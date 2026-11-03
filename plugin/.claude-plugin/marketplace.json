@@ -1,0 +1,15 @@
+{
+  "name": "scribe-local",
+  "owner": {
+    "name": "Daniel"
+  },
+  "description": "A local marketplace for installing the scribe Claude Code package from this checkout.",
+  "plugins": [
+    {
+      "name": "scribe",
+      "source": "./claude-code",
+      "description": "Records the #scribe lines Daniel types as decisions and preferences, through the scribe binary on PATH.",
+      "version": "0.1.0"
+    }
+  ]
+}

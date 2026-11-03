@@ -371,6 +371,50 @@ pub(crate) enum Record {
     Session(Box<SessionPayload>),
 }
 
+/// The reply a Claude Code hook prints: the same text for Daniel
+/// (`systemMessage`) and for the main agent (`additionalContext`), plus what
+/// the audit log records for the run. Its JSON shape is Claude Code's hook
+/// protocol, so it is the same in every output mode.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct HookReply {
+    /// The hook event, such as `UserPromptSubmit`.
+    pub(crate) event: &'static str,
+    /// Shown to Daniel; `None` prints no reply at all.
+    pub(crate) message: Option<String>,
+    /// Shown to the main agent beside the prompt.
+    pub(crate) context: Option<String>,
+    /// One per record written or refused, for the audit log; empty when the
+    /// hook changed nothing.
+    pub(crate) outcomes: Vec<HookOutcome>,
+}
+
+/// One write or refusal a hook run made.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct HookOutcome {
+    /// The record it acted on: an entry id, or `session:<id>` for a refusal.
+    pub(crate) target: Option<String>,
+    /// The stable code of a refusal; `None` for a write.
+    pub(crate) error_code: Option<&'static str>,
+}
+
+/// The JSON a hook prints (Claude Code's hook output).
+#[derive(Serialize)]
+pub(crate) struct HookJson<'a> {
+    #[serde(rename = "systemMessage", skip_serializing_if = "Option::is_none")]
+    pub(crate) system_message: Option<&'a str>,
+    #[serde(rename = "hookSpecificOutput", skip_serializing_if = "Option::is_none")]
+    pub(crate) hook_specific_output: Option<HookSpecificJson<'a>>,
+}
+
+/// `hookSpecificOutput`.
+#[derive(Serialize)]
+pub(crate) struct HookSpecificJson<'a> {
+    #[serde(rename = "hookEventName")]
+    pub(crate) hook_event_name: &'a str,
+    #[serde(rename = "additionalContext")]
+    pub(crate) additional_context: &'a str,
+}
+
 /// What a command produced, before rendering.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Output {
@@ -394,4 +438,6 @@ pub(crate) enum Output {
         /// The record.
         record: Record,
     },
+    /// A hook's reply.
+    Hook(HookReply),
 }

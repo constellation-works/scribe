@@ -2,8 +2,11 @@
 
 A standalone Orbit plugin that keeps Daniel's explicitly marked preferences and decisions, catalogs the sessions he turns on, and answers agents' questions about him with verbatim citations. Design: [docs/design/scribe/1_overview.md](docs/design/scribe/1_overview.md).
 
-This slice reads the store; recording entries (`#scribe`), cataloging
-sessions (`/scribe on`), `ask` and the Orbit plugin arrive in later slices.
+A `#scribe` line Daniel types in Claude Code is recorded as an entry by the
+`UserPromptSubmit` hook (forms `#scribe <tag>: <content>` and `#scribe add
+<content> to <tag>`), and the CLI reads the store. Referents ("add this to
+decisions"), cataloging sessions (`/scribe on`), `ask` and the Orbit plugin
+arrive in later slices.
 
 ```sh
 scribe entry list                       # a table on a terminal, tab-separated lines in a pipe
@@ -27,8 +30,26 @@ are being cataloged, `proposals.json` the consistency routine's proposals and
 layout and every key are in
 [specs/store.md](docs/design/scribe/specs/store.md). A store that another
 user owns or could write, a linked file and a record from a newer build are
-refused. Every command here only reads, and writes nothing, not even an audit
-line.
+refused. Every `entry`, `session`, `proposal` and `tag` command only reads,
+and writes nothing, not even an audit line.
+
+## The Claude Code package
+
+`plugin/claude-code/` registers two hooks that run the `scribe` binary on
+`PATH`: `UserPromptSubmit` runs `scribe hook user-prompt-submit`, which
+records each `#scribe` line of the typed prompt (lines in code fences,
+blockquotes and pasted blocks are skipped) and replies to Daniel and the
+agent with what it recorded or refused; `Stop` runs `scribe hook stop`,
+which fills each new entry's cite with the transcript message's id. Each
+write and refusal leaves one line in `audit.jsonl` with ids and error codes
+only. Install it from this checkout after `make install`:
+
+```sh
+claude plugin install scribe --marketplace ./plugin
+```
+
+`plugin/.claude-plugin/marketplace.json` is the local marketplace that
+command adds; `claude plugin validate plugin/claude-code` checks the package.
 
 | Setting | Flag | Environment | Default |
 |---------|------|-------------|---------|
@@ -62,17 +83,21 @@ so keep them runnable.
 
 ```
 crates/scribe-core/   domain library (no clap, no terminal): entry.rs, tag.rs,
-                        session.rs, proposal.rs, record.rs, config.rs and
-                        verbatim.rs (business logic, no I/O), store/
+                        session.rs, proposal.rs, record.rs, config.rs,
+                        capture.rs, transcript.rs and verbatim.rs (business
+                        logic, no I/O), store/
                         (persistence: facade, format, redact, audit log,
                         fsio), error.rs
 crates/scribe/        the binary: cli.rs (root flags), app.rs (composition),
-                        commands/ (one module per noun: flags and handlers),
+                        commands/ (one module per noun: flags and handlers;
+                        hook/ has one file per Claude Code hook event),
                         audit_middleware.rs (audits mutating commands),
                         output/ (sink, rendering, errors)
 crates/*/tests/         integration tests; crates/scribe/tests/goldens/ holds the
                         help and output goldens, tests/fixtures/store/ the
                         fixture store they read
+plugin/claude-code/     the Claude Code package (hooks), and plugin/.claude-plugin/
+                        the local marketplace that installs it
 scripts/                structure gates run by `make ci-fast`
 docs/design/            design docs: _templates/ to copy, scribe/ for this tool
 ```

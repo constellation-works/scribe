@@ -1,6 +1,6 @@
 use crate::audit_middleware::{AuditGuard, AuditMeta};
 use crate::error::CliError;
-use crate::output::{EntryPayload, Output, Record};
+use crate::output::{EntryPayload, HookOutcome, HookReply, Output, Record};
 use scribe_core::{AuditStatus, Store};
 use std::path::PathBuf;
 use time::macros::datetime;
@@ -82,7 +82,7 @@ fn an_unmarked_guard_records_a_failure() {
     let dir = private_tempdir();
     let store = Store::open(dir.path());
     let guard = AuditGuard::start(&store, ADD, datetime!(2026-09-26 12:00:00 UTC));
-    assert_eq!(guard.event().status, AuditStatus::Failure);
+    assert_eq!(guard.events()[0].status, AuditStatus::Failure);
     drop(guard);
     let lines = lines(&store);
     assert_eq!(lines.len(), 1);
@@ -137,4 +137,53 @@ fn an_unwritable_audit_log_fails_open() {
     guard.mark_result(&Err(CliError::NoDataDir));
     drop(guard);
     assert_eq!(std::fs::read(&file).unwrap(), b"");
+}
+
+fn hook_reply(outcomes: Vec<HookOutcome>) -> Output {
+    Output::Hook(HookReply {
+        event: "UserPromptSubmit",
+        message: Some(String::from(
+            "scribe: added decisions-1 to decisions — \"secret content\"",
+        )),
+        context: None,
+        outcomes,
+    })
+}
+
+#[test]
+fn a_hook_writes_one_line_per_write_or_refusal_with_ids_and_codes_only() {
+    let dir = private_tempdir();
+    let store = Store::open(dir.path());
+    let mut guard = AuditGuard::start(&store, ADD, datetime!(2026-09-26 12:00:00 UTC));
+    guard.mark_result(&Ok(hook_reply(vec![
+        HookOutcome {
+            target: Some(String::from("decisions-1")),
+            error_code: None,
+        },
+        HookOutcome {
+            target: Some(String::from("session:s-1")),
+            error_code: Some("unknown_tag"),
+        },
+    ])));
+    drop(guard);
+    let lines = lines(&store);
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0]["status"], "success");
+    assert_eq!(lines[0]["target"], "decisions-1");
+    assert_eq!(lines[0]["error_code"], serde_json::Value::Null);
+    assert_eq!(lines[1]["status"], "failure");
+    assert_eq!(lines[1]["target"], "session:s-1");
+    assert_eq!(lines[1]["error_code"], "unknown_tag");
+    let text = std::fs::read_to_string(store.audit_path()).unwrap();
+    assert!(!text.contains("secret content"), "got {text}");
+}
+
+#[test]
+fn a_hook_that_changed_nothing_writes_no_line() {
+    let dir = private_tempdir();
+    let store = Store::open(dir.path());
+    let mut guard = AuditGuard::start(&store, ADD, datetime!(2026-09-26 12:00:00 UTC));
+    guard.mark_result(&Ok(hook_reply(Vec::new())));
+    drop(guard);
+    assert!(!store.audit_path().exists());
 }

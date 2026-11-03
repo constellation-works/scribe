@@ -1,4 +1,4 @@
-use crate::app::{AppEnv, resolve_root};
+use crate::app::{AppEnv, resolve_root, transcripts_dir};
 use crate::error::CliError;
 use std::path::{Path, PathBuf};
 
@@ -6,6 +6,7 @@ fn env(root: Option<&str>, home: Option<&str>) -> AppEnv {
     AppEnv {
         root: root.map(Into::into),
         home: home.map(Into::into),
+        claude_config_dir: None,
     }
 }
 
@@ -36,4 +37,25 @@ fn empty_variables_count_as_unset() {
         resolve_root(None, &env(Some(""), Some(""))),
         Err(CliError::NoDataDir)
     ));
+}
+
+#[test]
+fn transcripts_are_under_claude_config_dir_else_home() {
+    let mut both = env(None, Some("/home/u"));
+    assert_eq!(
+        transcripts_dir(&both),
+        Some(PathBuf::from("/home/u/.claude/projects"))
+    );
+    both.claude_config_dir = Some("/elsewhere/claude".into());
+    assert_eq!(
+        transcripts_dir(&both),
+        Some(PathBuf::from("/elsewhere/claude/projects"))
+    );
+    both.claude_config_dir = Some("".into());
+    assert_eq!(
+        transcripts_dir(&both),
+        Some(PathBuf::from("/home/u/.claude/projects")),
+        "empty counts as unset"
+    );
+    assert_eq!(transcripts_dir(&env(None, None)), None);
 }

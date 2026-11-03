@@ -105,5 +105,20 @@ breaking change and shows up as a golden diff.
 Stable codes: `entry_not_found`, `session_not_found`, `io_error`,
 `store_corrupt`, `config_invalid`, `store_too_new`, `store_locked`,
 `store_symlink`, `store_foreign_owner`, `store_permissions`, `no_data_dir`,
-`output_error`, `usage_error`. A not-found error names the path it looked
+`output_error`, `usage_error`, `hook_payload_invalid`. A hook's refusals
+are not errors and appear only in its reply and audit lines:
+`unknown_tag`, `unparsed_instruction`, `unsupported_instruction`,
+`provenance_failed`. A not-found error names the path it looked
 for and the `list` command that shows the existing ids.
+
+## Hook replies
+
+`scribe hook <event>` writes Claude Code hook JSON, the same in every mode
+(`--json` and `--plain` change nothing): one compact line,
+`{"systemMessage": "...", "hookSpecificOutput": {"hookEventName":
+"UserPromptSubmit", "additionalContext": "..."}}`, or nothing at all when
+there is nothing to say (a prompt without `#scribe`, and every `Stop`). It
+exits 0 whenever the payload parsed, including when every line was refused
+or the store could not be used, so the prompt is never blocked; a payload
+that is not valid JSON, lacks a field or has an invalid `session_id` exits 1
+with `hook_payload_invalid`.

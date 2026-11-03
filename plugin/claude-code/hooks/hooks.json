@@ -1,0 +1,27 @@
+{
+  "description": "scribe: record #scribe lines from typed prompts, then fill their cites after each reply",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "scribe hook user-prompt-submit",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "scribe hook stop",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

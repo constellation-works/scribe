@@ -3,12 +3,14 @@
 //! they reach only `pub(crate)` items. The store's tests live in
 //! `store/tests/`.
 
+mod capture;
 mod config;
 mod entry;
 mod proposal;
 mod record;
 mod session;
 mod tag;
+mod transcript;
 mod verbatim;
 
 use crate::entry::{Cite, ContentFrom, Entry, EntryStatus};

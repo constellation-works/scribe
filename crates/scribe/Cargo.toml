@@ -21,6 +21,11 @@ time = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
+# Unix only: the host name stamped on records and the effective uid the
+# transcript owner is checked against (STD-05 R1, R9).
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true, features = ["fs", "system"] }
+
 [dev-dependencies]
 serde_json = { workspace = true }
 tempfile = { workspace = true }

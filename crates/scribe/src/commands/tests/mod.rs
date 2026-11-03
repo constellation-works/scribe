@@ -44,7 +44,7 @@ fn a_cut_list_says_how_many_matched_and_a_whole_one_says_nothing() {
 }
 
 #[test]
-fn no_command_is_audited_because_every_command_reads() {
+fn only_the_hook_commands_are_audited_because_every_other_command_reads() {
     // STD-01 R31: a read writes nothing, not even an audit line.
     for args in [
         &["scribe", "entry", "list"][..],
@@ -56,5 +56,19 @@ fn no_command_is_audited_because_every_command_reads() {
     ] {
         let cli = Cli::try_parse_from(args).unwrap();
         assert!(cli.command.audit().is_none(), "{args:?}");
+    }
+}
+
+#[test]
+fn both_hook_commands_are_audited_under_their_command_path() {
+    for (args, path) in [
+        (
+            &["scribe", "hook", "user-prompt-submit"][..],
+            "hook user-prompt-submit",
+        ),
+        (&["scribe", "hook", "stop"], "hook stop"),
+    ] {
+        let cli = Cli::try_parse_from(args).unwrap();
+        assert_eq!(cli.command.audit().map(|m| m.command), Some(path));
     }
 }

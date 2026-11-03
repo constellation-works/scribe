@@ -187,3 +187,199 @@ fn record_audit_waits_for_the_store_lock() {
     assert!(matches!(err, Error::Locked { .. }), "got {err:?}");
     assert!(!store.audit_path().exists());
 }
+
+mod capture {
+    use super::put;
+    use crate::entry::{Cite, ContentFrom, EntryFilter, NewEntry};
+    use crate::error::Error;
+    use crate::store::tests::{entry_text, private_tempdir};
+    use crate::store::{Captured, Redactor, Store};
+    use std::fs;
+    use time::macros::datetime;
+
+    fn draft(tag: &str, line: u32, content: &str) -> NewEntry {
+        let at = datetime!(2026-11-02 19:05:40 UTC);
+        NewEntry {
+            tag: tag.parse().unwrap(),
+            project: "scribe".parse().unwrap(),
+            topics: crate::record::Topics::default(),
+            related: Vec::new(),
+            provider: String::from("claude-code").try_into().unwrap(),
+            host: String::from("host").try_into().unwrap(),
+            created: at,
+            said: format!("#scribe {tag}: {content}"),
+            content: content.to_owned(),
+            content_from: ContentFrom::Instruction,
+            cite: Cite {
+                session: "s-9".parse().unwrap(),
+                message: None,
+                at,
+                prompt_sha256: "a".repeat(64),
+                line,
+                cwd: String::from("/work"),
+            },
+            review_after: None,
+        }
+    }
+
+    fn ids(results: &[Captured]) -> Vec<String> {
+        results.iter().map(|c| c.entry().id.to_string()).collect()
+    }
+
+    #[test]
+    fn a_draft_becomes_the_next_entry_of_its_tag_and_reads_back() {
+        let dir = private_tempdir();
+        let root = dir.path().join("root");
+        let store = Store::open(&root);
+        let added = store
+            .capture(
+                vec![draft("decisions", 1, "one"), draft("preferences", 2, "two")],
+                &Redactor::default(),
+            )
+            .unwrap();
+        assert!(matches!(added[0], Captured::Added(_)));
+        assert_eq!(ids(&added), ["decisions-1", "preferences-1"]);
+        let read = store.entry(&"decisions-1".parse().unwrap()).unwrap();
+        assert_eq!(&read, added[0].entry());
+        assert_eq!(read.content, "one");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |p: &std::path::Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode(&root), 0o700);
+            assert_eq!(mode(&root.join("entries/decisions")), 0o700);
+            assert_eq!(mode(&store.entry_path(&read.id)), 0o600);
+        }
+    }
+
+    #[test]
+    fn the_same_line_of_the_same_prompt_is_never_written_twice() {
+        let dir = private_tempdir();
+        let store = Store::open(dir.path());
+        store
+            .capture(vec![draft("decisions", 1, "one")], &Redactor::default())
+            .unwrap();
+        let again = store
+            .capture(
+                vec![draft("decisions", 1, "one"), draft("decisions", 2, "two")],
+                &Redactor::default(),
+            )
+            .unwrap();
+        assert!(matches!(again[0], Captured::Existing(_)));
+        assert!(matches!(again[1], Captured::Added(_)));
+        assert_eq!(ids(&again), ["decisions-1", "decisions-2"]);
+        let listed = store.list_entries(&EntryFilter::default()).unwrap();
+        assert_eq!(listed.listing.total, 2);
+    }
+
+    #[test]
+    fn a_number_held_by_a_file_that_does_not_parse_is_not_reused() {
+        let dir = private_tempdir();
+        let root = dir.path();
+        put(root, "entries/decisions/decisions-1.md", &entry_text(""));
+        put(root, "entries/decisions/decisions-4.md", "not an entry");
+        let store = Store::open(root);
+        let added = store
+            .capture(vec![draft("decisions", 7, "new")], &Redactor::default())
+            .unwrap();
+        assert_eq!(ids(&added), ["decisions-5"]);
+        assert_eq!(
+            fs::read_to_string(root.join("entries/decisions/decisions-4.md")).unwrap(),
+            "not an entry"
+        );
+    }
+
+    #[test]
+    fn free_text_is_redacted_before_it_is_written() {
+        let dir = private_tempdir();
+        let store = Store::open(dir.path());
+        let secret = "sk-test-0123456789";
+        let redactor = Redactor::new([(String::from("ANTHROPIC_API_KEY"), secret.to_owned())]);
+        store
+            .capture(
+                vec![draft("decisions", 1, &format!("use {secret} here"))],
+                &redactor,
+            )
+            .unwrap();
+        let text = fs::read_to_string(dir.path().join("entries/decisions/decisions-1.md")).unwrap();
+        assert!(!text.contains(secret), "{text}");
+        assert!(
+            text.contains("use [redacted:ANTHROPIC_API_KEY] here"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn an_unsafe_root_is_refused_and_nothing_is_written() {
+        let dir = private_tempdir();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o777)).unwrap();
+            let err = Store::open(dir.path())
+                .capture(vec![draft("decisions", 1, "one")], &Redactor::default())
+                .unwrap_err();
+            assert!(matches!(err, Error::Permissions { .. }), "{err:?}");
+            assert!(!dir.path().join("entries").exists());
+        }
+    }
+
+    #[test]
+    fn cites_of_the_session_are_filled_once_and_others_are_left_alone() {
+        let dir = private_tempdir();
+        let store = Store::open(dir.path());
+        let mut other = draft("decisions", 1, "other session");
+        other.cite.session = "s-other".parse().unwrap();
+        store
+            .capture(
+                vec![
+                    draft("decisions", 1, "one"),
+                    draft("decisions", 2, "two"),
+                    other,
+                ],
+                &Redactor::default(),
+            )
+            .unwrap();
+        let session = "s-9".parse().unwrap();
+        assert!(store.has_unfilled_cites(&session).unwrap());
+        let now = datetime!(2026-11-02 19:06:00 UTC);
+        let filled = store
+            .fill_cite_messages(&session, now, |cite| {
+                (cite.line == 1).then(|| String::from("m-1"))
+            })
+            .unwrap();
+        let filled: Vec<String> = filled.iter().map(ToString::to_string).collect();
+        assert_eq!(filled, ["decisions-1"]);
+        let one = store.entry(&"decisions-1".parse().unwrap()).unwrap();
+        assert_eq!(one.cite.message.as_deref(), Some("m-1"));
+        assert_eq!(one.updated, now);
+        let two = store.entry(&"decisions-2".parse().unwrap()).unwrap();
+        assert_eq!(two.cite.message, None, "no match leaves it waiting");
+        let three = store.entry(&"decisions-3".parse().unwrap()).unwrap();
+        assert_eq!(three.cite.message, None, "another session is not touched");
+        // A filled cite is not filled again.
+        let again = store
+            .fill_cite_messages(&session, now, |_| Some(String::from("m-2")))
+            .unwrap();
+        let again: Vec<String> = again.iter().map(ToString::to_string).collect();
+        assert_eq!(again, ["decisions-2"]);
+        assert!(!store.has_unfilled_cites(&session).unwrap());
+    }
+
+    #[test]
+    fn checking_for_waiting_cites_writes_nothing() {
+        let dir = private_tempdir();
+        let root = dir.path().join("absent");
+        let store = Store::open(&root);
+        assert!(!store.has_unfilled_cites(&"s-9".parse().unwrap()).unwrap());
+        let filled = store
+            .fill_cite_messages(
+                &"s-9".parse().unwrap(),
+                datetime!(2026-11-02 19:06:00 UTC),
+                |_| Some(String::from("m")),
+            )
+            .unwrap();
+        assert!(filled.is_empty());
+        assert!(!root.exists());
+    }
+}

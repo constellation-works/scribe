@@ -1,0 +1,18 @@
+Fill in the message ids of entries this session recorded, from the Stop hook's JSON on stdin
+
+Usage: scribe hook stop [OPTIONS]
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Global options:
+      --root <DIR>       Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>  Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json             Shorthand for --format json
+
+Reads the Stop payload (session_id, transcript_path) on stdin. Prints
+nothing.
+
+Examples:
+  scribe hook stop < <payload.json>

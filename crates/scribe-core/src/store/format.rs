@@ -20,8 +20,8 @@ use crate::entry::Entry;
 use crate::error::{Error, Result};
 use crate::proposal::Proposal;
 use crate::session::{ControlState, SECTIONS, SessionControl, SessionId, SessionRecord};
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::num::NonZeroU32;
@@ -198,6 +198,38 @@ pub(super) fn decode_entry(
     }
     body.clone_into(&mut entry.content);
     Ok(entry)
+}
+
+/// The frontmatter as written: `format` and `kind` first, then the
+/// record's own keys.
+#[derive(Serialize)]
+struct EntryFront<'a> {
+    format: u32,
+    kind: &'static str,
+    #[serde(flatten)]
+    entry: &'a Entry,
+}
+
+/// An entry file's bytes at the current format: the frontmatter between two
+/// `---` lines, then the content and one line break. [`decode_entry`] reads
+/// it back to the same entry.
+pub(super) fn encode_entry(path: &Path, entry: &Entry) -> Result<Vec<u8>> {
+    let front = yaml_serde::to_string(&EntryFront {
+        format: FORMAT,
+        kind: ENTRY_KIND,
+        entry,
+    })
+    .map_err(|e| Error::corrupt(path, e))?;
+    let mut text = String::with_capacity(front.len() + entry.content.len() + 10);
+    text.push_str("---\n");
+    text.push_str(&front);
+    if !front.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push_str("---\n");
+    text.push_str(&entry.content);
+    text.push('\n');
+    Ok(text.into_bytes())
 }
 
 /// Parse a session record. `expected` is the file's stem and `year_month`

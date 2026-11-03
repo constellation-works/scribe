@@ -1,0 +1,19 @@
+Record each #scribe line of a typed prompt, from the UserPromptSubmit hook's JSON on stdin
+
+Usage: scribe hook user-prompt-submit [OPTIONS]
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Global options:
+      --root <DIR>       Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>  Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json             Shorthand for --format json
+
+Reads the UserPromptSubmit payload (session_id, transcript_path, cwd, prompt)
+on stdin. Prints Claude Code hook JSON when the prompt has a #scribe line,
+and nothing otherwise. Never blocks the prompt.
+
+Examples:
+  scribe hook user-prompt-submit < <payload.json>

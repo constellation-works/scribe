@@ -43,15 +43,7 @@ const PRIVATE_FILE_MODE: u32 = 0o600;
 
 /// Replace `path` with `bytes` atomically and durably. The file is `0600`.
 ///
-/// Every store write goes through here; S1 ships the read side only, and
-/// the `#scribe` capture slice is its first caller.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the first writer arrives with #scribe capture (S2)"
-    )
-)]
+/// Every store write except the audit log's goes through here.
 pub(super) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = parent_dir(path);
     // Same directory as the target, so the rename cannot cross filesystems.

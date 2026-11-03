@@ -13,8 +13,8 @@ mod sink;
 mod table;
 
 pub(crate) use payload::{
-    EntryPayload, Output, ProposalPayload, Record, Records, SessionPayload, TagPayload,
-    WarningPayload,
+    EntryPayload, HookOutcome, HookReply, Output, ProposalPayload, Record, Records, SessionPayload,
+    TagPayload, WarningPayload,
 };
 pub(crate) use sink::{FORMAT_ENV, FormatArg, Sink};
 
@@ -123,6 +123,7 @@ fn emit(sink: &Sink, output: &Output) -> io::Result<()> {
             ..
         } => render::list(&mut out, sink, records, *total, warnings)?,
         Output::Show { record } => render::show(&mut out, sink, record)?,
+        Output::Hook(reply) => render::hook(&mut out, reply)?,
     }
     out.flush()
 }

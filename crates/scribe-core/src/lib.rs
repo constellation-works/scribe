@@ -8,7 +8,9 @@
 //!   ([`SessionRecord`], [`ControlState`], [`Cadence`]) in `session`;
 //!   proposals ([`Proposal`]) in `proposal`; the shared metadata
 //!   ([`Project`], [`Topic`], [`Related`]) in `record`; `config.toml`
-//!   ([`Config`]) in `config`; and the quote check in [`verbatim`];
+//!   ([`Config`]) in `config`; parsing a typed turn into `#scribe`
+//!   instructions in [`capture`]; reading a Claude Code transcript in
+//!   [`transcript`]; and the quote check in [`verbatim`];
 //! - persistence in `store`: the file-backed [`Store`], its formats, the
 //!   audit log ([`AuditEvent`]), the [`Redactor`] and the filesystem
 //!   mechanisms, and nothing else;
@@ -25,6 +27,7 @@
 // Unit tests use unwrap/expect for fixture setup; production call sites remain linted.
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
+pub mod capture;
 mod config;
 mod entry;
 mod error;
@@ -33,11 +36,13 @@ mod record;
 mod session;
 mod store;
 mod tag;
+pub mod transcript;
 pub mod verbatim;
 
 pub use config::{Config, ConfigError, Models};
 pub use entry::{
-    Cite, ContentFrom, Entry, EntryError, EntryFilter, EntryId, EntryStatus, Speaker, TagName,
+    Cite, ContentFrom, Entry, EntryError, EntryFilter, EntryId, EntryStatus, NewEntry, Speaker,
+    TagName,
 };
 pub use error::{Error, Result};
 pub use proposal::{Proposal, ProposalError, ProposalId, ProposalKind, ProposalState, Quote};
@@ -47,9 +52,9 @@ pub use session::{
     SessionRecord, SessionStatus, Term,
 };
 pub use store::{
-    AUDIT_FILE, AuditEvent, AuditStatus, CONFIG_FILE, CONTROL_FILE, DEFAULT_LOCK_WAIT, ENTRIES_DIR,
-    EntryList, MIN_SECRET_CHARS, PROPOSALS_FILE, REDACTED_FIELDS, Redactor, SESSIONS_DIR,
-    SessionList, SessionView, Skipped, Store, TagList,
+    AUDIT_FILE, AuditEvent, AuditStatus, CONFIG_FILE, CONTROL_FILE, Captured, DEFAULT_LOCK_WAIT,
+    ENTRIES_DIR, EntryList, MIN_SECRET_CHARS, PROPOSALS_FILE, REDACTED_FIELDS, Redactor,
+    SESSIONS_DIR, SessionList, SessionView, Skipped, Store, TagList,
 };
 pub use tag::{TagDef, TagError, TagSummary, TagTable};
 

@@ -7,6 +7,7 @@ Commands:
   session   List and show the records of sessions cataloged with /scribe on
   proposal  List what the consistency routine proposes changing
   tag       List the tags entries are filed under
+  hook      Run a Claude Code hook: record #scribe lines and fill in their cites
   help      Print this message or the help of the given subcommand(s)
 
 Options:
