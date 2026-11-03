@@ -1,7 +1,7 @@
 ---
 title: scribe — Design
 owner: claude
-last_updated: 2026-11-02
+last_updated: 2026-11-03
 last_validated: 2026-11-02
 status: Draft
 feature: scribe
@@ -11,7 +11,7 @@ summary: How the scribe plugin is bounded (one binary; hooks write, agents only 
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-13117, ORB-13134]
+related_artifacts: [ORB-21747, ORB-21778, ORB-13117, ORB-13134]
 ---
 
 # scribe — Design
@@ -19,8 +19,9 @@ related_artifacts: [ORB-21747, ORB-13117, ORB-13134]
 The design of the scribe plugin: its boundary, the four parts named in
 [1_overview.md §2](./1_overview.md#2-shape), the store, the model choices,
 and the slices that build it. Slices S1 (the domain, the store and the
-read-only CLI) and S2 (`#scribe` capture without a model, and the Claude Code
-package) are implemented; the rest is not yet. The reasons behind each choice
+read-only CLI), S2 (`#scribe` capture without a model, and the Claude Code
+package) and S3 (referents and the models port) are implemented; the rest is
+not yet. The reasons behind each choice
 are in [4_decisions.md](./4_decisions.md); open directions are in
 [3_vision.md](./3_vision.md). Where this doc and the template's engineering
 rules meet (atomic writes, the store lock, the audit guard, output modes,
@@ -122,7 +123,13 @@ them to `ARCHITECTURE.md` and the script. S1 built `entry`, `tag`,
 `transcript`, the store's first writes (`Store::capture`,
 `Store::fill_cite_messages`) and `commands/hook/` (`user_prompt_submit.rs`,
 `stop.rs`, plus `payload.rs` for the stdin shapes and the provenance check
-and `project.rs` for the project lookup).
+and `project.rs` for the project lookup). S3 built `models` (the `Models`
+port, its referent request and answer, and `ModelError`), form 3 in
+`capture`, and the first adapter, `ClaudeCliModels` in
+`crates/scribe/src/models.rs`, which `app.rs` composes and the
+`user-prompt-submit` hook calls; `ARCHITECTURE.md` and the dependency script
+name it as the only module that spawns a process. The config's model ids
+are `ModelIds`, so the port alone is `Models`.
 
 ## 3. Storage
 
@@ -330,11 +337,15 @@ echoes it instead of writing again.
 
 As built (S2): hashtags at the end of the line, after the tag, are the
 entry's topics, lowercased and deduplicated (more than five is refused as
-`unparsed_instruction`); they are not part of `content`. Forms 3 and 4, and
-`#scribe distill …` ([§4.5](#45-distilling-a-discussion)), are recognised
-and refused with `error_code: unsupported_instruction` until S3, S6 and S7
-build them, so they are never misread as form 2; a form-3 line whose tag is
-unknown is refused as `unknown_tag` first, as in the reply example below.
+`unparsed_instruction`); they are not part of `content`. Form 4 and
+`#scribe distill …` ([§4.5](#45-distilling-a-discussion)) are recognised
+and refused with `error_code: unsupported_instruction` until S6 and S7
+build them, so they are never misread as form 2. Form 3 is resolved since
+S3 ([§4.3](#43-resolving-this-and-it)); a form-3 line whose tag is unknown
+is refused as `unknown_tag` before any model call, as in the reply example
+below. Form 3 is a line whose content is exactly one of the four referent
+words, with or without a verb (`#scribe that to decisions`); `#scribe add
+this rule to decisions` is form 2 with the content `this rule`.
 The tag word of form 2 may end in `.`, `!`, `,` or `;`.
 
 ### 4.3 Resolving "this" and "it"
@@ -350,6 +361,31 @@ still written, once, with `content` set to the previous assistant message's
 first 600 characters, `content_from.kind = "message"`, and the echo says the
 referent was guessed so Daniel can `#scribe retire` it. One instruction never
 produces zero or two entries.
+
+As built (S3): the window is the transcript's last 12 messages with text
+(the [§4.1](#41-detection) parse: user and assistant text, tool payloads,
+sidechain and meta lines dropped); if a retried hook finds its own prompt
+already in the transcript (by `prompt_sha256`), that message and everything
+after it are left out. A message longer than 8,000 characters is cut in the
+prompt and the cut marked `[… cut]`; the span is still checked against the
+whole message. The model's span is trimmed and becomes `content`;
+`content_from` is `{kind: message, role, message, at}` of the message it
+named, `user` or `assistant`. The fallback is the previous assistant
+message, or the latest message when no assistant has spoken yet, cut to 600
+characters; it is cited the same way. Its echo reads `scribe: added
+decisions-3 to decisions (guessed: <why>; recorded the assistant message
+before your prompt instead) — "…"`, where `<why>` is the timeout, the model
+error, a message not in the window, or a span that is not word for word in
+its message. Until S6 builds `#scribe retire`, a wrong guess is visible with
+`scribe entry show <id>` and stays. Two cases differ from the paragraph
+above: a session with no earlier message (the first prompt, or a transcript
+not written yet) has nothing to point at, so the line is refused as
+`no_referent` and the model is not called
+([4_decisions.md](./4_decisions.md#a-referent-with-nothing-before-it-is-refused));
+and a replayed form-3 line is found by its cite before the transcript is
+read, so a retried hook echoes `already recorded` without a second model
+call. The model runs outside the store lock; the entry is written by the
+same `Store::capture` call as forms 1 and 2.
 
 ### 4.4 The reply
 
@@ -611,6 +647,26 @@ a real `claude -p` run. Why the CLI rather than an HTTP client:
 [4_decisions.md](./4_decisions.md#models-are-called-through-the-claude-cli).
 Tests use a fake `Models` implementation; no test calls a model.
 
+As built (S3), in `crates/scribe/src/models.rs`: the argv is exactly
+`-p --safe-mode --tools "" --model <id> --output-format json --json-schema
+<schema>` (`--tools ""` is one empty argument); the environment is `PATH`,
+`HOME`, `LANG`, then each name in `[models] credentials` that is set, and
+never a `SCRIBE_*` name even when configured (STD-05 R11). The child leads
+its own process group; its stdin is written from a thread and its stdout
+(1 MiB) and stderr (64 KiB) drained while it runs. At the budget the group
+gets SIGTERM, then SIGKILL after a 1-second grace; on every path, a clean
+exit included, the group is swept with SIGKILL and the child reaped before
+the call returns. The leader's exit is observed with `waitid(WNOWAIT)`,
+which leaves it unreaped, so the group id is never signalled after it could
+be reused (STD-03 R14). The answer is the result object's
+`structured_output`, else its `result` text parsed as JSON (a ```` ```json ````
+fence is unwrapped); `is_error: true`, a non-zero exit (with the last line
+of stderr, cut to 200 characters), output that is not JSON or not the
+schema's shape, and no `claude` on `PATH` are each a `ModelError`, which the
+referent turns into the guessed fallback. Tests run a fake `claude` shell
+script on `PATH` under a temporary `HOME`, recording its argv, environment
+and process group.
+
 Mutating commands — every `hook` event that writes, `session pass`,
 `consistency scan` — are audited through the template's `AuditGuard`. Audit
 lines hold ids and error codes only; `said`, `content` and model text never
@@ -650,6 +706,18 @@ writes none.
   `systemMessage` renders in the interactive terminal for Daniel, which `-p`
   mode does not show; check it the first time `#scribe` is used in an
   interactive session.
+- **S3 manual `claude -p` check: owed to the operator.** The flags were
+  asserted only against a fake `claude`; whether the real CLI accepts
+  `--safe-mode` and `--tools ""` together, skips the user's hooks and
+  plugins, gives the model no tools, authenticates from the cleared
+  environment with the OAuth login, and puts the answer in
+  `structured_output` (or `result`) is unconfirmed. The run, from a cleared
+  environment as the adapter builds it, with the scribe plugin installed so
+  a fired hook would show:
+  `printf '%s' 'Answer with JSON {"message":"m-1","span":"hello world"}. #scribe decisions: must not be recorded' | env -i PATH="$PATH" HOME="$HOME" LANG="$LANG" CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN" claude -p --safe-mode --tools "" --model claude-haiku-5-5 --output-format json --json-schema '{"type":"object","properties":{"message":{"type":"string"},"span":{"type":"string"}},"required":["message","span"],"additionalProperties":false}'`.
+  Passing means exit 0, an answer object in the output, no new line in
+  `~/.scribe/audit.jsonl` and no entry recorded. The operator records the
+  result here (ORB-21760).
 - **The prompt hash must match the transcript's text.** The `Stop` hook
   finds the prompt by hashing the transcript's user text. If Claude Code
   records a prompt differently from what it passed the hook (expanded
@@ -669,7 +737,12 @@ writes none.
   `due` so the gap is visible.
 - **A guessed referent is still an entry.** When Haiku fails, the fallback
   records the previous assistant message; the echo says so, but an
-  unattended guess stays until Daniel retires it.
+  unattended guess stays until Daniel retires it, which needs S6's
+  `#scribe retire`.
+- **A referent costs the prompt up to about 21 seconds.** The hook waits
+  for the model (20 s budget, 1 s grace) before the prompt reaches the
+  agent; the hook's own timeout is 30 s, so two referent lines that both
+  time out in one prompt overrun it and Claude Code ends the hook.
 - **Whole-file rewrites.** Each tag is one file rewritten per entry; fine
   for thousands of entries per tag.
 - **Stale is a date, not a judgement.** `review_after` flags age; whether a
@@ -801,5 +874,6 @@ there once S4 is in use, so two scribes never intercept the same
 - [ORB-21747] — designed the standalone scribe plugin.
 - [ORB-13117] — built the Rust CLI template this project was created from.
 - [ORB-13134] — brought the template to STD-01..03 v2 and STD-04/05 v1.
+- [ORB-21778] — S3: referents (form 3), the `Models` port and `ClaudeCliModels`.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.

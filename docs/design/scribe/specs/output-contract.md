@@ -108,7 +108,7 @@ Stable codes: `entry_not_found`, `session_not_found`, `io_error`,
 `output_error`, `usage_error`, `hook_payload_invalid`. A hook's refusals
 are not errors and appear only in its reply and audit lines:
 `unknown_tag`, `unparsed_instruction`, `unsupported_instruction`,
-`provenance_failed`. A not-found error names the path it looked
+`no_referent`, `provenance_failed`. A not-found error names the path it looked
 for and the `list` command that shows the existing ids.
 
 ## Hook replies
@@ -122,3 +122,10 @@ exits 0 whenever the payload parsed, including when every line was refused
 or the store could not be used, so the prompt is never blocked; a payload
 that is not valid JSON, lacks a field or has an invalid `session_id` exits 1
 with `hook_payload_invalid`.
+The `UserPromptSubmit` reply has one echo line per `#scribe` line: `scribe:
+added <id> to <tag> — "<content>"`, `scribe: already recorded <id> in <tag>
+— "<content>"`, `scribe: refused "<line>" — <reason>` or `scribe: could not
+record "<line>" — <error>`. A form-3 line whose referent the model did not
+resolve is still added, and its echo puts `(guessed: <why>; recorded the
+<role> message before your prompt instead)` after the tag. The text is for
+Daniel and the agent to read; the audit line, not the echo, is the record.

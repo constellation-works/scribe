@@ -479,3 +479,204 @@ fn the_stop_hook_leaves_a_cite_waiting_until_its_prompt_is_in_the_transcript() {
         assert_eq!(entry["cite"]["message"], Value::Null);
     }
 }
+
+// --- form 3: referents, with a fake `claude` on PATH ---------------------
+
+/// A fake `claude` in the fixture: records each call's argv and environment
+/// under the `HOME` scribe gives it, then runs `body`.
+fn fake_claude(fx: &Fixture, body: &str) -> std::ffi::OsString {
+    let bin = fx.elsewhere("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let script = format!(
+        "#!/bin/sh\n\
+         n=$(ls \"$HOME\" | grep -c '^claude-argv')\n\
+         for a in \"$@\"; do printf '%s\\n' \"<$a>\"; done > \"$HOME/claude-argv-$n\"\n\
+         env > \"$HOME/claude-env-$n\"\n\
+         cat > /dev/null\n\
+         {body}\n"
+    );
+    let path = bin.join("claude");
+    std::fs::write(&path, script).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let mut var = bin.into_os_string();
+    var.push(":/usr/bin:/bin");
+    var
+}
+
+/// The argv of each call the fake `claude` received, oldest first.
+fn claude_calls(fx: &Fixture) -> Vec<Vec<String>> {
+    (0..)
+        .map(|n| fx.home().join(format!("claude-argv-{n}")))
+        .take_while(|p| p.exists())
+        .map(|p| {
+            std::fs::read_to_string(p)
+                .unwrap()
+                .lines()
+                .map(str::to_owned)
+                .collect()
+        })
+        .collect()
+}
+
+const SPOKEN: &str = "Options: squash or merge.\n\nI recommend we squash-merge agent PRs and keep merge commits for releases.";
+
+/// The conversation so far, before the `#scribe add this` prompt.
+fn write_conversation(claude: &Claude) {
+    let lines = [
+        json!({"type": "user", "uuid": "u-1", "sessionId": SESSION,
+               "timestamp": "2026-11-03T06:00:00Z",
+               "message": {"role": "user", "content": "How should agent PRs merge?"}}),
+        json!({"type": "assistant", "uuid": "a-1", "sessionId": SESSION,
+               "timestamp": "2026-11-03T06:00:05Z",
+               "message": {"role": "assistant", "content": [
+                   {"type": "thinking", "thinking": "hmm"},
+                   {"type": "text", "text": SPOKEN}]}}),
+    ];
+    let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
+    std::fs::write(&claude.transcript, text).unwrap();
+}
+
+fn referent_payload(claude: &Claude, prompt: &str) -> Value {
+    let mut payload = claude.payload("user-prompt-submit.json");
+    payload["prompt"] = json!(prompt);
+    payload
+}
+
+fn hook_with_path(fx: &Fixture, payload: &Value, path: &std::ffi::OsString) -> Output {
+    let child = fx
+        .cmd(&["hook", "user-prompt-submit"])
+        .env("PATH", path)
+        .env("LANG", "C.UTF-8")
+        .env("CLAUDE_CODE_OAUTH_TOKEN", "oauth-test-value")
+        .env("GITHUB_TOKEN", "not-for-the-model")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut guard = support::ChildGuard::new(child);
+    guard
+        .child()
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(payload.to_string().as_bytes())
+        .unwrap();
+    let out = guard.finish();
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    out
+}
+
+#[test]
+fn add_this_records_the_span_the_model_chose_through_a_safe_mode_claude() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    write_conversation(&claude);
+    let path = fake_claude(
+        &fx,
+        r#"echo '{"type":"result","subtype":"success","is_error":false,"result":"","structured_output":{"message":"a-1","span":"squash-merge agent PRs and keep merge commits for releases."}}'"#,
+    );
+    let payload = referent_payload(
+        &claude,
+        "Good.\n#scribe add this to decisions #merge-policy",
+    );
+    let out = hook_with_path(&fx, &payload, &path);
+    assert_eq!(
+        reply(&out)["systemMessage"],
+        "scribe: added decisions-1 to decisions — \"squash-merge agent PRs and keep merge commits for releases.\""
+    );
+    let stored = entries(&fx);
+    assert_eq!(stored.len(), 1);
+    let entry = &stored[0];
+    assert_eq!(entry["said"], "#scribe add this to decisions #merge-policy");
+    assert_eq!(
+        entry["content"],
+        "squash-merge agent PRs and keep merge commits for releases."
+    );
+    assert_eq!(entry["topics"], json!(["merge-policy"]));
+    assert_eq!(
+        entry["content_from"],
+        json!({"kind": "message", "role": "assistant", "message": "a-1",
+               "at": "2026-11-03T06:00:05Z"})
+    );
+    assert_eq!(entry["cite"]["line"], 2);
+    let targets: Vec<Value> = audit(&fx).iter().map(|l| l["target"].clone()).collect();
+    assert_eq!(targets, [json!("decisions-1")]);
+
+    // The call: safe mode, no tools, the configured referent model.
+    let calls = claude_calls(&fx);
+    assert_eq!(calls.len(), 1);
+    let argv = &calls[0];
+    assert_eq!(argv[..4], ["<-p>", "<--safe-mode>", "<--tools>", "<>"]);
+    assert_eq!(argv[4..6], ["<--model>", "<claude-haiku-5-5>"]);
+    // Only the allowlist reached it: no SCRIBE_ROOT, no unconfigured token.
+    let env = std::fs::read_to_string(fx.home().join("claude-env-0")).unwrap();
+    assert!(
+        env.contains("CLAUDE_CODE_OAUTH_TOKEN=oauth-test-value"),
+        "{env}"
+    );
+    assert!(!env.contains("SCRIBE_ROOT"), "{env}");
+    assert!(!env.contains("GITHUB_TOKEN"), "{env}");
+    assert!(!argv.iter().any(|a| a.contains("oauth-test-value")));
+
+    // A replay echoes it and does not call the model again.
+    let out = hook_with_path(&fx, &payload, &path);
+    let message = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
+    assert!(
+        message.starts_with("scribe: already recorded decisions-1 in decisions"),
+        "{message}"
+    );
+    assert_eq!(claude_calls(&fx).len(), 1);
+    assert_eq!(entries(&fx).len(), 1);
+}
+
+#[test]
+fn a_failing_or_unverifiable_model_still_writes_one_guessed_entry() {
+    for body in [
+        "echo 'Not logged in' >&2; exit 1",
+        r#"echo '{"type":"result","is_error":false,"structured_output":{"message":"a-1","span":"we always rebase agent PRs"}}'"#,
+        r#"echo '{"type":"result","is_error":false,"structured_output":{"message":"a-9","span":"squash-merge agent PRs"}}'"#,
+    ] {
+        let fx = Fixture::new();
+        let claude = Claude::new(&fx);
+        write_conversation(&claude);
+        let path = fake_claude(&fx, body);
+        let payload = referent_payload(&claude, "#scribe record it in my decisions");
+        let out = hook_with_path(&fx, &payload, &path);
+        let message = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
+        assert!(
+            message.starts_with("scribe: added decisions-1 to decisions (guessed: "),
+            "{body}: {message}"
+        );
+        let entries = entries(&fx);
+        assert_eq!(entries.len(), 1, "{body}");
+        assert_eq!(entries[0]["content"], SPOKEN);
+        assert_eq!(entries[0]["content_from"]["role"], "assistant");
+        assert_eq!(entries[0]["content_from"]["message"], "a-1");
+        assert_eq!(claude_calls(&fx).len(), 1);
+    }
+}
+
+#[test]
+fn a_referent_with_nothing_before_it_is_refused_without_a_model_call() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let path = fake_claude(&fx, "exit 1");
+    let payload = referent_payload(&claude, "#scribe add this to decisions");
+    let out = hook_with_path(&fx, &payload, &path);
+    let message = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
+    assert!(
+        message.starts_with(
+            "scribe: refused \"#scribe add this to decisions\" — there is no earlier message"
+        ),
+        "{message}"
+    );
+    assert!(claude_calls(&fx).is_empty());
+    assert!(!fx.root().join("entries").exists());
+    let codes: Vec<Value> = audit(&fx).iter().map(|l| l["error_code"].clone()).collect();
+    assert_eq!(codes, [json!("no_referent")]);
+}

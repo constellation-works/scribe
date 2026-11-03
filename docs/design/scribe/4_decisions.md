@@ -1,7 +1,7 @@
 ---
 title: scribe — Decisions
 owner: claude
-last_updated: 2026-11-02
+last_updated: 2026-11-03
 last_validated: 2026-11-02
 status: Draft
 feature: scribe
@@ -11,7 +11,7 @@ summary: Why superseded entries are hidden not removed, why one JSON file per ta
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-13117, ORB-13134]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-13117, ORB-13134]
 ---
 
 # scribe — Decisions
@@ -945,6 +945,40 @@ echoing the refusal. A form-3 line whose tag is not configured is refused as
 
 - Nothing is ever recorded from a misread instruction; Daniel sees why.
 - Cost: until S3 a `#scribe add that to decisions` does nothing but echo.
+- Superseded for form 3 by S3 ([ORB-21778]), which resolves referents
+  ([2_design.md §4.3](./2_design.md#43-resolving-this-and-it)); form 4 and
+  `distill` are still refused this way.
+
+## A referent with nothing before it is refused
+
+**Recorded:** 2026-11 · [ORB-21778]
+**Code anchors:** `crates/scribe-core/src/capture.rs` (`window`, `resolve`,
+`Refusal::NoReferent`); `crates/scribe/src/commands/hook/user_prompt_submit.rs`
+
+### Context
+
+[2_design.md §4.3](./2_design.md#43-resolving-this-and-it) says a form-3
+line always writes one entry, falling back to the previous assistant
+message. A session's first prompt, or one that reaches the hook before
+Claude Code has written the transcript, has no earlier message: there is
+nothing to ask the model about and nothing to fall back to. A session where
+only Daniel has spoken has no assistant message.
+
+### Decision
+
+With no earlier message the line is refused as `no_referent` (audited like
+any refusal) and no model is called. With earlier messages but no assistant
+one, the fallback is the latest message, cited with its role. Every other
+case writes exactly one entry, as the design says. A replayed line is found
+by its cite before the transcript is read, so it never calls the model
+again.
+
+### Consequences
+
+- An entry never holds empty or invented content, and the echo tells Daniel
+  to write the content itself.
+- Cost: "one instruction never produces zero entries" has one exception,
+  and Daniel must retype a referent typed as a session's first prompt.
 
 ## One audit line per hook outcome, none for a no-op
 
@@ -1041,5 +1075,6 @@ installs it. The hooks run `scribe` from `PATH` (`make install`).
 - [ORB-21753] — S1: built the domain, the frontmatter store and the read-only CLI.
 - [ORB-21764] — S2: built `#scribe` capture (no model) and the Claude Code package.
 - [ORB-21760] — the operator's live check of the S2 package.
+- [ORB-21778] — S3: referents (form 3), the `Models` port and `ClaudeCliModels`.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.

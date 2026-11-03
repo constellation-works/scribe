@@ -367,6 +367,47 @@ mod capture {
     }
 
     #[test]
+    fn entries_from_one_prompt_are_found_by_session_and_hash_without_writing() {
+        let dir = private_tempdir();
+        let store = Store::open(dir.path().join("absent"));
+        let session = "s-9".parse().unwrap();
+        assert!(
+            store
+                .entries_from_prompt(&session, &"a".repeat(64))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            !dir.path().join("absent").exists(),
+            "a read creates nothing"
+        );
+        let mut other_prompt = draft("decisions", 1, "other prompt");
+        other_prompt.cite.prompt_sha256 = "b".repeat(64);
+        let mut other_session = draft("decisions", 1, "other session");
+        other_session.cite.session = "s-other".parse().unwrap();
+        let store = Store::open(dir.path());
+        store
+            .capture(
+                vec![
+                    draft("decisions", 1, "one"),
+                    draft("preferences", 2, "two"),
+                    other_prompt,
+                    other_session,
+                ],
+                &Redactor::default(),
+            )
+            .unwrap();
+        let mut found: Vec<String> = store
+            .entries_from_prompt(&session, &"a".repeat(64))
+            .unwrap()
+            .iter()
+            .map(|e| e.id.to_string())
+            .collect();
+        found.sort();
+        assert_eq!(found, ["decisions-1", "preferences-1"]);
+    }
+
+    #[test]
     fn checking_for_waiting_cites_writes_nothing() {
         let dir = private_tempdir();
         let root = dir.path().join("absent");

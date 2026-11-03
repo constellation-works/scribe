@@ -48,7 +48,7 @@ pub struct ConfigError {
 
 /// The model each use runs, by id (docs/design/scribe/2_design.md §8).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Models {
+pub struct ModelIds {
     /// Answers `ask`.
     pub ask: String,
     /// Writes session records.
@@ -62,7 +62,7 @@ pub struct Models {
     pub credentials: Vec<String>,
 }
 
-impl Default for Models {
+impl Default for ModelIds {
     fn default() -> Self {
         Self {
             ask: String::from("claude-sonnet-5-5"),
@@ -83,7 +83,7 @@ pub struct Config {
     /// The tags.
     pub tags: TagTable,
     /// The model ids and credential names.
-    pub models: Models,
+    pub models: ModelIds,
     /// How often an opted-in session gets a pass.
     pub catalog: Cadence,
     /// Further environment variables whose values are masked.
@@ -94,7 +94,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             tags: TagTable::defaults(),
-            models: Models::default(),
+            models: ModelIds::default(),
             catalog: Cadence::default(),
             redact_env: Vec::new(),
         }
@@ -123,8 +123,8 @@ impl Config {
                 TagTable::new(defs).map_err(|e| unlocated(e.to_string()))?
             }
         };
-        let defaults = Models::default();
-        let models = Models {
+        let defaults = ModelIds::default();
+        let models = ModelIds {
             ask: raw.models.ask.unwrap_or(defaults.ask),
             session: raw.models.session.unwrap_or(defaults.session),
             consistency: raw.models.consistency.unwrap_or(defaults.consistency),
