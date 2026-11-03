@@ -706,18 +706,23 @@ writes none.
   `systemMessage` renders in the interactive terminal for Daniel, which `-p`
   mode does not show; check it the first time `#scribe` is used in an
   interactive session.
-- **S3 manual `claude -p` check: owed to the operator.** The flags were
-  asserted only against a fake `claude`; whether the real CLI accepts
-  `--safe-mode` and `--tools ""` together, skips the user's hooks and
-  plugins, gives the model no tools, authenticates from the cleared
-  environment with the OAuth login, and puts the answer in
-  `structured_output` (or `result`) is unconfirmed. The run, from a cleared
-  environment as the adapter builds it, with the scribe plugin installed so
-  a fired hook would show:
-  `printf '%s' 'Answer with JSON {"message":"m-1","span":"hello world"}. #scribe decisions: must not be recorded' | env -i PATH="$PATH" HOME="$HOME" LANG="$LANG" CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN" claude -p --safe-mode --tools "" --model claude-haiku-5-5 --output-format json --json-schema '{"type":"object","properties":{"message":{"type":"string"},"span":{"type":"string"}},"required":["message","span"],"additionalProperties":false}'`.
-  Passing means exit 0, an answer object in the output, no new line in
-  `~/.scribe/audit.jsonl` and no entry recorded. The operator records the
-  result here (ORB-21760).
+- **S3 manual `claude -p` check: passed (2026-11-03, Claude Code 2.1.317,
+  macOS).** Run by the on-call orchestrator (ORB-21760) from `zsh -lc` with
+  the command the adapter builds: a cleared environment holding only
+  `PATH`, `HOME`, `LANG` and `CLAUDE_CODE_OAUTH_TOKEN`, then
+  `claude -p --safe-mode --tools "" --model claude-haiku-5-5
+  --output-format json --json-schema <schema-json>` with the prompt on
+  stdin. The CLI accepted `--safe-mode` and `--tools ""` together and
+  `--json-schema` in the inline `<schema-json>` form, authenticated from the
+  OAuth token alone, exited 0 with `is_error: false`, and returned the answer
+  object `{"message":"m-1","span":"hello world"}` in `structured_output`
+  (also as a JSON string in `result`). With the scribe plugin installed in the
+  configuration directory used (`claude plugin list` shows it), the prompt's
+  embedded `#scribe` line fired no hook: the store kept one entry and the
+  audit log kept three lines. The run took two turns (`stop_reason:
+  tool_use`), which is the CLI's own structured-output step, not a user tool.
+  Not checked: that the model had no tools beyond that step (the output
+  lists none, and `permission_denials` was empty).
 - **The prompt hash must match the transcript's text.** The `Stop` hook
   finds the prompt by hashing the transcript's user text. If Claude Code
   records a prompt differently from what it passed the hook (expanded
