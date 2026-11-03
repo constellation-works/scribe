@@ -1,6 +1,6 @@
 # scribe — agent guide
 
-Loaded as both `AGENTS.md` and `CLAUDE.md` (a symlink). scribe is a standalone Orbit plugin that keeps Daniel's explicitly marked preferences and decisions, catalogs the sessions he turns on, and answers agents' questions with verbatim citations ([design](docs/design/scribe/1_overview.md)). It is a Rust CLI built from the constellation Rust CLI template; the code is still the template's note-keeping example until the first slice replaces it.
+Loaded as both `AGENTS.md` and `CLAUDE.md` (a symlink). scribe is a standalone Orbit plugin that keeps Daniel's explicitly marked preferences and decisions, catalogs the sessions he turns on, and answers agents' questions with verbatim citations ([design](docs/design/scribe/1_overview.md)). It is a Rust CLI built from the constellation Rust CLI template; the first slice has replaced the template's note example with scribe's domain, its Markdown-and-frontmatter store and a read-only CLI.
 
 <!-- constellation-standards:begin -->
 <!-- Managed by the constellation's operations/scripts/sync-standards.sh; edits inside this block are overwritten. -->
@@ -39,12 +39,12 @@ Reviewers check every change against the adopted standards and report violations
 ## Code
 
 - Layers: [`ARCHITECTURE.md`](ARCHITECTURE.md). Design and decisions: [`docs/design/scribe/`](docs/design/scribe/); new features copy [`docs/design/_templates/`](docs/design/_templates/).
-- `scribe-core` is the domain: no clap, no terminal, no environment reads. Business logic (`note.rs`, `query.rs`) does no I/O; everything that touches disk is in `store/`. The CLI crate parses (`cli.rs`), composes (`app.rs`), dispatches (`commands/`, one module per noun holding its flags and handlers; a large noun becomes `commands/<noun>/` with one file per verb), audits (`audit_middleware.rs`) and renders (`output/`).
+- `scribe-core` is the domain: no clap, no terminal, no environment reads. Business logic (`entry.rs`, `tag.rs`, `session.rs`, `proposal.rs`, `record.rs`, `config.rs`, `verbatim.rs`) does no I/O; everything that touches disk is in `store/`, and persisted free text passes `store/redact.rs`. The CLI crate parses (`cli.rs`), composes (`app.rs`), dispatches (`commands/`, one module per noun holding its flags and handlers; a large noun becomes `commands/<noun>/` with one file per verb), audits (`audit_middleware.rs`) and renders (`output/`).
 - Every mutating command is audited: declare it in `Command::audit` (the match is exhaustive, so a new command must decide). Read-only commands return `None`; they never write. Audit lines carry ids and error codes, never argument values or messages.
 - Lints come from `[workspace.lints]`: no `unwrap`/`expect` in production code, no `print!` (use `tracing`), no lock guard across `.await`, no wildcard arm on an enum, no narrowing `as`. CI runs clippy with `-D warnings`.
 - Only `crates/scribe/src/output/` touches stdout, stderr, TTY state or color/format env vars. stdout is payload only.
 - Errors: typed `thiserror` enums; the core's `Error` crosses into `CliError` through its one `#[from]`. Exit codes: 0 ok, 1 failure, 2 usage.
-- `--json` field names, the list envelope (`notes`, `total`, `truncated`) and the store's persisted shape are contracts: add fields, never rename or retype them. A persisted-shape change bumps the store format and appends a step to `store/format.rs::UPGRADES`.
+- `--json` field names, the list envelope (`entries`, `sessions`, `proposals` or `tags`, with `total`, `truncated` and `warnings`) and the store's persisted shape are contracts: add fields, never rename or retype them. A persisted-shape change bumps the store format and appends a step to `store/format.rs::UPGRADES`.
 - Default to `pub(crate)`; workspace dependencies via `.workspace = true`.
 - Unit tests live in a sibling `tests/` directory mirroring source file names, declared in its `mod.rs`; crate-root `tests/` is integration only.
 - Never put internal task, friction or record ids in help, examples or messages; use placeholders such as `<id>`.

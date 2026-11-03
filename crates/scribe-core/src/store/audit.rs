@@ -7,7 +7,7 @@
 //!
 //! An event holds stable identifiers only: the command path, the record it
 //! acted on, the outcome and a stable error code. Never argument values or
-//! error text, which can carry note contents or paths (STD-05 R13). Each line
+//! error text, which can carry record contents or paths (STD-05 R13). Each line
 //! carries its own `format` so a reader can refuse a newer one (STD-03 R10);
 //! a crash can leave a torn last line, which a reader skips.
 
@@ -38,7 +38,7 @@ pub struct AuditEvent {
     /// When the command started.
     #[serde(with = "time::serde::rfc3339")]
     pub at: OffsetDateTime,
-    /// The command path, such as `note add`.
+    /// The command path, such as `hook user-prompt-submit`.
     pub command: String,
     /// How it ended.
     pub status: AuditStatus,

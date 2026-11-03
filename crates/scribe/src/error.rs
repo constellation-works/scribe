@@ -41,8 +41,11 @@ impl CliError {
     /// reminds the reader to keep the same data directory.
     pub(crate) fn hint(&self) -> Option<&'static str> {
         match self {
-            Self::Core(scribe_core::Error::NotFound { .. }) => {
-                Some("run 'scribe note list' with the same --root to see existing ids")
+            Self::Core(scribe_core::Error::EntryNotFound { .. }) => {
+                Some("run 'scribe entry list' with the same --root to see existing ids")
+            }
+            Self::Core(scribe_core::Error::SessionNotFound { .. }) => {
+                Some("run 'scribe session list' with the same --root to see existing ids")
             }
             // The core enum is #[non_exhaustive], so it needs this arm.
             Self::Core(_) | Self::NoDataDir | Self::Output(_) => None,

@@ -1,0 +1,19 @@
+# The fixture store's config: the two default tags, plus one secret name.
+[tags.decisions]
+aliases = ["decision", "dec"]
+description = "choices Daniel has made"
+
+[tags.preferences]
+aliases = ["preference", "pref"]
+description = "how Daniel likes things done"
+stale_after_days = 180
+
+[models]
+credentials = ["CLAUDE_CODE_OAUTH_TOKEN"]
+
+[catalog]
+every_minutes = 20
+every_turns = 10
+
+[redact]
+env = ["GITHUB_TOKEN"]

@@ -1,0 +1,24 @@
+List entries, oldest first
+
+Usage: scribe entry list [OPTIONS]
+
+Options:
+      --tag <TAG>          Only entries filed under this tag, by its name as `tag list` prints it [default: any]
+      --status <STATUS>    Only entries with this status [default: any] [possible values: active, superseded, retired, forgotten]
+      --project <PROJECT>  Only entries recorded in this project (a repository slug, or global) [default: any]
+      --topic <TOPIC>      Only entries carrying this topic [default: any]
+      --limit <N>          Show at most this many of the matching entries, 1 or more; --json reports the total and whether the list was cut [default: all]
+  -h, --help               Print help
+  -V, --version            Print version
+
+Global options:
+      --root <DIR>       Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>  Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json             Shorthand for --format json
+
+Examples:
+  scribe entry list
+  scribe entry list --tag preferences --status active
+  scribe entry list --topic ci --limit 10
+  scribe entry list --json | jq '.entries[].content'
+  scribe entry list | cut -f1,6

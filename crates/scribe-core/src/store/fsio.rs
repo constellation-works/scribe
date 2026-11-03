@@ -1,7 +1,7 @@
 //! Durable-write, locking and private-state mechanisms (STD-03 R4–R7,
 //! STD-05 R7–R9).
 //!
-//! Mechanism only (no knowledge of notes):
+//! Mechanism only (no knowledge of entries, sessions or the store):
 //!
 //! - [`write_atomic`] replaces a file by write-temp, `fsync`, rename, `fsync`
 //!   the parent directory. A crash leaves the old file or the new one, never a
@@ -42,6 +42,16 @@ const PRIVATE_DIR_MODE: u32 = 0o700;
 const PRIVATE_FILE_MODE: u32 = 0o600;
 
 /// Replace `path` with `bytes` atomically and durably. The file is `0600`.
+///
+/// Every store write goes through here; S1 ships the read side only, and
+/// the `#scribe` capture slice is its first caller.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the first writer arrives with #scribe capture (S2)"
+    )
+)]
 pub(super) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = parent_dir(path);
     // Same directory as the target, so the rename cannot cross filesystems.
@@ -120,6 +130,39 @@ pub(super) fn inspect_dir(dir: &Path) -> Result<bool> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(e) => Err(Error::io("inspect", dir, e)),
     }
+}
+
+/// Check an existing directory inside the store (`entries/`, a tag
+/// directory, `sessions/<yyyy>/`); `Ok(false)` when it does not exist.
+/// Unlike the root, a directory inside the store is never followed through a
+/// link: the store uses only real directories (STD-05 R7).
+pub(super) fn inspect_subdir(dir: &Path) -> Result<bool> {
+    let meta = match fs::symlink_metadata(dir) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(Error::io("inspect", dir, e)),
+    };
+    refuse_symlink(dir, &meta)?;
+    check_owner_and_mode(dir, &meta, "700").map(|()| true)
+}
+
+/// The names in `dir`, sorted. Names that are not UTF-8 cannot be a store
+/// record and are left out. The caller has inspected `dir` first.
+pub(super) fn list_dir(dir: &Path) -> Result<Vec<String>> {
+    let mut names = Vec::new();
+    for item in fs::read_dir(dir).map_err(|e| Error::io("list", dir, e))? {
+        let item = item.map_err(|e| Error::io("list", dir, e))?;
+        if let Ok(name) = item.file_name().into_string() {
+            names.push(name);
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
+/// Read a store file that [`inspect_file`] found.
+pub(super) fn read(path: &Path) -> Result<Vec<u8>> {
+    fs::read(path).map_err(|e| Error::io("read", path, e))
 }
 
 /// Check an existing store file; `Ok(false)` when it does not exist. A file

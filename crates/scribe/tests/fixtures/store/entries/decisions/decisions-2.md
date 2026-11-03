@@ -1,0 +1,21 @@
+---
+format: 1
+kind: entry
+id: decisions-2
+tag: decisions
+status: active
+project: constellation-works/scribe
+topics: [merge-policy, release]
+related: ["repo:constellation-works/scribe"]
+provider: claude-code
+host: dk-server-1
+created: 2026-11-02T19:05:41Z
+updated: 2026-11-02T19:05:41Z
+said: "#scribe add this to decision #merge-policy #release"
+content_from: {kind: message, role: assistant, message: 9a1b2c3d-0000-4000-8000-000000000002, at: 2026-11-02T19:04:11Z}
+cite: {session: 7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02, message: null, at: 2026-11-02T19:05:40Z, prompt_sha256: "a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1", line: 3, cwd: /home/daniel/workspace/scribe}
+superseded_by: null
+review_after: null
+---
+squash-merge agent PRs;
+keep merge commits for releases

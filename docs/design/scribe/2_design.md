@@ -18,8 +18,8 @@ related_artifacts: [ORB-21747, ORB-13117, ORB-13134]
 
 The design of the scribe plugin: its boundary, the four parts named in
 [1_overview.md §2](./1_overview.md#2-shape), the store, the model choices,
-and the slices that build it. Nothing here is implemented yet; the code is
-the template's note example until slice S1. The reasons behind each choice
+and the slices that build it. Slice S1 (the domain, the store and the
+read-only CLI) is implemented; the rest is not yet. The reasons behind each choice
 are in [4_decisions.md](./4_decisions.md); open directions are in
 [3_vision.md](./3_vision.md). Where this doc and the template's engineering
 rules meet (atomic writes, the store lock, the audit guard, output modes,
@@ -92,6 +92,9 @@ The note domain is deleted in S1 and replaced by:
 | `tag` | the tag table and alias resolution | none |
 | `capture` | parsing a typed turn into `#scribe` instructions; tag resolution; the referent request and its validation | none |
 | `session` | `SessionRecord`, the control state, the due rule | none |
+| `proposal` | `Proposal`, its id, kind, state and quotes | none |
+| `record` | the metadata every record shares: `Project`, `Topic`, `Related`; list selection (`Listing`) | none |
+| `config` | parsing `config.toml` text into tags, models, cadence and redaction settings | none (takes text) |
 | `transcript` | parsing a Claude Code transcript (JSONL) into typed messages, dropping tool payloads and synthetic turns | none (takes bytes) |
 | `verbatim` | the one quote check ([§6.4](#64-the-verbatim-check)) | none |
 | `ask` | tokenizing, ranking, evidence packing, answer validation | none |
@@ -105,8 +108,10 @@ adapters composed in `app.rs`: `ClaudeCliModels` (the `Models` port,
 [§8](#8-models)) and `OrbitTasks` (task evidence for `ask`). Adapters that
 spawn processes live in the CLI crate so the core stays free of
 `std::process`, as the dependency-direction script already requires. The
-adapters are a new module family; S1 adds them to `ARCHITECTURE.md` and the
-script.
+adapters are a new module family; the slice that adds the first one adds
+them to `ARCHITECTURE.md` and the script. S1 built `entry`, `tag`,
+`session`, `proposal`, `record`, `config`, `verbatim` and `store` and the
+`entry`, `session`, `proposal` and `tag` commands.
 
 ## 3. Storage
 
@@ -233,14 +238,19 @@ characters), `quotes` (verbatim spans from both entries), `state`
 and `stale_after_days`; `[sources]` with `discussions_readonly`, a list of
 directories `ask` reads as extra discussion evidence and never writes
 (default: the constellation almanac's `15-discussions`, when present); `[models]` with `ask`, `distill`, `session`, `consistency`,
-`referent`; `[catalog]` with `every_minutes` (20) and `every_turns` (10).
+`referent` and `credentials` (the variables model calls are given, default
+`CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY`); `[catalog]` with
+`every_minutes` (20) and `every_turns` (10); `[redact]` with `env`, further
+variables whose values are masked. A missing file or table is the defaults;
+an unknown key or bad value is refused, naming the file and line
+([specs/store.md](./specs/store.md#config)).
 The file is created by `scribe hook session-start` on first run with the
 defaults ([4_decisions.md](./4_decisions.md#only-decisions-and-preferences-ship-by-default))
 if absent; scribe never rewrites it after that.
 
 **Redaction.** Before any write of `said`, `content`, a session record's
-text fields or a proposal's `reason`, the store masks the live values of the
-credential variables named in the config and those used for model calls
+title, text fields and terms, or a proposal's `reason` and quotes, the store masks
+the live values of the variables in `[redact] env` and `[models] credentials`
 (STD-05 R13, R14;
 [4_decisions.md](./4_decisions.md#persisted-free-text-passes-one-redactor)).
 
@@ -452,8 +462,10 @@ summary or an assistant's words as Daniel's. The response is a JSON schema
 ### 6.4 The verbatim check
 
 `verbatim::contains(source, quote)`: both strings are NFC-normalized, `\r\n`
-becomes `\n`, and runs of whitespace collapse to one space; the quote must be
-non-empty, at least 8 characters, and a substring of the source. No case
+becomes `\n`, and runs of whitespace collapse to one space; the quote's own
+leading and trailing space is dropped, so a span cut at a line break still
+matches. The quote must then be at least 8 characters and a substring of
+the source. No case
 folding, no punctuation stripping. The same function checks referent spans
 ([§4.3](#43-resolving-this-and-it)), proposal quotes ([§7](#7-consistency-routine))
 and answers. In `ask`, a claim whose quote fails is dropped and counted in

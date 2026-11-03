@@ -1,6 +1,7 @@
 //! Golden tests of the public surface, captured from the built binary as it
 //! ships (STD-01 R24): every command's `--help`, and the plain, table and
-//! JSON forms of `note list` and `note show`.
+//! JSON forms of every list and show, against the fixture store
+//! (`tests/fixtures/store`), whose timestamps are fixed.
 //!
 //! A mismatch fails. After an intentional surface change, regenerate with
 //! `make goldens UPDATE=1` (which sets `UPDATE_GOLDENS=1`) and review the
@@ -10,29 +11,40 @@
 mod support;
 
 use std::path::PathBuf;
-use support::{Fixture, redact_timestamps, text};
+use support::{Fixture, text};
 
 const HELP: &[(&str, &[&str])] = &[
     ("root", &["--help"]),
-    ("note", &["note", "--help"]),
-    ("note-add", &["note", "add", "--help"]),
-    ("note-list", &["note", "list", "--help"]),
-    ("note-show", &["note", "show", "--help"]),
+    ("entry", &["entry", "--help"]),
+    ("entry-list", &["entry", "list", "--help"]),
+    ("entry-show", &["entry", "show", "--help"]),
+    ("session", &["session", "--help"]),
+    ("session-list", &["session", "list", "--help"]),
+    ("session-show", &["session", "show", "--help"]),
+    ("proposal", &["proposal", "--help"]),
+    ("proposal-list", &["proposal", "list", "--help"]),
+    ("tag", &["tag", "--help"]),
+    ("tag-list", &["tag", "list", "--help"]),
 ];
 
+/// Each command whose output is pinned, by golden name; every one is
+/// captured plain, as a table and as JSON.
 const OUTPUT: &[(&str, &[&str])] = &[
-    ("note-list.plain.txt", &["note", "list"]),
+    ("entry-list", &["entry", "list"]),
+    ("entry-show", &["entry", "show", "decisions-2"]),
+    ("session-list", &["session", "list"]),
     (
-        "note-list.table.txt",
-        &["note", "list", "--format", "table"],
+        "session-show",
+        &["session", "show", "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02"],
     ),
-    ("note-list.json", &["note", "list", "--json"]),
-    ("note-show.plain.txt", &["note", "show", "3"]),
-    (
-        "note-show.table.txt",
-        &["note", "show", "3", "--format", "table"],
-    ),
-    ("note-show.json", &["note", "show", "3", "--json"]),
+    ("proposal-list", &["proposal", "list"]),
+    ("tag-list", &["tag", "list"]),
+];
+
+const MODES: &[(&str, &[&str])] = &[
+    ("plain.txt", &[]),
+    ("table.txt", &["--format", "table"]),
+    ("json", &["--json"]),
 ];
 
 fn golden_dir() -> PathBuf {
@@ -86,18 +98,53 @@ fn help_matches_goldens() {
 }
 
 #[test]
+fn every_help_page_has_a_golden() {
+    // Each subcommand path in the tree is pinned, so a new verb cannot ship
+    // without its help golden.
+    let fx = Fixture::new();
+    let root = text(&fx.ok(&["--help"]).stdout);
+    let nouns = commands_in(&root);
+    let mut pages = vec![String::from("root")];
+    for noun in &nouns {
+        pages.push(noun.clone());
+        let help = text(&fx.ok(&[noun.as_str(), "--help"]).stdout);
+        pages.extend(
+            commands_in(&help)
+                .into_iter()
+                .map(|verb| format!("{noun}-{verb}")),
+        );
+    }
+    let pinned: Vec<String> = HELP.iter().map(|(name, _)| (*name).to_owned()).collect();
+    assert_eq!(pages, pinned);
+}
+
+/// The subcommand names in a help page's `Commands:` section, less `help`.
+fn commands_in(help: &str) -> Vec<String> {
+    help.split("Commands:")
+        .nth(1)
+        .unwrap_or_default()
+        .lines()
+        .skip(1)
+        .take_while(|l| l.starts_with("  "))
+        .filter_map(|l| l.split_whitespace().next())
+        .filter(|name| *name != "help")
+        .map(str::to_owned)
+        .collect()
+}
+
+#[test]
 fn output_matches_goldens() {
     let fx = Fixture::new();
     fx.seed();
-    let failures: Vec<String> = OUTPUT
-        .iter()
-        .filter_map(|(name, args)| {
-            let out = fx.ok(args);
-            check(
-                &format!("output/{name}"),
-                &redact_timestamps(&text(&out.stdout)),
-            )
-        })
-        .collect();
+    let mut failures = Vec::new();
+    for (name, args) in OUTPUT {
+        for (suffix, mode) in MODES {
+            let out = fx.ok(&[*args, *mode].concat());
+            failures.extend(check(
+                &format!("output/{name}.{suffix}"),
+                &text(&out.stdout),
+            ));
+        }
+    }
     report(&failures);
 }

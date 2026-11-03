@@ -11,7 +11,7 @@
 //! `commands::Command::audit`; read-only commands are not, because they must
 //! not write (STD-01 R31). The line holds the command path, the record acted
 //! on, the outcome and the stable error code: never argument values or error
-//! text, which can carry note contents or paths (STD-05 R13).
+//! text, which can carry entry contents or paths (STD-05 R13).
 //!
 //! The audit log is a side channel, so it fails open (STD-02 R31): a line that
 //! cannot be written never fails the command that already ran, and is reported
@@ -20,15 +20,18 @@
 //! middleware, never the reverse.
 
 use crate::error::CliError;
-use crate::output::Output;
+use crate::output::{Output, Record};
 use scribe_core::{AuditEvent, AuditStatus, Store};
 use std::time::Instant;
 use time::OffsetDateTime;
 
 /// How a command appears in the audit log.
+///
+/// Every command so far is read-only, so none declares one yet; the hook
+/// commands that write entries (S2) are the first.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct AuditMeta {
-    /// The command path, such as `note add`.
+    /// The command path, such as `hook user-prompt-submit`.
     pub(crate) command: &'static str,
 }
 
@@ -60,7 +63,7 @@ impl<'a> AuditGuard<'a> {
         }
     }
 
-    /// Record how the command ended: the note it acted on on success, the
+    /// Record how the command ended: the record it acted on on success, the
     /// stable error code on failure (STD-01 R19).
     pub(crate) fn mark_result(&mut self, result: &Result<Output, CliError>) {
         match result {
@@ -108,7 +111,12 @@ impl Drop for AuditGuard<'_> {
 /// Exhaustive, so a new payload decides what it contributes (STD-02 R27).
 fn target_of(output: &Output) -> Option<String> {
     match output {
-        Output::Note { note, .. } => Some(note.id.to_string()),
-        Output::Notes { .. } => None,
+        Output::Show {
+            record: Record::Entry(entry),
+        } => Some(entry.id.clone()),
+        Output::Show {
+            record: Record::Session(session),
+        } => Some(session.id.clone()),
+        Output::List { .. } => None,
     }
 }
