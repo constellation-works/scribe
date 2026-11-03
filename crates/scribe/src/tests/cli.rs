@@ -1,5 +1,5 @@
 use crate::cli::Cli;
-use crate::commands::{Command, NoteCommand};
+use crate::commands::{Command, EntryCommand};
 use crate::output::FormatArg;
 use clap::{CommandFactory, Parser};
 use std::ffi::OsString;
@@ -13,25 +13,28 @@ fn the_command_tree_is_internally_consistent() {
 #[test]
 fn global_flags_parse_before_and_after_the_subcommand() {
     // STD-01 R4.
-    let before =
-        Cli::try_parse_from(["scribe", "--format", "json", "--root", "/r", "note", "list"])
-            .unwrap();
-    let after = Cli::try_parse_from(["scribe", "note", "list", "--format", "json", "--root", "/r"])
-        .unwrap();
+    let before = Cli::try_parse_from([
+        "scribe", "--format", "json", "--root", "/r", "entry", "list",
+    ])
+    .unwrap();
+    let after = Cli::try_parse_from([
+        "scribe", "entry", "list", "--format", "json", "--root", "/r",
+    ])
+    .unwrap();
     for cli in [before, after] {
         assert_eq!(cli.global.requested_format(), Some(FormatArg::Json));
         assert_eq!(cli.global.root.as_deref(), Some(std::path::Path::new("/r")));
-        assert!(matches!(cli.command, Command::Note(NoteCommand::List(_))));
+        assert!(matches!(cli.command, Command::Entry(EntryCommand::List(_))));
     }
 }
 
 #[test]
 fn json_is_shorthand_for_format_json_and_conflicts_with_format() {
-    let cli = Cli::try_parse_from(["scribe", "note", "list", "--json"]).unwrap();
+    let cli = Cli::try_parse_from(["scribe", "entry", "list", "--json"]).unwrap();
     assert_eq!(cli.global.requested_format(), Some(FormatArg::Json));
     for conflicting in [
-        &["scribe", "--json", "note", "list", "--format", "table"][..],
-        &["scribe", "note", "list", "--json", "--format", "auto"][..],
+        &["scribe", "--json", "entry", "list", "--format", "table"][..],
+        &["scribe", "entry", "list", "--json", "--format", "auto"][..],
     ] {
         let args: Vec<OsString> = conflicting.iter().map(OsString::from).collect();
         let err = Cli::parse_args(&args).unwrap_err();
@@ -41,7 +44,7 @@ fn json_is_shorthand_for_format_json_and_conflicts_with_format() {
             "{conflicting:?} should be a usage error"
         );
     }
-    let redundant: Vec<OsString> = ["scribe", "--json", "note", "list", "--format", "json"]
+    let redundant: Vec<OsString> = ["scribe", "--json", "entry", "list", "--format", "json"]
         .iter()
         .map(OsString::from)
         .collect();
@@ -192,7 +195,7 @@ fn documented_invocation(line: &str) -> Option<Vec<OsString>> {
     }
     let command = line.split(" | ").next().unwrap_or(line);
     let command = command.split("  #").next().unwrap_or(command);
-    let words = shell_words(&command.replace("<id>", "1"));
+    let words = shell_words(&command.replace("<id>", "decisions-1"));
     Some(words.into_iter().map(OsString::from).collect())
 }
 

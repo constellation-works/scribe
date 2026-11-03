@@ -68,68 +68,66 @@ impl Fixture {
         out
     }
 
-    /// Add the notes every output golden and several tests use.
+    /// Copy the fixture store (`tests/fixtures/store`) to the data root,
+    /// owner-only, for the output goldens and most tests.
     pub fn seed(&self) {
-        self.ok(&[
-            "note",
-            "add",
-            "Call the plumber",
-            "--tag",
-            "home",
-            "--priority",
-            "high",
-        ]);
-        self.ok(&[
-            "note",
-            "add",
-            "Draft the quarterly report",
-            "--tag",
-            "work",
-            "--tag",
-            "writing",
-        ]);
-        self.ok(&[
-            "note",
-            "add",
-            "Read later",
-            "--priority",
-            "low",
-            "--body",
-            "An article\nwith two lines",
-        ]);
+        copy_private(&fixture_store(), &self.root());
     }
+}
+
+/// The checked-in fixture store.
+pub fn fixture_store() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/store")
+}
+
+/// Copy the tree at `from` to `to` (which must not exist), every directory
+/// and file owner-only, as the binary requires of store state.
+pub fn copy_private(from: &Path, to: &Path) {
+    std::fs::create_dir(to).expect("create copy");
+    make_private(to);
+    let mut items: Vec<_> = std::fs::read_dir(from)
+        .expect("read fixture")
+        .map(|item| item.expect("fixture entry"))
+        .collect();
+    items.sort_by_key(std::fs::DirEntry::file_name);
+    for item in items {
+        let target = to.join(item.file_name());
+        if item.file_type().expect("file type").is_dir() {
+            copy_private(&item.path(), &target);
+        } else {
+            std::fs::copy(item.path(), &target).expect("copy fixture file");
+            make_private(&target);
+        }
+    }
+}
+
+/// Every file under `root` with its bytes and mode, sorted, for proving a
+/// command wrote nothing.
+pub fn snapshot(root: &Path) -> Vec<(PathBuf, Vec<u8>, u32)> {
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for item in std::fs::read_dir(&dir).expect("read dir") {
+            let path = item.expect("dir entry").path();
+            let meta = std::fs::symlink_metadata(&path).expect("metadata");
+            #[cfg(unix)]
+            let mode = std::os::unix::fs::PermissionsExt::mode(&meta.permissions());
+            #[cfg(not(unix))]
+            let mode = 0;
+            if meta.is_dir() {
+                out.push((path.clone(), Vec::new(), mode));
+                stack.push(path);
+            } else {
+                out.push((path.clone(), std::fs::read(&path).expect("read file"), mode));
+            }
+        }
+    }
+    out.sort();
+    out
 }
 
 pub fn text(bytes: &[u8]) -> String {
     String::from_utf8(bytes.to_vec()).expect("utf-8 output")
-}
-
-/// Replace every RFC 3339 UTC timestamp (`YYYY-MM-DDTHH:MM:SSZ`) with a
-/// placeholder so goldens do not depend on the clock.
-pub fn redact_timestamps(s: &str) -> String {
-    const SHAPE: &[u8] = b"dddd-dd-ddTdd:dd:ddZ";
-    let bytes = s.as_bytes();
-    let mut out = String::with_capacity(s.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        let fits = bytes.len() - i >= SHAPE.len()
-            && SHAPE
-                .iter()
-                .zip(&bytes[i..])
-                .all(|(&want, &got)| match want {
-                    b'd' => got.is_ascii_digit(),
-                    other => got == other,
-                });
-        if fits {
-            out.push_str("<timestamp>");
-            i += SHAPE.len();
-        } else {
-            let ch = s[i..].chars().next().expect("char boundary");
-            out.push(ch);
-            i += ch.len_utf8();
-        }
-    }
-    out
 }
 
 /// A spawned child that is killed and reaped if the test ends early, panics
@@ -175,21 +173,47 @@ pub fn make_private(path: &Path) {
     let _ = path;
 }
 
-/// Write a format-1 store file with `count` notes directly, for tests that
-/// need more data than is quick to add one process at a time.
-pub fn write_store(root: &Path, count: usize) {
-    let notes: Vec<serde_json::Value> = (1..=count)
-        .map(|id| {
-            serde_json::json!({
-                "id": id,
-                "title": format!("note number {id} with a title long enough to fill the pipe quickly"),
-                "created_at": "2026-01-02T03:04:05Z",
-            })
-        })
-        .collect();
-    std::fs::create_dir_all(root).expect("create root");
-    make_private(root);
-    let doc = serde_json::json!({ "format": 1, "notes": notes });
-    std::fs::write(root.join("notes.json"), doc.to_string()).expect("write store");
-    make_private(&root.join("notes.json"));
+/// One valid entry file's text, `decisions-<n>`, with `content` as its body.
+pub fn entry_text(n: usize, content: &str) -> String {
+    format!(
+        "---
+format: 1
+kind: entry
+id: decisions-{n}
+tag: decisions
+status: active
+project: scribe
+topics: []
+related: []
+provider: claude-code
+host: host
+created: 2026-01-02T03:04:05Z
+updated: 2026-01-02T03:04:05Z
+said: \"#scribe decisions: {content}\"
+content_from: {{kind: instruction}}
+cite: {{session: s-1, message: null, at: 2026-01-02T03:04:05Z, prompt_sha256: \"{sha}\", line: 1, cwd: /work}}
+superseded_by: null
+review_after: null
+---
+{content}
+",
+        sha = "0".repeat(64)
+    )
+}
+
+/// Write a store of `count` decision entries directly, for tests that need
+/// more data than the fixture holds.
+pub fn write_entries(root: &Path, count: usize) {
+    let dir = root.join("entries").join("decisions");
+    std::fs::create_dir_all(&dir).expect("create entries");
+    for d in [root.to_path_buf(), root.join("entries"), dir.clone()] {
+        make_private(&d);
+    }
+    for n in 1..=count {
+        let path = dir.join(format!("decisions-{n}.md"));
+        let content =
+            format!("decision number {n} with content long enough to fill the pipe quickly");
+        std::fs::write(&path, entry_text(n, &content)).expect("write entry");
+        make_private(&path);
+    }
 }

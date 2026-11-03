@@ -2,22 +2,33 @@
 
 A standalone Orbit plugin that keeps Daniel's explicitly marked preferences and decisions, catalogs the sessions he turns on, and answers agents' questions about him with verbatim citations. Design: [docs/design/scribe/1_overview.md](docs/design/scribe/1_overview.md).
 
-> The code below is still the Rust CLI template's note-keeping example; the first slice replaces it.
-
-Keep short notes in a local store.
+This slice reads the store; recording entries (`#scribe`), cataloging
+sessions (`/scribe on`), `ask` and the Orbit plugin arrive in later slices.
 
 ```sh
-scribe note add "Call the plumber" --tag home --priority high
-scribe note list                  # a table on a terminal, tab-separated lines in a pipe
-scribe note list --json | jq '.notes[].title'
-scribe note show <id>
+scribe entry list                       # a table on a terminal, tab-separated lines in a pipe
+scribe entry list --tag decisions --status active
+scribe entry list --project constellation-works/scribe --topic release
+scribe entry list --json | jq -r '.entries[].content'
+scribe entry show <id>
+scribe session list --project constellation-works/scribe
+scribe session show <id> --json | jq -r .next
+scribe proposal list
+scribe tag list
+scribe tag list --json | jq '.tags[] | select(.configured | not)'
 ```
 
-Notes live in one JSON file under the data directory: `--root <dir>`, else
-`$SCRIBE_ROOT`, else `~/.scribe`. The directory is created owner-only,
-and a store that another user owns or could write is refused. Each `note add`
-appends one line to `audit.jsonl` beside it (what ran, on which note, how it
-ended; never the note's text). Reading commands write nothing.
+The store is a directory: `--root <dir>`, else `$SCRIBE_ROOT`, else
+`~/.scribe`. Entries are Markdown files with YAML frontmatter under
+`entries/<tag>/<tag>-<n>.md`; session records are
+`sessions/<yyyy>/<mm>/<session-id>.md`; `control.json` holds which sessions
+are being cataloged, `proposals.json` the consistency routine's proposals and
+`config.toml` the tags, models, catalog cadence and redaction settings. The
+layout and every key are in
+[specs/store.md](docs/design/scribe/specs/store.md). A store that another
+user owns or could write, a linked file and a record from a newer build are
+refused. Every command here only reads, and writes nothing, not even an audit
+line.
 
 | Setting | Flag | Environment | Default |
 |---------|------|-------------|---------|
@@ -27,9 +38,12 @@ ended; never the note's text). Reading commands write nothing.
 | Log level (stderr) | — | `SCRIBE_LOG` (e.g. `debug`) | `warn` |
 
 Exit status is 0 on success, 1 when a command fails and 2 on a usage error.
-`--json` output is a stable contract: a list is
-`{"notes": [...], "total": N, "truncated": false}`, one note is an object,
-and errors in JSON mode are one `{"error", "code"}` object on stderr.
+`--json` output is a stable contract
+([specs/output-contract.md](docs/design/scribe/specs/output-contract.md)): a
+list is `{"<entries|sessions|proposals|tags>": [...], "total": N,
+"truncated": false, "warnings": [...]}`, where `warnings` names each record
+file left out because it did not parse; one record is an object; and errors
+in JSON mode are one `{"error", "code"}` object on stderr.
 
 ## Starting point
 
@@ -37,26 +51,28 @@ This repository was created from the constellation Rust CLI template, either
 with GitHub's "Use this template" on `constellation-works/rust-cli-template`
 followed by `scripts/rename-template.sh <name>`, or inside the constellation
 umbrella by `operations/scripts/new-rust-cli.sh` (the template's source is
-`operations/templates/rust-cli/` there). The note commands are a working example
-of the engineering standards (STD-01 CLI surface, STD-02 Rust architecture,
-STD-03 concurrency and process safety, STD-04 testing and verification,
-STD-05 security boundaries); replace them with the real domain and keep the
-structure, gates and tests as the pattern to follow. Fill in `about.md` and
-the summary above. The command lines in this README are parsed by a test, so
-keep them runnable.
+`operations/templates/rust-cli/` there). The template's note example has
+been replaced by scribe's domain; its structure, gates and tests remain the
+pattern to follow (STD-01 CLI surface, STD-02 Rust architecture, STD-03
+concurrency and process safety, STD-04 testing and verification, STD-05
+security boundaries). The command lines in this README are parsed by a test,
+so keep them runnable.
 
 ## Layout
 
 ```
-crates/scribe-core/   domain library (no clap, no terminal): note.rs and query.rs
-                        (business logic, no I/O), store/ (persistence: facade,
-                        format, audit log, fsio), error.rs
+crates/scribe-core/   domain library (no clap, no terminal): entry.rs, tag.rs,
+                        session.rs, proposal.rs, record.rs, config.rs and
+                        verbatim.rs (business logic, no I/O), store/
+                        (persistence: facade, format, redact, audit log,
+                        fsio), error.rs
 crates/scribe/        the binary: cli.rs (root flags), app.rs (composition),
                         commands/ (one module per noun: flags and handlers),
                         audit_middleware.rs (audits mutating commands),
                         output/ (sink, rendering, errors)
 crates/*/tests/         integration tests; crates/scribe/tests/goldens/ holds the
-                        help and output goldens
+                        help and output goldens, tests/fixtures/store/ the
+                        fixture store they read
 scripts/                structure gates run by `make ci-fast`
 docs/design/            design docs: _templates/ to copy, scribe/ for this tool
 ```

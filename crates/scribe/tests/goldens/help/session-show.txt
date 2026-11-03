@@ -1,0 +1,19 @@
+Show one session record in full: its metadata and its four sections
+
+Usage: scribe session show [OPTIONS] <ID>
+
+Arguments:
+  <ID>  The session's id, as printed by `session list`
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Global options:
+      --root <DIR>       Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>  Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json             Shorthand for --format json
+
+Examples:
+  scribe session show <id>
+  scribe session show <id> --json | jq -r .next

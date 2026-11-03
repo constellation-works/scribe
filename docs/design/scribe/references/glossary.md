@@ -28,4 +28,4 @@ exists today and is reshaped by slice S1.
 | **Audit log** | `<root>/audit.jsonl`: one line per mutating command (what ran, on which record, how it ended), identifiers only. |
 | **Payload** *(template)* | The typed record every output mode renders from; its JSON form is the contract. See [specs/output-contract.md](../specs/output-contract.md). |
 | **Sink** *(template)* | The per-invocation resolution of output mode, color and width. |
-| **List envelope** | The `--json` shape of every list: `{"<records>", "total", "truncated"}`; `notes` today *(template)*, `entries`/`sessions`/`proposals`/`tags` from S1. |
+| **List envelope** | The `--json` shape of every list: `{"<records>", "total", "truncated", "warnings"}`, with `<records>` one of `entries`, `sessions`, `proposals`, `tags`. |

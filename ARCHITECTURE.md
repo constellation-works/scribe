@@ -8,10 +8,10 @@ an edge changes this file and that script in the same commit.
 
 | Tier | Unit | Owns | May depend on |
 |------|------|------|---------------|
-| 1. Business logic | `scribe-core::note`, `::query`, `::error` | `Note`, `NoteId`, `Title`, `Tag`, `Priority`; validating constructors; serde shapes; the next-id rule; list selection (filter, count, limit); the crate's typed `Error`. No I/O. | nothing internal |
-| 2. Persistence | `scribe-core::store` | The `Store` facade (list, show, add, record an audit event) over its private parts: `format` (the persisted document, format upgrades), `audit` (the audit record shape) and `fsio` (atomic write, append, advisory lock, owner-only checks; knows nothing about notes). The only core module that touches the filesystem. | tier 1 |
+| 1. Business logic | `scribe-core::entry`, `::tag`, `::session`, `::proposal`, `::record`, `::config`, `::verbatim`, `::error` | Entries (`Entry`, `EntryId`, `TagName`, `EntryStatus`, `Cite`, `ContentFrom`) and their selection; the tag table and its alias resolution; session records, the on/off control state and the pass-due rule; consistency proposals; the metadata every record shares (`Project`, `Topic`, `Related`, `Listing`); parsing `config.toml` text; the verbatim quote check; the crate's typed `Error`. Validating constructors and serde shapes. No I/O. | nothing internal |
+| 2. Persistence | `scribe-core::store` | The `Store` facade (list and show entries and sessions, read control state and proposals, summarize tags, record an audit event) over its private parts: `format` (Markdown-with-frontmatter and JSON documents, format probe and upgrades), `redact` (masks configured secrets in every persisted free-text field), `audit` (the audit record shape) and `fsio` (atomic write, append, advisory lock, owner-only and link checks, directory listing; knows nothing about records). The only core module that touches the filesystem. | tier 1 |
 | 3. Composition | `scribe::app` | Resolves the data directory (`--root` > `SCRIBE_ROOT` > `~/.scribe`), constructs the `Store`, supplies the clock. | `scribe-core` |
-| 4. Surface | `scribe::cli`, `::commands`, `::audit_middleware`, `::output` | Root argument declarations; one module per noun with its flags and handlers (one store call per verb); the audit guard around every mutating command; rendering from payloads; the only stdout/stderr/TTY access. | tiers 1–3 |
+| 4. Surface | `scribe::cli`, `::commands`, `::audit_middleware`, `::output` | Root argument declarations; one module per noun (`entry`, `session`, `proposal`, `tag`) with its flags and handlers (one store call per verb); the audit guard around every mutating command; rendering from payloads; the only stdout/stderr/TTY access. | tiers 1–3 |
 
 ## Crates
 
@@ -28,8 +28,8 @@ Why persistence is a module inside the core rather than a third crate:
 
 Checked by grep over non-test sources:
 
-- Every `scribe-core` module except `store/` (today `note.rs`, `query.rs`, `error.rs`, `lib.rs`, and any module added later) imports no `std::fs`, `std::net`, `std::process`, `tempfile` or `rustix`, and no `crate::store`.
-- `scribe-core/src/store/fsio.rs` imports nothing from `note`, `query` or the rest of `store`; `store/format.rs` and `store/audit.rs` do no file I/O.
+- Every `scribe-core` module except `store/` (today `entry.rs`, `tag.rs`, `session.rs`, `proposal.rs`, `record.rs`, `config.rs`, `verbatim.rs`, `error.rs`, `lib.rs`, and any module added later) imports no `std::fs`, `std::net`, `std::process`, `tempfile` or `rustix`, and no `crate::store`.
+- `scribe-core/src/store/fsio.rs` imports nothing from the business modules or the rest of `store`; `store/format.rs`, `store/redact.rs` and `store/audit.rs` do no file I/O.
 - `scribe-core` reads no environment variables and discovers no paths (`std::env::`, `home_dir`, `current_dir`).
 - `scribe/src/app.rs` imports no `cli`, `commands`, `audit_middleware` or `output`.
 - `scribe/src/output/` imports no `app`, `cli`, `commands` or `audit_middleware`.

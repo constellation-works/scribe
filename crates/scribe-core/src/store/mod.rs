@@ -1,51 +1,126 @@
-//! Persistence: the file-backed note store and everything that touches disk.
+//! Persistence: the file-backed scribe store and everything that touches
+//! disk.
 //!
-//! The rest of the crate is business logic with no I/O ([`crate::note`],
-//! [`crate::query`]); this module is the only one that reads or writes files,
-//! so a second backend, or a move to a database, replaces this module and
+//! The rest of the crate is business logic with no I/O (`entry`, `tag`,
+//! `session`, `proposal`, `config`, `verbatim`); this module is the only one
+//! that reads or writes files, so a second backend replaces this module and
 //! nothing else. It is split by responsibility:
 //!
-//! - this file, the [`Store`] facade: load, apply the domain rules, persist;
-//! - `format`: the persisted document, its format versions and upgrades;
+//! - this file, the [`Store`] facade: walk the layout, load, select;
+//! - `format`: the persisted documents, their format versions and upgrades;
 //! - `audit`: the audit log's record shape;
+//! - `redact`: the one redactor every persisted free-text field passes;
 //! - `fsio`: durable writes, appends, locking and private-state checks,
-//!   mechanism only, with no knowledge of notes.
+//!   mechanism only.
 //!
-//! One JSON document, `<root>/notes.json`, holds every note. Reads take no
-//! lock and write nothing (STD-01 R31): the file is only ever replaced by an
-//! atomic rename, so a reader sees a whole old version or a whole new one.
-//! Writes are a read-modify-write, so they hold `<root>/.lock` from the read
-//! to the rename; two concurrent `add`s therefore never assign the same id or
-//! lose a note (STD-03 R5, R6). The directory is `0700` and the files `0600`,
-//! and a load refuses state that is not (STD-05 R8, R9).
+//! The layout (docs/design/scribe/2_design.md §3):
+//!
+//! ```text
+//! <root>/config.toml                        read-only to scribe
+//! <root>/entries/<tag>/<id>.md              one entry per file
+//! <root>/sessions/<yyyy>/<mm>/<id>.md       one session record per file
+//! <root>/control.json                       the on/off state
+//! <root>/proposals.json                     the consistency proposals
+//! <root>/audit.jsonl                        one line per mutating command
+//! <root>/.lock
+//! ```
+//!
+//! Reads take no lock and write nothing (STD-01 R31): every file is only
+//! ever replaced by an atomic rename, so a reader sees a whole old version or
+//! a whole new one, and the CLI works on a read-only root. Every load refuses
+//! state that is a link, another user's, or writable by others
+//! (STD-05 R7–R9), and a newer format (STD-03 R10). A record that does not
+//! parse is refused naming its file; a listing skips it and reports it in
+//! [`Skipped`], so one bad file does not hide the rest (4_decisions.md, "One
+//! malformed record makes its file corrupt").
 
 mod audit;
 mod format;
 mod fsio;
+mod redact;
 
 pub use audit::{AUDIT_FILE, AuditEvent, AuditStatus};
+pub use redact::{MIN_SECRET_CHARS, REDACTED_FIELDS, Redactor};
 
+use crate::config::Config;
+use crate::entry::{Entry, EntryFilter, EntryId};
 use crate::error::{Error, Result};
-use crate::note::{NewNote, Note, NoteId};
-use crate::query::{self, ListFilter, NoteList};
-use format::StoreDocument;
+use crate::proposal::Proposal;
+use crate::record::Listing;
+use crate::session::{ControlState, SessionFilter, SessionId, SessionRecord};
+use crate::tag::{self, TagSummary};
 use fsio::LockGuard;
-use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use time::OffsetDateTime;
 
-/// The store file's name under the data directory.
-pub const STORE_FILE: &str = "notes.json";
+/// The configuration file's name under the data directory.
+pub const CONFIG_FILE: &str = "config.toml";
+/// The entries directory's name under the data directory.
+pub const ENTRIES_DIR: &str = "entries";
+/// The session records directory's name under the data directory.
+pub const SESSIONS_DIR: &str = "sessions";
+/// The control document's name under the data directory.
+pub const CONTROL_FILE: &str = "control.json";
+/// The proposals document's name under the data directory.
+pub const PROPOSALS_FILE: &str = "proposals.json";
 
 /// The lock file's name under the data directory.
 const LOCK_FILE: &str = ".lock";
+/// A record file's extension.
+const RECORD_EXT: &str = ".md";
 
 /// How long a writer waits for another writer before refusing (STD-03 R7).
 pub const DEFAULT_LOCK_WAIT: Duration = Duration::from_secs(10);
 
-/// A note store rooted at one data directory.
+/// A record file a listing left out because it did not parse.
+#[derive(Debug)]
+pub struct Skipped {
+    /// The file.
+    pub path: PathBuf,
+    /// Why: always [`Error::Corrupt`], which names the file.
+    pub error: Error,
+}
+
+/// What [`Store::list_entries`] found.
+#[derive(Debug)]
+pub struct EntryList {
+    /// The matching entries, oldest first.
+    pub listing: Listing<Entry>,
+    /// Entry files left out because they did not parse.
+    pub skipped: Vec<Skipped>,
+}
+
+/// What [`Store::list_sessions`] found.
+#[derive(Debug)]
+pub struct SessionList {
+    /// The matching session records, oldest first.
+    pub listing: Listing<SessionRecord>,
+    /// Every session's on/off switch, to show beside its record.
+    pub control: ControlState,
+    /// Record files left out because they did not parse.
+    pub skipped: Vec<Skipped>,
+}
+
+/// One session record with its switch.
+#[derive(Debug)]
+pub struct SessionView {
+    /// The record.
+    pub record: SessionRecord,
+    /// Its switch in `control.json`, if it has one.
+    pub control: Option<crate::session::SessionControl>,
+}
+
+/// What [`Store::list_tags`] found.
+#[derive(Debug)]
+pub struct TagList {
+    /// Every configured tag and every tag with entries, by name.
+    pub tags: Vec<TagSummary>,
+    /// Entry files left out of the counts because they did not parse.
+    pub skipped: Vec<Skipped>,
+}
+
+/// A scribe store rooted at one data directory.
 #[derive(Clone, Debug)]
 pub struct Store {
     root: PathBuf,
@@ -53,9 +128,9 @@ pub struct Store {
 }
 
 impl Store {
-    /// A store at `root`. Performs no I/O; the directory is created by the
-    /// first write. The caller resolves `root` (STD-02 R3): this crate never
-    /// reads the environment or the home directory.
+    /// A store at `root`. Performs no I/O. The caller resolves `root`
+    /// (STD-02 R3): this crate never reads the environment or the home
+    /// directory.
     pub fn open(root: impl Into<PathBuf>) -> Self {
         Self {
             root: root.into(),
@@ -76,53 +151,134 @@ impl Store {
         &self.root
     }
 
-    /// The store file, `<root>/notes.json`.
-    #[must_use]
-    pub fn path(&self) -> PathBuf {
-        self.root.join(STORE_FILE)
-    }
-
     /// The audit log, `<root>/audit.jsonl`.
     #[must_use]
     pub fn audit_path(&self) -> PathBuf {
         self.root.join(AUDIT_FILE)
     }
 
-    /// Notes matching `filter`, oldest first, and how many matched. A missing
-    /// store is an empty one.
-    pub fn list(&self, filter: &ListFilter) -> Result<NoteList> {
-        Ok(query::select(self.load()?.notes, filter))
+    /// The file entry `id` lives in, `<root>/entries/<tag>/<id>.md`.
+    #[must_use]
+    pub fn entry_path(&self, id: &EntryId) -> PathBuf {
+        self.root
+            .join(ENTRIES_DIR)
+            .join(id.tag().as_str())
+            .join(format!("{id}{RECORD_EXT}"))
     }
 
-    /// The note with this id.
-    pub fn show(&self, id: NoteId) -> Result<Note> {
-        self.load()?
-            .notes
+    /// The configuration: `config.toml` parsed, or the defaults when there
+    /// is none. A bad key or value is refused, naming it.
+    pub fn config(&self) -> Result<Config> {
+        let path = self.root.join(CONFIG_FILE);
+        if !self.root_exists()? || !fsio::inspect_file(&path)? {
+            return Ok(Config::default());
+        }
+        let bytes = fsio::read(&path)?;
+        let text = std::str::from_utf8(&bytes).map_err(|e| Error::corrupt(&path, e))?;
+        Config::parse(text).map_err(|source| Error::Config { path, source })
+    }
+
+    /// Entries matching `filter`, oldest first, and how many matched. A
+    /// missing store is an empty one.
+    pub fn list_entries(&self, filter: &EntryFilter) -> Result<EntryList> {
+        let (entries, skipped) = self.load_entries()?;
+        Ok(EntryList {
+            listing: filter.select(entries),
+            skipped,
+        })
+    }
+
+    /// The entry with this id.
+    pub fn entry(&self, id: &EntryId) -> Result<Entry> {
+        let path = self.entry_path(id);
+        let not_found = || Error::EntryNotFound {
+            id: id.clone(),
+            path: path.clone(),
+        };
+        let tag_dir = self.root.join(ENTRIES_DIR).join(id.tag().as_str());
+        if !self.root_exists()?
+            || !fsio::inspect_subdir(&self.root.join(ENTRIES_DIR))?
+            || !fsio::inspect_subdir(&tag_dir)?
+            || !fsio::inspect_file(&path)?
+        {
+            return Err(not_found());
+        }
+        format::decode_entry(
+            &path,
+            &fsio::read(&path)?,
+            &id.to_string(),
+            id.tag().as_str(),
+        )
+    }
+
+    /// Session records matching `filter`, oldest first, with the on/off
+    /// state beside them.
+    pub fn list_sessions(&self, filter: &SessionFilter) -> Result<SessionList> {
+        let control = self.control()?;
+        let mut records = Vec::new();
+        let mut skipped = Vec::new();
+        for file in self.session_files()? {
+            match file.load() {
+                Ok(record) => records.push(record),
+                Err(error @ Error::Corrupt { .. }) => skipped.push(Skipped {
+                    path: file.path,
+                    error,
+                }),
+                Err(other) => return Err(other),
+            }
+        }
+        Ok(SessionList {
+            listing: filter.select(records),
+            control,
+            skipped,
+        })
+    }
+
+    /// The session record with this id, and its switch.
+    pub fn session(&self, id: &SessionId) -> Result<SessionView> {
+        let control = self.control()?;
+        let file = self
+            .session_files()?
             .into_iter()
-            .find(|n| n.id == id)
-            .ok_or_else(|| Error::NotFound {
-                id,
-                path: self.path(),
-            })
+            .find(|f| f.stem == id.as_str())
+            .ok_or_else(|| Error::SessionNotFound {
+                id: id.clone(),
+                path: self.root.join(SESSIONS_DIR),
+            })?;
+        Ok(SessionView {
+            record: file.load()?,
+            control: control.get(id).cloned(),
+        })
     }
 
-    /// Add a note, assigning the next id. `now` is the creation time; the
-    /// caller supplies it so tests can pin it.
-    pub fn add(&self, new: NewNote, now: OffsetDateTime) -> Result<Note> {
-        // Every check that can refuse runs before the first write (STD-02
-        // R34): an unsafe, corrupt or newer store is refused here, before the
-        // directory or the lock file is created.
-        self.load()?;
-        fsio::create_private_dir(&self.root)?;
-        let _lock = self.lock("note add")?;
-        // Re-read under the lock: anything read before it may be stale.
-        let mut doc = self.load()?;
-        let note = new.into_note(NoteId::next_after(&doc.notes), now);
-        doc.notes.push(note.clone());
-        let path = self.path();
-        fsio::write_atomic(&path, &format::encode(&path, doc)?)?;
-        tracing::debug!(id = %note.id, path = %path.display(), "added note");
-        Ok(note)
+    /// The on/off state; empty when there is no `control.json`.
+    pub fn control(&self) -> Result<ControlState> {
+        let path = self.root.join(CONTROL_FILE);
+        if !self.root_exists()? || !fsio::inspect_file(&path)? {
+            return Ok(ControlState::default());
+        }
+        format::decode_control(&path, &fsio::read(&path)?)
+    }
+
+    /// Every proposal, by id; none when there is no `proposals.json`.
+    pub fn proposals(&self) -> Result<Vec<Proposal>> {
+        let path = self.root.join(PROPOSALS_FILE);
+        if !self.root_exists()? || !fsio::inspect_file(&path)? {
+            return Ok(Vec::new());
+        }
+        let mut proposals = format::decode_proposals(&path, &fsio::read(&path)?)?;
+        proposals.sort_by_key(|p| p.id);
+        Ok(proposals)
+    }
+
+    /// Every configured tag and every tag that has entries, with counts.
+    pub fn list_tags(&self) -> Result<TagList> {
+        let config = self.config()?;
+        let (entries, skipped) = self.load_entries()?;
+        Ok(TagList {
+            tags: tag::summarize(&config.tags, &entries),
+            skipped,
+        })
     }
 
     /// Append one event to the audit log, creating the data directory and the
@@ -144,13 +300,108 @@ impl Store {
         LockGuard::acquire(&self.root.join(LOCK_FILE), label, self.lock_wait)
     }
 
-    fn load(&self) -> Result<StoreDocument> {
-        let path = self.path();
-        if !fsio::inspect_dir(&self.root)? || !fsio::inspect_file(&path)? {
-            return Ok(StoreDocument::empty());
+    fn root_exists(&self) -> Result<bool> {
+        fsio::inspect_dir(&self.root)
+    }
+
+    /// Every entry, plus the files that did not parse. Anything other than
+    /// a parse failure (a link, loose modes, a newer format, an I/O error)
+    /// refuses the whole load.
+    fn load_entries(&self) -> Result<(Vec<Entry>, Vec<Skipped>)> {
+        let mut entries = Vec::new();
+        let mut skipped = Vec::new();
+        let dir = self.root.join(ENTRIES_DIR);
+        if !self.root_exists()? || !fsio::inspect_subdir(&dir)? {
+            return Ok((entries, skipped));
         }
-        let bytes = fs::read(&path).map_err(|e| Error::io("read", &path, e))?;
-        format::decode(&path, &bytes)
+        for tag in visible(fsio::list_dir(&dir)?) {
+            let tag_dir = dir.join(&tag);
+            if !fsio::inspect_subdir(&tag_dir)? {
+                continue;
+            }
+            for name in visible(fsio::list_dir(&tag_dir)?) {
+                let Some(stem) = name.strip_suffix(RECORD_EXT) else {
+                    continue;
+                };
+                let path = tag_dir.join(&name);
+                if !fsio::inspect_file(&path)? {
+                    continue;
+                }
+                match format::decode_entry(&path, &fsio::read(&path)?, stem, &tag) {
+                    Ok(entry) => entries.push(entry),
+                    Err(error @ Error::Corrupt { .. }) => skipped.push(Skipped { path, error }),
+                    Err(other) => return Err(other),
+                }
+            }
+        }
+        Ok((entries, skipped))
+    }
+
+    /// Every `sessions/<yyyy>/<mm>/<id>.md`, checked but not yet parsed.
+    fn session_files(&self) -> Result<Vec<SessionFile>> {
+        let mut files = Vec::new();
+        let dir = self.root.join(SESSIONS_DIR);
+        if !self.root_exists()? || !fsio::inspect_subdir(&dir)? {
+            return Ok(files);
+        }
+        let digits =
+            |name: &str, len: usize| name.len() == len && name.bytes().all(|b| b.is_ascii_digit());
+        for year in fsio::list_dir(&dir)?.into_iter().filter(|n| digits(n, 4)) {
+            let year_dir = dir.join(&year);
+            if !fsio::inspect_subdir(&year_dir)? {
+                continue;
+            }
+            for month in fsio::list_dir(&year_dir)?
+                .into_iter()
+                .filter(|n| digits(n, 2))
+            {
+                let month_dir = year_dir.join(&month);
+                if !fsio::inspect_subdir(&month_dir)? {
+                    continue;
+                }
+                for name in visible(fsio::list_dir(&month_dir)?) {
+                    let Some(stem) = name.strip_suffix(RECORD_EXT) else {
+                        continue;
+                    };
+                    let path = month_dir.join(&name);
+                    if fsio::inspect_file(&path)? {
+                        files.push(SessionFile {
+                            stem: stem.to_owned(),
+                            year: year.clone(),
+                            month: month.clone(),
+                            path,
+                        });
+                    }
+                }
+            }
+        }
+        Ok(files)
+    }
+}
+
+/// Names that can be records: not hidden. A writer stages its temporary file
+/// as a dot-file beside the target, and an editor leaves swap files the
+/// same way; neither is a record.
+fn visible(names: Vec<String>) -> impl Iterator<Item = String> {
+    names.into_iter().filter(|n| !n.starts_with('.'))
+}
+
+/// A session record file found by the walk.
+struct SessionFile {
+    stem: String,
+    year: String,
+    month: String,
+    path: PathBuf,
+}
+
+impl SessionFile {
+    fn load(&self) -> Result<SessionRecord> {
+        format::decode_session(
+            &self.path,
+            &fsio::read(&self.path)?,
+            &self.stem,
+            (&self.year, &self.month),
+        )
     }
 }
 

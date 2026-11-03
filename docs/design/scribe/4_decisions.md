@@ -7,11 +7,11 @@ status: Draft
 feature: scribe
 doc_role: decisions
 type: design
-summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from a routine, plus the engineering decisions carried over from the Rust CLI template.
+summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from a routine, why frontmatter is parsed by yaml_serde, plus the engineering decisions carried over from the Rust CLI template.
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-13117, ORB-13134]
+related_artifacts: [ORB-21747, ORB-21753, ORB-13117, ORB-13134]
 ---
 
 # scribe — Decisions
@@ -62,7 +62,7 @@ removal from answers.
 ## One Markdown file per record, metadata in YAML frontmatter
 
 **Recorded:** 2026-11 · [ORB-21747] · **Overridable by Daniel**
-**Code anchors:** `crates/scribe-core/src/store/` (from S1)
+**Code anchors:** `crates/scribe-core/src/store/format.rs::split_frontmatter`, `::decode_entry`, `::decode_session`
 
 ### Context
 
@@ -93,8 +93,9 @@ store lock. There is no git repository: history is the audit log.
   readable and greppable as a file, and Daniel can open one in an editor.
 - A `#scribe` writes one new file and never rewrites other entries; ids are
   allocated by scanning `entries/<tag>/` under the lock.
-- Cost: a YAML parser dependency, chosen in S1 among maintained crates and
-  checked by `cargo deny`; every load parses one file per record, which is
+- Cost: a YAML parser dependency
+  ([chosen in S1](#frontmatter-is-parsed-by-yaml_serde-and-configtoml-by-toml));
+  every load parses one file per record, which is
   fine for thousands of records and is revisited if a load exceeds a second.
 - A cross-file operation (approving a proposal changes `proposals.json` and
   an entry file) is two atomic writes under one lock, not one transaction;
@@ -435,7 +436,7 @@ proposal or changes an entry's status.
 ## Persisted free text passes one redactor
 
 **Recorded:** 2026-11 · [ORB-21747]
-**Code anchors:** `crates/scribe-core/src/store/redact.rs` (from S1)
+**Code anchors:** `crates/scribe-core/src/store/redact.rs::Redactor`, `::REDACTED_FIELDS`
 
 ### Context
 
@@ -448,8 +449,12 @@ secret values, not words.
 
 The store masks, before every write of `said`, `content`, session text and
 proposal `reason`, the live values of the credential variables named in
-`config.toml` and those `scribe` was given for its model calls. A unit test
-holds the inventory of covered fields. Audit lines stay identifiers only.
+`config.toml`: `[redact] env`, plus `[models] credentials`, the variables
+the model calls are given. A unit test holds the inventory of covered fields
+(`REDACTED_FIELDS`, which also covers a session's `title` and `terms` and
+each proposal quote). A value shorter than 8 characters is not masked. Audit lines stay
+identifiers only. S1 builds the redactor; its first caller is the first
+writer, in S2.
 
 ### Consequences
 
@@ -590,7 +595,7 @@ usage error (exit 2).
 ## A list's JSON is an envelope with total and truncated
 
 **Recorded:** 2026-09 · [ORB-13134]
-**Code anchors:** `crates/scribe/src/output/payload.rs::ListPayload`
+**Code anchors:** `crates/scribe/src/output/render.rs::Envelope`
 
 ### Context
 
@@ -600,9 +605,12 @@ breaking change (§R10).
 
 ### Decision
 
-Every list's JSON is `{"<records>": [...], "total": N, "truncated": bool}`,
-where `<records>` names the noun (`entries`, `sessions`, `proposals`,
-`tags`); an empty result is the same envelope with an empty array. Filters
+Every list's JSON is `{"<records>": [...], "total": N, "truncated": bool,
+"warnings": [...]}`, where `<records>` names the noun (`entries`,
+`sessions`, `proposals`, `tags`) and `warnings` lists the record files left
+out because they did not parse
+([below](#one-malformed-record-makes-its-file-corrupt)); an empty result is
+the same envelope with empty arrays. Filters
 apply before the limit (§R33), and a cut list says so on stderr in every
 mode.
 
@@ -719,9 +727,11 @@ wants every layout change shipped as an appended migration.
 
 ### Decision
 
-Each persisted document type (tag file, session record, control, proposals)
-carries `format`. A shape change bumps it and appends one step to that
-type's `UPGRADES`; shipped steps are never edited. A newer format is refused
+Each persisted document (entry file, session record, control, proposals)
+carries `format`, one number for the whole store. A shape change bumps it and
+appends one step to `UPGRADES`; the step is given which document it is
+upgrading, so a change to one type passes the others through. Shipped steps
+are never edited. A newer format is refused
 for reads and writes; reads upgrade in memory only. The plugin's documents
 start at format 1 with empty registries: the template's `notes.json` is not
 carried over because no scribe store exists yet.
@@ -736,7 +746,7 @@ carried over because no scribe store exists yet.
 ## Store state is owner-only and checked on every load
 
 **Recorded:** 2026-09 · [ORB-13134]
-**Code anchors:** `crates/scribe-core/src/store/fsio.rs::create_private_dir`, `::inspect_dir`, `::inspect_file`, `::LockGuard::acquire`
+**Code anchors:** `crates/scribe-core/src/store/fsio.rs::create_private_dir`, `::inspect_dir`, `::inspect_subdir`, `::inspect_file`, `::LockGuard::acquire`
 
 ### Context
 
@@ -750,7 +760,8 @@ not do.
 The root and subdirectories are created `0700`, files `0600`. Every load,
 reads included, refuses a directory or file owned by another uid or
 writable by group or others, naming the `chmod` that fixes it, and refuses a
-store or lock file that is a link. Nothing is repaired automatically. On
+record file, document, subdirectory or lock file that is a link (the root
+itself may be one). Nothing is repaired automatically. On
 non-unix platforms the checks are no-ops.
 
 ### Consequences
@@ -762,7 +773,7 @@ non-unix platforms the checks are no-ops.
 ## One malformed record makes its file corrupt
 
 **Recorded:** 2026-09 · [ORB-13134]
-**Code anchors:** `crates/scribe-core/src/store/mod.rs::Store::load`, `crates/scribe-core/src/store/format.rs::decode`
+**Code anchors:** `crates/scribe-core/src/store/mod.rs::Store::load_entries`, `::Skipped`, `crates/scribe-core/src/store/format.rs::decode_frontmatter`
 
 ### Context
 
@@ -772,18 +783,23 @@ without it: data loss.
 
 ### Decision
 
-Deviation from STD-02@4 §R32 within one file: a tag file, session record,
-control or proposals document that fails to parse is refused as
+Deviation from STD-02@4 §R32 within one file: an entry file, session
+record, control or proposals document that fails to parse (bad YAML or JSON,
+an unknown or missing key, an id that does not match its path) is refused as
 `store_corrupt`, naming the file, and nothing rewrites it. Across files the
-rule holds: `ask` and the lists skip a corrupt file, report it on stderr (or
-in the payload's warnings) and answer from the rest; a write to a corrupt
-file refuses.
+rule holds: `ask` and the entry and session lists skip a corrupt record
+file, report it on stderr and in the payload's `warnings`, and answer from
+the rest; `show` of it fails, and a write to it refuses. Only parse failures
+are skipped: a link, loose modes or a newer format refuses the whole command,
+since they say the store, not one record, cannot be trusted.
 
 ### Consequences
 
 - A damaged file is never partially rewritten, and one bad tag does not
   silence the others.
-- Cost: one bad entry hides its whole tag until it is fixed by hand.
+- Cost: `control.json` and `proposals.json` are one file each, so one bad
+  proposal hides them all (and one bad switch, every session's `on`) until
+  it is fixed by hand.
 
 ## Missing gate tools warn locally and fail in CI
 
@@ -869,10 +885,49 @@ Still not exercised: destructive CLI verbs (STD-01@2 §R5; `forget` is a
 - Cost: the list goes stale unless the slice that starts doing one of these
   things also edits it.
 
+## Frontmatter is parsed by yaml_serde, and config.toml by toml
+
+**Recorded:** 2026-11 · [ORB-21753]
+**Code anchors:** `Cargo.toml` (`yaml_serde`, `toml`, `unicode-normalization`), `crates/scribe-core/src/store/format.rs::decode_frontmatter`, `crates/scribe-core/src/config.rs::Config::parse`
+
+### Context
+
+[Records are Markdown with YAML frontmatter](#one-markdown-file-per-record-metadata-in-yaml-frontmatter),
+which needs a YAML parser behind serde. `serde_yaml` is archived and
+unmaintained; `serde_yml`, its best-known fork, carries a soundness
+advisory; `saphyr` parses YAML but leaves serde to a separate, younger
+crate. Frontmatter is
+refused on an unknown or missing key, so the parser must hand serde a
+complete mapping and refuse a repeated key. `config.toml` is TOML by the
+design, and the verbatim check needs Unicode NFC.
+
+### Decision
+
+`yaml_serde` (MIT; the YAML organization's maintained continuation of
+`serde_yaml`, on the pure-Rust `libyaml-rs`) parses frontmatter into a
+mapping, which rejects repeated keys; the format probe and the `kind` check
+run on the mapping, then `deny_unknown_fields` structs take the rest.
+Nullable fields that must be present (`superseded_by`, `review_after`,
+`message`, `scribed_through`) use a deserializer that errors when the key is
+absent rather than defaulting it. `toml` 1 (parse and serde only, no writer)
+reads `config.toml`, and `unicode-normalization` gives the NFC for
+`verbatim::contains`. All three pass `cargo deny`.
+
+### Consequences
+
+- Records stay plain YAML that Daniel can edit; a typo is refused, naming
+  the file and key, rather than silently dropped.
+- Cost: three new dependency trees to track. YAML's typing still bites a
+  hand edit: the parser follows YAML 1.2, so `title: on` is text, but
+  `title: true`, `title: 12` or `title: null` is refused as corrupt until it
+  is quoted. The writer (S2) serializes through `yaml_serde`, which quotes
+  such values.
+
 ## Task References
 
 - [ORB-21747] — designed the standalone scribe plugin and recorded its decisions.
 - [ORB-13117] — built the Rust CLI template this project was created from.
 - [ORB-13134] — brought the template to STD-01..03 v2 and STD-04/05 v1.
+- [ORB-21753] — S1: built the domain, the frontmatter store and the read-only CLI.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.

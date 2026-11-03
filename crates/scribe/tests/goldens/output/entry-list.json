@@ -1,0 +1,138 @@
+{
+  "entries": [
+    {
+      "id": "rituals-1",
+      "tag": "rituals",
+      "status": "retired",
+      "project": "orbit",
+      "topics": [
+        "ci"
+      ],
+      "related": [],
+      "provider": "claude-code",
+      "host": "dk-server-1",
+      "created": "2026-09-15T07:30:00Z",
+      "updated": "2026-10-15T07:30:00Z",
+      "said": "#scribe rituals: run the full gate before every push #ci",
+      "content": "run the full gate before every push",
+      "content_from": {
+        "kind": "instruction",
+        "role": null,
+        "message": null,
+        "at": null
+      },
+      "cite": {
+        "session": "0f8e7a52-3c1d-4b6e-9a2f-5d4c3b2a1e01",
+        "message": "9a1b2c3d-0000-4000-8000-000000000004",
+        "at": "2026-09-15T07:29:59Z",
+        "prompt_sha256": "c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3",
+        "line": 1,
+        "cwd": "/home/daniel/workspace/orbit"
+      },
+      "superseded_by": null,
+      "review_after": null
+    },
+    {
+      "id": "preferences-1",
+      "tag": "preferences",
+      "status": "active",
+      "project": "global",
+      "topics": [],
+      "related": [],
+      "provider": "claude-code",
+      "host": "dk-server-1",
+      "created": "2026-10-01T12:00:00Z",
+      "updated": "2026-10-01T12:00:00Z",
+      "said": "#scribe preferences: short commit subjects, imperative mood",
+      "content": "short commit subjects, imperative mood",
+      "content_from": {
+        "kind": "instruction",
+        "role": null,
+        "message": null,
+        "at": null
+      },
+      "cite": {
+        "session": "0f8e7a52-3c1d-4b6e-9a2f-5d4c3b2a1e01",
+        "message": "9a1b2c3d-0000-4000-8000-000000000003",
+        "at": "2026-10-01T11:59:59Z",
+        "prompt_sha256": "b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2",
+        "line": 1,
+        "cwd": "/home/daniel/workspace/orbit"
+      },
+      "superseded_by": null,
+      "review_after": "2027-03-30"
+    },
+    {
+      "id": "decisions-1",
+      "tag": "decisions",
+      "status": "superseded",
+      "project": "constellation-works/scribe",
+      "topics": [
+        "merge-policy"
+      ],
+      "related": [
+        "pr:constellation-works/scribe#7"
+      ],
+      "provider": "claude-code",
+      "host": "dk-server-1",
+      "created": "2026-10-20T09:15:00Z",
+      "updated": "2026-11-02T08:00:00Z",
+      "said": "#scribe decisions: merge agent PRs with a merge commit #merge-policy",
+      "content": "merge agent PRs with a merge commit",
+      "content_from": {
+        "kind": "instruction",
+        "role": null,
+        "message": null,
+        "at": null
+      },
+      "cite": {
+        "session": "0f8e7a52-3c1d-4b6e-9a2f-5d4c3b2a1e01",
+        "message": "9a1b2c3d-0000-4000-8000-000000000001",
+        "at": "2026-10-20T09:14:58Z",
+        "prompt_sha256": "3f2a9c1e5b7d4f6a8c0e2b4d6f8a0c2e4b6d8f0a2c4e6b8d0f2a4c6e8b0d2f4a",
+        "line": 1,
+        "cwd": "/home/daniel/workspace/scribe"
+      },
+      "superseded_by": "decisions-2",
+      "review_after": null
+    },
+    {
+      "id": "decisions-2",
+      "tag": "decisions",
+      "status": "active",
+      "project": "constellation-works/scribe",
+      "topics": [
+        "merge-policy",
+        "release"
+      ],
+      "related": [
+        "repo:constellation-works/scribe"
+      ],
+      "provider": "claude-code",
+      "host": "dk-server-1",
+      "created": "2026-11-02T19:05:41Z",
+      "updated": "2026-11-02T19:05:41Z",
+      "said": "#scribe add this to decision #merge-policy #release",
+      "content": "squash-merge agent PRs;\nkeep merge commits for releases",
+      "content_from": {
+        "kind": "message",
+        "role": "assistant",
+        "message": "9a1b2c3d-0000-4000-8000-000000000002",
+        "at": "2026-11-02T19:04:11Z"
+      },
+      "cite": {
+        "session": "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02",
+        "message": null,
+        "at": "2026-11-02T19:05:40Z",
+        "prompt_sha256": "a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1",
+        "line": 3,
+        "cwd": "/home/daniel/workspace/scribe"
+      },
+      "superseded_by": null,
+      "review_after": null
+    }
+  ],
+  "total": 4,
+  "truncated": false,
+  "warnings": []
+}

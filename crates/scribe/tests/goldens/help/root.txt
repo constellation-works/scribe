@@ -1,10 +1,13 @@
-Keep short notes in a local store
+Read Daniel's recorded decisions and preferences, and the records of the sessions he cataloged
 
 Usage: scribe [OPTIONS] <COMMAND>
 
 Commands:
-  note  Add, list and show notes
-  help  Print this message or the help of the given subcommand(s)
+  entry     List and show the entries recorded with #scribe
+  session   List and show the records of sessions cataloged with /scribe on
+  proposal  List what the consistency routine proposes changing
+  tag       List the tags entries are filed under
+  help      Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help     Print help
@@ -16,9 +19,11 @@ Global options:
       --json             Shorthand for --format json
 
 Examples:
-  scribe note add "Call the plumber" --tag home --priority high
-  scribe note list --tag home
-  scribe note show <id> --json
-  scribe note list | cut -f1,3
+  scribe entry list --tag decisions --status active
+  scribe entry show <id> --json
+  scribe session list --project scribe
+  scribe proposal list
+  scribe tag list
+  scribe entry list | cut -f1,6
 
 Exit status: 0 on success, 1 when a command fails, 2 on a usage error.

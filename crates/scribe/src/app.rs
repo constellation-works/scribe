@@ -52,7 +52,7 @@ impl Context {
         })
     }
 
-    /// The note store.
+    /// The scribe store.
     pub(crate) fn store(&self) -> &Store {
         &self.store
     }

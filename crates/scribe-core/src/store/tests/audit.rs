@@ -5,7 +5,7 @@ use time::macros::datetime;
 fn failed_add() -> AuditEvent {
     AuditEvent {
         at: datetime!(2026-09-26 12:00:00 UTC),
-        command: String::from("note add"),
+        command: String::from("hook user-prompt-submit"),
         status: AuditStatus::Failure,
         target: None,
         error_code: Some(String::from("store_locked")),
@@ -35,7 +35,7 @@ fn a_line_round_trips_losslessly() {
 
 #[test]
 fn an_event_has_no_field_for_arguments_or_error_text() {
-    // STD-05 R13: the shape itself keeps note contents and paths out.
+    // STD-05 R13: the shape itself keeps record contents and paths out.
     let line = encode_line(&failed_add()).unwrap();
     let value: serde_json::Value = serde_json::from_slice(&line).unwrap();
     let mut keys: Vec<&str> = value

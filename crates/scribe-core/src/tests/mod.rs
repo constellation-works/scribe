@@ -3,5 +3,74 @@
 //! they reach only `pub(crate)` items. The store's tests live in
 //! `store/tests/`.
 
-mod note;
-mod query;
+mod config;
+mod entry;
+mod proposal;
+mod record;
+mod session;
+mod tag;
+mod verbatim;
+
+use crate::entry::{Cite, ContentFrom, Entry, EntryStatus};
+use crate::session::{SessionRecord, SessionStatus};
+use time::OffsetDateTime;
+use time::macros::datetime;
+
+/// An active entry `id` created at `created`, in project `scribe`.
+pub(crate) fn entry(id: &str, created: OffsetDateTime) -> Entry {
+    let id: crate::entry::EntryId = id.parse().unwrap();
+    Entry {
+        tag: id.tag().clone(),
+        id,
+        status: EntryStatus::Active,
+        project: "scribe".parse().unwrap(),
+        topics: crate::record::Topics::default(),
+        related: Vec::new(),
+        provider: String::from("claude-code").try_into().unwrap(),
+        host: String::from("host").try_into().unwrap(),
+        created,
+        updated: created,
+        said: String::from("#scribe decisions: something"),
+        content_from: ContentFrom::Instruction,
+        cite: Cite {
+            session: "s-1".parse().unwrap(),
+            message: None,
+            at: created,
+            prompt_sha256: "0".repeat(64),
+            line: 1,
+            cwd: String::from("/work"),
+        },
+        superseded_by: None,
+        review_after: None,
+        content: String::from("something"),
+    }
+}
+
+/// An open session record `id` started at `started`, in project `scribe`.
+pub(crate) fn session(id: &str, started: OffsetDateTime) -> SessionRecord {
+    SessionRecord {
+        id: id.parse().unwrap(),
+        status: SessionStatus::Open,
+        project: "scribe".parse().unwrap(),
+        topics: crate::record::Topics::default(),
+        related: Vec::new(),
+        terms: Vec::new(),
+        provider: String::from("claude-code").try_into().unwrap(),
+        host: String::from("host").try_into().unwrap(),
+        created: started,
+        updated: started,
+        title: String::from("a session"),
+        cwd: String::from("/work"),
+        started,
+        on_since: started,
+        scribed_through: None,
+        passes: 1,
+        next_open: 0,
+        summary: String::from("summary"),
+        goals: String::from("goals"),
+        outcome: String::from("outcome"),
+        next: String::from("next"),
+    }
+}
+
+pub(crate) const T0: OffsetDateTime = datetime!(2026-11-01 10:00:00 UTC);

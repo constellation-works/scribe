@@ -1,6 +1,6 @@
 [package]
 name = "scribe-core"
-description = "The scribe note store as a library: business logic, persistence, errors. No terminal, no argument parsing."
+description = "The scribe store as a library: entries, session records, proposals, the verbatim check and persistence. No terminal, no argument parsing."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -19,7 +19,10 @@ serde_json = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
+toml = { workspace = true }
 tracing = { workspace = true }
+unicode-normalization = { workspace = true }
+yaml_serde = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 rustix = { workspace = true }

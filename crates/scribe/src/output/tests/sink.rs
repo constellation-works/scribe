@@ -81,7 +81,7 @@ fn args(list: &[&str]) -> Vec<OsString> {
 #[test]
 fn a_failed_parse_still_honours_a_json_request() {
     assert!(raw_args_request_json(
-        &args(&["t", "note", "--bogus", "--json"]),
+        &args(&["t", "entry", "--bogus", "--json"]),
         None
     ));
     assert!(raw_args_request_json(

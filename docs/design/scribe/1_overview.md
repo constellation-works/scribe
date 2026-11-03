@@ -23,11 +23,11 @@ citations. It replaces the scribe built inside orbit-office, without the
 Library, to-dos or calendar around it.
 
 > **State.** The design ([2_design.md](./2_design.md),
-> [4_decisions.md](./4_decisions.md)) describes the plugin; nothing of it is
-> built yet. The code is still the Rust CLI template's note-keeping example,
-> and [specs/](./specs/) still specifies that example's output and store
-> until slice S1 of the [slice plan](./2_design.md#10-slice-plan) replaces
-> both.
+> [4_decisions.md](./4_decisions.md)) describes the plugin. Slice S1 of the
+> [slice plan](./2_design.md#10-slice-plan) is built: the domain, the
+> Markdown-and-frontmatter store and a read-only CLI (`entry`, `session`,
+> `proposal`, `tag`), specified in [specs/](./specs/). Capture, cataloging,
+> `ask` and the plugin tree are S2–S5.
 
 ## 1. Directions (Daniel, 2026-11-02)
 

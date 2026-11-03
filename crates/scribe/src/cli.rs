@@ -16,14 +16,16 @@ const GLOBAL: &str = "Global options";
 
 const ROOT_EXAMPLES: &str = "\
 Examples:
-  scribe note add \"Call the plumber\" --tag home --priority high
-  scribe note list --tag home
-  scribe note show <id> --json
-  scribe note list | cut -f1,3
+  scribe entry list --tag decisions --status active
+  scribe entry show <id> --json
+  scribe session list --project scribe
+  scribe proposal list
+  scribe tag list
+  scribe entry list | cut -f1,6
 
 Exit status: 0 on success, 1 when a command fails, 2 on a usage error.";
 
-/// Keep short notes in a local store.
+/// Read Daniel's recorded decisions and preferences, and the records of the sessions he cataloged.
 #[derive(Debug, Parser)]
 #[command(
     name = "scribe",
@@ -60,7 +62,7 @@ impl Cli {
     /// Parse a command line, including the checks clap cannot express.
     ///
     /// `conflicts_with` does not see a global flag given at a different
-    /// subcommand level (`--json note list --format table`), so the
+    /// subcommand level (`--json entry list --format table`), so the
     /// `--json`/`--format` conflict is checked here and reported as the same
     /// usage error (exit 2) clap would have produced.
     pub(crate) fn parse_args(args: &[OsString]) -> Result<Self, clap::Error> {

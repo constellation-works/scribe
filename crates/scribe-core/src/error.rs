@@ -5,7 +5,9 @@
 //! cause stays on [`std::error::Error::source`], so a surface can print the
 //! whole chain once without repeating it.
 
-use crate::note::NoteId;
+use crate::config::ConfigError;
+use crate::entry::EntryId;
+use crate::session::SessionId;
 use std::io;
 use std::path::PathBuf;
 
@@ -17,13 +19,21 @@ use std::path::PathBuf;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
-    /// No note has this id. The message names the store file searched, so a
+    /// No entry has this id. The message names the file looked for, so a
     /// mis-resolved data directory is visible (STD-02 R26).
-    #[error("no note with id {id} in {}", path.display())]
-    NotFound {
+    #[error("no entry {id}: {} does not exist", path.display())]
+    EntryNotFound {
         /// The id that was looked up.
-        id: NoteId,
-        /// The store file that was searched.
+        id: EntryId,
+        /// The file it would be in.
+        path: PathBuf,
+    },
+    /// No session record has this id.
+    #[error("no session record {id} under {}", path.display())]
+    SessionNotFound {
+        /// The id that was looked up.
+        id: SessionId,
+        /// The directory searched.
         path: PathBuf,
     },
     /// A filesystem operation failed.
@@ -37,14 +47,25 @@ pub enum Error {
         #[source]
         source: io::Error,
     },
-    /// The store file exists but is not a store this build can parse.
+    /// A store file exists but is not one this build can parse: bad JSON or
+    /// YAML, a missing or unknown key, a bad value, or a record whose id does
+    /// not match its file name. The message names the file.
     #[error("{} is not a valid store file", path.display())]
     Corrupt {
         /// The store file.
         path: PathBuf,
-        /// What the parser rejected.
+        /// What the parser rejected, naming the key where it can.
         #[source]
-        source: serde_json::Error,
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+    /// `config.toml` has a bad key or value; it is refused, never defaulted.
+    #[error("{} is not a valid scribe config", path.display())]
+    Config {
+        /// The config file.
+        path: PathBuf,
+        /// What was wrong, naming the key.
+        #[source]
+        source: ConfigError,
     },
     /// The store was written by a newer build (STD-03 R10: refuse, never
     /// rewrite or reinterpret newer state).
@@ -117,14 +138,26 @@ impl Error {
     #[must_use]
     pub fn code(&self) -> &'static str {
         match self {
-            Self::NotFound { .. } => "note_not_found",
+            Self::EntryNotFound { .. } => "entry_not_found",
+            Self::SessionNotFound { .. } => "session_not_found",
             Self::Io { .. } => "io_error",
             Self::Corrupt { .. } => "store_corrupt",
+            Self::Config { .. } => "config_invalid",
             Self::NewerFormat { .. } => "store_too_new",
             Self::Locked { .. } => "store_locked",
             Self::Symlink { .. } => "store_symlink",
             Self::ForeignOwner { .. } => "store_foreign_owner",
             Self::Permissions { .. } => "store_permissions",
+        }
+    }
+
+    pub(crate) fn corrupt(
+        path: impl Into<PathBuf>,
+        source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
+    ) -> Self {
+        Self::Corrupt {
+            path: path.into(),
+            source: source.into(),
         }
     }
 

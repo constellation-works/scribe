@@ -1,12 +1,12 @@
 use crate::audit_middleware::{AuditGuard, AuditMeta};
 use crate::error::CliError;
-use crate::output::{NotePayload, Output};
-use scribe_core::{AuditStatus, NewNote, Priority, Store};
+use crate::output::{EntryPayload, Output, Record};
+use scribe_core::{AuditStatus, Store};
 use std::path::PathBuf;
 use time::macros::datetime;
 
 const ADD: AuditMeta = AuditMeta {
-    command: "note add",
+    command: "hook user-prompt-submit",
 };
 
 /// An owner-only temporary directory, as a store directory must be.
@@ -28,17 +28,51 @@ fn lines(store: &Store) -> Vec<serde_json::Value> {
         .collect()
 }
 
-fn added_note(store: &Store) -> Output {
-    let new = NewNote {
-        title: "secret title".parse().unwrap(),
-        body: None,
-        tags: Vec::new(),
-        priority: Priority::Normal,
-    };
-    let note = store.add(new, datetime!(2026-09-26 12:00:00 UTC)).unwrap();
-    Output::Note {
-        note: NotePayload::from(&note),
-        notice: None,
+/// Write `decisions-1`, whose content is `secret content`, and show it.
+fn shown_entry(store: &Store) -> Output {
+    let dir = store.root().join("entries/decisions");
+    std::fs::create_dir_all(&dir).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for d in [store.root().join("entries"), dir.clone()] {
+            std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+    }
+    let path = dir.join("decisions-1.md");
+    let text = format!(
+        "---
+format: 1
+kind: entry
+id: decisions-1
+tag: decisions
+status: active
+project: scribe
+topics: []
+related: []
+provider: claude-code
+host: host
+created: 2026-09-26T12:00:00Z
+updated: 2026-09-26T12:00:00Z
+said: \"#scribe decisions: secret content\"
+content_from: {{kind: instruction}}
+cite: {{session: s-1, message: null, at: 2026-09-26T12:00:00Z, prompt_sha256: \"{}\", line: 1, cwd: /work}}
+superseded_by: null
+review_after: null
+---
+secret content
+",
+        "0".repeat(64)
+    );
+    std::fs::write(&path, text).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let entry = store.entry(&"decisions-1".parse().unwrap()).unwrap();
+    Output::Show {
+        record: Record::Entry(Box::new(EntryPayload::from(&entry))),
     }
 }
 
@@ -53,39 +87,39 @@ fn an_unmarked_guard_records_a_failure() {
     let lines = lines(&store);
     assert_eq!(lines.len(), 1);
     assert_eq!(lines[0]["status"], "failure");
-    assert_eq!(lines[0]["command"], "note add");
+    assert_eq!(lines[0]["command"], "hook user-prompt-submit");
     assert_eq!(lines[0]["error_code"], serde_json::Value::Null);
 }
 
 #[test]
-fn a_success_records_the_note_it_acted_on_and_nothing_it_contained() {
+fn a_success_records_the_record_it_acted_on_and_nothing_it_contained() {
     let dir = private_tempdir();
     let store = Store::open(dir.path());
-    let output = added_note(&store);
+    let output = shown_entry(&store);
     let mut guard = AuditGuard::start(&store, ADD, datetime!(2026-09-26 12:00:00 UTC));
     guard.mark_result(&Ok(output));
     drop(guard);
     let lines = lines(&store);
     assert_eq!(lines[0]["status"], "success");
-    assert_eq!(lines[0]["target"], "1");
+    assert_eq!(lines[0]["target"], "decisions-1");
     assert_eq!(lines[0]["at"], "2026-09-26T12:00:00Z");
     // STD-05 R13: no argument values in the log.
     let text = std::fs::read_to_string(store.audit_path()).unwrap();
-    assert!(!text.contains("secret title"), "got {text}");
+    assert!(!text.contains("secret content"), "got {text}");
 }
 
 #[test]
 fn a_failure_records_the_stable_code_never_the_message() {
     let dir = private_tempdir();
     let store = Store::open(dir.path());
-    let err = CliError::Core(store.show("9".parse().unwrap()).unwrap_err());
+    let err = CliError::Core(store.entry(&"decisions-9".parse().unwrap()).unwrap_err());
     let message = err.to_string();
     let mut guard = AuditGuard::start(&store, ADD, datetime!(2026-09-26 12:00:00 UTC));
     guard.mark_result(&Err(err));
     drop(guard);
     let lines = lines(&store);
     assert_eq!(lines[0]["status"], "failure");
-    assert_eq!(lines[0]["error_code"], "note_not_found");
+    assert_eq!(lines[0]["error_code"], "entry_not_found");
     assert_eq!(lines[0]["target"], serde_json::Value::Null);
     let text = std::fs::read_to_string(store.audit_path()).unwrap();
     assert!(!text.contains(&message), "the message names a path: {text}");

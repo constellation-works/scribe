@@ -30,7 +30,16 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
 thiserror = "2"
-time = { version = "0.3", features = ["formatting", "parsing", "serde"] }
+time = { version = "0.3", features = ["formatting", "macros", "parsing", "serde"] }
+# config.toml is read, never written by scribe: the parser and serde only, no
+# writer and no `debug` feature (which would pull terminal crates).
+toml = { version = "1", default-features = false, features = ["std", "parse", "serde"] }
+# NFC for the verbatim check (docs/design/scribe/2_design.md §6.4).
+unicode-normalization = "0.1"
+# Entry and session frontmatter. The YAML organization's maintained
+# continuation of serde_yaml; why this one: docs/design/scribe/4_decisions.md
+# ("Frontmatter is parsed by yaml_serde").
+yaml_serde = "0.10"
 tracing = "0.1"
 # No `ansi`: log lines go to stderr as plain text in every mode.
 tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "fmt", "env-filter"] }

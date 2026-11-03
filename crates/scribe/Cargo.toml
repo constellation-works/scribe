@@ -1,6 +1,6 @@
 [package]
 name = "scribe"
-description = "Keep short notes in a local store."
+description = "Keep Daniel's marked decisions and preferences and his opted-in session records, and answer from them."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

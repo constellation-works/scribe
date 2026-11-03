@@ -1,0 +1,16 @@
+List every proposal by id; settle one with #scribe approve or #scribe reject
+
+Usage: scribe proposal list [OPTIONS]
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Global options:
+      --root <DIR>       Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>  Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json             Shorthand for --format json
+
+Examples:
+  scribe proposal list
+  scribe proposal list --json

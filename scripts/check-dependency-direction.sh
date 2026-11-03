@@ -92,7 +92,7 @@ CORE=crates/scribe-core/src
 CLI=crates/scribe/src
 
 # Core is business logic plus one persistence module (R5). Every core module
-# but store/ is I/O-free and knows nothing of how notes are stored; a new
+# but store/ is I/O-free and knows nothing of how records are stored; a new
 # business module is covered as soon as it exists.
 for path in "$CORE"/*; do
   name=$(basename "$path")
@@ -100,10 +100,12 @@ for path in "$CORE"/*; do
   ban "$path" 'std::(fs|net|process)|tempfile::|rustix::' "core/$name is business logic: file and process access belong in store/"
   ban "$path" 'crate::store'                              "core/$name is business logic: it must not depend on persistence"
 done
-# Inside store/: fsio is mechanism with no knowledge of notes, and the format
-# and audit record shapes do no I/O of their own (R4, R5).
-ban "$CORE/store/fsio.rs"   'crate::(note|query|store)|super::'  "store/fsio.rs is mechanism only; it must not know notes or the store"
+# Inside store/: fsio is mechanism with no knowledge of records, and the
+# format, redaction and audit record shapes do no I/O of their own (R4, R5).
+ban "$CORE/store/fsio.rs"   'crate::(entry|tag|session|proposal|record|config|verbatim|store)|super::' \
+                                                                 "store/fsio.rs is mechanism only; it must not know records or the store"
 ban "$CORE/store/format.rs" 'std::fs|super::fsio'                "store/format.rs converts bytes; it must not do I/O"
+ban "$CORE/store/redact.rs" 'std::fs|super::fsio'                "store/redact.rs masks text it is handed; it must not do I/O"
 ban "$CORE/store/audit.rs"  'std::fs|super::fsio'                "store/audit.rs is a record shape; it must not do I/O"
 # The domain receives resolved roots and configuration (R3).
 ban "$CORE"          'std::env::|home_dir|current_dir'           "the core crate must not read the environment or discover paths"
@@ -124,7 +126,13 @@ for retired in \
   crates/scribe-core/src/fsio.rs \
   crates/scribe-core/src/store.rs \
   crates/scribe-core/src/tests/fsio.rs \
-  crates/scribe-core/src/tests/store.rs; do
+  crates/scribe-core/src/tests/store.rs \
+  crates/scribe-core/src/note.rs \
+  crates/scribe-core/src/query.rs \
+  crates/scribe-core/src/tests/note.rs \
+  crates/scribe-core/src/tests/query.rs \
+  crates/scribe/src/commands/note.rs \
+  crates/scribe/src/commands/tests/note.rs; do
   [[ -e "$retired" ]] && err "retired path exists again: $retired"
 done
 

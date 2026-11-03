@@ -5,8 +5,6 @@
 //! Only the roles this CLI uses exist. Add `Ok`, `Error` or `Active` when a
 //! value needs one, not before.
 
-use scribe_core::Priority;
-
 /// What a cell's color means.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Role {
@@ -18,12 +16,13 @@ pub(crate) enum Role {
     Neutral,
 }
 
-/// The one mapping from domain values to roles.
-pub(crate) fn role_for_priority(priority: Priority) -> Role {
-    match priority {
-        Priority::High => Role::Warn,
-        Priority::Low => Role::Muted,
-        Priority::Normal => Role::Neutral,
+/// The one mapping from an entry status to a role: anything but `active`
+/// is hidden from `ask`, so it is de-emphasized.
+pub(crate) fn role_for_status(status: &str) -> Role {
+    if status == "active" {
+        Role::Neutral
+    } else {
+        Role::Muted
     }
 }
 

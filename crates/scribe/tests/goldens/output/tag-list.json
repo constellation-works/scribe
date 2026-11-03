@@ -1,0 +1,37 @@
+{
+  "tags": [
+    {
+      "name": "decisions",
+      "aliases": [
+        "decision",
+        "dec"
+      ],
+      "description": "choices Daniel has made",
+      "stale_after_days": null,
+      "configured": true,
+      "entries": 2
+    },
+    {
+      "name": "preferences",
+      "aliases": [
+        "preference",
+        "pref"
+      ],
+      "description": "how Daniel likes things done",
+      "stale_after_days": 180,
+      "configured": true,
+      "entries": 1
+    },
+    {
+      "name": "rituals",
+      "aliases": [],
+      "description": null,
+      "stale_after_days": null,
+      "configured": false,
+      "entries": 1
+    }
+  ],
+  "total": 3,
+  "truncated": false,
+  "warnings": []
+}

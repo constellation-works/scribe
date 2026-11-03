@@ -1,260 +1,187 @@
-//! End-to-end tests of the public store API (STD-02 R20). Every test works in
-//! its own temporary directory and never touches the real home (STD-03 R20).
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+//! The store through its public API, against the shared fixture store the
+//! CLI's tests also read. Each test copies it to a fresh owner-only temp root.
 
-use scribe_core::{Error, ListFilter, NewNote, NoteId, Priority, STORE_FILE, Store, Tag};
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
+use scribe_core::{
+    EntryFilter, EntryStatus, Error, Redactor, SessionFilter, Store, TagName, verbatim,
+};
+use std::fs;
 use std::num::NonZeroUsize;
-use std::path::Path;
-use std::sync::Arc;
-use time::OffsetDateTime;
-use time::macros::datetime;
+use std::path::{Path, PathBuf};
 
-const NOW: OffsetDateTime = datetime!(2026-01-02 03:04:05 UTC);
+fn fixture() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../scribe/tests/fixtures/store")
+}
 
-/// A temporary directory that is owner-only whatever the umask, as a store
-/// directory must be (STD-05 R9). `tempfile` leaves the mode to the umask.
-fn tempdir() -> tempfile::TempDir {
+#[cfg(unix)]
+fn private(path: &Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+}
+
+#[cfg(not(unix))]
+fn private(_: &Path, _: u32) {}
+
+fn copy_tree(from: &Path, to: &Path) {
+    fs::create_dir(to).unwrap();
+    private(to, 0o700);
+    for item in fs::read_dir(from).unwrap() {
+        let item = item.unwrap();
+        let target = to.join(item.file_name());
+        if item.file_type().unwrap().is_dir() {
+            copy_tree(&item.path(), &target);
+        } else {
+            fs::copy(item.path(), &target).unwrap();
+            private(&target, 0o600);
+        }
+    }
+}
+
+/// A temp dir holding a copy of the fixture at `<dir>/store`.
+fn store() -> (tempfile::TempDir, Store) {
     let dir = tempfile::tempdir().unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
-    }
-    dir
+    let root = dir.path().join("store");
+    copy_tree(&fixture(), &root);
+    (dir, Store::open(root))
 }
 
-/// Write a store file by hand, owner-only as the store itself would.
-fn write_store_file(dir: &Path, text: &str) {
-    let path = dir.join(STORE_FILE);
-    std::fs::write(&path, text).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
-    }
-}
-
-fn limit(n: usize) -> Option<NonZeroUsize> {
-    NonZeroUsize::new(n)
-}
-
-fn new_note(title: &str, tags: &[&str], priority: Priority) -> NewNote {
-    NewNote {
-        title: title.parse().unwrap(),
-        body: None,
-        tags: tags.iter().map(|t| t.parse().unwrap()).collect(),
-        priority,
-    }
-}
-
-#[test]
-fn a_missing_store_lists_nothing_and_creates_nothing() {
-    let dir = tempdir();
-    let root = dir.path().join("data");
-    let store = Store::open(&root);
-    let listed = store.list(&ListFilter::default()).unwrap();
-    assert!(listed.notes.is_empty());
-    assert_eq!(listed.total, 0);
-    assert!(!root.exists(), "reads must not create the data directory");
-}
-
-#[test]
-fn add_assigns_sequential_ids_and_show_finds_them() {
-    let dir = tempdir();
-    let store = Store::open(dir.path().join("data"));
-    let first = store
-        .add(new_note("one", &[], Priority::Normal), NOW)
-        .unwrap();
-    let second = store
-        .add(new_note("two", &[], Priority::High), NOW)
-        .unwrap();
-    assert_eq!(first.id.get(), 1);
-    assert_eq!(second.id.get(), 2);
-    assert_eq!(store.show(second.id).unwrap(), second);
-    assert_eq!(store.show(first.id).unwrap().created_at, NOW);
-}
-
-#[test]
-fn show_of_an_unknown_id_is_not_found() {
-    let dir = tempdir();
-    let store = Store::open(dir.path());
-    let id: NoteId = "42".parse().unwrap();
-    let err = store.show(id).unwrap_err();
-    assert!(matches!(err, Error::NotFound { .. }));
-    assert_eq!(err.code(), "note_not_found");
-    // STD-02 R26: the message names the store that was searched.
-    assert!(
-        err.to_string()
-            .contains(&store.path().display().to_string()),
-        "got {err}"
-    );
-}
-
-#[test]
-fn list_filters_before_the_limit_and_reports_the_total() {
-    let dir = tempdir();
-    let store = Store::open(dir.path());
-    store
-        .add(new_note("a", &["home"], Priority::High), NOW)
-        .unwrap();
-    store
-        .add(new_note("b", &["work"], Priority::High), NOW)
-        .unwrap();
-    store
-        .add(new_note("c", &["home"], Priority::Low), NOW)
-        .unwrap();
-
-    let home: Tag = "home".parse().unwrap();
-    let titles = |filter: ListFilter| -> Vec<String> {
-        store
-            .list(&filter)
-            .unwrap()
-            .notes
-            .into_iter()
-            .map(|n| n.title.as_str().to_owned())
-            .collect()
-    };
-    assert_eq!(
-        titles(ListFilter {
-            tag: Some(home.clone()),
-            ..ListFilter::default()
-        }),
-        ["a", "c"]
-    );
-    assert_eq!(
-        titles(ListFilter {
-            tag: Some(home),
-            priority: Some(Priority::High),
-            limit: None,
-        }),
-        ["a"]
-    );
-    assert_eq!(
-        titles(ListFilter {
-            limit: limit(2),
-            ..ListFilter::default()
-        }),
-        ["a", "b"]
-    );
-    // STD-01 R33: the one `work` note is not among the first record, and the
-    // limit still finds it because filters apply first.
-    assert_eq!(
-        titles(ListFilter {
-            tag: Some("work".parse().unwrap()),
-            limit: limit(1),
-            ..ListFilter::default()
-        }),
-        ["b"]
-    );
-    // STD-01 R34: a cut list knows how many matched.
-    let cut = store
-        .list(&ListFilter {
-            limit: limit(2),
-            ..ListFilter::default()
-        })
-        .unwrap();
-    assert_eq!((cut.notes.len(), cut.total, cut.truncated()), (2, 3, true));
-    let whole = store.list(&ListFilter::default()).unwrap();
-    assert_eq!(
-        (whole.notes.len(), whole.total, whole.truncated()),
-        (3, 3, false)
-    );
-}
-
-#[test]
-fn concurrent_writers_never_lose_a_note_or_reuse_an_id() {
-    let dir = tempdir();
-    let store = Arc::new(Store::open(dir.path()));
-    let threads: Vec<_> = (0..4)
-        .map(|t| {
-            let store = Arc::clone(&store);
-            std::thread::spawn(move || {
-                for i in 0..5 {
-                    store
-                        .add(new_note(&format!("t{t}-{i}"), &[], Priority::Normal), NOW)
-                        .unwrap();
-                }
-            })
-        })
-        .collect();
-    for handle in threads {
-        handle.join().unwrap();
-    }
-    let mut ids: Vec<u64> = store
-        .list(&ListFilter::default())
-        .unwrap()
-        .notes
-        .iter()
-        .map(|n| n.id.get())
-        .collect();
-    ids.sort_unstable();
-    assert_eq!(ids, (1..=20).collect::<Vec<_>>());
-}
-
-#[test]
-fn a_store_from_a_newer_build_is_refused_not_rewritten() {
-    let dir = tempdir();
-    let path = dir.path().join(STORE_FILE);
-    let newer = r#"{"format": 2, "records": {"shape": "unknown to this build"}}"#;
-    write_store_file(dir.path(), newer);
-    let store = Store::open(dir.path());
-
-    let err = store.list(&ListFilter::default()).unwrap_err();
-    assert!(
-        matches!(
-            err,
-            Error::NewerFormat {
-                found: 2,
-                supported: 1,
-                ..
+/// Every file under `root` with its bytes, for proving reads write nothing.
+fn snapshot(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for item in fs::read_dir(&dir).unwrap() {
+            let path = item.unwrap().path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                out.push((path.clone(), fs::read(&path).unwrap()));
             }
-        ),
+        }
+    }
+    out.sort();
+    out
+}
+
+#[test]
+fn the_fixture_reads_whole_and_reading_writes_nothing() {
+    let (_dir, store) = store();
+    let before = snapshot(store.root());
+    let entries = store.list_entries(&EntryFilter::default()).unwrap();
+    assert!(entries.skipped.is_empty(), "{:?}", entries.skipped);
+    let ids: Vec<String> = entries
+        .listing
+        .items
+        .iter()
+        .map(|e| e.id.to_string())
+        .collect();
+    assert_eq!(
+        ids,
+        ["rituals-1", "preferences-1", "decisions-1", "decisions-2"]
+    );
+    let sessions = store.list_sessions(&SessionFilter::default()).unwrap();
+    assert_eq!(sessions.listing.total, 2);
+    assert_eq!(store.proposals().unwrap()[0].id.to_string(), "p-1");
+    let tags = store.list_tags().unwrap();
+    let rows: Vec<(String, usize, bool)> = tags
+        .tags
+        .iter()
+        .map(|t| (t.name.to_string(), t.entries, t.def.is_some()))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            (String::from("decisions"), 2, true),
+            (String::from("preferences"), 1, true),
+            (String::from("rituals"), 1, false),
+        ]
+    );
+    store.entry(&"decisions-2".parse().unwrap()).unwrap();
+    store
+        .session(&"7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02".parse().unwrap())
+        .unwrap();
+    assert_eq!(snapshot(store.root()), before);
+    assert!(!store.audit_path().exists());
+}
+
+#[test]
+fn filters_apply_before_the_limit() {
+    let (_dir, store) = store();
+    let filter = EntryFilter {
+        status: Some(EntryStatus::Active),
+        limit: NonZeroUsize::new(1),
+        ..EntryFilter::default()
+    };
+    let list = store.list_entries(&filter).unwrap();
+    assert_eq!(list.listing.total, 2);
+    assert!(list.listing.truncated());
+    let by_tag = EntryFilter {
+        tag: Some("decisions".parse::<TagName>().unwrap()),
+        ..EntryFilter::default()
+    };
+    assert_eq!(store.list_entries(&by_tag).unwrap().listing.total, 2);
+}
+
+#[test]
+fn a_stored_quote_passes_the_verbatim_check_against_its_entry() {
+    let (_dir, store) = store();
+    for proposal in store.proposals().unwrap() {
+        for quote in &proposal.quotes {
+            let entry = store.entry(&quote.entry).unwrap();
+            assert!(
+                verbatim::contains(&entry.content, &quote.text),
+                "{} does not quote {}",
+                proposal.id,
+                quote.entry
+            );
+        }
+    }
+}
+
+#[test]
+fn a_record_from_a_newer_build_is_refused_not_rewritten() {
+    let (_dir, store) = store();
+    let path = store.entry_path(&"decisions-2".parse().unwrap());
+    let text = fs::read_to_string(&path)
+        .unwrap()
+        .replace("format: 1", "format: 9");
+    fs::write(&path, &text).unwrap();
+    let err = store.list_entries(&EntryFilter::default()).unwrap_err();
+    assert!(
+        matches!(err, Error::NewerFormat { found: 9, .. }),
         "got {err:?}"
     );
-    let err = store
-        .add(new_note("x", &[], Priority::Normal), NOW)
-        .unwrap_err();
     assert_eq!(err.code(), "store_too_new");
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), newer);
-    // STD-02 R34: refused before the first side effect, so no lock file either.
-    assert!(!dir.path().join(".lock").exists());
+    assert_eq!(fs::read_to_string(&path).unwrap(), text);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_group_writable_root_or_a_linked_record_is_refused() {
+    let (_dir, store) = store();
+    private(store.root(), 0o770);
+    let err = store.list_entries(&EntryFilter::default()).unwrap_err();
+    assert_eq!(err.code(), "store_permissions", "got {err:?}");
+    private(store.root(), 0o700);
+
+    let path = store.entry_path(&"decisions-2".parse().unwrap());
+    let real = store.root().join("decisions-2.md.real");
+    fs::rename(&path, &real).unwrap();
+    std::os::unix::fs::symlink(&real, &path).unwrap();
+    let err = store.entry(&"decisions-2".parse().unwrap()).unwrap_err();
+    assert_eq!(err.code(), "store_symlink", "got {err:?}");
 }
 
 #[test]
-fn a_corrupt_store_is_reported_with_its_path() {
-    let dir = tempdir();
-    write_store_file(dir.path(), "not json");
-    let err = Store::open(dir.path())
-        .list(&ListFilter::default())
-        .unwrap_err();
-    assert_eq!(err.code(), "store_corrupt");
-    assert!(err.to_string().contains(STORE_FILE), "got {err}");
-}
-
-#[test]
-fn a_format_one_document_with_only_required_fields_still_loads() {
-    // Persisted shape contract (STD-02 R16): fields added later default.
-    let dir = tempdir();
-    let minimal = r#"{"format": 1, "notes": [
-        {"id": 1, "title": "old", "created_at": "2025-05-06T07:08:09Z"}
-    ]}"#;
-    write_store_file(dir.path(), minimal);
-    let notes = Store::open(dir.path())
-        .list(&ListFilter::default())
-        .unwrap()
-        .notes;
-    assert_eq!(notes.len(), 1);
-    assert_eq!(notes[0].priority, Priority::Normal);
-    assert!(notes[0].tags.is_empty());
-    assert_eq!(notes[0].body, None);
-}
-
-#[test]
-fn format_zero_never_existed_and_reads_as_corrupt() {
-    let dir = tempdir();
-    write_store_file(dir.path(), r#"{"format": 0, "notes": []}"#);
-    let err = Store::open(dir.path())
-        .list(&ListFilter::default())
-        .unwrap_err();
-    assert_eq!(err.code(), "store_corrupt");
+fn the_redactor_masks_a_value_from_the_store_config() {
+    let (_dir, store) = store();
+    let config = store.config().unwrap();
+    let redactor = Redactor::from_config(&config, |name| {
+        (name == "GITHUB_TOKEN").then(|| String::from("ghp_0123456789abcdef"))
+    });
+    let mut entry = store.entry(&"decisions-2".parse().unwrap()).unwrap();
+    entry.content = String::from("token ghp_0123456789abcdef here");
+    redactor.entry(&mut entry);
+    assert_eq!(entry.content, "token [redacted:GITHUB_TOKEN] here");
 }

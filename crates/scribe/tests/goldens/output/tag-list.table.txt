@@ -1,0 +1,4 @@
+NAME         ENTRIES  STALE DAYS  ALIASES          DESCRIPTION
+decisions          2           -  decision,dec     choices Daniel has made
+preferences        1         180  preference,pref  how Daniel likes things done
+rituals            1           -  -                -

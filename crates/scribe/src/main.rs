@@ -1,4 +1,5 @@
-//! `scribe`: keep short notes in a local store.
+//! `scribe`: Daniel's recorded decisions and preferences, and the records of
+//! the sessions he cataloged.
 //!
 //! `main` is wiring only: parse, resolve the output sink once, resolve the
 //! context, run the command (audited in `commands::run`), render. See

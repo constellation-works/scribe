@@ -1,0 +1,19 @@
+Show one entry in full: what was said, its content and its cite
+
+Usage: scribe entry show [OPTIONS] <ID>
+
+Arguments:
+  <ID>  The entry's id, as printed by `entry list`
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Global options:
+      --root <DIR>       Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>  Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json             Shorthand for --format json
+
+Examples:
+  scribe entry show <id>
+  scribe entry show <id> --json
