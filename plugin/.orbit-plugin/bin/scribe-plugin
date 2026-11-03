@@ -1,0 +1,17 @@
+#!/bin/sh
+# Orbit exec backend for scribe: run the installed binary as
+# `scribe plugin call`, which reads the envelope on stdin and prints one
+# reply envelope. When no `scribe` is on PATH, answer with an error envelope
+# (and exit 0, as the protocol asks) instead of failing the call.
+set -u
+
+fail() {
+    cat >/dev/null
+    printf '{"ok":false,"error":{"code":"%s","message":"%s","retryable":false}}\n' "$1" "$2"
+    exit 0
+}
+
+bin=$(command -v scribe) ||
+    fail not_installed "no scribe binary on PATH; run make install in the scribe repository"
+
+exec "$bin" plugin call

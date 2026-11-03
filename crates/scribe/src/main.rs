@@ -18,6 +18,7 @@ mod commands;
 mod error;
 mod models;
 mod output;
+mod tasks;
 
 use std::process::ExitCode;
 

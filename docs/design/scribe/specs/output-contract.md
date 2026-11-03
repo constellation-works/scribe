@@ -105,7 +105,9 @@ breaking change and shows up as a golden diff.
 Stable codes: `entry_not_found`, `session_not_found`, `io_error`,
 `store_corrupt`, `config_invalid`, `store_too_new`, `store_locked`,
 `store_symlink`, `store_foreign_owner`, `store_permissions`, `no_data_dir`,
-`output_error`, `usage_error`, `hook_payload_invalid`. A hook's refusals
+`output_error`, `usage_error`, `hook_payload_invalid`, and for `question
+ask` the model codes `model_timeout`, `model_unavailable`, `model_failed`,
+`model_malformed`. A hook's refusals
 are not errors and appear only in its reply and audit lines:
 `unknown_tag`, `unparsed_instruction`, `unsupported_instruction`,
 `no_referent`, `provenance_failed`, `unknown_scribe_command`. A session
@@ -166,3 +168,58 @@ print one row per pass (`session result error_code passes dropped_terms`);
 with nothing due stdout is empty, stderr says `no session pass is due` and
 the exit is 0. A failed pass still exits 0; each pass except a `waiting`
 one writes one audit line (`target` `session:<id>`, with its code).
+
+## Ask
+
+`scribe question ask "<question>" --json` and the Orbit tool `scribe.ask`
+return the same object (2_design.md §6.1, §6.6):
+
+```json
+{
+  "status": "answered | no_record | conflict | record",
+  "answer": "…",
+  "claims": [{"text": "…", "quote": "…", "cite": "decisions-2"}],
+  "conflicts": [{"cites": ["decisions-1", "decisions-2"], "note": "…"}],
+  "evidence_considered": 3,
+  "dropped_quotes": 0,
+  "hidden_matches": 1,
+  "lookup": null,
+  "records": [],
+  "warnings": []
+}
+```
+
+`cite` is an entry id, `session:<id>` or `task:<id>`; every `quote` was
+found verbatim in the item it cites. `evidence_considered` is the number of
+items the model read, or of records a lookup returned; `dropped_quotes`
+counts claims dropped by the check; `hidden_matches` counts superseded or
+retired entries that matched and were left out (0 with `include_hidden`).
+`lookup` is `null` when retrieval ran, else `last_session`,
+`named_session`, `next_steps`, `tag_period`, `term` or
+`orchestrator_session`, and then `status` is `record` and `records` holds
+the stored records, each `{"kind": "entry" | "session" | "task", "cite",
+"entry", "session", "task", "terms"}` with exactly the one named by `kind`
+set: `entry` is `entry show --json`'s object, `session` is `session show
+--json`'s (with `on` and `due`), `task` is `{"id", "title", "status",
+"tags", "updated", "execution_summary"}` with the summary verbatim, and
+`terms` holds the terms a term lookup matched. `warnings` lists record
+files skipped because they did not parse, as a list's do.
+
+Plain prints `<status>\t<answer>`, then `claim\t<cite>\t<quote>\t<text>`,
+`conflict\t<cites>\t<note>` and `record\t<kind>\t<cite>` lines; the table
+is a detail view followed by each record in full. A model failure exits 1
+with its code; nothing found is `no_record` and exits 0. `question ask`
+reads only and writes no audit line.
+
+## Plugin envelope
+
+`scribe plugin call` reads Orbit's exec envelope (`{"schema_version": 1,
+"tool": "scribe.<verb>", "input", "context": {"config": {"root",
+"task_workspaces"}, …}}`) on stdin and prints exactly one compact line, in
+every mode, then exits 0: `{"ok": true, "output": <ask>}`, or `{"ok":
+false, "error": {"code", "message", "retryable"}}` with `code`
+`invalid_envelope`, `unknown_tool`, `invalid_input` (unknown keys
+included), `not_configured` (`root` missing, empty or relative),
+`not_implemented` (`scribe.session-pass`, `scribe.consistency-scan`), a
+model code (`retryable` for `model_timeout` and `model_failed`) or a store
+code. It writes no audit line.

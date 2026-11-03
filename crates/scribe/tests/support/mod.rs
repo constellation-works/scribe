@@ -68,6 +68,22 @@ impl Fixture {
         out
     }
 
+    /// Write an executable script `bin/<name>` in the fixture, outside the
+    /// home and the data root, and return a `PATH` that finds it first.
+    #[cfg(unix)]
+    pub fn fake_program(&self, name: &str, script: &str) -> std::ffi::OsString {
+        use std::os::unix::fs::PermissionsExt;
+        let bin = self.elsewhere("bin");
+        std::fs::create_dir_all(&bin).expect("create fake bin");
+        let path = bin.join(name);
+        std::fs::write(&path, script).expect("write fake program");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))
+            .expect("make fake program executable");
+        let mut var = bin.into_os_string();
+        var.push(":/usr/bin:/bin");
+        var
+    }
+
     /// Copy the fixture store (`tests/fixtures/store`) to the data root,
     /// owner-only, for the output goldens and most tests.
     pub fn seed(&self) {

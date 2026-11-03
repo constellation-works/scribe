@@ -1,0 +1,5 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Not wired yet: every call answers not_implemented. The routine slice defines this output.",
+  "type": "object"
+}

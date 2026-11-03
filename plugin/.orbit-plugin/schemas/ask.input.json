@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["question"],
+  "properties": {
+    "question": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "scope": {
+      "type": "object",
+      "description": "Every field set must match. tags keeps entries only; tags, topics or kind leave Orbit tasks out.",
+      "properties": {
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "topics": { "type": "array", "items": { "type": "string" } },
+        "project": { "type": "string" },
+        "kind": { "enum": ["entry", "session"] },
+        "since": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" }
+      },
+      "additionalProperties": false
+    },
+    "include_hidden": {
+      "type": "boolean",
+      "description": "Superseded and retired entries are evidence too. Default false."
+    }
+  },
+  "additionalProperties": false
+}

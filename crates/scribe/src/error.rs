@@ -28,6 +28,9 @@ pub(crate) enum CliError {
         #[source]
         source: io::Error,
     },
+    /// A model call failed (`question ask`).
+    #[error(transparent)]
+    Model(#[from] scribe_core::models::ModelError),
     /// Writing the result to stdout failed for a reason other than a closed pipe.
     #[error("cannot write output")]
     Output(#[source] io::Error),
@@ -41,6 +44,7 @@ impl CliError {
             Self::NoDataDir => "no_data_dir",
             Self::HookPayload(_) => "hook_payload_invalid",
             Self::Read { .. } => "io_error",
+            Self::Model(e) => e.code(),
             Self::Output(_) => "output_error",
         }
     }
@@ -66,6 +70,7 @@ impl CliError {
             | Self::NoDataDir
             | Self::HookPayload(_)
             | Self::Read { .. }
+            | Self::Model(_)
             | Self::Output(_) => None,
         }
     }

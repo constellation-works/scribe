@@ -30,6 +30,7 @@
 // Unit tests use unwrap/expect for fixture setup; production call sites remain linted.
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
+pub mod ask;
 pub mod capture;
 mod config;
 pub mod control;

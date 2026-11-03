@@ -113,12 +113,17 @@ ban "$CORE"          'std::env::|home_dir|current_dir'           "the core crate
 ban "$CLI/app.rs"    'crate::(cli|commands|output|audit_middleware)' "app.rs (composition) must not import surface modules"
 # The model adapter is composed by app.rs and knows nothing of the surface (R2).
 ban "$CLI/models.rs" 'crate::(cli|commands|output|audit_middleware)' "models.rs (the model adapter) must not import surface modules"
-# One module spawns processes, so process-group supervision, the cleared
-# environment and the budget live in one place (STD-03 R11-R15, STD-05 R10).
+# So is the Orbit task adapter, which reuses the model adapter's supervisor.
+ban "$CLI/tasks.rs"  'crate::(cli|commands|output|audit_middleware)' "tasks.rs (the Orbit task adapter) must not import surface modules"
+# Two adapters spawn processes, and both go through models.rs's supervisor,
+# so process-group supervision, the cleared environment and the budget live
+# in one place (STD-03 R11-R15, STD-05 R10).
 for path in "$CLI"/*; do
-  case "$(basename "$path")" in models.rs | tests) continue ;; esac
-  ban "$path" 'process::(Command|Child)|Command::new' "only models.rs spawns processes: reach a model through the Models port"
+  case "$(basename "$path")" in models.rs | tasks.rs | tests) continue ;; esac
+  ban "$path" 'process::(Command|Child)|Command::new' "only models.rs and tasks.rs spawn processes: reach a model through the Models port, Orbit through the Tasks port"
 done
+ban "$CLI/tasks.rs" 'process::Child|\.spawn\(' "tasks.rs runs children only through models::supervise"
+
 # Rendering is derived from payloads only; it never reaches back up (R1).
 ban "$CLI/output"    'crate::(app|cli|commands|audit_middleware)'    "output must not import app, cli, commands or audit_middleware"
 # Dispatch depends on the middleware, never the reverse (R1).

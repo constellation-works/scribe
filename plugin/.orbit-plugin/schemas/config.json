@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "[plugins.scribe] settings.",
+  "type": "object",
+  "properties": {
+    "root": {
+      "type": "string",
+      "description": "The scribe data directory, an absolute path (the CLI's ~/.scribe). The sandbox grants read access to it alone; until it is set, scribe.ask answers not_configured."
+    },
+    "task_workspaces": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Workspaces whose Orbit tasks ask reads (orbit.search's workspaces), such as the one holding orchestration tasks. Empty: the workspace the call is bound to. Orbit refuses a federated search inside a managed run."
+    }
+  },
+  "additionalProperties": false
+}

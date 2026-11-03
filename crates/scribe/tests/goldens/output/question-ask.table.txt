@@ -1,0 +1,38 @@
+status      record
+answer      The newest session record in scope, as stored.
+lookup      last_session
+evidence    1 considered, 0 quotes dropped, 0 hidden matches
+claims      -
+conflicts   -
+
+id          7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02
+title       Merge policy for agent PRs
+status      open
+on          yes
+due         yes
+project     constellation-works/scribe
+topics      release,merge-policy
+related     -
+provider    claude-code
+host        dk-server-1
+cwd         /home/daniel/workspace/scribe
+started     2026-11-02T18:50:00Z
+on since    2026-11-02T18:55:00Z
+updated     2026-11-02T19:40:00Z
+passes      2
+next open   2
+through     9a1b2c3d-0000-4000-8000-0000000001aa
+terms       agent PR: "by agent PR I mean any PR a crew opens" (message 9a1b2c3d-0000-4000-8000-000000000001)
+
+## Summary
+Discussed how agent PRs are merged and recorded the decision.
+
+## Goals
+Agree a merge policy.
+
+## Outcome
+Squash-merge agent PRs; releases keep merge commits.
+
+## Next
+- update the contributing guide
+- tell the release crew

@@ -13,8 +13,8 @@ mod sink;
 mod table;
 
 pub(crate) use payload::{
-    EntryPayload, HookOutcome, HookReply, Output, PassPayload, PassReport, ProposalPayload, Record,
-    Records, SessionPayload, TagPayload, WarningPayload,
+    AskPayload, EntryPayload, HookOutcome, HookReply, Output, PassPayload, PassReport, PluginError,
+    PluginReply, ProposalPayload, Record, Records, SessionPayload, TagPayload, WarningPayload,
 };
 pub(crate) use sink::{FORMAT_ENV, FormatArg, Sink};
 
@@ -114,6 +114,12 @@ fn emit(sink: &Sink, output: &Output) -> io::Result<()> {
             let _ = writeln!(err, "{notice}");
         }
     }
+    if let Output::Ask(payload) = output {
+        let mut err = io::stderr().lock();
+        for warning in &payload.warnings {
+            let _ = writeln!(err, "warning: skipped {}", warning.error);
+        }
+    }
     if let Output::Pass(report) = output {
         let mut err = io::stderr().lock();
         for notice in &report.notices {
@@ -131,6 +137,8 @@ fn emit(sink: &Sink, output: &Output) -> io::Result<()> {
         Output::Show { record } => render::show(&mut out, sink, record)?,
         Output::Hook(reply) => render::hook(&mut out, reply)?,
         Output::Pass(report) => render::pass(&mut out, sink, report)?,
+        Output::Ask(payload) => render::ask(&mut out, sink, payload)?,
+        Output::Plugin(reply) => render::plugin(&mut out, reply)?,
     }
     out.flush()
 }
