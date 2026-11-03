@@ -11,7 +11,7 @@ summary: How the scribe plugin is bounded (one binary; hooks write, agents only 
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-13117, ORB-13134]
+related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134]
 ---
 
 # scribe — Design
@@ -20,8 +20,10 @@ The design of the scribe plugin: its boundary, the four parts named in
 [1_overview.md §2](./1_overview.md#2-shape), the store, the model choices,
 and the slices that build it. Slices S1 (the domain, the store and the
 read-only CLI), S2 (`#scribe` capture without a model, and the Claude Code
-package), S3 (referents and the models port) and S4 (`/scribe on` and
-session records) are implemented; the rest is not yet. The reasons behind each choice
+package), S3 (referents and the models port), S4 (`/scribe on` and
+session records), S5 (the Orbit plugin tree and `ask`) and S6 (the
+consistency routine and the settling verbs) are implemented; S7
+(discussions) is not yet. The reasons behind each choice
 are in [4_decisions.md](./4_decisions.md); open directions are in
 [3_vision.md](./3_vision.md). Where this doc and the template's engineering
 rules meet (atomic writes, the store lock, the audit guard, output modes,
@@ -87,6 +89,11 @@ command file, `commands/scribe.md`, whose body is `/scribe $ARGUMENTS` and
 whose only effect is the same hook call: Claude Code knows the command, and
 whichever form reaches the hook, typed or expanded, starts with `/scribe`
 ([4_decisions.md](./4_decisions.md#scribe-ships-a-command-file-that-expands-to-itself)).
+As built in S6, `SessionStart` (10 s) joins them: `scribe hook session-start`
+prints `scribe: <n> proposals to review — scribe proposal list` as a
+`systemMessage` for Daniel when any proposal is open, and nothing
+otherwise. It reads only; it does not create `config.toml`
+([§3](#3-storage)).
 
 Entry writes never go through Orbit's tool surface: the hooks call the
 binary. The two routine tools write session records and proposals, but they
@@ -115,6 +122,28 @@ through the same code as `question ask`, and always prints one envelope line
 and exits 0: errors are `invalid_envelope`, `unknown_tool`, `invalid_input`,
 `not_configured`, `not_implemented`, a model code (`model_timeout` and
 `model_failed` retryable) or a store code. It is read-only and not audited.
+
+As built (S6): the two routine tools are wired to the CLI's code, and the
+tree gains `routines/session_pass.yaml` and `routines/consistency.yaml`
+(seeded by `orbit plugin enable` as `scribe-session-pass`, `*/5 * * * *`,
+and `scribe-consistency`, `0 6 * * 1`, both `enabled: false`) and
+`jobs/session_pass.yaml` and `jobs/consistency.yaml` (`scribe-session-pass`
+and `scribe-consistency`, one `plugin.tool_call` step each, 300 s), listed
+under `spec.definitions` rather than in a `definitions/` directory.
+`scribe.session-pass` runs `session pass` and `scribe.consistency-scan`
+runs `consistency scan`, each answering the report its `--json` prints
+(`schemas/routine.output.json`). Departures, each in
+[4_decisions.md](./4_decisions.md#the-routine-tools-start-no-unit-after-a-deadline-and-audit-inside-the-call):
+`timeout_ms` is 300000, Orbit's cap, not 720000, so a tool call starts no
+session after 50 s and no batch after 170 s (the first always starts) and
+leaves the rest for the next run; the store root is granted `fs.write` as
+well as `fs.read`, and a new `transcripts` setting (Claude Code's projects
+directory, absolute) is granted `fs.read` and must be set for
+`scribe.session-pass`; the `root` default is `/var/tmp`, which means unset,
+because Orbit grants writes only to a directory that exists outside the
+install tree; and the routine tools are audited inside the call, in the
+store their envelope names, under the CLI verbs' command names
+(`plugin call` itself stays unaudited). The tools take only `{}`.
 
 ## 2. Layering
 
@@ -292,7 +321,9 @@ an unknown key or bad value is refused, naming the file and line
 ([specs/store.md](./specs/store.md#config)).
 The file is created by `scribe hook session-start` on first run with the
 defaults ([4_decisions.md](./4_decisions.md#only-decisions-and-preferences-ship-by-default))
-if absent; scribe never rewrites it after that.
+if absent; scribe never rewrites it after that. As built (S6), it is not:
+`session-start` reads only, and a missing file is the defaults
+([4_decisions.md](./4_decisions.md#session-start-reads-only)).
 
 **Redaction.** Before any write of `said`, `content`, a session record's
 title, text fields and terms, or a proposal's `reason` and quotes, the store masks
@@ -365,10 +396,15 @@ echoes it instead of writing again.
 
 As built (S2): hashtags at the end of the line, after the tag, are the
 entry's topics, lowercased and deduplicated (more than five is refused as
-`unparsed_instruction`); they are not part of `content`. Form 4 and
-`#scribe distill …` ([§4.5](#45-distilling-a-discussion)) are recognised
-and refused with `error_code: unsupported_instruction` until S6 and S7
-build them, so they are never misread as form 2. Form 3 is resolved since
+`unparsed_instruction`); they are not part of `content`.
+`#scribe distill …` ([§4.5](#45-distilling-a-discussion)) is recognised
+and refused with `error_code: unsupported_instruction` until S7 builds it,
+so it is never misread as form 2. Form 4 is built since S6: a settling
+verb takes exactly one id of its kind (a proposal id for `approve` and
+`reject`, an entry id for `retire` and `forget`, trailing `.`, `!`, `,` or
+`;` allowed), and anything else after the verb is refused as
+`unparsed_instruction` (`#scribe approve takes a proposal id, such as
+p-4`). Form 3 is resolved since
 S3 ([§4.3](#43-resolving-this-and-it)); a form-3 line whose tag is unknown
 is refused as `unknown_tag` before any model call, as in the reply example
 below. Form 3 is a line whose content is exactly one of the four referent
@@ -404,8 +440,8 @@ characters; it is cited the same way. Its echo reads `scribe: added
 decisions-3 to decisions (guessed: <why>; recorded the assistant message
 before your prompt instead) — "…"`, where `<why>` is the timeout, the model
 error, a message not in the window, or a span that is not word for word in
-its message. Until S6 builds `#scribe retire`, a wrong guess is visible with
-`scribe entry show <id>` and stays. Two cases differ from the paragraph
+its message. A wrong guess is visible with `scribe entry show <id>`, and
+`#scribe retire <id>` (since S6) hides it. Two cases differ from the paragraph
 above: a session with no earlier message (the first prompt, or a transcript
 not written yet) has nothing to point at, so the line is refused as
 `no_referent` and the model is not called
@@ -514,6 +550,12 @@ its job and the tool's wiring ship with the consistency routine in S6
 ([§10](#10-slice-plan): "the two routines ship seeded disabled"), so the
 tool answers `not_implemented` and `scribe session pass` still runs by hand
 or from cron.
+As built (S6): the routine and its job ship, seeded disabled, and the tool
+runs the same code as `scribe session pass`; it reads the transcripts under
+the plugin's `transcripts` setting and starts no session after the first
+once 50 s have passed, so one call ends inside Orbit's 300 s backend
+timeout; the rest count as `remaining` for the next run
+([§1](#1-boundary-and-surfaces)).
 
 ### 5.3 A pass
 
@@ -761,6 +803,46 @@ shape — newer side by date, held items, a resolve step — but not its
 inputs, which were Orbit tasks fed by a ledger extractor that no longer
 exists here.
 
+As built (S6): `scribe consistency scan` (and `scribe.consistency-scan`)
+runs the steps above in `scribe_core::consistency`, pure, with
+`Store::reapply_approved`, `Store::open_proposals` and `Store::settle` the
+three locked writes. Candidates are same-tag active pairs that share a
+topic hashtag (the "explicit subject term") or whose content tokens
+(`ask`'s tokenizer: lowercased, stopwords out, light stemming) overlap by
+at least one in four; a pair with a proposal in any state, in either
+order, is never offered again, nor is an entry with a `stale` proposal.
+The 40 pairs go to the model ten per call (`CONSISTENCY_SCHEMA`: one
+judgement per pair, `pair` its number in the batch), each call within
+120 s; a failed batch is reported (`failed_batches`) and audited, and its
+pairs are offered again next scan. A label for an unknown pair, a second
+label for one pair, an unknown label or a quote that is not verbatim in its
+entry is dropped and counted (`dropped_labels`); `unrelated` is counted,
+not stored, so an unrelated pair is judged again by later scans
+([§9](#9-concerns--honest-limitations)). A `stale` proposal's reason is
+scribe's own sentence, and its quote the entry's first 200 characters. The
+store numbers the drafts `p-<max+1>` under the lock, checking again that
+both entries are still active and the subject has no proposal, and masks
+their text with the redactor. The scan changes an entry only by
+re-applying an approval. A pair the model labels `refines` becomes a
+`supersedes` proposal like `contradicts`; topic-merge proposals are not
+built.
+
+The settling verbs run in `scribe hook user-prompt-submit`, in prompt
+order after the transcript check, one locked `Store::settle` each:
+`approve` needs an open proposal whose older entry is still `active`
+(refused `entry_not_active` otherwise), and writes `proposals.json` before
+the entry, so a crash between them is what the next scan re-applies;
+`reject` of an approved proposal or `approve` of a rejected one is refused
+`proposal_settled`; `retire` takes an `active` entry; `forget` takes any
+entry not yet forgotten and also blanks every proposal quote of it and the
+reason of every proposal about it, so its words leave the store. A repeated
+instruction echoes `… — nothing changed` and is not audited; a change is
+one audit line whose target is the proposal or entry, a refusal one line
+with its code (`proposal_not_found`, `entry_not_found`,
+`proposal_settled`, `entry_not_active`). `settled_by` is the typed turn's
+cite with `message: null`: the `Stop` hook fills entries' message ids, not
+proposals'.
+
 ## 8. Models
 
 | Use | Config key | Default | Called from | Budget |
@@ -897,13 +979,20 @@ writes none.
 - **The model sees Daniel's records.** Entries and session summaries go to
   Anthropic through the Claude CLI, as the sessions themselves already do.
   Nothing else leaves the host.
+- **An unrelated pair is judged again.** `unrelated` labels are not
+  stored, so a pair the model found unrelated is offered on every scan
+  until one entry stops being active; the cap of 40 pairs, newest first,
+  bounds the cost, but an old unrelated pair can keep a newer one waiting.
+- **One routine call does less than the CLI run.** Orbit caps a plugin
+  call at 300 s, so `scribe.session-pass` starts no session after 50 s and
+  `scribe.consistency-scan` no batch after 170 s; the rest waits for the
+  next run (every five minutes, or next week for the scan).
 - **Cadence depends on Orbit.** With the session-pass routine disabled,
   sessions are marked due but never summarised; `scribe session list` shows
   `due` so the gap is visible.
 - **A guessed referent is still an entry.** When Haiku fails, the fallback
   records the previous assistant message; the echo says so, but an
-  unattended guess stays until Daniel retires it, which needs S6's
-  `#scribe retire`.
+  unattended guess stays until Daniel retires it with `#scribe retire`.
 - **A referent costs the prompt up to about 21 seconds.** The hook waits
   for the model (20 s budget, 1 s grace) before the prompt reaches the
   agent; the hook's own timeout is 30 s, so two referent lines that both
@@ -1057,5 +1146,7 @@ there once S4 is in use, so two scribes never intercept the same
 - [ORB-21784] — S4: `/scribe on|off|status`, session-pass cadence and session records.
 - [ORB-21760] — the operator's live checks of each slice.
 - [ORB-21787] — S5: the Orbit plugin tree and `ask`.
+- [ORB-21795] — S6: the consistency routine, the settling verbs, the
+  `SessionStart` hook and the two routines.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.

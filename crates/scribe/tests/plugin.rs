@@ -168,14 +168,19 @@ fn bad_input_is_invalid_input() {
 }
 
 #[test]
-fn the_routine_tools_are_not_implemented_and_unknown_tools_are_refused() {
+fn unknown_tools_are_refused() {
     let s = Setup::new();
-    for tool in ["scribe.session-pass", "scribe.consistency-scan"] {
-        let reply = s.reply(tool, json!({}), s.root_config());
-        assert_eq!(error_code(&reply), "not_implemented", "{tool}");
-    }
     let reply = s.reply("scribe.delete-everything", json!({}), s.root_config());
     assert_eq!(error_code(&reply), "unknown_tool");
+}
+
+#[test]
+fn the_routine_tools_refuse_any_input_key() {
+    let s = Setup::new();
+    for tool in ["scribe.session-pass", "scribe.consistency-scan"] {
+        let reply = s.reply(tool, json!({"limit": 1}), s.root_config());
+        assert_eq!(error_code(&reply), "invalid_input", "{tool}");
+    }
 }
 
 #[test]

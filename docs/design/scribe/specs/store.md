@@ -158,6 +158,17 @@ listed with `configured: false`.
   ran; a `final` set while a non-final pass ran is kept) in one locked
   call, so a record and its `due` flag never disagree. With no record it
   only settles. A pass never writes an entry.
+- **Proposals** (S6). `Store::open_proposals` numbers new proposals
+  `p-<max+1>` under `.lock`, skipping any whose pair or stale entry already
+  has a proposal in any state or whose entries are no longer all `active`,
+  redacts them, and replaces `proposals.json` only when one opened.
+  `Store::settle` applies one `#scribe approve|reject|retire|forget` under
+  `.lock`, writing `proposals.json` first and then each entry it changed,
+  so a crash between them leaves an approved proposal whose older entry is
+  still `active`; `Store::reapply_approved` (the scan's first step)
+  finishes it. A forget blanks the entry's `said` and body and, in
+  `proposals.json`, the `text` of its quotes and the `reason` of every
+  proposal about it. Nothing is written when nothing changed.
 - **Failures in a row** (S4). `Store::failures_in_a_row` counts the
   newest audit lines for a command and target back to the last `ok` one;
   `session pass` uses it for its three-failures rule

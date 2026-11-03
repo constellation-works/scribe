@@ -43,10 +43,11 @@ pub use audit::{AUDIT_FILE, AuditEvent, AuditStatus};
 pub use redact::{MIN_SECRET_CHARS, REDACTED_FIELDS, Redactor};
 
 use crate::config::Config;
+use crate::consistency::{self, Draft, Reapplied, Settle, Settled};
 use crate::control;
 use crate::entry::{Cite, Entry, EntryFilter, EntryId, NewEntry};
 use crate::error::{Error, Result};
-use crate::proposal::Proposal;
+use crate::proposal::{Proposal, ProposalId};
 use crate::record::Listing;
 use crate::session::{ControlState, SessionFilter, SessionId, SessionRecord};
 use crate::tag::{self, TagSummary};
@@ -461,6 +462,108 @@ impl Store {
         };
         self.change_control(|state| control::settle(state, session, ran_final))?;
         Ok(written)
+    }
+
+    /// Re-apply, under the store lock, every approved proposal whose older
+    /// entry is still `active` ([`consistency::reapply`]): an approval
+    /// writes `proposals.json` and then the entry, and this repairs a crash
+    /// between the two. Writes only the entries it changes.
+    pub fn reapply_approved(&self, now: time::OffsetDateTime) -> Result<Vec<Reapplied>> {
+        if !self.root_exists()? {
+            return Ok(Vec::new());
+        }
+        let proposals = self.proposals()?;
+        let (entries, _) = self.load_entries()?;
+        let mut probe = entries;
+        if consistency::reapply(&proposals, &mut probe, now).is_empty() {
+            return Ok(Vec::new());
+        }
+        let _lock = self.lock("consistency scan")?;
+        let proposals = self.proposals()?;
+        let (mut entries, _) = self.load_entries()?;
+        let done = consistency::reapply(&proposals, &mut entries, now);
+        for change in &done {
+            if let Some(entry) = entries.iter().find(|e| e.id == change.entry) {
+                self.write_entry(entry, false)?;
+            }
+        }
+        Ok(done)
+    }
+
+    /// Open one proposal per draft, under the store lock: a draft whose
+    /// pair (or stale entry) already has a proposal in any state, or whose
+    /// entries are no longer all `active`, is skipped
+    /// ([`consistency::is_settled_or_gone`], checked again here because a
+    /// settle may have run since the drafts were made). The rest are
+    /// numbered `p-<n>` past the highest id, their free text masked by
+    /// `redactor`, and `proposals.json` is replaced whole. Returns the
+    /// proposals opened, by id; writes nothing when there are none.
+    pub fn open_proposals(
+        &self,
+        drafts: Vec<Draft>,
+        now: time::OffsetDateTime,
+        redactor: &Redactor,
+    ) -> Result<Vec<Proposal>> {
+        if drafts.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.prepare_dir(&self.root)?;
+        let _lock = self.lock("consistency scan")?;
+        let mut proposals = self.proposals()?;
+        let (entries, _) = self.load_entries()?;
+        let mut next = proposals.iter().map(|p| p.id.number()).max().unwrap_or(0);
+        let mut opened = Vec::new();
+        for draft in drafts {
+            if consistency::is_settled_or_gone(&draft, &proposals, &entries) {
+                continue;
+            }
+            next = next.saturating_add(1);
+            let Ok(id) = ProposalId::try_from(format!("p-{next}")) else {
+                continue;
+            };
+            let mut proposal = draft.into_proposal(id, now);
+            redactor.proposal(&mut proposal);
+            proposals.push(proposal.clone());
+            opened.push(proposal);
+        }
+        if !opened.is_empty() {
+            self.write_proposals(&proposals)?;
+        }
+        Ok(opened)
+    }
+
+    /// Apply one settling instruction typed in the turn `cite`, under the
+    /// store lock ([`consistency::settle`]). `proposals.json` is written
+    /// first and then the entry, so a crash between them leaves an approved
+    /// proposal the next scan re-applies; only what changed is written.
+    pub fn settle(
+        &self,
+        action: &Settle,
+        cite: &Cite,
+        now: time::OffsetDateTime,
+    ) -> Result<Settled> {
+        self.prepare_dir(&self.root)?;
+        let _lock = self.lock("settle")?;
+        let mut proposals = self.proposals()?;
+        let (mut entries, _) = self.load_entries()?;
+        let before_proposals = proposals.clone();
+        let before_entries = entries.clone();
+        let settled = consistency::settle(action, &mut proposals, &mut entries, cite, now);
+        if proposals != before_proposals {
+            self.write_proposals(&proposals)?;
+        }
+        for (entry, before) in entries.iter().zip(&before_entries) {
+            if entry != before {
+                self.write_entry(entry, false)?;
+            }
+        }
+        Ok(settled)
+    }
+
+    /// Replace `proposals.json` whole. The caller holds the lock.
+    fn write_proposals(&self, proposals: &[Proposal]) -> Result<()> {
+        let path = self.root.join(PROPOSALS_FILE);
+        fsio::write_atomic(&path, &format::encode_proposals(&path, proposals)?)
     }
 
     /// How many times in a row `command` last failed for `target`, read

@@ -1,0 +1,18 @@
+# The scribe-session-pass routine's job: one call to scribe.session-pass.
+schemaVersion: 2
+kind: Job
+metadata:
+  name: scribe-session-pass
+spec:
+  state: enabled
+  kind: workflow
+  max_active_runs: 1
+  steps:
+    - id: session-pass
+      timeout_seconds: 300
+      spec:
+        type: deterministic
+        action: plugin.tool_call
+        config:
+          tool: scribe.session-pass
+          input: {}

@@ -5,11 +5,18 @@
   "properties": {
     "root": {
       "type": "string",
-      "description": "The scribe data directory, an absolute path (the CLI's ~/.scribe). The sandbox grants read access to it alone; until it is set, scribe.ask answers not_configured."
+      "description": "The scribe data directory, an absolute path (the CLI's ~/.scribe). The sandbox grants access to it alone. The default, /var/tmp, means unset: every tool answers not_configured until it is set."
+    },
+    "transcripts": {
+      "type": "string",
+      "description": "Claude Code's projects directory, an absolute path (~/.claude/projects, or $CLAUDE_CONFIG_DIR/projects). scribe.session-pass reads the transcripts of sessions switched on with /scribe on there; until it is set (the default is empty), it answers not_configured."
     },
     "task_workspaces": {
       "type": "array",
-      "items": { "type": "string", "minLength": 1 },
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
       "description": "Workspaces whose Orbit tasks ask reads (orbit.search's workspaces), such as the one holding orchestration tasks. Empty: the workspace the call is bound to. Orbit refuses a federated search inside a managed run."
     }
   },

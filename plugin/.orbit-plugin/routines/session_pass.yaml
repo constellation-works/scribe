@@ -1,0 +1,16 @@
+# Seeded disabled as `scribe-session-pass` (2_design.md §5.2). Every five
+# minutes it runs the scribe-session-pass job, which calls
+# scribe.session-pass: the records of the sessions whose pass is due, at
+# most five per run. Enable it only once [plugins.scribe] root and
+# transcripts are set.
+schemaVersion: 1
+name: session-pass
+description: Write the record of each scribe session whose pass is due.
+enabled: false
+trigger:
+  cron: "*/5 * * * *"
+  missed_run: skip
+target: job:scribe-session-pass
+policy:
+  timeout_minutes: 6
+  overlap: forbid

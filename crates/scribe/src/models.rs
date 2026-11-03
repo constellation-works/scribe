@@ -28,7 +28,8 @@
 
 use scribe_core::Models;
 use scribe_core::models::{
-    ASK_SCHEMA, AskAnswer, AskRequest, ClaimAnswer, ConflictAnswer, ModelError, REFERENT_SCHEMA,
+    ASK_SCHEMA, AskAnswer, AskRequest, CONSISTENCY_SCHEMA, ClaimAnswer, ConflictAnswer,
+    ConsistencyAnswer, ConsistencyRequest, JudgementAnswer, ModelError, REFERENT_SCHEMA,
     ReferentAnswer, ReferentRequest, SESSION_SCHEMA, SessionAnswer, SessionRequest, TermAnswer,
 };
 use serde::Deserialize;
@@ -270,6 +271,42 @@ impl Models for ClaudeCliModels {
                 .map(|c| ConflictAnswer {
                     cites: c.cites,
                     note: c.note,
+                })
+                .collect(),
+        })
+    }
+
+    fn consistency(&self, request: &ConsistencyRequest) -> Result<ConsistencyAnswer, ModelError> {
+        #[derive(Deserialize)]
+        struct Judgement {
+            pair: String,
+            label: String,
+            reason: String,
+            older_quote: String,
+            newer_quote: String,
+        }
+        #[derive(Deserialize)]
+        struct Answer {
+            judgements: Vec<Judgement>,
+        }
+        let value = self.call(
+            &request.model,
+            CONSISTENCY_SCHEMA,
+            request.prompt(),
+            request.budget,
+        )?;
+        let a: Answer = serde_json::from_value(value)
+            .map_err(|e| ModelError::Malformed(format!("not a consistency answer: {e}")))?;
+        Ok(ConsistencyAnswer {
+            judgements: a
+                .judgements
+                .into_iter()
+                .map(|j| JudgementAnswer {
+                    pair: j.pair,
+                    label: j.label,
+                    reason: j.reason,
+                    older_quote: j.older_quote,
+                    newer_quote: j.newer_quote,
                 })
                 .collect(),
         })

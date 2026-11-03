@@ -20,6 +20,7 @@ Examples:
   scribe entry show <id> --json
   scribe session list --project scribe
   scribe proposal list
+  scribe consistency scan --json
   scribe tag list
   scribe question ask \"how do we merge agent PRs?\"
   scribe entry list | cut -f1,6

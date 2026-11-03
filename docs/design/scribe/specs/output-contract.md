@@ -123,8 +123,10 @@ for and the `list` command that shows the existing ids.
 (`--json` and `--plain` change nothing): one compact line,
 `{"systemMessage": "...", "hookSpecificOutput": {"hookEventName":
 "UserPromptSubmit", "additionalContext": "..."}}`, or nothing at all when
-there is nothing to say (a prompt without `#scribe`, and every `Stop` and
-`SessionEnd`). It
+there is nothing to say (a prompt without `#scribe`, every `Stop` and
+`SessionEnd`, and a `SessionStart` with no open proposal). `SessionStart`
+with open proposals prints `{"systemMessage": "scribe: <n> proposals to
+review — scribe proposal list"}` (`1 proposal`), and nothing for the agent. It
 exits 0 whenever the payload parsed, including when every line was refused
 or the store could not be used, so the prompt is never blocked; a payload
 that is not valid JSON, lacks a field or has an invalid `session_id` exits 1
@@ -134,8 +136,20 @@ added <id> to <tag> — "<content>"`, `scribe: already recorded <id> in <tag>
 — "<content>"`, `scribe: refused "<line>" — <reason>` or `scribe: could not
 record "<line>" — <error>`. A form-3 line whose referent the model did not
 resolve is still added, and its echo puts `(guessed: <why>; recorded the
-<role> message before your prompt instead)` after the tag. The text is for
-Daniel and the agent to read; the audit line, not the echo, is the record.
+<role> message before your prompt instead)` after the tag. A settling line
+echoes `scribe: approved p-<n> — <older> is superseded by <newer>; ask
+leaves it out of answers` (`<older> is retired` for a stale proposal),
+`scribe: rejected p-<n> — its entries stay as they are, and it is not
+proposed again`, `scribe: retired <id> — ask leaves it out of answers;
+scribe entry show <id> still has it`, `scribe: forgot <id> — its text is
+blanked for good; the id and cite stay`, `scribe: <id> is already <state>
+— nothing changed`, `scribe: refused "<line>" — <reason>` (codes
+`proposal_not_found`, `entry_not_found`, `proposal_settled`,
+`entry_not_active`) or `scribe: could not apply "<line>" — <error>`. A
+change writes one audit line whose `target` is the proposal or entry id; a
+refusal one line with `target` `session:<id>` and its code; a repeat none.
+The text is for Daniel and the agent to read; the audit line, not the
+echo, is the record.
 
 A prompt whose first line is `/scribe on`, `/scribe off`, `/scribe status`
 or a bare `/scribe` (also `/scribe:scribe …`, the plugin-namespaced form;
@@ -168,6 +182,31 @@ print one row per pass (`session result error_code passes dropped_terms`);
 with nothing due stdout is empty, stderr says `no session pass is due` and
 the exit is 0. A failed pass still exits 0; each pass except a `waiting`
 one writes one audit line (`target` `session:<id>`, with its code).
+
+## Consistency scan report
+
+`scribe consistency scan --json` and the Orbit tool
+`scribe.consistency-scan` print `{"reapplied": [{"proposal", "entry",
+"status"}], "opened": [<proposal>, ...], "judged_pairs", "pairs_left",
+"unrelated_pairs", "dropped_labels", "stale_entries", "failed_batches":
+[{"batch", "error_code"}]}`. `reapplied` lists approved proposals whose
+older entry was still `active` and is now `superseded` or `retired`;
+`opened` holds each proposal opened, in `proposal list --json`'s shape, by
+id; `judged_pairs` counts pairs the model labelled, `pairs_left` those past
+the cap of 40 or not reached in this call's time, `unrelated_pairs` those
+labelled `unrelated`, `dropped_labels` labels refused (a quote not verbatim,
+an unknown or repeated pair, an unknown label); `stale_entries` counts
+active entries past `review_after` without a stale proposal;
+`failed_batches` names each batch of ten the model failed, from 1. Plain and
+table print one row per change: `reapplied p-<n> <status> <entry> -`,
+`opened p-<n> <kind> <older> <newer or ->` and `failed batch-<n> <code> -
+-` (columns `action id what older newer`). When nothing was reapplied,
+opened or failed, stdout is empty and stderr says `nothing to propose: …`;
+when pairs are left, stderr says how many. The exit is 0 whenever the store
+could be read, including failed batches. Each reapplied approval (target the
+entry id), opened proposal (target the proposal id) and failed batch
+(target `batch:<n>`, with its code) writes one audit line under
+`consistency scan`.
 
 ## Ask
 
@@ -215,11 +254,16 @@ reads only and writes no audit line.
 
 `scribe plugin call` reads Orbit's exec envelope (`{"schema_version": 1,
 "tool": "scribe.<verb>", "input", "context": {"config": {"root",
-"task_workspaces"}, …}}`) on stdin and prints exactly one compact line, in
-every mode, then exits 0: `{"ok": true, "output": <ask>}`, or `{"ok":
-false, "error": {"code", "message", "retryable"}}` with `code`
-`invalid_envelope`, `unknown_tool`, `invalid_input` (unknown keys
-included), `not_configured` (`root` missing, empty or relative),
-`not_implemented` (`scribe.session-pass`, `scribe.consistency-scan`), a
+"transcripts", "task_workspaces"}, …}}`) on stdin and prints exactly one
+compact line, in every mode, then exits 0: `{"ok": true, "output":
+<output>}`, where `<output>` is the ask object for `scribe.ask`, the
+session pass report for `scribe.session-pass` and the consistency scan
+report for `scribe.consistency-scan`; or `{"ok": false, "error": {"code",
+"message", "retryable"}}` with `code` `invalid_envelope`, `unknown_tool`,
+`invalid_input` (unknown keys included; the routine tools take `{}`),
+`not_configured` (`root` missing, empty, relative or the manifest's
+`/var/tmp` default; for `scribe.session-pass`, `transcripts` likewise), a
 model code (`retryable` for `model_timeout` and `model_failed`) or a store
-code. It writes no audit line.
+code (`retryable` for `store_locked` from a routine tool). `scribe.ask`
+writes no audit line; the routine tools write the lines their CLI commands
+do, in the store `root` names.

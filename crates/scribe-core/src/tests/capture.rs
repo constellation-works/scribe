@@ -1,7 +1,10 @@
 use super::T0;
 use crate::capture::{self, Guess, Parsed, Referent, Refusal, Turn};
+use crate::consistency::Settle;
+use crate::entry::EntryId;
 use crate::entry::{ContentFrom, Speaker, TagName};
 use crate::models::{ModelError, Models, REFERENT_BUDGET, ReferentAnswer, ReferentRequest};
+use crate::proposal::ProposalId;
 use crate::tag::TagTable;
 use crate::transcript::Message;
 use std::cell::RefCell;
@@ -37,6 +40,7 @@ fn parse(prompt: &str) -> Vec<Outcome> {
                 ))
             }
             Parsed::Referent(r) => Err((r.line, "referent")),
+            Parsed::Settle(s) => Err((s.line, "settle")),
             Parsed::Refused(r) => Err((r.line, r.reason.code())),
         })
         .collect()
@@ -220,15 +224,59 @@ fn referent_lines_are_form_three_with_their_tag_and_topics() {
 }
 
 #[test]
-fn settling_verbs_and_distill_are_recognised_but_not_supported_yet() {
+fn distill_is_recognised_but_not_supported_yet() {
+    assert_eq!(
+        parse("#scribe distill this discussion"),
+        [Err((1, "unsupported_instruction"))]
+    );
+}
+
+/// The settling action of each `#scribe` line of `prompt`.
+fn settles(prompt: &str) -> Vec<Settle> {
+    capture::scan(prompt, &tags())
+        .into_iter()
+        .filter_map(|p| match p {
+            Parsed::Settle(s) => Some(s.action),
+            Parsed::Instruction(_) | Parsed::Referent(_) | Parsed::Refused(_) => None,
+        })
+        .collect()
+}
+
+fn proposal(id: &str) -> ProposalId {
+    ProposalId::try_from(id.to_owned()).unwrap()
+}
+
+fn entry(id: &str) -> EntryId {
+    EntryId::try_from(id.to_owned()).unwrap()
+}
+
+#[test]
+fn form_four_takes_a_settling_verb_and_one_id() {
+    assert_eq!(
+        settles(
+            "#scribe approve p-4\n#scribe reject p-12.\n#scribe retire decisions-2\n#scribe forget rituals-7!"
+        ),
+        [
+            Settle::Approve(proposal("p-4")),
+            Settle::Reject(proposal("p-12")),
+            Settle::Retire(entry("decisions-2")),
+            Settle::Forget(entry("rituals-7")),
+        ]
+    );
+}
+
+#[test]
+fn a_settling_verb_without_its_kind_of_id_is_refused() {
     for prompt in [
-        "#scribe approve p-4",
-        "#scribe forget decisions-2",
-        "#scribe distill this discussion",
+        "#scribe approve decisions-2",
+        "#scribe reject",
+        "#scribe forget decisions",
+        "#scribe retire decisions-2 decisions-3",
+        "#scribe approve p-4 and p-5",
     ] {
         assert_eq!(
             parse(prompt),
-            [Err((1, "unsupported_instruction"))],
+            [Err((1, "unparsed_instruction"))],
             "{prompt}"
         );
     }

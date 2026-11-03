@@ -31,6 +31,12 @@ pub(super) struct PromptPayload {
     pub(super) prompt: String,
 }
 
+/// The fields of the `SessionStart` payload scribe uses.
+#[derive(Debug, Deserialize)]
+pub(super) struct SessionStartPayload {
+    pub(super) session_id: String,
+}
+
 /// The fields of the `SessionEnd` payload scribe uses.
 #[derive(Debug, Deserialize)]
 pub(super) struct SessionEndPayload {

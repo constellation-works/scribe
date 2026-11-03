@@ -28,6 +28,7 @@
 //! audit line (`target` `session:<id>`); a run with nothing due writes none.
 
 use crate::app::Context;
+use crate::commands::RunLimits;
 use crate::commands::hook::payload::{self, Transcript};
 use crate::commands::hook::project;
 use crate::error::CliError;
@@ -43,7 +44,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 /// The command path in the audit log; also what the failure count reads.
-pub(super) const COMMAND: &str = "session pass";
+pub(in crate::commands) const COMMAND: &str = "session pass";
 
 /// The tool sessions are recorded through.
 const PROVIDER: &str = "claude-code";
@@ -63,16 +64,24 @@ Examples:
 #[derive(Debug, Args)]
 pub(crate) struct PassArgs {}
 
-/// Run the pass with the `claude` CLI as the session model.
+/// Run the pass with the `claude` CLI as the session model, at most
+/// [`pass::MAX_PER_RUN`] sessions.
 pub(super) fn run(ctx: &Context) -> Result<Output, CliError> {
-    run_with(ctx, |config| ctx.models(config))
+    run_with(
+        ctx,
+        |config| ctx.models(config),
+        RunLimits::new(pass::MAX_PER_RUN),
+    )
 }
 
 /// [`run`] with the `Models` adapter `models` builds for the config, so a
-/// test can answer with a fake.
-pub(super) fn run_with<M: Models>(
+/// test can answer with a fake, and within `limits`: the plugin's tool
+/// starts no session after its start-by time, so a call ends inside
+/// Orbit's backend timeout.
+pub(in crate::commands) fn run_with<M: Models>(
     ctx: &Context,
     models: impl FnOnce(&Config) -> M,
+    limits: RunLimits,
 ) -> Result<Output, CliError> {
     let store = ctx.store();
     let due = control::due(&store.control()?);
@@ -102,9 +111,13 @@ pub(super) fn run_with<M: Models>(
         .filter_map(|s| Some(s.path.file_stem()?.to_str()?.to_owned()))
         .collect();
     let adapter = models(&config);
-    let remaining = due.len().saturating_sub(pass::MAX_PER_RUN);
+    let mut remaining = 0usize;
     let mut passes = Vec::new();
-    for (id, switch) in due.into_iter().take(pass::MAX_PER_RUN) {
+    for (n, (id, switch)) in due.into_iter().enumerate() {
+        if !limits.may_start(n) {
+            remaining = remaining.saturating_add(1);
+            continue;
+        }
         let job = Job {
             ctx,
             config: &config,

@@ -9,6 +9,7 @@
 //! outgrows one file becomes a directory, `<noun>/mod.rs` plus one file per
 //! verb, as `hook/` is (STD-02 R18: split along responsibilities, not by length alone).
 
+mod consistency;
 mod entry;
 mod hook;
 mod plugin;
@@ -24,6 +25,7 @@ use crate::output::{Output, Records, WarningPayload};
 use clap::Subcommand;
 use scribe_core::Skipped;
 
+pub(crate) use consistency::ConsistencyCommand;
 pub(crate) use entry::EntryCommand;
 pub(crate) use hook::HookCommand;
 pub(crate) use plugin::PluginCommand;
@@ -44,13 +46,16 @@ pub(crate) enum Command {
     /// List what the consistency routine proposes changing
     #[command(subcommand, after_help = proposal::PROPOSAL_EXAMPLES)]
     Proposal(ProposalCommand),
+    /// Propose superseding or retiring entries a later one replaced or that are due for review (scan)
+    #[command(subcommand, after_help = consistency::CONSISTENCY_EXAMPLES)]
+    Consistency(ConsistencyCommand),
     /// List the tags entries are filed under
     #[command(subcommand, after_help = tag::TAG_EXAMPLES)]
     Tag(TagCommand),
     /// Answer a question from the records, citing a verbatim quote for every claim
     #[command(subcommand, after_help = question::QUESTION_EXAMPLES)]
     Question(QuestionCommand),
-    /// Run a Claude Code hook: record #scribe lines, switch /scribe on and off, mark session passes due
+    /// Run a Claude Code hook: record #scribe lines and settle proposals, switch /scribe on and off, mark session passes due, report open proposals
     #[command(subcommand, after_help = hook::HOOK_EXAMPLES)]
     Hook(HookCommand),
     /// Serve the Orbit plugin's tools (the plugin backend runs this)
@@ -62,13 +67,14 @@ impl Command {
     /// What the audit log records for this command, or `None` when it is not
     /// audited. Only commands that change durable state are: a read-only
     /// command must not write, not even an audit line (STD-01 R31). The
-    /// `hook` verbs and `session pass` are the writers. Exhaustive, so a new command cannot
+    /// `hook` verbs, `session pass` and `consistency scan` are the writers. Exhaustive, so a new command cannot
     /// compile without deciding (STD-02 R27).
     pub(crate) fn audit(&self) -> Option<AuditMeta> {
         match self {
             Self::Entry(command) => command.audit(),
             Self::Session(command) => command.audit(),
             Self::Proposal(command) => command.audit(),
+            Self::Consistency(command) => command.audit(),
             Self::Tag(command) => command.audit(),
             Self::Hook(command) => command.audit(),
             Self::Question(command) => command.audit(),
@@ -89,6 +95,7 @@ pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
         Command::Entry(command) => entry::run(command, ctx),
         Command::Session(command) => session::run(command, ctx),
         Command::Proposal(command) => proposal::run(command, ctx),
+        Command::Consistency(command) => consistency::run(command, ctx),
         Command::Tag(command) => tag::run(command, ctx),
         Command::Hook(command) => hook::run(command, ctx),
         Command::Question(command) => question::run(command, ctx),
@@ -98,6 +105,43 @@ pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
         audit.mark_result(&result);
     }
     result
+}
+
+/// How much one run of a routine command may do: at most `max` units
+/// (sessions passed, batches judged), and none started after `start_by`
+/// except the first, so a plugin call that may run a 240-second unit ends
+/// inside Orbit's 300-second backend timeout.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RunLimits {
+    max: usize,
+    start_by: Option<std::time::Instant>,
+}
+
+impl RunLimits {
+    /// At most `max` units, with no time limit (the CLI).
+    pub(crate) fn new(max: usize) -> Self {
+        Self {
+            max,
+            start_by: None,
+        }
+    }
+
+    /// No unit but the first starts after `start_by`.
+    pub(crate) fn start_by(self, start_by: std::time::Instant) -> Self {
+        Self {
+            start_by: Some(start_by),
+            ..self
+        }
+    }
+
+    /// Whether unit `n` (from 0) may start now.
+    pub(crate) fn may_start(&self, n: usize) -> bool {
+        n < self.max
+            && (n == 0
+                || self
+                    .start_by
+                    .is_none_or(|by| std::time::Instant::now() < by))
+    }
 }
 
 /// What a list needs to say on stderr beside its records.

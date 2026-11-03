@@ -13,8 +13,9 @@ mod sink;
 mod table;
 
 pub(crate) use payload::{
-    AskPayload, EntryPayload, HookOutcome, HookReply, Output, PassPayload, PassReport, PluginError,
-    PluginReply, ProposalPayload, Record, Records, SessionPayload, TagPayload, WarningPayload,
+    AskPayload, BatchFailure, EntryPayload, HookOutcome, HookReply, Output, PassPayload,
+    PassReport, PluginError, PluginReply, ProposalPayload, ReappliedPayload, Record, Records,
+    ScanReport, SessionPayload, TagPayload, WarningPayload,
 };
 pub(crate) use sink::{FORMAT_ENV, FormatArg, Sink};
 
@@ -126,6 +127,12 @@ fn emit(sink: &Sink, output: &Output) -> io::Result<()> {
             let _ = writeln!(err, "{notice}");
         }
     }
+    if let Output::Scan(report) = output {
+        let mut err = io::stderr().lock();
+        for notice in &report.notices {
+            let _ = writeln!(err, "{notice}");
+        }
+    }
     let mut out = io::stdout().lock();
     match output {
         Output::List {
@@ -137,6 +144,7 @@ fn emit(sink: &Sink, output: &Output) -> io::Result<()> {
         Output::Show { record } => render::show(&mut out, sink, record)?,
         Output::Hook(reply) => render::hook(&mut out, reply)?,
         Output::Pass(report) => render::pass(&mut out, sink, report)?,
+        Output::Scan(report) => render::scan(&mut out, sink, report)?,
         Output::Ask(payload) => render::ask(&mut out, sink, payload)?,
         Output::Plugin(reply) => render::plugin(&mut out, reply)?,
     }

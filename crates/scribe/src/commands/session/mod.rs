@@ -3,7 +3,7 @@
 //! read only and make one store call each (STD-02 R2); `pass` is the
 //! session-pass routine's job and lives in `pass.rs`.
 
-mod pass;
+pub(in crate::commands) mod pass;
 
 use super::{ListNotice, list_output};
 use crate::app::Context;

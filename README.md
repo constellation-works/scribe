@@ -10,8 +10,11 @@ writes one record per session whose pass is due. The CLI reads the store,
 and `scribe question ask` answers from it, quoting each record it cites
 verbatim; the Orbit plugin in `plugin/.orbit-plugin/` serves the same
 answer to agents as `scribe.ask` (install steps in its
-[README](plugin/.orbit-plugin/README.md)). The consistency routine arrives
-in a later slice.
+[README](plugin/.orbit-plugin/README.md)). `scribe consistency scan` (the
+weekly consistency routine's job) proposes superseding an entry a later one
+replaced, and retiring an entry due for review; Daniel settles each with
+`#scribe approve p-<n>` or `#scribe reject p-<n>` in a prompt, and hides or
+blanks an entry with `#scribe retire <id>` or `#scribe forget <id>`.
 
 ```sh
 scribe entry list                       # a table on a terminal, tab-separated lines in a pipe
@@ -23,6 +26,7 @@ scribe session list --project constellation-works/scribe
 scribe session show <id> --json | jq -r .next
 scribe session pass --json
 scribe proposal list
+scribe consistency scan --json
 scribe tag list
 scribe tag list --json | jq '.tags[] | select(.configured | not)'
 scribe question ask "how do we merge agent PRs?"
@@ -39,15 +43,19 @@ layout and every key are in
 [specs/store.md](docs/design/scribe/specs/store.md). A store that another
 user owns or could write, a linked file and a record from a newer build are
 refused. Every `entry`, `session`, `proposal`, `tag` and `question` command
-except `session pass` only reads, and writes nothing, not even an audit line.
+except `session pass` only reads, and writes nothing, not even an audit line;
+`session pass` and `consistency scan` write and are audited.
 
 ## The Claude Code package
 
-`plugin/claude-code/` registers three hooks that run the `scribe` binary on
-`PATH`, and the `/scribe` command: `UserPromptSubmit` runs `scribe hook user-prompt-submit`, which
+`plugin/claude-code/` registers four hooks that run the `scribe` binary on
+`PATH`, and the `/scribe` command: `SessionStart` runs `scribe hook
+session-start`, which tells Daniel how many proposals are open;
+`UserPromptSubmit` runs `scribe hook user-prompt-submit`, which
 records each `#scribe` line of the typed prompt (lines in code fences,
-blockquotes and pasted blocks are skipped) and replies to Daniel and the
-agent with what it recorded or refused; `Stop` runs `scribe hook stop`,
+blockquotes and pasted blocks are skipped), applies each `#scribe
+approve|reject|retire|forget`, and replies to Daniel and the
+agent with what it recorded, settled or refused; `Stop` runs `scribe hook stop`,
 which fills each new entry's cite with the transcript message's id and, for
 a session that is on, marks a pass due every `every_minutes` or
 `every_turns` (`[catalog]` in `config.toml`); `SessionEnd` runs `scribe

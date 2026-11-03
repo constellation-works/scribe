@@ -4,8 +4,8 @@
 use super::color::{self, Role};
 use super::payload::{
     AskPayload, EntryPayload, FoundPayload, HookJson, HookReply, HookSpecificJson, PassPayload,
-    PassReport, PluginReply, ProposalPayload, Record, Records, SessionPayload, TagPayload,
-    TaskPayload, WarningPayload,
+    PassReport, PluginReply, ProposalPayload, Record, Records, ScanReport, SessionPayload,
+    TagPayload, TaskPayload, WarningPayload,
 };
 use super::sink::{OutputMode, Sink};
 use super::table::{self, Align, Cell, Column};
@@ -57,6 +57,14 @@ const PASS_COLUMNS: [Column; 5] = [
     col("CODE", Align::Left, false),
     col("PASSES", Align::Right, false),
     col("TERMS DROPPED", Align::Right, false),
+];
+
+const SCAN_COLUMNS: [Column; 5] = [
+    col("ACTION", Align::Left, false),
+    col("ID", Align::Left, false),
+    col("WHAT", Align::Left, false),
+    col("OLDER", Align::Left, false),
+    col("NEWER", Align::Left, false),
 ];
 
 const TAG_COLUMNS: [Column; 5] = [
@@ -296,9 +304,9 @@ fn task_detail(out: &mut dyn Write, t: &TaskPayload) -> io::Result<()> {
 /// Orbit host reads it.
 pub(crate) fn plugin(out: &mut dyn Write, reply: &PluginReply) -> io::Result<()> {
     #[derive(serde::Serialize)]
-    struct Ok<'a> {
+    struct Ok<'a, T: serde::Serialize> {
         ok: bool,
-        output: &'a AskPayload,
+        output: &'a T,
     }
     #[derive(serde::Serialize)]
     struct Failed<'a> {
@@ -310,7 +318,21 @@ pub(crate) fn plugin(out: &mut dyn Write, reply: &PluginReply) -> io::Result<()>
             &mut *out,
             &Ok {
                 ok: true,
-                output: payload,
+                output: payload.as_ref(),
+            },
+        ),
+        PluginReply::Pass(report) => serde_json::to_writer(
+            &mut *out,
+            &Ok {
+                ok: true,
+                output: report,
+            },
+        ),
+        PluginReply::Scan(report) => serde_json::to_writer(
+            &mut *out,
+            &Ok {
+                ok: true,
+                output: report.as_ref(),
             },
         ),
         PluginReply::Error(error) => serde_json::to_writer(&mut *out, &Failed { ok: false, error }),
@@ -424,18 +446,7 @@ fn entry_row(e: &EntryPayload) -> Vec<Cell> {
 /// prints nothing but the JSON object.
 pub(crate) fn pass(out: &mut dyn Write, sink: &Sink, report: &PassReport) -> io::Result<()> {
     if sink.mode == OutputMode::Json {
-        #[derive(serde::Serialize)]
-        struct Json<'a> {
-            passes: &'a [PassPayload],
-            remaining: usize,
-        }
-        return write_json(
-            out,
-            &Json {
-                passes: &report.passes,
-                remaining: report.remaining,
-            },
-        );
+        return write_json(out, report);
     }
     if report.passes.is_empty() {
         return Ok(());
@@ -444,6 +455,60 @@ pub(crate) fn pass(out: &mut dyn Write, sink: &Sink, report: &PassReport) -> io:
     match sink.mode {
         OutputMode::Table => {
             out.write_all(table::render(&PASS_COLUMNS, &rows, sink.width, sink.color).as_bytes())
+        }
+        OutputMode::Plain | OutputMode::Json => rows
+            .iter()
+            .try_for_each(|row| writeln!(out, "{}", plain_line(row))),
+    }
+}
+
+/// A consistency scan's report: a table or tab-separated lines, one per
+/// approval re-applied, proposal opened and batch failed, or the JSON
+/// object. A scan that changed nothing prints nothing but the JSON object.
+pub(crate) fn scan(out: &mut dyn Write, sink: &Sink, report: &ScanReport) -> io::Result<()> {
+    if sink.mode == OutputMode::Json {
+        return write_json(out, report);
+    }
+    let mut rows: Vec<Vec<Cell>> = Vec::new();
+    for r in &report.reapplied {
+        rows.push(vec![
+            Cell::plain("reapplied"),
+            Cell::plain(r.proposal.clone()),
+            Cell::plain(r.status),
+            Cell::plain(r.entry.clone()),
+            Cell::plain("-"),
+        ]);
+    }
+    for p in &report.opened {
+        rows.push(vec![
+            Cell {
+                text: String::from("opened"),
+                role: Role::Warn,
+            },
+            Cell::plain(p.id.clone()),
+            Cell::plain(p.kind),
+            Cell::plain(p.older.clone()),
+            Cell::plain(p.newer.clone().unwrap_or_else(|| String::from("-"))),
+        ]);
+    }
+    for f in &report.failed_batches {
+        rows.push(vec![
+            Cell {
+                text: String::from("failed"),
+                role: Role::Warn,
+            },
+            Cell::plain(format!("batch-{}", f.batch)),
+            Cell::plain(f.error_code),
+            Cell::plain("-"),
+            Cell::plain("-"),
+        ]);
+    }
+    if rows.is_empty() {
+        return Ok(());
+    }
+    match sink.mode {
+        OutputMode::Table => {
+            out.write_all(table::render(&SCAN_COLUMNS, &rows, sink.width, sink.color).as_bytes())
         }
         OutputMode::Plain | OutputMode::Json => rows
             .iter()
