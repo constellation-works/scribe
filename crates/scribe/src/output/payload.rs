@@ -7,9 +7,10 @@
 //! shapes are deliberately separate from the store's persisted documents.
 //! An absent value is `null`, never an omitted key (R11).
 
+use scribe_core::ask::{Answer, Found, Task};
 use scribe_core::{
-    Cite, ContentFrom, Entry, Proposal, Quote, SessionControl, SessionRecord, Skipped, TagSummary,
-    Term,
+    Cite, ContentFrom, ControlState, Entry, Proposal, Quote, SessionControl, SessionRecord,
+    Skipped, TagSummary, Term,
 };
 use serde::Serialize;
 use time::OffsetDateTime;
@@ -453,6 +454,181 @@ pub(crate) struct PassReport {
     pub(crate) notices: Vec<String>,
 }
 
+/// A claim an answer rests on: verbatim-checked against its cite.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct ClaimPayload {
+    /// The statement (model text).
+    pub(crate) text: String,
+    /// Words verbatim from the cited record.
+    pub(crate) quote: String,
+    /// An entry id, `session:<id>` or `task:<id>`.
+    pub(crate) cite: String,
+}
+
+/// Two or more records that disagree.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct ConflictPayload {
+    pub(crate) cites: Vec<String>,
+    /// Model text.
+    pub(crate) note: String,
+}
+
+/// An Orbit task a lookup returned.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct TaskPayload {
+    pub(crate) id: String,
+    pub(crate) title: String,
+    pub(crate) status: String,
+    pub(crate) tags: Vec<String>,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub(crate) updated: Option<Timestamp>,
+    /// Verbatim; empty when the task has none.
+    pub(crate) execution_summary: String,
+}
+
+impl From<&Task> for TaskPayload {
+    fn from(t: &Task) -> Self {
+        Self {
+            id: t.id.clone(),
+            title: t.title.clone(),
+            status: t.status.clone(),
+            tags: t.tags.clone(),
+            updated: t.updated,
+            execution_summary: t.execution_summary.clone(),
+        }
+    }
+}
+
+/// One stored record a lookup returned, as stored: exactly one of `entry`,
+/// `session` and `task` is set, as `kind` says.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct FoundPayload {
+    /// `entry`, `session` or `task`.
+    pub(crate) kind: &'static str,
+    /// How an answer cites it.
+    pub(crate) cite: String,
+    pub(crate) entry: Option<EntryPayload>,
+    /// The same shape `session show --json` prints.
+    pub(crate) session: Option<SessionPayload>,
+    pub(crate) task: Option<TaskPayload>,
+    /// For a term lookup, the session's terms that matched, with Daniel's
+    /// defining words; empty otherwise.
+    pub(crate) terms: Vec<TermPayload>,
+}
+
+impl FoundPayload {
+    fn new(found: &Found, control: &ControlState) -> Self {
+        let cite = found.cite();
+        match found {
+            Found::Entry(entry) => Self {
+                kind: "entry",
+                cite,
+                entry: Some(EntryPayload::from(entry)),
+                session: None,
+                task: None,
+                terms: Vec::new(),
+            },
+            Found::Session { record, terms } => Self {
+                kind: "session",
+                cite,
+                entry: None,
+                session: Some(SessionPayload::new(record, control.get(&record.id))),
+                task: None,
+                terms: terms.iter().map(TermPayload::from).collect(),
+            },
+            Found::Task(task) => Self {
+                kind: "task",
+                cite,
+                entry: None,
+                session: None,
+                task: Some(TaskPayload::from(task)),
+                terms: Vec::new(),
+            },
+        }
+    }
+}
+
+/// What `question ask` and the `scribe.ask` tool return (2_design.md §6.1):
+/// the same payload from both.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct AskPayload {
+    /// `answered`, `no_record`, `conflict` or `record` (a lookup).
+    pub(crate) status: &'static str,
+    /// Model text for an answer; a fixed sentence otherwise.
+    pub(crate) answer: String,
+    pub(crate) claims: Vec<ClaimPayload>,
+    pub(crate) conflicts: Vec<ConflictPayload>,
+    /// Evidence items the model was given; records returned, for a lookup.
+    pub(crate) evidence_considered: usize,
+    /// Claims dropped because their quote or cite failed the check.
+    pub(crate) dropped_quotes: usize,
+    /// Superseded or retired entries that matched and were left out.
+    pub(crate) hidden_matches: usize,
+    /// The lookup that answered, or `null` when retrieval ran.
+    pub(crate) lookup: Option<&'static str>,
+    /// The stored records a lookup returned; empty otherwise.
+    pub(crate) records: Vec<FoundPayload>,
+    /// Record files left out because they did not parse.
+    pub(crate) warnings: Vec<WarningPayload>,
+}
+
+impl AskPayload {
+    pub(crate) fn new(answer: &Answer, control: &ControlState, skipped: &[Skipped]) -> Self {
+        Self {
+            status: answer.status.as_str(),
+            answer: answer.answer.clone(),
+            claims: answer
+                .claims
+                .iter()
+                .map(|c| ClaimPayload {
+                    text: c.text.clone(),
+                    quote: c.quote.clone(),
+                    cite: c.cite.clone(),
+                })
+                .collect(),
+            conflicts: answer
+                .conflicts
+                .iter()
+                .map(|c| ConflictPayload {
+                    cites: c.cites.clone(),
+                    note: c.note.clone(),
+                })
+                .collect(),
+            evidence_considered: answer.evidence_considered,
+            dropped_quotes: answer.dropped_quotes,
+            hidden_matches: answer.hidden_matches,
+            lookup: answer.lookup.map(|l| l.as_str()),
+            records: answer
+                .records
+                .iter()
+                .map(|f| FoundPayload::new(f, control))
+                .collect(),
+            warnings: skipped.iter().map(WarningPayload::from).collect(),
+        }
+    }
+}
+
+/// A plugin tool call's reply: Orbit's exec-backend envelope, one line on
+/// stdout whatever happened (`{"ok":true,"output":...}` or
+/// `{"ok":false,"error":{...}}`), in every output mode.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum PluginReply {
+    /// `scribe.ask` answered.
+    Ask(Box<AskPayload>),
+    /// The call failed; the envelope carries the code.
+    Error(PluginError),
+}
+
+/// A failed plugin call, as the envelope's `error` object.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct PluginError {
+    /// A stable `snake_case` code.
+    pub(crate) code: &'static str,
+    pub(crate) message: String,
+    /// Whether the same call may succeed later.
+    pub(crate) retryable: bool,
+}
+
 /// What a command produced, before rendering.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Output {
@@ -480,4 +656,8 @@ pub(crate) enum Output {
     Hook(HookReply),
     /// A session pass's report.
     Pass(PassReport),
+    /// An answer to a question.
+    Ask(Box<AskPayload>),
+    /// A plugin tool call's envelope.
+    Plugin(PluginReply),
 }

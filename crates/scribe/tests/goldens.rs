@@ -26,6 +26,8 @@ const HELP: &[(&str, &[&str])] = &[
     ("proposal-list", &["proposal", "list", "--help"]),
     ("tag", &["tag", "--help"]),
     ("tag-list", &["tag", "list", "--help"]),
+    ("question", &["question", "--help"]),
+    ("question-ask", &["question", "ask", "--help"]),
     ("hook", &["hook", "--help"]),
     (
         "hook-user-prompt-submit",
@@ -33,6 +35,8 @@ const HELP: &[(&str, &[&str])] = &[
     ),
     ("hook-stop", &["hook", "stop", "--help"]),
     ("hook-session-end", &["hook", "session-end", "--help"]),
+    ("plugin", &["plugin", "--help"]),
+    ("plugin-call", &["plugin", "call", "--help"]),
 ];
 
 /// Each command whose output is pinned, by golden name; every one is
@@ -47,6 +51,11 @@ const OUTPUT: &[(&str, &[&str])] = &[
     ),
     ("proposal-list", &["proposal", "list"]),
     ("tag-list", &["tag", "list"]),
+    // A lookup: answered from the store, with no model call.
+    (
+        "question-ask",
+        &["question", "ask", "can you fetch me last session summary?"],
+    ),
 ];
 
 const MODES: &[(&str, &[&str])] = &[

@@ -21,6 +21,7 @@ Examples:
   scribe session list --project scribe
   scribe proposal list
   scribe tag list
+  scribe question ask \"how do we merge agent PRs?\"
   scribe entry list | cut -f1,6
 
 Exit status: 0 on success, 1 when a command fails, 2 on a usage error.";

@@ -1,0 +1,51 @@
+# Goldens for `orbit plugin test plugin/.orbit-plugin`: a temp workspace and
+# plugin state, the manifest's config defaults (no store root), no network.
+# A store-backed answer needs [plugins.scribe] root, so ask's goldens are its
+# refusals; crates/scribe/tests/plugin.rs runs ask against a fixture store.
+schemaVersion: 1
+kind: PluginTest
+tests:
+- name: ask_without_a_store_root_is_not_configured
+  tool: ask
+  input:
+    question: can you fetch me last session summary?
+  expect:
+    error:
+      code: not_configured
+      retryable: false
+- name: ask_with_an_unknown_input_key_is_invalid
+  tool: ask
+  input:
+    question: how do we merge agent PRs?
+    limit: 5
+  expect:
+    error:
+      code: invalid_input
+- name: ask_with_a_blank_question_is_invalid
+  tool: ask
+  input:
+    question: "   "
+  expect:
+    error:
+      code: invalid_input
+- name: ask_with_an_unknown_scope_kind_is_invalid
+  tool: ask
+  input:
+    question: how do we merge agent PRs?
+    scope:
+      kind: discussion
+  expect:
+    error:
+      code: invalid_input
+- name: session_pass_is_not_wired_yet
+  tool: session-pass
+  input: {}
+  expect:
+    error:
+      code: not_implemented
+- name: consistency_scan_is_not_built_yet
+  tool: consistency-scan
+  input: {}
+  expect:
+    error:
+      code: not_implemented

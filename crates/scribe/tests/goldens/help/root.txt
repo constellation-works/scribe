@@ -7,7 +7,9 @@ Commands:
   session   List and show the records of sessions cataloged with /scribe on, and write them (pass)
   proposal  List what the consistency routine proposes changing
   tag       List the tags entries are filed under
+  question  Answer a question from the records, citing a verbatim quote for every claim
   hook      Run a Claude Code hook: record #scribe lines, switch /scribe on and off, mark session passes due
+  plugin    Serve the Orbit plugin's tools (the plugin backend runs this)
   help      Print this message or the help of the given subcommand(s)
 
 Options:
@@ -25,6 +27,7 @@ Examples:
   scribe session list --project scribe
   scribe proposal list
   scribe tag list
+  scribe question ask "how do we merge agent PRs?"
   scribe entry list | cut -f1,6
 
 Exit status: 0 on success, 1 when a command fails, 2 on a usage error.

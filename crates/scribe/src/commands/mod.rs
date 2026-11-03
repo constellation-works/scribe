@@ -4,13 +4,16 @@
 //! [`run`] is where cross-cutting behaviour attaches, once, for every command
 //! (STD-02 R24): today the audit log, through [`crate::audit_middleware`].
 //! Each noun lives in its own module with its subcommands, flags, help and
-//! handlers (`entry.rs`, `session.rs`, `proposal.rs`, `tag.rs`); a noun that
+//! handlers (`entry.rs`, `session/`, `proposal.rs`, `tag.rs`, `question.rs`,
+//! `plugin.rs`); a noun that
 //! outgrows one file becomes a directory, `<noun>/mod.rs` plus one file per
 //! verb, as `hook/` is (STD-02 R18: split along responsibilities, not by length alone).
 
 mod entry;
 mod hook;
+mod plugin;
 mod proposal;
+mod question;
 mod session;
 mod tag;
 
@@ -23,7 +26,9 @@ use scribe_core::Skipped;
 
 pub(crate) use entry::EntryCommand;
 pub(crate) use hook::HookCommand;
+pub(crate) use plugin::PluginCommand;
 pub(crate) use proposal::ProposalCommand;
+pub(crate) use question::QuestionCommand;
 pub(crate) use session::SessionCommand;
 pub(crate) use tag::TagCommand;
 
@@ -42,9 +47,15 @@ pub(crate) enum Command {
     /// List the tags entries are filed under
     #[command(subcommand, after_help = tag::TAG_EXAMPLES)]
     Tag(TagCommand),
+    /// Answer a question from the records, citing a verbatim quote for every claim
+    #[command(subcommand, after_help = question::QUESTION_EXAMPLES)]
+    Question(QuestionCommand),
     /// Run a Claude Code hook: record #scribe lines, switch /scribe on and off, mark session passes due
     #[command(subcommand, after_help = hook::HOOK_EXAMPLES)]
     Hook(HookCommand),
+    /// Serve the Orbit plugin's tools (the plugin backend runs this)
+    #[command(subcommand, after_help = plugin::PLUGIN_EXAMPLES)]
+    Plugin(PluginCommand),
 }
 
 impl Command {
@@ -60,6 +71,8 @@ impl Command {
             Self::Proposal(command) => command.audit(),
             Self::Tag(command) => command.audit(),
             Self::Hook(command) => command.audit(),
+            Self::Question(command) => command.audit(),
+            Self::Plugin(command) => command.audit(),
         }
     }
 }
@@ -78,6 +91,8 @@ pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
         Command::Proposal(command) => proposal::run(command, ctx),
         Command::Tag(command) => tag::run(command, ctx),
         Command::Hook(command) => hook::run(command, ctx),
+        Command::Question(command) => question::run(command, ctx),
+        Command::Plugin(command) => plugin::run(command, ctx),
     };
     if let Some(audit) = audit.as_mut() {
         audit.mark_result(&result);

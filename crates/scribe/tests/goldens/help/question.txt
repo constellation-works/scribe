@@ -1,0 +1,20 @@
+Answer a question from the records, citing a verbatim quote for every claim
+
+Usage: scribe question [OPTIONS] <COMMAND>
+
+Commands:
+  ask   Answer a question from the recorded entries, session records and Orbit tasks, citing each quote
+  help  Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Global options:
+      --root <DIR>       Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>  Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json             Shorthand for --format json
+
+Examples:
+  scribe question ask "how do we merge agent PRs?"
+  scribe question ask "can you fetch me last session summary?" --json

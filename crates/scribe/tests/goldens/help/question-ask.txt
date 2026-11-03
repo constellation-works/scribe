@@ -1,0 +1,61 @@
+Answer a question from the recorded entries, session records and Orbit tasks, citing each quote
+
+Usage: scribe question ask [OPTIONS] <QUESTION>
+
+Arguments:
+  <QUESTION>
+          The question, 1 to 2000 characters
+
+Options:
+      --tag <TAG>
+          Only entries in this tag (or alias); repeat for several. Leaves out session records and Orbit tasks [default: any]
+
+      --topic <TOPIC>
+          Only records carrying this topic; repeat for several. Leaves out Orbit tasks [default: any]
+
+      --project <PROJECT>
+          Only records of this project (a repository slug) [default: any]
+
+      --kind <KIND>
+          Only this kind of record. Leaves out Orbit tasks [default: any]
+
+          Possible values:
+          - entry:   Entries only
+          - session: Session records only
+
+      --since <DATE>
+          Only records changed on or after this day, YYYY-MM-DD [default: any]
+
+      --include-hidden
+          Include superseded and retired entries as evidence [default: active only]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Global options:
+      --root <DIR>
+          Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+
+      --format <FORMAT>
+          Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto]
+          
+          [possible values: auto, table, json]
+
+      --json
+          Shorthand for --format json
+
+Lookups (the newest session, a named session, open next steps, a tag's
+entries today or this week, month or year, a term Daniel defined, the last
+on-call session for a workspace) return the stored records with no model
+call. Anything else is answered by the configured ask model from the
+records that match, and every quote it gives is checked verbatim against
+the record it cites; claims that fail are dropped and counted.
+
+Examples:
+  scribe question ask "how do we merge agent PRs?"
+  scribe question ask "decisions this week" --json | jq '.records[].entry.content'
+  scribe question ask "what did we decide about releases?" --tag decisions --since 2026-01-01
+  scribe question ask "merge policy" --include-hidden --json | jq .claims

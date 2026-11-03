@@ -6,8 +6,12 @@ A `#scribe` line Daniel types in Claude Code is recorded as an entry by the
 `UserPromptSubmit` hook (forms `#scribe <tag>: <content>` and `#scribe add
 <content> to <tag>`, and `#scribe add this to <tag>`, whose "this" a model
 resolves). `/scribe on` in a session catalogs it: `scribe session pass`
-writes one record per session whose pass is due. The CLI reads the store.
-`ask` and the Orbit plugin arrive in later slices.
+writes one record per session whose pass is due. The CLI reads the store,
+and `scribe question ask` answers from it, quoting each record it cites
+verbatim; the Orbit plugin in `plugin/.orbit-plugin/` serves the same
+answer to agents as `scribe.ask` (install steps in its
+[README](plugin/.orbit-plugin/README.md)). The consistency routine arrives
+in a later slice.
 
 ```sh
 scribe entry list                       # a table on a terminal, tab-separated lines in a pipe
@@ -21,6 +25,8 @@ scribe session pass --json
 scribe proposal list
 scribe tag list
 scribe tag list --json | jq '.tags[] | select(.configured | not)'
+scribe question ask "how do we merge agent PRs?"
+scribe question ask "can you fetch me last session summary?" --json   # a lookup: no model call
 ```
 
 The store is a directory: `--root <dir>`, else `$SCRIBE_ROOT`, else
@@ -32,8 +38,8 @@ are being cataloged, `proposals.json` the consistency routine's proposals and
 layout and every key are in
 [specs/store.md](docs/design/scribe/specs/store.md). A store that another
 user owns or could write, a linked file and a record from a newer build are
-refused. Every `entry`, `session`, `proposal` and `tag` command except
-`session pass` only reads, and writes nothing, not even an audit line.
+refused. Every `entry`, `session`, `proposal`, `tag` and `question` command
+except `session pass` only reads, and writes nothing, not even an audit line.
 
 ## The Claude Code package
 
@@ -92,7 +98,7 @@ so keep them runnable.
 ```
 crates/scribe-core/   domain library (no clap, no terminal): entry.rs, tag.rs,
                         session.rs, proposal.rs, record.rs, config.rs,
-                        capture.rs, control.rs, pass.rs, transcript.rs,
+                        capture.rs, control.rs, pass.rs, ask.rs, transcript.rs,
                         verbatim.rs and models.rs (business
                         logic, no I/O), store/
                         (persistence: facade, format, redact, audit log,
@@ -100,8 +106,10 @@ crates/scribe-core/   domain library (no clap, no terminal): entry.rs, tag.rs,
 crates/scribe/        the binary: cli.rs (root flags), app.rs (composition),
                         commands/ (one module per noun: flags and handlers;
                         hook/ has one file per Claude Code hook event,
-                        session/pass.rs writes session records), models.rs
-                        (the claude CLI adapter),
+                        session/pass.rs writes session records, question.rs
+                        answers, plugin.rs is the Orbit backend), models.rs
+                        (the claude CLI adapter), tasks.rs (the Orbit task
+                        adapter),
                         audit_middleware.rs (audits mutating commands),
                         output/ (sink, rendering, errors)
 crates/*/tests/         integration tests; crates/scribe/tests/goldens/ holds the
@@ -109,6 +117,8 @@ crates/*/tests/         integration tests; crates/scribe/tests/goldens/ holds th
                         fixture store they read
 plugin/claude-code/     the Claude Code package (hooks, /scribe command), and plugin/.claude-plugin/
                         the local marketplace that installs it
+plugin/.orbit-plugin/   the Orbit plugin tree (manifest, launcher, schemas,
+                        conformance goldens and the manifest contract test)
 scripts/                structure gates run by `make ci-fast`
 docs/design/            design docs: _templates/ to copy, scribe/ for this tool
 ```

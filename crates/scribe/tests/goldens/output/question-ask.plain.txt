@@ -1,0 +1,2 @@
+record	The newest session record in scope, as stored.
+record	session	session:7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02

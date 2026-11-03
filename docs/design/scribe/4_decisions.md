@@ -1163,6 +1163,65 @@ own.
 - Cost: unverified live until the operator's check
   ([2_design.md §9](./2_design.md#9-concerns--honest-limitations)).
 
+## The plugin backend serves `ask` alone until S6
+
+### Context
+
+[2_design.md §1](./2_design.md#1-boundary-and-surfaces) asks for
+`timeout_ms: 720000`, `fs.read` and `fs.write` on the store root, a
+`bin/scribe` launcher and `definitions/` holding the two routines, while
+[§10](./2_design.md#10-slice-plan) puts the routines in S6. Orbit 0.44.0 caps
+`timeout_ms` at 300000, renders `{{config.<key>}}` from a literal default
+(no `~`, no `$HOME`; a relative path joins the plugin root), and refuses a
+write root that does not exist.
+
+### Decision
+
+S5 ships `ask` live and the routine tools declared but answering
+`not_implemented`, with no `definitions/`. `timeout_ms` is 150000 (30 s of
+task reads, 90 s of model, margin). The store is `[plugins.scribe] root`, an
+absolute path the operator sets, granted `fs.read` only; `fs.write` is
+`{{plugin_state}}`, which always exists. Until `root` is set, `ask` answers
+`not_configured` naming the setting. The launcher is `bin/scribe-plugin`, so
+the tree never holds a file named like the binary it runs.
+
+### Consequences
+
+- The manifest validates and its goldens pass with the defaults; the store
+  is unreadable to the plugin until the operator names it, and a CLI-only
+  user is unaffected.
+- S6 revisits the timeout (five sessions at 120 s exceed 300000; the job
+  takes fewer per call or several calls) and adds the store write grant with
+  the routines.
+
+## `ask` reads Orbit tasks through `orbit tool run`
+
+### Context
+
+Task evidence and the orchestrator lookup need `orbit.search` and
+`orbit.task.show` ([§6.2](./2_design.md#62-retrieval-model-free),
+[§6.5](./2_design.md#65-lookups-records-by-recency-or-id)). Inside the
+plugin those calls must go through Orbit's callback channel, which `orbit
+tool run` uses when run from the plugin's environment (`ORBIT_BIN`, the
+`ORBIT_PLUGIN_CALLBACK*` variables, descriptor 3). Federated `workspaces`
+search is refused inside managed runs.
+
+### Decision
+
+The core defines a `Tasks` port; the CLI's `OrbitTasks` runs `$ORBIT_BIN`
+(else `orbit`) `tool run` through the model adapter's supervisor, from a
+cleared environment of `PATH`, `HOME`, `LANG` and `ORBIT_*`. It searches the
+bound workspace, or the plugin's `task_workspaces`. A failure is logged and
+`ask` answers without task evidence.
+
+### Consequences
+
+- One supervisor covers both spawning modules; `tasks.rs` is the second
+  module allowed to spawn, and `check-dependency-direction.sh` requires it
+  to go through `models::supervise`.
+- From a terminal outside an Orbit workspace, `question ask` logs one
+  warning and answers from the store alone.
+
 ## Task References
 
 - [ORB-21747] — designed the standalone scribe plugin and recorded its decisions.
@@ -1173,5 +1232,6 @@ own.
 - [ORB-21760] — the operator's live check of the S2 package.
 - [ORB-21778] — S3: referents (form 3), the `Models` port and `ClaudeCliModels`.
 - [ORB-21784] — S4: `/scribe on|off|status`, session-pass cadence and session records.
+- [ORB-21787] — S5: the Orbit plugin tree and `ask`.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.

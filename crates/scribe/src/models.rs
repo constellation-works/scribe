@@ -28,8 +28,8 @@
 
 use scribe_core::Models;
 use scribe_core::models::{
-    ModelError, REFERENT_SCHEMA, ReferentAnswer, ReferentRequest, SESSION_SCHEMA, SessionAnswer,
-    SessionRequest, TermAnswer,
+    ASK_SCHEMA, AskAnswer, AskRequest, ClaimAnswer, ConflictAnswer, ModelError, REFERENT_SCHEMA,
+    ReferentAnswer, ReferentRequest, SESSION_SCHEMA, SessionAnswer, SessionRequest, TermAnswer,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -225,6 +225,51 @@ impl Models for ClaudeCliModels {
                     term: t.term,
                     said: t.said,
                     message: t.message,
+                })
+                .collect(),
+        })
+    }
+
+    fn ask(&self, request: &AskRequest) -> Result<AskAnswer, ModelError> {
+        #[derive(Deserialize)]
+        struct Claim {
+            text: String,
+            quote: String,
+            cite: String,
+        }
+        #[derive(Deserialize)]
+        struct Conflict {
+            cites: Vec<String>,
+            note: String,
+        }
+        #[derive(Deserialize)]
+        struct Answer {
+            status: String,
+            answer: String,
+            claims: Vec<Claim>,
+            conflicts: Vec<Conflict>,
+        }
+        let value = self.call(&request.model, ASK_SCHEMA, request.prompt(), request.budget)?;
+        let a: Answer = serde_json::from_value(value)
+            .map_err(|e| ModelError::Malformed(format!("not an answer: {e}")))?;
+        Ok(AskAnswer {
+            status: a.status,
+            answer: a.answer,
+            claims: a
+                .claims
+                .into_iter()
+                .map(|c| ClaimAnswer {
+                    text: c.text,
+                    quote: c.quote,
+                    cite: c.cite,
+                })
+                .collect(),
+            conflicts: a
+                .conflicts
+                .into_iter()
+                .map(|c| ConflictAnswer {
+                    cites: c.cites,
+                    note: c.note,
                 })
                 .collect(),
         })

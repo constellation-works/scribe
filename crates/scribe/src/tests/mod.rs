@@ -4,3 +4,4 @@ mod app;
 mod audit_middleware;
 mod cli;
 mod models;
+mod tasks;

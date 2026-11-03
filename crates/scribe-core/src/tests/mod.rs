@@ -3,6 +3,7 @@
 //! they reach only `pub(crate)` items. The store's tests live in
 //! `store/tests/`.
 
+mod ask;
 mod capture;
 mod config;
 mod control;

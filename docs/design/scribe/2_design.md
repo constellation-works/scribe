@@ -93,6 +93,29 @@ binary. The two routine tools write session records and proposals, but they
 are `mutating` and not agent-callable, so no tool needs `agent_callable` or an
 operator override, and the MCP list stays at one tool.
 
+As built (S5): the plugin tree is `plugin.yaml`, `bin/scribe-plugin` (a POSIX
+sh launcher that execs the `scribe` on `PATH` as `scribe plugin call`, and
+answers a `not_installed` envelope when there is none), `schemas/` (the
+config, `ask`'s input and output, and placeholders for the routine tools),
+`tests/conformance/scribe.yaml` (the `orbit plugin test` goldens) and
+`tests/conformance.rs`, the manifest contract test, compiled into
+`crates/scribe/tests/plugin.rs`. The three tools are declared as the table
+says; `scribe.session-pass` and `scribe.consistency-scan` answer
+`not_implemented` until S6 wires them with the routines, so there is no
+`definitions/` yet. Three departures, each in
+[4_decisions.md](./4_decisions.md#the-plugin-backend-serves-ask-alone-until-s6):
+`timeout_ms` is 150000, since Orbit caps it at 300000 and only `ask` is live
+(30 s of task reads, then 90 s of model); the store root is the plugin's
+`[plugins.scribe] root` setting, an absolute path, granted `fs.read` only
+(the write grant is `{{plugin_state}}`, unused), and `ask` answers
+`not_configured` until it is set; and task evidence comes from the workspace
+the call is bound to unless `task_workspaces` names others. `requires.programs`
+is `[scribe, claude]`. `plugin call` reads the envelope, runs `scribe.ask`
+through the same code as `question ask`, and always prints one envelope line
+and exits 0: errors are `invalid_envelope`, `unknown_tool`, `invalid_input`,
+`not_configured`, `not_implemented`, a model code (`model_timeout` and
+`model_failed` retryable) or a store code. It is read-only and not audited.
+
 ## 2. Layering
 
 The template's two crates and tiers stay
@@ -486,6 +509,11 @@ transcript is read, and the turns rule counts Daniel's turns after
 write only when the state changes, and neither calls a model. The
 `scribe-session-pass` routine and the Orbit job are S5's (the Orbit plugin
 tree); until then `scribe session pass` runs by hand or from cron.
+As built (S5): the plugin declares `scribe.session-pass`, but the routine,
+its job and the tool's wiring ship with the consistency routine in S6
+([§10](#10-slice-plan): "the two routines ship seeded disabled"), so the
+tool answers `not_implemented` and `scribe session pass` still runs by hand
+or from cron.
 
 ### 5.3 A pass
 
@@ -646,6 +674,55 @@ without a model call and without paraphrase. A question that is not a
 lookup, or a lookup that matches nothing, falls through to §6.2. When the
 classifier is unsure it falls through too, so a lookup never hides an
 answer.
+
+### 6.6 As built (S5)
+
+`scribe_core::ask::answer` runs the whole operation over records the caller
+loaded and two ports: `Models` (`ask` request, `models.ask`, 90 s) and
+`Tasks`, which the CLI implements as `OrbitTasks` over `orbit tool run
+orbit.search` (`kind: task`, `all: true`) and `orbit.task.show` for each hit,
+15 s a call and 30 s a search, from a cleared environment of `PATH`, `HOME`,
+`LANG` and the `ORBIT_*` variables (inside the plugin, Orbit's callback
+channel). A task source that fails is logged and costs only its evidence.
+`question ask` and `plugin call` both call `commands::question::answer_with`,
+so they return the same payload; it adds `hidden_matches`, `lookup` (`null`
+or `last_session`, `named_session`, `next_steps`, `tag_period`, `term`,
+`orchestrator_session`), `records` and `warnings` to §6.1's fields
+([specs/output-contract.md](./specs/output-contract.md#ask)).
+
+- **Lookups**, tried in this order, each falling through when it finds
+  nothing: a session named by `session:<id>` or by its whole title (at
+  least 8 characters) in the question; the last orchestrator session (a
+  recency word, `session`, `on-call`/`orchestrator`/`orchestration`, and the
+  workspace as the word after the last `for`/`in`/`of`): the newest
+  `orchestration`-tagged task whose title has that word, preferring one with
+  an execution summary; the last session (a recency word and `session`),
+  narrowed to a project (slug or its last segment) or topic the question
+  names; open next steps (`next steps`, `pending`, `open items`): the newest
+  records with `next_open > 0`; a tag (name or alias) with `today`, `this
+  week` (from Monday), `this month` or `this year`: its entries created
+  since, newest first; and a term: the question, less a leading "what did I
+  mean by", "what is", "define" and the like, equal (case and whitespace
+  folded) to a stored term, returns those sessions with the matching terms,
+  then entries whose body has the phrase. At most 10 records. Discussions
+  are S7's. `evidence_considered` counts the records returned.
+- **Retrieval** follows §6.2 with these rules: `tags` keeps entries only;
+  `tags`, `topics` or `kind` leave tasks out; `since` applies to `updated`
+  (a task without one is dropped). A project or topic the question names
+  narrows the store's records only when one of them still matches a query
+  word; dates the question names narrow nothing yet (the tag-period lookup
+  covers "decisions this week"). Stemming strips `-ing`, `-ed`, `-es`, `-s`
+  (not after `s`) and then a final `-e`, so `merge` and `merging` meet.
+  Superseded and retired entries are scored either way: without
+  `include_hidden` they are left out and counted in `hidden_matches`, and
+  the answer ends with a note saying so. Forgotten entries are never
+  evidence.
+- **The check** drops a claim whose cite is not in the evidence or whose
+  quote is not verbatim in that item, and a conflict naming fewer than two
+  evidence items. A surviving conflict makes the status `conflict`; no
+  surviving claim (or the model's own `no_record`) makes it `no_record` with
+  the fixed answer "Nothing recorded answers this.". A model failure is an
+  error (`question ask` exits 1 with its code).
 
 ## 7. Consistency routine
 
@@ -833,6 +910,20 @@ writes none.
   for thousands of entries per tag.
 - **Stale is a date, not a judgement.** `review_after` flags age; whether a
   preference still holds is Daniel's call through the proposal.
+- **The plugin is unverified live (S5).** `orbit plugin validate --render`
+  and `orbit plugin test` pass against Orbit 0.44.0, but no workspace has the
+  plugin installed. The rendered sandbox grants writes to
+  `{{plugin_state}}` and Orbit's own state only, so a `claude -p` that must
+  write under `~/.claude` may fail inside the plugin while it works from the
+  CLI; `orbit.search` and `orbit.task.show` through the callback channel are
+  exercised only against a fake `orbit`. The operator's live check
+  ([ORB-21760]) installs the plugin and asks one lookup and one model
+  question through `mcp__orbit__scribe_ask`.
+- **Orbit tasks are the bound workspace's by default.** The orchestrator
+  lookup reads `orchestration` tasks from the workspace the call is bound to
+  (or `task_workspaces`); §6.5's `ws_constellation` holds them only if the
+  plugin is called there or that setting names it, and Orbit refuses a
+  federated search inside a managed run.
 
 ## 10. Slice plan
 
@@ -962,5 +1053,7 @@ there once S4 is in use, so two scribes never intercept the same
 - [ORB-13134] — brought the template to STD-01..03 v2 and STD-04/05 v1.
 - [ORB-21778] — S3: referents (form 3), the `Models` port and `ClaudeCliModels`.
 - [ORB-21784] — S4: `/scribe on|off|status`, session-pass cadence and session records.
+- [ORB-21760] — the operator's live checks of each slice.
+- [ORB-21787] — S5: the Orbit plugin tree and `ask`.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.

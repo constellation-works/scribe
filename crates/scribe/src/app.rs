@@ -1,12 +1,14 @@
 //! Composition (STD-02 R2): the one place that resolves configuration, picks
 //! the data directory and constructs the store. It hands the domain resolved
-//! values (STD-02 R3), composes the model adapter (`ClaudeCliModels`), and
+//! values (STD-02 R3), composes the model adapter (`ClaudeCliModels`) and
+//! the Orbit task adapter (`OrbitTasks`), and
 //! knows nothing about argument parsing or rendering;
 //! `scripts/check-dependency-direction.sh` rejects `crate::cli`,
 //! `crate::command` and `crate::output` imports here.
 
 use crate::error::CliError;
 use crate::models::{ClaudeCliModels, allowed_env};
+use crate::tasks::{self, OrbitTasks};
 use scribe_core::{Config, Label, Redactor, Store};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -97,6 +99,16 @@ impl Context {
         ClaudeCliModels::new(allowed_env(&config.models.credentials, |name| {
             std::env::var_os(name)
         }))
+    }
+
+    /// The Orbit task adapter: `$ORBIT_BIN` (else `orbit`) run with `PATH`,
+    /// `HOME`, `LANG` and the `ORBIT_*` variables from this process's
+    /// environment, and nothing else (STD-05 R10).
+    pub(crate) fn tasks(&self) -> OrbitTasks {
+        OrbitTasks::new(
+            tasks::program(std::env::var_os(tasks::PROGRAM_ENV)),
+            tasks::allowed_env(std::env::vars_os()),
+        )
     }
 
     /// The current time, whole seconds, for records created by this invocation.
