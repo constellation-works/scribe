@@ -193,16 +193,17 @@ its write tools ended up on the MCP list.
 ### Decision
 
 The Claude Code package runs `scribe hook <event>` on `PATH`. Orbit hosts
-only `scribe.ask` and the two routine tools. No write tool exists in Orbit's
-registry, so there is nothing for an agent to be granted.
+only `scribe.ask` and the two routine tools. No tool in Orbit's registry
+writes an entry: the routine tools write session records and proposals and
+are not agent-callable (see the `ask` decision below), so there is no entry
+write for an agent to be granted.
 
 ### Consequences
 
 - The MCP list is one tool, and no Orbit grant can widen the write path.
-- Cost: the binary must be installed on `PATH` as well as in the Orbit
-  plugin tree (one `cargo install`, two locations to keep at the same
-  version); the hooks work without Orbit, the session passes and `ask` do
-  not.
+- Cost: the binary must be on `PATH`. The plugin's `bin/scribe` launcher
+  execs that same binary, so hooks, routines and `ask` share one version;
+  the hooks work without Orbit, the session passes and `ask` do not.
 
 ## ask is the only tool advertised to agents
 
@@ -247,10 +248,14 @@ used.
 
 ### Decision
 
-One `Models` port in the core; one adapter that runs `claude -p --model
-<id> --output-format json` with the prompt on stdin, from a cleared,
+One `Models` port in the core; one adapter that runs
+`claude -p --safe-mode --tools "" --model <id> --output-format json` with the
+prompt on stdin, from a cleared,
 allowlisted environment, in its own process group, with a hard budget
-([2_design.md §8](./2_design.md#8-models)). The model gets no tools. A model
+([2_design.md §8](./2_design.md#8-models)). `--safe-mode` keeps the user's
+hooks and plugins, including `scribe hook`, out of the model call, and
+`--tools ""` gives the model no tools; `--bare` is not used because it reads
+no OAuth login. A model
 call is an operator-configured network request (STD-05@1 §R20): the model
 ids and credential names come from `config.toml`.
 
@@ -327,13 +332,16 @@ the earlier part could look like the backfill Daniel rejected.
 
 ### Decision
 
-Turning a session on catalogs that whole session, from its first message.
+Turning a session on catalogs that whole session, from its first message,
+within the 150k-character window of [2_design.md §5.3](./2_design.md#53-a-pass):
+a longer session loses its oldest messages, with a note in the record.
 "No backfill" means no other session is ever read: scribe never scans
 transcripts it was not switched on for.
 
 ### Consequences
 
-- A record states the session's real goal even when `on` came late.
+- A record states the session's real goal even when `on` came late, unless
+  the session is longer than the window.
 - Cost: messages typed before `/scribe on` are summarised, which Daniel may
   not expect; `/scribe off` stops future passes but does not shrink the
   record.
@@ -432,7 +440,7 @@ CLI) over one domain.
 Two crates: `scribe-core` (library; business logic and persistence) and
 `scribe` (binary; composition, adapters and surfaces). Cargo makes clap
 unreachable from the core rather than merely banned. Further crates still
-need an STD-02@3 §R7 reason; the default for new code is a module in one of
+need an STD-02@4 §R7 reason; the default for new code is a module in one of
 these two.
 
 ### Consequences
@@ -451,14 +459,15 @@ these two.
 
 Rules tested through a filesystem are slow and fragile, and a second backend
 would mean untangling them first. Four crates (types, domain, storage, CLI)
-is heavy without an STD-02@3 §R7 reason.
+is heavy without an STD-02@4 §R7 reason.
 
 ### Decision
 
 Business logic (`entry`, `capture`, `session`, `ask`, `consistency`,
 `verbatim`) does no I/O and never imports `crate::store`. Everything that
 touches disk is the `store` module: the `Store` facade over private
-submodules `format`, `audit` and `fsio`. The dependency-direction script
+submodules `format`, `audit`, `fsio` and `redact`. The dependency-direction
+script
 bans file and process access, and `crate::store` imports, in every other
 core module. When persistence earns its own crate, `store/` moves out whole.
 
@@ -507,13 +516,13 @@ to "what changed it, and did that work", without making reads write
 
 ### Decision
 
-An RAII `AuditGuard` at the dispatch chokepoint (STD-02@3 §R24), starting
+An RAII `AuditGuard` at the dispatch chokepoint (STD-02@4 §R24), starting
 in the failure state, told the outcome by `mark_result`, writing one JSON
 line to `<root>/audit.jsonl` on drop. `Command::audit` declares per command,
 exhaustively, whether it is audited; reads return `None`. Lines hold
 identifiers only (command, entry or session id, status, stable error code,
 timing), never `said`, `content` or model text (STD-05@1 §R13). The log
-fails open with a warning (STD-02@3 §R31).
+fails open with a warning (STD-02@4 §R31).
 
 ### Consequences
 
@@ -561,6 +570,13 @@ where `<records>` names the noun (`entries`, `sessions`, `proposals`,
 `tags`); an empty result is the same envelope with an empty array. Filters
 apply before the limit (§R33), and a cut list says so on stderr in every
 mode.
+
+This departs from STD-01@2 §R10 ("field names MUST be stable") and the
+workspace guide's list-envelope contract for one key: S1 renames the
+template's `notes` key to `entries`. The note domain is removed in S1, and no
+scribe release exists (no tag; the CHANGELOG has only `Unreleased`), so the
+rename is the one break recorded here. From the first release the names are
+stable.
 
 ### Consequences
 
@@ -663,7 +679,7 @@ Without `docs/standards/check.sh`, `make standards-check` warns and exits
 ### Context
 
 An older build that loads a document with a field it does not know and
-rewrites it drops that field (STD-02@2 §R16, STD-03@2 §R10); STD-03@2 §R23
+rewrites it drops that field (STD-02@4 §R16, STD-03@2 §R10); STD-03@2 §R23
 wants every layout change shipped as an appended migration.
 
 ### Decision
@@ -679,8 +695,8 @@ carried over because no scribe store exists yet.
 
 - Older builds refuse newer stores instead of damaging them.
 - Cost: even an additive field locks older builds out until they upgrade,
-  which matters because the hook binary on `PATH` and the plugin's copy can
-  differ in version.
+  which matters because an older scribe binary left on `PATH` refuses the
+  store until it is replaced.
 
 ## Store state is owner-only and checked on every load
 
@@ -715,13 +731,13 @@ non-unix platforms the checks are no-ops.
 
 ### Context
 
-STD-02@2 §R32 wants one bad item isolated while the rest proceed. A file
+STD-02@4 §R32 wants one bad item isolated while the rest proceed. A file
 that is rewritten whole, if read past a bad record, would be rewritten
 without it: data loss.
 
 ### Decision
 
-Deviation from STD-02@2 §R32 within one file: a tag file, session record,
+Deviation from STD-02@4 §R32 within one file: a tag file, session record,
 control or proposals document that fails to parse is refused as
 `store_corrupt`, naming the file, and nothing rewrites it. Across files the
 rule holds: `ask` and the lists skip a corrupt file, report it on stderr (or
@@ -741,12 +757,12 @@ file refuses.
 
 ### Context
 
-STD-04@1 §R10 says a gate whose tool is missing fails; `cargo-nextest` and
+STD-04@2 §R10 says a gate whose tool is missing fails; `cargo-nextest` and
 `cargo-deny` are not installed everywhere this repository is built.
 
 ### Decision
 
-Deviation from STD-04@1 §R10 for local runs only: without `cargo-deny` the
+Deviation from STD-04@2 §R10 for local runs only: without `cargo-deny` the
 supply-chain check is skipped and without `cargo-nextest` tests run under
 `cargo test`, each with a warning. Under `CI=true` either missing tool
 fails.
@@ -763,12 +779,12 @@ fails.
 
 ### Context
 
-STD-02@2 §R28 refuses a bad configuration value at load; STD-01@2 §R8
+STD-02@4 §R28 refuses a bad configuration value at load; STD-01@2 §R8
 requires an unrecognized output-format variable to fall back to `auto`.
 
 ### Decision
 
-Deviation from STD-02@2 §R28 for the environment: an unrecognized
+Deviation from STD-02@4 §R28 for the environment: an unrecognized
 `SCRIBE_FORMAT` means `auto`, and an unparseable `SCRIBE_LOG` is reported
 once and replaced by `warn`. `config.toml` is not environment: a bad key or
 value there is refused at load, naming the key, and a hook that cannot load

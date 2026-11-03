@@ -42,7 +42,9 @@ STD-01 grammar:
 (`schemaVersion: 2`, `kind: Plugin`, `metadata.name: scribe`), `bin/scribe`
 (a launcher that execs the installed binary as `scribe plugin call`), `schemas/`
 and `definitions/` (the two routines and their jobs). The backend is
-`type: exec`, `timeout_ms: 180000`. Tools:
+`type: exec`, `timeout_ms: 720000`: the routine tools may need 600 s (five
+sessions at 120 s) and 480 s (four consistency batches at 120 s), and `ask`
+is bounded by its own 90 s budget. Tools:
 
 | Tool | `execution_kind` | `agent_callable` | `mcp_scope` |
 |---|---|---|---|
@@ -53,8 +55,10 @@ and `definitions/` (the two routines and their jobs). The backend is
 Orbit defaults `mcp_scope` to `workspace`, so every tool except `ask` sets
 `none` explicitly, and a conformance test in `plugin/.orbit-plugin/tests/`
 asserts that `ask` is the only advertised tool. Main agents therefore see
-exactly `mcp__orbit__scribe_ask`. `ask` is `global` because the store is
-Daniel's, not a workspace's. The two mutating tools run only from the
+exactly `mcp__orbit__scribe_ask` once orbit-office's scribe is retired (see
+*Outside this repository* in [§10](#10-slice-plan)); until then its
+`office.scribe-*` tools are on the list too. `ask` is `global` because the
+store is Daniel's, not a workspace's. The two mutating tools run only from the
 plugin's routines (Runner capability). Permissions: `fs.read` and `fs.write`
 on the store root, `network: any` for the model, `env_pass` for the model
 credential names ([§8](#8-models)), and `orbit_tools: [orbit.search,
@@ -71,9 +75,10 @@ command file: `/scribe` is intercepted by the `UserPromptSubmit` hook
 command key, which is why this is a separate package
 ([4_decisions.md](./4_decisions.md#hooks-call-the-scribe-binary-directly-not-orbit)).
 
-Writes never go through Orbit's tool surface: the hooks call the binary, so
-no mutating tool needs `agent_callable` or an operator override, and the MCP
-list stays at one tool.
+Entry writes never go through Orbit's tool surface: the hooks call the
+binary. The two routine tools write session records and proposals, but they
+are `mutating` and not agent-callable, so no tool needs `agent_callable` or an
+operator override, and the MCP list stays at one tool.
 
 ## 2. Layering
 
@@ -92,7 +97,7 @@ The note domain is deleted in S1 and replaced by:
 | `ask` | tokenizing, ranking, evidence packing, answer validation | none |
 | `consistency` | candidate pairing, staleness, proposal validation | none |
 | `models` | the `Models` port (a trait) and the typed requests/responses for each use | none |
-| `store` | the `Store` facade over `format`, `audit`, `fsio`; the only disk access | disk |
+| `store` | the `Store` facade over `format`, `audit`, `fsio`, `redact`; the only disk access | disk |
 
 The CLI crate adds `commands/{entry,session,proposal,tag,question,consistency,plugin}.rs`
 and `commands/hook/` (one file per event), plus two
@@ -115,7 +120,7 @@ serves every workspace on the host. The plugin's config key `root` (default
 ├── config.toml                  tags, models, cadence (Daniel edits; read-only to scribe)
 ├── tags/<tag>.json              {"format":1,"tag","entries":[…]}
 ├── sessions/<session-id>.json   {"format":1,"session":{…}}  one per opted-in session
-├── control.json                 {"format":1,"sessions":{"<id>":{"on","since","due"}}}
+├── control.json                 {"format":1,"sessions":{"<id>":{"on","since","due","final"}}}
 ├── proposals.json               {"format":1,"proposals":[…]}
 ├── audit.jsonl                  one line per mutating command (template shape)
 └── .lock
@@ -213,7 +218,8 @@ Model-free grammar, tried in order:
 
 1. `#scribe <tag>: <content>` — explicit tag, content after the colon.
 2. `#scribe [add|record|note] <content> (to|in|under) [my|the] <tag>` — the
-   tag is the last word group, matched against names and aliases.
+   tag is the last word group, matched against names and aliases. `<content>`
+   is never a bare `this`, `that`, `it` or `these`; those lines are form 3.
 3. `#scribe [add|record] (this|that|it|these) (to|in|under) [my|the] <tag>`
    — a referent instruction ([§4.3](#43-resolving-this-and-it)).
 4. `#scribe approve <p-id>` · `#scribe reject <p-id>` ·
@@ -392,7 +398,10 @@ answer.
 ## 7. Consistency routine
 
 The `scribe-consistency` routine (`0 6 * * 1`, weekly, seeded disabled)
-runs `scribe.consistency-scan`:
+runs `scribe.consistency-scan`. First it re-applies each approved proposal
+whose older entry is still `active`: approval writes two files, and this
+repairs a crash between them
+([4_decisions.md](./4_decisions.md#one-json-file-per-tag-and-per-session-under-scribe)). Then:
 
 1. **Candidates, model-free.** Within each tag, pair active entries whose
    token sets overlap (Jaccard ≥ 0.25 over content tokens) or share an
@@ -431,12 +440,16 @@ exists here.
 | `ask` | `models.ask` | `claude-sonnet-5-5` | `scribe.ask`, `scribe question ask` | 90 s |
 
 All four go through one `Models` port with one adapter, `ClaudeCliModels`:
-it runs `claude -p --model <id> --output-format json --json-schema <file>`
+it runs `claude -p --safe-mode --tools "" --model <id> --output-format json --json-schema <schema-json>`
 with the prompt on stdin, in its own process group, from a cleared
 environment holding only `PATH`, `HOME`, `LANG` and the credential names
 Daniel configures (`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`;
-STD-05 R10), killed and reaped at the budget (STD-03 R11–R13). The model
-never receives tools. Why the CLI rather than an HTTP client:
+STD-05 R10), killed and reaped at the budget (STD-03 R11–R13).
+`--safe-mode` turns off the hooks and plugins of the user's Claude Code setup,
+so a model call never fires `scribe hook`; `--tools ""` removes the built-in
+tools, so the model never receives tools. `--bare` is not used: it reads only
+`ANTHROPIC_API_KEY`, and Daniel's login is OAuth. S3 checks both flags against
+a real `claude -p` run. Why the CLI rather than an HTTP client:
 [4_decisions.md](./4_decisions.md#models-are-called-through-the-claude-cli).
 Tests use a fake `Models` implementation; no test calls a model.
 
@@ -526,6 +539,9 @@ Claude Code package.
 - `ClaudeCliModels` launches from a cleared allowlisted environment in its
   own process group and is killed and reaped at its budget (tested with a
   fake `claude` script on `PATH` under a temp `HOME`).
+- The argv carries `--safe-mode` and `--tools ""` (asserted on a fake `claude`
+  that records its argv), and a manual `claude -p` run with those flags is
+  recorded in [§9](#9-concerns--honest-limitations).
 
 **S4 — `/scribe on` and session records.**
 
@@ -559,7 +575,8 @@ Claude Code package.
 
 - `scribe consistency scan` with a fake `Models` turns a contradicting pair
   into one `supersedes` proposal, a stale entry into one `stale` proposal,
-  and never re-proposes a settled pair.
+  and never re-proposes a settled pair; and a scan re-applies an approved
+  proposal whose older entry is still `active`.
 - `#scribe approve p-<n>` marks the older entry `superseded` with
   `superseded_by`; `reject` closes the proposal; `retire` and `forget`
   behave as [§3](#3-storage) says; none is reachable from any Orbit tool.

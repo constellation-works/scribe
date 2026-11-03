@@ -96,10 +96,10 @@ can override.
 
 | Concern | Where it will live | Slice |
 |---------|--------------------|-------|
-| Entries, session records, proposals; the store | `crates/scribe-core/src/{entry,session,proposal}.rs`, `store/` | S1 |
+| Entries, session records, proposals; the store | `crates/scribe-core/src/{entry,session,consistency}.rs`, `store/` | S1 |
 | `#scribe` parsing and capture | `crates/scribe-core/src/capture.rs`, `crates/scribe/src/commands/hook/` | S2, S3 |
-| `/scribe on` and session passes | `crates/scribe-core/src/catalog.rs`, `commands/hook/`, `commands/session.rs` | S4 |
-| `ask` | `crates/scribe-core/src/ask/`, `commands/ask.rs` | S5 |
+| `/scribe on` and session passes | `crates/scribe-core/src/{session,transcript}.rs`, `commands/hook/`, `commands/session.rs` | S4 |
+| `ask` | `crates/scribe-core/src/ask/`, `commands/question.rs` | S5 |
 | Consistency routine | `crates/scribe-core/src/consistency.rs`, `commands/consistency.rs` | S6 |
 | Orbit plugin tree | `plugin/.orbit-plugin/` | S5 |
 | Claude Code hooks package | `plugin/claude-code/` | S2 |
