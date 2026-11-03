@@ -59,7 +59,7 @@ removal from answers.
   reader expecting the routine to delete must learn that only `forget`
   does.
 
-## One JSON file per tag and per session under ~/.scribe
+## One Markdown file per record, metadata in YAML frontmatter
 
 **Recorded:** 2026-11 · [ORB-21747] · **Overridable by Daniel**
 **Code anchors:** `crates/scribe-core/src/store/` (from S1)
@@ -68,30 +68,40 @@ removal from answers.
 
 The store needs entries, session records, the on/off state and proposals,
 written by hooks in concurrent sessions and read by `ask` from any
-workspace. orbit-office kept them as Markdown in a git-backed Library, which
-brought a git commit per pass and a parser per file shape. One database file
-(SQLite) would add a dependency and a second persistence discipline beside
-the template's atomic-replace store. One JSON document for everything would
-rewrite all of Daniel's records on every `#scribe`.
+workspace. The first version of this design kept one JSON file per tag and
+per session. Daniel, 2026-11-02: "for chat session summaries, we are
+probably better off using a good metadata system in the frontmatter, e.g.
+tags to filter by", and "same for decisions and preferences I suppose".
+orbit-office kept Markdown in a git-backed Library, which brought a commit
+per pass; SQLite would add a second persistence discipline.
 
 ### Decision
 
 A single root, `~/.scribe` by default, shared by every workspace on the
-host: `tags/<tag>.json`, `sessions/<session-id>.json`, `control.json`,
-`proposals.json`, `config.toml`, `audit.jsonl`, `.lock`
-([2_design.md §3](./2_design.md#3-storage)). Every document is replaced
-whole through `write_atomic` under the one store lock, as the template does.
-A write touches only the file it changes.
+host. Each entry is `entries/<tag>/<id>.md` and each session record is
+`sessions/<yyyy>/<mm>/<id>.md`: YAML frontmatter holding the metadata
+(`project`, `topics`, `related`, `status`, dates, cite) and a Markdown body
+(the verbatim entry, or the four session sections)
+([2_design.md §3](./2_design.md#3-storage)). `control.json`,
+`proposals.json`, `config.toml`, `audit.jsonl` and `.lock` stay as they
+were. Every file is replaced whole through `write_atomic` under the one
+store lock. There is no git repository: history is the audit log.
 
 ### Consequences
 
-- A `#scribe` rewrites one tag file; a session pass rewrites one session
-  file; a corrupt file affects only its own records.
-- Cost: a cross-file operation (approving a proposal changes
-  `proposals.json` and a tag file) is two atomic writes under one lock, not
-  one transaction; a crash between them leaves an approved proposal whose
-  entry is still active, which the next scan repairs by re-applying approved
-  proposals.
+- `ask` and the CLI filter by frontmatter before ranking; a record is
+  readable and greppable as a file, and Daniel can open one in an editor.
+- A `#scribe` writes one new file and never rewrites other entries; ids are
+  allocated by scanning `entries/<tag>/` under the lock.
+- Cost: a YAML parser dependency, chosen in S1 among maintained crates and
+  checked by `cargo deny`; every load parses one file per record, which is
+  fine for thousands of records and is revisited if a load exceeds a second.
+- A cross-file operation (approving a proposal changes `proposals.json` and
+  an entry file) is two atomic writes under one lock, not one transaction;
+  a crash between them leaves an approved proposal whose entry is still
+  active, which the next scan repairs by re-applying approved proposals.
+- `topics` is a new metadata field distinct from tags; near-duplicate topics
+  are merged only through an approved proposal.
 
 ## ask ranks in memory with no persisted index
 

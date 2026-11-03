@@ -118,8 +118,8 @@ serves every workspace on the host. The plugin's config key `root` (default
 ```
 ~/.scribe/                       0700, owner-checked on every load
 ├── config.toml                  tags, models, cadence (Daniel edits; read-only to scribe)
-├── tags/<tag>.json              {"format":1,"tag","entries":[…]}
-├── sessions/<session-id>.json   {"format":1,"session":{…}}  one per opted-in session
+├── entries/<tag>/<id>.md        one file per entry: YAML frontmatter + verbatim body
+├── sessions/<yyyy>/<mm>/<session-id>.md   one per opted-in session: frontmatter + sections
 ├── control.json                 {"format":1,"sessions":{"<id>":{"on","since","due","final"}}}
 ├── proposals.json               {"format":1,"proposals":[…]}
 ├── audit.jsonl                  one line per mutating command (template shape)
@@ -128,28 +128,63 @@ serves every workspace on the host. The plugin's config key `root` (default
 
 Every file except `audit.jsonl` is replaced whole through
 `fsio::write_atomic` under `.lock`; nothing is appended or edited in place.
+A `#scribe` creates one new entry file; a session pass replaces one session
+file.
 Reads take no lock and write nothing (STD-01 R31), so `ask` works on a
 read-only root. Each document carries `format: 1`; the template's
 `notes.json` format is not carried over because no scribe store exists yet
 (S1 starts `UPGRADES` empty for the new documents).
 
-**Entry** (`tags/<tag>.json`):
+**Metadata.** Entries and session records are Markdown files whose YAML
+frontmatter is the metadata `ask` and the CLI filter on, so a lookup narrows
+by fields before any ranking. Every record carries:
 
-```json
-{
-  "id": "decisions-12",
-  "tag": "decisions",
-  "said": "#scribe add this to decision",
-  "content": "squash-merge agent PRs; keep merge commits for releases",
-  "content_from": {"kind": "message", "role": "assistant", "message": "<uuid>", "at": "2026-11-02T19:04:11Z"},
-  "cite": {"provider": "claude-code", "host": "dk-server-1", "session": "<session-id>",
-           "message": "<uuid>", "at": "2026-11-02T19:05:40Z", "prompt_sha256": "…", "line": 3, "cwd": "…"},
-  "recorded_at": "2026-11-02T19:05:41Z",
-  "status": "active",
-  "superseded_by": null,
-  "review_after": "2027-05-01"
-}
+| Field | Meaning |
+|---|---|
+| `format`, `kind` | `1`; `entry` or `session` |
+| `id` | `decisions-12`, or the session id |
+| `status` | entry: `active`, `superseded`, `retired`, `forgotten`; session: `open`, `final` |
+| `project` | the repository slug from the cwd's git remote, else the cwd's basename; `global` when Daniel says so |
+| `topics` | 0–5 lowercase kebab-case labels (`ci`, `crew-routing`, `release`) |
+| `related` | references the record mentions: `task:ORB-123`, `pr:<owner>/<repo>#7`, `repo:<slug>`, `session:<id>` |
+| `provider`, `host` | where it was recorded |
+| `created`, `updated` | RFC 3339 UTC |
+
+`topics` are filter labels and are distinct from a tag, which names where an
+entry goes (`decisions`, `preferences`). An entry's topics are the extra
+hashtags on its `#scribe` line (`#scribe add this to decision #ci`) and
+nothing else, since capture calls no model. A session's topics come from
+the `session` model at each pass, which is given the existing topic list and
+told to reuse it before coining one. The consistency routine proposes
+merging near-duplicate topics (`ci` and `continuous-integration`) as it does
+superseding entries; nothing is renamed without Daniel's approval.
+
+**Entry** (`entries/<tag>/<id>.md`):
+
+```markdown
+---
+format: 1
+kind: entry
+id: decisions-12
+tag: decisions
+status: active
+project: orbit
+topics: [merge-policy]
+related: [task:ORB-123]
+provider: claude-code
+host: dk-server-1
+created: 2026-11-02T19:05:41Z
+updated: 2026-11-02T19:05:41Z
+said: "#scribe add this to decision #merge-policy"
+content_from: {kind: message, role: assistant, message: <uuid>, at: 2026-11-02T19:04:11Z}
+cite: {session: <session-id>, message: <uuid>, at: 2026-11-02T19:05:40Z, prompt_sha256: "…", line: 3, cwd: "…"}
+superseded_by: null
+review_after: 2027-05-01
+---
+squash-merge agent PRs; keep merge commits for releases
 ```
+
+The body is `content`, verbatim.
 
 - `said` is the full `#scribe` line exactly as Daniel typed it.
 - `content` is what the entry records. `content_from.kind` is
@@ -165,11 +200,12 @@ read-only root. Each document carries `format: 1`; the template's
 - Ids are `<tag>-<n>`, `n` being the tag's max + 1 under the lock: short,
   self-describing in an echo, and never reused.
 
-**Session record** (`sessions/<id>.json`): `session`, `provider`, `host`,
-`cwd`, `title`, `started`, `updated`, `on_since`, `scribed_through` (the last
-transcript message folded in), `summary`, `goals`, `outcome`, `next`
-(character budgets 600/400/1200/600), `passes` (count) and `final` (true
-after the session-end pass). The four text fields are model-written
+**Session record** (`sessions/<yyyy>/<mm>/<id>.md`): the common
+frontmatter plus `title`, `cwd`, `started`, `on_since`, `scribed_through`
+(the last transcript message folded in), `passes` (count) and `next_open`
+(the number of `next` items); `status: final` after the session-end pass.
+The body has four sections, `## Summary`, `## Goals`, `## Outcome` and
+`## Next` (character budgets 600/400/1200/600). The four text fields are model-written
 summaries, labelled as such in `ask` evidence, never quoted as Daniel's words.
 
 **Proposal** (`proposals.json`): `id` (`p-<n>`), `kind` (`supersedes` or
@@ -297,7 +333,8 @@ hook ([4_decisions.md](./4_decisions.md#session-passes-run-from-an-orbit-routine
    blocks as pasted.
 2. Send the previous record plus the messages after `scribed_through`
    (windowed to 150k characters, oldest dropped first with a note) to the
-   `session` model (Haiku) for `{title, summary, goals, outcome, next}`.
+   `session` model (Haiku) for `{title, summary, goals, outcome, next,
+   topics, related}`, giving it the store's existing topics to reuse.
 3. Validate the budgets and the JSON shape; on failure, keep the previous
    record and leave `due` set for the next run (three failures in a row
    clear `due` and log a `warn`).
@@ -311,7 +348,8 @@ never switched on are never read.
 
 ### 6.1 Contract
 
-Input: `{"question": string, "scope"?: {"tags"?: [..], "since"?: date},
+Input: `{"question": string, "scope"?: {"tags"?: [..], "topics"?: [..],
+"project"?: string, "kind"?: "entry" | "session", "since"?: date},
 "include_hidden"?: bool}`. Output:
 
 ```json
@@ -333,6 +371,10 @@ prints this payload).
 
 ### 6.2 Retrieval (model-free)
 
+0. Filter by frontmatter first. `scope` fields (`project`, `topics`,
+   `tags`, `since`, `kind`) and any project name, topic or date the
+   question names ("decisions on ci this month") restrict the candidate
+   records before ranking.
 1. Load every `active` entry (plus `superseded`/`retired` when
    `include_hidden`), every session record, and up to 20 Orbit tasks from
    `orbit.search` with the question's terms (title, status, and the first
@@ -383,7 +425,7 @@ nothing), so before §6.2 a model-free classifier recognises lookups:
 
 | Asks for | Returns |
 |---|---|
-| the latest/last/previous session (optionally for a project or scope) | the newest session record in that scope by `updated_at` |
+| the latest/last/previous session (optionally for a project or topic) | the newest session record matching that frontmatter, by `updated` |
 | a named session (`session:<id>`, or a title match) | that session record |
 | open next steps / what is pending | the `next` items of the newest records in scope, newest first |
 | the entries of a tag in a period ("decisions this week") | those entries, newest first |
@@ -401,7 +443,7 @@ The `scribe-consistency` routine (`0 6 * * 1`, weekly, seeded disabled)
 runs `scribe.consistency-scan`. First it re-applies each approved proposal
 whose older entry is still `active`: approval writes two files, and this
 repairs a crash between them
-([4_decisions.md](./4_decisions.md#one-json-file-per-tag-and-per-session-under-scribe)). Then:
+([4_decisions.md](./4_decisions.md#one-markdown-file-per-record-metadata-in-yaml-frontmatter)). Then:
 
 1. **Candidates, model-free.** Within each tag, pair active entries whose
    token sets overlap (Jaccard ≥ 0.25 over content tokens) or share an
@@ -502,8 +544,12 @@ session records, control state and proposals, and the read-only CLI.
 - `note.rs`, `query.rs`, the `note` noun, `notes.json` and their tests and
   goldens are gone; `entry`, `tag`, `session`, `verbatim` and `store` exist
   as in [§2](#2-layering)–[§3](#3-storage) and [§6.4](#64-the-verbatim-check).
-- `scribe entry list [--tag <tag>] [--status <status>]`, `entry show <id>`,
-  `session list`, `session show <id>`, `proposal list`, `tag list` work in
+- Entries and session records are Markdown files with the frontmatter in
+  [§3](#3-storage); a record with missing or unknown frontmatter keys is
+  refused, naming the file.
+- `scribe entry list [--tag <tag>] [--status <status>] [--project <p>]
+  [--topic <t>]`, `entry show <id>`, `session list [--project <p>]
+  [--topic <t>]`, `session show <id>`, `proposal list`, `tag list` work in
   table, plain and `--json` modes against a fixture store, and against a
   read-only root.
 - A store with a newer `format`, a group-writable root or a linked file is

@@ -52,6 +52,9 @@ Quoted verbatim; these are the requirements this design starts from.
 - "I just want to make sure that orchestrator agents can ask the scribe on
   anything, e.g. \"can you fetch me last session summary? (works as a
   session handoff)\"."
+- "for chat session summaries, we are probably better off using a good
+  metadata system in the frontmatter, e.g. tags to filter by" and "same for
+  decisions and preferences I suppose".
 
 ## 2. Shape
 
@@ -88,7 +91,7 @@ can override.
 | Question | Decision |
 |---|---|
 | Whether superseded entries are ever removed, or only hidden (the directions say "outdated record removal") | [Superseded and stale entries are hidden, not removed](./4_decisions.md#superseded-and-stale-entries-are-hidden-not-removed) |
-| Storage layout and the search index for `ask` | [One JSON file per tag and per session](./4_decisions.md#one-json-file-per-tag-and-per-session-under-scribe), [`ask` ranks in memory with no persisted index](./4_decisions.md#ask-ranks-in-memory-with-no-persisted-index) |
+| Storage layout and the search index for `ask` | [One Markdown file per record, metadata in YAML frontmatter](./4_decisions.md#one-markdown-file-per-record-metadata-in-yaml-frontmatter), [`ask` ranks in memory with no persisted index](./4_decisions.md#ask-ranks-in-memory-with-no-persisted-index) |
 | The migration from the orbit-office scribe (its v1 and v2 records) | [No migration of orbit-office scribe records](./4_decisions.md#no-migration-of-orbit-office-scribe-records) |
 | Which tags ship by default beyond `preferences` and `decisions` | [Only decisions and preferences ship by default](./4_decisions.md#only-decisions-and-preferences-ship-by-default) |
 
