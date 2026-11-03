@@ -34,6 +34,7 @@ use crate::error::CliError;
 use crate::output::{Output, PassPayload, PassReport};
 use clap::Args;
 use scribe_core::control::{self};
+use scribe_core::models::SessionRequest;
 use scribe_core::{
     Config, Label, Models, Project, Redactor, SessionControl, SessionFilter, SessionId,
     SessionRecord, pass, transcript,
@@ -195,10 +196,26 @@ impl Job<'_> {
             tracing::warn!(session = %self.id, %err, "the session model failed");
             err.code()
         })?;
-        let distilled = pass::check(answer, &conversation).map_err(|err| {
-            tracing::warn!(session = %self.id, %err, "the session model's answer was refused");
-            "session_answer_invalid"
-        })?;
+        // One more ask in the same pass, naming what was refused: a model
+        // can't count characters exactly, so a near miss is common.
+        let distilled = match pass::check(answer, &conversation) {
+            Ok(distilled) => distilled,
+            Err(err) => {
+                tracing::warn!(session = %self.id, %err, "the session model's answer was refused; asking once more");
+                let retry = SessionRequest {
+                    correction: Some(err.to_string()),
+                    ..request
+                };
+                let answer = adapter.session(&retry).map_err(|err| {
+                    tracing::warn!(session = %self.id, %err, "the session model failed");
+                    err.code()
+                })?;
+                pass::check(answer, &conversation).map_err(|err| {
+                    tracing::warn!(session = %self.id, %err, "the session model's answer was refused");
+                    "session_answer_invalid"
+                })?
+            }
+        };
         let dropped_terms = distilled.dropped_terms;
         let cwd = transcript::cwd(&bytes).unwrap_or_default();
         let now = self.ctx.now();

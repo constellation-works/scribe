@@ -347,7 +347,7 @@ fn a_pass_writes_one_record_of_daniels_terms_and_never_reads_a_session_never_swi
     setup.scribe("/scribe off");
     setup.scribe("/scribe on");
     let mut over = answer();
-    over["summary"] = json!("s".repeat(601));
+    over["summary"] = json!("s".repeat(1501));
     setup.answer(&over);
     let report = setup.pass();
     assert_eq!(report["passes"][0]["result"], "failed");

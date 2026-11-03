@@ -161,17 +161,17 @@ fn a_term_is_kept_only_when_said_is_verbatim_from_daniels_own_turn() {
 fn an_answer_over_budget_or_out_of_shape_is_refused_whole() {
     let conversation = pass::conversation(&transcript());
     let mut over = answer();
-    over.summary = "s".repeat(601);
+    over.summary = "s".repeat(1501);
     assert_eq!(
         pass::check(over, &conversation),
         Err(Invalid::OverBudget {
             field: "Summary",
-            chars: 601,
-            max: 600
+            chars: 1501,
+            max: 1500
         })
     );
     let mut next = answer();
-    next.next = vec!["n".repeat(599)];
+    next.next = vec!["n".repeat(999)];
     assert!(matches!(
         pass::check(next, &conversation),
         Err(Invalid::OverBudget { field: "next", .. })
