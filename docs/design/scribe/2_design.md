@@ -636,19 +636,20 @@ writes none.
   the S2 manual check below; `decision: "block"` and whether `/scribe`
   reaches the hook without a command file are S4's to confirm; if `/scribe`
   needs a command file, S4 adds one whose only effect is the same hook call.
-- **S2 manual check in a live session: pending (operator, ORB-21760).** The
-  leaf task that built S2 runs in a sandbox without an interactive Claude
-  Code session, so the check is the operator's. Steps: `make install`;
-  `claude plugin install scribe --marketplace ./plugin` from this checkout;
-  start a new `claude` session in any repository; type a prompt with the
-  line `#scribe decisions: S2 live check` plus a question on the next line;
-  confirm the `scribe: added decisions-<n> to decisions — "S2 live check"`
-  line is shown in the terminal (Daniel) and that the agent's answer shows
-  it saw the same text (ask it to repeat what scribe said); after the reply,
-  `scribe entry show decisions-<n> --json | jq .cite.message` is a uuid, not
-  `null`; then `#scribe add it to rituals` shows the refusal listing the
-  configured tags. Record the result, the Claude Code version and the date
-  here, replacing this item.
+- **S2 manual check in a live session: passed, headless (2026-11-03, Claude
+  Code 2.1.317, macOS).** Run by the on-call orchestrator (ORB-21760) with
+  `claude -p` against an isolated `CLAUDE_CONFIG_DIR` and `SCRIBE_ROOT`, the
+  plugin installed from the local marketplace (`scribe@scribe-local`). A
+  prompt with `#scribe decisions: S2 live check` wrote `decisions-1`; asked
+  to repeat any line starting with `scribe:`, the agent quoted
+  `scribe: added decisions-1 to decisions — "S2 live check"` from the hook's
+  `additionalContext`, so the agent sees the reply. After the reply
+  `cite.message` was a uuid, not `null`, so the `Stop` hook found the prompt
+  by its hash. `#scribe add it to rituals` was refused (no `rituals` tag in
+  the defaults) and the agent relayed the refusal. Not confirmed: that the
+  `systemMessage` renders in the interactive terminal for Daniel, which `-p`
+  mode does not show; check it the first time `#scribe` is used in an
+  interactive session.
 - **The prompt hash must match the transcript's text.** The `Stop` hook
   finds the prompt by hashing the transcript's user text. If Claude Code
   records a prompt differently from what it passed the hook (expanded
