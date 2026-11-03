@@ -16,6 +16,7 @@ mod audit_middleware;
 mod cli;
 mod commands;
 mod error;
+mod models;
 mod output;
 
 use std::process::ExitCode;

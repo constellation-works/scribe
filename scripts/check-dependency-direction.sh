@@ -111,6 +111,14 @@ ban "$CORE/store/audit.rs"  'std::fs|super::fsio'                "store/audit.rs
 ban "$CORE"          'std::env::|home_dir|current_dir'           "the core crate must not read the environment or discover paths"
 # Composition does not know about parsing, dispatch or rendering (R2).
 ban "$CLI/app.rs"    'crate::(cli|commands|output|audit_middleware)' "app.rs (composition) must not import surface modules"
+# The model adapter is composed by app.rs and knows nothing of the surface (R2).
+ban "$CLI/models.rs" 'crate::(cli|commands|output|audit_middleware)' "models.rs (the model adapter) must not import surface modules"
+# One module spawns processes, so process-group supervision, the cleared
+# environment and the budget live in one place (STD-03 R11-R15, STD-05 R10).
+for path in "$CLI"/*; do
+  case "$(basename "$path")" in models.rs | tests) continue ;; esac
+  ban "$path" 'process::(Command|Child)|Command::new' "only models.rs spawns processes: reach a model through the Models port"
+done
 # Rendering is derived from payloads only; it never reaches back up (R1).
 ban "$CLI/output"    'crate::(app|cli|commands|audit_middleware)'    "output must not import app, cli, commands or audit_middleware"
 # Dispatch depends on the middleware, never the reverse (R1).

@@ -341,6 +341,22 @@ impl Store {
         Ok(out)
     }
 
+    /// The entries already recorded from one prompt: `session` and
+    /// `prompt_sha256` as their cite has them. Reads only, so the hook can
+    /// echo a replayed form-3 line without asking the model again.
+    pub fn entries_from_prompt(
+        &self,
+        session: &SessionId,
+        prompt_sha256: &str,
+    ) -> Result<Vec<Entry>> {
+        Ok(self
+            .load_entries()?
+            .0
+            .into_iter()
+            .filter(|e| &e.cite.session == session && e.cite.prompt_sha256 == prompt_sha256)
+            .collect())
+    }
+
     /// Whether any entry from `session` still waits for its cite's message
     /// uuid. Reads only, so the `Stop` hook, which runs after every reply,
     /// can return without locking or writing when nothing waits.

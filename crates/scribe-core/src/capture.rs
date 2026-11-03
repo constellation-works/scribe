@@ -14,18 +14,26 @@
 //! 1. `#scribe <tag>: <content>`
 //! 2. `#scribe [add|record|note] <content> (to|in|under) [my|the] <tag>`
 //!
+//! 3. `#scribe [add|record] (this|that|it|these) (to|in|under) [my|the] <tag>`
+//!
 //! Hashtags at the end of the line are the entry's topics
-//! (`#scribe decisions: squash-merge agent PRs #merge-policy`). A referent
-//! (`#scribe add this to decisions`, form 3) and the settling verbs
-//! (`approve`, `reject`, `retire`, `forget`, form 4) are recognised and
-//! refused as not supported by this build, never misread as form 2.
+//! (`#scribe decisions: squash-merge agent PRs #merge-policy`). Form 3 parses
+//! to a [`Referent`]: the content is an earlier message's passage, which a
+//! model picks from the [`window`] before the prompt and [`resolve`] checks
+//! verbatim, falling back to the previous assistant message when the model
+//! fails (§4.3). The settling verbs (`approve`, `reject`, `retire`, `forget`,
+//! form 4) and `distill` are recognised and refused as not supported by this
+//! build, never misread as form 2.
 //!
 //! Pure functions over text: no I/O (STD-02 R5).
 
-use crate::entry::{Cite, ContentFrom, NewEntry, TagName};
+use crate::entry::{Cite, ContentFrom, NewEntry, Speaker, TagName};
+use crate::models::{Candidate, ModelError, REFERENT_BUDGET, ReferentAnswer, ReferentRequest};
 use crate::record::{Label, Project, Topic, Topics};
 use crate::session::SessionId;
 use crate::tag::TagTable;
+use crate::transcript::Message;
+use crate::verbatim;
 use sha2::{Digest, Sha256};
 use std::fmt;
 use std::fmt::Write as _;
@@ -35,7 +43,7 @@ use time::OffsetDateTime;
 pub const MARKER: &str = "#scribe";
 
 /// Words that point at an earlier message instead of giving the content
-/// (form 3, resolved by a model in a later slice).
+/// (form 3, resolved by a model).
 const REFERENTS: [&str; 4] = ["this", "that", "it", "these"];
 /// The optional verbs that open form 2.
 const VERBS: [&str; 3] = ["add", "record", "note"];
@@ -45,6 +53,12 @@ const PREPOSITIONS: [&str; 3] = ["to", "in", "under"];
 const DETERMINERS: [&str; 2] = ["my", "the"];
 /// Verbs that settle a proposal or hide an entry (form 4).
 const SETTLING: [&str; 4] = ["approve", "reject", "retire", "forget"];
+
+/// How many messages before the prompt a referent may point at (§4.3).
+pub const WINDOW: usize = 12;
+/// How much of the previous assistant message a guessed referent records,
+/// in characters (§4.3).
+pub const FALLBACK_CHARS: usize = 600;
 
 /// The forms, as the refusal of an unparsed instruction lists them.
 pub const FORMS: &str = "\"#scribe <tag>: <content>\" or \"#scribe add <content> to <tag>\"";
@@ -83,6 +97,9 @@ pub enum Refusal {
     },
     /// More than [`Topics::MAX`] distinct hashtags.
     TooManyTopics,
+    /// A referent ("this", "it") with no earlier message in the session to
+    /// point at.
+    NoReferent,
 }
 
 impl Refusal {
@@ -93,6 +110,7 @@ impl Refusal {
             Self::UnknownTag { .. } => "unknown_tag",
             Self::Unparsed | Self::TooManyTopics => "unparsed_instruction",
             Self::Unsupported { .. } => "unsupported_instruction",
+            Self::NoReferent => "no_referent",
         }
     }
 }
@@ -112,6 +130,10 @@ impl fmt::Display for Refusal {
             Self::TooManyTopics => {
                 write!(f, "at most {} topic hashtags fit on one entry", Topics::MAX)
             }
+            Self::NoReferent => write!(
+                f,
+                "there is no earlier message in this session to point at; write the content itself: {FORMS}"
+            ),
         }
     }
 }
@@ -127,11 +149,27 @@ pub struct Refused {
     pub reason: Refusal,
 }
 
+/// A form-3 line: its content is a passage of an earlier message, which
+/// [`resolve`] picks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Referent {
+    /// The line's number within the prompt, from 1.
+    pub line: u32,
+    /// The whole line exactly as typed.
+    pub said: String,
+    /// The tag it resolved to.
+    pub tag: TagName,
+    /// The hashtags at the end of the line.
+    pub topics: Topics,
+}
+
 /// The result for one `#scribe` line.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Parsed {
     /// It parsed and can be recorded.
     Instruction(Instruction),
+    /// It points at an earlier message (form 3).
+    Referent(Referent),
     /// It was refused.
     Refused(Refused),
 }
@@ -142,6 +180,7 @@ impl Parsed {
     pub fn line(&self) -> u32 {
         match self {
             Self::Instruction(i) => i.line,
+            Self::Referent(r) => r.line,
             Self::Refused(r) => r.line,
         }
     }
@@ -354,8 +393,11 @@ fn parse(line: u32, said: &str, tags: &TagTable) -> Parsed {
         return refuse(unknown(tag_word));
     };
     if prep - begin == 1 && is(content, &REFERENTS) {
-        return refuse(Refusal::Unsupported {
-            form: "pointing at an earlier message (\"this\", \"it\")",
+        return Parsed::Referent(Referent {
+            line,
+            said: said.to_owned(),
+            tag: def.name.clone(),
+            topics,
         });
     }
     instruction(def.name.clone(), content)
@@ -397,27 +439,182 @@ pub struct Turn {
 /// `review_after` comes from the tag's `stale_after_days`.
 #[must_use]
 pub fn draft(instruction: &Instruction, turn: &Turn, tags: &TagTable) -> NewEntry {
+    new_entry(
+        Line {
+            line: instruction.line,
+            said: &instruction.said,
+            tag: &instruction.tag,
+            topics: &instruction.topics,
+        },
+        instruction.content.clone(),
+        ContentFrom::Instruction,
+        turn,
+        tags,
+    )
+}
+
+/// The parts of a `#scribe` line every entry draft records.
+struct Line<'a> {
+    line: u32,
+    said: &'a str,
+    tag: &'a TagName,
+    topics: &'a Topics,
+}
+
+fn new_entry(
+    line: Line<'_>,
+    content: String,
+    content_from: ContentFrom,
+    turn: &Turn,
+    tags: &TagTable,
+) -> NewEntry {
     NewEntry {
-        tag: instruction.tag.clone(),
+        tag: line.tag.clone(),
         project: turn.project.clone(),
-        topics: instruction.topics.clone(),
+        topics: line.topics.clone(),
         related: Vec::new(),
         provider: turn.provider.clone(),
         host: turn.host.clone(),
         created: turn.at,
-        said: instruction.said.clone(),
-        content: instruction.content.clone(),
-        content_from: ContentFrom::Instruction,
+        said: line.said.to_owned(),
+        content,
+        content_from,
         cite: Cite {
             session: turn.session.clone(),
             message: None,
             at: turn.at,
             prompt_sha256: turn.prompt_sha256.clone(),
-            line: instruction.line,
+            line: line.line,
             cwd: turn.cwd.clone(),
         },
         review_after: tags
-            .get(&instruction.tag)
+            .get(line.tag)
             .and_then(|def| def.review_after(turn.at.date())),
     }
+}
+
+/// The messages a referent may point at: the last [`WINDOW`] messages with
+/// text before the prompt, oldest first. The prompt is usually not in the
+/// transcript yet when the hook runs; when it is (a retried hook), it and
+/// everything after it are left out, found by `prompt_sha256` as the `Stop`
+/// hook finds it.
+#[must_use]
+pub fn window<'a>(messages: &'a [Message], prompt_sha256: &str) -> Vec<&'a Message> {
+    let end = messages
+        .iter()
+        .rposition(|m| {
+            m.role == Speaker::User
+                && (self::prompt_sha256(&m.text()) == prompt_sha256
+                    || m.blocks
+                        .iter()
+                        .any(|b| self::prompt_sha256(b) == prompt_sha256))
+        })
+        .unwrap_or(messages.len());
+    let with_text: Vec<&Message> = messages[..end]
+        .iter()
+        .filter(|m| !m.text().trim().is_empty())
+        .collect();
+    with_text[with_text.len().saturating_sub(WINDOW)..].to_vec()
+}
+
+/// What to ask the referent model for `referent`, given the [`window`].
+#[must_use]
+pub fn referent_request(referent: &Referent, window: &[&Message], model: &str) -> ReferentRequest {
+    ReferentRequest {
+        model: model.to_owned(),
+        budget: REFERENT_BUDGET,
+        instruction: referent.said.clone(),
+        candidates: window
+            .iter()
+            .map(|m| Candidate {
+                uuid: m.uuid.clone(),
+                role: m.role,
+                text: m.text(),
+            })
+            .collect(),
+    }
+}
+
+/// Why a referent was guessed rather than taken from the model's answer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Guess {
+    /// The model call failed or timed out.
+    Model(ModelError),
+    /// The model named a message that is not in the window.
+    UnknownMessage,
+    /// The model's passage is not a verbatim span of the message it named.
+    NotVerbatim,
+}
+
+impl fmt::Display for Guess {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Model(err) => err.fmt(f),
+            Self::UnknownMessage => {
+                f.write_str("the model named a message that is not one of the recent ones")
+            }
+            Self::NotVerbatim => {
+                f.write_str("the model's passage is not word for word in the message it named")
+            }
+        }
+    }
+}
+
+/// The entry a form-3 line records, and why it was guessed when it was.
+///
+/// The model's answer is accepted only when its message is in `window` and
+/// its span passes [`verbatim::contains`] against that message; the content
+/// is then the span and `content_from` cites the message. Otherwise the
+/// entry records the first [`FALLBACK_CHARS`] characters of the previous
+/// assistant message (the latest message when there is none), and the
+/// [`Guess`] says why. Exactly one draft either way.
+///
+/// `window` must not be empty; a line with nothing to point at is refused
+/// with [`Refusal::NoReferent`] before any model call.
+#[must_use]
+pub fn resolve(
+    referent: &Referent,
+    window: &[&Message],
+    answer: Result<ReferentAnswer, ModelError>,
+    turn: &Turn,
+    tags: &TagTable,
+) -> Option<(NewEntry, Option<Guess>)> {
+    let line = || Line {
+        line: referent.line,
+        said: &referent.said,
+        tag: &referent.tag,
+        topics: &referent.topics,
+    };
+    let cite = |m: &Message| ContentFrom::Message {
+        role: m.role,
+        message: m.uuid.clone(),
+        at: m.at,
+    };
+    let guess = match answer {
+        Err(err) => Guess::Model(err),
+        Ok(answer) => match window.iter().find(|m| m.uuid == answer.message) {
+            None => Guess::UnknownMessage,
+            Some(message) if verbatim::contains(&message.text(), &answer.span) => {
+                let content = answer.span.trim().to_owned();
+                return Some((new_entry(line(), content, cite(message), turn, tags), None));
+            }
+            Some(_) => Guess::NotVerbatim,
+        },
+    };
+    let fallback = window
+        .iter()
+        .rev()
+        .find(|m| m.role == Speaker::Assistant)
+        .or_else(|| window.last())?;
+    let content: String = fallback
+        .text()
+        .trim()
+        .chars()
+        .take(FALLBACK_CHARS)
+        .collect();
+    let content = content.trim_end().to_owned();
+    Some((
+        new_entry(line(), content, cite(fallback), turn, tags),
+        Some(guess),
+    ))
 }
