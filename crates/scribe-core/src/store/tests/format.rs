@@ -227,3 +227,37 @@ fn an_encoded_entry_reads_back_as_the_same_entry() {
     assert!(text.starts_with("---\nformat: 1\nkind: entry\n"), "{text}");
     assert_eq!(entry(&text).unwrap(), original);
 }
+
+#[test]
+fn an_encoded_session_record_reads_back_as_the_same_record() {
+    let mut original = session(&session_text("", SESSION_BODY)).unwrap();
+    original.title = String::from("it's \"quoted\": and --- dashes");
+    original.summary = String::from("line one\n\nline two\n---\nafter dashes");
+    original.goals = String::new();
+    original.next = String::from("- one\n- two");
+    original.scribed_through = Some(String::from("m-9"));
+    original.terms.push(crate::session::Term {
+        term: String::from("agent PR"),
+        said: String::from("by agent PR I mean\nany PR a crew opens: \"all\""),
+        message: String::from("m-2"),
+    });
+    let bytes = crate::store::format::encode_session(Path::new(SESSION), &original).unwrap();
+    let text = String::from_utf8(bytes).unwrap();
+    assert!(
+        text.starts_with("---\nformat: 1\nkind: session\n"),
+        "{text}"
+    );
+    assert_eq!(session(&text).unwrap(), original);
+}
+
+#[test]
+fn encoded_control_reads_back_as_the_same_state() {
+    let control = br#"{"format":1,"sessions":{"s-1":{"on":true,"since":"2026-11-01T09:00:00Z","due":true,"final":false},"s-2":{"on":false,"since":null,"due":false,"final":false}}}"#;
+    let path = Path::new("control.json");
+    let state = decode_control(path, control).unwrap();
+    let bytes = crate::store::format::encode_control(path, &state).unwrap();
+    assert_eq!(decode_control(path, &bytes).unwrap(), state);
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(value["format"], 1);
+    assert_eq!(value["sessions"]["s-1"]["final"], false);
+}

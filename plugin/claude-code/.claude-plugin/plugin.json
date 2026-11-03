@@ -1,7 +1,7 @@
 {
   "name": "scribe",
   "version": "0.1.0",
-  "description": "Records the #scribe lines Daniel types as decisions and preferences, through the scribe binary on PATH.",
+  "description": "Records the #scribe lines Daniel types as decisions and preferences, and catalogs the sessions he switches on with /scribe on, through the scribe binary on PATH.",
   "author": {
     "name": "Daniel"
   },

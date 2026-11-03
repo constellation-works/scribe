@@ -3,8 +3,8 @@
 
 use super::color::{self, Role};
 use super::payload::{
-    EntryPayload, HookJson, HookReply, HookSpecificJson, ProposalPayload, Record, Records,
-    SessionPayload, TagPayload, WarningPayload,
+    EntryPayload, HookJson, HookReply, HookSpecificJson, PassPayload, PassReport, ProposalPayload,
+    Record, Records, SessionPayload, TagPayload, WarningPayload,
 };
 use super::sink::{OutputMode, Sink};
 use super::table::{self, Align, Cell, Column};
@@ -48,6 +48,14 @@ const PROPOSAL_COLUMNS: [Column; 7] = [
     col("NEWER", Align::Left, false),
     col("OPENED", Align::Left, false),
     col("REASON", Align::Left, true),
+];
+
+const PASS_COLUMNS: [Column; 5] = [
+    col("SESSION", Align::Left, false),
+    col("RESULT", Align::Left, false),
+    col("CODE", Align::Left, false),
+    col("PASSES", Align::Right, false),
+    col("TERMS DROPPED", Align::Right, false),
 ];
 
 const TAG_COLUMNS: [Column; 5] = [
@@ -158,10 +166,22 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
 /// A hook's reply: one line of Claude Code hook JSON, or nothing when the
 /// hook has nothing to say. The mode is ignored: Claude Code reads this.
 pub(crate) fn hook(out: &mut dyn Write, reply: &HookReply) -> io::Result<()> {
+    if let Some(reason) = &reply.block {
+        let json = HookJson {
+            decision: Some("block"),
+            reason: Some(reason),
+            system_message: None,
+            hook_specific_output: None,
+        };
+        serde_json::to_writer(&mut *out, &json).map_err(io::Error::from)?;
+        return writeln!(out);
+    }
     if reply.message.is_none() && reply.context.is_none() {
         return Ok(());
     }
     let json = HookJson {
+        decision: None,
+        reason: None,
         system_message: reply.message.as_deref(),
         hook_specific_output: reply.context.as_deref().map(|context| HookSpecificJson {
             hook_event_name: reply.event,
@@ -269,6 +289,58 @@ fn entry_row(e: &EntryPayload) -> Vec<Cell> {
         Cell::plain(joined(&e.topics)),
         Cell::plain(timestamp(e.created)),
         Cell::plain(one_line(&e.content)),
+    ]
+}
+
+/// A session pass's report: a table or tab-separated lines, one per
+/// session passed, or `{"passes": [...], "remaining": n}`. Nothing passed
+/// prints nothing but the JSON object.
+pub(crate) fn pass(out: &mut dyn Write, sink: &Sink, report: &PassReport) -> io::Result<()> {
+    if sink.mode == OutputMode::Json {
+        #[derive(serde::Serialize)]
+        struct Json<'a> {
+            passes: &'a [PassPayload],
+            remaining: usize,
+        }
+        return write_json(
+            out,
+            &Json {
+                passes: &report.passes,
+                remaining: report.remaining,
+            },
+        );
+    }
+    if report.passes.is_empty() {
+        return Ok(());
+    }
+    let rows: Vec<Vec<Cell>> = report.passes.iter().map(pass_row).collect();
+    match sink.mode {
+        OutputMode::Table => {
+            out.write_all(table::render(&PASS_COLUMNS, &rows, sink.width, sink.color).as_bytes())
+        }
+        OutputMode::Plain | OutputMode::Json => rows
+            .iter()
+            .try_for_each(|row| writeln!(out, "{}", plain_line(row))),
+    }
+}
+
+fn pass_row(p: &PassPayload) -> Vec<Cell> {
+    vec![
+        Cell::plain(p.session.clone()),
+        Cell {
+            text: p.result.to_owned(),
+            role: if p.result == "failed" {
+                Role::Warn
+            } else {
+                Role::Neutral
+            },
+        },
+        Cell::plain(p.error_code.unwrap_or("-")),
+        Cell::plain(
+            p.passes
+                .map_or_else(|| String::from("-"), |n| n.to_string()),
+        ),
+        Cell::plain(p.dropped_terms.to_string()),
     ]
 }
 

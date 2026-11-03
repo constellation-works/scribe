@@ -1,0 +1,204 @@
+//! `/scribe on|off|status`, intercepted by `scribe hook user-prompt-submit`
+//! (docs/design/scribe/2_design.md §5.1).
+//!
+//! A prompt whose first line is a `/scribe` command never reaches the
+//! model: the hook switches the session in `control.json` and returns
+//! `decision: "block"` with the status as the `reason` Claude Code shows
+//! Daniel. `on` records when and marks a pass due; `on` again is a no-op
+//! that says so; `off` stops further passes and keeps the record; `status`
+//! and any other argument change nothing.
+//!
+//! The payload is checked like a `#scribe` line's (an accident guard, not a
+//! security boundary): a transcript outside Claude Code's projects
+//! directory, or named for another session, switches nothing. A switch is
+//! audited (`target` `session:<id>`); a no-op or a status writes nothing.
+
+use super::payload::{self, PromptPayload};
+use crate::app::Context;
+use crate::output::{HookOutcome, HookReply, Output};
+use scribe_core::control::{self, Change, Switch};
+use scribe_core::{SessionControl, SessionId, SessionRecord};
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
+
+/// The hook event this replies to.
+const EVENT: &str = "UserPromptSubmit";
+/// The code of a payload whose transcript failed the provenance check.
+const PROVENANCE_FAILED: &str = "provenance_failed";
+/// The code of a `/scribe` argument that is not a command.
+const UNKNOWN_COMMAND: &str = "unknown_scribe_command";
+/// The commands, for a refusal.
+const USAGE: &str = "use /scribe on, /scribe off or /scribe status";
+
+/// Apply `switch` for the payload's session and block the prompt with the
+/// result.
+pub(super) fn run(
+    switch: &Switch,
+    payload: &PromptPayload,
+    session: &SessionId,
+    ctx: &Context,
+) -> Output {
+    let target = || Some(format!("session:{session}"));
+    if let Err(reason) =
+        payload::check_transcript(&payload.transcript_path, session, ctx.transcripts())
+    {
+        return blocked(
+            format!(
+                "scribe: {} not applied — the hook payload failed the transcript check: {reason}",
+                typed(switch)
+            ),
+            vec![HookOutcome {
+                target: target(),
+                error_code: Some(PROVENANCE_FAILED),
+            }],
+        );
+    }
+    let store = ctx.store();
+    let change = match switch {
+        Switch::Status => store
+            .control()
+            .map(|state| Change::Status(state.get(session).cloned())),
+        Switch::Unknown(arg) => Ok(Change::Unknown(arg.clone())),
+        Switch::On | Switch::Off => {
+            store.update_control(|state| control::switch(state, session, switch, ctx.now()))
+        }
+    };
+    let change = match change {
+        Ok(change) => change,
+        Err(err) => {
+            let outcomes = match switch {
+                Switch::On | Switch::Off => vec![HookOutcome {
+                    target: target(),
+                    error_code: Some(err.code()),
+                }],
+                Switch::Status | Switch::Unknown(_) => Vec::new(),
+            };
+            return blocked(
+                format!("scribe: {} failed — {}", typed(switch), chain(&err)),
+                outcomes,
+            );
+        }
+    };
+    let outcomes = match &change {
+        Change::SwitchedOn | Change::SwitchedOff => vec![HookOutcome {
+            target: target(),
+            error_code: None,
+        }],
+        Change::Unknown(_) => vec![HookOutcome {
+            target: target(),
+            error_code: Some(UNKNOWN_COMMAND),
+        }],
+        Change::AlreadyOn(_) | Change::AlreadyOff | Change::Status(_) => Vec::new(),
+    };
+    let record = match &change {
+        Change::Status(_) => record_of(ctx, session),
+        Change::SwitchedOn
+        | Change::AlreadyOn(_)
+        | Change::SwitchedOff
+        | Change::AlreadyOff
+        | Change::Unknown(_) => None,
+    };
+    blocked(status(&change, record.as_ref()), outcomes)
+}
+
+/// The command as Daniel typed it, for a reply.
+fn typed(switch: &Switch) -> String {
+    match switch {
+        Switch::On => String::from("/scribe on"),
+        Switch::Off => String::from("/scribe off"),
+        Switch::Status => String::from("/scribe status"),
+        Switch::Unknown(arg) => format!("/scribe {arg}"),
+    }
+}
+
+/// The reply for a change: what is true now.
+fn status(change: &Change, record: Option<&SessionRecord>) -> String {
+    match change {
+        Change::SwitchedOn => String::from(
+            "scribe: on — this session is cataloged from now on; its record is written at the next session pass (/scribe off stops it)",
+        ),
+        Change::AlreadyOn(control) => format!(
+            "scribe: already on since {} — nothing changed",
+            since(control)
+        ),
+        Change::SwitchedOff => {
+            String::from("scribe: off — no further passes for this session; its record is kept")
+        }
+        Change::AlreadyOff => String::from("scribe: this session is not on — nothing changed"),
+        Change::Status(None) => String::from(
+            "scribe: off — this session was never switched on (/scribe on starts cataloging it)",
+        ),
+        Change::Status(Some(control)) => {
+            let switch = if control.on {
+                format!("on since {}", since(control))
+            } else {
+                String::from("off")
+            };
+            let due = match (control.due, control.final_pass) {
+                (true, true) => "; the final pass is due",
+                (true, false) => "; a pass is due",
+                (false, _) => "",
+            };
+            let record = record.map_or_else(
+                || String::from("no record yet"),
+                |r| {
+                    format!(
+                        "record {} with {} {}, last written {}",
+                        r.status.as_str(),
+                        r.passes,
+                        if r.passes == 1 { "pass" } else { "passes" },
+                        timestamp(r.updated)
+                    )
+                },
+            );
+            format!("scribe: {switch}{due}; {record}")
+        }
+        Change::Unknown(arg) => format!("scribe: unknown command \"/scribe {arg}\" — {USAGE}"),
+    }
+}
+
+/// The session's record, if it has one that reads; a status is still
+/// given without it.
+fn record_of(ctx: &Context, session: &SessionId) -> Option<SessionRecord> {
+    match ctx.store().session(session) {
+        Ok(view) => Some(view.record),
+        Err(scribe_core::Error::SessionNotFound { .. }) => None,
+        Err(err) => {
+            tracing::warn!(%session, %err, "cannot read the session record for /scribe status");
+            None
+        }
+    }
+}
+
+fn since(control: &SessionControl) -> String {
+    control
+        .since
+        .map_or_else(|| String::from("an unknown time"), timestamp)
+}
+
+fn timestamp(at: OffsetDateTime) -> String {
+    at.format(&Rfc3339).unwrap_or_else(|_| at.to_string())
+}
+
+/// An error and its causes on one line.
+fn chain(err: &scribe_core::Error) -> String {
+    let mut message = err.to_string();
+    let mut source = std::error::Error::source(err);
+    while let Some(cause) = source {
+        message.push_str(": ");
+        message.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    message
+}
+
+/// Block the prompt with `reason`.
+fn blocked(reason: String, outcomes: Vec<HookOutcome>) -> Output {
+    Output::Hook(HookReply {
+        event: EVENT,
+        message: None,
+        context: None,
+        block: Some(reason),
+        outcomes,
+    })
+}

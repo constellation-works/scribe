@@ -1,4 +1,4 @@
-Fill in the message ids of entries this session recorded, from the Stop hook's JSON on stdin
+Fill in the message ids of entries this session recorded and mark a session pass due, from the Stop hook's JSON on stdin
 
 Usage: scribe hook stop [OPTIONS]
 
@@ -12,7 +12,7 @@ Global options:
       --json             Shorthand for --format json
 
 Reads the Stop payload (session_id, transcript_path) on stdin. Prints
-nothing.
+nothing. Calls no model.
 
 Examples:
   scribe hook stop < <payload.json>

@@ -264,6 +264,52 @@ pub(super) fn decode_session(
     Ok(record)
 }
 
+/// The frontmatter of a session record as written.
+#[derive(Serialize)]
+struct SessionFront<'a> {
+    format: u32,
+    kind: &'static str,
+    #[serde(flatten)]
+    record: &'a SessionRecord,
+}
+
+/// A session record file's bytes at the current format: the frontmatter
+/// between two `---` lines, then the four sections in order.
+/// [`decode_session`] reads it back to the same record.
+pub(super) fn encode_session(path: &Path, record: &SessionRecord) -> Result<Vec<u8>> {
+    let front = yaml_serde::to_string(&SessionFront {
+        format: FORMAT,
+        kind: SESSION_KIND,
+        record,
+    })
+    .map_err(|e| Error::corrupt(path, e))?;
+    let mut text = String::from("---\n");
+    text.push_str(&front);
+    if !front.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push_str("---\n");
+    let bodies = [
+        &record.summary,
+        &record.goals,
+        &record.outcome,
+        &record.next,
+    ];
+    for (i, ((name, _), body)) in SECTIONS.iter().zip(bodies).enumerate() {
+        if i > 0 {
+            text.push('\n');
+        }
+        text.push_str("## ");
+        text.push_str(name);
+        text.push('\n');
+        if !body.is_empty() {
+            text.push_str(body);
+            text.push('\n');
+        }
+    }
+    Ok(text.into_bytes())
+}
+
 /// The four `## <name>` sections of a session body, in order. Only those
 /// exact heading lines delimit; any other line, including another `##`
 /// heading, is section text. Blank lines around a section's text are
@@ -333,6 +379,25 @@ pub(super) fn decode_control(path: &Path, bytes: &[u8]) -> Result<ControlState> 
     Ok(ControlState {
         sessions: doc.sessions,
     })
+}
+
+/// `control.json` as written.
+#[derive(Serialize)]
+struct ControlOut<'a> {
+    format: u32,
+    sessions: &'a BTreeMap<SessionId, SessionControl>,
+}
+
+/// `control.json`'s bytes at the current format, one line break at the end.
+/// [`decode_control`] reads it back to the same state.
+pub(super) fn encode_control(path: &Path, state: &ControlState) -> Result<Vec<u8>> {
+    let mut bytes = serde_json::to_vec_pretty(&ControlOut {
+        format: FORMAT,
+        sessions: &state.sessions,
+    })
+    .map_err(|e| Error::corrupt(path, e))?;
+    bytes.push(b'\n');
+    Ok(bytes)
 }
 
 /// Parse `proposals.json`.

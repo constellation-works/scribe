@@ -147,6 +147,22 @@ listed with `configured: false`.
   session whose `cite.message` is `null` and for which the caller finds a
   message, setting `cite.message` and `updated`; it does nothing when the
   root does not exist.
+- **Control** (S4). `Store::update_control` changes `control.json` under
+  `.lock` and writes it only when the change reports one, so `/scribe on`
+  twice, `off` for a session that is not on, and a `Stop` or `SessionEnd`
+  for a session never switched on write nothing. A session never switched
+  on has no key in `control.json`.
+- **Session records** (S4). `Store::settle_pass` writes a session record
+  (redacted, `sessions/<yyyy>/<mm>/` from its `started`, created `0700`)
+  and settles its switch (`due` cleared, `final` too when the final pass
+  ran; a `final` set while a non-final pass ran is kept) in one locked
+  call, so a record and its `due` flag never disagree. With no record it
+  only settles. A pass never writes an entry.
+- **Failures in a row** (S4). `Store::failures_in_a_row` counts the
+  newest audit lines for a command and target back to the last `ok` one;
+  `session pass` uses it for its three-failures rule
+  ([4_decisions.md](../4_decisions.md#a-session-pass-counts-its-failures-from-the-audit-log)).
+  Lines that do not parse are skipped. It reads only.
 - **Modes and owners.** Every load refuses the root, a subdirectory, a
   record file or a document owned by another user (`store_foreign_owner`) or
   writable by group or others (`store_permissions`, naming the `chmod 700`
@@ -190,5 +206,5 @@ listed with `configured: false`.
 
 - `session list` lists session records. A session switched on in
   `control.json` before its first pass has no record yet and is not listed;
-  the catalog slice (S4) decides how it is shown.
+  `/scribe status` in that session reports it as on with no record yet.
 - `entry list --tag` matches a tag's name, not its aliases.

@@ -11,7 +11,7 @@ summary: How the scribe plugin is bounded (one binary; hooks write, agents only 
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21778, ORB-13117, ORB-13134]
+related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-13117, ORB-13134]
 ---
 
 # scribe — Design
@@ -20,8 +20,8 @@ The design of the scribe plugin: its boundary, the four parts named in
 [1_overview.md §2](./1_overview.md#2-shape), the store, the model choices,
 and the slices that build it. Slices S1 (the domain, the store and the
 read-only CLI), S2 (`#scribe` capture without a model, and the Claude Code
-package) and S3 (referents and the models port) are implemented; the rest is
-not yet. The reasons behind each choice
+package), S3 (referents and the models port) and S4 (`/scribe on` and
+session records) are implemented; the rest is not yet. The reasons behind each choice
 are in [4_decisions.md](./4_decisions.md); open directions are in
 [3_vision.md](./3_vision.md). Where this doc and the template's engineering
 rules meet (atomic writes, the store lock, the audit guard, output modes,
@@ -82,6 +82,11 @@ something to do (S4, S6), since a registered hook whose command does not
 exist fails on every session. `plugin/.claude-plugin/marketplace.json` is a
 one-plugin local marketplace, so the package installs from a checkout with
 `claude plugin install scribe --marketplace ./plugin`.
+As built in S4, `SessionEnd` (10 s) joins them, and the package ships one
+command file, `commands/scribe.md`, whose body is `/scribe $ARGUMENTS` and
+whose only effect is the same hook call: Claude Code knows the command, and
+whichever form reaches the hook, typed or expanded, starts with `/scribe`
+([4_decisions.md](./4_decisions.md#scribe-ships-a-command-file-that-expands-to-itself)).
 
 Entry writes never go through Orbit's tool surface: the hooks call the
 binary. The two routine tools write session records and proposals, but they
@@ -449,6 +454,17 @@ turn is spent. Every session starts off. `on` records `on_since` and marks a
 pass due; `off` stops further passes and keeps the record. `/scribe on` in a
 session that is already on is a no-op that says so.
 
+As built (S4): `control::parse` reads the prompt's first line only; the
+word is `/scribe` or the plugin-namespaced `/scribe:scribe`, the argument
+case-insensitive, and a bare `/scribe` is a status. The payload passes the
+same transcript check as a `#scribe` line first. `on` sets `since` and
+`due`; `off` also clears `due` and `final`, so no pass runs after it
+([4_decisions.md](./4_decisions.md#scribe-off-clears-a-pending-pass));
+any other argument is refused with `unknown_scribe_command` and the usage.
+A status reports the switch, whether a pass is due, and the record's status,
+pass count and last write. The reply wording is in
+[specs/output-contract.md](./specs/output-contract.md#hook-replies).
+
 ### 5.2 Cadence
 
 `scribe hook stop` runs after each assistant reply. It does no model work:
@@ -460,6 +476,16 @@ have arrived, it sets `due` under the lock. `scribe hook session-end` sets
 `scribe.session-pass` job, which processes every due session: at most five
 per run, each with a 120-second model budget. No process is detached from a
 hook ([4_decisions.md](./4_decisions.md#session-passes-run-from-an-orbit-routine-not-a-detached-hook-child)).
+
+As built (S4): the `Stop` hook reads `control.json` first and goes no
+further for a session that is not on or already due. The last pass is the
+record's `updated`, else `since`; the minutes rule is checked before the
+transcript is read, and the turns rule counts Daniel's turns after
+`scribed_through` in the conversation [§5.3](#53-a-pass) builds.
+`session-end` sets `due` and `final` only for a session that is on. Both
+write only when the state changes, and neither calls a model. The
+`scribe-session-pass` routine and the Orbit job are S5's (the Orbit plugin
+tree); until then `scribe session pass` runs by hand or from cron.
 
 ### 5.3 A pass
 
@@ -482,6 +508,39 @@ hook ([4_decisions.md](./4_decisions.md#session-passes-run-from-an-orbit-routine
 A pass writes no tag entries, even if the transcript contains `#decision`
 or an unprocessed `#scribe` line. There is no backfill: sessions that were
 never switched on are never read.
+
+As built (S4), in `scribe-core::pass` and `commands/session/pass.rs`:
+
+- Candidates are the sessions `control.json` marks on and due, by id, five
+  per run; the transcript is found by id under Claude Code's projects
+  directory and passes the hooks' provenance check
+  ([4_decisions.md](./4_decisions.md#a-pass-finds-its-transcript-by-session-id)).
+  No transcript or no message yet leaves the pass `waiting` and due.
+- The conversation drops tool payloads, thinking, turns that open with a
+  synthetic tag (`<task-notification>`, `<system-reminder>`,
+  `<command-name>` and the like) and `/scribe` command turns; a
+  `<pasted_content>` block is kept apart as pasted text, offered to the
+  model marked as pasted and never accepted as a term's `said`.
+- The window starts after `scribed_through`; when it is over 150k
+  characters the oldest messages are dropped (the request says how many)
+  and a single message over the limit is cut. Nothing after
+  `scribed_through` clears `due` without a model call; at session end it
+  marks the record final.
+- Budgets: title 120 characters, summary 600, goals 400, outcome 1200,
+  next 600 (rendered as a bullet list); a `## ` heading inside a section or
+  an empty summary also fails, as do invalid topics. A bad `related`
+  reference is dropped. A term is kept when its `said` (at most 400
+  characters) is verbatim in one of Daniel's own turns, not his pasted
+  text; its `message` is that turn (the one the model named when it
+  matches, else the first). A term already in the record is not repeated.
+- The previous record keeps its `created`, `started`, `cwd`, `project`,
+  `provider` and `host`; `on_since` is the switch's `since`; `passes`
+  counts up, `scribed_through` becomes the
+  window's last message, and the final pass sets `status: final`. The
+  record is written and `due` cleared by one locked store call. Three
+  failures in a row (counted from the audit log,
+  [4_decisions.md](./4_decisions.md#a-session-pass-counts-its-failures-from-the-audit-log))
+  clear `due` with a `warn`.
 
 ## 6. `ask`
 
@@ -692,6 +751,21 @@ writes none.
   the S2 manual check below; `decision: "block"` and whether `/scribe`
   reaches the hook without a command file are S4's to confirm; if `/scribe`
   needs a command file, S4 adds one whose only effect is the same hook call.
+  S4 added `commands/scribe.md` and registered `SessionEnd`.
+- **S4 manual check in a live session: pending, the operator's (ORB-21760).**
+  The sandbox that built S4 cannot run Claude Code. Steps, with an
+  isolated `CLAUDE_CONFIG_DIR` and `SCRIBE_ROOT`: `make install`; `claude
+  plugin validate plugin/claude-code --strict`; install
+  `scribe@scribe-local`; confirm `/scribe` is listed. In one session type
+  `/scribe on`: the prompt must not reach the model and the status line
+  must show; `/scribe on` again must say "already on"; `/scribe status`
+  must report a pass due. Note whether the hook saw `/scribe on` or
+  `/scribe:scribe on` (either works). Chat two or three turns, define a
+  phrase in your own words, then run `scribe session pass --json`: one
+  `written` pass, and `scribe session show <id>` has the term with your
+  words. End the session: `control.json` shows `final: true`; the next
+  `scribe session pass` marks the record `final`. A second session never
+  switched on must not appear in `control.json` or `sessions/`.
 - **S2 manual check in a live session: passed, headless (2026-11-03, Claude
   Code 2.1.317, macOS).** Run by the on-call orchestrator (ORB-21760) with
   `claude -p` against an isolated `CLAUDE_CONFIG_DIR` and `SCRIBE_ROOT`, the
@@ -880,5 +954,6 @@ there once S4 is in use, so two scribes never intercept the same
 - [ORB-13117] — built the Rust CLI template this project was created from.
 - [ORB-13134] — brought the template to STD-01..03 v2 and STD-04/05 v1.
 - [ORB-21778] — S3: referents (form 3), the `Models` port and `ClaudeCliModels`.
+- [ORB-21784] — S4: `/scribe on|off|status`, session-pass cadence and session records.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.

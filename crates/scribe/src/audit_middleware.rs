@@ -92,6 +92,20 @@ impl<'a> AuditGuard<'a> {
                     error_code: outcome.error_code,
                 })
                 .collect(),
+            Ok(Output::Pass(report)) => report
+                .passes
+                .iter()
+                .filter(|p| p.result != "waiting")
+                .map(|p| Line {
+                    status: if p.error_code.is_some() {
+                        AuditStatus::Failure
+                    } else {
+                        AuditStatus::Success
+                    },
+                    target: Some(format!("session:{}", p.session)),
+                    error_code: p.error_code,
+                })
+                .collect(),
             Ok(output) => vec![Line {
                 status: AuditStatus::Success,
                 target: target_of(output),
@@ -150,7 +164,7 @@ fn target_of(output: &Output) -> Option<String> {
             record: Record::Session(session),
         } => Some(session.id.clone()),
         Output::List { .. } => None,
-        // Hook replies are audited per outcome in `mark_result`.
-        Output::Hook(_) => None,
+        // Hook replies and passes are audited per outcome in `mark_result`.
+        Output::Hook(_) | Output::Pass(_) => None,
     }
 }

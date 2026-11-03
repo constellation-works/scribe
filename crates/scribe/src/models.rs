@@ -27,7 +27,10 @@
 //! stays free of `std::process` (ARCHITECTURE.md).
 
 use scribe_core::Models;
-use scribe_core::models::{ModelError, REFERENT_SCHEMA, ReferentAnswer, ReferentRequest};
+use scribe_core::models::{
+    ModelError, REFERENT_SCHEMA, ReferentAnswer, ReferentRequest, SESSION_SCHEMA, SessionAnswer,
+    SessionRequest, TermAnswer,
+};
 use serde::Deserialize;
 use serde_json::Value;
 use std::ffi::{OsStr, OsString};
@@ -178,6 +181,52 @@ impl Models for ClaudeCliModels {
         Ok(ReferentAnswer {
             message: answer.message,
             span: answer.span,
+        })
+    }
+
+    fn session(&self, request: &SessionRequest) -> Result<SessionAnswer, ModelError> {
+        #[derive(Deserialize)]
+        struct Term {
+            term: String,
+            said: String,
+            message: String,
+        }
+        #[derive(Deserialize)]
+        struct Answer {
+            title: String,
+            summary: String,
+            goals: String,
+            outcome: String,
+            next: Vec<String>,
+            topics: Vec<String>,
+            related: Vec<String>,
+            terms: Vec<Term>,
+        }
+        let value = self.call(
+            &request.model,
+            SESSION_SCHEMA,
+            request.prompt(),
+            request.budget,
+        )?;
+        let a: Answer = serde_json::from_value(value)
+            .map_err(|e| ModelError::Malformed(format!("not a session record: {e}")))?;
+        Ok(SessionAnswer {
+            title: a.title,
+            summary: a.summary,
+            goals: a.goals,
+            outcome: a.outcome,
+            next: a.next,
+            topics: a.topics,
+            related: a.related,
+            terms: a
+                .terms
+                .into_iter()
+                .map(|t| TermAnswer {
+                    term: t.term,
+                    said: t.said,
+                    message: t.message,
+                })
+                .collect(),
         })
     }
 }

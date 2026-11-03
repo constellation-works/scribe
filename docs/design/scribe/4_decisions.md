@@ -11,7 +11,7 @@ summary: Why superseded entries are hidden not removed, why one JSON file per ta
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-13117, ORB-13134]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-13117, ORB-13134]
 ---
 
 # scribe — Decisions
@@ -1067,6 +1067,102 @@ installs it. The hooks run `scribe` from `PATH` (`make install`).
 - Cost: the package and the binary are installed separately and can drift;
   a missing binary makes each hook fail visibly in Claude Code.
 
+## A session pass counts its failures from the audit log
+
+**Code anchors:** `crates/scribe-core/src/store/mod.rs` (`failures_in_a_row`);
+`crates/scribe/src/commands/session/pass.rs`
+
+### Context
+
+[2_design.md §5.3](./2_design.md#53-a-pass) clears `due` after three failed
+passes in a row. Keeping a counter in `control.json` or the record changes
+a persisted shape, which bumps the store format for one integer.
+
+### Decision
+
+Every session pass already writes one audit line, `command` `session pass`,
+`target` `session:<id>`, with its status and code. The count is the run of
+non-`ok` lines for that target since the last `ok` one, plus the current
+failure. No persisted shape changes.
+
+### Consequences
+
+- The count survives restarts and needs no new store state.
+- Cost: an audit log that cannot be read, or lines lost to an append
+  failure, under-count, so a session may cost one or two more model calls
+  before `due` is cleared.
+
+## A pass finds its transcript by session id
+
+**Code anchors:** `crates/scribe/src/commands/session/pass.rs` (`find`)
+
+### Context
+
+`control.json` keeps `{on, since, due, final}` per session, not the
+transcript path the hooks saw, and adding it is a format bump.
+
+### Decision
+
+A pass looks for `<transcripts>/<project-dir>/<session-id>.jsonl` across
+Claude Code's project directories (by name, first match), then applies the
+hooks' provenance check (this user's regular file, inside the transcripts
+directory, named for the session). The record's `cwd` and `started` come
+from the transcript's first message.
+
+### Consequences
+
+- No persisted-shape change, and the pass never trusts a path from a hook
+  payload it did not see.
+- Cost: one directory listing per due session; a transcript moved out of
+  the projects directory leaves the pass `waiting`.
+
+## `/scribe off` clears a pending pass
+
+**Code anchors:** `crates/scribe-core/src/control.rs` (`switch`)
+
+### Context
+
+[2_design.md §5.1](./2_design.md#51-switching-on-and-off) says `off` stops
+further passes and keeps the record. A pass due at the moment of `off`
+could still run.
+
+### Decision
+
+`off` clears `due` and `final` as well as `on`, and a pass only runs for a
+session that is on and due. Messages after the last pass are not recorded.
+
+### Consequences
+
+- `off` means no model reads the session again until `on`.
+- Cost: turns between the last pass and `off` stay out of the record;
+  `/scribe on` again marks a pass due that picks them up.
+
+## `/scribe` ships a command file that expands to itself
+
+**Code anchors:** `plugin/claude-code/commands/scribe.md`;
+`crates/scribe-core/src/control.rs` (`parse`)
+
+### Context
+
+Without a command file Claude Code may answer `/scribe` with "unknown
+command" before `UserPromptSubmit` runs; with one, the prompt the hook sees
+may be the typed line or the expanded body, and a plugin command may be
+named `/scribe:scribe`.
+
+### Decision
+
+`commands/scribe.md` (`disable-model-invocation: true`) has the body
+`/scribe $ARGUMENTS`, so either form the hook receives starts with
+`/scribe <arg>`; `parse` accepts `/scribe` and `/scribe:scribe`. The hook
+blocks the prompt in every case, so the command file has no effect of its
+own.
+
+### Consequences
+
+- `/scribe` works whichever way Claude Code delivers it.
+- Cost: unverified live until the operator's check
+  ([2_design.md §9](./2_design.md#9-concerns--honest-limitations)).
+
 ## Task References
 
 - [ORB-21747] — designed the standalone scribe plugin and recorded its decisions.
@@ -1076,5 +1172,6 @@ installs it. The hooks run `scribe` from `PATH` (`make install`).
 - [ORB-21764] — S2: built `#scribe` capture (no model) and the Claude Code package.
 - [ORB-21760] — the operator's live check of the S2 package.
 - [ORB-21778] — S3: referents (form 3), the `Models` port and `ClaudeCliModels`.
+- [ORB-21784] — S4: `/scribe on|off|status`, session-pass cadence and session records.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.

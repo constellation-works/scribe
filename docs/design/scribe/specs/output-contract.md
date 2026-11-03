@@ -108,7 +108,11 @@ Stable codes: `entry_not_found`, `session_not_found`, `io_error`,
 `output_error`, `usage_error`, `hook_payload_invalid`. A hook's refusals
 are not errors and appear only in its reply and audit lines:
 `unknown_tag`, `unparsed_instruction`, `unsupported_instruction`,
-`no_referent`, `provenance_failed`. A not-found error names the path it looked
+`no_referent`, `provenance_failed`, `unknown_scribe_command`. A session
+pass's failures appear only in its report and audit lines:
+`provenance_failed`, `io_error`, `session_answer_invalid` (budgets or
+shape), `model_timeout`, `model_unavailable`, `model_failed`,
+`model_malformed`, and the store codes. A not-found error names the path it looked
 for and the `list` command that shows the existing ids.
 
 ## Hook replies
@@ -117,7 +121,8 @@ for and the `list` command that shows the existing ids.
 (`--json` and `--plain` change nothing): one compact line,
 `{"systemMessage": "...", "hookSpecificOutput": {"hookEventName":
 "UserPromptSubmit", "additionalContext": "..."}}`, or nothing at all when
-there is nothing to say (a prompt without `#scribe`, and every `Stop`). It
+there is nothing to say (a prompt without `#scribe`, and every `Stop` and
+`SessionEnd`). It
 exits 0 whenever the payload parsed, including when every line was refused
 or the store could not be used, so the prompt is never blocked; a payload
 that is not valid JSON, lacks a field or has an invalid `session_id` exits 1
@@ -129,3 +134,35 @@ record "<line>" — <error>`. A form-3 line whose referent the model did not
 resolve is still added, and its echo puts `(guessed: <why>; recorded the
 <role> message before your prompt instead)` after the tag. The text is for
 Daniel and the agent to read; the audit line, not the echo, is the record.
+
+A prompt whose first line is `/scribe on`, `/scribe off`, `/scribe status`
+or a bare `/scribe` (also `/scribe:scribe …`, the plugin-namespaced form;
+the argument is case-insensitive) is not scanned for `#scribe` lines: the
+reply is `{"decision": "block", "reason": "<status>"}`, which keeps the
+prompt from the model and shows Daniel the reason. The reason is one line:
+`scribe: on — …`, `scribe: already on since <time> — nothing changed`,
+`scribe: off — …`, `scribe: this session is not on — nothing changed`,
+`scribe: on since <time>[; a pass is due]; <record status>` or `scribe: off
+— this session was never switched on …` for a status, `scribe: unknown
+command "/scribe <arg>" — use /scribe on, /scribe off or /scribe status`,
+or `scribe: /scribe <arg> not applied — …` when the payload fails the
+transcript check. A switch writes one audit line (`target`
+`session:<id>`); a no-op or a status writes none.
+
+## Session pass report
+
+`scribe session pass --json` prints `{"passes": [<pass>, ...],
+"remaining": <integer>}`: one pass per due session handled this run (at
+most five, by session id) and the due sessions left for the next run. A
+pass is `{"session", "result", "error_code", "passes", "dropped_terms",
+"gave_up"}`: `result` is `written`, `unchanged` (nothing new; `due`
+cleared without a model call), `waiting` (no transcript or message yet;
+still due) or `failed` (the previous record kept, still due);
+`error_code` is a stable code or `null`; `passes` is the record's pass
+count or `null` without a record; `dropped_terms` counts terms whose
+`said` was not verbatim from one of Daniel's turns; `gave_up` is true when
+this was the third failure in a row and `due` was cleared. Plain and table
+print one row per pass (`session result error_code passes dropped_terms`);
+with nothing due stdout is empty, stderr says `no session pass is due` and
+the exit is 0. A failed pass still exits 0; each pass except a `waiting`
+one writes one audit line (`target` `session:<id>`, with its code).

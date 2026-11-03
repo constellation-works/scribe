@@ -1,5 +1,5 @@
 {
-  "description": "scribe: record #scribe lines from typed prompts, then fill their cites after each reply",
+  "description": "scribe: record #scribe lines and switch /scribe on and off from typed prompts, fill cites and mark session passes due after each reply, and mark the final pass due at session end",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -18,6 +18,17 @@
           {
             "type": "command",
             "command": "scribe hook stop",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "scribe hook session-end",
             "timeout": 10
           }
         ]

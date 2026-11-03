@@ -43,6 +43,7 @@ pub use audit::{AUDIT_FILE, AuditEvent, AuditStatus};
 pub use redact::{MIN_SECRET_CHARS, REDACTED_FIELDS, Redactor};
 
 use crate::config::Config;
+use crate::control;
 use crate::entry::{Cite, Entry, EntryFilter, EntryId, NewEntry};
 use crate::error::{Error, Result};
 use crate::proposal::Proposal;
@@ -390,6 +391,103 @@ impl Store {
             filled.push(entry.id);
         }
         Ok(filled)
+    }
+
+    /// Change the on/off state under the store lock: `change` gets the
+    /// current state and its result is returned. `control.json` is
+    /// rewritten only when the state changed. The data directory is created
+    /// owner-only when absent, so a caller that may change nothing (the
+    /// `Stop` hook) reads [`Store::control`] first and calls this only when
+    /// a change is likely.
+    pub fn update_control<T>(&self, change: impl FnOnce(&mut ControlState) -> T) -> Result<T> {
+        self.prepare_dir(&self.root)?;
+        let _lock = self.lock("control")?;
+        self.change_control(change)
+    }
+
+    /// [`Store::update_control`] for a caller that holds the lock.
+    fn change_control<T>(&self, change: impl FnOnce(&mut ControlState) -> T) -> Result<T> {
+        let mut state = self.control()?;
+        let before = state.clone();
+        let out = change(&mut state);
+        if state != before {
+            let path = self.root.join(CONTROL_FILE);
+            fsio::write_atomic(&path, &format::encode_control(&path, &state)?)?;
+        }
+        Ok(out)
+    }
+
+    /// The file a session record lives in,
+    /// `<root>/sessions/<yyyy>/<mm>/<id>.md`, by the month it started.
+    #[must_use]
+    pub fn session_path(&self, record: &SessionRecord) -> PathBuf {
+        self.root
+            .join(SESSIONS_DIR)
+            .join(format!("{:04}", record.started.year()))
+            .join(format!("{:02}", u8::from(record.started.month())))
+            .join(format!("{}{RECORD_EXT}", record.id))
+    }
+
+    /// Finish a session pass under the store lock: write `record` (when the
+    /// pass produced one) whole with [`fsio::write_atomic`], its free text
+    /// masked by `redactor`, then settle the session's switch with
+    /// [`control::settle`]. Returns the record as written.
+    pub fn settle_pass(
+        &self,
+        session: &SessionId,
+        record: Option<SessionRecord>,
+        ran_final: bool,
+        redactor: &Redactor,
+    ) -> Result<Option<SessionRecord>> {
+        self.prepare_dir(&self.root)?;
+        let _lock = self.lock("session pass")?;
+        let written = match record {
+            Some(mut record) => {
+                redactor.session(&mut record);
+                let path = self.session_path(&record);
+                let mut dir = self.root.join(SESSIONS_DIR);
+                self.prepare_subdir(&dir)?;
+                for part in [
+                    format!("{:04}", record.started.year()),
+                    format!("{:02}", u8::from(record.started.month())),
+                ] {
+                    dir = dir.join(part);
+                    self.prepare_subdir(&dir)?;
+                }
+                fsio::write_atomic(&path, &format::encode_session(&path, &record)?)?;
+                Some(record)
+            }
+            None => None,
+        };
+        self.change_control(|state| control::settle(state, session, ran_final))?;
+        Ok(written)
+    }
+
+    /// How many times in a row `command` last failed for `target`, read
+    /// from the audit log: the failure lines after its last success. Reads
+    /// only; a missing log, or a line that does not parse (a torn last
+    /// line), counts nothing.
+    pub fn failures_in_a_row(&self, command: &str, target: &str) -> Result<u32> {
+        let path = self.audit_path();
+        if !self.root_exists()? || !fsio::inspect_file(&path)? {
+            return Ok(0);
+        }
+        let bytes = fsio::read(&path)?;
+        let mut count = 0u32;
+        for line in bytes.split(|&b| b == b'\n') {
+            let Ok(line) = serde_json::from_slice::<audit::AuditLine>(line) else {
+                continue;
+            };
+            let event = line.event;
+            if event.command != command || event.target.as_deref() != Some(target) {
+                continue;
+            }
+            count = match event.status {
+                AuditStatus::Success => 0,
+                AuditStatus::Failure => count.saturating_add(1),
+            };
+        }
+        Ok(count)
     }
 
     /// Write `entry` to its file, creating its directories owner-only. A new

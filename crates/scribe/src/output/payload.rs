@@ -383,6 +383,9 @@ pub(crate) struct HookReply {
     pub(crate) message: Option<String>,
     /// Shown to the main agent beside the prompt.
     pub(crate) context: Option<String>,
+    /// Block the prompt with this reason, shown to Daniel: a `/scribe`
+    /// command is answered here and never reaches the model.
+    pub(crate) block: Option<String>,
     /// One per record written or refused, for the audit log; empty when the
     /// hook changed nothing.
     pub(crate) outcomes: Vec<HookOutcome>,
@@ -400,6 +403,10 @@ pub(crate) struct HookOutcome {
 /// The JSON a hook prints (Claude Code's hook output).
 #[derive(Serialize)]
 pub(crate) struct HookJson<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) decision: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) reason: Option<&'a str>,
     #[serde(rename = "systemMessage", skip_serializing_if = "Option::is_none")]
     pub(crate) system_message: Option<&'a str>,
     #[serde(rename = "hookSpecificOutput", skip_serializing_if = "Option::is_none")]
@@ -413,6 +420,37 @@ pub(crate) struct HookSpecificJson<'a> {
     pub(crate) hook_event_name: &'a str,
     #[serde(rename = "additionalContext")]
     pub(crate) additional_context: &'a str,
+}
+
+/// What a session pass did for one session.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct PassPayload {
+    /// The session id.
+    pub(crate) session: String,
+    /// `written` (a record was written), `unchanged` (nothing new to
+    /// record), `waiting` (no transcript or messages yet; still due) or
+    /// `failed` (the previous record is kept).
+    pub(crate) result: &'static str,
+    /// The stable code of a failure; `null` otherwise.
+    pub(crate) error_code: Option<&'static str>,
+    /// The record's pass count after this pass; `null` when there is no
+    /// record.
+    pub(crate) passes: Option<u32>,
+    /// Terms the model offered that were not verbatim from Daniel's turns.
+    pub(crate) dropped_terms: usize,
+    /// Whether `due` was cleared after too many failures in a row.
+    pub(crate) gave_up: bool,
+}
+
+/// What `session pass` did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PassReport {
+    /// One per session passed, in id order.
+    pub(crate) passes: Vec<PassPayload>,
+    /// Due sessions left for the next run.
+    pub(crate) remaining: usize,
+    /// Lines for stderr, printed in every mode.
+    pub(crate) notices: Vec<String>,
 }
 
 /// What a command produced, before rendering.
@@ -440,4 +478,6 @@ pub(crate) enum Output {
     },
     /// A hook's reply.
     Hook(HookReply),
+    /// A session pass's report.
+    Pass(PassReport),
 }

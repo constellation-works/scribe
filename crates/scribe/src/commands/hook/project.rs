@@ -11,7 +11,7 @@ use scribe_core::Project;
 use std::path::{Path, PathBuf};
 
 /// The project for `cwd`.
-pub(super) fn of(cwd: &Path) -> Project {
+pub(in crate::commands) fn of(cwd: &Path) -> Project {
     remote_name(cwd).map_or_else(
         || Project::sanitized(&basename(cwd)),
         |name| Project::sanitized(&name),

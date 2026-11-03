@@ -146,6 +146,7 @@ fn hook_reply(outcomes: Vec<HookOutcome>) -> Output {
             "scribe: added decisions-1 to decisions — \"secret content\"",
         )),
         context: None,
+        block: None,
         outcomes,
     })
 }

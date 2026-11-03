@@ -49,6 +49,23 @@ pub fn parse(bytes: &[u8]) -> Vec<Message> {
         .collect()
 }
 
+/// The working directory the transcript's first message was written in
+/// (each line carries Claude Code's `cwd`), if any line names one.
+#[must_use]
+pub fn cwd(bytes: &[u8]) -> Option<String> {
+    bytes
+        .split(|&b| b == b'\n')
+        .filter_map(|line| serde_json::from_slice::<Value>(line).ok())
+        .filter(|value| message(value).is_some())
+        .find_map(|value| {
+            value
+                .get("cwd")
+                .and_then(Value::as_str)
+                .filter(|cwd| !cwd.is_empty())
+                .map(str::to_owned)
+        })
+}
+
 fn message(line: &Value) -> Option<Message> {
     let role = match line.get("type")?.as_str()? {
         "user" => Speaker::User,

@@ -6,7 +6,9 @@
 use crate::app::{AppEnv, Context};
 use crate::commands::hook::user_prompt_submit::run_with;
 use crate::output::Output;
-use scribe_core::models::{ModelError, ReferentAnswer, ReferentRequest};
+use scribe_core::models::{
+    ModelError, ReferentAnswer, ReferentRequest, SessionAnswer, SessionRequest,
+};
 use scribe_core::{ContentFrom, EntryFilter, Models, Speaker};
 use serde_json::json;
 use std::cell::Cell;
@@ -25,6 +27,9 @@ impl Models for FakeModels {
     fn referent(&self, _request: &ReferentRequest) -> Result<ReferentAnswer, ModelError> {
         self.calls.set(self.calls.get() + 1);
         self.answer.clone()
+    }
+    fn session(&self, _request: &SessionRequest) -> Result<SessionAnswer, ModelError> {
+        Err(ModelError::Unavailable(String::from("referent tests only")))
     }
 }
 
@@ -100,6 +105,9 @@ impl Setup {
 impl Models for &FakeModels {
     fn referent(&self, request: &ReferentRequest) -> Result<ReferentAnswer, ModelError> {
         (*self).referent(request)
+    }
+    fn session(&self, request: &SessionRequest) -> Result<SessionAnswer, ModelError> {
+        (*self).session(request)
     }
 }
 
