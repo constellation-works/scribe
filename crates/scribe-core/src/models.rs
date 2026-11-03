@@ -219,6 +219,9 @@ pub struct SessionRequest {
     pub budgets: Budgets,
     /// Whether the session has ended.
     pub final_pass: bool,
+    /// Why the previous answer in this pass was refused, when this request
+    /// asks again.
+    pub correction: Option<String>,
 }
 
 /// The character budgets an answer must keep (2_design.md §3).
@@ -307,6 +310,13 @@ impl SessionRequest {
         }
         if self.final_pass {
             out.push_str("\nThe session has ended: this is its final record.\n");
+        }
+        if let Some(correction) = &self.correction {
+            let _ = write!(
+                out,
+                "\nYour previous answer was refused: {correction}. Return the whole record \
+                 again, keeping every field within its budget.\n"
+            );
         }
         out
     }

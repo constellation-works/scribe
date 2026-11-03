@@ -21,9 +21,10 @@ const DEFINED: &str = "by graduate to level 4 I mean a crew that merges without 
 const ASSISTANT: &str = "Level 4 crews merge their own pull requests after green CI.";
 const NEVER_SAID: &str = "this session was never switched on and must stay unread";
 
-/// A `Models` answering every session pass with `answer`, keeping each
-/// request.
+/// A `Models` answering the first session request with `first`, when set,
+/// and every other with `answer`, keeping each request.
 struct FakeModels {
+    first: RefCell<Option<Result<SessionAnswer, ModelError>>>,
     answer: Result<SessionAnswer, ModelError>,
     asked: RefCell<Vec<SessionRequest>>,
 }
@@ -35,7 +36,7 @@ impl Models for &FakeModels {
 
     fn session(&self, request: &SessionRequest) -> Result<SessionAnswer, ModelError> {
         self.asked.borrow_mut().push(request.clone());
-        self.answer.clone()
+        self.first.take().unwrap_or_else(|| self.answer.clone())
     }
 }
 
@@ -151,6 +152,7 @@ impl Setup {
 
 fn fake(answer: Result<SessionAnswer, ModelError>) -> FakeModels {
     FakeModels {
+        first: RefCell::new(None),
         answer,
         asked: RefCell::new(Vec::new()),
     }
@@ -249,7 +251,7 @@ fn an_invalid_answer_keeps_the_previous_record_and_the_pass_due() {
     setup.mark_due();
 
     let mut over = answer();
-    over.summary = "s".repeat(601);
+    over.summary = "s".repeat(1501);
     for bad in [
         Ok(over),
         Err(ModelError::Timeout {
@@ -263,6 +265,28 @@ fn an_invalid_answer_keeps_the_previous_record_and_the_pass_due() {
         assert_eq!(std::fs::read(setup.record_file()).unwrap(), before);
         assert!(setup.due(), "left due for the next run");
     }
+}
+
+#[test]
+fn an_over_budget_answer_is_asked_again_once_and_the_valid_retry_is_written() {
+    // ORB-21800: a 626-character summary refused the whole pass.
+    let setup = Setup::new();
+    setup.switch_on();
+    let mut over = answer();
+    over.summary = "s".repeat(1501);
+    let models = fake(Ok(answer()));
+    *models.first.borrow_mut() = Some(Ok(over));
+
+    let passes = setup.run(&models);
+
+    assert_eq!(passes[0].result, "written");
+    let asked = models.asked.borrow();
+    assert_eq!(asked.len(), 2);
+    assert_eq!(asked[0].correction, None);
+    let correction = asked[1].correction.as_deref().unwrap();
+    assert!(correction.contains("Summary has 1501 characters; the budget is 1500"));
+    assert!(asked[1].prompt().contains(correction));
+    assert!(!setup.due());
 }
 
 #[test]

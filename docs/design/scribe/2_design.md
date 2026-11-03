@@ -258,7 +258,7 @@ frontmatter plus `title`, `cwd`, `started`, `on_since`, `scribed_through`
 (the last transcript message folded in), `passes` (count) and `next_open`
 (the number of `next` items); `status: final` after the session-end pass.
 The body has four sections, `## Summary`, `## Goals`, `## Outcome` and
-`## Next` (character budgets 600/400/1200/600). The four text fields are model-written
+`## Next` (character budgets 1500/600/2500/1000). The four text fields are model-written
 summaries, labelled as such in `ask` evidence, never quoted as Daniel's words.
 
 **Discussion** (`discussions/<yy-mm>/<slug>.md`): the distilled record of
@@ -528,9 +528,11 @@ or from cron.
    to reuse. Each term's `said` must pass the verbatim check against one of
    Daniel's own turns (never an assistant turn); a term that fails is
    dropped, the rest of the record is kept.
-3. Validate the budgets and the JSON shape; on failure, keep the previous
-   record and leave `due` set for the next run (three failures in a row
-   clear `due` and log a `warn`).
+3. Validate the budgets and the JSON shape. On failure, ask the model once
+   more in the same pass, naming what was refused (a field, its length and
+   its budget); if that answer fails too, keep the previous record and leave
+   `due` set for the next run (three failures in a row clear `due` and log
+   a `warn`).
 4. Write the record atomically, advance `scribed_through`, clear `due`.
 
 A pass writes no tag entries, even if the transcript contains `#decision`
@@ -554,8 +556,8 @@ As built (S4), in `scribe-core::pass` and `commands/session/pass.rs`:
   and a single message over the limit is cut. Nothing after
   `scribed_through` clears `due` without a model call; at session end it
   marks the record final.
-- Budgets: title 120 characters, summary 600, goals 400, outcome 1200,
-  next 600 (rendered as a bullet list); a `## ` heading inside a section or
+- Budgets: title 120 characters, summary 1500, goals 600, outcome 2500,
+  next 1000 (rendered as a bullet list); a `## ` heading inside a section or
   an empty summary also fails, as do invalid topics. A bad `related`
   reference is dropped. A term is kept when its `said` (at most 400
   characters) is verbatim in one of Daniel's own turns, not his pasted

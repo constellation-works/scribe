@@ -109,10 +109,10 @@ impl SessionStatus {
 /// A pass that writes more than a budget is refused (S4); a stored record is
 /// read whatever its length.
 pub const SECTIONS: [(&str, usize); 4] = [
-    ("Summary", 600),
-    ("Goals", 400),
-    ("Outcome", 1200),
-    ("Next", 600),
+    ("Summary", 1500),
+    ("Goals", 600),
+    ("Outcome", 2500),
+    ("Next", 1000),
 ];
 
 /// A phrase Daniel coined or defined in a session, kept in his exact words
