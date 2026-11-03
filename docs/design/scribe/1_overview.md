@@ -49,6 +49,9 @@ Quoted verbatim; these are the requirements this design starts from.
   \"scribe on\"."
 - "let's keep #scribe writing. I would rather keep mcp surface small for my
   main agents - they can just have \"ask\" mcp."
+- "I just want to make sure that orchestrator agents can ask the scribe on
+  anything, e.g. \"can you fetch me last session summary? (works as a
+  session handoff)\"."
 
 ## 2. Shape
 

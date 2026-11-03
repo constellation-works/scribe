@@ -319,7 +319,9 @@ Input: `{"question": string, "scope"?: {"tags"?: [..], "since"?: date},
 }
 ```
 
-`cite` is an entry id, `session:<id>` or `task:<id>`. `scribe question ask
+`cite` is an entry id, `session:<id>` or `task:<id>`. A lookup
+([§6.5](#65-lookups-records-by-recency-or-id)) also sets `"status":
+"record"` and returns `records`, the stored records themselves. `scribe question ask
 "<question>"` is the same operation for Daniel at a terminal (`--json`
 prints this payload).
 
@@ -365,6 +367,27 @@ and answers. In `ask`, a claim whose quote fails is dropped and counted in
 claim whose cite is not in the evidence is dropped the same way. When the
 evidence contains a hidden entry that matched (and `include_hidden` is
 false), the answer notes that a superseded record exists, without quoting it.
+
+### 6.5 Lookups: records by recency or id
+
+`ask` takes any question, and orchestrators use it for handoffs: "can you
+fetch me last session summary?" must return the latest session record, not
+a ranked guess. Word-overlap ranking cannot answer that ("last" matches
+nothing), so before §6.2 a model-free classifier recognises lookups:
+
+| Asks for | Returns |
+|---|---|
+| the latest/last/previous session (optionally for a project or scope) | the newest session record in that scope by `updated_at` |
+| a named session (`session:<id>`, or a title match) | that session record |
+| open next steps / what is pending | the `next` items of the newest records in scope, newest first |
+| the entries of a tag in a period ("decisions this week") | those entries, newest first |
+
+A lookup returns `"status": "record"` and `records` with each record's
+stored fields verbatim (summary, goals, outcome, next, timestamps, cite),
+without a model call and without paraphrase. A question that is not a
+lookup, or a lookup that matches nothing, falls through to §6.2. When the
+classifier is unsure it falls through too, so a lookup never hides an
+answer.
 
 ## 7. Consistency routine
 
@@ -527,6 +550,10 @@ Claude Code package.
   entries, and excludes hidden entries unless `include_hidden`.
 - `scribe question ask "<question>" --json` and the `scribe.ask` tool
   return the same payload for the same store.
+- "can you fetch me last session summary?" returns `"status": "record"`
+  with the newest session record in scope, its fields byte-identical to the
+  stored record, and makes no model call; a non-lookup question still goes
+  through retrieval and answering.
 
 **S6 — Consistency routine.**
 
