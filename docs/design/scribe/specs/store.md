@@ -132,8 +132,21 @@ listed with `configured: false`.
 
 ## Invariants
 
-- **Reads write nothing.** Every command in this slice reads: no lock, no
+- **Reads write nothing.** Every command except `hook` reads: no lock, no
   directory, no audit line, and it works on a read-only root.
+- **Capture** (S2). `Store::capture` takes the drafts of one prompt, and
+  under `.lock` finds an entry with the same `cite` session,
+  `prompt_sha256` and `line` before writing; a match is returned as it is
+  and nothing is written. A new entry gets the next number of its tag:
+  one more than the largest number among the tag's parsed entries and the
+  stems of its corrupt files, so a number is never reused while its file
+  exists. The root and `entries/<tag>/` are created `0700` when absent and
+  a new file is `0600`; writing over an existing entry file is refused.
+- **Cite fill** (S2). `Store::has_unfilled_cites` reads only.
+  `Store::fill_cite_messages` rewrites, under `.lock`, each entry of the
+  session whose `cite.message` is `null` and for which the caller finds a
+  message, setting `cite.message` and `updated`; it does nothing when the
+  root does not exist.
 - **Modes and owners.** Every load refuses the root, a subdirectory, a
   record file or a document owned by another user (`store_foreign_owner`) or
   writable by group or others (`store_permissions`, naming the `chmod 700`
@@ -155,11 +168,11 @@ listed with `configured: false`.
   given the document type it upgrades; shipped steps never change. Reads
   upgrade an older document in memory; a newer one is refused and left
   untouched.
-- **Writes** (from S2). Every file except `audit.jsonl` is replaced whole by
+- **Writes** (S2). Every file except `audit.jsonl` is replaced whole by
   `fsio::write_atomic`: a temp file in the same directory, `fsync`, rename,
   `fsync` of the directory, under `.lock`. Lock acquisition gives up after
   10 seconds with `store_locked`, naming the holder.
-- **Redaction** (from S2). Before a write, `Redactor` replaces each live
+- **Redaction** (S2). Before a write, `Redactor` replaces each live
   value of the variables in `[redact] env` and `[models] credentials` with
   `[redacted:<NAME>]` in every field of `REDACTED_FIELDS`: `entry.said`,
   `entry.content`, `session.title`, `session.summary`, `session.goals`,

@@ -62,6 +62,37 @@ impl Label {
         &self.0
     }
 
+    /// `text` made into a label: each whitespace or control character
+    /// becomes `-` and it is cut to [`Label::MAX_CHARS`]; an empty result is
+    /// `fallback`. For values read from the host (its name, a directory
+    /// name) that must become a label rather than be refused.
+    #[must_use]
+    pub fn sanitized(text: &str, fallback: &str) -> Self {
+        let clean = |t: &str| -> String {
+            t.chars()
+                .map(|c| {
+                    if c.is_whitespace() || c.is_control() {
+                        '-'
+                    } else {
+                        c
+                    }
+                })
+                .take(Self::MAX_CHARS)
+                .collect()
+        };
+        let label = clean(text);
+        if label.is_empty() {
+            let fallback = clean(fallback);
+            Self(if fallback.is_empty() {
+                String::from("-")
+            } else {
+                fallback
+            })
+        } else {
+            Self(label)
+        }
+    }
+
     fn parse_as(what: &'static str, value: String) -> Result<Self, RecordError> {
         let chars = value.chars().count();
         let valid = (1..=Self::MAX_CHARS).contains(&chars)
@@ -101,6 +132,16 @@ impl fmt::Display for Label {
 pub struct Project(Label);
 
 impl Project {
+    /// A record not tied to a repository.
+    pub const GLOBAL: &'static str = "global";
+
+    /// `text` made into a project label, as [`Label::sanitized`]; empty is
+    /// [`Project::GLOBAL`].
+    #[must_use]
+    pub fn sanitized(text: &str) -> Self {
+        Self(Label::sanitized(text, Self::GLOBAL))
+    }
+
     /// The project text.
     #[must_use]
     pub fn as_str(&self) -> &str {

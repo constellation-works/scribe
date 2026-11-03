@@ -1,0 +1,23 @@
+Run a Claude Code hook: record #scribe lines and fill in their cites
+
+Usage: scribe hook [OPTIONS] <COMMAND>
+
+Commands:
+  user-prompt-submit  Record each #scribe line of a typed prompt, from the UserPromptSubmit hook's JSON on stdin
+  stop                Fill in the message ids of entries this session recorded, from the Stop hook's JSON on stdin
+  help                Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Global options:
+      --root <DIR>       Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>  Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json             Shorthand for --format json
+
+These run from the Claude Code package (plugin/claude-code), not by hand.
+
+Examples:
+  scribe hook user-prompt-submit < <payload.json>
+  scribe hook stop < <payload.json>

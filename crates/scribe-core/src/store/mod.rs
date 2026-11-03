@@ -43,7 +43,7 @@ pub use audit::{AUDIT_FILE, AuditEvent, AuditStatus};
 pub use redact::{MIN_SECRET_CHARS, REDACTED_FIELDS, Redactor};
 
 use crate::config::Config;
-use crate::entry::{Entry, EntryFilter, EntryId};
+use crate::entry::{Cite, Entry, EntryFilter, EntryId, NewEntry};
 use crate::error::{Error, Result};
 use crate::proposal::Proposal;
 use crate::record::Listing;
@@ -118,6 +118,26 @@ pub struct TagList {
     pub tags: Vec<TagSummary>,
     /// Entry files left out of the counts because they did not parse.
     pub skipped: Vec<Skipped>,
+}
+
+/// What [`Store::capture`] did with one draft.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Captured {
+    /// It was written as a new entry.
+    Added(Entry),
+    /// An entry for the same `#scribe` line already existed (a retried or
+    /// replayed hook); nothing was written.
+    Existing(Entry),
+}
+
+impl Captured {
+    /// The entry written or found.
+    #[must_use]
+    pub fn entry(&self) -> &Entry {
+        match self {
+            Self::Added(entry) | Self::Existing(entry) => entry,
+        }
+    }
 }
 
 /// A scribe store rooted at one data directory.
@@ -281,6 +301,114 @@ impl Store {
         })
     }
 
+    /// Record each draft as a new entry, once.
+    ///
+    /// Under the store lock, each draft is checked against the existing
+    /// entries by its cite's `(session, prompt_sha256, line)`: a match is
+    /// returned as [`Captured::Existing`] and nothing is written, so a
+    /// retried or replayed hook never writes twice. Otherwise the draft gets
+    /// the next id in its tag (one past the highest, counting files that do
+    /// not parse, so a number is never reused), its free text passes
+    /// `redactor`, and it is written with [`fsio::write_atomic`]. Missing
+    /// directories are created owner-only.
+    pub fn capture(&self, drafts: Vec<NewEntry>, redactor: &Redactor) -> Result<Vec<Captured>> {
+        if drafts.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.prepare_dir(&self.root)?;
+        let _lock = self.lock("capture")?;
+        let (mut entries, skipped) = self.load_entries()?;
+        let mut ids: Vec<EntryId> = entries.iter().map(|e| e.id.clone()).collect();
+        ids.extend(
+            skipped
+                .iter()
+                .filter_map(|s| s.path.file_stem()?.to_str()?.parse().ok()),
+        );
+        let mut out = Vec::with_capacity(drafts.len());
+        for draft in drafts {
+            if let Some(found) = entries.iter().find(|e| e.cite.same_line(&draft.cite)) {
+                out.push(Captured::Existing(found.clone()));
+                continue;
+            }
+            let id = EntryId::next_in(&draft.tag, &ids);
+            let mut entry = draft.into_entry(id.clone());
+            redactor.entry(&mut entry);
+            self.write_entry(&entry, true)?;
+            ids.push(id);
+            entries.push(entry.clone());
+            out.push(Captured::Added(entry));
+        }
+        Ok(out)
+    }
+
+    /// Whether any entry from `session` still waits for its cite's message
+    /// uuid. Reads only, so the `Stop` hook, which runs after every reply,
+    /// can return without locking or writing when nothing waits.
+    pub fn has_unfilled_cites(&self, session: &SessionId) -> Result<bool> {
+        Ok(self.load_entries()?.0.iter().any(|e| unfilled(e, session)))
+    }
+
+    /// Under the store lock, fill the cite's message uuid of every entry
+    /// from `session` that has none yet with what `find` returns for its
+    /// cite; `updated` becomes `now`. Returns the ids filled, oldest first.
+    pub fn fill_cite_messages(
+        &self,
+        session: &SessionId,
+        now: time::OffsetDateTime,
+        find: impl Fn(&Cite) -> Option<String>,
+    ) -> Result<Vec<EntryId>> {
+        if !self.root_exists()? {
+            return Ok(Vec::new());
+        }
+        let _lock = self.lock("fill cite")?;
+        let (mut entries, _) = self.load_entries()?;
+        entries.sort_by(|a, b| a.created.cmp(&b.created).then_with(|| a.id.cmp(&b.id)));
+        let mut filled = Vec::new();
+        for mut entry in entries.into_iter().filter(|e| unfilled(e, session)) {
+            let Some(message) = find(&entry.cite) else {
+                continue;
+            };
+            entry.cite.message = Some(message);
+            entry.updated = now;
+            self.write_entry(&entry, false)?;
+            filled.push(entry.id);
+        }
+        Ok(filled)
+    }
+
+    /// Write `entry` to its file, creating its directories owner-only. A new
+    /// entry never replaces a file: ids come from the listing, so an
+    /// existing file means the listing missed it, and the write is refused
+    /// rather than overwrite it. The caller holds the lock.
+    fn write_entry(&self, entry: &Entry, new: bool) -> Result<()> {
+        let dir = self.root.join(ENTRIES_DIR);
+        self.prepare_subdir(&dir)?;
+        self.prepare_subdir(&dir.join(entry.tag.as_str()))?;
+        let path = self.entry_path(&entry.id);
+        if new && fsio::inspect_file(&path)? {
+            return Err(Error::io(
+                "create",
+                path,
+                io::Error::from(io::ErrorKind::AlreadyExists),
+            ));
+        }
+        fsio::write_atomic(&path, &format::encode_entry(&path, entry)?)
+    }
+
+    fn prepare_dir(&self, dir: &Path) -> Result<()> {
+        if !fsio::inspect_dir(dir)? {
+            fsio::create_private_dir(dir)?;
+        }
+        Ok(())
+    }
+
+    fn prepare_subdir(&self, dir: &Path) -> Result<()> {
+        if !fsio::inspect_subdir(dir)? {
+            fsio::create_private_dir(dir)?;
+        }
+        Ok(())
+    }
+
     /// Append one event to the audit log, creating the data directory and the
     /// log owner-only if needed. The append holds the store lock, so events
     /// from concurrent commands never interleave. An unsafe data directory is
@@ -377,6 +505,11 @@ impl Store {
         }
         Ok(files)
     }
+}
+
+/// Whether `entry` is from `session` and still waits for its message uuid.
+fn unfilled(entry: &Entry, session: &SessionId) -> bool {
+    &entry.cite.session == session && entry.cite.message.is_none()
 }
 
 /// Names that can be records: not hidden. A writer stages its temporary file

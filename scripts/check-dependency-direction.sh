@@ -116,6 +116,11 @@ ban "$CLI/output"    'crate::(app|cli|commands|audit_middleware)'    "output mus
 # Dispatch depends on the middleware, never the reverse (R1).
 ban "$CLI/audit_middleware.rs" 'crate::(cli|commands)'           "audit_middleware must not import cli or commands"
 
+# Commands may read files the host owns (a hook's transcript, git config), but
+# every write goes through the store's atomic writer under its lock (R4).
+ban "$CLI/commands"  'std::fs::(write|remove|rename|create|copy|set_permissions)|OpenOptions' \
+                                                                 "commands must not write files: store writes go through scribe-core's store"
+
 # Persisted shapes never fabricate a timestamp on read (R16).
 ban crates 'serde\(default *= *"[A-Za-z_:]*(now|now_utc)"'    "a persisted timestamp must not default to the current time"
 

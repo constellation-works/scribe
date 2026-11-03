@@ -371,3 +371,72 @@ impl EntryFilter {
         Listing::select(entries, |e| self.matches(e), self.limit)
     }
 }
+
+/// An entry before the store gives it an id: what `#scribe` capture builds
+/// from one instruction (`capture::draft`). New entries are always `active`,
+/// replace nothing and are `updated` when `created`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NewEntry {
+    /// The tag; the id is numbered within it.
+    pub tag: TagName,
+    /// The repository it was recorded in.
+    pub project: Project,
+    /// The extra hashtags on the line.
+    pub topics: Topics,
+    /// References it mentions.
+    pub related: Vec<Related>,
+    /// The tool it was recorded through.
+    pub provider: Label,
+    /// The host it was recorded on.
+    pub host: Label,
+    /// When it was recorded.
+    pub created: OffsetDateTime,
+    /// The `#scribe` line as typed.
+    pub said: String,
+    /// What it records, verbatim.
+    pub content: String,
+    /// Where `content` came from.
+    pub content_from: ContentFrom,
+    /// The turn it was typed in; `message` is still `None`.
+    pub cite: Cite,
+    /// When it is due for review.
+    pub review_after: Option<Date>,
+}
+
+impl NewEntry {
+    /// The stored entry under `id`.
+    #[must_use]
+    pub fn into_entry(self, id: EntryId) -> Entry {
+        Entry {
+            id,
+            tag: self.tag,
+            status: EntryStatus::Active,
+            project: self.project,
+            topics: self.topics,
+            related: self.related,
+            provider: self.provider,
+            host: self.host,
+            created: self.created,
+            updated: self.created,
+            said: self.said,
+            content_from: self.content_from,
+            cite: self.cite,
+            superseded_by: None,
+            review_after: self.review_after,
+            content: self.content,
+        }
+    }
+}
+
+impl Cite {
+    /// Whether `other` cites the same `#scribe` line: the same session,
+    /// prompt and line. This is capture's idempotency key
+    /// (docs/design/scribe/2_design.md §4.2), so a retried hook finds the
+    /// entry it already wrote instead of writing a second.
+    #[must_use]
+    pub fn same_line(&self, other: &Cite) -> bool {
+        self.session == other.session
+            && self.prompt_sha256 == other.prompt_sha256
+            && self.line == other.line
+    }
+}

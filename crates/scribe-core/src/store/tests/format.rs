@@ -214,3 +214,16 @@ fn control_and_proposals_are_strict_json() {
     let repeated = br#"{"format":1,"proposals":[],"proposals":[]}"#;
     corrupt_message(&decode_proposals(Path::new("proposals.json"), repeated).unwrap_err());
 }
+
+#[test]
+fn an_encoded_entry_reads_back_as_the_same_entry() {
+    let mut original = entry(&entry_text("")).unwrap();
+    original.said = String::from("#scribe decisions: it's \"quoted\" #ci: and --- dashes");
+    original.content = String::from("it's \"quoted\" #ci: and --- dashes");
+    original.cite.message = Some(String::from("m-1"));
+    original.review_after = Some(time::macros::date!(2027 - 01 - 02));
+    let bytes = crate::store::format::encode_entry(Path::new(ENTRY), &original).unwrap();
+    let text = String::from_utf8(bytes.clone()).unwrap();
+    assert!(text.starts_with("---\nformat: 1\nkind: entry\n"), "{text}");
+    assert_eq!(entry(&text).unwrap(), original);
+}

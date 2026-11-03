@@ -5,13 +5,19 @@
 //! `crate::command` and `crate::output` imports here.
 
 use crate::error::CliError;
-use scribe_core::Store;
+use scribe_core::{Config, Label, Redactor, Store};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 
 /// Environment variable naming the data directory.
 pub(crate) const ROOT_ENV: &str = "SCRIBE_ROOT";
+
+/// Environment variable that moves Claude Code's state directory.
+const CLAUDE_CONFIG_ENV: &str = "CLAUDE_CONFIG_DIR";
+
+/// The host label used when the host name cannot be read or is not a label.
+const UNKNOWN_HOST: &str = "unknown-host";
 
 /// Directory under `$HOME` used when nothing else names one.
 const DEFAULT_DIR: &str = ".scribe";
@@ -23,6 +29,9 @@ pub(crate) struct AppEnv {
     pub(crate) root: Option<OsString>,
     /// `HOME`.
     pub(crate) home: Option<OsString>,
+    /// `CLAUDE_CONFIG_DIR`: where Claude Code keeps its state instead of
+    /// `~/.claude`, and so its transcripts.
+    pub(crate) claude_config_dir: Option<OsString>,
 }
 
 impl AppEnv {
@@ -31,6 +40,7 @@ impl AppEnv {
         Self {
             root: std::env::var_os(ROOT_ENV),
             home: std::env::var_os("HOME"),
+            claude_config_dir: std::env::var_os(CLAUDE_CONFIG_ENV),
         }
     }
 }
@@ -39,6 +49,7 @@ impl AppEnv {
 #[derive(Debug)]
 pub(crate) struct Context {
     store: Store,
+    transcripts: Option<PathBuf>,
 }
 
 impl Context {
@@ -49,6 +60,7 @@ impl Context {
         tracing::debug!(root = %root.display(), "resolved data directory");
         Ok(Self {
             store: Store::open(root),
+            transcripts: transcripts_dir(env),
         })
     }
 
@@ -57,11 +69,55 @@ impl Context {
         &self.store
     }
 
+    /// Where Claude Code keeps session transcripts:
+    /// `$CLAUDE_CONFIG_DIR/projects`, else `$HOME/.claude/projects`. `None`
+    /// when neither is set, which makes every transcript fail the
+    /// provenance check.
+    pub(crate) fn transcripts(&self) -> Option<&Path> {
+        self.transcripts.as_deref()
+    }
+
+    /// This host's name as a record label, for the records it stamps.
+    pub(crate) fn host(&self) -> Label {
+        Label::sanitized(host_name().as_deref().unwrap_or_default(), UNKNOWN_HOST)
+    }
+
+    /// The redactor for `config`: the live values of the variables it names,
+    /// read from this process's environment.
+    pub(crate) fn redactor(&self, config: &Config) -> Redactor {
+        Redactor::from_config(config, |name| std::env::var(name).ok())
+    }
+
     /// The current time, whole seconds, for records created by this invocation.
     pub(crate) fn now(&self) -> OffsetDateTime {
         let now = OffsetDateTime::now_utc();
         now.replace_nanosecond(0).unwrap_or(now)
     }
+}
+
+/// The transcripts directory precedence, separated so tests can check it.
+pub(crate) fn transcripts_dir(env: &AppEnv) -> Option<PathBuf> {
+    let non_empty = |v: &Option<OsString>| v.clone().filter(|s| !s.is_empty());
+    non_empty(&env.claude_config_dir)
+        .map(PathBuf::from)
+        .or_else(|| non_empty(&env.home).map(|home| PathBuf::from(home).join(".claude")))
+        .map(|dir| dir.join("projects"))
+}
+
+#[cfg(unix)]
+fn host_name() -> Option<String> {
+    let uname = rustix::system::uname();
+    uname
+        .nodename()
+        .to_str()
+        .ok()
+        .filter(|n| !n.is_empty())
+        .map(str::to_owned)
+}
+
+#[cfg(not(unix))]
+fn host_name() -> Option<String> {
+    std::env::var("COMPUTERNAME").ok().filter(|n| !n.is_empty())
 }
 
 /// The data-directory precedence, separated so tests can check it directly.

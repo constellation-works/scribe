@@ -11,7 +11,7 @@ summary: Why superseded entries are hidden not removed, why one JSON file per ta
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-13117, ORB-13134]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-13117, ORB-13134]
 ---
 
 # scribe — Decisions
@@ -869,8 +869,9 @@ These rules bind from the slice that starts doing what they govern:
 - Plugin surface (S5): STD-05@1 §R3 (capability, not listing, keeps agents
   off the mutating tools), §R20 (model calls are operator-configured).
 - Free text persisted (S1): STD-05@1 §R13, §R14 (one redactor).
-- Installed defaults (S2): STD-03@2 §R25 for the seeded `config.toml` and
-  routines, which are created once and never overwritten.
+- Installed defaults (S4): STD-03@2 §R25 for the seeded `config.toml` and
+  routines, which are created once and never overwritten. S2 seeds
+  nothing: an absent `config.toml` means the built-in defaults.
 - Unattended work (S4, S6): STD-03@2 §R22 through Orbit's routine limits
   plus each model budget.
 
@@ -923,11 +924,122 @@ reads `config.toml`, and `unicode-normalization` gives the NFC for
   is quoted. The writer (S2) serializes through `yaml_serde`, which quotes
   such values.
 
+## S2 refuses forms 3 and 4 rather than guessing
+
+**Code anchors:** `crates/scribe-core/src/capture.rs`
+
+### Context
+
+Form 3 (`#scribe add it to <tag>`) needs a model to resolve the referent
+(S3), form 4 (`#scribe accept|reject|forget …`) needs proposals (S6), and
+`#scribe distill` needs S7. S2 has none of them, and a bare form-2 reading
+of `add it to decisions` would record the word "it".
+
+### Decision
+
+S2 recognises those shapes and refuses them with `unsupported_instruction`,
+echoing the refusal. A form-3 line whose tag is not configured is refused as
+`unknown_tag` first, so the reply already lists the tags.
+
+### Consequences
+
+- Nothing is ever recorded from a misread instruction; Daniel sees why.
+- Cost: until S3 a `#scribe add that to decisions` does nothing but echo.
+
+## One audit line per hook outcome, none for a no-op
+
+**Code anchors:** `crates/scribe/src/audit_middleware.rs`;
+`crates/scribe/src/output/payload.rs` (`HookOutcome`)
+
+### Context
+
+One prompt can hold several `#scribe` lines, some written and some refused,
+and nearly every prompt and every `Stop` changes nothing. One line per
+command would either lose which line failed or log every keystroke.
+
+### Decision
+
+A hook result carries its outcomes: an entry written or a cite filled
+(`target` the entry id) or a line refused or failed (`target`
+`session:<id>`, `error_code`). The guard writes one audit line per outcome
+and none when there are none; a hook that fails before a result (an invalid
+payload) writes one failure line.
+
+### Consequences
+
+- The audit log shows every write and refusal with ids and codes only.
+- A replay writes no audit line; it changed nothing.
+
+## The provenance check allows a missing transcript
+
+**Code anchors:** `crates/scribe/src/commands/hook/payload.rs`
+
+### Context
+
+STD-05@1 §R1 treats the hook payload as a claim. Claude Code may run a
+session's first `UserPromptSubmit` before it writes the transcript file.
+
+### Decision
+
+The path must be absolute, inside the transcripts directory, named
+`<session_id>.jsonl` and, when it exists, a regular file owned by this uid;
+a missing file passes. A failure records nothing and replies
+`provenance_failed` for each line.
+
+### Consequences
+
+- The first prompt of a session can be captured.
+- Cost: a forged payload naming a not-yet-existing transcript path passes;
+  like the rest of the check this is an accident guard (STD-05@1 §R5), not
+  a defence against a same-user process ([2_design.md §9](./2_design.md#9-concerns--honest-limitations)).
+
+## sha2 hashes the prompt
+
+**Code anchors:** `Cargo.toml`; `crates/scribe-core/src/capture.rs` (`prompt_sha256`)
+
+### Context
+
+The idempotency key and the `Stop` hook's transcript match both need the
+prompt's SHA-256, which `cite.prompt_sha256` already names.
+
+### Decision
+
+The RustCrypto `sha2` 0.10 crate (MIT or Apache-2.0, pure Rust), added as a
+workspace dependency of `scribe-core`; it passes `cargo deny`.
+
+### Consequences
+
+- Cost: one more small dependency tree to track.
+
+## The Claude Code package installs from a local marketplace
+
+**Code anchors:** `plugin/.claude-plugin/marketplace.json`;
+`plugin/claude-code/`
+
+### Context
+
+Claude Code installs plugins from a marketplace. scribe is not published to
+one, and the package must install from a checkout.
+
+### Decision
+
+`plugin/` is a one-plugin marketplace, `scribe-local`, whose plugin source
+is `./claude-code`; `claude plugin install scribe --marketplace ./plugin`
+installs it. The hooks run `scribe` from `PATH` (`make install`).
+
+### Consequences
+
+- Installing needs no network and no publication.
+- Cost: the package and the binary are installed separately and can drift;
+  a missing binary makes each hook fail visibly in Claude Code.
+
 ## Task References
 
 - [ORB-21747] — designed the standalone scribe plugin and recorded its decisions.
 - [ORB-13117] — built the Rust CLI template this project was created from.
 - [ORB-13134] — brought the template to STD-01..03 v2 and STD-04/05 v1.
 - [ORB-21753] — S1: built the domain, the frontmatter store and the read-only CLI.
+- [ORB-21764] — S2: built `#scribe` capture (no model) and the Claude Code package.
+- [ORB-21760] — the operator's live check of the S2 package.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.

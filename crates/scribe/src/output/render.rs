@@ -3,7 +3,8 @@
 
 use super::color::{self, Role};
 use super::payload::{
-    EntryPayload, ProposalPayload, Record, Records, SessionPayload, TagPayload, WarningPayload,
+    EntryPayload, HookJson, HookReply, HookSpecificJson, ProposalPayload, Record, Records,
+    SessionPayload, TagPayload, WarningPayload,
 };
 use super::sink::{OutputMode, Sink};
 use super::table::{self, Align, Cell, Column};
@@ -152,6 +153,23 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
         (OutputMode::Table, Record::Entry(entry)) => entry_detail(out, sink, entry),
         (OutputMode::Table, Record::Session(session)) => session_detail(out, sink, session),
     }
+}
+
+/// A hook's reply: one line of Claude Code hook JSON, or nothing when the
+/// hook has nothing to say. The mode is ignored: Claude Code reads this.
+pub(crate) fn hook(out: &mut dyn Write, reply: &HookReply) -> io::Result<()> {
+    if reply.message.is_none() && reply.context.is_none() {
+        return Ok(());
+    }
+    let json = HookJson {
+        system_message: reply.message.as_deref(),
+        hook_specific_output: reply.context.as_deref().map(|context| HookSpecificJson {
+            hook_event_name: reply.event,
+            additional_context: context,
+        }),
+    };
+    serde_json::to_writer(&mut *out, &json).map_err(io::Error::from)?;
+    writeln!(out)
 }
 
 fn entry_detail(out: &mut dyn Write, sink: &Sink, e: &EntryPayload) -> io::Result<()> {

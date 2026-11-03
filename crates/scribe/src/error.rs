@@ -16,6 +16,18 @@ pub(crate) enum CliError {
     /// No data directory could be resolved.
     #[error("no data directory: pass --root <dir> or set SCRIBE_ROOT (HOME is not set either)")]
     NoDataDir,
+    /// A hook's stdin was not the JSON Claude Code sends for that event.
+    #[error("the hook input is not a Claude Code hook payload: {0}")]
+    HookPayload(String),
+    /// Reading stdin or a file the command was pointed at failed.
+    #[error("cannot read {what}")]
+    Read {
+        /// What was being read: `stdin`, or the transcript's path.
+        what: String,
+        /// The operating-system error.
+        #[source]
+        source: io::Error,
+    },
     /// Writing the result to stdout failed for a reason other than a closed pipe.
     #[error("cannot write output")]
     Output(#[source] io::Error),
@@ -27,6 +39,8 @@ impl CliError {
         match self {
             Self::Core(e) => e.code(),
             Self::NoDataDir => "no_data_dir",
+            Self::HookPayload(_) => "hook_payload_invalid",
+            Self::Read { .. } => "io_error",
             Self::Output(_) => "output_error",
         }
     }
@@ -48,7 +62,11 @@ impl CliError {
                 Some("run 'scribe session list' with the same --root to see existing ids")
             }
             // The core enum is #[non_exhaustive], so it needs this arm.
-            Self::Core(_) | Self::NoDataDir | Self::Output(_) => None,
+            Self::Core(_)
+            | Self::NoDataDir
+            | Self::HookPayload(_)
+            | Self::Read { .. }
+            | Self::Output(_) => None,
         }
     }
 }

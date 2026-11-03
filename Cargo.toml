@@ -28,6 +28,9 @@ clap = { version = "4", default-features = false, features = ["std", "derive", "
 rustix = { version = "1", default-features = false, features = ["std", "process"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# The cite's prompt_sha256 (docs/design/scribe/2_design.md §4.1). RustCrypto,
+# MIT or Apache-2.0; no default features beyond std.
+sha2 = "0.10"
 tempfile = "3"
 thiserror = "2"
 time = { version = "0.3", features = ["formatting", "macros", "parsing", "serde"] }

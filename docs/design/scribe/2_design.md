@@ -18,8 +18,9 @@ related_artifacts: [ORB-21747, ORB-13117, ORB-13134]
 
 The design of the scribe plugin: its boundary, the four parts named in
 [1_overview.md §2](./1_overview.md#2-shape), the store, the model choices,
-and the slices that build it. Slice S1 (the domain, the store and the
-read-only CLI) is implemented; the rest is not yet. The reasons behind each choice
+and the slices that build it. Slices S1 (the domain, the store and the
+read-only CLI) and S2 (`#scribe` capture without a model, and the Claude Code
+package) are implemented; the rest is not yet. The reasons behind each choice
 are in [4_decisions.md](./4_decisions.md); open directions are in
 [3_vision.md](./3_vision.md). Where this doc and the template's engineering
 rules meet (atomic writes, the store lock, the audit guard, output modes,
@@ -74,6 +75,12 @@ command file: `/scribe` is intercepted by the `UserPromptSubmit` hook
 ([§5.1](#51-switching-on-and-off)). Orbit's plugin manifest has no hook or
 command key, which is why this is a separate package
 ([4_decisions.md](./4_decisions.md#hooks-call-the-scribe-binary-directly-not-orbit)).
+As built in S2, it registers `UserPromptSubmit` (30 s) and `Stop` (10 s)
+only; `SessionStart` and `SessionEnd` join with the slices that give them
+something to do (S4, S6), since a registered hook whose command does not
+exist fails on every session. `plugin/.claude-plugin/marketplace.json` is a
+one-plugin local marketplace, so the package installs from a checkout with
+`claude plugin install scribe --marketplace ./plugin`.
 
 Entry writes never go through Orbit's tool surface: the hooks call the
 binary. The two routine tools write session records and proposals, but they
@@ -111,7 +118,11 @@ spawn processes live in the CLI crate so the core stays free of
 adapters are a new module family; the slice that adds the first one adds
 them to `ARCHITECTURE.md` and the script. S1 built `entry`, `tag`,
 `session`, `proposal`, `record`, `config`, `verbatim` and `store` and the
-`entry`, `session`, `proposal` and `tag` commands.
+`entry`, `session`, `proposal` and `tag` commands. S2 built `capture`,
+`transcript`, the store's first writes (`Store::capture`,
+`Store::fill_cite_messages`) and `commands/hook/` (`user_prompt_submit.rs`,
+`stop.rs`, plus `payload.rs` for the stdin shapes and the provenance check
+and `project.rs` for the project lookup).
 
 ## 3. Storage
 
@@ -275,6 +286,23 @@ finds the user message whose text hashes to `prompt_sha256`. A process that
 can run `scribe hook` with forged stdin can forge an entry; that is
 documented in [§9](#9-concerns--honest-limitations).
 
+As built (S2): the transcripts directory is `$CLAUDE_CONFIG_DIR/projects`,
+else `$HOME/.claude/projects`. The path must be absolute, without `.` or `..`
+components, inside that directory and named `<session_id>.jsonl`; when the
+file exists it must be a regular file (not a link) owned by this uid. A
+missing file passes, because a session's first prompt can reach the hook
+before Claude Code has written the transcript. A failed check records
+nothing; each `#scribe` line gets a `could not record` reply and an audit
+line with `error_code: provenance_failed`. The `Stop` hook first checks,
+reading only, whether any entry of the session still has `message: null`;
+when none does (the usual case) it returns without opening the transcript,
+locking or writing. Otherwise it parses the transcript
+([§2](#2-layering), `transcript`: user and assistant text only, tool
+payloads, sidechain and meta lines dropped), hashes each user message's whole
+text and each of its text blocks, and gives each waiting cite the uuid of the
+matching message written closest to the cite's `at`; a cite whose prompt is
+not in the transcript yet stays `null` for the next `Stop`.
+
 ### 4.2 Parsing an instruction
 
 Model-free grammar, tried in order:
@@ -299,6 +327,15 @@ matches no form is refused with the forms. A refusal is still audited
 Exactly one entry per instruction, also under retries: the idempotency key
 is `(session, prompt_sha256, line)`. A repeat finds the existing entry and
 echoes it instead of writing again.
+
+As built (S2): hashtags at the end of the line, after the tag, are the
+entry's topics, lowercased and deduplicated (more than five is refused as
+`unparsed_instruction`); they are not part of `content`. Forms 3 and 4, and
+`#scribe distill …` ([§4.5](#45-distilling-a-discussion)), are recognised
+and refused with `error_code: unsupported_instruction` until S3, S6 and S7
+build them, so they are never misread as form 2; a form-3 line whose tag is
+unknown is refused as `unknown_tag` first, as in the reply example below.
+The tag word of form 2 may end in `.`, `!`, `,` or `;`.
 
 ### 4.3 Resolving "this" and "it"
 
@@ -328,6 +365,17 @@ scribe: refused "#scribe add it to rituals" — no tag "rituals"; tags: decision
 
 The agent-facing text adds "recorded by scribe; no action needed", so the
 main agent does not try to record it again.
+
+As built (S2): the reply is one line of hook JSON,
+`{"systemMessage": …, "hookSpecificOutput": {"hookEventName":
+"UserPromptSubmit", "additionalContext": …}}`, with one echo line per
+`#scribe` line in prompt order; a prompt without one prints nothing. A
+replayed line echoes `scribe: already recorded <id> in <tag> — "…"`. When
+the store or `config.toml` cannot be used, each line echoes `scribe: could
+not record "…" — <error>` and the hook still exits 0, so the prompt goes
+through. Quotes in an echo are flattened to one line and cut at 200
+characters (`scribe entry show <id>` has the whole text). The `Stop` hook
+prints nothing.
 
 ### 4.5 Distilling a discussion
 
@@ -566,7 +614,11 @@ Tests use a fake `Models` implementation; no test calls a model.
 Mutating commands — every `hook` event that writes, `session pass`,
 `consistency scan` — are audited through the template's `AuditGuard`. Audit
 lines hold ids and error codes only; `said`, `content` and model text never
-enter the audit log.
+enter the audit log. A hook run writes one line per entry written
+(`target` the entry id), per refusal and per failed line (`target`
+`session:<id>`, with its `error_code`) and per cite filled; a run that
+changed nothing (no `#scribe` line, a replay, a `Stop` with nothing waiting)
+writes none.
 
 ## 9. Concerns & Honest Limitations
 
@@ -575,11 +627,33 @@ enter the audit log.
   The transcript checks stop a confused agent, not a hostile one (STD-05 R5).
   Agents have shell access, so "main agents see only `ask`" holds for the MCP
   surface, not for the shell.
-- **Claude Code hook details are unverified.** The exact `UserPromptSubmit`
-  output fields (`systemMessage`, `additionalContext`, `decision: "block"`),
-  and whether `/scribe` reaches the hook without a command file, are
-  confirmed by S2/S4 against the installed Claude Code; if `/scribe` needs a
-  command file, S4 adds one whose only effect is the same hook call.
+- **Claude Code hook details are partly verified.** S2 confirmed against
+  Claude Code 2.1.317 on dk-server-1 that `plugin/claude-code/` validates
+  (`claude plugin validate`, also `--strict`), installs from the local
+  marketplace into a throwaway `HOME`, and is listed with two hooks,
+  `UserPromptSubmit` and `Stop`. Whether the reply's `systemMessage` reaches
+  Daniel and its `additionalContext` the agent needs a live session and is
+  the S2 manual check below; `decision: "block"` and whether `/scribe`
+  reaches the hook without a command file are S4's to confirm; if `/scribe`
+  needs a command file, S4 adds one whose only effect is the same hook call.
+- **S2 manual check in a live session: pending (operator, ORB-21760).** The
+  leaf task that built S2 runs in a sandbox without an interactive Claude
+  Code session, so the check is the operator's. Steps: `make install`;
+  `claude plugin install scribe --marketplace ./plugin` from this checkout;
+  start a new `claude` session in any repository; type a prompt with the
+  line `#scribe decisions: S2 live check` plus a question on the next line;
+  confirm the `scribe: added decisions-<n> to decisions — "S2 live check"`
+  line is shown in the terminal (Daniel) and that the agent's answer shows
+  it saw the same text (ask it to repeat what scribe said); after the reply,
+  `scribe entry show decisions-<n> --json | jq .cite.message` is a uuid, not
+  `null`; then `#scribe add it to rituals` shows the refusal listing the
+  configured tags. Record the result, the Claude Code version and the date
+  here, replacing this item.
+- **The prompt hash must match the transcript's text.** The `Stop` hook
+  finds the prompt by hashing the transcript's user text. If Claude Code
+  records a prompt differently from what it passed the hook (expanded
+  pasted blocks, attachments), the cite stays `message: null`; the entry
+  is still written and cited by session, line and hash.
 - **One host, one store.** Sessions on the Mac and on dk-server-1 write
   separate `~/.scribe` stores; `ask` on one host does not see the other.
   Sync is open ([3_vision.md](./3_vision.md)).

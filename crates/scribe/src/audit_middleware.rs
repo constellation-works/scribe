@@ -13,6 +13,11 @@
 //! on, the outcome and the stable error code: never argument values or error
 //! text, which can carry entry contents or paths (STD-05 R13).
 //!
+//! A hook run writes one line per record it wrote or refused (two `#scribe`
+//! lines in one prompt are two lines in the log), and none when it changed
+//! nothing: the `Stop` hook runs after every reply and usually has nothing
+//! to do, and a prompt without `#scribe` is not a mutation.
+//!
 //! The audit log is a side channel, so it fails open (STD-02 R31): a line that
 //! cannot be written never fails the command that already ran, and is reported
 //! as a warning on stderr. `scripts/check-dependency-direction.sh` rejects
@@ -25,14 +30,20 @@ use scribe_core::{AuditEvent, AuditStatus, Store};
 use std::time::Instant;
 use time::OffsetDateTime;
 
-/// How a command appears in the audit log.
-///
-/// Every command so far is read-only, so none declares one yet; the hook
-/// commands that write entries (S2) are the first.
+/// How a command appears in the audit log. Declared by the hook commands,
+/// the only ones that write.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct AuditMeta {
     /// The command path, such as `hook user-prompt-submit`.
     pub(crate) command: &'static str,
+}
+
+/// One line the guard will write: how it ended, the record, the code.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Line {
+    status: AuditStatus,
+    target: Option<String>,
+    error_code: Option<&'static str>,
 }
 
 /// Records one command in the audit log when dropped.
@@ -43,9 +54,7 @@ pub(crate) struct AuditGuard<'a> {
     meta: AuditMeta,
     at: OffsetDateTime,
     started: Instant,
-    status: AuditStatus,
-    target: Option<String>,
-    error_code: Option<&'static str>,
+    lines: Vec<Line>,
 }
 
 impl<'a> AuditGuard<'a> {
@@ -57,52 +66,75 @@ impl<'a> AuditGuard<'a> {
             meta,
             at,
             started: Instant::now(),
-            status: AuditStatus::Failure,
-            target: None,
-            error_code: None,
+            lines: vec![Line {
+                status: AuditStatus::Failure,
+                target: None,
+                error_code: None,
+            }],
         }
     }
 
     /// Record how the command ended: the record it acted on on success, the
-    /// stable error code on failure (STD-01 R19).
+    /// stable error code on failure (STD-01 R19), and for a hook one line
+    /// per write or refusal.
     pub(crate) fn mark_result(&mut self, result: &Result<Output, CliError>) {
-        match result {
-            Ok(output) => {
-                self.status = AuditStatus::Success;
-                self.target = target_of(output);
-                self.error_code = None;
-            }
-            Err(err) => {
-                self.status = AuditStatus::Failure;
-                self.target = None;
-                self.error_code = Some(err.code());
-            }
-        }
+        self.lines = match result {
+            Ok(Output::Hook(reply)) => reply
+                .outcomes
+                .iter()
+                .map(|outcome| Line {
+                    status: if outcome.error_code.is_some() {
+                        AuditStatus::Failure
+                    } else {
+                        AuditStatus::Success
+                    },
+                    target: outcome.target.clone(),
+                    error_code: outcome.error_code,
+                })
+                .collect(),
+            Ok(output) => vec![Line {
+                status: AuditStatus::Success,
+                target: target_of(output),
+                error_code: None,
+            }],
+            Err(err) => vec![Line {
+                status: AuditStatus::Failure,
+                target: None,
+                error_code: Some(err.code()),
+            }],
+        };
     }
 
-    /// The line this guard will write.
-    pub(crate) fn event(&self) -> AuditEvent {
-        AuditEvent {
-            at: self.at,
-            command: self.meta.command.to_owned(),
-            status: self.status,
-            target: self.target.clone(),
-            error_code: self.error_code.map(str::to_owned),
-            duration_ms: u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX),
-        }
+    /// The lines this guard will write, in order.
+    pub(crate) fn events(&self) -> Vec<AuditEvent> {
+        let duration_ms = u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        self.lines
+            .iter()
+            .map(|line| AuditEvent {
+                at: self.at,
+                command: self.meta.command.to_owned(),
+                status: line.status,
+                target: line.target.clone(),
+                error_code: line.error_code.map(str::to_owned),
+                duration_ms,
+            })
+            .collect()
     }
 }
 
 impl Drop for AuditGuard<'_> {
     fn drop(&mut self) {
         // Fail open, and never panic in a destructor (STD-03 R4).
-        if let Err(err) = self.store.record_audit(&self.event()) {
-            tracing::warn!(
-                command = self.meta.command,
-                path = %self.store.audit_path().display(),
-                error = %err,
-                "could not write the audit log"
-            );
+        for event in self.events() {
+            if let Err(err) = self.store.record_audit(&event) {
+                tracing::warn!(
+                    command = self.meta.command,
+                    path = %self.store.audit_path().display(),
+                    error = %err,
+                    "could not write the audit log"
+                );
+                return;
+            }
         }
     }
 }
@@ -118,5 +150,7 @@ fn target_of(output: &Output) -> Option<String> {
             record: Record::Session(session),
         } => Some(session.id.clone()),
         Output::List { .. } => None,
+        // Hook replies are audited per outcome in `mark_result`.
+        Output::Hook(_) => None,
     }
 }
