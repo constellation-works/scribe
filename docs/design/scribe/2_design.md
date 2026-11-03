@@ -147,6 +147,7 @@ by fields before any ranking. Every record carries:
 | `project` | the repository slug from the cwd's git remote, else the cwd's basename; `global` when Daniel says so |
 | `topics` | 0–5 lowercase kebab-case labels (`ci`, `crew-routing`, `release`) |
 | `related` | references the record mentions: `task:ORB-123`, `pr:<owner>/<repo>#7`, `repo:<slug>`, `session:<id>` |
+| `terms` | sessions only: phrases Daniel coins or defines, each `{term, said, message}` where `said` is a verbatim span of Daniel's own turn that defines or first uses it |
 | `provider`, `host` | where it was recorded |
 | `created`, `updated` | RFC 3339 UTC |
 
@@ -334,7 +335,10 @@ hook ([4_decisions.md](./4_decisions.md#session-passes-run-from-an-orbit-routine
 2. Send the previous record plus the messages after `scribed_through`
    (windowed to 150k characters, oldest dropped first with a note) to the
    `session` model (Haiku) for `{title, summary, goals, outcome, next,
-   topics, related}`, giving it the store's existing topics to reuse.
+   topics, related, terms}`, giving it the store's existing topics and terms
+   to reuse. Each term's `said` must pass the verbatim check against one of
+   Daniel's own turns (never an assistant turn); a term that fails is
+   dropped, the rest of the record is kept.
 3. Validate the budgets and the JSON shape; on failure, keep the previous
    record and leave `due` set for the next run (three failures in a row
    clear `due` and log a `warn`).
@@ -429,6 +433,14 @@ nothing), so before §6.2 a model-free classifier recognises lookups:
 | a named session (`session:<id>`, or a title match) | that session record |
 | open next steps / what is pending | the `next` items of the newest records in scope, newest first |
 | the entries of a tag in a period ("decisions this week") | those entries, newest first |
+| a term Daniel uses ("graduate to level 4", "what did I mean by resident orchestrator") | the session records whose `terms` contain it (case and whitespace normalised), newest first, each with the defining `said` span, plus entries whose body contains it |
+| the last orchestrator or on-call session for a workspace | the newest `orchestration`-tagged assignment task in `ws_constellation` whose title names that workspace, with its execution summary verbatim, cited `task:<id>` |
+
+Terms exist because Daniel's main conversational agent is a manager he
+discusses designs and ideas with, and his vocabulary carries meaning across
+those sessions: when he says "graduate to level 4", any agent can `ask` for
+the session where he defined it instead of guessing. A summary written by
+Haiku may paraphrase a term away, so terms are kept in Daniel's exact words.
 
 A lookup returns `"status": "record"` and `records` with each record's
 stored fields verbatim (summary, goals, outcome, next, timestamps, cite),
@@ -600,6 +612,8 @@ Claude Code package.
   and keeps the previous record when the model output is invalid.
 - A session never switched on is never read (a test transcript for it is
   untouched and absent from the store).
+- A pass keeps a term only when its `said` is a verbatim span of one of
+  Daniel's turns; a term quoting an assistant turn is dropped.
 
 **S5 — The Orbit plugin tree and `ask`.**
 
@@ -616,6 +630,10 @@ Claude Code package.
   with the newest session record in scope, its fields byte-identical to the
   stored record, and makes no model call; a non-lookup question still goes
   through retrieval and answering.
+- "graduate to level 4" returns the session records whose `terms` hold that
+  phrase with their defining spans, and "last on-call session for orbit"
+  returns the newest matching assignment task's execution summary verbatim,
+  both without a model call.
 
 **S6 — Consistency routine.**
 

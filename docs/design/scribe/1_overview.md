@@ -55,6 +55,12 @@ Quoted verbatim; these are the requirements this design starts from.
 - "for chat session summaries, we are probably better off using a good
   metadata system in the frontmatter, e.g. tags to filter by" and "same for
   decisions and preferences I suppose".
+- "I am trying to graduate to level 4 (1:1:many:many resident orchestrator
+  and manager setup), which means the \"agent\" that I will be primarily
+  talking to won't be orchestrators anymore. it will be manager, whom I will
+  discuss designs, ideas, etc, just like we are doing right now. So, by
+  scribing chat sessions, when I mention \"graduate to level 4\", a scribe
+  can pull up the session summary on that terminology."
 
 ## 2. Shape
 
