@@ -752,20 +752,27 @@ writes none.
   reaches the hook without a command file are S4's to confirm; if `/scribe`
   needs a command file, S4 adds one whose only effect is the same hook call.
   S4 added `commands/scribe.md` and registered `SessionEnd`.
-- **S4 manual check in a live session: pending, the operator's (ORB-21760).**
-  The sandbox that built S4 cannot run Claude Code. Steps, with an
-  isolated `CLAUDE_CONFIG_DIR` and `SCRIBE_ROOT`: `make install`; `claude
-  plugin validate plugin/claude-code --strict`; install
-  `scribe@scribe-local`; confirm `/scribe` is listed. In one session type
-  `/scribe on`: the prompt must not reach the model and the status line
-  must show; `/scribe on` again must say "already on"; `/scribe status`
-  must report a pass due. Note whether the hook saw `/scribe on` or
-  `/scribe:scribe on` (either works). Chat two or three turns, define a
-  phrase in your own words, then run `scribe session pass --json`: one
-  `written` pass, and `scribe session show <id>` has the term with your
-  words. End the session: `control.json` shows `final: true`; the next
-  `scribe session pass` marks the record `final`. A second session never
-  switched on must not appear in `control.json` or `sessions/`.
+- **S4 manual check in a live session: passed, headless (2026-11-03, Claude
+  Code 2.1.317, macOS).** Run by the on-call orchestrator (ORB-21760) with
+  `claude -p` against an isolated `CLAUDE_CONFIG_DIR` and `SCRIBE_ROOT`,
+  plugin `scribe@scribe-local` installed from `plugin/claude-code`
+  (`claude plugin details` lists the `UserPromptSubmit`, `Stop` and
+  `SessionEnd` hooks and the `scribe` command). `/scribe on` is delivered to
+  the hook and blocked before the model (`UserPromptSubmit operation blocked
+  by hook:` followed by the status line, no model turn, cost 0); in one
+  session (`--session-id`, then `--resume`) a second `/scribe on` said
+  "already on since <time> — nothing changed", and `/scribe status` reported
+  "the final pass is due; no record yet". A fresh session reported "off —
+  never switched on". `-p` ends a session after each call, so every call set
+  `final: true` in `control.json`; `/scribe:scribe on` was not needed. After
+  a chat in which the prompt defined "level 4" in its own words,
+  `scribe session pass --json` reported one `written` pass with zero dropped
+  terms, and the session record carried `terms: [{term: "level 4", said:
+  <the typed sentence>, message: <uuid>}]`; a session turned on but with no
+  chat was reported `unchanged`. A session never switched on has no entry in
+  `control.json` or `sessions/`. Not checked: the interactive terminal
+  rendering of the block message, and `final` through a real interactive
+  `SessionEnd`.
 - **S2 manual check in a live session: passed, headless (2026-11-03, Claude
   Code 2.1.317, macOS).** Run by the on-call orchestrator (ORB-21760) with
   `claude -p` against an isolated `CLAUDE_CONFIG_DIR` and `SCRIBE_ROOT`, the
