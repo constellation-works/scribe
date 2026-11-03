@@ -6,6 +6,11 @@ last_validated: 2026-09-26
 
 # Spec: Output contract
 
+> **Template state.** This spec describes the Rust CLI template's note
+> example, which is still the code. The scribe plugin's documents and payloads
+> are designed in [2_design.md](../2_design.md); slice S1 rewrites this spec
+> for them.
+
 Every data command renders one typed payload in the mode the sink resolved;
 stdout carries only that payload; errors and notices go to stderr; the exit
 code says whether it worked. The JSON form is a public contract.

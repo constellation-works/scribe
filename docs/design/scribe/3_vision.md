@@ -1,70 +1,97 @@
 ---
 title: scribe — Vision
 owner: claude
-last_updated: 2026-09-26
-last_validated: 2026-09-26
+last_updated: 2026-11-02
+last_validated: 2026-11-02
 status: Draft
 feature: scribe
 doc_role: vision
 type: design
-summary: Where a project grown from this template is expected to go next, and what the template deliberately leaves out.
+summary: Where the scribe plugin may go after its first six slices — more providers, cross-host stores, better retrieval, an opt-in import of orbit-office decisions — and what it deliberately leaves out.
 tags: [scribe]
-paths: ["crates/**"]
+paths: ["crates/**", "plugin/**"]
 related_features: [scribe]
-related_artifacts: [ORB-13117]
+related_artifacts: [ORB-21747, ORB-21744]
 ---
 
 # scribe — Vision
 
-Speculative. The note domain exists to be replaced; these are the directions
-a real project usually takes next and what the template intentionally does
-not build yet.
+Speculative. Nothing here is designed or committed; the plan is the slice
+plan in [2_design.md §10](./2_design.md#10-slice-plan).
 
 ## 1. Open Questions
 
-1. When the second noun arrives, do its verbs share one `list`/`show`
-   rendering helper, or does each noun keep its own column table?
-2. Does the project need NDJSON (STD-01 R7 SHOULD) once a command streams?
-3. When a destructive verb appears (`note remove`), it must refuse without
-   `--confirm` (STD-01 R5); is there also a bulk form that dry-runs by default?
-4. If a second surface (MCP server, desktop app) appears, does the core crate
-   grow an operations layer so both surfaces derive from one declaration
-   (STD-01 R25)?
+1. **Other providers.** Claude Code is first because its hooks see the
+   user's typed turn before the model does. Codex and other providers need
+   an equivalent pre-model hook, or a transcript watcher that only reads
+   sessions Daniel switched on. Which provider comes second, and does a
+   watcher keep the "user-typed only" rule honest?
+2. **Two hosts.** Sessions run on the Mac and on dk-server-1, each with its
+   own `~/.scribe`. Should one host own the store and the other forward
+   `#scribe` writes to it (over the SSH transport Daniel already uses), or
+   should `ask` read both? Either changes the provenance story.
+3. **Retrieval beyond BM25.** When paraphrase misses start to show up in
+   `no_record` answers, is a query-expansion step by the decision model
+   (which keeps the store index-free) enough, or does the store need
+   embeddings and a persisted index after all
+   ([4_decisions.md](./4_decisions.md#ask-ranks-in-memory-with-no-persisted-index))?
+4. **Importing orbit-office decisions.** An opt-in, one-shot importer could
+   turn each human-decided ledger line with a verbatim quote into a
+   proposal Daniel approves one by one. Is that worth building, given
+   [the no-migration decision](./4_decisions.md#no-migration-of-orbit-office-scribe-records)?
+5. **Where Daniel reviews.** Proposals are listed at session start and
+   settled with `#scribe approve`. If the queue grows, does it want a
+   digest (an Orbit notice, a mail through orbit-decision-mail) rather than
+   a session-start line?
+6. **Session records as evidence.** They are model summaries, so `ask`
+   labels them and never quotes them as Daniel's words. Should `ask` quote
+   the underlying transcript lines instead, which would mean keeping a
+   parsed copy of each opted-in transcript?
 
 ## 2. Prior Work
 
-### Constellation CLIs
-
-- Orbit's `orbit-cli` output layer (sink, payload, table, color) is the
-  full-size version of `output/` here.
-- nebula's `neb` uses the same core-library-plus-CLI split and the same
-  advisory-lock pattern.
-
-### Conventions
-
-- `gh` off a TTY: headerless tab-separated output, the model for the plain form.
-- no-color.org for `NO_COLOR`.
+- **orbit-office scribe** (v1 and v2, `docs/design/office/specs/scribe.md`
+  in orbit-office): session records with Summary/Goals/Outcome/Next under
+  character budgets, line-start marker detection that ignores fences,
+  quotes and pasted content, an exact-substring quote check, the
+  model-free "not captured" answer, a Stop-hook cadence of 20 minutes or
+  10 turns, and a contradiction view that orders sides by date. scribe
+  reuses these rules; it drops the Library, the git commit per pass, the
+  decision-ledger extractor and the auto-backfill.
+- **Orbit plugins** (`docs/design/plugins/` in orbit): the plugin tree,
+  exec backend, `mcp_scope`, capability floor and seeded-disabled routines
+  this plugin is built on.
 
 ## 3. What May Be Distinctive
 
-Nothing about the note tool. The distinctive part is that every standard
-rule that applies is visible in a small, working codebase with a gate behind
-it.
+The write path has no agent in it. Agents can ask, but only Daniel's typed
+turns add, settle or forget a record, and every answer carries a quote that
+code, not the model, has checked against the record.
 
-## 4. References
+## 4. Deliberately Out of Scope
+
+- Capturing anything Daniel did not mark: no inference of preferences from
+  behaviour, no tag entries from session passes.
+- A UI. The CLI lists and the SessionStart line are the only views.
+- Tasks, calendars and the Library: orbit-office keeps those.
+
+## 5. References
 
 **Project-internal**
 
-- [2_design.md](./2_design.md)
-- [specs/output-contract.md](./specs/output-contract.md)
+- [1_overview.md](./1_overview.md), [2_design.md](./2_design.md),
+  [4_decisions.md](./4_decisions.md)
 
 **External**
 
-- Constellation standards STD-01 to STD-05 (vendored under
-  `docs/standards/` once adopted).
+- orbit-office: `docs/design/office/specs/scribe.md`,
+  `docs/design/claude-code-scribe/4_decisions.md`,
+  `app/packages/server/src/features/scribe/contradictions.ts`.
+- orbit: `docs/design/plugins/1_scope.md`, `docs/design/routines/2_design.md`.
 
 ## Task References
 
-- [ORB-13117] — built the Rust CLI template this project was created from.
+- [ORB-21747] — designed the standalone scribe plugin.
+- [ORB-21744] — the orbit-office scribe redesign this plugin supersedes (archived).
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
