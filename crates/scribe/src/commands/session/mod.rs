@@ -1,6 +1,9 @@
 //! The `session` noun: list and show the records of sessions Daniel switched
-//! on with `/scribe on`. Read-only: records are written only by the
-//! session-pass routine. Each verb makes one store call (STD-02 R2).
+//! on with `/scribe on`, and `pass`, which writes them. `list` and `show`
+//! read only and make one store call each (STD-02 R2); `pass` is the
+//! session-pass routine's job and lives in `pass.rs`.
+
+mod pass;
 
 use super::{ListNotice, list_output};
 use crate::app::Context;
@@ -14,7 +17,8 @@ use std::num::NonZeroUsize;
 pub(super) const SESSION_EXAMPLES: &str = "\
 Examples:
   scribe session list --project scribe
-  scribe session show <id>";
+  scribe session show <id>
+  scribe session pass --json";
 
 const LIST_EXAMPLES: &str = "\
 Examples:
@@ -36,6 +40,9 @@ pub(crate) enum SessionCommand {
     /// Show one session record in full: its metadata and its four sections
     #[command(after_help = SHOW_EXAMPLES)]
     Show(ShowArgs),
+    /// Write the record of each session whose pass is due, with the session model (the session-pass routine runs this)
+    #[command(after_help = pass::PASS_EXAMPLES)]
+    Pass(pass::PassArgs),
 }
 
 /// Arguments to `session list`.
@@ -63,10 +70,14 @@ pub(crate) struct ShowArgs {
 }
 
 impl SessionCommand {
-    /// The audit entry for this verb: `None`, both verbs read (STD-01 R31).
+    /// The audit entry for this verb: `None` for `list` and `show`, which
+    /// read (STD-01 R31); `pass` writes records and `control.json`.
     pub(super) fn audit(&self) -> Option<AuditMeta> {
         match self {
             Self::List(_) | Self::Show(_) => None,
+            Self::Pass(_) => Some(AuditMeta {
+                command: pass::COMMAND,
+            }),
         }
     }
 }
@@ -76,6 +87,7 @@ pub(super) fn run(command: SessionCommand, ctx: &Context) -> Result<Output, CliE
     match command {
         SessionCommand::List(args) => list(args, ctx),
         SessionCommand::Show(args) => show(&args, ctx),
+        SessionCommand::Pass(pass::PassArgs {}) => pass::run(ctx),
     }
 }
 
@@ -127,3 +139,6 @@ fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
         ))),
     })
 }
+
+#[cfg(test)]
+mod tests;

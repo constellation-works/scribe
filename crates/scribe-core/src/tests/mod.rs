@@ -5,7 +5,9 @@
 
 mod capture;
 mod config;
+mod control;
 mod entry;
+mod pass;
 mod proposal;
 mod record;
 mod session;

@@ -424,3 +424,121 @@ mod capture {
         assert!(!root.exists());
     }
 }
+
+#[test]
+fn update_control_writes_only_a_change() {
+    use crate::control::{self, Switch};
+    let dir = private_tempdir();
+    let root = dir.path().join("root");
+    let store = Store::open(&root);
+    let s: crate::session::SessionId = "s-1".parse().unwrap();
+    let t0 = time::macros::datetime!(2026-11-01 10:00 UTC);
+
+    // Nothing changed: no control.json is written.
+    let off = store
+        .update_control(|state| control::switch(state, &s, &Switch::Off, t0))
+        .unwrap();
+    assert!(!off.changed());
+    assert!(!root.join("control.json").exists());
+
+    store
+        .update_control(|state| control::switch(state, &s, &Switch::On, t0))
+        .unwrap();
+    let path = root.join("control.json");
+    let written = fs::read(&path).unwrap();
+    let on = store.control().unwrap();
+    assert!(on.get(&s).is_some_and(|c| c.on && c.due));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
+    store
+        .update_control(|state| control::switch(state, &s, &Switch::On, t0))
+        .unwrap();
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        written,
+        "on twice rewrites nothing"
+    );
+}
+
+#[test]
+fn settle_pass_writes_the_record_and_clears_due_in_one_call() {
+    use crate::control::{self, Switch};
+    let dir = private_tempdir();
+    let root = dir.path().join("root");
+    let store = Store::open(&root);
+    let s: crate::session::SessionId = "s-1".parse().unwrap();
+    let t0 = time::macros::datetime!(2026-11-01 10:00 UTC);
+    store
+        .update_control(|state| control::switch(state, &s, &Switch::On, t0))
+        .unwrap();
+
+    let mut record = crate::tests::session("s-1", t0);
+    record.summary = String::from("the token is s3cr3t-value-123 here");
+    let redactor =
+        crate::store::Redactor::new([(String::from("TOKEN"), String::from("s3cr3t-value-123"))]);
+    let written = store
+        .settle_pass(&s, Some(record.clone()), false, &redactor)
+        .unwrap()
+        .unwrap();
+    assert_eq!(written.summary, "the token is [redacted:TOKEN] here");
+    assert!(root.join("sessions/2026/11/s-1.md").is_file());
+    let view = store.session(&s).unwrap();
+    assert_eq!(view.record, written);
+    assert!(!view.control.unwrap().due);
+    assert!(!root.join("entries").exists(), "a pass writes no entries");
+}
+
+#[test]
+fn failures_in_a_row_count_back_to_the_last_success() {
+    let dir = private_tempdir();
+    let store = Store::open(dir.path());
+    let line = |status, target: &str| AuditEvent {
+        status,
+        target: Some(target.to_owned()),
+        error_code: (status == AuditStatus::Failure).then(|| String::from("model_failed")),
+        ..event("session pass")
+    };
+    assert_eq!(
+        store
+            .failures_in_a_row("session pass", "session:a")
+            .unwrap(),
+        0
+    );
+    for e in [
+        line(AuditStatus::Failure, "session:a"),
+        line(AuditStatus::Success, "session:a"),
+        line(AuditStatus::Failure, "session:a"),
+        line(AuditStatus::Failure, "session:b"),
+        AuditEvent {
+            status: AuditStatus::Success,
+            target: Some(String::from("session:a")),
+            ..event("hook stop")
+        },
+        line(AuditStatus::Failure, "session:a"),
+    ] {
+        store.record_audit(&e).unwrap();
+    }
+    assert_eq!(
+        store
+            .failures_in_a_row("session pass", "session:a")
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        store
+            .failures_in_a_row("session pass", "session:b")
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        store
+            .failures_in_a_row("session pass", "session:c")
+            .unwrap(),
+        0
+    );
+}

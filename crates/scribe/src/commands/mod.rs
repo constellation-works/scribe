@@ -33,7 +33,7 @@ pub(crate) enum Command {
     /// List and show the entries recorded with #scribe
     #[command(subcommand, after_help = entry::ENTRY_EXAMPLES)]
     Entry(EntryCommand),
-    /// List and show the records of sessions cataloged with /scribe on
+    /// List and show the records of sessions cataloged with /scribe on, and write them (pass)
     #[command(subcommand, after_help = session::SESSION_EXAMPLES)]
     Session(SessionCommand),
     /// List what the consistency routine proposes changing
@@ -42,7 +42,7 @@ pub(crate) enum Command {
     /// List the tags entries are filed under
     #[command(subcommand, after_help = tag::TAG_EXAMPLES)]
     Tag(TagCommand),
-    /// Run a Claude Code hook: record #scribe lines and fill in their cites
+    /// Run a Claude Code hook: record #scribe lines, switch /scribe on and off, mark session passes due
     #[command(subcommand, after_help = hook::HOOK_EXAMPLES)]
     Hook(HookCommand),
 }
@@ -51,7 +51,7 @@ impl Command {
     /// What the audit log records for this command, or `None` when it is not
     /// audited. Only commands that change durable state are: a read-only
     /// command must not write, not even an audit line (STD-01 R31). The
-    /// `hook` verbs are the writers. Exhaustive, so a new command cannot
+    /// `hook` verbs and `session pass` are the writers. Exhaustive, so a new command cannot
     /// compile without deciding (STD-02 R27).
     pub(crate) fn audit(&self) -> Option<AuditMeta> {
         match self {

@@ -21,6 +21,7 @@ const HELP: &[(&str, &[&str])] = &[
     ("session", &["session", "--help"]),
     ("session-list", &["session", "list", "--help"]),
     ("session-show", &["session", "show", "--help"]),
+    ("session-pass", &["session", "pass", "--help"]),
     ("proposal", &["proposal", "--help"]),
     ("proposal-list", &["proposal", "list", "--help"]),
     ("tag", &["tag", "--help"]),
@@ -31,6 +32,7 @@ const HELP: &[(&str, &[&str])] = &[
         &["hook", "user-prompt-submit", "--help"],
     ),
     ("hook-stop", &["hook", "stop", "--help"]),
+    ("hook-session-end", &["hook", "session-end", "--help"]),
 ];
 
 /// Each command whose output is pinned, by golden name; every one is

@@ -1,0 +1,20 @@
+Write the record of each session whose pass is due, with the session model (the session-pass routine runs this)
+
+Usage: scribe session pass [OPTIONS]
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Global options:
+      --root <DIR>       Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>  Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json             Shorthand for --format json
+
+Runs from the scribe-session-pass routine every few minutes. Processes at
+most five due sessions per run; --json reports what each pass did and how
+many due sessions remain. Calls the configured session model.
+
+Examples:
+  scribe session pass
+  scribe session pass --json | jq '.passes[] | select(.result == "failed")'

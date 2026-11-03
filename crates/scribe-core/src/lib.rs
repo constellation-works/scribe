@@ -9,9 +9,11 @@
 //!   proposals ([`Proposal`]) in `proposal`; the shared metadata
 //!   ([`Project`], [`Topic`], [`Related`]) in `record`; `config.toml`
 //!   ([`Config`]) in `config`; parsing a typed turn into `#scribe`
-//!   instructions in [`capture`]; reading a Claude Code transcript in
-//!   [`transcript`]; the quote check in [`verbatim`]; and the [`Models`]
-//!   port, every model call as a typed request, in [`models`];
+//!   instructions in [`capture`]; `/scribe on|off|status` and the switch
+//!   transitions in [`control`]; a session pass, from transcript to record,
+//!   in [`pass`]; reading a Claude Code transcript in [`transcript`]; the
+//!   quote check in [`verbatim`]; and the [`Models`] port, every model call
+//!   as a typed request, in [`models`];
 //! - persistence in `store`: the file-backed [`Store`], its formats, the
 //!   audit log ([`AuditEvent`]), the [`Redactor`] and the filesystem
 //!   mechanisms, and nothing else;
@@ -30,9 +32,11 @@
 
 pub mod capture;
 mod config;
+pub mod control;
 mod entry;
 mod error;
 pub mod models;
+pub mod pass;
 mod proposal;
 mod record;
 mod session;

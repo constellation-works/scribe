@@ -1,10 +1,11 @@
-Run a Claude Code hook: record #scribe lines and fill in their cites
+Run a Claude Code hook: record #scribe lines, switch /scribe on and off, mark session passes due
 
 Usage: scribe hook [OPTIONS] <COMMAND>
 
 Commands:
   user-prompt-submit  Record each #scribe line of a typed prompt, from the UserPromptSubmit hook's JSON on stdin
-  stop                Fill in the message ids of entries this session recorded, from the Stop hook's JSON on stdin
+  stop                Fill in the message ids of entries this session recorded and mark a session pass due, from the Stop hook's JSON on stdin
+  session-end         Mark the final session pass due for a session that is on, from the SessionEnd hook's JSON on stdin
   help                Print this message or the help of the given subcommand(s)
 
 Options:
@@ -21,3 +22,4 @@ These run from the Claude Code package (plugin/claude-code), not by hand.
 Examples:
   scribe hook user-prompt-submit < <payload.json>
   scribe hook stop < <payload.json>
+  scribe hook session-end < <payload.json>

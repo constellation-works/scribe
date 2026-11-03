@@ -31,6 +31,12 @@ pub(super) struct PromptPayload {
     pub(super) prompt: String,
 }
 
+/// The fields of the `SessionEnd` payload scribe uses.
+#[derive(Debug, Deserialize)]
+pub(super) struct SessionEndPayload {
+    pub(super) session_id: String,
+}
+
 /// The fields of the `Stop` payload scribe uses.
 #[derive(Debug, Deserialize)]
 pub(super) struct StopPayload {
@@ -71,7 +77,7 @@ pub(super) fn session(id: &str) -> Result<SessionId, CliError> {
 
 /// What the provenance check found.
 #[derive(Debug, PartialEq, Eq)]
-pub(super) enum Transcript {
+pub(in crate::commands) enum Transcript {
     /// The transcript exists and passed.
     Present,
     /// The path is right but there is no file yet (a session's first prompt
@@ -81,7 +87,7 @@ pub(super) enum Transcript {
 
 /// Check `path` is this user's Claude Code transcript for `session`, under
 /// `root` (the transcripts directory). The error is why not, for the reply.
-pub(super) fn check_transcript(
+pub(in crate::commands) fn check_transcript(
     path: &Path,
     session: &SessionId,
     root: Option<&Path>,

@@ -341,6 +341,12 @@ impl Models for FakeModels {
         self.asked.borrow_mut().push(request.clone());
         self.answer.clone()
     }
+    fn session(
+        &self,
+        _request: &crate::models::SessionRequest,
+    ) -> Result<crate::models::SessionAnswer, ModelError> {
+        Err(ModelError::Unavailable(String::from("referent tests only")))
+    }
 }
 
 fn span(message: &str, span: &str) -> Result<ReferentAnswer, ModelError> {

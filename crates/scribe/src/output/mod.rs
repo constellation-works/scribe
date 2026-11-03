@@ -13,8 +13,8 @@ mod sink;
 mod table;
 
 pub(crate) use payload::{
-    EntryPayload, HookOutcome, HookReply, Output, ProposalPayload, Record, Records, SessionPayload,
-    TagPayload, WarningPayload,
+    EntryPayload, HookOutcome, HookReply, Output, PassPayload, PassReport, ProposalPayload, Record,
+    Records, SessionPayload, TagPayload, WarningPayload,
 };
 pub(crate) use sink::{FORMAT_ENV, FormatArg, Sink};
 
@@ -114,6 +114,12 @@ fn emit(sink: &Sink, output: &Output) -> io::Result<()> {
             let _ = writeln!(err, "{notice}");
         }
     }
+    if let Output::Pass(report) = output {
+        let mut err = io::stderr().lock();
+        for notice in &report.notices {
+            let _ = writeln!(err, "{notice}");
+        }
+    }
     let mut out = io::stdout().lock();
     match output {
         Output::List {
@@ -124,6 +130,7 @@ fn emit(sink: &Sink, output: &Output) -> io::Result<()> {
         } => render::list(&mut out, sink, records, *total, warnings)?,
         Output::Show { record } => render::show(&mut out, sink, record)?,
         Output::Hook(reply) => render::hook(&mut out, reply)?,
+        Output::Pass(report) => render::pass(&mut out, sink, report)?,
     }
     out.flush()
 }

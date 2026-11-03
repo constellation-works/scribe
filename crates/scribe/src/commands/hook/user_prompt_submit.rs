@@ -15,6 +15,10 @@
 //! and the echo says it was guessed. A session with no earlier message has
 //! nothing to point at and the line is refused as `no_referent`.
 //!
+//! A prompt whose first line is `/scribe on`, `/scribe off` or
+//! `/scribe status` is not a turn: `scribe_command.rs` switches the session
+//! and blocks it (§5.1), and its `#scribe` lines, if any, are not read.
+//!
 //! The reply tells Daniel (`systemMessage`) and the main agent
 //! (`additionalContext`) the same thing, one line per `#scribe` line,
 //! and never blocks the prompt: a refusal or a store failure is a reply, not
@@ -73,6 +77,9 @@ pub(super) fn run_with<M: Models>(
 ) -> Result<Output, CliError> {
     let payload: PromptPayload = payload::decode(input)?;
     let session = payload::session(&payload.session_id)?;
+    if let Some(switch) = scribe_core::control::parse(&payload.prompt) {
+        return Ok(super::scribe_command::run(&switch, &payload, &session, ctx));
+    }
     let lines = capture::lines(&payload.prompt);
     if lines.is_empty() {
         return Ok(reply(Vec::new(), Vec::new()));
@@ -328,6 +335,7 @@ fn reply(echoes: Vec<String>, outcomes: Vec<HookOutcome>) -> Output {
         event: EVENT,
         message,
         context,
+        block: None,
         outcomes,
     })
 }
