@@ -61,6 +61,9 @@ Quoted verbatim; these are the requirements this design starts from.
   discuss designs, ideas, etc, just like we are doing right now. So, by
   scribing chat sessions, when I mention \"graduate to level 4\", a scribe
   can pull up the session summary on that terminology."
+- "I like this kind of setup: knowledgebase/almanac/15-discussions. I used
+  to keep selective discussions where we discussed something meaningful.
+  and I can reference it later in chats. I want scribe to fill that gap."
 
 ## 2. Shape
 

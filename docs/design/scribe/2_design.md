@@ -120,6 +120,7 @@ serves every workspace on the host. The plugin's config key `root` (default
 ├── config.toml                  tags, models, cadence (Daniel edits; read-only to scribe)
 ├── entries/<tag>/<id>.md        one file per entry: YAML frontmatter + verbatim body
 ├── sessions/<yyyy>/<mm>/<session-id>.md   one per opted-in session: frontmatter + sections
+├── discussions/<yy-mm>/<slug>.md   one per distilled discussion (§4.5), Daniel may edit
 ├── control.json                 {"format":1,"sessions":{"<id>":{"on","since","due","final"}}}
 ├── proposals.json               {"format":1,"proposals":[…]}
 ├── audit.jsonl                  one line per mutating command (template shape)
@@ -209,6 +210,19 @@ The body has four sections, `## Summary`, `## Goals`, `## Outcome` and
 `## Next` (character budgets 600/400/1200/600). The four text fields are model-written
 summaries, labelled as such in `ask` evidence, never quoted as Daniel's words.
 
+**Discussion** (`discussions/<yy-mm>/<slug>.md`): the distilled record of
+a conversation that concluded something, in the shape of Daniel's almanac
+discussions (`almanac/15-discussions/`). Frontmatter: the common fields with
+`kind: discussion`, plus `title`, `status` (`seed`, `growing`, `settled`),
+`sources` (the `session:<id>` and `message` ids each point came from) and
+`terms`. Body, in order: a thesis paragraph; `## The arc`, numbered
+`### <n>. <claim>` points, each opening with one blockquoted verbatim quote
+of Daniel (`> "…" — Daniel`) followed by one interpreting paragraph, a
+change of mind headed `Correction #<n> —`; `## Through-lines`;
+`## The one-line takeaway`; `## References` (sessions, tasks, related
+discussions as `[[slug]]`). The quotes are Daniel's words; everything else
+is the model's interpretation and is labelled so in `ask` evidence.
+
 **Proposal** (`proposals.json`): `id` (`p-<n>`), `kind` (`supersedes` or
 `stale`), `older`, `newer` (entry ids), `reason` (model text, at most 300
 characters), `quotes` (verbatim spans from both entries), `state`
@@ -216,7 +230,9 @@ characters), `quotes` (verbatim spans from both entries), `state`
 (a `cite` of Daniel's approving turn).
 
 **Config** (`config.toml`): `[tags.<name>]` with `aliases`, `description`
-and `stale_after_days`; `[models]` with `ask`, `session`, `consistency`,
+and `stale_after_days`; `[sources]` with `discussions_readonly`, a list of
+directories `ask` reads as extra discussion evidence and never writes
+(default: the constellation almanac's `15-discussions`, when present); `[models]` with `ask`, `distill`, `session`, `consistency`,
 `referent`; `[catalog]` with `every_minutes` (20) and `every_turns` (10).
 The file is created by `scribe hook session-start` on first run with the
 defaults ([4_decisions.md](./4_decisions.md#only-decisions-and-preferences-ship-by-default))
@@ -303,6 +319,31 @@ scribe: refused "#scribe add it to rituals" — no tag "rituals"; tags: decision
 The agent-facing text adds "recorded by scribe; no action needed", so the
 main agent does not try to record it again.
 
+### 4.5 Distilling a discussion
+
+Two more `#scribe` forms, explicit like the rest; nothing is distilled
+unless Daniel asks.
+
+- `#scribe distill this discussion [as "<title>"]` reads the current
+  session's turns since the last distill point (or the whole session) and
+  writes a new discussion with `status: growing`.
+- `#scribe add this to <slug or title>` reads the turns since that
+  discussion was last updated in this session and extends it.
+
+The `distill` model (the decision model; distilling is judgment) returns
+the thesis, arc points with quotes, through-lines, takeaway, topics and
+terms as JSON. Every quote must pass the verbatim check against one of
+Daniel's own turns; a point whose quote fails is dropped and counted in the
+echo. Related discussions are proposed from topic and term overlap with the
+store and the read-only sources.
+
+Extending never rewrites what exists, because Daniel may have edited the
+file: new arc points are appended after the last numbered point,
+`sources`, `terms`, `topics` and `updated` are merged, and the thesis,
+through-lines and takeaway are left as they are unless the extension adds a
+`Correction`, in which case the echo says the thesis may need Daniel's edit.
+The echo names the file path, the points added and any dropped quotes.
+
 ## 5. `/scribe on`
 
 ### 5.1 Switching on and off
@@ -380,7 +421,8 @@ prints this payload).
    question names ("decisions on ci this month") restrict the candidate
    records before ranking.
 1. Load every `active` entry (plus `superseded`/`retired` when
-   `include_hidden`), every session record, and up to 20 Orbit tasks from
+   `include_hidden`), every session record, every discussion (the store's
+   and the read-only sources'), and up to 20 Orbit tasks from
    `orbit.search` with the question's terms (title, status, and the first
    1,000 characters of the description).
 2. Tokenize: lowercase, split on non-alphanumerics, drop stopwords and
@@ -433,6 +475,7 @@ nothing), so before §6.2 a model-free classifier recognises lookups:
 | a named session (`session:<id>`, or a title match) | that session record |
 | open next steps / what is pending | the `next` items of the newest records in scope, newest first |
 | the entries of a tag in a period ("decisions this week") | those entries, newest first |
+| what was concluded about a subject ("what did we conclude about level 4?") | the discussions whose title, topics or terms match, newest `updated` first, with thesis and takeaway verbatim; the store's before the read-only sources' |
 | a term Daniel uses ("graduate to level 4", "what did I mean by resident orchestrator") | the session records whose `terms` contain it (case and whitespace normalised), newest first, each with the defining `said` span, plus entries whose body contains it |
 | the last orchestrator or on-call session for a workspace | the newest `orchestration`-tagged assignment task in `ws_constellation` whose title names that workspace, with its execution summary verbatim, cited `task:<id>` |
 
@@ -492,8 +535,9 @@ exists here.
 | Session pass | `models.session` | `claude-haiku-5-5` | `scribe.session-pass` job | 120 s |
 | Consistency judgement | `models.consistency` | `claude-haiku-5-5` | `scribe.consistency-scan` job | 120 s per batch of 10 pairs |
 | `ask` | `models.ask` | `claude-sonnet-5-5` | `scribe.ask`, `scribe question ask` | 90 s |
+| Distilling a discussion | `models.distill` | `claude-sonnet-5-5` | `UserPromptSubmit` hook, run as a detached job like a session pass | 180 s |
 
-All four go through one `Models` port with one adapter, `ClaudeCliModels`:
+All five go through one `Models` port with one adapter, `ClaudeCliModels`:
 it runs `claude -p --safe-mode --tools "" --model <id> --output-format json --json-schema <schema-json>`
 with the prompt on stdin, in its own process group, from a cleared
 environment holding only `PATH`, `HOME`, `LANG` and the credential names
@@ -646,6 +690,19 @@ Claude Code package.
   behave as [§3](#3-storage) says; none is reachable from any Orbit tool.
 - The `SessionStart` hook reports the open-proposal count; the two routines
   ship seeded disabled.
+
+**S7 — Discussions.**
+
+- `#scribe distill this discussion as "<title>"` with a fake `Models` writes
+  one discussion in the [§3](#3-storage) shape whose every quote passes the
+  verbatim check against Daniel's turns; a point quoting an assistant turn
+  is dropped and counted in the echo.
+- `#scribe add this to <slug>` on a discussion Daniel edited by hand
+  appends new points after the last one and leaves every existing line
+  byte-identical.
+- `ask` answers "what did we conclude about <subject>" from a store
+  discussion and from a fixture `discussions_readonly` directory, and scribe
+  never writes into that directory.
 
 **Outside this repository.** Retiring orbit-office's scribe (its hooks,
 `office.scribe-*` tools and `/scribe` command) is orbit-office work, filed

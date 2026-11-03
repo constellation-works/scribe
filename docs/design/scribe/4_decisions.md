@@ -103,6 +103,31 @@ store lock. There is no git repository: history is the audit log.
 - `topics` is a new metadata field distinct from tags; near-duplicate topics
   are merged only through an approved proposal.
 
+## Discussions live in the scribe store; the almanac is read-only
+
+**Recorded:** 2026-11 · [ORB-21747] · **Daniel's choice**
+**Code anchors:** `crates/scribe-core/src/store/` (S7)
+
+### Context
+
+Daniel keeps selective, distilled discussions in his almanac
+(`almanac/15-discussions/`, 15 of them): "I used to keep selective
+discussions where we discussed something meaningful. and I can reference it
+later in chats. I want scribe to fill that gap." The constellation rule is
+that agents never write the almanac.
+
+### Decision
+
+Daniel chose, 2026-11-02: discussions scribe distills live in the scribe
+store (`discussions/<yy-mm>/<slug>.md`) in the almanac's format. `ask`
+reads the almanac discussions as a read-only source and never writes them.
+The existing 15 are not moved.
+
+### Consequences
+
+- The almanac stays Daniel's alone; both sets answer the same questions.
+- A discussion Daniel wants in the almanac he copies there himself.
+
 ## ask ranks in memory with no persisted index
 
 **Recorded:** 2026-11 · [ORB-21747] · **Overridable by Daniel**
