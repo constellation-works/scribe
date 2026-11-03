@@ -1,22 +1,419 @@
 ---
 title: scribe — Decisions
 owner: claude
-last_updated: 2026-09-26
-last_validated: 2026-09-26
+last_updated: 2026-11-02
+last_validated: 2026-11-02
 status: Draft
 feature: scribe
 doc_role: decisions
 type: design
-summary: Why two crates with persistence as one core module, why commands are one module per noun, why mutating commands are audited through one guard, why --json is the only alias, why a list's JSON is an envelope, why std file locks, why clap has no color, how the store format evolves and stays private, and every recorded standard deviation or rule the template does not exercise.
+summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from a routine, plus the engineering decisions carried over from the Rust CLI template.
 tags: [scribe, decisions]
-paths: ["Cargo.toml", "crates/**", "Makefile"]
+paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-13117, ORB-13134]
+related_artifacts: [ORB-21747, ORB-13117, ORB-13134]
 ---
 
 # scribe — Decisions
 
 Record non-obvious decisions here by title. Task references carry provenance; superseded decisions remain in place so their original reasoning stays legible. See [CONVENTIONS.md §3](../CONVENTIONS.md#3-what-earns-a-decision-entry) for the admission rule and required `Cost:` line.
+
+The plugin decisions come first. Each one marked **Overridable by Daniel**
+was a choice among real alternatives in his directions
+([1_overview.md §1](./1_overview.md#1-directions-daniel-2026-11-02)); he
+can reverse it by saying so, and the change is recorded here as a new entry
+that supersedes the old one. The template's engineering decisions follow,
+restated for the plugin. Decisions that only concerned the template's note
+example (an empty list printing `[]`, `note add` naming its file on stderr)
+were dropped with [ORB-21747]; they are in git history at `c9807fa`.
+
+## Superseded and stale entries are hidden, not removed
+
+**Recorded:** 2026-11 · [ORB-21747] · **Overridable by Daniel**
+
+### Context
+
+Daniel's directions ask for "a routine that checks for inconsistencies,
+outdated record removal". Deleting an entry when a newer one supersedes it
+loses the history of how a preference changed, and a wrong supersession
+(the routine's model misjudging a pair) could not be undone. Keeping
+everything visible makes `ask` quote positions Daniel has abandoned.
+
+### Decision
+
+Nothing is deleted automatically. An approved `supersedes` proposal marks
+the older entry `superseded` with `superseded_by`; an approved `stale`
+proposal or `#scribe retire <id>` marks it `retired`. Both stay on disk and
+are excluded from `ask` evidence unless the caller passes `include_hidden`;
+an answer that matched a hidden entry says a superseded record exists. Real
+removal happens only on Daniel's explicit `#scribe forget <id>`, which
+blanks `said` and `content` and keeps the id, cite and status `forgotten`,
+so citations elsewhere do not dangle. "Removal" in the directions is read as
+removal from answers.
+
+### Consequences
+
+- A wrong approval is reversible by hand, and `ask --include-hidden` can
+  answer "what did Daniel used to prefer".
+- Cost: tag files keep growing with entries nobody will be shown; and a
+  reader expecting the routine to delete must learn that only `forget`
+  does.
+
+## One JSON file per tag and per session under ~/.scribe
+
+**Recorded:** 2026-11 · [ORB-21747] · **Overridable by Daniel**
+**Code anchors:** `crates/scribe-core/src/store/` (from S1)
+
+### Context
+
+The store needs entries, session records, the on/off state and proposals,
+written by hooks in concurrent sessions and read by `ask` from any
+workspace. orbit-office kept them as Markdown in a git-backed Library, which
+brought a git commit per pass and a parser per file shape. One database file
+(SQLite) would add a dependency and a second persistence discipline beside
+the template's atomic-replace store. One JSON document for everything would
+rewrite all of Daniel's records on every `#scribe`.
+
+### Decision
+
+A single root, `~/.scribe` by default, shared by every workspace on the
+host: `tags/<tag>.json`, `sessions/<session-id>.json`, `control.json`,
+`proposals.json`, `config.toml`, `audit.jsonl`, `.lock`
+([2_design.md §3](./2_design.md#3-storage)). Every document is replaced
+whole through `write_atomic` under the one store lock, as the template does.
+A write touches only the file it changes.
+
+### Consequences
+
+- A `#scribe` rewrites one tag file; a session pass rewrites one session
+  file; a corrupt file affects only its own records.
+- Cost: a cross-file operation (approving a proposal changes
+  `proposals.json` and a tag file) is two atomic writes under one lock, not
+  one transaction; a crash between them leaves an approved proposal whose
+  entry is still active, which the next scan repairs by re-applying approved
+  proposals.
+
+## ask ranks in memory with no persisted index
+
+**Recorded:** 2026-11 · [ORB-21747] · **Overridable by Daniel**
+**Code anchors:** `crates/scribe-core/src/ask/` (from S5)
+
+### Context
+
+`ask` needs model-free retrieval. A persisted index (SQLite FTS5, as
+orbit-office uses for its Library, or embeddings) must be built and kept in
+step with the records; building it inside `ask` would make a read write,
+which STD-01@2 §R31 forbids, and keeping it current from every writer adds
+a second store that can drift. Embeddings would also need a model call per
+write. The expected corpus is small: hundreds of entries and session
+records, growing by a few a day.
+
+### Decision
+
+No persisted index. `ask` loads the active records and ranks them with BM25
+in memory on every call, plus up to 20 Orbit tasks fetched through
+`orbit.search` at query time ([2_design.md §6.2](./2_design.md#62-retrieval-model-free)).
+Revisit when a cold `ask` spends over 200 ms in retrieval or the store
+passes 20,000 records.
+
+### Consequences
+
+- `ask` is a pure read, works on a read-only root, and can never answer
+  from a stale index.
+- Cost: no paraphrase or synonym matching ("merge strategy" misses
+  "squash"); every call reparses every file.
+
+## No migration of orbit-office scribe records
+
+**Recorded:** 2026-11 · [ORB-21747] · **Overridable by Daniel**
+
+### Context
+
+orbit-office's scribe left v1 SCR files (one line per extracted entry),
+v2 SCR files (session sections plus an append-only tag list), a decision
+ledger and preference pages, all in its Library on the Mac. Daniel's
+directions reject the way most of them were made: "I don't think
+auto-backfilling is a good idea … too noisy", and only explicitly marked
+things should become entries. orbit-office itself declined a v1→v2
+backfill because it would have produced about 184 preference proposals.
+
+### Decision
+
+scribe imports nothing. The orbit-office records stay where they are,
+readable in orbit-office's Library, and `ask` does not search them. Entries
+start empty; the first entries are Daniel's first `#scribe` lines.
+
+### Consequences
+
+- Every entry in the store is one Daniel asked for under the new rule.
+- Cost: decisions Daniel already made are invisible to `ask` until he
+  restates them with `#scribe`. A later opt-in importer, one proposal per
+  human-decided ledger line with a verbatim quote, is a direction in
+  [3_vision.md](./3_vision.md), not a commitment.
+
+## Only decisions and preferences ship by default
+
+**Recorded:** 2026-11 · [ORB-21747] · **Overridable by Daniel**
+
+### Context
+
+Daniel named `#preferences` and `#decision` and said "other tags" may be
+added. Shipping more defaults (say `rules`, `people`, `projects`) guesses
+at categories he did not ask for and makes the refusal list longer; shipping
+none makes the first `#scribe` fail.
+
+### Decision
+
+`config.toml` is created with two tags: `decisions` (aliases `decision`,
+`dec`; never stale) and `preferences` (aliases `preference`, `pref`;
+`stale_after_days = 180`). Further tags are added by Daniel editing the
+config; scribe never creates a tag on its own, and an instruction naming an
+unknown tag is refused with the list.
+
+### Consequences
+
+- The refusal message is short and the tag list is Daniel's.
+- Cost: a new tag needs a file edit rather than a `#scribe` instruction.
+
+## Hooks call the scribe binary directly, not Orbit
+
+**Recorded:** 2026-11 · [ORB-21747]
+**Code anchors:** `plugin/claude-code/hooks/hooks.json`; `crates/scribe/src/commands/hook/` (from S2)
+
+### Context
+
+Writes must come only from provider hooks. Orbit's plugin manifest has no
+hook or slash-command key, so hooks ship as a Claude Code package either
+way. If they wrote through Orbit (`orbit tool run scribe.append`), the
+write tool would need either `agent_callable: true` with an `agent_tools`
+grant — which makes it callable by any agent — or an operator override in
+the hook's environment (STD-05@1 §R4). orbit-office took the first route and
+its write tools ended up on the MCP list.
+
+### Decision
+
+The Claude Code package runs `scribe hook <event>` on `PATH`. Orbit hosts
+only `scribe.ask` and the two routine tools. No write tool exists in Orbit's
+registry, so there is nothing for an agent to be granted.
+
+### Consequences
+
+- The MCP list is one tool, and no Orbit grant can widen the write path.
+- Cost: the binary must be installed on `PATH` as well as in the Orbit
+  plugin tree (one `cargo install`, two locations to keep at the same
+  version); the hooks work without Orbit, the session passes and `ask` do
+  not.
+
+## ask is the only tool advertised to agents
+
+**Recorded:** 2026-11 · [ORB-21747]
+**Code anchors:** `plugin/.orbit-plugin/plugin.yaml` `spec.tools`; `plugin/.orbit-plugin/tests/conformance/` (from S5)
+
+### Context
+
+Daniel: "I would rather keep mcp surface small for my main agents - they
+can just have \"ask\" mcp." Orbit advertises a plugin tool at `workspace`
+scope unless told otherwise, and hiding a tool is not a permission check
+(STD-05@1 §R3).
+
+### Decision
+
+`scribe.ask` is `read_only` with `mcp_scope: global`. `scribe.session-pass`
+and `scribe.consistency-scan` are `mutating`, not `agent_callable`, and
+`mcp_scope: none`, so Orbit's capability floor refuses them to agents
+whether or not they are listed. A conformance test fails if any other tool
+is advertised.
+
+### Consequences
+
+- Main agents see exactly `mcp__orbit__scribe_ask`.
+- Cost: an agent cannot list tags or entries except by asking; the
+  read-only CLI (`scribe entry list`) remains reachable from a shell, which
+  is acceptable because it only reads.
+
+## Models are called through the claude CLI
+
+**Recorded:** 2026-11 · [ORB-21747]
+**Code anchors:** `crates/scribe/src/models.rs::ClaudeCliModels` (from S3)
+
+### Context
+
+Four uses need a model: referents in the hook, session passes and
+consistency scans in routines, and `ask`. Calling the Anthropic API
+directly needs an HTTP client and TLS stack (new dependencies under
+`cargo deny`) and an API key Daniel does not otherwise keep; his Claude Code
+login already authorizes `claude -p`, which orbit-office's scribe pass also
+used.
+
+### Decision
+
+One `Models` port in the core; one adapter that runs `claude -p --model
+<id> --output-format json` with the prompt on stdin, from a cleared,
+allowlisted environment, in its own process group, with a hard budget
+([2_design.md §8](./2_design.md#8-models)). The model gets no tools. A model
+call is an operator-configured network request (STD-05@1 §R20): the model
+ids and credential names come from `config.toml`.
+
+### Consequences
+
+- No HTTP dependency, no new secret, and tests swap the port for a fake.
+- Cost: a process launch per call (about a second of overhead), a hard
+  dependency on the `claude` binary being on `PATH` wherever scribe runs
+  a model, and output parsing tied to the CLI's JSON format.
+
+## Haiku for capture-side work, a decision model for ask
+
+**Recorded:** 2026-11 · [ORB-21747] · **Overridable by Daniel**
+
+### Context
+
+Daniel: "\"asking\" probably better with a decision model; and a routine
+that checks for inconsistencies, outdated record removal, and small model
+like haiku for \"scribe on\"." The referent and consistency uses were not
+named.
+
+### Decision
+
+`models.session`, `models.referent` and `models.consistency` default to
+`claude-haiku-5-5`; `models.ask` defaults to `claude-sonnet-5-5`, read as
+the "decision model": a stronger model that weighs conflicting evidence and
+declines to answer. Each is one config key. Haiku's output in every use is
+checked by code (verbatim spans, budgets, JSON schema) and a consistency
+finding only becomes a proposal Daniel approves, which is why a small model
+is enough there.
+
+### Consequences
+
+- The frequent calls (every session pass, every referent) are cheap; the
+  call agents depend on gets the strongest default.
+- Cost: `ask` is the slowest and most expensive call and runs on every
+  agent question; a model id that is retired breaks its use until the
+  config changes.
+
+## Session passes run from an Orbit routine, not a detached hook child
+
+**Recorded:** 2026-11 · [ORB-21747]
+**Code anchors:** `plugin/.orbit-plugin/definitions/routines/scribe-session-pass.yaml` (from S4)
+
+### Context
+
+A pass takes up to two minutes of model time, longer than a hook may block.
+orbit-office's Stop hook launched `claude -p` and did not wait; a detached
+process needs a durable owner record and a resource-bounded container
+(STD-03@2 §R16), which a hook cannot portably give on both Linux and macOS.
+
+### Decision
+
+Hooks only mark a session due. A plugin routine (`*/5 * * * *`, seeded
+disabled) runs `scribe.session-pass`, which Orbit supervises with its own
+timeout and limits (STD-03@2 §R22) and which processes at most five due
+sessions per run.
+
+### Consequences
+
+- No scribe process outlives its spawner.
+- Cost: a summary lags the due mark by up to five minutes, and nothing is
+  summarised until Daniel enables the routine in one workspace.
+
+## A session record covers the whole opted-in session
+
+**Recorded:** 2026-11 · [ORB-21747] · **Overridable by Daniel**
+
+### Context
+
+`/scribe on` may be typed mid-session. Summarising only what follows it
+gives a record whose goals and outcome miss the session's start; reading
+the earlier part could look like the backfill Daniel rejected.
+
+### Decision
+
+Turning a session on catalogs that whole session, from its first message.
+"No backfill" means no other session is ever read: scribe never scans
+transcripts it was not switched on for.
+
+### Consequences
+
+- A record states the session's real goal even when `on` came late.
+- Cost: messages typed before `/scribe on` are summarised, which Daniel may
+  not expect; `/scribe off` stops future passes but does not shrink the
+  record.
+
+## The #scribe grammar is model-free
+
+**Recorded:** 2026-11 · [ORB-21747]
+**Code anchors:** `crates/scribe-core/src/capture.rs` (from S2)
+
+### Context
+
+`#scribe add this to decision` mixes routing (which tag) with content.
+A model could parse any phrasing, but a model in the routing path could
+send an entry to the wrong tag or invent one, and would put a model call on
+every `#scribe`.
+
+### Decision
+
+Tag and form are resolved by a fixed grammar over configured names and
+aliases ([2_design.md §4.2](./2_design.md#42-parsing-an-instruction)). A
+model is used only to find the passage "this"/"it" points at, and its answer
+must pass the verbatim check. If that model fails, the entry is still
+written once with a marked fallback, so one instruction always yields
+exactly one entry.
+
+### Consequences
+
+- An unknown or unparseable instruction is refused deterministically, with
+  the list of tags or forms.
+- Cost: phrasings outside the grammar ("#scribe remember for decisions
+  that…") are refused rather than understood.
+
+## Proposals are settled only by #scribe in a typed turn
+
+**Recorded:** 2026-11 · [ORB-21747]
+
+### Context
+
+"Daniel approves" needs a channel only Daniel uses. A CLI verb or an Orbit
+tool is equally reachable by an agent with a shell or a grant.
+
+### Decision
+
+`#scribe approve|reject <p-id>`, `#scribe retire|forget <entry-id>` are
+instructions like any other `#scribe` line, captured by the
+`UserPromptSubmit` hook. There is no CLI or Orbit verb that settles a
+proposal or changes an entry's status.
+
+### Consequences
+
+- Every status change cites the turn Daniel typed.
+- Cost: approving needs a Claude Code session, and the guard is the same
+  accident guard as capture (STD-05@1 §R5): a process running as Daniel can
+  still forge a hook call.
+
+## Persisted free text passes one redactor
+
+**Recorded:** 2026-11 · [ORB-21747]
+**Code anchors:** `crates/scribe-core/src/store/redact.rs` (from S1)
+
+### Context
+
+Entries quote Daniel and session records summarise transcripts, which can
+contain a pasted token. STD-05@1 §R13 wants every writer of free text to
+pass one redactor at the durability boundary, and §R14 wants it to match
+secret values, not words.
+
+### Decision
+
+The store masks, before every write of `said`, `content`, session text and
+proposal `reason`, the live values of the credential variables named in
+`config.toml` and those `scribe` was given for its model calls. A unit test
+holds the inventory of covered fields. Audit lines stay identifiers only.
+
+### Consequences
+
+- A configured secret never reaches `~/.scribe` in clear.
+- Cost: a quote that contained a masked value no longer passes the verbatim
+  check against its source, and a secret scribe was not told about is not
+  masked.
 
 ## A domain library crate and a CLI crate
 
@@ -25,31 +422,25 @@ Record non-obvious decisions here by title. Task references carry provenance; su
 
 ### Context
 
-STD-02@1 §R7 said to start as one crate and split only for a build or
-dependency need (STD-02@2 §R7 has since made two crates the default for a new
-CLI, for the reason below). A single crate can express the layers as modules with grep
-bans. The template, though, exists to be copied by agents into projects that
-grow, and the edge that matters most — the domain must not know about
-argument parsing, terminals or log subscribers — is exactly "a dependency
-edge that must be enforceable", R7's own justification for a split.
+STD-02 asks for an enforceable boundary between the domain and the surface.
+The domain must not know about argument parsing, terminals or log
+subscribers, and scribe has three surfaces (hooks, the Orbit backend, the
+CLI) over one domain.
 
 ### Decision
 
 Two crates: `scribe-core` (library; business logic and persistence) and
-`scribe` (binary; composition and surface). Cargo makes clap unreachable
-from the core rather than merely banned, and the core is ready to be consumed
-by a second surface (MCP server, desktop app) without restructuring. Further
-crates still need an R7 reason; the default for new code is a module in one
-of these two. A project that is certain to stay a single small binary may
-collapse to one crate with STD-02's single-crate check.
+`scribe` (binary; composition, adapters and surfaces). Cargo makes clap
+unreachable from the core rather than merely banned. Further crates still
+need an STD-02@3 §R7 reason; the default for new code is a module in one of
+these two.
 
 ### Consequences
 
 - The domain/surface boundary is enforced by the compiler plus
   `check-dependency-direction.sh`, not by review.
-- Cost: two manifests, a `[workspace.dependencies]` table, and a crate
-  boundary that forces `pub` on the core's API where one crate would use
-  `pub(crate)`.
+- Cost: two manifests, a `[workspace.dependencies]` table, and `pub` on the
+  core's API where one crate would use `pub(crate)`.
 
 ## Persistence is one module inside the core crate
 
@@ -58,60 +449,50 @@ collapse to one crate with STD-02's single-crate check.
 
 ### Context
 
-A core crate that mixes business rules with file handling becomes hard to
-extend: the rules get tested through a filesystem, and a second backend (a
-database, a remote store) means untangling them first. The obvious fix is
-more crates (types, domain, storage, CLI), but four crates is heavy for a
-starting template, and STD-02@3 §R7 asks a further crate for a build or
-dependency reason the template does not have yet.
+Rules tested through a filesystem are slow and fragile, and a second backend
+would mean untangling them first. Four crates (types, domain, storage, CLI)
+is heavy without an STD-02@3 §R7 reason.
 
 ### Decision
 
-Keep two crates, and split the core by responsibility inside it. Business
-logic (`note`: types and the next-id rule; `query`: list selection) does no
-I/O and never imports `crate::store`. Everything that touches disk is the
-`store` module: the `Store` facade over private submodules `format`, `audit`
-and `fsio`, declared with `pub(super)` so nothing outside `store` can reach a
-file primitive. The dependency-direction script bans file and process access,
-and `crate::store` imports, in every other core module, including ones added
-later. When persistence earns its own crate (a second backend, or heavy
-dependencies the rules should not compile against), `store/` moves out whole.
+Business logic (`entry`, `capture`, `session`, `ask`, `consistency`,
+`verbatim`) does no I/O and never imports `crate::store`. Everything that
+touches disk is the `store` module: the `Store` facade over private
+submodules `format`, `audit` and `fsio`. The dependency-direction script
+bans file and process access, and `crate::store` imports, in every other
+core module. When persistence earns its own crate, `store/` moves out whole.
 
 ### Consequences
 
-- The selection and id rules are unit-tested without a filesystem.
-- Cost: `Store` stays a concrete type, not a trait, so swapping the backend
-  still edits the facade; the module boundary is enforced by visibility and
-  grep, which are weaker than a crate edge.
+- The capture grammar, ranking and verbatim rules are unit-tested without a
+  filesystem.
+- Cost: `Store` is a concrete type, not a trait, and the module boundary is
+  enforced by visibility and grep, which are weaker than a crate edge.
 
 ## Commands are one module per noun
 
 **Recorded:** 2026-09-26
-**Code anchors:** `crates/scribe/src/commands/mod.rs`, `crates/scribe/src/commands/note.rs`
+**Code anchors:** `crates/scribe/src/commands/mod.rs`
 
 ### Context
 
-A single `command.rs` dispatching every verb, with every flag in `cli.rs`,
-reads well at three verbs and badly at thirty: each new noun edits both
-files, and the flags sit far from the handlers that use them.
+One dispatch file with every flag in `cli.rs` reads badly past a few verbs.
 
 ### Decision
 
 `commands/mod.rs` holds the `Command` enum of nouns, the audited-command
-table and `run`, the one chokepoint. Each noun is a module holding its
-subcommand enum, its `Args` structs, help examples and handlers
-(`commands/note.rs`); `cli.rs` keeps only the program root and the global
-flags. A noun that outgrows one file becomes a directory split along its
-verbs, `commands/note/{mod,add,list,show,support}.rs` with `tests/` beside
-them, as Orbit's `command/` tree does. The split follows responsibilities, not
-length (STD-02@3 §R18).
+table and `run`, the one chokepoint. Each noun is a module with its
+subcommands, flags, help and handlers; a noun that outgrows one file becomes
+a directory split along its verbs (`commands/hook/` has one file per event).
+Every surface follows `<tool> <noun> <verb>` (STD-01@2 §R1): the CLI form of
+`ask` is `scribe question ask`, and the Orbit backend entry is
+`scribe plugin call`.
 
 ### Consequences
 
-- Adding a noun is one new module plus one variant and one `run` arm.
-- Cost: clap declarations are spread across modules, so the whole command
-  tree is no longer readable in one file; `--help` goldens stay the review
-  surface for it.
+- Adding a noun is one module plus one variant and one `run` arm.
+- Cost: the command tree is spread across modules, so the help goldens are
+  its review surface; and `question ask` is wordier than a bare `ask`.
 
 ## Mutating commands are audited through one guard
 
@@ -120,30 +501,26 @@ length (STD-02@3 §R18).
 
 ### Context
 
-A store changed by several people, scripts and agents needs an answer to
-"what changed it, and did that work". Logging from each handler repeats the
-rule per verb and misses early returns and panics. Auditing every command
-would make `list` and `show` write, which STD-01@2 §R31 forbids and which
-would break them on a read-only data directory.
+A store changed by hooks in several sessions and by routines needs an answer
+to "what changed it, and did that work", without making reads write
+(STD-01@2 §R31).
 
 ### Decision
 
-Orbit's pattern: an RAII `AuditGuard` created at the dispatch chokepoint
-(STD-02@3 §R24), starting in the failure state, told the outcome by
-`mark_result`, writing one JSON line to `<root>/audit.jsonl` on drop.
-`Command::audit` declares per command, with an exhaustive match, whether it
-is audited; read-only commands return `None`. A line holds identifiers only
-(command path, note id, status, stable error code, timing), so no free text
-is persisted and no redactor is needed (STD-05@1 §R13). The log is a side
-channel and fails open with a warning (STD-02@3 §R31). Appends hold the store
-lock, so concurrent commands never interleave lines.
+An RAII `AuditGuard` at the dispatch chokepoint (STD-02@3 §R24), starting
+in the failure state, told the outcome by `mark_result`, writing one JSON
+line to `<root>/audit.jsonl` on drop. `Command::audit` declares per command,
+exhaustively, whether it is audited; reads return `None`. Lines hold
+identifiers only (command, entry or session id, status, stable error code,
+timing), never `said`, `content` or model text (STD-05@1 §R13). The log
+fails open with a warning (STD-02@3 §R31).
 
 ### Consequences
 
-- A panic or early return in a handler is logged as a failure.
-- Cost: every audited command pays a second lock and an `fsync`; a command
-  that cannot write its line still succeeds, so the log can miss entries,
-  and it grows without rotation.
+- A panic or early return in a hook is logged as a failure, and a refused
+  `#scribe` leaves an audit line with its error code.
+- Cost: every audited command pays a second lock and an `fsync`, and the
+  log grows without rotation.
 
 ## --json is the one alias for --format json
 
@@ -152,49 +529,44 @@ lock, so concurrent commands never interleave lines.
 
 ### Context
 
-STD-01 R7 requires at least `--json` on every data command; R4 wants the
-output mode as one global flag and R3 one spelling per concept. `--format`
-also has to exist for `table` and `auto`. clap's `conflicts_with` does not
-see a global flag given at a different subcommand level, so
-`scribe --json note list --format table` would parse silently.
+STD-01 R7 requires `--json` on every data command; R3 wants one spelling
+per concept, and `--format` must exist for `table` and `auto`.
 
 ### Decision
 
-`--json` is a global boolean documented as shorthand for `--format json`;
-it is the only alias, and no other output flag may be added. The conflict is
-checked after parsing in `Cli::parse_args` and reported as a clap usage error
-(exit 2).
+`--json` is a global boolean, shorthand for `--format json`, and the only
+alias. A conflict with `--format` is checked after parsing and reported as a
+usage error (exit 2).
 
 ### Consequences
 
 - Scripts can rely on `--json` everywhere, humans on `--format`.
-- Cost: two spellings of one mode, and a hand-written conflict check that a
-  new mode flag must extend.
+- Cost: two spellings of one mode and a hand-written conflict check.
 
-## An empty JSON list is []
+## A list's JSON is an envelope with total and truncated
 
-**Superseded** by [A list's JSON is an envelope with total and truncated](#a-lists-json-is-an-envelope-with-total-and-truncated).
-
-**Recorded:** 2026-09 · [ORB-13117]
-**Code anchors:** `crates/scribe/src/output/render.rs::note_list`
+**Recorded:** 2026-09 · [ORB-13134]
+**Code anchors:** `crates/scribe/src/output/payload.rs::ListPayload`
 
 ### Context
 
-STD-01 R16 says a query that matches nothing prints nothing to stdout; R7
-says JSON mode emits one JSON document, an array for a list. An empty stdout
-is not a JSON document, so `--json | jq` would fail on an empty result.
+A list capped by `--limit` must say so in its machine payload (STD-01@2
+§R34), and turning a shipped bare array into an envelope later is a
+breaking change (§R10).
 
 ### Decision
 
-In JSON mode an empty list prints `[]`; in table and plain modes it prints
-nothing. In every mode the one-line notice goes to stderr and the exit code
-is 0. This reads R16's "nothing" as "no records", as Orbit does.
+Every list's JSON is `{"<records>": [...], "total": N, "truncated": bool}`,
+where `<records>` names the noun (`entries`, `sessions`, `proposals`,
+`tags`); an empty result is the same envelope with an empty array. Filters
+apply before the limit (§R33), and a cut list says so on stderr in every
+mode.
 
 ### Consequences
 
-- `jq` and `wc -l` both behave on empty results.
-- Cost: JSON consumers and line consumers see different bytes for the same
-  empty result, which the goldens and tests must pin separately.
+- A capped page cannot pass for a complete one.
+- Cost: `jq '.entries[]'` instead of `jq '.[]'`, and every list verb
+  inherits the envelope.
 
 ## The store lock uses std file locks, not a crate
 
@@ -203,21 +575,20 @@ is 0. This reads R16's "nothing" as "no records", as Orbit does.
 
 ### Context
 
-STD-03 R6 needs a kernel advisory lock released on holder death. Rust 1.89
-stabilized `File::lock`/`try_lock` (`flock` on unix, `LockFileEx` on
-Windows); before that, constellation code used `fs4`.
+STD-03 R6 needs a kernel advisory lock released on holder death; Rust 1.89
+stabilized `File::lock`/`try_lock`.
 
 ### Decision
 
-Use `std::fs::File::try_lock` with an in-process polling deadline, and raise
-`rust-version` to 1.89 for it. Prefer std over a crate whenever std covers
-the need.
+`std::fs::File::try_lock` with an in-process polling deadline;
+`rust-version` is 1.89. Prefer std over a crate whenever std covers the
+need.
 
 ### Consequences
 
-- One fewer dependency to audit; the lock semantics are std's documented ones.
-- Cost: the minimum supported Rust is 1.89, and there is no blocking-with-
-  timeout primitive, so the wait is a 20 ms poll.
+- One fewer dependency to audit.
+- Cost: no blocking-with-timeout primitive, so the wait is a 20 ms poll;
+  concurrent `#scribe` lines in several sessions queue on it.
 
 ## clap without color or terminal-width features
 
@@ -226,21 +597,19 @@ the need.
 
 ### Context
 
-STD-01 R17 requires the color/TTY decision in exactly one place. clap's
-default `color` feature and the `wrap_help` feature each query the terminal
-themselves, and a terminal-dependent help rendering would also make the help
-goldens depend on where they were captured.
+STD-01 R17 requires the color/TTY decision in one place; clap's `color` and
+`wrap_help` features query the terminal themselves and would make help
+goldens machine-dependent.
 
 ### Decision
 
-clap is built with `default-features = false` and without `color` or
-`wrap_help`. Help and usage errors are plain text everywhere; styling, if it
-is ever wanted, is applied from the sink's decision.
+clap is built with `default-features = false`, without `color` or
+`wrap_help`.
 
 ### Consequences
 
-- Help renders byte-identically on every machine, so goldens are stable.
-- Cost: no colored help and no wrapping of long help lines to the terminal.
+- Help renders byte-identically everywhere, so goldens are stable.
+- Cost: no colored or wrapped help.
 
 ## Usage errors keep clap's rendering
 
@@ -249,25 +618,21 @@ is ever wanted, is applied from the sink's decision.
 
 ### Context
 
-STD-01@1 §R19 says a non-JSON error is a single `error: <message>` line.
-clap's usage errors are an `error:` line followed by a tip or did-you-mean
-suggestion, the usage line and a pointer to `--help` — the actionable detail
-R21 asks for.
+clap's usage errors carry a tip, the usage line and a pointer to `--help`,
+the actionable detail STD-01 R21 asks for.
 
 ### Decision
 
-Deviation from STD-01@1 §R19 for usage errors only: in human mode they keep
-clap's multi-line rendering (first line `error: …`, exit 2). In JSON mode they
-are one `{"error","code":"usage_error"}` object like every other error.
-Command failures follow R19 exactly.
+In human mode usage errors keep clap's multi-line rendering (first line
+`error: …`, exit 2); in JSON mode they are one `{"error","code":
+"usage_error"}` object. STD-01@2 §R19 allows this rendering
+([ORB-13134]), so it is not a deviation.
 
 ### Consequences
 
-- Wrappers still branch on exit code 2 and the stable `code`.
-- Cost: a script reading human-mode stderr gets several lines for a usage
-  error and one line for a command failure.
-- Update [ORB-13134]: STD-01@2 §R19 allows exactly this rendering, so it is
-  no longer a deviation.
+- Wrappers branch on exit code 2 and the stable `code`.
+- Cost: human-mode stderr has several lines for a usage error and one for a
+  command failure.
 
 ## standards-check warns locally and fails in CI
 
@@ -276,75 +641,19 @@ Command failures follow R19 exactly.
 
 ### Context
 
-The adopted standards are vendored into `docs/standards/` by the
-constellation's `sync-standards.sh`, which may run after the repository is
-created. A fresh copy must still pass `make ci`, but a real project whose
-standards were never vendored should not pass CI.
+Standards are vendored into `docs/standards/` by the constellation's sync,
+which may run after the repository is created.
 
 ### Decision
 
-Without `docs/standards/check.sh`, `make standards-check` prints a warning
-and the command to run, and exits 0 — unless `STANDARDS_STRICT=1`, which CI
-sets, and then it fails.
+Without `docs/standards/check.sh`, `make standards-check` warns and exits
+0 unless `STANDARDS_STRICT=1`, which CI sets.
 
 ### Consequences
 
-- The template and a just-created project pass `make ci` locally.
+- A just-created copy passes `make ci` locally.
 - Cost: a local `make ci` can pass while CI fails, until the standards are
   vendored.
-
-## A list's JSON is an envelope with total and truncated
-
-**Recorded:** 2026-09 · [ORB-13134]
-**Code anchors:** `crates/scribe/src/output/payload.rs::ListPayload`; `crates/scribe-core/src/query.rs::NoteList`; `crates/scribe/src/commands/note.rs::list_notice`
-
-### Context
-
-`note list --limit N` can return fewer notes than matched. STD-01@2 §R34
-requires a capped list to say so in its machine payload, and warns that
-turning a shipped bare array into an envelope later is a breaking change
-(§R10). The alternative, dropping `--limit` so a bare array complies, only
-postpones that break to the first project that needs a limit.
-
-### Decision
-
-`note list --json` is always `{"notes": [...], "total": N, "truncated":
-bool}`, whether or not a limit applied, and an empty result is the same
-envelope with `"notes": []` (§R16). The store filters before it limits
-(§R33) and reports the match count; a cut list also prints `showing N of M
-matching notes` on stderr in every mode. `--limit` must be at least 1.
-
-### Consequences
-
-- A consumer never branches on flags or counts to find the records, and a
-  capped page cannot pass for a complete one.
-- Cost: `jq '.notes[]'` instead of `jq '.[]'`, and every future list verb
-  inherits the envelope.
-
-## add names what it wrote on stderr
-
-**Recorded:** 2026-09 · [ORB-13134]
-**Code anchors:** `crates/scribe/src/commands/note.rs::add`
-
-### Context
-
-STD-01@2 §R30 asks a write to name its resolved target in its human output
-and its machine payload. The record's `id` is in the payload already. The
-store file is what exposes a mis-resolved data directory, but adding it to
-the JSON would make `add` and `show` return different shapes.
-
-### Decision
-
-`add` returns the same note payload as `show` (the record, with its `id`) and
-prints `added note <id> to <root>/notes.json` on stderr in every mode.
-Errors that depend on the data directory name the store file too
-(STD-02@2 §R26).
-
-### Consequences
-
-- A human sees where the note went; a script gets the record.
-- Cost: the file path is not machine-readable output; a script that needs
-  it resolves `--root` itself.
 
 ## Store format upgrades are an append-only registry
 
@@ -353,29 +662,25 @@ Errors that depend on the data directory name the store file too
 
 ### Context
 
-The store is one JSON document with a `format` number. Adding a defaulted
-field without bumping it looks compatible, but an older build then loads the
-file, drops the field it does not know and rewrites the store without it,
-which is a lossy round trip (STD-02@2 §R16) and an old binary writing newer
-state (STD-03@2 §R10). STD-03@2 §R23 wants every layout change shipped as an
-appended migration.
+An older build that loads a document with a field it does not know and
+rewrites it drops that field (STD-02@2 §R16, STD-03@2 §R10); STD-03@2 §R23
+wants every layout change shipped as an appended migration.
 
 ### Decision
 
-Every change to the persisted shape bumps `FORMAT` and appends one step to
-`UPGRADES` (format `n` document in, `n + 1` out). A shipped step is never
-edited, reordered or removed; a unit test holds `FORMAT == UPGRADES.len() +
-1`. A newer format is refused for reads and writes. Reads upgrade in memory
-only (STD-01@2 §R31); the next `add` persists the current format. The
-registry ships empty.
+Each persisted document type (tag file, session record, control, proposals)
+carries `format`. A shape change bumps it and appends one step to that
+type's `UPGRADES`; shipped steps are never edited. A newer format is refused
+for reads and writes; reads upgrade in memory only. The plugin's documents
+start at format 1 with empty registries: the template's `notes.json` is not
+carried over because no scribe store exists yet.
 
 ### Consequences
 
-- Fresh and upgraded stores converge on one shape, and older builds refuse
-  newer stores instead of damaging them.
-- Cost: even an additive field locks older builds out of the store until
-  they are upgraded, because a JSON file has no way to open read-only for
-  just the fields an old build knows.
+- Older builds refuse newer stores instead of damaging them.
+- Cost: even an additive field locks older builds out until they upgrade,
+  which matters because the hook binary on `PATH` and the plugin's copy can
+  differ in version.
 
 ## Store state is owner-only and checked on every load
 
@@ -384,60 +689,50 @@ registry ships empty.
 
 ### Context
 
-Notes are personal data. STD-05@1 §R8 wants state created owner-only
-regardless of the umask, and §R9 wants it refused or repaired on load when it
-is foreign-owned, writable by others, or reached through a link. A repair is
-a write, which STD-01@2 §R31 forbids in `list` and `show`. std has no safe
-way to get the effective uid, and Windows has no mode bits.
+Entries and session records are Daniel's personal data. STD-05@1 §R8 wants
+state created owner-only; §R9 wants it refused when foreign-owned, writable
+by others or reached through a link. A repair is a write, which reads may
+not do.
 
 ### Decision
 
-The data directory is created `0700` and the store and lock files `0600`,
-set explicitly. Every load, reads included, refuses a data directory or
-store file that is owned by another uid or writable by group or others,
-naming the `chmod` that fixes it (`store_foreign_owner`,
-`store_permissions`), and refuses a store or lock file that is a symbolic
-link (`store_symlink`). Nothing is repaired automatically. The data
-directory itself may be a link, since the operator chooses it; its target is
-what gets checked. Because the directory is verified owner-only first, the
-files are not re-verified after opening: only the same user could swap them,
-and that is not a boundary (STD-05@1 §R5). `rustix` supplies `geteuid` on
-unix; on other platforms the checks are no-ops (STD-05@1 §R8, §R9, deviation
-for Windows, which would need ACLs).
+The root and subdirectories are created `0700`, files `0600`. Every load,
+reads included, refuses a directory or file owned by another uid or
+writable by group or others, naming the `chmod` that fixes it, and refuses a
+store or lock file that is a link. Nothing is repaired automatically. On
+non-unix platforms the checks are no-ops.
 
 ### Consequences
 
-- Another local user can neither read a new store nor plant one, and a link
-  cannot redirect a write.
-- Cost: a store created by an older build under a loose umask (`0664`) is
-  refused until the operator runs the named `chmod` (STD-03@2 §R24 allows
-  this form: the refusal names the file and a repair that needs no tool);
-  and one more dependency.
+- Another local user can neither read the store nor plant one.
+- Cost: a store copied in under a loose umask is refused until Daniel runs
+  the named `chmod`.
 
-## One malformed note makes the store corrupt
+## One malformed record makes its file corrupt
 
 **Recorded:** 2026-09 · [ORB-13134]
 **Code anchors:** `crates/scribe-core/src/store/mod.rs::Store::load`, `crates/scribe-core/src/store/format.rs::decode`
 
 ### Context
 
-STD-02@2 §R32 wants one bad item in a listing isolated and reported while
-the rest proceed. The notes live in one document that `add` rewrites whole.
-Skipping an unparseable note on read would invite `add` to rewrite the file
-without it, which is data loss.
+STD-02@2 §R32 wants one bad item isolated while the rest proceed. A file
+that is rewritten whole, if read past a bad record, would be rewritten
+without it: data loss.
 
 ### Decision
 
-Deviation from STD-02@2 §R32: the store file is one unit of integrity. If
-any note fails to parse, every command refuses with `store_corrupt`, naming
-the file (fail closed, STD-02@2 §R31), and nothing rewrites it. A project
-whose records become independent (a file per record, a database) isolates
-per record instead.
+Deviation from STD-02@2 §R32 within one file: a tag file, session record,
+control or proposals document that fails to parse is refused as
+`store_corrupt`, naming the file, and nothing rewrites it. Across files the
+rule holds: `ask` and the lists skip a corrupt file, report it on stderr (or
+in the payload's warnings) and answer from the rest; a write to a corrupt
+file refuses.
 
 ### Consequences
 
-- A damaged store is never partially rewritten.
-- Cost: one bad record hides all the good ones until it is fixed by hand.
+- A damaged file is never partially rewritten, and one bad tag does not
+  silence the others.
+- Cost: one bad entry hides its whole tag until it is fixed by hand.
 
 ## Missing gate tools warn locally and fail in CI
 
@@ -446,26 +741,19 @@ per record instead.
 
 ### Context
 
-STD-04@1 §R10 says a gate whose tool is missing fails, and §R12 puts every
-parity check CI runs into the fast local gate, except those that need a
-build. `cargo-nextest` (per-test timeouts, `--no-tests=fail`) and
-`cargo-deny` are not installed everywhere a copy of this template is built.
+STD-04@1 §R10 says a gate whose tool is missing fails; `cargo-nextest` and
+`cargo-deny` are not installed everywhere this repository is built.
 
 ### Decision
 
 Deviation from STD-04@1 §R10 for local runs only: without `cargo-deny` the
-supply-chain check is skipped, and without `cargo-nextest` the tests run
-under `cargo test`, each with a warning naming the install command. Under
-`CI=true` (set by GitHub Actions) either missing tool fails the gate, and CI
-installs both at pinned versions. `ci-fast` runs formatting, the structure
-checks and `standards-check`. Two checks stay out of it under STD-04@1 §R12
-because they need a build: the help and output goldens (`make goldens`) and
-Cargo.lock freshness (`--locked` on every cargo build).
+supply-chain check is skipped and without `cargo-nextest` tests run under
+`cargo test`, each with a warning. Under `CI=true` either missing tool
+fails.
 
 ### Consequences
 
-- A fresh clone passes `make ci` with only cargo installed, and CI cannot
-  pass with a gate missing.
+- A fresh clone passes `make ci` with only cargo installed.
 - Cost: a local green `make ci` without those tools is weaker than CI's.
 
 ## Environment settings fall back rather than refuse
@@ -475,69 +763,64 @@ Cargo.lock freshness (`--locked` on every cargo build).
 
 ### Context
 
-STD-02@2 §R28 refuses a bad configuration value at load, naming the key.
-STD-01@2 §R8 requires an unrecognized output-format variable to fall back
-to `auto`, so one exported typo does not break every command in a shell.
-The log filter is a side channel (STD-02@2 §R31).
+STD-02@2 §R28 refuses a bad configuration value at load; STD-01@2 §R8
+requires an unrecognized output-format variable to fall back to `auto`.
 
 ### Decision
 
 Deviation from STD-02@2 §R28 for the environment: an unrecognized
-`SCRIBE_FORMAT` means `auto`, and a `SCRIBE_LOG` that does not parse is
-reported once on stderr and replaced by `warn`. Command-line values are
-validated when parsed (`--limit` at least 1, a non-blank `--body`) and
-refused as usage errors naming the flag.
+`SCRIBE_FORMAT` means `auto`, and an unparseable `SCRIBE_LOG` is reported
+once and replaced by `warn`. `config.toml` is not environment: a bad key or
+value there is refused at load, naming the key, and a hook that cannot load
+it replies with that error instead of capturing.
 
 ### Consequences
 
 - A stray variable never stops a command.
-- Cost: an unrecognized `SCRIBE_FORMAT` gives no warning, by STD-01's
-  rule.
+- Cost: an unrecognized `SCRIBE_FORMAT` gives no warning.
 
-## Standard rules this template does not exercise
+## Standard rules the plugin brings into force
 
-**Recorded:** 2026-09 · [ORB-13134]
+**Recorded:** 2026-11 · [ORB-21747]
 
 ### Context
 
-The template adopts STD-01@2, STD-02@3, STD-03@2, STD-04@1 and STD-05@1.
-Some of their rules govern things a three-verb note CLI does not do. A
-project grown from the template must not read their absence as a waiver.
+The template recorded which rules of STD-01@2, STD-02@3, STD-03@2,
+STD-04@1 and STD-05@1 it met only because it did not do what they govern.
+The plugin does several of those things.
 
 ### Decision
 
-These rules are met trivially today because the code does not do what they
-govern. Each binds as soon as it does, and this entry is edited then:
+These rules bind from the slice that starts doing what they govern:
 
-- No destructive verb, prompt, removed flag or default filter: STD-01@2 §R5,
-  §R27, §R35 (and §R33's default-filter clause).
-- No agent or script hand-off, no recovery path: STD-02@3 §R25, §R33.
-- No async code, channels or nested locks: STD-03@2 §R1–§R3. One store file,
-  so no multi-store commit or replay: §R8, §R9.
-- No spawned or detached processes in the product: STD-03@2 §R11–§R16 and
-  STD-05@1 §R10–§R12. Test fixtures that spawn the binary follow STD-03@2
-  §R17–§R20.
-- No installed defaults, long-lived processes, moving references,
-  integrity guards, deletion, remote calls or git automation: STD-03@2
-  §R25–§R32.
-- No capability-dependent tests: every test runs on every CI runner, so
-  there is nothing to skip (STD-04@1 §R8).
-- No authorization, plugins, credentials, listeners, consent or tokens:
-  STD-05@1 §R1–§R5, §R15–§R19, §R21, §R22, §R25. The binary makes no
-  network request at all (§R20).
-- No persisted free text besides note content the caller asked to store,
-  kept verbatim, so there is no redaction layer (STD-05@1 §R13, §R14). The
-  audit log persists identifiers and stable codes only; a unit test pins its
-  fields, and adding a free-text field to it brings §R13 into force.
+- Spawned model processes (S3): STD-03@2 §R11–§R15 (process group, kill
+  and reap, drained output) and STD-05@1 §R10–§R12 (cleared, allowlisted
+  environment; no secret in argv).
+- Provenance and authority (S2): STD-05@1 §R1, §R2 (the hook payload is a
+  claim; host and transcript checks stamp the cite), §R5 (documented as an
+  accident guard).
+- Plugin surface (S5): STD-05@1 §R3 (capability, not listing, keeps agents
+  off the mutating tools), §R20 (model calls are operator-configured).
+- Free text persisted (S1): STD-05@1 §R13, §R14 (one redactor).
+- Installed defaults (S2): STD-03@2 §R25 for the seeded `config.toml` and
+  routines, which are created once and never overwritten.
+- Unattended work (S4, S6): STD-03@2 §R22 through Orbit's routine limits
+  plus each model budget.
+
+Still not exercised: destructive CLI verbs (STD-01@2 §R5; `forget` is a
+`#scribe` instruction, not a command), async code and nested locks
+(STD-03@2 §R1–§R3), listeners (STD-05@1 §R16–§R19), git automation
+(STD-03@2 §R32).
 
 ### Consequences
 
-- A reviewer checks a new feature against this list first.
-- Cost: the list goes stale unless the change that starts doing one of
-  these things also edits it.
+- A reviewer checks each slice against its rows here.
+- Cost: the list goes stale unless the slice that starts doing one of these
+  things also edits it.
 
 ## Task References
 
+- [ORB-21747] — designed the standalone scribe plugin and recorded its decisions.
 - [ORB-13117] — built the Rust CLI template this project was created from.
 - [ORB-13134] — brought the template to STD-01..03 v2 and STD-04/05 v1.
 

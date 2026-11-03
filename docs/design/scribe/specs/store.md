@@ -6,6 +6,11 @@ last_validated: 2026-09-26
 
 # Spec: Store
 
+> **Template state.** This spec describes the Rust CLI template's note
+> example, which is still the code. The scribe plugin's documents and payloads
+> are designed in [2_design.md](../2_design.md); slice S1 rewrites this spec
+> for them.
+
 The store never exposes a torn file, never loses a concurrent write, never
 rewrites a file a newer build wrote, and never trusts state another user
 could have written.
