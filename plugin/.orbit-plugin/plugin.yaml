@@ -1,8 +1,9 @@
 # scribe's Orbit plugin (docs/design/scribe/2_design.md §1). The backend is
 # the installed `scribe` binary, run as `scribe plugin call`; this tree holds
 # no code of its own. `scribe.ask` is the one tool agents see: the two
-# routine tools are `mutating`, not agent-callable and `mcp_scope: none`, and
-# tests/conformance.rs (run by `cargo test`) keeps it that way.
+# routine tools are `mutating`, not agent-callable and `mcp_scope: none`, the
+# two routines ship `enabled: false`, and tests/conformance.rs (run by
+# `cargo test`) keeps it that way.
 schemaVersion: 2
 kind: Plugin
 metadata:
@@ -23,17 +24,20 @@ spec:
   backend:
     type: exec
     command: bin/scribe-plugin
-    # ask: up to 30 s of Orbit task reads, then a 90 s model budget. The
-    # routine tools are not wired yet; they answer at once.
-    timeout_ms: 150000
+    # The cap. ask: up to 30 s of Orbit task reads, then a 90 s model
+    # budget. session-pass starts no session after 50 s, and one session is
+    # at most two 121 s asks; consistency-scan starts no batch after 170 s,
+    # and one batch is at most 121 s.
+    timeout_ms: 300000
     sandbox: default
 
   permissions:
     fs:
-      # The store; `ask` only reads it.
-      read: ["{{config.root}}"]
-      write: ["{{plugin_state}}"]
-    # The ask model, through the claude CLI.
+      # The store, which ask only reads and the routine tools write; and
+      # Claude Code's transcripts, which session-pass reads.
+      read: ["{{config.root}}", "{{config.transcripts}}"]
+      write: ["{{config.root}}", "{{plugin_state}}"]
+    # The ask, session and consistency models, through the claude CLI.
     network: any
     # The model credential names config.toml lists by default (§8).
     env_pass: [CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY]
@@ -43,9 +47,16 @@ spec:
   config:
     schema: schemas/config.json
     defaults:
-      # Must be set to the absolute store path; a call answers
-      # `not_configured` until it is.
-      root: ""
+      # Must be set to the absolute store path; every call answers
+      # `not_configured` until it is. The default `/var/tmp` means unset, and
+      # scribe never opens a store there: a write grant must name a
+      # directory that exists, outside the install tree (Orbit resolves an
+      # empty or relative path against it), so the default can be neither
+      # empty nor made up (4_decisions.md).
+      root: /var/tmp
+      # Claude Code's projects directory, an absolute path; session-pass
+      # answers `not_configured` until it is set.
+      transcripts: ""
       task_workspaces: []
 
   tools:
@@ -68,8 +79,8 @@ spec:
     - name: session-pass
       description: >-
         The scribe-session-pass routine's job: write the record of each
-        session whose pass is due. Not wired to the plugin yet; run
-        `scribe session pass`.
+        session whose pass is due, at most five per call, as `scribe session
+        pass --json` does. Needs [plugins.scribe] root and transcripts.
       execution_kind: mutating
       agent_callable: false
       mcp_scope: none
@@ -78,12 +89,19 @@ spec:
 
     - name: consistency-scan
       description: >-
-        The scribe-consistency routine's job: propose superseding
-        contradicting entries and reviewing stale ones. Not built yet.
+        The scribe-consistency routine's job: re-apply interrupted approvals,
+        then open a proposal for each entry a later one replaced and each
+        entry due for review, as `scribe consistency scan --json` does. Changes
+        no entry otherwise; Daniel settles proposals with #scribe approve or
+        #scribe reject. Needs [plugins.scribe] root.
       execution_kind: mutating
       agent_callable: false
       mcp_scope: none
       input_schema: { $ref: schemas/empty.input.json }
       output_schema: { $ref: schemas/routine.output.json }
+
+  definitions:
+    jobs: [jobs/session_pass.yaml, jobs/consistency.yaml]
+    routines: [routines/session_pass.yaml, routines/consistency.yaml]
 
   tests: [tests/conformance/*.yaml]

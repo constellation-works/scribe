@@ -443,14 +443,64 @@ pub(crate) struct PassPayload {
     pub(crate) gave_up: bool,
 }
 
-/// What `session pass` did.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// What `session pass` did; `--json` and the `scribe.session-pass` tool
+/// print it as `{"passes", "remaining"}`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct PassReport {
     /// One per session passed, in id order.
     pub(crate) passes: Vec<PassPayload>,
     /// Due sessions left for the next run.
     pub(crate) remaining: usize,
     /// Lines for stderr, printed in every mode.
+    #[serde(skip)]
+    pub(crate) notices: Vec<String>,
+}
+
+/// An approved proposal a scan applied again, because its older entry was
+/// still `active`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct ReappliedPayload {
+    /// The proposal id.
+    pub(crate) proposal: String,
+    /// The older entry's id.
+    pub(crate) entry: String,
+    /// Its status now: `superseded` or `retired`.
+    pub(crate) status: &'static str,
+}
+
+/// A batch of pairs the consistency model did not label.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct BatchFailure {
+    /// The batch's number in this scan, from 1.
+    pub(crate) batch: usize,
+    /// The model failure's stable code.
+    pub(crate) error_code: &'static str,
+}
+
+/// What `consistency scan` did; `--json` and the `scribe.consistency-scan`
+/// tool print it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct ScanReport {
+    /// Approvals applied again, by proposal id.
+    pub(crate) reapplied: Vec<ReappliedPayload>,
+    /// Proposals this scan opened, by id.
+    pub(crate) opened: Vec<ProposalPayload>,
+    /// Candidate pairs the model labelled.
+    pub(crate) judged_pairs: usize,
+    /// Candidate pairs left for a later scan: past the per-scan cap, or not
+    /// reached in this call's time.
+    pub(crate) pairs_left: usize,
+    /// Pairs labelled `unrelated`.
+    pub(crate) unrelated_pairs: usize,
+    /// Labels dropped: a quote not verbatim in its entry, an unknown pair or
+    /// label.
+    pub(crate) dropped_labels: usize,
+    /// Stale entries found (each opens a proposal unless one exists).
+    pub(crate) stale_entries: usize,
+    /// Batches the model failed; their pairs are offered again next scan.
+    pub(crate) failed_batches: Vec<BatchFailure>,
+    /// Lines for stderr, printed in every mode.
+    #[serde(skip)]
     pub(crate) notices: Vec<String>,
 }
 
@@ -615,6 +665,10 @@ impl AskPayload {
 pub(crate) enum PluginReply {
     /// `scribe.ask` answered.
     Ask(Box<AskPayload>),
+    /// `scribe.session-pass` ran.
+    Pass(PassReport),
+    /// `scribe.consistency-scan` ran.
+    Scan(Box<ScanReport>),
     /// The call failed; the envelope carries the code.
     Error(PluginError),
 }
@@ -656,6 +710,8 @@ pub(crate) enum Output {
     Hook(HookReply),
     /// A session pass's report.
     Pass(PassReport),
+    /// A consistency scan's report.
+    Scan(Box<ScanReport>),
     /// An answer to a question.
     Ask(Box<AskPayload>),
     /// A plugin tool call's envelope.

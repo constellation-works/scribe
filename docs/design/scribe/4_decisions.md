@@ -11,7 +11,7 @@ summary: Why superseded entries are hidden not removed, why one JSON file per ta
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-13117, ORB-13134]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134]
 ---
 
 # scribe — Decisions
@@ -1192,7 +1192,8 @@ the tree never holds a file named like the binary it runs.
   user is unaffected.
 - S6 revisits the timeout (five sessions at 120 s exceed 300000; the job
   takes fewer per call or several calls) and adds the store write grant with
-  the routines.
+  the routines. Superseded in those parts by
+  [the routine tools' deadline](#the-routine-tools-start-no-unit-after-a-deadline-and-audit-inside-the-call).
 
 ## `ask` reads Orbit tasks through `orbit tool run`
 
@@ -1222,6 +1223,131 @@ bound workspace, or the plugin's `task_workspaces`. A failure is logged and
 - From a terminal outside an Orbit workspace, `question ask` logs one
   warning and answers from the store alone.
 
+## The routine tools start no unit after a deadline and audit inside the call
+
+**Recorded:** 2026-11 · [ORB-21795]
+**Code anchors:** `crates/scribe/src/commands/plugin.rs::audited`, `crates/scribe/src/commands/mod.rs::RunLimits`
+
+### Context
+
+[2_design.md §1](./2_design.md#1-boundary-and-surfaces) sizes the backend at
+`timeout_ms: 720000` (five sessions at 120 s, four batches at 120 s) and
+puts the routines in `definitions/`. Orbit 0.44.0 caps `timeout_ms` at
+300000, lists a plugin's jobs and routines under `spec.definitions` (any
+path), seeds every routine disabled, resolves an empty or relative
+`{{config.<key>}}` against the install tree and refuses a write grant there,
+under its global root, or on a directory that does not exist. `plugin call`
+learns which store it serves only from the envelope, after `Command::audit`
+has run.
+
+### Decision
+
+- `timeout_ms` is 300000. The tools run the CLI's code under
+  `commands::RunLimits`: `scribe.session-pass` starts no session after the
+  first once 50 s have passed (one session is at most two 121 s asks), and
+  `scribe.consistency-scan` no batch after the first once 170 s have (one
+  batch is at most 121 s); what is left is `remaining` or `pairs_left` for
+  the next run. The CLI keeps five sessions and four batches with no time
+  limit. Each job step is 300 s, each routine `timeout_minutes: 6` with
+  `overlap: forbid`.
+- The routines and jobs are `routines/*.yaml` and `jobs/*.yaml`, listed
+  under `spec.definitions`.
+- The store root is granted `fs.read` and `fs.write`. Its default is
+  `/var/tmp`, a directory every host has, outside any Orbit tree, which
+  scribe treats as unset (`not_configured`), so the manifest validates and
+  its goldens run before the operator sets it. A new `transcripts` setting
+  (absolute; default empty, which is a harmless read of the install tree) is
+  granted `fs.read`; `scribe.session-pass` answers `not_configured` without
+  it.
+- The routine tools are audited by an `AuditGuard` started inside the call,
+  on the store the envelope names, under the CLI verbs' command names
+  (`session pass`, `consistency scan`), with the same `mark_result` lines.
+  `PluginCommand::audit` stays `None`, so `scribe.ask` writes nothing. This
+  departs from `STD-02@4 §R24`'s single chokepoint in where the guard
+  starts, not in what it records: one `AuditGuard` implementation serves both.
+
+### Consequences
+
+- A busy store catches up over several routine runs; the CLI still does a
+  full run by hand.
+- A failure counter that reads the audit log (`session pass`) sees the
+  plugin's passes and the CLI's alike.
+- Until `root` is set, the plugin holds a write grant on `/var/tmp` it never
+  uses.
+- Cost: a sentinel default the code must recognise, and two places that
+  start an audit guard instead of one.
+
+## Approving needs the older entry active
+
+**Recorded:** 2026-11 · [ORB-21795]
+**Code anchors:** `crates/scribe-core/src/consistency.rs::settle`
+
+### Context
+
+A proposal stays `open` while Daniel retires, forgets or supersedes one of
+its entries by another proposal. Applying it then would overwrite that
+newer decision, for example turning a `forgotten` entry back into a
+`superseded` one.
+
+### Decision
+
+`#scribe approve <p-id>` is refused `entry_not_active` unless the older entry
+is `active`; the proposal stays open, and `#scribe reject` closes it.
+`reapply` likewise touches only an older entry that is still `active`.
+
+### Consequences
+
+- An approval never changes an entry Daniel settled another way.
+- Cost: a stale open proposal needs an explicit reject to leave
+  `proposal list`.
+
+## Forgetting an entry blanks the proposals' copies of it
+
+**Recorded:** 2026-11 · [ORB-21795]
+**Code anchors:** `crates/scribe-core/src/consistency.rs::settle`
+
+### Context
+
+[§3](./2_design.md#3-storage) says `forgotten` blanks `said` and `content`.
+Proposals quote both of their entries and their reasons paraphrase them, so
+the words of a forgotten entry would survive in `proposals.json`.
+
+### Decision
+
+`#scribe forget <entry-id>` also blanks the `text` of every proposal quote of
+that entry and the `reason` of every proposal whose `older` or `newer` it
+is, in the same locked write. The proposals' ids, kinds, states and cites
+stay.
+
+### Consequences
+
+- A forgotten entry's words leave the whole store at once.
+- Cost: a proposal about a forgotten entry no longer says why it was
+  opened, or what the other entry's quote was contrasted with.
+
+## `session-start` reads only
+
+**Recorded:** 2026-11 · [ORB-21795]
+**Code anchors:** `crates/scribe/src/commands/hook/session_start.rs`
+
+### Context
+
+[§3](./2_design.md#3-storage) has `scribe hook session-start` create
+`config.toml` with the defaults on first run. Every command already treats a
+missing file as the defaults, and the hook runs before every session.
+
+### Decision
+
+`session-start` only reads `proposals.json` and prints the open count; it
+writes nothing, so it is not audited and cannot fail a session start on a
+read-only or missing store (a read error is logged and counts as none).
+
+### Consequences
+
+- Daniel creates `config.toml` when he wants to change a default; nothing
+  writes it for him.
+- Cost: no file on disk to show the defaults; `scribe tag list` shows them.
+
 ## Task References
 
 - [ORB-21747] — designed the standalone scribe plugin and recorded its decisions.
@@ -1233,5 +1359,6 @@ bound workspace, or the plugin's `task_workspaces`. A failure is logged and
 - [ORB-21778] — S3: referents (form 3), the `Models` port and `ClaudeCliModels`.
 - [ORB-21784] — S4: `/scribe on|off|status`, session-pass cadence and session records.
 - [ORB-21787] — S5: the Orbit plugin tree and `ask`.
+- [ORB-21795] — S6: the consistency routine, the settling verbs and the routines.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.

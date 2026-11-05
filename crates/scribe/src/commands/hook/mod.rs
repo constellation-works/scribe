@@ -9,18 +9,26 @@
 //! - `stop.rs`: after a reply, fill in the message uuid of the entries the
 //!   prompt wrote, from the transcript, and mark a switched-on session's
 //!   pass due by minutes or turns (§5.2);
-//! - `session_end.rs`: mark a switched-on session's last pass due and final.
+//! - `session_end.rs`: mark a switched-on session's last pass due and final;
+//! - `session_start.rs`: tell Daniel how many proposals are open (§7).
+//!
+//! A `#scribe approve|reject|retire|forget` line goes from
+//! `user_prompt_submit.rs` to `proposal_command.rs`, which settles a
+//! proposal or hides or blanks an entry (§3, §7).
 //!
 //! `payload.rs` holds the stdin shapes and the transcript provenance check;
 //! `project.rs` finds the repository a session's cwd belongs to (both also
 //! serve `session pass`). These are the only commands that write entries or
-//! `control.json`; every one is audited, and none calls a model except the
-//! form-3 referent in `user_prompt_submit.rs`.
+//! `control.json`, and the only ones that settle proposals; every one that
+//! writes is audited (`session-start` reads only), and none calls a model
+//! except the form-3 referent in `user_prompt_submit.rs`.
 
 pub(super) mod payload;
 pub(super) mod project;
+mod proposal_command;
 mod scribe_command;
 mod session_end;
+mod session_start;
 mod stop;
 mod user_prompt_submit;
 
@@ -34,6 +42,7 @@ pub(super) const HOOK_EXAMPLES: &str = "\
 These run from the Claude Code package (plugin/claude-code), not by hand.
 
 Examples:
+  scribe hook session-start < <payload.json>
   scribe hook user-prompt-submit < <payload.json>
   scribe hook stop < <payload.json>
   scribe hook session-end < <payload.json>";
@@ -41,7 +50,9 @@ Examples:
 const PROMPT_EXAMPLES: &str = "\
 Reads the UserPromptSubmit payload (session_id, transcript_path, cwd, prompt)
 on stdin. Prints Claude Code hook JSON when the prompt has a #scribe line,
-and nothing otherwise; never blocks such a prompt. A prompt whose first
+and nothing otherwise; never blocks such a prompt. #scribe approve <p-id>,
+#scribe reject <p-id>, #scribe retire <entry-id> and #scribe forget
+<entry-id> settle a proposal or hide or blank an entry. A prompt whose first
 line is /scribe on, /scribe off or /scribe status switches this session's
 cataloging and is blocked, its status given as the reason.
 
@@ -55,6 +66,14 @@ nothing. Calls no model.
 Examples:
   scribe hook stop < <payload.json>";
 
+const SESSION_START_EXAMPLES: &str = "\
+Reads the SessionStart payload (session_id) on stdin. Prints a message for
+Daniel when proposals are open, and nothing otherwise. Reads only; calls no
+model.
+
+Examples:
+  scribe hook session-start < <payload.json>";
+
 const SESSION_END_EXAMPLES: &str = "\
 Reads the SessionEnd payload (session_id) on stdin. Prints nothing. Calls
 no model; the pass itself runs from scribe session pass.
@@ -65,7 +84,10 @@ Examples:
 /// Verbs on the `hook` noun: one per Claude Code hook event.
 #[derive(Debug, Subcommand)]
 pub(crate) enum HookCommand {
-    /// Record each #scribe line of a typed prompt, from the UserPromptSubmit hook's JSON on stdin
+    /// Tell Daniel how many proposals are open, from the SessionStart hook's JSON on stdin
+    #[command(after_help = SESSION_START_EXAMPLES)]
+    SessionStart(HookArgs),
+    /// Record each #scribe line of a typed prompt, or settle the proposal or entry it names, from the UserPromptSubmit hook's JSON on stdin
     #[command(after_help = PROMPT_EXAMPLES)]
     UserPromptSubmit(HookArgs),
     /// Fill in the message ids of entries this session recorded and mark a session pass due, from the Stop hook's JSON on stdin
@@ -81,10 +103,12 @@ pub(crate) enum HookCommand {
 pub(crate) struct HookArgs {}
 
 impl HookCommand {
-    /// Every verb writes, so every verb is audited; a run that changed nothing
-    /// writes no line (see `audit_middleware`).
+    /// Every verb but `session-start` writes, so those are audited; a run
+    /// that changed nothing writes no line (see `audit_middleware`).
+    /// `session-start` reads only (STD-01 R31).
     pub(super) fn audit(&self) -> Option<AuditMeta> {
         match self {
+            Self::SessionStart(_) => None,
             Self::UserPromptSubmit(_) => Some(AuditMeta {
                 command: "hook user-prompt-submit",
             }),
@@ -102,6 +126,7 @@ impl HookCommand {
 pub(super) fn run(command: HookCommand, ctx: &Context) -> Result<Output, CliError> {
     let input = payload::read_stdin()?;
     match command {
+        HookCommand::SessionStart(HookArgs {}) => session_start::run(&input, ctx),
         HookCommand::UserPromptSubmit(HookArgs {}) => user_prompt_submit::run(&input, ctx),
         HookCommand::Stop(HookArgs {}) => stop::run(&input, ctx),
         HookCommand::SessionEnd(HookArgs {}) => session_end::run(&input, ctx),

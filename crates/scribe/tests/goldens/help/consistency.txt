@@ -1,0 +1,20 @@
+Propose superseding or retiring entries a later one replaced or that are due for review (scan)
+
+Usage: scribe consistency [OPTIONS] <COMMAND>
+
+Commands:
+  scan  Propose superseding entries a later one replaced, and retiring entries due for review, with the consistency model
+  help  Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Global options:
+      --root <DIR>       Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>  Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json             Shorthand for --format json
+
+Examples:
+  scribe consistency scan
+  scribe consistency scan --json | jq '.opened[].id'

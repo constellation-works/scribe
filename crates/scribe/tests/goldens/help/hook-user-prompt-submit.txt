@@ -1,4 +1,4 @@
-Record each #scribe line of a typed prompt, from the UserPromptSubmit hook's JSON on stdin
+Record each #scribe line of a typed prompt, or settle the proposal or entry it names, from the UserPromptSubmit hook's JSON on stdin
 
 Usage: scribe hook user-prompt-submit [OPTIONS]
 
@@ -13,7 +13,9 @@ Global options:
 
 Reads the UserPromptSubmit payload (session_id, transcript_path, cwd, prompt)
 on stdin. Prints Claude Code hook JSON when the prompt has a #scribe line,
-and nothing otherwise; never blocks such a prompt. A prompt whose first
+and nothing otherwise; never blocks such a prompt. #scribe approve <p-id>,
+#scribe reject <p-id>, #scribe retire <entry-id> and #scribe forget
+<entry-id> settle a proposal or hide or blank an entry. A prompt whose first
 line is /scribe on, /scribe off or /scribe status switches this session's
 cataloging and is blocked, its status given as the reason.
 

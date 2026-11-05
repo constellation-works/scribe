@@ -15,8 +15,11 @@
 //!
 //! A hook run writes one line per record it wrote or refused (two `#scribe`
 //! lines in one prompt are two lines in the log), and none when it changed
-//! nothing: the `Stop` hook runs after every reply and usually has nothing
-//! to do, and a prompt without `#scribe` is not a mutation.
+//! nothing; a session pass one per session passed; a consistency scan one
+//! per entry re-applied, per proposal opened and per batch the model
+//! failed, and none when it changed nothing: the `Stop` hook runs after
+//! every reply and usually has nothing to do, and a prompt without
+//! `#scribe` is not a mutation.
 //!
 //! The audit log is a side channel, so it fails open (STD-02 R31): a line that
 //! cannot be written never fails the command that already ran, and is reported
@@ -30,8 +33,9 @@ use scribe_core::{AuditEvent, AuditStatus, Store};
 use std::time::Instant;
 use time::OffsetDateTime;
 
-/// How a command appears in the audit log. Declared by the hook commands,
-/// the only ones that write.
+/// How a command appears in the audit log. Declared by the commands that
+/// write: the hooks, `session pass` and `consistency scan` (also when the
+/// plugin's routine tools run them).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct AuditMeta {
     /// The command path, such as `hook user-prompt-submit`.
@@ -106,6 +110,25 @@ impl<'a> AuditGuard<'a> {
                     error_code: p.error_code,
                 })
                 .collect(),
+            Ok(Output::Scan(report)) => report
+                .reapplied
+                .iter()
+                .map(|r| Line {
+                    status: AuditStatus::Success,
+                    target: Some(r.entry.clone()),
+                    error_code: None,
+                })
+                .chain(report.opened.iter().map(|p| Line {
+                    status: AuditStatus::Success,
+                    target: Some(p.id.clone()),
+                    error_code: None,
+                }))
+                .chain(report.failed_batches.iter().map(|f| Line {
+                    status: AuditStatus::Failure,
+                    target: Some(format!("batch:{}", f.batch)),
+                    error_code: Some(f.error_code),
+                }))
+                .collect(),
             Ok(output) => vec![Line {
                 status: AuditStatus::Success,
                 target: target_of(output),
@@ -164,8 +187,9 @@ fn target_of(output: &Output) -> Option<String> {
             record: Record::Session(session),
         } => Some(session.id.clone()),
         Output::List { .. } => None,
-        // Hook replies and passes are audited per outcome in `mark_result`.
-        Output::Hook(_) | Output::Pass(_) => None,
+        // Hook replies, passes and scans are audited per outcome in
+        // `mark_result`.
+        Output::Hook(_) | Output::Pass(_) | Output::Scan(_) => None,
         // Read-only: never audited (`question ask`, `plugin call`).
         Output::Ask(_) | Output::Plugin(_) => None,
     }

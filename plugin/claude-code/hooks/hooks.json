@@ -1,6 +1,17 @@
 {
-  "description": "scribe: record #scribe lines and switch /scribe on and off from typed prompts, fill cites and mark session passes due after each reply, and mark the final pass due at session end",
+  "description": "scribe: say at session start how many proposals are open, record #scribe lines, settle proposals and switch /scribe on and off from typed prompts, fill cites and mark session passes due after each reply, and mark the final pass due at session end",
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "scribe hook session-start",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [

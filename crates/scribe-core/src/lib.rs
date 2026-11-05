@@ -11,7 +11,9 @@
 //!   ([`Config`]) in `config`; parsing a typed turn into `#scribe`
 //!   instructions in [`capture`]; `/scribe on|off|status` and the switch
 //!   transitions in [`control`]; a session pass, from transcript to record,
-//!   in [`pass`]; reading a Claude Code transcript in [`transcript`]; the
+//!   in [`pass`]; the consistency routine's candidates and checks and the
+//!   settling verbs (`approve`, `reject`, `retire`, `forget`) in
+//!   [`consistency`]; reading a Claude Code transcript in [`transcript`]; the
 //!   quote check in [`verbatim`]; and the [`Models`] port, every model call
 //!   as a typed request, in [`models`];
 //! - persistence in `store`: the file-backed [`Store`], its formats, the
@@ -33,6 +35,7 @@
 pub mod ask;
 pub mod capture;
 mod config;
+pub mod consistency;
 pub mod control;
 mod entry;
 mod error;

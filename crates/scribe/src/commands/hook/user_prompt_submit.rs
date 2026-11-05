@@ -15,6 +15,10 @@
 //! and the echo says it was guessed. A session with no earlier message has
 //! nothing to point at and the line is refused as `no_referent`.
 //!
+//! A settling line (`#scribe approve|reject <p-id>`,
+//! `#scribe retire|forget <entry-id>`, form 4) goes to `proposal_command.rs`
+//! after the entries are recorded, and is echoed in its place.
+//!
 //! A prompt whose first line is `/scribe on`, `/scribe off` or
 //! `/scribe status` is not a turn: `scribe_command.rs` switches the session
 //! and blocks it (§5.1), and its `#scribe` lines, if any, are not read.
@@ -29,7 +33,7 @@ use super::project;
 use crate::app::Context;
 use crate::error::CliError;
 use crate::output::{HookOutcome, HookReply, Output};
-use scribe_core::capture::{self, Guess, Parsed, Refusal, Refused, Turn};
+use scribe_core::capture::{self, Guess, Parsed, Refusal, Refused, Settling, Turn};
 use scribe_core::models::ModelError;
 use scribe_core::transcript::{self, Message};
 use scribe_core::{Captured, Config, ContentFrom, Entry, Label, Models, SessionId};
@@ -66,6 +70,8 @@ enum Plan {
     /// A referent line this prompt already recorded: echoed, the model not
     /// asked again.
     Recorded(Box<Entry>),
+    /// A settling line (form 4), applied after the entries are recorded.
+    Settle(Settling),
 }
 
 /// [`run`] with the `Models` adapter `models` builds for the config, so a
@@ -129,6 +135,7 @@ pub(super) fn run_with<M: Models>(
     for item in parsed {
         let plan = match item {
             Parsed::Refused(refused) => Plan::Refused(refused),
+            Parsed::Settle(settling) => Plan::Settle(settling),
             Parsed::Instruction(instruction) => {
                 drafts.push(capture::draft(&instruction, &turn, &config.tags));
                 Plan::Draft {
@@ -205,6 +212,11 @@ pub(super) fn run_with<M: Models>(
                 outcomes.push(refusal(&session, refused.reason.code()));
             }
             Plan::Recorded(entry) => echoes.push(already(&entry)),
+            Plan::Settle(settling) => {
+                let reply = super::proposal_command::run(&settling, &turn, ctx);
+                echoes.push(reply.echo);
+                outcomes.extend(reply.outcome);
+            }
             Plan::Draft { line, said, guess } => match (captured.get(&line), &store_error) {
                 (Some(Captured::Added(entry)), _) => {
                     let guessed = guess
@@ -341,7 +353,7 @@ fn reply(echoes: Vec<String>, outcomes: Vec<HookOutcome>) -> Output {
 }
 
 /// `text` on one line, cut to [`ECHO_CHARS`].
-fn quote(text: &str) -> String {
+pub(super) fn quote(text: &str) -> String {
     let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if flat.chars().count() <= ECHO_CHARS {
         flat
@@ -353,7 +365,7 @@ fn quote(text: &str) -> String {
 }
 
 /// An error and its causes on one line.
-fn chain(err: &scribe_core::Error) -> String {
+pub(super) fn chain(err: &scribe_core::Error) -> String {
     let mut message = err.to_string();
     let mut source = std::error::Error::source(err);
     while let Some(cause) = source {

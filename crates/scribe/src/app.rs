@@ -68,6 +68,16 @@ impl Context {
         })
     }
 
+    /// A context for the store at `root` and the transcripts under
+    /// `transcripts`, as the plugin's settings name them (`plugin call`
+    /// never reads `SCRIBE_ROOT` or `HOME`).
+    pub(crate) fn at(root: PathBuf, transcripts: Option<PathBuf>) -> Self {
+        Self {
+            store: Store::open(root),
+            transcripts,
+        }
+    }
+
     /// The scribe store.
     pub(crate) fn store(&self) -> &Store {
         &self.store

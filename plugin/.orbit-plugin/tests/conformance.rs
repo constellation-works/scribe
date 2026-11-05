@@ -57,3 +57,63 @@ fn ask_is_read_only_and_global_and_the_routine_tools_are_not_agent_callable() {
         }
     }
 }
+
+fn yaml(relative: &str) -> Value {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../plugin/.orbit-plugin")
+        .join(relative);
+    let text = std::fs::read_to_string(&path).expect("read a definition");
+    yaml_serde::from_str(&text).expect("a definition is YAML")
+}
+
+fn listed<'a>(manifest: &'a Value, kind: &str) -> Vec<&'a str> {
+    manifest["spec"]["definitions"][kind]
+        .as_sequence()
+        .expect("spec.definitions lists it")
+        .iter()
+        .map(|v| v.as_str().expect("a path"))
+        .collect()
+}
+
+#[test]
+fn the_routines_ship_disabled_and_each_runs_one_routine_tool() {
+    let manifest = manifest();
+    let jobs: Vec<Value> = listed(&manifest, "jobs").into_iter().map(yaml).collect();
+    let mut ran = Vec::new();
+    for routine in listed(&manifest, "routines").into_iter().map(yaml) {
+        let name = routine["name"].as_str().expect("a routine has a name");
+        assert_eq!(routine["enabled"].as_bool(), Some(false), "{name}");
+        let target = routine["target"].as_str().expect("a target");
+        let job = target.strip_prefix("job:").expect("a job target");
+        let job = jobs
+            .iter()
+            .find(|j| j["metadata"]["name"].as_str() == Some(job))
+            .unwrap_or_else(|| panic!("{name}: no job {job}"));
+        let steps = job["spec"]["steps"].as_sequence().expect("steps");
+        assert_eq!(steps.len(), 1, "{name}");
+        let config = &steps[0]["spec"]["config"];
+        assert_eq!(
+            steps[0]["spec"]["action"].as_str(),
+            Some("plugin.tool_call")
+        );
+        ran.push(config["tool"].as_str().expect("a tool").to_owned());
+    }
+    ran.sort();
+    assert_eq!(ran, ["scribe.consistency-scan", "scribe.session-pass"]);
+}
+
+#[test]
+fn no_tool_settles_a_proposal_or_changes_an_entry_by_id() {
+    // Settling is Daniel's, typed in a prompt (#scribe approve|reject|
+    // retire|forget): the tools are exactly ask and the two routine jobs,
+    // and the routine tools take no input.
+    let manifest = manifest();
+    let names: Vec<&str> = tools(&manifest)
+        .into_iter()
+        .map(|t| field(t, "name").expect("a tool has a name"))
+        .collect();
+    assert_eq!(names, ["ask", "session-pass", "consistency-scan"]);
+    let empty = yaml("schemas/empty.input.json");
+    assert_eq!(empty["additionalProperties"].as_bool(), Some(false));
+    assert!(empty.get("properties").is_none());
+}

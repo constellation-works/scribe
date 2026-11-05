@@ -11,8 +11,17 @@ The Claude Code hooks that write entries are a separate package,
 | Tool | Kind | MCP | State |
 |---|---|---|---|
 | `scribe.ask` | read-only | `global` | live |
-| `scribe.session-pass` | mutating, not agent-callable | none | `not_implemented` until S6 |
-| `scribe.consistency-scan` | mutating, not agent-callable | none | `not_implemented` until S6 |
+| `scribe.session-pass` | mutating, not agent-callable | none | live; the `scribe-session-pass` routine runs it |
+| `scribe.consistency-scan` | mutating, not agent-callable | none | live; the `scribe-consistency` routine runs it |
+
+`routines/` and `jobs/` hold the two routines, seeded by `orbit plugin
+enable` with `enabled: false`: `scribe-session-pass` (`*/5 * * * *`, the
+records of sessions whose pass is due, as `scribe session pass` writes them)
+and `scribe-consistency` (`0 6 * * 1`, proposals, as `scribe consistency
+scan` opens them). Each runs one job step that calls its tool. A call
+starts no session after 50 s and no batch after 170 s, to end inside
+Orbit's 300 s limit; the rest waits for the next run. No tool settles a
+proposal: that is `#scribe approve|reject` in a typed prompt.
 
 ## Install (operator)
 
@@ -27,11 +36,13 @@ orbit plugin add plugin/.orbit-plugin
 orbit plugin enable scribe --grant fs,network,env_pass,orbit_tools
 ```
 
-Then set the store root in the workspace's Orbit config and check one call:
+Then set the store root and the transcripts directory in the workspace's
+Orbit config and check one call:
 
 ```toml
 [plugins.scribe]
-root = "/home/<user>/.scribe"     # absolute; ask answers not_configured until set
+root = "/home/<user>/.scribe"     # absolute; every tool answers not_configured until set
+transcripts = "/home/<user>/.claude/projects"   # absolute; session-pass needs it
 # task_workspaces = ["ws_constellation"]   # optional: where orchestration tasks live
 ```
 
@@ -39,9 +50,21 @@ root = "/home/<user>/.scribe"     # absolute; ask answers not_configured until s
 orbit tool run scribe.ask --input '{"question":"can you fetch me last session summary?"}'
 ```
 
-The grants are: `fs` (read the store root), `network` (the `claude` CLI),
-`env_pass` (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`), and
-`orbit_tools` (`orbit.search`, `orbit.task.show`, read-only).
+(`orbit config set plugins.scribe.root <path>` sets a key the same way.)
+The routines stay disabled until you switch them on, in one workspace:
+`orbit routine list` shows them, and setting `enabled: true` in
+`.orbit/routines/scribe-session-pass.yaml` and
+`.orbit/routines/scribe-consistency.yaml` turns them on, once the CLI's
+`scribe session pass` and `scribe consistency scan` do what you expect. Reinstall the Claude Code package
+(`claude plugin install scribe --marketplace ./plugin`) so its
+`SessionStart` hook is registered.
+
+The grants are: `fs` (read and write the store root, read the transcripts
+directory), `network` (the `claude` CLI), `env_pass`
+(`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`), and `orbit_tools`
+(`orbit.search`, `orbit.task.show`, read-only). The `root` default,
+`/var/tmp`, means unset: Orbit grants writes only to a directory that
+exists, and scribe never opens a store there.
 
 ## Tests
 

@@ -11,16 +11,29 @@
 //! - `scribe.ask` runs [`super::question::answer_with`], the code behind
 //!   `question ask`, against the store at the plugin's `root` setting, so
 //!   both return the same payload for the same store.
-//! - `scribe.session-pass` and `scribe.consistency-scan` are declared for
-//!   the routines but not yet wired (the routines ship in a later slice):
-//!   they answer `not_implemented`.
+//! - `scribe.session-pass` runs `session pass` (the `scribe-session-pass`
+//!   routine's job) and `scribe.consistency-scan` runs `consistency scan`
+//!   (the `scribe-consistency` routine's), on the same code as the CLI
+//!   verbs, with the same reports. Both are `agent_callable: false` and
+//!   `mcp_scope: none` in `plugin.yaml`: only the routines reach them. So
+//!   that a call ends inside Orbit's 300 s backend timeout, no session
+//!   after the first starts once [`PASS_START_BY`] has passed, and no
+//!   batch after the first once [`SCAN_START_BY`] has; what is left is
+//!   reported as remaining for the next run.
 //!
-//! The store root comes from `[plugins.scribe] root`, never from
-//! `SCRIBE_ROOT` or `HOME`: the plugin's sandbox grants read access to that
-//! path alone. Every call here reads only, so none is audited.
+//! The store root comes from `[plugins.scribe] root`, and the transcripts
+//! directory from `[plugins.scribe] transcripts`, never from `SCRIBE_ROOT`
+//! or `HOME`: the plugin's sandbox grants access to those paths alone.
+//! `scribe.ask` reads only and is not audited. The two routine tools write,
+//! and are audited here, inside the call, under the same command names as
+//! the CLI verbs (`session pass`, `consistency scan`) and in the store they
+//! change — `plugin call` itself has no audit entry, because which store a
+//! call writes is known only once the envelope is read (4_decisions.md).
 
 use super::question::{answer_with, date_parser, question_parser};
+use super::{RunLimits, consistency, session};
 use crate::app::Context;
+use crate::audit_middleware::{AuditGuard, AuditMeta};
 use crate::error::CliError;
 use crate::output::{Output, PluginError, PluginReply};
 use clap::{Args, Subcommand};
@@ -31,6 +44,15 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::io::Read;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
+
+/// How long after a call starts `scribe.session-pass` may start another
+/// session: a session may take two 121-second asks, and the call must end
+/// inside Orbit's 300-second backend timeout.
+const PASS_START_BY: Duration = Duration::from_secs(50);
+/// How long after a call starts `scribe.consistency-scan` may start another
+/// batch, each within 121 seconds.
+const SCAN_START_BY: Duration = Duration::from_secs(170);
 
 pub(super) const PLUGIN_EXAMPLES: &str = "\
 The Orbit plugin's backend runs this; it is not meant to be typed.
@@ -66,8 +88,8 @@ pub(crate) enum PluginCommand {
 pub(crate) struct CallArgs {}
 
 impl PluginCommand {
-    /// `None`: every tool wired today reads only. The routine tools are
-    /// audited where they write, when they are wired.
+    /// `None`: `scribe.ask` reads only, and the routine tools audit
+    /// themselves in the store their call names (see the module docs).
     pub(super) fn audit(&self) -> Option<crate::audit_middleware::AuditMeta> {
         match self {
             Self::Call(_) => None,
@@ -172,16 +194,8 @@ fn call(raw: &[u8], ctx: &Context) -> PluginReply {
         .unwrap_or_default();
     match verb {
         "ask" => ask(envelope.input, &envelope.context.config, ctx),
-        "session-pass" => failure(
-            "not_implemented",
-            "scribe.session-pass is not wired to the plugin yet; run 'scribe session pass'",
-            false,
-        ),
-        "consistency-scan" => failure(
-            "not_implemented",
-            "scribe.consistency-scan is not built yet",
-            false,
-        ),
+        "session-pass" => session_pass(&envelope.input, &envelope.context.config, ctx),
+        "consistency-scan" => consistency_scan(&envelope.input, &envelope.context.config, ctx),
         _ => failure(
             "unknown_tool",
             format!("{} is not a scribe tool", envelope.tool),
@@ -190,21 +204,130 @@ fn call(raw: &[u8], ctx: &Context) -> PluginReply {
     }
 }
 
-/// The store the plugin's `root` setting names: an absolute path.
-fn store_root(config: &Value) -> Result<PathBuf, PluginReply> {
-    let root = config
-        .get("root")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let path = PathBuf::from(root);
-    if root.is_empty() || !path.is_absolute() {
+/// The `root` default in `plugin.yaml`, which means unset. Orbit grants
+/// writes only to a directory that exists outside the install tree (it
+/// resolves an empty or relative path against that tree), so the default
+/// is a directory every host has, and no store is ever opened there.
+const ROOT_UNSET: &str = "/var/tmp";
+/// The `transcripts` default: empty (a read grant may name the install
+/// tree).
+const TRANSCRIPTS_UNSET: &str = "";
+
+/// The absolute path the setting `key` names, unless it is empty, relative
+/// or its `unset` default.
+fn setting_path(
+    config: &Value,
+    key: &str,
+    unset: &str,
+    help: &str,
+) -> Result<PathBuf, PluginReply> {
+    let value = config.get(key).and_then(Value::as_str).unwrap_or_default();
+    let path = PathBuf::from(value);
+    if value.is_empty() || value == unset || !path.is_absolute() {
         return Err(failure(
             "not_configured",
-            "set [plugins.scribe] root to the scribe data directory, an absolute path such as /home/<user>/.scribe",
+            format!("set [plugins.scribe] {key} to {help}"),
             false,
         ));
     }
     Ok(path)
+}
+
+/// The store the plugin's `root` setting names.
+fn store_root(config: &Value) -> Result<PathBuf, PluginReply> {
+    setting_path(
+        config,
+        "root",
+        ROOT_UNSET,
+        "the scribe data directory, an absolute path such as /home/<user>/.scribe",
+    )
+}
+
+/// The input of a routine tool: an empty object
+/// (`schemas/empty.input.json`).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RoutineInput {}
+
+/// Check a routine tool's `input`: `{}` (or absent).
+fn routine_input(tool: &str, input: &Value) -> Result<(), PluginReply> {
+    if input.is_null() {
+        return Ok(());
+    }
+    serde_json::from_value::<RoutineInput>(input.clone())
+        .map(|RoutineInput {}| ())
+        .map_err(|e| failure("invalid_input", format!("{tool} input: {e}"), false))
+}
+
+/// The transcripts directory the plugin's `transcripts` setting names.
+fn transcripts_dir(config: &Value) -> Result<PathBuf, PluginReply> {
+    setting_path(
+        config,
+        "transcripts",
+        TRANSCRIPTS_UNSET,
+        "Claude Code's projects directory, an absolute path such as /home/<user>/.claude/projects",
+    )
+}
+
+/// Run a routine command against `routine_ctx`, audited there as `command`.
+fn audited(
+    routine_ctx: &Context,
+    command: &'static str,
+    run: impl FnOnce(&Context) -> Result<Output, CliError>,
+) -> PluginReply {
+    let mut audit = AuditGuard::start(
+        routine_ctx.store(),
+        AuditMeta { command },
+        routine_ctx.now(),
+    );
+    let result = run(routine_ctx);
+    audit.mark_result(&result);
+    drop(audit);
+    match result {
+        Ok(Output::Pass(report)) => PluginReply::Pass(report),
+        Ok(Output::Scan(report)) => PluginReply::Scan(report),
+        Ok(_) => failure(
+            "internal_error",
+            format!("{command} returned no report"),
+            false,
+        ),
+        Err(err) => {
+            let retryable = matches!(err, CliError::Core(ref e) if e.code() == "store_locked");
+            failure(err.code(), message_of(&err), retryable)
+        }
+    }
+}
+
+fn session_pass(input: &Value, config: &Value, ctx: &Context) -> PluginReply {
+    if let Err(reply) = routine_input("scribe.session-pass", input) {
+        return reply;
+    }
+    let (root, transcripts) = match (store_root(config), transcripts_dir(config)) {
+        (Ok(root), Ok(transcripts)) => (root, transcripts),
+        (Err(reply), _) | (_, Err(reply)) => return reply,
+    };
+    let limits =
+        RunLimits::new(scribe_core::pass::MAX_PER_RUN).start_by(Instant::now() + PASS_START_BY);
+    audited(
+        &Context::at(root, Some(transcripts)),
+        session::pass::COMMAND,
+        |routine| session::pass::run_with(routine, |config| ctx.models(config), limits),
+    )
+}
+
+fn consistency_scan(input: &Value, config: &Value, ctx: &Context) -> PluginReply {
+    if let Err(reply) = routine_input("scribe.consistency-scan", input) {
+        return reply;
+    }
+    let root = match store_root(config) {
+        Ok(root) => root,
+        Err(reply) => return reply,
+    };
+    let limits =
+        RunLimits::new(consistency::max_batches()).start_by(Instant::now() + SCAN_START_BY);
+    audited(&Context::at(root, None), consistency::COMMAND, |routine| {
+        consistency::scan(routine, |config| ctx.models(config), limits)
+    })
 }
 
 fn ask(input: Value, config: &Value, ctx: &Context) -> PluginReply {

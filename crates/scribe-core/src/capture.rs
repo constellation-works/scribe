@@ -21,14 +21,21 @@
 //! to a [`Referent`]: the content is an earlier message's passage, which a
 //! model picks from the [`window`] before the prompt and [`resolve`] checks
 //! verbatim, falling back to the previous assistant message when the model
-//! fails (§4.3). The settling verbs (`approve`, `reject`, `retire`, `forget`,
-//! form 4) and `distill` are recognised and refused as not supported by this
-//! build, never misread as form 2.
+//! fails (§4.3).
+//!
+//! 4. `#scribe approve|reject <p-id>` · `#scribe retire|forget <entry-id>`
+//!
+//! Form 4 parses to a [`Settle`]: settling a proposal or hiding or blanking
+//! an entry, which [`crate::consistency::settle`] applies. `distill` is
+//! recognised and refused as not supported by this build, never misread as
+//! form 2.
 //!
 //! Pure functions over text: no I/O (STD-02 R5).
 
-use crate::entry::{Cite, ContentFrom, NewEntry, Speaker, TagName};
+use crate::consistency::Settle;
+use crate::entry::{Cite, ContentFrom, EntryId, NewEntry, Speaker, TagName};
 use crate::models::{Candidate, ModelError, REFERENT_BUDGET, ReferentAnswer, ReferentRequest};
+use crate::proposal::ProposalId;
 use crate::record::{Label, Project, Topic, Topics};
 use crate::session::SessionId;
 use crate::tag::TagTable;
@@ -100,6 +107,13 @@ pub enum Refusal {
     /// A referent ("this", "it") with no earlier message in the session to
     /// point at.
     NoReferent,
+    /// A settling verb whose id is not the kind it takes.
+    BadId {
+        /// The verb as typed, lowercased.
+        verb: String,
+        /// What it takes, for the reply.
+        expected: &'static str,
+    },
 }
 
 impl Refusal {
@@ -108,7 +122,7 @@ impl Refusal {
     pub fn code(&self) -> &'static str {
         match self {
             Self::UnknownTag { .. } => "unknown_tag",
-            Self::Unparsed | Self::TooManyTopics => "unparsed_instruction",
+            Self::Unparsed | Self::TooManyTopics | Self::BadId { .. } => "unparsed_instruction",
             Self::Unsupported { .. } => "unsupported_instruction",
             Self::NoReferent => "no_referent",
         }
@@ -134,6 +148,9 @@ impl fmt::Display for Refusal {
                 f,
                 "there is no earlier message in this session to point at; write the content itself: {FORMS}"
             ),
+            Self::BadId { verb, expected } => {
+                write!(f, "#scribe {verb} takes {expected}")
+            }
         }
     }
 }
@@ -163,6 +180,17 @@ pub struct Referent {
     pub topics: Topics,
 }
 
+/// A form-4 line: settle a proposal, or hide or blank an entry.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Settling {
+    /// The line's number within the prompt, from 1.
+    pub line: u32,
+    /// The whole line exactly as typed.
+    pub said: String,
+    /// What it does.
+    pub action: Settle,
+}
+
 /// The result for one `#scribe` line.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Parsed {
@@ -170,6 +198,8 @@ pub enum Parsed {
     Instruction(Instruction),
     /// It points at an earlier message (form 3).
     Referent(Referent),
+    /// It settles a proposal or changes an entry's status (form 4).
+    Settle(Settling),
     /// It was refused.
     Refused(Refused),
 }
@@ -181,6 +211,7 @@ impl Parsed {
         match self {
             Self::Instruction(i) => i.line,
             Self::Referent(r) => r.line,
+            Self::Settle(s) => s.line,
             Self::Refused(r) => r.line,
         }
     }
@@ -333,11 +364,46 @@ fn parse(line: u32, said: &str, tags: &TagTable) -> Parsed {
     };
     let text = &said[first.start..last.end];
 
-    // Form 4: a settling verb and one id.
-    if body.len() == 2 && is(first.text, &SETTLING) {
-        return refuse(Refusal::Unsupported {
-            form: "settling a proposal or an entry",
-        });
+    // Form 4: a settling verb and one id; anything else after the verb is
+    // refused, never read as another form.
+    if is(first.text, &SETTLING) {
+        let verb = first.text.to_lowercase();
+        let id = if body.len() == 2 {
+            last.text.trim_end_matches(['.', '!', ',', ';'])
+        } else {
+            ""
+        };
+        let action = match verb.as_str() {
+            "approve" | "reject" => id.parse::<ProposalId>().ok().map(|p| {
+                if verb == "approve" {
+                    Settle::Approve(p)
+                } else {
+                    Settle::Reject(p)
+                }
+            }),
+            _ => id.parse::<EntryId>().ok().map(|e| {
+                if verb == "retire" {
+                    Settle::Retire(e)
+                } else {
+                    Settle::Forget(e)
+                }
+            }),
+        };
+        return match action {
+            Some(action) => Parsed::Settle(Settling {
+                line,
+                said: said.to_owned(),
+                action,
+            }),
+            None => {
+                let expected = if matches!(verb.as_str(), "approve" | "reject") {
+                    "a proposal id, such as p-4"
+                } else {
+                    "an entry id, such as decisions-12"
+                };
+                refuse(Refusal::BadId { verb, expected })
+            }
+        };
     }
     if is(first.text, &["distill"]) {
         return refuse(Refusal::Unsupported {
@@ -435,6 +501,22 @@ pub struct Turn {
     pub host: Label,
 }
 
+impl Turn {
+    /// The cite of `#scribe` line `line` of this turn; its message uuid is
+    /// `None` until the next `Stop` hook finds it.
+    #[must_use]
+    pub fn cite(&self, line: u32) -> Cite {
+        Cite {
+            session: self.session.clone(),
+            message: None,
+            at: self.at,
+            prompt_sha256: self.prompt_sha256.clone(),
+            line,
+            cwd: self.cwd.clone(),
+        }
+    }
+}
+
 /// The entry an instruction records, before the store gives it an id. Its
 /// `review_after` comes from the tag's `stale_after_days`.
 #[must_use]
@@ -479,14 +561,7 @@ fn new_entry(
         said: line.said.to_owned(),
         content,
         content_from,
-        cite: Cite {
-            session: turn.session.clone(),
-            message: None,
-            at: turn.at,
-            prompt_sha256: turn.prompt_sha256.clone(),
-            line: line.line,
-            cwd: turn.cwd.clone(),
-        },
+        cite: turn.cite(line.line),
         review_after: tags
             .get(line.tag)
             .and_then(|def| def.review_after(turn.at.date())),

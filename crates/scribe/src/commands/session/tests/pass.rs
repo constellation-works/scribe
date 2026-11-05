@@ -132,7 +132,12 @@ impl Setup {
     }
 
     fn run(&self, models: &FakeModels) -> Vec<PassPayload> {
-        let Output::Pass(report) = run_with(&self.ctx, |_| models).unwrap() else {
+        let Output::Pass(report) = run_with(
+            &self.ctx,
+            |_| models,
+            crate::commands::RunLimits::new(scribe_core::pass::MAX_PER_RUN),
+        )
+        .unwrap() else {
             panic!("a pass report");
         };
         report.passes

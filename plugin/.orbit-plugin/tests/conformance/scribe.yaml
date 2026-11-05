@@ -1,7 +1,8 @@
 # Goldens for `orbit plugin test plugin/.orbit-plugin`: a temp workspace and
 # plugin state, the manifest's config defaults (no store root), no network.
-# A store-backed answer needs [plugins.scribe] root, so ask's goldens are its
-# refusals; crates/scribe/tests/plugin.rs runs ask against a fixture store.
+# A store-backed call needs [plugins.scribe] root, so the goldens are the
+# tools' refusals; crates/scribe/tests/plugin.rs runs every tool against a
+# fixture store.
 schemaVersion: 1
 kind: PluginTest
 tests:
@@ -37,15 +38,31 @@ tests:
   expect:
     error:
       code: invalid_input
-- name: session_pass_is_not_wired_yet
+- name: session_pass_without_a_store_root_is_not_configured
   tool: session-pass
   input: {}
   expect:
     error:
-      code: not_implemented
-- name: consistency_scan_is_not_built_yet
+      code: not_configured
+      retryable: false
+- name: session_pass_with_an_input_key_is_invalid
+  tool: session-pass
+  input:
+    limit: 1
+  expect:
+    error:
+      code: invalid_input
+- name: consistency_scan_without_a_store_root_is_not_configured
   tool: consistency-scan
   input: {}
   expect:
     error:
-      code: not_implemented
+      code: not_configured
+      retryable: false
+- name: consistency_scan_with_an_input_key_is_invalid
+  tool: consistency-scan
+  input:
+    dry_run: true
+  expect:
+    error:
+      code: invalid_input

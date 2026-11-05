@@ -405,3 +405,24 @@ pub(super) fn decode_proposals(path: &Path, bytes: &[u8]) -> Result<Vec<Proposal
     let doc: ProposalsDocument = decode_json(path, bytes, Document::Proposals)?;
     Ok(doc.proposals)
 }
+
+/// `proposals.json` as written.
+#[derive(Serialize)]
+struct ProposalsOut<'a> {
+    format: u32,
+    proposals: &'a [Proposal],
+}
+
+/// `proposals.json`'s bytes at the current format, by id, one line break at
+/// the end. [`decode_proposals`] reads it back to the same proposals.
+pub(super) fn encode_proposals(path: &Path, proposals: &[Proposal]) -> Result<Vec<u8>> {
+    let mut sorted = proposals.to_vec();
+    sorted.sort_by_key(|p| p.id);
+    let mut bytes = serde_json::to_vec_pretty(&ProposalsOut {
+        format: FORMAT,
+        proposals: &sorted,
+    })
+    .map_err(|e| Error::corrupt(path, e))?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}

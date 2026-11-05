@@ -72,3 +72,20 @@ fn both_hook_commands_are_audited_under_their_command_path() {
         assert_eq!(cli.command.audit().map(|m| m.command), Some(path));
     }
 }
+
+#[test]
+fn run_limits_cap_the_units_and_start_only_the_first_after_the_deadline() {
+    use crate::commands::RunLimits;
+    use std::time::{Duration, Instant};
+    let open = RunLimits::new(2);
+    assert!(open.may_start(0) && open.may_start(1));
+    assert!(!open.may_start(2), "at most max");
+    let Some(past) = Instant::now().checked_sub(Duration::from_secs(1)) else {
+        return;
+    };
+    let late = RunLimits::new(5).start_by(past);
+    assert!(late.may_start(0), "the first unit always starts");
+    assert!(!late.may_start(1), "no later unit after the deadline");
+    let early = RunLimits::new(5).start_by(Instant::now() + Duration::from_secs(600));
+    assert!(early.may_start(4));
+}

@@ -6,6 +6,7 @@
 mod ask;
 mod capture;
 mod config;
+mod consistency;
 mod control;
 mod entry;
 mod pass;
