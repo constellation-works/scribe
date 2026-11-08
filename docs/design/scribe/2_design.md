@@ -343,6 +343,17 @@ orbit-office `markers.rs` rule). Each such line is one instruction; a turn
 with two lines writes two entries. A bare `#decision`, `#preferences` or any
 other hashtag is not an instruction and captures nothing, with no reply.
 
+Only Daniel writes scribe: a user-role turn that is not plainly typed by
+him records nothing, settles nothing and does not run `/scribe`. The hook
+skips a turn whose prompt carries an agent or harness wrapper
+(`<agent-message>`, `<task-notification>`, `<side-sessions-event>`, a
+scheduled/loop wrapper, or any prompt opening with a markup tag), or whose
+payload origin field (`source`, `prompt_source`, `origin`,
+`prompt_origin`, where the harness provides one) is not a plain typed
+value. The reply is empty and nothing is audited. This is an accident
+guard like the provenance check below (STD-05 R5), not a security
+boundary: a process running as Daniel can forge a plain payload.
+
 Provenance check (an accident guard, not a security boundary — STD-05 R5):
 before writing, the hook confirms `transcript_path` lies under
 `~/.claude/projects/`, belongs to the user, and that its session id matches

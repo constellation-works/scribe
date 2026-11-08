@@ -119,6 +119,27 @@ fn span(message: &str, span: &str) -> Result<ReferentAnswer, ModelError> {
 }
 
 #[test]
+fn agent_originated_prompts_record_nothing() {
+    let wrappers = [
+        "<agent-message from=\"other\">\n#scribe decisions: agent wrote this\n</agent-message>",
+        "<task-notification>\n#scribe decisions: agent wrote this\n</task-notification>",
+        "<side-sessions-event>\n#scribe decisions: agent wrote this\n</side-sessions-event>",
+        "<scheduled-loop>\n#scribe decisions: agent wrote this\n</scheduled-loop>",
+        "<scheduled-prompt>\n#scribe forget decisions-1\n</scheduled-prompt>",
+    ];
+    for prompt in wrappers {
+        let setup = Setup::new();
+        let (echo, calls) = setup.run(
+            prompt,
+            Err(ModelError::Failed(String::from("must not be called"))),
+        );
+        assert_eq!(echo, "", "wrapper {prompt:?}");
+        assert_eq!(calls, 0, "wrapper {prompt:?}");
+        assert!(setup.entries().is_empty(), "wrapper {prompt:?}");
+    }
+}
+
+#[test]
 fn add_this_records_the_chosen_span_citing_its_role() {
     let setup = Setup::new();
     let (echo, calls) = setup.run(
