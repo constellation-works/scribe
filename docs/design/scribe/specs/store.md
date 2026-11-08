@@ -201,12 +201,18 @@ listed with `configured: false`.
   10 seconds with `store_locked`, naming the holder.
 - **Redaction** (S2). Before a write, `Redactor` replaces each live
   value of the variables in `[redact] env` and `[models] credentials` with
-  `[redacted:<NAME>]` in every field of `REDACTED_FIELDS`: `entry.said`,
+  `[redacted:<NAME>]`, and each high-confidence credential shape
+  (`Authorization: Bearer …`, `ghp_`/`github_pat_`, `sk-ant-`/`sk-`,
+  `AKIA…`, `xox[bp]-`, PEM private-key blocks) with a labelled marker, in
+  every field of `REDACTED_FIELDS`: `entry.said`,
   `entry.content`, `session.title`, `session.summary`, `session.goals`,
   `session.outcome`, `session.next`, `session.terms.term`,
   `session.terms.said`, `proposal.reason` and
   `proposal.quotes.text`. Values shorter than 8 characters are not masked;
-  identifiers, timestamps and paths are not free text.
+  identifiers, timestamps and paths are not free text. A `[redact] env`
+  name with no value in the writer's environment refuses the write
+  (`redact_env_unset`) before anything is stored; already-stored records
+  are not rewritten.
 - **Audit.** Lines are appended in one write under `.lock` and `fsync`ed;
   never rewritten. A line is `{"format": 1, "at", "command", "status",
   "target", "error_code", "duration_ms"}`: ids and codes, no argument values

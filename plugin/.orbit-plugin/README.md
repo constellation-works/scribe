@@ -64,7 +64,11 @@ directory), `network` (the `claude` CLI), `env_pass`
 (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`), and `orbit_tools`
 (`orbit.search`, `orbit.task.show`, read-only). The `root` default,
 `/var/tmp`, means unset: Orbit grants writes only to a directory that
-exists, and scribe never opens a store there.
+exists, and scribe never opens a store there. If the store's
+`config.toml` names extra variables under `[redact] env`, add those
+names to `env_pass` in `plugin.yaml` as well: a routine that cannot see
+a configured redact name's value refuses (`redact_env_unset`) rather
+than write text it was told to mask.
 
 ## Tests
 

@@ -115,6 +115,12 @@ pub(super) fn run_with<M: Models>(
         Ok(config) => config,
         Err(err) => return failed_all(&chain(&err), err.code()),
     };
+    // Fail closed before recording anything when a configured [redact] env
+    // name has no value here: the capture would store it unmasked.
+    let redactor = match ctx.redactor(&config) {
+        Ok(redactor) => redactor,
+        Err(err) => return failed_all(&err.to_string(), err.code()),
+    };
 
     let at = ctx.now();
     let turn = Turn {
@@ -186,7 +192,7 @@ pub(super) fn run_with<M: Models>(
         };
         plans.push(plan);
     }
-    let stored = ctx.store().capture(drafts, &ctx.redactor(&config));
+    let stored = ctx.store().capture(drafts, &redactor);
 
     let mut captured: BTreeMap<u32, Captured> = BTreeMap::new();
     let mut store_error: Option<scribe_core::Error> = None;

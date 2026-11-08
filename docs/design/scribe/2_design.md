@@ -328,6 +328,10 @@ if absent; scribe never rewrites it after that. As built (S6), it is not:
 **Redaction.** Before any write of `said`, `content`, a session record's
 title, text fields and terms, or a proposal's `reason` and quotes, the store masks
 the live values of the variables in `[redact] env` and `[models] credentials`
+and high-confidence credential shapes (`Authorization: Bearer …`,
+`ghp_`/`github_pat_`, `sk-ant-`/`sk-`, `AKIA…`, `xox[bp]-`, PEM
+private-key blocks); a `[redact] env` name with no value in the writer's
+environment refuses the write instead of storing text unmasked
 (STD-05 R13, R14;
 [4_decisions.md](./4_decisions.md#persisted-free-text-passes-one-redactor)).
 

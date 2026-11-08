@@ -99,6 +99,9 @@ pub(in crate::commands) fn scan<M: Models>(
 ) -> Result<Output, CliError> {
     let store = ctx.store();
     let now = ctx.now();
+    // Fail closed before any write (the reapply below writes entries) when
+    // a configured [redact] env name has no value in this environment.
+    let _checked = ctx.redactor(&store.config()?)?;
     let reapplied = store.reapply_approved(now)?;
     let entries = store.list_entries(&EntryFilter::default())?.listing.items;
     let proposals = store.proposals()?;
@@ -153,7 +156,7 @@ pub(in crate::commands) fn scan<M: Models>(
     drafts.extend(found.stale.iter().map(consistency::stale));
     if !drafts.is_empty() {
         let config = store.config()?;
-        let redactor = ctx.redactor(&config);
+        let redactor = ctx.redactor(&config)?;
         report.opened = store
             .open_proposals(drafts, now, &redactor)?
             .iter()

@@ -302,6 +302,51 @@ fn stop_marks_due_by_turns_and_minutes_and_session_end_marks_final_without_a_mod
 }
 
 #[test]
+fn a_pass_refuses_when_a_configured_redact_name_is_unset() {
+    // STD-05 R13: [redact] env names a value scribe must mask, but the
+    // routine's environment (the plugin's env_pass, here the cleared test
+    // environment) does not carry it. The pass refuses before any model
+    // call or write, rather than storing text unmasked without warning.
+    let setup = Setup::new();
+    setup.config("[redact]\nenv = [\"SCRIBE_UNSET_REDACT_TOKEN\"]\n");
+    setup.scribe("/scribe on");
+    let out = setup
+        .fx
+        .cmd(&["session", "pass", "--json"])
+        .env("PATH", &setup.path)
+        .output()
+        .unwrap();
+    assert_ne!(out.status.code(), Some(0), "{}", text(&out.stdout));
+    assert!(
+        text(&out.stderr).contains("SCRIBE_UNSET_REDACT_TOKEN"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert!(
+        text(&out.stderr).contains("redact_env_unset")
+            || text(&out.stderr).contains("[redact] env"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert!(setup.record(ON).is_none(), "nothing was written");
+    assert_eq!(setup.control()["due"], true, "the pass stays due");
+    assert!(setup.prompts().is_empty(), "no model call before refusal");
+
+    // With the name supplied, the same pass writes as usual.
+    let out = setup
+        .fx
+        .cmd(&["session", "pass", "--json"])
+        .env("PATH", &setup.path)
+        .env("SCRIBE_UNSET_REDACT_TOKEN", "a-value-that-must-be-masked")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["passes"][0]["result"], "written");
+    assert!(setup.record(ON).is_some());
+}
+
+#[test]
 fn a_pass_writes_one_record_of_daniels_terms_and_never_reads_a_session_never_switched_on() {
     let setup = Setup::new();
     let never_before = std::fs::read(setup.transcript(NEVER)).unwrap();

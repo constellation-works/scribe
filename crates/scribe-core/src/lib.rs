@@ -65,7 +65,7 @@ pub use session::{
 pub use store::{
     AUDIT_FILE, AuditEvent, AuditStatus, CONFIG_FILE, CONTROL_FILE, Captured, DEFAULT_LOCK_WAIT,
     ENTRIES_DIR, EntryList, MIN_SECRET_CHARS, PROPOSALS_FILE, REDACTED_FIELDS, Redactor,
-    SESSIONS_DIR, SessionList, SessionView, Skipped, Store, TagList,
+    SESSIONS_DIR, SessionList, SessionView, Skipped, Store, TagList, unresolved_redact_env,
 };
 pub use tag::{TagDef, TagError, TagSummary, TagTable};
 

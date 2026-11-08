@@ -16,6 +16,13 @@ pub(crate) enum CliError {
     /// No data directory could be resolved.
     #[error("no data directory: pass --root <dir> or set SCRIBE_ROOT (HOME is not set either)")]
     NoDataDir,
+    /// A `[redact] env` name has no value in this process's environment, so
+    /// text it was configured to mask could be stored unmasked.
+    #[error(
+        "configured [redact] env name(s) have no value in this environment: {}; refusing to write unmasked text (add the name(s) to the caller's env_pass or remove them from [redact] env)",
+        .0.join(", ")
+    )]
+    RedactEnvUnset(Vec<String>),
     /// A hook's stdin was not the JSON Claude Code sends for that event.
     #[error("the hook input is not a Claude Code hook payload: {0}")]
     HookPayload(String),
@@ -42,6 +49,7 @@ impl CliError {
         match self {
             Self::Core(e) => e.code(),
             Self::NoDataDir => "no_data_dir",
+            Self::RedactEnvUnset(_) => "redact_env_unset",
             Self::HookPayload(_) => "hook_payload_invalid",
             Self::Read { .. } => "io_error",
             Self::Model(e) => e.code(),
@@ -67,6 +75,7 @@ impl CliError {
             }
             // The core enum is #[non_exhaustive], so it needs this arm.
             Self::Core(_)
+            | Self::RedactEnvUnset(_)
             | Self::NoDataDir
             | Self::HookPayload(_)
             | Self::Read { .. }

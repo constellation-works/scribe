@@ -450,18 +450,36 @@ secret values, not words.
 The store masks, before every write of `said`, `content`, session text and
 proposal `reason`, the live values of the credential variables named in
 `config.toml`: `[redact] env`, plus `[models] credentials`, the variables
-the model calls are given. A unit test holds the inventory of covered fields
+the model calls are given. It also masks high-confidence credential
+shapes a configured value cannot cover — a pasted or echoed credential
+scribe was never told about (STD-05@1 §R14): an `Authorization: Bearer …`
+token, `ghp_`/`github_pat_`, `sk-ant-`/`sk-`, `AKIA…` and `xox[bp]-`
+tokens, and PEM private-key blocks, each replaced by a labelled marker
+such as `[redacted:github-token]`. Shapes require a token boundary and a
+minimum tail length, so ordinary hyphenated words (`task-pilot`) and
+short look-alikes survive. A unit test holds the inventory of covered fields
 (`REDACTED_FIELDS`, which also covers a session's `title` and `terms` and
 each proposal quote). A value shorter than 8 characters is not masked. Audit lines stay
 identifiers only. S1 builds the redactor; its first caller is the first
-writer, in S2.
+writer, in S2. Already-stored records are not rewritten.
+
+A `[redact] env` name with no (non-empty) value in the writing process's
+environment fails closed: `scribe session pass`, `scribe consistency
+scan` and `#scribe` capture refuse (`redact_env_unset`, naming the
+variables) before any write, rather than store unmasked text silently.
+This matters in the Orbit plugin routines, whose `env_pass` carries only
+the two model credentials: an extra `[redact] env` name must be added to
+`env_pass` (or removed from the config) before the routines can write.
+The model credentials themselves are not checked this way: they are
+alternatives, so one may legitimately be unset.
 
 ### Consequences
 
-- A configured secret never reaches `~/.scribe` in clear.
+- A configured secret never reaches `~/.scribe` in clear, and neither
+  does a credential in one of the known shapes.
 - Cost: a quote that contained a masked value no longer passes the verbatim
-  check against its source, and a secret scribe was not told about is not
-  masked.
+  check against its source, and a secret in no known shape that scribe was
+  not told about is not masked.
 
 ## A domain library crate and a CLI crate
 
