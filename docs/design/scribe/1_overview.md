@@ -4,6 +4,8 @@ owner: claude
 last_updated: 2026-11-02
 last_validated: 2026-11-02
 status: Draft
+stage: building
+next: S7 discussions (no task filed)
 feature: scribe
 doc_role: overview
 type: design
@@ -22,12 +24,10 @@ lets any agent ask what Daniel said or decided, answering with verbatim
 citations. It replaces the scribe built inside orbit-office, without the
 Library, to-dos or calendar around it.
 
-> **State.** The design ([2_design.md](./2_design.md),
-> [4_decisions.md](./4_decisions.md)) describes the plugin. Slice S1 of the
-> [slice plan](./2_design.md#10-slice-plan) is built: the domain, the
-> Markdown-and-frontmatter store and a read-only CLI (`entry`, `session`,
-> `proposal`, `tag`), specified in [specs/](./specs/). Capture, cataloging,
-> `ask` and the plugin tree are S2–S5.
+> The design ([2_design.md](./2_design.md),
+> [4_decisions.md](./4_decisions.md)) describes the plugin. Delivery state
+> lives only in the [slice plan](./2_design.md#10-slice-plan); this overview
+> does not restate it.
 
 ## 1. Directions (Daniel, 2026-11-02)
 
