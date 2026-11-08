@@ -29,6 +29,80 @@ pub(super) struct PromptPayload {
     pub(super) transcript_path: PathBuf,
     pub(super) cwd: String,
     pub(super) prompt: String,
+    /// Origin claim, where the harness provides one (`source`,
+    /// `prompt_source`, `origin` or `prompt_origin`); a claim, not
+    /// authority (STD-05 R1), used only to refuse agent turns.
+    #[serde(default)]
+    pub(super) source: Option<String>,
+    #[serde(default, alias = "promptSource")]
+    pub(super) prompt_source: Option<String>,
+    #[serde(default)]
+    pub(super) origin: Option<String>,
+    #[serde(default, alias = "promptOrigin")]
+    pub(super) prompt_origin: Option<String>,
+}
+
+/// Source values that mean Daniel typed the prompt himself.
+const PLAIN_SOURCES: &[&str] = &[
+    "typed",
+    "user",
+    "human",
+    "daniel",
+    "interactive",
+    "keyboard",
+    "manual",
+    "direct",
+    "user-typed",
+    "plain",
+];
+
+/// Opening tags of agent- or system-written user turns. A prompt carrying
+/// one of these anywhere is not Daniel's typing, however a `#scribe` line
+/// sits inside it.
+const AGENT_WRAPPERS: &[&str] = &[
+    "<agent-message",
+    "<task-notification",
+    "<side-sessions-event",
+    "<side-session-event",
+    "<side-session",
+    "<scheduled-prompt",
+    "<scheduled-loop",
+    "<scheduled",
+    "<loop-prompt",
+    "<loop-",
+    "<teammate-message",
+    "<cross-session",
+];
+
+/// Whether this payload's turn was written by an agent or the harness,
+/// not plainly typed by Daniel: a non-plain origin field, an agent
+/// wrapper anywhere in the prompt, or a prompt opening with a markup tag
+/// (a plainly typed prompt does not open that way). Such a turn records
+/// nothing, decides nothing and does not switch `/scribe` on or off.
+/// This is an accident guard like the transcript check (STD-05 R5): a
+/// process running as Daniel can still forge a plain payload.
+pub(super) fn agent_originated(payload: &PromptPayload) -> bool {
+    let sources = [
+        payload.source.as_deref(),
+        payload.prompt_source.as_deref(),
+        payload.origin.as_deref(),
+        payload.prompt_origin.as_deref(),
+    ];
+    for source in sources.into_iter().flatten() {
+        let normalized = source.trim().to_lowercase().replace(['_', ' '], "-");
+        if !normalized.is_empty() && !PLAIN_SOURCES.contains(&normalized.as_str()) {
+            return true;
+        }
+    }
+    // Underscores and hyphens spell the same wrapper (`<agent_message>`).
+    let lower = payload.prompt.to_lowercase().replace('_', "-");
+    if AGENT_WRAPPERS.iter().any(|tag| lower.contains(tag)) {
+        return true;
+    }
+    let trimmed = lower.trim_start_matches('\u{feff}').trim_start();
+    trimmed
+        .strip_prefix('<')
+        .is_some_and(|rest| rest.chars().next().is_some_and(|c| c.is_ascii_alphabetic()))
 }
 
 /// The fields of the `SessionStart` payload scribe uses.

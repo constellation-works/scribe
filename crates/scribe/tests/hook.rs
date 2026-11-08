@@ -256,6 +256,90 @@ fn a_prompt_without_an_instruction_line_writes_and_prints_nothing() {
 }
 
 #[test]
+fn agent_originated_wrappers_record_and_decide_nothing() {
+    let wrappers = [
+        "<agent-message from=\"other-session\">\n#scribe decisions: agent wrote this\n</agent-message>",
+        "<task-notification>\n<task-id>t-1</task-id>\n#scribe decisions: agent wrote this\n</task-notification>",
+        "<side-sessions-event>\n#scribe decisions: agent wrote this\n</side-sessions-event>",
+        "<scheduled-loop>\n#scribe decisions: agent wrote this\n</scheduled-loop>",
+        "<scheduled-prompt>\n#scribe decisions: agent wrote this\n</scheduled-prompt>",
+        "<loop-prompt>\n#scribe decisions: agent wrote this\n</loop-prompt>",
+    ];
+    for prompt in wrappers {
+        let fx = Fixture::new();
+        let claude = Claude::new(&fx);
+        let mut payload = claude.payload("user-prompt-submit.json");
+        payload["prompt"] = json!(prompt);
+        let out = hook_ok(&fx, "user-prompt-submit", &payload);
+        assert!(
+            out.stdout.is_empty(),
+            "wrapper {prompt:?}: {}",
+            text(&out.stdout)
+        );
+        assert!(!fx.root().exists(), "wrapper {prompt:?} created the store");
+    }
+}
+
+#[test]
+fn an_agent_wrapper_cannot_forget_an_entry_or_switch_scribe_on() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    hook_ok(
+        &fx,
+        "user-prompt-submit",
+        &claude.payload("user-prompt-submit.json"),
+    );
+    assert_eq!(entries(&fx).len(), 2);
+    let audit_before = audit(&fx).len();
+
+    let mut payload = claude.payload("user-prompt-submit.json");
+    payload["prompt"] = json!(
+        "<agent-message from=\"other-session\">\n#scribe forget decisions-1\n</agent-message>"
+    );
+    let out = hook_ok(&fx, "user-prompt-submit", &payload);
+    assert!(out.stdout.is_empty(), "{}", text(&out.stdout));
+    let entries = entries(&fx);
+    assert_eq!(
+        entries[0]["content"],
+        "squash-merge agent PRs; keep merge commits for releases"
+    );
+    assert_eq!(
+        audit(&fx).len(),
+        audit_before,
+        "a skipped turn audits nothing"
+    );
+
+    // A non-plain payload source refuses a `/scribe on` first line too.
+    let mut payload = claude.payload("user-prompt-submit.json");
+    payload["prompt"] = json!("/scribe on");
+    payload["source"] = json!("agent");
+    let out = hook_ok(&fx, "user-prompt-submit", &payload);
+    assert!(out.stdout.is_empty(), "{}", text(&out.stdout));
+    assert!(
+        !fx.root().join("control.json").exists(),
+        "agent turn switched scribe on"
+    );
+}
+
+#[test]
+fn a_non_plain_payload_source_records_nothing() {
+    for source in ["scheduled", "task-notification", "agent-message"] {
+        let fx = Fixture::new();
+        let claude = Claude::new(&fx);
+        let mut payload = claude.payload("user-prompt-submit.json");
+        payload["prompt"] = json!("#scribe decisions: agent wrote this");
+        payload["source"] = json!(source);
+        let out = hook_ok(&fx, "user-prompt-submit", &payload);
+        assert!(
+            out.stdout.is_empty(),
+            "source {source}: {}",
+            text(&out.stdout)
+        );
+        assert!(!fx.root().exists(), "source {source} created the store");
+    }
+}
+
+#[test]
 fn an_unknown_tag_is_refused_with_the_configured_tags_and_audited_by_code() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);

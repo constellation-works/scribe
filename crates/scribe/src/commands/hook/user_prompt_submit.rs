@@ -1,6 +1,12 @@
 //! `scribe hook user-prompt-submit`: record each `#scribe` line of a typed
 //! prompt (docs/design/scribe/2_design.md §4.1–§4.4).
 //!
+//! A turn that is not plainly typed by Daniel (an agent or harness wrapper
+//! such as `<agent-message>`, `<task-notification>`,
+//! `<side-sessions-event>` or a scheduled/loop wrapper, or a non-plain
+//! payload origin field; see `payload::agent_originated`) is skipped at
+//! once: it records nothing, settles nothing and does not run `/scribe`.
+//!
 //! A prompt with no `#scribe` line returns at once: nothing is read, written,
 //! audited or printed. Otherwise the transcript provenance is checked, the
 //! config loaded, every line parsed, and the parsed ones recorded in one
@@ -83,6 +89,9 @@ pub(super) fn run_with<M: Models>(
 ) -> Result<Output, CliError> {
     let payload: PromptPayload = payload::decode(input)?;
     let session = payload::session(&payload.session_id)?;
+    if payload::agent_originated(&payload) {
+        return Ok(reply(Vec::new(), Vec::new()));
+    }
     if let Some(switch) = scribe_core::control::parse(&payload.prompt) {
         return Ok(super::scribe_command::run(&switch, &payload, &session, ctx));
     }
