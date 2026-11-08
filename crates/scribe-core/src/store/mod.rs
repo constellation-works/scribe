@@ -40,7 +40,7 @@ mod fsio;
 mod redact;
 
 pub use audit::{AUDIT_FILE, AuditEvent, AuditStatus};
-pub use redact::{MIN_SECRET_CHARS, REDACTED_FIELDS, Redactor};
+pub use redact::{MIN_SECRET_CHARS, REDACTED_FIELDS, Redactor, unresolved_redact_env};
 
 use crate::config::Config;
 use crate::consistency::{self, Draft, Reapplied, Settle, Settled};

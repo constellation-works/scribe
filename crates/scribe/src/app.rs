@@ -9,7 +9,7 @@
 use crate::error::CliError;
 use crate::models::{ClaudeCliModels, allowed_env};
 use crate::tasks::{self, OrbitTasks};
-use scribe_core::{Config, Label, Redactor, Store};
+use scribe_core::{Config, Label, Redactor, Store, unresolved_redact_env};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
@@ -97,9 +97,24 @@ impl Context {
     }
 
     /// The redactor for `config`: the live values of the variables it names,
-    /// read from this process's environment.
-    pub(crate) fn redactor(&self, config: &Config) -> Redactor {
-        Redactor::from_config(config, |name| std::env::var(name).ok())
+    /// read from this process's environment. Fails closed when a
+    /// `[redact] env` name has no value here (a plugin routine whose
+    /// `env_pass` does not carry it, for instance): persisting text then
+    /// would store the very value the operator configured scribe to mask,
+    /// unmasked and without warning (STD-05 R13). The model credentials
+    /// are not checked: they are alternatives, so one may be unset.
+    pub(crate) fn redactor(&self, config: &Config) -> Result<Redactor, CliError> {
+        let missing = unresolved_redact_env(config, |name| std::env::var(name).ok());
+        if !missing.is_empty() {
+            tracing::warn!(
+                names = %missing.join(","),
+                "refusing to write: a configured [redact] env name has no value in this environment"
+            );
+            return Err(CliError::RedactEnvUnset(missing));
+        }
+        Ok(Redactor::from_config(config, |name| {
+            std::env::var(name).ok()
+        }))
     }
 
     /// The model adapter for `config`: `claude` run with `PATH`, `HOME`,

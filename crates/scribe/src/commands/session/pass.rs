@@ -93,7 +93,7 @@ pub(in crate::commands) fn run_with<M: Models>(
         }));
     }
     let config = store.config()?;
-    let redactor = ctx.redactor(&config);
+    let redactor = ctx.redactor(&config)?;
     let found = store.list_sessions(&SessionFilter::default())?;
     let mut topics: BTreeSet<String> = BTreeSet::new();
     let mut terms: BTreeSet<String> = BTreeSet::new();

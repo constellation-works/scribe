@@ -118,10 +118,150 @@ fn short_unset_and_overlapping_values_are_handled() {
     );
     assert_eq!(redactor.mask("abcdefgh"), "[redacted:INNER]");
     let unset = Redactor::from_config(&Config::default(), |_| None);
-    assert_eq!(unset.mask(SECRET), SECRET);
+    assert_eq!(
+        unset.mask("ordinary stored text"),
+        "ordinary stored text",
+        "an unset redactor masks no configured value"
+    );
+    assert!(
+        !unset.mask(SECRET).contains(SECRET),
+        "a credential shape is masked even with no configured value"
+    );
     let debug = format!("{redactor:?}");
     assert!(
         !debug.contains("abcdefgh"),
         "Debug never shows a value: {debug}"
+    );
+}
+
+fn assert_shape_masked(text: &str, secret: &str, marker: &str) {
+    let masked = Redactor::default().mask(text);
+    assert!(!masked.contains(secret), "secret survived: {masked}");
+    assert!(masked.contains(marker), "no {marker} in: {masked}");
+}
+
+#[test]
+fn a_bearer_token_in_an_authorization_header_is_masked() {
+    let token = "abcdefghijklmnopqrstuvwxyz0123456789";
+    assert_shape_masked(
+        &format!("Authorization: Bearer {token}"),
+        token,
+        "[redacted:bearer]",
+    );
+    assert_eq!(
+        Redactor::default().mask(&format!("Authorization: Bearer {token}")),
+        "Authorization: Bearer [redacted:bearer]",
+        "the header name is kept, the token is not"
+    );
+    assert_shape_masked(
+        &format!("authorization: bearer {token}"),
+        token,
+        "[redacted:bearer]",
+    );
+}
+
+#[test]
+fn a_ghp_token_is_masked() {
+    let token = format!("ghp_{}", "0123456789abcdefghij0123456789abcdef");
+    assert_shape_masked(
+        &format!("pushed with {token} yesterday"),
+        &token,
+        "[redacted:github-token]",
+    );
+}
+
+#[test]
+fn a_github_pat_token_is_masked() {
+    let token = format!("github_pat_{}", "11ABCDEFG0a1b2c3d4e5f6g7h8i9j0k1l2");
+    assert_shape_masked(
+        &format!("token: {token}"),
+        &token,
+        "[redacted:github-token]",
+    );
+}
+
+#[test]
+fn an_sk_ant_key_is_masked() {
+    let token = format!("sk-ant-{}", "api03-0123456789abcdefghij0123456789");
+    assert_shape_masked(&format!("key {token}"), &token, "[redacted:api-key]");
+}
+
+#[test]
+fn a_plain_sk_key_is_masked() {
+    let token = format!("sk-{}", "proj-0123456789abcdefghij0123456789");
+    assert_shape_masked(&format!("key {token}"), &token, "[redacted:api-key]");
+}
+
+#[test]
+fn an_akia_access_key_id_is_masked() {
+    assert_shape_masked(
+        "aws key AKIAIOSFODNN7EXAMPLE here",
+        "AKIAIOSFODNN7EXAMPLE",
+        "[redacted:aws-access-key]",
+    );
+}
+
+#[test]
+fn slack_tokens_are_masked() {
+    for prefix in ["xoxb-", "xoxp-"] {
+        let token = format!("{prefix}{}", "123456789012-abcdefghij0123");
+        assert_shape_masked(&format!("slack {token}"), &token, "[redacted:slack-token]");
+    }
+}
+
+#[test]
+fn a_pem_private_key_block_is_masked_whole() {
+    let body = "MIIEvwIBADANBgkqhkiG9w0BAQEFAASC";
+    let text = format!(
+        "before\n-----BEGIN RSA PRIVATE KEY-----\n{body}\n-----END RSA PRIVATE KEY-----\nafter"
+    );
+    let masked = Redactor::default().mask(&text);
+    assert!(!masked.contains(body), "{masked}");
+    assert!(!masked.contains("PRIVATE KEY-----"), "{masked}");
+    assert_eq!(masked, "before\n[redacted:private-key]\nafter");
+}
+
+#[test]
+fn a_credential_shape_is_masked_in_a_stored_entry_field() {
+    let token = format!("ghp_{}", "0123456789abcdefghij0123456789abcdef");
+    let mut e = entry("decisions-1", T0);
+    e.content = format!("echoed {token}");
+    Redactor::default().entry(&mut e);
+    assert!(!e.content.contains(&token), "{}", e.content);
+    assert!(e.content.contains("[redacted:github-token]"));
+}
+
+#[test]
+fn ordinary_words_and_short_lookalikes_survive_shape_masking() {
+    let redactor = Redactor::default();
+    for text in [
+        "the task-pilot routine and session-pass keep working",
+        "a bearer of good news about tokens and private keys",
+        "discussing sk-ant- and ghp_ prefixes masks nothing by itself",
+        "short lookalikes: sk-short, ghp_short, AKIA123, xoxb-short",
+        "an identifier like task-pilot-1234567890 is not a credential",
+    ] {
+        assert_eq!(redactor.mask(text), text, "{text}");
+    }
+}
+
+#[test]
+fn unresolved_redact_env_names_only_the_unset_redact_names() {
+    use super::super::redact::unresolved_redact_env;
+    let config = Config::parse("[redact]\nenv = [\"GITHUB_TOKEN\", \"EXTRA_TOKEN\"]\n").unwrap();
+    assert_eq!(
+        unresolved_redact_env(&config, |name| {
+            (name == "GITHUB_TOKEN").then(|| String::from("a long enough value"))
+        }),
+        ["EXTRA_TOKEN"]
+    );
+    assert_eq!(
+        unresolved_redact_env(&config, |_| Some(String::new())),
+        ["GITHUB_TOKEN", "EXTRA_TOKEN"],
+        "an empty value counts as unset"
+    );
+    assert!(
+        unresolved_redact_env(&Config::default(), |_| None).is_empty(),
+        "the default credentials are alternatives, not [redact] env names"
     );
 }

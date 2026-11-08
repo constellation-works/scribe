@@ -5,8 +5,12 @@
 //! Before the store writes an entry, a session record or a proposal, every
 //! free-text field in [`REDACTED_FIELDS`] passes [`Redactor`], which masks the
 //! live values of the configured credential variables
-//! ([`crate::Config::secret_names`]). It matches values, not words, so a
-//! sentence about a token is kept and the token itself is not. Identifiers,
+//! ([`crate::Config::secret_names`]) and high-confidence credential shapes
+//! (STD-05 R14): an `Authorization: Bearer …` token, `ghp_`/`github_pat_`,
+//! `sk-ant-`/`sk-`, `AKIA…` and `xox[bp]-` tokens, and PEM private-key
+//! blocks. It matches values and shapes, not words, so a sentence about a
+//! token is kept and the token itself is not, and ordinary hyphenated words
+//! such as `task-pilot` survive. Identifiers,
 //! timestamps and paths are not free text and are left alone; audit lines
 //! carry no free text at all. No I/O: the caller reads the environment and
 //! hands the values in (STD-02 R3).
@@ -77,7 +81,9 @@ impl Redactor {
         )
     }
 
-    /// `text` with every configured value replaced by `[redacted:<NAME>]`.
+    /// `text` with every configured value replaced by `[redacted:<NAME>]`
+    /// and every high-confidence credential shape replaced by a labelled
+    /// marker such as `[redacted:github-token]`.
     #[must_use]
     pub fn mask(&self, text: &str) -> String {
         let mut out = text.to_owned();
@@ -86,7 +92,7 @@ impl Redactor {
                 out = out.replace(value.as_str(), &format!("[redacted:{name}]"));
             }
         }
-        out
+        mask_shapes(&out)
     }
 
     fn mask_all<'a>(&self, fields: impl IntoIterator<Item = (&'static str, &'a mut String)>) {
@@ -109,6 +115,155 @@ impl Redactor {
     pub fn proposal(&self, proposal: &mut Proposal) {
         self.mask_all(proposal_fields(proposal));
     }
+}
+
+/// The `[redact] env` names in `config` whose value `lookup` cannot supply
+/// (absent or empty). The model credentials are not included: they are
+/// alternatives, so one may legitimately be unset. A caller that persists
+/// free text refuses to write while this is non-empty, rather than store
+/// text it was told to mask but cannot (STD-05 R13).
+#[must_use]
+pub fn unresolved_redact_env(
+    config: &Config,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Vec<String> {
+    config
+        .redact_env
+        .iter()
+        .filter(|name| lookup(name).is_none_or(|value| value.is_empty()))
+        .cloned()
+        .collect()
+}
+
+/// The shortest tail after a credential prefix that counts as a credential.
+/// Shorter look-alikes (a word, a truncated example) are left alone.
+const MIN_SHAPE_TAIL: usize = 8;
+
+/// Whether `byte` may sit inside a credential token of the given alphabet.
+fn is_shape_char(byte: u8, alphabet: &[u8]) -> bool {
+    byte.is_ascii_alphanumeric() || alphabet.contains(&byte)
+}
+
+/// A match at `i` starts a new token: it is not the tail of a longer word
+/// or identifier (STD-05 R14: never mask part of an ordinary identifier).
+fn at_token_start(bytes: &[u8], i: usize) -> bool {
+    i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || matches!(bytes[i - 1], b'_' | b'-'))
+}
+
+/// The end of the token starting at `i`, over `alphabet` plus alphanumerics.
+fn token_end(bytes: &[u8], i: usize, alphabet: &[u8]) -> usize {
+    let mut end = i;
+    while end < bytes.len() && is_shape_char(bytes[end], alphabet) {
+        end += 1;
+    }
+    end
+}
+
+/// A PEM private-key block starting at `i`: its end (the whole block, or
+/// the rest of the text when the end marker is missing, failing closed).
+fn pem_block_end(text: &str, i: usize) -> Option<usize> {
+    let rest = text.get(i..)?;
+    if !rest.starts_with("-----BEGIN ") {
+        return None;
+    }
+    let header_end = rest.find('\n').unwrap_or(rest.len());
+    if !rest[..header_end].contains("PRIVATE KEY-----") {
+        return None;
+    }
+    let close = "PRIVATE KEY-----";
+    Some(
+        rest.find("-----END ")
+            .and_then(|start| {
+                rest[start..]
+                    .find(close)
+                    .map(|at| i + start + at + close.len())
+            })
+            .unwrap_or(text.len()),
+    )
+}
+
+/// An `Authorization: Bearer <token>` header starting at `i`
+/// (case-insensitive): the token's `(start, end)`, header kept as written.
+fn bearer_token_span(text: &str, i: usize) -> Option<(usize, usize)> {
+    let rest = text.get(i..)?;
+    let lower = rest.to_ascii_lowercase();
+    let after_scheme = lower.strip_prefix("authorization:")?;
+    let after_scheme = after_scheme.trim_start_matches([' ', '\t']);
+    let after_bearer = after_scheme.strip_prefix("bearer")?;
+    if !after_bearer.starts_with([' ', '\t']) {
+        return None;
+    }
+    let token = after_bearer.trim_start_matches([' ', '\t']);
+    let token_start = i + (rest.len() - token.len());
+    let bytes = text.as_bytes();
+    let end = token_end(bytes, token_start, b"._~+/=-");
+    (end - token_start >= MIN_SHAPE_TAIL).then_some((token_start, end))
+}
+
+/// A prefixed credential starting at `i`: its `(end, replacement)`.
+fn prefixed_shape(bytes: &[u8], i: usize) -> Option<(usize, &'static str)> {
+    // Longest prefixes first, so `sk-ant-…` is not claimed by `sk-`.
+    const PREFIXES: &[(&[u8], &[u8], &str)] = &[
+        (b"github_pat_", b"_", "[redacted:github-token]"),
+        (b"ghp_", b"", "[redacted:github-token]"),
+        (b"sk-ant-", b"-_", "[redacted:api-key]"),
+        (b"sk-", b"-_", "[redacted:api-key]"),
+        (b"xoxb-", b"-", "[redacted:slack-token]"),
+        (b"xoxp-", b"-", "[redacted:slack-token]"),
+    ];
+    for (prefix, alphabet, replacement) in PREFIXES {
+        if bytes[i..].starts_with(prefix) {
+            let tail_start = i + prefix.len();
+            let end = token_end(bytes, tail_start, alphabet);
+            if end - tail_start >= MIN_SHAPE_TAIL {
+                return Some((end, replacement));
+            }
+        }
+    }
+    // An AWS access key id: `AKIA` plus exactly 16 upper-case/digit chars.
+    if bytes[i..].starts_with(b"AKIA") {
+        let end = i + 4 + 16;
+        if end <= bytes.len()
+            && bytes[i + 4..end]
+                .iter()
+                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+            && (end == bytes.len() || !bytes[end].is_ascii_alphanumeric())
+        {
+            return Some((end, "[redacted:aws-access-key]"));
+        }
+    }
+    None
+}
+
+/// `text` with every high-confidence credential shape masked.
+fn mask_shapes(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if at_token_start(bytes, i) {
+            if let Some(end) = pem_block_end(text, i) {
+                out.push_str("[redacted:private-key]");
+                i = end;
+                continue;
+            }
+            if let Some((start, end)) = bearer_token_span(text, i) {
+                out.push_str(&text[i..start]);
+                out.push_str("[redacted:bearer]");
+                i = end;
+                continue;
+            }
+            if let Some((end, replacement)) = prefixed_shape(bytes, i) {
+                out.push_str(replacement);
+                i = end;
+                continue;
+            }
+        }
+        let ch_len = text[i..].chars().next().map_or(1, char::len_utf8);
+        out.push_str(&text[i..i + ch_len]);
+        i += ch_len;
+    }
+    out
 }
 
 /// The free-text fields of an entry, named as in [`REDACTED_FIELDS`].
