@@ -244,10 +244,15 @@ config tag claims is dropped with a warning naming both.
   model ran still matches and its links are merged as before. Each window rewrites the header and open segment, appends up to
   three new segments, and derives message ranges and dates from the new
   segments' `starts_at` ids. A segment seals when another starts, after
-  `segment_windows` windows, or in the final pass's last window. The
+  `segment_windows` windows, after repairing an overlong open text without
+  a successor, or in the final pass's last window. The
   header budgets are title 120, summary 1200, goals 600 and next 1000;
   each segment has a 1–80-character heading and 1–900-character text.
-  Refused answers get one retry naming the refusal before failing with
+  Refused answers get one retry naming the refusal. Remaining header/text
+  budget overruns and misplaced starts can be repaired deterministically
+  ([design §5.5](../2_design.md#55-the-log-segments-and-sealing)); all other
+  shape rules must pass on the uncut answer, and the repaired answer is
+  revalidated before redaction and writing. Unrepairable answers fail with
   `session_answer_invalid`. `active`, `keep_active`, `active_change` and
   `cataloged_by` are carried from the record on
   disk. `Store::checkpoint_pass` writes intermediate windows with the same

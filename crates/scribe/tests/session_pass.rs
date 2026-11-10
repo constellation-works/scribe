@@ -402,6 +402,167 @@ fn unexpected_open_becomes_the_first_new_segment() {
 }
 
 #[test]
+fn repeated_header_budget_misses_are_repaired_after_retry_and_reported() {
+    for (field, value, expected, boundary) in [
+        (
+            "summary",
+            json!(format!("Keep this sentence. {}", "é".repeat(1200))),
+            "Keep this sentence.".to_owned(),
+            "sentence",
+        ),
+        (
+            "goals",
+            json!(format!("Keep these words {}", "é".repeat(600))),
+            "Keep these words…".to_owned(),
+            "word",
+        ),
+        (
+            "summary",
+            json!(format!("Keep this sentence.\" {}", "é".repeat(1200))),
+            "Keep this sentence.\"".to_owned(),
+            "sentence",
+        ),
+        (
+            "title",
+            json!("é".repeat(121)),
+            format!("{}…", "é".repeat(119)),
+            "word",
+        ),
+        (
+            "next",
+            json!(["Keep this bullet", "é".repeat(1000)]),
+            "- Keep this bullet".to_owned(),
+            "bullet",
+        ),
+        (
+            "next",
+            json!([format!("Keep these words {}", "é".repeat(1000))]),
+            "- Keep these words…".to_owned(),
+            "word",
+        ),
+    ] {
+        let setup = Setup::new();
+        let mut over = answer();
+        over[field] = value;
+        setup.answers(&[Some(over.clone()), Some(over)]);
+        setup.scribe("/scribe on");
+
+        let out = setup.run_any(&["session", "pass", "--json"], b"");
+
+        assert_eq!(out.status.code(), Some(0), "{field}: {}", text(&out.stderr));
+        let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(report["passes"][0]["windows"], 1);
+        let warning = report["passes"][0]["warnings"][0].as_str().unwrap();
+        assert!(
+            warning.contains(field) && warning.contains(boundary),
+            "{warning}"
+        );
+        assert!(text(&out.stderr).contains(warning));
+        assert_eq!(setup.prompts().len(), 2, "repair follows the retry");
+        assert!(!setup.prompts()[1].contains(DEFINED), "header-only retry");
+        let record = setup.record(ON).unwrap();
+        assert_eq!(record[field], expected, "{field}");
+        assert_eq!(record["log"][0]["text"], "Level 4 is defined.");
+        assert_eq!(record["scribed_through"], "a-1");
+        assert_eq!(setup.control()["due"], false);
+    }
+}
+
+#[test]
+fn segment_text_repairs_keep_new_segments_and_redact_before_writing() {
+    let setup = Setup::new();
+    setup.scribe("/scribe on");
+    setup.pass();
+    setup.append(
+        ON,
+        &[
+            line("user", "u-2", "Second."),
+            line("assistant", "a-2", "Third."),
+        ],
+    );
+    let mut over = answer();
+    over["open"] = json!({"heading": "First", "text": format!("Keep first. {}", "é".repeat(900)), "topics": [], "related": []});
+    over["new"] = json!([
+        {"starts_at": "u-2", "heading": "Second", "text": format!("Keep sensitive-value-123. {}", "é".repeat(900)), "topics": [], "related": []},
+        {"starts_at": "a-2", "heading": "Third", "text": format!("Keep third. {}", "é".repeat(900)), "topics": [], "related": []}
+    ]);
+    setup.answer(&over);
+    setup.config("[redact]\nenv = [\"TEST_SECRET\"]\n");
+    let mut cmd = setup
+        .fx
+        .cmd(&["session", "pass", "--session", ON, "--json"]);
+    cmd.env("PATH", &setup.path)
+        .env("TEST_SECRET", "sensitive-value-123");
+
+    let out = setup.run_with(cmd, b"");
+
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["passes"][0]["warnings"].as_array().unwrap().len(), 3);
+    assert_eq!(report["passes"][0]["segments_sealed"], 2);
+    assert_eq!(setup.prompts().len(), 3, "initial call, miss and one retry");
+    // Reading the stored record does not require loading the model config.
+    let record = setup.record(ON).unwrap();
+    assert_eq!(record["log"].as_array().unwrap().len(), 3);
+    assert_eq!(record["log"][0]["text"], "Keep first.");
+    assert_eq!(record["log"][0]["last_message"], "a-1");
+    assert_eq!(record["log"][1]["text"], "Keep [redacted:TEST_SECRET].");
+    assert_eq!(record["log"][1]["first_message"], "u-2");
+    assert_eq!(record["log"][2]["text"], "Keep third.");
+    assert_eq!(record["log"][2]["state"], "open");
+    assert!(
+        !std::fs::read_to_string(setup.record_file())
+            .unwrap()
+            .contains("sensitive-value-123")
+    );
+}
+
+#[test]
+fn starts_at_repairs_warn_in_plain_output_and_preserve_sealed_segments() {
+    for overflow in [false, true] {
+        let setup = Setup::new();
+        setup.scribe("/scribe on");
+        let mut initial = answer();
+        initial["new"] = json!([
+            {"starts_at": "u-1", "heading": "Sealed", "text": "Sealed history.", "topics": [], "related": []},
+            {"starts_at": "a-1", "heading": "Open", "text": "Open history.", "topics": [], "related": []}
+        ]);
+        setup.answer(&initial);
+        setup.pass();
+        let before = setup.record(ON).unwrap();
+        setup.append(ON, &[line("user", "u-2", "More.")]);
+        let mut bad = answer();
+        bad["new"][0]["starts_at"] = json!("a-1");
+        bad["new"][0]["text"] = json!(if overflow {
+            "é".repeat(900)
+        } else {
+            "Continued history.".to_owned()
+        });
+        setup.answer(&bad);
+
+        let out = setup.run(&["session", "pass", "--session", ON], b"");
+
+        assert!(text(&out.stderr).contains("window 1: repaired new segment 1 starts_at"));
+        assert!(text(&out.stdout).contains("written"));
+        assert_eq!(setup.prompts().len(), 3);
+        let record = setup.record(ON).unwrap();
+        assert_eq!(record["log"][0], before["log"][0]);
+        assert_eq!(record["scribed_through"], "u-2");
+        if overflow {
+            assert_eq!(record["log"].as_array().unwrap().len(), 3);
+            assert_eq!(record["log"][2]["first_message"], "u-2");
+            assert_eq!(record["log"][2]["text"], "é".repeat(900));
+        } else {
+            assert_eq!(record["log"].as_array().unwrap().len(), 2);
+            assert_eq!(
+                record["log"][1]["text"],
+                "Open history.\n\nContinued history."
+            );
+        }
+    }
+}
+
+#[test]
 fn header_length_retries_cover_every_prose_field_and_recheck_the_result() {
     for (field, value) in [
         ("title", json!("t".repeat(121))),
@@ -661,7 +822,7 @@ fn character_windows_and_each_windows_field_limits_are_enforced() {
             .collect::<Vec<_>>(),
     );
     let mut over = answer();
-    over["summary"] = json!("s".repeat(1201));
+    over["summary"] = json!(format!("{}\n## Injected", "s".repeat(1201)));
     setup.answers(&[Some(answer()), Some(over.clone()), Some(over)]);
     setup.scribe("/scribe on");
     let out = setup.run_any(&["session", "pass", "--json"], b"");
@@ -924,7 +1085,7 @@ fn a_pass_writes_one_record_of_daniels_terms_and_never_reads_a_session_never_swi
     setup.scribe("/scribe off");
     setup.scribe("/scribe on");
     let mut over = answer();
-    over["summary"] = json!("s".repeat(1201));
+    over["summary"] = json!(format!("{}\n## Injected", "s".repeat(1201)));
     setup.answer(&over);
     let out = setup.run_any(&["session", "pass", "--json"], b"");
     assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
@@ -1594,6 +1755,54 @@ fi
     let prompts = setup.prompts();
     assert!(prompts[2].contains("--- user · u-later ---"));
     assert!(!prompts[2].contains("--- user · u-1 ---"));
+}
+
+#[test]
+fn rebuild_repairs_a_repeated_third_window_budget_miss_and_reports_its_window() {
+    let setup = Setup::new();
+    setup.scribe("/scribe on");
+    setup.pass();
+    setup.config("[catalog]\nwindow_messages = 2\n");
+    setup.append(
+        ON,
+        &[
+            line("user", "u-2", "Second window."),
+            line("assistant", "a-2", "Continue."),
+            line("user", "u-3", "Third window."),
+        ],
+    );
+    let mut over = answer();
+    over["open"] = Value::Null;
+    over["new"] = json!([]);
+    over["next"] = json!(["Keep this bullet", "é".repeat(1000)]);
+    setup.answers(&[
+        None,
+        Some(answer()),
+        Some(answer()),
+        Some(over.clone()),
+        Some(over),
+    ]);
+
+    let out = setup.run(&rebuild_args(true), b"");
+
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["passes"][0]["windows"], 3);
+    assert_eq!(
+        report["passes"][0]["warnings"],
+        json!(["window 3: repaired next: cut at bullet boundary (budget 1000 characters)"])
+    );
+    assert!(text(&out.stderr).contains("window 3: repaired next"));
+    assert_eq!(setup.prompts().len(), 5);
+    let record = setup.record(ON).unwrap();
+    assert_eq!(record["next"], "- Keep this bullet");
+    assert_eq!(record["scribed_through"], "u-3");
+    assert_eq!(record["log"][0]["text"], "Level 4 is defined.");
+    assert!(
+        !setup
+            .record_file()
+            .with_file_name(format!(".{ON}.rebuild.md"))
+            .exists()
+    );
 }
 
 #[test]

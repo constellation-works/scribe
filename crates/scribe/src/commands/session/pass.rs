@@ -197,6 +197,7 @@ pub(in crate::commands) fn run_with<M: Models>(
             segments_sealed: 0,
             segments: None,
             dropped_terms: 0,
+            warnings: Vec::new(),
             incomplete: false,
         };
         let result = if let Some((_, reason)) = corrupt.iter().find(|(stem, _)| stem == id.as_str())
@@ -240,6 +241,7 @@ struct Job<'a> {
     segments_sealed: usize,
     segments: Option<usize>,
     dropped_terms: usize,
+    warnings: Vec<String>,
     incomplete: bool,
 }
 
@@ -376,6 +378,7 @@ impl Job<'_> {
             );
             let distilled = distill(self.id, request, &conversation[..end], adapter)?;
             let dropped = distilled.dropped_terms;
+            let warnings = window_warnings(self.windows + 1, &distilled);
             let cwd = transcript::cwd(&bytes).unwrap_or_default();
             let now = self.ctx.now();
             // The window's first and last messages' times bound the segment.
@@ -435,6 +438,7 @@ impl Job<'_> {
             self.segments = previous.as_ref().map(|r| r.log.len());
             self.windows = self.windows.saturating_add(1);
             self.dropped_terms = self.dropped_terms.saturating_add(dropped);
+            self.warnings.extend(warnings);
             offset = end;
             if last {
                 return Ok(self.payload("written", previous.as_ref()));
@@ -512,6 +516,7 @@ impl Job<'_> {
             author: None,
             gave_up: false,
             error: Some(short_reason(self.redactor, &failure.message)),
+            warnings: self.warnings.clone(),
         })
     }
 
@@ -528,6 +533,7 @@ impl Job<'_> {
             author: None,
             gave_up: false,
             error: None,
+            warnings: self.warnings.clone(),
         }
     }
 }
@@ -584,11 +590,22 @@ pub(super) fn distill<M: Models>(
                 };
                 answer = adapter.session(&retry).map_err(retry_failure)?;
             }
-            pass::check(answer, conversation, &request).map_err(|err| {
-                tracing::warn!(session = %id, %err, "the session model's answer was refused");
-                PassError::new("session_answer_invalid", format!("{refusal}; retry: {err}"))
-            })?
+            pass::check(answer.clone(), conversation, &request)
+                .or_else(|_| pass::repair(answer, conversation, &request))
+                .map_err(|err| {
+                    tracing::warn!(session = %id, %err, "the session model's answer was refused");
+                    PassError::new("session_answer_invalid", format!("{refusal}; retry: {err}"))
+                })?
         }
     };
     Ok(distilled)
+}
+
+/// Repairs describe only fixed rule names and numbers; no model text or ids.
+pub(super) fn window_warnings(window: usize, answer: &pass::Distilled) -> Vec<String> {
+    answer
+        .repairs
+        .iter()
+        .map(|repair| format!("window {window}: {repair}"))
+        .collect()
 }

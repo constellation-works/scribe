@@ -1009,18 +1009,45 @@ are resent. Keep the first answer's topics, references, terms and segments,
 replace only those four prose fields, then validate the complete answer
 again against all hard limits. Any other defect, including one hidden
 behind an overlong header, uses the fresh full-window retry. Both paths
-share the same one-retry allowance; a second refusal fails the pass and
-keeps the previous checkpoint. The bounded, redacted `error` field includes
-the initial refusal and the retry's refusal or model failure. The refusal for
-an overlong text says "seal it and start a new segment", which is how a
-full segment seals.
+share the same one-retry allowance. After that retry, scribe repairs an answer
+whose only remaining defects are these budget and start misses:
+
+- Cut overlong `title`, `summary` and `goals` at the last sentence boundary
+  within their Unicode-character budgets. Cut `next` at the last complete
+  bullet within 1000 characters, counting `- ` prefixes and newlines. If no
+  such boundary fits, cut at the last word boundary with `…` inside the
+  budget (at a Unicode character when one word itself is too long).
+- Cut each segment text over 900 at a sentence boundary, with the same word
+  fallback. When the open text was cut and there are no new segments, seal
+  it at this window's end. When there are new segments, keep all of them
+  with their cut text and continue the normal range and sealing rules.
+- A `new` start outside the window or at/before the previous open segment's
+  last message becomes a continuation of that open segment: append its text
+  with a blank line when the combined text fits 900. Keep the open heading,
+  merge references and retain the first five distinct topics in input order.
+  If the combined text would exceed 900, or there is no open segment, keep
+  the new segment and start it at the window's first message, ahead of valid
+  later starts. Never discard another new segment to make room.
+
+The uncut answer must still pass all other shape checks: truncation cannot
+hide a heading line or invalid topic. Reversed or duplicate starts within
+the window, excessive segment counts and collisions after reanchoring are
+still refused. The repaired answer is checked again before record creation;
+redaction and store validation still run before the atomic write. Sealed
+history is never repaired. Each persisted repair is reported in the pass's
+`warnings` (and on stderr), naming the invocation's window and the repaired
+field or segment. The same path serves routine passes, rebuild and catalog.
+A nonrepairable second refusal or a failed model retry fails the pass and
+keeps the previous checkpoint. The bounded, redacted `error` includes the
+initial refusal and the retry's refusal or model failure.
 
 **Written.** Message ranges follow from `starts_at`: a segment runs to the
 message before the next segment's start, the last one to the window's
 last message. The open segment's `windows` counts up. scribe seals the
 open segment itself when its `windows` reaches `[catalog] segment_windows`
-(3), when the final pass's last window is written (a `final` record has no
-open segment), and never otherwise. The store refuses a write that would
+(3), when an overlong open text was repaired without a new segment, or when
+the final pass's last window is written (a `final` record has no open
+segment). The store refuses a write that would
 change a sealed segment's metadata or text from what is on disk
 (`sealed_segment_changed`, an internal error that fails the pass and keeps
 the record), so the append-only rule is code, not prompt.
@@ -1895,11 +1922,14 @@ As built (S8):
 - An answer whose segment text exceeds 900 characters, whose heading
   exceeds 80, whose `starts_at` is outside the window or out of order, or
   whose header breaks a budget gets one retry naming the refusal, then
-  fails the pass with `session_answer_invalid` if the retry is also invalid,
-  the record unchanged. Header-only length failures use compression rather
-  than resending the window; all other failures use the full-window retry.
+  applies the deterministic budget/start repairs of §5.5 if the retry still
+  misses only those rules. Other invalid answers fail with
+  `session_answer_invalid`, keeping the previous checkpoint. Header-only
+  length failures use compression rather than resending the window; all
+  other failures use the full-window retry.
 - scribe seals the open segment after `[catalog] segment_windows` windows
-  (3) and at the final pass's last window; a sealed segment is
+  (3), after cutting an overlong open text with no successor, and at the
+  final pass's last window; a sealed segment is
   byte-identical on disk after every later pass.
 - `scribe session rebuild <id> --author <name> --confirm` replaces an
   upgraded record with one built from its transcript (`origin: rebuild`),
@@ -1917,8 +1947,9 @@ As built (S9):
   targets 900 and gives the current length. Header-only compression and
   the tolerant `open` rules follow §5.5. Segment
   content, ordered starts, ranges, timestamps and sealing are checked in
-  `scribe-core::pass`; a refusal retries once and retains the bounded,
-  redacted pass failure reason introduced before S9.
+  `scribe-core::pass`; a refusal retries once, then repairs only the allowed
+  budget/start misses. Unrepairable failures retain the bounded, redacted
+  pass failure reason introduced before S9.
 - `[catalog] segment_windows` parses as a positive integer (default 3).
   The store compares every sealed segment before any record replacement
   by a pass and retains its bytes through redaction. Pass reports add

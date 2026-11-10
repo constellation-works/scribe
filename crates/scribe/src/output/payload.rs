@@ -763,6 +763,8 @@ pub(crate) struct PassPayload {
     /// A redacted, bounded explanation for a failure; absent otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) error: Option<String>,
+    /// Deterministic repairs in successfully persisted windows, in order.
+    pub(crate) warnings: Vec<String>,
 }
 
 /// What `session pass` did; `--json` and the `scribe.session-pass` tool
