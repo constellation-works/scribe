@@ -358,7 +358,9 @@ repairs header budget overruns (sentence or bullet boundary, else a word
 boundary with `…`), segment texts over 900 (cut and seal at window end when
 no new segment follows), and new starts outside the window or at/before the
 open segment's last message (continue the open segment when it fits, else
-start at the window's first message). New segments with cut text are kept;
+start at the first window message after the open segment's last message,
+else cut the continuation and seal the open segment at window end; with no
+open segment, start at the window's first message). New segments with cut text are kept;
 sealed segments stay unchanged. Other shape defects still fail the window,
 and the entire repaired answer is revalidated before redaction and writing
 ([design §5.5](../2_design.md#55-the-log-segments-and-sealing)).

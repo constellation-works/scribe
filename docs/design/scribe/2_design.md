@@ -1025,9 +1025,14 @@ whose only remaining defects are these budget and start misses:
   last message becomes a continuation of that open segment: append its text
   with a blank line when the combined text fits 900. Keep the open heading,
   merge references and retain the first five distinct topics in input order.
-  If the combined text would exceed 900, or there is no open segment, keep
-  the new segment and start it at the window's first message, ahead of valid
-  later starts. Never discard another new segment to make room.
+  If the combined text would exceed 900, keep the new segment and start it
+  at the first window message that follows the open segment's last message
+  in the transcript and precedes every start the model kept (never one the
+  final check would refuse). When no window message qualifies, the content
+  ends the open segment instead: the combined text is cut at 900 as above
+  and the open segment seals at this window's end. With no open segment,
+  keep the new segment and start it at the window's first message, ahead of
+  valid later starts. Never discard another new segment to make room.
 
 The uncut answer must still pass all other shape checks: truncation cannot
 hide a heading line or invalid topic. Reversed or duplicate starts within

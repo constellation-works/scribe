@@ -1,6 +1,8 @@
 use super::{T0, session};
 use crate::entry::Speaker;
-use crate::models::{NewSegmentAnswer, PassMessage, SegmentAnswer, SessionAnswer, TermAnswer};
+use crate::models::{
+    NewSegmentAnswer, PassMessage, SegmentAnswer, SessionAnswer, SessionRequest, TermAnswer,
+};
 use crate::pass::{self, Invalid, PassMeta, WINDOW_CHARS};
 use crate::session::{SegmentOrigin, SegmentState, SessionStatus};
 use crate::transcript::Message;
@@ -394,4 +396,122 @@ fn the_request_carries_the_previous_record_the_window_and_what_to_reuse() {
         assert!(prompt.contains(part), "{part:?} missing from:\n{prompt}");
     }
     assert!(!prompt.contains("--- user · u-1 ---"), "already folded in");
+}
+
+/// The request for `window` after a record whose open segment is near the
+/// segment budget and ends at `last`.
+fn overflow_request(last: &str, window: &[&str]) -> SessionRequest {
+    let mut previous = session("s-1", T0);
+    previous.log[0].text = "o".repeat(800);
+    previous.log[0].last_message = Some(last.to_owned());
+    pass::request(
+        "fake",
+        Some(&previous),
+        Vec::new(),
+        pass::Window {
+            messages: window.iter().map(|id| plain(id, 10)).collect(),
+            dropped: 0,
+        },
+        Vec::new(),
+        Vec::new(),
+        false,
+    )
+}
+
+fn segment_at(starts_at: &str, text: String) -> NewSegmentAnswer {
+    NewSegmentAnswer {
+        starts_at: starts_at.to_owned(),
+        heading: String::from("Next part"),
+        text,
+        topics: Vec::new(),
+        related: Vec::new(),
+    }
+}
+
+/// An answer whose new segments cannot continue the 800-character open one.
+fn overflow_answer(new: Vec<NewSegmentAnswer>) -> SessionAnswer {
+    SessionAnswer {
+        open: Some(SegmentAnswer {
+            heading: String::from("part 1"),
+            text: "o".repeat(800),
+            topics: Vec::new(),
+            related: Vec::new(),
+        }),
+        new,
+        ..answer()
+    }
+}
+
+fn conversation_of(ids: &[&str]) -> Vec<PassMessage> {
+    ids.iter().map(|id| plain(id, 10)).collect()
+}
+
+#[test]
+fn repair_starts_an_overflowing_segment_at_a_window_message_the_check_accepts() {
+    // The window's first message is not a conversation turn, so a start there
+    // cannot be ordered against the open segment's last message.
+    let conversation = conversation_of(&["u-1", "a-1", "a-2"]);
+    let request = overflow_request("a-1", &["ghost", "a-2"]);
+    let answer = overflow_answer(vec![segment_at("a-1", "n".repeat(300))]);
+    assert!(pass::check(answer.clone(), &conversation, &request).is_err());
+
+    let repaired = pass::repair(answer, &conversation, &request).unwrap();
+
+    assert_eq!(repaired.new.len(), 1);
+    assert_eq!(
+        repaired.new[0].0, 1,
+        "a-2, the first turn after the open one"
+    );
+    assert_eq!(repaired.new[0].1.text, "n".repeat(300));
+    assert!(!repaired.seal_open);
+}
+
+#[test]
+fn repair_skips_window_messages_at_or_before_the_open_segments_last_message() {
+    let conversation = conversation_of(&["u-1", "a-1", "u-2", "a-2"]);
+    let request = overflow_request("u-2", &["a-1", "u-2", "a-2"]);
+    let answer = overflow_answer(vec![segment_at("a-1", "n".repeat(300))]);
+
+    let repaired = pass::repair(answer, &conversation, &request).unwrap();
+
+    assert_eq!(repaired.new.len(), 1);
+    assert_eq!(repaired.new[0].0, 2, "not the window's first message");
+}
+
+#[test]
+fn repair_seals_the_open_segment_when_no_window_message_can_start_the_content() {
+    let conversation = conversation_of(&["u-1", "a-1", "u-2"]);
+    let request = overflow_request("u-2", &["a-1", "u-2"]);
+    let answer = overflow_answer(vec![segment_at("a-1", "n".repeat(300))]);
+
+    let repaired = pass::repair(answer, &conversation, &request).unwrap();
+
+    assert!(repaired.new.is_empty());
+    assert!(
+        repaired.seal_open,
+        "the open segment ends at the window's end"
+    );
+    let open = repaired.open.unwrap();
+    assert!(open.text.chars().count() <= pass::SEGMENT_CHARS);
+    assert!(open.text.starts_with(&"o".repeat(800)));
+    assert!(repaired.repairs.iter().any(|r| r.contains("cut at")));
+}
+
+#[test]
+fn repair_never_places_a_relocated_segment_after_a_start_the_model_kept() {
+    // The only start before the model's own second start is not after the
+    // open segment, so the first segment's content ends the open one instead.
+    let conversation = conversation_of(&["u-1", "a-1", "u-2", "a-2"]);
+    let request = overflow_request("u-2", &["a-1", "u-2", "a-2"]);
+    let answer = overflow_answer(vec![
+        segment_at("a-1", "n".repeat(300)),
+        segment_at("a-2", String::from("Kept as the model wrote it.")),
+    ]);
+
+    let repaired = pass::repair(answer, &conversation, &request).unwrap();
+
+    assert_eq!(repaired.new.len(), 1);
+    assert_eq!(repaired.new[0].0, 2);
+    assert_eq!(repaired.new[0].1.text, "Kept as the model wrote it.");
+    assert!(repaired.open.unwrap().text.chars().count() <= pass::SEGMENT_CHARS);
 }

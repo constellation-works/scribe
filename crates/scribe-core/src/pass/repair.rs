@@ -104,17 +104,25 @@ pub fn repair(
     let last_open = expected
         .and_then(|s| s.last_message.as_ref())
         .and_then(|id| conversation.iter().position(|m| &m.uuid == id));
-    let mut new = Vec::new();
+    let position = |uuid: &str| conversation.iter().position(|m| m.uuid == uuid);
+    let window_index = |uuid: &str| request.messages.iter().position(|m| m.uuid == uuid);
+    let follows =
+        |uuid: &str| last_open.is_none_or(|last| position(uuid).is_some_and(|i| i > last));
+    // Starts the final check accepts as they stand; a relocated segment must
+    // land before them, so the transcript order the check enforces holds.
+    let earliest_kept = answer
+        .new
+        .iter()
+        .filter(|s| follows(&s.starts_at))
+        .filter_map(|s| window_index(&s.starts_at))
+        .min();
+    let mut kept = Vec::new();
+    let mut relocated: Vec<NewSegmentAnswer> = Vec::new();
+    let mut last_anchor = None;
+    let mut forced_seal = false;
     for (i, mut segment) in std::mem::take(&mut answer.new).into_iter().enumerate() {
-        let in_window = request.messages.iter().any(|m| m.uuid == segment.starts_at);
-        let follows_open = last_open.is_none_or(|last| {
-            conversation
-                .iter()
-                .position(|m| m.uuid == segment.starts_at)
-                .is_some_and(|start| start > last)
-        });
-        if in_window && follows_open {
-            new.push(segment);
+        if window_index(&segment.starts_at).is_some() && follows(&segment.starts_at) {
+            kept.push(segment);
             continue;
         }
         if let Some(previous) = expected {
@@ -131,40 +139,58 @@ pub fn repair(
             });
             let continuation = format!("{}\n\n{}", open.text.trim(), segment.text.trim());
             if continuation.chars().count() <= SEGMENT_CHARS {
-                open.text = continuation;
-                // Each input's topics passed validation; preserve their order
-                // and the first five distinct labels on the combined segment.
-                for topic in segment.topics {
-                    if !open.topics.contains(&topic) && open.topics.len() < 5 {
-                        open.topics.push(topic);
-                    }
-                }
-                for related in segment.related {
-                    if !open.related.contains(&related) {
-                        open.related.push(related);
-                    }
-                }
+                merge_into(open, segment, continuation);
                 repairs.push(format!(
                     "repaired new segment {} starts_at: continued the open segment",
                     i + 1
                 ));
                 continue;
             }
+            // The first window message after the open segment's last message
+            // that the check can place before every start it keeps.
+            let anchor = request.messages.iter().enumerate().find(|(at, m)| {
+                last_anchor.is_none_or(|last| *at > last)
+                    && earliest_kept.is_none_or(|kept| *at < kept)
+                    && follows(&m.uuid)
+            });
+            let Some((at, first)) = anchor else {
+                // No start can hold this content: it ends the open segment at
+                // the window's end instead, cut to the segment budget.
+                let (text, boundary) = cut(&continuation, SEGMENT_CHARS, true);
+                merge_into(open, segment, text);
+                forced_seal = true;
+                repairs.push(format!(
+                    "repaired new segment {} starts_at: continued the open segment, cut at {boundary} boundary (budget {SEGMENT_CHARS} characters)",
+                    i + 1
+                ));
+                continue;
+            };
+            segment.starts_at.clone_from(&first.uuid);
+            last_anchor = Some(at);
+            relocated.push(segment);
+            repairs.push(format!(
+                "repaired new segment {} starts_at: opened at the first window message after the open segment",
+                i + 1
+            ));
+            continue;
         }
+        // No open segment: the first new segment starts the window.
         let first = request.messages.first().ok_or_else(|| {
             Invalid::Segment(String::from("cannot repair starts_at in an empty window"))
         })?;
         segment.starts_at.clone_from(&first.uuid);
         // Keep the content, ahead of valid later starts. The final check still
         // refuses collisions; never discard another new segment to make room.
-        new.insert(0, segment);
+        relocated.push(segment);
         repairs.push(format!(
             "repaired new segment {} starts_at: opened at the window's first message",
             i + 1
         ));
     }
+    let mut new = relocated;
+    new.extend(kept);
     answer.new = new;
-    let seal_open = over_open && answer.new.is_empty();
+    let seal_open = (over_open || forced_seal) && answer.new.is_empty();
     if seal_open {
         repairs.push(String::from(
             "repaired open segment: sealed at window end after text cut",
@@ -174,6 +200,22 @@ pub fn repair(
     distilled.repairs = repairs;
     distilled.seal_open = seal_open;
     Ok(distilled)
+}
+
+/// Append a new segment's content to the open segment. Each input's topics
+/// passed validation; keep their order and the first five distinct labels.
+fn merge_into(open: &mut SegmentAnswer, segment: NewSegmentAnswer, text: String) {
+    open.text = text;
+    for topic in segment.topics {
+        if !open.topics.contains(&topic) && open.topics.len() < 5 {
+            open.topics.push(topic);
+        }
+    }
+    for related in segment.related {
+        if !open.related.contains(&related) {
+            open.related.push(related);
+        }
+    }
 }
 
 fn cut_field(field: &str, text: &mut String, max: usize, repairs: &mut Vec<String>) {
