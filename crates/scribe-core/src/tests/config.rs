@@ -83,6 +83,36 @@ fn segment_windows_is_positive_and_defaults_to_three() {
 }
 
 #[test]
+fn projects_take_kebab_slugs_and_non_empty_paths() {
+    let config = Config::parse(
+        r#"
+[projects.scribe]
+paths = ["codebases/scribe", " codebases/scribe ", "crates/scribe"]
+
+[projects.orbit]
+paths = ["codebases/orbit"]
+"#,
+    )
+    .unwrap();
+    let scribe = config.projects.get(&"scribe".parse().unwrap()).unwrap();
+    assert_eq!(
+        scribe,
+        &["codebases/scribe".to_owned(), "crates/scribe".to_owned()]
+    );
+    assert!(config.projects.contains_key(&"orbit".parse().unwrap()));
+    assert!(Config::default().projects.is_empty());
+
+    let err = Config::parse("[projects.Not_Kebab]\npaths = [\"x\"]\n").unwrap_err();
+    assert!(err.message.contains("projects.Not_Kebab"), "{err}");
+    let err = Config::parse("[projects.scribe]\npaths = []\n").unwrap_err();
+    assert!(err.message.contains("at least one path"), "{err}");
+    let err = Config::parse("[projects.scribe]\npaths = [\"  \"]\n").unwrap_err();
+    assert!(err.message.contains("must not be empty"), "{err}");
+    let err = Config::parse("[projects.scribe]\nroots = [\"x\"]\n").unwrap_err();
+    assert!(err.message.contains("roots"), "{err}");
+}
+
+#[test]
 fn sessions_inactive_after_days_defaults_to_120_and_must_be_a_positive_integer() {
     assert_eq!(
         Config::parse("")

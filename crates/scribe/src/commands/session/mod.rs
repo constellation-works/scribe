@@ -13,6 +13,7 @@
 //! `activity.rs`.
 
 pub(in crate::commands) mod activity;
+pub(in crate::commands) mod catalog;
 pub(in crate::commands) mod pass;
 pub(in crate::commands) mod rebuild;
 
@@ -73,6 +74,9 @@ pub(crate) enum SessionCommand {
     /// Show an inactive session again, or pin or unpin it against automatic deactivation
     #[command(after_help = activity::ACTIVATE_EXAMPLES)]
     Activate(activity::ActivateArgs),
+    /// Switch a past session on by name and catalog every window of its transcript
+    #[command(after_help = catalog::EXAMPLES)]
+    Catalog(catalog::CatalogArgs),
 }
 
 /// Arguments to `session list`.
@@ -189,6 +193,9 @@ impl SessionCommand {
             Self::Activate(_) => Some(AuditMeta {
                 command: activity::ACTIVATE_COMMAND,
             }),
+            Self::Catalog(_) => Some(AuditMeta {
+                command: catalog::COMMAND,
+            }),
         }
     }
 }
@@ -202,6 +209,7 @@ pub(super) fn run(command: SessionCommand, ctx: &Context) -> Result<Output, CliE
         SessionCommand::Pass(args) => pass::run(&args, ctx),
         SessionCommand::Deactivate(args) => activity::deactivate(args, ctx),
         SessionCommand::Activate(args) => activity::activate(args, ctx),
+        SessionCommand::Catalog(args) => catalog::run(&args, ctx),
     }
 }
 

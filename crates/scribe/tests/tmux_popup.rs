@@ -214,13 +214,12 @@ fn the_proposals_view_previews_the_proposal() {
 }
 
 #[test]
-fn the_transcripts_view_says_so_until_s14_lands() {
+fn the_transcripts_view_says_when_nothing_is_uncataloged() {
     let fx = Fixture::new();
     fx.seed();
     let (mut cmd, cap) = popup(&fx);
-    // `transcript list` does not exist in the built binary (S14), so the
-    // reload must produce the notice row, and Enter on it must not fail
-    // or open the pager.
+    // The fixture has no Claude Code transcripts, so the list succeeds
+    // empty and the view shows that notice. Enter on it does not page.
     let out = cmd
         .env("FAKE_FZF_PRESS", "ctrl-b")
         .output()
@@ -232,7 +231,10 @@ fn the_transcripts_view_says_so_until_s14_lands() {
         String::from_utf8_lossy(&out.stderr)
     );
     let reload = read(&cap, "fzf-reload.txt");
-    assert!(reload.contains("S14"), "{reload}");
+    assert!(
+        reload.contains("no uncataloged transcripts in the last 30 days"),
+        "{reload}"
+    );
     assert!(reload.contains("transcript\t-"), "{reload}");
     assert!(read(&cap, "pager.txt").is_empty());
 }

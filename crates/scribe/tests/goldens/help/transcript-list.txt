@@ -1,0 +1,23 @@
+List uncataloged transcripts, newest first, writing nothing
+
+Usage: scribe transcript list [OPTIONS] --since <DATE>
+
+Options:
+      --since <DATE>       Only transcripts whose span, from the first message to the last, overlaps this day, YYYY-MM-DD
+      --until <DATE>       Only transcripts on or before this day, YYYY-MM-DD [default: no upper bound]
+      --project <PROJECT>  Only transcripts attributed to this project; repeat to accept any of them [default: any]
+      --min-turns <N>      Only transcripts with at least this many of Daniel's turns [default: 20]
+      --limit <N>          Show at most this many transcripts, 1 or more; --json reports the total and whether the list was cut [default: all]
+  -h, --help               Print help
+  -V, --version            Print version
+
+Global options:
+      --root <DIR>       Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>  Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json             Shorthand for --format json
+
+Examples:
+  scribe transcript list --since 2026-10-01
+  scribe transcript list --since 2026-10-01 --project orbit --project scribe
+  scribe transcript list --since 2026-10-01 --min-turns 40 --limit 10
+  scribe transcript show <id>

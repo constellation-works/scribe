@@ -151,6 +151,8 @@ pub(in crate::commands) fn run_with<M: Models>(
             } else {
                 format!("{remaining} due session pass(es) waiting for retry backoff")
             }],
+            catalog: false,
+            switch_written: false,
         }));
     }
     let config = store.config()?;
@@ -199,6 +201,7 @@ pub(in crate::commands) fn run_with<M: Models>(
             dropped_terms: 0,
             warnings: Vec::new(),
             incomplete: false,
+            catalog: None,
         };
         let result = if let Some((_, reason)) = corrupt.iter().find(|(stem, _)| stem == id.as_str())
         {
@@ -219,7 +222,83 @@ pub(in crate::commands) fn run_with<M: Models>(
         passes,
         remaining,
         notices: Vec::new(),
+        catalog: false,
+        switch_written: false,
     }))
+}
+
+/// Run one `session catalog` after its switch is written. No deadline and
+/// no five-session cap. `project` is used only when the session has no
+/// record yet. `ended` marks the last window final and turns the switch off.
+pub(in crate::commands) fn run_catalog<M: Models>(
+    ctx: &Context,
+    models: impl FnOnce(&Config) -> M,
+    id: &SessionId,
+    switch: &SessionControl,
+    project: Project,
+    ended: bool,
+) -> Result<PassReport, CliError> {
+    let store = ctx.store();
+    let config = store.config()?;
+    let redactor = ctx.redactor(&config)?;
+    let found = store.list_sessions(&SessionFilter {
+        include_inactive: true,
+        ..Default::default()
+    })?;
+    let mut topics: BTreeSet<String> = BTreeSet::new();
+    let mut terms: BTreeSet<String> = BTreeSet::new();
+    for record in &found.listing.items {
+        topics.extend(record.topics.as_slice().iter().map(ToString::to_string));
+        terms.extend(record.terms.iter().map(|t| t.term.clone()));
+    }
+    let known = Known {
+        topics: topics.into_iter().take(MAX_LISTED).collect(),
+        terms: terms.into_iter().take(MAX_LISTED).collect(),
+        records: &found.listing.items,
+    };
+    let corrupt: Vec<(String, String)> = found
+        .skipped
+        .iter()
+        .filter_map(|s| {
+            Some((
+                s.path.file_stem()?.to_str()?.to_owned(),
+                s.error.to_string(),
+            ))
+        })
+        .collect();
+    let adapter = models(&config);
+    let mut job = Job {
+        ctx,
+        config: &config,
+        redactor: &redactor,
+        id,
+        switch,
+        windows: 0,
+        segments_sealed: 0,
+        segments: None,
+        dropped_terms: 0,
+        warnings: Vec::new(),
+        incomplete: false,
+        catalog: Some(CatalogRun { project, ended }),
+    };
+    let limits = RunLimits::new(1);
+    let result = if let Some((_, reason)) = corrupt.iter().find(|(stem, _)| stem == id.as_str()) {
+        Err(PassError::new("store_corrupt", reason.clone()))
+    } else {
+        let previous = found.listing.items.iter().find(|r| &r.id == id);
+        job.run(previous, &known, &adapter, &limits)
+    };
+    let passes = vec![match result {
+        Ok(done) => done,
+        Err(failure) => job.failed(failure)?,
+    }];
+    Ok(PassReport {
+        passes,
+        remaining: 0,
+        notices: Vec::new(),
+        catalog: true,
+        switch_written: false,
+    })
 }
 
 /// The store's topics and terms, offered to the model for reuse, and its
@@ -243,6 +322,15 @@ struct Job<'a> {
     dropped_terms: usize,
     warnings: Vec<String>,
     incomplete: bool,
+    /// Set for `session catalog`: the project of the first record, and
+    /// whether the transcript's last message is at least a day old.
+    catalog: Option<CatalogRun>,
+}
+
+/// One cataloged session's extra facts. Absent for an ordinary pass.
+struct CatalogRun {
+    project: Project,
+    ended: bool,
 }
 
 /// A session pass failure, with the stable code kept separate from its
@@ -296,7 +384,10 @@ impl Job<'_> {
         limits: &RunLimits,
     ) -> Result<PassPayload, PassError> {
         self.segments = previous.map(|p| p.log.len());
-        let final_pass = self.switch.final_pass;
+        let final_pass = match &self.catalog {
+            Some(catalog) => catalog.ended,
+            None => self.switch.final_pass,
+        };
         let Some(path) = self.ctx.transcripts().and_then(|dir| find(dir, self.id)) else {
             return self.nothing_new(previous, true);
         };
@@ -388,13 +479,21 @@ impl Job<'_> {
             };
             let from = sent(first_message.as_deref());
             let to = sent(Some(&through));
+            let mut project = if cwd.is_empty() {
+                Project::sanitized("")
+            } else {
+                project::of(Path::new(&cwd))
+            };
+            // `--project`, or the transcript-list attribution, only for the
+            // first record. A resumed catalog keeps the record's project.
+            if previous.is_none()
+                && let Some(catalog) = &self.catalog
+            {
+                project = catalog.project.clone();
+            }
             let meta = pass::PassMeta {
                 id: self.id.clone(),
-                project: if cwd.is_empty() {
-                    Project::sanitized("")
-                } else {
-                    project::of(Path::new(&cwd))
-                },
+                project,
                 provider: Label::sanitized(PROVIDER, PROVIDER),
                 host: self.ctx.host(),
                 cwd,
@@ -408,7 +507,11 @@ impl Job<'_> {
                 final_pass: final_pass && last,
                 window: window_meta,
                 segment_windows: self.config.segment_windows,
-                origin: scribe_core::SegmentOrigin::Pass,
+                origin: if self.catalog.is_some() {
+                    scribe_core::SegmentOrigin::Catalog
+                } else {
+                    scribe_core::SegmentOrigin::Pass
+                },
             };
             let sealed_before = previous.as_ref().map_or(0, |p| {
                 p.log
@@ -416,22 +519,20 @@ impl Job<'_> {
                     .filter(|s| s.state == scribe_core::SegmentState::Sealed)
                     .count()
             });
-            let record = pass::record(previous.as_ref(), distilled, meta);
+            let record = self.stamp_catalog(pass::record(previous.as_ref(), distilled, meta));
             let sealed_after = record
                 .log
                 .iter()
                 .filter(|s| s.state == scribe_core::SegmentState::Sealed)
                 .count();
-            previous = if last {
-                self.settle(Some(record), expected)?
+            previous = if !last {
+                self.checkpoint(record, expected)?
+            } else if self.catalog.as_ref().is_some_and(|c| c.ended) {
+                self.settle_off(Some(record), expected)?
+            } else if self.catalog.is_some() {
+                self.checkpoint_live(record, expected)?
             } else {
-                self.ctx
-                    .store()
-                    .checkpoint_pass(record, expected, self.redactor)
-                    .map_err(|err| {
-                        tracing::warn!(session = %self.id, %err, "cannot checkpoint the session window");
-                        PassError::new(err.code(), err.to_string())
-                    })?
+                self.settle(Some(record), expected)?
             };
             expected = previous.as_ref().map(|p| p.updated);
             self.segments_sealed += sealed_after.saturating_sub(sealed_before);
@@ -455,6 +556,32 @@ impl Job<'_> {
         previous: Option<&SessionRecord>,
         wait: bool,
     ) -> Result<PassPayload, PassError> {
+        if self.catalog.is_some() {
+            let ended = self.catalog.as_ref().is_some_and(|c| c.ended);
+            // An ended transcript with nothing left to send is still final,
+            // and the switch turns off with that write. A live one, or a
+            // transcript with no message yet, stays on and due.
+            if ended && !wait {
+                let record = previous.map(|p| {
+                    let mut finalized = pass::finalized(p, self.ctx.now());
+                    if finalized.cataloged_by.is_none() {
+                        finalized.cataloged_by.clone_from(&self.switch.cataloged_by);
+                    }
+                    finalized
+                });
+                let newly_sealed = previous.is_some_and(|p| p.open_segment().is_some());
+                let written = self.settle_off(record, previous.map(|p| p.updated))?;
+                self.segments_sealed += usize::from(newly_sealed);
+                let result = if written.is_some() {
+                    "written"
+                } else {
+                    "unchanged"
+                };
+                return Ok(self.payload(result, written.as_ref()));
+            }
+            let result = if wait { "waiting" } else { "unchanged" };
+            return Ok(self.payload(result, previous));
+        }
         if self.switch.final_pass {
             let record = previous.map(|p| pass::finalized(p, self.ctx.now()));
             let newly_sealed = previous.is_some_and(|p| p.open_segment().is_some());
@@ -472,6 +599,60 @@ impl Job<'_> {
         }
         self.settle(None, previous.map(|p| p.updated))?;
         Ok(self.payload("unchanged", previous))
+    }
+
+    /// Copy `cataloged_by` from the switch onto the first record. Later
+    /// windows keep it through [`pass::record`].
+    fn stamp_catalog(&self, mut record: SessionRecord) -> SessionRecord {
+        if self.catalog.is_some() && record.cataloged_by.is_none() {
+            record.cataloged_by.clone_from(&self.switch.cataloged_by);
+        }
+        record
+    }
+
+    fn checkpoint(
+        &self,
+        record: SessionRecord,
+        expected: Option<time::OffsetDateTime>,
+    ) -> Result<Option<SessionRecord>, PassError> {
+        self.ctx
+            .store()
+            .checkpoint_pass(record, expected, self.redactor)
+            .map_err(|err| {
+                tracing::warn!(session = %self.id, %err, "cannot checkpoint the session window");
+                PassError::new(err.code(), err.to_string())
+            })
+    }
+
+    /// A live catalog's last window: the switch stays on and due.
+    fn checkpoint_live(
+        &self,
+        record: SessionRecord,
+        expected: Option<time::OffsetDateTime>,
+    ) -> Result<Option<SessionRecord>, PassError> {
+        self.ctx
+            .store()
+            .checkpoint_catalog(record, expected, self.redactor)
+            .map_err(|err| {
+                tracing::warn!(session = %self.id, %err, "cannot checkpoint the catalog window");
+                PassError::new(err.code(), err.to_string())
+            })
+    }
+
+    /// An ended catalog's last window: final record and the switch off,
+    /// in one store call.
+    fn settle_off(
+        &self,
+        record: Option<SessionRecord>,
+        expected: Option<time::OffsetDateTime>,
+    ) -> Result<Option<SessionRecord>, PassError> {
+        self.ctx
+            .store()
+            .settle_catalog_final(self.id, record, expected, self.redactor)
+            .map_err(|err| {
+                tracing::warn!(session = %self.id, %err, "cannot finish the catalog");
+                PassError::new(err.code(), err.to_string())
+            })
     }
 
     /// Write `record` (if any) and settle the switch, in one store call.

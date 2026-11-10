@@ -101,6 +101,7 @@ fn an_empty_list_is_empty_stdout_in_human_modes_and_an_empty_envelope_in_json() 
         ),
         (Records::Proposals(Vec::new()), "proposals"),
         (Records::Tags(Vec::new()), "tags"),
+        (Records::Transcripts(Vec::new()), "transcripts"),
     ] {
         assert_eq!(render_list(OutputMode::Plain, &records, 0, &[]), "");
         assert_eq!(render_list(OutputMode::Table, &records, 0, &[]), "");

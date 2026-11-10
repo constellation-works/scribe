@@ -1,0 +1,28 @@
+List uncataloged Claude Code transcripts and show one, writing nothing
+
+Usage: scribe transcript [OPTIONS] <COMMAND>
+
+Commands:
+  list  List uncataloged transcripts, newest first, writing nothing
+  show  Show one transcript and Daniel's first five turns, writing nothing
+  help  Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Global options:
+      --root <DIR>       Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>  Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json             Shorthand for --format json
+
+Lists Claude Code transcripts that have no session record and no switch,
+newest first, and writes nothing. --min-turns defaults to 20. project is
+the configured [projects.<slug>] path with the most mentions, else the
+cwd's project. show prints one transcript with Daniel's first five turns.
+
+Examples:
+  scribe transcript list --since 2026-10-01 --project scribe
+  scribe transcript list --since 2026-10-01 --until 2026-10-31 --min-turns 40
+  scribe transcript show <id>
+  scribe transcript list --since 2026-10-01 --json | jq '.transcripts[].session'

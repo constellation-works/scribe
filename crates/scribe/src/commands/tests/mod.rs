@@ -1,6 +1,7 @@
 //! Unit tests for the command modules, one file per source file (STD-02 R19).
 
 mod entry;
+mod transcript;
 
 use crate::cli::Cli;
 use crate::commands::ListNotice;
@@ -53,6 +54,8 @@ fn only_the_hook_commands_are_audited_because_every_other_command_reads() {
         &["scribe", "session", "show", "s-1"],
         &["scribe", "proposal", "list"],
         &["scribe", "tag", "list"],
+        &["scribe", "transcript", "list", "--since", "2026-10-01"],
+        &["scribe", "transcript", "show", "abcd"],
     ] {
         let cli = Cli::try_parse_from(args).unwrap();
         assert!(cli.command.audit().is_none(), "{args:?}");
@@ -67,6 +70,10 @@ fn both_hook_commands_are_audited_under_their_command_path() {
             "hook user-prompt-submit",
         ),
         (&["scribe", "hook", "stop"], "hook stop"),
+        (
+            &["scribe", "session", "catalog", "abcd", "--author", "daniel"],
+            "session catalog",
+        ),
     ] {
         let cli = Cli::try_parse_from(args).unwrap();
         assert_eq!(cli.command.audit().map(|m| m.command), Some(path));

@@ -187,8 +187,8 @@ env = []                         # more variables whose values are masked
 [sessions]
 inactive_after_days = 120        # days since a session's last message
 
-# Designed for S14 (not yet accepted by the parser):
-[projects.orbit]                 # none by default
+# Accepted by the parser (S14). None by default.
+[projects.orbit]
 paths = ["codebases/orbit"]      # path fragments counted by transcript list
 ```
 
@@ -369,9 +369,11 @@ config tag claims is dropped with a warning naming both.
   and `nothing changed` on stderr, without an audit event (the lock holder
   diagnostic may change). Config/store collisions are resolved in memory:
   `tag list` warns; it never rewrites either file.
-- **Transcripts** *(S14)*. `transcript list` and `transcript show` read
-  Claude Code transcripts through the hooks' provenance check and write
-  nothing, take no lock and create nothing.
+- **Transcripts** *(S14, built)*. `transcript list` and `transcript show`
+  read Claude Code transcripts through the hooks' provenance check and
+  write nothing, take no lock and create nothing. `[projects.<slug>] paths`
+  is parsed: a kebab-case slug and at least one non-empty path. `session
+  catalog` sets `cataloged_by` on the switch and copies it onto the record.
 - **Links** (§5.4). A link is written only by `/scribe on --from` or
   `/scribe link`, under the store lock: onto the child's record when it has
   one (no other field, `updated` included, changes), else onto its switch's

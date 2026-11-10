@@ -100,20 +100,37 @@ impl<'a> AuditGuard<'a> {
                     error_code: outcome.error_code,
                 })
                 .collect(),
-            Ok(Output::Pass(report)) => report
-                .passes
-                .iter()
-                .filter(|p| p.result != "waiting")
-                .map(|p| Line {
-                    status: if p.error_code.is_some() {
-                        AuditStatus::Failure
-                    } else {
-                        AuditStatus::Success
-                    },
-                    target: Some(format!("session:{}", p.session)),
-                    error_code: p.error_code,
-                })
-                .collect(),
+            Ok(Output::Pass(report)) => {
+                let mut lines: Vec<Line> = report
+                    .passes
+                    .iter()
+                    .filter(|p| p.result != "waiting")
+                    .map(|p| Line {
+                        status: if p.error_code.is_some() {
+                            AuditStatus::Failure
+                        } else {
+                            AuditStatus::Success
+                        },
+                        target: Some(format!("session:{}", p.session)),
+                        error_code: p.error_code,
+                    })
+                    .collect();
+                if report.switch_written {
+                    let target = report
+                        .passes
+                        .first()
+                        .map(|p| format!("session:{}", p.session));
+                    lines.insert(
+                        0,
+                        Line {
+                            status: AuditStatus::Success,
+                            target,
+                            error_code: None,
+                        },
+                    );
+                }
+                lines
+            }
             Ok(Output::Scan(report)) => report
                 .reapplied
                 .iter()
@@ -219,6 +236,9 @@ fn target_of(output: &Output) -> Option<String> {
         Output::Show {
             record: Record::Session(session),
         } => Some(session.id.clone()),
+        Output::Show {
+            record: Record::Transcript(transcript),
+        } => Some(format!("session:{}", transcript.session)),
         Output::List { .. } => None,
         // Hook replies, passes and scans are audited per outcome in
         // `mark_result`.
@@ -234,5 +254,6 @@ fn record_target(record: &Record) -> Option<String> {
         Record::Session(s) => format!("session:{}", s.id),
         Record::Tag(t) => t.name.to_string(),
         Record::Proposal(p) => p.id.clone(),
+        Record::Transcript(t) => format!("session:{}", t.session),
     })
 }

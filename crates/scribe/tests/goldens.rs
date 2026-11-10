@@ -31,6 +31,10 @@ const HELP: &[(&str, &[&str])] = &[
     ("session-rebuild", &["session", "rebuild", "--help"]),
     ("session-deactivate", &["session", "deactivate", "--help"]),
     ("session-activate", &["session", "activate", "--help"]),
+    ("session-catalog", &["session", "catalog", "--help"]),
+    ("transcript", &["transcript", "--help"]),
+    ("transcript-list", &["transcript", "list", "--help"]),
+    ("transcript-show", &["transcript", "show", "--help"]),
     ("proposal", &["proposal", "--help"]),
     ("proposal-add", &["proposal", "add", "--help"]),
     ("proposal-update", &["proposal", "update", "--help"]),
@@ -277,6 +281,77 @@ fn failed_session_pass_matches_golden() {
     let failures: Vec<String> = check("output/session-pass-failed.json", &text(&out.stdout))
         .into_iter()
         .collect();
+    report(&failures);
+}
+
+#[test]
+fn transcript_list_and_show_match_goldens() {
+    const SESSION: &str = "c0ffee00-1111-4222-8333-444455556666";
+    let fx = Fixture::new();
+    let root = fx.root();
+    std::fs::create_dir_all(&root).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let config = root.join("config.toml");
+    std::fs::write(
+        &config,
+        "[projects.orbit]\npaths = [\"codebases/orbit\"]\n\n[projects.scribe]\npaths = [\"codebases/scribe\"]\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let project = fx.home().join(".claude/projects/-work-constellation");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join(format!("{SESSION}.jsonl")),
+        format!(
+            "{}\n{}\n",
+            json!({
+                "type": "user",
+                "uuid": "u-1",
+                "timestamp": "2026-10-15T10:00:00Z",
+                "cwd": "/work/constellation",
+                "message": {"role": "user", "content": "Backfill the orbit work in codebases/orbit and again codebases/orbit."}
+            }),
+            json!({
+                "type": "user",
+                "uuid": "u-2",
+                "timestamp": "2026-10-16T11:00:00Z",
+                "cwd": "/work/constellation",
+                "message": {"role": "user", "content": "And one more turn about codebases/scribe."}
+            })
+        ),
+    )
+    .unwrap();
+    let mut failures = Vec::new();
+    for (name, args) in [
+        (
+            "transcript-list",
+            vec![
+                "transcript",
+                "list",
+                "--since",
+                "2026-10-01",
+                "--min-turns",
+                "1",
+            ],
+        ),
+        ("transcript-show", vec!["transcript", "show", SESSION]),
+    ] {
+        for (suffix, mode) in MODES {
+            let out = fx.ok(&[args.as_slice(), *mode].concat());
+            failures.extend(check(
+                &format!("output/{name}.{suffix}"),
+                &text(&out.stdout),
+            ));
+        }
+    }
     report(&failures);
 }
 

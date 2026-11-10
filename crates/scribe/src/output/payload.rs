@@ -594,6 +594,8 @@ pub(crate) enum Records {
     Tags(Vec<TagPayload>),
     /// `record search`, best first.
     Hits(Vec<HitPayload>),
+    /// `transcript list`.
+    Transcripts(Vec<TranscriptPayload>),
 }
 
 impl Records {
@@ -605,6 +607,7 @@ impl Records {
             Self::Proposals(v) => v.len(),
             Self::Tags(v) => v.len(),
             Self::Hits(v) => v.len(),
+            Self::Transcripts(v) => v.len(),
         }
     }
 }
@@ -680,6 +683,37 @@ pub(crate) enum Record {
     Proposal(Box<ProposalPayload>),
     Entry(Box<EntryPayload>),
     Session(Box<SessionPayload>),
+    Transcript(Box<TranscriptPayload>),
+}
+
+/// One uncataloged transcript (`transcript list` / `transcript show`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct TranscriptPayload {
+    /// The transcript's id.
+    pub(crate) session: String,
+    /// The attributed project slug.
+    pub(crate) project: String,
+    /// Mentions of each configured project's paths. Every configured project
+    /// is present.
+    pub(crate) project_mentions: BTreeMap<String, u32>,
+    /// The transcript's cwd, empty when it names none.
+    pub(crate) cwd: String,
+    /// The first kept message. `null` when the file has none.
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub(crate) started: Option<Timestamp>,
+    /// The last kept message.
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub(crate) ended: Option<Timestamp>,
+    /// The file's length.
+    pub(crate) bytes: u64,
+    /// Daniel's turns, by the pass's rule.
+    pub(crate) daniel_turns: u32,
+    /// His first turn, cut to 300 characters. Empty when he has none.
+    pub(crate) first_prompt: String,
+    /// His first five turns, each cut to 300 characters. Present on
+    /// `transcript show` only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) daniel_first_turns: Option<Vec<String>>,
 }
 
 /// The reply a Claude Code hook prints: the same text for Daniel
@@ -778,6 +812,12 @@ pub(crate) struct PassReport {
     /// Lines for stderr, printed in every mode.
     #[serde(skip)]
     pub(crate) notices: Vec<String>,
+    /// This report is `session catalog`. Not part of the JSON contract.
+    #[serde(skip)]
+    pub(crate) catalog: bool,
+    /// The catalog switch was written this run: one extra success audit line.
+    #[serde(skip)]
+    pub(crate) switch_written: bool,
 }
 
 impl PassReport {
@@ -794,6 +834,13 @@ impl PassReport {
             })
             .collect();
         (!failed.is_empty()).then(|| {
+            if self.catalog {
+                return crate::error::CliError::PassFailed(format!(
+                    "{} session catalog(s) failed: {}; checkpoint kept; repeat 'scribe session catalog <id> --author <name>' to resume",
+                    failed.len(),
+                    failed.join(", ")
+                ));
+            }
             if self.passes.iter().any(|p| p.author.is_some()) {
                 return crate::error::CliError::PassFailed(format!("{} session rebuild(s) failed: {}; checkpoint kept; repeat 'scribe session rebuild <id> --author <name> --confirm' to resume", failed.len(), failed.join(", ")));
             }

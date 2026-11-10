@@ -13,6 +13,8 @@
 //! on, so a session never switched on is never mentioned in `control.json`
 //! and a pass never reads its transcript. Pure values, no I/O (STD-02 R5).
 
+use crate::activity::CatalogedBy;
+use crate::record::Author;
 use crate::session::{
     Cadence, ControlState, LinkError, LinkType, SessionControl, SessionId, SessionLink, check_link,
 };
@@ -192,6 +194,57 @@ pub fn link(
         switched_on,
         write_record,
     })
+}
+
+/// Whether `session catalog` may start or resume `session`.
+///
+/// A switch `catalog` wrote (`cataloged_by` set) that is still on and due
+/// resumes, even when a partial record exists. Any other switch, or a
+/// record with no such switch, is refused (`session_cataloged`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CatalogGate {
+    /// No record and no switch: write one and catalog.
+    Start,
+    /// A catalog switch is still due. Keep `since` and `cataloged_by`.
+    Resume(SessionControl),
+    /// A record or a non-catalog switch already exists.
+    Refused,
+}
+
+/// Decide [`CatalogGate`] without changing `state`. `has_record` is true
+/// when a session file for `session` exists, including one that did not parse.
+#[must_use]
+pub fn catalog_gate(state: &ControlState, session: &SessionId, has_record: bool) -> CatalogGate {
+    if let Some(control) = state.get(session) {
+        if control.cataloged_by.is_some() && control.on && control.due {
+            return CatalogGate::Resume(control.clone());
+        }
+        return CatalogGate::Refused;
+    }
+    if has_record {
+        CatalogGate::Refused
+    } else {
+        CatalogGate::Start
+    }
+}
+
+/// Switch `session` on as a cataloged-by-name session. The caller has
+/// already decided [`CatalogGate::Start`]. `since` and `cataloged_by.at`
+/// are both `now`.
+pub fn catalog_on(state: &mut ControlState, session: &SessionId, by: Author, now: OffsetDateTime) {
+    state.sessions.insert(
+        session.clone(),
+        SessionControl {
+            on: true,
+            since: Some(now),
+            due: true,
+            final_pass: false,
+            consecutive_failures: 0,
+            retry_after: None,
+            pending_links: Vec::new(),
+            cataloged_by: Some(CatalogedBy { at: now, by }),
+        },
+    );
 }
 
 /// Apply `request` to `session`'s switch at `now`.

@@ -1,4 +1,4 @@
-List and show the records of sessions cataloged with /scribe on, and write them (pass)
+List and show the records of sessions cataloged with /scribe on, and write them (pass, catalog)
 
 Usage: scribe session [OPTIONS] <COMMAND>
 
@@ -9,6 +9,7 @@ Commands:
   rebuild     Replace a session record with a log rebuilt from its transcript, resuming interrupted windows
   deactivate  Hide a session whose content no longer describes something current, with a reason
   activate    Show an inactive session again, or pin or unpin it against automatic deactivation
+  catalog     Switch a past session on by name and catalog every window of its transcript
   help        Print this message or the help of the given subcommand(s)
 
 Options:
