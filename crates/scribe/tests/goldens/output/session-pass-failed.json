@@ -7,6 +7,9 @@
       "passes": null,
       "dropped_terms": 0,
       "windows": 0,
+      "segments_sealed": 0,
+      "segments": null,
+      "author": null,
       "gave_up": false,
       "error": "the model failed: golden model refusal"
     }

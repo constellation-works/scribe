@@ -591,3 +591,65 @@ fn a_link_is_kept_on_the_switch_until_the_first_record_then_on_the_record() {
     assert_eq!(err.code(), "link_cycle");
     assert_eq!(fs::read(root.join("control.json")).unwrap(), before);
 }
+
+#[test]
+fn ordinary_writes_refuse_any_change_to_a_sealed_segment() {
+    use crate::{Redactor, SegmentState};
+    let dir = private_tempdir();
+    let store = Store::open(dir.path());
+    let t0 = time::macros::datetime!(2026-11-01 10:00 UTC);
+    let mut record = crate::tests::session("s-1", t0);
+    record.log[0].state = SegmentState::Sealed;
+    let id = record.id.clone();
+    let redactor = Redactor::new([]);
+    let original = store
+        .settle_pass(&id, Some(record), false, &redactor)
+        .unwrap()
+        .unwrap();
+    let path = store.session_path(&original);
+    let before = fs::read(&path).unwrap();
+    let mut variants = Vec::new();
+    let mut changed = original.clone();
+    changed.log[0].text.push_str(" edited");
+    variants.push(changed);
+    let mut changed = original.clone();
+    changed.log[0].heading.push_str(" edited");
+    variants.push(changed);
+    let mut changed = original.clone();
+    changed.log[0].windows = std::num::NonZeroU32::new(2).unwrap();
+    variants.push(changed);
+    let mut changed = original.clone();
+    changed.log[0].to += time::Duration::seconds(1);
+    variants.push(changed);
+    let mut changed = original.clone();
+    changed.log.clear();
+    variants.push(changed);
+    for changed in variants {
+        assert_eq!(
+            store
+                .checkpoint_pass(changed.clone(), &redactor)
+                .unwrap_err()
+                .code(),
+            "sealed_segment_changed"
+        );
+        assert_eq!(
+            store
+                .settle_pass(&id, Some(changed), false, &redactor)
+                .unwrap_err()
+                .code(),
+            "sealed_segment_changed"
+        );
+        assert_eq!(fs::read(&path).unwrap(), before);
+    }
+    let mut changed = original.clone();
+    changed.summary = String::from("Updated header");
+    let redactor = Redactor::new([(String::from("LATER"), original.log[0].text.clone())]);
+    let written = store
+        .settle_pass(&id, Some(changed), false, &redactor)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        written.log, original.log,
+        "new redaction settings leave sealed history intact"
+    );
+}

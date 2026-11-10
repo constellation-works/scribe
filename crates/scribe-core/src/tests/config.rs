@@ -66,3 +66,18 @@ fn an_unknown_key_or_bad_value_is_refused_naming_it() {
     assert!(err.message.contains("'b'"), "{err}");
     assert!(!err.to_string().contains('\n'), "one line: {err}");
 }
+
+#[test]
+fn segment_windows_is_positive_and_defaults_to_three() {
+    assert_eq!(Config::default().segment_windows.get(), 3);
+    assert_eq!(
+        Config::parse("[catalog]\nsegment_windows = 2\n")
+            .unwrap()
+            .segment_windows
+            .get(),
+        2
+    );
+    for raw in ["0", "-1", "1.5", "\"three\""] {
+        assert!(Config::parse(&format!("[catalog]\nsegment_windows = {raw}\n")).is_err());
+    }
+}

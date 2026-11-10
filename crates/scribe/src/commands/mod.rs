@@ -91,6 +91,14 @@ pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
     let mut audit = command
         .audit()
         .map(|meta| AuditGuard::start(ctx.store(), meta, ctx.now()));
+    let rebuild_target = if let Command::Session(SessionCommand::Rebuild(args)) = &command {
+        Some(format!("session:{}", args.id))
+    } else {
+        None
+    };
+    if let (Some(audit), Some(target)) = (audit.as_mut(), rebuild_target.as_deref()) {
+        audit.set_target(target);
+    }
     let result = match command {
         Command::Entry(command) => entry::run(command, ctx),
         Command::Session(command) => session::run(command, ctx),
@@ -103,6 +111,9 @@ pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
     };
     if let Some(audit) = audit.as_mut() {
         audit.mark_result(&result);
+        if let Some(target) = rebuild_target.as_deref() {
+            audit.set_target(target);
+        }
     }
     result
 }

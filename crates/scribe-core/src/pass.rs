@@ -20,12 +20,8 @@
 //!    its `said` is a verbatim span of one of Daniel's own turns;
 //! 5. [`record`]: the new record, `scribed_through` advanced.
 //!
-//! Until S9 gives the model the log itself, a pass writes the header
-//! (title, summary, goals, next) and puts the answer's `outcome` in the
-//! record's open segment: it opens one (`origin: pass`) when there is none,
-//! extends its message range and `windows` otherwise, and seals it at the
-//! final pass. Sealed segments, the upgraded one included, are never
-//! touched.
+//! A window rewrites the header and open segment, then appends up to three
+//! new segments. Sealed text is never sent to the model or rewritten.
 //!
 //! A pass writes no tag entries, whatever the transcript holds. No I/O
 //! (STD-02 R5).
@@ -33,13 +29,13 @@
 use crate::control;
 use crate::entry::Speaker;
 use crate::models::{
-    Budgets, CUT_MARK, LinkedRecord, PassMessage, PreviousRecord, SESSION_BUDGET, SessionAnswer,
-    SessionRequest,
+    Budgets, CUT_MARK, LinkedRecord, PassMessage, PreviousRecord, SESSION_BUDGET, SegmentAnswer,
+    SegmentHeading, SessionAnswer, SessionRequest,
 };
 use crate::record::{Label, Project, Related, Topic, Topics};
 use crate::session::{
-    HEADER_SECTIONS, LOG_SECTION, SEGMENT_HEADING_CHARS, Segment, SegmentOrigin, SegmentState,
-    SessionId, SessionLink, SessionRecord, SessionStatus, Term,
+    SEGMENT_HEADING_CHARS, Segment, SegmentOrigin, SegmentState, SessionId, SessionLink,
+    SessionRecord, SessionStatus, Term,
 };
 use crate::transcript::Message;
 use crate::verbatim;
@@ -80,15 +76,20 @@ pub const TERM_CHARS: usize = 80;
 /// The longest `said` span of a term, in characters.
 pub const SAID_CHARS: usize = 400;
 
-/// The character budgets of an answer: the title, the header's sections,
-/// and `outcome`, the open segment's text. S9 replaces these with the
-/// segment budgets of 2_design.md §5.5.
+/// Header character budgets (2_design.md §5.5).
 pub const BUDGETS: Budgets = Budgets {
     title: 120,
-    summary: 1500,
+    summary: 1200,
     goals: 600,
-    outcome: 2500,
     next: 1000,
+};
+
+/// Maximum text length of a model-written segment.
+pub const SEGMENT_CHARS: usize = 900;
+/// Default windows before sealing an open segment.
+pub const SEGMENT_WINDOWS: NonZeroU32 = match NonZeroU32::new(3) {
+    Some(n) => n,
+    None => NonZeroU32::MIN,
 };
 
 /// User turns that Claude Code writes itself, not Daniel: a turn whose text
@@ -311,7 +312,19 @@ pub fn request(
             title: r.title.clone(),
             summary: r.summary.clone(),
             goals: r.goals.clone(),
-            outcome: r.open_segment().map(|s| s.text.clone()).unwrap_or_default(),
+            open: r.open_segment().cloned(),
+            sealed: r
+                .log
+                .iter()
+                .filter(|s| s.state == SegmentState::Sealed)
+                .map(|s| SegmentHeading {
+                    n: s.n.get(),
+                    heading: s.heading.clone(),
+                    from: s.from,
+                    to: s.to,
+                })
+                .collect(),
+            terms: r.terms.clone(),
             next: r.next.clone(),
             topics: r
                 .topics
@@ -358,6 +371,9 @@ pub enum Invalid {
     /// The topics are not 0-5 distinct lowercase kebab-case labels.
     #[error("bad topics: {0}")]
     Topics(String),
+    /// Segment presence, content or message range is invalid.
+    #[error("{0}")]
+    Segment(String),
 }
 
 /// A checked answer, ready to become a record.
@@ -369,8 +385,10 @@ pub struct Distilled {
     pub summary: String,
     /// `## Goals`.
     pub goals: String,
-    /// The open segment's text.
-    pub outcome: String,
+    /// The rewritten open segment.
+    pub open: Option<CheckedSegment>,
+    /// New segments with their starting offsets in the window.
+    pub new: Vec<(usize, CheckedSegment)>,
     /// `## Next`, one `- <item>` line per item.
     pub next: String,
     /// How many items `next` lists.
@@ -391,9 +409,13 @@ pub struct Distilled {
 /// `conversation` (never an assistant turn or a pasted block). A bad
 /// budget, title, section or topic refuses the whole answer; a bad
 /// reference or term is dropped and the rest kept.
-pub fn check(answer: SessionAnswer, conversation: &[PassMessage]) -> Result<Distilled, Invalid> {
+pub fn check(
+    answer: SessionAnswer,
+    conversation: &[PassMessage],
+    request: &SessionRequest,
+) -> Result<Distilled, Invalid> {
     let title = answer.title.trim().to_owned();
-    if title.is_empty() || title.contains('\n') {
+    if title.is_empty() || title.contains(['\n', '\r']) {
         return Err(Invalid::Title);
     }
     within("title", &title, BUDGETS.title)?;
@@ -402,7 +424,62 @@ pub fn check(answer: SessionAnswer, conversation: &[PassMessage]) -> Result<Dist
         return Err(Invalid::EmptySummary);
     }
     let goals = section("Goals", &answer.goals, BUDGETS.goals)?;
-    let outcome = section("Outcome", &answer.outcome, BUDGETS.outcome)?;
+    let expected = request.previous.as_ref().and_then(|p| p.open.as_ref());
+    if answer.open.is_some() != expected.is_some() {
+        return Err(Invalid::Segment(String::from(
+            "open must be present exactly when the request has an open segment",
+        )));
+    }
+    if answer.new.len() > 3 {
+        return Err(Invalid::Segment(String::from(
+            "new must hold at most 3 segments",
+        )));
+    }
+    let open = answer.open.map(check_segment).transpose()?;
+    let mut new = Vec::new();
+    let mut last_start = None;
+    for segment in answer.new {
+        let start = request
+            .messages
+            .iter()
+            .position(|m| m.uuid == segment.starts_at)
+            .ok_or_else(|| {
+                Invalid::Segment(format!(
+                    "starts_at '{}' is outside the window",
+                    segment.starts_at
+                ))
+            })?;
+        if last_start.is_some_and(|last| start <= last) {
+            return Err(Invalid::Segment(String::from(
+                "starts_at ids must be distinct and in transcript order",
+            )));
+        }
+        if let Some(last) = expected
+            .and_then(|s| s.last_message.as_ref())
+            .and_then(|id| conversation.iter().position(|m| &m.uuid == id))
+            && conversation
+                .iter()
+                .position(|m| m.uuid == segment.starts_at)
+                .is_none_or(|i| i <= last)
+        {
+            return Err(Invalid::Segment(String::from(
+                "starts_at must follow the open segment's last message",
+            )));
+        }
+        last_start = Some(start);
+        let checked = check_segment(SegmentAnswer {
+            heading: segment.heading,
+            text: segment.text,
+            topics: segment.topics,
+            related: segment.related,
+        })?;
+        new.push((start, checked));
+    }
+    if expected.is_none() && new.first().is_none_or(|(start, _)| *start != 0) {
+        return Err(Invalid::Segment(String::from(
+            "without an open segment, new must start at the window's first message",
+        )));
+    }
     let items: Vec<String> = answer
         .next
         .iter()
@@ -454,13 +531,73 @@ pub fn check(answer: SessionAnswer, conversation: &[PassMessage]) -> Result<Dist
         title,
         summary,
         goals,
-        outcome,
+        open,
+        new,
         next,
         next_open: u32::try_from(items.len()).unwrap_or(u32::MAX),
         topics,
         related,
         terms,
         dropped_terms,
+    })
+}
+
+/// Validated content of a segment; message ranges are derived by scribe.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CheckedSegment {
+    /// One-line heading.
+    pub heading: String,
+    /// Plain text.
+    pub text: String,
+    /// Checked topic labels.
+    pub topics: Topics,
+    /// Parsed references.
+    pub related: Vec<Related>,
+}
+
+fn check_segment(answer: SegmentAnswer) -> Result<CheckedSegment, Invalid> {
+    let heading = answer.heading.trim().to_owned();
+    within("segment heading", &heading, SEGMENT_HEADING_CHARS)?;
+    if heading.is_empty() || heading.contains(['\n', '\r']) {
+        return Err(Invalid::Segment(String::from(
+            "a segment heading must be one non-empty line",
+        )));
+    }
+    let text = answer.text.trim().to_owned();
+    if text.chars().count() > SEGMENT_CHARS {
+        return Err(Invalid::Segment(format!(
+            "segment text has {} characters; the budget is {SEGMENT_CHARS}; seal it and start a new segment",
+            text.chars().count()
+        )));
+    }
+    if text.is_empty() || text.lines().any(|l| l.trim_start().starts_with('#')) {
+        return Err(Invalid::Segment(String::from(
+            "segment text must have 1-900 characters and no # heading line",
+        )));
+    }
+    let mut topics = Vec::new();
+    for raw in answer.topics {
+        let topic: Topic = raw
+            .parse()
+            .map_err(|e: crate::record::RecordError| Invalid::Topics(e.to_string()))?;
+        if !topics.contains(&topic) {
+            topics.push(topic);
+        }
+    }
+    let topics = Topics::try_from(topics).map_err(|e| Invalid::Topics(e.to_string()))?;
+    let mut related = Vec::new();
+    for raw in answer.related {
+        if let Ok(r) = Related::try_from(raw.trim().to_owned())
+            && !related.contains(&r)
+        {
+            related.push(r);
+        }
+    }
+    Ok(CheckedSegment {
+        heading,
+        text,
+        topics,
+        related,
     })
 }
 
@@ -477,12 +614,9 @@ fn within(field: &'static str, text: &str, max: usize) -> Result<(), Invalid> {
 fn section(name: &'static str, text: &str, max: usize) -> Result<String, Invalid> {
     let text = text.trim().to_owned();
     within(name, &text, max)?;
-    let heading = text.lines().any(|line| {
-        line.starts_with("### ")
-            || line
-                .strip_prefix("## ")
-                .is_some_and(|h| h == LOG_SECTION || h == "Outcome" || HEADER_SECTIONS.contains(&h))
-    });
+    let heading = text
+        .lines()
+        .any(|line| line.trim_start().starts_with("## ") || line.trim_start().starts_with("### "));
     if heading {
         return Err(Invalid::Heading(name));
     }
@@ -566,6 +700,12 @@ pub struct PassMeta {
     pub now: OffsetDateTime,
     /// Whether this is the session-end pass.
     pub final_pass: bool,
+    /// Window message ids and timestamps in transcript order.
+    pub window: Vec<(String, OffsetDateTime)>,
+    /// Windows before automatic sealing.
+    pub segment_windows: NonZeroU32,
+    /// The route writing new segments.
+    pub origin: SegmentOrigin,
 }
 
 /// The record a pass writes. A previous record keeps its `created`,
@@ -573,7 +713,7 @@ pub struct PassMeta {
 /// it is), its activity fields and catalog marker, its sealed segments and
 /// its terms, the new ones appended; `passes` counts up and
 /// `scribed_through` advances to the last message the pass read. The
-/// answer's `outcome` becomes the open segment's text ([`log_after`]).
+/// header and checked segments become the next record ([`log_after`]).
 #[must_use]
 pub fn record(
     previous: Option<&SessionRecord>,
@@ -621,70 +761,72 @@ pub fn record(
     }
 }
 
-/// The log after one window: the previous record's segments, sealed ones
-/// unchanged. The open segment, when there is one, takes the answer's
-/// `outcome` as its text, the title as its heading, the answer's topics and
-/// references, and the window's last message and time; its `windows`
-/// counts up. Without one, a non-empty `outcome` opens segment `n + 1`
-/// over the window. The final pass seals the last segment.
+/// Extend the open segment and append new ones, deriving ranges from the
+/// checked starts and transcript timestamps. Earlier sealed segments are cloned.
 fn log_after(
     previous: Option<&SessionRecord>,
     distilled: &Distilled,
     meta: &PassMeta,
 ) -> Vec<Segment> {
     let mut log = previous.map_or_else(Vec::new, |p| p.log.clone());
-    let heading = segment_heading(&distilled.title);
-    let through = meta.through.clone();
-    match log.last_mut().filter(|s| s.state == SegmentState::Open) {
-        Some(open) => {
-            open.heading = heading;
-            open.text.clone_from(&distilled.outcome);
-            open.topics = distilled.topics.clone();
-            open.related.clone_from(&distilled.related);
-            if through.is_some() {
-                open.last_message = through;
-                open.to = meta.to;
-            }
-            open.windows = open.windows.saturating_add(1);
+    let end = meta.window.len().saturating_sub(1);
+    if let Some(content) = &distilled.open
+        && let Some(open) = log.last_mut().filter(|s| s.state == SegmentState::Open)
+    {
+        open.heading.clone_from(&content.heading);
+        open.text.clone_from(&content.text);
+        open.topics = content.topics.clone();
+        open.related.clone_from(&content.related);
+        open.windows = open.windows.saturating_add(1);
+        let until = distilled
+            .new
+            .first()
+            .map_or(Some(end), |(start, _)| start.checked_sub(1));
+        if let Some((id, at)) = until.and_then(|i| meta.window.get(i)) {
+            open.last_message = Some(id.clone());
+            open.to = *at;
         }
-        None if !distilled.outcome.is_empty() => {
-            let n = u32::try_from(log.len())
-                .unwrap_or(u32::MAX)
-                .saturating_add(1);
-            log.push(Segment {
-                n: NonZeroU32::new(n).unwrap_or(NonZeroU32::MAX),
-                heading,
-                first_message: meta.first_message.clone().or_else(|| through.clone()),
-                last_message: through,
-                from: meta.from,
-                to: meta.to,
-                state: SegmentState::Open,
-                windows: NonZeroU32::MIN,
-                origin: SegmentOrigin::Pass,
-                topics: distilled.topics.clone(),
-                related: distilled.related.clone(),
-                text: distilled.outcome.clone(),
-            });
+        if !distilled.new.is_empty() {
+            open.state = SegmentState::Sealed;
         }
-        None => {}
     }
-    if meta.final_pass {
+    for (i, (start, content)) in distilled.new.iter().enumerate() {
+        let until = distilled
+            .new
+            .get(i + 1)
+            .map_or(end, |(next, _)| next.saturating_sub(1));
+        let first = meta.window.get(*start);
+        let last = meta.window.get(until);
+        let n = u32::try_from(log.len())
+            .unwrap_or(u32::MAX)
+            .saturating_add(1);
+        log.push(Segment {
+            n: NonZeroU32::new(n).unwrap_or(NonZeroU32::MAX),
+            heading: content.heading.clone(),
+            text: content.text.clone(),
+            first_message: first.map(|(id, _)| id.clone()),
+            last_message: last.map(|(id, _)| id.clone()),
+            from: first.map_or(meta.from, |(_, at)| *at),
+            to: last.map_or(meta.to, |(_, at)| *at),
+            windows: NonZeroU32::MIN,
+            origin: meta.origin,
+            state: if i + 1 < distilled.new.len() {
+                SegmentState::Sealed
+            } else {
+                SegmentState::Open
+            },
+            topics: content.topics.clone(),
+            related: content.related.clone(),
+        });
+    }
+    if meta.final_pass
+        || log
+            .last()
+            .is_some_and(|s| s.windows >= meta.segment_windows)
+    {
         seal(&mut log);
     }
     log
-}
-
-/// A segment heading from a title: one line, at most
-/// [`SEGMENT_HEADING_CHARS`] characters; `Session` when the title is empty.
-fn segment_heading(title: &str) -> String {
-    let flat = title.split_whitespace().collect::<Vec<_>>().join(" ");
-    let cut: String = flat.chars().take(SEGMENT_HEADING_CHARS).collect();
-    let cut = cut.trim_end().to_owned();
-    if cut.is_empty() {
-        String::from("Session")
-    } else {
-        cut
-    }
 }
 
 /// Seal the open segment, if there is one: a `final` record has none.

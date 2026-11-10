@@ -56,6 +56,24 @@ pub(crate) enum CliError {
         /// How many segments the log has.
         count: usize,
     },
+    /// Rebuilding replaces the visible record and requires explicit confirmation.
+    #[error(
+        "session {id} has {segments} segment(s) and {passes} pass(es) to replace; pass --confirm to rebuild it"
+    )]
+    ConfirmRequired {
+        id: scribe_core::SessionId,
+        segments: usize,
+        passes: u32,
+    },
+    /// No transcript is available for rebuilding this record.
+    #[error("no transcript for session {0}; its record is unchanged")]
+    TranscriptMissing(scribe_core::SessionId),
+    /// A rebuild's transcript failed the same provenance check as a pass.
+    #[error("transcript for session {id} refused: {reason}")]
+    TranscriptRefused {
+        id: scribe_core::SessionId,
+        reason: String,
+    },
     /// A session pass ran and at least one pass failed. The report is printed
     /// first; its redacted reasons are included here for the routine's root
     /// cause.
@@ -81,6 +99,9 @@ impl CliError {
             Self::Read { .. } => "io_error",
             Self::SessionNotOn(_) => "session_not_on",
             Self::SegmentNotFound { .. } => "segment_not_found",
+            Self::ConfirmRequired { .. } => "confirm_required",
+            Self::TranscriptMissing(_) => "transcript_missing",
+            Self::TranscriptRefused { .. } => "provenance_failed",
             Self::PassFailed(_) => "session_pass_failed",
             Self::Model(e) => e.code(),
             Self::Output(_) => "output_error",
@@ -114,6 +135,9 @@ impl CliError {
             | Self::HookPayload(_)
             | Self::Read { .. }
             | Self::SessionNotOn(_)
+            | Self::ConfirmRequired { .. }
+            | Self::TranscriptMissing(_)
+            | Self::TranscriptRefused { .. }
             | Self::PassFailed(_)
             | Self::Model(_)
             | Self::Output(_) => None,

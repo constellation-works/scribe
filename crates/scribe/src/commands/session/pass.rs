@@ -61,8 +61,10 @@ The plugin routine ships disabled; once enabled on a host it runs every
 5 minutes. Also run this command by hand where claude is on PATH. Takes
 at most five due sessions per run, processing every new-message window
 (default 40 messages / 15000 characters; [catalog] window_messages and
-window_chars). Each window updates and checkpoints the record. --json
-reports persisted windows per session and how many due sessions remain.
+window_chars). Each window rewrites the header and open segment, appends
+new segments and checkpoints the record. Sealed segments stay unchanged;
+[catalog] segment_windows (default 3) bounds how long a segment stays open.
+--json reports windows, segments, seals and how many due sessions remain.
 A failed pass stays due with automatic retry delays of 5, 10, 20, 40,
 then at most 60 minutes. --session retries immediately. Exits 1 when any
 pass failed, naming each failed session, its error code and short reason.
@@ -138,7 +140,10 @@ pub(in crate::commands) fn run_with<M: Models>(
     }
     let config = store.config()?;
     let redactor = ctx.redactor(&config)?;
-    let found = store.list_sessions(&SessionFilter::default())?;
+    let found = store.list_sessions(&SessionFilter {
+        include_inactive: true,
+        ..Default::default()
+    })?;
     let mut topics: BTreeSet<String> = BTreeSet::new();
     let mut terms: BTreeSet<String> = BTreeSet::new();
     for record in &found.listing.items {
@@ -174,6 +179,8 @@ pub(in crate::commands) fn run_with<M: Models>(
             id: &id,
             switch: &switch,
             windows: 0,
+            segments_sealed: 0,
+            segments: None,
             dropped_terms: 0,
             incomplete: false,
         };
@@ -215,6 +222,8 @@ struct Job<'a> {
     id: &'a SessionId,
     switch: &'a SessionControl,
     windows: usize,
+    segments_sealed: usize,
+    segments: Option<usize>,
     dropped_terms: usize,
     incomplete: bool,
 }
@@ -222,9 +231,9 @@ struct Job<'a> {
 /// A session pass failure, with the stable code kept separate from its
 /// redacted, bounded diagnostic.
 #[derive(Debug)]
-struct PassError {
-    code: &'static str,
-    message: String,
+pub(super) struct PassError {
+    pub(super) code: &'static str,
+    pub(super) message: String,
 }
 
 impl PassError {
@@ -269,6 +278,7 @@ impl Job<'_> {
         adapter: &M,
         limits: &RunLimits,
     ) -> Result<PassPayload, PassError> {
+        self.segments = previous.map(|p| p.log.len());
         let final_pass = self.switch.final_pass;
         let Some(path) = self.ctx.transcripts().and_then(|dir| find(dir, self.id)) else {
             return self.nothing_new(previous, true);
@@ -313,6 +323,19 @@ impl Job<'_> {
                 return self.nothing_new(previous.as_ref(), false);
             };
             let first_message = window.messages.first().map(|m| m.uuid.clone());
+            let window_meta = window
+                .messages
+                .iter()
+                .map(|m| {
+                    (
+                        m.uuid.clone(),
+                        messages
+                            .iter()
+                            .find(|sent| sent.uuid == m.uuid)
+                            .map_or(self.ctx.now(), |sent| sent.at),
+                    )
+                })
+                .collect();
             if self.windows > 0 && !limits.may_continue() {
                 self.incomplete = true;
                 return Ok(self.payload("written", previous.as_ref()));
@@ -335,7 +358,7 @@ impl Job<'_> {
                 terms.into_iter().take(MAX_LISTED).collect(),
                 final_pass && last,
             );
-            let distilled = self.distill(request, &conversation[..end], adapter)?;
+            let distilled = distill(self.id, request, &conversation[..end], adapter)?;
             let dropped = distilled.dropped_terms;
             let cwd = transcript::cwd(&bytes).unwrap_or_default();
             let now = self.ctx.now();
@@ -364,8 +387,22 @@ impl Job<'_> {
                 to,
                 now,
                 final_pass: final_pass && last,
+                window: window_meta,
+                segment_windows: self.config.segment_windows,
+                origin: scribe_core::SegmentOrigin::Pass,
             };
+            let sealed_before = previous.as_ref().map_or(0, |p| {
+                p.log
+                    .iter()
+                    .filter(|s| s.state == scribe_core::SegmentState::Sealed)
+                    .count()
+            });
             let record = pass::record(previous.as_ref(), distilled, meta);
+            let sealed_after = record
+                .log
+                .iter()
+                .filter(|s| s.state == scribe_core::SegmentState::Sealed)
+                .count();
             previous = if last {
                 self.settle(Some(record))?
             } else {
@@ -374,6 +411,8 @@ impl Job<'_> {
                     PassError::new(err.code(), err.to_string())
                 })?
             };
+            self.segments_sealed += sealed_after.saturating_sub(sealed_before);
+            self.segments = previous.as_ref().map(|r| r.log.len());
             self.windows = self.windows.saturating_add(1);
             self.dropped_terms = self.dropped_terms.saturating_add(dropped);
             offset = end;
@@ -383,51 +422,20 @@ impl Job<'_> {
         }
     }
 
-    fn distill<M: Models>(
-        &self,
-        request: SessionRequest,
-        conversation: &[scribe_core::models::PassMessage],
-        adapter: &M,
-    ) -> Result<pass::Distilled, PassError> {
-        let answer = adapter.session(&request).map_err(|err| {
-            tracing::warn!(session = %self.id, %err, "the session model failed");
-            PassError::new(err.code(), err.to_string())
-        })?;
-        // One more ask in the same pass, naming what was refused: a model
-        // can't count characters exactly, so a near miss is common.
-        let distilled = match pass::check(answer, conversation) {
-            Ok(distilled) => distilled,
-            Err(err) => {
-                tracing::warn!(session = %self.id, %err, "the session model's answer was refused; asking once more");
-                let retry = SessionRequest {
-                    correction: Some(err.to_string()),
-                    ..request
-                };
-                let answer = adapter.session(&retry).map_err(|err| {
-                    tracing::warn!(session = %self.id, %err, "the session model failed");
-                    PassError::new(err.code(), err.to_string())
-                })?;
-                pass::check(answer, conversation).map_err(|err| {
-                    tracing::warn!(session = %self.id, %err, "the session model's answer was refused");
-                    PassError::new("session_answer_invalid", err.to_string())
-                })?
-            }
-        };
-        Ok(distilled)
-    }
-
     /// Nothing to send the model. At session end the record (if any) is
     /// marked final and the pass settled. Otherwise, when `wait` (no
     /// transcript or message yet) the pass stays due for the next run;
     /// else (nothing new since the last pass) it is settled unchanged.
     fn nothing_new(
-        &self,
+        &mut self,
         previous: Option<&SessionRecord>,
         wait: bool,
     ) -> Result<PassPayload, PassError> {
         if self.switch.final_pass {
             let record = previous.map(|p| pass::finalized(p, self.ctx.now()));
+            let newly_sealed = previous.is_some_and(|p| p.open_segment().is_some());
             let written = self.settle(record)?;
+            self.segments_sealed += usize::from(newly_sealed);
             let result = if written.is_some() {
                 "written"
             } else {
@@ -466,6 +474,9 @@ impl Job<'_> {
             passes: None,
             dropped_terms: self.dropped_terms,
             windows: self.windows,
+            segments_sealed: self.segments_sealed,
+            segments: self.segments,
+            author: None,
             gave_up: false,
             error: Some(short_reason(self.redactor, &failure.message)),
         })
@@ -479,6 +490,9 @@ impl Job<'_> {
             passes: record.map(|r| r.passes),
             dropped_terms: self.dropped_terms,
             windows: self.windows,
+            segments_sealed: self.segments_sealed,
+            segments: record.map(|r| r.log.len()),
+            author: None,
             gave_up: false,
             error: None,
         }
@@ -488,7 +502,7 @@ impl Job<'_> {
 /// The session's transcript: `<dir>/<project-dir>/<id>.jsonl`, the first
 /// project directory (by name) that has one. Claude Code names the project
 /// directory after the session's cwd, which the store does not keep.
-fn find(dir: &Path, id: &SessionId) -> Option<PathBuf> {
+pub(super) fn find(dir: &Path, id: &SessionId) -> Option<PathBuf> {
     let name = format!("{id}.jsonl");
     let mut projects: Vec<PathBuf> = std::fs::read_dir(dir)
         .ok()?
@@ -501,4 +515,37 @@ fn find(dir: &Path, id: &SessionId) -> Option<PathBuf> {
         .into_iter()
         .map(|project| project.join(&name))
         .find(|path| std::fs::symlink_metadata(path).is_ok())
+}
+
+pub(super) fn distill<M: Models>(
+    id: &SessionId,
+    request: SessionRequest,
+    conversation: &[scribe_core::models::PassMessage],
+    adapter: &M,
+) -> Result<pass::Distilled, PassError> {
+    let answer = adapter.session(&request).map_err(|err| {
+        tracing::warn!(session = %id, %err, "the session model failed");
+        PassError::new(err.code(), err.to_string())
+    })?;
+    // One more ask in the same pass, naming what was refused: a model
+    // can't count characters exactly, so a near miss is common.
+    let distilled = match pass::check(answer, conversation, &request) {
+        Ok(distilled) => distilled,
+        Err(err) => {
+            tracing::warn!(session = %id, %err, "the session model's answer was refused; asking once more");
+            let retry = SessionRequest {
+                correction: Some(err.to_string()),
+                ..request
+            };
+            let answer = adapter.session(&retry).map_err(|err| {
+                tracing::warn!(session = %id, %err, "the session model failed");
+                PassError::new(err.code(), err.to_string())
+            })?;
+            pass::check(answer, conversation, &retry).map_err(|err| {
+                tracing::warn!(session = %id, %err, "the session model's answer was refused");
+                PassError::new("session_answer_invalid", err.to_string())
+            })?
+        }
+    };
+    Ok(distilled)
 }

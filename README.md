@@ -26,6 +26,7 @@ scribe session list --project constellation-works/scribe
 scribe session show <id> --json | jq -r .next
 scribe session show <id> --log
 scribe session pass --json
+scribe session rebuild <id> --author <name> --confirm
 scribe proposal list
 scribe consistency scan --json
 scribe tag list
@@ -44,8 +45,13 @@ layout and every key are in
 [specs/store.md](docs/design/scribe/specs/store.md). A store that another
 user owns or could write, a linked file and a record from a newer build are
 refused. Every `entry`, `session`, `proposal`, `tag` and `question` command
-except `session pass` only reads, and writes nothing, not even an audit line;
-`session pass` and `consistency scan` write and are audited.
+except `session pass` and `session rebuild` only reads, and writes nothing,
+not even an audit line; those two verbs and `consistency scan` write and
+are audited. Passes rewrite the header and open segment and append new
+segments; sealed segments stay unchanged. `[catalog] segment_windows`
+(default 3) bounds each segment's rewrites. Rebuild replaces a record from
+its transcript only when every window succeeds, resuming private
+checkpoints on the next confirmed invocation.
 
 ## The Claude Code package
 
