@@ -1,0 +1,24 @@
+Update content or metadata; Daniel's entries allow metadata only
+
+Usage: scribe entry update [OPTIONS] --author <AUTHOR> <ID>
+
+Arguments:
+  <ID>  Entry id or unique prefix (at least four characters)
+
+Options:
+      --author <AUTHOR>                  Agent name
+      --content <CONTENT>                Replacement content
+      --add-topic <ADD_TOPIC>            Topic to add, repeatable
+      --remove-topic <REMOVE_TOPIC>      Topic to remove, repeatable
+      --add-related <ADD_RELATED>        Reference to add, repeatable
+      --remove-related <REMOVE_RELATED>  Reference to remove, repeatable
+  -h, --help                             Print help
+  -V, --version                          Print version
+
+Global options:
+      --root <DIR>       Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>  Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json             Shorthand for --format json
+
+Examples:
+  scribe entry update <id> --author opus --add-topic api

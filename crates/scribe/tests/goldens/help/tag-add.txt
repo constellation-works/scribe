@@ -1,0 +1,22 @@
+Create an agent-owned tag in the store
+
+Usage: scribe tag add [OPTIONS] --author <AUTHOR> --description <DESCRIPTION> <NAME>
+
+Arguments:
+  <NAME>  Canonical tag name
+
+Options:
+      --author <AUTHOR>                      Agent name
+      --description <DESCRIPTION>            What belongs in the tag
+      --alias <ALIAS>                        Alias, repeatable
+      --stale-after-days <STALE_AFTER_DAYS>  Days before review (positive; omitted means never)
+  -h, --help                                 Print help
+  -V, --version                              Print version
+
+Global options:
+      --root <DIR>       Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>  Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json             Shorthand for --format json
+
+Examples:
+  scribe tag add notes --author opus --description 'Agent notes'

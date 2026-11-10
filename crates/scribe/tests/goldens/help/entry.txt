@@ -1,11 +1,14 @@
-List and show the entries recorded with #scribe
+Read entries and write agent notes
 
 Usage: scribe entry [OPTIONS] <COMMAND>
 
 Commands:
-  list  List entries, oldest first
-  show  Show one entry in full: what was said, its content and its cite
-  help  Print this message or the help of the given subcommand(s)
+  add     Add an agent note (never attributed to Daniel)
+  update  Update content or metadata; Daniel's entries allow metadata only
+  retire  Retire an agent note with a reason
+  list    List entries, oldest first
+  show    Show one entry in full: what was said, its content and its cite
+  help    Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help     Print help

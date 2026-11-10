@@ -1,6 +1,6 @@
 ---
 type: design
-summary: "Spec: output contract — streams, modes, plain columns, the JSON list envelope and record fields (format 4: segments, activity, authors, search hits, transcripts), warnings, errors and exit codes"
+summary: "Spec: output contract — streams, modes, plain columns, the JSON list envelope and record fields (segments, activity, agent authors and direct writes; future search hits and transcripts), warnings, errors and exit codes"
 last_validated: 2026-11-10
 ---
 
@@ -10,8 +10,8 @@ Every data command renders one typed payload in the mode the sink resolved;
 stdout carries only that payload; warnings, notices and errors go to stderr;
 the exit code says whether it worked. The JSON form is a public contract,
 pinned by the output goldens in `crates/scribe/tests/goldens/output/`.
-Parts marked *(S11)* to *(S14)* are designed ([ORB-23892]) and not yet
-built; each only adds fields, columns, commands and codes.
+S12 writes are built. Other parts marked *(S11)* to *(S14)* are designed
+([ORB-23892]) and not yet built; each only adds fields, columns, commands and codes.
 
 ## Why This Exists
 
@@ -43,7 +43,7 @@ is `-`, lists are comma-joined, and timestamps are RFC 3339.
 | `session list --tree` | `id parent status due project topics updated title` (`parent` is the session the row nests under, its `spawned_from` link else its first `continues` link, or `-`) |
 | `session list --include-inactive` | `id status active due project topics updated title` (`active` is `yes` or `no`); without the flag the columns are unchanged, inactive sessions are left out, and when any matched the notice `<n> inactive session(s) also match and are hidden; --include-inactive lists them` goes to stderr. With `--tree` too, `active` follows `status` |
 | `proposal list` | `id kind state older newer opened_at reason` |
-| `tag list` | `name entries stale_after_days aliases description`, and *(S12)* a last column `source` (`config` or `store`) |
+| `tag list` | `name entries stale_after_days aliases description`, and (S12) a last column `source` (`config` or `store`) |
 | `record search` *(S11)* | `cite kind score updated title snippet` |
 | `transcript list` *(S14)* | `session project daniel_turns bytes started ended first_prompt` |
 
@@ -85,7 +85,8 @@ are RFC 3339 with offset.
 instruction), `cite` (`{session, message, at, prompt_sha256, line, cwd}`;
 `message` may be `null`), `superseded_by` (an id or `null`),
 `review_after` (`YYYY-MM-DD` or `null`), `author` (`{kind, name}`, `kind`
-`daniel` or `agent`) and `updated_by` (an author or `null`). *(S12)* An
+`daniel` or `agent`), `updated_by` (an author or `null`) and
+`retirement_reason` (text or `null`). (S12) An
 agent entry has `said` `""`, `content_from` `{kind: "agent",
 role: null, message: null, at: null}` and `cite` `null`; a Daniel entry's
 `cite` is never `null`, so a reader of Daniel's entries sees no change.
@@ -132,13 +133,15 @@ as `<id> <type> (<title>)`, one per line, or `-`.
 `stale`), `older`, `newer` (or `null`), `reason`, `quotes` (`[{entry,
 text}]`), `state` (`open`, `approved`, `rejected`), `opened_at`,
 `settled_at` (or `null`), `settled_by` (a cite or `null`), `author` and
-`settled_author` (`{kind, name}` or `null`).
+`settled_author` (`{kind, name}` or `null`), and `updated_by` (the last
+agent who revised the reason, or `null`).
 
 **Tag** (`tags[]`): `name`, `aliases`, `description` (or `null`),
 `stale_after_days` (integer or `null`), `configured` (false for a directory
-no configured tag names), `entries` (count, any status). *(S12)* Adds
+no configured tag names), `entries` (count, any status). (S12) Adds
 `source` (`config`, `store`, or `null` for a directory no tag names) and
-`author` (`null` for a config tag).
+`author` (`null` for a config or orphaned tag). `configured` is true only
+for config tags, even though a store tag is also routable.
 
 **Hit** *(S11, `hits[]`)*: `kind` (`entry`, `session`, `discussion`),
 `cite` (an entry id, `session:<id>`, `session:<id>#<n>` or a discussion
@@ -153,7 +156,7 @@ session's title, a discussion's title, or an entry's tag and id), `snippet`
 `daniel_turns`, `first_prompt` (at most 300 characters); `transcript show`
 adds `daniel_first_turns` (up to five strings of at most 300 characters).
 
-**Write verbs** *(S10, S12)*: `entry add`, `entry update`, `entry
+**Write verbs** (S12 built; S10 separately): `entry add`, `entry update`, `entry
 retire`, `tag add`, `tag update`, `proposal add`, `proposal update`,
 `proposal settle`, `session activate` and `session deactivate` print the
 record they wrote in its `show` shape (`--json`: the record object). A
@@ -168,6 +171,21 @@ stderr; deactivating a pinned session also says on stderr that it
 unpinned it. A blank `--reason`, one over 300 characters, a `--cite`
 that is not one token of at most 200 characters, a segment cite as the
 id, or `--pin` with `--unpin` is a usage error (exit 2).
+
+S12 tag writes return `name`, `aliases`, `description`, `stale_after_days`,
+`author`, `updated_by`, `created` and `updated`. Plain tag writes are one
+line (`name description author aliases`, tab-separated); table mode shows
+the full definition and provenance. Plain proposal writes use the proposal
+list columns; table mode shows settlement metadata. Proposal writes use the
+proposal-list item shape, including the additive `updated_by` author.
+Entry writes use the entry-show shape, with `cite: null` and
+`content_from.kind: agent` for an agent note. Every write requires
+`--author`; the name `daniel` still records kind `agent`.
+
+For retrieval with any agent evidence, checked quotes and source labels
+form the answer and claim text; model-written attribution prose is not
+forwarded. Conflicts retain their checked cites with a fixed attribution
+notice. Daniel-only retrieval keeps the existing answer behavior.
 
 Adding a field is compatible. Renaming, removing or retyping one is a
 breaking change and shows up as a golden diff.
@@ -188,6 +206,8 @@ Stable codes: `entry_not_found`, `session_not_found`, `io_error`,
 `transcript_missing`, `session_busy` (exit 1), *(S10–S14)* `id_ambiguous` (exit 2, listing
 up to ten candidates), `daniel_only`, `tag_not_found`, `tag_conflict`, `tag_configured`,
 `proposal_not_found`, `proposal_settled`, `entry_not_active`,
+(S12) `invalid_text`, `invalid_topics`,
+`proposal_invalid`, `proposal_not_agent`,
 `session_cataloged`, `transcript_not_found`, for `session pass`
 `session_pass_failed` and `session_not_on`, and for `question
 ask` the model codes `model_timeout`, `model_unavailable`, `model_failed`,

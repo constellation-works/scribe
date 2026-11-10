@@ -1,10 +1,13 @@
-List what the consistency routine proposes changing
+Read, open, update and settle proposals
 
 Usage: scribe proposal [OPTIONS] <COMMAND>
 
 Commands:
-  list  List every proposal by id; settle one with #scribe approve or #scribe reject
-  help  Print this message or the help of the given subcommand(s)
+  add     Open a proposal, including against a Daniel entry
+  update  Update the reason of an open agent proposal
+  settle  Approve or reject a proposal about an agent entry
+  list    List every proposal by id and its settlement state
+  help    Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help     Print help

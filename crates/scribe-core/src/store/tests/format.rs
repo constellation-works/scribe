@@ -48,7 +48,7 @@ fn an_entry_file_reads_whole_with_its_body_as_the_content() {
     assert_eq!(e.id.to_string(), "decisions-1");
     assert_eq!(e.content, "run the gate before every push");
     assert_eq!(e.topics.as_slice()[0].as_str(), "ci");
-    assert!(e.cite.message.is_none());
+    assert!(e.cite.as_ref().unwrap().message.is_none());
 }
 
 #[test]
@@ -220,7 +220,7 @@ fn an_encoded_entry_reads_back_as_the_same_entry() {
     let mut original = entry(&entry_text("")).unwrap();
     original.said = String::from("#scribe decisions: it's \"quoted\" #ci: and --- dashes");
     original.content = String::from("it's \"quoted\" #ci: and --- dashes");
-    original.cite.message = Some(String::from("m-1"));
+    original.cite.as_mut().unwrap().message = Some(String::from("m-1"));
     original.review_after = Some(time::macros::date!(2027 - 01 - 02));
     let bytes = crate::store::format::encode_entry(Path::new(ENTRY), &original).unwrap();
     let text = String::from_utf8(bytes.clone()).unwrap();

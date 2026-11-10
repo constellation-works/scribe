@@ -78,12 +78,13 @@ const SCAN_COLUMNS: [Column; 5] = [
     col("NEWER", Align::Left, false),
 ];
 
-const TAG_COLUMNS: [Column; 5] = [
+const TAG_COLUMNS: [Column; 6] = [
     col("NAME", Align::Left, false),
     col("ENTRIES", Align::Right, false),
     col("STALE DAYS", Align::Right, false),
     col("ALIASES", Align::Left, false),
     col("DESCRIPTION", Align::Left, true),
+    col("SOURCE", Align::Left, false),
 ];
 
 /// The `--json` form of a list: always `{"<records>": [...], "total",
@@ -206,6 +207,85 @@ fn envelope<'a, T>(
 /// R15).
 pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Result<()> {
     match (sink.mode, record) {
+        (OutputMode::Json, Record::Tag(tag)) => write_json(out, tag),
+        (OutputMode::Json, Record::Proposal(proposal)) => write_json(out, proposal),
+        (OutputMode::Plain, Record::Tag(tag)) => writeln!(
+            out,
+            "{}\t{}\t{}\t{}",
+            tag.name,
+            one_line(&tag.description),
+            tag.author,
+            tag.aliases
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        (OutputMode::Plain, Record::Proposal(p)) => {
+            writeln!(out, "{}", plain_line(&proposal_row(p)))
+        }
+        (OutputMode::Table, Record::Tag(tag)) => {
+            field(out, "name", tag.name.as_str())?;
+            field(out, "description", &tag.description)?;
+            field(
+                out,
+                "aliases",
+                &tag.aliases
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            )?;
+            field(out, "author", &tag.author.to_string())?;
+            field(
+                out,
+                "updated_by",
+                &tag.updated_by
+                    .as_ref()
+                    .map_or_else(|| "-".to_owned(), ToString::to_string),
+            )?;
+            field(
+                out,
+                "stale_after_days",
+                &tag.stale_after_days
+                    .map_or_else(|| "-".to_owned(), |d| d.to_string()),
+            )?;
+            field(out, "created", &timestamp(tag.created))?;
+            field(out, "updated", &timestamp(tag.updated))
+        }
+        (OutputMode::Table, Record::Proposal(p)) => {
+            field(out, "id", &p.id)?;
+            field(out, "kind", p.kind)?;
+            field(out, "state", p.state)?;
+            field(out, "older", &p.older)?;
+            field(out, "newer", p.newer.as_deref().unwrap_or("-"))?;
+            field(out, "reason", &p.reason)?;
+            field(
+                out,
+                "author",
+                &format!("{}:{}", p.author.kind, p.author.name),
+            )?;
+            field(
+                out,
+                "updated_by",
+                &p.updated_by
+                    .as_ref()
+                    .map_or_else(|| "-".to_owned(), |a| format!("{}:{}", a.kind, a.name)),
+            )?;
+            field(
+                out,
+                "settled_author",
+                &p.settled_author
+                    .as_ref()
+                    .map_or_else(|| "-".to_owned(), |a| format!("{}:{}", a.kind, a.name)),
+            )?;
+            field(out, "opened", &timestamp(p.opened_at))?;
+            field(
+                out,
+                "settled",
+                &p.settled_at.map_or_else(|| "-".to_owned(), timestamp),
+            )
+        }
         (OutputMode::Json, Record::Entry(entry)) => write_json(out, entry),
         (OutputMode::Json, Record::Session(session)) => write_json(out, session),
         (OutputMode::Plain, Record::Entry(entry)) => {
@@ -409,15 +489,22 @@ fn entry_detail(out: &mut dyn Write, sink: &Sink, e: &EntryPayload) -> io::Resul
         (Some(role), Some(message), Some(at)) => {
             format!("{role} message {message} at {}", timestamp(at))
         }
+        _ if e.content_from.kind == "agent" => format!("agent note ({})", e.author.name),
         _ => String::from("the #scribe line"),
     };
-    let cite = format!(
-        "session {}, line {}, message {}, at {}",
-        e.cite.session,
-        e.cite.line,
-        e.cite.message.as_deref().unwrap_or("-"),
-        timestamp(e.cite.at)
-    );
+    let cite = e
+        .cite
+        .as_ref()
+        .map(|c| {
+            format!(
+                "session {}, line {}, message {}, at {}",
+                c.session,
+                c.line,
+                c.message.as_deref().unwrap_or("-"),
+                timestamp(c.at)
+            )
+        })
+        .unwrap_or_else(|| format!("agent note ({})", e.author.name));
     let status = color::paint(e.status, color::role_for_status(e.status), sink.color);
     field(out, "id", &e.id)?;
     field(out, "tag", &e.tag)?;
@@ -433,8 +520,11 @@ fn entry_detail(out: &mut dyn Write, sink: &Sink, e: &EntryPayload) -> io::Resul
     field(out, "superseded", e.superseded_by.as_deref().unwrap_or("-"))?;
     field(out, "from", &from)?;
     field(out, "cite", &cite)?;
-    field(out, "cwd", &e.cite.cwd)?;
+    field(out, "cwd", e.cite.as_ref().map_or("-", |c| c.cwd.as_str()))?;
     field(out, "said", or_dash(&e.said))?;
+    if let Some(reason) = &e.retirement_reason {
+        field(out, "retirement_reason", reason)?;
+    }
     field(out, "content", or_dash(&e.content))
 }
 
@@ -773,6 +863,7 @@ fn tag_row(t: &TagPayload) -> Vec<Cell> {
         ),
         Cell::plain(joined(&t.aliases)),
         Cell::plain(one_line(t.description.as_deref().unwrap_or("-"))),
+        Cell::plain(t.source.unwrap_or("-").to_owned()),
     ]
 }
 

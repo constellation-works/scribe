@@ -1,8 +1,8 @@
 //! The tag table: which tags exist, their aliases, and how long an entry in
 //! each stays fresh.
 //!
-//! Tags come from `config.toml` (`[tags.<name>]`); scribe never creates one
-//! on its own. Without a config the defaults below apply: `decisions` and
+//! Tags come from `config.toml` (`[tags.<name>]`) and agent-created
+//! `tags.json`; config claims take precedence. Without a config the defaults below apply: `decisions` and
 //! `preferences` (docs/design/scribe/4_decisions.md, "Only decisions and
 //! preferences ship by default"). Pure values and no I/O (STD-02 R5).
 
@@ -29,7 +29,7 @@ pub enum TagError {
     },
 }
 
-/// One configured tag.
+/// One effective routing definition, from config or the store.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TagDef {
     /// The tag's name, which is also its directory under `entries/`.
@@ -51,7 +51,7 @@ impl TagDef {
     }
 }
 
-/// The configured tags, sorted by name, with no name or alias claimed twice.
+/// Effective tags, sorted by name, with no name or alias claimed twice.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TagTable {
     tags: Vec<TagDef>,
@@ -74,6 +74,35 @@ impl TagTable {
             }
         }
         Ok(Self { tags })
+    }
+
+    /// Merge store definitions in memory; config claims win with explicit warnings.
+    pub(crate) fn merge_store(&self, stored: &[StoreTag]) -> Result<(Self, Vec<String>), TagError> {
+        let mut tags = self.tags().to_vec();
+        let mut warnings = Vec::new();
+        for tag in stored {
+            if let Some(configured) = self.resolve(tag.name.as_str()) {
+                warnings.push(format!(
+                    "store tag {} is shadowed by config tag {}",
+                    tag.name, configured.name
+                ));
+                continue;
+            }
+            let mut def = tag.definition();
+            def.aliases.retain(|alias| {
+                if let Some(configured) = self.resolve(alias.as_str()) {
+                    warnings.push(format!(
+                        "store tag {} alias {alias} is shadowed by config tag {}",
+                        tag.name, configured.name
+                    ));
+                    false
+                } else {
+                    true
+                }
+            });
+            tags.push(def);
+        }
+        Ok((Self::new(tags)?, warnings))
     }
 
     /// The tags scribe ships with: `decisions` (aliases `decision`, `dec`;
@@ -128,10 +157,13 @@ impl TagTable {
 /// One row of `tag list`: a tag and how many entries it holds.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TagSummary {
+    /// Creator for store tags; absent for configured or orphaned tags.
+    pub author: Option<crate::Author>,
+    /// Routing source, or none for orphaned directories.
+    pub source: Option<&'static str>,
     /// The tag's name.
     pub name: TagName,
-    /// Its configuration; `None` for a directory under `entries/` that no
-    /// configured tag names (left from a tag Daniel removed).
+    /// Its effective definition; `None` for an orphaned entry directory.
     pub def: Option<TagDef>,
     /// How many entries it holds, any status.
     pub entries: usize,
@@ -151,9 +183,63 @@ pub fn summarize(table: &TagTable, entries: &[Entry]) -> Vec<TagSummary> {
     counts
         .into_iter()
         .map(|(name, entries)| TagSummary {
+            author: None,
+            source: table.get(&name).map(|_| "config"),
             def: table.get(&name).cloned(),
             name,
             entries,
         })
         .collect()
+}
+
+/// A tag created through a CLI write, persisted in tags.json.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StoreTag {
+    /// Canonical name.
+    pub name: TagName,
+    /// Alternate names.
+    pub aliases: Vec<TagName>,
+    /// Redacted description.
+    pub description: String,
+    /// Optional review interval.
+    #[serde(deserialize_with = "crate::record::nullable")]
+    pub stale_after_days: Option<NonZeroU32>,
+    /// Creator, always an agent.
+    pub author: crate::Author,
+    /// Last updater, or null.
+    #[serde(deserialize_with = "crate::record::nullable")]
+    pub updated_by: Option<crate::Author>,
+    /// Creation time.
+    #[serde(with = "time::serde::rfc3339")]
+    pub created: time::OffsetDateTime,
+    /// Last change.
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated: time::OffsetDateTime,
+}
+
+impl StoreTag {
+    /// Its routing definition.
+    #[must_use]
+    pub fn definition(&self) -> TagDef {
+        TagDef {
+            name: self.name.clone(),
+            aliases: self.aliases.clone(),
+            description: Some(self.description.clone()),
+            stale_after_days: self.stale_after_days,
+        }
+    }
+}
+
+/// Fields accepted by tag update.
+#[derive(Clone, Debug, Default)]
+pub struct TagPatch {
+    /// Replace the description.
+    pub description: Option<String>,
+    /// Aliases to add.
+    pub add_aliases: Vec<TagName>,
+    /// Aliases to remove.
+    pub remove_aliases: Vec<TagName>,
+    /// Replace the interval when supplied.
+    pub stale_after_days: Option<NonZeroU32>,
 }

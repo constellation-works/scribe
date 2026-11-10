@@ -19,6 +19,15 @@ use std::path::PathBuf;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
+    /// A direct write violated a domain rule.
+    #[error("{message}")]
+    AgentWrite {
+        /// Stable refusal code.
+        kind: WriteRefusal,
+        /// Actionable explanation.
+        message: String,
+    },
+
     /// No entry has this id. The message names the file looked for, so a
     /// mis-resolved data directory is visible (STD-02 R26).
     #[error("no entry {id}: {} does not exist", path.display())]
@@ -161,6 +170,7 @@ impl Error {
     #[must_use]
     pub fn code(&self) -> &'static str {
         match self {
+            Self::AgentWrite { kind, .. } => kind.code(),
             Self::EntryNotFound { .. } => "entry_not_found",
             Self::SessionNotFound { .. } => "session_not_found",
             Self::SealedSegmentChanged { .. } => "sealed_segment_changed",
@@ -199,3 +209,58 @@ impl Error {
 
 /// `Result` with this crate's [`Error`].
 pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+/// Domain classification of a refused direct write.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WriteRefusal {
+    /// `daniel_only`.
+    DanielOnly,
+    /// `invalid_text`.
+    InvalidText,
+    /// `invalid_topics`.
+    InvalidTopics,
+    /// `tag_not_found`.
+    TagNotFound,
+    /// `tag_conflict`.
+    TagConflict,
+    /// `tag_configured`.
+    TagConfigured,
+    /// `proposal_invalid`.
+    ProposalInvalid,
+    /// `proposal_settled`.
+    ProposalSettled,
+    /// `proposal_not_agent`.
+    ProposalNotAgent,
+    /// `entry_not_active`.
+    EntryNotActive,
+    /// `entry_not_found`.
+    EntryNotFound,
+    /// `proposal_not_found`.
+    ProposalNotFound,
+    /// `id_ambiguous`.
+    IdAmbiguous,
+    /// Invalid id syntax, retaining the CLI usage-error contract.
+    InvalidId,
+}
+impl WriteRefusal {
+    /// Stable machine-readable code.
+    #[must_use]
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::DanielOnly => "daniel_only",
+            Self::InvalidText => "invalid_text",
+            Self::InvalidTopics => "invalid_topics",
+            Self::TagNotFound => "tag_not_found",
+            Self::TagConflict => "tag_conflict",
+            Self::TagConfigured => "tag_configured",
+            Self::ProposalInvalid => "proposal_invalid",
+            Self::ProposalSettled => "proposal_settled",
+            Self::ProposalNotAgent => "proposal_not_agent",
+            Self::EntryNotActive => "entry_not_active",
+            Self::EntryNotFound => "entry_not_found",
+            Self::ProposalNotFound => "proposal_not_found",
+            Self::IdAmbiguous => "id_ambiguous",
+            Self::InvalidId => "usage_error",
+        }
+    }
+}

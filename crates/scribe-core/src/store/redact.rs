@@ -26,6 +26,7 @@ use crate::session::{SEGMENT_HEADING_CHARS, SessionRecord};
 pub const REDACTED_FIELDS: &[&str] = &[
     "entry.said",
     "entry.content",
+    "entry.retirement_reason",
     "session.title",
     "session.summary",
     "session.goals",
@@ -37,6 +38,7 @@ pub const REDACTED_FIELDS: &[&str] = &[
     "session.active_change.reason",
     "proposal.reason",
     "proposal.quotes.text",
+    "tag.description",
 ];
 
 /// A value shorter than this is not masked: a one-character "secret" would
@@ -106,6 +108,11 @@ impl Redactor {
     /// Mask an entry's free text.
     pub fn entry(&self, entry: &mut Entry) {
         self.mask_all(entry_fields(entry));
+    }
+
+    /// Mask a store tag's description.
+    pub fn tag(&self, tag: &mut crate::StoreTag) {
+        self.mask_all(tag_fields(tag));
     }
 
     /// Mask a session record's free text. A segment heading a marker made
@@ -283,10 +290,14 @@ fn mask_shapes(text: &str) -> String {
 
 /// The free-text fields of an entry, named as in [`REDACTED_FIELDS`].
 pub(super) fn entry_fields(entry: &mut Entry) -> Vec<(&'static str, &mut String)> {
-    vec![
+    let mut fields = vec![
         ("entry.said", &mut entry.said),
         ("entry.content", &mut entry.content),
-    ]
+    ];
+    if let Some(reason) = &mut entry.retirement_reason {
+        fields.push(("entry.retirement_reason", reason));
+    }
+    fields
 }
 
 /// The free-text fields of a session record; each term and each segment
@@ -322,4 +333,9 @@ pub(super) fn proposal_fields(proposal: &mut Proposal) -> Vec<(&'static str, &mu
             .map(|q| ("proposal.quotes.text", &mut q.text)),
     );
     fields
+}
+
+/// Store tag free text.
+pub(super) fn tag_fields(tag: &mut crate::StoreTag) -> Vec<(&'static str, &mut String)> {
+    vec![("tag.description", &mut tag.description)]
 }

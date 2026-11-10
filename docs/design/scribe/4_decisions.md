@@ -1987,3 +1987,34 @@ project a session was about.
   surface and skill, the tmux popup and backfill by name (designed).
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
+
+
+## S12 writes format 5 and preserves write provenance
+
+**Recorded:** 2026-11-10 · **Implementation decision**
+
+The S12 sketch called the new tag document and agent entry shape format 4.
+The shipped format-4 reader requires an entry cite and has no `agent`
+content provenance variant. The workspace guide, STD-02@4 §R16 and
+STD-03@2 §R23 require a new version rather than changing a shipped format
+in place. S12 appends step 4→5, keeping prior steps unchanged. Old entries
+and proposals remain readable without writes or locks; the next write
+uses format 5. The step adds nullable `retirement_reason` to entries and
+`updated_by` to proposals. The optional tags document carries creator and
+last updater. These additive fields retain required reasons and writers
+without destroying the original author. Input descriptions and reasons
+are bounded at 300 characters before credential redaction.
+
+Agent notes have `said: ""`, `content_from: {kind: agent}`, `cite: null`;
+Daniel entries retain typed provenance. The decoder rejects inconsistent
+author/provenance combinations. CLI writers construct agent authors even
+when the supplied name is `daniel`. This is an accident guard, not an OS
+security boundary (STD-05@1 §R5).
+
+Prompt labels alone cannot guarantee attribution. When an ask request
+contains agent evidence, the checked response renders the verified quotes
+with each evidence source label, replaces model-written claim attribution,
+and uses a fixed conflict notice with the checked cites. This gives up
+some synthesized prose in mixed-source answers to enforce that an agent's
+words never become Daniel's. Agent evidence has base weight 1.0×;
+the ordinary named-tag boost is independent of author.

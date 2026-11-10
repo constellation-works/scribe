@@ -1,0 +1,29 @@
+{
+  "id": "notes-1",
+  "tag": "notes",
+  "status": "active",
+  "project": "scribe",
+  "topics": [],
+  "related": [],
+  "provider": "cli",
+  "host": "host",
+  "created": "2026-11-10T01:00:00Z",
+  "updated": "2026-11-10T01:00:00Z",
+  "said": "",
+  "content": "Keep the API stable.",
+  "content_from": {
+    "kind": "agent",
+    "role": null,
+    "message": null,
+    "at": null
+  },
+  "cite": null,
+  "superseded_by": null,
+  "review_after": null,
+  "author": {
+    "kind": "agent",
+    "name": "opus"
+  },
+  "updated_by": null,
+  "retirement_reason": null
+}

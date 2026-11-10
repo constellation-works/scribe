@@ -153,7 +153,21 @@ pub struct Proposal {
     pub settled_by: Option<Cite>,
     /// Who opened it: `{kind: scribe, name: consistency}` for the routine.
     pub author: Author,
+    /// Agent who last revised the reason, or null.
+    #[serde(deserialize_with = "nullable")]
+    pub updated_by: Option<Author>,
     /// Who settled it, set exactly when `state` is not `open`.
     #[serde(deserialize_with = "nullable")]
     pub settled_author: Option<Author>,
+}
+
+/// Direct proposal change requested by an agent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProposalChange {
+    /// Replace the reason of an open agent proposal.
+    Update,
+    /// Apply the proposal to an agent entry.
+    Approve,
+    /// Reject a proposal about an agent entry.
+    Reject,
 }

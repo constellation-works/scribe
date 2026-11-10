@@ -6,7 +6,7 @@ A `#scribe` line Daniel types in Claude Code is recorded as an entry by the
 `UserPromptSubmit` hook (forms `#scribe <tag>: <content>` and `#scribe add
 <content> to <tag>`, and `#scribe add this to <tag>`, whose "this" a model
 resolves). `/scribe on` in a session catalogs it: `scribe session pass`
-writes one record per session whose pass is due. The CLI reads the store,
+writes one record per session whose pass is due. The CLI reads the store and accepts authored agent notes,
 and `scribe question ask` answers from it, quoting each record it cites
 verbatim; the Orbit plugin in `plugin/.orbit-plugin/` serves the same
 answer to agents as `scribe.ask` (install steps in its
@@ -28,6 +28,14 @@ scribe entry list --tag decisions --status active
 scribe entry list --project constellation-works/scribe --topic release
 scribe entry list --json | jq -r '.entries[].content'
 scribe entry show <id>
+scribe entry add --tag decisions --author opus 'Keep the API stable.'
+scribe entry update <id> --author opus --add-topic api
+scribe entry retire <id> --author opus --reason 'No longer applies'
+scribe tag add notes --author opus --description 'Agent notes'
+scribe tag update notes --author opus --add-alias note
+scribe proposal add --kind stale --older <id> --reason 'Review needed' --author opus
+scribe proposal update <id> --author opus --reason 'New evidence'
+scribe proposal settle <id> --reject --author opus
 scribe session list --project constellation-works/scribe
 scribe session show <id> --json | jq -r .next
 scribe session show <id> --log
@@ -47,20 +55,28 @@ The store is a directory: `--root <dir>`, else `$SCRIBE_ROOT`, else
 `~/.scribe`. Entries are Markdown files with YAML frontmatter under
 `entries/<tag>/<tag>-<n>.md`; session records are
 `sessions/<yyyy>/<mm>/<session-id>.md`; `control.json` holds which sessions
-are being cataloged, `proposals.json` the consistency routine's proposals and
-`config.toml` the tags, models, catalog cadence, session age limit and
-redaction settings. The
+are being cataloged, `proposals.json` holds routine and agent proposals,
+`tags.json` holds agent-created tags, and `config.toml` holds configured tags,
+models, catalog cadence, session age limit and redaction settings. Config names and aliases
+take precedence over store tags; `tag list` shows each source. The
 layout and every key are in
 [specs/store.md](docs/design/scribe/specs/store.md). A store that another
 user owns or could write, a linked file and a record from a newer build are
-refused. Every `entry`, `session`, `proposal`, `tag` and `question` command
-except `session pass`, `session rebuild`, `session deactivate` and `session activate`
-only reads, and writes nothing, not even an audit line; those four verbs and
-`consistency scan` write and are audited. Passes rewrite the header and open
-segment and append new segments; sealed segments stay unchanged.
-`[catalog] segment_windows` (default 3) bounds each segment's rewrites. Rebuild
-replaces a record from its transcript only when every window succeeds, resuming
-private checkpoints on the next confirmed invocation.
+refused. List, show and question commands only read: they take no lock
+and write nothing, including audit lines. Direct agent writes, session
+passes and rebuilds, `session deactivate` and `session activate`, and consistency scans are audited. Each direct write
+requires `--author` and records kind `agent`, even for the name `daniel`.
+Agents may annotate Daniel's topics and references, but cannot replace his
+content, retire his entries or settle proposals about them. Daniel still
+settles those through `#scribe`. Agent notes have no typed-turn citation;
+`ask` labels them `agent note (<name>)`. Repeating an unchanged write prints
+the unchanged record with `nothing changed` on stderr and no audit event.
+The store now writes format 5 and reads older formats without rewriting them.
+Passes rewrite the header and open segment and append new
+segments; sealed segments stay unchanged. `[catalog] segment_windows`
+(default 3) bounds each segment's rewrites. Rebuild replaces a record from
+its transcript only when every window succeeds, resuming private
+checkpoints on the next confirmed invocation.
 
 ## The Claude Code package
 

@@ -1,4 +1,4 @@
-List every proposal by id; settle one with #scribe approve or #scribe reject
+List every proposal by id and its settlement state
 
 Usage: scribe proposal list [OPTIONS]
 

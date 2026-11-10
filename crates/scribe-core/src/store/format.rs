@@ -39,7 +39,7 @@ use std::path::Path;
 
 /// The newest store format: this build reads formats 1 to `FORMAT` of every
 /// document and would write `FORMAT`.
-pub(super) const FORMAT: u32 = 4;
+pub(super) const FORMAT: u32 = 5;
 
 /// Which document an upgrade step is applied to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,7 +66,36 @@ pub(super) type Upgrade = fn(Document, serde_json::Value) -> serde_json::Result<
 /// (STD-02 R16, STD-03 R10). A shipped step is never edited, reordered or
 /// removed. Reads upgrade in memory only; the next write persists the
 /// current format. The template's `notes.json` is not carried over.
-pub(super) const UPGRADES: &[Upgrade] = &[retry_state, session_links, log_active_author];
+pub(super) const UPGRADES: &[Upgrade] =
+    &[retry_state, session_links, log_active_author, agent_writes];
+
+/// Format 4 -> 5 permits agent provenance and adds retirement reasons and proposal updaters.
+fn agent_writes(
+    document: Document,
+    mut value: serde_json::Value,
+) -> serde_json::Result<serde_json::Value> {
+    if document == Document::Entry
+        && let Some(entry) = value.as_object_mut()
+    {
+        entry
+            .entry("retirement_reason")
+            .or_insert(serde_json::Value::Null);
+    }
+    if document == Document::Proposals {
+        for proposal in value
+            .get_mut("proposals")
+            .and_then(serde_json::Value::as_array_mut)
+            .into_iter()
+            .flatten()
+            .filter_map(serde_json::Value::as_object_mut)
+        {
+            proposal
+                .entry("updated_by")
+                .or_insert(serde_json::Value::Null);
+        }
+    }
+    Ok(value)
+}
 
 /// Format 1 -> 2 adds bounded retry state to each session switch. Other
 /// document shapes are unchanged. Reads upgrade only in memory.
@@ -288,6 +317,38 @@ struct ProposalV3 {
     settled_by: Option<Cite>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProposalsV4 {
+    #[allow(dead_code, reason = "format-4 validation before upgrade")]
+    format: u32,
+    #[allow(dead_code, reason = "format-4 validation before upgrade")]
+    proposals: Vec<ProposalV4>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "format-4 validation before upgrade")]
+struct ProposalV4 {
+    id: ProposalId,
+    kind: ProposalKind,
+    older: EntryId,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    newer: Option<EntryId>,
+    reason: String,
+    quotes: Vec<Quote>,
+    state: ProposalState,
+    #[serde(with = "time::serde::rfc3339")]
+    opened_at: time::OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339::option")]
+    settled_at: Option<time::OffsetDateTime>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    settled_by: Option<Cite>,
+    author: crate::Author,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    settled_author: Option<crate::Author>,
+}
+
 /// Frozen format-2 `control.json` shape, validated before upgrading.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -481,6 +542,23 @@ pub(super) fn decode_entry(
                 "id {} and tag {} do not match the file entries/{tag_dir}/{expected}.md",
                 entry.id, entry.tag
             ),
+        ));
+    }
+    let valid = match entry.author.kind {
+        crate::AuthorKind::Daniel => {
+            entry.cite.is_some() && entry.content_from != crate::ContentFrom::Agent
+        }
+        crate::AuthorKind::Agent => {
+            entry.cite.is_none()
+                && entry.said.is_empty()
+                && entry.content_from == crate::ContentFrom::Agent
+        }
+        crate::AuthorKind::Scribe => false,
+    };
+    if !valid {
+        return Err(shape(
+            path,
+            "entry author, said, content_from and cite disagree",
         ));
     }
     body.clone_into(&mut entry.content);
@@ -812,6 +890,13 @@ fn decode_json<T: DeserializeOwned>(path: &Path, bytes: &[u8], document: Documen
         return serde_json::from_slice(bytes).map_err(|e| Error::corrupt(path, e));
     }
     match document {
+        Document::Control if from == 4 => {
+            serde_json::from_slice::<ControlDocument>(bytes)
+                .map_err(|e| Error::corrupt(path, e))?;
+        }
+        Document::Proposals if from == 4 => {
+            serde_json::from_slice::<ProposalsV4>(bytes).map_err(|e| Error::corrupt(path, e))?;
+        }
         Document::Control if from == 1 => {
             serde_json::from_slice::<ControlV1>(bytes).map_err(|e| Error::corrupt(path, e))?;
         }
@@ -877,6 +962,44 @@ pub(super) fn encode_proposals(path: &Path, proposals: &[Proposal]) -> Result<Ve
     let mut bytes = serde_json::to_vec_pretty(&ProposalsOut {
         format: FORMAT,
         proposals: &sorted,
+    })
+    .map_err(|e| Error::corrupt(path, e))?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TagsDocument {
+    format: u32,
+    tags: Vec<crate::StoreTag>,
+}
+
+pub(super) fn decode_tags(path: &Path, bytes: &[u8]) -> Result<Vec<crate::StoreTag>> {
+    check_format(
+        path,
+        serde_json::from_slice(bytes).map_err(|e| Error::corrupt(path, e)),
+    )?;
+    let doc: TagsDocument = serde_json::from_slice(bytes).map_err(|e| Error::corrupt(path, e))?;
+    crate::TagTable::new(doc.tags.iter().map(crate::StoreTag::definition).collect())
+        .map_err(|e| Error::corrupt(path, e))?;
+    if doc.tags.iter().any(|t| {
+        t.author.kind != crate::AuthorKind::Agent
+            || t.updated_by
+                .as_ref()
+                .is_some_and(|a| a.kind != crate::AuthorKind::Agent)
+    }) {
+        return Err(shape(path, "store tags must have agent authors"));
+    }
+    Ok(doc.tags)
+}
+
+pub(super) fn encode_tags(path: &Path, tags: &[crate::StoreTag]) -> Result<Vec<u8>> {
+    let mut tags = tags.to_vec();
+    tags.sort_by(|a, b| a.name.cmp(&b.name));
+    let mut bytes = serde_json::to_vec_pretty(&TagsDocument {
+        format: FORMAT,
+        tags,
     })
     .map_err(|e| Error::corrupt(path, e))?;
     bytes.push(b'\n');

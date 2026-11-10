@@ -1,4 +1,4 @@
-//! Entries: the decisions and preferences Daniel marks with `#scribe`.
+//! Entries: Daniel's marked words and explicitly authored agent notes.
 //!
 //! An entry is one file, `entries/<tag>/<id>.md`: YAML frontmatter holding
 //! the fields below and a body that is [`Entry::content`], verbatim
@@ -260,6 +260,8 @@ impl Speaker {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 pub enum ContentFrom {
+    /// Written directly through an agent CLI verb.
+    Agent,
     /// A verbatim substring of the `#scribe` line itself.
     Instruction,
     /// A verbatim span of an earlier message the instruction pointed at
@@ -331,8 +333,12 @@ pub struct Entry {
     pub said: String,
     /// Where `content` came from.
     pub content_from: ContentFrom,
-    /// The turn it was typed in.
-    pub cite: Cite,
+    /// The typed turn; null for an agent note.
+    #[serde(deserialize_with = "nullable")]
+    pub cite: Option<Cite>,
+    /// Redacted reason for direct retirement, or null.
+    #[serde(deserialize_with = "nullable")]
+    pub retirement_reason: Option<String>,
     /// The entry that replaced it, when `superseded`.
     #[serde(deserialize_with = "nullable")]
     pub superseded_by: Option<EntryId>,
@@ -430,7 +436,8 @@ impl NewEntry {
             updated: self.created,
             said: self.said,
             content_from: self.content_from,
-            cite: self.cite,
+            cite: Some(self.cite),
+            retirement_reason: None,
             superseded_by: None,
             review_after: self.review_after,
             content: self.content,
@@ -449,4 +456,36 @@ impl Cite {
             && self.prompt_sha256 == other.prompt_sha256
             && self.line == other.line
     }
+}
+
+/// Metadata and content for a directly written note.
+#[derive(Clone, Debug)]
+pub struct AgentEntry {
+    /// Tag name or alias.
+    pub tag: TagName,
+    /// Content to redact and store.
+    pub content: String,
+    /// Project, or global.
+    pub project: Project,
+    /// Topics.
+    pub topics: Topics,
+    /// Related references.
+    pub related: Vec<Related>,
+    /// Host supplied by composition.
+    pub host: Label,
+}
+
+/// A metadata/content patch. Removals apply before additions.
+#[derive(Clone, Debug, Default)]
+pub struct EntryPatch {
+    /// Replacement content, only for agent notes.
+    pub content: Option<String>,
+    /// Topics to add.
+    pub add_topics: Vec<Topic>,
+    /// Topics to remove.
+    pub remove_topics: Vec<Topic>,
+    /// References to add.
+    pub add_related: Vec<Related>,
+    /// References to remove.
+    pub remove_related: Vec<Related>,
 }

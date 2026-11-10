@@ -1,0 +1,18 @@
+{
+  "id": "p-1",
+  "kind": "stale",
+  "older": "notes-1",
+  "newer": null,
+  "reason": "Review this note.",
+  "quotes": [],
+  "state": "open",
+  "opened_at": "2026-11-10T01:00:00Z",
+  "settled_at": null,
+  "settled_by": null,
+  "author": {
+    "kind": "agent",
+    "name": "opus"
+  },
+  "settled_author": null,
+  "updated_by": null
+}

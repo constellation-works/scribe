@@ -1,4 +1,4 @@
-use super::super::redact::{entry_fields, proposal_fields, session_fields};
+use super::super::redact::{entry_fields, proposal_fields, session_fields, tag_fields};
 use crate::config::Config;
 use crate::proposal::{Proposal, ProposalKind, ProposalState, Quote};
 use crate::session::{SessionRecord, Term};
@@ -29,6 +29,7 @@ fn proposal() -> Proposal {
         settled_at: None,
         settled_by: None,
         author: crate::record::Author::consistency(),
+        updated_by: None,
         settled_author: None,
     }
 }
@@ -56,11 +57,14 @@ fn the_redacted_field_inventory_is_exactly_the_fields_masked() {
     // A new free-text field must join both REDACTED_FIELDS and its record's
     // field list, or this fails.
     let mut e = entry("decisions-1", T0);
+    e.retirement_reason = Some(String::new());
     let mut s = session_with_term();
     let mut p = proposal();
     let mut names: Vec<&str> = entry_fields(&mut e).into_iter().map(|(n, _)| n).collect();
     names.extend(session_fields(&mut s).into_iter().map(|(n, _)| n));
     names.extend(proposal_fields(&mut p).into_iter().map(|(n, _)| n));
+    let mut tag = store_tag();
+    names.extend(tag_fields(&mut tag).into_iter().map(|(n, _)| n));
     names.dedup();
     assert_eq!(names, REDACTED_FIELDS);
 }
@@ -75,6 +79,7 @@ fn a_configured_secret_is_masked_in_every_covered_field() {
     let masked = "the token is [redacted:GITHUB_TOKEN], keep it";
 
     let mut e = entry("decisions-1", T0);
+    e.retirement_reason = Some(String::new());
     for (_, text) in entry_fields(&mut e) {
         *text = leak.clone();
     }
@@ -106,9 +111,10 @@ fn a_configured_secret_is_masked_in_every_covered_field() {
 fn identifiers_and_paths_are_not_masked() {
     let redactor = Redactor::new([(String::from("TOKEN"), String::from("/work/abc"))]);
     let mut e = entry("decisions-1", T0);
-    e.cite.cwd = String::from("/work/abc");
+    e.retirement_reason = Some(String::new());
+    e.cite.as_mut().unwrap().cwd = String::from("/work/abc");
     redactor.entry(&mut e);
-    assert_eq!(e.cite.cwd, "/work/abc");
+    assert_eq!(e.cite.as_ref().unwrap().cwd, "/work/abc");
 }
 
 #[test]
@@ -234,6 +240,7 @@ fn a_pem_private_key_block_is_masked_whole() {
 fn a_credential_shape_is_masked_in_a_stored_entry_field() {
     let token = format!("ghp_{}", "0123456789abcdefghij0123456789abcdef");
     let mut e = entry("decisions-1", T0);
+    e.retirement_reason = Some(String::new());
     e.content = format!("echoed {token}");
     Redactor::default().entry(&mut e);
     assert!(!e.content.contains(&token), "{}", e.content);
@@ -288,4 +295,26 @@ fn a_masked_segment_heading_stays_within_its_limit() {
         crate::session::SEGMENT_HEADING_CHARS
     );
     assert!(crate::session::check_log(&s).is_ok());
+}
+
+fn store_tag() -> crate::StoreTag {
+    crate::StoreTag {
+        name: "notes".parse().unwrap(),
+        aliases: Vec::new(),
+        description: String::new(),
+        stale_after_days: None,
+        author: crate::Author::agent("opus".parse().unwrap()),
+        updated_by: None,
+        created: T0,
+        updated: T0,
+    }
+}
+
+#[test]
+fn tag_description_is_redacted_at_the_same_boundary() {
+    let redactor = Redactor::new([(String::from("TOKEN"), SECRET.to_owned())]);
+    let mut tag = store_tag();
+    tag.description = SECRET.to_owned();
+    redactor.tag(&mut tag);
+    assert_eq!(tag.description, "[redacted:TOKEN]");
 }

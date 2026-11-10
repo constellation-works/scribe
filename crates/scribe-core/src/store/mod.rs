@@ -34,11 +34,13 @@
 //! [`Skipped`], so one bad file does not hide the rest (4_decisions.md, "One
 //! malformed record makes its file corrupt").
 
+mod agent;
 mod audit;
 mod format;
 mod fsio;
 mod rebuild;
 mod redact;
+mod tags;
 pub use rebuild::RebuildGuard;
 
 pub use audit::{AUDIT_FILE, AuditEvent, AuditStatus};
@@ -136,6 +138,8 @@ pub struct SessionView {
 pub struct TagList {
     /// Every configured tag and every tag with entries, by name.
     pub tags: Vec<TagSummary>,
+    /// Config overrides reported to the caller.
+    pub warnings: Vec<String>,
     /// Entry files left out of the counts because they did not parse.
     pub skipped: Vec<Skipped>,
 }
@@ -209,6 +213,12 @@ impl Store {
     /// The configuration: `config.toml` parsed, or the defaults when there
     /// is none. A bad key or value is refused, naming it.
     pub fn config(&self) -> Result<Config> {
+        let mut config = self.config_only()?;
+        config.tags = self.merge_tags(&config.tags)?.0;
+        Ok(config)
+    }
+
+    fn config_only(&self) -> Result<Config> {
         let path = self.root.join(CONFIG_FILE);
         if !self.root_exists()? || !fsio::inspect_file(&path)? {
             return Ok(Config::default());
@@ -500,11 +510,32 @@ impl Store {
 
     /// Every configured tag and every tag that has entries, with counts.
     pub fn list_tags(&self) -> Result<TagList> {
-        let config = self.config()?;
+        let configured = self.config_only()?.tags;
+        let stored = self.store_tags()?;
+        let (table, warnings) = configured
+            .merge_store(&stored)
+            .map_err(|e| agent::refusal(crate::WriteRefusal::TagConflict, e.to_string()))?;
         let (entries, skipped) = self.load_entries()?;
+        let mut tags = tag::summarize(&table, &entries);
+        for tag in &mut tags {
+            tag.source = if configured.get(&tag.name).is_some() {
+                Some("config")
+            } else if table.get(&tag.name).is_some() {
+                Some("store")
+            } else {
+                None
+            };
+            if tag.source == Some("store") {
+                tag.author = stored
+                    .iter()
+                    .find(|t| t.name == tag.name)
+                    .map(|t| t.author.clone());
+            }
+        }
         Ok(TagList {
-            tags: tag::summarize(&config.tags, &entries),
+            tags,
             skipped,
+            warnings,
         })
     }
 
@@ -533,7 +564,10 @@ impl Store {
         );
         let mut out = Vec::with_capacity(drafts.len());
         for draft in drafts {
-            if let Some(found) = entries.iter().find(|e| e.cite.same_line(&draft.cite)) {
+            if let Some(found) = entries
+                .iter()
+                .find(|e| e.cite.as_ref().is_some_and(|c| c.same_line(&draft.cite)))
+            {
                 out.push(Captured::Existing(found.clone()));
                 continue;
             }
@@ -560,7 +594,11 @@ impl Store {
             .load_entries()?
             .0
             .into_iter()
-            .filter(|e| &e.cite.session == session && e.cite.prompt_sha256 == prompt_sha256)
+            .filter(|e| {
+                e.cite
+                    .as_ref()
+                    .is_some_and(|c| &c.session == session && c.prompt_sha256 == prompt_sha256)
+            })
             .collect())
     }
 
@@ -588,10 +626,13 @@ impl Store {
         entries.sort_by(|a, b| a.created.cmp(&b.created).then_with(|| a.id.cmp(&b.id)));
         let mut filled = Vec::new();
         for mut entry in entries.into_iter().filter(|e| unfilled(e, session)) {
-            let Some(message) = find(&entry.cite) else {
+            let Some(cite) = entry.cite.as_mut() else {
                 continue;
             };
-            entry.cite.message = Some(message);
+            let Some(message) = find(cite) else {
+                continue;
+            };
+            cite.message = Some(message);
             entry.updated = now;
             self.write_entry(&entry, false)?;
             filled.push(entry.id);
@@ -1015,7 +1056,10 @@ fn merge_links(links: &mut Vec<SessionLink>, more: &[SessionLink]) {
 
 /// Whether `entry` is from `session` and still waits for its message uuid.
 fn unfilled(entry: &Entry, session: &SessionId) -> bool {
-    &entry.cite.session == session && entry.cite.message.is_none()
+    entry
+        .cite
+        .as_ref()
+        .is_some_and(|c| &c.session == session && c.message.is_none())
 }
 
 /// Names that can be records: not hidden. A writer stages its temporary file
