@@ -1,0 +1,82 @@
+{
+  "hits": [
+    {
+      "kind": "entry",
+      "cite": "decisions-2",
+      "id": "decisions-2",
+      "segment": null,
+      "score": 2.929,
+      "title": "decisions-2 (decisions)",
+      "snippet": "squash-merge agent PRs; keep merge commits for releases",
+      "project": "constellation-works/scribe",
+      "topics": [
+        "merge-policy",
+        "release"
+      ],
+      "author": {
+        "kind": "daniel",
+        "name": "daniel"
+      },
+      "active": null,
+      "updated": "2026-11-02T19:05:41Z",
+      "status": "active"
+    },
+    {
+      "kind": "session",
+      "cite": "session:7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02#1",
+      "id": "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02",
+      "segment": 1,
+      "score": 2.548,
+      "title": "Merge policy for agent PRs",
+      "snippet": "Squash-merge agent PRs; releases keep merge commits.",
+      "project": "constellation-works/scribe",
+      "topics": [
+        "release",
+        "merge-policy"
+      ],
+      "author": null,
+      "active": true,
+      "updated": "2026-11-02T19:20:00Z",
+      "status": "open"
+    },
+    {
+      "kind": "session",
+      "cite": "session:7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02",
+      "id": "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02",
+      "segment": null,
+      "score": 2.254,
+      "title": "Merge policy for agent PRs",
+      "snippet": "Discussed how agent PRs are merged and recorded the decision. Agree a merge policy. - update the contributing guide - tell the release crew",
+      "project": "constellation-works/scribe",
+      "topics": [
+        "release",
+        "merge-policy"
+      ],
+      "author": null,
+      "active": true,
+      "updated": "2026-11-02T19:40:00Z",
+      "status": "open"
+    },
+    {
+      "kind": "session",
+      "cite": "session:7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02#2",
+      "id": "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02",
+      "segment": 2,
+      "score": 0.541,
+      "title": "Telling the release crew",
+      "snippet": "Drafted the note to the release crew about the new merge policy.",
+      "project": "constellation-works/scribe",
+      "topics": [
+        "release",
+        "merge-policy"
+      ],
+      "author": null,
+      "active": true,
+      "updated": "2026-11-02T19:40:00Z",
+      "status": "open"
+    }
+  ],
+  "total": 4,
+  "truncated": false,
+  "warnings": []
+}

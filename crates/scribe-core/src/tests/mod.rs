@@ -13,6 +13,7 @@ mod entry;
 mod pass;
 mod proposal;
 mod record;
+mod search;
 mod session;
 mod tag;
 mod transcript;

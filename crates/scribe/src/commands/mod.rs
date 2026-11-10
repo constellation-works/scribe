@@ -4,7 +4,7 @@
 //! [`run`] is where cross-cutting behaviour attaches, once, for every command
 //! (STD-02 R24): today the audit log, through [`crate::audit_middleware`].
 //! Each noun lives in its own module with its subcommands, flags, help and
-//! handlers (`entry.rs`, `session/`, `proposal.rs`, `tag.rs`, `question.rs`,
+//! handlers (`entry.rs`, `session/`, `proposal.rs`, `record.rs`, `tag.rs`, `question.rs`,
 //! `plugin.rs`); a noun that
 //! outgrows one file becomes a directory, `<noun>/mod.rs` plus one file per
 //! verb, as `hook/` is (STD-02 R18: split along responsibilities, not by length alone).
@@ -15,6 +15,7 @@ mod hook;
 mod plugin;
 mod proposal;
 mod question;
+mod record;
 mod session;
 mod tag;
 
@@ -22,8 +23,9 @@ use crate::app::Context;
 use crate::audit_middleware::{AuditGuard, AuditMeta};
 use crate::error::CliError;
 use crate::output::{Output, Records, WarningPayload};
-use clap::Subcommand;
-use scribe_core::Skipped;
+use clap::{Args, Subcommand};
+use scribe_core::{DateRange, Skipped};
+use time::Date;
 
 pub(crate) use consistency::ConsistencyCommand;
 pub(crate) use entry::EntryCommand;
@@ -31,6 +33,7 @@ pub(crate) use hook::HookCommand;
 pub(crate) use plugin::PluginCommand;
 pub(crate) use proposal::ProposalCommand;
 pub(crate) use question::QuestionCommand;
+pub(crate) use record::RecordCommand;
 pub(crate) use session::SessionCommand;
 pub(crate) use tag::TagCommand;
 
@@ -46,6 +49,9 @@ pub(crate) enum Command {
     /// Read, open, update and settle proposals
     #[command(subcommand, after_help = proposal::PROPOSAL_EXAMPLES)]
     Proposal(ProposalCommand),
+    /// Search every stored record for words, ranked as question ask ranks them, with no model call
+    #[command(subcommand, after_help = record::RECORD_EXAMPLES)]
+    Record(RecordCommand),
     /// Propose superseding or retiring entries a later one replaced or that are due for review (scan)
     #[command(subcommand, after_help = consistency::CONSISTENCY_EXAMPLES)]
     Consistency(ConsistencyCommand),
@@ -74,6 +80,7 @@ impl Command {
             Self::Entry(command) => command.audit(),
             Self::Session(command) => command.audit(),
             Self::Proposal(command) => command.audit(),
+            Self::Record(command) => command.audit(),
             Self::Consistency(command) => command.audit(),
             Self::Tag(command) => command.audit(),
             Self::Hook(command) => command.audit(),
@@ -92,7 +99,12 @@ pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
         .audit()
         .map(|meta| AuditGuard::start(ctx.store(), meta, ctx.now()));
     let rebuild_target = if let Command::Session(SessionCommand::Rebuild(args)) = &command {
-        Some(format!("session:{}", args.id))
+        // The audit line names the session, not the prefix typed for it.
+        let id = ctx
+            .store()
+            .resolve_session(&args.id)
+            .unwrap_or_else(|_| args.id.clone());
+        Some(format!("session:{id}"))
     } else {
         None
     };
@@ -103,6 +115,7 @@ pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
         Command::Entry(command) => entry::run(command, ctx),
         Command::Session(command) => session::run(command, ctx),
         Command::Proposal(command) => proposal::run(command, ctx),
+        Command::Record(command) => record::run(command, ctx),
         Command::Consistency(command) => consistency::run(command, ctx),
         Command::Tag(command) => tag::run(command, ctx),
         Command::Hook(command) => hook::run(command, ctx),
@@ -160,6 +173,54 @@ impl RunLimits {
         self.start_by
             .is_none_or(|by| std::time::Instant::now() < by)
     }
+}
+
+/// `--since` and `--until`, shared by every list and the search.
+#[derive(Debug, Args)]
+pub(crate) struct DateArgs {
+    /// Only records on or after this day, YYYY-MM-DD [default: no lower bound]
+    #[arg(long, value_name = "DATE", value_parser = day_parser)]
+    pub(crate) since: Option<Date>,
+
+    /// Only records on or before this day, YYYY-MM-DD [default: no upper bound]
+    #[arg(long, value_name = "DATE", value_parser = day_parser)]
+    pub(crate) until: Option<Date>,
+}
+
+impl DateArgs {
+    /// The range, or a usage error when it ends before it starts.
+    pub(crate) fn range(&self) -> Result<DateRange, CliError> {
+        if let (Some(since), Some(until)) = (self.since, self.until)
+            && until < since
+        {
+            return Err(CliError::Usage(format!(
+                "--until {} is before --since {}; give a range that ends on or after it starts",
+                scribe_core::DateRange::day(until),
+                scribe_core::DateRange::day(since)
+            )));
+        }
+        Ok(DateRange {
+            since: self.since,
+            until: self.until,
+        })
+    }
+
+    /// The flags that set the range, for a list's "no match" line.
+    pub(crate) fn criteria(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if let Some(since) = self.since {
+            out.push(format!("--since {}", scribe_core::DateRange::day(since)));
+        }
+        if let Some(until) = self.until {
+            out.push(format!("--until {}", scribe_core::DateRange::day(until)));
+        }
+        out
+    }
+}
+
+/// `YYYY-MM-DD`; anything else is a usage error (exit 2).
+pub(crate) fn day_parser(text: &str) -> Result<Date, String> {
+    scribe_core::parse_day(text)
 }
 
 /// What a list needs to say on stderr beside its records.

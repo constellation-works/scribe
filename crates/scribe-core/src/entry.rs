@@ -11,7 +11,8 @@
 //! Never rename or retype a field without a store format bump.
 
 use crate::record::{
-    Author, Label, Listing, Project, Related, Topic, Topics, nullable, nullable_date,
+    Author, AuthorKind, AuthorName, DateRange, Label, Listing, Project, Related, Topic, Topics,
+    nullable, nullable_date,
 };
 use crate::session::SessionId;
 use serde::{Deserialize, Serialize};
@@ -360,8 +361,17 @@ pub struct EntryFilter {
     pub status: Option<EntryStatus>,
     /// Only entries recorded in this project.
     pub project: Option<Project>,
-    /// Only entries carrying this topic.
-    pub topic: Option<Topic>,
+    /// Only entries carrying every one of these topics.
+    pub topics: Vec<Topic>,
+    /// Only entries mentioning at least one of these references (none set:
+    /// any entry).
+    pub related: Vec<Related>,
+    /// Only entries created on a day in this range.
+    pub dates: DateRange,
+    /// Only entries written under this author name.
+    pub author: Option<AuthorName>,
+    /// Only entries written through this channel.
+    pub author_kind: Option<AuthorKind>,
     /// At most this many of the matching entries.
     pub limit: Option<NonZeroUsize>,
 }
@@ -373,7 +383,11 @@ impl EntryFilter {
         self.tag.as_ref().is_none_or(|t| &entry.tag == t)
             && self.status.is_none_or(|s| entry.status == s)
             && self.project.as_ref().is_none_or(|p| &entry.project == p)
-            && self.topic.as_ref().is_none_or(|t| entry.topics.contains(t))
+            && self.topics.iter().all(|t| entry.topics.contains(t))
+            && (self.related.is_empty() || self.related.iter().any(|r| entry.related.contains(r)))
+            && self.dates.contains(entry.created)
+            && self.author.as_ref().is_none_or(|a| &entry.author.name == a)
+            && self.author_kind.is_none_or(|k| entry.author.kind == k)
     }
 
     /// Apply the filter to `entries`, oldest first (by `created`, then id),

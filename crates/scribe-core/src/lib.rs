@@ -46,6 +46,7 @@ pub mod models;
 pub mod pass;
 mod proposal;
 mod record;
+pub mod search;
 mod session;
 mod store;
 mod tag;
@@ -60,11 +61,12 @@ pub use entry::{
 pub use error::{Error, Result, WriteRefusal};
 pub use models::Models;
 pub use proposal::{
-    Proposal, ProposalChange, ProposalError, ProposalId, ProposalKind, ProposalState, Quote,
+    Proposal, ProposalChange, ProposalError, ProposalFilter, ProposalId, ProposalKind,
+    ProposalState, Quote,
 };
 pub use record::{
-    Author, AuthorKind, AuthorName, Label, Listing, Project, RecordError, Related, RelatedKind,
-    Topic, Topics,
+    Author, AuthorKind, AuthorName, DateRange, Label, Listing, Project, RecordError, Related,
+    RelatedKind, Topic, Topics, parse_day,
 };
 pub use session::{
     Cadence, Child, ControlState, HEADER_SECTIONS, LOG_SECTION, LinkError, LinkType, LogError,

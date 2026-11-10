@@ -50,7 +50,7 @@ Examples:
 /// Arguments to `session deactivate`.
 #[derive(Debug, Args)]
 pub(crate) struct DeactivateArgs {
-    /// The session's id, as printed by `session list`, or its cite session:<id>
+    /// The session's id, as printed by `session list`, a unique prefix of it (at least four characters), or its cite session:<id>
     #[arg(value_name = "ID", value_parser = parse_session_ref)]
     pub(crate) id: SessionRef,
 
@@ -70,7 +70,7 @@ pub(crate) struct DeactivateArgs {
 /// Arguments to `session activate`.
 #[derive(Debug, Args)]
 pub(crate) struct ActivateArgs {
-    /// The session's id, as printed by `session list --include-inactive`, or its cite session:<id>
+    /// The session's id, as printed by `session list --include-inactive`, a unique prefix of it (at least four characters), or its cite session:<id>
     #[arg(value_name = "ID", value_parser = parse_session_ref)]
     pub(crate) id: SessionRef,
 
@@ -93,7 +93,7 @@ pub(crate) struct ActivateArgs {
 
 /// `session deactivate`.
 pub(super) fn deactivate(args: DeactivateArgs, ctx: &Context) -> Result<Output, CliError> {
-    let id = whole_session(&args.id)?;
+    let id = ctx.store().resolve_session(&whole_session(&args.id)?)?;
     let reason = reason("--reason", &args.reason)?;
     let cite = args.cite.as_deref().map(cite).transpose()?;
     let request = SetActive::Deactivate {
@@ -107,7 +107,7 @@ pub(super) fn deactivate(args: DeactivateArgs, ctx: &Context) -> Result<Output, 
 
 /// `session activate`.
 pub(super) fn activate(args: ActivateArgs, ctx: &Context) -> Result<Output, CliError> {
-    let id = whole_session(&args.id)?;
+    let id = ctx.store().resolve_session(&whole_session(&args.id)?)?;
     let reason = args
         .reason
         .as_deref()

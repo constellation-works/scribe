@@ -1,6 +1,6 @@
 ---
 type: design
-summary: "Spec: output contract — streams, modes, plain columns, the JSON list envelope and record fields (segments, activity, agent authors and direct writes; future search hits and transcripts), warnings, errors and exit codes"
+summary: "Spec: output contract — streams, modes, plain columns, the JSON list envelope and record fields (segments, activity, agent authors and direct writes, search hits; future transcripts), warnings, errors and exit codes"
 last_validated: 2026-11-10
 ---
 
@@ -10,8 +10,9 @@ Every data command renders one typed payload in the mode the sink resolved;
 stdout carries only that payload; warnings, notices and errors go to stderr;
 the exit code says whether it worked. The JSON form is a public contract,
 pinned by the output goldens in `crates/scribe/tests/goldens/output/`.
-S12 writes are built. Other parts marked *(S11)* to *(S14)* are designed
-([ORB-23892]) and not yet built; each only adds fields, columns, commands and codes.
+S11's read surface and S12's writes are built. Other parts marked *(S13)*
+or *(S14)* are designed ([ORB-23892]) and not yet built; each only adds
+fields, columns, commands and codes.
 
 ## Why This Exists
 
@@ -44,10 +45,11 @@ is `-`, lists are comma-joined, and timestamps are RFC 3339.
 | `session list --include-inactive` | `id status active due project topics updated title` (`active` is `yes` or `no`); without the flag the columns are unchanged, inactive sessions are left out, and when any matched the notice `<n> inactive session(s) also match and are hidden; --include-inactive lists them` goes to stderr. With `--tree` too, `active` follows `status` |
 | `proposal list` | `id kind state older newer opened_at reason` |
 | `tag list` | `name entries stale_after_days aliases description`, and (S12) a last column `source` (`config` or `store`) |
-| `record search` *(S11)* | `cite kind score updated title snippet` |
+| `record search` (S11) | `cite kind score updated title snippet` (`score` to three decimals; the table cuts `title` to 40 characters and fits `snippet` to the width) |
 | `transcript list` *(S14)* | `session project daniel_turns bytes started ended first_prompt` |
 
-Search hits are best first, ties newest first; transcripts newest first by
+Search hits are best first; on a tie entries come before sessions, then
+the newest first (as `ask` ranks); transcripts newest first by
 `started`. Entries and sessions are oldest first (by `created`, then `started`, ties by
 id); proposals by number; tags by name. `session list --tree` keeps that
 order among siblings but lists each session right after the one it nests
@@ -60,7 +62,7 @@ indent, and the `parent` column carries the nesting.
 Every list is
 `{"<key>": [<record>, ...], "total": <integer>, "truncated": <boolean>,
 "warnings": [<warning>, ...]}`, with `<key>` `entries`, `sessions`,
-`proposals` or `tags`, and *(S11, S14)* `hits` for `record search` and
+`proposals` or `tags`, (S11) `hits` for `record search`, and *(S14)*
 `transcripts` for `transcript list`. `total` counts the records that matched the filters;
 `truncated` is true when `--limit` returned fewer. No matches is the same
 envelope with an empty array. A warning is `{"path", "code", "error"}` for a
@@ -71,6 +73,23 @@ every mode.
 stderr also carries, in every mode, one notice when a list is empty (where
 records come from, or `no <noun> match <filters>` naming the flags) or cut
 (`showing N of M matching <noun>; raise or drop --limit to see the rest`).
+(S11) `record search` names its terms first among the filters (`no records
+match "<terms>" --kind session`), and when hidden records also matched it
+adds `<n> hidden record(s) also match: superseded or retired entries, or
+inactive sessions; --include-hidden shows them`.
+
+(S11) List filters: `entry list` and `session list` take `--since <date>`
+and `--until <date>` (`YYYY-MM-DD`, both days included), `--status`,
+repeated `--topic` (every one must match) and repeated `--related
+<kind:target>` (any may match); `entry list` also `--author <name>` and
+`--author-kind daniel|agent`; `proposal list` takes `--state`, `--since`,
+`--until`, `--entry <id>` (the older or the newer entry) and
+`--author-kind daniel|agent|scribe`. An entry's day is its `created`, a
+proposal's its `opened_at`; a session matches when its span, `started` to
+`updated`, has a day in the range, and its topics and references are the
+record's and its segments'. A date that does not parse, or `--until`
+before `--since`, is `usage_error` (exit 2). The filters change no
+record shape.
 
 ## JSON fields
 
@@ -143,12 +162,19 @@ no configured tag names), `entries` (count, any status). (S12) Adds
 `author` (`null` for a config or orphaned tag). `configured` is true only
 for config tags, even though a store tag is also routable.
 
-**Hit** *(S11, `hits[]`)*: `kind` (`entry`, `session`, `discussion`),
-`cite` (an entry id, `session:<id>`, `session:<id>#<n>` or a discussion
-slug), `id`, `segment` (integer or `null`), `score` (number), `title` (a
-session's title, a discussion's title, or an entry's tag and id), `snippet`
-(up to 240 characters), `project`, `topics`, `author` (or `null`),
-`active` (sessions; `null` otherwise), `updated`.
+**Hit** (S11, `hits[]`): `kind` (`entry` or `session`; *(S7)*
+`discussion`), `cite` (an entry id, `session:<id>` for a header,
+`session:<id>#<n>` for a segment; *(S7)* a discussion slug), `id` (the
+entry's or session's id), `segment` (integer or `null`), `score` (a
+number, three decimals), `title` (a session's title, a segment's heading,
+or for an entry `<id> (<tag>)`), `snippet` (up to 240 characters on one
+line, starting a little before the first matching word, with `…` where it
+was cut), `project`, `topics` (a segment's are its session's plus its
+own), `author` (an entry's `{kind, name}`, `null` for a session), `active`
+(a session's flag; `null` for an entry), `updated` (an entry's or
+session's `updated`, a segment's `to`), and `status` (added beside the
+designed fields: an entry's `active`, `superseded` or `retired`, a
+session's `open` or `final`).
 
 **Transcript** *(S14, `transcripts[]`, `transcript show`)*: `session`,
 `project` (the attributed slug), `project_mentions` (`{"<slug>":
@@ -198,13 +224,23 @@ breaking change and shows up as a golden diff.
 | 1 | the command failed | `error: <message>` or `{"error": "...", "code": "..."}` |
 | 2 | usage error, including an invalid id, tag, topic, project or status | clap's rendering, or `{"error": "...", "code": "usage_error"}` |
 
+(S11) Every command that takes an entry, proposal or session id (`entry
+show|update|retire`, `proposal add --older|--newer`, `proposal
+update|settle`, `proposal list --entry`, `session show|deactivate|activate|rebuild`
+and `session pass --session`) also takes a unique prefix of it of at least
+four characters. An exact id wins over a prefix; several matches are
+`id_ambiguous` (exit 2); none is the noun's not-found (`entry_not_found`,
+`proposal_not_found`, `session_not_found`, exit 1). A session's prefix is
+matched against its record and its switch in `control.json`, and the
+audit line of a write names the full id.
+
 Stable codes: `entry_not_found`, `session_not_found`, `io_error`,
 `store_corrupt`, `config_invalid`, `store_too_new`, `store_locked`,
 `store_symlink`, `store_foreign_owner`, `store_permissions`, `no_data_dir`,
 `output_error`, `usage_error`, `hook_payload_invalid`,
 `segment_not_found`, `sealed_segment_changed`, `confirm_required`,
-`transcript_missing`, `session_busy` (exit 1), *(S10–S14)* `id_ambiguous` (exit 2, listing
-up to ten candidates), `daniel_only`, `tag_not_found`, `tag_conflict`, `tag_configured`,
+`transcript_missing`, `session_busy` (exit 1), (S11) `id_ambiguous` (exit 2;
+the message lists up to ten candidates, sorted, and how many more), `daniel_only`, `tag_not_found`, `tag_conflict`, `tag_configured`,
 `proposal_not_found`, `proposal_settled`, `entry_not_active`,
 (S12) `invalid_text`, `invalid_topics`,
 `proposal_invalid`, `proposal_not_agent`,

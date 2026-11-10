@@ -1382,6 +1382,22 @@ characters around the best-matching terms, `author` an entry's author else
 best first. It reads only and writes no audit line. Discussions are
 searched once S7 builds them, together with the read-only sources.
 
+As built (S11): `scribe_core::search` builds the units with `ask`'s own
+`store_docs` and ranks them with its `rank` (the named-tag boost and the
+§6.2 step 0 narrowing included), so the two cannot drift; only the Orbit
+tasks are missing from the corpus, so a score can differ slightly from the
+one inside `ask`, never the method. `--kind` takes `entry` and `session`
+until S7 builds discussions. Terms with no word ranking can use (all
+stopwords or shorter than three letters) are a usage error. `--topic`
+repeats and every one must match, as in the lists; a segment carries its
+session's topics and its own. `--since`/`--until` keep an entry created on
+a day in the range, a session header whose `started`–`updated` span
+overlaps it, and a segment whose `from`–`to` does. A hit's `title` is a
+session's title, a segment's heading or `<id> (<tag>)` for an entry;
+`active` is `null` for an entry, and an additive `status` field carries
+the entry's or session's status. When hidden records matched and are left
+out, stderr says how many.
+
 ## 7. Consistency routine
 
 The `scribe-consistency` routine (`0 6 * * 1`, weekly, seeded disabled)
@@ -1951,10 +1967,9 @@ As built (S10):
   free text of one token, at most 200 characters, not resolved against
   the store; activity belongs to the whole session, so a segment cite as
   the id is a usage error.
-- Ids are exact (or `session:<id>`): unique-prefix resolution
-  (`id_ambiguous`) is the CLI agent surface's rule
-  ([§1.1](#11-the-cli-agent-surface)) and arrives with S11–S13 for every
-  verb at once.
+- Ids were exact (or `session:<id>`) in S10; S11 added unique-prefix
+  resolution (`id_ambiguous`), the CLI agent surface's rule
+  ([§1.1](#11-the-cli-agent-surface)), to both verbs.
 - A record with no segment yet counts its age from the later of `started`
   and `on_since`, never from `updated`.
 - Removed-feature candidates are built from session headers and segments
@@ -1987,6 +2002,23 @@ As built (S10):
 - Every command that takes an id accepts a unique prefix of at least four
   characters; an exact id wins; an ambiguous prefix exits 2 with
   `id_ambiguous` listing the candidates.
+
+**As built (S11).** `record search` is `commands/record.rs` over
+`scribe_core::search` ([§6.8](#68-record-search)). `EntryFilter`,
+`SessionFilter` and the new `ProposalFilter` hold the filters, with the
+dates as `record::DateRange` (both days included): an entry's day is its
+`created`, a proposal's its `opened_at`, and a session matches when any
+day from `started` to `updated` is in the range. A session's `--topic`
+and `--related` match its record's or any segment's (format-4 records
+keep them per segment). `--status` on `session list` is `open` or `final`;
+`--until` before `--since` is a usage error like a bad date. Id prefixes
+resolve in the store (`store/ids.rs`), reading only: entries and
+proposals as S12 built them, and sessions against both their records and
+their switches, for `session show|deactivate|activate|rebuild` and `session
+pass --session`; a write's audit line names the full id. The plugin's
+`session pass` call and the hooks (`#scribe approve|reject|retire|forget`,
+`/scribe link`) still take exact ids: they are not commands an agent types
+at a shell, and Daniel's ids there come from scribe's own replies.
 
 **S12 — CLI write verbs with authors.** Depends on S8.
 

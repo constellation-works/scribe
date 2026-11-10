@@ -26,8 +26,9 @@ exempts it from the scan.
 scribe entry list                       # a table on a terminal, tab-separated lines in a pipe
 scribe entry list --tag decisions --status active
 scribe entry list --project constellation-works/scribe --topic release
+scribe entry list --since 2026-11-01 --author-kind daniel --related task:<id>
 scribe entry list --json | jq -r '.entries[].content'
-scribe entry show <id>
+scribe entry show <id>                  # or a unique prefix of at least four characters
 scribe entry add --tag decisions --author opus 'Keep the API stable.'
 scribe entry update <id> --author opus --add-topic api
 scribe entry retire <id> --author opus --reason 'No longer applies'
@@ -37,13 +38,15 @@ scribe proposal add --kind stale --older <id> --reason 'Review needed' --author 
 scribe proposal update <id> --author opus --reason 'New evidence'
 scribe proposal settle <id> --reject --author opus
 scribe session list --project constellation-works/scribe
+scribe session list --since 2026-11-01 --status final --topic release --topic store
 scribe session show <id> --json | jq -r .next
 scribe session show <id> --log
 scribe session pass --json
 scribe session rebuild <id> --author <name> --confirm
 scribe session deactivate <id> --author opus --reason 'the feature was removed'
 scribe session activate <id> --author opus --pin
-scribe proposal list
+scribe proposal list --state open --entry <id>
+scribe record search "merge policy" --kind session --since 2026-11-01   # BM25, no model call
 scribe consistency scan --json
 scribe tag list
 scribe tag list --json | jq '.tags[] | select(.configured | not)'
@@ -62,7 +65,7 @@ take precedence over store tags; `tag list` shows each source. The
 layout and every key are in
 [specs/store.md](docs/design/scribe/specs/store.md). A store that another
 user owns or could write, a linked file and a record from a newer build are
-refused. List, show and question commands only read: they take no lock
+refused. List, show, search and question commands only read: they take no lock
 and write nothing, including audit lines. Direct agent writes, session
 passes and rebuilds, `session deactivate` and `session activate`, and consistency scans are audited. Each direct write
 requires `--author` and records kind `agent`, even for the name `daniel`.

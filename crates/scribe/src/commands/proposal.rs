@@ -1,11 +1,12 @@
 //! Proposal listing and audited direct agent writes and settlement.
 
-use super::{ListNotice, list_output};
+use super::{DateArgs, ListNotice, list_output};
 use crate::app::Context;
 use crate::audit_middleware::AuditMeta;
 use crate::error::CliError;
 use crate::output::{Output, ProposalPayload, Record, Records};
 use clap::{Args, Subcommand};
+use scribe_core::{AuthorKind, ProposalFilter, ProposalState};
 
 pub(super) const PROPOSAL_EXAMPLES: &str = "\
 Examples:
@@ -15,6 +16,8 @@ Examples:
 const LIST_EXAMPLES: &str = "\
 Examples:
   scribe proposal list
+  scribe proposal list --state open --author-kind scribe
+  scribe proposal list --entry <id> --since 2026-11-01
   scribe proposal list --json";
 
 /// Verbs on the `proposal` noun.
@@ -38,9 +41,47 @@ pub(crate) enum ProposalCommand {
     List(ListArgs),
 }
 
-/// Arguments to `proposal list` (none yet).
+/// Arguments to `proposal list`.
 #[derive(Debug, Args)]
-pub(crate) struct ListArgs {}
+pub(crate) struct ListArgs {
+    /// Only proposals in this state [default: any]
+    #[arg(long, value_name = "STATE", value_enum)]
+    pub(crate) state: Option<StateArg>,
+
+    /// Only proposals opened on a day in the range
+    #[command(flatten)]
+    pub(crate) dates: DateArgs,
+
+    /// Only proposals about this entry, as the older or the newer one: its id or a unique prefix (at least four characters) [default: any]
+    #[arg(long, value_name = "ID")]
+    pub(crate) entry: Option<String>,
+
+    /// Only proposals opened through this channel: daniel, agent (proposal add) or scribe (the consistency routine) [default: any]
+    #[arg(long, value_name = "KIND", value_enum)]
+    pub(crate) author_kind: Option<AuthorKindArg>,
+}
+
+/// A proposal's settlement state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub(crate) enum StateArg {
+    // Waiting to be settled.
+    Open,
+    // Applied.
+    Approved,
+    // Closed without applying.
+    Rejected,
+}
+
+/// Who opened a proposal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub(crate) enum AuthorKindArg {
+    // Daniel.
+    Daniel,
+    // An agent, through proposal add.
+    Agent,
+    // scribe's consistency routine.
+    Scribe,
+}
 
 impl ProposalCommand {
     /// Audit every write; listings remain read-only.
@@ -63,7 +104,7 @@ impl ProposalCommand {
 /// Run one `proposal` verb.
 pub(super) fn run(command: ProposalCommand, ctx: &Context) -> Result<Output, CliError> {
     match command {
-        ProposalCommand::List(ListArgs {}) => list(ctx),
+        ProposalCommand::List(args) => list(&args, ctx),
         ProposalCommand::Add(args) => {
             let redactor = ctx.redactor(&ctx.store().config()?)?;
             let kind = match args.kind {
@@ -112,15 +153,49 @@ pub(super) fn run(command: ProposalCommand, ctx: &Context) -> Result<Output, Cli
     }
 }
 
-fn list(ctx: &Context) -> Result<Output, CliError> {
-    let proposals = ctx.store().proposals()?;
+fn list(args: &ListArgs, ctx: &Context) -> Result<Output, CliError> {
+    let store = ctx.store();
+    let entry = match &args.entry {
+        Some(id) => Some(store.resolve_entry(id)?.id),
+        None => None,
+    };
+    let filter = ProposalFilter {
+        state: args.state.map(|s| match s {
+            StateArg::Open => ProposalState::Open,
+            StateArg::Approved => ProposalState::Approved,
+            StateArg::Rejected => ProposalState::Rejected,
+        }),
+        dates: args.dates.range()?,
+        entry,
+        author_kind: args.author_kind.map(|k| match k {
+            AuthorKindArg::Daniel => AuthorKind::Daniel,
+            AuthorKindArg::Agent => AuthorKind::Agent,
+            AuthorKindArg::Scribe => AuthorKind::Scribe,
+        }),
+    };
+    let proposals: Vec<_> = store
+        .proposals()?
+        .into_iter()
+        .filter(|p| filter.matches(p))
+        .collect();
     let empty = format!(
         "no proposals in {}; the consistency routine opens them",
-        ctx.store().root().display()
+        store.root().display()
     );
+    let mut criteria = Vec::new();
+    if let Some(state) = filter.state {
+        criteria.push(format!("--state {}", state.as_str()));
+    }
+    criteria.extend(args.dates.criteria());
+    if let Some(entry) = &filter.entry {
+        criteria.push(format!("--entry {entry}"));
+    }
+    if let Some(kind) = filter.author_kind {
+        criteria.push(format!("--author-kind {}", kind.as_str()));
+    }
     let notice = ListNotice {
         noun: "proposals",
-        criteria: Vec::new(),
+        criteria,
         empty: &empty,
     };
     let total = proposals.len();
@@ -155,7 +230,7 @@ pub(crate) struct AddArgs {
 
 #[derive(Debug, Args)]
 pub(crate) struct UpdateArgs {
-    /// Proposal id or unique prefix
+    /// Proposal id or unique prefix (at least four characters)
     id: String,
     /// Agent name
     #[arg(long)]

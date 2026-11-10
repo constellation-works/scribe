@@ -38,6 +38,7 @@ mod agent;
 mod audit;
 mod format;
 mod fsio;
+mod ids;
 mod rebuild;
 mod redact;
 mod tags;

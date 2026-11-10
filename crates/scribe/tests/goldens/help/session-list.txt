@@ -4,7 +4,11 @@ Usage: scribe session list [OPTIONS]
 
 Options:
       --project <PROJECT>  Only sessions that ran in this project (a repository slug) [default: any]
-      --topic <TOPIC>      Only sessions carrying this topic [default: any]
+      --topic <TOPIC>      Only sessions carrying this topic; repeat it to require every one [default: any]
+      --related <REF>      Only sessions mentioning this reference (task:<id>, pr:<owner>/<repo>#<n>, repo:<slug> or session:<id>); repeat it to accept any of them [default: any]
+      --status <STATUS>    Only sessions with this status: open (more passes may update it) or final [default: any] [possible values: open, final]
+      --since <DATE>       Only records on or after this day, YYYY-MM-DD [default: no lower bound]
+      --until <DATE>       Only records on or before this day, YYYY-MM-DD [default: no upper bound]
       --limit <N>          Show at most this many of the matching sessions, 1 or more; --json reports the total and whether the list was cut [default: all]
       --tree               Order the sessions as a tree: each one under the session it was spawned from (else the one it continues), with a PARENT column; --json keeps the envelope, in tree order
       --include-inactive   Include inactive sessions (hidden by default), with an ACTIVE column
@@ -20,5 +24,7 @@ Examples:
   scribe session list
   scribe session list --tree
   scribe session list --topic release --limit 5
+  scribe session list --since 2026-11-01 --status final --topic store --topic release
+  scribe session list --related task:<id>
   scribe session list --include-inactive
   scribe session list --json | jq '.sessions[] | select(.due)'

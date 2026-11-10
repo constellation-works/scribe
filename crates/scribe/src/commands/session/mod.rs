@@ -16,13 +16,15 @@ pub(in crate::commands) mod activity;
 pub(in crate::commands) mod pass;
 pub(in crate::commands) mod rebuild;
 
-use super::{ListNotice, list_output};
+use super::{DateArgs, ListNotice, list_output};
 use crate::app::Context;
 use crate::audit_middleware::AuditMeta;
 use crate::error::CliError;
 use crate::output::{Kin, Output, Record, Records, SessionPayload, TreeRow};
 use clap::{Args, Subcommand};
-use scribe_core::{Project, SessionFilter, SessionId, SessionRecord, Topic};
+use scribe_core::{
+    Project, Related, SessionFilter, SessionId, SessionRecord, SessionStatus, Topic,
+};
 use std::num::{NonZeroU32, NonZeroUsize};
 
 pub(super) const SESSION_EXAMPLES: &str = "\
@@ -37,6 +39,8 @@ Examples:
   scribe session list
   scribe session list --tree
   scribe session list --topic release --limit 5
+  scribe session list --since 2026-11-01 --status final --topic store --topic release
+  scribe session list --related task:<id>
   scribe session list --include-inactive
   scribe session list --json | jq '.sessions[] | select(.due)'";
 
@@ -78,9 +82,21 @@ pub(crate) struct ListArgs {
     #[arg(long, value_name = "PROJECT")]
     pub(crate) project: Option<Project>,
 
-    /// Only sessions carrying this topic [default: any]
+    /// Only sessions carrying this topic; repeat it to require every one [default: any]
     #[arg(long, value_name = "TOPIC")]
-    pub(crate) topic: Option<Topic>,
+    pub(crate) topic: Vec<Topic>,
+
+    /// Only sessions mentioning this reference (task:<id>, pr:<owner>/<repo>#<n>, repo:<slug> or session:<id>); repeat it to accept any of them [default: any]
+    #[arg(long, value_name = "REF")]
+    pub(crate) related: Vec<Related>,
+
+    /// Only sessions with this status: open (more passes may update it) or final [default: any]
+    #[arg(long, value_name = "STATUS", value_enum)]
+    pub(crate) status: Option<StatusArg>,
+
+    /// Only sessions that ran on a day in the range, from started to updated
+    #[command(flatten)]
+    pub(crate) dates: DateArgs,
 
     /// Show at most this many of the matching sessions, 1 or more; --json reports the total and whether the list was cut [default: all]
     #[arg(long, value_name = "N")]
@@ -95,10 +111,28 @@ pub(crate) struct ListArgs {
     pub(crate) include_inactive: bool,
 }
 
+/// A session record's status.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub(crate) enum StatusArg {
+    // More passes may update it.
+    Open,
+    // The session-end pass ran.
+    Final,
+}
+
+impl From<StatusArg> for SessionStatus {
+    fn from(status: StatusArg) -> Self {
+        match status {
+            StatusArg::Open => Self::Open,
+            StatusArg::Final => Self::Final,
+        }
+    }
+}
+
 /// Arguments to `session show`.
 #[derive(Debug, Args)]
 pub(crate) struct ShowArgs {
-    /// The session's id, as printed by `session list`, or a cite: session:<id>, or session:<id>#<n> for one segment
+    /// The session's id, as printed by `session list`, or a unique prefix of it (at least four characters), or a cite: session:<id>, or session:<id>#<n> for one segment
     #[arg(value_name = "ID", value_parser = parse_session_ref)]
     pub(crate) id: SessionRef,
 
@@ -111,7 +145,9 @@ pub(crate) struct ShowArgs {
     pub(crate) segment: Option<NonZeroU32>,
 }
 
-/// A session named by id or by its cite, optionally with a segment.
+/// A session named by id (or a prefix of one) or by its cite, optionally
+/// with a segment. The id is resolved against the store by the handler
+/// ([`scribe_core::Store::resolve_session`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SessionRef {
     pub(crate) id: SessionId,
@@ -172,7 +208,10 @@ pub(super) fn run(command: SessionCommand, ctx: &Context) -> Result<Output, CliE
 fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
     let filter = SessionFilter {
         project: args.project,
-        topic: args.topic,
+        topics: args.topic,
+        related: args.related,
+        status: args.status.map(SessionStatus::from),
+        dates: args.dates.range()?,
         include_inactive: args.include_inactive,
         limit: args.limit,
     };
@@ -185,9 +224,16 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
     if let Some(project) = &filter.project {
         criteria.push(format!("--project {project}"));
     }
-    if let Some(topic) = &filter.topic {
+    for topic in &filter.topics {
         criteria.push(format!("--topic {topic}"));
     }
+    for related in &filter.related {
+        criteria.push(format!("--related {related}"));
+    }
+    if let Some(status) = filter.status {
+        criteria.push(format!("--status {}", status.as_str()));
+    }
+    criteria.extend(args.dates.criteria());
     let notice = ListNotice {
         noun: "sessions",
         criteria,
@@ -247,7 +293,8 @@ fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
         }
         (flag, cite) => flag.or(cite),
     };
-    let view = ctx.store().session(&args.id.id)?;
+    let id = ctx.store().resolve_session(&args.id.id)?;
+    let view = ctx.store().session(&id)?;
     let record = &view.record;
     let payload = SessionPayload::new(
         record,

@@ -3,7 +3,7 @@ Write the record of each session whose pass is due, or of the sessions named, wi
 Usage: scribe session pass [OPTIONS]
 
 Options:
-      --session <ID>  Pass this session now, ignoring retry backoff and whether a pass is due (it must be switched on); repeat for several [default: every due session, at most five]
+      --session <ID>  Pass this session (its id or a unique prefix of at least four characters) now, ignoring retry backoff and whether a pass is due (it must be switched on); repeat for several [default: every due session, at most five]
   -h, --help          Print help
   -V, --version       Print version
 

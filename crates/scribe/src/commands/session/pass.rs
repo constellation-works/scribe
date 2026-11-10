@@ -82,7 +82,7 @@ Examples:
 /// Arguments to `session pass`.
 #[derive(Debug, Args)]
 pub(crate) struct PassArgs {
-    /// Pass this session now, ignoring retry backoff and whether a pass is due (it must be switched on); repeat for several [default: every due session, at most five]
+    /// Pass this session (its id or a unique prefix of at least four characters) now, ignoring retry backoff and whether a pass is due (it must be switched on); repeat for several [default: every due session, at most five]
     #[arg(long = "session", value_name = "ID")]
     pub(crate) sessions: Vec<SessionId>,
 }
@@ -95,11 +95,21 @@ pub(super) fn run(args: &PassArgs, ctx: &Context) -> Result<Output, CliError> {
     } else {
         args.sessions.len()
     };
+    // A prefix names its session; an id nothing matches is kept, so the
+    // pass refuses it as not switched on.
+    let sessions = args
+        .sessions
+        .iter()
+        .map(|id| match ctx.store().resolve_session(id) {
+            Err(scribe_core::Error::SessionNotFound { .. }) => Ok(id.clone()),
+            other => other,
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     run_with(
         ctx,
         |config| ctx.models(config),
         RunLimits::new(max),
-        &args.sessions,
+        &sessions,
     )
 }
 

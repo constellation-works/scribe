@@ -7,7 +7,7 @@
 //! is required and an unknown one is refused.
 
 use crate::entry::{Cite, EntryId};
-use crate::record::{Author, nullable};
+use crate::record::{Author, AuthorKind, DateRange, nullable};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::num::NonZeroU64;
@@ -170,4 +170,31 @@ pub enum ProposalChange {
     Approve,
     /// Reject a proposal about an agent entry.
     Reject,
+}
+
+/// Which proposals `proposal list` returns. Every field set must match.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProposalFilter {
+    /// Only proposals in this state.
+    pub state: Option<ProposalState>,
+    /// Only proposals opened on a day in this range.
+    pub dates: DateRange,
+    /// Only proposals about this entry, as the older or the newer one.
+    pub entry: Option<EntryId>,
+    /// Only proposals opened through this channel.
+    pub author_kind: Option<AuthorKind>,
+}
+
+impl ProposalFilter {
+    /// Whether `proposal` passes every criterion.
+    #[must_use]
+    pub fn matches(&self, proposal: &Proposal) -> bool {
+        self.state.is_none_or(|s| proposal.state == s)
+            && self.dates.contains(proposal.opened_at)
+            && self
+                .entry
+                .as_ref()
+                .is_none_or(|e| &proposal.older == e || proposal.newer.as_ref() == Some(e))
+            && self.author_kind.is_none_or(|k| proposal.author.kind == k)
+    }
 }

@@ -23,7 +23,7 @@
 //! unknown target, a self-link and a cycle.
 
 use crate::activity::{ActiveChange, CatalogedBy};
-use crate::record::{Label, Listing, Project, Related, Topic, Topics, nullable};
+use crate::record::{DateRange, Label, Listing, Project, Related, Topic, Topics, nullable};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -608,8 +608,17 @@ impl SessionRecord {
 pub struct SessionFilter {
     /// Only sessions in this project.
     pub project: Option<Project>,
-    /// Only sessions carrying this topic.
-    pub topic: Option<Topic>,
+    /// Only sessions carrying every one of these topics, on the record or
+    /// on any of its segments.
+    pub topics: Vec<Topic>,
+    /// Only sessions mentioning at least one of these references, on the
+    /// record or in any of its segments (none set: any session).
+    pub related: Vec<Related>,
+    /// Only sessions with this status.
+    pub status: Option<SessionStatus>,
+    /// Only sessions that ran on a day in this range: from `started` to
+    /// `updated`.
+    pub dates: DateRange,
     /// Inactive sessions too; they are left out otherwise.
     pub include_inactive: bool,
     /// At most this many of the matching sessions.
@@ -622,10 +631,15 @@ impl SessionFilter {
     pub fn matches(&self, record: &SessionRecord) -> bool {
         (self.include_inactive || record.active)
             && self.project.as_ref().is_none_or(|p| &record.project == p)
-            && self
-                .topic
-                .as_ref()
-                .is_none_or(|t| record.topics.contains(t))
+            && self.topics.iter().all(|t| {
+                record.topics.contains(t) || record.log.iter().any(|s| s.topics.contains(t))
+            })
+            && (self.related.is_empty()
+                || self.related.iter().any(|r| {
+                    record.related.contains(r) || record.log.iter().any(|s| s.related.contains(r))
+                }))
+            && self.status.is_none_or(|s| record.status == s)
+            && self.dates.overlaps(record.started, record.updated)
     }
 
     /// Apply the filter to `records`, oldest first (by `started`, then id),

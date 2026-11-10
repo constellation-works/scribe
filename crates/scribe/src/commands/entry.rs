@@ -1,13 +1,15 @@
 //! Entry listing, display and audited direct agent writes.
 
-use super::{ListNotice, list_output};
+use super::{DateArgs, ListNotice, list_output};
 use crate::app::Context;
 use crate::audit_middleware::AuditMeta;
 use crate::error::CliError;
 use crate::output::{EntryPayload, Output, Record, Records};
 use clap::builder::{PossibleValuesParser, TypedValueParser};
 use clap::{Args, Subcommand};
-use scribe_core::{EntryFilter, EntryStatus, Project, TagName, Topic};
+use scribe_core::{
+    AuthorKind, AuthorName, EntryFilter, EntryStatus, Project, Related, TagName, Topic,
+};
 use std::num::NonZeroUsize;
 
 pub(super) const ENTRY_EXAMPLES: &str = "\
@@ -21,6 +23,8 @@ Examples:
   scribe entry list
   scribe entry list --tag preferences --status active
   scribe entry list --topic ci --limit 10
+  scribe entry list --since 2026-10-01 --until 2026-10-31 --author-kind daniel
+  scribe entry list --related task:<id> --related pr:<owner>/<repo>#<n>
   scribe entry list --json | jq '.entries[].content'
   scribe entry list | cut -f1,6";
 
@@ -68,19 +72,52 @@ pub(crate) struct ListArgs {
     #[arg(long, value_name = "PROJECT")]
     pub(crate) project: Option<Project>,
 
-    /// Only entries carrying this topic [default: any]
+    /// Only entries carrying this topic; repeat it to require every one [default: any]
     #[arg(long, value_name = "TOPIC")]
-    pub(crate) topic: Option<Topic>,
+    pub(crate) topic: Vec<Topic>,
+
+    /// Only entries mentioning this reference (task:<id>, pr:<owner>/<repo>#<n>, repo:<slug> or session:<id>); repeat it to accept any of them [default: any]
+    #[arg(long, value_name = "REF")]
+    pub(crate) related: Vec<Related>,
+
+    #[command(flatten)]
+    pub(crate) dates: DateArgs,
+
+    /// Only entries written under this author name, such as daniel or an agent's --author [default: any]
+    #[arg(long, value_name = "NAME")]
+    pub(crate) author: Option<AuthorName>,
+
+    /// Only entries written through this channel: daniel (a #scribe line) or agent (entry add) [default: any]
+    #[arg(long, value_name = "KIND", value_enum)]
+    pub(crate) author_kind: Option<EntryAuthorKind>,
 
     /// Show at most this many of the matching entries, 1 or more; --json reports the total and whether the list was cut [default: all]
     #[arg(long, value_name = "N")]
     pub(crate) limit: Option<NonZeroUsize>,
 }
 
+/// The channels an entry can be written through.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub(crate) enum EntryAuthorKind {
+    // A #scribe line Daniel typed.
+    Daniel,
+    // A CLI write verb.
+    Agent,
+}
+
+impl From<EntryAuthorKind> for AuthorKind {
+    fn from(kind: EntryAuthorKind) -> Self {
+        match kind {
+            EntryAuthorKind::Daniel => Self::Daniel,
+            EntryAuthorKind::Agent => Self::Agent,
+        }
+    }
+}
+
 /// Arguments to `entry show`.
 #[derive(Debug, Args)]
 pub(crate) struct ShowArgs {
-    /// The entry's id, as printed by `entry list`
+    /// The entry's id, as printed by `entry list`, or a unique prefix of it (at least four characters)
     #[arg(value_name = "ID")]
     pub(crate) id: String,
 }
@@ -170,7 +207,11 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
         tag: args.tag,
         status: args.status,
         project: args.project,
-        topic: args.topic,
+        topics: args.topic,
+        related: args.related,
+        dates: args.dates.range()?,
+        author: args.author,
+        author_kind: args.author_kind.map(AuthorKind::from),
         limit: args.limit,
     };
     let found = ctx.store().list_entries(&filter)?;
@@ -178,9 +219,11 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
         "no entries in {}; they are recorded by a #scribe line in a Claude Code session",
         ctx.store().root().display()
     );
+    let mut criteria = criteria(&filter);
+    criteria.extend(args.dates.criteria());
     let notice = ListNotice {
         noun: "entries",
-        criteria: criteria(&filter),
+        criteria,
         empty: &empty,
     };
     let records = Records::Entries(found.listing.items.iter().map(EntryPayload::from).collect());
@@ -192,7 +235,8 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
     ))
 }
 
-/// The filters applied, as the flags that set them.
+/// The filters applied, as the flags that set them (the dates aside, which
+/// the caller adds from its flags).
 pub(super) fn criteria(filter: &EntryFilter) -> Vec<String> {
     let mut criteria = Vec::new();
     if let Some(tag) = &filter.tag {
@@ -204,8 +248,17 @@ pub(super) fn criteria(filter: &EntryFilter) -> Vec<String> {
     if let Some(project) = &filter.project {
         criteria.push(format!("--project {project}"));
     }
-    if let Some(topic) = &filter.topic {
+    for topic in &filter.topics {
         criteria.push(format!("--topic {topic}"));
+    }
+    for related in &filter.related {
+        criteria.push(format!("--related {related}"));
+    }
+    if let Some(author) = &filter.author {
+        criteria.push(format!("--author {author}"));
+    }
+    if let Some(kind) = filter.author_kind {
+        criteria.push(format!("--author-kind {}", kind.as_str()));
     }
     criteria
 }

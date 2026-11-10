@@ -3,8 +3,13 @@ List every proposal by id and its settlement state
 Usage: scribe proposal list [OPTIONS]
 
 Options:
-  -h, --help     Print help
-  -V, --version  Print version
+      --state <STATE>       Only proposals in this state [default: any] [possible values: open, approved, rejected]
+      --since <DATE>        Only records on or after this day, YYYY-MM-DD [default: no lower bound]
+      --until <DATE>        Only records on or before this day, YYYY-MM-DD [default: no upper bound]
+      --entry <ID>          Only proposals about this entry, as the older or the newer one: its id or a unique prefix (at least four characters) [default: any]
+      --author-kind <KIND>  Only proposals opened through this channel: daniel, agent (proposal add) or scribe (the consistency routine) [default: any] [possible values: daniel, agent, scribe]
+  -h, --help                Print help
+  -V, --version             Print version
 
 Global options:
       --root <DIR>       Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
@@ -13,4 +18,6 @@ Global options:
 
 Examples:
   scribe proposal list
+  scribe proposal list --state open --author-kind scribe
+  scribe proposal list --entry <id> --since 2026-11-01
   scribe proposal list --json

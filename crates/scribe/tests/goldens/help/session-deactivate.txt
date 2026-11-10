@@ -3,7 +3,7 @@ Hide a session whose content no longer describes something current, with a reaso
 Usage: scribe session deactivate [OPTIONS] --author <NAME> --reason <TEXT> <ID>
 
 Arguments:
-  <ID>  The session's id, as printed by `session list`, or its cite session:<id>
+  <ID>  The session's id, as printed by `session list`, a unique prefix of it (at least four characters), or its cite session:<id>
 
 Options:
       --author <NAME>  Who is asking: lowercase letters, digits, '.', '_' or '-', 1-40 characters, such as your crew or model
