@@ -1,7 +1,7 @@
 //! The `session` noun: list and show the records of sessions Daniel switched
 //! on with `/scribe on`, and `pass`, which writes them. `list` and `show`
-//! read only and make one store call each (STD-02 R2); `pass` is the
-//! session-pass routine's job and lives in `pass.rs`.
+//! read only and make one store call each (STD-02 R2); `pass`, which Daniel
+//! runs by hand, lives in `pass.rs`.
 
 pub(in crate::commands) mod pass;
 
@@ -40,7 +40,7 @@ pub(crate) enum SessionCommand {
     /// Show one session record in full: its metadata and its four sections
     #[command(after_help = SHOW_EXAMPLES)]
     Show(ShowArgs),
-    /// Write the record of each session whose pass is due, with the session model (the session-pass routine runs this)
+    /// Write the record of each session whose pass is due, or of the sessions named, with the session model
     #[command(after_help = pass::PASS_EXAMPLES)]
     Pass(pass::PassArgs),
 }
@@ -87,7 +87,7 @@ pub(super) fn run(command: SessionCommand, ctx: &Context) -> Result<Output, CliE
     match command {
         SessionCommand::List(args) => list(args, ctx),
         SessionCommand::Show(args) => show(&args, ctx),
-        SessionCommand::Pass(pass::PassArgs {}) => pass::run(ctx),
+        SessionCommand::Pass(args) => pass::run(&args, ctx),
     }
 }
 

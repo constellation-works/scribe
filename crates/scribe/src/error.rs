@@ -35,12 +35,34 @@ pub(crate) enum CliError {
         #[source]
         source: io::Error,
     },
+    /// `session pass --session` named a session that is not switched on.
+    #[error(
+        "session {0} is not switched on, so it is never passed; /scribe on in that session switches it on"
+    )]
+    SessionNotOn(scribe_core::SessionId),
+    /// A session pass ran, and at least one pass in it failed: `(session,
+    /// code)` for each. The report is printed first.
+    #[error(
+        "{} session pass(es) failed: {}; each stays due, run 'scribe session pass' again to retry",
+        .0.len(),
+        failed_list(.0)
+    )]
+    PassFailed(Vec<(String, &'static str)>),
     /// A model call failed (`question ask`).
     #[error(transparent)]
     Model(#[from] scribe_core::models::ModelError),
     /// Writing the result to stdout failed for a reason other than a closed pipe.
     #[error("cannot write output")]
     Output(#[source] io::Error),
+}
+
+/// `<id> <code>` for each failed pass, comma-separated.
+fn failed_list(failed: &[(String, &'static str)]) -> String {
+    failed
+        .iter()
+        .map(|(id, code)| format!("{id} {code}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 impl CliError {
@@ -52,6 +74,8 @@ impl CliError {
             Self::RedactEnvUnset(_) => "redact_env_unset",
             Self::HookPayload(_) => "hook_payload_invalid",
             Self::Read { .. } => "io_error",
+            Self::SessionNotOn(_) => "session_not_on",
+            Self::PassFailed(_) => "session_pass_failed",
             Self::Model(e) => e.code(),
             Self::Output(_) => "output_error",
         }
@@ -79,6 +103,8 @@ impl CliError {
             | Self::NoDataDir
             | Self::HookPayload(_)
             | Self::Read { .. }
+            | Self::SessionNotOn(_)
+            | Self::PassFailed(_)
             | Self::Model(_)
             | Self::Output(_) => None,
         }

@@ -23,7 +23,9 @@
 //!
 //! The store root comes from `[plugins.scribe] root`, and the transcripts
 //! directory from `[plugins.scribe] transcripts`, never from `SCRIBE_ROOT`
-//! or `HOME`: the plugin's sandbox grants access to those paths alone.
+//! or `HOME`: the plugin's sandbox grants access to those paths alone. A
+//! session-pass run with any failed pass is an error envelope,
+//! `session_pass_failed`.
 //! `scribe.ask` reads only and is not audited. The two routine tools write,
 //! and are audited here, inside the call, under the same command names as
 //! the CLI verbs (`session pass`, `consistency scan`) and in the store they
@@ -35,7 +37,7 @@ use super::{RunLimits, consistency, session};
 use crate::app::Context;
 use crate::audit_middleware::{AuditGuard, AuditMeta};
 use crate::error::CliError;
-use crate::output::{Output, PluginError, PluginReply};
+use crate::output::{Output, PassReport, PluginError, PluginReply};
 use clap::{Args, Subcommand};
 use scribe_core::ask::{Question, RecordKind, Scope};
 use scribe_core::models::ModelError;
@@ -308,11 +310,32 @@ fn session_pass(input: &Value, config: &Value, ctx: &Context) -> PluginReply {
     };
     let limits =
         RunLimits::new(scribe_core::pass::MAX_PER_RUN).start_by(Instant::now() + PASS_START_BY);
-    audited(
+    let reply = audited(
         &Context::at(root, Some(transcripts)),
         session::pass::COMMAND,
-        |routine| session::pass::run_with(routine, |config| ctx.models(config), limits),
-    )
+        |routine| session::pass::run_with(routine, |config| ctx.models(config), limits, &[]),
+    );
+    pass_reply(reply)
+}
+
+/// The routine's reply for a session pass report: an error envelope when any
+/// pass in it failed, as the CLI exits 1, so the tool result and the Orbit
+/// run are not a success. The message names each failed session with its
+/// code; the audit lines carry the same codes.
+fn pass_reply(reply: PluginReply) -> PluginReply {
+    let failed = match &reply {
+        PluginReply::Pass(report) => failed_passes(report),
+        PluginReply::Scan(_) | PluginReply::Ask(_) | PluginReply::Error(_) => None,
+    };
+    failed.unwrap_or(reply)
+}
+
+/// The error for a pass report with a failed pass, `None` when none failed:
+/// the CLI's message. Not retryable: each failed session stays due, and the
+/// next run retries it.
+fn failed_passes(report: &PassReport) -> Option<PluginReply> {
+    let err = report.failure()?;
+    Some(failure(err.code(), err.to_string(), false))
 }
 
 fn consistency_scan(input: &Value, config: &Value, ctx: &Context) -> PluginReply {

@@ -38,9 +38,6 @@ pub const WINDOW_CHARS: usize = 150_000;
 /// The most sessions one `session pass` run processes (2_design.md §5.2).
 pub const MAX_PER_RUN: usize = 5;
 
-/// Failed passes in a row after which `due` is cleared (2_design.md §5.3).
-pub const MAX_FAILURES: u32 = 3;
-
 /// The longest term, in characters.
 pub const TERM_CHARS: usize = 80;
 

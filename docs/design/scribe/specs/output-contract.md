@@ -105,13 +105,15 @@ breaking change and shows up as a golden diff.
 Stable codes: `entry_not_found`, `session_not_found`, `io_error`,
 `store_corrupt`, `config_invalid`, `store_too_new`, `store_locked`,
 `store_symlink`, `store_foreign_owner`, `store_permissions`, `no_data_dir`,
-`output_error`, `usage_error`, `hook_payload_invalid`, and for `question
+`output_error`, `usage_error`, `hook_payload_invalid`, for `session pass`
+`session_pass_failed` and `session_not_on`, and for `question
 ask` the model codes `model_timeout`, `model_unavailable`, `model_failed`,
 `model_malformed`. A hook's refusals
 are not errors and appear only in its reply and audit lines:
 `unknown_tag`, `unparsed_instruction`, `unsupported_instruction`,
 `no_referent`, `provenance_failed`, `unknown_scribe_command`. A session
-pass's failures appear only in its report and audit lines:
+pass's failures appear in its report and audit lines, and the run's
+`session_pass_failed` error names each with its code:
 `provenance_failed`, `io_error`, `session_answer_invalid` (budgets or
 shape), `model_timeout`, `model_unavailable`, `model_failed`,
 `model_malformed`, and the store codes. A not-found error names the path it looked
@@ -176,11 +178,17 @@ cleared without a model call), `waiting` (no transcript or message yet;
 still due) or `failed` (the previous record kept, still due);
 `error_code` is a stable code or `null`; `passes` is the record's pass
 count or `null` without a record; `dropped_terms` counts terms whose
-`said` was not verbatim from one of Daniel's turns; `gave_up` is true when
-this was the third failure in a row and `due` was cleared. Plain and table
+`said` was not verbatim from one of Daniel's turns; `gave_up` is always
+`false` (a failed pass is never given up; the field is kept for the
+shape). Plain and table
 print one row per pass (`session result error_code passes dropped_terms`);
 with nothing due stdout is empty, stderr says `no session pass is due` and
-the exit is 0. A failed pass still exits 0; each pass except a `waiting`
+the exit is 0. When any pass failed, the report is printed as usual and
+the run then exits 1 with `session_pass_failed` on stderr, `error: <n>
+session pass(es) failed: <id> <code>, ...; each stays due, run 'scribe
+session pass' again to retry` (or that message in the JSON error object
+under `--json`). `--session <id>` naming a session that is not on exits 1
+with `session_not_on` before any pass. Each pass except a `waiting`
 one writes one audit line (`target` `session:<id>`, with its code).
 
 ## Consistency scan report
@@ -264,6 +272,10 @@ report for `scribe.consistency-scan`; or `{"ok": false, "error": {"code",
 `not_configured` (`root` missing, empty, relative or the manifest's
 `/var/tmp` default; for `scribe.session-pass`, `transcripts` likewise), a
 model code (`retryable` for `model_timeout` and `model_failed`) or a store
-code (`retryable` for `store_locked` from a routine tool). `scribe.ask`
+code (`retryable` for `store_locked` from a routine tool). For
+`scribe.session-pass`, `session_pass_failed` when any pass in the report
+failed (not `retryable`: each failed session stays due for the next run);
+its message is the CLI's, naming each failed session and its code, and the
+report is not returned. `scribe.ask`
 writes no audit line; the routine tools write the lines their CLI commands
 do, in the store `root` names.

@@ -5,7 +5,7 @@ Usage: scribe session [OPTIONS] <COMMAND>
 Commands:
   list  List session records, oldest first, with whether a pass is due
   show  Show one session record in full: its metadata and its four sections
-  pass  Write the record of each session whose pass is due, with the session model (the session-pass routine runs this)
+  pass  Write the record of each session whose pass is due, or of the sessions named, with the session model
   help  Print this message or the help of the given subcommand(s)
 
 Options:

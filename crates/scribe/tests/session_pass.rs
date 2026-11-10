@@ -114,10 +114,26 @@ impl Setup {
     }
 
     fn run(&self, args: &[&str], input: &[u8]) -> Output {
-        let child = self
-            .fx
-            .cmd(args)
-            .env("PATH", &self.path)
+        let out = self.run_any(args, input);
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{args:?}: {}",
+            text(&out.stderr)
+        );
+        out
+    }
+
+    /// [`Setup::run`] without asserting the exit code.
+    fn run_any(&self, args: &[&str], input: &[u8]) -> Output {
+        let mut cmd = self.fx.cmd(args);
+        cmd.env("PATH", &self.path);
+        self.run_with(cmd, input)
+    }
+
+    /// Run `cmd` with `input` on stdin; the exit code is not checked.
+    fn run_with(&self, mut cmd: std::process::Command, input: &[u8]) -> Output {
+        let child = cmd
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -131,14 +147,7 @@ impl Setup {
             .unwrap()
             .write_all(input)
             .unwrap();
-        let out = guard.finish();
-        assert_eq!(
-            out.status.code(),
-            Some(0),
-            "{args:?}: {}",
-            text(&out.stderr)
-        );
-        out
+        guard.finish()
     }
 
     fn hook(&self, event: &str, payload: &Value) -> Output {
@@ -394,9 +403,151 @@ fn a_pass_writes_one_record_of_daniels_terms_and_never_reads_a_session_never_swi
     let mut over = answer();
     over["summary"] = json!("s".repeat(1501));
     setup.answer(&over);
-    let report = setup.pass();
+    let out = setup.run_any(&["session", "pass", "--json"], b"");
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(report["passes"][0]["result"], "failed");
     assert_eq!(report["passes"][0]["error_code"], "session_answer_invalid");
     assert_eq!(std::fs::read(setup.record_file()).unwrap(), before);
     assert_eq!(setup.control()["due"], true);
+}
+
+/// A `claude` that cannot answer: exits 3 without output (`model_failed`).
+const BROKEN: &str = "#!/bin/sh\ncat >/dev/null\nexit 3\n";
+
+#[test]
+fn a_failed_pass_stays_due_exits_1_naming_it_and_the_next_run_retries_it() {
+    let setup = Setup::new();
+    setup.scribe("/scribe on");
+    setup.fx.fake_program("claude", BROKEN);
+    // More failures in a row than the old give-up bound of three: each one
+    // leaves the session due, whatever its code.
+    for run in 1..=4 {
+        let out = setup.run_any(&["session", "pass"], b"");
+        assert_eq!(out.status.code(), Some(1), "run {run}");
+        let stderr = text(&out.stderr);
+        assert!(
+            stderr.contains(&format!(
+                "error: 1 session pass(es) failed: {ON} model_failed"
+            )),
+            "{stderr}"
+        );
+        assert!(
+            text(&out.stdout).contains("failed"),
+            "the report is printed"
+        );
+        assert_eq!(setup.control()["due"], true, "run {run} keeps it due");
+        assert!(setup.record(ON).is_none());
+    }
+    // --json still prints the report, and the error object on stderr.
+    let out = setup.run_any(&["session", "pass", "--json"], b"");
+    assert_eq!(out.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["passes"][0]["error_code"], "model_failed");
+    assert_eq!(report["passes"][0]["gave_up"], false);
+    // The model's failure is logged first; the error object is the last line.
+    let stderr = text(&out.stderr);
+    let error: Value = serde_json::from_str(stderr.lines().last().unwrap()).unwrap();
+    assert_eq!(error["code"], "session_pass_failed", "{stderr}");
+
+    // No claude at all (model_unavailable) is no different.
+    std::fs::remove_file(setup.fx.elsewhere("bin/claude")).unwrap();
+    let out = setup.run_any(&["session", "pass"], b"");
+    assert_eq!(out.status.code(), Some(1));
+    assert!(text(&out.stderr).contains("model_unavailable"));
+    assert_eq!(setup.control()["due"], true);
+
+    // Once the model answers, the next run writes the record.
+    setup.answer(&answer());
+    let report = setup.pass();
+    assert_eq!(report["passes"][0]["result"], "written");
+    assert!(setup.record(ON).is_some());
+    assert_eq!(setup.control()["due"], false);
+}
+
+#[test]
+fn session_names_a_switched_on_session_whose_due_was_cleared_and_passes_it() {
+    let setup = Setup::new();
+    // A session stranded as an earlier give-up rule left it: on, not due,
+    // no record.
+    let control = json!({"format": 1, "sessions": {ON: {
+        "on": true, "since": "2026-11-03T05:00:00Z", "due": false, "final": false}}});
+    setup.config("");
+    let file = setup.fx.root().join("control.json");
+    std::fs::write(&file, format!("{control}\n")).unwrap();
+    make_private(&file);
+    assert_eq!(setup.pass()["passes"], json!([]), "nothing is due");
+    assert!(setup.prompts().is_empty());
+
+    let out = setup.run(
+        &[
+            "session",
+            "pass",
+            "--session",
+            ON,
+            "--session",
+            ON,
+            "--json",
+        ],
+        b"",
+    );
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let passes = report["passes"].as_array().unwrap();
+    assert_eq!(passes.len(), 1, "named twice, passed once");
+    assert_eq!(passes[0]["session"], ON);
+    assert_eq!(passes[0]["result"], "written");
+    assert_eq!(setup.record(ON).unwrap()["passes"], 1);
+    assert_eq!(setup.control()["due"], false);
+
+    // A session never switched on, or switched off, is refused and not read.
+    let calls = setup.prompts().len();
+    let out = setup.run_any(&["session", "pass", "--session", NEVER], b"");
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains(&format!("session {NEVER} is not switched on")),
+        "{stderr}"
+    );
+    setup.scribe("/scribe off");
+    let out = setup.run_any(&["session", "pass", "--session", ON, "--json"], b"");
+    assert_eq!(out.status.code(), Some(1));
+    let error: Value = serde_json::from_slice(&out.stderr).unwrap();
+    assert_eq!(error["code"], "session_not_on");
+    assert_eq!(setup.prompts().len(), calls, "no model call");
+    assert!(setup.record(NEVER).is_none());
+}
+
+/// `scribe.session-pass` as Orbit calls it: the reply envelope.
+fn plugin_pass(setup: &Setup) -> Value {
+    let config = json!({
+        "root": setup.fx.root(),
+        "transcripts": setup.fx.home().join(".claude/projects"),
+    });
+    let envelope = json!({"schema_version": 1, "tool": "scribe.session-pass", "input": {},
+                          "context": {"config": config}});
+    let mut cmd = setup.fx.cmd(&["plugin", "call"]);
+    cmd.env_remove("SCRIBE_ROOT").env("PATH", &setup.path);
+    let out = setup.run_with(cmd, envelope.to_string().as_bytes());
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    serde_json::from_slice(&out.stdout).unwrap()
+}
+
+#[test]
+fn the_plugin_tool_answers_session_pass_failed_and_keeps_the_session_due() {
+    let setup = Setup::new();
+    setup.scribe("/scribe on");
+    setup.fx.fake_program("claude", BROKEN);
+    let reply = plugin_pass(&setup);
+    assert_eq!(reply["ok"], false, "{reply}");
+    assert_eq!(reply["error"]["code"], "session_pass_failed", "{reply}");
+    assert_eq!(reply["error"]["retryable"], false, "{reply}");
+    let message = reply["error"]["message"].as_str().unwrap();
+    assert!(message.contains(&format!("{ON} model_failed")), "{message}");
+    assert_eq!(setup.control()["due"], true);
+
+    setup.answer(&answer());
+    let reply = plugin_pass(&setup);
+    assert_eq!(reply["ok"], true, "{reply}");
+    assert_eq!(reply["output"]["passes"][0]["result"], "written", "{reply}");
+    assert_eq!(setup.control()["due"], false);
 }

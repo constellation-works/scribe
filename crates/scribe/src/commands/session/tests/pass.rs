@@ -136,6 +136,7 @@ impl Setup {
             &self.ctx,
             |_| models,
             crate::commands::RunLimits::new(scribe_core::pass::MAX_PER_RUN),
+            &[],
         )
         .unwrap() else {
             panic!("a pass report");

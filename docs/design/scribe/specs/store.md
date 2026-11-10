@@ -169,11 +169,6 @@ listed with `configured: false`.
   finishes it. A forget blanks the entry's `said` and body and, in
   `proposals.json`, the `text` of its quotes and the `reason` of every
   proposal about it. Nothing is written when nothing changed.
-- **Failures in a row** (S4). `Store::failures_in_a_row` counts the
-  newest audit lines for a command and target back to the last `ok` one;
-  `session pass` uses it for its three-failures rule
-  ([4_decisions.md](../4_decisions.md#a-session-pass-counts-its-failures-from-the-audit-log)).
-  Lines that do not parse are skipped. It reads only.
 - **Modes and owners.** Every load refuses the root, a subdirectory, a
   record file or a document owned by another user (`store_foreign_owner`) or
   writable by group or others (`store_permissions`, naming the `chmod 700`
