@@ -72,7 +72,7 @@ fn plain(uuid: &str, chars: usize) -> PassMessage {
 }
 
 #[test]
-fn the_window_starts_after_scribed_through_and_drops_the_oldest_first() {
+fn the_window_starts_after_scribed_through_and_keeps_the_oldest_first() {
     let conversation = vec![plain("m-1", 10), plain("m-2", 60), plain("m-3", 60)];
     let all = pass::window(&conversation, None, 1_000);
     assert_eq!(all.messages.len(), 3);
@@ -89,16 +89,30 @@ fn the_window_starts_after_scribed_through_and_drops_the_oldest_first() {
 
     let tight = pass::window(&conversation, None, 100);
     let ids: Vec<&str> = tight.messages.iter().map(|m| m.uuid.as_str()).collect();
-    assert_eq!(ids, ["m-3"]);
-    assert_eq!(tight.dropped, 2);
+    assert_eq!(ids, ["m-1", "m-2"]);
+    assert_eq!(tight.dropped, 0);
 
     let huge = vec![plain("m-1", WINDOW_CHARS + 10)];
     let cut = pass::window(&huge, None, WINDOW_CHARS);
     assert!(cut.messages[0].text.ends_with(crate::models::CUT_MARK));
-    assert_eq!(
-        cut.messages[0].text.chars().count(),
-        WINDOW_CHARS + crate::models::CUT_MARK.chars().count()
-    );
+    assert_eq!(cut.messages[0].text.chars().count(), WINDOW_CHARS);
+
+    // Even tiny bounds and cuts between own/pasted text stay within the
+    // Unicode-character budget, without attributing pasted words to Daniel.
+    let pasted = vec![PassMessage {
+        text: "é".repeat(50),
+        pasted: vec!["pasted".repeat(30)],
+        ..plain("pasted", 0)
+    }];
+    for max in [1, 32, 50, 80] {
+        let bounded = pass::window(&pasted, None, max);
+        let message = &bounded.messages[0];
+        assert_eq!(message.chars(), max);
+        assert!(!message.text.contains("pasted"));
+        let tail = message.pasted.last().unwrap_or(&message.text);
+        let marker: String = crate::models::CUT_MARK.chars().take(max).collect();
+        assert!(tail.ends_with(&marker));
+    }
 }
 
 fn answer() -> SessionAnswer {
@@ -127,8 +141,8 @@ fn a_term_is_kept_only_when_said_is_verbatim_from_daniels_own_turn() {
     let conversation = pass::conversation(&transcript());
     let mut a = answer();
     a.terms = vec![
-        // Daniel's words, though the model named the wrong message.
-        term("resident orchestrator", DEFINED, "a-1"),
+        // Daniel's words in the named turn.
+        term("resident orchestrator", DEFINED, "u-1"),
         // The assistant's words: never Daniel's.
         term(
             "graduated crew",
@@ -279,9 +293,9 @@ fn the_request_carries_the_previous_record_the_window_and_what_to_reuse() {
     assert_eq!(request.budget, crate::models::SESSION_BUDGET);
     let prompt = request.prompt();
     for part in [
-        "<message id=\"u-5\" role=\"user\">",
-        "<pasted>\nerror: the pasted words are not mine at all\n</pasted>",
-        "<message id=\"a-2\" role=\"assistant\">",
+        "--- user · u-5 ---",
+        "--- Pasted data (not Daniel's words) ---\nerror: the pasted words are not mine at all",
+        "--- assistant · a-2 ---",
         "Existing topics: ci",
         "Existing terms: graduate to level 4",
         "## Summary\nsummary",
@@ -289,5 +303,5 @@ fn the_request_carries_the_previous_record_the_window_and_what_to_reuse() {
     ] {
         assert!(prompt.contains(part), "{part:?} missing from:\n{prompt}");
     }
-    assert!(!prompt.contains("<message id=\"u-1\""), "already folded in");
+    assert!(!prompt.contains("--- user · u-1 ---"), "already folded in");
 }

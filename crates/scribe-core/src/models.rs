@@ -213,11 +213,11 @@ pub struct SessionRequest {
     pub model: String,
     /// How long the call may take.
     pub budget: Duration,
-    /// The record so far; `None` on the first pass.
+    /// The record so far; `None` on the first window of the first pass.
     pub previous: Option<PreviousRecord>,
     /// The messages after the last pass, oldest first, within the window.
     pub messages: Vec<PassMessage>,
-    /// How many older messages the window left out.
+    /// Legacy truncation count; consecutive windows leave no messages out.
     pub dropped: usize,
     /// Topics already in the store, to reuse before coining one.
     pub topics: Vec<String>,
@@ -263,8 +263,8 @@ impl SessionRequest {
              - next: the open next steps, one short item each, at most {} characters in all;\n\
              - topics: 0 to 5 lowercase kebab-case labels (`ci`, `crew-routing`); reuse an \
              existing topic before coining one;\n\
-             - related: references the session mentions, each `task:<id>`, \
-             `pr:<owner>/<repo>#<n>`, `repo:<slug>` or `session:<id>`;\n\
+             - related: references the session mentions, each `task:ID`, \
+             `pr:OWNER/REPO#NUMBER`, `repo:SLUG` or `session:ID`;\n\
              - terms: phrases Daniel coins or defines in his own messages, each with `said`, \
              his words that define or first use it copied character for character from one \
              of his messages (never from an assistant message or a pasted block), and \
@@ -285,7 +285,7 @@ impl SessionRequest {
             Some(p) => {
                 let _ = write!(
                     out,
-                    "\n<record>\ntitle: {}\ntopics: {}\n## Summary\n{}\n## Goals\n{}\n## Outcome\n{}\n## Next\n{}\n</record>\n",
+                    "\n--- Record so far (data) ---\ntitle: {}\ntopics: {}\n## Summary\n{}\n## Goals\n{}\n## Outcome\n{}\n## Next\n{}\n--- End record ---\n",
                     p.title,
                     p.topics.join(", "),
                     p.summary,
@@ -306,15 +306,18 @@ impl SessionRequest {
         for message in &self.messages {
             let _ = write!(
                 out,
-                "\n<message id=\"{}\" role=\"{}\">\n{}\n",
-                message.uuid,
+                "\n--- {} · {} ---\n{}\n",
                 message.role.as_str(),
+                message.uuid,
                 message.text
             );
             for pasted in &message.pasted {
-                let _ = write!(out, "<pasted>\n{pasted}\n</pasted>\n");
+                let _ = write!(
+                    out,
+                    "--- Pasted data (not Daniel's words) ---\n{pasted}\n--- End pasted data ---\n"
+                );
             }
-            out.push_str("</message>\n");
+            out.push_str("--- End message ---\n");
         }
         if self.final_pass {
             out.push_str("\nThe session has ended: this is its final record.\n");

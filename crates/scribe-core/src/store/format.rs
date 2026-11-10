@@ -29,7 +29,7 @@ use std::path::Path;
 
 /// The newest store format: this build reads formats 1 to `FORMAT` of every
 /// document and would write `FORMAT`.
-pub(super) const FORMAT: u32 = 1;
+pub(super) const FORMAT: u32 = 2;
 
 /// Which document an upgrade step is applied to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,9 +55,60 @@ pub(super) type Upgrade = fn(Document, serde_json::Value) -> serde_json::Result<
 /// refuses the new format instead of dropping fields it does not know
 /// (STD-02 R16, STD-03 R10). A shipped step is never edited, reordered or
 /// removed. Reads upgrade in memory only; the next write persists the
-/// current format. Empty: no scribe store predates format 1, and the
-/// template's `notes.json` is not carried over.
-pub(super) const UPGRADES: &[Upgrade] = &[];
+/// current format. The template's `notes.json` is not carried over.
+pub(super) const UPGRADES: &[Upgrade] = &[retry_state];
+
+/// Format 1 -> 2 adds bounded retry state to each session switch. Other
+/// document shapes are unchanged. Reads upgrade only in memory.
+fn retry_state(
+    document: Document,
+    mut value: serde_json::Value,
+) -> serde_json::Result<serde_json::Value> {
+    if document == Document::Control
+        && let Some(sessions) = value
+            .get_mut("sessions")
+            .and_then(serde_json::Value::as_object_mut)
+    {
+        for session in sessions
+            .values_mut()
+            .filter_map(serde_json::Value::as_object_mut)
+        {
+            session
+                .entry("consecutive_failures")
+                .or_insert(serde_json::json!(0));
+            session
+                .entry("retry_after")
+                .or_insert(serde_json::Value::Null);
+        }
+    }
+    Ok(value)
+}
+
+/// Frozen format-1 shape. Validate before upgrading so unknown or repeated
+/// fields remain errors rather than being hidden by a generic JSON value.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ControlV1 {
+    #[allow(dead_code, reason = "format-1 validation before upgrade")]
+    format: u32,
+    #[allow(dead_code, reason = "format-1 validation before upgrade")]
+    sessions: BTreeMap<SessionId, SwitchV1>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SwitchV1 {
+    #[allow(dead_code, reason = "format-1 validation before upgrade")]
+    on: bool,
+    #[allow(dead_code, reason = "format-1 validation before upgrade")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    since: Option<time::OffsetDateTime>,
+    #[allow(dead_code, reason = "format-1 validation before upgrade")]
+    due: bool,
+    #[allow(dead_code, reason = "format-1 validation before upgrade")]
+    #[serde(rename = "final")]
+    final_pass: bool,
+}
 
 /// What the frontmatter's `kind` says a Markdown record is.
 const ENTRY_KIND: &str = "entry";
@@ -369,6 +420,16 @@ fn decode_json<T: DeserializeOwned>(path: &Path, bytes: &[u8], document: Documen
     if from == FORMAT {
         // Straight from the bytes, so a repeated key is refused too.
         return serde_json::from_slice(bytes).map_err(|e| Error::corrupt(path, e));
+    }
+    match document {
+        Document::Control => {
+            serde_json::from_slice::<ControlV1>(bytes).map_err(|e| Error::corrupt(path, e))?;
+        }
+        Document::Proposals => {
+            serde_json::from_slice::<ProposalsDocument>(bytes)
+                .map_err(|e| Error::corrupt(path, e))?;
+        }
+        Document::Entry | Document::Session => {}
     }
     upgrade(path, document, from, value)
 }

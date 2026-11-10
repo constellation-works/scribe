@@ -201,8 +201,8 @@ serves every workspace on the host. The plugin's config key `root` (default
 ├── entries/<tag>/<id>.md        one file per entry: YAML frontmatter + verbatim body
 ├── sessions/<yyyy>/<mm>/<session-id>.md   one per opted-in session: frontmatter + sections
 ├── discussions/<yy-mm>/<slug>.md   one per distilled discussion (§4.5), Daniel may edit
-├── control.json                 {"format":1,"sessions":{"<id>":{"on","since","due","final"}}}
-├── proposals.json               {"format":1,"proposals":[…]}
+├── control.json                 {"format":2,"sessions":{"<id>":{"on","since","due","final","consecutive_failures","retry_after"}}}
+├── proposals.json               {"format":2,"proposals":[…]}
 ├── audit.jsonl                  one line per mutating command (template shape)
 └── .lock
 ```
@@ -212,9 +212,10 @@ Every file except `audit.jsonl` is replaced whole through
 A `#scribe` creates one new entry file; a session pass replaces one session
 file.
 Reads take no lock and write nothing (STD-01 R31), so `ask` works on a
-read-only root. Each document carries `format: 1`; the template's
-`notes.json` format is not carried over because no scribe store exists yet
-(S1 starts `UPGRADES` empty for the new documents).
+read-only root. Each document now writes `format: 2`. Format 1 remains readable: its
+control switches gain `consecutive_failures: 0` and `retry_after: null` in
+memory; the next mutation writes format 2. Entry, session and proposal
+shapes are unchanged. The template's `notes.json` is not carried over.
 
 **Metadata.** Entries and session records are Markdown files whose YAML
 frontmatter is the metadata `ask` and the CLI filter on, so a lookup narrows
@@ -222,7 +223,7 @@ by fields before any ranking. Every record carries:
 
 | Field | Meaning |
 |---|---|
-| `format`, `kind` | `1`; `entry` or `session` |
+| `format`, `kind` | `2`; `entry` or `session` |
 | `id` | `decisions-12`, or the session id |
 | `status` | entry: `active`, `superseded`, `retired`, `forgotten`; session: `open`, `final` |
 | `project` | the repository slug from the cwd's git remote, else the cwd's basename; `global` when Daniel says so |
@@ -245,7 +246,7 @@ superseding entries; nothing is renamed without Daniel's approval.
 
 ```markdown
 ---
-format: 1
+format: 2
 kind: entry
 id: decisions-12
 tag: decisions
@@ -315,7 +316,8 @@ directories `ask` reads as extra discussion evidence and never writes
 (default: the constellation almanac's `15-discussions`, when present); `[models]` with `ask`, `distill`, `session`, `consistency`,
 `referent` and `credentials` (the variables model calls are given, default
 `CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY`); `[catalog]` with
-`every_minutes` (20) and `every_turns` (10); `[redact]` with `env`, further
+`every_minutes` (20), `every_turns` (10), `window_messages` (40) and
+`window_chars` (15000), all positive integers; `[redact]` with `env`, further
 variables whose values are masked. A missing file or table is the defaults;
 an unknown key or bad value is refused, naming the file and line
 ([specs/store.md](./specs/store.md#config)).
@@ -545,12 +547,17 @@ pass count and last write. The reply wording is in
 it reads `control.json`, and when the session is on and either
 `every_minutes` have passed since the last pass or `every_turns` user turns
 have arrived, it sets `due` under the lock. `scribe hook session-end` sets
-`due` with `final: true`. Daniel runs `scribe session pass` by hand, from a
-login shell where `claude` is on `PATH`; it processes the due sessions, at
-most five per run, each with a 120-second model budget
-([4_decisions.md](./4_decisions.md#a-failed-pass-stays-due-and-daniel-runs-the-pass-by-hand)). The plugin still ships the
-`scribe-session-pass` routine (`*/5 * * * *`, seeded disabled), which runs
-the same code through the `scribe.session-pass` job; it is not switched on.
+`due` with `final: true`. The plugin ships `scribe-session-pass` seeded
+disabled for each host to review. Once enabled with `orbit routine enable`,
+it runs every 5 minutes (`*/5 * * * *`) through the `scribe.session-pass`
+job. Daniel can also run `scribe session pass` by hand where `claude` is on
+`PATH`. Both take at most five due sessions per run, with a 120-second
+budget per model call. Daniel reversed the manual-only choice on
+2026-11-10: "perhaps routine was not a bad idea then? let's add that back"
+([4_decisions.md](./4_decisions.md#consecutive-windows-and-bounded-retries-keep-session-passes-cheap)).
+Failures keep the session due and delay automatic retries by 5, 10, 20,
+40, then at most 60 minutes; a completed pass resets this state.
+`scribe session pass --session <id>` bypasses backoff.
 No process is detached from a hook ([4_decisions.md](./4_decisions.md#session-passes-run-from-an-orbit-routine-not-a-detached-hook-child)).
 
 As built (S4): the `Stop` hook reads `control.json` first and goes no
@@ -569,9 +576,10 @@ tool answers `not_implemented` and `scribe session pass` still runs by hand
 or from cron.
 As built (S6): the routine and its job ship, seeded disabled, and the tool
 runs the same code as `scribe session pass`; it reads the transcripts under
-the plugin's `transcripts` setting and starts no session after the first
+the plugin's `transcripts` setting and starts no later session or window
 once 50 s have passed, so one call ends inside Orbit's 300 s backend
-timeout; the rest count as `remaining` for the next run
+timeout; partly processed sessions keep their checkpoint and stay due,
+counted in `remaining` alongside sessions waiting for backoff or the next run
 ([§1](#1-boundary-and-surfaces)).
 
 ### 5.3 A pass
@@ -580,18 +588,28 @@ timeout; the rest count as `remaining` for the next run
    session, not only messages since `on_since`), dropping tool payloads,
    `<task-notification>` and other synthetic turns, and attributing pasted
    blocks as pasted.
-2. Send the previous record plus the messages after `scribed_through`
-   (windowed to 150k characters, oldest dropped first with a note) to the
-   `session` model (Haiku) for `{title, summary, goals, outcome, next,
-   topics, related, terms}`, giving it the store's existing topics and terms
-   to reuse. Each term's `said` must pass the verbatim check against one of
-   Daniel's own turns (never an assistant turn); a term that fails is
-   dropped, the rest of the record is kept.
-3. Validate the budgets and the JSON shape. On failure, ask the model once
-   more in the same pass, naming what was refused (a field, its length and
-   its budget); if that answer fails too, keep the previous record and leave
-   `due` set, whatever the failure, so the next run retries it.
-4. Write the record atomically, advance `scribed_through`, clear `due`.
+2. Split messages after `scribed_through` into consecutive windows, oldest
+   first: at most `[catalog] window_messages = 40` messages or
+   `window_chars = 15000` Unicode characters of content, whichever binds
+   first. An individually oversized message is cut with a marker inside
+   the character limit. No older messages are discarded to fit later ones.
+3. Send each window and the record so far to the `session` model (Haiku)
+   for the whole updated `{title, summary, goals, outcome, next, topics,
+   related, terms}` record. The first window of a first pass has no prior
+   record. Plain message headers retain role and id; pasted data and the
+   record use plain delimiters too. Messages are data, never instructions.
+   Offer stored topics and terms, including those from earlier windows,
+   for reuse. Validate field limits and shape on every window, with one
+   fresh retry naming the refusal. A term must name a user message in the
+   current or an earlier window and quote its own text verbatim; unknown,
+   future, assistant and pasted citations are dropped.
+4. After every valid window, redact and atomically write the whole record
+   under the store lock, advancing `scribed_through` and `passes` (successful
+   record updates). Feed the persisted record into the next window. Only
+   the last window clears `due` and applies final status. A failure keeps
+   all prior windows, stays due, and starts bounded retry backoff; the next
+   pass resumes at the failed window. One CLI invocation processes all
+   windows; the routine may yield between them at its deadline.
 
 A pass writes no tag entries, even if the transcript contains `#decision`
 or an unprocessed `#scribe` line. There is no backfill: sessions that were
@@ -600,8 +618,9 @@ never switched on are never read.
 As built (S4), in `scribe-core::pass` and `commands/session/pass.rs`:
 
 - Candidates are the sessions `control.json` marks on and due, by id, five
-  per run; the transcript is found by id under Claude Code's projects
-  directory and passes the hooks' provenance check
+  per run, excluding sessions whose `retry_after` is still in the future;
+  skipped sessions remain due and count in `remaining`. The transcript is
+  found by id under Claude Code's projects directory and passes the hooks' provenance check
   ([4_decisions.md](./4_decisions.md#a-pass-finds-its-transcript-by-session-id)).
   No transcript or no message yet leaves the pass `waiting` and due.
 - The conversation drops tool payloads, thinking, turns that open with a
@@ -609,9 +628,10 @@ As built (S4), in `scribe-core::pass` and `commands/session/pass.rs`:
   `<command-name>` and the like) and `/scribe` command turns; a
   `<pasted_content>` block is kept apart as pasted text, offered to the
   model marked as pasted and never accepted as a term's `said`.
-- The window starts after `scribed_through`; when it is over 150k
-  characters the oldest messages are dropped (the request says how many)
-  and a single message over the limit is cut. Nothing after
+- Consecutive windows start after `scribed_through` and stop at either
+  configured bound. A single oversized message is cut with a marker;
+  the character count includes pasted content and the marker, but excludes
+  prompt headers, instructions and the previous record. Nothing after
   `scribed_through` clears `due` without a model call; at session end it
   marks the record final.
 - Budgets: title 120 characters, summary 1500, goals 600, outcome 2500,
@@ -619,20 +639,21 @@ As built (S4), in `scribe-core::pass` and `commands/session/pass.rs`:
   an empty summary also fails, as do invalid topics. A bad `related`
   reference is dropped. A term is kept when its `said` (at most 400
   characters) is verbatim in one of Daniel's own turns, not his pasted
-  text; its `message` is that turn (the one the model named when it
-  matches, else the first). A term already in the record is not repeated.
+  text; its `message` must name that turn, up through the current window.
+  A term already in the record is not repeated.
 - The previous record keeps its `created`, `started`, `cwd`, `project`,
   `provider` and `host`; `on_since` is the switch's `since`; `passes`
   counts up, `scribed_through` becomes the
-  window's last message, and the final pass sets `status: final`. The
-  record is written and `due` cleared by one locked store call. A failed
-  pass, whatever its code, keeps the previous record and leaves `due` set:
+  window's last message, and only the last window of the final pass sets
+  `status: final`. Each window is checkpointed under the lock; the last
+  settles `due` and resets retry state. A failed pass keeps the latest
+  checkpoint and leaves `due` set with bounded retry backoff:
   the run prints its report and then exits 1 naming each failed session
   and its code, and `scribe.session-pass` answers `session_pass_failed`
   ([4_decisions.md](./4_decisions.md#a-failed-pass-stays-due-and-daniel-runs-the-pass-by-hand)).
 - `scribe session pass --session <id>` (repeatable) passes the sessions
-  named whether or not they are due, each once and without the
-  five-per-run cap, so a session whose `due` was cleared can be passed
+  named whether or not they are due, ignoring backoff, each once and
+  without the five-per-run cap, so a session whose `due` was cleared can be passed
   again; a session that is not on is refused (`session_not_on`) and never
   read, and the switch's `final` flag counts as for a due pass.
 
@@ -1006,12 +1027,14 @@ writes none.
   until one entry stops being active; the cap of 40 pairs, newest first,
   bounds the cost, but an old unrelated pair can keep a newer one waiting.
 - **One routine call does less than the CLI run.** Orbit caps a plugin
-  call at 300 s, so `scribe.session-pass` starts no session after 50 s and
+  call at 300 s, so `scribe.session-pass` starts no later session or window
+  after 50 s and
   `scribe.consistency-scan` no batch after 170 s; the rest waits for the
-  next run (every five minutes, or next week for the scan).
-- **Records wait for Daniel.** Passes run by hand, so a session is marked
-  due by the hooks but summarised only when Daniel runs `scribe session
-  pass`; `scribe session list` shows `due` so the gap is visible.
+  next run (every five minutes once enabled, or next week for the scan).
+- **Cataloging requires host opt-in.** The routine ships disabled; records
+  wait until the host enables it or Daniel runs `scribe session pass`.
+  Repeated failures can delay retries up to an hour; `--session <id>`
+  retries immediately. `scribe session list` shows `due` so the gap is visible.
 - **A guessed referent is still an entry.** When Haiku fails, the fallback
   records the previous assistant message; the echo says so, but an
   unattended guess stays until Daniel retires it with `#scribe retire`.

@@ -167,7 +167,7 @@ pub struct SessionRecord {
     /// The uuid of the last transcript message folded in.
     #[serde(deserialize_with = "nullable")]
     pub scribed_through: Option<String>,
-    /// How many passes have written it.
+    /// Successful model record updates, one per persisted window.
     pub passes: u32,
     /// How many items `next` lists.
     pub next_open: u32,
@@ -230,6 +230,11 @@ pub struct SessionControl {
     /// Whether the due pass is the session-end one.
     #[serde(rename = "final")]
     pub final_pass: bool,
+    /// Consecutive failed session passes; success resets the counter.
+    pub consecutive_failures: u32,
+    /// Earliest automatic retry; explicit `--session` bypasses it.
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub retry_after: Option<OffsetDateTime>,
 }
 
 /// Every session's switch, keyed by session id.

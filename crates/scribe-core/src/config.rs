@@ -23,6 +23,8 @@
 //! [catalog]
 //! every_minutes = 20
 //! every_turns = 10
+//! window_messages = 40
+//! window_chars = 15000
 //!
 //! [redact]
 //! env = ["GITHUB_TOKEN"]
@@ -33,7 +35,7 @@ use crate::session::Cadence;
 use crate::tag::{TagDef, TagTable};
 use serde::Deserialize;
 use std::collections::BTreeMap;
-use std::num::NonZeroU32;
+use std::num::{NonZeroU32, NonZeroUsize};
 
 /// Why `config.toml` was refused: the parser's message and, when known, the
 /// line it points at.
@@ -86,6 +88,8 @@ pub struct Config {
     pub models: ModelIds,
     /// How often an opted-in session gets a pass.
     pub catalog: Cadence,
+    /// Per-call message bounds, also configured under `[catalog]`.
+    pub catalog_window: crate::pass::WindowLimits,
     /// Further environment variables whose values are masked.
     pub redact_env: Vec<String>,
 }
@@ -96,6 +100,7 @@ impl Default for Config {
             tags: TagTable::defaults(),
             models: ModelIds::default(),
             catalog: Cadence::default(),
+            catalog_window: crate::pass::WindowLimits::default(),
             redact_env: Vec::new(),
         }
     }
@@ -139,12 +144,17 @@ impl Config {
             }
         }
         let cadence = Cadence::default();
+        let window = crate::pass::WindowLimits::default();
         Ok(Self {
             tags,
             models,
             catalog: Cadence {
                 every_minutes: raw.catalog.every_minutes.unwrap_or(cadence.every_minutes),
                 every_turns: raw.catalog.every_turns.unwrap_or(cadence.every_turns),
+            },
+            catalog_window: crate::pass::WindowLimits {
+                messages: raw.catalog.window_messages.unwrap_or(window.messages),
+                chars: raw.catalog.window_chars.unwrap_or(window.chars),
             },
             redact_env: raw.redact.env,
         })
@@ -241,6 +251,8 @@ struct RawModels {
 struct RawCatalog {
     every_minutes: Option<NonZeroU32>,
     every_turns: Option<NonZeroU32>,
+    window_messages: Option<NonZeroUsize>,
+    window_chars: Option<NonZeroUsize>,
 }
 
 #[derive(Default, Deserialize)]

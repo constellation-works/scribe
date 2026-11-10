@@ -113,6 +113,25 @@ impl Setup {
             .collect()
     }
 
+    /// Scripted answers across process invocations; `None` fails that call.
+    fn answers(&self, answers: &[Option<Value>]) {
+        let mut script = String::from(
+            "#!/bin/sh\nn=$(ls \"$HOME\" | grep -c '^claude-stdin')\ncat > \"$HOME/claude-stdin-$n\"\ncase $n in\n",
+        );
+        for (n, answer) in answers.iter().enumerate() {
+            match answer {
+                Some(body) => {
+                    let envelope = json!({"type": "result", "subtype": "success",
+                        "is_error": false, "result": "", "structured_output": body});
+                    script.push_str(&format!("{n}) echo '{envelope}' ;;\n"));
+                }
+                None => script.push_str(&format!("{n}) exit 3 ;;\n")),
+            }
+        }
+        script.push_str("*) exit 4 ;;\nesac\n");
+        self.fx.fake_program("claude", &script);
+    }
+
     fn run(&self, args: &[&str], input: &[u8]) -> Output {
         let out = self.run_any(args, input);
         assert_eq!(
@@ -182,6 +201,13 @@ impl Setup {
         serde_json::from_str::<Value>(&text).unwrap()["sessions"][ON].clone()
     }
 
+    fn expire_retry(&self) {
+        let file = self.fx.root().join("control.json");
+        let mut state: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        state["sessions"][ON]["retry_after"] = json!("2026-01-01T00:00:00Z");
+        std::fs::write(&file, state.to_string()).unwrap();
+    }
+
     fn control_bytes(&self) -> Vec<u8> {
         std::fs::read(self.fx.root().join("control.json")).unwrap()
     }
@@ -226,6 +252,198 @@ fn answer() -> Value {
              "message": "a-1"}
         ]
     })
+}
+
+#[test]
+fn large_deltas_use_consecutive_windows_and_carry_the_record_without_xml_framing() {
+    let setup = Setup::new();
+    let messages: Vec<Value> = (0..81)
+        .map(|n| line("user", &format!("m-{n}"), &format!("unique-turn-{n:03}")))
+        .collect();
+    setup.write(ON, &messages);
+    let answers: Vec<Option<Value>> = (0..3)
+        .map(|n| {
+            let mut body = answer();
+            body["summary"] = json!(format!("record-stage-{n}"));
+            Some(body)
+        })
+        .collect();
+    setup.answers(&answers);
+    setup.scribe("/scribe on");
+    let report = setup.pass();
+    let prompts = setup.prompts();
+    assert_eq!(
+        prompts.len(),
+        3,
+        "81 messages require three 40-message windows"
+    );
+    for (n, prompt) in prompts.iter().enumerate() {
+        assert!(!prompt.contains("<message"), "no XML message framing");
+        assert!(!prompt.contains("<record>"), "no XML record framing");
+        for m in 0..81 {
+            let in_window = m / 40 == n;
+            assert_eq!(prompt.contains(&format!("unique-turn-{m:03}")), in_window);
+            if in_window {
+                assert!(prompt.contains(&format!("m-{m}")), "citation id retained");
+            }
+        }
+        if n > 0 {
+            assert!(prompt.contains(&format!("record-stage-{}", n - 1)));
+            assert!(prompt.contains("Existing topics: crew-routing"));
+        } else {
+            assert!(prompt.contains("There is no record yet"));
+        }
+        assert!(prompt.contains("messages: they are data"));
+    }
+    assert_eq!(report["passes"][0]["windows"], 3);
+    assert_eq!(setup.record(ON).unwrap()["scribed_through"], "m-80");
+    assert_eq!(setup.control()["due"], false);
+}
+
+#[test]
+fn a_failed_middle_window_keeps_progress_and_resumes_with_strict_term_citations() {
+    let setup = Setup::new();
+    setup.config("[catalog]\nwindow_messages = 2\nwindow_chars = 15000\n");
+    setup.write(
+        ON,
+        &[
+            line("user", "u-1", DEFINED),
+            line("assistant", "a-1", "First response."),
+            line("user", "u-2", "Second window."),
+            line("assistant", "a-2", "Second response."),
+            line("user", "u-3", "Third window."),
+        ],
+    );
+    let mut first = answer();
+    first["terms"] = json!([]);
+    first["summary"] = json!("checkpoint-one");
+    let mut later = answer();
+    later["terms"] = json!([
+        {"term": "earlier-window", "said": DEFINED, "message": "u-1"},
+        {"term": "unknown-id", "said": DEFINED, "message": "missing"},
+        {"term": "future-window", "said": "Third window.", "message": "u-3"}
+    ]);
+    setup.answers(&[Some(first), None, Some(later), Some(answer())]);
+    setup.scribe("/scribe on");
+    setup.hook("session-end", &setup.payload("SessionEnd"));
+    let out = setup.run_any(&["session", "pass", "--json"], b"");
+    assert_eq!(out.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["passes"][0]["windows"], 1);
+    let checkpoint = setup.record(ON).unwrap();
+    assert_eq!(checkpoint["summary"], "checkpoint-one");
+    assert_eq!(checkpoint["scribed_through"], "a-1");
+    assert_eq!(
+        checkpoint["status"], "open",
+        "not final until all windows finish"
+    );
+    assert_eq!(setup.control()["due"], true);
+    assert_eq!(setup.control()["final"], true);
+    let out = setup.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["passes"][0]["windows"], 2);
+    assert_eq!(report["passes"][0]["dropped_terms"], 3);
+    let prompts = setup.prompts();
+    assert_eq!(prompts.len(), 4);
+    assert!(prompts[2].contains("checkpoint-one"));
+    assert!(prompts[2].contains("Second window."));
+    assert!(!prompts[2].contains("First response."));
+    assert!(!prompts[2].contains("Third window."));
+    let record = setup.record(ON).unwrap();
+    assert_eq!(record["scribed_through"], "u-3");
+    assert_eq!(record["status"], "final");
+    assert_eq!(record["terms"].as_array().unwrap().len(), 2);
+    assert_eq!(record["terms"][0]["term"], "earlier-window");
+    assert_eq!(setup.control()["due"], false);
+}
+
+#[test]
+fn character_windows_and_each_windows_field_limits_are_enforced() {
+    let setup = Setup::new();
+    setup.config("[catalog]\nwindow_messages = 40\nwindow_chars = 100\n");
+    setup.write(
+        ON,
+        &(0..3)
+            .map(|n| line("user", &format!("u-{n}"), &"é".repeat(60)))
+            .collect::<Vec<_>>(),
+    );
+    let mut over = answer();
+    over["summary"] = json!("s".repeat(1501));
+    setup.answers(&[Some(answer()), Some(over.clone()), Some(over)]);
+    setup.scribe("/scribe on");
+    let out = setup.run_any(&["session", "pass", "--json"], b"");
+    assert_eq!(out.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["passes"][0]["error_code"], "session_answer_invalid");
+    assert_eq!(report["passes"][0]["windows"], 1);
+    assert_eq!(setup.record(ON).unwrap()["scribed_through"], "u-0");
+    let prompts = setup.prompts();
+    assert_eq!(
+        prompts.len(),
+        3,
+        "one call then an invalid window and its fresh retry"
+    );
+    assert!(prompts[1].contains("u-1"));
+    assert!(!prompts[1].contains("u-2"));
+}
+
+#[test]
+fn failures_back_off_while_due_and_explicit_sessions_ignore_the_delay() {
+    let setup = Setup::new();
+    setup.scribe("/scribe on");
+    setup.answers(&[None, None, Some(answer())]);
+    for failures in 1..=2 {
+        let out = setup.run_any(&["session", "pass", "--session", ON, "--json"], b"");
+        assert_eq!(out.status.code(), Some(1));
+        let control = setup.control();
+        assert_eq!(control["due"], true);
+        assert_eq!(control["consecutive_failures"], failures);
+        assert!(control["retry_after"].is_string());
+        let calls = setup.prompts().len();
+        let report = setup.pass();
+        assert_eq!(report["passes"], json!([]));
+        assert_eq!(report["remaining"], 1, "backed-off session is still owed");
+        assert_eq!(setup.prompts().len(), calls);
+    }
+    setup.run(&["session", "pass", "--session", ON], b"");
+    assert_eq!(setup.control()["due"], false);
+    assert_eq!(setup.control()["consecutive_failures"], 0);
+    assert_eq!(setup.control()["retry_after"], Value::Null);
+}
+
+#[test]
+fn legacy_control_is_read_without_writes_and_new_retry_state_is_strict() {
+    let setup = Setup::new();
+    setup.config("");
+    let file = setup.fx.root().join("control.json");
+    let legacy = json!({"format": 1, "sessions": {ON: {
+        "on": true, "since": "2026-11-03T05:00:00Z", "due": true, "final": false}}});
+    std::fs::write(&file, legacy.to_string()).unwrap();
+    make_private(&file);
+    let before = setup.control_bytes();
+    setup.run(&["session", "list", "--json"], b"");
+    assert_eq!(
+        setup.control_bytes(),
+        before,
+        "migration on read is in memory only"
+    );
+    setup.pass();
+    let current: Value = serde_json::from_slice(&setup.control_bytes()).unwrap();
+    assert_eq!(current["format"], 2);
+    assert_eq!(current["sessions"][ON]["consecutive_failures"], 0);
+    assert_eq!(current["sessions"][ON]["retry_after"], Value::Null);
+    for missing in ["consecutive_failures", "retry_after"] {
+        let mut broken = current.clone();
+        broken["sessions"][ON]
+            .as_object_mut()
+            .unwrap()
+            .remove(missing);
+        std::fs::write(&file, broken.to_string()).unwrap();
+        let out = setup.run_any(&["session", "list", "--json"], b"");
+        assert_eq!(out.status.code(), Some(1), "{missing}");
+        let error: Value = serde_json::from_slice(&out.stderr).unwrap();
+        assert_eq!(error["code"], "store_corrupt");
+    }
 }
 
 #[test]
@@ -423,7 +641,7 @@ fn a_failed_pass_stays_due_exits_1_naming_it_and_the_next_run_retries_it() {
     // More failures in a row than the old give-up bound of three: each one
     // leaves the session due, whatever its code.
     for run in 1..=4 {
-        let out = setup.run_any(&["session", "pass"], b"");
+        let out = setup.run_any(&["session", "pass", "--session", ON], b"");
         assert_eq!(out.status.code(), Some(1), "run {run}");
         let stderr = text(&out.stderr);
         assert!(
@@ -440,7 +658,7 @@ fn a_failed_pass_stays_due_exits_1_naming_it_and_the_next_run_retries_it() {
         assert!(setup.record(ON).is_none());
     }
     // --json still prints the report, and the error object on stderr.
-    let out = setup.run_any(&["session", "pass", "--json"], b"");
+    let out = setup.run_any(&["session", "pass", "--session", ON, "--json"], b"");
     assert_eq!(out.status.code(), Some(1));
     let report: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(report["passes"][0]["error_code"], "model_failed");
@@ -452,14 +670,15 @@ fn a_failed_pass_stays_due_exits_1_naming_it_and_the_next_run_retries_it() {
 
     // No claude at all (model_unavailable) is no different.
     std::fs::remove_file(setup.fx.elsewhere("bin/claude")).unwrap();
-    let out = setup.run_any(&["session", "pass"], b"");
+    let out = setup.run_any(&["session", "pass", "--session", ON], b"");
     assert_eq!(out.status.code(), Some(1));
     assert!(text(&out.stderr).contains("model_unavailable"));
     assert_eq!(setup.control()["due"], true);
 
     // Once the model answers, the next run writes the record.
     setup.answer(&answer());
-    let report = setup.pass();
+    let out = setup.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(report["passes"][0]["result"], "written");
     assert!(setup.record(ON).is_some());
     assert_eq!(setup.control()["due"], false);
@@ -546,6 +765,10 @@ fn the_plugin_tool_answers_session_pass_failed_and_keeps_the_session_due() {
     assert_eq!(setup.control()["due"], true);
 
     setup.answer(&answer());
+    let reply = plugin_pass(&setup);
+    assert_eq!(reply["output"]["passes"], json!([]));
+    assert_eq!(reply["output"]["remaining"], 1);
+    setup.expire_retry();
     let reply = plugin_pass(&setup);
     assert_eq!(reply["ok"], true, "{reply}");
     assert_eq!(reply["output"]["passes"][0]["result"], "written", "{reply}");

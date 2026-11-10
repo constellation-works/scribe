@@ -43,7 +43,7 @@ pub(crate) enum CliError {
     /// A session pass ran, and at least one pass in it failed: `(session,
     /// code)` for each. The report is printed first.
     #[error(
-        "{} session pass(es) failed: {}; each stays due, run 'scribe session pass' again to retry",
+        "{} session pass(es) failed: {}; each stays due with retry backoff; use 'scribe session pass --session <id>' to retry now",
         .0.len(),
         failed_list(.0)
     )]

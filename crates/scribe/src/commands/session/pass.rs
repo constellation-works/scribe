@@ -1,34 +1,33 @@
-//! `scribe session pass`: write one distilled record per session whose pass
-//! is due (docs/design/scribe/2_design.md §5.2, §5.3).
+//! `scribe session pass`: distill due sessions, checkpointing every window
+//! (docs/design/scribe/2_design.md §5.2, §5.3).
 //!
-//! Daniel runs it by hand, from a login shell where `claude` is on `PATH`
-//! (the plugin still ships the `scribe-session-pass` routine, switched
-//! off). It takes the sessions `control.json` marks on and due, at most five
-//! per run, oldest id first, or with `--session <id>` the sessions named,
-//! due or not but only while on; and for each:
+//! The plugin ships `scribe-session-pass` seeded disabled for host review.
+//! Once enabled it runs every 5 minutes; Daniel can also run the command by
+//! hand from a shell where `claude` is on `PATH`. Daniel, 2026-11-10:
+//! "perhaps routine was not a bad idea then? let's add that back".
 //!
-//! 1. finds its transcript, `<transcripts>/<project-dir>/<id>.jsonl`, and
-//!    checks it as a hook does (this user's regular file, named for the
-//!    session);
-//! 2. reads the whole session ([`pass::conversation`]) and the messages
-//!    after the record's `scribed_through`, windowed to 150k characters;
-//! 3. asks the `session` model through the `Models` port, within 120 s;
-//! 4. checks the answer ([`pass::check`]): a bad budget or shape keeps the
-//!    previous record and leaves the pass due; a term whose `said` is not
-//!    verbatim from one of Daniel's turns is dropped;
-//! 5. writes the record and clears `due` in one store call.
+//! At most five on, due sessions run per invocation, by id. Explicit
+//! `--session` ids bypass due state, retry backoff and the five-session cap.
+//! The transcript is provenance-checked, synthetic turns dropped, and all
+//! new messages are processed oldest first in consecutive windows (default
+//! 40 messages / 15,000 characters, configured under `[catalog]`). Each
+//! window receives the previous record and updates it with one model call
+//! (120 s), plus one fresh retry for an invalid answer. Plain headers keep
+//! message ids available without XML framing; messages remain data.
 //!
-//! Nothing new since the last pass clears `due` without a model call (and
-//! marks the record final at session end); no transcript or no message yet
-//! leaves the pass due for the next run. A failed pass, whatever its code,
-//! keeps the previous record and leaves `due` set, so running the command
-//! again retries it; the run then exits 1 naming each failed session and
-//! its code (`output::finish`), and the plugin tool answers
-//! `session_pass_failed` (`commands/plugin.rs`).
+//! Every window checks field limits and terms against Daniel's own turns
+//! up through that window, then writes a redacted atomic checkpoint under
+//! the store lock. Only the last window settles due/final state. Failure
+//! preserves earlier checkpoints and keeps the session due; automatic
+//! retries wait 5, 10, 20, 40, then at most 60 minutes. Success resets the
+//! backoff. The CLI finishes all windows; the plugin starts no further
+//! window after its deadline, leaving the remainder due for its next run.
 //!
-//! A session never switched on is never read: only sessions with a switch
-//! are candidates. A pass writes no entries. Each session passed is one
-//! audit line (`target` `session:<id>`); a run with nothing due writes none.
+//! Nothing new clears due without a model call (and finalizes an ended
+//! session); no transcript or messages yet leaves it waiting. Failed runs
+//! exit 1 with each failed session and code; the plugin answers
+//! `session_pass_failed`. A never-on session is never read. A pass writes
+//! no entries and one audit line per session handled (none for waiting).
 
 use crate::app::Context;
 use crate::commands::RunLimits;
@@ -55,11 +54,15 @@ const PROVIDER: &str = "claude-code";
 const MAX_LISTED: usize = 200;
 
 pub(super) const PASS_EXAMPLES: &str = "\
-Run it by hand, from a shell where claude is on PATH. Processes at most
-five due sessions per run; --json reports what each pass did and how many
-due sessions remain. Calls the configured session model. A failed pass
-stays due: run the command again to retry it. Exits 1 when any pass
-failed, naming each failed session and its error code on stderr.
+The plugin routine ships disabled; once enabled on a host it runs every
+5 minutes. Also run this command by hand where claude is on PATH. Takes
+at most five due sessions per run, processing every new-message window
+(default 40 messages / 15000 characters; [catalog] window_messages and
+window_chars). Each window updates and checkpoints the record. --json
+reports persisted windows per session and how many due sessions remain.
+A failed pass stays due with automatic retry delays of 5, 10, 20, 40,
+then at most 60 minutes. --session retries immediately. Exits 1 when any
+pass failed, naming each failed session and its error code on stderr.
 
 Examples:
   scribe session pass
@@ -69,7 +72,7 @@ Examples:
 /// Arguments to `session pass`.
 #[derive(Debug, Args)]
 pub(crate) struct PassArgs {
-    /// Pass this session now, whether or not a pass is due (it must be switched on); repeat for several [default: every due session, at most five]
+    /// Pass this session now, ignoring retry backoff and whether a pass is due (it must be switched on); repeat for several [default: every due session, at most five]
     #[arg(long = "session", value_name = "ID")]
     pub(crate) sessions: Vec<SessionId>,
 }
@@ -108,11 +111,26 @@ pub(in crate::commands) fn run_with<M: Models>(
     } else {
         control::chosen(&state, only).map_err(CliError::SessionNotOn)?
     };
+    let mut remaining = 0usize;
+    let due: Vec<_> = due
+        .into_iter()
+        .filter(|(_, c)| {
+            let ready = !only.is_empty() || c.retry_after.is_none_or(|at| ctx.now() >= at);
+            if !ready {
+                remaining = remaining.saturating_add(1);
+            }
+            ready
+        })
+        .collect();
     if due.is_empty() {
         return Ok(Output::Pass(PassReport {
             passes: Vec::new(),
-            remaining: 0,
-            notices: vec![String::from("no session pass is due")],
+            remaining,
+            notices: vec![if remaining == 0 {
+                String::from("no session pass is due")
+            } else {
+                format!("{remaining} due session pass(es) waiting for retry backoff")
+            }],
         }));
     }
     let config = store.config()?;
@@ -134,30 +152,35 @@ pub(in crate::commands) fn run_with<M: Models>(
         .filter_map(|s| Some(s.path.file_stem()?.to_str()?.to_owned()))
         .collect();
     let adapter = models(&config);
-    let mut remaining = 0usize;
     let mut passes = Vec::new();
     for (n, (id, switch)) in due.into_iter().enumerate() {
         if !limits.may_start(n) {
             remaining = remaining.saturating_add(1);
             continue;
         }
-        let job = Job {
+        let mut job = Job {
             ctx,
             config: &config,
             redactor: &redactor,
             id: &id,
             switch: &switch,
+            windows: 0,
+            dropped_terms: 0,
+            incomplete: false,
         };
         let result = if corrupt.iter().any(|stem| stem == id.as_str()) {
             Err("store_corrupt")
         } else {
             let previous = found.listing.items.iter().find(|r| r.id == id);
-            job.run(previous, &known, &adapter)
+            job.run(previous, &known, &adapter, &limits)
         };
         passes.push(match result {
             Ok(done) => done,
-            Err(code) => job.failed(code),
+            Err(code) => job.failed(code)?,
         });
+        if job.incomplete {
+            remaining = remaining.saturating_add(1);
+        }
     }
     Ok(Output::Pass(PassReport {
         passes,
@@ -179,6 +202,9 @@ struct Job<'a> {
     redactor: &'a Redactor,
     id: &'a SessionId,
     switch: &'a SessionControl,
+    windows: usize,
+    dropped_terms: usize,
+    incomplete: bool,
 }
 
 /// A failure's stable code.
@@ -186,10 +212,11 @@ type Code = &'static str;
 
 impl Job<'_> {
     fn run<M: Models>(
-        &self,
+        &mut self,
         previous: Option<&SessionRecord>,
         known: &Known,
         adapter: &M,
+        limits: &RunLimits,
     ) -> Result<PassPayload, Code> {
         let final_pass = self.switch.final_pass;
         let Some(path) = self.ctx.transcripts().and_then(|dir| find(dir, self.id)) else {
@@ -212,29 +239,89 @@ impl Job<'_> {
         if conversation.is_empty() {
             return self.nothing_new(previous, true);
         }
-        let window = pass::window(
+        let mut offset = pass::start_after(
             &conversation,
             previous.and_then(|p| p.scribed_through.as_deref()),
-            pass::WINDOW_CHARS,
         );
-        let Some(through) = window.messages.last().map(|m| m.uuid.clone()) else {
-            return self.nothing_new(previous, false);
-        };
-        let request = pass::request(
-            &self.config.models.session,
-            previous,
-            window,
-            known.topics.clone(),
-            known.terms.clone(),
-            final_pass,
-        );
+        let mut previous = previous.cloned();
+        loop {
+            let window =
+                pass::window_with_limits(&conversation[offset..], None, self.config.catalog_window);
+            let Some(through) = window.messages.last().map(|m| m.uuid.clone()) else {
+                return self.nothing_new(previous.as_ref(), false);
+            };
+            if self.windows > 0 && !limits.may_continue() {
+                self.incomplete = true;
+                return Ok(self.payload("written", previous.as_ref()));
+            }
+            // Citation validation includes older windows, never future messages.
+            let end = offset + window.messages.len();
+            let last = end == conversation.len();
+            let mut topics: BTreeSet<_> = known.topics.iter().cloned().collect();
+            let mut terms: BTreeSet<_> = known.terms.iter().cloned().collect();
+            if let Some(record) = &previous {
+                topics.extend(record.topics.as_slice().iter().map(ToString::to_string));
+                terms.extend(record.terms.iter().map(|t| t.term.clone()));
+            }
+            let request = pass::request(
+                &self.config.models.session,
+                previous.as_ref(),
+                window,
+                topics.into_iter().take(MAX_LISTED).collect(),
+                terms.into_iter().take(MAX_LISTED).collect(),
+                final_pass && last,
+            );
+            let distilled = self.distill(request, &conversation[..end], adapter)?;
+            let dropped = distilled.dropped_terms;
+            let cwd = transcript::cwd(&bytes).unwrap_or_default();
+            let now = self.ctx.now();
+            let meta = pass::PassMeta {
+                id: self.id.clone(),
+                project: if cwd.is_empty() {
+                    Project::sanitized("")
+                } else {
+                    project::of(Path::new(&cwd))
+                },
+                provider: Label::sanitized(PROVIDER, PROVIDER),
+                host: self.ctx.host(),
+                cwd,
+                started: messages.first().map_or(now, |m| m.at),
+                on_since: self.switch.since.unwrap_or(now),
+                through: Some(through),
+                now,
+                final_pass: final_pass && last,
+            };
+            let record = pass::record(previous.as_ref(), distilled, meta);
+            previous = if last {
+                self.settle(Some(record))?
+            } else {
+                self.ctx.store().checkpoint_pass(record, self.redactor).map_err(|err| {
+                    tracing::warn!(session = %self.id, %err, "cannot checkpoint the session window");
+                    err.code()
+                })?
+            };
+            self.windows = self.windows.saturating_add(1);
+            self.dropped_terms = self.dropped_terms.saturating_add(dropped);
+            offset = end;
+            if last {
+                return Ok(self.payload("written", previous.as_ref()));
+            }
+        }
+    }
+
+    fn distill<M: Models>(
+        &self,
+        request: SessionRequest,
+        conversation: &[scribe_core::models::PassMessage],
+        adapter: &M,
+    ) -> Result<pass::Distilled, Code> {
         let answer = adapter.session(&request).map_err(|err| {
             tracing::warn!(session = %self.id, %err, "the session model failed");
             err.code()
         })?;
         // One more ask in the same pass, naming what was refused: a model
         // can't count characters exactly, so a near miss is common.
-        let distilled = match pass::check(answer, &conversation) {
+        let distilled = match pass::check(answer, conversation) {
             Ok(distilled) => distilled,
             Err(err) => {
                 tracing::warn!(session = %self.id, %err, "the session model's answer was refused; asking once more");
@@ -246,37 +333,13 @@ impl Job<'_> {
                     tracing::warn!(session = %self.id, %err, "the session model failed");
                     err.code()
                 })?;
-                pass::check(answer, &conversation).map_err(|err| {
+                pass::check(answer, conversation).map_err(|err| {
                     tracing::warn!(session = %self.id, %err, "the session model's answer was refused");
                     "session_answer_invalid"
                 })?
             }
         };
-        let dropped_terms = distilled.dropped_terms;
-        let cwd = transcript::cwd(&bytes).unwrap_or_default();
-        let now = self.ctx.now();
-        let meta = pass::PassMeta {
-            id: self.id.clone(),
-            project: if cwd.is_empty() {
-                Project::sanitized("")
-            } else {
-                project::of(Path::new(&cwd))
-            },
-            provider: Label::sanitized(PROVIDER, PROVIDER),
-            host: self.ctx.host(),
-            cwd,
-            started: messages.first().map_or(now, |m| m.at),
-            on_since: self.switch.since.unwrap_or(now),
-            through: Some(through),
-            now,
-            final_pass,
-        };
-        let record = pass::record(previous, distilled, meta);
-        let written = self.settle(Some(record))?;
-        Ok(PassPayload {
-            dropped_terms,
-            ..self.payload("written", written.as_ref())
-        })
+        Ok(distilled)
     }
 
     /// Nothing to send the model. At session end the record (if any) is
@@ -318,15 +381,19 @@ impl Job<'_> {
 
     /// The previous record is kept and the pass stays due, so the next run
     /// retries it.
-    fn failed(&self, code: Code) -> PassPayload {
-        PassPayload {
+    fn failed(&self, code: Code) -> Result<PassPayload, CliError> {
+        self.ctx
+            .store()
+            .update_control(|state| control::fail(state, self.id, self.ctx.now()))?;
+        Ok(PassPayload {
             session: self.id.to_string(),
             result: "failed",
             error_code: Some(code),
             passes: None,
-            dropped_terms: 0,
+            dropped_terms: self.dropped_terms,
+            windows: self.windows,
             gave_up: false,
-        }
+        })
     }
 
     fn payload(&self, result: &'static str, record: Option<&SessionRecord>) -> PassPayload {
@@ -335,7 +402,8 @@ impl Job<'_> {
             result,
             error_code: None,
             passes: record.map(|r| r.passes),
-            dropped_terms: 0,
+            dropped_terms: self.dropped_terms,
+            windows: self.windows,
             gave_up: false,
         }
     }

@@ -265,6 +265,16 @@ fn an_invalid_answer_keeps_the_previous_record_and_the_pass_due() {
         }),
         Err(ModelError::Malformed(String::from("not JSON"))),
     ] {
+        setup
+            .ctx
+            .store()
+            .update_control(|s| {
+                s.sessions
+                    .get_mut(&ON.parse().unwrap())
+                    .unwrap()
+                    .retry_after = None
+            })
+            .unwrap();
         let passes = setup.run(&fake(bad));
         assert_eq!(passes[0].result, "failed");
         assert!(passes[0].error_code.is_some());
@@ -314,4 +324,43 @@ fn session_end_with_nothing_new_marks_the_record_final_without_a_model() {
     assert_eq!(view.record.status, scribe_core::SessionStatus::Final);
     let switch = view.control.unwrap();
     assert!(!switch.due && !switch.final_pass);
+}
+
+#[test]
+fn a_plugin_deadline_between_windows_preserves_the_checkpoint_for_the_next_run() {
+    let setup = Setup::new();
+    setup.write(
+        ON,
+        &(0..41)
+            .map(|n| line("user", &format!("u-{n}"), "Another turn."))
+            .collect::<Vec<_>>(),
+    );
+    setup.switch_on();
+    let models = fake(Ok(answer()));
+    // Expired before entry: the first window may start, no later one may.
+    let limits = crate::commands::RunLimits::new(scribe_core::pass::MAX_PER_RUN)
+        .start_by(std::time::Instant::now());
+    let Output::Pass(report) = run_with(&setup.ctx, |_| &models, limits, &[]).unwrap() else {
+        panic!("a pass report");
+    };
+    assert_eq!(report.remaining, 1);
+    assert_eq!(report.passes[0].windows, 1);
+    assert_eq!(models.asked.borrow().len(), 1);
+    assert!(setup.due());
+    let id = ON.parse().unwrap();
+    assert_eq!(
+        setup
+            .ctx
+            .store()
+            .session(&id)
+            .unwrap()
+            .record
+            .scribed_through
+            .as_deref(),
+        Some("u-39")
+    );
+    let passes = setup.run(&models);
+    assert_eq!(passes[0].windows, 1);
+    assert_eq!(models.asked.borrow()[1].messages[0].uuid, "u-40");
+    assert!(!setup.due());
 }

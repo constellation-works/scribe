@@ -3,7 +3,7 @@ Write the record of each session whose pass is due, or of the sessions named, wi
 Usage: scribe session pass [OPTIONS]
 
 Options:
-      --session <ID>  Pass this session now, whether or not a pass is due (it must be switched on); repeat for several [default: every due session, at most five]
+      --session <ID>  Pass this session now, ignoring retry backoff and whether a pass is due (it must be switched on); repeat for several [default: every due session, at most five]
   -h, --help          Print help
   -V, --version       Print version
 
@@ -12,11 +12,15 @@ Global options:
       --format <FORMAT>  Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
       --json             Shorthand for --format json
 
-Run it by hand, from a shell where claude is on PATH. Processes at most
-five due sessions per run; --json reports what each pass did and how many
-due sessions remain. Calls the configured session model. A failed pass
-stays due: run the command again to retry it. Exits 1 when any pass
-failed, naming each failed session and its error code on stderr.
+The plugin routine ships disabled; once enabled on a host it runs every
+5 minutes. Also run this command by hand where claude is on PATH. Takes
+at most five due sessions per run, processing every new-message window
+(default 40 messages / 15000 characters; [catalog] window_messages and
+window_chars). Each window updates and checkpoints the record. --json
+reports persisted windows per session and how many due sessions remain.
+A failed pass stays due with automatic retry delays of 5, 10, 20, 40,
+then at most 60 minutes. --session retries immediately. Exits 1 when any
+pass failed, naming each failed session and its error code on stderr.
 
 Examples:
   scribe session pass

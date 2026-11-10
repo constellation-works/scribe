@@ -9,8 +9,8 @@
 //!    whole session, not only those since `on_since`), synthetic turns
 //!    (`<task-notification>`, command echoes, `/scribe` itself) dropped and
 //!    pasted blocks set apart from Daniel's own words;
-//! 2. [`window`]: the messages after the record's `scribed_through`, at most
-//!    [`WINDOW_CHARS`] characters, oldest dropped first and counted;
+//! 2. [`window_with_limits`]: the next consecutive messages after the record's
+//!    `scribed_through`, within the configured message and character limits;
 //! 3. [`request`]: the model request, with the previous record and the
 //!    store's existing topics and terms;
 //! 4. [`check`]: the answer's budgets and shape, refused whole when wrong
@@ -32,8 +32,30 @@ use crate::transcript::Message;
 use crate::verbatim;
 use time::OffsetDateTime;
 
-/// The most characters of new messages one pass sends (2_design.md §5.3).
-pub const WINDOW_CHARS: usize = 150_000;
+/// The default characters of message content in one window (2_design.md §5.3).
+pub const WINDOW_CHARS: usize = 15_000;
+
+/// The default number of messages in one window.
+pub const WINDOW_MESSAGES: usize = 40;
+
+/// Bounds on each consecutive model window, configured under `[catalog]`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WindowLimits {
+    /// The most messages in one call.
+    pub messages: std::num::NonZeroUsize,
+    /// The most Unicode characters of message content in one call.
+    pub chars: std::num::NonZeroUsize,
+}
+
+impl Default for WindowLimits {
+    fn default() -> Self {
+        Self {
+            messages: std::num::NonZeroUsize::new(WINDOW_MESSAGES)
+                .unwrap_or(std::num::NonZeroUsize::MIN),
+            chars: std::num::NonZeroUsize::new(WINDOW_CHARS).unwrap_or(std::num::NonZeroUsize::MIN),
+        }
+    }
+}
 
 /// The most sessions one `session pass` run processes (2_design.md §5.2).
 pub const MAX_PER_RUN: usize = 5;
@@ -146,7 +168,9 @@ pub fn user_turns_after(conversation: &[PassMessage], through: Option<&str>) -> 
     u32::try_from(new.iter().filter(|m| m.role == Speaker::User).count()).unwrap_or(u32::MAX)
 }
 
-fn start_after(conversation: &[PassMessage], through: Option<&str>) -> usize {
+/// Index after the persisted cursor, or the start when that cursor is absent.
+#[must_use]
+pub fn start_after(conversation: &[PassMessage], through: Option<&str>) -> usize {
     through
         .and_then(|uuid| conversation.iter().position(|m| m.uuid == uuid))
         .map_or(0, |i| i + 1)
@@ -157,38 +181,81 @@ fn start_after(conversation: &[PassMessage], through: Option<&str>) -> usize {
 pub struct Window {
     /// The messages after the last pass, oldest first.
     pub messages: Vec<PassMessage>,
-    /// How many older new messages were left out to fit.
+    /// Kept for request compatibility; consecutive windows never drop messages.
     pub dropped: usize,
 }
 
 /// The messages after `through` (the record's `scribed_through`; all of
-/// them when it is `None` or no longer in the transcript), at most
-/// `max_chars` characters: the oldest are dropped first, and a single
-/// message longer than the window is cut, the cut marked.
+/// them when it is `None` or no longer in the transcript), oldest first,
+/// with the default message count and at most `max_chars` characters.
 #[must_use]
 pub fn window(conversation: &[PassMessage], through: Option<&str>, max_chars: usize) -> Window {
-    let mut messages: Vec<PassMessage> =
-        conversation[start_after(conversation, through)..].to_vec();
-    let mut total: usize = messages.iter().map(PassMessage::chars).sum();
-    let mut dropped = 0;
-    while total > max_chars && messages.len() > 1 {
-        total -= messages.remove(0).chars();
-        dropped += 1;
-    }
-    if let Some(only) = messages.first_mut().filter(|m| m.chars() > max_chars) {
-        only.pasted.clear();
-        only.text = cut(&only.text, max_chars);
-    }
-    Window { messages, dropped }
+    next_window(conversation, through, WINDOW_MESSAGES, max_chars)
 }
 
-fn cut(text: &str, max: usize) -> String {
-    if text.chars().count() <= max {
-        return text.to_owned();
+/// The next oldest window. No message is skipped; an individually oversized
+/// message is cut with a marker, including that marker in the character bound.
+#[must_use]
+pub fn window_with_limits(
+    conversation: &[PassMessage],
+    through: Option<&str>,
+    limits: WindowLimits,
+) -> Window {
+    next_window(
+        conversation,
+        through,
+        limits.messages.get(),
+        limits.chars.get(),
+    )
+}
+
+fn next_window(
+    conversation: &[PassMessage],
+    through: Option<&str>,
+    max_messages: usize,
+    max_chars: usize,
+) -> Window {
+    let mut messages = Vec::new();
+    let mut total = 0usize;
+    for message in conversation[start_after(conversation, through)..]
+        .iter()
+        .take(max_messages)
+    {
+        let chars = message.chars();
+        if !messages.is_empty() && chars > max_chars.saturating_sub(total) {
+            break;
+        }
+        let mut message = message.clone();
+        if chars > max_chars {
+            // Keep the speaker's own text and pasted blocks distinct, even at a cut.
+            let marker: String = CUT_MARK.chars().take(max_chars).collect();
+            let mut left = max_chars.saturating_sub(marker.chars().count());
+            message.text = message.text.chars().take(left).collect();
+            left = left.saturating_sub(message.text.chars().count());
+            message.pasted = message
+                .pasted
+                .iter()
+                .filter_map(|p| {
+                    if left == 0 {
+                        return None;
+                    }
+                    let text: String = p.chars().take(left).collect();
+                    left = left.saturating_sub(text.chars().count());
+                    Some(text)
+                })
+                .collect();
+            match message.pasted.last_mut() {
+                Some(pasted) => pasted.push_str(&marker),
+                None => message.text.push_str(&marker),
+            }
+        }
+        total = total.saturating_add(message.chars());
+        messages.push(message);
     }
-    let mut out: String = text.chars().take(max).collect();
-    out.push_str(CUT_MARK);
-    out
+    Window {
+        messages,
+        dropped: 0,
+    }
 }
 
 /// The session-model request for one pass.
@@ -383,9 +450,7 @@ fn section(name: &'static str, text: &str, max: usize) -> Result<String, Invalid
     Ok(text)
 }
 
-/// The term, if its `said` is a verbatim span of one of Daniel's own turns:
-/// the one the model named when it holds the span, else the first that
-/// does. Its `message` is that turn's uuid.
+/// The term, only if its named message is Daniel's own turn and holds `said`.
 fn verified_term(
     term: &str,
     said: &str,
@@ -401,8 +466,7 @@ fn verified_term(
     let turn = conversation
         .iter()
         .filter(holds)
-        .find(|m| m.uuid == named)
-        .or_else(|| conversation.iter().find(holds))?;
+        .find(|m| m.uuid == named)?;
     Some(Term {
         term,
         said: said.to_owned(),

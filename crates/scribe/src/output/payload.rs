@@ -439,6 +439,8 @@ pub(crate) struct PassPayload {
     pub(crate) passes: Option<u32>,
     /// Terms the model offered that were not verbatim from Daniel's turns.
     pub(crate) dropped_terms: usize,
+    /// Successfully persisted model windows for this session in this run.
+    pub(crate) windows: usize,
     /// Always `false`: a failed pass stays due and is never given up. Kept
     /// because the `--json` shape is a contract.
     pub(crate) gave_up: bool,

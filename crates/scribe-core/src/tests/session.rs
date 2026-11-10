@@ -21,6 +21,8 @@ fn on(due: bool) -> SessionControl {
         since: Some(T0),
         due,
         final_pass: false,
+        consecutive_failures: 0,
+        retry_after: None,
     }
 }
 

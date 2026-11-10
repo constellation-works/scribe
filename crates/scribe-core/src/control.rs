@@ -109,6 +109,8 @@ pub fn switch(
                         since: Some(now),
                         due: true,
                         final_pass: false,
+                        consecutive_failures: 0,
+                        retry_after: None,
                     },
                 );
                 Change::SwitchedOn
@@ -119,6 +121,8 @@ pub fn switch(
                 control.on = false;
                 control.due = false;
                 control.final_pass = false;
+                control.consecutive_failures = 0;
+                control.retry_after = None;
                 Change::SwitchedOff
             }
             Some(_) | None => Change::AlreadyOff,
@@ -185,7 +189,7 @@ pub fn mark_final(state: &mut ControlState, session: &SessionId) -> bool {
 }
 
 /// A pass for `session` is settled: it ran (`ran_final` says whether it was
-/// the final one), or it failed too often to retry. `due` is cleared, unless
+/// the final one). `due` is cleared, unless
 /// the session ended while a non-final pass was running, in which case the
 /// final pass is still owed. Returns whether the state changed.
 pub fn settle(state: &mut ControlState, session: &SessionId, ran_final: bool) -> bool {
@@ -193,11 +197,25 @@ pub fn settle(state: &mut ControlState, session: &SessionId, ran_final: bool) ->
         return false;
     };
     let before = control.clone();
+    control.consecutive_failures = 0;
+    control.retry_after = None;
     if ran_final || !control.final_pass {
         control.due = false;
         control.final_pass = false;
     }
     *control != before
+}
+
+/// A failed pass stays due, with automatic retries after 5, 10, 20, 40,
+/// then at most 60 minutes. Partial progress does not reset this counter.
+pub fn fail(state: &mut ControlState, session: &SessionId, now: OffsetDateTime) {
+    if let Some(control) = state.sessions.get_mut(session).filter(|c| c.on) {
+        control.due = true;
+        control.consecutive_failures = control.consecutive_failures.saturating_add(1);
+        let shift = control.consecutive_failures.saturating_sub(1).min(4);
+        let minutes = (5i64 << shift).min(60);
+        control.retry_after = Some(now.saturating_add(time::Duration::minutes(minutes)));
+    }
 }
 
 /// The sessions a pass should run for, oldest id first: on and due. A
