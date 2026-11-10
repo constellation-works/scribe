@@ -264,17 +264,24 @@ pub fn bless(recording: &Path) {
 
 /// A keyed substitution of letters and digits. ASCII letters map to ASCII
 /// letters of the same case and digits to digits, by a permutation the key
-/// fixes; another alphabetic character maps to a letter of the same UTF-8
-/// width (2 bytes: Cyrillic `а`-`я`; 3 bytes: a CJK ideograph). Everything
-/// else, whitespace and punctuation included, is kept, so lengths in bytes
-/// and characters, word and sentence boundaries and any span relation
-/// between two texts survive.
+/// fixes; non-ASCII alphabetic characters map to letters of the same UTF-8
+/// width and, when the source has case, the same case. Everything else,
+/// whitespace and punctuation included, is kept, so lengths in bytes and
+/// characters, word and sentence boundaries and any span relation between
+/// two texts survive.
 #[derive(Clone, Debug)]
 pub struct Key {
     lower: [u8; 26],
     digits: [u8; 10],
     seed: u64,
 }
+
+const TITLECASE_2_BYTE: &[u32] = &[0x01C5, 0x01C8, 0x01CB, 0x01F2];
+const TITLECASE_3_BYTE: &[u32] = &[
+    0x1F88, 0x1F89, 0x1F8A, 0x1F8B, 0x1F8C, 0x1F8D, 0x1F8E, 0x1F8F, 0x1F98, 0x1F99, 0x1F9A, 0x1F9B,
+    0x1F9C, 0x1F9D, 0x1F9E, 0x1F9F, 0x1FA8, 0x1FA9, 0x1FAA, 0x1FAB, 0x1FAC, 0x1FAD, 0x1FAE, 0x1FAF,
+    0x1FBC, 0x1FCC, 0x1FFC,
+];
 
 impl Key {
     pub fn new(key: &str) -> Self {
@@ -319,9 +326,26 @@ impl Key {
             let pick = |base: u32, span: u64| {
                 char::from_u32(base + u32::try_from(h % span).unwrap_or(0)).unwrap_or(c)
             };
+            let pick_from = |chars: &[u32]| {
+                let span = u64::try_from(chars.len()).unwrap_or(1);
+                let index = usize::try_from(h % span).unwrap_or(0);
+                char::from_u32(chars[index]).unwrap_or(c)
+            };
+            let is_titlecase = !c.is_uppercase()
+                && !c.is_lowercase()
+                && c.to_uppercase().next() != c.to_lowercase().next();
             match c.len_utf8() {
-                2 => pick(0x0430, 32),
-                3 => pick(0x4E00, 0x5000),
+                2 if is_titlecase => pick_from(TITLECASE_2_BYTE),
+                2 if c.is_uppercase() => pick(0x0410, 32),
+                2 if c.is_lowercase() => pick(0x0430, 32),
+                2 => pick(0x05D0, 27), // Hebrew letters have no case.
+                3 if is_titlecase => pick_from(TITLECASE_3_BYTE),
+                3 if c.is_uppercase() => pick(0x1C90, 43), // Georgian Mtavruli.
+                3 if c.is_lowercase() => pick(0x10D0, 43), // Georgian Mkhedruli.
+                3 => pick(0x4E00, 0x5000),                 // CJK ideographs have no case.
+                4 if c.is_uppercase() => pick(0x10400, 40), // Deseret capitals.
+                4 if c.is_lowercase() => pick(0x10428, 40), // Deseret small letters.
+                4 => pick(0x20000, 0x5000),                // CJK Extension B has no case.
                 _ => c,
             }
         } else {
@@ -716,6 +740,27 @@ fn redact_file(key: &Key, name: &str, src: &str) -> String {
 pub fn redact_recording(from: &Path, to: &Path, key: &Key) -> Result<(), String> {
     if to.exists() {
         return Err(format!("{} already exists", to.display()));
+    }
+    let source = from
+        .canonicalize()
+        .map_err(|e| format!("{}: {e}", from.display()))?;
+    let parent = to
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let parent = parent
+        .canonicalize()
+        .map_err(|e| format!("{}: {e}", parent.display()))?;
+    let name = to
+        .file_name()
+        .ok_or_else(|| format!("{} has no final path component", to.display()))?;
+    let destination = parent.join(name);
+    if destination.starts_with(&source) {
+        return Err(format!(
+            "output {} must be outside source {}",
+            destination.display(),
+            source.display()
+        ));
     }
     let meta = Meta::read(from)?;
     let calls = recorded_calls(from);

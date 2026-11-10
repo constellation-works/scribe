@@ -84,8 +84,9 @@ result. Every step runs on temp roots; nothing reads or writes `~/.scribe`.
 1. Every free text in the transcript, the seed store and the model outputs
    is rewritten by a substitution `<key>` fixes: an ASCII letter becomes an
    ASCII letter of the same case, a digit a digit, by one permutation each;
-   any other alphabetic character becomes a letter of the same UTF-8 width
-   (Cyrillic for two bytes, a CJK ideograph for three). The project
+   a cased non-ASCII letter becomes a letter of the same case and UTF-8
+   width; a letter from a script without case becomes a same-width letter
+   from another script. The project
    directory name is mapped too.
 2. The replay of the redacted recording, answering in order without
    comparing, gives the prompts scribe sends for it; they become the new
@@ -100,7 +101,7 @@ Any failed check stops the tool with the call, line and character.
 
 **Preserved:** every file's name and length in bytes and characters;
 whitespace, punctuation, line breaks and Markdown bullet and heading
-structure; letter case (ASCII); JSON keys, numbers, literals and escape
+structure; letter case (ASCII and cased non-ASCII); JSON keys, numbers, literals and escape
 sequences; string values under id, enum and reference keys (`uuid`,
 `parentUuid`, `sessionId`, `timestamp`, `type`, `role`, `id`, `name`,
 `model`, `starts_at`, `message`, `related`, `status`, `state`, `kind`,
@@ -125,7 +126,7 @@ sentence cuts and the repairs they cause come out the same.
   `related` references (`task:<id>`, `repo:<slug>`), tag names, git branch
   names and the word `scribe` in paths.
 - Escaped characters in JSON (`é`) and in YAML double-quoted values
-  are kept as they are; non-ASCII letters lose their case.
+  are kept as they are.
 - A mapped value may read as a YAML or TOML literal (`true`, a number);
   the replay then fails loudly rather than producing a wrong fixture.
 - More than 200 store topics or terms: scribe sends the first 200 in

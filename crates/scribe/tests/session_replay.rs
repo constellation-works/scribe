@@ -221,6 +221,26 @@ fn redact_a_recording() {
     }
     let from = synthetic();
     let key = Key::new("replay-test-key");
+
+    // The substitution preserves case and UTF-8 width for non-ASCII text,
+    // including scripts whose characters use three or four bytes.
+    let sample = "ÉéЯяᲐა𐐀𐐨ǅᾈ中";
+    let mapped = key.text(sample, false);
+    assert_eq!(mapped.len(), sample.len());
+    for (before, after) in sample.chars().zip(mapped.chars()) {
+        let before_upper: String = before.to_uppercase().collect();
+        let before_lower: String = before.to_lowercase().collect();
+        let after_upper: String = after.to_uppercase().collect();
+        let after_lower: String = after.to_lowercase().collect();
+        if before_upper != before_lower {
+            assert_ne!(before, after);
+            assert_ne!(after_upper, after_lower);
+        }
+        assert_eq!(before.len_utf8(), after.len_utf8());
+        assert_eq!(before.is_uppercase(), after.is_uppercase());
+        assert_eq!(before.is_lowercase(), after.is_lowercase());
+    }
+
     let to = fx.elsewhere("redacted");
     replay::redact_recording(&from, &to, &key).unwrap();
 
@@ -306,4 +326,17 @@ fn redact_a_recording() {
     // The redacted recording replays strictly with the same outcome.
     let run = replay::rebuild(&to, Mode::Strict);
     replay::assert_expected(&to, &run);
+}
+
+#[test]
+fn redaction_refuses_a_destination_inside_its_source() {
+    let fx = Fixture::new();
+    let from = fx.elsewhere("recording");
+    copy_private(&synthetic(), &from);
+    // A long component keeps an accidental recursive copy bounded.
+    let to = from.join("n".repeat(180));
+    let result = replay::redact_recording(&from, &to, &Key::new("nested-path"));
+    let error = result.expect_err("a nested output must be refused");
+    assert!(error.contains("must be outside source"), "{error}");
+    assert!(!to.exists(), "refusal must happen before creating output");
 }
