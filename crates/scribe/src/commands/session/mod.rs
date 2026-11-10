@@ -181,22 +181,20 @@ impl SessionCommand {
     pub(super) fn subject(&self, ctx: &Context) -> AuditSubject {
         match self {
             Self::List(_) | Self::Show(_) | Self::Pass(_) => AuditSubject::default(),
-            // A prefix is resolved before the line is written; a miss keeps the typed id.
+            // A prefix is resolved before the line is written; an id that
+            // resolves to no record leaves the target null, never the typed id.
             Self::Rebuild(args) => AuditSubject {
-                target: Some(format!(
-                    "session:{}",
-                    ctx.store()
-                        .resolve_session(&args.id)
-                        .unwrap_or_else(|_| args.id.clone())
-                )),
+                target: ctx
+                    .store()
+                    .resolve_session(&args.id)
+                    .ok()
+                    .map(|id| format!("session:{id}")),
                 author: Some(args.author.as_str().to_owned()),
             },
             Self::Catalog(args) => AuditSubject {
-                target: Some(format!(
-                    "session:{}",
-                    crate::commands::transcript::resolve_transcript(ctx, &args.id)
-                        .unwrap_or_else(|_| args.id.clone())
-                )),
+                target: crate::commands::transcript::resolve_transcript(ctx, &args.id)
+                    .ok()
+                    .map(|id| format!("session:{id}")),
                 author: Some(args.author.as_str().to_owned()),
             },
             Self::Deactivate(args) => activity::subject(ctx, &args.id, &args.author),

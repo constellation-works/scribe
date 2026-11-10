@@ -683,3 +683,29 @@ fn refused_writes_audit_the_target_and_author_but_never_the_arguments() {
     assert!(!audit.contains("obsolete reason text"));
     assert!(!audit.contains("review needed"));
 }
+
+#[test]
+fn a_session_id_that_resolves_to_no_record_leaves_the_audit_target_null() {
+    // A refused rebuild names no record it could find: its line carries the
+    // author but not the typed id, which resolved to nothing (the decision in
+    // 4_decisions.md: an unresolved id leaves `target` null).
+    let fx = Fixture::new();
+    fx.seed();
+    let out = fx.run(&[
+        "session",
+        "rebuild",
+        "s-missing-1",
+        "--author",
+        "opus",
+        "--confirm",
+        "--json",
+    ]);
+    assert!(!out.status.success());
+    let audit = std::fs::read_to_string(fx.root().join("audit.jsonl")).unwrap();
+    let line: serde_json::Value = serde_json::from_str(audit.lines().last().unwrap()).unwrap();
+    assert_eq!(line["command"], "session rebuild");
+    assert_eq!(line["status"], "failure");
+    assert_eq!(line["target"], serde_json::Value::Null);
+    assert_eq!(line["author"], "opus");
+    assert!(!audit.contains("s-missing-1"));
+}
