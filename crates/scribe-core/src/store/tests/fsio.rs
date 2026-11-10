@@ -85,33 +85,61 @@ mod private_state {
     }
 
     #[test]
-    fn a_file_writable_by_others_is_refused_with_its_chmod_fix() {
+    fn a_lock_open_to_others_is_refused_before_it_is_taken() {
+        // Writes take the store lock, but no load reads it, so taking the lock
+        // checks its mode: a loose lock another user can reach is refused.
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("data.json");
-        fs::write(&path, b"{}").unwrap();
-        fs::set_permissions(&path, Permissions::from_mode(0o664)).unwrap();
-        let err = inspect_file(&path).unwrap_err();
-        let Error::Permissions { mode, fix, .. } = err else {
-            panic!("expected Permissions, got {err:?}");
-        };
-        assert_eq!((mode, fix), (0o664, "600"));
+        let path = dir.path().join(".lock");
+        fs::write(&path, b"").unwrap();
         fs::set_permissions(&path, Permissions::from_mode(0o644)).unwrap();
+        let err = LockGuard::acquire(&path, "writer", Duration::from_secs(1)).unwrap_err();
         assert!(
-            inspect_file(&path).unwrap(),
-            "readable by others is allowed"
+            matches!(
+                err,
+                Error::Permissions {
+                    mode: 0o644,
+                    fix: "600",
+                    ..
+                }
+            ),
+            "got {err:?}"
         );
+        fs::set_permissions(&path, Permissions::from_mode(0o600)).unwrap();
+        assert!(LockGuard::acquire(&path, "writer", Duration::from_secs(1)).is_ok());
     }
 
     #[test]
-    fn a_directory_writable_by_others_is_refused() {
+    fn a_file_open_to_others_is_refused_with_its_chmod_fix() {
+        // Owner-only: a group or other read bit is refused as well as a
+        // write bit, so another local user cannot read the record.
         let dir = tempfile::tempdir().unwrap();
-        fs::set_permissions(dir.path(), Permissions::from_mode(0o777)).unwrap();
-        let err = inspect_dir(dir.path()).unwrap_err();
+        let path = dir.path().join("data.json");
+        fs::write(&path, b"{}").unwrap();
+        for loose in [0o664, 0o644, 0o640] {
+            fs::set_permissions(&path, Permissions::from_mode(loose)).unwrap();
+            let err = inspect_file(&path).unwrap_err();
+            let Error::Permissions { mode, fix, .. } = err else {
+                panic!("expected Permissions for {loose:o}, got {err:?}");
+            };
+            assert_eq!((mode, fix), (loose, "600"));
+        }
+        fs::set_permissions(&path, Permissions::from_mode(0o600)).unwrap();
+        assert!(inspect_file(&path).unwrap(), "owner-only is accepted");
+    }
+
+    #[test]
+    fn a_directory_open_to_others_is_refused_with_its_chmod_fix() {
+        let dir = tempfile::tempdir().unwrap();
+        for loose in [0o777, 0o755, 0o750] {
+            fs::set_permissions(dir.path(), Permissions::from_mode(loose)).unwrap();
+            let err = inspect_dir(dir.path()).unwrap_err();
+            assert!(
+                matches!(err, Error::Permissions { mode, fix: "700", .. } if mode == loose),
+                "{loose:o}: got {err:?}"
+            );
+        }
         fs::set_permissions(dir.path(), Permissions::from_mode(0o700)).unwrap();
-        assert!(
-            matches!(err, Error::Permissions { fix: "700", .. }),
-            "got {err:?}"
-        );
+        assert!(inspect_dir(dir.path()).unwrap(), "owner-only is accepted");
     }
 
     #[test]

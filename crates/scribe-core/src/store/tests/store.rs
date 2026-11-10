@@ -324,6 +324,34 @@ mod capture {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_root_or_config_open_to_others_is_refused_on_load() {
+        // Owner-only (STD-05 R9): the config's group and other read bits are
+        // refused as well as its write bits, and so is a loose root.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = private_tempdir();
+        let config = dir.path().join("config.toml");
+        fs::write(&config, "").unwrap();
+        for loose in [0o644, 0o640] {
+            fs::set_permissions(&config, fs::Permissions::from_mode(loose)).unwrap();
+            let err = Store::open(dir.path()).config().unwrap_err();
+            assert!(
+                matches!(err, Error::Permissions { mode, fix: "600", .. } if mode == loose),
+                "{loose:o}: {err:?}"
+            );
+        }
+        fs::set_permissions(&config, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(Store::open(dir.path()).config().is_ok());
+
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
+        let err = Store::open(dir.path()).config().unwrap_err();
+        assert!(
+            matches!(err, Error::Permissions { fix: "700", .. }),
+            "{err:?}"
+        );
+    }
+
     #[test]
     fn cites_of_the_session_are_filled_once_and_others_are_left_alone() {
         let dir = private_tempdir();

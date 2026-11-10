@@ -73,13 +73,16 @@ Real recordings hold Daniel's words; whether a redacted copy is committed
 is Daniel's call. Redacting one is one command:
 
 ```sh
-scripts/redact-recording.sh <recording-dir> <output-dir> <key>
+scripts/redact-recording.sh <recording-dir> <output-dir> < key-file
 ```
 
-It runs the `redact_a_recording` test with `SCRIBE_REDACT_FROM`,
-`SCRIBE_REDACT_TO` and `SCRIBE_REDACT_KEY` set. Without them that test
-redacts the synthetic recording into a temp directory and checks the
-result. Every step runs on temp roots; nothing reads or writes `~/.scribe`.
+The key is one line on stdin: a terminal gets a silent prompt, and a file
+or pipe supplies it otherwise. It is never an argument, because `ps` lists
+arguments for every user. The script runs the `redact_a_recording` test with
+`SCRIBE_REDACT_FROM` and `SCRIBE_REDACT_TO` set, and the key on that test's
+stdin. Without them that test redacts the synthetic recording into a temp
+directory and checks the result. Every step runs on temp roots; nothing
+reads or writes `~/.scribe`.
 
 1. Every free text in the transcript, the seed store and the model outputs
    is rewritten by a substitution `<key>` fixes: an ASCII letter becomes an

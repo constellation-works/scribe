@@ -42,7 +42,8 @@ fn list_and_show_read_a_read_only_root_and_a_missing_catalog_is_not_found() {
     .unwrap();
 
     let before = support::snapshot(&root);
-    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o555)).unwrap();
+    // Owner read-only: the store refuses group and other bits (STD-05 R9).
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o500)).unwrap();
     let listed = fx.ok(&[
         "transcript",
         "list",

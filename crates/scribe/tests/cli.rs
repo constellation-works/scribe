@@ -655,6 +655,43 @@ mod unix {
     }
 
     #[test]
+    fn a_store_readable_by_others_is_refused_with_a_chmod_fix() {
+        // STD-05 R8, R9: owner-only, so group and other read bits are refused
+        // too. Each refusal names the chmod that fixes it.
+        let fx = Fixture::new();
+        fx.seed();
+        let root = fx.root();
+        for (path, loose, fix) in [
+            (root.clone(), 0o755, "chmod 700"),
+            (root.join("entries/decisions"), 0o750, "chmod 700"),
+            (
+                root.join("entries/decisions/decisions-1.md"),
+                0o644,
+                "chmod 600",
+            ),
+            (root.join("config.toml"), 0o640, "chmod 600"),
+        ] {
+            chmod(&path, loose);
+            let out = if path.ends_with("config.toml") {
+                fx.run(&["tag", "list", "--json"])
+            } else {
+                fx.run(&["entry", "list"])
+            };
+            chmod(&path, if path.is_dir() { 0o700 } else { 0o600 });
+            assert_eq!(out.status.code(), Some(1), "{}", path.display());
+            let stderr = text(&out.stderr);
+            assert!(
+                stderr.contains(fix) && stderr.contains(path.to_str().unwrap()),
+                "{stderr}"
+            );
+        }
+        chmod(&root, 0o755);
+        let out = fx.run(&["tag", "list", "--json"]);
+        chmod(&root, 0o700);
+        assert_eq!(super::json(&out.stderr)["code"], "store_permissions");
+    }
+
+    #[test]
     fn a_linked_record_or_directory_is_refused_and_its_target_left_alone() {
         // STD-05 R7, R9.
         let fx = Fixture::new();

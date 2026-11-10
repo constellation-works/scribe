@@ -330,7 +330,8 @@ fn list_writes_nothing_on_a_read_only_root() {
     );
     let root = setup.ctx.store().root();
     let before = names(root);
-    let _guard = ModeGuard::set(root, 0o555);
+    // Owner read-only: the store refuses group and other bits (STD-05 R9).
+    let _guard = ModeGuard::set(root, 0o500);
     let found = rows(setup.list(args(day(2026, 10, 1))));
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].project, "orbit");
