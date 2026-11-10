@@ -176,11 +176,14 @@ fn piped_output_is_one_undecorated_line_per_record() {
             stdout.lines().all(|l| l.split('\t').count() == fields),
             "{args:?}: {stdout}"
         );
-        assert!(
-            out.stderr.is_empty(),
-            "{args:?} stderr: {}",
-            text(&out.stderr)
-        );
+        // The one stderr line allowed is the hint that the fixture's inactive
+        // session is hidden (R12: hints go to stderr).
+        let hint = if args[0] == "session" {
+            "1 inactive session(s) also match and are hidden; --include-inactive lists them\n"
+        } else {
+            ""
+        };
+        assert_eq!(text(&out.stderr), hint, "{args:?}");
     }
 }
 
@@ -465,7 +468,14 @@ fn every_listed_id_is_accepted_back_by_show() {
         let doc = json(&fx.ok(&[noun, "list", "--json"]).stdout);
         for record in doc[key].as_array().unwrap() {
             let id = record["id"].as_str().unwrap();
-            assert_eq!(&json(&fx.ok(&[noun, "show", id, "--json"]).stdout), record);
+            let mut shown = json(&fx.ok(&[noun, "show", id, "--json"]).stdout);
+            if noun == "session" {
+                // A list carries no log; show adds it, and only it.
+                let log = shown.as_object_mut().unwrap().remove("log");
+                assert!(log.is_some_and(|l| l.is_array()), "{id}");
+                assert!(record.get("log").is_none(), "{id}");
+            }
+            assert_eq!(&shown, record);
         }
         let piped = text(&fx.ok(&[noun, "list"]).stdout);
         for line in piped.lines() {
@@ -735,4 +745,153 @@ mod unix {
         }
         assert_eq!(after, before);
     }
+}
+
+const INACTIVE_SESSION: &str = "3d5e7f90-1a2b-4c3d-8e9f-0a1b2c3d4e05";
+
+#[test]
+fn show_prints_the_log_contents_and_one_segment_by_number_or_cite() {
+    let fx = Fixture::new();
+    fx.seed();
+    let table = |args: &[&str]| text(&fx.ok(&[args, &["--format", "table"]].concat()).stdout);
+
+    let header = table(&["session", "show", OPEN_SESSION]);
+    assert!(header.contains("## Log\n  1  sealed"), "{header}");
+    assert!(header.contains("Telling the release crew"), "{header}");
+    assert!(
+        !header.contains("Drafted the note"),
+        "no text without --log"
+    );
+    assert!(!header.contains("## Outcome"), "{header}");
+
+    let full = table(&["session", "show", OPEN_SESSION, "--log"]);
+    assert!(
+        full.contains("### 1. Merge policy for agent PRs\nSquash-merge"),
+        "{full}"
+    );
+    assert!(
+        full.contains("### 2. Telling the release crew\nDrafted the note"),
+        "{full}"
+    );
+
+    let cite = format!("session:{OPEN_SESSION}#2");
+    let suffix = format!("{OPEN_SESSION}#2");
+    let by_flag = json(
+        &fx.ok(&["session", "show", OPEN_SESSION, "--segment", "2", "--json"])
+            .stdout,
+    );
+    for id in [&cite, &suffix] {
+        let doc = json(&fx.ok(&["session", "show", id, "--json"]).stdout);
+        assert_eq!(doc, by_flag, "{id}");
+    }
+    let log = by_flag["log"].as_array().unwrap();
+    assert_eq!(log.len(), 1);
+    assert_eq!(log[0]["n"], 2);
+    assert_eq!(log[0]["state"], "open");
+    assert!(
+        log[0]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("Drafted the note")
+    );
+    assert_eq!(by_flag["outcome"], "", "kept in the payload, empty");
+    let one = table(&["session", "show", &cite]);
+    assert!(one.contains("### 2. Telling the release crew"), "{one}");
+    assert!(!one.contains("### 1."), "{one}");
+
+    let all = json(&fx.ok(&["session", "show", OPEN_SESSION, "--json"]).stdout);
+    assert_eq!(all["log"].as_array().map(Vec::len), Some(2));
+}
+
+#[test]
+fn an_unknown_or_contradictory_segment_is_refused() {
+    let fx = Fixture::new();
+    fx.seed();
+    let missing = format!("session:{OPEN_SESSION}#3");
+    for args in [
+        &["session", "show", OPEN_SESSION, "--segment", "3", "--json"][..],
+        &["session", "show", &missing, "--json"][..],
+    ] {
+        let out = fx.run(args);
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        assert_eq!(json(&out.stderr)["code"], "segment_not_found", "{args:?}");
+        assert!(out.stdout.is_empty());
+    }
+    let both = format!("{OPEN_SESSION}#1");
+    for args in [
+        &["session", "show", &both, "--segment", "2", "--json"][..],
+        &["session", "show", "session:x#0", "--json"][..],
+    ] {
+        let out = fx.run(args);
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        assert_eq!(json(&out.stderr)["code"], "usage_error", "{args:?}");
+    }
+}
+
+#[test]
+fn an_inactive_session_is_listed_only_on_request_and_shown_by_id() {
+    let fx = Fixture::new();
+    fx.seed();
+    let ids = |doc: &serde_json::Value| -> Vec<String> {
+        doc["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["id"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let out = fx.ok(&["session", "list", "--json"]);
+    let shown = json(&out.stdout);
+    assert!(!ids(&shown).contains(&INACTIVE_SESSION.to_owned()));
+    assert_eq!(shown["total"], 2);
+    assert!(text(&out.stderr).contains("--include-inactive"));
+
+    let out = fx.ok(&["session", "list", "--include-inactive", "--json"]);
+    let all = json(&out.stdout);
+    assert!(ids(&all).contains(&INACTIVE_SESSION.to_owned()));
+    assert_eq!(all["total"], 3);
+    assert!(out.stderr.is_empty());
+
+    let doc = json(
+        &fx.ok(&["session", "show", INACTIVE_SESSION, "--json"])
+            .stdout,
+    );
+    assert_eq!(doc["active"], false);
+    assert_eq!(doc["active_change"]["route"], "removed");
+    assert_eq!(doc["active_change"]["by"]["kind"], "scribe");
+}
+
+#[test]
+fn a_format_three_store_reads_and_is_never_rewritten_by_a_read() {
+    // STD-03 R10: an older record upgrades in memory; reads leave it alone.
+    let fx = Fixture::new();
+    fx.seed();
+    let path = fx
+        .root()
+        .join("sessions/2026/10/0f8e7a52-3c1d-4b6e-9a2f-5d4c3b2a1e01.md");
+    let before = std::fs::read(&path).unwrap();
+    let doc = json(
+        &fx.ok(&[
+            "session",
+            "show",
+            "0f8e7a52-3c1d-4b6e-9a2f-5d4c3b2a1e01",
+            "--json",
+        ])
+        .stdout,
+    );
+    assert_eq!(doc["active"], true);
+    let log = doc["log"].as_array().unwrap();
+    assert_eq!(log.len(), 1);
+    assert_eq!(log[0]["origin"], "upgrade");
+    assert_eq!(log[0]["state"], "sealed");
+    assert!(
+        log[0]["text"]
+            .as_str()
+            .unwrap()
+            .ends_with("control and proposals stay JSON."),
+        "the old outcome is kept in the segment"
+    );
+    let entry = json(&fx.ok(&["entry", "show", "decisions-1", "--json"]).stdout);
+    assert_eq!(entry["author"]["kind"], "daniel");
+    assert_eq!(std::fs::read(&path).unwrap(), before);
 }

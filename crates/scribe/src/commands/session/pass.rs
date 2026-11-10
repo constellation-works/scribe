@@ -312,6 +312,7 @@ impl Job<'_> {
             let Some(through) = window.messages.last().map(|m| m.uuid.clone()) else {
                 return self.nothing_new(previous.as_ref(), false);
             };
+            let first_message = window.messages.first().map(|m| m.uuid.clone());
             if self.windows > 0 && !limits.may_continue() {
                 self.incomplete = true;
                 return Ok(self.payload("written", previous.as_ref()));
@@ -338,6 +339,13 @@ impl Job<'_> {
             let dropped = distilled.dropped_terms;
             let cwd = transcript::cwd(&bytes).unwrap_or_default();
             let now = self.ctx.now();
+            // The window's first and last messages' times bound the segment.
+            let sent = |uuid: Option<&str>| {
+                uuid.and_then(|u| messages.iter().find(|m| m.uuid == u))
+                    .map_or(now, |m| m.at)
+            };
+            let from = sent(first_message.as_deref());
+            let to = sent(Some(&through));
             let meta = pass::PassMeta {
                 id: self.id.clone(),
                 project: if cwd.is_empty() {
@@ -351,6 +359,9 @@ impl Job<'_> {
                 started: messages.first().map_or(now, |m| m.at),
                 on_since: self.switch.since.unwrap_or(now),
                 through: Some(through),
+                first_message,
+                from,
+                to,
                 now,
                 final_pass: final_pass && last,
             };

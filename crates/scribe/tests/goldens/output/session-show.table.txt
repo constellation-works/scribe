@@ -1,6 +1,10 @@
 id          7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02
 title       Merge policy for agent PRs
 status      open
+active      yes
+keep active no
+change      -
+cataloged   -
 on          yes
 due         yes
 project     constellation-works/scribe
@@ -25,9 +29,10 @@ Discussed how agent PRs are merged and recorded the decision.
 ## Goals
 Agree a merge policy.
 
-## Outcome
-Squash-merge agent PRs; releases keep merge commits.
-
 ## Next
 - update the contributing guide
 - tell the release crew
+
+## Log
+  1  sealed  2026-11-02T18:55:00Z  2026-11-02T19:20:00Z  Merge policy for agent PRs
+  2  open    2026-11-02T19:21:00Z  2026-11-02T19:40:00Z  Telling the release crew

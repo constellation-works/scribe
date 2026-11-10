@@ -49,10 +49,48 @@
         "next_open": 2,
         "summary": "Discussed how agent PRs are merged and recorded the decision.",
         "goals": "Agree a merge policy.",
-        "outcome": "Squash-merge agent PRs; releases keep merge commits.",
+        "outcome": "",
         "next": "- update the contributing guide\n- tell the release crew",
         "on": true,
-        "due": true
+        "due": true,
+        "active": true,
+        "keep_active": false,
+        "active_change": null,
+        "cataloged_by": null,
+        "log": [
+          {
+            "n": 1,
+            "heading": "Merge policy for agent PRs",
+            "first_message": "9a1b2c3d-0000-4000-8000-000000000001",
+            "last_message": "9a1b2c3d-0000-4000-8000-000000000150",
+            "from": "2026-11-02T18:55:00Z",
+            "to": "2026-11-02T19:20:00Z",
+            "state": "sealed",
+            "windows": 1,
+            "origin": "pass",
+            "topics": [
+              "merge-policy"
+            ],
+            "related": [],
+            "text": "Squash-merge agent PRs; releases keep merge commits."
+          },
+          {
+            "n": 2,
+            "heading": "Telling the release crew",
+            "first_message": "9a1b2c3d-0000-4000-8000-000000000151",
+            "last_message": "9a1b2c3d-0000-4000-8000-0000000001aa",
+            "from": "2026-11-02T19:21:00Z",
+            "to": "2026-11-02T19:40:00Z",
+            "state": "open",
+            "windows": 1,
+            "origin": "pass",
+            "topics": [
+              "release"
+            ],
+            "related": [],
+            "text": "Drafted the note to the release crew about the new merge policy."
+          }
+        ]
       },
       "task": null,
       "terms": []

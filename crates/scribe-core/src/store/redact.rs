@@ -18,7 +18,7 @@
 use crate::config::Config;
 use crate::entry::Entry;
 use crate::proposal::Proposal;
-use crate::session::SessionRecord;
+use crate::session::{SEGMENT_HEADING_CHARS, SessionRecord};
 
 /// Every free-text field the redactor covers, as `<record>.<field>`. A unit
 /// test pins this list against the fields [`Redactor`] actually masks; a new
@@ -29,10 +29,12 @@ pub const REDACTED_FIELDS: &[&str] = &[
     "session.title",
     "session.summary",
     "session.goals",
-    "session.outcome",
     "session.next",
     "session.terms.term",
     "session.terms.said",
+    "session.log.heading",
+    "session.log.text",
+    "session.active_change.reason",
     "proposal.reason",
     "proposal.quotes.text",
 ];
@@ -106,9 +108,22 @@ impl Redactor {
         self.mask_all(entry_fields(entry));
     }
 
-    /// Mask a session record's free text.
+    /// Mask a session record's free text. A segment heading a marker made
+    /// longer than [`SEGMENT_HEADING_CHARS`] is cut back to it, so the
+    /// record still reads back.
     pub fn session(&self, record: &mut SessionRecord) {
         self.mask_all(session_fields(record));
+        for segment in &mut record.log {
+            if segment.heading.chars().count() > SEGMENT_HEADING_CHARS {
+                segment.heading = segment
+                    .heading
+                    .chars()
+                    .take(SEGMENT_HEADING_CHARS)
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned();
+            }
+        }
     }
 
     /// Mask a proposal's free text.
@@ -274,18 +289,25 @@ pub(super) fn entry_fields(entry: &mut Entry) -> Vec<(&'static str, &mut String)
     ]
 }
 
-/// The free-text fields of a session record; each term is two fields.
+/// The free-text fields of a session record; each term and each segment
+/// is two fields.
 pub(super) fn session_fields(record: &mut SessionRecord) -> Vec<(&'static str, &mut String)> {
     let mut fields = vec![
         ("session.title", &mut record.title),
         ("session.summary", &mut record.summary),
         ("session.goals", &mut record.goals),
-        ("session.outcome", &mut record.outcome),
         ("session.next", &mut record.next),
     ];
     for term in &mut record.terms {
         fields.push(("session.terms.term", &mut term.term));
         fields.push(("session.terms.said", &mut term.said));
+    }
+    for segment in &mut record.log {
+        fields.push(("session.log.heading", &mut segment.heading));
+        fields.push(("session.log.text", &mut segment.text));
+    }
+    if let Some(change) = &mut record.active_change {
+        fields.push(("session.active_change.reason", &mut change.reason));
     }
     fields
 }

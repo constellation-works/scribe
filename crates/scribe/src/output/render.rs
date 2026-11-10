@@ -121,11 +121,11 @@ pub(crate) fn list(
             Records::Entries(items) => {
                 write_json(out, &envelope("entries", items, total, warnings))
             }
-            Records::Sessions(items) => {
+            Records::Sessions { items, .. } => {
                 write_json(out, &envelope("sessions", items, total, warnings))
             }
-            Records::SessionTree(items) => {
-                write_json(out, &envelope("sessions", items, total, warnings))
+            Records::SessionTree { rows, .. } => {
+                write_json(out, &envelope("sessions", rows, total, warnings))
             }
             Records::Proposals(items) => {
                 write_json(out, &envelope("proposals", items, total, warnings))
@@ -137,27 +137,53 @@ pub(crate) fn list(
     if records.len() == 0 {
         return Ok(());
     }
-    let (columns, rows): (&[Column], Vec<Vec<Cell>>) = match records {
-        Records::Entries(items) => (&ENTRY_COLUMNS, items.iter().map(entry_row).collect()),
-        Records::Sessions(items) => (&SESSION_COLUMNS, items.iter().map(session_row).collect()),
-        Records::SessionTree(items) => (
-            &SESSION_TREE_COLUMNS,
+    let (columns, rows): (Vec<Column>, Vec<Vec<Cell>>) = match records {
+        Records::Entries(items) => (
+            ENTRY_COLUMNS.to_vec(),
+            items.iter().map(entry_row).collect(),
+        ),
+        Records::Sessions {
+            items,
+            active_column,
+        } => (
+            with_active(&SESSION_COLUMNS, *active_column, 2),
             items
                 .iter()
-                .map(|row| tree_row(row, sink.mode == OutputMode::Table))
+                .map(|s| session_row(s, *active_column))
                 .collect(),
         ),
-        Records::Proposals(items) => (&PROPOSAL_COLUMNS, items.iter().map(proposal_row).collect()),
-        Records::Tags(items) => (&TAG_COLUMNS, items.iter().map(tag_row).collect()),
+        Records::SessionTree {
+            rows,
+            active_column,
+        } => (
+            with_active(&SESSION_TREE_COLUMNS, *active_column, 3),
+            rows.iter()
+                .map(|row| tree_row(row, sink.mode == OutputMode::Table, *active_column))
+                .collect(),
+        ),
+        Records::Proposals(items) => (
+            PROPOSAL_COLUMNS.to_vec(),
+            items.iter().map(proposal_row).collect(),
+        ),
+        Records::Tags(items) => (TAG_COLUMNS.to_vec(), items.iter().map(tag_row).collect()),
     };
     match sink.mode {
         OutputMode::Table => {
-            out.write_all(table::render(columns, &rows, sink.width, sink.color).as_bytes())
+            out.write_all(table::render(&columns, &rows, sink.width, sink.color).as_bytes())
         }
         OutputMode::Plain | OutputMode::Json => rows
             .iter()
             .try_for_each(|row| writeln!(out, "{}", plain_line(row))),
     }
+}
+
+/// `columns` with an `ACTIVE` column inserted at `at` when `active`.
+fn with_active(columns: &[Column], active: bool, at: usize) -> Vec<Column> {
+    let mut out = columns.to_vec();
+    if active {
+        out.insert(at, col("ACTIVE", Align::Left, false));
+    }
+    out
 }
 
 fn envelope<'a, T>(
@@ -186,7 +212,19 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
             writeln!(out, "{}", plain_line(&entry_row(entry)))
         }
         (OutputMode::Plain, Record::Session(session)) => {
-            writeln!(out, "{}", plain_line(&session_row(session)))
+            writeln!(out, "{}", plain_line(&session_row(session, false)))?;
+            for segment in session.log.iter().flatten() {
+                writeln!(
+                    out,
+                    "segment\t{}\t{}\t{}\t{}\t{}",
+                    segment.n,
+                    segment.state,
+                    timestamp(segment.from),
+                    timestamp(segment.to),
+                    one_line(&segment.heading)
+                )?;
+            }
+            Ok(())
         }
         (OutputMode::Table, Record::Entry(entry)) => entry_detail(out, sink, entry),
         (OutputMode::Table, Record::Session(session)) => session_detail(out, sink, session),
@@ -405,6 +443,30 @@ fn session_detail(out: &mut dyn Write, sink: &Sink, s: &SessionPayload) -> io::R
     field(out, "id", &s.id)?;
     field(out, "title", or_dash(&s.title))?;
     field(out, "status", s.status)?;
+    field(out, "active", yes_no(s.active))?;
+    field(out, "keep active", yes_no(s.keep_active))?;
+    let change = s.active_change.as_ref().map_or_else(
+        || String::from("-"),
+        |c| {
+            format!(
+                "{} {} by {}:{} ({}){}",
+                timestamp(c.at),
+                c.route,
+                c.by.kind,
+                c.by.name,
+                one_line(&c.reason),
+                c.cite
+                    .as_ref()
+                    .map_or_else(String::new, |cite| format!(", cite {cite}"))
+            )
+        },
+    );
+    field(out, "change", &change)?;
+    let cataloged = s.cataloged_by.as_ref().map_or_else(
+        || String::from("-"),
+        |c| format!("{} by {}:{}", timestamp(c.at), c.by.kind, c.by.name),
+    );
+    field(out, "cataloged", &cataloged)?;
     field(out, "on", yes_no(s.on))?;
     field(out, "due", &due)?;
     field(out, "project", &s.project)?;
@@ -444,12 +506,37 @@ fn session_detail(out: &mut dyn Write, sink: &Sink, s: &SessionPayload) -> io::R
     for (name, text) in [
         ("Summary", &s.summary),
         ("Goals", &s.goals),
-        ("Outcome", &s.outcome),
         ("Next", &s.next),
     ] {
         writeln!(out)?;
         writeln!(out, "## {name}")?;
         writeln!(out, "{}", or_dash(text))?;
+    }
+    let log = s.log.as_deref().unwrap_or_default();
+    writeln!(out)?;
+    writeln!(out, "## Log")?;
+    if log.is_empty() {
+        writeln!(out, "-")?;
+        return Ok(());
+    }
+    // The table of contents: one line per segment.
+    for segment in log {
+        writeln!(
+            out,
+            "{:>3}  {:<6}  {}  {}  {}",
+            segment.n,
+            segment.state,
+            timestamp(segment.from),
+            timestamp(segment.to),
+            one_line(&segment.heading)
+        )?;
+    }
+    if s.log_text {
+        for segment in log {
+            writeln!(out)?;
+            writeln!(out, "### {}. {}", segment.n, segment.heading)?;
+            writeln!(out, "{}", or_dash(&segment.text))?;
+        }
     }
     Ok(())
 }
@@ -574,8 +661,8 @@ fn pass_row(p: &PassPayload) -> Vec<Cell> {
 
 /// A `session list --tree` row: the session's row with its parent after
 /// the id; in a table the title is indented two spaces per level.
-fn tree_row(row: &TreeRow, indent: bool) -> Vec<Cell> {
-    let mut cells = session_row(&row.session);
+fn tree_row(row: &TreeRow, indent: bool, active: bool) -> Vec<Cell> {
+    let mut cells = session_row(&row.session, active);
     cells.insert(
         1,
         Cell::plain(row.parent.clone().unwrap_or_else(|| String::from("-"))),
@@ -586,8 +673,10 @@ fn tree_row(row: &TreeRow, indent: bool) -> Vec<Cell> {
     cells
 }
 
-fn session_row(s: &SessionPayload) -> Vec<Cell> {
-    vec![
+/// A session's list row; `active` adds its `active` column after the
+/// status (`session list --include-inactive`).
+fn session_row(s: &SessionPayload, active: bool) -> Vec<Cell> {
+    let mut cells = vec![
         Cell::plain(s.id.clone()),
         Cell::plain(s.status),
         Cell {
@@ -598,7 +687,17 @@ fn session_row(s: &SessionPayload) -> Vec<Cell> {
         Cell::plain(joined(&s.topics)),
         Cell::plain(timestamp(s.updated)),
         Cell::plain(one_line(&s.title)),
-    ]
+    ];
+    if active {
+        cells.insert(
+            2,
+            Cell {
+                text: yes_no(s.active).to_owned(),
+                role: if s.active { Role::Neutral } else { Role::Muted },
+            },
+        );
+    }
+    cells
 }
 
 fn proposal_row(p: &ProposalPayload) -> Vec<Cell> {

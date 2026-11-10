@@ -2,17 +2,22 @@
 //!
 //! Domain errors arrive through the one translator, `#[from]` on
 //! [`CliError::Core`], applied by `?` (STD-02 R12); nothing matches core
-//! variants ad hoc. Usage errors never reach this type: clap reports them
-//! and exits 2 before a command runs.
+//! variants ad hoc. Usage errors are clap's, which reports them and exits 2
+//! before a command runs, except [`CliError::Usage`]: arguments that each
+//! parse but contradict each other.
 
 use std::io;
 
-/// Why a command failed. Every variant exits 1 (STD-01 R20).
+/// Why a command failed. Every variant but [`CliError::Usage`] exits 1
+/// (STD-01 R20).
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum CliError {
     /// The store refused or failed.
     #[error(transparent)]
     Core(#[from] scribe_core::Error),
+    /// Arguments that each parse but together make no sense; exits 2.
+    #[error("{0}")]
+    Usage(String),
     /// No data directory could be resolved.
     #[error("no data directory: pass --root <dir> or set SCRIBE_ROOT (HOME is not set either)")]
     NoDataDir,
@@ -40,6 +45,17 @@ pub(crate) enum CliError {
         "session {0} is not switched on, so it is never passed; /scribe on in that session switches it on"
     )]
     SessionNotOn(scribe_core::SessionId),
+    /// `session show --segment <n>` (or `session:<id>#<n>`) named a segment
+    /// the record's log does not have.
+    #[error("session {session} has no segment {n}: its log has {count} segment(s)")]
+    SegmentNotFound {
+        /// The session.
+        session: scribe_core::SessionId,
+        /// The segment asked for.
+        n: u32,
+        /// How many segments the log has.
+        count: usize,
+    },
     /// A session pass ran and at least one pass failed. The report is printed
     /// first; its redacted reasons are included here for the routine's root
     /// cause.
@@ -58,20 +74,22 @@ impl CliError {
     pub(crate) fn code(&self) -> &'static str {
         match self {
             Self::Core(e) => e.code(),
+            Self::Usage(_) => "usage_error",
             Self::NoDataDir => "no_data_dir",
             Self::RedactEnvUnset(_) => "redact_env_unset",
             Self::HookPayload(_) => "hook_payload_invalid",
             Self::Read { .. } => "io_error",
             Self::SessionNotOn(_) => "session_not_on",
+            Self::SegmentNotFound { .. } => "segment_not_found",
             Self::PassFailed(_) => "session_pass_failed",
             Self::Model(e) => e.code(),
             Self::Output(_) => "output_error",
         }
     }
 
-    /// The process exit code. Only usage errors (clap's) exit 2.
+    /// The process exit code. Only usage errors exit 2.
     pub(crate) fn exit_code(&self) -> u8 {
-        1
+        if matches!(self, Self::Usage(_)) { 2 } else { 1 }
     }
 
     /// The fix, where it is known and not already in the message (STD-01
@@ -85,8 +103,12 @@ impl CliError {
             Self::Core(scribe_core::Error::SessionNotFound { .. }) => {
                 Some("run 'scribe session list' with the same --root to see existing ids")
             }
+            Self::SegmentNotFound { .. } => Some(
+                "run 'scribe session show' on the same id, without --segment, to see its segments",
+            ),
             // The core enum is #[non_exhaustive], so it needs this arm.
             Self::Core(_)
+            | Self::Usage(_)
             | Self::RedactEnvUnset(_)
             | Self::NoDataDir
             | Self::HookPayload(_)

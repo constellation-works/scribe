@@ -24,6 +24,7 @@ scribe entry list --json | jq -r '.entries[].content'
 scribe entry show <id>
 scribe session list --project constellation-works/scribe
 scribe session show <id> --json | jq -r .next
+scribe session show <id> --log
 scribe session pass --json
 scribe proposal list
 scribe consistency scan --json
@@ -109,7 +110,7 @@ so keep them runnable.
 
 ```
 crates/scribe-core/   domain library (no clap, no terminal): entry.rs, tag.rs,
-                        session.rs, proposal.rs, record.rs, config.rs,
+                        session.rs, activity.rs, proposal.rs, record.rs, config.rs,
                         capture.rs, control.rs, pass.rs, ask.rs, transcript.rs,
                         verbatim.rs and models.rs (business
                         logic, no I/O), store/

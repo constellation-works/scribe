@@ -7,10 +7,11 @@
 //! shapes are deliberately separate from the store's persisted documents.
 //! An absent value is `null`, never an omitted key (R11).
 
+use scribe_core::activity::{ActiveChange, CatalogedBy};
 use scribe_core::ask::{Answer, Found, Task};
 use scribe_core::{
-    Child, Cite, ContentFrom, ControlState, Entry, Proposal, Quote, SessionControl, SessionId,
-    SessionRecord, Skipped, TagSummary, Term,
+    Author, Child, Cite, ContentFrom, ControlState, Entry, Proposal, Quote, Segment,
+    SessionControl, SessionId, SessionRecord, Skipped, TagSummary, Term,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -48,6 +49,105 @@ impl From<&ContentFrom> for ContentFromPayload {
                 message: Some(message.clone()),
                 at: Some(*at),
             },
+        }
+    }
+}
+
+/// Who wrote a record or a change.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct AuthorPayload {
+    /// `daniel`, `agent` or `scribe`.
+    pub(crate) kind: &'static str,
+    pub(crate) name: String,
+}
+
+impl From<&Author> for AuthorPayload {
+    fn from(author: &Author) -> Self {
+        Self {
+            kind: author.kind.as_str(),
+            name: author.name.to_string(),
+        }
+    }
+}
+
+/// The last change of a session's `active` or `keep_active`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct ActiveChangePayload {
+    #[serde(with = "time::serde::rfc3339")]
+    pub(crate) at: Timestamp,
+    pub(crate) by: AuthorPayload,
+    /// `age`, `removed` or `manual`.
+    pub(crate) route: &'static str,
+    pub(crate) reason: String,
+    pub(crate) cite: Option<String>,
+}
+
+impl From<&ActiveChange> for ActiveChangePayload {
+    fn from(change: &ActiveChange) -> Self {
+        Self {
+            at: change.at,
+            by: AuthorPayload::from(&change.by),
+            route: change.route.as_str(),
+            reason: change.reason.clone(),
+            cite: change.cite.clone(),
+        }
+    }
+}
+
+/// Who cataloged a session by name.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct CatalogedByPayload {
+    #[serde(with = "time::serde::rfc3339")]
+    pub(crate) at: Timestamp,
+    pub(crate) by: AuthorPayload,
+}
+
+impl From<&CatalogedBy> for CatalogedByPayload {
+    fn from(c: &CatalogedBy) -> Self {
+        Self {
+            at: c.at,
+            by: AuthorPayload::from(&c.by),
+        }
+    }
+}
+
+/// One segment of a session's log, with its text.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct SegmentPayload {
+    pub(crate) n: u32,
+    pub(crate) heading: String,
+    pub(crate) first_message: Option<String>,
+    pub(crate) last_message: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub(crate) from: Timestamp,
+    #[serde(with = "time::serde::rfc3339")]
+    pub(crate) to: Timestamp,
+    /// `open` or `sealed`.
+    pub(crate) state: &'static str,
+    pub(crate) windows: u32,
+    /// `pass`, `rebuild`, `catalog` or `upgrade`.
+    pub(crate) origin: &'static str,
+    pub(crate) topics: Vec<String>,
+    pub(crate) related: Vec<String>,
+    /// Model-written, never Daniel's words.
+    pub(crate) text: String,
+}
+
+impl From<&Segment> for SegmentPayload {
+    fn from(s: &Segment) -> Self {
+        Self {
+            n: s.n.get(),
+            heading: s.heading.clone(),
+            first_message: s.first_message.clone(),
+            last_message: s.last_message.clone(),
+            from: s.from,
+            to: s.to,
+            state: s.state.as_str(),
+            windows: s.windows.get(),
+            origin: s.origin.as_str(),
+            topics: strings(s.topics.as_slice()),
+            related: strings(&s.related),
+            text: s.text.clone(),
         }
     }
 }
@@ -102,6 +202,10 @@ pub(crate) struct EntryPayload {
     pub(crate) superseded_by: Option<String>,
     /// `YYYY-MM-DD`.
     pub(crate) review_after: Option<String>,
+    /// Who wrote it; `daniel` for a typed `#scribe` line.
+    pub(crate) author: AuthorPayload,
+    /// Who last updated or retired it through a CLI verb.
+    pub(crate) updated_by: Option<AuthorPayload>,
 }
 
 fn strings<T: ToString>(items: &[T]) -> Vec<String> {
@@ -137,6 +241,8 @@ impl From<&Entry> for EntryPayload {
             cite: CitePayload::from(&entry.cite),
             superseded_by: entry.superseded_by.as_ref().map(ToString::to_string),
             review_after: entry.review_after.map(date),
+            author: AuthorPayload::from(&entry.author),
+            updated_by: entry.updated_by.as_ref().map(AuthorPayload::from),
         }
     }
 }
@@ -250,6 +356,8 @@ pub(crate) struct SessionPayload {
     /// Model-written, never Daniel's words.
     pub(crate) summary: String,
     pub(crate) goals: String,
+    /// Always `""` from store format 4: what it held is in `log`. Kept so
+    /// no reader of the field breaks.
     pub(crate) outcome: String,
     pub(crate) next: String,
     /// Whether cataloging is on now (`control.json`); `false` when the
@@ -257,6 +365,20 @@ pub(crate) struct SessionPayload {
     pub(crate) on: bool,
     /// Whether a pass is due and not yet run.
     pub(crate) due: bool,
+    /// Whether the record still describes something current.
+    pub(crate) active: bool,
+    /// Exempt from automatic deactivation.
+    pub(crate) keep_active: bool,
+    pub(crate) active_change: Option<ActiveChangePayload>,
+    pub(crate) cataloged_by: Option<CatalogedByPayload>,
+    /// The log's segments with their text, oldest first (one with
+    /// `--segment`); absent from a list, whose rows carry no log.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) log: Option<Vec<SegmentPayload>>,
+    /// Whether the table view prints each segment's text (`--log`,
+    /// `--segment`) or only the table of contents.
+    #[serde(skip)]
+    pub(crate) log_text: bool,
 }
 
 impl SessionPayload {
@@ -295,11 +417,24 @@ impl SessionPayload {
             next_open: record.next_open,
             summary: record.summary.clone(),
             goals: record.goals.clone(),
-            outcome: record.outcome.clone(),
+            outcome: String::new(),
             next: record.next.clone(),
             on: control.is_some_and(|c| c.on),
             due: control.is_some_and(|c| c.due),
+            active: record.active,
+            keep_active: record.keep_active,
+            active_change: record.active_change.as_ref().map(ActiveChangePayload::from),
+            cataloged_by: record.cataloged_by.as_ref().map(CatalogedByPayload::from),
+            log: None,
+            log_text: false,
         }
+    }
+
+    /// With `segments` as its `log`: a `show` carries the whole log, or the
+    /// one segment asked for.
+    pub(crate) fn with_log<'a>(mut self, segments: impl IntoIterator<Item = &'a Segment>) -> Self {
+        self.log = Some(segments.into_iter().map(SegmentPayload::from).collect());
+        self
     }
 }
 
@@ -337,6 +472,10 @@ pub(crate) struct ProposalPayload {
     #[serde(with = "time::serde::rfc3339::option")]
     pub(crate) settled_at: Option<Timestamp>,
     pub(crate) settled_by: Option<CitePayload>,
+    /// Who opened it.
+    pub(crate) author: AuthorPayload,
+    /// Who settled it; `null` while open.
+    pub(crate) settled_author: Option<AuthorPayload>,
 }
 
 impl From<&Proposal> for ProposalPayload {
@@ -352,6 +491,8 @@ impl From<&Proposal> for ProposalPayload {
             opened_at: p.opened_at,
             settled_at: p.settled_at,
             settled_by: p.settled_by.as_ref().map(CitePayload::from),
+            author: AuthorPayload::from(&p.author),
+            settled_author: p.settled_author.as_ref().map(AuthorPayload::from),
         }
     }
 }
@@ -424,9 +565,17 @@ impl From<&Skipped> for WarningPayload {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Records {
     Entries(Vec<EntryPayload>),
-    Sessions(Vec<SessionPayload>),
+    /// `session list`; `active_column` with `--include-inactive`, which adds
+    /// an `active` column to the human forms.
+    Sessions {
+        items: Vec<SessionPayload>,
+        active_column: bool,
+    },
     /// `session list --tree`: sessions in tree order, each with its depth.
-    SessionTree(Vec<TreeRow>),
+    SessionTree {
+        rows: Vec<TreeRow>,
+        active_column: bool,
+    },
     Proposals(Vec<ProposalPayload>),
     Tags(Vec<TagPayload>),
 }
@@ -435,8 +584,8 @@ impl Records {
     pub(crate) fn len(&self) -> usize {
         match self {
             Self::Entries(v) => v.len(),
-            Self::Sessions(v) => v.len(),
-            Self::SessionTree(v) => v.len(),
+            Self::Sessions { items, .. } => items.len(),
+            Self::SessionTree { rows, .. } => rows.len(),
             Self::Proposals(v) => v.len(),
             Self::Tags(v) => v.len(),
         }
@@ -703,11 +852,14 @@ impl FoundPayload {
                 kind: "session",
                 cite,
                 entry: None,
-                session: Some(SessionPayload::new(
-                    record,
-                    sessions.control.get(&record.id),
-                    Kin::of(&record.id, sessions.children, sessions.titles),
-                )),
+                session: Some(
+                    SessionPayload::new(
+                        record,
+                        sessions.control.get(&record.id),
+                        Kin::of(&record.id, sessions.children, sessions.titles),
+                    )
+                    .with_log(&record.log),
+                ),
                 task: None,
                 terms: terms.iter().map(TermPayload::from).collect(),
             },

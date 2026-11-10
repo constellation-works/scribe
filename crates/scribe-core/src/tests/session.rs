@@ -24,6 +24,7 @@ fn on(due: bool) -> SessionControl {
         consecutive_failures: 0,
         retry_after: None,
         pending_links: Vec::new(),
+        cataloged_by: None,
     }
 }
 

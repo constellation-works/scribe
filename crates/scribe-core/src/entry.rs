@@ -10,7 +10,9 @@
 //! refused, so a hand-edited file with a typo is reported, not half-read.
 //! Never rename or retype a field without a store format bump.
 
-use crate::record::{Label, Listing, Project, Related, Topic, Topics, nullable, nullable_date};
+use crate::record::{
+    Author, Label, Listing, Project, Related, Topic, Topics, nullable, nullable_date,
+};
 use crate::session::SessionId;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -313,6 +315,11 @@ pub struct Entry {
     pub provider: Label,
     /// The host it was recorded on.
     pub host: Label,
+    /// Who wrote it: `{kind: daniel}` for a typed `#scribe` line.
+    pub author: Author,
+    /// Who last updated or retired it through a CLI verb, or `null`.
+    #[serde(deserialize_with = "nullable")]
+    pub updated_by: Option<Author>,
     /// When it was recorded.
     #[serde(with = "time::serde::rfc3339")]
     pub created: OffsetDateTime,
@@ -374,7 +381,8 @@ impl EntryFilter {
 
 /// An entry before the store gives it an id: what `#scribe` capture builds
 /// from one instruction (`capture::draft`). New entries are always `active`,
-/// replace nothing and are `updated` when `created`.
+/// replace nothing, are `updated` when `created`, and are Daniel's: a typed
+/// `#scribe` line is the only way to write one.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NewEntry {
     /// The tag; the id is numbered within it.
@@ -416,6 +424,8 @@ impl NewEntry {
             related: self.related,
             provider: self.provider,
             host: self.host,
+            author: Author::daniel(),
+            updated_by: None,
             created: self.created,
             updated: self.created,
             said: self.said,

@@ -1310,7 +1310,8 @@ or `last_session`, `named_session`, `next_steps`, `tag_period`, `term`,
 
 ### 6.7 Segments, authors and inactive sessions
 
-Designed for S8 (segments, inactive) and S12 (authors).
+Segments and inactive sessions are built (S8); authors' weights and labels
+are designed for S12.
 
 - **Units.** From format 4 a session is ranked as several units: its header
   (title, summary, goals, next), cited `session:<id>`, and each segment
@@ -1808,6 +1809,33 @@ CLI behaviour; tests follow the repository's rules in `AGENTS.md`.
   against that segment.
 - `specs/store.md`, `specs/output-contract.md` and the goldens describe
   the new shapes.
+
+As built (S8):
+
+- Passes are S9's to rewrite, so S8 keeps the session model's answer
+  shape and maps it onto the log: the answer's `outcome` becomes the text
+  of the open segment (its heading the title, cut to 80 characters;
+  `windows` counted up; `to` and `last_message` from the window), a log
+  with no open segment gains segment `n + 1` when the outcome is not
+  empty, and the final pass (or a `SessionEnd` with nothing new) seals the
+  last segment. A pass carries `active`, `keep_active`, `active_change`
+  and `cataloged_by` over from the record on disk. The model still sees
+  the open segment's text as the previous record's outcome.
+- The format-3 body is converted while the record is decoded, because
+  `UPGRADES` steps see the frontmatter only; the step fills the segment's
+  metadata and the decoder its text.
+- `tags.json` is S12's ([§3](#3-storage)), not S8's: nothing reads or
+  writes it yet. The agent-entry shape (`content_from: {kind: agent}`,
+  `cite: null`) and the `Store::set_active` write are S12's and S10's;
+  S8 parses and writes the fields they will set.
+- `hidden_matches` counts inactive sessions that retrieval matched; a
+  lookup that skips an inactive session does not count it, as a lookup
+  never counted hidden entries.
+- A lookup's session record carries every segment in `--json`; its table
+  view prints the header and the log's table of contents.
+- `session list` without `--include-inactive` prints a stderr notice when
+  inactive sessions matched; the JSON envelope's `total` counts only the
+  sessions listed.
 
 **S9 — Passes write segments; `session rebuild`.** Depends on S8.
 

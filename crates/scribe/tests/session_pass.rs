@@ -429,7 +429,7 @@ fn legacy_control_is_read_without_writes_and_new_retry_state_is_strict() {
     );
     setup.pass();
     let current: Value = serde_json::from_slice(&setup.control_bytes()).unwrap();
-    assert_eq!(current["format"], 3);
+    assert_eq!(current["format"], 4);
     assert_eq!(current["sessions"][ON]["consecutive_failures"], 0);
     assert_eq!(current["sessions"][ON]["retry_after"], Value::Null);
     assert_eq!(current["sessions"][ON]["pending_links"], json!([]));
@@ -603,6 +603,17 @@ fn a_pass_writes_one_record_of_daniels_terms_and_never_reads_a_session_never_swi
         json!([{"term": "graduate to level 4", "said": DEFINED, "message": "u-1"}])
     );
     assert!(!setup.fx.root().join("entries").exists(), "no entries");
+    // The record is written at format 4: a header and one open segment
+    // holding this pass's outcome.
+    let file = std::fs::read_to_string(setup.record_file()).unwrap();
+    assert!(file.starts_with("---\nformat: 4\n"), "{file}");
+    assert!(file.contains("\n## Log\n### 1. "), "{file}");
+    assert!(!file.contains("## Outcome"), "{file}");
+    assert_eq!(record["active"], true);
+    assert_eq!(record["outcome"], "");
+    assert_eq!(record["log"][0]["state"], "open");
+    assert_eq!(record["log"][0]["origin"], "pass");
+    assert_eq!(record["log"][0]["last_message"], "a-1");
 
     let prompts = setup.prompts();
     assert_eq!(prompts.len(), 1);

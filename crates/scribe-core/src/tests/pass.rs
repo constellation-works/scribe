@@ -2,7 +2,7 @@ use super::{T0, session};
 use crate::entry::Speaker;
 use crate::models::{PassMessage, SessionAnswer, TermAnswer};
 use crate::pass::{self, Invalid, PassMeta, WINDOW_CHARS};
-use crate::session::SessionStatus;
+use crate::session::{SegmentOrigin, SegmentState, SessionStatus};
 use crate::transcript::Message;
 use time::Duration;
 
@@ -231,6 +231,9 @@ fn meta(now: time::OffsetDateTime, through: &str, final_pass: bool) -> PassMeta 
         through: Some(through.to_owned()),
         now,
         final_pass,
+        first_message: Some(String::from("m-1")),
+        from: T0,
+        to: now,
     }
 }
 
@@ -275,6 +278,66 @@ fn a_record_advances_scribed_through_and_keeps_where_it_lives() {
     let finalized = pass::finalized(&previous, later);
     assert_eq!(finalized.status, SessionStatus::Final);
     assert_eq!(finalized.passes, previous.passes);
+}
+
+#[test]
+fn passes_grow_the_open_segment_and_the_last_one_seals_it() {
+    // Interim S8 log behaviour: the answer's outcome is the open segment's
+    // text; a sealed log (an upgraded record) gains segment n + 1.
+    let conversation = pass::conversation(&transcript());
+    let now = T0 + Duration::minutes(30);
+    let first = pass::record(
+        None,
+        pass::check(answer(), &conversation).unwrap(),
+        meta(now, "a-1", false),
+    );
+    assert_eq!(first.log.len(), 1);
+    let one = &first.log[0];
+    assert_eq!((one.n.get(), one.state), (1, SegmentState::Open));
+    assert_eq!(one.origin, SegmentOrigin::Pass);
+    assert_eq!(one.heading, "Planning the orchestrator");
+    assert_eq!(one.text, "A definition.");
+    assert_eq!(one.first_message.as_deref(), Some("m-1"));
+    assert_eq!(one.last_message.as_deref(), Some("a-1"));
+    assert_eq!((one.from, one.to), (T0, now));
+    assert!(crate::session::check_log(&first).is_ok());
+
+    let later = now + Duration::minutes(20);
+    let mut b = answer();
+    b.outcome = String::from("A definition, and a plan.");
+    let second = pass::record(
+        Some(&first),
+        pass::check(b, &conversation).unwrap(),
+        meta(later, "a-2", false),
+    );
+    assert_eq!(second.log.len(), 1, "the open segment grows");
+    assert_eq!(second.log[0].windows.get(), 2);
+    assert_eq!(second.log[0].text, "A definition, and a plan.");
+    assert_eq!(second.log[0].last_message.as_deref(), Some("a-2"));
+    assert_eq!(second.log[0].from, T0, "where it began is kept");
+
+    let ended = pass::finalized(&second, later);
+    assert_eq!(ended.log[0].state, SegmentState::Sealed);
+    assert!(crate::session::check_log(&ended).is_ok());
+
+    let mut upgraded = session("s-1", T0);
+    upgraded.log[0].state = SegmentState::Sealed;
+    upgraded.log[0].origin = SegmentOrigin::Upgrade;
+    let next = pass::record(
+        Some(&upgraded),
+        pass::check(answer(), &conversation).unwrap(),
+        meta(later, "a-2", true),
+    );
+    assert_eq!(next.log.len(), 2);
+    assert_eq!(
+        next.log[0], upgraded.log[0],
+        "a sealed segment is not touched"
+    );
+    assert_eq!(
+        (next.log[1].n.get(), next.log[1].state),
+        (2, SegmentState::Sealed)
+    );
+    assert!(crate::session::check_log(&next).is_ok());
 }
 
 #[test]

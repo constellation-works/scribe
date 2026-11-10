@@ -123,7 +123,7 @@ fn a_session_is_shown_with_its_switch() {
     );
     let store = Store::open(dir.path());
     let view = store.session(&"s-1".parse().unwrap()).unwrap();
-    assert_eq!(view.record.outcome, "out");
+    assert_eq!(view.record.log[0].text, "sum\n\nout");
     assert!(view.control.unwrap().due);
     let err = store.session(&"s-2".parse().unwrap()).unwrap_err();
     assert_eq!(err.code(), "session_not_found");

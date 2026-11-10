@@ -18,7 +18,7 @@ mod transcript;
 mod verbatim;
 
 use crate::entry::{Cite, ContentFrom, Entry, EntryStatus};
-use crate::session::{SessionRecord, SessionStatus};
+use crate::session::{Segment, SegmentOrigin, SegmentState, SessionRecord, SessionStatus};
 use time::OffsetDateTime;
 use time::macros::datetime;
 
@@ -34,6 +34,8 @@ pub(crate) fn entry(id: &str, created: OffsetDateTime) -> Entry {
         related: Vec::new(),
         provider: String::from("claude-code").try_into().unwrap(),
         host: String::from("host").try_into().unwrap(),
+        author: crate::record::Author::daniel(),
+        updated_by: None,
         created,
         updated: created,
         said: String::from("#scribe decisions: something"),
@@ -57,6 +59,10 @@ pub(crate) fn session(id: &str, started: OffsetDateTime) -> SessionRecord {
     SessionRecord {
         id: id.parse().unwrap(),
         status: SessionStatus::Open,
+        active: true,
+        keep_active: false,
+        active_change: None,
+        cataloged_by: None,
         project: "scribe".parse().unwrap(),
         topics: crate::record::Topics::default(),
         related: Vec::new(),
@@ -73,10 +79,28 @@ pub(crate) fn session(id: &str, started: OffsetDateTime) -> SessionRecord {
         scribed_through: None,
         passes: 1,
         next_open: 0,
+        log: vec![segment(1, SegmentState::Open, started, "outcome")],
         summary: String::from("summary"),
         goals: String::from("goals"),
-        outcome: String::from("outcome"),
         next: String::from("next"),
+    }
+}
+
+/// Segment `n` of a pass, from `at` to an hour later, holding `text`.
+pub(crate) fn segment(n: u32, state: SegmentState, at: OffsetDateTime, text: &str) -> Segment {
+    Segment {
+        n: std::num::NonZeroU32::new(n).unwrap(),
+        heading: format!("part {n}"),
+        first_message: Some(format!("m-{n}-first")),
+        last_message: Some(format!("m-{n}-last")),
+        from: at,
+        to: at + time::Duration::hours(1),
+        state,
+        windows: std::num::NonZeroU32::MIN,
+        origin: SegmentOrigin::Pass,
+        topics: crate::record::Topics::default(),
+        related: Vec::new(),
+        text: text.to_owned(),
     }
 }
 

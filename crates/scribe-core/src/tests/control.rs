@@ -45,6 +45,7 @@ fn on_marks_a_pass_due_and_on_twice_changes_nothing() {
         consecutive_failures: 0,
         retry_after: None,
         pending_links: Vec::new(),
+        cataloged_by: None,
     };
     assert_eq!(state.get(&s), Some(&on));
 

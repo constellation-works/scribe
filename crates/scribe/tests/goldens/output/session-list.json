@@ -32,10 +32,14 @@
       "next_open": 1,
       "summary": "Settled the store layout: one Markdown file per record with YAML\nfrontmatter.",
       "goals": "Pick a layout that filters by metadata.",
-      "outcome": "Entries and session records are Markdown files; control and proposals stay JSON.",
+      "outcome": "",
       "next": "- choose the YAML crate",
       "on": false,
-      "due": false
+      "due": false,
+      "active": true,
+      "keep_active": false,
+      "active_change": null,
+      "cataloged_by": null
     },
     {
       "id": "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02",
@@ -74,10 +78,14 @@
       "next_open": 2,
       "summary": "Discussed how agent PRs are merged and recorded the decision.",
       "goals": "Agree a merge policy.",
-      "outcome": "Squash-merge agent PRs; releases keep merge commits.",
+      "outcome": "",
       "next": "- update the contributing guide\n- tell the release crew",
       "on": true,
-      "due": true
+      "due": true,
+      "active": true,
+      "keep_active": false,
+      "active_change": null,
+      "cataloged_by": null
     }
   ],
   "total": 2,

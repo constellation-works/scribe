@@ -1,5 +1,6 @@
 use crate::output::payload::{
-    CitePayload, ContentFromPayload, EntryPayload, Record, Records, TagPayload, WarningPayload,
+    AuthorPayload, CitePayload, ContentFromPayload, EntryPayload, Record, Records, TagPayload,
+    WarningPayload,
 };
 use crate::output::render::{list, show};
 use crate::output::sink::{OutputMode, Sink};
@@ -16,6 +17,11 @@ fn entry(id: &str, content: &str) -> EntryPayload {
         related: Vec::new(),
         provider: String::from("claude-code"),
         host: String::from("host"),
+        author: AuthorPayload {
+            kind: "daniel",
+            name: String::from("daniel"),
+        },
+        updated_by: None,
         created: at,
         updated: at,
         said: String::from("#scribe decisions: x"),
@@ -85,7 +91,13 @@ fn an_empty_list_is_empty_stdout_in_human_modes_and_an_empty_envelope_in_json() 
     // STD-01 R16 (and R7: JSON mode always emits one document).
     for (records, key) in [
         (entries(Vec::new()), "entries"),
-        (Records::Sessions(Vec::new()), "sessions"),
+        (
+            Records::Sessions {
+                items: Vec::new(),
+                active_column: false,
+            },
+            "sessions",
+        ),
         (Records::Proposals(Vec::new()), "proposals"),
         (Records::Tags(Vec::new()), "tags"),
     ] {

@@ -1,0 +1,40 @@
+id          7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02
+title       Merge policy for agent PRs
+status      open
+active      yes
+keep active no
+change      -
+cataloged   -
+on          yes
+due         yes
+project     constellation-works/scribe
+topics      release,merge-policy
+related     -
+links       continues 0f8e7a52-3c1d-4b6e-9a2f-5d4c3b2a1e01 (Scribe store layout)
+children    -
+provider    claude-code
+host        dk-server-1
+cwd         /home/daniel/workspace/scribe
+started     2026-11-02T18:50:00Z
+on since    2026-11-02T18:55:00Z
+updated     2026-11-02T19:40:00Z
+passes      2
+next open   2
+through     9a1b2c3d-0000-4000-8000-0000000001aa
+terms       agent PR: "by agent PR I mean any PR a crew opens" (message 9a1b2c3d-0000-4000-8000-000000000001)
+
+## Summary
+Discussed how agent PRs are merged and recorded the decision.
+
+## Goals
+Agree a merge policy.
+
+## Next
+- update the contributing guide
+- tell the release crew
+
+## Log
+  2  open    2026-11-02T19:21:00Z  2026-11-02T19:40:00Z  Telling the release crew
+
+### 2. Telling the release crew
+Drafted the note to the release crew about the new merge policy.
