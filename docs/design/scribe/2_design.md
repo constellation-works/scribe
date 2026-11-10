@@ -1032,7 +1032,13 @@ prompt fix is redone.
 - The last step, under the lock, replaces the record with the rebuilt one
   only if the record's `updated` is what rebuild read when it started;
   if a pass wrote in the meantime, rebuild folds in the newer messages
-  first and tries again. It keeps `id`, `created`, `links`, `active`,
+  first and tries again. Ordinary passes mirror this: before each
+  window's write they compare, under the store lock, the `updated`
+  revision they loaded with the record on disk, and on a mismatch refuse
+  that write with `record_changed`, keep the session due and leave the
+  record on disk unchanged, so the next pass starts from the rebuilt
+  record and a pass that loaded its record before a rebuild finished
+  cannot overwrite it. It keeps `id`, `created`, `links`, `active`,
   `keep_active`, `active_change` and `cataloged_by`; segments are
   `origin: rebuild`; `scribed_through` is the transcript's last message;
   `status` is `final` when the switch's `final` is set or the session was

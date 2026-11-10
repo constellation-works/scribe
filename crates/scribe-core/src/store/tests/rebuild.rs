@@ -10,7 +10,7 @@ fn rebuild_checkpoints_are_hidden_and_replacement_compares_the_visible_revision(
     let original = crate::tests::session("s-1", datetime!(2026-11-01 10:00 UTC));
     let id = original.id.clone();
     store
-        .settle_pass(&id, Some(original.clone()), false, &redactor)
+        .settle_pass(&id, Some(original.clone()), false, None, &redactor)
         .unwrap();
     let _guard = store.lock_rebuild(&original).unwrap();
     let mut rebuilt = original.clone();
@@ -39,7 +39,13 @@ fn rebuild_checkpoints_are_hidden_and_replacement_compares_the_visible_revision(
     advanced.active = false;
     advanced.keep_active = true;
     store
-        .settle_pass(&id, Some(advanced.clone()), false, &redactor)
+        .settle_pass(
+            &id,
+            Some(advanced.clone()),
+            false,
+            Some(original.updated),
+            &redactor,
+        )
         .unwrap();
     assert!(
         store

@@ -44,6 +44,12 @@ pub enum Error {
         /// Sealed segment number.
         n: u32,
     },
+    /// The record on disk changed since the pass loaded it.
+    #[error("session {id} record changed since it was loaded; retry from the current record")]
+    RecordChanged {
+        /// Session whose record changed.
+        id: SessionId,
+    },
     /// A due live session must finish its pass before rebuilding.
     #[error(
         "session {0} is on and due; run 'scribe session pass --session <id>' before rebuilding"
@@ -158,6 +164,7 @@ impl Error {
             Self::EntryNotFound { .. } => "entry_not_found",
             Self::SessionNotFound { .. } => "session_not_found",
             Self::SealedSegmentChanged { .. } => "sealed_segment_changed",
+            Self::RecordChanged { .. } => "record_changed",
             Self::SessionBusy(_) => "session_busy",
             Self::Link(err) => err.code(),
             Self::Io { .. } => "io_error",

@@ -20,7 +20,11 @@
 //!
 //! Every window checks field limits and terms against Daniel's own turns
 //! up through that window, then writes a redacted atomic checkpoint under
-//! the store lock. Only the last window settles due/final state. Failure
+//! the store lock. Before each write the store compares the loaded
+//! record's `updated` revision with the record on disk under that lock; a
+//! mismatch (for example a rebuild finished while the model ran) refuses
+//! the write with `record_changed`, reported with its `error` reason.
+//! Only the last window settles due/final state. Failure
 //! preserves earlier checkpoints and keeps the session due; automatic
 //! retries wait 5, 10, 20, 40, then at most 60 minutes. Success resets the
 //! backoff. The CLI finishes all windows; the plugin starts no further
@@ -304,6 +308,7 @@ impl Job<'_> {
             &conversation,
             previous.and_then(|p| p.scribed_through.as_deref()),
         );
+        let mut expected = previous.map(|p| p.updated);
         let mut previous = previous.cloned();
         // The linked sessions' latest records, read once: context only.
         let mut links = previous
@@ -404,13 +409,17 @@ impl Job<'_> {
                 .filter(|s| s.state == scribe_core::SegmentState::Sealed)
                 .count();
             previous = if last {
-                self.settle(Some(record))?
+                self.settle(Some(record), expected)?
             } else {
-                self.ctx.store().checkpoint_pass(record, self.redactor).map_err(|err| {
-                    tracing::warn!(session = %self.id, %err, "cannot checkpoint the session window");
-                    PassError::new(err.code(), err.to_string())
-                })?
+                self.ctx
+                    .store()
+                    .checkpoint_pass(record, expected, self.redactor)
+                    .map_err(|err| {
+                        tracing::warn!(session = %self.id, %err, "cannot checkpoint the session window");
+                        PassError::new(err.code(), err.to_string())
+                    })?
             };
+            expected = previous.as_ref().map(|p| p.updated);
             self.segments_sealed += sealed_after.saturating_sub(sealed_before);
             self.segments = previous.as_ref().map(|r| r.log.len());
             self.windows = self.windows.saturating_add(1);
@@ -434,7 +443,7 @@ impl Job<'_> {
         if self.switch.final_pass {
             let record = previous.map(|p| pass::finalized(p, self.ctx.now()));
             let newly_sealed = previous.is_some_and(|p| p.open_segment().is_some());
-            let written = self.settle(record)?;
+            let written = self.settle(record, previous.map(|p| p.updated))?;
             self.segments_sealed += usize::from(newly_sealed);
             let result = if written.is_some() {
                 "written"
@@ -446,15 +455,28 @@ impl Job<'_> {
         if wait {
             return Ok(self.payload("waiting", previous));
         }
-        self.settle(None)?;
+        self.settle(None, previous.map(|p| p.updated))?;
         Ok(self.payload("unchanged", previous))
     }
 
     /// Write `record` (if any) and settle the switch, in one store call.
-    fn settle(&self, record: Option<SessionRecord>) -> Result<Option<SessionRecord>, PassError> {
+    /// `expected` is the loaded record's `updated` revision, checked by the
+    /// store under its lock; a refusal keeps the session due through
+    /// [`Job::failed`].
+    fn settle(
+        &self,
+        record: Option<SessionRecord>,
+        expected: Option<time::OffsetDateTime>,
+    ) -> Result<Option<SessionRecord>, PassError> {
         self.ctx
             .store()
-            .settle_pass(self.id, record, self.switch.final_pass, self.redactor)
+            .settle_pass(
+                self.id,
+                record,
+                self.switch.final_pass,
+                expected,
+                self.redactor,
+            )
             .map_err(|err| {
                 tracing::warn!(session = %self.id, %err, "cannot write the session pass");
                 PassError::new(err.code(), err.to_string())

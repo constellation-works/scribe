@@ -482,7 +482,7 @@ fn settle_pass_writes_the_record_and_clears_due_in_one_call() {
     let redactor =
         crate::store::Redactor::new([(String::from("TOKEN"), String::from("s3cr3t-value-123"))]);
     let written = store
-        .settle_pass(&s, Some(record.clone()), false, &redactor)
+        .settle_pass(&s, Some(record.clone()), false, None, &redactor)
         .unwrap()
         .unwrap();
     assert_eq!(written.summary, "the token is [redacted:TOKEN] here");
@@ -512,6 +512,7 @@ fn a_link_is_kept_on_the_switch_until_the_first_record_then_on_the_record() {
             &parent,
             Some(crate::tests::session("p-1", t0)),
             false,
+            None,
             &redactor,
         )
         .unwrap();
@@ -533,6 +534,7 @@ fn a_link_is_kept_on_the_switch_until_the_first_record_then_on_the_record() {
             &child,
             Some(crate::tests::session("c-1", t0)),
             false,
+            None,
             &redactor,
         )
         .unwrap()
@@ -573,8 +575,9 @@ fn a_link_is_kept_on_the_switch_until_the_first_record_then_on_the_record() {
     let on_disk = store.session(&child).unwrap().record;
     assert_eq!(on_disk.links, vec![spawned.clone(), continues.clone()]);
     assert_eq!(on_disk.updated, stale.updated, "a link is not a pass");
+    let stale_updated = stale.updated;
     let written = store
-        .settle_pass(&child, Some(stale), false, &redactor)
+        .settle_pass(&child, Some(stale), false, Some(stale_updated), &redactor)
         .unwrap()
         .unwrap();
     assert_eq!(written.links, vec![spawned, continues]);
@@ -603,7 +606,7 @@ fn ordinary_writes_refuse_any_change_to_a_sealed_segment() {
     let id = record.id.clone();
     let redactor = Redactor::new([]);
     let original = store
-        .settle_pass(&id, Some(record), false, &redactor)
+        .settle_pass(&id, Some(record), false, None, &redactor)
         .unwrap()
         .unwrap();
     let path = store.session_path(&original);
@@ -627,14 +630,14 @@ fn ordinary_writes_refuse_any_change_to_a_sealed_segment() {
     for changed in variants {
         assert_eq!(
             store
-                .checkpoint_pass(changed.clone(), &redactor)
+                .checkpoint_pass(changed.clone(), Some(original.updated), &redactor)
                 .unwrap_err()
                 .code(),
             "sealed_segment_changed"
         );
         assert_eq!(
             store
-                .settle_pass(&id, Some(changed), false, &redactor)
+                .settle_pass(&id, Some(changed), false, Some(original.updated), &redactor)
                 .unwrap_err()
                 .code(),
             "sealed_segment_changed"
@@ -645,7 +648,7 @@ fn ordinary_writes_refuse_any_change_to_a_sealed_segment() {
     changed.summary = String::from("Updated header");
     let redactor = Redactor::new([(String::from("LATER"), original.log[0].text.clone())]);
     let written = store
-        .settle_pass(&id, Some(changed), false, &redactor)
+        .settle_pass(&id, Some(changed), false, Some(original.updated), &redactor)
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -664,7 +667,13 @@ fn set_active_writes_only_the_activity_fields_and_only_on_a_change() {
     let t0 = time::macros::datetime!(2026-11-01 10:00 UTC);
     let none = crate::store::Redactor::new([]);
     store
-        .settle_pass(&s, Some(crate::tests::session("s-1", t0)), false, &none)
+        .settle_pass(
+            &s,
+            Some(crate::tests::session("s-1", t0)),
+            false,
+            None,
+            &none,
+        )
         .unwrap();
     let path = root.join("sessions/2026/11/s-1.md");
     let before = store.session(&s).unwrap().record;
@@ -721,6 +730,7 @@ fn set_active_many_isolates_a_corrupt_record_and_continues() {
                 &id,
                 Some(crate::tests::session(id.as_str(), now)),
                 false,
+                None,
                 &redactor,
             )
             .unwrap();
@@ -764,4 +774,73 @@ fn set_active_many_isolates_a_corrupt_record_and_continues() {
             .record
             .active
     );
+}
+
+#[test]
+fn a_pass_write_refuses_when_the_record_changed_since_it_was_loaded() {
+    use crate::control::{self, Switch};
+    use crate::{Redactor, SegmentOrigin};
+    let dir = private_tempdir();
+    let store = Store::open(dir.path());
+    let t0 = time::macros::datetime!(2026-11-01 10:00 UTC);
+    let redactor = Redactor::new([]);
+    let record = crate::tests::session("s-1", t0);
+    let id = record.id.clone();
+    store
+        .update_control(|state| control::switch(state, &id, &Switch::On, t0))
+        .unwrap();
+    let original = store
+        .settle_pass(&id, Some(record), false, None, &redactor)
+        .unwrap()
+        .unwrap();
+    // The record a pass loaded, then a rebuild replaces it on disk.
+    let stale = store.session(&id).unwrap().record;
+    assert_eq!(stale, original);
+    let mut rebuilt = stale.clone();
+    rebuilt.summary = String::from("Rebuilt header");
+    rebuilt.updated = t0 + time::Duration::hours(2);
+    rebuilt.log[0].origin = SegmentOrigin::Rebuild;
+    let rebuilt = store
+        .finish_rebuild(rebuilt, stale.updated, &redactor)
+        .unwrap()
+        .unwrap();
+    let path = store.session_path(&rebuilt);
+    let rebuilt_bytes = fs::read(&path).unwrap();
+    store
+        .update_control(|state| control::fail(state, &id, t0))
+        .unwrap();
+    assert!(store.control().unwrap().get(&id).unwrap().due);
+
+    let mut attempt = stale.clone();
+    attempt.summary = String::from("Stale pass");
+    attempt.updated = t0 + time::Duration::hours(3);
+    assert_eq!(
+        store
+            .checkpoint_pass(attempt.clone(), Some(stale.updated), &redactor)
+            .unwrap_err()
+            .code(),
+        "record_changed"
+    );
+    assert_eq!(
+        store
+            .settle_pass(&id, Some(attempt), false, Some(stale.updated), &redactor)
+            .unwrap_err()
+            .code(),
+        "record_changed"
+    );
+    assert_eq!(fs::read(&path).unwrap(), rebuilt_bytes);
+    assert!(
+        store.control().unwrap().get(&id).unwrap().due,
+        "a refused settle keeps the session due"
+    );
+
+    // A pass that loaded the rebuilt record writes normally.
+    let mut next = rebuilt.clone();
+    next.summary = String::from("Next pass");
+    next.updated = t0 + time::Duration::hours(4);
+    let written = store
+        .checkpoint_pass(next, Some(rebuilt.updated), &redactor)
+        .unwrap()
+        .unwrap();
+    assert_eq!(written.summary, "Next pass");
 }

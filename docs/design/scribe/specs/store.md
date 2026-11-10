@@ -229,7 +229,14 @@ config tag claims is dropped with a warning naming both.
   (redacted, `sessions/<yyyy>/<mm>/` from its `started`, created `0700`)
   and settles its switch (`due` cleared, `final` too when the final pass
   ran; a `final` set while a non-final pass ran is kept) in one locked
-  call. Each window rewrites the header and open segment, appends up to
+  call. Before each window's write (a `checkpoint_pass` or the final
+  `settle_pass`), the pass compares, under the same lock, the `updated`
+  revision of the record it loaded with the record on disk; on a mismatch
+  it refuses that write with `record_changed`, writes nothing, leaves the
+  record on disk unchanged and keeps the session due, so the next run
+  starts from the record on disk. A session with no record loaded expects
+  no record on disk. A link keeps `updated`, so a record linked while the
+  model ran still matches and its links are merged as before. Each window rewrites the header and open segment, appends up to
   three new segments, and derives message ranges and dates from the new
   segments' `starts_at` ids. A segment seals when another starts, after
   `segment_windows` windows, or in the final pass's last window. The
@@ -298,7 +305,11 @@ config tag claims is dropped with a warning naming both.
 - **The log is append-only** (S9). Every session write except `session
   rebuild` compares each sealed segment it writes with the one on disk;
   any difference in metadata or text refuses the write
-  (`sealed_segment_changed`) and keeps the record. A rebuild writes its
+  (`sealed_segment_changed`) and keeps the record. An ordinary pass first
+  compares the `updated` revision it loaded with the one on disk under
+  the lock; a mismatch refuses the write with `record_changed` before the
+  sealed-segment check, so a pass that loaded its record before a rebuild
+  finished cannot overwrite the rebuilt record. A rebuild writes its
   windows to `.<id>.rebuild.md` beside the record and replaces the record
   under the lock only if the record's `updated` is unchanged since the
   rebuild began. Checkpoints use the same format-4 session shape; their
