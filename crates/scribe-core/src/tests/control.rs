@@ -42,6 +42,8 @@ fn on_marks_a_pass_due_and_on_twice_changes_nothing() {
         since: Some(T0),
         due: true,
         final_pass: false,
+        consecutive_failures: 0,
+        retry_after: None,
     };
     assert_eq!(state.get(&s), Some(&on));
 
@@ -94,6 +96,41 @@ fn cadence() -> Cadence {
 fn settled_on(state: &mut ControlState, s: &SessionId) {
     control::switch(state, s, &Switch::On, T0);
     assert!(control::settle(state, s, false));
+}
+
+#[test]
+fn retry_schedule_grows_to_one_hour_saturates_and_success_or_off_resets_it() {
+    let s = id("s-1");
+    let mut state = ControlState::default();
+    control::fail(&mut state, &s, T0);
+    assert!(
+        state.sessions.is_empty(),
+        "a failure cannot switch a session on"
+    );
+    control::switch(&mut state, &s, &Switch::On, T0);
+    for (n, minutes) in [5, 10, 20, 40, 60, 60, 60].into_iter().enumerate() {
+        control::fail(&mut state, &s, T0);
+        let c = state.get(&s).unwrap();
+        assert_eq!(c.consecutive_failures, u32::try_from(n + 1).unwrap());
+        assert_eq!(c.retry_after, Some(T0 + Duration::minutes(minutes)));
+        assert!(c.due && c.on, "backoff never gives up");
+    }
+    state.sessions.get_mut(&s).unwrap().consecutive_failures = u32::MAX;
+    control::fail(&mut state, &s, T0);
+    assert_eq!(state.get(&s).unwrap().consecutive_failures, u32::MAX);
+    assert_eq!(
+        state.get(&s).unwrap().retry_after,
+        Some(T0 + Duration::hours(1))
+    );
+    control::settle(&mut state, &s, false);
+    assert_eq!(state.get(&s).unwrap().consecutive_failures, 0);
+    assert_eq!(state.get(&s).unwrap().retry_after, None);
+    control::fail(&mut state, &s, T0);
+    control::switch(&mut state, &s, &Switch::Off, T0);
+    assert_eq!(state.get(&s).unwrap().consecutive_failures, 0);
+    assert_eq!(state.get(&s).unwrap().retry_after, None);
+    control::fail(&mut state, &s, T0);
+    assert!(!state.get(&s).unwrap().due, "an off session stays off");
 }
 
 #[test]

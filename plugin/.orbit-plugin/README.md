@@ -11,18 +11,17 @@ The Claude Code hooks that write entries are a separate package,
 | Tool | Kind | MCP | State |
 |---|---|---|---|
 | `scribe.ask` | read-only | `global` | live |
-| `scribe.session-pass` | mutating, not agent-callable | none | live; its routine ships switched off, since Daniel runs `scribe session pass` by hand |
+| `scribe.session-pass` | mutating, not agent-callable | none | live; routine ships disabled, runs every 5 minutes once enabled; also runs by hand |
 | `scribe.consistency-scan` | mutating, not agent-callable | none | live; the `scribe-consistency` routine runs it |
 
 `routines/` and `jobs/` hold the two routines, seeded by `orbit plugin
 enable` with `enabled: false`: `scribe-session-pass` (`*/5 * * * *`, the
 records of sessions whose pass is due, as `scribe session pass` writes them;
-left off, because Daniel runs `scribe session pass` by hand from a login
-shell, where `claude` is on `PATH`, and a failed pass stays due for his next
-run) and `scribe-consistency` (`0 6 * * 1`, proposals, as `scribe consistency
-scan` opens them). Each runs one job step that calls its tool. A call
-starts no session after 50 s and no batch after 170 s, to end inside
-Orbit's 300 s limit; the rest waits for the next run. No tool settles a
+enabled on each host after review; Daniel can also run it by hand where
+`claude` is on `PATH`) and `scribe-consistency` (`0 6 * * 1`, proposals,
+as `scribe consistency scan` opens them). Each runs one job step that
+calls its tool. A call starts no later session or window after 50 s and no
+batch after 170 s, to end inside Orbit's 300 s limit; the rest waits for the next run. No tool settles a
 proposal: that is `#scribe approve|reject` in a typed prompt.
 
 ## Install (operator)
@@ -53,14 +52,26 @@ orbit tool run scribe.ask --input '{"question":"can you fetch me last session su
 ```
 
 (`orbit config set plugins.scribe.root <path>` sets a key the same way.)
-The routines stay disabled until you switch them on, in one workspace:
-`orbit routine list` shows them, and setting `enabled: true` in
-`.orbit/routines/scribe-consistency.yaml` turns the scan on, once the CLI's
-`scribe consistency scan` does what you expect. Session passes run by hand:
-`scribe session pass` (the due sessions, five per run) or `scribe session
-pass --session <id>` (a named session, due or not). The session-pass
-routine runs `claude` from the Orbit clock's `PATH`, which on macOS
-(launchd) holds no `~/.local/bin`, so leave it off there. Reinstall the Claude Code package
+The routines ship disabled so the operator can review each host's setup,
+following Orbit's convention. `orbit routine list` shows them; enable the
+session routine with `orbit routine enable scribe-session-pass` once the
+store and transcripts are configured and `claude` is reachable from the
+Orbit clock's `PATH`. Once enabled it runs every 5 minutes. Daniel,
+2026-11-10: "perhaps routine was not a bad idea then? let's add that back".
+The Mac enabled it that day; the shipped default remains disabled.
+
+Also run `scribe session pass` by hand (due sessions, five per run) or
+`scribe session pass --session <id>` (a named session, due or not, ignoring
+retry backoff). New messages run in consecutive windows, default 40
+messages / 15000 characters, configurable via `[catalog] window_messages`
+and `window_chars`. Every valid window checkpoints the record; a failure
+keeps that progress and the next run resumes at its failed window.
+Automatic retries wait 5, 10, 20, 40, then at most 60 minutes while the
+session stays due; a completed pass resets backoff. JSON adds `windows`
+per session (persisted this run), and `remaining` includes sessions waiting
+for backoff or the routine's time budget. On macOS, verify `claude` is
+reachable from the clock's environment before enabling the routine.
+Reinstall the Claude Code package
 (`claude plugin install scribe --marketplace ./plugin`) so its
 `SessionStart` hook is registered.
 

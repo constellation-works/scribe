@@ -1,7 +1,7 @@
 //! The `session` noun: list and show the records of sessions Daniel switched
 //! on with `/scribe on`, and `pass`, which writes them. `list` and `show`
-//! read only and make one store call each (STD-02 R2); `pass`, which Daniel
-//! runs by hand, lives in `pass.rs`.
+//! read only and make one store call each (STD-02 R2); `pass`, run by the
+//! enabled routine or by hand, lives in `pass.rs`.
 
 pub(in crate::commands) mod pass;
 

@@ -142,6 +142,13 @@ impl RunLimits {
                     .start_by
                     .is_none_or(|by| std::time::Instant::now() < by))
     }
+
+    /// A started session may process another window only before the plugin
+    /// deadline. The CLI has no deadline and finishes every window.
+    pub(crate) fn may_continue(&self) -> bool {
+        self.start_by
+            .is_none_or(|by| std::time::Instant::now() < by)
+    }
 }
 
 /// What a list needs to say on stderr beside its records.

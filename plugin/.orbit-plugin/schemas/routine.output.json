@@ -11,14 +11,15 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["session", "result", "error_code", "passes", "dropped_terms", "gave_up"],
+            "required": ["session", "result", "error_code", "passes", "dropped_terms", "gave_up", "windows"],
             "properties": {
               "session": { "type": "string" },
               "result": { "enum": ["written", "unchanged", "waiting", "failed"] },
               "error_code": { "type": ["string", "null"] },
               "passes": { "type": ["integer", "null"], "minimum": 0 },
               "dropped_terms": { "type": "integer", "minimum": 0 },
-              "gave_up": { "type": "boolean" }
+              "gave_up": { "type": "boolean" },
+              "windows": { "type": "integer", "minimum": 0, "description": "Successfully persisted windows for this session in this call; retries do not count twice." }
             }
           }
         },

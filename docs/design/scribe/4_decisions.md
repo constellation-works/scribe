@@ -7,7 +7,7 @@ status: Draft
 feature: scribe
 doc_role: decisions
 type: design
-summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from a routine and later by hand, why frontmatter is parsed by yaml_serde, plus the engineering decisions carried over from the Rust CLI template.
+summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, plus the engineering decisions carried over from the Rust CLI template.
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
@@ -357,8 +357,8 @@ sessions per run.
   summarised until Daniel enables the routine in one workspace.
 - Superseded in its cadence by
   [a failed pass stays due, and Daniel runs the pass by hand](#a-failed-pass-stays-due-and-daniel-runs-the-pass-by-hand):
-  hooks still only mark a session due, but the pass is run by hand and the
-  routine stays switched off.
+  that manual-only cadence was itself reversed on 2026-11-10; see
+  [consecutive windows and bounded retries](#consecutive-windows-and-bounded-retries-keep-session-passes-cheap).
 
 ## A session record covers the whole opted-in session
 
@@ -373,15 +373,16 @@ the earlier part could look like the backfill Daniel rejected.
 ### Decision
 
 Turning a session on catalogs that whole session, from its first message,
-within the 150k-character window of [2_design.md §5.3](./2_design.md#53-a-pass):
-a longer session loses its oldest messages, with a note in the record.
+in consecutive bounded windows ([2_design.md §5.3](./2_design.md#53-a-pass)).
+The 2026-11-10 windowing decision below supersedes the original 150k
+newest-message cutoff; a longer session no longer loses its older messages.
 "No backfill" means no other session is ever read: scribe never scans
 transcripts it was not switched on for.
 
 ### Consequences
 
-- A record states the session's real goal even when `on` came late, unless
-  the session is longer than the window.
+- A record states the session's real goal even when `on` came late; long
+  deltas are processed oldest first across multiple windows.
 - Cost: messages typed before `/scribe on` are summarised, which Daniel may
   not expect; `/scribe off` stops future passes but does not shrink the
   record.
@@ -1115,8 +1116,9 @@ failure. No persisted shape changes.
   before `due` is cleared.
 - Superseded by
   [a failed pass stays due, and Daniel runs the pass by hand](#a-failed-pass-stays-due-and-daniel-runs-the-pass-by-hand):
-  no failure clears `due`, so nothing counts them, and `failures_in_a_row`
-  is gone.
+  no failure clears `due`, and `failures_in_a_row` is gone. The later
+  bounded-retry decision counts failures in control state for scheduling,
+  without reintroducing a give-up threshold.
 
 ## A failed pass stays due, and Daniel runs the pass by hand
 
@@ -1138,12 +1140,17 @@ The `scribe-session-pass` routine was switched off that day.
 
 ### Decision
 
-- Daniel runs `scribe session pass` by hand, from a login shell where
-  `claude` is on `PATH`. No setting names another `claude`. The plugin keeps
+- Daniel can run `scribe session pass` by hand where `claude` is on
+  `PATH`. Later on 2026-11-10 he reversed the manual-only choice: "perhaps
+  routine was not a bad idea then? let's add that back". Once a host enables
+  the routine, it runs every 5 minutes; see the windowing decision below.
+  No setting names another `claude`. The plugin keeps
   shipping the routine and its job, seeded disabled.
 - A failed pass, of any code, keeps the previous record and leaves `due`
-  set; there is no give-up bound. Daniel retries by running the command
-  again. `gave_up` stays in the `--json` report, always `false`.
+  set; there is no give-up bound. The later windowing decision preserves
+  successful checkpoints, adds bounded automatic backoff, and lets Daniel
+  retry immediately with `--session`. `gave_up` stays in the `--json`
+  report, always `false`.
 - A run with any failed pass prints its report and then exits 1 with
   `session_pass_failed`, naming each failed session and its code;
   `scribe.session-pass` answers the same code and message, not retryable.
@@ -1156,13 +1163,72 @@ The `scribe-session-pass` routine was switched off that day.
 ### Consequences
 
 - A failure is seen when it happens, on Daniel's terminal, and nothing is
-  dropped: the next run retries every failed session.
+  dropped: automatic runs retry after backoff, and explicit sessions retry
+  immediately.
 - The five sessions stranded by the old rule are passed with `--session`;
   no one edits `control.json` by hand.
-- Cost: records wait until Daniel runs the command, and a session that can
-  never be summarised (a transcript the model always refuses) costs a model
-  call on every run until Daniel switches it off with `/scribe off`. If the
-  routine is switched on again, that cost recurs every five minutes.
+- Cost: a session that keeps failing remains due indefinitely. The later
+  backoff caps repeated model cost at one attempt per hour, while the
+  enabled routine checks every 5 minutes and the manual command remains
+  available.
+
+## Consecutive windows and bounded retries keep session passes cheap
+
+**Recorded:** 2026-11-10 · [ORB-23853] · **Overridable by Daniel**
+**Code anchors:** `scribe-core::pass::window_with_limits`,
+`scribe-core::control::fail`, `Store::checkpoint_pass`,
+`store/format.rs::UPGRADES`, `SessionRequest::prompt`,
+`commands/session/pass.rs`
+
+### Context
+
+A first pass sent 53,852 characters to Haiku. XML message framing and tags
+inside the transcript were followed by malformed structured output: later
+fields landed inside the `goals` string as XML. Daniel: "The point of
+scribe was to use a cheap model". At 03:37Z on 2026-11-10 he also reversed
+manual-only operation: "perhaps routine was not a bad idea then? let's add
+that back". The Mac enabled the 5-minute routine that day. Daniel then
+settled the shipped default: plugin-seeded routines start disabled for the
+operator to review, following Orbit's convention.
+
+### Decision
+
+- Keep `claude-haiku-5-5`. Send consecutive oldest-first windows, default
+  40 messages or 15,000 Unicode characters of message content, configurable
+  with positive `[catalog] window_messages` and `window_chars`. Include
+  pasted content in that budget. A single oversized message is cut with a
+  marker inside the limit; headers and the previous record are additional.
+- Each window receives the persisted record so far (none initially) and
+  produces the whole updated record. Use plain headers for messages,
+  pasted blocks and the previous record; retain ids for citations and the
+  rule that messages are data. Keep one fresh validation retry per window,
+  every field limit and topic/term reuse. Terms must name a user message
+  already processed and quote its own words verbatim.
+- Checkpoint every valid window through the store lock, redaction and
+  `write_atomic`, advancing `scribed_through` and the record-update count
+  `passes`. Keep the session due until all windows finish; only then
+  finalize an ended session. A failed later window resumes from the last
+  checkpoint. JSON adds per-session `windows`, successful checkpoints in
+  this invocation, including those before failure.
+- Keep consecutive failure count and `retry_after` in `control.json`,
+  bumping the global store format to 2 with an appended format-1 upgrade.
+  Retry automatically after 5, 10, 20, 40, then at most 60 minutes; success
+  or switching off resets backoff. Keep the session due, never give up.
+  `scribe session pass --session <id>` ignores the delay.
+- The routine continues to ship seeded disabled, unchanged. Each host
+  enables it with `orbit routine enable`; then it runs every 5 minutes.
+  Daniel can also use the manual command. The CLI finishes all windows;
+  the routine starts no further window after its existing 50-second
+  start-by deadline and counts the unfinished session in `remaining`.
+
+### Consequences
+
+A large delta costs several cheap calls instead of one large prompt, and
+an interruption or failure preserves earlier work. Old stores remain
+readable without writes; the next mutation writes format 2. This does not
+fix the Mac clock's missing `claude` PATH entry: the host must make the CLI
+reachable before enabling the routine. Live Haiku validation on Daniel's
+Mac remains an operator check after installation.
 
 ## A pass finds its transcript by session id
 

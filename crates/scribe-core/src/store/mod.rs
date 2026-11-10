@@ -440,8 +440,38 @@ impl Store {
         ran_final: bool,
         redactor: &Redactor,
     ) -> Result<Option<SessionRecord>> {
+        self.write_pass(session, record, Some(ran_final), redactor)
+    }
+
+    /// Persist one intermediate window under the store lock, redacted and
+    /// atomically replaced. Keep the pass due until its last window settles.
+    pub fn checkpoint_pass(
+        &self,
+        record: SessionRecord,
+        redactor: &Redactor,
+    ) -> Result<Option<SessionRecord>> {
+        let session = record.id.clone();
+        self.write_pass(&session, Some(record), None, redactor)
+    }
+
+    fn write_pass(
+        &self,
+        session: &SessionId,
+        record: Option<SessionRecord>,
+        ran_final: Option<bool>,
+        redactor: &Redactor,
+    ) -> Result<Option<SessionRecord>> {
         self.prepare_dir(&self.root)?;
         let _lock = self.lock("session pass")?;
+        // An explicit pass can start when not due. Publish the obligation
+        // before the checkpoint, so interruption cannot strand its remainder.
+        if ran_final.is_none() {
+            self.change_control(|state| {
+                if let Some(control) = state.sessions.get_mut(session).filter(|c| c.on) {
+                    control.due = true;
+                }
+            })?;
+        }
         let written = match record {
             Some(mut record) => {
                 redactor.session(&mut record);
@@ -460,7 +490,9 @@ impl Store {
             }
             None => None,
         };
-        self.change_control(|state| control::settle(state, session, ran_final))?;
+        if let Some(ran_final) = ran_final {
+            self.change_control(|state| control::settle(state, session, ran_final))?;
+        }
         Ok(written)
     }
 

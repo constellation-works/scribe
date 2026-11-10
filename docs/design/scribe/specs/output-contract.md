@@ -171,22 +171,32 @@ transcript check. A switch writes one audit line (`target`
 
 `scribe session pass --json` prints `{"passes": [<pass>, ...],
 "remaining": <integer>}`: one pass per due session handled this run (at
-most five, by session id) and the due sessions left for the next run. A
+most five, by session id, or explicitly named sessions) and the due sessions
+left for the next run, including those waiting for retry backoff and a
+partly processed session stopped between windows by the routine deadline. A
 pass is `{"session", "result", "error_code", "passes", "dropped_terms",
-"gave_up"}`: `result` is `written`, `unchanged` (nothing new; `due`
+"gave_up", "windows"}`: `result` is `written`, `unchanged` (nothing new; `due`
 cleared without a model call), `waiting` (no transcript or message yet;
 still due) or `failed` (the previous record kept, still due);
 `error_code` is a stable code or `null`; `passes` is the record's pass
-count or `null` without a record; `dropped_terms` counts terms whose
-`said` was not verbatim from one of Daniel's turns; `gave_up` is always
+count (successful record updates, one per window), or `null` on failure
+or without a record; `windows` is the number of successfully persisted
+windows for this session in this invocation (including progress before a
+later failure; validation retries do not add a window). `dropped_terms`
+counts terms dropped across persisted windows whose
+`said` was not verbatim from its named user turn, whose message id was
+unknown or future, or whose lengths were invalid; `gave_up` is always
 `false` (a failed pass is never given up; the field is kept for the
 shape). Plain and table
 print one row per pass (`session result error_code passes dropped_terms`);
 with nothing due stdout is empty, stderr says `no session pass is due` and
-the exit is 0. When any pass failed, the report is printed as usual and
+the exit is 0. If all due sessions are waiting for backoff, `passes` is
+empty, `remaining` counts them, and stderr names the retry wait. Automatic
+retries wait 5, 10, 20, 40, then at most 60 minutes; `--session <id>` ignores
+backoff. When any pass failed, the report is printed as usual and
 the run then exits 1 with `session_pass_failed` on stderr, `error: <n>
-session pass(es) failed: <id> <code>, ...; each stays due, run 'scribe
-session pass' again to retry` (or that message in the JSON error object
+session pass(es) failed: <id> <code>, ...; each stays due with retry
+backoff; use 'scribe session pass --session <id>' to retry now` (or that message in the JSON error object
 under `--json`). `--session <id>` naming a session that is not on exits 1
 with `session_not_on` before any pass. Each pass except a `waiting`
 one writes one audit line (`target` `session:<id>`, with its code).

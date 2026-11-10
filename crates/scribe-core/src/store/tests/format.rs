@@ -224,7 +224,10 @@ fn an_encoded_entry_reads_back_as_the_same_entry() {
     original.review_after = Some(time::macros::date!(2027 - 01 - 02));
     let bytes = crate::store::format::encode_entry(Path::new(ENTRY), &original).unwrap();
     let text = String::from_utf8(bytes.clone()).unwrap();
-    assert!(text.starts_with("---\nformat: 1\nkind: entry\n"), "{text}");
+    assert!(
+        text.starts_with(&format!("---\nformat: {FORMAT}\nkind: entry\n")),
+        "{text}"
+    );
     assert_eq!(entry(&text).unwrap(), original);
 }
 
@@ -244,7 +247,7 @@ fn an_encoded_session_record_reads_back_as_the_same_record() {
     let bytes = crate::store::format::encode_session(Path::new(SESSION), &original).unwrap();
     let text = String::from_utf8(bytes).unwrap();
     assert!(
-        text.starts_with("---\nformat: 1\nkind: session\n"),
+        text.starts_with(&format!("---\nformat: {FORMAT}\nkind: session\n")),
         "{text}"
     );
     assert_eq!(session(&text).unwrap(), original);
@@ -258,6 +261,6 @@ fn encoded_control_reads_back_as_the_same_state() {
     let bytes = crate::store::format::encode_control(path, &state).unwrap();
     assert_eq!(decode_control(path, &bytes).unwrap(), state);
     let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(value["format"], 1);
+    assert_eq!(value["format"], FORMAT);
     assert_eq!(value["sessions"]["s-1"]["final"], false);
 }

@@ -545,9 +545,9 @@ fn a_record_from_a_newer_build_is_refused_whole_and_left_alone() {
     ] {
         let path = fx.root().join(file);
         let original = std::fs::read_to_string(&path).unwrap();
-        let newer = original.replacen("format: 1", "format: 2", 1).replacen(
+        let newer = original.replacen("format: 1", "format: 999", 1).replacen(
             "\"format\": 1",
-            "\"format\": 2",
+            "\"format\": 999",
             1,
         );
         std::fs::write(&path, &newer).unwrap();
