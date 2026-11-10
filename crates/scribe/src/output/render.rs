@@ -3,9 +3,9 @@
 
 use super::color::{self, Role};
 use super::payload::{
-    AskPayload, EntryPayload, FoundPayload, HookJson, HookReply, HookSpecificJson, PassPayload,
-    PassReport, PluginReply, ProposalPayload, Record, Records, ScanReport, SessionPayload,
-    TagPayload, TaskPayload, TreeRow, WarningPayload,
+    AskPayload, EntryPayload, FoundPayload, HitPayload, HookJson, HookReply, HookSpecificJson,
+    PassPayload, PassReport, PluginReply, ProposalPayload, Record, Records, ScanReport,
+    SessionPayload, TagPayload, TaskPayload, TreeRow, WarningPayload,
 };
 use super::sink::{OutputMode, Sink};
 use super::table::{self, Align, Cell, Column};
@@ -87,6 +87,15 @@ const TAG_COLUMNS: [Column; 6] = [
     col("SOURCE", Align::Left, false),
 ];
 
+const HIT_COLUMNS: [Column; 6] = [
+    col("CITE", Align::Left, false),
+    col("KIND", Align::Left, false),
+    col("SCORE", Align::Right, false),
+    col("UPDATED", Align::Left, false),
+    col("TITLE", Align::Left, false),
+    col("SNIPPET", Align::Left, true),
+];
+
 /// The `--json` form of a list: always `{"<records>": [...], "total",
 /// "truncated", "warnings"}`, whatever the flags, so its shape never depends
 /// on them (STD-01 R34, R10).
@@ -132,6 +141,7 @@ pub(crate) fn list(
                 write_json(out, &envelope("proposals", items, total, warnings))
             }
             Records::Tags(items) => write_json(out, &envelope("tags", items, total, warnings)),
+            Records::Hits(items) => write_json(out, &envelope("hits", items, total, warnings)),
         };
     }
     // An empty list prints nothing, not a lone header (STD-01 R16).
@@ -167,6 +177,10 @@ pub(crate) fn list(
             items.iter().map(proposal_row).collect(),
         ),
         Records::Tags(items) => (TAG_COLUMNS.to_vec(), items.iter().map(tag_row).collect()),
+        Records::Hits(items) => (
+            HIT_COLUMNS.to_vec(),
+            items.iter().map(|h| hit_row(h, sink.mode)).collect(),
+        ),
     };
     match sink.mode {
         OutputMode::Table => {
@@ -845,6 +859,32 @@ fn proposal_row(p: &ProposalPayload) -> Vec<Cell> {
         Cell::plain(one_line(&p.reason)),
     ]
 }
+
+/// A hit's row, the same in the table and the plain line, except that the
+/// table cuts the title to [`TITLE_CELL_CHARS`] so the snippet keeps room.
+/// A hidden record's cite is muted in the table.
+fn hit_row(h: &HitPayload, mode: OutputMode) -> Vec<Cell> {
+    let title = one_line(&h.title);
+    let hidden = h.active == Some(false) || !matches!(h.status, "active" | "open" | "final");
+    vec![
+        Cell {
+            text: h.cite.clone(),
+            role: if hidden { Role::Muted } else { Role::Neutral },
+        },
+        Cell::plain(h.kind),
+        Cell::plain(format!("{:.3}", h.score.as_f64().unwrap_or_default())),
+        Cell::plain(timestamp(h.updated)),
+        Cell::plain(if mode == OutputMode::Table {
+            table::truncate(&title, TITLE_CELL_CHARS)
+        } else {
+            title
+        }),
+        Cell::plain(one_line(&h.snippet)),
+    ]
+}
+
+/// The widest title a hit's table row shows.
+const TITLE_CELL_CHARS: usize = 40;
 
 fn tag_row(t: &TagPayload) -> Vec<Cell> {
     vec![

@@ -22,6 +22,7 @@ Examples:
   scribe proposal list
   scribe consistency scan --json
   scribe tag list
+  scribe record search \"merge policy\" --kind session --since 2026-11-01
   scribe question ask \"how do we merge agent PRs?\"
   scribe entry list | cut -f1,6
 

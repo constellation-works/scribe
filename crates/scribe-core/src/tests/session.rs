@@ -1,5 +1,5 @@
 use super::{T0, session};
-use crate::session::{Cadence, SessionControl, SessionFilter, SessionId};
+use crate::session::{Cadence, SessionControl, SessionFilter, SessionId, SessionStatus};
 use std::num::{NonZeroU32, NonZeroUsize};
 use time::Duration;
 
@@ -76,11 +76,48 @@ fn session_selection_filters_then_sorts_by_start() {
     };
     assert_eq!(ids(&scribe), ["a", "b"]);
     let ci = SessionFilter {
-        topic: Some("ci".parse().unwrap()),
+        topics: vec!["ci".parse().unwrap()],
         limit: NonZeroUsize::new(5),
         ..SessionFilter::default()
     };
     assert_eq!(ids(&ci), ["b"]);
+}
+
+#[test]
+fn a_session_matches_dates_its_span_overlaps_and_its_status() {
+    let mut r = session("a", T0);
+    r.updated = T0 + time::Duration::days(3);
+    let day = T0.date();
+    let dates = |since, until| SessionFilter {
+        dates: crate::record::DateRange { since, until },
+        ..SessionFilter::default()
+    };
+    // Any day from started to updated is in the span.
+    assert!(dates(day.next_day(), day.next_day()).matches(&r));
+    assert!(dates(None, Some(day)).matches(&r));
+    assert!(!dates(Some(day + time::Duration::days(4)), None).matches(&r));
+    assert!(!dates(None, day.previous_day()).matches(&r));
+    let status = |s| SessionFilter {
+        status: Some(s),
+        ..SessionFilter::default()
+    };
+    assert!(status(SessionStatus::Open).matches(&r));
+    assert!(!status(SessionStatus::Final).matches(&r));
+    r.related = vec![String::from("task:t-1").try_into().unwrap()];
+    let related = SessionFilter {
+        related: vec![
+            String::from("task:t-2").try_into().unwrap(),
+            String::from("task:t-1").try_into().unwrap(),
+        ],
+        ..SessionFilter::default()
+    };
+    assert!(related.matches(&r));
+    let both = SessionFilter {
+        topics: vec!["ci".parse().unwrap(), "api".parse().unwrap()],
+        ..SessionFilter::default()
+    };
+    r.topics = vec!["ci".parse().unwrap()].try_into().unwrap();
+    assert!(!both.matches(&r));
 }
 
 mod links {

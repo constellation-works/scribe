@@ -3,7 +3,7 @@ Update the reason of an open agent proposal
 Usage: scribe proposal update [OPTIONS] --author <AUTHOR> --reason <REASON> <ID>
 
 Arguments:
-  <ID>  Proposal id or unique prefix
+  <ID>  Proposal id or unique prefix (at least four characters)
 
 Options:
       --author <AUTHOR>  Agent name

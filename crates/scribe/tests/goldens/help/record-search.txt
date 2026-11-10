@@ -1,0 +1,34 @@
+Rank entries, session headers and segments for words, best first, with no model call
+
+Usage: scribe record search [OPTIONS] <TERMS>
+
+Arguments:
+  <TERMS>  The words to look for; stopwords and words under three letters are ignored
+
+Options:
+      --kind <KIND>        Only this kind of record [default: both] [possible values: entry, session]
+      --project <PROJECT>  Only records of this project (a repository slug, or global) [default: any]
+      --topic <TOPIC>      Only records carrying this topic (a segment: its session's or its own); repeat it to require every one [default: any]
+      --since <DATE>       Only records on or after this day, YYYY-MM-DD [default: no lower bound]
+      --until <DATE>       Only records on or before this day, YYYY-MM-DD [default: no upper bound]
+      --include-hidden     Include superseded and retired entries and inactive sessions
+      --limit <N>          Show at most this many hits, 1 or more; --json reports the total and whether the list was cut [default: 20]
+  -h, --help               Print help
+  -V, --version            Print version
+
+Global options:
+      --root <DIR>       Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>  Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json             Shorthand for --format json
+
+Ranks each entry, each session header and each segment of a session's log
+with BM25, as question ask does, and prints the best first; Daniel's own
+entries weigh 1.5 times. The CITE column is what question ask would cite:
+pass it to entry show or session show. Superseded and retired entries and
+inactive sessions are left out unless --include-hidden.
+
+Examples:
+  scribe record search "merge queue"
+  scribe record search release --kind session --since 2026-11-01
+  scribe record search "store format" --project scribe --topic store --limit 5
+  scribe record search "api" --json | jq -r '.hits[].cite'

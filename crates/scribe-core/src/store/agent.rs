@@ -1,4 +1,5 @@
 //! Locked direct writes from the CLI. Authors always describe the agent channel.
+use super::ids::resolve;
 use super::{Redactor, Store};
 use crate::WriteRefusal;
 use crate::entry::{AgentEntry, EntryPatch};
@@ -418,36 +419,5 @@ impl Store {
             self.write_entry(&entry, false)?;
         }
         Ok((result, changed))
-    }
-}
-
-fn resolve(input: &str, ids: &[String], missing: WriteRefusal) -> Result<usize> {
-    if let Some(i) = ids.iter().position(|id| id == input) {
-        return Ok(i);
-    }
-    let matches: Vec<usize> = ids
-        .iter()
-        .enumerate()
-        .filter(|(_, id)| input.len() >= 4 && id.starts_with(input))
-        .map(|(i, _)| i)
-        .collect();
-    match matches.as_slice() {
-        [i] => Ok(*i),
-        [] => Err(refusal(
-            missing,
-            "no matching id; list records with the same --root",
-        )),
-        _ => Err(refusal(
-            WriteRefusal::IdAmbiguous,
-            format!(
-                "ambiguous id; candidates: {}",
-                matches
-                    .iter()
-                    .take(10)
-                    .map(|i| ids[*i].as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        )),
     }
 }

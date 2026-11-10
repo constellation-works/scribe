@@ -24,7 +24,7 @@ Examples:
 
 #[derive(Debug, Args)]
 pub(crate) struct RebuildArgs {
-    /// Session record to replace
+    /// Session record to replace: its id or a unique prefix of it (at least four characters)
     #[arg(value_name = "ID")]
     pub(crate) id: SessionId,
     /// Name of the agent requesting the rebuild (lowercase letters, digits, '.', '_' or '-')
@@ -45,31 +45,28 @@ pub(in crate::commands) fn run_with<M: Models>(
     models: impl FnOnce(&Config) -> M,
 ) -> Result<Output, CliError> {
     let store = ctx.store();
-    let mut original = store.session(&args.id)?.record;
+    let id = store.resolve_session(&args.id)?;
+    let mut original = store.session(&id)?.record;
     if !args.confirm {
         return Err(CliError::ConfirmRequired {
-            id: args.id.clone(),
+            id: id.clone(),
             segments: original.log.len(),
             passes: original.passes,
         });
     }
-    if store
-        .control()?
-        .get(&args.id)
-        .is_some_and(|c| c.on && c.due)
-    {
-        return Err(scribe_core::Error::SessionBusy(args.id.clone()).into());
+    if store.control()?.get(&id).is_some_and(|c| c.on && c.due) {
+        return Err(scribe_core::Error::SessionBusy(id.clone()).into());
     }
     let path = ctx
         .transcripts()
-        .and_then(|dir| command_pass::find(dir, &args.id))
-        .ok_or_else(|| CliError::TranscriptMissing(args.id.clone()))?;
-    match payload::check_transcript(&path, &args.id, ctx.transcripts()) {
+        .and_then(|dir| command_pass::find(dir, &id))
+        .ok_or_else(|| CliError::TranscriptMissing(id.clone()))?;
+    match payload::check_transcript(&path, &id, ctx.transcripts()) {
         Ok(Transcript::Present) => {}
-        Ok(Transcript::Missing) => return Err(CliError::TranscriptMissing(args.id.clone())),
+        Ok(Transcript::Missing) => return Err(CliError::TranscriptMissing(id.clone())),
         Err(reason) => {
             return Err(CliError::TranscriptRefused {
-                id: args.id.clone(),
+                id: id.clone(),
                 reason,
             });
         }
@@ -79,11 +76,11 @@ pub(in crate::commands) fn run_with<M: Models>(
     let adapter = models(&config);
     let _rebuild = store.lock_rebuild(&original)?;
     // Re-read after taking the per-session lock: another rebuilder may have finished.
-    original = store.session(&args.id)?.record;
+    original = store.session(&id)?.record;
     let mut previous = store.rebuild_checkpoint(&original)?;
     let mut expected = previous.as_ref().map_or(original.updated, |r| r.updated);
     let mut report = PassPayload {
-        session: args.id.to_string(),
+        session: id.to_string(),
         result: "written",
         error_code: None,
         passes: None,
@@ -116,12 +113,12 @@ pub(in crate::commands) fn run_with<M: Models>(
         .collect();
     loop {
         // Re-check provenance when re-reading a growing transcript.
-        match payload::check_transcript(&path, &args.id, ctx.transcripts()) {
+        match payload::check_transcript(&path, &id, ctx.transcripts()) {
             Ok(Transcript::Present) => {}
-            Ok(Transcript::Missing) => return Err(CliError::TranscriptMissing(args.id.clone())),
+            Ok(Transcript::Missing) => return Err(CliError::TranscriptMissing(id.clone())),
             Err(reason) => {
                 return Err(CliError::TranscriptRefused {
-                    id: args.id.clone(),
+                    id: id.clone(),
                     reason,
                 });
             }
@@ -133,7 +130,7 @@ pub(in crate::commands) fn run_with<M: Models>(
         let messages = transcript::parse(&bytes);
         let conversation = pass::conversation(&messages);
         if conversation.is_empty() {
-            return Err(CliError::TranscriptMissing(args.id.clone()));
+            return Err(CliError::TranscriptMissing(id.clone()));
         }
         let mut offset = pass::start_after(
             &conversation,
@@ -162,7 +159,7 @@ pub(in crate::commands) fn run_with<M: Models>(
                 .collect();
             let final_window = end == conversation.len()
                 && (original.status == SessionStatus::Final
-                    || store.control()?.get(&args.id).is_some_and(|s| s.final_pass));
+                    || store.control()?.get(&id).is_some_and(|s| s.final_pass));
             let mut topics = known_topics.clone();
             let mut terms = known_terms.clone();
             if let Some(record) = &previous {
@@ -178,7 +175,7 @@ pub(in crate::commands) fn run_with<M: Models>(
                 terms.into_iter().take(200).collect(),
                 final_window,
             );
-            let answer = match distill(&args.id, request, &conversation[..end], &adapter) {
+            let answer = match distill(&id, request, &conversation[..end], &adapter) {
                 Ok(answer) => answer,
                 Err(error) => {
                     report.result = "failed";
@@ -195,7 +192,7 @@ pub(in crate::commands) fn run_with<M: Models>(
             };
             let dropped = answer.dropped_terms;
             let meta = pass::PassMeta {
-                id: args.id.clone(),
+                id: id.clone(),
                 project: original.project.clone(),
                 provider: original.provider.clone(),
                 host: original.host.clone(),
@@ -236,11 +233,11 @@ pub(in crate::commands) fn run_with<M: Models>(
             offset = end;
         }
         let Some(mut finished) = previous.clone() else {
-            return Err(CliError::TranscriptMissing(args.id.clone()));
+            return Err(CliError::TranscriptMissing(id.clone()));
         };
         let switch = store.control()?;
         let final_pass = original.status == SessionStatus::Final
-            || switch.get(&args.id).is_some_and(|s| s.final_pass);
+            || switch.get(&id).is_some_and(|s| s.final_pass);
         let sealed_at_finish = final_pass && finished.open_segment().is_some();
         if final_pass {
             finished = pass::finalized(&finished, ctx.now());
@@ -258,7 +255,7 @@ pub(in crate::commands) fn run_with<M: Models>(
                 }));
             }
             None => {
-                original = store.session(&args.id)?.record;
+                original = store.session(&id)?.record;
                 expected = original.updated;
                 // The next iteration re-reads the transcript and folds in any newer messages.
             }

@@ -36,6 +36,8 @@ const HELP: &[(&str, &[&str])] = &[
     ("proposal-update", &["proposal", "update", "--help"]),
     ("proposal-settle", &["proposal", "settle", "--help"]),
     ("proposal-list", &["proposal", "list", "--help"]),
+    ("record", &["record", "--help"]),
+    ("record-search", &["record", "search", "--help"]),
     ("consistency", &["consistency", "--help"]),
     ("consistency-scan", &["consistency", "scan", "--help"]),
     ("tag", &["tag", "--help"]),
@@ -101,6 +103,8 @@ const OUTPUT: &[(&str, &[&str])] = &[
         &["session", "show", "0f8e7a52-3c1d-4b6e-9a2f-5d4c3b2a1e01"],
     ),
     ("proposal-list", &["proposal", "list"]),
+    // Ranked with no model call: entries, session headers and segments.
+    ("record-search", &["record", "search", "merge agent PRs"]),
     ("tag-list", &["tag", "list"]),
     // A lookup: answered from the store, with no model call.
     (

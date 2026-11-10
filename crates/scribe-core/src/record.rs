@@ -13,6 +13,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt;
 use std::num::NonZeroUsize;
 use std::str::FromStr;
+use time::{Date, OffsetDateTime};
 
 /// Why a value was rejected as record metadata.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -509,6 +510,60 @@ impl fmt::Display for Related {
     }
 }
 
+/// A list's or search's `--since`/`--until`: calendar days, both ends
+/// included. A record matches when a day it covers falls in the range: an
+/// instant on that day, or a span (a session, a segment) that overlaps it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DateRange {
+    /// The first day kept.
+    pub since: Option<Date>,
+    /// The last day kept.
+    pub until: Option<Date>,
+}
+
+impl DateRange {
+    /// A day as `YYYY-MM-DD`.
+    #[must_use]
+    pub fn day(date: Date) -> String {
+        nullable_date::format(date)
+    }
+
+    /// Whether neither end is set.
+    #[must_use]
+    pub fn is_unbounded(&self) -> bool {
+        self.since.is_none() && self.until.is_none()
+    }
+
+    /// Whether `at`'s day (in its own offset) is in the range.
+    #[must_use]
+    pub fn contains(&self, at: OffsetDateTime) -> bool {
+        self.overlaps(at, at)
+    }
+
+    /// Whether the span from `from` to `to` has a day in the range. A span
+    /// given backwards is read forwards.
+    #[must_use]
+    pub fn overlaps(&self, from: OffsetDateTime, to: OffsetDateTime) -> bool {
+        let (first, last) = if from <= to {
+            (from.date(), to.date())
+        } else {
+            (to.date(), from.date())
+        };
+        self.since.is_none_or(|since| last >= since)
+            && self.until.is_none_or(|until| first <= until)
+    }
+}
+
+/// Parse a calendar day, `YYYY-MM-DD`.
+///
+/// # Errors
+///
+/// A message naming the text and the expected form.
+pub fn parse_day(text: &str) -> std::result::Result<Date, String> {
+    Date::parse(text, nullable_date::FORMAT)
+        .map_err(|_| format!("{text:?} is not a date in the form YYYY-MM-DD"))
+}
+
 /// What a listing found: the records returned and how many matched.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Listing<T> {
@@ -558,7 +613,8 @@ pub(crate) mod nullable_date {
     use time::format_description::BorrowedFormatItem;
     use time::macros::format_description;
 
-    const FORMAT: &[BorrowedFormatItem<'static>] = format_description!("[year]-[month]-[day]");
+    pub(super) const FORMAT: &[BorrowedFormatItem<'static>] =
+        format_description!("[year]-[month]-[day]");
 
     /// Render a date as `YYYY-MM-DD`.
     pub(crate) fn format(date: Date) -> String {

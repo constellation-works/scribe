@@ -588,7 +588,7 @@ fn stem(word: &str) -> String {
 
 /// The question's words for the lookup classifier: lowercase, split on
 /// anything but letters, digits and `-`.
-fn words(text: &str) -> Vec<String> {
+pub(crate) fn words(text: &str) -> Vec<String> {
     text.to_lowercase()
         .split(|c: char| !(c.is_alphanumeric() || c == '-'))
         .filter(|w| !w.is_empty())
@@ -1022,37 +1022,52 @@ struct Retrieved {
     hidden_matches: usize,
 }
 
-/// A candidate unit, ready to rank: an entry, a session header or segment,
-/// or a task.
-struct Doc {
-    /// The record it belongs to (a session's units share one), for counting
-    /// hidden matches once per record.
-    record: String,
-    item: EvidenceItem,
-    tokens: Vec<String>,
-    weight: f64,
-    order: u8,
-    at: OffsetDateTime,
-    hidden: bool,
+/// Where a ranked unit came from, by index into the [`Corpus`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Origin {
+    /// `corpus.entries[i]`.
+    Entry(usize),
+    /// The header of `corpus.sessions[i]`.
+    Header(usize),
+    /// Segment `log[j]` of `corpus.sessions[i]`.
+    Segment(usize, usize),
+    /// An Orbit task.
+    Task,
 }
 
-fn retrieve<T: Tasks + ?Sized>(question: &Question, corpus: Corpus<'_>, tasks: &T) -> Retrieved {
-    let query: BTreeSet<String> = tokens(&question.text).into_iter().collect();
-    if query.is_empty() {
-        return Retrieved {
-            evidence: Vec::new(),
-            hidden_matches: 0,
-        };
-    }
-    let words = words(&question.text);
-    let scope = &question.scope;
+/// A candidate unit, ready to rank: an entry, a session header or segment,
+/// or a task.
+pub(crate) struct Doc {
+    /// The record it belongs to (a session's units share one), for counting
+    /// hidden matches once per record.
+    pub(crate) record: String,
+    pub(crate) item: EvidenceItem,
+    pub(crate) tokens: Vec<String>,
+    pub(crate) weight: f64,
+    pub(crate) order: u8,
+    pub(crate) at: OffsetDateTime,
+    pub(crate) hidden: bool,
+    pub(crate) origin: Origin,
+}
+
+/// The store's units (§6.2 step 1, §6.7): every entry `keep_entry` accepts
+/// (never a forgotten one), and each session header and segment
+/// `keep_unit` accepts (`None` for the header, the segment otherwise),
+/// weighted as `ask` weights them; an entry in a tag the `words` name is
+/// boosted.
+pub(crate) fn store_docs(
+    words: &[String],
+    corpus: Corpus<'_>,
+    keep_entry: impl Fn(&Entry) -> bool,
+    keep_unit: impl Fn(&SessionRecord, Option<&Segment>) -> bool,
+) -> Vec<Doc> {
     let named_tags: Vec<&TagName> = words
         .iter()
         .filter_map(|w| corpus.tags.resolve(w).map(|t| &t.name))
         .collect();
     let mut docs: Vec<Doc> = Vec::new();
-    for entry in corpus.entries.iter().filter(|e| scope.keeps_entry(e)) {
-        if entry.status == EntryStatus::Forgotten {
+    for (i, entry) in corpus.entries.iter().enumerate() {
+        if entry.status == EntryStatus::Forgotten || !keep_entry(entry) {
             continue;
         }
         let boost = if named_tags.contains(&&entry.tag) {
@@ -1072,23 +1087,30 @@ fn retrieve<T: Tasks + ?Sized>(question: &Question, corpus: Corpus<'_>, tasks: &
             at: entry.updated,
             hidden: entry.status.is_hidden(),
             item: entry_item(entry),
+            origin: Origin::Entry(i),
         });
     }
-    for record in corpus.sessions.iter().filter(|r| scope.keeps_session(r)) {
+    for (i, record) in corpus.sessions.iter().enumerate() {
         let key = format!("session:{}", record.id);
-        docs.push(Doc {
-            record: key.clone(),
-            tokens: tokens(&format!(
-                "{} {} {} {}",
-                record.title, record.summary, record.goals, record.next
-            )),
-            weight: 1.0,
-            order: 1,
-            at: record.updated,
-            hidden: !record.active,
-            item: session_item(record),
-        });
-        for segment in &record.log {
+        if keep_unit(record, None) {
+            docs.push(Doc {
+                record: key.clone(),
+                tokens: tokens(&format!(
+                    "{} {} {} {}",
+                    record.title, record.summary, record.goals, record.next
+                )),
+                weight: 1.0,
+                order: 1,
+                at: record.updated,
+                hidden: !record.active,
+                item: session_item(record),
+                origin: Origin::Header(i),
+            });
+        }
+        for (j, segment) in record.log.iter().enumerate() {
+            if !keep_unit(record, Some(segment)) {
+                continue;
+            }
             docs.push(Doc {
                 record: key.clone(),
                 tokens: tokens(&format!("{} {}", segment.heading, segment.text)),
@@ -1097,9 +1119,54 @@ fn retrieve<T: Tasks + ?Sized>(question: &Question, corpus: Corpus<'_>, tasks: &
                 at: segment.to,
                 hidden: !record.active,
                 item: segment_item(record, segment),
+                origin: Origin::Segment(i, j),
             });
         }
     }
+    docs
+}
+
+/// Rank `docs` for `query` (§6.2 steps 0 and 3): narrow to a project or
+/// topic the `words` name, score with BM25 times each unit's weight, keep
+/// what scores above zero, best first (entries before sessions before
+/// tasks on a tie, then newest).
+pub(crate) fn rank(
+    words: &[String],
+    corpus: Corpus<'_>,
+    mut docs: Vec<Doc>,
+    query: &BTreeSet<String>,
+) -> Vec<(f64, Doc)> {
+    narrow_docs(words, corpus, &mut docs, query);
+    let scores = bm25(&docs, query);
+    let mut ranked: Vec<(f64, Doc)> = scores
+        .into_iter()
+        .zip(docs)
+        .filter(|(score, _)| *score > 0.0)
+        .collect();
+    ranked.sort_by(|(sa, a), (sb, b)| {
+        sb.total_cmp(sa)
+            .then_with(|| a.order.cmp(&b.order))
+            .then_with(|| b.at.cmp(&a.at))
+    });
+    ranked
+}
+
+fn retrieve<T: Tasks + ?Sized>(question: &Question, corpus: Corpus<'_>, tasks: &T) -> Retrieved {
+    let query: BTreeSet<String> = tokens(&question.text).into_iter().collect();
+    if query.is_empty() {
+        return Retrieved {
+            evidence: Vec::new(),
+            hidden_matches: 0,
+        };
+    }
+    let words = words(&question.text);
+    let scope = &question.scope;
+    let mut docs = store_docs(
+        &words,
+        corpus,
+        |e| scope.keeps_entry(e),
+        |r, _| scope.keeps_session(r),
+    );
     if scope.keeps_tasks() {
         let query_text: Vec<&str> = query.iter().map(String::as_str).collect();
         let found = tasks.search(&TaskQuery {
@@ -1123,35 +1190,20 @@ fn retrieve<T: Tasks + ?Sized>(question: &Question, corpus: Corpus<'_>, tasks: &
                         at: task.updated.unwrap_or(OffsetDateTime::UNIX_EPOCH),
                         hidden: false,
                         item: task_item(task, &description),
+                        origin: Origin::Task,
                     });
                 }
             }
             Err(err) => tracing::warn!(%err, "ask goes on without Orbit task evidence"),
         }
     }
-    narrow_docs(&words, corpus, &mut docs, &query);
-    let scores = bm25(&docs, &query);
-    let mut ranked: Vec<(f64, Doc)> = scores
-        .into_iter()
-        .zip(docs)
-        .filter(|(score, _)| *score > 0.0)
-        .collect();
+    let mut ranked = rank(&words, corpus, docs, &query);
     let hidden_matches = if question.include_hidden {
         0
     } else {
-        ranked
-            .iter()
-            .filter(|(_, d)| d.hidden)
-            .map(|(_, d)| d.record.as_str())
-            .collect::<BTreeSet<_>>()
-            .len()
+        hidden_records(&ranked)
     };
     ranked.retain(|(_, d)| question.include_hidden || !d.hidden);
-    ranked.sort_by(|(sa, a), (sb, b)| {
-        sb.total_cmp(sa)
-            .then_with(|| a.order.cmp(&b.order))
-            .then_with(|| b.at.cmp(&a.at))
-    });
     ranked.truncate(TOP_K);
     ranked.sort_by(|(_, a), (_, b)| b.at.cmp(&a.at).then_with(|| a.order.cmp(&b.order)));
     let mut budget = EVIDENCE_CHARS;
@@ -1167,6 +1219,16 @@ fn retrieve<T: Tasks + ?Sized>(question: &Question, corpus: Corpus<'_>, tasks: &
         evidence,
         hidden_matches,
     }
+}
+
+/// How many records have a hidden unit among `ranked`, each counted once.
+pub(crate) fn hidden_records(ranked: &[(f64, Doc)]) -> usize {
+    ranked
+        .iter()
+        .filter(|(_, d)| d.hidden)
+        .map(|(_, d)| d.record.as_str())
+        .collect::<BTreeSet<_>>()
+        .len()
 }
 
 /// Narrow store records to a project or topic the question names (§6.2

@@ -592,6 +592,8 @@ pub(crate) enum Records {
     },
     Proposals(Vec<ProposalPayload>),
     Tags(Vec<TagPayload>),
+    /// `record search`, best first.
+    Hits(Vec<HitPayload>),
 }
 
 impl Records {
@@ -602,6 +604,57 @@ impl Records {
             Self::SessionTree { rows, .. } => rows.len(),
             Self::Proposals(v) => v.len(),
             Self::Tags(v) => v.len(),
+            Self::Hits(v) => v.len(),
+        }
+    }
+}
+
+/// One `record search` hit (docs/design/scribe/specs/output-contract.md).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct HitPayload {
+    /// `entry` or `session`.
+    pub(crate) kind: &'static str,
+    /// What `ask` would cite: an entry id, `session:<id>` or `session:<id>#<n>`.
+    pub(crate) cite: String,
+    /// The entry's or the session's id.
+    pub(crate) id: String,
+    /// The segment's number, or `null` for an entry or a session header.
+    pub(crate) segment: Option<u32>,
+    /// The BM25 score times the unit's weight, to three decimals.
+    pub(crate) score: serde_json::Number,
+    pub(crate) title: String,
+    /// Up to 240 characters around the first matching word, on one line.
+    pub(crate) snippet: String,
+    pub(crate) project: String,
+    pub(crate) topics: Vec<String>,
+    /// An entry's author; `null` for a session.
+    pub(crate) author: Option<AuthorPayload>,
+    /// Whether the session is active; `null` for an entry.
+    pub(crate) active: Option<bool>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub(crate) updated: Timestamp,
+    /// The entry's status (`active`, `superseded`, `retired`) or the
+    /// session's (`open`, `final`); added beside the designed fields.
+    pub(crate) status: &'static str,
+}
+
+impl From<&scribe_core::search::Hit> for HitPayload {
+    fn from(hit: &scribe_core::search::Hit) -> Self {
+        Self {
+            kind: hit.kind.as_str(),
+            cite: hit.cite.clone(),
+            id: hit.id.clone(),
+            segment: hit.segment,
+            score: serde_json::Number::from_f64(hit.score)
+                .unwrap_or_else(|| serde_json::Number::from(0)),
+            title: hit.title.clone(),
+            snippet: hit.snippet.clone(),
+            project: hit.project.to_string(),
+            topics: strings(&hit.topics),
+            author: hit.author.as_ref().map(AuthorPayload::from),
+            active: hit.active,
+            updated: hit.updated,
+            status: hit.status,
         }
     }
 }

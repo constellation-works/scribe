@@ -83,8 +83,8 @@ fn a_filter_matches_every_field_it_sets() {
         tag: Some("decisions".parse().unwrap()),
         status: Some(EntryStatus::Active),
         project: Some("scribe".parse().unwrap()),
-        topic: Some("ci".parse().unwrap()),
-        limit: None,
+        topics: vec!["ci".parse().unwrap()],
+        ..EntryFilter::default()
     };
     assert!(hit.matches(&e));
     for miss in [
@@ -101,12 +101,61 @@ fn a_filter_matches_every_field_it_sets() {
             ..EntryFilter::default()
         },
         EntryFilter {
-            topic: Some("release".parse().unwrap()),
+            topics: vec!["release".parse().unwrap()],
             ..EntryFilter::default()
         },
     ] {
         assert!(!miss.matches(&e), "{miss:?}");
     }
+}
+
+#[test]
+fn topics_must_all_match_related_any_and_dates_bound_created() {
+    let mut e = entry("decisions-1", T0);
+    e.topics = vec!["ci".parse().unwrap(), "api".parse().unwrap()]
+        .try_into()
+        .unwrap();
+    e.related = vec![String::from("task:t-1").try_into().unwrap()];
+    let topics = |names: &[&str]| EntryFilter {
+        topics: names.iter().map(|t| t.parse().unwrap()).collect(),
+        ..EntryFilter::default()
+    };
+    assert!(topics(&["ci", "api"]).matches(&e));
+    assert!(!topics(&["ci", "release"]).matches(&e));
+    let related = |refs: &[&str]| EntryFilter {
+        related: refs
+            .iter()
+            .map(|r| String::from(*r).try_into().unwrap())
+            .collect(),
+        ..EntryFilter::default()
+    };
+    assert!(related(&["task:t-9", "task:t-1"]).matches(&e));
+    assert!(!related(&["task:t-9"]).matches(&e));
+    let day = T0.date();
+    let dates = |since, until| EntryFilter {
+        dates: crate::record::DateRange { since, until },
+        ..EntryFilter::default()
+    };
+    assert!(dates(Some(day), Some(day)).matches(&e));
+    assert!(!dates(day.next_day(), None).matches(&e));
+    assert!(!dates(None, day.previous_day()).matches(&e));
+}
+
+#[test]
+fn author_and_author_kind_select_the_writer() {
+    let daniel = entry("decisions-1", T0);
+    let mut agent = entry("decisions-2", T0);
+    agent.author = crate::record::Author::agent("opus".parse().unwrap());
+    let by_kind = EntryFilter {
+        author_kind: Some(crate::record::AuthorKind::Agent),
+        ..EntryFilter::default()
+    };
+    assert!(by_kind.matches(&agent) && !by_kind.matches(&daniel));
+    let by_name = EntryFilter {
+        author: Some("daniel".parse().unwrap()),
+        ..EntryFilter::default()
+    };
+    assert!(by_name.matches(&daniel) && !by_name.matches(&agent));
 }
 
 #[test]

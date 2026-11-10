@@ -3,7 +3,7 @@ Show one entry in full: what was said, its content and its cite
 Usage: scribe entry show [OPTIONS] <ID>
 
 Arguments:
-  <ID>  The entry's id, as printed by `entry list`
+  <ID>  The entry's id, as printed by `entry list`, or a unique prefix of it (at least four characters)
 
 Options:
   -h, --help     Print help
