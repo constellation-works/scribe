@@ -9,7 +9,7 @@
       "name": "scribe",
       "source": "./claude-code",
       "description": "Records the #scribe lines Daniel types as decisions and preferences, through the scribe binary on PATH.",
-      "version": "0.1.0"
+      "version": "0.2.0"
     }
   ]
 }

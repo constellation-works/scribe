@@ -18,7 +18,7 @@ for review. It changes an entry only to finish an approval that was cut
 short; settle a proposal with #scribe approve or #scribe reject in a
 prompt. It also deactivates sessions with no messages for [sessions]
 inactive_after_days (120) and, after asking the model about at most 20
-pairs, sessions a later record says were removed or replaced; pinned
+pairs, sessions a later entry Daniel wrote says were removed or replaced; pinned
 sessions are left alone, and scribe session activate reverses either.
 --json reports what the scan did.
 

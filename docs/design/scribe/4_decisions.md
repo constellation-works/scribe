@@ -7,11 +7,11 @@ status: Draft
 feature: scribe
 doc_role: decisions
 type: design
-summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, plus the engineering decisions carried over from the Rust CLI template.
+summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, plus the engineering decisions carried over from the Rust CLI template.
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24006]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006]
 ---
 
 # scribe — Decisions
@@ -1804,6 +1804,44 @@ features.
 - Cost: a wrong `removed` judgement hides a useful session until someone
   looks with `--include-inactive`; the age limit still hides an unpinned
   session about a long-lived feature after 120 days.
+
+## Removal evidence is Daniel-authored entries only
+
+**Recorded:** 2026-11-10 · [ORB-24005] · **Overridable by Daniel**
+**Code anchors:** `crates/scribe-core/src/consistency.rs` (`later_records`, `judge_removals`)
+
+### Context
+
+Security review of the 2026-11-10 shift: the `removed` route paired a
+session with any later record — a session header, a segment, or an
+entry — and kept a `removed` label whenever the model's quote appeared
+verbatim in that record. Session text is model-written: a pass
+summarizes a cataloged transcript, so text injected into a transcript
+can surface in a segment, and an agent can write `entry add "X was
+removed"` directly. Either gives the model a quote it can always
+satisfy, and the scan deactivates the related sessions, hiding them
+from `ask` (reversible and audited, but silent until looked for).
+
+### Decision
+
+- Only active entries Daniel wrote (`author.kind` is `daniel`) are
+  removal evidence. Session headers and segments — open or sealed —
+  and agent-written entries never pair and never deactivate.
+- Sealed segments stay excluded: sealing proves a segment never
+  changed after it was written, not that Daniel wrote it; its words
+  are still a model's summary of a transcript.
+- `judge_removals` re-checks the cite as defence in depth: a `removed`
+  label whose later cite is not an entry id is dropped, so a pair
+  built from model-written or agent-written text deactivates nothing
+  even if it reaches the judge.
+
+### Consequences
+
+- Injected or agent-supplied words cannot hide a session; only
+  Daniel's own marked words can, through the one channel only he uses.
+- Cost: a removal Daniel mentions only in conversation (never in a
+  `#scribe` entry) no longer deactivates anything; the session waits
+  for the age route, a pin, or a manual `session deactivate`.
 
 ## Agents read and write through the CLI, taught by one skill
 

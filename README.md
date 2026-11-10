@@ -111,6 +111,15 @@ claude plugin install scribe --marketplace ./plugin
 
 `plugin/.claude-plugin/marketplace.json` is the local marketplace that
 command adds; `claude plugin validate plugin/claude-code` checks the package.
+An install after a plugin change runs:
+
+```sh
+claude plugin marketplace update scribe-local
+claude plugin update scribe@scribe-local
+orbit plugin upgrade scribe plugin/.orbit-plugin --grant fs,network,env_pass,orbit_tools
+```
+
+`claude plugin update` applies on the next Claude Code restart.
 
 The package also ships one skill, `skills/scribe/SKILL.md`, which teaches
 agents the CLI above: when a word, date or topic makes `record search` or

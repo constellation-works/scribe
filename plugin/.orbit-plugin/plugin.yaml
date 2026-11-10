@@ -8,7 +8,7 @@ schemaVersion: 2
 kind: Plugin
 metadata:
   name: scribe
-  version: 0.1.0
+  version: 0.2.0
   description: >-
     Daniel's explicitly recorded decisions and preferences and the records of
     the sessions he cataloged, answered with verbatim citations.

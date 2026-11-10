@@ -21,10 +21,11 @@
 //!    is older than `[sessions] inactive_after_days` (route `age`);
 //! 6. (S10) asks the model about removed-feature pairs
 //!    ([`consistency::removal_candidates`]: an active, unpinned session and
-//!    a later record with a removal cue, at most
+//!    a later entry Daniel wrote with a removal cue, at most
 //!    [`consistency::MAX_REMOVAL_PAIRS`]) and deactivates each session a
 //!    `removed` label with a verbatim quote names (route `removed`, citing
-//!    the later record).
+//!    the later entry). Model-written session text and agent-written
+//!    entries are never offered as removal evidence.
 //!
 //! A scan never changes an entry except in step 1: Daniel settles every
 //! proposal with `#scribe approve` or `#scribe reject` in a typed turn. A
@@ -66,7 +67,7 @@ for review. It changes an entry only to finish an approval that was cut
 short; settle a proposal with #scribe approve or #scribe reject in a
 prompt. It also deactivates sessions with no messages for [sessions]
 inactive_after_days (120) and, after asking the model about at most 20
-pairs, sessions a later record says were removed or replaced; pinned
+pairs, sessions a later entry Daniel wrote says were removed or replaced; pinned
 sessions are left alone, and scribe session activate reverses either.
 --json reports what the scan did.
 
@@ -247,8 +248,8 @@ struct SessionScan<'a, M> {
 /// The scan's session steps (§7, S10), skipping pinned and inactive
 /// sessions: deactivate every session whose last message is older than
 /// `[sessions] inactive_after_days` (route `age`), then ask the model about
-/// the removed-feature pairs and deactivate each session a later record
-/// says was removed or replaced, with a verbatim quote (route `removed`).
+/// the removed-feature pairs and deactivate each session a later entry
+/// Daniel wrote says was removed or replaced, with a verbatim quote (route `removed`).
 /// `calls` is how many model calls the scan has made so far: after the
 /// first, a batch starts only within the call's time.
 fn deactivate_sessions<M: Models>(
