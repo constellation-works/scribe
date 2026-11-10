@@ -1,4 +1,4 @@
-Propose superseding entries a later one replaced, and retiring entries due for review, with the consistency model
+Propose superseding entries a later one replaced and retiring entries due for review, and deactivate stale or removed-feature sessions, with the consistency model
 
 Usage: scribe consistency scan [OPTIONS]
 
@@ -16,9 +16,14 @@ candidate pairs per run, ten per call to the configured consistency model,
 and opens a proposal for each pair one entry replaced and each entry due
 for review. It changes an entry only to finish an approval that was cut
 short; settle a proposal with #scribe approve or #scribe reject in a
-prompt. --json reports what the scan did.
+prompt. It also deactivates sessions with no messages for [sessions]
+inactive_after_days (120) and, after asking the model about at most 20
+pairs, sessions a later record says were removed or replaced; pinned
+sessions are left alone, and scribe session activate reverses either.
+--json reports what the scan did.
 
 Examples:
   scribe consistency scan
   scribe consistency scan --json | jq '.opened[] | {id, kind, older, newer}'
+  scribe consistency scan --json | jq '.deactivated[] | {session, route, cite}'
   scribe proposal list

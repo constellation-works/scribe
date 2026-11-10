@@ -10,7 +10,7 @@ Every data command renders one typed payload in the mode the sink resolved;
 stdout carries only that payload; warnings, notices and errors go to stderr;
 the exit code says whether it worked. The JSON form is a public contract,
 pinned by the output goldens in `crates/scribe/tests/goldens/output/`.
-Parts marked *(S10)* to *(S14)* are designed ([ORB-23892]) and not yet
+Parts marked *(S11)* to *(S14)* are designed ([ORB-23892]) and not yet
 built; each only adds fields, columns, commands and codes.
 
 ## Why This Exists
@@ -159,7 +159,15 @@ retire`, `tag add`, `tag update`, `proposal add`, `proposal update`,
 record they wrote in its `show` shape (`--json`: the record object). A
 write that changed nothing prints the record unchanged and `nothing
 changed` on stderr. `session rebuild` and `session catalog` print the
-session pass report.
+session pass report. *(S10, as built)* `session deactivate` and `session
+activate` print the session in `session show`'s shape (`--json`: the
+object with every segment); a change writes one audit line (`session
+deactivate` or `session activate`, target `session:<id>`) and an
+unchanged write none, with `nothing changed: <id> is already <state>` on
+stderr; deactivating a pinned session also says on stderr that it
+unpinned it. A blank `--reason`, one over 300 characters, a `--cite`
+that is not one token of at most 200 characters, a segment cite as the
+id, or `--pin` with `--unpin` is a usage error (exit 2).
 
 Adding a field is compatible. Renaming, removing or retyping one is a
 breaking change and shows up as a golden diff.
@@ -317,10 +325,22 @@ labelled `unrelated`, `dropped_labels` labels refused (a quote not verbatim,
 an unknown or repeated pair, an unknown label); `stale_entries` counts
 active entries past `review_after` without a stale proposal;
 `failed_batches` names each batch of ten the model failed, from 1.
-*(S10)* Adds `deactivated` (`[{session, route, reason, cite}]`, `route`
-`age` or `removed`), `removal_pairs_judged`, `removal_pairs_left` and
-`dropped_removal_labels`; each deactivation is also a plain row
-`deactivated <session> <route> <cite or -> -`. Plain and
+*(S10)* Adds `deactivated` (`[{session, route, reason, cite, quote}]`,
+`route` `age` or `removed`; `cite` and `quote`, the later record and its
+verbatim words, are `null` for `age`), `removal_pairs_judged`,
+`removal_pairs_left` (past the cap of 20 or not reached in this call's
+time), `dropped_removal_labels` and `failed_removal_batches` (`[{batch,
+error_code}]`, numbered from 1 apart from `failed_batches`), and
+`failed_deactivations` (`[{session, route, error_code}]`): a failed
+session write is reported and audited by session while the other
+deactivations continue. Each
+deactivation is also a plain row `deactivated <session> <route> <cite or
+-> -`, and each failed removed-feature batch `failed removal-batch-<n>
+<code> - -`. Each deactivation writes one audit line (target
+`session:<id>`), each failed deactivation one (failure target
+`session:<id>` with its error code), each failed removed-feature batch one (target
+`removal-batch:<n>`, with its code); when removed-feature pairs are
+left, stderr says how many. Plain and
 table print one row per change: `reapplied p-<n> <status> <entry> -`,
 `opened p-<n> <kind> <older> <newer or ->` and `failed batch-<n> <code> -
 -` (columns `action id what older newer`). When nothing was reapplied,

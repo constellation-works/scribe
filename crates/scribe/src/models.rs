@@ -30,7 +30,8 @@ use scribe_core::Models;
 use scribe_core::models::{
     ASK_SCHEMA, AskAnswer, AskRequest, CONSISTENCY_SCHEMA, ClaimAnswer, ConflictAnswer,
     ConsistencyAnswer, ConsistencyRequest, JudgementAnswer, ModelError, REFERENT_SCHEMA,
-    ReferentAnswer, ReferentRequest, SESSION_SCHEMA, SessionAnswer, SessionRequest,
+    REMOVAL_SCHEMA, ReferentAnswer, ReferentRequest, RemovalAnswer, RemovalJudgementAnswer,
+    RemovalRequest, SESSION_SCHEMA, SessionAnswer, SessionRequest,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -272,6 +273,42 @@ impl Models for ClaudeCliModels {
                     reason: j.reason,
                     older_quote: j.older_quote,
                     newer_quote: j.newer_quote,
+                })
+                .collect(),
+        })
+    }
+
+    fn removal(&self, request: &RemovalRequest) -> Result<RemovalAnswer, ModelError> {
+        #[derive(Deserialize)]
+        struct Judgement {
+            pair: String,
+            label: String,
+            feature: String,
+            reason: String,
+            quote: String,
+        }
+        #[derive(Deserialize)]
+        struct Answer {
+            judgements: Vec<Judgement>,
+        }
+        let value = self.call(
+            &request.model,
+            REMOVAL_SCHEMA,
+            request.prompt(),
+            request.budget,
+        )?;
+        let a: Answer = serde_json::from_value(value)
+            .map_err(|e| ModelError::Malformed(format!("not a removed-feature answer: {e}")))?;
+        Ok(RemovalAnswer {
+            judgements: a
+                .judgements
+                .into_iter()
+                .map(|j| RemovalJudgementAnswer {
+                    pair: j.pair,
+                    label: j.label,
+                    feature: j.feature,
+                    reason: j.reason,
+                    quote: j.quote,
                 })
                 .collect(),
         })

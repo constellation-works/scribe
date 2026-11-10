@@ -551,3 +551,141 @@ impl RefusalCode for Settled {
         }
     }
 }
+
+// Removed-feature sessions (S10).
+
+use crate::consistency::{RemovalPair, has_removal_cue, judge_removals, removal_candidates};
+use crate::models::{RemovalAnswer, RemovalJudgementAnswer};
+use crate::session::{SegmentState, SessionRecord};
+
+const REMOVAL: &str = "The digest feature was ripped out and replaced by the weekly report.";
+
+/// A session about `title`, whose one segment ends an hour after
+/// `days_after_t0`, updated then too.
+fn about(id: &str, days_after_t0: i64, title: &str) -> SessionRecord {
+    let at = T0 + Duration::days(days_after_t0);
+    let mut s = super::session(id, at);
+    s.title = title.to_owned();
+    s.summary = format!("Built the {title}.");
+    s.goals = String::new();
+    s.next = String::new();
+    s.log = vec![super::segment(1, SegmentState::Sealed, at, "work")];
+    s
+}
+
+fn removal_answer(pair: &str, label: &str, quote: &str) -> RemovalAnswer {
+    RemovalAnswer {
+        judgements: vec![RemovalJudgementAnswer {
+            pair: pair.to_owned(),
+            label: label.to_owned(),
+            feature: String::from("the digest"),
+            reason: String::from("The digest was replaced by the weekly report."),
+            quote: quote.to_owned(),
+        }],
+    }
+}
+
+#[test]
+fn a_removal_cue_is_a_whole_word_or_phrase() {
+    assert!(has_removal_cue("we Removed it"));
+    assert!(has_removal_cue("it was ripped out."));
+    assert!(has_removal_cue("sunset"));
+    assert!(!has_removal_cue("unremovedness and sunsets"));
+    assert!(!has_removal_cue("we kept it"));
+}
+
+#[test]
+fn removal_candidates_pair_an_active_session_with_a_recent_later_record_that_has_a_cue() {
+    let now = T0 + Duration::days(40);
+    let digest = about("s-digest", 1, "digest feature");
+    let mut later = about("s-later", 35, "weekly report");
+    later.log[0].text = REMOVAL.to_owned();
+    // An entry saying the same, recent and related by its words.
+    let mut said = with("decisions-7", 36, "The digest feature was removed.");
+    said.updated = said.created;
+    // Unrelated cue, an old record, a pinned and an inactive session.
+    let other = with("decisions-8", 37, "The flaky lint was removed.");
+    let mut old = about("s-old", 2, "old digest feature");
+    old.log[0].text = REMOVAL.to_owned();
+    let mut pinned = about("s-pinned", 1, "digest feature");
+    pinned.keep_active = true;
+    let mut inactive = about("s-inactive", 1, "digest feature");
+    inactive.active = false;
+
+    let sessions = vec![digest, later, old, pinned, inactive];
+    let found = removal_candidates(&sessions, &[said, other], now, 20);
+
+    let pairs: Vec<(String, String)> = found
+        .pairs
+        .iter()
+        .map(|p| (p.session.to_string(), p.later.cite.clone()))
+        .collect();
+    assert_eq!(
+        pairs,
+        [
+            (String::from("s-digest"), String::from("decisions-7")),
+            (String::from("s-old"), String::from("decisions-7")),
+            (String::from("s-digest"), String::from("session:s-later#1")),
+        ],
+        "newest later record first; one unit per record; never a pinned or \
+         inactive session, never s-old as the later record (not updated in 8 \
+         days), never a record about something else, and s-old's header \
+         overlaps s-later's segment by less than one token in four"
+    );
+    assert_eq!(found.over_cap, 0);
+
+    let capped = removal_candidates(&sessions, &[], now, 0);
+    assert!(capped.pairs.is_empty());
+    assert_eq!(capped.over_cap, 1, "only s-later pairs without the entries");
+}
+
+#[test]
+fn a_record_before_the_sessions_last_message_is_not_a_candidate() {
+    let now = T0 + Duration::days(40);
+    let digest = about("s-digest", 36, "digest feature");
+    let said = with("decisions-7", 35, "The digest feature was removed.");
+    assert!(
+        removal_candidates(&[digest], &[said], now, 20)
+            .pairs
+            .is_empty()
+    );
+}
+
+#[test]
+fn a_removed_label_survives_only_with_a_verbatim_quote_of_the_later_record() {
+    let now = T0 + Duration::days(40);
+    let digest = about("s-digest", 1, "digest feature");
+    let mut later = about("s-later", 35, "weekly report");
+    later.log[0].text = REMOVAL.to_owned();
+    let pairs: Vec<RemovalPair> = removal_candidates(&[digest, later], &[], now, 20).pairs;
+    assert_eq!(pairs.len(), 1);
+
+    let kept = judge_removals(
+        removal_answer("1", "removed", "ripped out and replaced"),
+        &pairs,
+    );
+    assert_eq!(kept.dropped, 0);
+    assert_eq!(kept.removals.len(), 1);
+    let removal = &kept.removals[0];
+    assert_eq!(removal.session.as_str(), "s-digest");
+    assert_eq!(removal.cite, "session:s-later#1");
+    assert_eq!(removal.quote, "ripped out and replaced");
+    assert_eq!(
+        removal.reason,
+        "The digest was replaced by the weekly report."
+    );
+
+    let invented = judge_removals(removal_answer("1", "removed", "the digest is gone"), &pairs);
+    assert!(invented.removals.is_empty());
+    assert_eq!(
+        invented.dropped, 1,
+        "a quote not in the later record is dropped"
+    );
+
+    let unknown = judge_removals(removal_answer("2", "removed", "ripped out"), &pairs);
+    assert_eq!(unknown.dropped, 1);
+    let current = judge_removals(removal_answer("1", "still_current", ""), &pairs);
+    assert_eq!((current.kept, current.dropped), (1, 0));
+    let bad = judge_removals(removal_answer("1", "obsolete", "ripped out"), &pairs);
+    assert_eq!(bad.dropped, 1);
+}

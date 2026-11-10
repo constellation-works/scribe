@@ -81,3 +81,25 @@ fn segment_windows_is_positive_and_defaults_to_three() {
         assert!(Config::parse(&format!("[catalog]\nsegment_windows = {raw}\n")).is_err());
     }
 }
+
+#[test]
+fn sessions_inactive_after_days_defaults_to_120_and_must_be_a_positive_integer() {
+    assert_eq!(
+        Config::parse("")
+            .unwrap()
+            .sessions
+            .inactive_after_days
+            .get(),
+        120
+    );
+    let config = Config::parse("[sessions]\ninactive_after_days = 30\n").unwrap();
+    assert_eq!(config.sessions.inactive_after_days.get(), 30);
+
+    for bad in ["0", "-5", "1.5", "\"ninety\""] {
+        let err =
+            Config::parse(&format!("[sessions]\ninactive_after_days = {bad}\n")).expect_err(bad);
+        assert_eq!(err.line, Some(2), "{bad}: {err}");
+    }
+    let err = Config::parse("[sessions]\nactive_days = 3\n").unwrap_err();
+    assert!(err.message.contains("active_days"), "{err}");
+}

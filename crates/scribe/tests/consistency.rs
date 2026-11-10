@@ -521,3 +521,378 @@ fn the_routine_tools_run_the_commands_against_the_configured_store() {
         );
     }
 }
+
+// S10: the scan deactivates sessions by age and by removed feature.
+
+const REMOVAL: &str = "The digest feature was ripped out and replaced by the weekly report.";
+
+/// `days` before now, whole seconds.
+fn days_ago(days: i64) -> time::OffsetDateTime {
+    let at = time::OffsetDateTime::now_utc() - time::Duration::days(days);
+    at.replace_nanosecond(0).unwrap()
+}
+
+/// RFC 3339.
+fn rfc3339(at: time::OffsetDateTime) -> String {
+    at.format(&time::format_description::well_known::Rfc3339)
+        .unwrap()
+}
+
+/// One format-4 session record: started `days_ago`, its one segment's last
+/// message an hour later, `updated` `updated_ago` days ago.
+struct SessionFile<'a> {
+    id: &'a str,
+    days_ago: i64,
+    updated_ago: i64,
+    title: &'a str,
+    topics: &'a str,
+    keep_active: bool,
+    segment: &'a str,
+}
+
+impl Setup {
+    fn session(&self, s: &SessionFile<'_>) {
+        let started = days_ago(s.days_ago);
+        let start = rfc3339(started);
+        let last = rfc3339(started + time::Duration::hours(1));
+        let text = format!(
+            "---
+format: 4
+kind: session
+id: {id}
+status: final
+active: true
+keep_active: {keep}
+active_change: null
+cataloged_by: null
+project: scribe
+topics: [{topics}]
+related: []
+links: []
+terms: []
+provider: claude-code
+host: host
+created: {start}
+updated: {updated}
+title: {title}
+cwd: /work
+started: {start}
+on_since: {start}
+scribed_through: m-2
+passes: 1
+next_open: 0
+log:
+  - {{n: 1, heading: Work, first_message: m-1, last_message: m-2, from: {start}, to: {last}, state: sealed, windows: 1, origin: pass, topics: [{topics}], related: []}}
+---
+## Summary
+Built the {title}.
+
+## Goals
+Ship it.
+
+## Next
+
+## Log
+### 1. Work
+{segment}
+",
+            id = s.id,
+            keep = s.keep_active,
+            topics = s.topics,
+            title = s.title,
+            updated = rfc3339(days_ago(s.updated_ago)),
+            segment = s.segment,
+        );
+        let dir = self
+            .fx
+            .root()
+            .join("sessions")
+            .join(format!("{:04}", started.year()))
+            .join(format!("{:02}", u8::from(started.month())));
+        std::fs::create_dir_all(&dir).unwrap();
+        for d in [
+            self.fx.root(),
+            self.fx.root().join("sessions"),
+            dir.parent().unwrap().to_path_buf(),
+            dir.clone(),
+        ] {
+            make_private(&d);
+        }
+        let file = dir.join(format!("{}.md", s.id));
+        std::fs::write(&file, text).unwrap();
+        make_private(&file);
+    }
+
+    fn session_json(&self, id: &str) -> Value {
+        self.json(&["session", "show", id, "--json"])
+    }
+
+    /// A fake `claude` that answers a removed-feature prompt with
+    /// `removal` and any other with the entry pair's contradiction.
+    fn answer_both(&self, removal: &Value) {
+        let envelope = |body: &Value| {
+            json!({"type": "result", "subtype": "success", "is_error": false,
+                   "result": "", "structured_output": body})
+        };
+        self.fx.fake_program(
+            "claude",
+            &format!(
+                "#!/bin/sh\necho call >> \"$HOME/claude-calls\"\n\
+                 if grep -q 'cataloged work sessions'; then echo '{}'; else echo '{}'; fi\n",
+                envelope(removal),
+                envelope(&contradicts()),
+            ),
+        );
+    }
+
+    /// A fake `claude` that corrupts one removal target after the scan has
+    /// loaded its sessions, so the next target must still be processed.
+    fn answer_both_corrupting(&self, removal: &Value, path: &Path) {
+        let envelope = |body: &Value| {
+            json!({"type": "result", "subtype": "success", "is_error": false,
+                   "result": "", "structured_output": body})
+        };
+        self.fx.fake_program(
+            "claude",
+            &format!(
+                "#!/bin/sh\necho call >> \"$HOME/claude-calls\"\ncat > \"$HOME/claude-prompt\"\nif grep -q 'cataloged work sessions' \"$HOME/claude-prompt\"; then printf 'corrupt\\n' > '{path}'; echo '{}'; else echo '{}'; fi\n",
+                envelope(removal),
+                envelope(&contradicts()),
+                path = path.display(),
+            ),
+        );
+    }
+}
+
+fn session_files() -> [SessionFile<'static>; 5] {
+    [
+        // Silent for 200 days: deactivated by age.
+        SessionFile {
+            id: "s-quiet",
+            days_ago: 200,
+            updated_ago: 200,
+            title: "old export",
+            topics: "export",
+            keep_active: false,
+            segment: "Wrote the export.",
+        },
+        // As old, but pinned: never touched.
+        SessionFile {
+            id: "s-pinned",
+            days_ago: 200,
+            updated_ago: 200,
+            title: "store layout",
+            topics: "store",
+            keep_active: true,
+            segment: "Chose the layout.",
+        },
+        // About the digest, which the later session says was removed.
+        SessionFile {
+            id: "s-a-digest",
+            days_ago: 20,
+            updated_ago: 20,
+            title: "digest feature",
+            topics: "digest",
+            keep_active: false,
+            segment: "Built the daily digest.",
+        },
+        // Also about the digest; the model's quote for it is invented.
+        SessionFile {
+            id: "s-b-digest",
+            days_ago: 21,
+            updated_ago: 21,
+            title: "digest settings",
+            topics: "digest",
+            keep_active: false,
+            segment: "Tuned the digest settings.",
+        },
+        // The later record: recent, same topic, with a removal cue.
+        SessionFile {
+            id: "s-later",
+            days_ago: 2,
+            updated_ago: 1,
+            title: "weekly report",
+            topics: "digest",
+            keep_active: false,
+            segment: REMOVAL,
+        },
+    ]
+}
+
+#[test]
+fn a_scan_deactivates_old_sessions_and_removed_features_but_never_a_pinned_one() {
+    let s = Setup::new();
+    for file in &session_files() {
+        s.session(file);
+    }
+    // Pair 1 is s-a-digest (ties on the later record break by session
+    // id), pair 2 s-b-digest, whose quote is not in the later record.
+    s.answer_both(&json!({"judgements": [
+        {"pair": "1", "label": "removed", "feature": "the digest",
+         "reason": "The weekly report replaced the digest.", "quote": "ripped out and replaced"},
+        {"pair": "2", "label": "removed", "feature": "the digest",
+         "reason": "Gone.", "quote": "the settings were deleted"},
+    ]}));
+
+    let report = s.scan();
+
+    let deactivated = report["deactivated"].as_array().unwrap();
+    assert_eq!(deactivated.len(), 2, "{report}");
+    assert_eq!(deactivated[0]["session"], "s-quiet");
+    assert_eq!(deactivated[0]["route"], "age");
+    assert_eq!(deactivated[0]["cite"], Value::Null);
+    assert!(
+        deactivated[0]["reason"]
+            .as_str()
+            .unwrap()
+            .ends_with("(limit 120 days)"),
+        "{report}"
+    );
+    assert_eq!(deactivated[1]["session"], "s-a-digest");
+    assert_eq!(deactivated[1]["route"], "removed");
+    assert_eq!(deactivated[1]["cite"], "session:s-later#1");
+    assert_eq!(deactivated[1]["quote"], "ripped out and replaced");
+    assert_eq!(report["removal_pairs_judged"], 2);
+    assert_eq!(report["removal_pairs_left"], 0);
+    assert_eq!(report["dropped_removal_labels"], 1, "the invented quote");
+    assert_eq!(report["failed_removal_batches"], json!([]));
+
+    let quiet = s.session_json("s-quiet");
+    assert_eq!(quiet["active"], false);
+    assert_eq!(quiet["active_change"]["route"], "age");
+    assert_eq!(quiet["active_change"]["by"]["kind"], "scribe");
+    assert_eq!(quiet["active_change"]["by"]["name"], "consistency");
+    let digest = s.session_json("s-a-digest");
+    assert_eq!(digest["active"], false);
+    assert_eq!(digest["active_change"]["route"], "removed");
+    assert_eq!(digest["active_change"]["cite"], "session:s-later#1");
+    assert_eq!(
+        digest["active_change"]["reason"],
+        "The weekly report replaced the digest."
+    );
+    for id in ["s-pinned", "s-b-digest", "s-later"] {
+        let record = s.session_json(id);
+        assert_eq!(record["active"], true, "{id}");
+        assert_eq!(record["active_change"], Value::Null, "{id}");
+    }
+
+    let targets: Vec<String> = s
+        .audit()
+        .iter()
+        .filter_map(|l| l["target"].as_str())
+        .filter(|t| t.starts_with("session:"))
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(targets, ["session:s-quiet", "session:s-a-digest"]);
+
+    // A dropped label is not stored: the next scan offers s-b-digest
+    // again (now pair 1), and never the sessions already inactive.
+    let calls = s.calls();
+    let out = s.run(&["consistency", "scan", "--format", "auto"], b"");
+    assert_eq!(out.status.code(), Some(0));
+    assert!(s.calls() > calls);
+    let rows: Vec<String> = text(&out.stdout)
+        .lines()
+        .filter(|l| l.starts_with("deactivated"))
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(
+        rows,
+        ["deactivated\ts-b-digest\tremoved\tsession:s-later#1\t-"]
+    );
+}
+
+#[test]
+fn a_failed_removal_deactivation_is_reported_and_other_sessions_continue() {
+    let s = Setup::new();
+    for file in &session_files() {
+        s.session(file);
+    }
+    let started = days_ago(20);
+    let path =
+        s.fx.root()
+            .join("sessions")
+            .join(format!("{:04}", started.year()))
+            .join(format!("{:02}", u8::from(started.month())))
+            .join("s-a-digest.md");
+    let removal = json!({"judgements": [
+        {"pair": "1", "label": "removed", "feature": "the digest",
+         "reason": "The weekly report replaced the digest.", "quote": "ripped out and replaced"},
+        {"pair": "2", "label": "removed", "feature": "the digest",
+         "reason": "The weekly report replaced the digest.", "quote": "ripped out and replaced"},
+    ]});
+    s.answer_both_corrupting(&removal, &path);
+
+    let report = s.scan();
+
+    assert_eq!(
+        report["failed_deactivations"],
+        json!([{
+            "session": "s-a-digest",
+            "route": "removed",
+            "error_code": "store_corrupt",
+        }])
+    );
+    assert!(
+        report["deactivated"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| { item["session"] == "s-b-digest" && item["route"] == "removed" })
+    );
+    let audit = s.audit();
+    assert!(audit.iter().any(|event| {
+        event["target"] == "session:s-a-digest"
+            && event["status"] == "failure"
+            && event["error_code"] == "store_corrupt"
+    }));
+    assert!(
+        audit.iter().any(|event| {
+            event["target"] == "session:s-b-digest" && event["status"] == "success"
+        })
+    );
+}
+
+#[test]
+fn deactivated_rows_print_in_plain_output() {
+    let s = Setup::new();
+    s.session(&session_files()[0]);
+    let out = s.run(&["consistency", "scan", "--format", "auto"], b"");
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let rows = text(&out.stdout);
+    assert!(
+        rows.lines().any(|l| l == "deactivated\ts-quiet\tage\t-\t-"),
+        "{rows}"
+    );
+}
+
+#[test]
+fn a_shorter_configured_limit_deactivates_sooner() {
+    let s = Setup::new();
+    let [_, _, digest, ..] = session_files();
+    let file = SessionFile {
+        days_ago: 40,
+        updated_ago: 40,
+        ..digest
+    };
+    s.session(&file);
+    std::fs::write(
+        s.fx.root().join("config.toml"),
+        "[sessions]\ninactive_after_days = 30\n",
+    )
+    .unwrap();
+    make_private(&s.fx.root().join("config.toml"));
+    let report = s.scan();
+    assert_eq!(report["deactivated"][0]["session"], "s-a-digest");
+    assert_eq!(report["deactivated"][0]["route"], "age");
+
+    std::fs::write(
+        s.fx.root().join("config.toml"),
+        "[sessions]\ninactive_after_days = 0\n",
+    )
+    .unwrap();
+    let out = s.run(&["consistency", "scan", "--json"], b"");
+    assert_eq!(out.status.code(), Some(1));
+    let err: Value = serde_json::from_slice(&out.stderr).unwrap();
+    assert_eq!(err["code"], "config_invalid");
+}

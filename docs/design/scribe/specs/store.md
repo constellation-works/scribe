@@ -179,10 +179,10 @@ segment_windows = 3               # windows before scribe seals an open segment
 [redact]
 env = []                         # more variables whose values are masked
 
-# Designed for S10/S14 (not yet accepted by the parser):
 [sessions]
 inactive_after_days = 120        # days since a session's last message
 
+# Designed for S14 (not yet accepted by the parser):
 [projects.orbit]                 # none by default
 paths = ["codebases/orbit"]      # path fragments counted by transcript list
 ```
@@ -318,6 +318,16 @@ config tag claims is dropped with a warning naming both.
 - **Activity** *(S10)*. `Store::set_active` changes `active` or
   `keep_active` and `active_change` under the lock, and nothing else on
   the record (`updated` included); it writes only when something changed.
+  `active_change.reason` and `cite` pass the redactor. The consistency
+  scan's deactivations go through `Store::set_active_many`, one lock for
+  the batch, each checked again against the record on disk: a session
+  pinned or already inactive by then is left as it is, and a missing or
+  unreadable record fails only its own request so the remaining requests
+  proceed and the scan reports the failure. A pinned session
+  (`keep_active: true`) is never deactivated by `age` or `removed`; a
+  `manual` deactivation clears `keep_active` too. Age counts from the
+  last segment's `to`, or for a record with no segment from the later of
+  `started` and `on_since`.
 - **Agent writes** *(S12)*. Each write verb takes the lock, checks the
   author guard (a Daniel entry's content, retirement and the settling of a
   proposal whose `older` is a Daniel entry are refused `daniel_only`),

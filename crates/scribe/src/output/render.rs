@@ -586,8 +586,9 @@ pub(crate) fn pass(out: &mut dyn Write, sink: &Sink, report: &PassReport) -> io:
 }
 
 /// A consistency scan's report: a table or tab-separated lines, one per
-/// approval re-applied, proposal opened and batch failed, or the JSON
-/// object. A scan that changed nothing prints nothing but the JSON object.
+/// approval re-applied, proposal opened, session deactivated or deactivation
+/// failed, or the JSON object. A scan that changed nothing prints nothing
+/// but the JSON object.
 pub(crate) fn scan(out: &mut dyn Write, sink: &Sink, report: &ScanReport) -> io::Result<()> {
     if sink.mode == OutputMode::Json {
         return write_json(out, report);
@@ -621,6 +622,42 @@ pub(crate) fn scan(out: &mut dyn Write, sink: &Sink, report: &ScanReport) -> io:
                 role: Role::Warn,
             },
             Cell::plain(format!("batch-{}", f.batch)),
+            Cell::plain(f.error_code),
+            Cell::plain("-"),
+            Cell::plain("-"),
+        ]);
+    }
+    for d in &report.deactivated {
+        rows.push(vec![
+            Cell {
+                text: String::from("deactivated"),
+                role: Role::Warn,
+            },
+            Cell::plain(d.session.clone()),
+            Cell::plain(d.route),
+            Cell::plain(d.cite.clone().unwrap_or_else(|| String::from("-"))),
+            Cell::plain("-"),
+        ]);
+    }
+    for f in &report.failed_deactivations {
+        rows.push(vec![
+            Cell {
+                text: String::from("failed"),
+                role: Role::Warn,
+            },
+            Cell::plain(f.session.clone()),
+            Cell::plain(f.route),
+            Cell::plain(f.error_code),
+            Cell::plain("-"),
+        ]);
+    }
+    for f in &report.failed_removal_batches {
+        rows.push(vec![
+            Cell {
+                text: String::from("failed"),
+                role: Role::Warn,
+            },
+            Cell::plain(format!("removal-batch-{}", f.batch)),
             Cell::plain(f.error_code),
             Cell::plain("-"),
             Cell::plain("-"),

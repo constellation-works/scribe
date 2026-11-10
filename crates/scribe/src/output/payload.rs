@@ -756,6 +756,17 @@ pub(crate) struct BatchFailure {
     pub(crate) error_code: &'static str,
 }
 
+/// A session whose automatic deactivation failed after the scan found it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct DeactivationFailure {
+    /// The session id.
+    pub(crate) session: String,
+    /// `age` or `removed`.
+    pub(crate) route: &'static str,
+    /// The stable storage error code.
+    pub(crate) error_code: &'static str,
+}
+
 /// What `consistency scan` did; `--json` and the `scribe.consistency-scan`
 /// tool print it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -778,9 +789,41 @@ pub(crate) struct ScanReport {
     pub(crate) stale_entries: usize,
     /// Batches the model failed; their pairs are offered again next scan.
     pub(crate) failed_batches: Vec<BatchFailure>,
+    /// Sessions this scan deactivated (S10), by route.
+    pub(crate) deactivated: Vec<DeactivatedPayload>,
+    /// Sessions the scan could not deactivate; other sessions are still
+    /// processed.
+    pub(crate) failed_deactivations: Vec<DeactivationFailure>,
+    /// Removed-feature pairs the model labelled.
+    pub(crate) removal_pairs_judged: usize,
+    /// Removed-feature pairs past the cap of 20 or not reached in this
+    /// call's time.
+    pub(crate) removal_pairs_left: usize,
+    /// Removed-feature labels refused: a quote not verbatim in the later
+    /// record, an unknown or repeated pair, an unknown label.
+    pub(crate) dropped_removal_labels: usize,
+    /// Removed-feature batches the model failed; their pairs are offered
+    /// again while their later record is recent.
+    pub(crate) failed_removal_batches: Vec<BatchFailure>,
     /// Lines for stderr, printed in every mode.
     #[serde(skip)]
     pub(crate) notices: Vec<String>,
+}
+
+/// A session a scan deactivated.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct DeactivatedPayload {
+    /// The session id.
+    pub(crate) session: String,
+    /// `age` or `removed`.
+    pub(crate) route: &'static str,
+    /// Why: scribe's sentence for `age`, the model's for `removed`.
+    pub(crate) reason: String,
+    /// The later record a `removed` deactivation rests on; `null` for `age`.
+    pub(crate) cite: Option<String>,
+    /// The later record's verbatim words a `removed` deactivation rests
+    /// on; `null` for `age`.
+    pub(crate) quote: Option<String>,
 }
 
 /// A claim an answer rests on: verbatim-checked against its cite.
@@ -1004,6 +1047,17 @@ pub(crate) enum Output {
     Show {
         /// The record.
         record: Record,
+    },
+    /// The record a write verb wrote, in the `show` shape (`session
+    /// activate`, `session deactivate`).
+    Written {
+        /// The record as it now stands.
+        record: Record,
+        /// Whether the write changed it; an unchanged write is not audited.
+        changed: bool,
+        /// Lines for stderr, printed in every mode: `nothing changed`, or
+        /// that a deactivation unpinned the session.
+        notices: Vec<String>,
     },
     /// A hook's reply.
     Hook(HookReply),

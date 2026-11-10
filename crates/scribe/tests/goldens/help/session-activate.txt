@@ -1,0 +1,27 @@
+Show an inactive session again, or pin or unpin it against automatic deactivation
+
+Usage: scribe session activate [OPTIONS] --author <NAME> <ID>
+
+Arguments:
+  <ID>  The session's id, as printed by `session list --include-inactive`, or its cite session:<id>
+
+Options:
+      --author <NAME>  Who is asking: lowercase letters, digits, '.', '_' or '-', 1-40 characters, such as your crew or model
+      --reason <TEXT>  Why, at most 300 characters [default: scribe says what changed]
+      --pin            Exempt the session from automatic deactivation (keep_active)
+      --unpin          Lift the exemption, so the consistency routine may deactivate it again
+  -h, --help           Print help
+  -V, --version        Print version
+
+Global options:
+      --root <DIR>       Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>  Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json             Shorthand for --format json
+
+Shows an inactive session again. --pin exempts it from the consistency
+routine's deactivation by age and by removed feature; --unpin lifts that.
+
+Examples:
+  scribe session activate <id> --author opus
+  scribe session activate <id> --author opus --pin --reason 'still the reference for the store'
+  scribe session activate <id> --author opus --unpin
