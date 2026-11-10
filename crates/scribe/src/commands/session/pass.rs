@@ -12,8 +12,9 @@
 //! new messages are processed oldest first in consecutive windows (default
 //! 40 messages / 15,000 characters, configured under `[catalog]`). Each
 //! window receives the previous record and updates it with one model call
-//! (120 s), plus one fresh retry for an invalid answer. A session that
-//! links to another (`spawned_from`, `continues`) gets that session's
+//! (120 s), plus one retry for an invalid answer: header-only compression
+//! when only header lengths fail, otherwise a fresh window request. A session
+//! that links to another (`spawned_from`, `continues`) gets that session's
 //! latest title and summary as context, and the prompt says to summarize
 //! its own slice, not retell the other. Plain headers keep
 //! message ids available without XML framing; messages remain data.
@@ -545,27 +546,37 @@ pub(super) fn distill<M: Models>(
     conversation: &[scribe_core::models::PassMessage],
     adapter: &M,
 ) -> Result<pass::Distilled, PassError> {
-    let answer = adapter.session(&request).map_err(|err| {
+    let mut answer = adapter.session(&request).map_err(|err| {
         tracing::warn!(session = %id, %err, "the session model failed");
         PassError::new(err.code(), err.to_string())
     })?;
     // One more ask in the same pass, naming what was refused: a model
     // can't count characters exactly, so a near miss is common.
-    let distilled = match pass::check(answer, conversation, &request) {
+    let distilled = match pass::check(answer.clone(), conversation, &request) {
         Ok(distilled) => distilled,
         Err(err) => {
             tracing::warn!(session = %id, %err, "the session model's answer was refused; asking once more");
-            let retry = SessionRequest {
-                correction: Some(err.to_string()),
-                ..request
-            };
-            let answer = adapter.session(&retry).map_err(|err| {
+            let refusal = err.to_string();
+            let retry_failure = |err: scribe_core::models::ModelError| {
                 tracing::warn!(session = %id, %err, "the session model failed");
-                PassError::new(err.code(), err.to_string())
-            })?;
-            pass::check(answer, conversation, &retry).map_err(|err| {
+                PassError::new(err.code(), format!("{refusal}; retry: {err}"))
+            };
+            if let Some(compress) = pass::compression_request(&answer, conversation, &request) {
+                let header = adapter.session_header(&compress).map_err(retry_failure)?;
+                answer.title = header.title;
+                answer.summary = header.summary;
+                answer.goals = header.goals;
+                answer.next = header.next;
+            } else {
+                let retry = SessionRequest {
+                    correction: Some(refusal.clone()),
+                    ..request.clone()
+                };
+                answer = adapter.session(&retry).map_err(retry_failure)?;
+            }
+            pass::check(answer, conversation, &request).map_err(|err| {
                 tracing::warn!(session = %id, %err, "the session model's answer was refused");
-                PassError::new("session_answer_invalid", err.to_string())
+                PassError::new("session_answer_invalid", format!("{refusal}; retry: {err}"))
             })?
         }
     };

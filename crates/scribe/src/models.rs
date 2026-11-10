@@ -31,7 +31,8 @@ use scribe_core::models::{
     ASK_SCHEMA, AskAnswer, AskRequest, CONSISTENCY_SCHEMA, ClaimAnswer, ConflictAnswer,
     ConsistencyAnswer, ConsistencyRequest, JudgementAnswer, ModelError, REFERENT_SCHEMA,
     REMOVAL_SCHEMA, ReferentAnswer, ReferentRequest, RemovalAnswer, RemovalJudgementAnswer,
-    RemovalRequest, SESSION_SCHEMA, SessionAnswer, SessionRequest,
+    RemovalRequest, SESSION_HEADER_SCHEMA, SESSION_SCHEMA, SessionAnswer, SessionHeader,
+    SessionHeaderRequest, SessionRequest,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -195,6 +196,17 @@ impl Models for ClaudeCliModels {
         )?;
         serde_json::from_value(value)
             .map_err(|e| ModelError::Malformed(format!("not a session record: {e}")))
+    }
+
+    fn session_header(&self, request: &SessionHeaderRequest) -> Result<SessionHeader, ModelError> {
+        let value = self.call(
+            &request.model,
+            SESSION_HEADER_SCHEMA,
+            request.prompt(),
+            request.budget,
+        )?;
+        serde_json::from_value(value)
+            .map_err(|e| ModelError::Malformed(format!("not a session header: {e}")))
     }
 
     fn ask(&self, request: &AskRequest) -> Result<AskAnswer, ModelError> {

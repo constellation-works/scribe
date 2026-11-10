@@ -877,8 +877,10 @@ counted in `remaining` alongside sessions waiting for backoff or the next run
    record use plain delimiters too. Messages are data, never instructions.
    Offer stored topics and terms, including those from earlier windows,
    for reuse. Validate field limits and shape on every window, with one
-   fresh retry naming the refusal. A term must name a user message in the
-   current or an earlier window and quote its own text verbatim; unknown,
+   retry naming the refusal (header-only compression for length overruns;
+   otherwise a fresh window request, [§5.5](#55-the-log-segments-and-sealing)).
+   A term must name a user message in the current or an earlier window and
+   quote its own text verbatim; unknown,
    future, assistant and pasted citations are dropped.
 4. After every valid window, redact and atomically write the whole record
    under the store lock, advancing `scribed_through` and `passes` (successful
@@ -969,6 +971,10 @@ Designed for S9 ([ORB-23892]). A pass keeps the window loop of
 segment in full (number, heading, message range, text), and the sealed
 segments as a table of contents: number, heading, dates, never their text.
 Then the window's messages, and linked sessions' summaries as before.
+The prompt asks for a summary of at most 900 characters, leaving room below
+the 1200-character hard limit, and states the current summary's Unicode
+character count (0 for a first pass). The summary stays a compact overview;
+the log carries the details as the session grows.
 
 **Answered.** `{title, summary, goals, next, topics, related, terms, open,
 new}`: the rewritten header; `open`, the open segment's rewritten
@@ -976,16 +982,36 @@ new}`: the rewritten header; `open`, the open segment's rewritten
 `{starts_at, heading, text, topics, related}`, where `starts_at` is the id
 of the window message the segment begins with. Giving a new segment seals
 the one before it. When the record has no open segment (a first pass, or
-scribe sealed the last one), `open` must be `null` and `new` must hold at
-least one segment starting at the window's first message.
+scribe sealed the last one), ask for `open: null` and at least one `new`
+segment starting at the window's first message.
+
+scribe tolerates an omitted or null `open` when the request had an open
+segment: keep its heading, text, topics and references unchanged. Its range
+and window count still advance normally, and new segments or the usual
+sealing rules can seal it. When there was no open segment, an unexpected
+`open` object becomes the first `new` segment, starting at the window's
+first message. It must pass the same content, ordering and total 3-segment
+limit as every new segment. Refuse conversion when it is impossible: an
+empty window, a duplicate first-message start, too many segments, or invalid
+segment content. Neither fallback changes any sealed segment.
 
 **Checked.** Header budgets (title 120, summary 1200, goals 600, next 1000;
 a `## ` line inside a section, an empty summary or an invalid topic is
 refused, as today); segment headings at most 80 characters, texts 1–900
 characters, no `#` heading line in a text; `starts_at` ids in the window,
 in transcript order, each after the open segment's last message, and no
-two segments starting at one message. A refused answer gets the one fresh
-retry naming the refusal; a second refusal fails the pass. The refusal for
+two segments starting at one message. A refused answer gets one retry
+naming the refusal. If the only defects are header length overruns, send
+only its prose header (`title`, `summary`, `goals`, `next`) to a compression
+request, with its current summary length and the budgets (still asking for
+900 summary characters). No messages, linked records, segments or terms
+are resent. Keep the first answer's topics, references, terms and segments,
+replace only those four prose fields, then validate the complete answer
+again against all hard limits. Any other defect, including one hidden
+behind an overlong header, uses the fresh full-window retry. Both paths
+share the same one-retry allowance; a second refusal fails the pass and
+keeps the previous checkpoint. The bounded, redacted `error` field includes
+the initial refusal and the retry's refusal or model failure. The refusal for
 an overlong text says "seal it and start a new segment", which is how a
 full segment seals.
 
@@ -1853,7 +1879,9 @@ As built (S8):
 - An answer whose segment text exceeds 900 characters, whose heading
   exceeds 80, whose `starts_at` is outside the window or out of order, or
   whose header breaks a budget gets one retry naming the refusal, then
-  fails the pass with `session_answer_invalid`, the record unchanged.
+  fails the pass with `session_answer_invalid` if the retry is also invalid,
+  the record unchanged. Header-only length failures use compression rather
+  than resending the window; all other failures use the full-window retry.
 - scribe seals the open segment after `[catalog] segment_windows` windows
   (3) and at the final pass's last window; a sealed segment is
   byte-identical on disk after every later pass.
@@ -1869,7 +1897,9 @@ As built (S9):
 
 - The model port now answers with the header, `open` and `new` of §5.5;
   the legacy `outcome` is no longer requested. The public record JSON keeps
-  `outcome: ""`. Header summary is bounded to 1200 characters. Segment
+  `outcome: ""`. Header summary is bounded to 1200 characters; the prompt
+  targets 900 and gives the current length. Header-only compression and
+  the tolerant `open` rules follow §5.5. Segment
   content, ordered starts, ranges, timestamps and sealing are checked in
   `scribe-core::pass`; a refusal retries once and retains the bounded,
   redacted pass failure reason introduced before S9.

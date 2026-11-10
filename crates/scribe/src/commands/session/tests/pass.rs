@@ -9,7 +9,7 @@ use crate::output::{Output, PassPayload};
 use scribe_core::control::{self, Switch};
 use scribe_core::models::{
     ModelError, NewSegmentAnswer, ReferentAnswer, ReferentRequest, SegmentAnswer, SessionAnswer,
-    SessionRequest, TermAnswer,
+    SessionHeader, SessionHeaderRequest, SessionRequest, TermAnswer,
 };
 use scribe_core::{Models, Redactor, SessionId};
 use serde_json::json;
@@ -28,6 +28,7 @@ struct FakeModels {
     first: RefCell<Option<Result<SessionAnswer, ModelError>>>,
     answer: Result<SessionAnswer, ModelError>,
     asked: RefCell<Vec<SessionRequest>>,
+    compressed: RefCell<Vec<SessionHeaderRequest>>,
 }
 
 impl Models for &FakeModels {
@@ -61,6 +62,16 @@ impl Models for &FakeModels {
                 }
                 answer
             })
+    }
+
+    fn session_header(&self, request: &SessionHeaderRequest) -> Result<SessionHeader, ModelError> {
+        self.compressed.borrow_mut().push(request.clone());
+        self.answer.clone().map(|a| SessionHeader {
+            title: a.title,
+            summary: a.summary,
+            goals: a.goals,
+            next: a.next,
+        })
     }
 }
 
@@ -192,6 +203,7 @@ fn fake(answer: Result<SessionAnswer, ModelError>) -> FakeModels {
         first: RefCell::new(None),
         answer,
         asked: RefCell::new(Vec::new()),
+        compressed: RefCell::new(Vec::new()),
     }
 }
 
@@ -315,7 +327,7 @@ fn an_invalid_answer_keeps_the_previous_record_and_the_pass_due() {
 }
 
 #[test]
-fn an_over_budget_answer_is_asked_again_once_and_the_valid_retry_is_written() {
+fn an_over_budget_header_is_compressed_once_without_resending_the_window() {
     // ORB-21800: a 626-character summary refused the whole pass.
     let setup = Setup::new();
     setup.switch_on();
@@ -328,12 +340,40 @@ fn an_over_budget_answer_is_asked_again_once_and_the_valid_retry_is_written() {
 
     assert_eq!(passes[0].result, "written");
     let asked = models.asked.borrow();
-    assert_eq!(asked.len(), 2);
+    assert_eq!(asked.len(), 1);
     assert_eq!(asked[0].correction, None);
-    let correction = asked[1].correction.as_deref().unwrap();
+    let compressed = models.compressed.borrow();
+    assert_eq!(compressed.len(), 1);
+    let correction = &compressed[0].correction;
     assert!(correction.contains("Summary has 1201 characters; the budget is 1200"));
-    assert!(asked[1].prompt().contains(correction));
+    assert!(compressed[0].prompt().contains(correction));
+    assert_eq!(compressed[0].header.summary, "s".repeat(1201));
+    assert!(!compressed[0].prompt().contains(DEFINED));
     assert!(!setup.due());
+}
+
+#[test]
+fn a_fake_model_can_omit_open_without_changing_its_content() {
+    let setup = Setup::new();
+    setup.switch_on();
+    setup.run(&fake(Ok(answer())));
+    let id = ON.parse().unwrap();
+    let before = setup.ctx.store().session(&id).unwrap().record.log[0].clone();
+    setup.append(&[line("user", "u-2", "More on levels.")]);
+    setup.mark_due();
+    let mut a = answer();
+    a.open = None;
+    a.new.clear();
+    let models = fake(Ok(a));
+
+    assert_eq!(setup.run(&models)[0].result, "written");
+
+    let record = setup.ctx.store().session(&id).unwrap().record;
+    assert_eq!(record.log[0].text, before.text);
+    assert_eq!(record.log[0].heading, before.heading);
+    assert_eq!(record.log[0].last_message.as_deref(), Some("u-2"));
+    assert_eq!(models.asked.borrow().len(), 1);
+    assert!(models.compressed.borrow().is_empty());
 }
 
 #[test]
@@ -470,9 +510,6 @@ fn invalid_segment_answers_retry_once_with_the_refusal_and_preserve_the_record()
     a.open.as_mut().unwrap().text = String::from("# Injected heading");
     cases.push((a, "heading line"));
     let mut a = valid();
-    a.open = None;
-    cases.push((a, "open must be present"));
-    let mut a = valid();
     a.new = vec![new("u-2"); 4];
     cases.push((a, "at most 3"));
     for (bad, reason) in cases {
@@ -488,12 +525,13 @@ fn invalid_segment_answers_retry_once_with_the_refusal_and_preserve_the_record()
         };
         assert_eq!(report.passes[0].error_code, Some("session_answer_invalid"));
         let asked = models.asked.borrow();
-        assert_eq!(asked.len(), 2);
-        assert!(
-            asked[1].correction.as_deref().unwrap().contains(reason),
-            "{:?}",
-            asked[1].correction
+        let compressed = models.compressed.borrow();
+        assert_eq!(asked.len() + compressed.len(), 2);
+        let correction = compressed.first().map_or_else(
+            || asked[1].correction.as_deref().unwrap(),
+            |request| request.correction.as_str(),
         );
+        assert!(correction.contains(reason), "{correction}");
         assert_eq!(std::fs::read(setup.record_file()).unwrap(), before);
         assert!(setup.due());
     }
