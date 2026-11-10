@@ -7,6 +7,13 @@
 //! age is its last message, not the file's mtime: a day old, the last window
 //! marks the record final and the switch off; newer, the switch stays on
 //! and due. No entries are written.
+//!
+//! Who cataloged it is a channel, like every `author`: `--author daniel`
+//! records `kind: daniel` only when stdin is a terminal (Daniel typing or
+//! pasting the popup's command in a shell) and is refused
+//! `reserved_author` otherwise, so an agent driving the CLI through a pipe
+//! cannot catalog as Daniel. Any other name records `kind: agent`, and the
+//! reserved names (`scribe`, `consistency`) are refused the same way.
 
 use super::pass::{self, find};
 use crate::app::Context;
@@ -28,10 +35,14 @@ switch. A transcript whose last message is at least a day old is marked
 final and switched off; a newer one stays on and due. A failed catalog
 keeps its checkpoint; run the same command again to resume. Writes no entries.
 
+--author daniel is Daniel's channel: it records kind daniel only from an
+interactive terminal and is refused otherwise. An agent catalogs under its
+own name, recorded as kind agent.
+
 Examples:
   scribe session catalog <id> --author daniel
   scribe session catalog <id> --author daniel --project scribe
-  scribe session catalog <id> --author daniel --json | jq '.passes[0].result'";
+  scribe session catalog <id> --author opus --json | jq '.passes[0].result'";
 
 /// Arguments to `session catalog`.
 #[derive(Debug, Args)]
@@ -51,16 +62,21 @@ pub(crate) struct CatalogArgs {
 
 /// Catalog with the `claude` CLI as the session model.
 pub(super) fn run(args: &CatalogArgs, ctx: &Context) -> Result<Output, CliError> {
-    run_with(args, ctx, |config| ctx.models(config))
+    run_with(args, ctx, crate::output::stdin_interactive(), |config| {
+        ctx.models(config)
+    })
 }
 
 /// [`run`] with the `Models` adapter `models` builds, so a test can answer
-/// with a fake.
+/// with a fake. `interactive` is whether stdin is a terminal; it decides
+/// the `--author daniel` channel (see the module comment).
 pub(in crate::commands) fn run_with<M: Models>(
     args: &CatalogArgs,
     ctx: &Context,
+    interactive: bool,
     models: impl FnOnce(&scribe_core::Config) -> M,
 ) -> Result<Output, CliError> {
+    let by = catalog_author(&args.author, interactive)?;
     let id = super::super::transcript::resolve_transcript(ctx, &args.id)?;
     let dir = ctx
         .transcripts()
@@ -92,8 +108,7 @@ pub(in crate::commands) fn run_with<M: Models>(
         CatalogGate::Refused => return Err(CliError::SessionCataloged(id)),
         CatalogGate::Resume(switch) => (switch, false),
         CatalogGate::Start => {
-            let author = Author::agent(args.author.clone());
-            store.update_control(|state| control::catalog_on(state, &id, author, ctx.now()))?;
+            store.update_control(|state| control::catalog_on(state, &id, by, ctx.now()))?;
             let switch = store.control()?.get(&id).cloned().ok_or_else(|| {
                 CliError::Core(scribe_core::Error::SessionNotFound {
                     id: id.clone(),
@@ -113,6 +128,17 @@ pub(in crate::commands) fn run_with<M: Models>(
     let mut report: PassReport = pass::run_catalog(ctx, models, &id, &switch, project, ended)?;
     report.switch_written = wrote_switch;
     Ok(Output::Pass(report))
+}
+
+/// The `cataloged_by` author for `--author <name>`: Daniel's channel only
+/// from an interactive terminal, an agent channel under an agent's own
+/// name, and a reserved name refused (`reserved_author`) either way.
+fn catalog_author(name: &AuthorName, interactive: bool) -> Result<Author, CliError> {
+    if name.as_str() == "daniel" && interactive {
+        return Ok(Author::daniel());
+    }
+    scribe_core::check_agent_author(name)?;
+    Ok(Author::agent(name.clone()))
 }
 
 /// Whether a session file for `id` exists, including one that did not parse.

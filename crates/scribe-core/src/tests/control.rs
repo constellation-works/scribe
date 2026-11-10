@@ -91,7 +91,7 @@ fn off_stops_passes_and_never_creates_a_switch() {
 #[test]
 fn catalog_starts_only_a_session_with_no_record_and_no_switch() {
     use crate::control::CatalogGate;
-    use crate::record::{Author, AuthorName};
+    use crate::record::Author;
     let mut state = ControlState::default();
     let s = id("s-1");
     assert_eq!(control::catalog_gate(&state, &s, false), CatalogGate::Start);
@@ -107,7 +107,7 @@ fn catalog_starts_only_a_session_with_no_record_and_no_switch() {
         "a /scribe on switch is refused"
     );
 
-    let by = Author::agent(AuthorName::try_from(String::from("daniel")).unwrap());
+    let by = Author::daniel();
     control::catalog_on(&mut state, &s, by, T0);
     let switch = state.get(&s).unwrap().clone();
     assert_eq!(switch.since, Some(T0));

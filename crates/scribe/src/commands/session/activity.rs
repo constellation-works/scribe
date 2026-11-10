@@ -93,6 +93,7 @@ pub(crate) struct ActivateArgs {
 
 /// `session deactivate`.
 pub(super) fn deactivate(args: DeactivateArgs, ctx: &Context) -> Result<Output, CliError> {
+    scribe_core::check_agent_author(&args.author)?;
     let id = ctx.store().resolve_session(&whole_session(&args.id)?)?;
     let reason = reason("--reason", &args.reason)?;
     let cite = args.cite.as_deref().map(cite).transpose()?;
@@ -107,6 +108,7 @@ pub(super) fn deactivate(args: DeactivateArgs, ctx: &Context) -> Result<Output, 
 
 /// `session activate`.
 pub(super) fn activate(args: ActivateArgs, ctx: &Context) -> Result<Output, CliError> {
+    scribe_core::check_agent_author(&args.author)?;
     let id = ctx.store().resolve_session(&whole_session(&args.id)?)?;
     let reason = args
         .reason

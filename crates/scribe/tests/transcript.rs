@@ -71,7 +71,7 @@ fn list_and_show_read_a_read_only_root_and_a_missing_catalog_is_not_found() {
         "catalog",
         "no-such-session",
         "--author",
-        "daniel",
+        "opus",
         "--json",
     ]);
     assert_eq!(missing.status.code(), Some(1), "{}", text(&missing.stderr));

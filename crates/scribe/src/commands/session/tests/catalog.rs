@@ -154,9 +154,13 @@ impl Setup {
     }
 
     fn args(&self, project: Option<&str>) -> CatalogArgs {
+        self.args_by("daniel", project)
+    }
+
+    fn args_by(&self, author: &str, project: Option<&str>) -> CatalogArgs {
         CatalogArgs {
             id: ID.parse().unwrap(),
-            author: "daniel".parse().unwrap(),
+            author: author.parse().unwrap(),
             project: project.map(|slug| slug.parse::<Project>().unwrap()),
         }
     }
@@ -166,7 +170,25 @@ impl Setup {
         models: &FakeModels,
         project: Option<&str>,
     ) -> Result<PassReport, crate::error::CliError> {
-        let Output::Pass(report) = catalog::run_with(&self.args(project), &self.ctx, |_| models)?
+        // Daniel at a terminal: his `--author daniel` channel.
+        let Output::Pass(report) =
+            catalog::run_with(&self.args(project), &self.ctx, true, |_| models)?
+        else {
+            panic!("session catalog returns a pass report");
+        };
+        Ok(report)
+    }
+
+    fn run_by(
+        &self,
+        models: &FakeModels,
+        author: &str,
+        interactive: bool,
+    ) -> Result<PassReport, crate::error::CliError> {
+        let Output::Pass(report) =
+            catalog::run_with(&self.args_by(author, None), &self.ctx, interactive, |_| {
+                models
+            })?
         else {
             panic!("session catalog returns a pass report");
         };
@@ -209,7 +231,7 @@ fn an_ended_transcript_is_cataloged_final_and_off_with_no_entries() {
             .all(|segment| segment.origin == scribe_core::SegmentOrigin::Catalog)
     );
     let by = view.record.cataloged_by.unwrap();
-    assert_eq!(by.by.kind, AuthorKind::Agent);
+    assert_eq!(by.by.kind, AuthorKind::Daniel);
     assert_eq!(by.by.name.as_str(), "daniel");
     assert_eq!(view.record.project.as_str(), "scribe");
     assert_eq!(
@@ -312,6 +334,47 @@ fn a_live_catalog_keeps_the_recorded_project_when_resumed_with_another() {
     let control = setup.ctx.store().control().unwrap();
     let switch = control.get(&setup.id()).unwrap();
     assert!(switch.on && switch.due);
+}
+
+#[test]
+fn an_agent_catalog_is_recorded_as_an_agent_and_daniel_needs_a_terminal() {
+    let setup = Setup::new();
+    let old = setup.stamp(time::Duration::hours(25));
+    setup.write_at(&[("u-1", &old, &format!("Crews. {DEFINED}."))]);
+
+    // `--author daniel` off a terminal (a pipe, as an agent drives it) is
+    // refused before any switch or model call, as are scribe's names.
+    for name in ["daniel", "scribe", "consistency"] {
+        let models = fake(Ok(answer()));
+        let err = setup.run_by(&models, name, false).unwrap_err();
+        assert_eq!(err.code(), "reserved_author", "{name}");
+        assert_eq!(*models.asked.borrow(), 0);
+    }
+    assert!(
+        setup
+            .ctx
+            .store()
+            .control()
+            .unwrap()
+            .get(&setup.id())
+            .is_none()
+    );
+
+    // The same call under an agent's own name catalogs, recorded as agent.
+    let models = fake(Ok(answer()));
+    let report = setup.run_by(&models, "opus", false).unwrap();
+    assert!(report.switch_written);
+    let by = setup
+        .ctx
+        .store()
+        .session(&setup.id())
+        .unwrap()
+        .record
+        .cataloged_by
+        .unwrap()
+        .by;
+    assert_eq!(by.kind, AuthorKind::Agent);
+    assert_eq!(by.name.as_str(), "opus");
 }
 
 #[test]

@@ -241,7 +241,7 @@ Stable codes: `entry_not_found`, `session_not_found`, `io_error`,
 `output_error`, `usage_error`, `hook_payload_invalid`,
 `segment_not_found`, `sealed_segment_changed`, `confirm_required`,
 `transcript_missing`, `session_busy` (exit 1), (S11) `id_ambiguous` (exit 2;
-the message lists up to ten candidates, sorted, and how many more), `daniel_only`, `tag_not_found`, `tag_conflict`, `tag_configured`,
+the message lists up to ten candidates, sorted, and how many more), `daniel_only`, `reserved_author`, `not_author`, `tag_not_found`, `tag_conflict`, `tag_configured`,
 `proposal_not_found`, `proposal_settled`, `entry_not_active`,
 (S12) `invalid_text`, `invalid_topics`,
 `proposal_invalid`, `proposal_not_agent`,

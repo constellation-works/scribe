@@ -2021,3 +2021,60 @@ and uses a fixed conflict notice with the checked cites. This gives up
 some synthesized prose in mixed-source answers to enforce that an agent's
 words never become Daniel's. Agent evidence has base weight 1.0×;
 the ordinary named-tag boost is independent of author.
+
+## Agent writes use their own name and edit only their own work
+
+**Recorded:** 2026-11-10 · [ORB-24002] · **Overridable by Daniel**
+**Code anchors:** `crates/scribe-core/src/store/agent.rs` (`check_agent_author`, the agent write guards), `crates/scribe/src/commands/session/catalog.rs` (`catalog_author`)
+
+### Context
+
+"Every entry and proposal records its author" recorded `kind: agent`
+whatever `--author` name a CLI write passed, so `entry add --author
+daniel` mixed with Daniel's entries under `entry list --author daniel`,
+and `session catalog --author daniel` from any agent's shell produced a
+`cataloged_by` identical to Daniel's popup catalog. The agent write verbs
+also let any agent rewrite another agent's note, update a retired note,
+replace the reason on a proposal Daniel or the consistency routine
+opened while settling it, and settle its own proposal — looser than the
+skill's "an open proposal you opened" and than "agents never change,
+retire or settle against Daniel's entries" (STD-05@1 §R1, §R2, §R5).
+
+### Decision
+
+- `daniel`, `scribe` and `consistency` are reserved author names. Every
+  agent-channel write (entry, tag and proposal writes, `session
+  activate|deactivate`, `session rebuild`, `session catalog`) using one
+  is refused `reserved_author`; reads still accept them as filters.
+- `session catalog` keeps a Daniel channel: `--author daniel` records
+  `cataloged_by: {kind: daniel}` only when stdin is a terminal — Daniel
+  typing or pasting the tmux popup's command in a shell — and is refused
+  through a pipe. An agent catalogs under its own name, recorded
+  `{kind: agent}`, so the two are distinguishable in the record and the
+  switch.
+- Between agents, an agent edits only its own work. `entry update` and
+  `entry retire` of an agent entry and `proposal update` require the
+  record's author name (`not_author`); a non-active agent entry refuses
+  updates (`entry_not_active`). `proposal settle` is the mirror image:
+  the proposal's author cannot settle it (`not_author`), so a second
+  agent settles a proposal about an agent entry. Daniel entries keep the
+  metadata-only rule for every agent, and store tags stay shared
+  vocabulary any agent may update, recorded in `updated_by`.
+- Settling with `--reason` replaces the proposal's reason, so it is
+  allowed only on an agent-opened proposal. On a proposal Daniel or
+  scribe opened, a changed reason is refused `proposal_not_agent`;
+  settling without `--reason` keeps the original reason, with the settler
+  recorded in `settled_author`.
+
+### Consequences
+
+- Daniel's words and catalogs are marked by channels an agent cannot
+  claim from its usual pipe, and one agent cannot silently rewrite
+  another's note, a routine proposal's reason, or its own proposal's
+  verdict.
+- Cost: `--author` is still an unchecked label — a process running as
+  Daniel can choose another agent's name or edit the store directly, and
+  a script Daniel runs non-interactively cannot catalog as `daniel`
+  (it can under an agent name). These refusals are accident guards, not
+  permissions (STD-05@1 §R5). Cross-agent tidying of a note now goes
+  through its author or a new note.

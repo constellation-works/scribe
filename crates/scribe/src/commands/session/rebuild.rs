@@ -44,6 +44,7 @@ pub(in crate::commands) fn run_with<M: Models>(
     ctx: &Context,
     models: impl FnOnce(&Config) -> M,
 ) -> Result<Output, CliError> {
+    scribe_core::check_agent_author(&args.author)?;
     let store = ctx.store();
     let id = store.resolve_session(&args.id)?;
     let mut original = store.session(&id)?.record;

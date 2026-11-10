@@ -185,6 +185,12 @@ Rules every verb keeps:
   such as `opus`) and records `{kind: agent, name}`. `kind: agent` means
   "written through the CLI"; Daniel's channel is still `#scribe`, which
   records `kind: daniel` ([4_decisions.md](./4_decisions.md#every-entry-and-proposal-records-its-author)).
+  The names `daniel`, `scribe` and `consistency` are reserved for the
+  non-agent channels: an agent write using one is refused
+  `reserved_author` (reads still accept them as filters). The one
+  exception is `session catalog --author daniel` from an interactive
+  terminal, Daniel's channel for cataloging, which records
+  `kind: daniel` ([§5.8](#58-cataloging-a-past-session)).
 - **The guard.** `ask` never presents an agent's entry as Daniel's words
   and gives it no 1.5× weight ([§6.7](#67-segments-authors-and-inactive-sessions)).
   Agents never change the content of, retire or settle a proposal about an
@@ -194,6 +200,16 @@ Rules every verb keeps:
   Daniel's. Agents may open a proposal against a Daniel entry; Daniel
   settles it with `#scribe approve|reject`. `#scribe forget` stays
   Daniel's alone ([4_decisions.md](./4_decisions.md#entries-daniel-wrote-are-settled-only-by-daniel)).
+  Between agents, an agent edits only its own work: `entry update` and
+  `entry retire` of an agent entry, and `proposal update`, require the
+  record's author name (`not_author` otherwise), a non-active agent entry
+  refuses updates (`entry_not_active`), and a proposal's author cannot
+  settle it — another agent does. Settling with `--reason` replaces the
+  proposal's reason, so on a proposal Daniel or scribe opened it is
+  refused `proposal_not_agent`; settling without `--reason` keeps the
+  original. Tags stay shared vocabulary: any agent may update a store
+  tag, recorded in `updated_by`
+  ([4_decisions.md](./4_decisions.md#agent-writes-use-their-own-name-and-edit-only-their-own-work)).
 - **Audit and redaction.** Each write verb is a mutating command: one
   audit line per change or refusal (ids and codes only), store lock,
   `write_atomic`, and every free-text argument passes the redactor before
@@ -1197,7 +1213,12 @@ names of its own.
 
 **Cataloging: `scribe session catalog <id>`.** `scribe session catalog <id>
 --author <name> [--project <slug>]` switches the named session on as a
-cataloged-by-name session and runs its passes to the end:
+cataloged-by-name session and runs its passes to the end. Who cataloged
+it is a channel: `--author daniel` records `kind: daniel` only when stdin
+is a terminal (Daniel typing or pasting the popup's command in a shell)
+and is refused `reserved_author` through a pipe, so an agent cannot
+catalog as Daniel; an agent's own name records `kind: agent`, and
+`scribe`/`consistency` are refused as reserved:
 
 - The transcript is found and checked as a pass finds it. A session that
   already has a record or a switch is refused `session_cataloged` (use
@@ -1725,10 +1746,13 @@ writes none.
   write scribe. A worker that needs Daniel's context gets it in its task.
 - **An agent write is an accident guard too.** `--author` is a label an
   agent chooses, not an identity; `kind: agent` is what scribe can know
-  ("written through the CLI"). The guard that keeps agents from settling
-  Daniel's entries is a refusal in the CLI, not a permission: a process
-  running as Daniel can still edit `~/.scribe` (STD-05 R5). The audit log
-  records every write's command and target.
+  ("written through the CLI"). Reserved names, own-author edits and the
+  interactive-terminal test for `catalog --author daniel` only separate
+  the channels a caller claims: an agent can still choose another agent's
+  name, and a process running as Daniel can still edit `~/.scribe`
+  (STD-05 R5). The guard that keeps agents from settling Daniel's entries
+  is a refusal in the CLI, not a permission. The audit log records every
+  write's command and target.
 - **Removed-feature judgement can be wrong.** Haiku may read "removed the
   old flag" as the removal of the session's feature. The quote is checked,
   the session is only hidden, and `session activate` brings it back, but a
@@ -2159,8 +2183,10 @@ with no parsed times is left out, because a date bound is always set.
 `cwd` is on the row, as §5.8 specifies.
 
 `session catalog` checks the transcript and the redactor before it writes
-the switch. `cataloged_by.by` is `{kind: agent}` even when the name is
-`daniel`. Age is the last kept message's timestamp, not the file mtime;
+the switch. `cataloged_by.by` is `{kind: daniel}` for Daniel's interactive
+`--author daniel` channel and `{kind: agent, name}` under an agent's own
+name; a reserved name off that channel is refused `reserved_author`
+before the transcript is resolved. Age is the last kept message's timestamp, not the file mtime;
 at least 24 hours old, the last window is final and the switch turns off
 in the same store lock. A newer transcript stays on and due, and that
 write clears retry backoff. An empty conversation writes no record, leaves
