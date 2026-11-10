@@ -45,6 +45,8 @@ claude plugin update scribe@scribe-local
 orbit plugin upgrade scribe plugin/.orbit-plugin --grant fs,network,env_pass,orbit_tools
 ```
 
+`claude plugin update` applies on the next Claude Code restart.
+
 Then set the store root and the transcripts directory in the workspace's
 Orbit config and check one call:
 
@@ -87,8 +89,9 @@ claude plugin update scribe@scribe-local
 orbit plugin upgrade scribe plugin/.orbit-plugin --grant fs,network,env_pass,orbit_tools
 ```
 
-(or `claude plugin install scribe --marketplace ./plugin` on a fresh install) so its
-`SessionStart` hook is registered.
+`claude plugin update` applies on the next Claude Code restart. On a fresh
+install, `claude plugin install scribe --marketplace ./plugin` registers the
+package and its `SessionStart` hook instead.
 
 The grants are: `fs` (read and write the store root, read the transcripts
 directory), `network` (the `claude` CLI), `env_pass`
