@@ -62,7 +62,22 @@ clippy:
 # Supply chain (STD-02 R23, STD-05 R23/R24): advisories, licenses, sources.
 deny:
 	@if $(CARGO) deny --version >/dev/null 2>&1; then \
-		$(CARGO) deny check; \
+		cargo_home="$${CARGO_HOME:-$$HOME/.cargo}"; \
+		deny_db="$$cargo_home/advisory-dbs"; \
+		writable_parent="$$deny_db"; \
+		while [ ! -d "$$writable_parent" ]; do \
+			parent=$$(dirname "$$writable_parent"); \
+			[ "$$parent" = "$$writable_parent" ] && break; \
+			writable_parent="$$parent"; \
+		done; \
+		if [ ! -w "$$writable_parent" ] || [ ! -x "$$writable_parent" ]; then \
+			mkdir -p "$(CURDIR)/target/cargo-deny"; \
+			deny_config="$(CURDIR)/target/cargo-deny/deny-$$$$.toml"; \
+			sed 's@^db-path = "\$$CARGO_HOME/advisory-dbs"$$@db-path = "$(CURDIR)/target/cargo-deny/advisory-dbs"@' deny.toml > "$$deny_config"; \
+			$(CARGO) deny check --config "$$deny_config"; \
+		else \
+			$(CARGO) deny check; \
+		fi; \
 	else \
 		$(call missing_tool,cargo-deny,the supply-chain check); \
 	fi
