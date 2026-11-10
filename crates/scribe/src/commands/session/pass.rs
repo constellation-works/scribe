@@ -21,7 +21,11 @@
 //! leaves the pass due for the next run. After [`pass::MAX_FAILURES`]
 //! failures in a row (counted from the audit log) `due` is cleared and a
 //! warning logged, so a session that cannot be summarised stops costing a
-//! model call every run until the cadence marks it due again.
+//! model call every run until the cadence marks it due again. A retryable
+//! failure (the model could not be started, or timed out) gets
+//! [`pass::MAX_RETRYABLE_FAILURES`] instead, so an outage does not strand
+//! the session; a run that had any failed pass is not a success (the plugin
+//! tool reports it, see `commands/plugin.rs`).
 //!
 //! A session never switched on is never read: only sessions with a switch
 //! are candidates. A pass writes no entries. Each session passed is one
@@ -293,23 +297,26 @@ impl Job<'_> {
             })
     }
 
-    /// The previous record is kept and the pass stays due, unless this is
-    /// the [`pass::MAX_FAILURES`]th failure in a row.
+    /// The previous record is kept and the pass stays due, unless this
+    /// failure is the one [`pass::gives_up`] names for its code: the third in
+    /// a row, or for a retryable code ([`pass::retryable`]) the
+    /// [`pass::MAX_RETRYABLE_FAILURES`]th.
     fn failed(&self, code: Code) -> PassPayload {
         let store = self.ctx.store();
-        let before = store
+        let failures = store
             .failures_in_a_row(COMMAND, &format!("session:{}", self.id))
             .unwrap_or_else(|err| {
                 tracing::warn!(session = %self.id, %err, "cannot count earlier failures");
                 0
-            });
-        let gave_up = before.saturating_add(1) >= pass::MAX_FAILURES;
+            })
+            .saturating_add(1);
+        let gave_up = pass::gives_up(code, failures);
         if gave_up {
             tracing::warn!(
                 session = %self.id,
-                failures = before.saturating_add(1),
-                "session pass failed {} times in a row; clearing due until the cadence marks it again",
-                pass::MAX_FAILURES
+                failures,
+                code,
+                "session pass failed {failures} times in a row; clearing due until the cadence marks it again"
             );
             if let Err(err) = store.settle_pass(self.id, None, true, self.redactor) {
                 tracing::warn!(session = %self.id, %err, "cannot clear due");

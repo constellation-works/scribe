@@ -11,6 +11,10 @@
       "type": "string",
       "description": "Claude Code's projects directory, an absolute path (~/.claude/projects, or $CLAUDE_CONFIG_DIR/projects). scribe.session-pass reads the transcripts of sessions switched on with /scribe on there; until it is set (the default is empty), it answers not_configured."
     },
+    "claude_program": {
+      "type": "string",
+      "description": "The claude program the model tools run, an absolute path (for example ~/.local/bin/claude) for a launcher whose PATH holds no claude, such as the Orbit clock's on macOS. Empty (the default) runs claude from the call's PATH. A relative path is refused with not_configured."
+    },
     "task_workspaces": {
       "type": "array",
       "items": {

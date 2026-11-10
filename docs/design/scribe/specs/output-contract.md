@@ -177,7 +177,8 @@ still due) or `failed` (the previous record kept, still due);
 `error_code` is a stable code or `null`; `passes` is the record's pass
 count or `null` without a record; `dropped_terms` counts terms whose
 `said` was not verbatim from one of Daniel's turns; `gave_up` is true when
-this was the third failure in a row and `due` was cleared. Plain and table
+this failure cleared `due`: the third in a row, or for a retryable code
+(`model_unavailable`, `model_timeout`) the 96th. Plain and table
 print one row per pass (`session result error_code passes dropped_terms`);
 with nothing due stdout is empty, stderr says `no session pass is due` and
 the exit is 0. A failed pass still exits 0; each pass except a `waiting`
@@ -264,6 +265,10 @@ report for `scribe.consistency-scan`; or `{"ok": false, "error": {"code",
 `not_configured` (`root` missing, empty, relative or the manifest's
 `/var/tmp` default; for `scribe.session-pass`, `transcripts` likewise), a
 model code (`retryable` for `model_timeout` and `model_failed`) or a store
-code (`retryable` for `store_locked` from a routine tool). `scribe.ask`
+code (`retryable` for `store_locked` from a routine tool). For
+`scribe.session-pass`, `session_pass_failed` when any pass in the report
+failed (`retryable` when every failure was `model_unavailable` or
+`model_timeout`); its message names each failed session, its code and the
+model program, and the report is not returned. `scribe.ask`
 writes no audit line; the routine tools write the lines their CLI commands
 do, in the store `root` names.

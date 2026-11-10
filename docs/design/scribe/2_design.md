@@ -589,7 +589,8 @@ timeout; the rest count as `remaining` for the next run
    more in the same pass, naming what was refused (a field, its length and
    its budget); if that answer fails too, keep the previous record and leave
    `due` set for the next run (three failures in a row clear `due` and log
-   a `warn`).
+   a `warn`; a retryable failure, `model_unavailable` or `model_timeout`,
+   clears it only at 96 in a row, see the failures decision below).
 4. Write the record atomically, advance `scribed_through`, clear `due`.
 
 A pass writes no tag entries, even if the transcript contains `#decision`
@@ -627,7 +628,11 @@ As built (S4), in `scribe-core::pass` and `commands/session/pass.rs`:
   record is written and `due` cleared by one locked store call. Three
   failures in a row (counted from the audit log,
   [4_decisions.md](./4_decisions.md#a-session-pass-counts-its-failures-from-the-audit-log))
-  clear `due` with a `warn`.
+  clear `due` with a `warn`; a retryable failure (`model_unavailable`,
+  `model_timeout`) clears it at 96 in a row
+  ([4_decisions.md](./4_decisions.md#a-retryable-pass-failure-stays-due-for-a-bounded-outage)).
+  A routine run in which any pass failed is an error envelope,
+  `session_pass_failed`, not a success.
 
 ## 6. `ask`
 
@@ -873,7 +878,10 @@ it runs `claude -p --safe-mode --tools "" --model <id> --output-format json --js
 with the prompt on stdin, in its own process group, from a cleared
 environment holding only `PATH`, `HOME`, `LANG` and the credential names
 Daniel configures (`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`;
-STD-05 R10), killed and reaped at the budget (STD-03 R11–R13).
+STD-05 R10), killed and reaped at the budget (STD-03 R11–R13). The program
+is `claude` on that `PATH`, or, in the plugin, the absolute path
+`[plugins.scribe] claude_program` names (for a launcher whose `PATH` holds no
+`claude`); the environment is the same either way.
 `--safe-mode` turns off the hooks and plugins of the user's Claude Code setup,
 so a model call never fires `scribe hook`; `--tools ""` removes the built-in
 tools, so the model never receives tools. `--bare` is not used: it reads only

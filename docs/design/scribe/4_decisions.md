@@ -1110,6 +1110,49 @@ failure. No persisted shape changes.
   failure, under-count, so a session may cost one or two more model calls
   before `due` is cleared.
 
+## A retryable pass failure stays due for a bounded outage
+
+**Code anchors:** `crates/scribe-core/src/pass.rs` (`retryable`,
+`gives_up`, `MAX_RETRYABLE_FAILURES`); `crates/scribe/src/commands/session/pass.rs`
+(`failed`); `crates/scribe/src/commands/plugin.rs` (`claude_program`,
+`failed_passes`)
+
+### Context
+
+On the Mac the Orbit clock's `PATH` holds no `claude`, so every pass failed
+with `model_unavailable` from 2026-11-08 20:00Z. The third failure in a row
+cleared `due` for every code, so five sessions were stranded with no
+record, and the routine run still reported success.
+
+### Decision
+
+- `model_unavailable` (the program could not start) and `model_timeout` are
+  retryable: `due` is cleared at the 96th failure in a row
+  (`MAX_RETRYABLE_FAILURES`, eight hours at the five-minute cadence). Every
+  other code keeps the third failure ([`MAX_FAILURES`](./2_design.md#53-a-pass)).
+  A bound stays, so a permanent failure cannot hot-loop.
+- `[plugins.scribe] claude_program` names an absolute path to `claude` for
+  the plugin's model tools (`ask`, `session-pass`, `consistency-scan`); empty
+  runs `claude` from the call's `PATH`, and a relative path is refused with
+  `not_configured`. The child's environment is unchanged (STD-05 R10–R12).
+- A `session-pass` run in which any pass failed is an error envelope,
+  `session_pass_failed`, retryable when every failure was. Its message names
+  each failed session and code and the program used. The audit lines are
+  unchanged.
+
+### Consequences
+
+- An outage costs one failed spawn per due session per run, for up to
+  eight hours, and then the session is given up as before.
+- The routine run is no longer a success when one pass fails, so a failing
+  model is visible in Orbit rather than only in the audit log.
+- Sessions already given up need `due` set again by hand, or a one-off pass
+  after the fix. Their earlier failures stay in the audit log and still count
+  toward the bound until a success clears them; for the sessions given up on
+  the third failure that is three, far from 96.
+- Cost: `consistency-scan` still reports success when a batch failed; it is
+  the same kind of gap and is left for its own change.
+
 ## A pass finds its transcript by session id
 
 **Code anchors:** `crates/scribe/src/commands/session/pass.rs` (`find`)

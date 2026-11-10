@@ -23,7 +23,11 @@
 //!
 //! The store root comes from `[plugins.scribe] root`, and the transcripts
 //! directory from `[plugins.scribe] transcripts`, never from `SCRIBE_ROOT`
-//! or `HOME`: the plugin's sandbox grants access to those paths alone.
+//! or `HOME`: the plugin's sandbox grants access to those paths alone. The
+//! model program is `[plugins.scribe] claude_program`, an absolute path (empty
+//! means `claude` on the call's `PATH`), for all three model-calling tools.
+//! A session-pass run with any failed pass is an error envelope,
+//! `session_pass_failed`.
 //! `scribe.ask` reads only and is not audited. The two routine tools write,
 //! and are audited here, inside the call, under the same command names as
 //! the CLI verbs (`session pass`, `consistency scan`) and in the store they
@@ -35,7 +39,7 @@ use super::{RunLimits, consistency, session};
 use crate::app::Context;
 use crate::audit_middleware::{AuditGuard, AuditMeta};
 use crate::error::CliError;
-use crate::output::{Output, PluginError, PluginReply};
+use crate::output::{Output, PassReport, PluginError, PluginReply};
 use clap::{Args, Subcommand};
 use scribe_core::ask::{Question, RecordKind, Scope};
 use scribe_core::models::ModelError;
@@ -43,7 +47,7 @@ use scribe_core::{Project, Store, TagName, Topic};
 use serde::Deserialize;
 use serde_json::Value;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 /// How long after a call starts `scribe.session-pass` may start another
@@ -269,6 +273,30 @@ fn transcripts_dir(config: &Value) -> Result<PathBuf, PluginReply> {
     )
 }
 
+/// The model program the plugin's `claude_program` setting names: an
+/// absolute path, or `None` (empty or absent) for `claude` on the call's
+/// `PATH`. A launcher whose `PATH` holds no `claude` (launchd's, say) sets
+/// the path; a relative one is refused, since it would resolve against the
+/// caller's directory.
+fn claude_program(config: &Value) -> Result<Option<PathBuf>, PluginReply> {
+    let value = config
+        .get("claude_program")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    let path = PathBuf::from(value);
+    if !path.is_absolute() {
+        return Err(failure(
+            "not_configured",
+            "set [plugins.scribe] claude_program to an absolute path to claude, or leave it empty to run claude from PATH",
+            false,
+        ));
+    }
+    Ok(Some(path))
+}
+
 /// Run a routine command against `routine_ctx`, audited there as `command`.
 fn audited(
     routine_ctx: &Context,
@@ -306,13 +334,70 @@ fn session_pass(input: &Value, config: &Value, ctx: &Context) -> PluginReply {
         (Ok(root), Ok(transcripts)) => (root, transcripts),
         (Err(reply), _) | (_, Err(reply)) => return reply,
     };
+    let program = match claude_program(config) {
+        Ok(program) => program,
+        Err(reply) => return reply,
+    };
     let limits =
         RunLimits::new(scribe_core::pass::MAX_PER_RUN).start_by(Instant::now() + PASS_START_BY);
-    audited(
+    let reply = audited(
         &Context::at(root, Some(transcripts)),
         session::pass::COMMAND,
-        |routine| session::pass::run_with(routine, |config| ctx.models(config), limits),
-    )
+        |routine| {
+            session::pass::run_with(
+                routine,
+                |config| ctx.models(config).with_program(program.as_deref()),
+                limits,
+            )
+        },
+    );
+    pass_reply(reply, program.as_deref())
+}
+
+/// The routine's reply for a session pass report: an error envelope when any
+/// pass in it failed, so the tool result and the Orbit run are not a
+/// success. The message names each failed session with its code and the
+/// program the model ran; the audit lines carry the same codes.
+fn pass_reply(reply: PluginReply, program: Option<&Path>) -> PluginReply {
+    let failed = match &reply {
+        PluginReply::Pass(report) => failed_passes(report, program),
+        PluginReply::Scan(_) | PluginReply::Ask(_) | PluginReply::Error(_) => None,
+    };
+    failed.unwrap_or(reply)
+}
+
+/// The error for a pass report with a failed pass, `None` when none failed.
+fn failed_passes(report: &PassReport, program: Option<&Path>) -> Option<PluginReply> {
+    let failed: Vec<_> = report
+        .passes
+        .iter()
+        .filter(|pass| pass.result == "failed")
+        .collect();
+    if failed.is_empty() {
+        return None;
+    }
+    let retryable = failed
+        .iter()
+        .all(|pass| pass.error_code.is_some_and(scribe_core::pass::retryable));
+    let codes: Vec<String> = failed
+        .iter()
+        .map(|pass| format!("{} {}", pass.session, pass.error_code.unwrap_or("unknown")))
+        .collect();
+    let gave_up = failed.iter().filter(|pass| pass.gave_up).count();
+    let program = program.map_or_else(
+        || String::from("claude on PATH"),
+        |path| path.display().to_string(),
+    );
+    Some(failure(
+        "session_pass_failed",
+        format!(
+            "{} of {} session passes failed ({}); model program: {program}; {gave_up} gave up and cleared due",
+            failed.len(),
+            report.passes.len(),
+            codes.join(", ")
+        ),
+        retryable,
+    ))
 }
 
 fn consistency_scan(input: &Value, config: &Value, ctx: &Context) -> PluginReply {
@@ -323,10 +408,18 @@ fn consistency_scan(input: &Value, config: &Value, ctx: &Context) -> PluginReply
         Ok(root) => root,
         Err(reply) => return reply,
     };
+    let program = match claude_program(config) {
+        Ok(program) => program,
+        Err(reply) => return reply,
+    };
     let limits =
         RunLimits::new(consistency::max_batches()).start_by(Instant::now() + SCAN_START_BY);
     audited(&Context::at(root, None), consistency::COMMAND, |routine| {
-        consistency::scan(routine, |config| ctx.models(config), limits)
+        consistency::scan(
+            routine,
+            |config| ctx.models(config).with_program(program.as_deref()),
+            limits,
+        )
     })
 }
 
@@ -343,11 +436,15 @@ fn ask(input: Value, config: &Value, ctx: &Context) -> PluginReply {
         Ok(root) => root,
         Err(reply) => return reply,
     };
+    let program = match claude_program(config) {
+        Ok(program) => program,
+        Err(reply) => return reply,
+    };
     let store = Store::open(root);
     match answer_with(
         &store,
         question,
-        |config| ctx.models(config),
+        |config| ctx.models(config).with_program(program.as_deref()),
         &ctx.tasks().with_workspaces(task_workspaces(config)),
         ctx.now(),
     ) {

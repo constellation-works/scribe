@@ -291,3 +291,33 @@ fn the_request_carries_the_previous_record_the_window_and_what_to_reuse() {
     }
     assert!(!prompt.contains("<message id=\"u-1\""), "already folded in");
 }
+
+#[test]
+fn a_retryable_failure_keeps_due_until_the_retry_bound_and_others_give_up_at_three() {
+    use crate::models::ModelError;
+    use std::time::Duration as StdDuration;
+
+    // The codes the adapter reports for an outage and a timeout are the
+    // retryable ones; a model that answers wrongly is not.
+    let outage = ModelError::Unavailable(String::from("claude: not found"));
+    let slow = ModelError::Timeout {
+        budget: StdDuration::from_secs(120),
+    };
+    let broken = ModelError::Failed(String::from("exit 3"));
+    assert!(pass::retryable(outage.code()));
+    assert!(pass::retryable(slow.code()));
+    assert!(!pass::retryable(broken.code()));
+
+    // A permanent failure is given up at the third failure in a row.
+    assert!(!pass::gives_up(broken.code(), pass::MAX_FAILURES - 1));
+    assert!(pass::gives_up(broken.code(), pass::MAX_FAILURES));
+
+    // An outage is retried past that count, and given up only at the bound.
+    assert!(!pass::gives_up(outage.code(), pass::MAX_FAILURES));
+    assert!(!pass::gives_up(
+        outage.code(),
+        pass::MAX_RETRYABLE_FAILURES - 1
+    ));
+    assert!(pass::gives_up(outage.code(), pass::MAX_RETRYABLE_FAILURES));
+    assert!(pass::gives_up(slow.code(), pass::MAX_RETRYABLE_FAILURES));
+}

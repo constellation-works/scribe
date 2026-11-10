@@ -43,6 +43,7 @@ Orbit config and check one call:
 [plugins.scribe]
 root = "/home/<user>/.scribe"     # absolute; every tool answers not_configured until set
 transcripts = "/home/<user>/.claude/projects"   # absolute; session-pass needs it
+# claude_program = "/home/<user>/.local/bin/claude"   # optional: absolute path to claude when the routine's PATH has none; empty runs claude from PATH
 # task_workspaces = ["ws_constellation"]   # optional: where orchestration tasks live
 ```
 

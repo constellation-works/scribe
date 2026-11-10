@@ -41,6 +41,32 @@ pub const MAX_PER_RUN: usize = 5;
 /// Failed passes in a row after which `due` is cleared (2_design.md §5.3).
 pub const MAX_FAILURES: u32 = 3;
 
+/// Failed passes in a row after which `due` is cleared, for a retryable
+/// failure ([`retryable`]): the model could not be started or ran past its
+/// budget, which an outage or a moved program causes and a later run can
+/// clear. 96 runs at the routine's five-minute cadence is eight hours.
+pub const MAX_RETRYABLE_FAILURES: u32 = 96;
+
+/// Whether a pass failure with this code ([`crate::models::ModelError::code`])
+/// is worth retrying in a later run.
+#[must_use]
+pub fn retryable(code: &str) -> bool {
+    matches!(code, "model_unavailable" | "model_timeout")
+}
+
+/// Whether the `failures`th failure in a row, with this `code`, clears
+/// `due`: a retryable one at [`MAX_RETRYABLE_FAILURES`], any other at
+/// [`MAX_FAILURES`].
+#[must_use]
+pub fn gives_up(code: &str, failures: u32) -> bool {
+    let bound = if retryable(code) {
+        MAX_RETRYABLE_FAILURES
+    } else {
+        MAX_FAILURES
+    };
+    failures >= bound
+}
+
 /// The longest term, in characters.
 pub const TERM_CHARS: usize = 80;
 

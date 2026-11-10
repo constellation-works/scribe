@@ -60,6 +60,9 @@ spec:
       # Claude Code's projects directory, an absolute path; session-pass
       # answers `not_configured` until it is set.
       transcripts: ""
+      # The claude the model tools run: empty runs `claude` from the call's
+      # PATH; an absolute path serves a launcher whose PATH holds none.
+      claude_program: ""
       task_workspaces: []
 
   tools:

@@ -11,10 +11,11 @@
 
 mod support;
 
+use scribe_core::pass;
 use serde_json::{Value, json};
 use std::ffi::OsString;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Output, Stdio};
 use support::{Fixture, make_private, text};
 
@@ -398,5 +399,120 @@ fn a_pass_writes_one_record_of_daniels_terms_and_never_reads_a_session_never_swi
     assert_eq!(report["passes"][0]["result"], "failed");
     assert_eq!(report["passes"][0]["error_code"], "session_answer_invalid");
     assert_eq!(std::fs::read(setup.record_file()).unwrap(), before);
+    assert_eq!(setup.control()["due"], true);
+}
+
+/// The routine's call as Orbit makes it: `scribe plugin call` for
+/// `scribe.session-pass`, from the cleared environment the Orbit clock gives
+/// (launchd's PATH, which holds no `claude`), with `claude_program` set when
+/// given. Returns the reply envelope.
+fn routine_pass(setup: &Setup, claude_program: Option<&Path>) -> Value {
+    let mut config = json!({
+        "root": setup.fx.root(),
+        "transcripts": setup.fx.home().join(".claude/projects"),
+    });
+    if let Some(program) = claude_program {
+        config["claude_program"] = json!(program);
+    }
+    let envelope = json!({"schema_version": 1, "tool": "scribe.session-pass", "input": {},
+                          "context": {"config": config}});
+    let mut cmd = setup.fx.cmd(&["plugin", "call"]);
+    cmd.env_remove("SCRIBE_ROOT")
+        .env("PATH", "/usr/bin:/bin")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = support::ChildGuard::new(cmd.spawn().unwrap());
+    child
+        .child()
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(envelope.to_string().as_bytes())
+        .unwrap();
+    let out = child.finish();
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    serde_json::from_slice(&out.stdout).unwrap()
+}
+
+#[test]
+fn the_routine_writes_a_due_session_through_an_absolute_claude_program() {
+    let setup = Setup::new();
+    setup.scribe("/scribe on");
+    let program = setup.fx.elsewhere("bin/claude");
+    let reply = routine_pass(&setup, Some(&program));
+    assert_eq!(reply["ok"], true, "{reply}");
+    assert_eq!(reply["output"]["passes"][0]["result"], "written", "{reply}");
+    assert!(setup.record(ON).is_some());
+    assert_eq!(setup.control()["due"], false);
+}
+
+#[test]
+fn a_session_whose_program_cannot_start_stays_due_and_a_later_run_retries_it() {
+    let setup = Setup::new();
+    setup.scribe("/scribe on");
+    let missing = setup.fx.elsewhere("bin/no-such-claude");
+    let reply = routine_pass(&setup, Some(&missing));
+    assert_eq!(reply["ok"], false, "{reply}");
+    assert_eq!(reply["error"]["code"], "session_pass_failed", "{reply}");
+    assert_eq!(reply["error"]["retryable"], true, "{reply}");
+    let message = reply["error"]["message"].as_str().unwrap();
+    assert!(message.contains("model_unavailable"), "{message}");
+    assert!(message.contains(missing.to_str().unwrap()), "{message}");
+    assert!(setup.record(ON).is_none(), "nothing was written");
+    assert_eq!(setup.control()["due"], true, "the pass stays due");
+
+    let program = setup.fx.elsewhere("bin/claude");
+    let reply = routine_pass(&setup, Some(&program));
+    assert_eq!(reply["ok"], true, "{reply}");
+    assert!(setup.record(ON).is_some(), "the later run wrote the record");
+    assert_eq!(setup.control()["due"], false);
+}
+
+#[test]
+fn a_permanent_failure_clears_due_at_the_third_run() {
+    let setup = Setup::new();
+    setup.scribe("/scribe on");
+    setup
+        .fx
+        .fake_program("claude-broken", "#!/bin/sh\ncat >/dev/null\nexit 3\n");
+    let broken = setup.fx.elsewhere("bin/claude-broken");
+    for run in 1..pass::MAX_FAILURES {
+        let reply = routine_pass(&setup, Some(&broken));
+        assert_eq!(reply["ok"], false, "{reply}");
+        assert_eq!(
+            setup.control()["due"],
+            true,
+            "failure {run} of a permanent error"
+        );
+    }
+    routine_pass(&setup, Some(&broken));
+    assert_eq!(
+        setup.control()["due"],
+        false,
+        "given up at the third failure"
+    );
+}
+
+#[test]
+fn an_outage_keeps_due_until_the_retry_bound() {
+    let setup = Setup::new();
+    setup.scribe("/scribe on");
+    let missing = setup.fx.elsewhere("bin/no-such-claude");
+    for run in 1..pass::MAX_RETRYABLE_FAILURES {
+        routine_pass(&setup, Some(&missing));
+        assert_eq!(setup.control()["due"], true, "failure {run} of an outage");
+    }
+    routine_pass(&setup, Some(&missing));
+    assert_eq!(setup.control()["due"], false, "given up at the retry bound");
+}
+
+#[test]
+fn a_relative_claude_program_is_not_configured() {
+    let setup = Setup::new();
+    setup.scribe("/scribe on");
+    let reply = routine_pass(&setup, Some(Path::new("claude")));
+    assert_eq!(reply["ok"], false, "{reply}");
+    assert_eq!(reply["error"]["code"], "not_configured", "{reply}");
     assert_eq!(setup.control()["due"], true);
 }
