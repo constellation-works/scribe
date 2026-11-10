@@ -85,6 +85,30 @@ mod private_state {
     }
 
     #[test]
+    fn a_lock_open_to_others_is_refused_before_it_is_taken() {
+        // Writes take the store lock, but no load reads it, so taking the lock
+        // checks its mode: a loose lock another user can reach is refused.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".lock");
+        fs::write(&path, b"").unwrap();
+        fs::set_permissions(&path, Permissions::from_mode(0o644)).unwrap();
+        let err = LockGuard::acquire(&path, "writer", Duration::from_secs(1)).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::Permissions {
+                    mode: 0o644,
+                    fix: "600",
+                    ..
+                }
+            ),
+            "got {err:?}"
+        );
+        fs::set_permissions(&path, Permissions::from_mode(0o600)).unwrap();
+        assert!(LockGuard::acquire(&path, "writer", Duration::from_secs(1)).is_ok());
+    }
+
+    #[test]
     fn a_file_open_to_others_is_refused_with_its_chmod_fix() {
         // Owner-only: a group or other read bit is refused as well as a
         // write bit, so another local user cannot read the record.

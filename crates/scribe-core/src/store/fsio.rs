@@ -227,12 +227,9 @@ impl LockGuard {
     /// `label` says what the holder is doing; it is recorded with the pid and
     /// time so a writer that times out can say who is in the way.
     pub(super) fn acquire(path: &Path, label: &str, wait: Duration) -> Result<Self> {
-        // Never create or truncate through a link (STD-05 R7).
-        match fs::symlink_metadata(path) {
-            Ok(meta) => refuse_symlink(path, &meta)?,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(e) => return Err(Error::io("inspect", path, e)),
-        }
+        // Never create or truncate through a link, and never lock a file that
+        // another user can reach (STD-05 R7, R9): inspect it like any store file.
+        inspect_file(path)?;
         let mut options = OpenOptions::new();
         options.create(true).truncate(false).read(true).write(true);
         #[cfg(unix)]

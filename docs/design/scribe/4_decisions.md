@@ -844,10 +844,10 @@ writable by others; §R8 asks for owner-only modes.
 
 ### Decision
 
-Every load refuses a root, subdirectory, record file, document, `config.toml`
-or lock file that any group or other mode bit reaches (`mode & 0o077 != 0`),
-read and execute bits included. It names the `chmod 700` or `chmod 600` that
-fixes it. Nothing is repaired automatically, and reads still never write.
+Every load refuses a root, subdirectory, record file, document or `config.toml`
+that any group or other mode bit reaches (`mode & 0o077 != 0`), read and
+execute bits included. A write refuses the same way for the lock file, since
+loads take no lock. It names the `chmod 700` or `chmod 600` that fixes it. Nothing is repaired automatically, and reads still never write.
 This supersedes the write-only check recorded above.
 
 ### Consequences
