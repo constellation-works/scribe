@@ -26,7 +26,7 @@ pub const REASON_CHARS: usize = 300;
 pub enum ActiveRoute {
     /// The session's last message is older than the configured limit.
     Age,
-    /// A later record says the session's feature was removed or replaced.
+    /// A later entry Daniel wrote says the session's feature was removed or replaced.
     Removed,
     /// `session activate` or `session deactivate`, by an agent or Daniel.
     Manual,

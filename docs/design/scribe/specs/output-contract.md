@@ -420,7 +420,7 @@ an unknown or repeated pair, an unknown label); `stale_entries` counts
 active entries past `review_after` without a stale proposal;
 `failed_batches` names each batch of ten the model failed, from 1.
 *(S10)* Adds `deactivated` (`[{session, route, reason, cite, quote}]`,
-`route` `age` or `removed`; `cite` and `quote`, the later record and its
+`route` `age` or `removed`; `cite` and `quote`, the later entry and its
 verbatim words, are `null` for `age`), `removal_pairs_judged`,
 `removal_pairs_left` (past the cap of 20 or not reached in this call's
 time), `dropped_removal_labels` and `failed_removal_batches` (`[{batch,
