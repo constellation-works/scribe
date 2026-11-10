@@ -536,6 +536,9 @@ pub(crate) struct PassPayload {
     /// Always `false`: a failed pass stays due and is never given up. Kept
     /// because the `--json` shape is a contract.
     pub(crate) gave_up: bool,
+    /// A redacted, bounded explanation for a failure; absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) error: Option<String>,
 }
 
 /// What `session pass` did; `--json` and the `scribe.session-pass` tool
@@ -552,15 +555,25 @@ pub(crate) struct PassReport {
 }
 
 impl PassReport {
-    /// The run's error when any pass failed, naming each failed session and
-    /// its code; `None` when none did.
+    /// The run's error when any pass failed, naming each failed session,
+    /// code and short reason; `None` when none did.
     pub(crate) fn failure(&self) -> Option<crate::error::CliError> {
-        let failed: Vec<(String, &'static str)> = self
+        let failed: Vec<String> = self
             .passes
             .iter()
-            .filter_map(|p| Some((p.session.clone(), p.error_code?)))
+            .filter_map(|p| {
+                let code = p.error_code?;
+                let reason = p.error.as_deref().unwrap_or("reason unavailable");
+                Some(format!("{} {code}: {reason}", p.session))
+            })
             .collect();
-        (!failed.is_empty()).then(|| crate::error::CliError::PassFailed(failed))
+        (!failed.is_empty()).then(|| {
+            crate::error::CliError::PassFailed(format!(
+                "{} session pass(es) failed: {}; each stays due with retry backoff; use 'scribe session pass --session <id>' to retry now",
+                failed.len(),
+                failed.join(", ")
+            ))
+        })
     }
 }
 

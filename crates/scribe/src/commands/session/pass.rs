@@ -28,7 +28,7 @@
 //!
 //! Nothing new clears due without a model call (and finalizes an ended
 //! session); no transcript or messages yet leaves it waiting. Failed runs
-//! exit 1 with each failed session and code; the plugin answers
+//! exit 1 with each failed session, code and short reason; the plugin answers
 //! `session_pass_failed`. A never-on session is never read. A pass writes
 //! no entries and one audit line per session handled (none for waiting).
 
@@ -65,7 +65,7 @@ window_chars). Each window updates and checkpoints the record. --json
 reports persisted windows per session and how many due sessions remain.
 A failed pass stays due with automatic retry delays of 5, 10, 20, 40,
 then at most 60 minutes. --session retries immediately. Exits 1 when any
-pass failed, naming each failed session and its error code on stderr.
+pass failed, naming each failed session, its error code and short reason.
 
 Examples:
   scribe session pass
@@ -150,10 +150,15 @@ pub(in crate::commands) fn run_with<M: Models>(
         terms: terms.into_iter().take(MAX_LISTED).collect(),
         records: &found.listing.items,
     };
-    let corrupt: Vec<String> = found
+    let corrupt: Vec<(String, String)> = found
         .skipped
         .iter()
-        .filter_map(|s| Some(s.path.file_stem()?.to_str()?.to_owned()))
+        .filter_map(|s| {
+            Some((
+                s.path.file_stem()?.to_str()?.to_owned(),
+                s.error.to_string(),
+            ))
+        })
         .collect();
     let adapter = models(&config);
     let mut passes = Vec::new();
@@ -172,15 +177,16 @@ pub(in crate::commands) fn run_with<M: Models>(
             dropped_terms: 0,
             incomplete: false,
         };
-        let result = if corrupt.iter().any(|stem| stem == id.as_str()) {
-            Err("store_corrupt")
+        let result = if let Some((_, reason)) = corrupt.iter().find(|(stem, _)| stem == id.as_str())
+        {
+            Err(PassError::new("store_corrupt", reason.clone()))
         } else {
             let previous = found.listing.items.iter().find(|r| r.id == id);
             job.run(previous, &known, &adapter, &limits)
         };
         passes.push(match result {
             Ok(done) => done,
-            Err(code) => job.failed(code)?,
+            Err(failure) => job.failed(failure)?,
         });
         if job.incomplete {
             remaining = remaining.saturating_add(1);
@@ -213,8 +219,47 @@ struct Job<'a> {
     incomplete: bool,
 }
 
-/// A failure's stable code.
-type Code = &'static str;
+/// A session pass failure, with the stable code kept separate from its
+/// redacted, bounded diagnostic.
+#[derive(Debug)]
+struct PassError {
+    code: &'static str,
+    message: String,
+}
+
+impl PassError {
+    fn new(code: &'static str, message: impl Into<String>) -> Self {
+        let message = message.into();
+        Self {
+            code,
+            message: if message.trim().is_empty() {
+                code.to_owned()
+            } else {
+                message
+            },
+        }
+    }
+}
+
+/// The maximum characters of a reason exposed in a pass report.
+const MAX_ERROR_CHARS: usize = 300;
+
+/// Redact, flatten and bound a failure reason before it reaches a report or
+/// the aggregate command error.
+pub(super) fn short_reason(redactor: &Redactor, message: &str) -> String {
+    let flattened = redactor
+        .mask(message)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut chars = flattened.chars();
+    let mut bounded: String = chars.by_ref().take(MAX_ERROR_CHARS).collect();
+    if chars.next().is_some() {
+        bounded = bounded.chars().take(MAX_ERROR_CHARS - 1).collect();
+        bounded.push('…');
+    }
+    bounded
+}
 
 impl Job<'_> {
     fn run<M: Models>(
@@ -223,7 +268,7 @@ impl Job<'_> {
         known: &Known<'_>,
         adapter: &M,
         limits: &RunLimits,
-    ) -> Result<PassPayload, Code> {
+    ) -> Result<PassPayload, PassError> {
         let final_pass = self.switch.final_pass;
         let Some(path) = self.ctx.transcripts().and_then(|dir| find(dir, self.id)) else {
             return self.nothing_new(previous, true);
@@ -233,12 +278,12 @@ impl Job<'_> {
             Ok(Transcript::Missing) => return self.nothing_new(previous, true),
             Err(reason) => {
                 tracing::warn!(session = %self.id, %reason, "not passing: the transcript check failed");
-                return Err("provenance_failed");
+                return Err(PassError::new("provenance_failed", reason));
             }
         }
         let bytes = std::fs::read(&path).map_err(|err| {
             tracing::warn!(session = %self.id, path = %path.display(), %err, "cannot read the transcript");
-            "io_error"
+            PassError::new("io_error", format!("cannot read transcript: {err}"))
         })?;
         let messages = transcript::parse(&bytes);
         let conversation = pass::conversation(&messages);
@@ -315,7 +360,7 @@ impl Job<'_> {
             } else {
                 self.ctx.store().checkpoint_pass(record, self.redactor).map_err(|err| {
                     tracing::warn!(session = %self.id, %err, "cannot checkpoint the session window");
-                    err.code()
+                    PassError::new(err.code(), err.to_string())
                 })?
             };
             self.windows = self.windows.saturating_add(1);
@@ -332,10 +377,10 @@ impl Job<'_> {
         request: SessionRequest,
         conversation: &[scribe_core::models::PassMessage],
         adapter: &M,
-    ) -> Result<pass::Distilled, Code> {
+    ) -> Result<pass::Distilled, PassError> {
         let answer = adapter.session(&request).map_err(|err| {
             tracing::warn!(session = %self.id, %err, "the session model failed");
-            err.code()
+            PassError::new(err.code(), err.to_string())
         })?;
         // One more ask in the same pass, naming what was refused: a model
         // can't count characters exactly, so a near miss is common.
@@ -349,11 +394,11 @@ impl Job<'_> {
                 };
                 let answer = adapter.session(&retry).map_err(|err| {
                     tracing::warn!(session = %self.id, %err, "the session model failed");
-                    err.code()
+                    PassError::new(err.code(), err.to_string())
                 })?;
                 pass::check(answer, conversation).map_err(|err| {
                     tracing::warn!(session = %self.id, %err, "the session model's answer was refused");
-                    "session_answer_invalid"
+                    PassError::new("session_answer_invalid", err.to_string())
                 })?
             }
         };
@@ -368,7 +413,7 @@ impl Job<'_> {
         &self,
         previous: Option<&SessionRecord>,
         wait: bool,
-    ) -> Result<PassPayload, Code> {
+    ) -> Result<PassPayload, PassError> {
         if self.switch.final_pass {
             let record = previous.map(|p| pass::finalized(p, self.ctx.now()));
             let written = self.settle(record)?;
@@ -387,30 +432,31 @@ impl Job<'_> {
     }
 
     /// Write `record` (if any) and settle the switch, in one store call.
-    fn settle(&self, record: Option<SessionRecord>) -> Result<Option<SessionRecord>, Code> {
+    fn settle(&self, record: Option<SessionRecord>) -> Result<Option<SessionRecord>, PassError> {
         self.ctx
             .store()
             .settle_pass(self.id, record, self.switch.final_pass, self.redactor)
             .map_err(|err| {
                 tracing::warn!(session = %self.id, %err, "cannot write the session pass");
-                err.code()
+                PassError::new(err.code(), err.to_string())
             })
     }
 
     /// The previous record is kept and the pass stays due, so the next run
     /// retries it.
-    fn failed(&self, code: Code) -> Result<PassPayload, CliError> {
+    fn failed(&self, failure: PassError) -> Result<PassPayload, CliError> {
         self.ctx
             .store()
             .update_control(|state| control::fail(state, self.id, self.ctx.now()))?;
         Ok(PassPayload {
             session: self.id.to_string(),
             result: "failed",
-            error_code: Some(code),
+            error_code: Some(failure.code),
             passes: None,
             dropped_terms: self.dropped_terms,
             windows: self.windows,
             gave_up: false,
+            error: Some(short_reason(self.redactor, &failure.message)),
         })
     }
 
@@ -423,6 +469,7 @@ impl Job<'_> {
             dropped_terms: self.dropped_terms,
             windows: self.windows,
             gave_up: false,
+            error: None,
         }
     }
 }

@@ -321,7 +321,7 @@ fn session_pass(input: &Value, config: &Value, ctx: &Context) -> PluginReply {
 /// The routine's reply for a session pass report: an error envelope when any
 /// pass in it failed, as the CLI exits 1, so the tool result and the Orbit
 /// run are not a success. The message names each failed session with its
-/// code; the audit lines carry the same codes.
+/// code and redacted reason; the audit lines carry the codes only.
 fn pass_reply(reply: PluginReply) -> PluginReply {
     let failed = match &reply {
         PluginReply::Pass(report) => failed_passes(report),
@@ -331,8 +331,8 @@ fn pass_reply(reply: PluginReply) -> PluginReply {
 }
 
 /// The error for a pass report with a failed pass, `None` when none failed:
-/// the CLI's message. Not retryable: each failed session stays due, and the
-/// next run retries it.
+/// the CLI's message with each session's code and redacted reason. Not
+/// retryable: each failed session stays due, and the next run retries it.
 fn failed_passes(report: &PassReport) -> Option<PluginReply> {
     let err = report.failure()?;
     Some(failure(err.code(), err.to_string(), false))

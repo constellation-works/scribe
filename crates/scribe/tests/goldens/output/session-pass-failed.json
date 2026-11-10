@@ -1,0 +1,15 @@
+{
+  "passes": [
+    {
+      "session": "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f",
+      "result": "failed",
+      "error_code": "model_failed",
+      "passes": null,
+      "dropped_terms": 0,
+      "windows": 0,
+      "gave_up": false,
+      "error": "the model failed: golden model refusal"
+    }
+  ],
+  "remaining": 0
+}

@@ -4,13 +4,13 @@
 //! Daniel's turns, and a session never switched on never read.
 
 use crate::app::{AppEnv, Context};
-use crate::commands::session::pass::run_with;
+use crate::commands::session::pass::{run_with, short_reason};
 use crate::output::{Output, PassPayload};
 use scribe_core::control::{self, Switch};
 use scribe_core::models::{
     ModelError, ReferentAnswer, ReferentRequest, SessionAnswer, SessionRequest, TermAnswer,
 };
-use scribe_core::{Models, SessionId};
+use scribe_core::{Models, Redactor, SessionId};
 use serde_json::json;
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -363,4 +363,18 @@ fn a_plugin_deadline_between_windows_preserves_the_checkpoint_for_the_next_run()
     assert_eq!(passes[0].windows, 1);
     assert_eq!(models.asked.borrow()[1].messages[0].uuid, "u-40");
     assert!(!setup.due());
+}
+
+#[test]
+fn surfaced_failure_reason_is_redacted_flattened_and_limited() {
+    let secret = String::from("sensitive-value-123");
+    let redactor = Redactor::new([(String::from("TEST_SECRET"), secret.clone())]);
+    let message = format!("model refused {secret}\n{}", "x".repeat(400));
+
+    let reason = short_reason(&redactor, &message);
+
+    assert!(reason.contains("[redacted:TEST_SECRET]"), "{reason}");
+    assert!(!reason.contains(&secret), "{reason}");
+    assert!(!reason.contains('\n'), "{reason}");
+    assert_eq!(reason.chars().count(), 300, "{reason}");
 }

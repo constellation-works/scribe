@@ -256,10 +256,12 @@ most five, by session id, or explicitly named sessions) and the due sessions
 left for the next run, including those waiting for retry backoff and a
 partly processed session stopped between windows by the routine deadline. A
 pass is `{"session", "result", "error_code", "passes", "dropped_terms",
-"gave_up", "windows"}`: `result` is `written`, `unchanged` (nothing new; `due`
-cleared without a model call), `waiting` (no transcript or message yet;
-still due) or `failed` (the previous record kept, still due);
-`error_code` is a stable code or `null`; `passes` is the record's pass
+"gave_up", "windows", "error"}`: `result` is `written`, `unchanged`
+(nothing new; `due` cleared without a model call), `waiting` (no transcript
+or message yet; still due) or `failed` (the previous record kept, still due);
+`error_code` is a stable code or `null`; `error` is present only on a failed
+pass and contains its store-redacted reason, flattened to one line and cut to
+at most 300 characters; `passes` is the record's pass
 count (successful record updates, one per window), or `null` on failure
 or without a record; `windows` is the number of successfully persisted
 windows for this session in this invocation (including progress before a
@@ -279,11 +281,12 @@ empty, `remaining` counts them, and stderr names the retry wait. Automatic
 retries wait 5, 10, 20, 40, then at most 60 minutes; `--session <id>` ignores
 backoff. When any pass failed, the report is printed as usual and
 the run then exits 1 with `session_pass_failed` on stderr, `error: <n>
-session pass(es) failed: <id> <code>, ...; each stays due with retry
+session pass(es) failed: <id> <code>: <reason>, ...; each stays due with retry
 backoff; use 'scribe session pass --session <id>' to retry now` (or that message in the JSON error object
 under `--json`). `--session <id>` naming a session that is not on exits 1
 with `session_not_on` before any pass. Each pass except a `waiting`
-one writes one audit line (`target` `session:<id>`, with its code).
+one writes one audit line (`target` `session:<id>`, with its code only; the
+reason is never added to the audit line).
 
 ## Consistency scan report
 
@@ -375,7 +378,7 @@ model code (`retryable` for `model_timeout` and `model_failed`) or a store
 code (`retryable` for `store_locked` from a routine tool). For
 `scribe.session-pass`, `session_pass_failed` when any pass in the report
 failed (not `retryable`: each failed session stays due for the next run);
-its message is the CLI's, naming each failed session and its code, and the
-report is not returned. `scribe.ask`
+its message is the CLI's, naming each failed session with its code and short
+reason, and the report is not returned. `scribe.ask`
 writes no audit line; the routine tools write the lines their CLI commands
 do, in the store `root` names.
