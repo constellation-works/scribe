@@ -1,12 +1,17 @@
-//! `/scribe on|off|status`, intercepted by `scribe hook user-prompt-submit`
-//! (docs/design/scribe/2_design.md §5.1).
+//! `/scribe on|off|status|link`, intercepted by
+//! `scribe hook user-prompt-submit` (docs/design/scribe/2_design.md §5.1,
+//! §5.4).
 //!
 //! A prompt whose first line is a `/scribe` command never reaches the
 //! model: the hook switches the session in `control.json` and returns
 //! `decision: "block"` with the status as the `reason` Claude Code shows
 //! Daniel. `on` records when and marks a pass due; `on` again is a no-op
 //! that says so; `off` stops further passes and keeps the record; `status`
-//! and any other argument change nothing.
+//! and any other argument change nothing. `/scribe on --from <id>` and
+//! `/scribe link <id> [--type continues]` link this session to another one
+//! (`spawned_from` by default), in one locked store call; an unknown id, a
+//! self-link, a cycle, a second parent or (for `link`) a session that is not
+//! cataloged is refused with its code and changes nothing.
 //!
 //! The payload is checked like a `#scribe` line's (an accident guard, not a
 //! security boundary): a transcript outside Claude Code's projects
@@ -17,7 +22,7 @@ use super::payload::{self, PromptPayload};
 use crate::app::Context;
 use crate::output::{HookOutcome, HookReply, Output};
 use scribe_core::control::{self, Change, Switch};
-use scribe_core::{SessionControl, SessionId, SessionRecord};
+use scribe_core::{SessionControl, SessionId, SessionLink, SessionRecord};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
@@ -28,7 +33,7 @@ const PROVENANCE_FAILED: &str = "provenance_failed";
 /// The code of a `/scribe` argument that is not a command.
 const UNKNOWN_COMMAND: &str = "unknown_scribe_command";
 /// The commands, for a refusal.
-const USAGE: &str = "use /scribe on, /scribe off or /scribe status";
+const USAGE: &str = "use /scribe on, /scribe off, /scribe status, /scribe on --from <id> or /scribe link <id> [--type spawned_from|continues]";
 
 /// Apply `switch` for the payload's session and block the prompt with the
 /// result.
@@ -54,8 +59,11 @@ pub(super) fn run(
         );
     }
     let store = ctx.store();
+    if let Switch::Link { link, on } = switch {
+        return run_link(switch, link, *on, session, ctx);
+    }
     let change = match switch {
-        Switch::Status => store
+        Switch::Link { .. } | Switch::Status => store
             .control()
             .map(|state| Change::Status(state.get(session).cloned())),
         Switch::Unknown(arg) => Ok(Change::Unknown(arg.clone())),
@@ -71,7 +79,7 @@ pub(super) fn run(
                     target: target(),
                     error_code: Some(err.code()),
                 }],
-                Switch::Status | Switch::Unknown(_) => Vec::new(),
+                Switch::Link { .. } | Switch::Status | Switch::Unknown(_) => Vec::new(),
             };
             return blocked(
                 format!("scribe: {} failed — {}", typed(switch), chain(&err)),
@@ -107,7 +115,59 @@ fn typed(switch: &Switch) -> String {
         Switch::On => String::from("/scribe on"),
         Switch::Off => String::from("/scribe off"),
         Switch::Status => String::from("/scribe status"),
+        Switch::Link { link, on: true } => {
+            format!("/scribe on --from {} --type {}", link.session, link.kind)
+        }
+        Switch::Link { link, on: false } => {
+            format!("/scribe link {} --type {}", link.session, link.kind)
+        }
         Switch::Unknown(arg) => format!("/scribe {arg}"),
+    }
+}
+
+/// `/scribe on --from <id>` or `/scribe link <id>`: link the session (and
+/// switch it on for the first), audited as a write when anything changed
+/// and as a refusal with the link's code.
+fn run_link(
+    switch: &Switch,
+    link: &SessionLink,
+    on: bool,
+    session: &SessionId,
+    ctx: &Context,
+) -> Output {
+    let target = || Some(format!("session:{session}"));
+    let relation = format!("{} {}", link.kind, link.session);
+    match ctx.store().link_session(session, link, on, ctx.now()) {
+        Ok(linked) => {
+            let outcomes = if linked.added || linked.switched_on {
+                vec![HookOutcome {
+                    target: target(),
+                    error_code: None,
+                }]
+            } else {
+                Vec::new()
+            };
+            let reply = match (linked.switched_on, linked.added) {
+                (true, true) => format!(
+                    "scribe: on — this session is cataloged from now on and linked: {relation}; its record is written at the next session pass (/scribe off stops it)"
+                ),
+                (true, false) => format!(
+                    "scribe: on — this session is cataloged from now on; it was already linked: {relation}"
+                ),
+                (false, true) => format!("scribe: linked — this session is {relation}"),
+                (false, false) => {
+                    format!("scribe: already linked: {relation} — nothing changed")
+                }
+            };
+            blocked(reply, outcomes)
+        }
+        Err(err) => blocked(
+            format!("scribe: {} refused — {}", typed(switch), chain(&err)),
+            vec![HookOutcome {
+                target: target(),
+                error_code: Some(err.code()),
+            }],
+        ),
     }
 }
 
@@ -139,6 +199,25 @@ fn status(change: &Change, record: Option<&SessionRecord>) -> String {
                 (true, false) => "; a pass is due",
                 (false, _) => "",
             };
+            let mut links: Vec<String> = record
+                .map(|r| {
+                    r.links
+                        .iter()
+                        .map(|l| format!("{} {}", l.kind, l.session))
+                        .collect()
+                })
+                .unwrap_or_default();
+            links.extend(
+                control
+                    .pending_links
+                    .iter()
+                    .map(|l| format!("{} {}", l.kind, l.session)),
+            );
+            let links = if links.is_empty() {
+                String::new()
+            } else {
+                format!("; linked: {}", links.join(", "))
+            };
             let record = record.map_or_else(
                 || String::from("no record yet"),
                 |r| {
@@ -151,7 +230,7 @@ fn status(change: &Change, record: Option<&SessionRecord>) -> String {
                     )
                 },
             );
-            format!("scribe: {switch}{due}; {record}")
+            format!("scribe: {switch}{due}; {record}{links}")
         }
         Change::Unknown(arg) => format!("scribe: unknown command \"/scribe {arg}\" — {USAGE}"),
     }

@@ -12,7 +12,10 @@
 //! new messages are processed oldest first in consecutive windows (default
 //! 40 messages / 15,000 characters, configured under `[catalog]`). Each
 //! window receives the previous record and updates it with one model call
-//! (120 s), plus one fresh retry for an invalid answer. Plain headers keep
+//! (120 s), plus one fresh retry for an invalid answer. A session that
+//! links to another (`spawned_from`, `continues`) gets that session's
+//! latest title and summary as context, and the prompt says to summarize
+//! its own slice, not retell the other. Plain headers keep
 //! message ids available without XML framing; messages remain data.
 //!
 //! Every window checks field limits and terms against Daniel's own turns
@@ -145,6 +148,7 @@ pub(in crate::commands) fn run_with<M: Models>(
     let known = Known {
         topics: topics.into_iter().take(MAX_LISTED).collect(),
         terms: terms.into_iter().take(MAX_LISTED).collect(),
+        records: &found.listing.items,
     };
     let corrupt: Vec<String> = found
         .skipped
@@ -189,10 +193,12 @@ pub(in crate::commands) fn run_with<M: Models>(
     }))
 }
 
-/// The store's topics and terms, offered to the model for reuse.
-struct Known {
+/// The store's topics and terms, offered to the model for reuse, and its
+/// records, for a linked session's context.
+struct Known<'a> {
     topics: Vec<String>,
     terms: Vec<String>,
+    records: &'a [SessionRecord],
 }
 
 /// One session's pass.
@@ -214,7 +220,7 @@ impl Job<'_> {
     fn run<M: Models>(
         &mut self,
         previous: Option<&SessionRecord>,
-        known: &Known,
+        known: &Known<'_>,
         adapter: &M,
         limits: &RunLimits,
     ) -> Result<PassPayload, Code> {
@@ -244,6 +250,17 @@ impl Job<'_> {
             previous.and_then(|p| p.scribed_through.as_deref()),
         );
         let mut previous = previous.cloned();
+        // The linked sessions' latest records, read once: context only.
+        let mut links = previous
+            .as_ref()
+            .map(|p| p.links.clone())
+            .unwrap_or_default();
+        for link in &self.switch.pending_links {
+            if !links.contains(link) {
+                links.push(link.clone());
+            }
+        }
+        let linked = pass::linked_context(&links, known.records);
         loop {
             let window =
                 pass::window_with_limits(&conversation[offset..], None, self.config.catalog_window);
@@ -266,6 +283,7 @@ impl Job<'_> {
             let request = pass::request(
                 &self.config.models.session,
                 previous.as_ref(),
+                linked.clone(),
                 window,
                 topics.into_iter().take(MAX_LISTED).collect(),
                 terms.into_iter().take(MAX_LISTED).collect(),

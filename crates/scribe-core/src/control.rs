@@ -1,8 +1,9 @@
-//! `/scribe on|off|status` and the switch transitions behind it
-//! (docs/design/scribe/2_design.md §5.1, §5.2).
+//! `/scribe on|off|status|link` and the switch transitions behind it
+//! (docs/design/scribe/2_design.md §5.1, §5.2, §5.4).
 //!
-//! A prompt whose first line is `/scribe on`, `/scribe off` or
-//! `/scribe status` is a control command, not a turn: the `UserPromptSubmit`
+//! A prompt whose first line is `/scribe on`, `/scribe off`,
+//! `/scribe status`, `/scribe on --from <id>` or `/scribe link <id>` is a
+//! control command, not a turn: the `UserPromptSubmit`
 //! hook applies it to `control.json` and blocks the prompt. This module
 //! recognises the line ([`parse`]) and changes a [`ControlState`] in memory
 //! ([`switch`], [`mark_due`], [`mark_final`], [`settle`]); the store persists
@@ -12,7 +13,10 @@
 //! on, so a session never switched on is never mentioned in `control.json`
 //! and a pass never reads its transcript. Pure values, no I/O (STD-02 R5).
 
-use crate::session::{Cadence, ControlState, SessionControl, SessionId};
+use crate::session::{
+    Cadence, ControlState, LinkError, LinkType, SessionControl, SessionId, SessionLink, check_link,
+};
+use std::collections::{BTreeMap, BTreeSet};
 use time::OffsetDateTime;
 
 /// The command word, as typed.
@@ -30,6 +34,14 @@ pub enum Switch {
     Off,
     /// Report the switch without changing it (also a bare `/scribe`).
     Status,
+    /// Link this session to another (`/scribe link <id> [--type <type>]`);
+    /// with `on`, also switch it on (`/scribe on --from <id>`).
+    Link {
+        /// The link to add to this session.
+        link: SessionLink,
+        /// Whether to switch the session on as well.
+        on: bool,
+    },
     /// Any other argument: refused with the usage.
     Unknown(String),
 }
@@ -46,13 +58,50 @@ pub fn parse(prompt: &str) -> Option<Switch> {
     if word != COMMAND && word != NAMESPACED {
         return None;
     }
-    let rest: Vec<&str> = words.collect();
-    Some(match rest.as_slice() {
+    let words: Vec<&str> = words.collect();
+    Some(match words.as_slice() {
         [] => Switch::Status,
         [arg] if arg.eq_ignore_ascii_case("on") => Switch::On,
         [arg] if arg.eq_ignore_ascii_case("off") => Switch::Off,
         [arg] if arg.eq_ignore_ascii_case("status") => Switch::Status,
+        [arg, rest @ ..] if arg.eq_ignore_ascii_case("on") || arg.eq_ignore_ascii_case("link") => {
+            link_args(rest, arg.eq_ignore_ascii_case("on"))
+                .unwrap_or_else(|| Switch::Unknown(words.join(" ")))
+        }
         other => Switch::Unknown(other.join(" ")),
+    })
+}
+
+/// The words after `on` (`--from <id> [--type <type>]`) or after `link`
+/// (`<id> [--type <type>]`), in any order; `None` when they do not parse.
+/// The type defaults to `spawned_from`.
+fn link_args(words: &[&str], on: bool) -> Option<Switch> {
+    let mut target: Option<SessionId> = None;
+    let mut kind: Option<LinkType> = None;
+    let mut it = words.iter();
+    while let Some(word) = it.next() {
+        if word.eq_ignore_ascii_case("--type") {
+            if kind.is_some() {
+                return None;
+            }
+            kind = Some(it.next()?.parse().ok()?);
+        } else if on && word.eq_ignore_ascii_case("--from") {
+            if target.is_some() {
+                return None;
+            }
+            target = Some(it.next()?.parse().ok()?);
+        } else if !on && target.is_none() && !word.starts_with('-') {
+            target = Some(word.parse().ok()?);
+        } else {
+            return None;
+        }
+    }
+    Some(Switch::Link {
+        link: SessionLink {
+            kind: kind.unwrap_or(LinkType::SpawnedFrom),
+            session: target?,
+        },
+        on,
     })
 }
 
@@ -84,6 +133,67 @@ impl Change {
     }
 }
 
+/// What [`link`] did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Linked {
+    /// Whether the link is new; `false` when the session already had it.
+    pub added: bool,
+    /// Whether `/scribe on --from` switched the session on too.
+    pub switched_on: bool,
+    /// Whether the caller must add the link to the session's existing
+    /// record. When the session has no record yet, a new link goes to its
+    /// switch's `pending_links` in `state` instead, and this is `false`.
+    pub write_record: bool,
+}
+
+/// Add `link` to `session` at `now`, switching it on first when `on`.
+/// `records` holds every session record's links, by id (a session with a
+/// record has a key, even with no links). The target must be known (a
+/// record or a switch), not `session` itself, and not lead back to it
+/// ([`check_link`]); a session that is neither recorded nor switched on is
+/// refused unless `on`. Nothing in `state` changes when it is refused.
+///
+/// # Errors
+///
+/// The [`LinkError`] that refused it.
+pub fn link(
+    state: &mut ControlState,
+    records: &BTreeMap<SessionId, Vec<SessionLink>>,
+    session: &SessionId,
+    link: &SessionLink,
+    on: bool,
+    now: OffsetDateTime,
+) -> Result<Linked, LinkError> {
+    let has_record = records.contains_key(session);
+    if !on && !has_record && !state.sessions.contains_key(session) {
+        return Err(LinkError::NotCataloged);
+    }
+    let mut known: BTreeSet<SessionId> = records.keys().cloned().collect();
+    known.extend(state.sessions.keys().cloned());
+    let mut graph = records.clone();
+    for (id, control) in &state.sessions {
+        graph
+            .entry(id.clone())
+            .or_default()
+            .extend(control.pending_links.iter().cloned());
+    }
+    let added = check_link(session, link, &known, &graph)?;
+    let switched_on = on && switch(state, session, &Switch::On, now) == Change::SwitchedOn;
+    let mut write_record = false;
+    if added {
+        if has_record {
+            write_record = true;
+        } else if let Some(control) = state.sessions.get_mut(session) {
+            control.pending_links.push(link.clone());
+        }
+    }
+    Ok(Linked {
+        added,
+        switched_on,
+        write_record,
+    })
+}
+
 /// Apply `request` to `session`'s switch at `now`.
 ///
 /// `on` records `since` and marks a pass due, so the first record is written
@@ -102,6 +212,7 @@ pub fn switch(
         Switch::On => match current {
             Some(control) if control.on => Change::AlreadyOn(control),
             Some(_) | None => {
+                let pending_links = current.map(|c| c.pending_links).unwrap_or_default();
                 state.sessions.insert(
                     session.clone(),
                     SessionControl {
@@ -111,6 +222,7 @@ pub fn switch(
                         final_pass: false,
                         consecutive_failures: 0,
                         retry_after: None,
+                        pending_links,
                     },
                 );
                 Change::SwitchedOn
@@ -128,6 +240,8 @@ pub fn switch(
             Some(_) | None => Change::AlreadyOff,
         },
         Switch::Status => Change::Status(current),
+        // A link is applied by the store's link call, not here.
+        Switch::Link { .. } => Change::Status(current),
         Switch::Unknown(arg) => Change::Unknown(arg.clone()),
     }
 }

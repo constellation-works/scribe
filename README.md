@@ -61,7 +61,11 @@ a session that is on, marks a pass due every `every_minutes` or
 `every_turns` (`[catalog]` in `config.toml`); `SessionEnd` runs `scribe
 hook session-end`, which marks the last pass due and final. A prompt whose
 first line is `/scribe on`, `/scribe off` or `/scribe status` is answered
-by the `UserPromptSubmit` hook and never reaches the model. No hook calls a
+by the `UserPromptSubmit` hook and never reaches the model; so are
+`/scribe on --from <id>` and `/scribe link <id> [--type continues]`, which
+link this session to the one it was spawned from (or continues), refusing
+an unknown id, a self-link or a cycle. Claude Code's hook input and
+transcripts name no parent session, so links are only ever typed. No hook calls a
 model except for a `#scribe add this` line; the pass does. Each
 write and refusal leaves one line in `audit.jsonl` with ids and error codes
 only. Install it from this checkout after `make install`:

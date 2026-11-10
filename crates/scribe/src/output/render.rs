@@ -5,7 +5,7 @@ use super::color::{self, Role};
 use super::payload::{
     AskPayload, EntryPayload, FoundPayload, HookJson, HookReply, HookSpecificJson, PassPayload,
     PassReport, PluginReply, ProposalPayload, Record, Records, ScanReport, SessionPayload,
-    TagPayload, TaskPayload, WarningPayload,
+    TagPayload, TaskPayload, TreeRow, WarningPayload,
 };
 use super::sink::{OutputMode, Sink};
 use super::table::{self, Align, Cell, Column};
@@ -29,6 +29,17 @@ const ENTRY_COLUMNS: [Column; 6] = [
     col("TOPICS", Align::Left, false),
     col("CREATED", Align::Left, false),
     col("CONTENT", Align::Left, true),
+];
+
+const SESSION_TREE_COLUMNS: [Column; 8] = [
+    col("ID", Align::Left, false),
+    col("PARENT", Align::Left, false),
+    col("STATUS", Align::Left, false),
+    col("DUE", Align::Left, false),
+    col("PROJECT", Align::Left, false),
+    col("TOPICS", Align::Left, false),
+    col("UPDATED", Align::Left, false),
+    col("TITLE", Align::Left, true),
 ];
 
 const SESSION_COLUMNS: [Column; 7] = [
@@ -113,6 +124,9 @@ pub(crate) fn list(
             Records::Sessions(items) => {
                 write_json(out, &envelope("sessions", items, total, warnings))
             }
+            Records::SessionTree(items) => {
+                write_json(out, &envelope("sessions", items, total, warnings))
+            }
             Records::Proposals(items) => {
                 write_json(out, &envelope("proposals", items, total, warnings))
             }
@@ -126,6 +140,13 @@ pub(crate) fn list(
     let (columns, rows): (&[Column], Vec<Vec<Cell>>) = match records {
         Records::Entries(items) => (&ENTRY_COLUMNS, items.iter().map(entry_row).collect()),
         Records::Sessions(items) => (&SESSION_COLUMNS, items.iter().map(session_row).collect()),
+        Records::SessionTree(items) => (
+            &SESSION_TREE_COLUMNS,
+            items
+                .iter()
+                .map(|row| tree_row(row, sink.mode == OutputMode::Table))
+                .collect(),
+        ),
         Records::Proposals(items) => (&PROPOSAL_COLUMNS, items.iter().map(proposal_row).collect()),
         Records::Tags(items) => (&TAG_COLUMNS, items.iter().map(tag_row).collect()),
     };
@@ -389,6 +410,21 @@ fn session_detail(out: &mut dyn Write, sink: &Sink, s: &SessionPayload) -> io::R
     field(out, "project", &s.project)?;
     field(out, "topics", &joined(&s.topics))?;
     field(out, "related", &joined(&s.related))?;
+    let links: Vec<String> = s
+        .links
+        .iter()
+        .map(|l| match &l.title {
+            Some(title) => format!("{} {} ({})", l.kind, l.session, one_line(title)),
+            None => format!("{} {}", l.kind, l.session),
+        })
+        .collect();
+    field(out, "links", &joined_lines(&links))?;
+    let children: Vec<String> = s
+        .children
+        .iter()
+        .map(|c| format!("{} {} ({})", c.session, c.kind, one_line(&c.title)))
+        .collect();
+    field(out, "children", &joined_lines(&children))?;
     field(out, "provider", &s.provider)?;
     field(out, "host", &s.host)?;
     field(out, "cwd", &s.cwd)?;
@@ -534,6 +570,20 @@ fn pass_row(p: &PassPayload) -> Vec<Cell> {
         ),
         Cell::plain(p.dropped_terms.to_string()),
     ]
+}
+
+/// A `session list --tree` row: the session's row with its parent after
+/// the id; in a table the title is indented two spaces per level.
+fn tree_row(row: &TreeRow, indent: bool) -> Vec<Cell> {
+    let mut cells = session_row(&row.session);
+    cells.insert(
+        1,
+        Cell::plain(row.parent.clone().unwrap_or_else(|| String::from("-"))),
+    );
+    if indent && let Some(title) = cells.last_mut() {
+        title.text = format!("{}{}", "  ".repeat(row.depth), title.text);
+    }
+    cells
 }
 
 fn session_row(s: &SessionPayload) -> Vec<Cell> {

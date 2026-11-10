@@ -6,6 +6,8 @@ due         yes
 project     constellation-works/scribe
 topics      release,merge-policy
 related     -
+links       continues 0f8e7a52-3c1d-4b6e-9a2f-5d4c3b2a1e01 (Scribe store layout)
+children    -
 provider    claude-code
 host        dk-server-1
 cwd         /home/daniel/workspace/scribe

@@ -205,6 +205,20 @@ pub struct PreviousRecord {
     pub topics: Vec<String>,
 }
 
+/// The latest record of a session this one links to (its parent, or the
+/// session it continues), as the session model reads it: context only.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkedRecord {
+    /// How this session relates to it: `spawned_from` or `continues`.
+    pub kind: crate::session::LinkType,
+    /// Its session id.
+    pub session: String,
+    /// Its title.
+    pub title: String,
+    /// Its `## Summary`.
+    pub summary: String,
+}
+
 /// Write or update one session record from the session's new messages
 /// (2_design.md §5.3).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -215,6 +229,9 @@ pub struct SessionRequest {
     pub budget: Duration,
     /// The record so far; `None` on the first window of the first pass.
     pub previous: Option<PreviousRecord>,
+    /// The latest records of the sessions this one links to, as context:
+    /// the model summarizes this session's own slice, not theirs.
+    pub linked: Vec<LinkedRecord>,
     /// The messages after the last pass, oldest first, within the window.
     pub messages: Vec<PassMessage>,
     /// Legacy truncation count; consecutive windows leave no messages out.
@@ -280,6 +297,23 @@ impl SessionRequest {
         }
         if !self.terms.is_empty() {
             let _ = writeln!(out, "Existing terms: {}", self.terms.join("; "));
+        }
+        for linked in &self.linked {
+            let relation = match linked.kind {
+                crate::session::LinkType::SpawnedFrom => "was spawned from",
+                crate::session::LinkType::Continues => "continues",
+            };
+            let _ = write!(
+                out,
+                "\n--- Linked session (data): this session {relation} session {} ---\ntitle: {}\n## Summary\n{}\n--- End linked session ---\n",
+                linked.session, linked.title, linked.summary
+            );
+        }
+        if !self.linked.is_empty() {
+            out.push_str(
+                "The linked session's record is context only: it has its own record. Summarize \
+                 only this session's own work; do not retell the linked session.\n",
+            );
         }
         match &self.previous {
             Some(p) => {

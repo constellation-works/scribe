@@ -6,6 +6,7 @@ Options:
       --project <PROJECT>  Only sessions that ran in this project (a repository slug) [default: any]
       --topic <TOPIC>      Only sessions carrying this topic [default: any]
       --limit <N>          Show at most this many of the matching sessions, 1 or more; --json reports the total and whether the list was cut [default: all]
+      --tree               Order the sessions as a tree: each one under the session it was spawned from (else the one it continues), with a PARENT column; --json keeps the envelope, in tree order
   -h, --help               Print help
   -V, --version            Print version
 
@@ -16,5 +17,6 @@ Global options:
 
 Examples:
   scribe session list
+  scribe session list --tree
   scribe session list --topic release --limit 5
   scribe session list --json | jq '.sessions[] | select(.due)'

@@ -44,6 +44,7 @@ fn on_marks_a_pass_due_and_on_twice_changes_nothing() {
         final_pass: false,
         consecutive_failures: 0,
         retry_after: None,
+        pending_links: Vec::new(),
     };
     assert_eq!(state.get(&s), Some(&on));
 
@@ -216,4 +217,89 @@ fn chosen_takes_sessions_that_are_on_whether_or_not_due_and_refuses_the_rest() {
 
     assert_eq!(control::chosen(&state, &[a.clone(), off.clone()]), Err(off));
     assert_eq!(control::chosen(&state, &[never.clone(), a]), Err(never));
+}
+
+#[test]
+fn link_commands_parse_with_a_target_and_an_optional_type() {
+    use crate::control::{Switch, parse};
+    use crate::session::{LinkType, SessionLink};
+    let link = |kind, on| Switch::Link {
+        link: SessionLink {
+            kind,
+            session: "s-1".parse().unwrap(),
+        },
+        on,
+    };
+    assert_eq!(
+        parse("/scribe on --from s-1"),
+        Some(link(LinkType::SpawnedFrom, true))
+    );
+    assert_eq!(
+        parse("/scribe link s-1"),
+        Some(link(LinkType::SpawnedFrom, false))
+    );
+    assert_eq!(
+        parse("/scribe link s-1 --type continues"),
+        Some(link(LinkType::Continues, false))
+    );
+    assert_eq!(
+        parse("/scribe:scribe on --type continues --from s-1"),
+        Some(link(LinkType::Continues, true))
+    );
+    for bad in [
+        "/scribe link",
+        "/scribe link a/b",
+        "/scribe link s-1 s-2",
+        "/scribe link s-1 --type related_to",
+        "/scribe on --from",
+        "/scribe on s-1",
+    ] {
+        assert!(matches!(parse(bad), Some(Switch::Unknown(_))), "{bad}");
+    }
+}
+
+#[test]
+fn a_link_for_a_session_without_a_record_waits_on_its_switch() {
+    use crate::control::{Switch, link, switch};
+    use crate::session::{ControlState, LinkError, LinkType, SessionId, SessionLink};
+    use std::collections::BTreeMap;
+    let mut state = ControlState::default();
+    let parent: SessionId = "p".parse().unwrap();
+    let child: SessionId = "c".parse().unwrap();
+    switch(&mut state, &parent, &Switch::On, T0);
+    let to_parent = SessionLink {
+        kind: LinkType::SpawnedFrom,
+        session: parent.clone(),
+    };
+    let records = BTreeMap::new();
+    // Not cataloged and not switching on: refused, nothing changed.
+    let before = state.clone();
+    assert_eq!(
+        link(&mut state, &records, &child, &to_parent, false, T0),
+        Err(LinkError::NotCataloged)
+    );
+    assert_eq!(state, before);
+    let done = link(&mut state, &records, &child, &to_parent, true, T0).unwrap();
+    assert!(done.added && done.switched_on && !done.write_record);
+    assert_eq!(
+        state.get(&child).unwrap().pending_links,
+        vec![to_parent.clone()]
+    );
+    // The parent cannot now continue its child: a cycle through a pending link.
+    let back = SessionLink {
+        kind: LinkType::Continues,
+        session: child.clone(),
+    };
+    assert!(matches!(
+        link(&mut state, &records, &parent, &back, false, T0),
+        Err(LinkError::Cycle(_))
+    ));
+    // With a record, the caller writes the link onto it.
+    let records: BTreeMap<SessionId, Vec<SessionLink>> =
+        [(child.clone(), Vec::new())].into_iter().collect();
+    let mut fresh = ControlState::default();
+    switch(&mut fresh, &parent, &Switch::On, T0);
+    let done = link(&mut fresh, &records, &child, &to_parent, false, T0).unwrap();
+    assert!(done.added && !done.switched_on && done.write_record);
+    assert!(fresh.get(&child).is_none());
 }

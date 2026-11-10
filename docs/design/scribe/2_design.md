@@ -11,7 +11,7 @@ summary: How the scribe plugin is bounded (one binary; hooks write, agents only 
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134]
+related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849]
 ---
 
 # scribe — Design
@@ -201,8 +201,8 @@ serves every workspace on the host. The plugin's config key `root` (default
 ├── entries/<tag>/<id>.md        one file per entry: YAML frontmatter + verbatim body
 ├── sessions/<yyyy>/<mm>/<session-id>.md   one per opted-in session: frontmatter + sections
 ├── discussions/<yy-mm>/<slug>.md   one per distilled discussion (§4.5), Daniel may edit
-├── control.json                 {"format":2,"sessions":{"<id>":{"on","since","due","final","consecutive_failures","retry_after"}}}
-├── proposals.json               {"format":2,"proposals":[…]}
+├── control.json                 {"format":3,"sessions":{"<id>":{"on","since","due","final","consecutive_failures","retry_after","pending_links"}}}
+├── proposals.json               {"format":3,"proposals":[…]}
 ├── audit.jsonl                  one line per mutating command (template shape)
 └── .lock
 ```
@@ -212,10 +212,12 @@ Every file except `audit.jsonl` is replaced whole through
 A `#scribe` creates one new entry file; a session pass replaces one session
 file.
 Reads take no lock and write nothing (STD-01 R31), so `ask` works on a
-read-only root. Each document now writes `format: 2`. Format 1 remains readable: its
+read-only root. Each document now writes `format: 3`. Format 1 remains readable: its
 control switches gain `consecutive_failures: 0` and `retry_after: null` in
-memory; the next mutation writes format 2. Entry, session and proposal
-shapes are unchanged. The template's `notes.json` is not carried over.
+memory. Format 2 remains readable too: its session records gain an empty
+`links` and its control switches an empty `pending_links` in memory
+([§5.4](#54-session-links)). The next mutation writes format 3. Entry and
+proposal shapes are unchanged. The template's `notes.json` is not carried over.
 
 **Metadata.** Entries and session records are Markdown files whose YAML
 frontmatter is the metadata `ask` and the CLI filter on, so a lookup narrows
@@ -223,12 +225,13 @@ by fields before any ranking. Every record carries:
 
 | Field | Meaning |
 |---|---|
-| `format`, `kind` | `2`; `entry` or `session` |
+| `format`, `kind` | `3`; `entry` or `session` |
 | `id` | `decisions-12`, or the session id |
 | `status` | entry: `active`, `superseded`, `retired`, `forgotten`; session: `open`, `final` |
 | `project` | the repository slug from the cwd's git remote, else the cwd's basename; `global` when Daniel says so |
 | `topics` | 0–5 lowercase kebab-case labels (`ci`, `crew-routing`, `release`) |
-| `related` | references the record mentions: `task:ORB-123`, `pr:<owner>/<repo>#7`, `repo:<slug>`, `session:<id>` |
+| `related` | references the record mentions: `task:ORB-123`, `pr:<owner>/<repo>#7`, `repo:<slug>`, `session:<id>` (model-extracted for a session) |
+| `links` | sessions only: `[{type, session}]`, `type` `spawned_from` or `continues`; the session structure Daniel asserted ([§5.4](#54-session-links)), stored on the child only |
 | `terms` | sessions only: phrases Daniel coins or defines, each `{term, said, message}` where `said` is a verbatim span of Daniel's own turn that defines or first uses it |
 | `provider`, `host` | where it was recorded |
 | `created`, `updated` | RFC 3339 UTC |
@@ -246,7 +249,7 @@ superseding entries; nothing is renamed without Daniel's approval.
 
 ```markdown
 ---
-format: 2
+format: 3
 kind: entry
 id: decisions-12
 tag: decisions
@@ -284,7 +287,9 @@ The body is `content`, verbatim.
   self-describing in an echo, and never reused.
 
 **Session record** (`sessions/<yyyy>/<mm>/<id>.md`): the common
-frontmatter plus `title`, `cwd`, `started`, `on_since`, `scribed_through`
+frontmatter plus `links` (sessions only; `related` says what a session
+mentions, `links` the structure Daniel asserted, [§5.4](#54-session-links)),
+`title`, `cwd`, `started`, `on_since`, `scribed_through`
 (the last transcript message folded in), `passes` (count) and `next_open`
 (the number of `next` items); `status: final` after the session-end pass.
 The body has four sections, `## Summary`, `## Goals`, `## Outcome` and
@@ -524,7 +529,7 @@ The echo names the file path, the points added and any dropped quotes.
 ### 5.1 Switching on and off
 
 A prompt whose first line is `/scribe on`, `/scribe off` or `/scribe status`
-is intercepted by the `UserPromptSubmit` hook, which updates `control.json`
+(or a link command, [§5.4](#54-session-links)) is intercepted by the `UserPromptSubmit` hook, which updates `control.json`
 and returns `decision: "block"` with the status as `reason`, so no model
 turn is spent. Every session starts off. `on` records `on_since` and marks a
 pass due; `off` stops further passes and keeps the record. `/scribe on` in a
@@ -595,7 +600,11 @@ counted in `remaining` alongside sessions waiting for backoff or the next run
    the character limit. No older messages are discarded to fit later ones.
 3. Send each window and the record so far to the `session` model (Haiku)
    for the whole updated `{title, summary, goals, outcome, next, topics,
-   related, terms}` record. The first window of a first pass has no prior
+   related, terms}` record. A session with links also sends the latest
+   title and summary of each linked session that has a record, read once
+   at the start of the pass, framed as data, with the instruction to
+   summarize only this session's own work and not retell the linked one
+   ([§5.4](#54-session-links)). The first window of a first pass has no prior
    record. Plain message headers retain role and id; pasted data and the
    record use plain delimiters too. Messages are data, never instructions.
    Offer stored topics and terms, including those from earlier windows,
@@ -1193,5 +1202,6 @@ there once S4 is in use, so two scribes never intercept the same
 - [ORB-21787] — S5: the Orbit plugin tree and `ask`.
 - [ORB-21795] — S6: the consistency routine, the settling verbs, the
   `SessionStart` hook and the two routines.
+- [ORB-23849] — session links (`spawned_from`, `continues`), `session list --tree` and the linked-session pass context.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.

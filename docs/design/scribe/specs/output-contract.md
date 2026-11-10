@@ -38,11 +38,16 @@ is `-`, lists are comma-joined, and timestamps are RFC 3339.
 |---------|---------|
 | `entry list` | `id status project topics created content` |
 | `session list` | `id status due project topics updated title` (`due` is `yes` or `no`) |
+| `session list --tree` | `id parent status due project topics updated title` (`parent` is the session the row nests under, its `spawned_from` link else its first `continues` link, or `-`) |
 | `proposal list` | `id kind state older newer opened_at reason` |
 | `tag list` | `name entries stale_after_days aliases description` |
 
 Entries and sessions are oldest first (by `created`, then `started`, ties by
-id); proposals by number; tags by name.
+id); proposals by number; tags by name. `session list --tree` keeps that
+order among siblings but lists each session right after the one it nests
+under, depth first; a session whose parent is not listed is a root. The
+table indents the title two spaces per level; the piped form does not
+indent, and the `parent` column carries the nesting.
 
 ## JSON list envelope
 
@@ -75,12 +80,23 @@ instruction), `cite` (`{session, message, at, prompt_sha256, line, cwd}`;
 `review_after` (`YYYY-MM-DD` or `null`).
 
 **Session** (`sessions[]`, `session show`): `id`, `status` (`open`,
-`final`), `project`, `topics`, `related`, `terms` (`[{term, said,
+`final`), `project`, `topics`, `related` (unchanged: model-extracted
+`kind:target` strings), `links` (`[{type, session, title}]`: the links the
+record stores, `type` `spawned_from` or `continues`, `title` the linked
+session's record title or `null` when it has none), `children`
+(`[{type, session, title}]`: the sessions whose links point at this one,
+derived at read time from every record, oldest first; `type` is the
+child's link type), `terms` (`[{term, said,
 message}]`, Daniel's own words), `provider`, `host`, `created`,
 `updated`, `title`, `cwd`, `started`, `on_since`, `scribed_through` (a
 message id or `null`), `passes`, `next_open`, `summary`, `goals`,
 `outcome`, `next`, and from `control.json` `on` and `due` (both `false`
 when the session has no switch). The four text fields are model-written.
+`links` and `children` were added with session links (store format 3);
+every other field is unchanged. `session list --tree --json` is the same
+envelope with the same objects, in tree order. The table detail view of
+`session show` prints `links` as `<type> <id> (<title>)` and `children`
+as `<id> <type> (<title>)`, one per line, or `-`.
 
 **Proposal** (`proposals[]`): `id` (`p-<n>`), `kind` (`supersedes`,
 `stale`), `older`, `newer` (or `null`), `reason`, `quotes` (`[{entry,
@@ -153,8 +169,9 @@ refusal one line with `target` `session:<id>` and its code; a repeat none.
 The text is for Daniel and the agent to read; the audit line, not the
 echo, is the record.
 
-A prompt whose first line is `/scribe on`, `/scribe off`, `/scribe status`
-or a bare `/scribe` (also `/scribe:scribe …`, the plugin-namespaced form;
+A prompt whose first line is `/scribe on`, `/scribe off`, `/scribe status`,
+`/scribe on --from <id> [--type <type>]`, `/scribe link <id> [--type
+<type>]` or a bare `/scribe` (also `/scribe:scribe …`, the plugin-namespaced form;
 the argument is case-insensitive) is not scanned for `#scribe` lines: the
 reply is `{"decision": "block", "reason": "<status>"}`, which keeps the
 prompt from the model and shows Daniel the reason. The reason is one line:
@@ -162,10 +179,21 @@ prompt from the model and shows Daniel the reason. The reason is one line:
 `scribe: off — …`, `scribe: this session is not on — nothing changed`,
 `scribe: on since <time>[; a pass is due]; <record status>` or `scribe: off
 — this session was never switched on …` for a status, `scribe: unknown
-command "/scribe <arg>" — use /scribe on, /scribe off or /scribe status`,
+command "/scribe <arg>" — use /scribe on, /scribe off, /scribe status,
+/scribe on --from <id> or /scribe link <id> [--type spawned_from|continues]`,
 or `scribe: /scribe <arg> not applied — …` when the payload fails the
-transcript check. A switch writes one audit line (`target`
-`session:<id>`); a no-op or a status writes none.
+transcript check. A status of a linked session ends `; linked: <type>
+<id>, …`. A link replies `scribe: on — this session is cataloged from now
+on and linked: <type> <id>; …`, `scribe: on — … it was already linked:
+<type> <id>`, `scribe: linked — this session is <type> <id>`, `scribe:
+already linked: <type> <id> — nothing changed`, or `scribe: /scribe
+<command> refused — cannot link this session: <reason>` with code
+`link_unknown_session` (no record and no switch for the target),
+`link_self`, `link_cycle` (the target's links lead back here),
+`link_conflict` (a second `spawned_from` parent) or `link_session_off`
+(`/scribe link` in a session neither switched on nor recorded). A switch
+or a new link writes one audit line (`target` `session:<id>`); a refusal
+one line with its code; a no-op or a status writes none.
 
 ## Session pass report
 

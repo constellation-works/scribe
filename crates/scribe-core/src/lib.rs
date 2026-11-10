@@ -59,8 +59,9 @@ pub use models::Models;
 pub use proposal::{Proposal, ProposalError, ProposalId, ProposalKind, ProposalState, Quote};
 pub use record::{Label, Listing, Project, RecordError, Related, RelatedKind, Topic, Topics};
 pub use session::{
-    Cadence, ControlState, SECTIONS, SessionControl, SessionError, SessionFilter, SessionId,
-    SessionRecord, SessionStatus, Term,
+    Cadence, Child, ControlState, LinkError, LinkType, SECTIONS, SessionControl, SessionError,
+    SessionFilter, SessionId, SessionLink, SessionRecord, SessionStatus, Term, check_link,
+    children, tree_order, tree_parent,
 };
 pub use store::{
     AUDIT_FILE, AuditEvent, AuditStatus, CONFIG_FILE, CONTROL_FILE, Captured, DEFAULT_LOCK_WAIT,

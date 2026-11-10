@@ -7,7 +7,7 @@
 
 use crate::config::ConfigError;
 use crate::entry::EntryId;
-use crate::session::SessionId;
+use crate::session::{LinkError, SessionId};
 use std::io;
 use std::path::PathBuf;
 
@@ -36,6 +36,10 @@ pub enum Error {
         /// The directory searched.
         path: PathBuf,
     },
+    /// A session link was refused: unknown target, self-link, cycle,
+    /// a second parent, or a session not cataloged.
+    #[error("cannot link this session: {0}")]
+    Link(#[from] LinkError),
     /// A filesystem operation failed.
     #[error("cannot {action} {}", path.display())]
     Io {
@@ -140,6 +144,7 @@ impl Error {
         match self {
             Self::EntryNotFound { .. } => "entry_not_found",
             Self::SessionNotFound { .. } => "session_not_found",
+            Self::Link(err) => err.code(),
             Self::Io { .. } => "io_error",
             Self::Corrupt { .. } => "store_corrupt",
             Self::Config { .. } => "config_invalid",

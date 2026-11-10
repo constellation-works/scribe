@@ -9,10 +9,11 @@
 
 use scribe_core::ask::{Answer, Found, Task};
 use scribe_core::{
-    Cite, ContentFrom, ControlState, Entry, Proposal, Quote, SessionControl, SessionRecord,
-    Skipped, TagSummary, Term,
+    Child, Cite, ContentFrom, ControlState, Entry, Proposal, Quote, SessionControl, SessionId,
+    SessionRecord, Skipped, TagSummary, Term,
 };
 use serde::Serialize;
+use std::collections::BTreeMap;
 use time::OffsetDateTime;
 
 /// RFC 3339 with an explicit offset (R11).
@@ -160,6 +161,62 @@ impl From<&Term> for TermPayload {
     }
 }
 
+/// A link a session record stores: how it relates to another session.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct LinkPayload {
+    /// `spawned_from` or `continues`.
+    #[serde(rename = "type")]
+    pub(crate) kind: &'static str,
+    /// The session linked to.
+    pub(crate) session: String,
+    /// That session's record title; `null` when it has no record.
+    pub(crate) title: Option<String>,
+}
+
+/// A session that links to this one, derived at read time.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct ChildPayload {
+    /// How the child relates to this session: `spawned_from` or `continues`.
+    #[serde(rename = "type")]
+    pub(crate) kind: &'static str,
+    /// The child session.
+    pub(crate) session: String,
+    /// Its record title.
+    pub(crate) title: String,
+}
+
+impl From<&Child> for ChildPayload {
+    fn from(child: &Child) -> Self {
+        Self {
+            kind: child.kind.as_str(),
+            session: child.session.to_string(),
+            title: child.title.clone(),
+        }
+    }
+}
+
+/// What a session payload shows besides its own record: the sessions that
+/// link to it and the titles of the records it links to.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Kin<'a> {
+    pub(crate) children: &'a [Child],
+    pub(crate) titles: &'a BTreeMap<SessionId, String>,
+}
+
+impl<'a> Kin<'a> {
+    /// `id`'s kin from a listing's derived children and titles.
+    pub(crate) fn of(
+        id: &SessionId,
+        children: &'a BTreeMap<SessionId, Vec<Child>>,
+        titles: &'a BTreeMap<SessionId, String>,
+    ) -> Self {
+        Self {
+            children: children.get(id).map_or(&[][..], Vec::as_slice),
+            titles,
+        }
+    }
+}
+
 /// One session record, with its switch, as every output mode sees it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct SessionPayload {
@@ -169,6 +226,10 @@ pub(crate) struct SessionPayload {
     pub(crate) project: String,
     pub(crate) topics: Vec<String>,
     pub(crate) related: Vec<String>,
+    /// The links this session stores (`spawned_from`, `continues`).
+    pub(crate) links: Vec<LinkPayload>,
+    /// The sessions that link to this one, derived at read time.
+    pub(crate) children: Vec<ChildPayload>,
     /// Daniel's own words, unlike the four model-written sections.
     pub(crate) terms: Vec<TermPayload>,
     pub(crate) provider: String,
@@ -199,13 +260,27 @@ pub(crate) struct SessionPayload {
 }
 
 impl SessionPayload {
-    pub(crate) fn new(record: &SessionRecord, control: Option<&SessionControl>) -> Self {
+    pub(crate) fn new(
+        record: &SessionRecord,
+        control: Option<&SessionControl>,
+        kin: Kin<'_>,
+    ) -> Self {
         Self {
             id: record.id.to_string(),
             status: record.status.as_str(),
             project: record.project.to_string(),
             topics: strings(record.topics.as_slice()),
             related: strings(&record.related),
+            links: record
+                .links
+                .iter()
+                .map(|l| LinkPayload {
+                    kind: l.kind.as_str(),
+                    session: l.session.to_string(),
+                    title: kin.titles.get(&l.session).cloned(),
+                })
+                .collect(),
+            children: kin.children.iter().map(ChildPayload::from).collect(),
             terms: record.terms.iter().map(TermPayload::from).collect(),
             provider: record.provider.to_string(),
             host: record.host.to_string(),
@@ -350,6 +425,8 @@ impl From<&Skipped> for WarningPayload {
 pub(crate) enum Records {
     Entries(Vec<EntryPayload>),
     Sessions(Vec<SessionPayload>),
+    /// `session list --tree`: sessions in tree order, each with its depth.
+    SessionTree(Vec<TreeRow>),
     Proposals(Vec<ProposalPayload>),
     Tags(Vec<TagPayload>),
 }
@@ -359,10 +436,25 @@ impl Records {
         match self {
             Self::Entries(v) => v.len(),
             Self::Sessions(v) => v.len(),
+            Self::SessionTree(v) => v.len(),
             Self::Proposals(v) => v.len(),
             Self::Tags(v) => v.len(),
         }
     }
+}
+
+/// One row of `session list --tree`. Its JSON is the session's alone: the
+/// nesting is in each session's `links` and `children`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub(crate) struct TreeRow {
+    /// How deep it nests: 0 for a root.
+    #[serde(skip)]
+    pub(crate) depth: usize,
+    /// The session it nests under, if it has one in the list.
+    #[serde(skip)]
+    pub(crate) parent: Option<String>,
+    pub(crate) session: SessionPayload,
 }
 
 /// One record a `show` returned.
@@ -583,7 +675,7 @@ pub(crate) struct FoundPayload {
 }
 
 impl FoundPayload {
-    fn new(found: &Found, control: &ControlState) -> Self {
+    fn new(found: &Found, sessions: &SessionsContext<'_>) -> Self {
         let cite = found.cite();
         match found {
             Found::Entry(entry) => Self {
@@ -598,7 +690,11 @@ impl FoundPayload {
                 kind: "session",
                 cite,
                 entry: None,
-                session: Some(SessionPayload::new(record, control.get(&record.id))),
+                session: Some(SessionPayload::new(
+                    record,
+                    sessions.control.get(&record.id),
+                    Kin::of(&record.id, sessions.children, sessions.titles),
+                )),
                 task: None,
                 terms: terms.iter().map(TermPayload::from).collect(),
             },
@@ -612,6 +708,15 @@ impl FoundPayload {
             },
         }
     }
+}
+
+/// What a found session record is shown with: every switch, the derived
+/// children and every record's title.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SessionsContext<'a> {
+    pub(crate) control: &'a ControlState,
+    pub(crate) children: &'a BTreeMap<SessionId, Vec<Child>>,
+    pub(crate) titles: &'a BTreeMap<SessionId, String>,
 }
 
 /// What `question ask` and the `scribe.ask` tool return (2_design.md §6.1):
@@ -639,7 +744,11 @@ pub(crate) struct AskPayload {
 }
 
 impl AskPayload {
-    pub(crate) fn new(answer: &Answer, control: &ControlState, skipped: &[Skipped]) -> Self {
+    pub(crate) fn new(
+        answer: &Answer,
+        sessions: &SessionsContext<'_>,
+        skipped: &[Skipped],
+    ) -> Self {
         Self {
             status: answer.status.as_str(),
             answer: answer.answer.clone(),
@@ -667,7 +776,7 @@ impl AskPayload {
             records: answer
                 .records
                 .iter()
-                .map(|f| FoundPayload::new(f, control))
+                .map(|f| FoundPayload::new(f, sessions))
                 .collect(),
             warnings: skipped.iter().map(WarningPayload::from).collect(),
         }

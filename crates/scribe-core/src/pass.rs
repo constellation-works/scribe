@@ -11,8 +11,10 @@
 //!    pasted blocks set apart from Daniel's own words;
 //! 2. [`window_with_limits`]: the next consecutive messages after the record's
 //!    `scribed_through`, within the configured message and character limits;
-//! 3. [`request`]: the model request, with the previous record and the
-//!    store's existing topics and terms;
+//! 3. [`request`]: the model request, with the previous record, the
+//!    latest records of the sessions this one links to ([`linked_context`]:
+//!    context only, the prompt says not to retell them) and the store's
+//!    existing topics and terms;
 //! 4. [`check`]: the answer's budgets and shape, refused whole when wrong
 //!    (the caller keeps the previous record), and every term kept only when
 //!    its `said` is a verbatim span of one of Daniel's own turns;
@@ -24,10 +26,11 @@
 use crate::control;
 use crate::entry::Speaker;
 use crate::models::{
-    Budgets, CUT_MARK, PassMessage, PreviousRecord, SESSION_BUDGET, SessionAnswer, SessionRequest,
+    Budgets, CUT_MARK, LinkedRecord, PassMessage, PreviousRecord, SESSION_BUDGET, SessionAnswer,
+    SessionRequest,
 };
 use crate::record::{Label, Project, Related, Topic, Topics};
-use crate::session::{SECTIONS, SessionId, SessionRecord, SessionStatus, Term};
+use crate::session::{SECTIONS, SessionId, SessionLink, SessionRecord, SessionStatus, Term};
 use crate::transcript::Message;
 use crate::verbatim;
 use time::OffsetDateTime;
@@ -258,11 +261,32 @@ fn next_window(
     }
 }
 
-/// The session-model request for one pass.
+/// The latest records of the sessions `links` point at, as pass context,
+/// in link order; a link whose session has no record in `records` is left
+/// out.
+#[must_use]
+pub fn linked_context(links: &[SessionLink], records: &[SessionRecord]) -> Vec<LinkedRecord> {
+    links
+        .iter()
+        .filter_map(|link| {
+            let record = records.iter().find(|r| r.id == link.session)?;
+            Some(LinkedRecord {
+                kind: link.kind,
+                session: record.id.to_string(),
+                title: record.title.clone(),
+                summary: record.summary.clone(),
+            })
+        })
+        .collect()
+}
+
+/// The session-model request for one pass. `linked` is the context of the
+/// sessions this one links to ([`linked_context`]).
 #[must_use]
 pub fn request(
     model: &str,
     previous: Option<&SessionRecord>,
+    linked: Vec<LinkedRecord>,
     window: Window,
     topics: Vec<String>,
     terms: Vec<String>,
@@ -284,6 +308,7 @@ pub fn request(
                 .map(ToString::to_string)
                 .collect(),
         }),
+        linked,
         messages: window.messages,
         dropped: window.dropped,
         topics,
@@ -547,6 +572,7 @@ pub fn record(
         project: previous.map_or(meta.project, |p| p.project.clone()),
         topics: distilled.topics,
         related: distilled.related,
+        links: previous.map_or_else(Vec::new, |p| p.links.clone()),
         terms,
         provider: previous.map_or(meta.provider, |p| p.provider.clone()),
         host: previous.map_or(meta.host, |p| p.host.clone()),

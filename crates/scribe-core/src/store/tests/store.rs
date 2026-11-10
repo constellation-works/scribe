@@ -492,3 +492,102 @@ fn settle_pass_writes_the_record_and_clears_due_in_one_call() {
     assert!(!view.control.unwrap().due);
     assert!(!root.join("entries").exists(), "a pass writes no entries");
 }
+
+#[test]
+fn a_link_is_kept_on_the_switch_until_the_first_record_then_on_the_record() {
+    use crate::control::{self, Switch};
+    use crate::session::{LinkType, SessionId, SessionLink};
+    let dir = private_tempdir();
+    let root = dir.path().join("root");
+    let store = Store::open(&root);
+    let t0 = time::macros::datetime!(2026-11-01 10:00 UTC);
+    let parent: SessionId = "p-1".parse().unwrap();
+    let child: SessionId = "c-1".parse().unwrap();
+    store
+        .update_control(|state| control::switch(state, &parent, &Switch::On, t0))
+        .unwrap();
+    let redactor = crate::store::Redactor::new([]);
+    store
+        .settle_pass(
+            &parent,
+            Some(crate::tests::session("p-1", t0)),
+            false,
+            &redactor,
+        )
+        .unwrap();
+
+    let spawned = SessionLink {
+        kind: LinkType::SpawnedFrom,
+        session: parent.clone(),
+    };
+    let linked = store.link_session(&child, &spawned, true, t0).unwrap();
+    assert!(linked.added && linked.switched_on && !linked.write_record);
+    assert_eq!(
+        store.control().unwrap().get(&child).unwrap().pending_links,
+        vec![spawned.clone()]
+    );
+
+    // The first record takes the pending link, and the switch drops it.
+    let written = store
+        .settle_pass(
+            &child,
+            Some(crate::tests::session("c-1", t0)),
+            false,
+            &redactor,
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(written.links, vec![spawned.clone()]);
+    assert!(
+        store
+            .control()
+            .unwrap()
+            .get(&child)
+            .unwrap()
+            .pending_links
+            .is_empty()
+    );
+    let view = store.session(&parent).unwrap();
+    assert_eq!(view.children.len(), 1);
+    assert_eq!(view.children[0].session, child);
+    assert!(
+        view.record.links.is_empty(),
+        "the parent is never rewritten"
+    );
+
+    // A link added while a pass runs on an older copy is not lost.
+    let stale = store.session(&child).unwrap().record;
+    let later = t0 + time::Duration::hours(1);
+    let other: SessionId = "o-1".parse().unwrap();
+    store
+        .update_control(|state| control::switch(state, &other, &Switch::On, t0))
+        .unwrap();
+    let continues = SessionLink {
+        kind: LinkType::Continues,
+        session: other,
+    };
+    let linked = store
+        .link_session(&child, &continues, false, later)
+        .unwrap();
+    assert!(linked.added && linked.write_record);
+    let on_disk = store.session(&child).unwrap().record;
+    assert_eq!(on_disk.links, vec![spawned.clone(), continues.clone()]);
+    assert_eq!(on_disk.updated, stale.updated, "a link is not a pass");
+    let written = store
+        .settle_pass(&child, Some(stale), false, &redactor)
+        .unwrap()
+        .unwrap();
+    assert_eq!(written.links, vec![spawned, continues]);
+
+    // A refused link writes nothing.
+    let before = fs::read(root.join("control.json")).unwrap();
+    let cycle = SessionLink {
+        kind: LinkType::Continues,
+        session: child.clone(),
+    };
+    let err = store
+        .link_session(&parent, &cycle, false, later)
+        .unwrap_err();
+    assert_eq!(err.code(), "link_cycle");
+    assert_eq!(fs::read(root.join("control.json")).unwrap(), before);
+}

@@ -285,6 +285,7 @@ fn the_request_carries_the_previous_record_the_window_and_what_to_reuse() {
     let request = pass::request(
         "claude-haiku-5-5",
         Some(&previous),
+        Vec::new(),
         window,
         vec![String::from("ci")],
         vec![String::from("graduate to level 4")],
