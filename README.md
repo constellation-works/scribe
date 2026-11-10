@@ -112,6 +112,28 @@ claude plugin install scribe --marketplace ./plugin
 `plugin/.claude-plugin/marketplace.json` is the local marketplace that
 command adds; `claude plugin validate plugin/claude-code` checks the package.
 
+The package also ships one skill, `skills/scribe/SKILL.md`, which teaches
+agents the CLI above: when a word, date or topic makes `record search` or
+a list the right tool and when a vague question goes to `question ask`,
+the `--author` rule for the write verbs, and the guard that Daniel's own
+entries are settled only by him. The skill serves sessions on this Mac,
+where the store lives.
+
+## The tmux popup
+
+`plugin/tmux/scribe-tmux` browses sessions, entries, proposals and
+backfill candidates in an `fzf` popup for Daniel, previewing each record
+with `scribe … show`, opening it in the pager on Enter and copying its
+id on `ctrl-y`; it only reads. Put it on `PATH` with `scribe` and `fzf`
+and bind a key (its [README](plugin/tmux/README.md) has the details):
+
+```tmux
+bind-key S display-popup -E -w 90% -h 85% scribe-tmux
+```
+
+Backfill candidates come from `scribe transcript list`, which arrives
+with S14; until then that view says so instead of failing.
+
 | Setting | Flag | Environment | Default |
 |---------|------|-------------|---------|
 | Data directory | `--root <DIR>` | `SCRIBE_ROOT` | `~/.scribe` |

@@ -10,8 +10,9 @@ Every data command renders one typed payload in the mode the sink resolved;
 stdout carries only that payload; warnings, notices and errors go to stderr;
 the exit code says whether it worked. The JSON form is a public contract,
 pinned by the output goldens in `crates/scribe/tests/goldens/output/`.
-S11's read surface and S12's writes are built. Other parts marked *(S13)*
-or *(S14)* are designed ([ORB-23892]) and not yet built; each only adds
+S11's read surface and S12's writes are built, and S13's skill and tmux
+popup consume the plain rows below without changing them. Other parts
+marked *(S14)* are designed ([ORB-23892]) and not yet built; each only adds
 fields, columns, commands and codes.
 
 ## Why This Exists
