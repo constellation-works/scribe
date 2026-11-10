@@ -1,17 +1,17 @@
 ---
 title: scribe — Vision
 owner: claude
-last_updated: 2026-11-02
+last_updated: 2026-11-10
 last_validated: 2026-11-02
 status: Draft
 feature: scribe
 doc_role: vision
 type: design
-summary: Where the scribe plugin may go after its first six slices — more providers, cross-host stores, better retrieval, an opt-in import of orbit-office decisions — and what it deliberately leaves out.
+summary: Where the scribe plugin may go after its slices — more providers, cross-host stores, better retrieval, an opt-in import of orbit-office decisions, a real TUI if the tmux popup proves too small — and what it deliberately leaves out.
 tags: [scribe]
 paths: ["crates/**", "plugin/**"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21744]
+related_artifacts: [ORB-21747, ORB-21744, ORB-23892]
 ---
 
 # scribe — Vision
@@ -48,6 +48,17 @@ plan in [2_design.md §10](./2_design.md#10-slice-plan).
    the underlying transcript lines instead, which would mean keeping a
    parsed copy of each opted-in transcript?
 
+7. **A real TUI.** The tmux popup ([2_design.md §1.2](./2_design.md#12-the-tmux-popup))
+   is a 60-line fzf script. If Daniel finds himself wanting to act from it
+   (activate, deactivate, catalog, settle) rather than read and copy ids,
+   or to see a session's log beside its links, a ratatui TUI is the next
+   step, at the cost of new dependencies. Build it only if the popup proves
+   too small.
+8. **Box workers and the agent surface.** The `scribe` skill serves Mac
+   sessions only. If box workers need scribe, does that wait for a
+   cross-host store (question 2), or does the skill learn to reach the Mac
+   over SSH?
+
 ## 2. Prior Work
 
 - **orbit-office scribe** (v1 and v2, `docs/design/office/specs/scribe.md`
@@ -64,15 +75,20 @@ plan in [2_design.md §10](./2_design.md#10-slice-plan).
 
 ## 3. What May Be Distinctive
 
-The write path has no agent in it. Agents can ask, but only Daniel's typed
-turns add, settle or forget a record, and every answer carries a quote that
-code, not the model, has checked against the record.
+Daniel's words have no agent in their path. Until S12 the write path had
+no agent at all; from S12 agents write too, through the CLI, but every
+record says who wrote it, only Daniel's typed turns add his entries or
+settle and forget them, and every answer carries a quote that code, not
+the model, has checked against the record.
 
 ## 4. Deliberately Out of Scope
 
 - Capturing anything Daniel did not mark: no inference of preferences from
   behaviour, no tag entries from session passes.
-- A UI. The CLI lists and the SessionStart line are the only views.
+- A desktop or web UI. The CLI, the SessionStart line and, from S13, the
+  tmux popup are the views ([4_decisions.md](./4_decisions.md#humans-browse-scribe-in-a-tmux-popup-over-fzf)).
+- Scanning or cataloging sessions on scribe's own initiative. Backfill
+  catalogs only sessions Daniel names.
 - Tasks, calendars and the Library: orbit-office keeps those.
 
 ## 5. References

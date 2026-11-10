@@ -1,17 +1,17 @@
 ---
 title: scribe — Design
 owner: claude
-last_updated: 2026-11-03
+last_updated: 2026-11-10
 last_validated: 2026-11-02
 status: Draft
 feature: scribe
 doc_role: design
 type: design
-summary: How the scribe plugin is bounded (one binary; hooks write, agents only ask), how #scribe entries, /scribe on session records, ask and the consistency routine work, where everything is stored, which model does what, and the slice plan that builds it.
+summary: How the scribe plugin is bounded (one binary; Daniel writes through hooks, agents read and write through the CLI taught by one skill, and the MCP surface stays ask), how #scribe entries, /scribe on session records (a rewritable header over an append-only log of segments), active and inactive sessions, ask and search, the consistency routine, backfill by name and the tmux popup work, where everything is stored, which model does what, and the slice plan that builds it.
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849]
+related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892]
 ---
 
 # scribe — Design
@@ -23,7 +23,10 @@ read-only CLI), S2 (`#scribe` capture without a model, and the Claude Code
 package), S3 (referents and the models port), S4 (`/scribe on` and
 session records), S5 (the Orbit plugin tree and `ask`) and S6 (the
 consistency routine and the settling verbs) are implemented; S7
-(discussions) is not yet. The reasons behind each choice
+(discussions) is not yet. S8–S14 ([ORB-23892], designed 2026-11-10, not
+built) turn a session record into a header over an append-only log, add the
+`active` flag, give agents a CLI read and write surface taught by one skill,
+add a tmux popup for Daniel, and catalog chosen past sessions by name. The reasons behind each choice
 are in [4_decisions.md](./4_decisions.md); open directions are in
 [3_vision.md](./3_vision.md). Where this doc and the template's engineering
 rules meet (atomic writes, the store lock, the audit guard, output modes,
@@ -38,9 +41,9 @@ STD-01 grammar:
 
 | Entry point | Called by | Does |
 |---|---|---|
-| `scribe hook <event>` | Claude Code hooks (the `plugin/claude-code/` package) | Reads the hook's JSON on stdin; captures `#scribe` instructions, switches cataloging on and off, marks session passes due. The only path that writes entries. |
+| `scribe hook <event>` | Claude Code hooks (the `plugin/claude-code/` package) | Reads the hook's JSON on stdin; captures `#scribe` instructions, switches cataloging on and off, marks session passes due. The only path that writes Daniel's entries (`author.kind: daniel`) and settles proposals about them. |
 | `scribe plugin call` | Orbit's exec backend (`plugin/.orbit-plugin/`) | Reads the Orbit tool request on stdin, writes the `{"ok", …}` envelope on stdout. Serves `scribe.ask` and the routines' tools. |
-| `scribe <noun> <verb>` | Daniel at a terminal, scripts | Read-only `entry list/show`, `session list/show`, `proposal list`, `tag list`, `question ask`, plus `session pass` (Daniel runs it by hand) and `consistency scan` (its routine's job). |
+| `scribe <noun> <verb>` | Daniel at a terminal, scripts, and agents through a shell (from S11) | Read-only `entry list/show`, `session list/show`, `proposal list`, `tag list`, `question ask`, plus `session pass` (Daniel runs it by hand) and `consistency scan` (its routine's job). From S8–S14: `record search`, list filters, the agent write verbs ([§1.1](#11-the-cli-agent-surface)), `session rebuild`, `session activate/deactivate`, `session catalog` and `transcript list/show`. |
 
 **The Orbit plugin tree** is `plugin/.orbit-plugin/`: `plugin.yaml`
 (`schemaVersion: 2`, `kind: Plugin`, `metadata.name: scribe`), `bin/scribe`
@@ -96,7 +99,7 @@ otherwise. It reads only; it does not create `config.toml`
 ([§3](#3-storage)).
 
 Entry writes never go through Orbit's tool surface: the hooks call the
-binary. The two routine tools write session records and proposals, but they
+binary, and from S12 agents call the CLI ([§1.1](#11-the-cli-agent-surface)). The two routine tools write session records and proposals, but they
 are `mutating` and not agent-callable, so no tool needs `agent_callable` or an
 operator override, and the MCP list stays at one tool.
 
@@ -145,6 +148,117 @@ install tree; and the routine tools are audited inside the call, in the
 store their envelope names, under the CLI verbs' command names
 (`plugin call` itself stays unaudited). The tools take only `{}`.
 
+### 1.1 The CLI agent surface
+
+Designed 2026-11-10 ([ORB-23892]); built by S11, S12 and S13. Daniel: "I
+don't want to keep having to manually search for specific session id's to
+hand to agents; and I am not sure about adding another set of MCP tools. so
+I think a single scribe skill that teaches terminal commands will suffice."
+Agents "should able to filter sessions by topics, tags, bm25 search, date
+range, add/update proposals, tags and entries directly", and `scribe.ask`
+stays for intensive and vague searches.
+
+The MCP surface does not change: `scribe.ask` is still the one advertised
+tool. Agents with a shell use the CLI, and one skill teaches it
+([4_decisions.md](./4_decisions.md#agents-read-and-write-through-the-cli-taught-by-one-skill)).
+
+| Want | Command | Model |
+|---|---|---|
+| Words to look for | `scribe record search "<terms>" [--kind entry\|session\|discussion] [--project <p>] [--topic <t>]… [--since <date>] [--until <date>] [--include-hidden] [--limit <n>]` | none ([§6.8](#68-record-search)) |
+| Records by metadata | `entry list` and `session list` with `--since <date>`, `--until <date>`, `--status <status>`, repeated `--topic <t>` (every one must match) and repeated `--related <kind:target>` (any may match); `entry list` also `--author <name>` and `--author-kind daniel\|agent`; `session list` also `--include-inactive`; `proposal list` with `--state`, `--since`, `--until`, `--entry <id>` and `--author-kind daniel\|agent\|scribe` | none |
+| One record | `entry show <id>`, `session show <id> [--log] [--segment <n>]`; `session show session:<id>#<n>` shows one segment | none |
+| An answer in prose | `scribe question ask "<question>"`, or the `scribe.ask` MCP tool | decision model |
+| Record a note | `scribe entry add --tag <tag> --author <name> [--topic <t>]… [--related <r>]… [--project <p>] <content>` | none |
+| Change a note | `scribe entry update <id> --author <name> [--content <text>] [--add-topic <t>]… [--remove-topic <t>]… [--add-related <r>]… [--remove-related <r>]…`; `scribe entry retire <id> --author <name> --reason <text>` | none |
+| A tag | `scribe tag add <name> --author <name> --description <text> [--alias <a>]… [--stale-after-days <n>]`; `scribe tag update <name> --author <name> [--description <text>] [--add-alias <a>]… [--remove-alias <a>]… [--stale-after-days <n>]` | none |
+| A proposal | `scribe proposal add --kind supersedes\|stale --older <id> [--newer <id>] --reason <text> --author <name>`; `scribe proposal update <p-id> --author <name> --reason <text>`; `scribe proposal settle <p-id> --approve\|--reject --author <name> [--reason <text>]` | none |
+| A session's relevance | `scribe session deactivate <id> --author <name> --reason <text> [--cite <ref>]`; `scribe session activate <id> --author <name> [--pin\|--unpin] [--reason <text>]` ([§5.7](#57-active-and-inactive-sessions)) | none |
+
+Rules every verb keeps:
+
+- **Ids.** Every command that takes an id takes a unique prefix of it (at
+  least four characters). An exact id wins over a prefix. An ambiguous
+  prefix is refused with exit 2 and `id_ambiguous`, listing up to ten
+  candidates; no prefix matches is the noun's `*_not_found`.
+- **Authors.** Every write verb requires `--author <name>` (lowercase
+  `[a-z0-9._-]`, 1–40 characters, by convention the agent's crew or model,
+  such as `opus`) and records `{kind: agent, name}`. `kind: agent` means
+  "written through the CLI"; Daniel's channel is still `#scribe`, which
+  records `kind: daniel` ([4_decisions.md](./4_decisions.md#every-entry-and-proposal-records-its-author)).
+- **The guard.** `ask` never presents an agent's entry as Daniel's words
+  and gives it no 1.5× weight ([§6.7](#67-segments-authors-and-inactive-sessions)).
+  Agents never change the content of, retire or settle a proposal about an
+  entry Daniel wrote: `entry update` of a Daniel entry may change only its
+  topics and related references; `entry retire` and `proposal settle` are
+  refused `daniel_only` when the entry (the proposal's `older`) is
+  Daniel's. Agents may open a proposal against a Daniel entry; Daniel
+  settles it with `#scribe approve|reject`. `#scribe forget` stays
+  Daniel's alone ([4_decisions.md](./4_decisions.md#entries-daniel-wrote-are-settled-only-by-daniel)).
+- **Audit and redaction.** Each write verb is a mutating command: one
+  audit line per change or refusal (ids and codes only), store lock,
+  `write_atomic`, and every free-text argument passes the redactor before
+  it is stored. A repeated write that changes nothing prints `nothing
+  changed` and writes no audit line.
+- **Output.** Each write prints the record it wrote in the `show` shape
+  (`--json`: the record object), so an agent can read back the id.
+- **Grammar.** Names follow STD-01 R1–R2: the search is `record search`
+  (`record` is any stored record) rather than a bare `scribe search`,
+  which would mix verb-first and noun-first orders; backfill candidates
+  are `transcript list` and `transcript show`. `session rebuild` replaces
+  a record's text, so it refuses without `--confirm` (STD-01 R5).
+
+Division of work (Daniel confirmed 2026-11-10): scribe's own job is
+summarizing and cataloging sessions, and its model work stays there; the
+session pass keeps its model. Agents do the direct writes. scribe never
+writes an entry, a tag or a proposal on an agent's behalf from a model
+call.
+
+**The skill.** One `scribe` skill ships in the Claude Code package as
+`plugin/claude-code/skills/scribe/SKILL.md`. It teaches: which question
+goes to `search` or a list (a known word, a date range, a topic, a task
+id) and which to `ask` (vague, needs weighing or a synthesized answer);
+`session show <id>` versus `--log`, and that segments cite as
+`session:<id>#<n>`; the write verbs, `--author`, and the guard; that
+session records are model summaries and agent entries are not Daniel's
+words; and that `--json` is the stable machine form. A route for other
+providers lives in the constellation umbrella at `.agents/skills/scribe/`
+(outside this repository, [§10](#10-slice-plan)).
+
+**Limit.** The store is on the Mac, so the skill serves sessions on the
+Mac. Box workers still cannot read scribe
+([§9](#9-concerns--honest-limitations)).
+
+### 1.2 The tmux popup
+
+Daniel: "we need a very simple desktop UI or tmux UI for humans. perhaps
+tmux will be better - having another desktop app will be cumbersome."
+`plugin/tmux/scribe-tmux` is a POSIX shell script of about 60 lines that
+needs `fzf` and `scribe` on `PATH`; it adds no Rust dependency. Bound to a
+tmux key, it opens a popup:
+
+```tmux
+bind-key S display-popup -E -w 90% -h 85% scribe-tmux
+```
+
+- It lists sessions first (`scribe session list`, which prints
+  tab-separated rows into a pipe); `ctrl-s`, `ctrl-e`, `ctrl-p` and
+  `ctrl-b` reload the list with sessions, active entries, open proposals or
+  backfill candidates (`scribe transcript list --since <30 days ago>`,
+  [§5.8](#58-cataloging-a-past-session)).
+- The preview pane is `scribe <noun> show <id>`: `session`, `entry`,
+  `proposal` or `transcript`.
+- Enter opens `scribe <noun> show <id> --log` in `$PAGER` (else `less`).
+  On a candidate, Enter puts `scribe session catalog <id> --author daniel`
+  in the tmux paste buffer and says so; cataloging runs from a shell, where
+  its progress is visible.
+- `ctrl-y` copies the id: `tmux set-buffer`, and `pbcopy` when present.
+- `alt-a` toggles inactive sessions and hidden entries (adds
+  `--include-inactive` to the session list and drops `--status active`
+  from the entry list).
+
+It reads only, so it needs no audit. A real TUI is built only if this
+proves too small ([3_vision.md](./3_vision.md)).
+
 ## 2. Layering
 
 The template's two crates and tiers stay
@@ -188,6 +302,20 @@ port, its referent request and answer, and `ModelError`), form 3 in
 name it as the only module that spawns a process. The config's model ids
 are `ModelIds`, so the port alone is `Models`.
 
+S8–S14 add no crate and no process-spawning module. In the core, `session`
+gains the header, the `Segment` log and the sealing rule; `record` gains
+`Author` (`{kind, name}`) and the date and related filters of `Listing`;
+`activity` (new, no I/O) holds the `active` flag, the age rule and the
+removed-feature candidate pairing; `ask` exposes its tokenizer and BM25
+ranking to `search` (new, no I/O), which ranks without a model; `tag`
+merges config tags with the store's `tags.json`; `transcript` gains the
+model-free statistics `transcript list` reports (Daniel's turns, size,
+path-mention counts). The CLI gains `commands/record.rs` (`record search`),
+`commands/transcript.rs`, the write verbs in `commands/{entry,tag,proposal}.rs`
+and `commands/session/{rebuild,activate,catalog}.rs`, and an id-prefix
+resolver shared by every command that takes an id. The tmux script and the
+skill are files in `plugin/`, not code.
+
 ## 3. Storage
 
 The root is `--root` > `SCRIBE_ROOT` > `~/.scribe`, as in the template. The
@@ -199,10 +327,11 @@ serves every workspace on the host. The plugin's config key `root` (default
 ~/.scribe/                       0700, owner-checked on every load
 ├── config.toml                  tags, models, cadence (Daniel edits; read-only to scribe)
 ├── entries/<tag>/<id>.md        one file per entry: YAML frontmatter + verbatim body
-├── sessions/<yyyy>/<mm>/<session-id>.md   one per opted-in session: frontmatter + sections
+├── sessions/<yyyy>/<mm>/<session-id>.md   one per opted-in session: frontmatter + header sections + ## Log (S8)
 ├── discussions/<yy-mm>/<slug>.md   one per distilled discussion (§4.5), Daniel may edit
-├── control.json                 {"format":3,"sessions":{"<id>":{"on","since","due","final","consecutive_failures","retry_after","pending_links"}}}
-├── proposals.json               {"format":3,"proposals":[…]}
+├── control.json                 {"format":4,"sessions":{"<id>":{"on","since","due","final","consecutive_failures","retry_after","pending_links","cataloged_by"}}}
+├── proposals.json               {"format":4,"proposals":[…]}
+├── tags.json                    {"format":4,"tags":[…]} agent-created tags (S12); optional
 ├── audit.jsonl                  one line per mutating command (template shape)
 └── .lock
 ```
@@ -219,13 +348,31 @@ memory. Format 2 remains readable too: its session records gain an empty
 ([§5.4](#54-session-links)). The next mutation writes format 3. Entry and
 proposal shapes are unchanged. The template's `notes.json` is not carried over.
 
+**Format 4** (S8, [ORB-23892]) changes four shapes in one bump, appended as
+one step to `store/format.rs::UPGRADES`
+([4_decisions.md](./4_decisions.md#store-format-4-carries-the-log-active-and-author-in-one-step)):
+a session record becomes a header over an append-only `## Log` of segments,
+with `active`, `keep_active`, `active_change` and `cataloged_by`; an entry
+gains `author` and `updated_by`; a proposal gains `author` and
+`settled_author`; a control switch gains `cataloged_by`. `tags.json` is
+new. The 3-to-4 step converts in memory, as the earlier steps do: a
+session's `## Summary` stays the header summary, its summary and
+`## Outcome` become sealed segment 1 (`origin: upgrade`), and it is
+`active: true`; every existing entry is `author: {kind: daniel, name:
+daniel}`, since every entry so far came from a typed `#scribe` line; every
+existing proposal is `author: {kind: scribe, name: consistency}`, and a
+settled one `settled_author: {kind: daniel, name: daniel}`. The next write
+of each document persists format 4; an older build refuses it. A record
+whose transcript still exists can then be rebuilt into real segments
+([§5.6](#56-rebuilding-a-record)).
+
 **Metadata.** Entries and session records are Markdown files whose YAML
 frontmatter is the metadata `ask` and the CLI filter on, so a lookup narrows
 by fields before any ranking. Every record carries:
 
 | Field | Meaning |
 |---|---|
-| `format`, `kind` | `3`; `entry` or `session` |
+| `format`, `kind` | `3` (`4` from S8); `entry` or `session` |
 | `id` | `decisions-12`, or the session id |
 | `status` | entry: `active`, `superseded`, `retired`, `forgotten`; session: `open`, `final` |
 | `project` | the repository slug from the cwd's git remote, else the cwd's basename; `global` when Daniel says so |
@@ -234,6 +381,8 @@ by fields before any ranking. Every record carries:
 | `links` | sessions only: `[{type, session}]`, `type` `spawned_from` or `continues`; the session structure Daniel asserted ([§5.4](#54-session-links)), stored on the child only |
 | `terms` | sessions only: phrases Daniel coins or defines, each `{term, said, message}` where `said` is a verbatim span of Daniel's own turn that defines or first uses it |
 | `provider`, `host` | where it was recorded |
+| `author` | entries and proposals, from S8: `{kind, name}`; `kind` is `daniel` (a typed `#scribe` turn), `agent` (a CLI write verb, `name` from `--author`) or `scribe` (scribe's own routine, proposals only) |
+| `active` | sessions only, from S8: `true` while the record still describes something current ([§5.7](#57-active-and-inactive-sessions)); distinct from `status` |
 | `created`, `updated` | RFC 3339 UTC |
 
 `topics` are filter labels and are distinct from a tag, which names where an
@@ -249,7 +398,7 @@ superseding entries; nothing is renamed without Daniel's approval.
 
 ```markdown
 ---
-format: 3
+format: 4
 kind: entry
 id: decisions-12
 tag: decisions
@@ -259,6 +408,8 @@ topics: [merge-policy]
 related: [task:ORB-123]
 provider: claude-code
 host: dk-server-1
+author: {kind: daniel, name: daniel}
+updated_by: null
 created: 2026-11-02T19:05:41Z
 updated: 2026-11-02T19:05:41Z
 said: "#scribe add this to decision #merge-policy"
@@ -285,6 +436,12 @@ The body is `content`, verbatim.
   for `decisions`, 180 days for `preferences`).
 - Ids are `<tag>-<n>`, `n` being the tag's max + 1 under the lock: short,
   self-describing in an echo, and never reused.
+- `author` (from S8) says who wrote the entry. A `#scribe` line writes
+  `{kind: daniel, name: daniel}`. `scribe entry add` writes `{kind: agent,
+  name: <--author>}`, `said: ""` (there is no typed line), `content_from:
+  {kind: agent}` and `cite: null`; the agent's session, when it gives one,
+  is a `related` `session:<id>`. `updated_by` is the author of the last
+  `entry update` or `entry retire`, else `null`.
 
 **Session record** (`sessions/<yyyy>/<mm>/<id>.md`): the common
 frontmatter plus `links` (sessions only; `related` says what a session
@@ -292,9 +449,96 @@ mentions, `links` the structure Daniel asserted, [§5.4](#54-session-links)),
 `title`, `cwd`, `started`, `on_since`, `scribed_through`
 (the last transcript message folded in), `passes` (count) and `next_open`
 (the number of `next` items); `status: final` after the session-end pass.
-The body has four sections, `## Summary`, `## Goals`, `## Outcome` and
-`## Next` (character budgets 1500/600/2500/1000). The four text fields are model-written
+Up to format 3 the body has four sections, `## Summary`, `## Goals`,
+`## Outcome` and `## Next` (character budgets 1500/600/2500/1000). The four text fields are model-written
 summaries, labelled as such in `ask` evidence, never quoted as Daniel's words.
+
+From format 4 (S8) a session record is a **header** the passes rewrite and
+a **log** they only append to
+([4_decisions.md](./4_decisions.md#a-session-record-is-a-rewritable-header-over-an-append-only-log)).
+Daniel, 2026-11-10: "limiting each session to 2500 is insufficient for long
+sessions - e.g. after writing first version of the session using all 2500
+characters, the next update must remove a part of the original. So over
+multiple re-writes, the beginning session's context will get lost, defeating
+the purpose." One record per session still holds: a long session grows its
+log, it does not start a second record.
+
+```markdown
+---
+format: 4
+kind: session
+id: 7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02
+status: open
+active: true
+keep_active: false
+active_change: null
+cataloged_by: null
+project: scribe
+topics: [session-records, backfill]
+related: [task:ORB-23892]
+links: []
+terms: []
+provider: claude-code
+host: daniels-mac
+created: 2026-11-10T02:11:09Z
+updated: 2026-11-10T05:40:31Z
+title: Session records with a log, an active flag and a CLI agent surface
+cwd: /Users/daniel/workspace/constellation
+started: 2026-11-10T02:10:44Z
+on_since: 2026-11-10T02:11:09Z
+scribed_through: <uuid>
+passes: 6
+next_open: 2
+log:
+  - {n: 1, heading: "Why one 2500-character outcome loses history", first_message: <uuid>, last_message: <uuid>, from: 2026-11-10T02:10:44Z, to: 2026-11-10T03:02:17Z, state: sealed, windows: 2, origin: pass, topics: [session-records], related: []}
+  - {n: 2, heading: "Agents write through the CLI", first_message: <uuid>, last_message: <uuid>, from: 2026-11-10T03:04:50Z, to: 2026-11-10T05:39:58Z, state: open, windows: 1, origin: pass, topics: [agent-surface], related: [task:ORB-23892]}
+---
+## Summary
+1. Why one outcome section loses a long session's start; the header-and-log shape. 2. Agents read and write through the CLI…
+## Goals
+…
+## Next
+- …
+## Log
+### 1. Why one 2500-character outcome loses history
+…
+### 2. Agents write through the CLI
+…
+```
+
+- **Header**, rewritten by every pass: `title` (for the whole session, not
+  the latest window; 120 characters), `## Summary` (at most 1200
+  characters, written as a table of contents: what the session covered, in
+  order, pointing at segment numbers), `## Goals` (600) and `## Next`
+  (1000, a bullet list), plus the header's `topics`, `related` and `terms`.
+  There is no `## Outcome`: what happened is the log's job
+  ([4_decisions.md](./4_decisions.md#outcome-folds-into-the-log)).
+- **Log**, appended: `## Log`, then one `### <n>. <heading>` per segment,
+  in order, each followed by its text. A segment's metadata is the
+  frontmatter list `log`: `n` (from 1, no gaps), `heading` (at most 80
+  characters, equal to the body heading), `first_message` and
+  `last_message` (the transcript message ids it covers; `null` only for an
+  upgraded segment whose start is unknown), `from` and `to` (those
+  messages' times), `state` (`open` or `sealed`; only the last segment may
+  be `open`), `windows` (how many pass windows wrote it), `origin` (`pass`,
+  `rebuild`, `catalog` or `upgrade`), and its own `topics` (0–5) and
+  `related`. A pass writes a segment's text in at most 900 characters,
+  asking the model for about 800; an upgraded segment keeps its converted
+  text whatever its length.
+- Only the open segment is ever rewritten. Sealed segments are never sent
+  back to the model to rewrite and never change, except by `session
+  rebuild`, which replaces the whole record ([§5.6](#56-rebuilding-a-record)).
+- **Activity** (sessions only): `active` (default `true`), `keep_active`
+  (default `false`; the exemption from automatic deactivation) and
+  `active_change` (`null`, or the last change of `active` or `keep_active`:
+  `{at, by, route, reason, cite}`, where `by` is an author, `route` is
+  `age`, `removed` or `manual`, `reason` at most 300 characters and `cite`
+  the record that justified it, such as `session:<id>#<n>` or an entry id,
+  else `null`). Every change is also an audit line
+  ([§5.7](#57-active-and-inactive-sessions)).
+- `cataloged_by` is `null` for a session Daniel switched on with
+  `/scribe on`, or `{at, by}` for one cataloged by name with `session
+  catalog` ([§5.8](#58-cataloging-a-past-session)).
 
 **Discussion** (`discussions/<yy-mm>/<slug>.md`): the distilled record of
 a conversation that concluded something, in the shape of Daniel's almanac
@@ -313,7 +557,23 @@ is the model's interpretation and is labelled so in `ask` evidence.
 `stale`), `older`, `newer` (entry ids), `reason` (model text, at most 300
 characters), `quotes` (verbatim spans from both entries), `state`
 (`open`, `approved`, `rejected`), `opened_at`, `settled_at`, `settled_by`
-(a `cite` of Daniel's approving turn).
+(a `cite` of Daniel's approving turn). From format 4: `author` (who opened
+it: `{kind: scribe, name: consistency}` for the routine, `{kind: agent,
+name}` for `proposal add`) and `settled_author` (`{kind: daniel, name:
+daniel}` for a `#scribe` settle, `{kind: agent, name}` for `proposal
+settle`, else `null`). An agent's settle has `settled_by: null`, since no
+typed turn exists to cite.
+
+**Tags store** (`tags.json`, from S12): `{"format": 4, "tags": [{"name",
+"aliases", "description", "stale_after_days", "author", "created",
+"updated"}]}`, the tags agents created with `scribe tag add`. The tag table
+scribe uses is the config's tags merged with these. Config tags win: a
+store tag may not take a name or alias a config tag claims (`tag add` and
+`tag update` refuse it, `tag_conflict`), a word a later config edit claims
+is dropped from the store tag with a warning, and a config tag cannot be
+changed by `tag update` (`tag_configured`). A store tag is used exactly
+like a config tag, by `#scribe` lines and by `entry add`
+([4_decisions.md](./4_decisions.md#agent-created-tags-live-in-the-store-and-config-tags-win)).
 
 **Config** (`config.toml`): `[tags.<name>]` with `aliases`, `description`
 and `stale_after_days`; `[sources]` with `discussions_readonly`, a list of
@@ -322,7 +582,13 @@ directories `ask` reads as extra discussion evidence and never writes
 `referent` and `credentials` (the variables model calls are given, default
 `CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY`); `[catalog]` with
 `every_minutes` (20), `every_turns` (10), `window_messages` (40) and
-`window_chars` (15000), all positive integers; `[redact]` with `env`, further
+`window_chars` (15000), all positive integers, and from S9 `segment_windows`
+(3, [§5.5](#55-the-log-segments-and-sealing)); from S10 `[sessions]` with
+`inactive_after_days` (120, a positive integer;
+[§5.7](#57-active-and-inactive-sessions)); from S14 `[projects.<slug>]`
+with `paths`, the path fragments whose mentions attribute a transcript to
+that project ([§5.8](#58-cataloging-a-past-session); none by default);
+`[redact]` with `env`, further
 variables whose values are masked. A missing file or table is the defaults;
 an unknown key or bad value is refused, naming the file and line
 ([specs/store.md](./specs/store.md#config)).
@@ -333,7 +599,9 @@ if absent; scribe never rewrites it after that. As built (S6), it is not:
 ([4_decisions.md](./4_decisions.md#session-start-reads-only)).
 
 **Redaction.** Before any write of `said`, `content`, a session record's
-title, text fields and terms, or a proposal's `reason` and quotes, the store masks
+title, text fields and terms (from S8 also each segment's heading and text,
+and `active_change.reason`), a proposal's `reason` and quotes, or (from
+S12) a store tag's description, the store masks
 the live values of the variables in `[redact] env` and `[models] credentials`
 and high-confidence credential shapes (`Authorization: Bearer …`,
 `ghp_`/`github_pat_`, `sk-ant-`/`sk-`, `AKIA…`, `xox[bp]-`, PEM
@@ -620,9 +888,20 @@ counted in `remaining` alongside sessions waiting for backoff or the next run
    pass resumes at the failed window. One CLI invocation processes all
    windows; the routine may yield between them at its deadline.
 
+From format 4 (S9), steps 3 and 4 write the header and the log instead of
+the four sections ([§5.5](#55-the-log-segments-and-sealing)): each window
+sends the header and the open segment, and the record's sealed segments
+only as a table of contents; the answer rewrites the header and the open
+segment and may open new segments; the write appends, never rewrites, a
+sealed segment.
+
 A pass writes no tag entries, even if the transcript contains `#decision`
-or an unprocessed `#scribe` line. There is no backfill: sessions that were
-never switched on are never read.
+or an unprocessed `#scribe` line. Up to S13 there is no backfill: sessions
+that were never switched on are never read. From S14 one more route reads
+a session: Daniel names a past session with `scribe session catalog <id>`
+([§5.8](#58-cataloging-a-past-session)). scribe still never scans or
+catalogs a session on its own; `transcript list` reads transcripts to help
+Daniel choose and writes nothing.
 
 As built (S4), in `scribe-core::pass` and `commands/session/pass.rs`:
 
@@ -666,6 +945,212 @@ As built (S4), in `scribe-core::pass` and `commands/session/pass.rs`:
   again; a session that is not on is refused (`session_not_on`) and never
   read, and the switch's `final` flag counts as for a due pass.
 
+### 5.4 Session links
+
+As built ([ORB-23849]): Daniel links a session to the one it was spawned
+from or continues, by typing `/scribe on --from <id> [--type <type>]` or
+`/scribe link <id> [--type <type>]` in the child. The link is stored once,
+on the child's record (`links`), or on its switch's `pending_links` until
+the first pass writes the record; children are derived at read time. A
+linked session's pass reads each linked record's latest title and summary
+as data. The refusals and replies are in
+[specs/output-contract.md](./specs/output-contract.md#hook-replies); the
+reasons in
+[4_decisions.md](./4_decisions.md#session-links-are-typed-stored-on-the-child-and-manual).
+Neither the hook payloads nor the transcripts carry a parent session id,
+so nothing is linked automatically.
+
+### 5.5 The log: segments and sealing
+
+Designed for S9 ([ORB-23892]). A pass keeps the window loop of
+[§5.3](#53-a-pass); what each window sends and writes changes.
+
+**Sent.** The header (title, summary, goals, next, topics, terms), the open
+segment in full (number, heading, message range, text), and the sealed
+segments as a table of contents: number, heading, dates, never their text.
+Then the window's messages, and linked sessions' summaries as before.
+
+**Answered.** `{title, summary, goals, next, topics, related, terms, open,
+new}`: the rewritten header; `open`, the open segment's rewritten
+`{heading, text, topics, related}`; and `new`, 0–3 further segments, each
+`{starts_at, heading, text, topics, related}`, where `starts_at` is the id
+of the window message the segment begins with. Giving a new segment seals
+the one before it. When the record has no open segment (a first pass, or
+scribe sealed the last one), `open` must be `null` and `new` must hold at
+least one segment starting at the window's first message.
+
+**Checked.** Header budgets (title 120, summary 1200, goals 600, next 1000;
+a `## ` line inside a section, an empty summary or an invalid topic is
+refused, as today); segment headings at most 80 characters, texts 1–900
+characters, no `#` heading line in a text; `starts_at` ids in the window,
+in transcript order, each after the open segment's last message, and no
+two segments starting at one message. A refused answer gets the one fresh
+retry naming the refusal; a second refusal fails the pass. The refusal for
+an overlong text says "seal it and start a new segment", which is how a
+full segment seals.
+
+**Written.** Message ranges follow from `starts_at`: a segment runs to the
+message before the next segment's start, the last one to the window's
+last message. The open segment's `windows` counts up. scribe seals the
+open segment itself when its `windows` reaches `[catalog] segment_windows`
+(3), when the final pass's last window is written (a `final` record has no
+open segment), and never otherwise. The store refuses a write that would
+change a sealed segment's metadata or text from what is on disk
+(`sealed_segment_changed`, an internal error that fails the pass and keeps
+the record), so the append-only rule is code, not prompt.
+
+Why three windows: one segment then covers at most about 120 messages or
+45,000 characters before scribe seals it, so a run of rewrites can
+compress at most that much into 800 characters, and the model is never
+asked to keep more than one segment's worth of history in mind
+([4_decisions.md](./4_decisions.md#a-segment-seals-when-it-is-full-when-the-thread-changes-or-after-three-windows)).
+
+`session show <id>` prints the header and the log's table of contents
+(number, heading, dates, state); `--log` adds every segment's text;
+`--segment <n>` prints one segment. `session show session:<id>#<n>` is the
+same as `--segment <n>`, so a citation can be pasted as is.
+
+### 5.6 Rebuilding a record
+
+Designed for S9. `scribe session rebuild <id> --author <name> --confirm`
+rebuilds a record from its transcript, from the first message, with the
+format-4 pass ([§5.5](#55-the-log-segments-and-sealing)) and no prior
+record. It is how an upgraded record (one sealed segment holding the old
+summary and outcome) gets a real log, and how a record written before a
+prompt fix is redone.
+
+- The transcript is found and checked as a pass finds it. A session whose
+  transcript is gone is refused `transcript_missing`, and its record stays
+  as the upgrade left it.
+- Without `--confirm` it refuses (`confirm_required`) and says what it
+  would replace: the number of segments and passes in the current record
+  (STD-01 R5).
+- It runs every window with no deadline and no five-session cap. Each
+  window is checkpointed to `sessions/<yyyy>/<mm>/.<id>.rebuild.md`, a
+  dot-file every read skips, so an interrupted rebuild resumes there on
+  the next run; the record itself is untouched until the last window.
+- The last step, under the lock, replaces the record with the rebuilt one
+  only if the record's `updated` is what rebuild read when it started;
+  if a pass wrote in the meantime, rebuild folds in the newer messages
+  first and tries again. It keeps `id`, `created`, `links`, `active`,
+  `keep_active`, `active_change` and `cataloged_by`; segments are
+  `origin: rebuild`; `scribed_through` is the transcript's last message;
+  `status` is `final` when the switch's `final` is set or the session was
+  cataloged as ended.
+- A session that is on and due is refused `session_busy`; `scribe session
+  pass --session <id>` first, or wait for the routine.
+- It is a mutating command: one audit line (`target` `session:<id>`).
+
+### 5.7 Active and inactive sessions
+
+Designed for S8 (the flag and the read paths) and S10 (the routes). Daniel,
+2026-11-10: "we should add \"isActive\" field to sessions so that scribe or
+based on configurable duration limit can periodically deactivate stale
+sessions", and "A feature that no longer exists (if it exists in session
+store) should be deactivated."
+
+`status` says whether the session has ended (`open`, `final`). `active`
+says whether its content still describes something current. A final
+session about a feature that still exists stays active; an open session can
+be deactivated. An inactive session is hidden, not removed, as superseded
+entries are: `session list`, `record search` and `ask` leave it out by
+default and show it with `--include-inactive` (lists), `--include-hidden`
+(search) or `include_hidden` (`ask`); `session show` always shows it, with
+its `active_change`; `ask` counts hidden matches and says one exists, as
+for entries.
+
+Three routes change `active`, each audited and each recording `{at, by,
+route, reason, cite}` in `active_change`:
+
+| Route | By | When | Reason / cite |
+|---|---|---|---|
+| `removed` | the consistency routine, `{kind: scribe, name: consistency}` | a later record says the session's feature was removed or replaced ([§7](#7-consistency-routine)) | the model's reason; cite the later record (`session:<id>#<n>`, an entry id or a discussion) |
+| `age` | the consistency routine | the session's last message (its last segment's `to`) is older than `[sessions] inactive_after_days` (120) | `no messages since <date> (limit <n> days)`; no cite |
+| `manual` | an agent or Daniel: `scribe session deactivate <id> --author <name> --reason <text> [--cite <ref>]`, `scribe session activate <id> --author <name> [--reason <text>] [--pin\|--unpin]` | any time | the given reason and cite |
+
+The goal is context for features that still exist, and such a session can
+be old. So removal of the feature is the main route, the age limit is
+generous, and there is an exemption: `keep_active: true`, set with
+`session activate <id> --pin` and cleared with `--unpin`, exempts a
+session from both automatic routes. A manual `deactivate` of a pinned
+session also unpins it, and says so. Age is measured from the last message,
+not `updated`, because a rebuild, a link or a catalog rewrites `updated`
+without new conversation
+([4_decisions.md](./4_decisions.md#removal-of-the-feature-is-the-main-deactivation-route-age-is-a-generous-backstop)).
+
+scribe stays generic: it never reads a repository to decide whether a
+feature exists. That check belongs to the agent or routine that calls
+`deactivate` and gives the reason; the consistency routine judges only from
+scribe's own records. Activating an active session, or deactivating an
+inactive one, changes nothing and writes no audit line. Deactivation never
+changes a record's text, its `updated`, or a pass's cadence; an inactive
+session that is on is still passed.
+
+### 5.8 Cataloging a past session
+
+Designed for S14. Daniel, 2026-11-10: "we need to backfill some of
+important chat sessions on orbit and scribe projects. not everything but
+certain long ones", then "we don't need to go all the way back to aug.
+those will just add noise. the primary goal is to understand the context of
+existing features, to provide continuity ... month of oct will be a good
+starting point." The scope is Claude Code sessions on the Mac from
+2026-10-01 for orbit, scribe and constellation-site; long ones only; Daniel
+picks. scribe never scans or catalogs on its own
+([4_decisions.md](./4_decisions.md#backfill-is-by-name-a-session-daniel-picks)).
+
+**Choosing: `scribe transcript list`.** `scribe transcript list --since
+<date> [--until <date>] [--project <slug>]… [--min-turns <n>] [--limit
+<n>]` lists the Claude Code transcripts under the projects directory that
+have no record and no switch, model-free, newest first. A row is
+`{session, project, project_mentions, cwd, started, ended, bytes,
+daniel_turns, first_prompt}`: `daniel_turns` counts Daniel's typed turns
+(the pass's rule for whose turn is whose), `--min-turns` defaults to 20 so
+only long sessions show, and `first_prompt` is his first turn cut to 300
+characters. It reads transcripts and writes nothing: no lock, no audit.
+`scribe transcript show <id>` prints one row with Daniel's first five
+turns, each cut to 300 characters, for the tmux preview.
+
+Project. Most sessions start from the constellation root (463 of 947
+transcripts on the Mac), so the cwd alone does not say which project a
+session was about. `project_mentions` counts, per configured project, how
+many times the transcript's text mentions any of that project's
+`[projects.<slug>] paths` (for example `codebases/orbit`,
+`codebases/scribe`, `constellation-site`), and `project` is the slug with
+the highest count, else the cwd's slug, as today. `--project` filters on
+that attribution. The paths are Daniel's config; scribe knows no project
+names of its own.
+
+**Cataloging: `scribe session catalog <id>`.** `scribe session catalog <id>
+--author <name> [--project <slug>]` switches the named session on as a
+cataloged-by-name session and runs its passes to the end:
+
+- The transcript is found and checked as a pass finds it. A session that
+  already has a record or a switch is refused `session_cataloged` (use
+  `session pass --session` or `session rebuild`), unless the switch is one
+  `catalog` wrote (`cataloged_by` set) and still due: then `catalog`
+  resumes it.
+- It writes the switch with `since` now, `due`, and `cataloged_by: {at,
+  by}`, then runs every window ([§5.5](#55-the-log-segments-and-sealing))
+  with no 50 s routine deadline and no five-session cap. Segments are
+  `origin: catalog`.
+- `project` is `--project`, else the `transcript list` attribution. The
+  record's `on_since` is the switch's `since`; `started` is the
+  transcript's first message.
+- When the transcript has not been written for 24 hours the session has
+  ended: the last window marks the record `final` and the switch off, so
+  no hook ever passes it again. A transcript written to within 24 hours is
+  left on and due, and the hooks carry on as for `/scribe on`.
+- A failure keeps the checkpoint and the switch due, as a pass failure
+  does, and running `catalog` again resumes it.
+- Audited like a pass, plus one line for the switch.
+
+The result is a model-written session record, labelled as a summary
+wherever it is evidence. Cataloging creates no entries. A session only
+about a feature since removed is skipped when Daniel picks, or deactivated
+if it was cataloged ([§5.7](#57-active-and-inactive-sessions)). The few that
+matter most are also distilled into discussions ([§4.5](#45-distilling-a-discussion),
+S7). It runs by hand from the CLI, a few sessions at a time.
+
 ## 6. `ask`
 
 ### 6.1 Contract
@@ -685,7 +1170,8 @@ Input: `{"question": string, "scope"?: {"tags"?: [..], "topics"?: [..],
 }
 ```
 
-`cite` is an entry id, `session:<id>` or `task:<id>`. A lookup
+`cite` is an entry id, `session:<id>`, `session:<id>#<n>` (a segment,
+from S8) or `task:<id>`. A lookup
 ([§6.5](#65-lookups-records-by-recency-or-id)) also sets `"status":
 "record"` and returns `records`, the stored records themselves. `scribe question ask
 "<question>"` is the same operation for Daniel at a terminal (`--json`
@@ -706,8 +1192,10 @@ prints this payload).
    tokens under three characters, light suffix stripping (`-s`, `-es`,
    `-ing`, `-ed`). Tag names and aliases in the question boost their tag.
 3. Rank with BM25 over `content` + `said` + tag for entries, the four text
-   fields for sessions, title + description for tasks; entries get a 1.5×
-   weight because they are Daniel's explicit words.
+   fields for sessions (from format 4, the header and each segment as
+   separate units, [§6.7](#67-segments-authors-and-inactive-sessions)),
+   title + description for tasks; Daniel's entries get a 1.5×
+   weight because they are his explicit words (agent entries do not).
 4. Keep the top 20 (entries first on ties), packed newest-first within a
    48k-character evidence budget.
 
@@ -820,6 +1308,47 @@ or `last_session`, `named_session`, `next_steps`, `tag_period`, `term`,
   the fixed answer "Nothing recorded answers this.". A model failure is an
   error (`question ask` exits 1 with its code).
 
+### 6.7 Segments, authors and inactive sessions
+
+Designed for S8 (segments, inactive) and S12 (authors).
+
+- **Units.** From format 4 a session is ranked as several units: its header
+  (title, summary, goals, next), cited `session:<id>`, and each segment
+  (heading and text), cited `session:<id>#<n>`. Each unit carries the
+  record's frontmatter for §6.2 step 0, and a segment its own topics and
+  `from`/`to` dates as well, so "what did we decide about X in October"
+  narrows to segments of that month. A claim citing a segment is checked
+  against that segment's text; one citing the header against the header.
+  Lookups ([§6.5](#65-lookups-records-by-recency-or-id)) still return the
+  record; a `last_session` or `named_session` record carries the header and
+  the log's table of contents, and `records[].session.log` holds every
+  segment (output contract).
+- **Inactive sessions** are left out of evidence and lookups unless
+  `include_hidden`, and counted in `hidden_matches` like hidden entries.
+- **Authors.** Daniel's entries keep the 1.5× weight; agent entries get
+  1.0×, like session units. Evidence labels an agent entry `agent note
+  (<name>)`, never `Daniel`, and the system prompt forbids presenting it
+  as Daniel's words. A `conflict` between a Daniel entry and an agent entry
+  is reported as such, with both labels.
+
+### 6.8 `record search`
+
+Designed for S11. `scribe record search "<terms>" [--kind
+entry|session|discussion] [--project <p>] [--topic <t>]… [--since <date>]
+[--until <date>] [--include-hidden] [--limit <n>]` runs §6.2's filtering,
+tokenizing and BM25 ranking with the §6.7 units and weights, and stops
+there: no lookup classifier, no Orbit tasks, no model. It is the fast,
+offline path for a known word; `ask` stays for vague questions and
+synthesized answers. Hidden entries and inactive sessions are left out
+unless `--include-hidden`; forgotten entries never match. The default limit
+is 20. Each hit is `{kind, cite, id, segment, score, title, snippet,
+project, topics, author, active, updated}`: `cite` is what `ask` would
+cite, `segment` the segment number or `null`, `snippet` up to 240
+characters around the best-matching terms, `author` an entry's author else
+`null`. The `--json` envelope is the list envelope with the key `hits`,
+best first. It reads only and writes no audit line. Discussions are
+searched once S7 builds them, together with the read-only sources.
+
 ## 7. Consistency routine
 
 The `scribe-consistency` routine (`0 6 * * 1`, weekly, seeded disabled)
@@ -847,9 +1376,12 @@ Daniel sees open proposals at session start (the `SessionStart` hook returns
 typed turn: `#scribe approve p-4` sets the older entry `superseded` (or
 `retired` for a stale proposal) and records `superseded_by`; `#scribe reject
 p-4` closes it for good. `#scribe retire <entry-id>` hides an entry directly;
-`#scribe forget <entry-id>` blanks its text for good. Agents cannot settle
-proposals: settling is a `#scribe` instruction, which only a user-typed turn
-carries. The orbit-office contradiction detector
+`#scribe forget <entry-id>` blanks its text for good. Up to S11 agents
+cannot settle proposals: settling is a `#scribe` instruction, which only a
+user-typed turn carries. From S12 an agent may settle, with `scribe proposal
+settle`, a proposal whose older entry is agent-authored; one about an entry
+Daniel wrote stays his, settled only by `#scribe approve|reject`
+([§1.1](#11-the-cli-agent-surface)). The orbit-office contradiction detector
 (`app/packages/server/src/features/scribe/contradictions.ts`) contributes the
 shape — newer side by date, held items, a resolve step — but not its
 inputs, which were Orbit tasks fed by a ledger extractor that no longer
@@ -879,6 +1411,32 @@ re-applying an approval. A pair the model labels `refines` becomes a
 `supersedes` proposal like `contradicts`; topic-merge proposals are not
 built.
 
+**Deactivating sessions** (designed for S10, [§5.7](#57-active-and-inactive-sessions)).
+After the entry steps the scan runs two session steps, skipping pinned
+(`keep_active: true`) and inactive sessions:
+
+1. **Age, model-free.** Every session whose last message is older than
+   `[sessions] inactive_after_days` is deactivated, route `age`.
+2. **Removed features, model judgement.** Candidates are model-free pairs
+   of an active session S and a later record R (a session unit, an entry or
+   a discussion whose date is after S's last message, written or updated in
+   the last 8 days, so a weekly scan sees each new record once) that share
+   a topic or a term with S or overlap its header by at least one token in
+   four, and whose text has a removal cue (`removed`, `deleted`, `dropped`,
+   `decommissioned`, `retired`, `replaced`, `superseded`, `ripped out`,
+   `sunset`). At most 20 pairs per scan, ten per call, within 120 s each.
+   The `consistency` model labels each pair `removed` (R says the feature S
+   is about was removed or replaced), `still_current` or `unrelated`, with
+   the feature's name and a verbatim quote from R. A `removed` label whose
+   quote passes the verbatim check against R deactivates S, route
+   `removed`, reason the model's (at most 300 characters), cite R. Other
+   labels are counted, not stored.
+
+The routine deactivates directly rather than proposing: an inactive
+session is hidden, not changed, and `session activate` reverses it. Each
+deactivation is one audit line (`target` `session:<id>`) and an
+entry in the scan report's `deactivated`.
+
 The settling verbs run in `scribe hook user-prompt-submit`, in prompt
 order after the transcript check, one locked `Store::settle` each:
 `approve` needs an open proposal whose older entry is still `active`
@@ -900,8 +1458,8 @@ proposals'.
 | Use | Config key | Default | Called from | Budget |
 |---|---|---|---|---|
 | Referent of "this"/"it" | `models.referent` | `claude-haiku-5-5` | `UserPromptSubmit` hook | 20 s |
-| Session pass | `models.session` | `claude-haiku-5-5` | `scribe.session-pass` job | 120 s |
-| Consistency judgement | `models.consistency` | `claude-haiku-5-5` | `scribe.consistency-scan` job | 120 s per batch of 10 pairs |
+| Session pass (also `session rebuild` and `session catalog`, from S9/S14) | `models.session` | `claude-haiku-5-5` | `scribe.session-pass` job, the CLI | 120 s |
+| Consistency judgement (entry pairs; from S10 also removed-feature session pairs) | `models.consistency` | `claude-haiku-5-5` | `scribe.consistency-scan` job | 120 s per batch of 10 pairs |
 | `ask` | `models.ask` | `claude-sonnet-5-5` | `scribe.ask`, `scribe question ask` | 90 s |
 | Distilling a discussion | `models.distill` | `claude-sonnet-5-5` | `UserPromptSubmit` hook, run as a detached job like a session pass | 180 s |
 
@@ -1070,6 +1628,35 @@ writes none.
   plugin is called there or that setting names it, and Orbit refuses a
   federated search inside a managed run.
 
+- **The agent surface serves the Mac only.** The store is on the Mac, so
+  the `scribe` skill helps sessions there; box workers still cannot read or
+  write scribe. A worker that needs Daniel's context gets it in its task.
+- **An agent write is an accident guard too.** `--author` is a label an
+  agent chooses, not an identity; `kind: agent` is what scribe can know
+  ("written through the CLI"). The guard that keeps agents from settling
+  Daniel's entries is a refusal in the CLI, not a permission: a process
+  running as Daniel can still edit `~/.scribe` (STD-05 R5). The audit log
+  records every write's command and target.
+- **Removed-feature judgement can be wrong.** Haiku may read "removed the
+  old flag" as the removal of the session's feature. The quote is checked,
+  the session is only hidden, and `session activate` brings it back, but a
+  wrong deactivation is silent until someone looks with
+  `--include-inactive`. `session list --include-inactive` shows `active`
+  and the scan report lists every deactivation.
+- **Path mentions guess a project.** `transcript list` attributes a
+  constellation-root session by counting path mentions; a session that
+  reads many orbit files to change scribe is attributed to orbit. Daniel
+  picks, and `--project` on `catalog` overrides it.
+- **An upgraded record has one long segment.** Until `session rebuild`
+  runs, a record converted from format 3 has a single sealed segment of up
+  to about 4,000 characters, ranked as one unit.
+- **Rebuilds and catalogs cost model calls.** A long session is dozens of
+  windows; rebuild and catalog run them with no deadline from the CLI.
+  Daniel runs them a few at a time.
+- **The tmux popup needs fzf.** Without it `scribe-tmux` prints how to
+  install it and exits 1. Copying to the system clipboard needs `pbcopy`
+  (macOS); elsewhere the id goes to the tmux buffer only.
+
 ## 10. Slice plan
 
 Each slice is one Orbit task on `agent-main`, in order; each must pass
@@ -1186,10 +1773,148 @@ Claude Code package.
   discussion and from a fixture `discussions_readonly` directory, and scribe
   never writes into that directory.
 
+S8–S14 were designed on 2026-11-10 ([ORB-23892]) and are filed one Orbit
+task each, in this order; S7 does not block them. Acceptance is observable
+CLI behaviour; tests follow the repository's rules in `AGENTS.md`.
+
+**S8 — Store format 4 and its read paths.** Depends on nothing.
+
+- `FORMAT` is 4 and `UPGRADES` gains one appended step; a format-3 store
+  loads unchanged on disk, and the next write of each document persists
+  format 4. A format-3 session record reads as a header (its summary,
+  goals and next) over one sealed segment `origin: upgrade` holding its
+  summary and outcome, `active: true`; a format-3 entry reads `author:
+  {kind: daniel, name: daniel}`; a format-3 proposal reads `author: {kind:
+  scribe, name: consistency}`. An older build refuses a format-4 store.
+- Session records parse and write in the [§3](#3-storage) shape: the
+  `log` metadata and the `## Log` body agree (numbers, headings, order),
+  only the last segment may be open, and a record that breaks this is
+  `store_corrupt` naming the file. `active`, `keep_active`,
+  `active_change` and `cataloged_by` parse and write; entries carry
+  `author` and `updated_by`, proposals `author` and `settled_author`,
+  control switches `cataloged_by`; `#scribe` lines write `{kind: daniel}`.
+  Redaction covers segment headings and texts and `active_change.reason`.
+- `session show <id>` prints the header and the log's table of contents;
+  `--log` adds every segment's text; `--segment <n>` and `session show
+  session:<id>#<n>` print one segment; an unknown segment is
+  `segment_not_found`. `session show --json` adds `active`, `keep_active`,
+  `active_change`, `cataloged_by` and `log` (each segment with its text);
+  `outcome` stays in the payload as `""`.
+- `session list` leaves inactive sessions out unless `--include-inactive`;
+  `ask` leaves them out of evidence and lookups unless `include_hidden` and
+  counts them in `hidden_matches`.
+- `ask` ranks session headers and segments as separate units and cites a
+  segment as `session:<id>#<n>`; a claim quoting a segment is checked
+  against that segment.
+- `specs/store.md`, `specs/output-contract.md` and the goldens describe
+  the new shapes.
+
+**S9 — Passes write segments; `session rebuild`.** Depends on S8.
+
+- With a fake `Models`, a pass sends the header, the open segment and the
+  sealed segments' headings only, never a sealed segment's text; writes
+  the header and the open segment; and opens each `new` segment at its
+  `starts_at`, sealing the one before. Message ranges, `from`, `to` and
+  `windows` follow [§5.5](#55-the-log-segments-and-sealing).
+- An answer whose segment text exceeds 900 characters, whose heading
+  exceeds 80, whose `starts_at` is outside the window or out of order, or
+  whose header breaks a budget gets one retry naming the refusal, then
+  fails the pass with `session_answer_invalid`, the record unchanged.
+- scribe seals the open segment after `[catalog] segment_windows` windows
+  (3) and at the final pass's last window; a sealed segment is
+  byte-identical on disk after every later pass.
+- `scribe session rebuild <id> --author <name> --confirm` replaces an
+  upgraded record with one built from its transcript (`origin: rebuild`),
+  keeping `id`, `created`, `links` and the activity fields; without
+  `--confirm` it refuses with `confirm_required` and changes nothing; a
+  session without a transcript is `transcript_missing`; an on-and-due
+  session is `session_busy`; an interrupted rebuild resumes from its
+  checkpoint and the record is untouched until the last window.
+
+**S10 — Active routes.** Depends on S8.
+
+- `scribe session deactivate <id> --author <name> --reason <text> [--cite
+  <ref>]` and `scribe session activate <id> --author <name> [--reason
+  <text>] [--pin|--unpin]` change `active` and `keep_active`, record
+  `active_change` with route `manual`, and write one audit line; a repeat
+  is `nothing changed` with no audit line; deactivating a pinned session
+  unpins it and says so.
+- `[sessions] inactive_after_days` (default 120) parses; zero or a
+  non-integer is `config_invalid`.
+- `scribe consistency scan` deactivates every active, unpinned session
+  whose last message is older than the limit (route `age`), and, with a
+  fake `Models`, a session whose removed-feature pair is labelled
+  `removed` with a verbatim quote (route `removed`, cite the later record);
+  a label whose quote fails is dropped and counted; pinned sessions are
+  never deactivated by the scan. The report lists `deactivated`.
+
+**S11 — CLI read surface.** Depends on S8.
+
+- `scribe record search "<terms>"` returns hits ranked as `ask` ranks
+  them, with no model call and no Orbit call, in table, plain and `--json`
+  (envelope key `hits`); `--kind`, `--project`, `--topic`, `--since`,
+  `--until`, `--include-hidden` and `--limit` narrow it; hidden entries
+  and inactive sessions appear only with `--include-hidden`.
+- `entry list` and `session list` take `--since`, `--until`, `--status`,
+  repeated `--topic` (all must match) and repeated `--related` (any may
+  match); `entry list` takes `--author` and `--author-kind`; `proposal
+  list` takes `--state`, `--since`, `--until`, `--entry` and
+  `--author-kind`. A bad date is a usage error.
+- Every command that takes an id accepts a unique prefix of at least four
+  characters; an exact id wins; an ambiguous prefix exits 2 with
+  `id_ambiguous` listing the candidates.
+
+**S12 — CLI write verbs with authors.** Depends on S8.
+
+- `entry add`, `entry update`, `entry retire`, `tag add`, `tag update`,
+  `proposal add`, `proposal update` and `proposal settle` exist as in
+  [§1.1](#11-the-cli-agent-surface); each requires `--author`, records
+  `{kind: agent, name}`, writes one audit line per change or refusal, and
+  prints the record it wrote.
+- The guard: changing a Daniel entry's content, retiring it, or settling
+  a proposal whose older entry is Daniel's is refused `daniel_only` and
+  changes nothing; opening a proposal against a Daniel entry works, and
+  `#scribe approve` settles it.
+- `tags.json` holds agent tags; `tag list` shows config and store tags
+  with a `source` column; a store tag clashing with a config name or alias
+  is refused `tag_conflict`; `tag update` of a config tag is
+  `tag_configured`; `#scribe … to <store tag>` files under it.
+- `ask` labels agent entries `agent note (<name>)` and weights them 1.0×;
+  with a fake `Models`, an agent entry is never cited as Daniel's words.
+
+**S13 — The skill and the tmux popup.** Depends on S11 and S12.
+
+- `plugin/claude-code/skills/scribe/SKILL.md` ships in the Claude Code
+  package and `claude plugin validate` accepts it; it teaches the commands
+  in [§1.1](#11-the-cli-agent-surface), when to `ask` instead, the
+  `--author` rule and the guard, and every command it names exists with
+  the flags it shows.
+- `plugin/tmux/scribe-tmux` lists sessions, entries, proposals and
+  transcripts in fzf with `show` as the preview, opens a record with
+  `--log` in the pager on Enter, copies the id on `ctrl-y`, and exits 1
+  with an install hint without `fzf`; the README documents the
+  `display-popup` binding.
+
+**S14 — Backfill by name.** Depends on S9.
+
+- `scribe transcript list --since <date>` lists uncataloged transcripts
+  with `project`, `project_mentions`, `started`, `ended`, `bytes`,
+  `daniel_turns` and `first_prompt`, at least `--min-turns` (20) of
+  Daniel's turns, attributed by `[projects.<slug>] paths`; it writes
+  nothing and works on a read-only root. `transcript show <id>` prints one
+  row with Daniel's first five turns.
+- `scribe session catalog <id> --author <name>` switches a never-switched
+  session on with `cataloged_by`, runs every window with no deadline,
+  marks it `final` and off when its transcript is a day old, and writes no
+  entries; a session with a record or a `/scribe on` switch is refused
+  `session_cataloged`; a failed catalog resumes on the next run.
+
 **Outside this repository.** Retiring orbit-office's scribe (its hooks,
 `office.scribe-*` tools and `/scribe` command) is orbit-office work, filed
 there once S4 is in use, so two scribes never intercept the same
-`/scribe` prompt.
+`/scribe` prompt. With S13, the constellation umbrella adds the `scribe`
+route under `.agents/skills/scribe/` for providers other than Claude Code,
+pointing at the same commands; that is a constellation change.
 
 ## Task References
 
@@ -1203,5 +1928,8 @@ there once S4 is in use, so two scribes never intercept the same
 - [ORB-21795] — S6: the consistency routine, the settling verbs, the
   `SessionStart` hook and the two routines.
 - [ORB-23849] — session links (`spawned_from`, `continues`), `session list --tree` and the linked-session pass context.
+- [ORB-23892] — designed S8–S14: the header-and-log session record, the
+  `active` flag, the CLI agent surface and skill, the tmux popup and
+  backfill by name.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.

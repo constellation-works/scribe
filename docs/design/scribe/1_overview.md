@@ -1,19 +1,19 @@
 ---
 title: scribe — Overview
 owner: claude
-last_updated: 2026-11-02
+last_updated: 2026-11-10
 last_validated: 2026-11-02
 status: Draft
 stage: building
-next: S7 discussions (no task filed)
+next: S8 store format 4 (session header and log, active flag, authors), then S9–S14; S7 discussions unfiled
 feature: scribe
 doc_role: overview
 type: design
-summary: A standalone Orbit plugin that keeps Daniel's explicitly marked preferences and decisions, catalogs the sessions he turns on, and answers agents' questions about him with verbatim citations.
+summary: A standalone Orbit plugin that keeps Daniel's explicitly marked preferences and decisions, catalogs the sessions he turns on or names (each a header over an append-only log), answers agents' questions about him with verbatim citations, and lets agents search and write through its CLI under one skill.
 tags: [scribe]
 paths: ["crates/**", "plugin/**"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21744, ORB-21404, ORB-23849]
+related_artifacts: [ORB-21747, ORB-21744, ORB-21404, ORB-23849, ORB-23892]
 ---
 
 # scribe — Overview
@@ -21,7 +21,8 @@ related_artifacts: [ORB-21747, ORB-21744, ORB-21404, ORB-23849]
 scribe is a small, standalone Orbit plugin. It records only what Daniel
 explicitly asks it to record, catalogs only the sessions he turns on, and
 lets any agent ask what Daniel said or decided, answering with verbatim
-citations. It replaces the scribe built inside orbit-office, without the
+citations. Agents on the Mac also search and write scribe through its CLI,
+taught by one skill; Daniel browses it in a tmux popup. It replaces the scribe built inside orbit-office, without the
 Library, to-dos or calendar around it.
 
 > The design ([2_design.md](./2_design.md),
@@ -65,6 +66,29 @@ Quoted verbatim; these are the requirements this design starts from.
   to keep selective discussions where we discussed something meaningful.
   and I can reference it later in chats. I want scribe to fill that gap."
 
+### Directions of 2026-11-10 ([ORB-23892])
+
+- "limiting each session to 2500 is insufficient for long sessions - e.g.
+  after writing first version of the session using all 2500 characters,
+  the next update must remove a part of the original. So over multiple
+  re-writes, the beginning session's context will get lost, defeating the
+  purpose."
+- "we should add \"isActive\" field to sessions so that scribe or based on
+  configurable duration limit can periodically deactivate stale sessions",
+  and "A feature that no longer exists (if it exists in session store)
+  should be deactivated."
+- "I don't want to keep having to manually search for specific session
+  id's to hand to agents; and I am not sure about adding another set of
+  MCP tools. so I think a single scribe skill that teaches terminal
+  commands will suffice."
+- "we need a very simple desktop UI or tmux UI for humans. perhaps tmux
+  will be better - having another desktop app will be cumbersome."
+- "we need to backfill some of important chat sessions on orbit and scribe
+  projects. not everything but certain long ones", then "we don't need to
+  go all the way back to aug. those will just add noise. the primary goal
+  is to understand the context of existing features, to provide continuity
+  ... month of oct will be a good starting point."
+
 ## 2. Shape
 
 | Part | Does | Model |
@@ -72,10 +96,16 @@ Quoted verbatim; these are the requirements this design starts from.
 | `#scribe <instruction>` | In a user-typed turn, in any session whether on or off, adds exactly one entry to the named tag. It quotes Daniel verbatim, cites the message, and echoes the tag, text and id. An unknown tag is refused with the configured list. A bare `#decision` captures nothing. | None, unless the instruction says "this"/"it": then Haiku picks the referenced message |
 | `/scribe on` | Catalogs that session into one session record (summary, goals, outcome, next), refreshed on cadence and at session end. Writes no tag entries. No backfill of other sessions. `/scribe on --from <id>` or `/scribe link <id>` links it to the session it was spawned from or continues ([§5.4](./2_design.md#54-session-links)); its pass reads that session's summary as context. | Haiku |
 | `ask` | The one MCP tool exposed to main agents. Retrieval is model-free (lexical ranking over entries, session records and Orbit tasks); a decision model answers only from the retrieved evidence, every quote is verbatim-checked, it says "no record" rather than infer, and reports conflicts instead of picking a side. | Decision model (Sonnet by default) |
-| Consistency routine | Flags contradictions and stale entries and proposes "B supersedes A" or "retire A". Daniel approves with `#scribe approve <id>`. A superseded entry stays on disk, is marked, and is hidden from answers by default. | Haiku, on model-free candidate pairs |
+| Consistency routine | Flags contradictions and stale entries and proposes "B supersedes A" or "retire A". Daniel approves with `#scribe approve <id>`. A superseded entry stays on disk, is marked, and is hidden from answers by default. From S10 it also deactivates sessions whose feature a later record says was removed, and sessions past a generous age limit unless pinned. | Haiku, on model-free candidate pairs |
+| CLI agent surface (S11–S13) | Agents on the Mac search (`scribe record search`, BM25), filter lists by date, status, topic and task, and add or update entries, tags and proposals with `--author`; one `scribe` skill teaches it. Agent writes are marked `author.kind: agent`, never quoted as Daniel's words, and never settle an entry Daniel wrote. | None |
+| tmux popup (S13) | `scribe-tmux` lists sessions, entries, proposals and backfill candidates in fzf with `show` as the preview. | None |
+| Backfill by name (S14) | `scribe transcript list --since 2026-10-01` lists long uncataloged sessions; Daniel picks and runs `scribe session catalog <id>`. | Haiku (the session pass) |
 
-Writes stay with the provider hooks (`#scribe`, `/scribe on`) and the
-plugin's own routines; main agents see only `ask`.
+Daniel's own entries and settlements come only from his typed `#scribe`
+turns. Agents see only `ask` over MCP; from S12 they also write through
+the CLI, each write recording its author. A session record becomes a
+rewritable header over an append-only log of segments (S8, S9), and a
+session can be inactive: hidden, not removed (S8, S10).
 
 ## 3. Core concepts
 
@@ -84,7 +114,12 @@ plugin's own routines; main agents see only `ask`.
 - **Entry** — one record in a tag: Daniel's instruction verbatim, the
   content it records (verbatim from his instruction or from the message it
   points at), and a citation of the message.
-- **Session record** — the one catalog record of a session Daniel turned on.
+- **Session record** — the one catalog record of a session Daniel turned on
+  or named: a header (title, summary, goals, next) over a log of segments.
+- **Segment** — one sealed or open stretch of a session record's log, cited
+  `session:<id>#<n>`.
+- **Author** — who wrote an entry or proposal: Daniel (`#scribe`), an agent
+  (the CLI) or scribe's routine.
 - **Proposal** — a consistency finding ("B supersedes A", "A is stale")
   waiting for Daniel's approval.
 - **Evidence** — what `ask` retrieved and handed to the decision model; an
@@ -116,6 +151,13 @@ can override.
 | Consistency routine | `crates/scribe-core/src/consistency.rs`, `commands/consistency.rs` | S6 |
 | Orbit plugin tree | `plugin/.orbit-plugin/` | S5 |
 | Claude Code hooks package | `plugin/claude-code/` | S2 |
+| Store format 4: session header and log, `active`, authors, tags store | `crates/scribe-core/src/{session,record,activity,tag}.rs`, `store/` | S8 |
+| Segment-writing passes, `session rebuild` | `crates/scribe-core/src/pass.rs`, `commands/session/rebuild.rs` | S9 |
+| Deactivation routes | `crates/scribe-core/src/{activity,consistency}.rs`, `commands/session/activate.rs` | S10 |
+| `record search`, list filters, id prefixes | `crates/scribe-core/src/search.rs`, `commands/record.rs` | S11 |
+| Agent write verbs and the author guard | `commands/{entry,tag,proposal}.rs` | S12 |
+| The `scribe` skill, the tmux popup | `plugin/claude-code/skills/scribe/`, `plugin/tmux/` | S13 |
+| `session catalog`, `transcript list/show` | `commands/session/catalog.rs`, `commands/transcript.rs` | S14 |
 
 ## Task References
 
@@ -123,5 +165,7 @@ can override.
 - [ORB-21744] — the orbit-office scribe redesign this plugin supersedes (archived).
 - [ORB-21404] — the on-call task the scribe redesign was spawned from.
 - [ORB-23849] — session links between session records.
+- [ORB-23892] — designed S8–S14: session header and log, the `active`
+  flag, the CLI agent surface and skill, the tmux popup, backfill by name.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
