@@ -43,6 +43,7 @@
   "keep_active": false,
   "active_change": null,
   "cataloged_by": null,
+  "rebuilt_by": null,
   "log": [
     {
       "n": 2,

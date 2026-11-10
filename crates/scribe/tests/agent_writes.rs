@@ -590,3 +590,96 @@ fn corrupt_entries_still_count_when_resolving_prefixes() {
     let unchanged = json(&fx.ok(&["entry", "show", "decisions-1", "--json"]).stdout);
     assert_eq!(unchanged["content"], "one");
 }
+
+#[test]
+fn refused_writes_audit_the_target_and_author_but_never_the_arguments() {
+    let fx = Fixture::new();
+    fx.seed();
+    let config = fx.root().join("config.toml");
+    let text = std::fs::read_to_string(&config)
+        .unwrap()
+        .replace("env = [\"GITHUB_TOKEN\"]", "env = []");
+    std::fs::write(config, text).unwrap();
+    let proposal = json(
+        &fx.ok(&[
+            "proposal",
+            "add",
+            "--kind",
+            "stale",
+            "--older",
+            "decisions-2",
+            "--reason",
+            "review needed",
+            "--author",
+            "opus",
+            "--json",
+        ])
+        .stdout,
+    );
+    let proposal_id = proposal["id"].as_str().unwrap().to_owned();
+    // Each refusal names the record it was aimed at: the resolved target id and
+    // the agent's own --author name, never the content, reason or other arguments.
+    let refusals: [(Vec<&str>, &str, &str); 3] = [
+        (
+            vec![
+                "entry",
+                "update",
+                "decisions-2",
+                "--author",
+                "opus",
+                "--content",
+                "rewritten secret text",
+                "--json",
+            ],
+            "entry update",
+            "decisions-2",
+        ),
+        (
+            vec![
+                "entry",
+                "retire",
+                "decisions-2",
+                "--author",
+                "opus",
+                "--reason",
+                "obsolete reason text",
+                "--json",
+            ],
+            "entry retire",
+            "decisions-2",
+        ),
+        (
+            vec![
+                "proposal",
+                "settle",
+                proposal_id.as_str(),
+                "--approve",
+                "--author",
+                "opus",
+                "--json",
+            ],
+            "proposal settle",
+            proposal_id.as_str(),
+        ),
+    ];
+    for (args, _, _) in &refusals {
+        let out = fx.run(args);
+        assert_eq!(json(&out.stderr)["code"], "daniel_only");
+    }
+    let audit = std::fs::read_to_string(fx.root().join("audit.jsonl")).unwrap();
+    let lines: Vec<serde_json::Value> = audit
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let refused = &lines[lines.len() - refusals.len()..];
+    for (line, (_, command, target)) in refused.iter().zip(&refusals) {
+        assert_eq!(line["command"], *command);
+        assert_eq!(line["status"], "failure");
+        assert_eq!(line["error_code"], "daniel_only");
+        assert_eq!(line["target"], *target);
+        assert_eq!(line["author"], "opus");
+    }
+    assert!(!audit.contains("rewritten secret text"));
+    assert!(!audit.contains("obsolete reason text"));
+    assert!(!audit.contains("review needed"));
+}

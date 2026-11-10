@@ -19,7 +19,7 @@ pub(in crate::commands) mod rebuild;
 
 use super::{DateArgs, ListNotice, list_output};
 use crate::app::Context;
-use crate::audit_middleware::AuditMeta;
+use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{Kin, Output, Record, Records, SessionPayload, TreeRow};
 use clap::{Args, Subcommand};
@@ -175,6 +175,35 @@ fn parse_session_ref(raw: &str) -> Result<SessionRef, String> {
 }
 
 impl SessionCommand {
+    /// The session and agent a write verb names, resolved before it runs, so
+    /// a refusal is attributable. `list`, `show` and `pass` name none here: a
+    /// pass's lines come from its outcomes.
+    pub(super) fn subject(&self, ctx: &Context) -> AuditSubject {
+        match self {
+            Self::List(_) | Self::Show(_) | Self::Pass(_) => AuditSubject::default(),
+            // A prefix is resolved before the line is written; a miss keeps the typed id.
+            Self::Rebuild(args) => AuditSubject {
+                target: Some(format!(
+                    "session:{}",
+                    ctx.store()
+                        .resolve_session(&args.id)
+                        .unwrap_or_else(|_| args.id.clone())
+                )),
+                author: Some(args.author.as_str().to_owned()),
+            },
+            Self::Catalog(args) => AuditSubject {
+                target: Some(format!(
+                    "session:{}",
+                    crate::commands::transcript::resolve_transcript(ctx, &args.id)
+                        .unwrap_or_else(|_| args.id.clone())
+                )),
+                author: Some(args.author.as_str().to_owned()),
+            },
+            Self::Deactivate(args) => activity::subject(ctx, &args.id, &args.author),
+            Self::Activate(args) => activity::subject(ctx, &args.id, &args.author),
+        }
+    }
+
     /// The audit entry for this verb: `None` for `list` and `show`, which
     /// read (STD-01 R31); `pass` writes records and `control.json`;
     /// `deactivate` and `activate` write one record.

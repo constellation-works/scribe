@@ -39,7 +39,8 @@
       "active": true,
       "keep_active": false,
       "active_change": null,
-      "cataloged_by": null
+      "cataloged_by": null,
+      "rebuilt_by": null
     },
     {
       "id": "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02",
@@ -85,7 +86,8 @@
       "active": true,
       "keep_active": false,
       "active_change": null,
-      "cataloged_by": null
+      "cataloged_by": null,
+      "rebuilt_by": null
     }
   ],
   "total": 2,

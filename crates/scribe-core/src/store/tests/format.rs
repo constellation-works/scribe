@@ -265,12 +265,32 @@ fn encoded_control_reads_back_as_the_same_state() {
     assert_eq!(value["sessions"]["s-1"]["final"], false);
 }
 
+#[test]
+fn a_format_five_control_and_proposals_document_reads_at_its_own_shape() {
+    // Format 5 -> 6 changed neither document, so a format-5 file is checked
+    // against the current shape, not the frozen format-3 one it used to fall to.
+    let control = br#"{"format":5,"sessions":{"s-1":{"on":false,"since":null,"due":false,"final":false,"consecutive_failures":0,"retry_after":null,"pending_links":[],"cataloged_by":null}}}"#;
+    let state = decode_control(Path::new("control.json"), control).unwrap();
+    assert_eq!(state.sessions.len(), 1);
+    let proposals = br#"{"format":5,"proposals":[]}"#;
+    assert!(
+        decode_proposals(Path::new("proposals.json"), proposals)
+            .unwrap()
+            .is_empty()
+    );
+    // Strictness holds at format 5: an unknown key is still refused.
+    let stray = br#"{"format":5,"sessions":{},"stray":1}"#;
+    assert!(decode_control(Path::new("control.json"), stray).is_err());
+    let stray = br#"{"format":5,"proposals":[],"stray":1}"#;
+    assert!(decode_proposals(Path::new("proposals.json"), stray).is_err());
+}
+
 /// A format-4 session record for `s-1` whose `log` metadata is `log` (YAML
 /// list items) and whose body is `body`.
 fn session_v4(log: &str, body: &str) -> String {
     session_text(
         &format!(
-            "links: []\nactive: true\nkeep_active: false\nactive_change: null\ncataloged_by: null\nlog:\n{log}"
+            "links: []\nactive: true\nkeep_active: false\nactive_change: null\ncataloged_by: null\nrebuilt_by: null\nlog:\n{log}"
         ),
         body,
     )
@@ -332,6 +352,7 @@ fn a_legacy_session_record_reads_as_a_header_over_one_sealed_upgrade_segment() {
         "keep_active",
         "active_change",
         "cataloged_by",
+        "rebuilt_by",
         "log",
     ] {
         let missing: String = two_segments()
@@ -408,6 +429,7 @@ fn the_activity_and_author_fields_round_trip() {
         cite: Some(String::from("session:s-0#2")),
     });
     original.cataloged_by = Some(crate::activity::CatalogedBy { at, by: daniel });
+    original.rebuilt_by = Some(crate::record::Author::agent("opus".parse().unwrap()));
     let bytes = crate::store::format::encode_session(Path::new(SESSION), &original).unwrap();
     let text = String::from_utf8(bytes).unwrap();
     assert!(
@@ -424,6 +446,17 @@ fn the_activity_and_author_fields_round_trip() {
     assert_eq!(back, e);
     assert_eq!(back.author.to_string(), "daniel:daniel");
     assert_eq!(back.updated_by.unwrap().to_string(), "scribe:consistency");
+}
+
+#[test]
+fn a_format_five_session_record_reads_with_no_rebuilder() {
+    // Format 5 -> 6 adds `rebuilt_by`; a record no rebuild wrote reads as null.
+    let text = two_segments()
+        .replacen("format: 6", "format: 5", 1)
+        .replacen("rebuilt_by: null\n", "", 1);
+    let r = session(&text).unwrap();
+    assert_eq!(r.rebuilt_by, None);
+    assert_eq!(r.log.len(), 2);
 }
 
 #[test]

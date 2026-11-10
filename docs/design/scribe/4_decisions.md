@@ -1973,6 +1973,29 @@ project a session was about.
 - Cost: the attribution is a heuristic that a session touching many repos
   can fool; each catalog is a full model run over a long transcript.
 
+## Audit lines name the agent and the resolved target; rebuilds persist their author
+
+**Recorded:** 2026-11-10 · **Implementation decision** (ORB-24003, against
+STD-05@1 §R2)
+
+A `session rebuild` replaces a record's header and log, so its audit line,
+which named only `session:<id>`, could not say who replaced them. A refused
+write named neither its record nor its `--author`, so a `daniel_only`
+refusal was not attributable. Store format 6 adds the nullable `rebuilt_by`
+header field, `{kind, name}`: the rebuild that writes the record sets it, a
+pass carries it forward, and the upgrade step writes `null`. Audit format 2
+adds `author`, the `--author` name of a command that takes one, on success
+and on refusal. It has its own field because STD-05 R2 keeps a self-reported
+identity apart from the arguments, which the line still never carries.
+The target of an entry, proposal or session write is resolved before the
+command runs, so a refusal names the id it aimed at. An id that does not
+resolve leaves `target` `null` rather than echoing what was typed. A format-1
+line still reads, with no author.
+
+The author stays a self-report. The audit line is an accident guard, not an
+OS security boundary (STD-05@1 §R5, as the S12 decision records). `session
+show` prints `rebuilt_by` only in `--json`.
+
 ## Task References
 
 - [ORB-21747] — designed the standalone scribe plugin and recorded its decisions.
@@ -1988,6 +2011,8 @@ project a session was about.
 - [ORB-23849] — session links (`spawned_from`, `continues`) between session records.
 - [ORB-23892] — session records with a log, the `active` flag, the CLI agent
   surface and skill, the tmux popup and backfill by name (designed).
+- [ORB-24003] — `rebuilt_by` on session records (format 6) and the author and
+  resolved target on audit lines, including refusals (audit format 2).
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
 

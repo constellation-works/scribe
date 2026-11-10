@@ -2,7 +2,7 @@
 
 use super::{DateArgs, ListNotice, list_output};
 use crate::app::Context;
-use crate::audit_middleware::AuditMeta;
+use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{Output, ProposalPayload, Record, Records};
 use clap::{Args, Subcommand};
@@ -84,6 +84,26 @@ pub(crate) enum AuthorKindArg {
 }
 
 impl ProposalCommand {
+    /// The proposal and agent a write verb names, resolved before it runs, so
+    /// a refusal is attributable. `add` names its target only in its output.
+    pub(super) fn subject(&self, ctx: &Context) -> AuditSubject {
+        match self {
+            Self::List(_) => AuditSubject::default(),
+            Self::Add(args) => AuditSubject {
+                target: None,
+                author: Some(args.author.as_str().to_owned()),
+            },
+            Self::Update(args) => AuditSubject {
+                target: resolved_proposal(ctx, &args.id),
+                author: Some(args.author.as_str().to_owned()),
+            },
+            Self::Settle(args) => AuditSubject {
+                target: resolved_proposal(ctx, &args.id),
+                author: Some(args.author.as_str().to_owned()),
+            },
+        }
+    }
+
     /// Audit every write; listings remain read-only.
     pub(super) fn audit(&self) -> Option<AuditMeta> {
         match self {
@@ -99,6 +119,14 @@ impl ProposalCommand {
             }),
         }
     }
+}
+
+/// The id of the proposal `input` resolves to, or `None` when it does not.
+fn resolved_proposal(ctx: &Context, input: &str) -> Option<String> {
+    ctx.store()
+        .resolve_proposal(input)
+        .ok()
+        .map(|proposal| proposal.id.to_string())
 }
 
 /// Run one `proposal` verb.

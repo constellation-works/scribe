@@ -1,6 +1,6 @@
 ---
 type: design
-summary: "Spec: store — layout, record files with YAML frontmatter (format 5: agent provenance and write metadata; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
+summary: "Spec: store — layout, record files with YAML frontmatter (format 6: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
 last_validated: 2026-11-10
 ---
 
@@ -10,7 +10,8 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-The code writes format 5 since S12 and reads formats 1–5. S12 is built;
+The code writes format 6 and reads formats 1–6. Format 6 adds the session
+`rebuilt_by` field (ORB-24003); S12 is built;
 other future-slice markers describe work outside this slice.
 
 ## Why This Exists
@@ -94,7 +95,9 @@ span of his turn that does so, and that message's uuid), `provider`, `host`, `cr
 `active_change` (`null` or `{at, by, route, reason, cite}`: `by` an author
 of any kind, `route` `age`, `removed` or `manual`, `reason` at most 300
 characters, `cite` a reference or `null`), `cataloged_by` (`null` or `{at,
-by}`) and `log`, a list of segments `{n, heading, first_message,
+by}`), `rebuilt_by` (`null` or `{kind, name}`: the agent whose `--author` ran
+the `session rebuild` that wrote the record; from format 6) and `log`, a list
+of segments `{n, heading, first_message,
 last_message, from, to, state, windows, origin, topics, related}`: `n`
 counts from 1 without gaps; `heading` at most 80 characters with no line
 break; `first_message` and `last_message` message ids, `null` only when
@@ -312,6 +315,13 @@ config tag claims is dropped with a warning naming both.
   place an upgraded segment may exceed 900 characters. The first write of
   an upgraded document now persists it at format 5; a build older than S8
   refuses format 4 (`store_too_new`).
+- **Format 6**. The format-5-to-6 step adds `rebuilt_by: null` to each session
+  record. A rebuild sets it to its `--author` as it finishes (`finish_rebuild`
+  writes the record it is given); a pass carries it forward unchanged, so it
+  names the rebuild that wrote the record now on disk. Checkpoints are not
+  visible and carry none. An older build refuses format 6 (`store_too_new`).
+  `control.json` and `proposals.json` change no shape at format 6; a format-5
+  file of either is checked against its current shape, as format 4 is.
 - **The log is append-only** (S9). Every session write except `session
   rebuild` compares each sealed segment it writes with the one on disk;
   any difference in metadata or text refuses the write
@@ -330,7 +340,7 @@ config tag claims is dropped with a warning naming both.
   remains after release; ordinary reads skip it. A changed visible revision
   causes rebuild to read the transcript again and fold in newer messages
   before retrying replacement. A successful replacement removes its
-  checkpoint. Identity, creation time, links and activity/catalog fields
+  checkpoint. It records `rebuilt_by` (format 6) with the `--author` that ran it. Identity, creation time, links and activity/catalog fields
   come from the latest visible record; the control switch stays unchanged.
   `--confirm` is mandatory, missing transcripts refuse `transcript_missing`,
   and on-and-due sessions refuse `session_busy`. Sealed segments are checked
@@ -402,9 +412,13 @@ config tag claims is dropped with a warning naming both.
   (`redact_env_unset`) before anything is stored; already-stored records
   are not rewritten.
 - **Audit.** Lines are appended in one write under `.lock` and `fsync`ed;
-  never rewritten. A line is `{"format": 1, "at", "command", "status",
-  "target", "error_code", "duration_ms"}`: ids and codes, no argument values
-  or error text. A line that cannot be written is a warning and never
+  never rewritten. A line is `{"format": 2, "at", "command", "status",
+  "target", "error_code", "author", "duration_ms"}`: ids and codes, no argument
+  values or error text. `target` is the resolved id of the record a write names,
+  on refusal as well as success (`null` when it does not resolve). `author` is
+  the `--author` name of a command that takes one, on every line it writes
+  (STD-05 R2: a self-reported identity, kept in its own field); `null`
+  otherwise. A format-1 line, with no `author`, still reads. A line that cannot be written is a warning and never
   changes the command's result.
 
 ## Known gaps

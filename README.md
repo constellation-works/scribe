@@ -74,7 +74,7 @@ content, retire his entries or settle proposals about them. Daniel still
 settles those through `#scribe`. Agent notes have no typed-turn citation;
 `ask` labels them `agent note (<name>)`. Repeating an unchanged write prints
 the unchanged record with `nothing changed` on stderr and no audit event.
-The store now writes format 5 and reads older formats without rewriting them.
+The store now writes format 6 and reads older formats without rewriting them.
 Passes rewrite the header and open segment and append new
 segments; sealed segments stay unchanged. `[catalog] segment_windows`
 (default 3) bounds each segment's rewrites. Rebuild replaces a record from
@@ -102,8 +102,8 @@ link this session to the one it was spawned from (or continues), refusing
 an unknown id, a self-link or a cycle. Claude Code's hook input and
 transcripts name no parent session, so links are only ever typed. No hook calls a
 model except for a `#scribe add this` line; the pass does. Each
-write and refusal leaves one line in `audit.jsonl` with ids and error codes
-only. Install it from this checkout after `make install`:
+write and refusal leaves one line in `audit.jsonl` with ids, the `--author`
+name and error codes only. Install it from this checkout after `make install`:
 
 ```sh
 claude plugin install scribe --marketplace ./plugin

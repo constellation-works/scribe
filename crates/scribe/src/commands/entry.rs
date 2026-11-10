@@ -2,7 +2,7 @@
 
 use super::{DateArgs, ListNotice, list_output};
 use crate::app::Context;
-use crate::audit_middleware::AuditMeta;
+use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{EntryPayload, Output, Record, Records};
 use clap::builder::{PossibleValuesParser, TypedValueParser};
@@ -129,6 +129,26 @@ fn status_parser() -> impl TypedValueParser<Value = EntryStatus> {
 }
 
 impl EntryCommand {
+    /// The entry and agent a write verb names, resolved before it runs, so a
+    /// refusal is attributable. `add` names its target only in its output.
+    pub(super) fn subject(&self, ctx: &Context) -> AuditSubject {
+        match self {
+            Self::List(_) | Self::Show(_) => AuditSubject::default(),
+            Self::Add(args) => AuditSubject {
+                target: None,
+                author: Some(args.author.as_str().to_owned()),
+            },
+            Self::Update(args) => AuditSubject {
+                target: resolved_entry(ctx, &args.id),
+                author: Some(args.author.as_str().to_owned()),
+            },
+            Self::Retire(args) => AuditSubject {
+                target: resolved_entry(ctx, &args.id),
+                author: Some(args.author.as_str().to_owned()),
+            },
+        }
+    }
+
     /// Audit every write; list and show remain read-only.
     /// See [`super::Command::audit`].
     pub(super) fn audit(&self) -> Option<AuditMeta> {
@@ -145,6 +165,14 @@ impl EntryCommand {
             }),
         }
     }
+}
+
+/// The id of the entry `input` resolves to, or `None` when it does not.
+fn resolved_entry(ctx: &Context, input: &str) -> Option<String> {
+    ctx.store()
+        .resolve_entry(input)
+        .ok()
+        .map(|entry| entry.id.to_string())
 }
 
 /// Run one `entry` verb.

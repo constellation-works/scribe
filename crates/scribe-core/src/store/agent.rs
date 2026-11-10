@@ -36,6 +36,15 @@ fn required_reason(reason: &str) -> Result<()> {
 }
 
 impl Store {
+    /// Resolve an exact proposal id or a unique prefix of at least four
+    /// characters, as the write verbs do, without locking or writing.
+    pub fn resolve_proposal(&self, input: &str) -> Result<Proposal> {
+        let proposals = self.proposals()?;
+        let ids: Vec<String> = proposals.iter().map(|p| p.id.to_string()).collect();
+        let i = resolve(input, &ids, WriteRefusal::ProposalNotFound)?;
+        Ok(proposals[i].clone())
+    }
+
     /// Resolve an exact entry id or a unique prefix of at least four characters.
     pub fn resolve_entry(&self, input: &str) -> Result<Entry> {
         let exact = input.parse::<EntryId>().ok();

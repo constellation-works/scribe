@@ -21,7 +21,7 @@ mod tag;
 mod transcript;
 
 use crate::app::Context;
-use crate::audit_middleware::{AuditGuard, AuditMeta};
+use crate::audit_middleware::{AuditGuard, AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{Output, Records, WarningPayload};
 use clap::{Args, Subcommand};
@@ -74,6 +74,23 @@ pub(crate) enum Command {
 }
 
 impl Command {
+    /// The record and agent a write names, resolved before it runs, so a
+    /// refusal is attributable too. Exhaustive like [`Command::audit`].
+    pub(crate) fn subject(&self, ctx: &Context) -> AuditSubject {
+        match self {
+            Self::Entry(command) => command.subject(ctx),
+            Self::Session(command) => command.subject(ctx),
+            Self::Proposal(command) => command.subject(ctx),
+            Self::Transcript(_)
+            | Self::Record(_)
+            | Self::Consistency(_)
+            | Self::Tag(_)
+            | Self::Hook(_)
+            | Self::Question(_)
+            | Self::Plugin(_) => AuditSubject::default(),
+        }
+    }
+
     /// What the audit log records for this command, or `None` when it is not
     /// audited. Only commands that change durable state are: a read-only
     /// command must not write, not even an audit line (STD-01 R31). The
@@ -103,9 +120,9 @@ pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
     let mut audit = command
         .audit()
         .map(|meta| AuditGuard::start(ctx.store(), meta, ctx.now()));
-    let named_target = session_target(&command, ctx);
-    if let (Some(audit), Some(target)) = (audit.as_mut(), named_target.as_deref()) {
-        audit.set_target(target);
+    let subject = command.subject(ctx);
+    if let Some(audit) = audit.as_mut() {
+        subject.apply(audit);
     }
     let result = match command {
         Command::Entry(command) => entry::run(command, ctx),
@@ -121,34 +138,9 @@ pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
     };
     if let Some(audit) = audit.as_mut() {
         audit.mark_result(&result);
-        if let Some(target) = named_target.as_deref() {
-            audit.set_target(target);
-        }
+        subject.apply(audit);
     }
     result
-}
-
-/// The audit target for a session verb that names one session. A prefix is
-/// resolved before the line is written; a miss keeps the typed id.
-fn session_target(command: &Command, ctx: &Context) -> Option<String> {
-    let Command::Session(session) = command else {
-        return None;
-    };
-    let id = match session {
-        SessionCommand::Rebuild(args) => ctx
-            .store()
-            .resolve_session(&args.id)
-            .unwrap_or_else(|_| args.id.clone()),
-        SessionCommand::Catalog(args) => {
-            transcript::resolve_transcript(ctx, &args.id).unwrap_or_else(|_| args.id.clone())
-        }
-        SessionCommand::List(_)
-        | SessionCommand::Show(_)
-        | SessionCommand::Pass(_)
-        | SessionCommand::Deactivate(_)
-        | SessionCommand::Activate(_) => return None,
-    };
-    Some(format!("session:{id}"))
 }
 
 /// How much one run of a routine command may do: at most `max` units

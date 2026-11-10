@@ -797,6 +797,7 @@ pub fn record(
         keep_active: previous.is_some_and(|p| p.keep_active),
         active_change: previous.and_then(|p| p.active_change.clone()),
         cataloged_by: previous.and_then(|p| p.cataloged_by.clone()),
+        rebuilt_by: previous.and_then(|p| p.rebuilt_by.clone()),
         project: previous.map_or(meta.project, |p| p.project.clone()),
         topics: distilled.topics,
         related: distilled.related,
