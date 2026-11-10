@@ -40,29 +40,17 @@ pub(crate) enum CliError {
         "session {0} is not switched on, so it is never passed; /scribe on in that session switches it on"
     )]
     SessionNotOn(scribe_core::SessionId),
-    /// A session pass ran, and at least one pass in it failed: `(session,
-    /// code)` for each. The report is printed first.
-    #[error(
-        "{} session pass(es) failed: {}; each stays due with retry backoff; use 'scribe session pass --session <id>' to retry now",
-        .0.len(),
-        failed_list(.0)
-    )]
-    PassFailed(Vec<(String, &'static str)>),
+    /// A session pass ran and at least one pass failed. The report is printed
+    /// first; its redacted reasons are included here for the routine's root
+    /// cause.
+    #[error("{0}")]
+    PassFailed(String),
     /// A model call failed (`question ask`).
     #[error(transparent)]
     Model(#[from] scribe_core::models::ModelError),
     /// Writing the result to stdout failed for a reason other than a closed pipe.
     #[error("cannot write output")]
     Output(#[source] io::Error),
-}
-
-/// `<id> <code>` for each failed pass, comma-separated.
-fn failed_list(failed: &[(String, &'static str)]) -> String {
-    failed
-        .iter()
-        .map(|(id, code)| format!("{id} {code}"))
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 impl CliError {

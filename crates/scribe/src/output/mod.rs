@@ -64,7 +64,8 @@ pub(crate) fn init_logging() {
 
 /// Render a command's outcome and return the process exit code. A session
 /// pass report with a failed pass is printed, then reported as an error
-/// naming each failed session and its code (exit 1, STD-01 R20).
+/// naming each failed session, its code and its redacted reason (exit 1,
+/// STD-01 R20).
 pub(crate) fn finish(sink: &Sink, outcome: Result<Output, CliError>) -> ExitCode {
     let result = outcome.and_then(|output| {
         emit(sink, &output).map_err(CliError::Output)?;

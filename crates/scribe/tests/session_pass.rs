@@ -664,10 +664,26 @@ fn a_failed_pass_stays_due_exits_1_naming_it_and_the_next_run_retries_it() {
     let report: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(report["passes"][0]["error_code"], "model_failed");
     assert_eq!(report["passes"][0]["gave_up"], false);
+    let reason = report["passes"][0]["error"].as_str().unwrap();
+    assert!(reason.contains("model failed"), "{reason}");
+    assert!(reason.chars().count() <= 300, "{reason}");
     // The model's failure is logged first; the error object is the last line.
     let stderr = text(&out.stderr);
     let error: Value = serde_json::from_str(stderr.lines().last().unwrap()).unwrap();
     assert_eq!(error["code"], "session_pass_failed", "{stderr}");
+    assert!(
+        error["error"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("{ON} model_failed: {reason}")),
+        "{}",
+        error["error"]
+    );
+    let audit = std::fs::read_to_string(setup.fx.root().join("audit.jsonl")).unwrap();
+    assert!(
+        !audit.contains(reason),
+        "audit exposed the failure reason: {audit}"
+    );
 
     // No claude at all (model_unavailable) is no different.
     std::fs::remove_file(setup.fx.elsewhere("bin/claude")).unwrap();
@@ -681,8 +697,48 @@ fn a_failed_pass_stays_due_exits_1_naming_it_and_the_next_run_retries_it() {
     let out = setup.run(&["session", "pass", "--session", ON, "--json"], b"");
     let report: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(report["passes"][0]["result"], "written");
+    assert!(report["passes"][0].get("error").is_none());
     assert!(setup.record(ON).is_some());
     assert_eq!(setup.control()["due"], false);
+}
+
+#[test]
+fn a_failed_pass_redacts_the_model_reason_in_json_and_the_aggregate_error() {
+    const SECRET: &str = "pass-error-secret-value-123";
+    const SECRET_NAME: &str = "SCRIBE_PASS_ERROR_SECRET";
+    let setup = Setup::new();
+    setup.config(&format!("[redact]\nenv = [\"{SECRET_NAME}\"]\n"));
+    setup.scribe("/scribe on");
+    let script =
+        format!("#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' 'model error: {SECRET}' >&2\nexit 3\n");
+    setup.fx.fake_program("claude", &script);
+    let mut command = setup
+        .fx
+        .cmd(&["session", "pass", "--session", ON, "--json"]);
+    command.env("PATH", &setup.path).env(SECRET_NAME, SECRET);
+
+    let out = setup.run_with(command, b"");
+
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let reason = report["passes"][0]["error"].as_str().unwrap();
+    assert!(
+        reason.contains("[redacted:SCRIBE_PASS_ERROR_SECRET]"),
+        "{reason}"
+    );
+    assert!(!reason.contains(SECRET), "{reason}");
+    assert!(reason.chars().count() <= 300, "{reason}");
+    let stderr = text(&out.stderr);
+    let error: Value = serde_json::from_str(stderr.lines().last().unwrap()).unwrap();
+    assert_eq!(error["code"], "session_pass_failed", "{stderr}");
+    assert!(
+        error["error"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("{ON} model_failed: {reason}")),
+        "{}",
+        error["error"]
+    );
 }
 
 #[test]
@@ -762,7 +818,10 @@ fn the_plugin_tool_answers_session_pass_failed_and_keeps_the_session_due() {
     assert_eq!(reply["error"]["code"], "session_pass_failed", "{reply}");
     assert_eq!(reply["error"]["retryable"], false, "{reply}");
     let message = reply["error"]["message"].as_str().unwrap();
-    assert!(message.contains(&format!("{ON} model_failed")), "{message}");
+    assert!(
+        message.contains(&format!("{ON} model_failed: the model failed")),
+        "{message}"
+    );
     assert_eq!(setup.control()["due"], true);
 
     setup.answer(&answer());

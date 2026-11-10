@@ -10,7 +10,10 @@
 
 mod support;
 
+use serde_json::json;
+use std::io::Write;
 use std::path::PathBuf;
+use std::process::{Output, Stdio};
 use support::{Fixture, text};
 
 const HELP: &[(&str, &[&str])] = &[
@@ -173,4 +176,91 @@ fn output_matches_goldens() {
         }
     }
     report(&failures);
+}
+
+#[test]
+fn failed_session_pass_matches_golden() {
+    const SESSION: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f";
+    let fx = Fixture::new();
+    let project = fx.home().join(".claude/projects/-work-scribe");
+    std::fs::create_dir_all(&project).unwrap();
+    let transcript = project.join(format!("{SESSION}.jsonl"));
+    std::fs::write(
+        &transcript,
+        format!(
+            "{}\n",
+            json!({
+                "type": "user",
+                "uuid": "u-1",
+                "timestamp": "2026-11-03T06:00:00Z",
+                "cwd": "/work/scribe",
+                "message": {"role": "user", "content": "Keep this session pass deterministic."}
+            })
+        ),
+    )
+    .unwrap();
+    let hook = json!({
+        "session_id": SESSION,
+        "transcript_path": transcript,
+        "cwd": "/work/scribe",
+        "permission_mode": "default",
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "/scribe on"
+    });
+    let switched = run_with_input(
+        &fx,
+        &["hook", "user-prompt-submit"],
+        hook.to_string().as_bytes(),
+        None,
+    );
+    assert_eq!(
+        switched.status.code(),
+        Some(0),
+        "{}",
+        text(&switched.stderr)
+    );
+
+    let path = fx.fake_program(
+        "claude",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"result\",\"is_error\":true,\"result\":\"golden model refusal\"}'\n",
+    );
+    let out = run_with_input(
+        &fx,
+        &["session", "pass", "--session", SESSION, "--json"],
+        b"",
+        Some(&path),
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    let failures: Vec<String> = check("output/session-pass-failed.json", &text(&out.stdout))
+        .into_iter()
+        .collect();
+    report(&failures);
+}
+
+/// Run the built binary with optional `PATH` and a JSON payload on stdin.
+fn run_with_input(
+    fx: &Fixture,
+    args: &[&str],
+    input: &[u8],
+    path: Option<&std::ffi::OsStr>,
+) -> Output {
+    let mut command = fx.cmd(args);
+    if let Some(path) = path {
+        command.env("PATH", path);
+    }
+    let child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut guard = support::ChildGuard::new(child);
+    guard
+        .child()
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input)
+        .unwrap();
+    guard.finish()
 }
