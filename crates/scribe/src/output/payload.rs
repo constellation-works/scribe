@@ -756,6 +756,17 @@ pub(crate) struct BatchFailure {
     pub(crate) error_code: &'static str,
 }
 
+/// A session whose automatic deactivation failed after the scan found it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct DeactivationFailure {
+    /// The session id.
+    pub(crate) session: String,
+    /// `age` or `removed`.
+    pub(crate) route: &'static str,
+    /// The stable storage error code.
+    pub(crate) error_code: &'static str,
+}
+
 /// What `consistency scan` did; `--json` and the `scribe.consistency-scan`
 /// tool print it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -780,6 +791,9 @@ pub(crate) struct ScanReport {
     pub(crate) failed_batches: Vec<BatchFailure>,
     /// Sessions this scan deactivated (S10), by route.
     pub(crate) deactivated: Vec<DeactivatedPayload>,
+    /// Sessions the scan could not deactivate; other sessions are still
+    /// processed.
+    pub(crate) failed_deactivations: Vec<DeactivationFailure>,
     /// Removed-feature pairs the model labelled.
     pub(crate) removal_pairs_judged: usize,
     /// Removed-feature pairs past the cap of 20 or not reached in this

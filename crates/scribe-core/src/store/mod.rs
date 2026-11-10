@@ -420,14 +420,14 @@ impl Store {
     /// Apply the routine's deactivations under one store lock, each
     /// checked again against the record on disk (a session pinned or
     /// already deactivated since the scan read it is left alone). A
-    /// session with no record, or whose record does not parse, is skipped.
-    /// Returns what each request did, in order.
+    /// missing or unreadable record fails only its own request; the other
+    /// requests continue. Returns each outcome in request order.
     pub fn set_active_many(
         &self,
         requests: &[(SessionId, SetActive)],
         now: time::OffsetDateTime,
         redactor: &Redactor,
-    ) -> Result<Vec<ActiveOutcome>> {
+    ) -> Result<Vec<Result<ActiveOutcome>>> {
         if requests.is_empty() {
             return Ok(Vec::new());
         }
@@ -437,18 +437,20 @@ impl Store {
         let mut out = Vec::with_capacity(requests.len());
         for (id, request) in requests {
             let Some(file) = files.iter().find(|f| f.stem == id.as_str()) else {
-                out.push(ActiveOutcome::Unchanged);
+                out.push(Err(Error::SessionNotFound {
+                    id: id.clone(),
+                    path: self.root.join(SESSIONS_DIR),
+                }));
                 continue;
             };
             let mut record = match file.load() {
                 Ok(record) => record,
-                Err(Error::Corrupt { .. }) => {
-                    out.push(ActiveOutcome::Unchanged);
+                Err(error) => {
+                    out.push(Err(error));
                     continue;
                 }
-                Err(other) => return Err(other),
             };
-            out.push(self.apply_active(file, &mut record, request, now, redactor)?);
+            out.push(self.apply_active(file, &mut record, request, now, redactor));
         }
         Ok(out)
     }

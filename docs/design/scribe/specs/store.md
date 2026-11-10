@@ -179,10 +179,10 @@ segment_windows = 3               # windows before scribe seals an open segment
 [redact]
 env = []                         # more variables whose values are masked
 
-# Designed for S10/S14 (not yet accepted by the parser):
 [sessions]
 inactive_after_days = 120        # days since a session's last message
 
+# Designed for S14 (not yet accepted by the parser):
 [projects.orbit]                 # none by default
 paths = ["codebases/orbit"]      # path fragments counted by transcript list
 ```
@@ -321,8 +321,9 @@ config tag claims is dropped with a warning naming both.
   `active_change.reason` and `cite` pass the redactor. The consistency
   scan's deactivations go through `Store::set_active_many`, one lock for
   the batch, each checked again against the record on disk: a session
-  pinned or already inactive by then is left as it is, and one whose
-  record is missing or does not parse is skipped. A pinned session
+  pinned or already inactive by then is left as it is, and a missing or
+  unreadable record fails only its own request so the remaining requests
+  proceed and the scan reports the failure. A pinned session
   (`keep_active: true`) is never deactivated by `age` or `removed`; a
   `manual` deactivation clears `keep_active` too. Age counts from the
   last segment's `to`, or for a record with no segment from the later of

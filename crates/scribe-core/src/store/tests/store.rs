@@ -702,3 +702,66 @@ fn set_active_writes_only_the_activity_fields_and_only_on_a_change() {
         .unwrap_err();
     assert_eq!(err.code(), "session_not_found");
 }
+
+#[test]
+fn set_active_many_isolates_a_corrupt_record_and_continues() {
+    use crate::activity::{ActiveOutcome, ActiveRoute, SetActive};
+    use crate::record::Author;
+    use crate::session::SessionId;
+
+    let dir = private_tempdir();
+    let root = dir.path().join("root");
+    let store = Store::open(&root);
+    let now = time::macros::datetime!(2026-11-10 10:00 UTC);
+    let redactor = crate::store::Redactor::new([]);
+    for id in ["s-1", "s-3"] {
+        let id: SessionId = id.parse().unwrap();
+        store
+            .settle_pass(
+                &id,
+                Some(crate::tests::session(id.as_str(), now)),
+                false,
+                &redactor,
+            )
+            .unwrap();
+    }
+    put(&root, "sessions/2026/11/s-2.md", "not a session record");
+
+    let change = SetActive::Deactivate {
+        by: Author::consistency(),
+        route: ActiveRoute::Age,
+        reason: String::from("old"),
+        cite: None,
+    };
+    let requests = [
+        ("s-1".parse().unwrap(), change.clone()),
+        ("s-2".parse().unwrap(), change.clone()),
+        ("s-3".parse().unwrap(), change),
+    ];
+    let outcomes = store.set_active_many(&requests, now, &redactor).unwrap();
+
+    assert_eq!(outcomes.len(), 3);
+    assert_eq!(
+        *outcomes[0].as_ref().unwrap(),
+        ActiveOutcome::Changed { unpinned: false }
+    );
+    assert_eq!(outcomes[1].as_ref().unwrap_err().code(), "store_corrupt");
+    assert_eq!(
+        *outcomes[2].as_ref().unwrap(),
+        ActiveOutcome::Changed { unpinned: false }
+    );
+    assert!(
+        !store
+            .session(&"s-1".parse().unwrap())
+            .unwrap()
+            .record
+            .active
+    );
+    assert!(
+        !store
+            .session(&"s-3".parse().unwrap())
+            .unwrap()
+            .record
+            .active
+    );
+}

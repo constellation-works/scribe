@@ -16,8 +16,9 @@
 //! A hook run writes one line per record it wrote or refused (two `#scribe`
 //! lines in one prompt are two lines in the log), and none when it changed
 //! nothing; a session pass one per session passed; a consistency scan one
-//! per entry re-applied, per proposal opened, per session deactivated and
-//! per batch the model failed, and none when it changed nothing; a write
+//! per entry re-applied, per proposal opened, per session deactivated or
+//! deactivation failed, per batch the model failed, and none when it changed
+//! nothing; a write
 //! verb (`session activate|deactivate`) one when it changed the record and
 //! none when it did not: the `Stop` hook runs after
 //! every reply and usually has nothing to do, and a prompt without
@@ -134,6 +135,11 @@ impl<'a> AuditGuard<'a> {
                     status: AuditStatus::Success,
                     target: Some(format!("session:{}", d.session)),
                     error_code: None,
+                }))
+                .chain(report.failed_deactivations.iter().map(|f| Line {
+                    status: AuditStatus::Failure,
+                    target: Some(format!("session:{}", f.session)),
+                    error_code: Some(f.error_code),
                 }))
                 .chain(report.failed_removal_batches.iter().map(|f| Line {
                     status: AuditStatus::Failure,

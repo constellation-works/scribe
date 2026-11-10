@@ -644,6 +644,24 @@ Ship it.
             ),
         );
     }
+
+    /// A fake `claude` that corrupts one removal target after the scan has
+    /// loaded its sessions, so the next target must still be processed.
+    fn answer_both_corrupting(&self, removal: &Value, path: &Path) {
+        let envelope = |body: &Value| {
+            json!({"type": "result", "subtype": "success", "is_error": false,
+                   "result": "", "structured_output": body})
+        };
+        self.fx.fake_program(
+            "claude",
+            &format!(
+                "#!/bin/sh\necho call >> \"$HOME/claude-calls\"\ncat > \"$HOME/claude-prompt\"\nif grep -q 'cataloged work sessions' \"$HOME/claude-prompt\"; then printf 'corrupt\\n' > '{path}'; echo '{}'; else echo '{}'; fi\n",
+                envelope(removal),
+                envelope(&contradicts()),
+                path = path.display(),
+            ),
+        );
+    }
 }
 
 fn session_files() -> [SessionFile<'static>; 5] {
@@ -781,6 +799,57 @@ fn a_scan_deactivates_old_sessions_and_removed_features_but_never_a_pinned_one()
     assert_eq!(
         rows,
         ["deactivated\ts-b-digest\tremoved\tsession:s-later#1\t-"]
+    );
+}
+
+#[test]
+fn a_failed_removal_deactivation_is_reported_and_other_sessions_continue() {
+    let s = Setup::new();
+    for file in &session_files() {
+        s.session(file);
+    }
+    let started = days_ago(20);
+    let path =
+        s.fx.root()
+            .join("sessions")
+            .join(format!("{:04}", started.year()))
+            .join(format!("{:02}", u8::from(started.month())))
+            .join("s-a-digest.md");
+    let removal = json!({"judgements": [
+        {"pair": "1", "label": "removed", "feature": "the digest",
+         "reason": "The weekly report replaced the digest.", "quote": "ripped out and replaced"},
+        {"pair": "2", "label": "removed", "feature": "the digest",
+         "reason": "The weekly report replaced the digest.", "quote": "ripped out and replaced"},
+    ]});
+    s.answer_both_corrupting(&removal, &path);
+
+    let report = s.scan();
+
+    assert_eq!(
+        report["failed_deactivations"],
+        json!([{
+            "session": "s-a-digest",
+            "route": "removed",
+            "error_code": "store_corrupt",
+        }])
+    );
+    assert!(
+        report["deactivated"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| { item["session"] == "s-b-digest" && item["route"] == "removed" })
+    );
+    let audit = s.audit();
+    assert!(audit.iter().any(|event| {
+        event["target"] == "session:s-a-digest"
+            && event["status"] == "failure"
+            && event["error_code"] == "store_corrupt"
+    }));
+    assert!(
+        audit.iter().any(|event| {
+            event["target"] == "session:s-b-digest" && event["status"] == "success"
+        })
     );
 }
 

@@ -41,7 +41,8 @@ use crate::app::Context;
 use crate::audit_middleware::AuditMeta;
 use crate::error::CliError;
 use crate::output::{
-    BatchFailure, DeactivatedPayload, Output, ProposalPayload, ReappliedPayload, ScanReport,
+    BatchFailure, DeactivatedPayload, DeactivationFailure, Output, ProposalPayload,
+    ReappliedPayload, ScanReport,
 };
 use clap::{Args, Subcommand};
 use scribe_core::activity::{self, ActiveRoute, SetActive};
@@ -153,6 +154,7 @@ pub(in crate::commands) fn scan<M: Models>(
         stale_entries: found.stale.len(),
         failed_batches: Vec::new(),
         deactivated: Vec::new(),
+        failed_deactivations: Vec::new(),
         removal_pairs_judged: 0,
         removal_pairs_left: 0,
         dropped_removal_labels: 0,
@@ -206,6 +208,7 @@ pub(in crate::commands) fn scan<M: Models>(
         && report.opened.is_empty()
         && report.failed_batches.is_empty()
         && report.deactivated.is_empty()
+        && report.failed_deactivations.is_empty()
         && report.failed_removal_batches.is_empty());
     if !changed {
         report
@@ -275,6 +278,17 @@ fn deactivate_sessions<M: Models>(
         .collect();
     let outcomes = store.set_active_many(&aged, now, redactor)?;
     for ((id, change), outcome) in aged.iter().zip(outcomes) {
+        let outcome = match outcome {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                report.failed_deactivations.push(DeactivationFailure {
+                    session: id.to_string(),
+                    route: ActiveRoute::Age.as_str(),
+                    error_code: error.code(),
+                });
+                continue;
+            }
+        };
         if !outcome.changed() {
             continue;
         }
@@ -323,13 +337,37 @@ fn deactivate_sessions<M: Models>(
             }
         }
     }
+    let mut seen_removals = Vec::new();
+    let removals: Vec<_> = removals
+        .into_iter()
+        .filter(|removal| {
+            if seen_removals.contains(&removal.session) {
+                false
+            } else {
+                seen_removals.push(removal.session.clone());
+                true
+            }
+        })
+        .collect();
     let requests: Vec<(SessionId, SetActive)> = removals
         .iter()
         .map(|r| (r.session.clone(), r.change()))
         .collect();
-    // A second removal of a session already deactivated is unchanged.
+    // A session may have several later records; keep its newest surviving
+    // removal pair so one scan attempts to deactivate it only once.
     let outcomes = store.set_active_many(&requests, now, redactor)?;
     for (removal, outcome) in removals.iter().zip(outcomes) {
+        let outcome = match outcome {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                report.failed_deactivations.push(DeactivationFailure {
+                    session: removal.session.to_string(),
+                    route: ActiveRoute::Removed.as_str(),
+                    error_code: error.code(),
+                });
+                continue;
+            }
+        };
         if outcome.changed() {
             report.deactivated.push(DeactivatedPayload {
                 session: removal.session.to_string(),

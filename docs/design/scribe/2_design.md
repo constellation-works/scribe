@@ -1932,7 +1932,9 @@ As built (S10):
   listed in `failed_removal_batches`, numbered apart from the entry
   batches. In the plugin call, a removed-feature batch after the scan's
   first model call starts only before the call's deadline, as entry
-  batches do.
+  batches do. A failed per-session store write is listed in
+  `failed_deactivations` and audited with its session id and error code;
+  other sessions in the scan continue.
 
 **S11 — CLI read surface.** Depends on S8.
 

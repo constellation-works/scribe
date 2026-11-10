@@ -10,7 +10,7 @@ Every data command renders one typed payload in the mode the sink resolved;
 stdout carries only that payload; warnings, notices and errors go to stderr;
 the exit code says whether it worked. The JSON form is a public contract,
 pinned by the output goldens in `crates/scribe/tests/goldens/output/`.
-Parts marked *(S10)* to *(S14)* are designed ([ORB-23892]) and not yet
+Parts marked *(S11)* to *(S14)* are designed ([ORB-23892]) and not yet
 built; each only adds fields, columns, commands and codes.
 
 ## Why This Exists
@@ -330,11 +330,15 @@ active entries past `review_after` without a stale proposal;
 verbatim words, are `null` for `age`), `removal_pairs_judged`,
 `removal_pairs_left` (past the cap of 20 or not reached in this call's
 time), `dropped_removal_labels` and `failed_removal_batches` (`[{batch,
-error_code}]`, numbered from 1 apart from `failed_batches`); each
+error_code}]`, numbered from 1 apart from `failed_batches`), and
+`failed_deactivations` (`[{session, route, error_code}]`): a failed
+session write is reported and audited by session while the other
+deactivations continue. Each
 deactivation is also a plain row `deactivated <session> <route> <cite or
 -> -`, and each failed removed-feature batch `failed removal-batch-<n>
 <code> - -`. Each deactivation writes one audit line (target
-`session:<id>`), each failed removed-feature batch one (target
+`session:<id>`), each failed deactivation one (failure target
+`session:<id>` with its error code), each failed removed-feature batch one (target
 `removal-batch:<n>`, with its code); when removed-feature pairs are
 left, stderr says how many. Plain and
 table print one row per change: `reapplied p-<n> <status> <entry> -`,
