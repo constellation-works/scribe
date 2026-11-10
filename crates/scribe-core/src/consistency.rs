@@ -22,9 +22,14 @@
 //! After the entry steps (S10) a scan deactivates sessions: the `age`
 //! route ([`crate::activity::past_age`]) model-free, then the `removed`
 //! route: [`removal_candidates`] pairs each active, unpinned session with
-//! later records that carry a removal cue, the model labels them
-//! ([`removal_request`]), and [`judge_removals`] keeps a `removed` label
-//! only when its quote is verbatim in the later record.
+//! later Daniel-authored entries that carry a removal cue, the model
+//! labels them ([`removal_request`]), and [`judge_removals`] keeps a
+//! `removed` label only when its quote is verbatim in that entry.
+//! Model-written session text (headers and segments, sealed or not) and
+//! agent-written entries are never removal evidence: injected or
+//! agent-supplied words must not be able to satisfy the quote check and
+//! hide a session from `ask` (4_decisions.md, "Removal evidence is
+//! Daniel-authored entries only").
 //!
 //! The order of a pair is fixed here, never by the model: the newer entry
 //! (by `created`, then id) supersedes the older.
@@ -43,7 +48,7 @@ use crate::models::{
     RemovalLater, RemovalPairItem, RemovalRequest, RemovalSession,
 };
 use crate::proposal::{Proposal, ProposalId, ProposalKind, ProposalState, Quote};
-use crate::record::Author;
+use crate::record::{Author, AuthorKind};
 use crate::session::{SessionId, SessionRecord};
 use crate::verbatim;
 use std::collections::BTreeSet;
@@ -669,10 +674,11 @@ fn approve(
 
 /// The most removed-feature pairs one scan offers the model (§7, S10).
 pub const MAX_REMOVAL_PAIRS: usize = 20;
-/// How recently a later record must have been written or updated to be
-/// offered, in days: a weekly scan sees each new record once (§7).
+/// How recently a Daniel-authored entry must have been written or
+/// updated to be offered, in days: a weekly scan sees each new entry
+/// once (§7).
 pub const REMOVAL_RECENT_DAYS: i64 = 8;
-/// The words that make a later record a removal candidate (§7).
+/// The words that make a Daniel-authored entry a removal candidate (§7).
 pub const REMOVAL_CUES: &[&str] = &[
     "removed",
     "deleted",
@@ -685,18 +691,19 @@ pub const REMOVAL_CUES: &[&str] = &[
     "sunset",
 ];
 
-/// A record written after a session that may say its feature is gone: a
-/// session's header, one of its segments, or an entry.
+/// A Daniel-authored entry written after a session that may say its
+/// feature is gone. Only entries Daniel wrote (`author.kind` is
+/// [`AuthorKind::Daniel`]) are removal evidence; session headers and
+/// segments are model-written and agent entries are agent-written, so
+/// neither can deactivate a session.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LaterRecord {
-    /// `session:<id>`, `session:<id>#<n>` or an entry id: what a
-    /// deactivation cites.
+    /// The entry id: what a deactivation cites.
     pub cite: String,
-    /// The record it belongs to (a session id or the entry id), so one
-    /// session is paired with one unit of each record at most.
+    /// The entry id again, so one session is paired with one unit of
+    /// each record at most.
     pub record: String,
-    /// The unit's date: a segment's last message, a header's session's
-    /// last message, an entry's `created`.
+    /// The entry's `created`.
     pub date: OffsetDateTime,
     /// The text the model reads and the quote is checked against.
     pub text: String,
@@ -704,7 +711,8 @@ pub struct LaterRecord {
     pub topics: Vec<String>,
 }
 
-/// An active, unpinned session and a later record with a removal cue.
+/// An active, unpinned session and a later Daniel-authored entry with a
+/// removal cue.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RemovalPair {
     /// The session that may be about a removed feature.
@@ -713,7 +721,7 @@ pub struct RemovalPair {
     pub last_message: OffsetDateTime,
     /// Its header as the model reads it.
     pub header: String,
-    /// The later record.
+    /// The later Daniel-authored entry.
     pub later: LaterRecord,
 }
 
@@ -756,56 +764,41 @@ pub fn has_removal_cue(text: &str) -> bool {
     })
 }
 
-/// The later units of every session record and active entry written or
-/// updated since `since`.
-fn later_records(
-    sessions: &[SessionRecord],
-    entries: &[Entry],
-    since: OffsetDateTime,
-) -> Vec<LaterRecord> {
+/// The active Daniel-authored entries written or updated since `since`:
+/// the only removal evidence. Session headers and segments are
+/// model-written (a pass summarizes a transcript that may hold injected
+/// text) and other entries are agent-written (`entry add`), so counting
+/// them would let supplied words satisfy the verbatim quote check in
+/// [`judge_removals`] and hide a session. Sealed segments stay excluded:
+/// sealing proves a segment never changed after it was written, not that
+/// Daniel wrote it.
+fn later_records(entries: &[Entry], since: OffsetDateTime) -> Vec<LaterRecord> {
     let topics = |t: &crate::record::Topics| t.as_slice().iter().map(ToString::to_string).collect();
-    let mut out = Vec::new();
-    for r in sessions.iter().filter(|r| r.updated >= since) {
-        let record = r.id.to_string();
-        out.push(LaterRecord {
-            cite: format!("session:{}", r.id),
-            record: record.clone(),
-            date: activity::last_message(r),
-            text: header_text(r),
-            topics: topics(&r.topics),
-        });
-        for segment in &r.log {
-            out.push(LaterRecord {
-                cite: format!("session:{}#{}", r.id, segment.n),
-                record: record.clone(),
-                date: segment.to,
-                text: format!("{}\n\n{}", segment.heading.trim(), segment.text.trim()),
-                topics: topics(&segment.topics),
-            });
-        }
-    }
-    for e in entries
+    entries
         .iter()
-        .filter(|e| e.status == EntryStatus::Active && e.updated >= since)
-    {
-        out.push(LaterRecord {
+        .filter(|e| {
+            e.status == EntryStatus::Active
+                && e.updated >= since
+                && e.author.kind == AuthorKind::Daniel
+        })
+        .map(|e| LaterRecord {
             cite: e.id.to_string(),
             record: e.id.to_string(),
             date: e.created,
             text: e.content.clone(),
             topics: topics(&e.topics),
-        });
-    }
-    out
+        })
+        .collect()
 }
 
 /// The scan's removed-feature candidates (§7, S10), model-free: pairs of an
-/// active, unpinned session S and a later record R (a session header or
-/// segment, or an active entry) whose date is after S's last message,
-/// written or updated in the last [`REMOVAL_RECENT_DAYS`] days, that shares
-/// a topic or a term with S or overlaps S's header by at least one token
-/// in four, and whose text has a removal cue. One unit of each record per
-/// session, the newest; newest pairs first, at most `max_pairs`.
+/// active, unpinned session S and a later Daniel-authored entry R whose
+/// date is after S's last message, written or updated in the last
+/// [`REMOVAL_RECENT_DAYS`] days, that shares a topic or a term with S or
+/// overlaps S's header by at least one token in four, and whose text has
+/// a removal cue. Model-written session text and agent-written entries
+/// never pair. One unit of each record per session, the newest; newest
+/// pairs first, at most `max_pairs`.
 #[must_use]
 pub fn removal_candidates(
     sessions: &[SessionRecord],
@@ -814,7 +807,7 @@ pub fn removal_candidates(
     max_pairs: usize,
 ) -> RemovalCandidates {
     let since = now - time::Duration::days(REMOVAL_RECENT_DAYS);
-    let later: Vec<(LaterRecord, BTreeSet<String>)> = later_records(sessions, entries, since)
+    let later: Vec<(LaterRecord, BTreeSet<String>)> = later_records(entries, since)
         .into_iter()
         .filter(|l| has_removal_cue(&l.text))
         .map(|l| {
@@ -940,8 +933,12 @@ pub struct RemovalJudged {
 }
 
 /// Check the model's labels for `pairs`: a `removed` label survives only
-/// when its quote is verbatim in the later record's text. The reason is
-/// trimmed and cut; an empty one becomes scribe's own sentence naming the
+/// when the later record cites a Daniel-authored entry (its cite parses
+/// as an entry id; [`removal_candidates`] only ever pairs those) and its
+/// quote is verbatim in that entry's text. The cite check is defence in
+/// depth, so a pair built from model-written or agent-written text
+/// deactivates nothing even if it reaches here. The reason is trimmed
+/// and cut; an empty one becomes scribe's own sentence naming the
 /// feature.
 #[must_use]
 pub fn judge_removals(answer: RemovalAnswer, pairs: &[RemovalPair]) -> RemovalJudged {
@@ -965,7 +962,9 @@ pub fn judge_removals(answer: RemovalAnswer, pairs: &[RemovalPair]) -> RemovalJu
             "still_current" | "unrelated" => out.kept = out.kept.saturating_add(1),
             "removed" => {
                 let quote = j.quote.trim();
-                if !verbatim::contains(&pair.later.text, quote) {
+                if pair.later.cite.parse::<EntryId>().is_err()
+                    || !verbatim::contains(&pair.later.text, quote)
+                {
                     out.dropped = out.dropped.saturating_add(1);
                     continue;
                 }
