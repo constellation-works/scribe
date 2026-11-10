@@ -439,7 +439,8 @@ pub(crate) struct PassPayload {
     pub(crate) passes: Option<u32>,
     /// Terms the model offered that were not verbatim from Daniel's turns.
     pub(crate) dropped_terms: usize,
-    /// Whether `due` was cleared after too many failures in a row.
+    /// Always `false`: a failed pass stays due and is never given up. Kept
+    /// because the `--json` shape is a contract.
     pub(crate) gave_up: bool,
 }
 
@@ -454,6 +455,19 @@ pub(crate) struct PassReport {
     /// Lines for stderr, printed in every mode.
     #[serde(skip)]
     pub(crate) notices: Vec<String>,
+}
+
+impl PassReport {
+    /// The run's error when any pass failed, naming each failed session and
+    /// its code; `None` when none did.
+    pub(crate) fn failure(&self) -> Option<crate::error::CliError> {
+        let failed: Vec<(String, &'static str)> = self
+            .passes
+            .iter()
+            .filter_map(|p| Some((p.session.clone(), p.error_code?)))
+            .collect();
+        (!failed.is_empty()).then(|| crate::error::CliError::PassFailed(failed))
+    }
 }
 
 /// An approved proposal a scan applied again, because its older entry was

@@ -40,7 +40,7 @@ STD-01 grammar:
 |---|---|---|
 | `scribe hook <event>` | Claude Code hooks (the `plugin/claude-code/` package) | Reads the hook's JSON on stdin; captures `#scribe` instructions, switches cataloging on and off, marks session passes due. The only path that writes entries. |
 | `scribe plugin call` | Orbit's exec backend (`plugin/.orbit-plugin/`) | Reads the Orbit tool request on stdin, writes the `{"ok", …}` envelope on stdout. Serves `scribe.ask` and the routines' tools. |
-| `scribe <noun> <verb>` | Daniel at a terminal, scripts | Read-only `entry list/show`, `session list/show`, `proposal list`, `tag list`, `question ask`, plus `consistency scan` and `session pass` for the routines. |
+| `scribe <noun> <verb>` | Daniel at a terminal, scripts | Read-only `entry list/show`, `session list/show`, `proposal list`, `tag list`, `question ask`, plus `session pass` (Daniel runs it by hand) and `consistency scan` (its routine's job). |
 
 **The Orbit plugin tree** is `plugin/.orbit-plugin/`: `plugin.yaml`
 (`schemaVersion: 2`, `kind: Plugin`, `metadata.name: scribe`), `bin/scribe`
@@ -545,11 +545,13 @@ pass count and last write. The reply wording is in
 it reads `control.json`, and when the session is on and either
 `every_minutes` have passed since the last pass or `every_turns` user turns
 have arrived, it sets `due` under the lock. `scribe hook session-end` sets
-`due` with `final: true`. The plugin's `scribe-session-pass` routine
-(`*/5 * * * *`, seeded disabled; Daniel enables it in one workspace) runs the
-`scribe.session-pass` job, which processes every due session: at most five
-per run, each with a 120-second model budget. No process is detached from a
-hook ([4_decisions.md](./4_decisions.md#session-passes-run-from-an-orbit-routine-not-a-detached-hook-child)).
+`due` with `final: true`. Daniel runs `scribe session pass` by hand, from a
+login shell where `claude` is on `PATH`; it processes the due sessions, at
+most five per run, each with a 120-second model budget
+([4_decisions.md](./4_decisions.md#a-failed-pass-stays-due-and-daniel-runs-the-pass-by-hand)). The plugin still ships the
+`scribe-session-pass` routine (`*/5 * * * *`, seeded disabled), which runs
+the same code through the `scribe.session-pass` job; it is not switched on.
+No process is detached from a hook ([4_decisions.md](./4_decisions.md#session-passes-run-from-an-orbit-routine-not-a-detached-hook-child)).
 
 As built (S4): the `Stop` hook reads `control.json` first and goes no
 further for a session that is not on or already due. The last pass is the
@@ -588,9 +590,7 @@ timeout; the rest count as `remaining` for the next run
 3. Validate the budgets and the JSON shape. On failure, ask the model once
    more in the same pass, naming what was refused (a field, its length and
    its budget); if that answer fails too, keep the previous record and leave
-   `due` set for the next run (three failures in a row clear `due` and log
-   a `warn`; a retryable failure, `model_unavailable` or `model_timeout`,
-   clears it only at 96 in a row, see the failures decision below).
+   `due` set, whatever the failure, so the next run retries it.
 4. Write the record atomically, advance `scribed_through`, clear `due`.
 
 A pass writes no tag entries, even if the transcript contains `#decision`
@@ -625,14 +625,16 @@ As built (S4), in `scribe-core::pass` and `commands/session/pass.rs`:
   `provider` and `host`; `on_since` is the switch's `since`; `passes`
   counts up, `scribed_through` becomes the
   window's last message, and the final pass sets `status: final`. The
-  record is written and `due` cleared by one locked store call. Three
-  failures in a row (counted from the audit log,
-  [4_decisions.md](./4_decisions.md#a-session-pass-counts-its-failures-from-the-audit-log))
-  clear `due` with a `warn`; a retryable failure (`model_unavailable`,
-  `model_timeout`) clears it at 96 in a row
-  ([4_decisions.md](./4_decisions.md#a-retryable-pass-failure-stays-due-for-a-bounded-outage)).
-  A routine run in which any pass failed is an error envelope,
-  `session_pass_failed`, not a success.
+  record is written and `due` cleared by one locked store call. A failed
+  pass, whatever its code, keeps the previous record and leaves `due` set:
+  the run prints its report and then exits 1 naming each failed session
+  and its code, and `scribe.session-pass` answers `session_pass_failed`
+  ([4_decisions.md](./4_decisions.md#a-failed-pass-stays-due-and-daniel-runs-the-pass-by-hand)).
+- `scribe session pass --session <id>` (repeatable) passes the sessions
+  named whether or not they are due, each once and without the
+  five-per-run cap, so a session whose `due` was cleared can be passed
+  again; a session that is not on is refused (`session_not_on`) and never
+  read, and the switch's `final` flag counts as for a due pass.
 
 ## 6. `ask`
 
@@ -878,10 +880,7 @@ it runs `claude -p --safe-mode --tools "" --model <id> --output-format json --js
 with the prompt on stdin, in its own process group, from a cleared
 environment holding only `PATH`, `HOME`, `LANG` and the credential names
 Daniel configures (`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`;
-STD-05 R10), killed and reaped at the budget (STD-03 R11–R13). The program
-is `claude` on that `PATH`, or, in the plugin, the absolute path
-`[plugins.scribe] claude_program` names (for a launcher whose `PATH` holds no
-`claude`); the environment is the same either way.
+STD-05 R10), killed and reaped at the budget (STD-03 R11–R13).
 `--safe-mode` turns off the hooks and plugins of the user's Claude Code setup,
 so a model call never fires `scribe hook`; `--tools ""` removes the built-in
 tools, so the model never receives tools. `--bare` is not used: it reads only
@@ -1010,9 +1009,9 @@ writes none.
   call at 300 s, so `scribe.session-pass` starts no session after 50 s and
   `scribe.consistency-scan` no batch after 170 s; the rest waits for the
   next run (every five minutes, or next week for the scan).
-- **Cadence depends on Orbit.** With the session-pass routine disabled,
-  sessions are marked due but never summarised; `scribe session list` shows
-  `due` so the gap is visible.
+- **Records wait for Daniel.** Passes run by hand, so a session is marked
+  due by the hooks but summarised only when Daniel runs `scribe session
+  pass`; `scribe session list` shows `due` so the gap is visible.
 - **A guessed referent is still an entry.** When Haiku fails, the fallback
   records the previous assistant message; the echo says so, but an
   unattended guess stays until Daniel retires it with `#scribe retire`.

@@ -211,3 +211,24 @@ pub fn due(state: &ControlState) -> Vec<(SessionId, SessionControl)> {
         .map(|(id, c)| (id.clone(), c.clone()))
         .collect()
 }
+
+/// The sessions `ids` names, for a pass Daniel asks for by id, oldest id
+/// first and each once, whether or not `due` is set: a pass whose `due` was
+/// cleared can be run again. A session that is off or has no switch is
+/// never passed, so the first such id is the `Err`.
+///
+/// # Errors
+///
+/// The first id (in id order) whose session is not on.
+pub fn chosen(
+    state: &ControlState,
+    ids: &[SessionId],
+) -> Result<Vec<(SessionId, SessionControl)>, SessionId> {
+    let ids: std::collections::BTreeSet<&SessionId> = ids.iter().collect();
+    ids.into_iter()
+        .map(|id| match state.sessions.get(id) {
+            Some(control) if control.on => Ok((id.clone(), control.clone())),
+            Some(_) | None => Err(id.clone()),
+        })
+        .collect()
+}

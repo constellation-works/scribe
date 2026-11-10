@@ -162,3 +162,21 @@ fn session_end_marks_final_and_a_final_pass_settles_it() {
     let c = state.get(&s).unwrap();
     assert!(!c.due && !c.final_pass && c.on);
 }
+
+#[test]
+fn chosen_takes_sessions_that_are_on_whether_or_not_due_and_refuses_the_rest() {
+    let mut state = ControlState::default();
+    let (a, b, off, never) = (id("s-a"), id("s-b"), id("s-off"), id("s-never"));
+    settled_on(&mut state, &b);
+    control::switch(&mut state, &a, &Switch::On, T0);
+    control::switch(&mut state, &off, &Switch::On, T0);
+    control::switch(&mut state, &off, &Switch::Off, T0);
+    assert!(!state.get(&b).unwrap().due, "b's due was cleared");
+
+    let picked = control::chosen(&state, &[b.clone(), a.clone(), b.clone()]).unwrap();
+    let ids: Vec<&SessionId> = picked.iter().map(|(s, _)| s).collect();
+    assert_eq!(ids, [&a, &b], "id order, each once, due or not");
+
+    assert_eq!(control::chosen(&state, &[a.clone(), off.clone()]), Err(off));
+    assert_eq!(control::chosen(&state, &[never.clone(), a]), Err(never));
+}

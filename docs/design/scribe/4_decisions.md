@@ -7,11 +7,11 @@ status: Draft
 feature: scribe
 doc_role: decisions
 type: design
-summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from a routine, why frontmatter is parsed by yaml_serde, plus the engineering decisions carried over from the Rust CLI template.
+summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from a routine and later by hand, why frontmatter is parsed by yaml_serde, plus the engineering decisions carried over from the Rust CLI template.
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134]
 ---
 
 # scribe — Decisions
@@ -355,6 +355,10 @@ sessions per run.
 - No scribe process outlives its spawner.
 - Cost: a summary lags the due mark by up to five minutes, and nothing is
   summarised until Daniel enables the routine in one workspace.
+- Superseded in its cadence by
+  [a failed pass stays due, and Daniel runs the pass by hand](#a-failed-pass-stays-due-and-daniel-runs-the-pass-by-hand):
+  hooks still only mark a session due, but the pass is run by hand and the
+  routine stays switched off.
 
 ## A session record covers the whole opted-in session
 
@@ -1109,49 +1113,56 @@ failure. No persisted shape changes.
 - Cost: an audit log that cannot be read, or lines lost to an append
   failure, under-count, so a session may cost one or two more model calls
   before `due` is cleared.
+- Superseded by
+  [a failed pass stays due, and Daniel runs the pass by hand](#a-failed-pass-stays-due-and-daniel-runs-the-pass-by-hand):
+  no failure clears `due`, so nothing counts them, and `failures_in_a_row`
+  is gone.
 
-## A retryable pass failure stays due for a bounded outage
+## A failed pass stays due, and Daniel runs the pass by hand
 
-**Code anchors:** `crates/scribe-core/src/pass.rs` (`retryable`,
-`gives_up`, `MAX_RETRYABLE_FAILURES`); `crates/scribe/src/commands/session/pass.rs`
-(`failed`); `crates/scribe/src/commands/plugin.rs` (`claude_program`,
-`failed_passes`)
+**Recorded:** 2026-11 · [ORB-23829] · **Overridable by Daniel**
+**Code anchors:** `crates/scribe/src/commands/session/pass.rs` (`failed`,
+`PassArgs`); `crates/scribe-core/src/control.rs` (`chosen`);
+`crates/scribe/src/output/mod.rs` (`finish`); `crates/scribe/src/commands/plugin.rs`
+(`failed_passes`)
 
 ### Context
 
-On the Mac the Orbit clock's `PATH` holds no `claude`, so every pass failed
-with `model_unavailable` from 2026-11-08 20:00Z. The third failure in a row
-cleared `due` for every code, so five sessions were stranded with no
-record, and the routine run still reported success.
+On the Mac the Orbit clock's `PATH` holds no `claude`, so from 2026-11-08
+20:00Z every routine pass failed with `model_unavailable`. The third
+failure in a row cleared `due` whatever the code, so five sessions were
+left on, not due and without a record, and the routine run still reported
+success. Daniel, 2026-11-10: "I don't think we need automatic scribe
+updates. I can just run "scribe session pass" - simpler and less noisy."
+The `scribe-session-pass` routine was switched off that day.
 
 ### Decision
 
-- `model_unavailable` (the program could not start) and `model_timeout` are
-  retryable: `due` is cleared at the 96th failure in a row
-  (`MAX_RETRYABLE_FAILURES`, eight hours at the five-minute cadence). Every
-  other code keeps the third failure ([`MAX_FAILURES`](./2_design.md#53-a-pass)).
-  A bound stays, so a permanent failure cannot hot-loop.
-- `[plugins.scribe] claude_program` names an absolute path to `claude` for
-  the plugin's model tools (`ask`, `session-pass`, `consistency-scan`); empty
-  runs `claude` from the call's `PATH`, and a relative path is refused with
-  `not_configured`. The child's environment is unchanged (STD-05 R10–R12).
-- A `session-pass` run in which any pass failed is an error envelope,
-  `session_pass_failed`, retryable when every failure was. Its message names
-  each failed session and code and the program used. The audit lines are
-  unchanged.
+- Daniel runs `scribe session pass` by hand, from a login shell where
+  `claude` is on `PATH`. No setting names another `claude`. The plugin keeps
+  shipping the routine and its job, seeded disabled.
+- A failed pass, of any code, keeps the previous record and leaves `due`
+  set; there is no give-up bound. Daniel retries by running the command
+  again. `gave_up` stays in the `--json` report, always `false`.
+- A run with any failed pass prints its report and then exits 1 with
+  `session_pass_failed`, naming each failed session and its code;
+  `scribe.session-pass` answers the same code and message, not retryable.
+- `scribe session pass --session <id>` (repeatable) passes the named
+  sessions whether or not they are due, each once and without the
+  five-per-run cap, and refuses a session that is not on
+  (`session_not_on`). It is the supported way to pass a session whose `due`
+  an earlier give-up cleared.
 
 ### Consequences
 
-- An outage costs one failed spawn per due session per run, for up to
-  eight hours, and then the session is given up as before.
-- The routine run is no longer a success when one pass fails, so a failing
-  model is visible in Orbit rather than only in the audit log.
-- Sessions already given up need `due` set again by hand, or a one-off pass
-  after the fix. Their earlier failures stay in the audit log and still count
-  toward the bound until a success clears them; for the sessions given up on
-  the third failure that is three, far from 96.
-- Cost: `consistency-scan` still reports success when a batch failed; it is
-  the same kind of gap and is left for its own change.
+- A failure is seen when it happens, on Daniel's terminal, and nothing is
+  dropped: the next run retries every failed session.
+- The five sessions stranded by the old rule are passed with `--session`;
+  no one edits `control.json` by hand.
+- Cost: records wait until Daniel runs the command, and a session that can
+  never be summarised (a transcript the model always refuses) costs a model
+  call on every run until Daniel switches it off with `/scribe off`. If the
+  routine is switched on again, that cost recurs every five minutes.
 
 ## A pass finds its transcript by session id
 

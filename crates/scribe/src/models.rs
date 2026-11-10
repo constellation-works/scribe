@@ -36,14 +36,12 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::ffi::{OsStr, OsString};
 use std::io::{Read, Write};
-use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-/// The program run, found on the child's `PATH`, unless the plugin config
-/// names another ([`ClaudeCliModels::with_program`]).
+/// The program run, found on the child's `PATH`.
 pub(crate) const PROGRAM: &str = "claude";
 
 /// The variables every model call gets besides the configured credentials:
@@ -121,17 +119,6 @@ impl ClaudeCliModels {
             program: OsString::from(PROGRAM),
             env,
         }
-    }
-
-    /// Run `program` instead of [`PROGRAM`] when it is given: the absolute
-    /// path `[plugins.scribe] claude_program` names, for a launcher whose
-    /// `PATH` holds no `claude`. `None` keeps [`PROGRAM`] on the child's
-    /// `PATH`.
-    pub(crate) fn with_program(mut self, program: Option<&Path>) -> Self {
-        if let Some(program) = program {
-            self.program = program.as_os_str().to_owned();
-        }
-        self
     }
 
     /// One call: the model's structured answer.

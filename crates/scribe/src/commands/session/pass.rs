@@ -1,9 +1,11 @@
 //! `scribe session pass`: write one distilled record per session whose pass
 //! is due (docs/design/scribe/2_design.md §5.2, §5.3).
 //!
-//! The `scribe-session-pass` routine runs it; Daniel can too. It takes the
-//! sessions `control.json` marks on and due, at most five per run, oldest
-//! id first, and for each:
+//! Daniel runs it by hand, from a login shell where `claude` is on `PATH`
+//! (the plugin still ships the `scribe-session-pass` routine, switched
+//! off). It takes the sessions `control.json` marks on and due, at most five
+//! per run, oldest id first, or with `--session <id>` the sessions named,
+//! due or not but only while on; and for each:
 //!
 //! 1. finds its transcript, `<transcripts>/<project-dir>/<id>.jsonl`, and
 //!    checks it as a hook does (this user's regular file, named for the
@@ -18,14 +20,11 @@
 //!
 //! Nothing new since the last pass clears `due` without a model call (and
 //! marks the record final at session end); no transcript or no message yet
-//! leaves the pass due for the next run. After [`pass::MAX_FAILURES`]
-//! failures in a row (counted from the audit log) `due` is cleared and a
-//! warning logged, so a session that cannot be summarised stops costing a
-//! model call every run until the cadence marks it due again. A retryable
-//! failure (the model could not be started, or timed out) gets
-//! [`pass::MAX_RETRYABLE_FAILURES`] instead, so an outage does not strand
-//! the session; a run that had any failed pass is not a success (the plugin
-//! tool reports it, see `commands/plugin.rs`).
+//! leaves the pass due for the next run. A failed pass, whatever its code,
+//! keeps the previous record and leaves `due` set, so running the command
+//! again retries it; the run then exits 1 naming each failed session and
+//! its code (`output::finish`), and the plugin tool answers
+//! `session_pass_failed` (`commands/plugin.rs`).
 //!
 //! A session never switched on is never read: only sessions with a switch
 //! are candidates. A pass writes no entries. Each session passed is one
@@ -56,39 +55,59 @@ const PROVIDER: &str = "claude-code";
 const MAX_LISTED: usize = 200;
 
 pub(super) const PASS_EXAMPLES: &str = "\
-Runs from the scribe-session-pass routine every few minutes. Processes at
-most five due sessions per run; --json reports what each pass did and how
-many due sessions remain. Calls the configured session model.
+Run it by hand, from a shell where claude is on PATH. Processes at most
+five due sessions per run; --json reports what each pass did and how many
+due sessions remain. Calls the configured session model. A failed pass
+stays due: run the command again to retry it. Exits 1 when any pass
+failed, naming each failed session and its error code on stderr.
 
 Examples:
   scribe session pass
+  scribe session pass --session <id> --session <id>
   scribe session pass --json | jq '.passes[] | select(.result == \"failed\")'";
 
-/// Arguments to `session pass`: none.
+/// Arguments to `session pass`.
 #[derive(Debug, Args)]
-pub(crate) struct PassArgs {}
+pub(crate) struct PassArgs {
+    /// Pass this session now, whether or not a pass is due (it must be switched on); repeat for several [default: every due session, at most five]
+    #[arg(long = "session", value_name = "ID")]
+    pub(crate) sessions: Vec<SessionId>,
+}
 
-/// Run the pass with the `claude` CLI as the session model, at most
-/// [`pass::MAX_PER_RUN`] sessions.
-pub(super) fn run(ctx: &Context) -> Result<Output, CliError> {
+/// Run the pass with the `claude` CLI as the session model: at most
+/// [`pass::MAX_PER_RUN`] due sessions, or every session `args` names.
+pub(super) fn run(args: &PassArgs, ctx: &Context) -> Result<Output, CliError> {
+    let max = if args.sessions.is_empty() {
+        pass::MAX_PER_RUN
+    } else {
+        args.sessions.len()
+    };
     run_with(
         ctx,
         |config| ctx.models(config),
-        RunLimits::new(pass::MAX_PER_RUN),
+        RunLimits::new(max),
+        &args.sessions,
     )
 }
 
 /// [`run`] with the `Models` adapter `models` builds for the config, so a
 /// test can answer with a fake, and within `limits`: the plugin's tool
 /// starts no session after its start-by time, so a call ends inside
-/// Orbit's backend timeout.
+/// Orbit's backend timeout. `only` names the sessions to pass whether or
+/// not they are due; empty takes the due ones.
 pub(in crate::commands) fn run_with<M: Models>(
     ctx: &Context,
     models: impl FnOnce(&Config) -> M,
     limits: RunLimits,
+    only: &[SessionId],
 ) -> Result<Output, CliError> {
     let store = ctx.store();
-    let due = control::due(&store.control()?);
+    let state = store.control()?;
+    let due = if only.is_empty() {
+        control::due(&state)
+    } else {
+        control::chosen(&state, only).map_err(CliError::SessionNotOn)?
+    };
     if due.is_empty() {
         return Ok(Output::Pass(PassReport {
             passes: Vec::new(),
@@ -297,38 +316,16 @@ impl Job<'_> {
             })
     }
 
-    /// The previous record is kept and the pass stays due, unless this
-    /// failure is the one [`pass::gives_up`] names for its code: the third in
-    /// a row, or for a retryable code ([`pass::retryable`]) the
-    /// [`pass::MAX_RETRYABLE_FAILURES`]th.
+    /// The previous record is kept and the pass stays due, so the next run
+    /// retries it.
     fn failed(&self, code: Code) -> PassPayload {
-        let store = self.ctx.store();
-        let failures = store
-            .failures_in_a_row(COMMAND, &format!("session:{}", self.id))
-            .unwrap_or_else(|err| {
-                tracing::warn!(session = %self.id, %err, "cannot count earlier failures");
-                0
-            })
-            .saturating_add(1);
-        let gave_up = pass::gives_up(code, failures);
-        if gave_up {
-            tracing::warn!(
-                session = %self.id,
-                failures,
-                code,
-                "session pass failed {failures} times in a row; clearing due until the cadence marks it again"
-            );
-            if let Err(err) = store.settle_pass(self.id, None, true, self.redactor) {
-                tracing::warn!(session = %self.id, %err, "cannot clear due");
-            }
-        }
         PassPayload {
             session: self.id.to_string(),
             result: "failed",
             error_code: Some(code),
             passes: None,
             dropped_terms: 0,
-            gave_up,
+            gave_up: false,
         }
     }
 

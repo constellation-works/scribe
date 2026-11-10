@@ -566,33 +566,6 @@ impl Store {
         fsio::write_atomic(&path, &format::encode_proposals(&path, proposals)?)
     }
 
-    /// How many times in a row `command` last failed for `target`, read
-    /// from the audit log: the failure lines after its last success. Reads
-    /// only; a missing log, or a line that does not parse (a torn last
-    /// line), counts nothing.
-    pub fn failures_in_a_row(&self, command: &str, target: &str) -> Result<u32> {
-        let path = self.audit_path();
-        if !self.root_exists()? || !fsio::inspect_file(&path)? {
-            return Ok(0);
-        }
-        let bytes = fsio::read(&path)?;
-        let mut count = 0u32;
-        for line in bytes.split(|&b| b == b'\n') {
-            let Ok(line) = serde_json::from_slice::<audit::AuditLine>(line) else {
-                continue;
-            };
-            let event = line.event;
-            if event.command != command || event.target.as_deref() != Some(target) {
-                continue;
-            }
-            count = match event.status {
-                AuditStatus::Success => 0,
-                AuditStatus::Failure => count.saturating_add(1),
-            };
-        }
-        Ok(count)
-    }
-
     /// Write `entry` to its file, creating its directories owner-only. A new
     /// entry never replaces a file: ids come from the listing, so an
     /// existing file means the listing missed it, and the write is refused
