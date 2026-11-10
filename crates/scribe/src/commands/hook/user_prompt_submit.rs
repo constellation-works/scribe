@@ -29,10 +29,13 @@
 //! `/scribe status` is not a turn: `scribe_command.rs` switches the session
 //! and blocks it (§5.1), and its `#scribe` lines, if any, are not read.
 //!
-//! The reply tells Daniel (`systemMessage`) and the main agent
-//! (`additionalContext`) the same thing, one line per `#scribe` line,
-//! and never blocks the prompt: a refusal or a store failure is a reply, not
-//! an error exit, so the rest of the prompt still reaches the agent.
+//! The reply tells Daniel (`systemMessage`) one echo per `#scribe` line.
+//! The main agent (`additionalContext`) gets the same echoes, each with a
+//! note for that line: recorded lines say no action is needed, refused or
+//! failed lines say they were not recorded and must be relayed to Daniel.
+//! The hook never blocks the prompt: a refusal or a store failure is a
+//! reply, not an error exit, so the rest of the prompt still reaches the
+//! agent.
 
 use super::payload::{self, PromptPayload, Transcript};
 use super::project;
@@ -52,8 +55,12 @@ const EVENT: &str = "UserPromptSubmit";
 const PROVIDER: &str = "claude-code";
 /// The longest quote an echo shows, in characters; `entry show` has it all.
 const ECHO_CHARS: usize = 200;
-/// What the agent is told after the echo, so it does not record it again.
+/// What the agent is told after a recorded echo, so it does not record it
+/// again.
 const AGENT_NOTE: &str = "(recorded by scribe; no action needed)";
+/// What the agent is told after a refused or failed echo: nothing was
+/// recorded, so the line must not be silently lost.
+const AGENT_RELAY_NOTE: &str = "(not recorded by scribe; relay this to Daniel)";
 /// The code of a payload whose transcript failed the provenance check.
 const PROVENANCE_FAILED: &str = "provenance_failed";
 
@@ -61,6 +68,29 @@ const PROVENANCE_FAILED: &str = "provenance_failed";
 /// CLI.
 pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
     run_with(input, ctx, |config| ctx.models(config))
+}
+
+/// One echo line, and whether its line was recorded (or already applied),
+/// which decides the note the agent gets for it.
+struct Echo {
+    text: String,
+    recorded: bool,
+}
+
+impl Echo {
+    fn recorded(text: String) -> Self {
+        Self {
+            text,
+            recorded: true,
+        }
+    }
+
+    fn not_recorded(text: String) -> Self {
+        Self {
+            text,
+            recorded: false,
+        }
+    }
 }
 
 /// What one `#scribe` line comes to before the store is called.
@@ -102,7 +132,12 @@ pub(super) fn run_with<M: Models>(
     let failed_all = |message: &str, code: &'static str| {
         let echoes = lines
             .iter()
-            .map(|(_, said)| format!("scribe: could not record \"{}\" — {message}", quote(said)))
+            .map(|(_, said)| {
+                Echo::not_recorded(format!(
+                    "scribe: could not record \"{}\" — {message}",
+                    quote(said)
+                ))
+            })
             .collect();
         let outcomes = lines.iter().map(|_| refusal(&session, code)).collect();
         Ok(reply(echoes, outcomes))
@@ -221,17 +256,27 @@ pub(super) fn run_with<M: Models>(
     for plan in plans {
         match plan {
             Plan::Refused(refused) => {
-                echoes.push(format!(
+                echoes.push(Echo::not_recorded(format!(
                     "scribe: refused \"{}\" — {}",
                     quote(&refused.said),
                     refused.reason
-                ));
+                )));
                 outcomes.push(refusal(&session, refused.reason.code()));
             }
-            Plan::Recorded(entry) => echoes.push(already(&entry)),
+            Plan::Recorded(entry) => echoes.push(Echo::recorded(already(&entry))),
             Plan::Settle(settling) => {
                 let reply = super::proposal_command::run(&settling, &turn, ctx);
-                echoes.push(reply.echo);
+                // An outcome with a code is a refusal or failure; `None`
+                // (already applied) and a codeless outcome need no relay.
+                let recorded = match &reply.outcome {
+                    Some(outcome) => outcome.error_code.is_none(),
+                    None => true,
+                };
+                echoes.push(if recorded {
+                    Echo::recorded(reply.echo)
+                } else {
+                    Echo::not_recorded(reply.echo)
+                });
                 outcomes.extend(reply.outcome);
             }
             Plan::Draft { line, said, guess } => match (captured.get(&line), &store_error) {
@@ -244,24 +289,24 @@ pub(super) fn run_with<M: Models>(
                             )
                         })
                         .unwrap_or_default();
-                    echoes.push(format!(
+                    echoes.push(Echo::recorded(format!(
                         "scribe: added {} to {}{guessed} — \"{}\"",
                         entry.id,
                         entry.tag,
                         quote(&entry.content)
-                    ));
+                    )));
                     outcomes.push(HookOutcome {
                         target: Some(entry.id.to_string()),
                         error_code: None,
                     });
                 }
-                (Some(Captured::Existing(entry)), _) => echoes.push(already(entry)),
+                (Some(Captured::Existing(entry)), _) => echoes.push(Echo::recorded(already(entry))),
                 (None, Some(err)) => {
-                    echoes.push(format!(
+                    echoes.push(Echo::not_recorded(format!(
                         "scribe: could not record \"{}\" — {}",
                         quote(&said),
                         chain(err)
-                    ));
+                    )));
                     outcomes.push(refusal(&session, err.code()));
                 }
                 (None, None) => {}
@@ -352,13 +397,30 @@ fn refusal(session: &SessionId, code: &'static str) -> HookOutcome {
     }
 }
 
-/// The reply: nothing at all when there is nothing to echo.
-fn reply(echoes: Vec<String>, outcomes: Vec<HookOutcome>) -> Output {
+/// The reply: nothing at all when there is nothing to echo. Daniel sees
+/// the plain echoes; the agent sees each echo with its own note, so a
+/// recorded line never lends its "no action needed" to a refused one.
+fn reply(echoes: Vec<Echo>, outcomes: Vec<HookOutcome>) -> Output {
     let (message, context) = if echoes.is_empty() {
         (None, None)
     } else {
-        let text = echoes.join("\n");
-        let context = format!("{text}\n{AGENT_NOTE}");
+        let text = echoes
+            .iter()
+            .map(|echo| echo.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let context = echoes
+            .iter()
+            .map(|echo| {
+                let note = if echo.recorded {
+                    AGENT_NOTE
+                } else {
+                    AGENT_RELAY_NOTE
+                };
+                format!("{} {note}", echo.text)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
         (Some(text), Some(context))
     };
     Output::Hook(HookReply {

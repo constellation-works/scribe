@@ -291,7 +291,14 @@ blanked for good; the id and cite stay`, `scribe: <id> is already <state>
 change writes one audit line whose `target` is the proposal or entry id; a
 refusal one line with `target` `session:<id>` and its code; a repeat none.
 The text is for Daniel and the agent to read; the audit line, not the
-echo, is the record.
+echo, is the record. Daniel's `systemMessage` carries the plain echoes;
+the agent's `additionalContext` carries each echo with a per-line note:
+` (recorded by scribe; no action needed)` after a recorded, already
+recorded or settled line, and ` (not recorded by scribe; relay this to
+Daniel)` after a refused line (`scribe: refused …`), a line that could
+not be recorded (`scribe: could not record …`) or a settling line that
+was refused or could not be applied. A refused or failed line therefore
+never says no action is needed, even beside a recorded line.
 
 A prompt whose first line is `/scribe on`, `/scribe off`, `/scribe status`,
 `/scribe on --from <id> [--type <type>]`, `/scribe link <id> [--type

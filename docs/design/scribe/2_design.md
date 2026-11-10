@@ -745,16 +745,21 @@ same `Store::capture` call as forms 1 and 2.
 
 The hook returns `systemMessage` (shown to Daniel) and
 `hookSpecificOutput.additionalContext` (shown to the main agent) with the
-same text, and never blocks the turn, so the rest of the prompt still
-reaches the agent:
+same echo lines (the agent's copies carry the per-line notes below), and
+never blocks the turn, so the rest of the prompt still reaches the agent:
 
 ```
 scribe: added decisions-12 to decisions — "squash-merge agent PRs; keep merge commits for releases"
 scribe: refused "#scribe add it to rituals" — no tag "rituals"; tags: decisions, preferences
 ```
 
-The agent-facing text adds "recorded by scribe; no action needed", so the
-main agent does not try to record it again.
+The agent-facing text adds a note to each echo line: a recorded (or
+already recorded, or settled) line adds "recorded by scribe; no action
+needed", so the main agent does not try to record it again; a refused or
+failed line adds "not recorded by scribe; relay this to Daniel", so the
+agent relays the refusal or failure to Daniel instead of silently losing
+the line. The note is per line, so a recorded line never lends its
+"no action needed" to a refused line in the same prompt.
 
 As built (S2): the reply is one line of hook JSON,
 `{"systemMessage": …, "hookSpecificOutput": {"hookEventName":

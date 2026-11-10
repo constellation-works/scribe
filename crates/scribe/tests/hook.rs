@@ -163,7 +163,8 @@ fn each_scribe_line_of_the_fixture_prompt_becomes_one_entry_with_its_cite_and_ec
     );
     assert_eq!(
         reply["hookSpecificOutput"]["additionalContext"],
-        format!("{message}\n(recorded by scribe; no action needed)")
+        "scribe: added decisions-1 to decisions — \"squash-merge agent PRs; keep merge commits for releases\" (recorded by scribe; no action needed)\n\
+         scribe: added preferences-1 to preferences — \"short commit subjects\" (recorded by scribe; no action needed)"
     );
     assert!(
         reply.get("decision").is_none(),
@@ -370,6 +371,93 @@ fn an_unknown_tag_is_refused_with_the_configured_tags_and_audited_by_code() {
     assert_eq!(lines[1]["status"], "success");
     assert_eq!(lines[1]["target"], "rituals-1");
     assert_eq!(lines[1]["error_code"], Value::Null);
+}
+
+#[test]
+fn a_refused_line_tells_the_agent_to_relay_it_to_daniel_not_that_no_action_is_needed() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let mut payload = claude.payload("user-prompt-submit.json");
+    payload["prompt"] = json!("#scribe nosuchtag: hello");
+    let out = hook_ok(&fx, "user-prompt-submit", &payload);
+    let reply = reply(&out);
+    let message = reply["systemMessage"].as_str().unwrap();
+    assert!(message.starts_with("scribe: refused"), "{message}");
+    let context = reply["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        context,
+        format!("{message} (not recorded by scribe; relay this to Daniel)")
+    );
+    assert!(!context.contains("no action needed"), "{context}");
+}
+
+#[test]
+fn a_failed_line_tells_the_agent_to_relay_it_to_daniel_not_that_no_action_is_needed() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let mut payload = claude.payload("user-prompt-submit.json");
+    payload["prompt"] = json!("#scribe decisions: hello");
+    let elsewhere = fx.elsewhere(&format!("{SESSION}.jsonl"));
+    payload["transcript_path"] = json!(elsewhere.to_str().unwrap());
+    let out = hook_ok(&fx, "user-prompt-submit", &payload);
+    let reply = reply(&out);
+    let message = reply["systemMessage"].as_str().unwrap();
+    assert!(message.starts_with("scribe: could not record"), "{message}");
+    let context = reply["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        context,
+        format!("{message} (not recorded by scribe; relay this to Daniel)")
+    );
+    assert!(!context.contains("no action needed"), "{context}");
+}
+
+#[test]
+fn a_refused_approve_tells_the_agent_to_relay_it_to_daniel() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let mut payload = claude.payload("user-prompt-submit.json");
+    payload["prompt"] = json!("#scribe approve p-99");
+    let out = hook_ok(&fx, "user-prompt-submit", &payload);
+    let reply = reply(&out);
+    let message = reply["systemMessage"].as_str().unwrap();
+    assert!(message.starts_with("scribe: refused"), "{message}");
+    let context = reply["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        context,
+        format!("{message} (not recorded by scribe; relay this to Daniel)")
+    );
+    assert!(!context.contains("no action needed"), "{context}");
+}
+
+#[test]
+fn a_mixed_prompt_notes_each_line_by_whether_it_was_recorded() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    std::fs::create_dir(fx.root()).unwrap();
+    make_private(&fx.root());
+    let config = fx.root().join("config.toml");
+    std::fs::write(
+        &config,
+        "[tags.decisions]\naliases = [\"decision\"]\n\n[tags.rituals]\naliases = [\"ritual\"]\n",
+    )
+    .unwrap();
+    make_private(&config);
+    let mut payload = claude.payload("user-prompt-submit.json");
+    payload["prompt"] =
+        json!("#scribe add stand-up at nine to my habits\n#scribe ritual: stand-up at nine");
+    let out = hook_ok(&fx, "user-prompt-submit", &payload);
+    let reply = reply(&out);
+    assert_eq!(
+        reply["hookSpecificOutput"]["additionalContext"],
+        "scribe: refused \"#scribe add stand-up at nine to my habits\" — no tag \"habits\"; tags: decisions, rituals (not recorded by scribe; relay this to Daniel)\n\
+         scribe: added rituals-1 to rituals — \"stand-up at nine\" (recorded by scribe; no action needed)"
+    );
 }
 
 #[test]
