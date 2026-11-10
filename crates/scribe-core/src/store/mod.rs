@@ -44,6 +44,7 @@ pub use rebuild::RebuildGuard;
 pub use audit::{AUDIT_FILE, AuditEvent, AuditStatus};
 pub use redact::{MIN_SECRET_CHARS, REDACTED_FIELDS, Redactor, unresolved_redact_env};
 
+use crate::activity::{self, ActiveOutcome, SetActive};
 use crate::config::Config;
 use crate::consistency::{self, Draft, Reapplied, Settle, Settled};
 use crate::control;
@@ -382,6 +383,97 @@ impl Store {
             fsio::write_atomic(&path, &format::encode_session(&path, &record)?)?;
         }
         Ok(linked)
+    }
+
+    /// Change one session's `active` or `keep_active` under the store lock
+    /// ([`activity::set_active`]), its reason masked by `redactor`. Only
+    /// `active`, `keep_active` and `active_change` change (`updated`
+    /// included stays), and the record is written only when something
+    /// changed. Returns the record as it now stands and what changed.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::SessionNotFound`] when no record has the id; a store error
+    /// otherwise.
+    pub fn set_active(
+        &self,
+        id: &SessionId,
+        request: &SetActive,
+        now: time::OffsetDateTime,
+        redactor: &Redactor,
+    ) -> Result<(SessionRecord, ActiveOutcome)> {
+        self.prepare_dir(&self.root)?;
+        let _lock = self.lock("session activity")?;
+        let file = self
+            .session_files()?
+            .into_iter()
+            .find(|f| f.stem == id.as_str())
+            .ok_or_else(|| Error::SessionNotFound {
+                id: id.clone(),
+                path: self.root.join(SESSIONS_DIR),
+            })?;
+        let mut record = file.load()?;
+        let outcome = self.apply_active(&file, &mut record, request, now, redactor)?;
+        Ok((record, outcome))
+    }
+
+    /// Apply the routine's deactivations under one store lock, each
+    /// checked again against the record on disk (a session pinned or
+    /// already deactivated since the scan read it is left alone). A
+    /// session with no record, or whose record does not parse, is skipped.
+    /// Returns what each request did, in order.
+    pub fn set_active_many(
+        &self,
+        requests: &[(SessionId, SetActive)],
+        now: time::OffsetDateTime,
+        redactor: &Redactor,
+    ) -> Result<Vec<ActiveOutcome>> {
+        if requests.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.prepare_dir(&self.root)?;
+        let _lock = self.lock("session activity")?;
+        let files = self.session_files()?;
+        let mut out = Vec::with_capacity(requests.len());
+        for (id, request) in requests {
+            let Some(file) = files.iter().find(|f| f.stem == id.as_str()) else {
+                out.push(ActiveOutcome::Unchanged);
+                continue;
+            };
+            let mut record = match file.load() {
+                Ok(record) => record,
+                Err(Error::Corrupt { .. }) => {
+                    out.push(ActiveOutcome::Unchanged);
+                    continue;
+                }
+                Err(other) => return Err(other),
+            };
+            out.push(self.apply_active(file, &mut record, request, now, redactor)?);
+        }
+        Ok(out)
+    }
+
+    /// Apply `request` to `record` and write it back to its own file when
+    /// it changed. The caller holds the lock.
+    fn apply_active(
+        &self,
+        file: &SessionFile,
+        record: &mut SessionRecord,
+        request: &SetActive,
+        now: time::OffsetDateTime,
+        redactor: &Redactor,
+    ) -> Result<ActiveOutcome> {
+        let outcome = activity::set_active(record, request, now);
+        if outcome.changed() {
+            if let Some(change) = record.active_change.as_mut() {
+                change.reason = redactor.mask(&change.reason);
+                if let Some(cite) = change.cite.as_mut() {
+                    *cite = redactor.mask(cite);
+                }
+            }
+            fsio::write_atomic(&file.path, &format::encode_session(&file.path, record)?)?;
+        }
+        Ok(outcome)
     }
 
     /// The on/off state; empty when there is no `control.json`.

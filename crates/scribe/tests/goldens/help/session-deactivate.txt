@@ -1,0 +1,28 @@
+Hide a session whose content no longer describes something current, with a reason
+
+Usage: scribe session deactivate [OPTIONS] --author <NAME> --reason <TEXT> <ID>
+
+Arguments:
+  <ID>  The session's id, as printed by `session list`, or its cite session:<id>
+
+Options:
+      --author <NAME>  Who is asking: lowercase letters, digits, '.', '_' or '-', 1-40 characters, such as your crew or model
+      --reason <TEXT>  Why the session no longer describes something current, at most 300 characters
+      --cite <REF>     The record that says so: session:<id>, session:<id>#<n> or an entry id [default: none]
+  -h, --help           Print help
+  -V, --version        Print version
+
+Global options:
+      --root <DIR>       Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>  Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json             Shorthand for --format json
+
+Hides the session from session list and ask, as a superseded entry is
+hidden; session show still shows it, with the reason.
+Deactivating a pinned session also unpins it. Check that the feature is
+gone before you deactivate: scribe takes your reason as given.
+
+Examples:
+  scribe session deactivate <id> --author opus --reason 'the feature was removed'
+  scribe session deactivate <id> --author opus --reason 'replaced by the new pass' --cite 'session:<id>#2'
+  scribe session deactivate <id> --author opus --reason '...' --json | jq '.active_change'

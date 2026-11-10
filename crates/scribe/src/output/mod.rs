@@ -13,9 +13,10 @@ mod sink;
 mod table;
 
 pub(crate) use payload::{
-    AskPayload, BatchFailure, EntryPayload, HookOutcome, HookReply, Kin, Output, PassPayload,
-    PassReport, PluginError, PluginReply, ProposalPayload, ReappliedPayload, Record, Records,
-    ScanReport, SessionPayload, SessionsContext, TagPayload, TreeRow, WarningPayload,
+    AskPayload, BatchFailure, DeactivatedPayload, EntryPayload, HookOutcome, HookReply, Kin,
+    Output, PassPayload, PassReport, PluginError, PluginReply, ProposalPayload, ReappliedPayload,
+    Record, Records, ScanReport, SessionPayload, SessionsContext, TagPayload, TreeRow,
+    WarningPayload,
 };
 pub(crate) use sink::{FORMAT_ENV, FormatArg, Sink};
 
@@ -73,6 +74,7 @@ pub(crate) fn finish(sink: &Sink, outcome: Result<Output, CliError>) -> ExitCode
             Output::Pass(report) => report.failure().map_or(Ok(()), Err),
             Output::List { .. }
             | Output::Show { .. }
+            | Output::Written { .. }
             | Output::Hook(_)
             | Output::Scan(_)
             | Output::Ask(_)
@@ -147,6 +149,12 @@ fn emit(sink: &Sink, output: &Output) -> io::Result<()> {
             let _ = writeln!(err, "{notice}");
         }
     }
+    if let Output::Written { notices, .. } = output {
+        let mut err = io::stderr().lock();
+        for notice in notices {
+            let _ = writeln!(err, "{notice}");
+        }
+    }
     let mut out = io::stdout().lock();
     match output {
         Output::List {
@@ -155,7 +163,9 @@ fn emit(sink: &Sink, output: &Output) -> io::Result<()> {
             warnings,
             ..
         } => render::list(&mut out, sink, records, *total, warnings)?,
-        Output::Show { record } => render::show(&mut out, sink, record)?,
+        Output::Show { record } | Output::Written { record, .. } => {
+            render::show(&mut out, sink, record)?;
+        }
         Output::Hook(reply) => render::hook(&mut out, reply)?,
         Output::Pass(report) => render::pass(&mut out, sink, report)?,
         Output::Scan(report) => render::scan(&mut out, sink, report)?,

@@ -1903,6 +1903,37 @@ As built (S9):
   a label whose quote fails is dropped and counted; pinned sessions are
   never deactivated by the scan. The report lists `deactivated`.
 
+As built (S10):
+
+- `activity::set_active` applies one route to a loaded record and
+  `Store::set_active` writes it under the lock; the scan's deactivations
+  go through `Store::set_active_many`, one lock for the batch, each
+  checked again on disk. `session activate` without `--reason` records
+  scribe's sentence (`activated by hand`, `pinned by hand`, `activated
+  and pinned by hand`, …); a `--reason` over 300 characters is refused as
+  a usage error rather than cut (a model's reason is cut). `--cite` is
+  free text of one token, at most 200 characters, not resolved against
+  the store; activity belongs to the whole session, so a segment cite as
+  the id is a usage error.
+- Ids are exact (or `session:<id>`): unique-prefix resolution
+  (`id_ambiguous`) is the CLI agent surface's rule
+  ([§1.1](#11-the-cli-agent-surface)) and arrives with S11–S13 for every
+  verb at once.
+- A record with no segment yet counts its age from the later of `started`
+  and `on_since`, never from `updated`.
+- Removed-feature candidates are built from session headers and segments
+  and from active entries; discussions join when they are stored. One
+  unit of each later record is paired with a session (its newest), ties
+  are broken by session id, and the model call is a separate
+  `Models::removal` request (`REMOVAL_SCHEMA`: `pair`, `label`, `feature`,
+  `reason`, `quote`) on `models.consistency`. A `removed` label with an
+  empty reason gets scribe's sentence naming the feature. The report's
+  `deactivated` items also carry the `quote`, and a failed batch is
+  listed in `failed_removal_batches`, numbered apart from the entry
+  batches. In the plugin call, a removed-feature batch after the scan's
+  first model call starts only before the call's deadline, as entry
+  batches do.
+
 **S11 — CLI read surface.** Depends on S8.
 
 - `scribe record search "<terms>"` returns hits ranked as `ask` ranks

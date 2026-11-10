@@ -626,6 +626,30 @@ pub(crate) fn scan(out: &mut dyn Write, sink: &Sink, report: &ScanReport) -> io:
             Cell::plain("-"),
         ]);
     }
+    for d in &report.deactivated {
+        rows.push(vec![
+            Cell {
+                text: String::from("deactivated"),
+                role: Role::Warn,
+            },
+            Cell::plain(d.session.clone()),
+            Cell::plain(d.route),
+            Cell::plain(d.cite.clone().unwrap_or_else(|| String::from("-"))),
+            Cell::plain("-"),
+        ]);
+    }
+    for f in &report.failed_removal_batches {
+        rows.push(vec![
+            Cell {
+                text: String::from("failed"),
+                role: Role::Warn,
+            },
+            Cell::plain(format!("removal-batch-{}", f.batch)),
+            Cell::plain(f.error_code),
+            Cell::plain("-"),
+            Cell::plain("-"),
+        ]);
+    }
     if rows.is_empty() {
         return Ok(());
     }

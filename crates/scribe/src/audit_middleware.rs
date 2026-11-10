@@ -16,8 +16,10 @@
 //! A hook run writes one line per record it wrote or refused (two `#scribe`
 //! lines in one prompt are two lines in the log), and none when it changed
 //! nothing; a session pass one per session passed; a consistency scan one
-//! per entry re-applied, per proposal opened and per batch the model
-//! failed, and none when it changed nothing: the `Stop` hook runs after
+//! per entry re-applied, per proposal opened, per session deactivated and
+//! per batch the model failed, and none when it changed nothing; a write
+//! verb (`session activate|deactivate`) one when it changed the record and
+//! none when it did not: the `Stop` hook runs after
 //! every reply and usually has nothing to do, and a prompt without
 //! `#scribe` is not a mutation.
 //!
@@ -128,7 +130,31 @@ impl<'a> AuditGuard<'a> {
                     target: Some(format!("batch:{}", f.batch)),
                     error_code: Some(f.error_code),
                 }))
+                .chain(report.deactivated.iter().map(|d| Line {
+                    status: AuditStatus::Success,
+                    target: Some(format!("session:{}", d.session)),
+                    error_code: None,
+                }))
+                .chain(report.failed_removal_batches.iter().map(|f| Line {
+                    status: AuditStatus::Failure,
+                    target: Some(format!("removal-batch:{}", f.batch)),
+                    error_code: Some(f.error_code),
+                }))
                 .collect(),
+            // A write verb that changed nothing writes no line.
+            Ok(Output::Written { changed: false, .. }) => Vec::new(),
+            Ok(Output::Written {
+                changed: true,
+                record,
+                ..
+            }) => vec![Line {
+                status: AuditStatus::Success,
+                target: Some(match record {
+                    Record::Entry(entry) => entry.id.clone(),
+                    Record::Session(session) => format!("session:{}", session.id),
+                }),
+                error_code: None,
+            }],
             Ok(output) => vec![Line {
                 status: AuditStatus::Success,
                 target: target_of(output),
@@ -194,9 +220,9 @@ fn target_of(output: &Output) -> Option<String> {
             record: Record::Session(session),
         } => Some(session.id.clone()),
         Output::List { .. } => None,
-        // Hook replies, passes and scans are audited per outcome in
-        // `mark_result`.
-        Output::Hook(_) | Output::Pass(_) | Output::Scan(_) => None,
+        // Hook replies, passes, scans and write verbs are audited per
+        // outcome in `mark_result`.
+        Output::Hook(_) | Output::Pass(_) | Output::Scan(_) | Output::Written { .. } => None,
         // Read-only: never audited (`question ask`, `plugin call`).
         Output::Ask(_) | Output::Plugin(_) => None,
     }

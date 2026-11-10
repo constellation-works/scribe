@@ -14,7 +14,13 @@ answer to agents as `scribe.ask` (install steps in its
 weekly consistency routine's job) proposes superseding an entry a later one
 replaced, and retiring an entry due for review; Daniel settles each with
 `#scribe approve p-<n>` or `#scribe reject p-<n>` in a prompt, and hides or
-blanks an entry with `#scribe retire <id>` or `#scribe forget <id>`.
+blanks an entry with `#scribe retire <id>` or `#scribe forget <id>`. The
+scan also deactivates (hides, never removes) sessions with no messages for
+`[sessions] inactive_after_days` (120) and sessions a later record says were
+removed or replaced; an agent or Daniel does the same by hand with `scribe
+session deactivate <id> --author <name> --reason <text>`, and `scribe
+session activate <id> --author <name> [--pin|--unpin]` shows one again or
+exempts it from the scan.
 
 ```sh
 scribe entry list                       # a table on a terminal, tab-separated lines in a pipe
@@ -27,6 +33,8 @@ scribe session show <id> --json | jq -r .next
 scribe session show <id> --log
 scribe session pass --json
 scribe session rebuild <id> --author <name> --confirm
+scribe session deactivate <id> --author opus --reason 'the feature was removed'
+scribe session activate <id> --author opus --pin
 scribe proposal list
 scribe consistency scan --json
 scribe tag list
@@ -40,18 +48,19 @@ The store is a directory: `--root <dir>`, else `$SCRIBE_ROOT`, else
 `entries/<tag>/<tag>-<n>.md`; session records are
 `sessions/<yyyy>/<mm>/<session-id>.md`; `control.json` holds which sessions
 are being cataloged, `proposals.json` the consistency routine's proposals and
-`config.toml` the tags, models, catalog cadence and redaction settings. The
+`config.toml` the tags, models, catalog cadence, session age limit and
+redaction settings. The
 layout and every key are in
 [specs/store.md](docs/design/scribe/specs/store.md). A store that another
 user owns or could write, a linked file and a record from a newer build are
 refused. Every `entry`, `session`, `proposal`, `tag` and `question` command
-except `session pass` and `session rebuild` only reads, and writes nothing,
-not even an audit line; those two verbs and `consistency scan` write and
-are audited. Passes rewrite the header and open segment and append new
-segments; sealed segments stay unchanged. `[catalog] segment_windows`
-(default 3) bounds each segment's rewrites. Rebuild replaces a record from
-its transcript only when every window succeeds, resuming private
-checkpoints on the next confirmed invocation.
+except `session pass`, `session rebuild`, `session deactivate` and `session activate`
+only reads, and writes nothing, not even an audit line; those four verbs and
+`consistency scan` write and are audited. Passes rewrite the header and open
+segment and append new segments; sealed segments stay unchanged.
+`[catalog] segment_windows` (default 3) bounds each segment's rewrites. Rebuild
+replaces a record from its transcript only when every window succeeds, resuming
+private checkpoints on the next confirmed invocation.
 
 ## The Claude Code package
 

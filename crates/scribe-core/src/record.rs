@@ -148,6 +148,16 @@ impl Author {
         }
     }
 
+    /// An agent or a person at a terminal, through a CLI write verb's
+    /// `--author <name>`.
+    #[must_use]
+    pub fn agent(name: AuthorName) -> Self {
+        Self {
+            kind: AuthorKind::Agent,
+            name,
+        }
+    }
+
     /// scribe's consistency routine.
     #[must_use]
     pub fn consistency() -> Self {

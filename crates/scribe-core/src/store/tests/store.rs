@@ -653,3 +653,52 @@ fn ordinary_writes_refuse_any_change_to_a_sealed_segment() {
         "new redaction settings leave sealed history intact"
     );
 }
+
+#[test]
+fn set_active_writes_only_the_activity_fields_and_only_on_a_change() {
+    use crate::activity::{ActiveOutcome, ActiveRoute, SetActive};
+    let dir = private_tempdir();
+    let root = dir.path().join("root");
+    let store = Store::open(&root);
+    let s: crate::session::SessionId = "s-1".parse().unwrap();
+    let t0 = time::macros::datetime!(2026-11-01 10:00 UTC);
+    let none = crate::store::Redactor::new([]);
+    store
+        .settle_pass(&s, Some(crate::tests::session("s-1", t0)), false, &none)
+        .unwrap();
+    let path = root.join("sessions/2026/11/s-1.md");
+    let before = store.session(&s).unwrap().record;
+
+    let redactor =
+        crate::store::Redactor::new([(String::from("TOKEN"), String::from("s3cr3t-value-123"))]);
+    let off = SetActive::Deactivate {
+        by: crate::record::Author::agent("opus".parse().unwrap()),
+        route: ActiveRoute::Manual,
+        reason: String::from("removed; token s3cr3t-value-123"),
+        cite: None,
+    };
+    let later = t0 + time::Duration::days(2);
+    let (record, outcome) = store.set_active(&s, &off, later, &redactor).unwrap();
+    assert_eq!(outcome, ActiveOutcome::Changed { unpinned: false });
+    assert!(!record.active);
+    assert_eq!(
+        record.active_change.as_ref().unwrap().reason,
+        "removed; token [redacted:TOKEN]"
+    );
+    let on_disk = store.session(&s).unwrap().record;
+    assert_eq!(on_disk, record);
+    let mut expected = before.clone();
+    expected.active = false;
+    expected.active_change.clone_from(&record.active_change);
+    assert_eq!(on_disk, expected, "nothing else changes, updated included");
+
+    let bytes = fs::read(&path).unwrap();
+    let (_, again) = store.set_active(&s, &off, later, &redactor).unwrap();
+    assert_eq!(again, ActiveOutcome::Unchanged);
+    assert_eq!(fs::read(&path).unwrap(), bytes, "a repeat writes nothing");
+
+    let err = store
+        .set_active(&"s-2".parse().unwrap(), &off, later, &redactor)
+        .unwrap_err();
+    assert_eq!(err.code(), "session_not_found");
+}

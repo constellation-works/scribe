@@ -52,7 +52,7 @@ mod tag;
 pub mod transcript;
 pub mod verbatim;
 
-pub use config::{Config, ConfigError, ModelIds};
+pub use config::{Config, ConfigError, ModelIds, SessionsConfig};
 pub use entry::{
     Cite, ContentFrom, Entry, EntryError, EntryFilter, EntryId, EntryStatus, NewEntry, Speaker,
     TagName,

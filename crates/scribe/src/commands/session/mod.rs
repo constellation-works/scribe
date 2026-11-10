@@ -8,8 +8,11 @@
 //! the id written as the cite `session:<id>#<n>`) one segment. `list` and `show`
 //! read only and make one store call each (STD-02 R2); `pass`, run by the
 //! enabled routine or by hand, lives in `pass.rs`; `rebuild` replaces a
-//! record from its transcript with resumable private checkpoints in `rebuild.rs`.
+//! record from its transcript with resumable private checkpoints in `rebuild.rs`;
+//! `deactivate` and `activate`, the `manual` route of the `active` flag, in
+//! `activity.rs`.
 
+pub(in crate::commands) mod activity;
 pub(in crate::commands) mod pass;
 pub(in crate::commands) mod rebuild;
 
@@ -26,6 +29,7 @@ pub(super) const SESSION_EXAMPLES: &str = "\
 Examples:
   scribe session list --project scribe
   scribe session show <id>
+  scribe session deactivate <id> --author opus --reason 'the feature was removed'
   scribe session pass --json";
 
 const LIST_EXAMPLES: &str = "\
@@ -59,6 +63,12 @@ pub(crate) enum SessionCommand {
     /// Replace a session record with a log rebuilt from its transcript, resuming interrupted windows
     #[command(after_help = rebuild::EXAMPLES)]
     Rebuild(rebuild::RebuildArgs),
+    /// Hide a session whose content no longer describes something current, with a reason
+    #[command(after_help = activity::DEACTIVATE_EXAMPLES)]
+    Deactivate(activity::DeactivateArgs),
+    /// Show an inactive session again, or pin or unpin it against automatic deactivation
+    #[command(after_help = activity::ACTIVATE_EXAMPLES)]
+    Activate(activity::ActivateArgs),
 }
 
 /// Arguments to `session list`.
@@ -126,7 +136,8 @@ fn parse_session_ref(raw: &str) -> Result<SessionRef, String> {
 
 impl SessionCommand {
     /// The audit entry for this verb: `None` for `list` and `show`, which
-    /// read (STD-01 R31); `pass` writes records and `control.json`.
+    /// read (STD-01 R31); `pass` writes records and `control.json`;
+    /// `deactivate` and `activate` write one record.
     pub(super) fn audit(&self) -> Option<AuditMeta> {
         match self {
             Self::List(_) | Self::Show(_) => None,
@@ -135,6 +146,12 @@ impl SessionCommand {
             }),
             Self::Pass(_) => Some(AuditMeta {
                 command: pass::COMMAND,
+            }),
+            Self::Deactivate(_) => Some(AuditMeta {
+                command: activity::DEACTIVATE_COMMAND,
+            }),
+            Self::Activate(_) => Some(AuditMeta {
+                command: activity::ACTIVATE_COMMAND,
             }),
         }
     }
@@ -147,6 +164,8 @@ pub(super) fn run(command: SessionCommand, ctx: &Context) -> Result<Output, CliE
         SessionCommand::Show(args) => show(&args, ctx),
         SessionCommand::Rebuild(args) => rebuild::run(&args, ctx),
         SessionCommand::Pass(args) => pass::run(&args, ctx),
+        SessionCommand::Deactivate(args) => activity::deactivate(args, ctx),
+        SessionCommand::Activate(args) => activity::activate(args, ctx),
     }
 }
 

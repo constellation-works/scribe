@@ -1,5 +1,5 @@
-//! `config.toml`: tags, model ids, cadence and the credential names whose
-//! values the redactor masks.
+//! `config.toml`: tags, model ids, cadence, the session age limit and the
+//! credential names whose values the redactor masks.
 //!
 //! Daniel edits the file and scribe only reads it; a missing file means the
 //! defaults. A bad key or value is refused at load, naming it, never
@@ -26,6 +26,9 @@
 //! window_messages = 40
 //! window_chars = 15000
 //! segment_windows = 3
+//!
+//! [sessions]
+//! inactive_after_days = 120
 //!
 //! [redact]
 //! env = ["GITHUB_TOKEN"]
@@ -80,6 +83,31 @@ impl Default for ModelIds {
     }
 }
 
+/// `[sessions]`: when the consistency routine deactivates a session by
+/// age (docs/design/scribe/2_design.md §5.7).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SessionsConfig {
+    /// Days since a session's last message after which the routine
+    /// deactivates it (route `age`), unless it is pinned.
+    pub inactive_after_days: NonZeroU32,
+}
+
+impl SessionsConfig {
+    /// The default age limit, in days.
+    pub const DEFAULT_INACTIVE_AFTER_DAYS: NonZeroU32 = match NonZeroU32::new(120) {
+        Some(n) => n,
+        None => NonZeroU32::MIN,
+    };
+}
+
+impl Default for SessionsConfig {
+    fn default() -> Self {
+        Self {
+            inactive_after_days: Self::DEFAULT_INACTIVE_AFTER_DAYS,
+        }
+    }
+}
+
 /// The parsed configuration.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
@@ -93,6 +121,8 @@ pub struct Config {
     pub catalog_window: crate::pass::WindowLimits,
     /// Windows before scribe seals an open segment (default 3).
     pub segment_windows: NonZeroU32,
+    /// When sessions are deactivated by age.
+    pub sessions: SessionsConfig,
     /// Further environment variables whose values are masked.
     pub redact_env: Vec<String>,
 }
@@ -105,6 +135,7 @@ impl Default for Config {
             catalog: Cadence::default(),
             catalog_window: crate::pass::WindowLimits::default(),
             segment_windows: crate::pass::SEGMENT_WINDOWS,
+            sessions: SessionsConfig::default(),
             redact_env: Vec::new(),
         }
     }
@@ -164,6 +195,12 @@ impl Config {
                 .catalog
                 .segment_windows
                 .unwrap_or(crate::pass::SEGMENT_WINDOWS),
+            sessions: SessionsConfig {
+                inactive_after_days: raw
+                    .sessions
+                    .inactive_after_days
+                    .unwrap_or(SessionsConfig::DEFAULT_INACTIVE_AFTER_DAYS),
+            },
             redact_env: raw.redact.env,
         })
     }
@@ -205,6 +242,8 @@ struct RawConfig {
     models: RawModels,
     #[serde(default)]
     catalog: RawCatalog,
+    #[serde(default)]
+    sessions: RawSessions,
     #[serde(default)]
     redact: RawRedact,
 }
@@ -262,6 +301,12 @@ struct RawCatalog {
     window_messages: Option<NonZeroUsize>,
     window_chars: Option<NonZeroUsize>,
     segment_windows: Option<NonZeroU32>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawSessions {
+    inactive_after_days: Option<NonZeroU32>,
 }
 
 #[derive(Default, Deserialize)]

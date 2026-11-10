@@ -26,6 +26,8 @@ const HELP: &[(&str, &[&str])] = &[
     ("session-show", &["session", "show", "--help"]),
     ("session-pass", &["session", "pass", "--help"]),
     ("session-rebuild", &["session", "rebuild", "--help"]),
+    ("session-deactivate", &["session", "deactivate", "--help"]),
+    ("session-activate", &["session", "activate", "--help"]),
     ("proposal", &["proposal", "--help"]),
     ("proposal-list", &["proposal", "list", "--help"]),
     ("consistency", &["consistency", "--help"]),

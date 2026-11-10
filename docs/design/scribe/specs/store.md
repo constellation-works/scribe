@@ -318,6 +318,15 @@ config tag claims is dropped with a warning naming both.
 - **Activity** *(S10)*. `Store::set_active` changes `active` or
   `keep_active` and `active_change` under the lock, and nothing else on
   the record (`updated` included); it writes only when something changed.
+  `active_change.reason` and `cite` pass the redactor. The consistency
+  scan's deactivations go through `Store::set_active_many`, one lock for
+  the batch, each checked again against the record on disk: a session
+  pinned or already inactive by then is left as it is, and one whose
+  record is missing or does not parse is skipped. A pinned session
+  (`keep_active: true`) is never deactivated by `age` or `removed`; a
+  `manual` deactivation clears `keep_active` too. Age counts from the
+  last segment's `to`, or for a record with no segment from the later of
+  `started` and `on_since`.
 - **Agent writes** *(S12)*. Each write verb takes the lock, checks the
   author guard (a Daniel entry's content, retirement and the settling of a
   proposal whose `older` is a Daniel entry are refused `daniel_only`),

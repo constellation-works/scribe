@@ -19,6 +19,13 @@
 //!    [`Draft`]; each stale entry becomes a `stale` draft ([`stale`]). The
 //!    store numbers and writes them; nothing changes on an entry yet.
 //!
+//! After the entry steps (S10) a scan deactivates sessions: the `age`
+//! route ([`crate::activity::past_age`]) model-free, then the `removed`
+//! route: [`removal_candidates`] pairs each active, unpinned session with
+//! later records that carry a removal cue, the model labels them
+//! ([`removal_request`]), and [`judge_removals`] keeps a `removed` label
+//! only when its quote is verbatim in the later record.
+//!
 //! The order of a pair is fixed here, never by the model: the newer entry
 //! (by `created`, then id) supersedes the older.
 //!
@@ -29,12 +36,15 @@
 //!
 //! Pure functions over loaded records: no I/O (STD-02 R5).
 
+use crate::activity::{self, ActiveRoute, SetActive};
 use crate::entry::{Cite, Entry, EntryId, EntryStatus};
 use crate::models::{
-    CONSISTENCY_BUDGET, ConsistencyAnswer, ConsistencyRequest, PairItem, PairSide,
+    CONSISTENCY_BUDGET, ConsistencyAnswer, ConsistencyRequest, PairItem, PairSide, RemovalAnswer,
+    RemovalLater, RemovalPairItem, RemovalRequest, RemovalSession,
 };
 use crate::proposal::{Proposal, ProposalId, ProposalKind, ProposalState, Quote};
 use crate::record::Author;
+use crate::session::{SessionId, SessionRecord};
 use crate::verbatim;
 use std::collections::BTreeSet;
 use std::fmt;
@@ -658,4 +668,334 @@ fn approve(
         status,
         by,
     }
+}
+
+/// The most removed-feature pairs one scan offers the model (§7, S10).
+pub const MAX_REMOVAL_PAIRS: usize = 20;
+/// How recently a later record must have been written or updated to be
+/// offered, in days: a weekly scan sees each new record once (§7).
+pub const REMOVAL_RECENT_DAYS: i64 = 8;
+/// The words that make a later record a removal candidate (§7).
+pub const REMOVAL_CUES: &[&str] = &[
+    "removed",
+    "deleted",
+    "dropped",
+    "decommissioned",
+    "retired",
+    "replaced",
+    "superseded",
+    "ripped out",
+    "sunset",
+];
+
+/// A record written after a session that may say its feature is gone: a
+/// session's header, one of its segments, or an entry.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LaterRecord {
+    /// `session:<id>`, `session:<id>#<n>` or an entry id: what a
+    /// deactivation cites.
+    pub cite: String,
+    /// The record it belongs to (a session id or the entry id), so one
+    /// session is paired with one unit of each record at most.
+    pub record: String,
+    /// The unit's date: a segment's last message, a header's session's
+    /// last message, an entry's `created`.
+    pub date: OffsetDateTime,
+    /// The text the model reads and the quote is checked against.
+    pub text: String,
+    /// Its topics.
+    pub topics: Vec<String>,
+}
+
+/// An active, unpinned session and a later record with a removal cue.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemovalPair {
+    /// The session that may be about a removed feature.
+    pub session: SessionId,
+    /// Its last message.
+    pub last_message: OffsetDateTime,
+    /// Its header as the model reads it.
+    pub header: String,
+    /// The later record.
+    pub later: LaterRecord,
+}
+
+/// The removed-feature pairs of one scan.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RemovalCandidates {
+    /// Pairs, newest later record first, at most the cap.
+    pub pairs: Vec<RemovalPair>,
+    /// Pairs the cap left out.
+    pub over_cap: usize,
+}
+
+/// A session's header as one text: title, summary, goals and next.
+fn header_text(record: &SessionRecord) -> String {
+    [
+        record.title.as_str(),
+        record.summary.as_str(),
+        record.goals.as_str(),
+        record.next.as_str(),
+    ]
+    .iter()
+    .map(|s| s.trim())
+    .filter(|s| !s.is_empty())
+    .collect::<Vec<_>>()
+    .join("\n\n")
+}
+
+/// Whether `text` holds a removal cue as a whole word or phrase.
+#[must_use]
+pub fn has_removal_cue(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    REMOVAL_CUES.iter().any(|cue| {
+        lower.match_indices(cue).any(|(at, _)| {
+            let before = lower.get(..at).and_then(|s| s.chars().next_back());
+            let after = lower
+                .get(at.saturating_add(cue.len())..)
+                .and_then(|s| s.chars().next());
+            !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
+        })
+    })
+}
+
+/// The later units of every session record and active entry written or
+/// updated since `since`.
+fn later_records(
+    sessions: &[SessionRecord],
+    entries: &[Entry],
+    since: OffsetDateTime,
+) -> Vec<LaterRecord> {
+    let topics = |t: &crate::record::Topics| t.as_slice().iter().map(ToString::to_string).collect();
+    let mut out = Vec::new();
+    for r in sessions.iter().filter(|r| r.updated >= since) {
+        let record = r.id.to_string();
+        out.push(LaterRecord {
+            cite: format!("session:{}", r.id),
+            record: record.clone(),
+            date: activity::last_message(r),
+            text: header_text(r),
+            topics: topics(&r.topics),
+        });
+        for segment in &r.log {
+            out.push(LaterRecord {
+                cite: format!("session:{}#{}", r.id, segment.n),
+                record: record.clone(),
+                date: segment.to,
+                text: format!("{}\n\n{}", segment.heading.trim(), segment.text.trim()),
+                topics: topics(&segment.topics),
+            });
+        }
+    }
+    for e in entries
+        .iter()
+        .filter(|e| e.status == EntryStatus::Active && e.updated >= since)
+    {
+        out.push(LaterRecord {
+            cite: e.id.to_string(),
+            record: e.id.to_string(),
+            date: e.created,
+            text: e.content.clone(),
+            topics: topics(&e.topics),
+        });
+    }
+    out
+}
+
+/// The scan's removed-feature candidates (§7, S10), model-free: pairs of an
+/// active, unpinned session S and a later record R (a session header or
+/// segment, or an active entry) whose date is after S's last message,
+/// written or updated in the last [`REMOVAL_RECENT_DAYS`] days, that shares
+/// a topic or a term with S or overlaps S's header by at least one token
+/// in four, and whose text has a removal cue. One unit of each record per
+/// session, the newest; newest pairs first, at most `max_pairs`.
+#[must_use]
+pub fn removal_candidates(
+    sessions: &[SessionRecord],
+    entries: &[Entry],
+    now: OffsetDateTime,
+    max_pairs: usize,
+) -> RemovalCandidates {
+    let since = now - time::Duration::days(REMOVAL_RECENT_DAYS);
+    let later: Vec<(LaterRecord, BTreeSet<String>)> = later_records(sessions, entries, since)
+        .into_iter()
+        .filter(|l| has_removal_cue(&l.text))
+        .map(|l| {
+            let tokens = crate::ask::tokens(&l.text).into_iter().collect();
+            (l, tokens)
+        })
+        .collect();
+    let mut pairs = Vec::new();
+    for s in sessions.iter().filter(|s| s.active && !s.keep_active) {
+        let last = activity::last_message(s);
+        let header = header_text(s);
+        let s_tokens: BTreeSet<String> = crate::ask::tokens(&header).into_iter().collect();
+        let s_topics: Vec<String> = s
+            .topics
+            .as_slice()
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        let s_terms: Vec<String> = s
+            .terms
+            .iter()
+            .map(|t| t.term.trim().to_lowercase())
+            .filter(|t| !t.is_empty())
+            .collect();
+        let mut best: Vec<&LaterRecord> = Vec::new();
+        for (l, l_tokens) in &later {
+            if l.record == s.id.as_str() || l.date <= last {
+                continue;
+            }
+            let lower = l.text.to_lowercase();
+            let related = l.topics.iter().any(|t| s_topics.contains(t))
+                || s_terms.iter().any(|t| lower.contains(t.as_str()))
+                || overlaps(&s_tokens, l_tokens);
+            if !related {
+                continue;
+            }
+            match best.iter_mut().find(|b| b.record == l.record) {
+                Some(b) if (l.date, &l.cite) > (b.date, &b.cite) => *b = l,
+                Some(_) => {}
+                None => best.push(l),
+            }
+        }
+        pairs.extend(best.into_iter().map(|l| RemovalPair {
+            session: s.id.clone(),
+            last_message: last,
+            header: header.clone(),
+            later: l.clone(),
+        }));
+    }
+    pairs.sort_by(|a, b| {
+        (b.later.date, &b.later.cite)
+            .cmp(&(a.later.date, &a.later.cite))
+            .then_with(|| a.session.cmp(&b.session))
+    });
+    let over_cap = pairs.len().saturating_sub(max_pairs);
+    pairs.truncate(max_pairs);
+    RemovalCandidates { pairs, over_cap }
+}
+
+/// The model request for one batch of removed-feature pairs, numbered
+/// from 1.
+#[must_use]
+pub fn removal_request(model: &str, pairs: &[RemovalPair]) -> RemovalRequest {
+    RemovalRequest {
+        model: model.to_owned(),
+        budget: CONSISTENCY_BUDGET,
+        pairs: pairs
+            .iter()
+            .zip(1u32..)
+            .map(|(p, n)| RemovalPairItem {
+                pair: n.to_string(),
+                session: RemovalSession {
+                    id: p.session.to_string(),
+                    date: p.last_message.date().to_string(),
+                    text: p.header.clone(),
+                },
+                later: RemovalLater {
+                    cite: p.later.cite.clone(),
+                    date: p.later.date.date().to_string(),
+                    text: p.later.text.clone(),
+                },
+            })
+            .collect(),
+    }
+}
+
+/// One session a `removed` label deactivates.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Removal {
+    /// The session.
+    pub session: SessionId,
+    /// The model's reason, at most [`activity::REASON_CHARS`] characters.
+    pub reason: String,
+    /// The later record's cite.
+    pub cite: String,
+    /// The verbatim span of the later record.
+    pub quote: String,
+}
+
+impl Removal {
+    /// The change it makes, by the consistency routine.
+    #[must_use]
+    pub fn change(&self) -> SetActive {
+        SetActive::Deactivate {
+            by: Author::consistency(),
+            route: ActiveRoute::Removed,
+            reason: self.reason.clone(),
+            cite: Some(self.cite.clone()),
+        }
+    }
+}
+
+/// What [`judge_removals`] made of one answer.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RemovalJudged {
+    /// One per surviving `removed` label, in pair order.
+    pub removals: Vec<Removal>,
+    /// Pairs labelled `still_current` or `unrelated`.
+    pub kept: usize,
+    /// Labels dropped: a quote not verbatim in the later record, an
+    /// unknown pair or label, or a second label for the same pair.
+    pub dropped: usize,
+}
+
+/// Check the model's labels for `pairs`: a `removed` label survives only
+/// when its quote is verbatim in the later record's text. The reason is
+/// trimmed and cut; an empty one becomes scribe's own sentence naming the
+/// feature.
+#[must_use]
+pub fn judge_removals(answer: RemovalAnswer, pairs: &[RemovalPair]) -> RemovalJudged {
+    let mut out = RemovalJudged::default();
+    let mut seen = BTreeSet::new();
+    let mut found: Vec<(usize, Removal)> = Vec::new();
+    for j in answer.judgements {
+        let index = j
+            .pair
+            .trim()
+            .parse::<usize>()
+            .ok()
+            .and_then(|n| n.checked_sub(1))
+            .filter(|i| *i < pairs.len());
+        let Some(index) = index.filter(|i| seen.insert(*i)) else {
+            out.dropped = out.dropped.saturating_add(1);
+            continue;
+        };
+        let pair = &pairs[index];
+        match j.label.trim() {
+            "still_current" | "unrelated" => out.kept = out.kept.saturating_add(1),
+            "removed" => {
+                let quote = j.quote.trim();
+                if !verbatim::contains(&pair.later.text, quote) {
+                    out.dropped = out.dropped.saturating_add(1);
+                    continue;
+                }
+                let reason = j.reason.trim();
+                let reason = if reason.is_empty() {
+                    format!(
+                        "{} says {} was removed or replaced",
+                        pair.later.cite,
+                        j.feature.trim()
+                    )
+                } else {
+                    reason.to_owned()
+                };
+                found.push((
+                    index,
+                    Removal {
+                        session: pair.session.clone(),
+                        reason: cut(&reason, activity::REASON_CHARS),
+                        cite: pair.later.cite.clone(),
+                        quote: quote.to_owned(),
+                    },
+                ));
+            }
+            _ => out.dropped = out.dropped.saturating_add(1),
+        }
+    }
+    found.sort_by_key(|(i, _)| *i);
+    out.removals = found.into_iter().map(|(_, r)| r).collect();
+    out
 }
