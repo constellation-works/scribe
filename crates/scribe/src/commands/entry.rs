@@ -1,7 +1,4 @@
-//! The `entry` noun: list and show the entries Daniel recorded with
-//! `#scribe`. Read-only: entries are written only by the `UserPromptSubmit`
-//! hook. Each verb makes one store call and wraps the result in a payload
-//! (STD-02 R2); rendering happens later, in `output`, from the payload alone.
+//! Entry listing, display and audited direct agent writes.
 
 use super::{ListNotice, list_output};
 use crate::app::Context;
@@ -10,7 +7,7 @@ use crate::error::CliError;
 use crate::output::{EntryPayload, Output, Record, Records};
 use clap::builder::{PossibleValuesParser, TypedValueParser};
 use clap::{Args, Subcommand};
-use scribe_core::{EntryFilter, EntryId, EntryStatus, Project, TagName, Topic};
+use scribe_core::{EntryFilter, EntryStatus, Project, TagName, Topic};
 use std::num::NonZeroUsize;
 
 pub(super) const ENTRY_EXAMPLES: &str = "\
@@ -35,6 +32,19 @@ Examples:
 /// Verbs on the `entry` noun.
 #[derive(Debug, Subcommand)]
 pub(crate) enum EntryCommand {
+    /// Add an agent note (never attributed to Daniel)
+    #[command(
+        after_help = "Examples:\n  scribe entry add --tag decisions --author opus 'Use the stable API'"
+    )]
+    Add(AddArgs),
+    /// Update content or metadata; Daniel's entries allow metadata only
+    #[command(after_help = "Examples:\n  scribe entry update <id> --author opus --add-topic api")]
+    Update(UpdateArgs),
+    /// Retire an agent note with a reason
+    #[command(
+        after_help = "Examples:\n  scribe entry retire <id> --author opus --reason 'No longer applies'"
+    )]
+    Retire(RetireArgs),
     /// List entries, oldest first
     #[command(after_help = LIST_EXAMPLES)]
     List(ListArgs),
@@ -72,7 +82,7 @@ pub(crate) struct ListArgs {
 pub(crate) struct ShowArgs {
     /// The entry's id, as printed by `entry list`
     #[arg(value_name = "ID")]
-    pub(crate) id: EntryId,
+    pub(crate) id: String,
 }
 
 /// Allowed statuses come from the domain type, so help and parsing cannot
@@ -82,11 +92,20 @@ fn status_parser() -> impl TypedValueParser<Value = EntryStatus> {
 }
 
 impl EntryCommand {
-    /// The audit entry for this verb: `None`, both verbs read (STD-01 R31).
+    /// Audit every write; list and show remain read-only.
     /// See [`super::Command::audit`].
     pub(super) fn audit(&self) -> Option<AuditMeta> {
         match self {
             Self::List(_) | Self::Show(_) => None,
+            Self::Add(_) => Some(AuditMeta {
+                command: "entry add",
+            }),
+            Self::Update(_) => Some(AuditMeta {
+                command: "entry update",
+            }),
+            Self::Retire(_) => Some(AuditMeta {
+                command: "entry retire",
+            }),
         }
     }
 }
@@ -96,6 +115,53 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
     match command {
         EntryCommand::List(args) => list(args, ctx),
         EntryCommand::Show(args) => show(&args, ctx),
+        EntryCommand::Add(args) => {
+            let redactor = ctx.redactor(&ctx.store().config()?)?;
+            let topics = scribe_core::Topics::try_from(args.topic)
+                .map_err(|e| CliError::Usage(e.to_string()))?;
+            let entry = ctx.store().add_agent_entry(
+                scribe_core::AgentEntry {
+                    tag: args.tag,
+                    content: args.content,
+                    project: args.project,
+                    topics,
+                    related: args.related,
+                    host: ctx.host(),
+                },
+                args.author,
+                ctx.now(),
+                &redactor,
+            )?;
+            Ok(written(entry, true))
+        }
+        EntryCommand::Update(args) => {
+            let redactor = ctx.redactor(&ctx.store().config()?)?;
+            let (entry, changed) = ctx.store().update_agent_entry(
+                &args.id,
+                scribe_core::EntryPatch {
+                    content: args.content,
+                    add_topics: args.add_topic,
+                    remove_topics: args.remove_topic,
+                    add_related: args.add_related,
+                    remove_related: args.remove_related,
+                },
+                args.author,
+                ctx.now(),
+                &redactor,
+            )?;
+            Ok(written(entry, changed))
+        }
+        EntryCommand::Retire(args) => {
+            let redactor = ctx.redactor(&ctx.store().config()?)?;
+            let (entry, changed) = ctx.store().retire_agent_entry(
+                &args.id,
+                &args.reason,
+                args.author,
+                ctx.now(),
+                &redactor,
+            )?;
+            Ok(written(entry, changed))
+        }
     }
 }
 
@@ -145,8 +211,69 @@ pub(super) fn criteria(filter: &EntryFilter) -> Vec<String> {
 }
 
 fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
-    let entry = ctx.store().entry(&args.id)?;
+    let entry = ctx.store().resolve_entry(&args.id)?;
     Ok(Output::Show {
         record: Record::Entry(Box::new(EntryPayload::from(&entry))),
     })
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct AddArgs {
+    /// Content to record
+    content: String,
+    /// Tag name or alias
+    #[arg(long)]
+    tag: TagName,
+    /// Agent name (even daniel records the agent channel)
+    #[arg(long)]
+    author: scribe_core::AuthorName,
+    /// Project slug
+    #[arg(long, default_value = "global")]
+    project: Project,
+    /// Topic, repeatable (at most five)
+    #[arg(long)]
+    topic: Vec<Topic>,
+    /// Related reference, repeatable
+    #[arg(long)]
+    related: Vec<scribe_core::Related>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct UpdateArgs {
+    /// Entry id or unique prefix (at least four characters)
+    id: String,
+    /// Agent name
+    #[arg(long)]
+    author: scribe_core::AuthorName,
+    /// Replacement content
+    #[arg(long)]
+    content: Option<String>,
+    /// Topic to add, repeatable
+    #[arg(long)]
+    add_topic: Vec<Topic>,
+    /// Topic to remove, repeatable
+    #[arg(long)]
+    remove_topic: Vec<Topic>,
+    /// Reference to add, repeatable
+    #[arg(long)]
+    add_related: Vec<scribe_core::Related>,
+    /// Reference to remove, repeatable
+    #[arg(long)]
+    remove_related: Vec<scribe_core::Related>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct RetireArgs {
+    /// Entry id or unique prefix
+    id: String,
+    /// Agent name
+    #[arg(long)]
+    author: scribe_core::AuthorName,
+    /// Why the note no longer applies
+    #[arg(long)]
+    reason: String,
+}
+
+fn written(entry: scribe_core::Entry, changed: bool) -> Output {
+    Output::written(Record::Entry(Box::new(EntryPayload::from(&entry))), changed)
 }

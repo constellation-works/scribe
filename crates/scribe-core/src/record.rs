@@ -490,6 +490,13 @@ impl TryFrom<String> for Related {
     }
 }
 
+impl FromStr for Related {
+    type Err = RecordError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::try_from(s.to_owned())
+    }
+}
+
 impl From<Related> for String {
     fn from(related: Related) -> Self {
         related.to_string()
@@ -574,5 +581,14 @@ pub(crate) mod nullable_date {
         Option::<String>::deserialize(deserializer)?
             .map(|text| Date::parse(&text, FORMAT).map_err(serde::de::Error::custom))
             .transpose()
+    }
+}
+
+pub(crate) fn patch<T: Clone + PartialEq>(items: &mut Vec<T>, add: &[T], remove: &[T]) {
+    items.retain(|item| !remove.contains(item));
+    for item in add {
+        if !items.contains(item) {
+            items.push(item.clone());
+        }
     }
 }

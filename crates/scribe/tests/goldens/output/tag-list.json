@@ -1,6 +1,8 @@
 {
   "tags": [
     {
+      "author": null,
+      "source": "config",
       "name": "decisions",
       "aliases": [
         "decision",
@@ -12,6 +14,8 @@
       "entries": 2
     },
     {
+      "author": null,
+      "source": "config",
       "name": "preferences",
       "aliases": [
         "preference",
@@ -23,6 +27,8 @@
       "entries": 1
     },
     {
+      "author": null,
+      "source": null,
       "name": "rituals",
       "aliases": [],
       "description": null,

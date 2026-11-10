@@ -35,7 +35,8 @@
         "kind": "daniel",
         "name": "daniel"
       },
-      "updated_by": null
+      "updated_by": null,
+      "retirement_reason": null
     },
     {
       "id": "preferences-1",
@@ -70,7 +71,8 @@
         "kind": "daniel",
         "name": "daniel"
       },
-      "updated_by": null
+      "updated_by": null,
+      "retirement_reason": null
     },
     {
       "id": "decisions-1",
@@ -109,7 +111,8 @@
         "kind": "daniel",
         "name": "daniel"
       },
-      "updated_by": null
+      "updated_by": null,
+      "retirement_reason": null
     },
     {
       "id": "decisions-2",
@@ -149,7 +152,8 @@
         "kind": "daniel",
         "name": "daniel"
       },
-      "updated_by": null
+      "updated_by": null,
+      "retirement_reason": null
     }
   ],
   "total": 4,

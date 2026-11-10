@@ -755,3 +755,97 @@ fn an_inactive_session_is_hidden_from_lookups_and_evidence_unless_include_hidden
     let a = run(&last, &[], &sessions, &FakeModels::silent(), &NoTasks);
     assert_eq!(a.records[0].cite(), "session:s-2");
 }
+
+#[test]
+fn agent_evidence_cannot_be_presented_as_daniels_words_even_by_the_model() {
+    let mut agent = decision("decisions-1", 0, SQUASH);
+    agent.author = crate::Author::agent("daniel".parse().unwrap());
+    agent.cite = None;
+    agent.said.clear();
+    agent.content_from = ContentFrom::Agent;
+    let mut reply = answered(vec![claim("Daniel said to squash", SQUASH, "decisions-1")]);
+    reply.answer = String::from("Daniel says to squash.");
+    let models = FakeModels::answering(reply);
+    let result = run(
+        &question("how should we merge PRs?"),
+        &[agent],
+        &[],
+        &models,
+        &NoTasks,
+    );
+    assert_eq!(
+        models.calls.borrow()[0].evidence[0].whose,
+        "agent note (daniel)"
+    );
+    assert_eq!(result.claims[0].text, "agent note (daniel)");
+    assert!(result.answer.starts_with("agent note (daniel):"));
+    assert!(!result.answer.contains("Daniel says"));
+}
+
+#[test]
+fn daniels_evidence_wins_top_k_over_a_newer_identical_agent_note() {
+    let mut entries: Vec<Entry> = (1..=ask::TOP_K)
+        .map(|n| {
+            let mut e = decision(&format!("decisions-{n}"), 0, SQUASH);
+            e.said.clear();
+            e
+        })
+        .collect();
+    let mut agent = decision("decisions-21", 1, SQUASH);
+    agent.author = crate::Author::agent("opus".parse().unwrap());
+    agent.cite = None;
+    agent.content_from = ContentFrom::Agent;
+    agent.said.clear();
+    entries.push(agent);
+    let models = FakeModels::silent();
+    run(
+        &question("squash merge PRs"),
+        &entries,
+        &[],
+        &models,
+        &NoTasks,
+    );
+    assert_eq!(models.cites().len(), ask::TOP_K);
+    assert!(
+        !models.cites().iter().any(|id| id == "decisions-21"),
+        "the agent note must lose the last retrieval slot despite its recency"
+    );
+}
+
+#[test]
+fn mixed_author_conflicts_keep_both_labels_and_a_nonempty_safe_answer() {
+    let daniel = decision("decisions-1", 0, "squash merge all changes");
+    let mut agent = decision("decisions-2", 1, "rebase merge all changes");
+    agent.author = crate::Author::agent("opus".parse().unwrap());
+    agent.cite = None;
+    agent.said.clear();
+    agent.content_from = ContentFrom::Agent;
+    let models = FakeModels::answering(AskAnswer {
+        status: String::from("conflict"),
+        answer: String::from("Daniel says both."),
+        claims: Vec::new(),
+        conflicts: vec![ConflictAnswer {
+            cites: vec!["decisions-1".to_owned(), "decisions-2".to_owned()],
+            note: String::from("Daniel contradicts himself."),
+        }],
+    });
+    let result = run(
+        &question("how should we merge changes?"),
+        &[daniel, agent],
+        &[],
+        &models,
+        &NoTasks,
+    );
+    assert_eq!(result.status, Status::Conflict);
+    assert!(result.conflicts[0].note.contains("Daniel [decisions-1]"));
+    assert!(
+        result.conflicts[0]
+            .note
+            .contains("agent note (opus) [decisions-2]")
+    );
+    assert!(
+        !result.answer.is_empty(),
+        "a conflict without claims still needs a safe answer"
+    );
+    assert!(!result.answer.contains("Daniel says"));
+}

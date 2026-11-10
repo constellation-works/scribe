@@ -1,6 +1,6 @@
 ---
 type: design
-summary: "Spec: store — layout, record files with YAML frontmatter (format 4: session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
+summary: "Spec: store — layout, record files with YAML frontmatter (format 5: agent provenance and write metadata; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
 last_validated: 2026-11-10
 ---
 
@@ -10,8 +10,8 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-The code is format 4 since S8. Parts marked *(S10)* to *(S14)* are designed
-([ORB-23892]) and not yet built.
+The code writes format 5 since S12 and reads formats 1–5. S12 is built;
+other future-slice markers describe work outside this slice.
 
 ## Why This Exists
 
@@ -29,7 +29,7 @@ user's file could pass for one of Daniel's records.
 ├── sessions/<yyyy>/<mm>/<session-id>.md 0600, one file per session record
 ├── control.json                         0600, optional
 ├── proposals.json                       0600, optional
-├── tags.json                            0600, optional (format 4, S12)
+├── tags.json                            0600, optional (format 5, S12)
 ├── audit.jsonl                          0600, created by the first audited command
 └── .lock                                0600, created by the first writer, never deleted
 ```
@@ -74,9 +74,11 @@ at}`), `cite` (`{session, message, at, prompt_sha256, line, cwd}`),
 
 Format 4 adds `author` (`{kind: daniel|agent, name}`; `name` lowercase
 `[a-z0-9._-]`, 1–40 characters) and `updated_by` (an author or `null`);
-`#scribe` capture writes `{kind: daniel, name: daniel}`. *(S12)* An agent entry (`author.kind: agent`) has `said: ""`,
+`#scribe` capture writes `{kind: daniel, name: daniel}`. (S12) An agent entry (`author.kind: agent`) has `said: ""`,
 `content_from: {kind: agent}` and `cite: null`; a Daniel entry always has a
-cite. Any other combination is `store_corrupt`.
+cite. Any other combination is `store_corrupt`. Format 5 adds
+`retirement_reason` (redacted text or `null`) and enables this agent
+provenance; old entries upgrade with a null retirement reason.
 
 **Session keys:** `format`, `kind`, `id`, `status` (`open`, `final`),
 `project`, `topics`, `related` (model-extracted references, unchanged by
@@ -138,15 +140,18 @@ heading is `store_corrupt`. It reads as format 4 (see **Format 4** below).
   Each proposal also has `author` (`{kind: scribe|agent|daniel, name}`;
   the consistency routine writes `{kind: scribe, name: consistency}`) and
   `settled_author` (an author or `null`; `#scribe approve|reject|retire|forget`
-  sets Daniel's). *(S12)* An agent's settle leaves `settled_by` `null`.
+  sets Daniel's). (S12) An agent's settle leaves `settled_by` `null`. Format 5 adds
+  `updated_by` (agent author or `null`) to preserve who last changed a
+  proposal reason without replacing its original `author`.
 - `cataloged_by` on a `control.json` switch is `null` or `{at, by}`;
   `/scribe on` keeps it. *(S14)* `session catalog` sets it and the pass
   copies it onto the record.
-- *(S12)* `tags.json`: `{"format": 4, "tags": [{"name",
-  "aliases", "description", "stale_after_days", "author", "created",
+- (S12) `tags.json`: `{"format": 5, "tags": [{"name",
+  "aliases", "description", "stale_after_days", "author", "updated_by", "created",
   "updated"}]}`, sorted by name; `name` and aliases as for config tags,
-  `description` at most 300 characters, `stale_after_days` a positive
-  integer or `null`, `author` of kind `agent`. Absent is no store tags.
+  `description` accepts 1–300 characters before redaction, `stale_after_days` a positive
+  integer or `null`, `author` of kind `agent`; `updated_by` is the last updating agent or
+  `null`. Absent is no store tags.
 
 Both are strict in the same way as frontmatter: format first, then no
 unknown, missing or repeated key.
@@ -198,7 +203,7 @@ lowercase kebab-case, or an empty `paths`.
 
 `tag list` reports every configured tag and every directory under
 `entries/` with its entry count; a directory no configured tag names is
-listed with `configured: false`. *(format 4, S12)* The tag table is the
+listed with `configured: false`. *(format 5, S12)* The tag table is the
 config's tags merged with `tags.json`'s; config tags win
 ([2_design.md §3](../2_design.md#3-storage)), and a store tag's word a
 config tag claims is dropped with a warning naming both.
@@ -279,7 +284,7 @@ config tag claims is dropped with a warning naming both.
   other refusal (a link, loose modes, a newer format, an I/O error) fails
   the whole command rather than skipping the file
   ([4_decisions.md](../4_decisions.md#one-malformed-record-makes-its-file-corrupt)).
-- **Format.** One `FORMAT` (4) covers every document. A shape change bumps
+- **Format.** One `FORMAT` (5) covers every document. A shape change bumps
   it and appends one step to `UPGRADES` in `store/format.rs`, which is
   given the document type it upgrades; shipped steps never change. Reads
   upgrade an older document in memory; a newer one is refused and left
@@ -300,7 +305,7 @@ config tag claims is dropped with a warning naming both.
   consistency}` and `settled_author` (Daniel's for a settled one, else
   `null`); control switches `cataloged_by: null`. The step is the only
   place an upgraded segment may exceed 900 characters. The first write of
-  an upgraded document persists it at format 4; a build older than S8
+  an upgraded document now persists it at format 5; a build older than S8
   refuses format 4 (`store_too_new`).
 - **The log is append-only** (S9). Every session write except `session
   rebuild` compares each sealed segment it writes with the one on disk;
@@ -339,12 +344,26 @@ config tag claims is dropped with a warning naming both.
   `manual` deactivation clears `keep_active` too. Age counts from the
   last segment's `to`, or for a record with no segment from the later of
   `started` and `on_since`.
-- **Agent writes** *(S12)*. Each write verb takes the lock, checks the
+- **Format 5** (S12). Append-only step 4→5 adds null entry
+  `retirement_reason` and proposal `updated_by`. Existing citations and
+  authors are preserved. New agent notes have a null cite and
+  `content_from: {kind: agent}`. Agent tags are a new optional document.
+  A format-4 reader refuses format-5 records rather than misreading them.
+- **Agent writes** (S12). Each write verb takes the lock, checks the
   author guard (a Daniel entry's content, retirement and the settling of a
   proposal whose `older` is a Daniel entry are refused `daniel_only`),
   redacts, and writes the entry, `proposals.json` or `tags.json` through
   `write_atomic`. `entry add` numbers like capture. An agent settle uses the
-  same two-write order as `#scribe approve`.
+  same two-write order as `#scribe approve`; both and recovery call the
+  same entry-effect function. Recovery preserves an agent settler in
+  `updated_by`. Entry content updates retain the original author and set
+  `updated_by`; metadata-only updates of Daniel entries do likewise.
+  Direct retirement stores its redacted reason. Proposal reasons accept
+  1–300 characters before redaction; direct retirement uses the same bound.
+  Repeating an unchanged update or settlement prints the unchanged record
+  and `nothing changed` on stderr, without an audit event (the lock holder
+  diagnostic may change). Config/store collisions are resolved in memory:
+  `tag list` warns; it never rewrites either file.
 - **Transcripts** *(S14)*. `transcript list` and `transcript show` read
   Claude Code transcripts through the hooks' provenance check and write
   nothing, take no lock and create nothing.
@@ -368,7 +387,8 @@ config tag claims is dropped with a warning naming both.
   `session.next`, `session.terms.term`, `session.terms.said`,
   `session.log.heading`, `session.log.text`,
   `session.active_change.reason`, `proposal.reason` and
-  `proposal.quotes.text`; *(S12)* also `tag.description`. A masked segment
+  `proposal.quotes.text`; (S12) also `tag.description` and
+  `entry.retirement_reason`. A masked segment
   heading is cut back to 80 characters. Values shorter than 8 characters are not masked;
   identifiers, timestamps and paths are not free text. A `[redact] env`
   name with no value in the writer's environment refuses the write

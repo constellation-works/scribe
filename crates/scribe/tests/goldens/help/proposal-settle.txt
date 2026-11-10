@@ -1,0 +1,22 @@
+Approve or reject a proposal about an agent entry
+
+Usage: scribe proposal settle [OPTIONS] --author <AUTHOR> <ID>
+
+Arguments:
+  <ID>  Proposal id or unique prefix
+
+Options:
+      --author <AUTHOR>  Agent name
+      --approve          Apply the proposal
+      --reject           Close without applying
+      --reason <REASON>  Replacement explanation for the settlement
+  -h, --help             Print help
+  -V, --version          Print version
+
+Global options:
+      --root <DIR>       Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>  Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json             Shorthand for --format json
+
+Examples:
+  scribe proposal settle <id> --approve --author opus

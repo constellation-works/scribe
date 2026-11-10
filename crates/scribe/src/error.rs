@@ -110,7 +110,11 @@ impl CliError {
 
     /// The process exit code. Only usage errors exit 2.
     pub(crate) fn exit_code(&self) -> u8 {
-        if matches!(self, Self::Usage(_)) { 2 } else { 1 }
+        if matches!(self, Self::Usage(_)) || matches!(self.code(), "id_ambiguous" | "usage_error") {
+            2
+        } else {
+            1
+        }
     }
 
     /// The fix, where it is known and not already in the message (STD-01

@@ -32,14 +32,15 @@ fn entry(id: &str, content: &str) -> EntryPayload {
             message: None,
             at: None,
         },
-        cite: CitePayload {
+        retirement_reason: None,
+        cite: Some(CitePayload {
             session: String::from("s-1"),
             message: None,
             at,
             prompt_sha256: "0".repeat(64),
             line: 1,
             cwd: String::from("/work"),
-        },
+        }),
         superseded_by: None,
         review_after: None,
     }
@@ -171,6 +172,8 @@ fn the_detail_view_keeps_the_content_whole() {
 fn a_single_record_list_is_still_a_table_and_counts_align_right() {
     // STD-01 R16: the shape does not depend on the record count.
     let tag = TagPayload {
+        author: None,
+        source: Some("config"),
         name: String::from("decisions"),
         aliases: vec![String::from("dec")],
         description: None,

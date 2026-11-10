@@ -37,19 +37,19 @@ pub(crate) use tag::TagCommand;
 /// Top-level nouns.
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
-    /// List and show the entries recorded with #scribe
+    /// Read entries and write agent notes
     #[command(subcommand, after_help = entry::ENTRY_EXAMPLES)]
     Entry(EntryCommand),
     /// List and show the records of sessions cataloged with /scribe on, and write them (pass)
     #[command(subcommand, after_help = session::SESSION_EXAMPLES)]
     Session(SessionCommand),
-    /// List what the consistency routine proposes changing
+    /// Read, open, update and settle proposals
     #[command(subcommand, after_help = proposal::PROPOSAL_EXAMPLES)]
     Proposal(ProposalCommand),
     /// Propose superseding or retiring entries a later one replaced or that are due for review (scan)
     #[command(subcommand, after_help = consistency::CONSISTENCY_EXAMPLES)]
     Consistency(ConsistencyCommand),
-    /// List the tags entries are filed under
+    /// List tags and manage agent-created store tags
     #[command(subcommand, after_help = tag::TAG_EXAMPLES)]
     Tag(TagCommand),
     /// Answer a question from the records, citing a verbatim quote for every claim
@@ -67,7 +67,7 @@ impl Command {
     /// What the audit log records for this command, or `None` when it is not
     /// audited. Only commands that change durable state are: a read-only
     /// command must not write, not even an audit line (STD-01 R31). The
-    /// `hook` verbs, `session pass` and `consistency scan` are the writers. Exhaustive, so a new command cannot
+    /// hooks, passes, scans and direct agent write verbs are writers. Exhaustive, so a new command cannot
     /// compile without deciding (STD-02 R27).
     pub(crate) fn audit(&self) -> Option<AuditMeta> {
         match self {

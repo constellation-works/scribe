@@ -1,0 +1,20 @@
+Open a proposal, including against a Daniel entry
+
+Usage: scribe proposal add [OPTIONS] --kind <KIND> --older <OLDER> --reason <REASON> --author <AUTHOR>
+
+Options:
+      --kind <KIND>      Proposed change [possible values: supersedes, stale]
+      --older <OLDER>    Entry to retire or supersede
+      --newer <NEWER>    Replacement entry (required for supersedes)
+      --reason <REASON>  Why this change is proposed
+      --author <AUTHOR>  Agent name
+  -h, --help             Print help
+  -V, --version          Print version
+
+Global options:
+      --root <DIR>       Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>  Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json             Shorthand for --format json
+
+Examples:
+  scribe proposal add --kind stale --older <id> --reason 'Review needed' --author opus

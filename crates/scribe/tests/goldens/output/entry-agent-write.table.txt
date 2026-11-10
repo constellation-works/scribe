@@ -1,0 +1,17 @@
+id          notes-1
+tag         notes
+status      active
+project     scribe
+topics      -
+related     -
+provider    cli
+host        host
+created     2026-11-10T01:00:00Z
+updated     2026-11-10T01:00:00Z
+review      -
+superseded  -
+from        agent note (opus)
+cite        agent note (opus)
+cwd         -
+said        -
+content     Keep the API stable.

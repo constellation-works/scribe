@@ -1,0 +1,48 @@
+{
+  "tags": [
+    {
+      "author": null,
+      "source": "config",
+      "name": "decisions",
+      "aliases": [
+        "decision",
+        "dec"
+      ],
+      "description": "choices Daniel has made",
+      "stale_after_days": null,
+      "configured": true,
+      "entries": 0
+    },
+    {
+      "author": {
+        "kind": "agent",
+        "name": "opus"
+      },
+      "source": "store",
+      "name": "notes",
+      "aliases": [
+        "note"
+      ],
+      "description": "Agent notes",
+      "stale_after_days": null,
+      "configured": false,
+      "entries": 1
+    },
+    {
+      "author": null,
+      "source": "config",
+      "name": "preferences",
+      "aliases": [
+        "preference",
+        "pref"
+      ],
+      "description": "how Daniel likes things done",
+      "stale_after_days": 180,
+      "configured": true,
+      "entries": 0
+    }
+  ],
+  "total": 3,
+  "truncated": false,
+  "warnings": []
+}

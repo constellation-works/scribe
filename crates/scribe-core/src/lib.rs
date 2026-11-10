@@ -54,12 +54,14 @@ pub mod verbatim;
 
 pub use config::{Config, ConfigError, ModelIds, SessionsConfig};
 pub use entry::{
-    Cite, ContentFrom, Entry, EntryError, EntryFilter, EntryId, EntryStatus, NewEntry, Speaker,
-    TagName,
+    AgentEntry, Cite, ContentFrom, Entry, EntryError, EntryFilter, EntryId, EntryPatch,
+    EntryStatus, NewEntry, Speaker, TagName,
 };
-pub use error::{Error, Result};
+pub use error::{Error, Result, WriteRefusal};
 pub use models::Models;
-pub use proposal::{Proposal, ProposalError, ProposalId, ProposalKind, ProposalState, Quote};
+pub use proposal::{
+    Proposal, ProposalChange, ProposalError, ProposalId, ProposalKind, ProposalState, Quote,
+};
 pub use record::{
     Author, AuthorKind, AuthorName, Label, Listing, Project, RecordError, Related, RelatedKind,
     Topic, Topics,
@@ -76,7 +78,7 @@ pub use store::{
     Redactor, SESSIONS_DIR, SessionList, SessionView, Skipped, Store, TagList,
     unresolved_redact_env,
 };
-pub use tag::{TagDef, TagError, TagSummary, TagTable};
+pub use tag::{StoreTag, TagDef, TagError, TagPatch, TagSummary, TagTable};
 
 #[cfg(test)]
 mod tests;

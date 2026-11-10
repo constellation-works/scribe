@@ -351,12 +351,20 @@ mod capture {
         let filled: Vec<String> = filled.iter().map(ToString::to_string).collect();
         assert_eq!(filled, ["decisions-1"]);
         let one = store.entry(&"decisions-1".parse().unwrap()).unwrap();
-        assert_eq!(one.cite.message.as_deref(), Some("m-1"));
+        assert_eq!(one.cite.as_ref().unwrap().message.as_deref(), Some("m-1"));
         assert_eq!(one.updated, now);
         let two = store.entry(&"decisions-2".parse().unwrap()).unwrap();
-        assert_eq!(two.cite.message, None, "no match leaves it waiting");
+        assert_eq!(
+            two.cite.as_ref().unwrap().message,
+            None,
+            "no match leaves it waiting"
+        );
         let three = store.entry(&"decisions-3".parse().unwrap()).unwrap();
-        assert_eq!(three.cite.message, None, "another session is not touched");
+        assert_eq!(
+            three.cite.as_ref().unwrap().message,
+            None,
+            "another session is not touched"
+        );
         // A filled cite is not filled again.
         let again = store
             .fill_cite_messages(&session, now, |_| Some(String::from("m-2")))

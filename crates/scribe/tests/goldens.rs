@@ -19,6 +19,9 @@ use support::{Fixture, text};
 const HELP: &[(&str, &[&str])] = &[
     ("root", &["--help"]),
     ("entry", &["entry", "--help"]),
+    ("entry-add", &["entry", "add", "--help"]),
+    ("entry-update", &["entry", "update", "--help"]),
+    ("entry-retire", &["entry", "retire", "--help"]),
     ("entry-list", &["entry", "list", "--help"]),
     ("entry-show", &["entry", "show", "--help"]),
     ("session", &["session", "--help"]),
@@ -29,10 +32,15 @@ const HELP: &[(&str, &[&str])] = &[
     ("session-deactivate", &["session", "deactivate", "--help"]),
     ("session-activate", &["session", "activate", "--help"]),
     ("proposal", &["proposal", "--help"]),
+    ("proposal-add", &["proposal", "add", "--help"]),
+    ("proposal-update", &["proposal", "update", "--help"]),
+    ("proposal-settle", &["proposal", "settle", "--help"]),
     ("proposal-list", &["proposal", "list", "--help"]),
     ("consistency", &["consistency", "--help"]),
     ("consistency-scan", &["consistency", "scan", "--help"]),
     ("tag", &["tag", "--help"]),
+    ("tag-add", &["tag", "add", "--help"]),
+    ("tag-update", &["tag", "update", "--help"]),
     ("tag-list", &["tag", "list", "--help"]),
     ("question", &["question", "--help"]),
     ("question-ask", &["question", "ask", "--help"]),
@@ -294,4 +302,90 @@ fn run_with_input(
         .write_all(input)
         .unwrap();
     guard.finish()
+}
+
+#[test]
+fn agent_write_shapes_match_goldens() {
+    use scribe_core::{
+        AgentEntry, Author, Label, Project, ProposalKind, Redactor, Store, StoreTag, Topics,
+    };
+    let fx = Fixture::new();
+    let store = Store::open(fx.root());
+    let now = time::macros::datetime!(2026-11-10 01:00 UTC);
+    let author = || "opus".parse().unwrap();
+    let redactor = Redactor::default();
+    store
+        .add_agent_tag(
+            StoreTag {
+                name: "notes".parse().unwrap(),
+                aliases: vec!["note".parse().unwrap()],
+                description: String::from("Agent notes"),
+                stale_after_days: None,
+                author: Author::agent(author()),
+                updated_by: None,
+                created: now,
+                updated: now,
+            },
+            &redactor,
+        )
+        .unwrap();
+    store
+        .add_agent_entry(
+            AgentEntry {
+                tag: "notes".parse().unwrap(),
+                content: String::from("Keep the API stable."),
+                project: Project::sanitized("scribe"),
+                topics: Topics::default(),
+                related: Vec::new(),
+                host: Label::sanitized("host", "host"),
+            },
+            author(),
+            now,
+            &redactor,
+        )
+        .unwrap();
+    store
+        .add_agent_proposal(
+            ProposalKind::Stale,
+            "notes-1",
+            None,
+            "Review this note.",
+            author(),
+            now,
+            &redactor,
+        )
+        .unwrap();
+    let mut failures = Vec::new();
+    for (name, args) in [
+        (
+            "entry-agent-write",
+            vec!["entry", "update", "notes-1", "--author", "opus"],
+        ),
+        (
+            "tag-write",
+            vec!["tag", "update", "notes", "--author", "opus"],
+        ),
+        (
+            "proposal-write",
+            vec![
+                "proposal",
+                "update",
+                "p-1",
+                "--author",
+                "opus",
+                "--reason",
+                "Review this note.",
+            ],
+        ),
+        ("tag-list-store", vec!["tag", "list"]),
+    ] {
+        for (suffix, mode) in MODES {
+            let out = fx.ok(&[args.as_slice(), *mode].concat());
+            failures.extend(check(
+                &format!("output/{name}.{suffix}"),
+                &text(&out.stdout),
+            ));
+        }
+    }
+    report(&failures);
 }

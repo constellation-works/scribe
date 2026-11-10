@@ -18,9 +18,9 @@
 //! nothing; a session pass one per session passed; a consistency scan one
 //! per entry re-applied, per proposal opened, per session deactivated or
 //! deactivation failed, per batch the model failed, and none when it changed
-//! nothing; a write
-//! verb (`session activate|deactivate`) one when it changed the record and
-//! none when it did not: the `Stop` hook runs after
+//! nothing; a direct write verb (`entry`, `tag` and `proposal` writes,
+//! `session activate|deactivate`) one when it changed the record and none
+//! when it did not: the `Stop` hook runs after
 //! every reply and usually has nothing to do, and a prompt without
 //! `#scribe` is not a mutation.
 //!
@@ -86,6 +86,7 @@ impl<'a> AuditGuard<'a> {
     /// per write or refusal.
     pub(crate) fn mark_result(&mut self, result: &Result<Output, CliError>) {
         self.lines = match result {
+            Ok(Output::Written { changed: false, .. }) => Vec::new(),
             Ok(Output::Hook(reply)) => reply
                 .outcomes
                 .iter()
@@ -147,20 +148,6 @@ impl<'a> AuditGuard<'a> {
                     error_code: Some(f.error_code),
                 }))
                 .collect(),
-            // A write verb that changed nothing writes no line.
-            Ok(Output::Written { changed: false, .. }) => Vec::new(),
-            Ok(Output::Written {
-                changed: true,
-                record,
-                ..
-            }) => vec![Line {
-                status: AuditStatus::Success,
-                target: Some(match record {
-                    Record::Entry(entry) => entry.id.clone(),
-                    Record::Session(session) => format!("session:{}", session.id),
-                }),
-                error_code: None,
-            }],
             Ok(output) => vec![Line {
                 status: AuditStatus::Success,
                 target: target_of(output),
@@ -219,6 +206,13 @@ impl Drop for AuditGuard<'_> {
 /// Exhaustive, so a new payload decides what it contributes (STD-02 R27).
 fn target_of(output: &Output) -> Option<String> {
     match output {
+        Output::Written { record, .. } => record_target(record),
+        Output::Show {
+            record: Record::Tag(tag),
+        } => Some(tag.name.to_string()),
+        Output::Show {
+            record: Record::Proposal(proposal),
+        } => Some(proposal.id.clone()),
         Output::Show {
             record: Record::Entry(entry),
         } => Some(entry.id.clone()),
@@ -226,10 +220,19 @@ fn target_of(output: &Output) -> Option<String> {
             record: Record::Session(session),
         } => Some(session.id.clone()),
         Output::List { .. } => None,
-        // Hook replies, passes, scans and write verbs are audited per
-        // outcome in `mark_result`.
-        Output::Hook(_) | Output::Pass(_) | Output::Scan(_) | Output::Written { .. } => None,
+        // Hook replies, passes and scans are audited per outcome in
+        // `mark_result`.
+        Output::Hook(_) | Output::Pass(_) | Output::Scan(_) => None,
         // Read-only: never audited (`question ask`, `plugin call`).
         Output::Ask(_) | Output::Plugin(_) => None,
     }
+}
+
+fn record_target(record: &Record) -> Option<String> {
+    Some(match record {
+        Record::Entry(e) => e.id.clone(),
+        Record::Session(s) => format!("session:{}", s.id),
+        Record::Tag(t) => t.name.to_string(),
+        Record::Proposal(p) => p.id.clone(),
+    })
 }

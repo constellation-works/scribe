@@ -469,9 +469,66 @@ pub fn check(reply: AskAnswer, evidence: &[EvidenceItem], hidden: usize) -> Answ
     if status == Status::NoRecord {
         return no_record(evidence.len(), dropped, hidden);
     }
+    let has_agent = evidence.iter().any(|e| e.whose.starts_with("agent note ("));
+    let answer = if has_agent {
+        claims
+            .iter()
+            .map(|c| {
+                let whose = evidence
+                    .iter()
+                    .find(|e| e.cite == c.cite)
+                    .map_or("record", |e| e.whose.as_str());
+                format!("{whose}: \"{}\" [{}]", c.quote, c.cite)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        reply.answer
+    };
+    let claims = if has_agent {
+        claims
+            .into_iter()
+            .map(|mut c| {
+                if let Some(e) = evidence.iter().find(|e| e.cite == c.cite) {
+                    c.text.clone_from(&e.whose);
+                }
+                c
+            })
+            .collect()
+    } else {
+        claims
+    };
+    let conflicts: Vec<Conflict> = if has_agent {
+        conflicts
+            .into_iter()
+            .map(|mut c| {
+                c.note = format!(
+                    "The cited sources disagree: {}.",
+                    c.cites
+                        .iter()
+                        .filter_map(|cite| evidence.iter().find(|e| &e.cite == cite))
+                        .map(|e| format!("{} [{}]", e.whose, e.cite))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                );
+                c
+            })
+            .collect()
+    } else {
+        conflicts
+    };
+    let answer = if has_agent && answer.is_empty() {
+        conflicts
+            .iter()
+            .map(|c| c.note.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        answer
+    };
     Answer {
         status,
-        answer: with_hidden_note(reply.answer, hidden),
+        answer: with_hidden_note(answer, hidden),
         claims,
         conflicts,
         evidence_considered: evidence.len(),
@@ -1006,7 +1063,11 @@ fn retrieve<T: Tasks + ?Sized>(question: &Question, corpus: Corpus<'_>, tasks: &
         docs.push(Doc {
             record: entry.id.to_string(),
             tokens: tokens(&format!("{} {} {}", entry.content, entry.said, entry.tag)),
-            weight: ENTRY_WEIGHT * boost,
+            weight: if entry.author.kind == crate::AuthorKind::Daniel {
+                ENTRY_WEIGHT * boost
+            } else {
+                boost
+            },
             order: 0,
             at: entry.updated,
             hidden: entry.status.is_hidden(),
@@ -1239,6 +1300,7 @@ fn day(at: OffsetDateTime) -> String {
 
 fn entry_item(entry: &Entry) -> EvidenceItem {
     let whose = match &entry.content_from {
+        ContentFrom::Agent => "agent",
         ContentFrom::Instruction
         | ContentFrom::Message {
             role: Speaker::User,
@@ -1252,7 +1314,11 @@ fn entry_item(entry: &Entry) -> EvidenceItem {
     EvidenceItem {
         cite: entry.id.to_string(),
         kind: "entry",
-        whose,
+        whose: if entry.author.kind == crate::AuthorKind::Agent {
+            format!("agent note ({})", entry.author.name)
+        } else {
+            whose.to_owned()
+        },
         status: entry.status.as_str().to_owned(),
         date: day(entry.created),
         text: entry.content.clone(),
@@ -1274,7 +1340,7 @@ fn session_item(record: &SessionRecord) -> EvidenceItem {
     EvidenceItem {
         cite: format!("session:{}", record.id),
         kind: "session",
-        whose: "session summary",
+        whose: "session summary".to_owned(),
         status: record.status.as_str().to_owned(),
         date: day(record.updated),
         text,
@@ -1287,7 +1353,7 @@ fn segment_item(record: &SessionRecord, segment: &Segment) -> EvidenceItem {
     EvidenceItem {
         cite: format!("session:{}#{}", record.id, segment.n),
         kind: "session",
-        whose: "session summary",
+        whose: "session summary".to_owned(),
         status: record.status.as_str().to_owned(),
         date: day(segment.to),
         text: format!("{}\n{}", segment.heading, segment.text),
@@ -1298,7 +1364,7 @@ fn task_item(task: &Task, description: &str) -> EvidenceItem {
     EvidenceItem {
         cite: format!("task:{}", task.id),
         kind: "task",
-        whose: "Orbit task",
+        whose: "Orbit task".to_owned(),
         status: task.status.clone(),
         date: task.updated.map(day).unwrap_or_default(),
         text: format!("{}\n{description}", task.title),

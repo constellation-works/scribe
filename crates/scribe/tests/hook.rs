@@ -764,3 +764,50 @@ fn a_referent_with_nothing_before_it_is_refused_without_a_model_call() {
     let codes: Vec<Value> = audit(&fx).iter().map(|l| l["error_code"].clone()).collect();
     assert_eq!(codes, [json!("no_referent")]);
 }
+
+#[test]
+fn store_tag_capture_and_daniel_approval_of_agent_proposal() {
+    let fx = Fixture::new();
+    fx.ok(&[
+        "tag",
+        "add",
+        "notes",
+        "--author",
+        "opus",
+        "--description",
+        "Agent notes",
+        "--alias",
+        "note",
+    ]);
+    let claude = Claude::new(&fx);
+    let mut payload = claude.payload("user-prompt-submit.json");
+    payload["prompt"] = json!("#scribe keep this note to note");
+    claude.write_transcript(payload["prompt"].as_str().unwrap(), "u-note");
+    hook_ok(&fx, "user-prompt-submit", &payload);
+    let recorded = entries(&fx);
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0]["tag"], "notes");
+    assert_eq!(recorded[0]["author"]["kind"], "daniel");
+    fx.ok(&[
+        "proposal",
+        "add",
+        "--kind",
+        "stale",
+        "--older",
+        "notes-1",
+        "--reason",
+        "Review this",
+        "--author",
+        "opus",
+    ]);
+    payload["prompt"] = json!("#scribe approve p-1");
+    claude.write_transcript("#scribe approve p-1", "u-approve");
+    hook_ok(&fx, "user-prompt-submit", &payload);
+    assert_eq!(entries(&fx)[0]["status"], "retired");
+    let proposals: Value =
+        serde_json::from_slice(&fx.ok(&["proposal", "list", "--json"]).stdout).unwrap();
+    assert_eq!(
+        proposals["proposals"][0]["settled_author"]["kind"],
+        "daniel"
+    );
+}

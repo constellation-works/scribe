@@ -23,8 +23,8 @@ read-only CLI), S2 (`#scribe` capture without a model, and the Claude Code
 package), S3 (referents and the models port), S4 (`/scribe on` and
 session records), S5 (the Orbit plugin tree and `ask`) and S6 (the
 consistency routine and the settling verbs) are implemented; S7
-(discussions) is not yet. S8–S14 ([ORB-23892], designed 2026-11-10, not
-built) turn a session record into a header over an append-only log, add the
+(discussions) is not yet. S8–S14 ([ORB-23892], designed 2026-11-10; see the slice-specific
+As built notes) turn a session record into a header over an append-only log, add the
 `active` flag, give agents a CLI read and write surface taught by one skill,
 add a tmux popup for Daniel, and catalog chosen past sessions by name. The reasons behind each choice
 are in [4_decisions.md](./4_decisions.md); open directions are in
@@ -1317,7 +1317,7 @@ or `last_session`, `named_session`, `next_steps`, `tag_period`, `term`,
 ### 6.7 Segments, authors and inactive sessions
 
 Segments and inactive sessions are built (S8); authors' weights and labels
-are designed for S12.
+are built in S12.
 
 - **Units.** From format 4 a session is ranked as several units: its header
   (title, summary, goals, next), cited `session:<id>`, and each segment
@@ -1975,6 +1975,20 @@ As built (S10):
   `tag_configured`; `#scribe … to <store tag>` files under it.
 - `ask` labels agent entries `agent note (<name>)` and weights them 1.0×;
   with a fake `Models`, an agent entry is never cited as Daniel's words.
+
+**As built (S12).** All eight CLI write verbs are implemented, with
+unique entry/proposal prefixes, agent authors, no-op output and audit
+suppression, redaction and locked atomic writes. Daniel entries accept
+only metadata patches through the CLI; human hook settlement is unchanged.
+Config and store tags share routing, with source and author in `tag list`.
+The store writes **format 5**, superseding this design's format-4 sketch:
+the workspace guide requires a version bump for nullable agent citations,
+the new provenance variant and additional metadata. Entry retirement
+reasons and proposal updaters are retained; tag updaters are retained too.
+See the S12 decision and the current store/output specs. `ask` gives agent
+entries a 1.0× base weight (the existing named-tag boost still applies).
+When agent evidence is packed, answers use checked quotes with source
+labels instead of forwarding potentially misattributed model prose.
 
 **S13 — The skill and the tmux popup.** Depends on S11 and S12.
 

@@ -23,7 +23,7 @@ type Timestamp = OffsetDateTime;
 /// Where an entry's content came from.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct ContentFromPayload {
-    /// `instruction` or `message`.
+    /// `instruction`, `message` or `agent`.
     pub(crate) kind: &'static str,
     /// `user` or `assistant` for a message; `null` for an instruction.
     pub(crate) role: Option<&'static str>,
@@ -37,6 +37,12 @@ pub(crate) struct ContentFromPayload {
 impl From<&ContentFrom> for ContentFromPayload {
     fn from(from: &ContentFrom) -> Self {
         match from {
+            ContentFrom::Agent => Self {
+                kind: "agent",
+                role: None,
+                message: None,
+                at: None,
+            },
             ContentFrom::Instruction => Self {
                 kind: "instruction",
                 role: None,
@@ -198,7 +204,7 @@ pub(crate) struct EntryPayload {
     /// What the entry records, verbatim.
     pub(crate) content: String,
     pub(crate) content_from: ContentFromPayload,
-    pub(crate) cite: CitePayload,
+    pub(crate) cite: Option<CitePayload>,
     pub(crate) superseded_by: Option<String>,
     /// `YYYY-MM-DD`.
     pub(crate) review_after: Option<String>,
@@ -206,6 +212,7 @@ pub(crate) struct EntryPayload {
     pub(crate) author: AuthorPayload,
     /// Who last updated or retired it through a CLI verb.
     pub(crate) updated_by: Option<AuthorPayload>,
+    pub(crate) retirement_reason: Option<String>,
 }
 
 fn strings<T: ToString>(items: &[T]) -> Vec<String> {
@@ -238,11 +245,12 @@ impl From<&Entry> for EntryPayload {
             said: entry.said.clone(),
             content: entry.content.clone(),
             content_from: ContentFromPayload::from(&entry.content_from),
-            cite: CitePayload::from(&entry.cite),
+            cite: entry.cite.as_ref().map(CitePayload::from),
             superseded_by: entry.superseded_by.as_ref().map(ToString::to_string),
             review_after: entry.review_after.map(date),
             author: AuthorPayload::from(&entry.author),
             updated_by: entry.updated_by.as_ref().map(AuthorPayload::from),
+            retirement_reason: entry.retirement_reason.clone(),
         }
     }
 }
@@ -476,6 +484,7 @@ pub(crate) struct ProposalPayload {
     pub(crate) author: AuthorPayload,
     /// Who settled it; `null` while open.
     pub(crate) settled_author: Option<AuthorPayload>,
+    pub(crate) updated_by: Option<AuthorPayload>,
 }
 
 impl From<&Proposal> for ProposalPayload {
@@ -493,6 +502,7 @@ impl From<&Proposal> for ProposalPayload {
             settled_by: p.settled_by.as_ref().map(CitePayload::from),
             author: AuthorPayload::from(&p.author),
             settled_author: p.settled_author.as_ref().map(AuthorPayload::from),
+            updated_by: p.updated_by.as_ref().map(AuthorPayload::from),
         }
     }
 }
@@ -500,6 +510,8 @@ impl From<&Proposal> for ProposalPayload {
 /// One tag as every output mode sees it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct TagPayload {
+    pub(crate) author: Option<AuthorPayload>,
+    pub(crate) source: Option<&'static str>,
     pub(crate) name: String,
     pub(crate) aliases: Vec<String>,
     pub(crate) description: Option<String>,
@@ -515,6 +527,8 @@ pub(crate) struct TagPayload {
 impl From<&TagSummary> for TagPayload {
     fn from(tag: &TagSummary) -> Self {
         Self {
+            source: tag.source,
+            author: tag.author.as_ref().map(AuthorPayload::from),
             name: tag.name.to_string(),
             aliases: tag
                 .def
@@ -527,7 +541,7 @@ impl From<&TagSummary> for TagPayload {
                 .as_ref()
                 .and_then(|d| d.stale_after_days)
                 .map(|d| d.get()),
-            configured: tag.def.is_some(),
+            configured: tag.source == Some("config"),
             entries: tag.entries,
         }
     }
@@ -609,6 +623,8 @@ pub(crate) struct TreeRow {
 /// One record a `show` returned.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Record {
+    Tag(Box<scribe_core::StoreTag>),
+    Proposal(Box<ProposalPayload>),
     Entry(Box<EntryPayload>),
     Session(Box<SessionPayload>),
 }
@@ -1025,6 +1041,23 @@ pub(crate) struct PluginError {
     pub(crate) retryable: bool,
 }
 
+impl Output {
+    /// A direct write's outcome. An unchanged write says `nothing changed`
+    /// on stderr and is not audited.
+    pub(crate) fn written(record: Record, changed: bool) -> Self {
+        let notices = if changed {
+            Vec::new()
+        } else {
+            vec![String::from("nothing changed")]
+        };
+        Self::Written {
+            record,
+            changed,
+            notices,
+        }
+    }
+}
+
 /// What a command produced, before rendering.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Output {
@@ -1048,8 +1081,8 @@ pub(crate) enum Output {
         /// The record.
         record: Record,
     },
-    /// The record a write verb wrote, in the `show` shape (`session
-    /// activate`, `session deactivate`).
+    /// The record a direct write verb wrote, in the `show` shape (`entry`,
+    /// `tag` and `proposal` writes; `session activate`, `session deactivate`).
     Written {
         /// The record as it now stands.
         record: Record,

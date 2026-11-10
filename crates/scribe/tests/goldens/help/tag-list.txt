@@ -1,4 +1,4 @@
-List the configured tags, their aliases and how many entries each holds
+List config and store tags, their aliases, sources and entry counts
 
 Usage: scribe tag list [OPTIONS]
 

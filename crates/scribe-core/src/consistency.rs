@@ -114,6 +114,7 @@ impl Draft {
             settled_at: None,
             settled_by: None,
             author: Author::consistency(),
+            updated_by: None,
             settled_author: None,
         }
     }
@@ -419,10 +420,8 @@ pub fn reapply(
         else {
             continue;
         };
-        let (status, by) = approved_status(proposal);
-        entry.status = status;
-        entry.superseded_by = by;
-        entry.updated = now;
+        apply_approval(proposal, entry, now);
+        let status = entry.status;
         out.push(Reapplied {
             proposal: proposal.id,
             entry: entry.id.clone(),
@@ -659,9 +658,7 @@ fn approve(
     proposal.settled_at = Some(now);
     proposal.settled_by = Some(cite.clone());
     proposal.settled_author = Some(Author::daniel());
-    entry.status = status;
-    entry.superseded_by.clone_from(&by);
-    entry.updated = now;
+    apply_approval(proposal, entry, now);
     Settled::Approved {
         proposal: id,
         entry: entry.id.clone(),
@@ -998,4 +995,19 @@ pub fn judge_removals(answer: RemovalAnswer, pairs: &[RemovalPair]) -> RemovalJu
     found.sort_by_key(|(i, _)| *i);
     out.removals = found.into_iter().map(|(_, r)| r).collect();
     out
+}
+
+/// The single entry effect used by human approval, agent approval and recovery.
+pub(crate) fn apply_approval(proposal: &Proposal, entry: &mut Entry, now: OffsetDateTime) {
+    let (status, by) = approved_status(proposal);
+    entry.status = status;
+    entry.superseded_by = by;
+    entry.updated = now;
+    if proposal
+        .settled_author
+        .as_ref()
+        .is_some_and(|a| a.kind == crate::AuthorKind::Agent)
+    {
+        entry.updated_by.clone_from(&proposal.settled_author);
+    }
 }

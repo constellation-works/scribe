@@ -208,7 +208,9 @@ pub(super) fn run_with<M: Models>(
     match stored {
         Ok(results) => {
             for result in results {
-                captured.insert(result.entry().cite.line, result);
+                if let Some(cite) = &result.entry().cite {
+                    captured.insert(cite.line, result);
+                }
             }
         }
         Err(err) => store_error = Some(err),
@@ -274,6 +276,7 @@ fn previous(entry: &Entry) -> &'static str {
     match &entry.content_from {
         ContentFrom::Message { role, .. } => role.as_str(),
         ContentFrom::Instruction => "last",
+        ContentFrom::Agent => "agent",
     }
 }
 
@@ -321,7 +324,7 @@ impl<'a> Referents<'a> {
                     .unwrap_or_default()
             })
             .iter()
-            .find(|e| e.cite.line == line)
+            .find(|e| e.cite.as_ref().is_some_and(|c| c.line == line))
             .cloned()
     }
 

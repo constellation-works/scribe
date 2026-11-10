@@ -1,0 +1,20 @@
+Update the reason of an open agent proposal
+
+Usage: scribe proposal update [OPTIONS] --author <AUTHOR> --reason <REASON> <ID>
+
+Arguments:
+  <ID>  Proposal id or unique prefix
+
+Options:
+      --author <AUTHOR>  Agent name
+      --reason <REASON>  Replacement reason
+  -h, --help             Print help
+  -V, --version          Print version
+
+Global options:
+      --root <DIR>       Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>  Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json             Shorthand for --format json
+
+Examples:
+  scribe proposal update <id> --author opus --reason 'New evidence'

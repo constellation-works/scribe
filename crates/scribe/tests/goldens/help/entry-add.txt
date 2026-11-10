@@ -1,0 +1,23 @@
+Add an agent note (never attributed to Daniel)
+
+Usage: scribe entry add [OPTIONS] --tag <TAG> --author <AUTHOR> <CONTENT>
+
+Arguments:
+  <CONTENT>  Content to record
+
+Options:
+      --tag <TAG>          Tag name or alias
+      --author <AUTHOR>    Agent name (even daniel records the agent channel)
+      --project <PROJECT>  Project slug [default: global]
+      --topic <TOPIC>      Topic, repeatable (at most five)
+      --related <RELATED>  Related reference, repeatable
+  -h, --help               Print help
+  -V, --version            Print version
+
+Global options:
+      --root <DIR>       Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>  Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json             Shorthand for --format json
+
+Examples:
+  scribe entry add --tag decisions --author opus 'Use the stable API'

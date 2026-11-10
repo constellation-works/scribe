@@ -41,14 +41,15 @@ pub(crate) fn entry(id: &str, created: OffsetDateTime) -> Entry {
         updated: created,
         said: String::from("#scribe decisions: something"),
         content_from: ContentFrom::Instruction,
-        cite: Cite {
+        retirement_reason: None,
+        cite: Some(Cite {
             session: "s-1".parse().unwrap(),
             message: None,
             at: created,
             prompt_sha256: "0".repeat(64),
             line: 1,
             cwd: String::from("/work"),
-        },
+        }),
         superseded_by: None,
         review_after: None,
         content: String::from("something"),
