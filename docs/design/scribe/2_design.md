@@ -1764,8 +1764,9 @@ session records, control state and proposals, and the read-only CLI.
   [--topic <t>]`, `session show <id>`, `proposal list`, `tag list` work in
   table, plain and `--json` modes against a fixture store, and against a
   read-only root.
-- A store with a newer `format`, a group-writable root or a linked file is
-  refused with the template's errors; golden tests cover every help page.
+- A store with a newer `format`, a root open to group or others, or a linked
+  file is refused with the template's errors; golden tests cover every help
+  page.
 - The redactor masks a configured credential value in every free-text
   field it covers, and a unit test pins that inventory.
 - `specs/store.md` and `specs/output-contract.md` describe the new

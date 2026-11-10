@@ -28,8 +28,8 @@
 //! Reads take no lock and write nothing (STD-01 R31): every file is only
 //! ever replaced by an atomic rename, so a reader sees a whole old version or
 //! a whole new one, and the CLI works on a read-only root. Every load refuses
-//! state that is a link, another user's, or writable by others
-//! (STD-05 R7–R9), and a newer format (STD-03 R10). A record that does not
+//! state that is a link, another user's, or open to any group or other mode
+//! bit (STD-05 R7–R9), and a newer format (STD-03 R10). A record that does not
 //! parse is refused naming its file; a listing skips it and reports it in
 //! [`Skipped`], so one bad file does not hide the rest (4_decisions.md, "One
 //! malformed record makes its file corrupt").

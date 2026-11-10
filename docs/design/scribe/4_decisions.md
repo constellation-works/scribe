@@ -11,7 +11,7 @@ summary: Why superseded entries are hidden not removed, why one JSON file per ta
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24006]
 ---
 
 # scribe — Decisions
@@ -824,6 +824,41 @@ non-unix platforms the checks are no-ops.
 - Another local user can neither read the store nor plant one.
 - Cost: a store copied in under a loose umask is refused until Daniel runs
   the named `chmod`.
+- Superseded in part, 2026-11-10 ([ORB-24006]): the check refused only group
+  and other write bits, so a group or other read bit was accepted. See
+  [store state refuses any group or other mode bit](#store-state-refuses-any-group-or-other-mode-bit).
+
+## Store state refuses any group or other mode bit
+
+**Recorded:** 2026-11-10 · [ORB-24006]
+**Code anchors:** `crates/scribe-core/src/store/fsio.rs::check_owner_and_mode`, `crates/scribe-core/src/error.rs::Error::Permissions`
+
+### Context
+
+The security and QA review of 2026-11-10 found that the load check refused
+only group and other write bits. A `0755` root and a `0644` `config.toml` were
+read without a refusal, so another local user could read Daniel's entries and
+config. That contradicts the consequence recorded above, that another local
+user can neither read the store. STD-05@1 §R9 asks only that state not be
+writable by others; §R8 asks for owner-only modes.
+
+### Decision
+
+Every load refuses a root, subdirectory, record file, document, `config.toml`
+or lock file that any group or other mode bit reaches (`mode & 0o077 != 0`),
+read and execute bits included. It names the `chmod 700` or `chmod 600` that
+fixes it. Nothing is repaired automatically, and reads still never write.
+This supersedes the write-only check recorded above.
+
+### Consequences
+
+- Another local user can neither read nor traverse the store, as the
+  decision above claimed.
+- Cost: a `config.toml` made under a `022` umask (`0644`, the usual mode of a
+  hand-written file) is refused until `chmod 600`, and a `0755` root until
+  `chmod 700`. The refusal names the fix.
+- STD-05@1 §R9 requires less than this (no group or other write). Owner-only
+  is stricter than the standard, so it is a tightening, not a deviation.
 
 ## One malformed record makes its file corrupt
 
@@ -1988,6 +2023,8 @@ project a session was about.
 - [ORB-23849] — session links (`spawned_from`, `continues`) between session records.
 - [ORB-23892] — session records with a log, the `active` flag, the CLI agent
   surface and skill, the tmux popup and backfill by name (designed).
+- [ORB-24006] — store state refuses any group or other mode bit; the
+  redaction script takes its key on stdin.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
 

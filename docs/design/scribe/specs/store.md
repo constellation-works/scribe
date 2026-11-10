@@ -275,9 +275,10 @@ config tag claims is dropped with a warning naming both.
   proposal about it. Nothing is written when nothing changed.
 - **Modes and owners.** Every load refuses the root, a subdirectory, a
   record file or a document owned by another user (`store_foreign_owner`) or
-  writable by group or others (`store_permissions`, naming the `chmod 700`
-  or `chmod 600` that fixes it). Nothing is repaired automatically. On
-  non-unix platforms these checks are no-ops.
+  open to group or others, any group or other mode bit read included
+  (`store_permissions`, naming the `chmod 700` or `chmod 600` that fixes it).
+  Nothing is repaired automatically. On non-unix platforms these checks are
+  no-ops.
 - **Links.** A subdirectory, record file, document, config or lock file that
   is a symbolic link is `store_symlink` and is not followed. The root itself
   may be a link.
