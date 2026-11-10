@@ -108,6 +108,9 @@ pub struct SessionList {
     pub titles: BTreeMap<SessionId, String>,
     /// Every session's on/off switch, to show beside its record.
     pub control: ControlState,
+    /// Inactive sessions the filter left out that match its other
+    /// criteria; `0` when it includes inactive ones.
+    pub inactive_hidden: usize,
     /// Record files left out because they did not parse.
     pub skipped: Vec<Skipped>,
 }
@@ -261,6 +264,18 @@ impl Store {
                 Err(other) => return Err(other),
             }
         }
+        let inactive_hidden = if filter.include_inactive {
+            0
+        } else {
+            let any = SessionFilter {
+                include_inactive: true,
+                ..filter.clone()
+            };
+            records
+                .iter()
+                .filter(|r| !r.active && any.matches(r))
+                .count()
+        };
         Ok(SessionList {
             children: session_mod::children(&records),
             titles: records
@@ -268,6 +283,7 @@ impl Store {
                 .map(|r| (r.id.clone(), r.title.clone()))
                 .collect(),
             listing: filter.select(records),
+            inactive_hidden,
             control,
             skipped,
         })

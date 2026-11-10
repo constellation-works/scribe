@@ -34,6 +34,7 @@ use crate::models::{
     CONSISTENCY_BUDGET, ConsistencyAnswer, ConsistencyRequest, PairItem, PairSide,
 };
 use crate::proposal::{Proposal, ProposalId, ProposalKind, ProposalState, Quote};
+use crate::record::Author;
 use crate::verbatim;
 use std::collections::BTreeSet;
 use std::fmt;
@@ -102,6 +103,8 @@ impl Draft {
             opened_at: now,
             settled_at: None,
             settled_by: None,
+            author: Author::consistency(),
+            settled_author: None,
         }
     }
 }
@@ -563,6 +566,7 @@ pub fn settle(
                     proposal.state = ProposalState::Rejected;
                     proposal.settled_at = Some(now);
                     proposal.settled_by = Some(cite.clone());
+                    proposal.settled_author = Some(Author::daniel());
                     Settled::Rejected { proposal: *id }
                 }
             }
@@ -644,6 +648,7 @@ fn approve(
     proposal.state = ProposalState::Approved;
     proposal.settled_at = Some(now);
     proposal.settled_by = Some(cite.clone());
+    proposal.settled_author = Some(Author::daniel());
     entry.status = status;
     entry.superseded_by.clone_from(&by);
     entry.updated = now;

@@ -1,1 +1,3 @@
 7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02	open	yes	constellation-works/scribe	release,merge-policy	2026-11-02T19:40:00Z	Merge policy for agent PRs
+segment	1	sealed	2026-11-02T18:55:00Z	2026-11-02T19:20:00Z	Merge policy for agent PRs
+segment	2	open	2026-11-02T19:21:00Z	2026-11-02T19:40:00Z	Telling the release crew

@@ -212,7 +212,9 @@ pub fn switch(
         Switch::On => match current {
             Some(control) if control.on => Change::AlreadyOn(control),
             Some(_) | None => {
-                let pending_links = current.map(|c| c.pending_links).unwrap_or_default();
+                let (pending_links, cataloged_by) = current
+                    .map(|c| (c.pending_links, c.cataloged_by))
+                    .unwrap_or_default();
                 state.sessions.insert(
                     session.clone(),
                     SessionControl {
@@ -223,6 +225,7 @@ pub fn switch(
                         consecutive_failures: 0,
                         retry_after: None,
                         pending_links,
+                        cataloged_by,
                     },
                 );
                 Change::SwitchedOn

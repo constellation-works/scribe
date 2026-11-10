@@ -28,12 +28,21 @@ fn proposal() -> Proposal {
         opened_at: T0,
         settled_at: None,
         settled_by: None,
+        author: crate::record::Author::consistency(),
+        settled_author: None,
     }
 }
 
 /// A session record with one term, so the term's fields are listed.
 fn session_with_term() -> SessionRecord {
     let mut s = session("s-1", T0);
+    s.active_change = Some(crate::activity::ActiveChange {
+        at: T0,
+        by: crate::record::Author::daniel(),
+        route: crate::activity::ActiveRoute::Manual,
+        reason: String::new(),
+        cite: None,
+    });
     s.terms.push(Term {
         term: String::new(),
         said: String::new(),
@@ -264,4 +273,19 @@ fn unresolved_redact_env_names_only_the_unset_redact_names() {
         unresolved_redact_env(&Config::default(), |_| None).is_empty(),
         "the default credentials are alternatives, not [redact] env names"
     );
+}
+
+#[test]
+fn a_masked_segment_heading_stays_within_its_limit() {
+    let redactor = Redactor::new([(String::from("TOKEN_WITH_A_LONG_NAME"), SECRET.to_owned())]);
+    let mut s = session("s-1", T0);
+    s.log[0].heading = format!("{} {SECRET}", "h".repeat(60));
+    redactor.session(&mut s);
+    let heading = &s.log[0].heading;
+    assert!(!heading.contains(SECRET), "{heading}");
+    assert_eq!(
+        heading.chars().count(),
+        crate::session::SEGMENT_HEADING_CHARS
+    );
+    assert!(crate::session::check_log(&s).is_ok());
 }

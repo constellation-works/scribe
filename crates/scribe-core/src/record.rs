@@ -42,6 +42,126 @@ pub enum RecordError {
         "invalid related reference '{0}': expected task:<id>, pr:<owner>/<repo>#<n>, repo:<slug> or session:<id>"
     )]
     InvalidRelated(String),
+    /// An author name was not 1-40 lowercase letters, digits, `.`, `_` or `-`.
+    #[error(
+        "invalid author name '{0}': use 1-{max} lowercase letters, digits, '.', '_' or '-'",
+        max = AuthorName::MAX_CHARS
+    )]
+    InvalidAuthor(String),
+}
+
+/// Through which channel a record was written (2_design.md §3). `kind`
+/// means the channel, not a claimed identity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AuthorKind {
+    /// A typed `#scribe` turn: Daniel's own words.
+    Daniel,
+    /// A CLI write verb, named by its `--author`.
+    Agent,
+    /// scribe's own routine (proposals and activity changes only).
+    Scribe,
+}
+
+impl AuthorKind {
+    /// The canonical lowercase token.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Daniel => "daniel",
+            Self::Agent => "agent",
+            Self::Scribe => "scribe",
+        }
+    }
+}
+
+/// An author's name: lowercase `[a-z0-9._-]`, 1-40 characters.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct AuthorName(String);
+
+impl AuthorName {
+    /// The longest name accepted, in characters.
+    pub const MAX_CHARS: usize = 40;
+
+    /// The name.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for AuthorName {
+    type Error = RecordError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let valid = !value.is_empty()
+            && value.len() <= Self::MAX_CHARS
+            && value.bytes().all(|b| {
+                b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'-')
+            });
+        if valid {
+            Ok(Self(value))
+        } else {
+            Err(RecordError::InvalidAuthor(value))
+        }
+    }
+}
+
+impl From<AuthorName> for String {
+    fn from(name: AuthorName) -> Self {
+        name.0
+    }
+}
+
+impl FromStr for AuthorName {
+    type Err = RecordError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::try_from(s.to_owned())
+    }
+}
+
+impl fmt::Display for AuthorName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// Who wrote a record or a change: `{kind, name}` (store format 4).
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Author {
+    /// The channel.
+    pub kind: AuthorKind,
+    /// `daniel`, the agent's `--author`, or the routine's name.
+    pub name: AuthorName,
+}
+
+impl Author {
+    /// Daniel, through a typed `#scribe` turn.
+    #[must_use]
+    pub fn daniel() -> Self {
+        Self {
+            kind: AuthorKind::Daniel,
+            name: AuthorName(String::from("daniel")),
+        }
+    }
+
+    /// scribe's consistency routine.
+    #[must_use]
+    pub fn consistency() -> Self {
+        Self {
+            kind: AuthorKind::Scribe,
+            name: AuthorName(String::from("consistency")),
+        }
+    }
+}
+
+impl fmt::Display for Author {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.kind.as_str(), self.name)
+    }
 }
 
 /// A short single-token label: the project slug, the provider, the host.

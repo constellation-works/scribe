@@ -10,8 +10,8 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-Parts marked *(format 4, S8–S14)* are designed ([ORB-23892]) and not yet
-built; until S8 lands the code is format 3.
+The code is format 4 since S8. Parts marked *(S9)* to *(S14)* are designed
+([ORB-23892]) and not yet built.
 
 ## Why This Exists
 
@@ -72,9 +72,9 @@ Frontmatter is read strictly:
 at}`), `cite` (`{session, message, at, prompt_sha256, line, cwd}`),
 `superseded_by`, `review_after`. The body is the entry's content, verbatim.
 
-*(format 4, S8, S12)* Entries add `author` (`{kind: daniel|agent, name}`;
-`name` lowercase `[a-z0-9._-]`, 1–40 characters) and `updated_by` (an
-author or `null`). An agent entry (`author.kind: agent`) has `said: ""`,
+Format 4 adds `author` (`{kind: daniel|agent, name}`; `name` lowercase
+`[a-z0-9._-]`, 1–40 characters) and `updated_by` (an author or `null`);
+`#scribe` capture writes `{kind: daniel, name: daniel}`. *(S12)* An agent entry (`author.kind: agent`) has `said: ""`,
 `content_from: {kind: agent}` and `cite: null`; a Daniel entry always has a
 cite. Any other combination is `store_corrupt`.
 
@@ -88,13 +88,7 @@ are derived at read time and its record is never rewritten for them),
 `{term, said, message}`: a phrase Daniel coined or defined, the verbatim
 span of his turn that does so, and that message's uuid), `provider`, `host`, `created`, `updated`,
 `title`, `cwd`, `started`, `on_since`, `scribed_through`, `passes`,
-`next_open`. The body is exactly the headings `## Summary`, `## Goals`,
-`## Outcome` and `## Next`, in that order, each followed by its text; any
-other line, another `##` heading included, is section text, and blank lines
-around a section's text are dropped. Text before `## Summary` or a missing
-heading is `store_corrupt`.
-
-*(format 4, S8)* Session keys add `active` (bool), `keep_active` (bool),
+`next_open`, and from format 4 `active` (bool), `keep_active` (bool),
 `active_change` (`null` or `{at, by, route, reason, cite}`: `by` an author
 of any kind, `route` `age`, `removed` or `manual`, `reason` at most 300
 characters, `cite` a reference or `null`), `cataloged_by` (`null` or `{at,
@@ -109,16 +103,26 @@ break; `first_message` and `last_message` message ids, `null` only when
 is exactly `## Summary`, `## Goals`, `## Next` and `## Log`, in that order;
 under `## Log`, one `### <n>. <heading>` line per `log` item, in order and
 equal to it, each followed by its text. Under `## Log`, text before the
-first `### ` line, a heading that disagrees with `log`, or a `### ` line
-that starts no segment is `store_corrupt`; a segment's text is every other
-line up to the next `### <n+1>. ` line. A format-4 record with `##
-Outcome` is `store_corrupt`.
+first `### ` line, a heading that disagrees with `log`, a `### ` line
+that starts no segment, or more or fewer segments than `log` items is
+`store_corrupt`, naming the file; a segment's text is every other line up
+to the next `### ` line. Header text is every line up to the next `##`
+heading of the four; a format-4 record with `## Outcome` is
+`store_corrupt`. The writer refuses (rather than writes) a header text
+holding one of those heading lines or a segment text holding a `### `
+line, so a written record always reads back the same.
+
+A format 1–3 record's body is exactly the headings `## Summary`, `## Goals`,
+`## Outcome` and `## Next`, in that order, each followed by its text; any
+other line, another `##` heading included, is section text, and blank lines
+around a section's text are dropped. Text before `## Summary` or a missing
+heading is `store_corrupt`. It reads as format 4 (see **Format 4** below).
 
 ## JSON documents
 
-- `control.json`: `{"format": 3, "sessions": {"<session-id>": {"on",
+- `control.json`: `{"format": 4, "sessions": {"<session-id>": {"on",
   "since", "due", "final", "consecutive_failures", "retry_after",
-  "pending_links"}}}`. `pending_links` holds `{type, session}` links
+  "pending_links", "cataloged_by"}}}`. `pending_links` holds `{type, session}` links
   Daniel asserted before the session had a record; the pass that writes
   the record moves them onto it, then clears them, in one locked call.
   `since` and `retry_after` are RFC 3339 timestamps or `null`; the failure
@@ -126,18 +130,19 @@ Outcome` is `store_corrupt`.
   automatic attempt waits 5, 10, 20, 40, then at most 60 minutes. Success
   or switching off resets both retry fields. Explicit `--session` bypasses
   the delay.
-- `proposals.json`: `{"format": 3, "proposals": [{"id": "p-<n>", "kind":
+- `proposals.json`: `{"format": 4, "proposals": [{"id": "p-<n>", "kind":
   "supersedes"|"stale", "older", "newer", "reason", "quotes": [{"entry",
   "text"}], "state": "open"|"approved"|"rejected", "opened_at",
   "settled_at", "settled_by"}]}`. `newer`, `settled_at` and `settled_by`
   (a cite) may be `null`. Proposals are returned sorted by number.
-  *(format 4, S8)* Each proposal adds `author` (`{kind:
-  scribe|agent|daniel, name}`) and `settled_author` (an author or `null`;
-  set exactly when `state` is not `open`). An agent's settle leaves
-  `settled_by` `null`.
-- *(format 4, S8)* `control.json` switches add `cataloged_by` (`null` or
-  `{at, by}`), set by `session catalog` and copied onto the record.
-- *(format 4, S12)* `tags.json`: `{"format": 4, "tags": [{"name",
+  Each proposal also has `author` (`{kind: scribe|agent|daniel, name}`;
+  the consistency routine writes `{kind: scribe, name: consistency}`) and
+  `settled_author` (an author or `null`; `#scribe approve|reject|retire|forget`
+  sets Daniel's). *(S12)* An agent's settle leaves `settled_by` `null`.
+- `cataloged_by` on a `control.json` switch is `null` or `{at, by}`;
+  `/scribe on` keeps it. *(S14)* `session catalog` sets it and the pass
+  copies it onto the record.
+- *(S12)* `tags.json`: `{"format": 4, "tags": [{"name",
   "aliases", "description", "stale_after_days", "author", "created",
   "updated"}]}`, sorted by name; `name` and aliases as for config tags,
   `description` at most 300 characters, `stale_after_days` a positive
@@ -226,7 +231,13 @@ config tag claims is dropped with a warning naming both.
   (redacted, `sessions/<yyyy>/<mm>/` from its `started`, created `0700`)
   and settles its switch (`due` cleared, `final` too when the final pass
   ran; a `final` set while a non-final pass ran is kept) in one locked
-  call. `Store::checkpoint_pass` writes intermediate windows with the same
+  call. Until S9 rewrites passes, a pass keeps the answer's `outcome` as
+  the text of the open segment (heading from the title, `windows` counted
+  up, `to` and `last_message` from the window), opens segment `n + 1`
+  when the log has no open segment and the outcome is not empty, and the
+  final pass seals the last segment; `active`, `keep_active`,
+  `active_change` and `cataloged_by` are carried from the record on
+  disk. `Store::checkpoint_pass` writes intermediate windows with the same
   lock, redaction and atomic replacement, keeping `due` set. An explicit
   pass starting while not due publishes that obligation before its first
   intermediate checkpoint. A crash after the last record write but before
@@ -260,7 +271,7 @@ config tag claims is dropped with a warning naming both.
   other refusal (a link, loose modes, a newer format, an I/O error) fails
   the whole command rather than skipping the file
   ([4_decisions.md](../4_decisions.md#one-malformed-record-makes-its-file-corrupt)).
-- **Format.** One `FORMAT` (3; 4 from S8) covers every document. A shape change bumps
+- **Format.** One `FORMAT` (4) covers every document. A shape change bumps
   it and appends one step to `UPGRADES` in `store/format.rs`, which is
   given the document type it upgrades; shipped steps never change. Reads
   upgrade an older document in memory; a newer one is refused and left
@@ -270,7 +281,7 @@ config tag claims is dropped with a warning naming both.
   empty `pending_links` to each control switch; entries and proposals are
   unchanged. The old shape is validated strictly before upgrade, and reads
   never rewrite it.
-- **Format 4** *(S8)*. The format-3-to-4 step converts in memory: a
+- **Format 4**. The format-3-to-4 step converts in memory: a
   session record's `## Summary`, `## Goals` and `## Next` become the
   header, and one sealed segment `{n: 1, heading: <title>, first_message:
   null, last_message: <scribed_through>, from: <started>, to: <updated>,
@@ -280,7 +291,9 @@ config tag claims is dropped with a warning naming both.
   daniel}` and `updated_by: null`; proposals `author: {kind: scribe, name:
   consistency}` and `settled_author` (Daniel's for a settled one, else
   `null`); control switches `cataloged_by: null`. The step is the only
-  place an upgraded segment may exceed 900 characters.
+  place an upgraded segment may exceed 900 characters. The first write of
+  an upgraded document persists it at format 4; a build older than S8
+  refuses format 4 (`store_too_new`).
 - **The log is append-only** *(S9)*. Every session write except `session
   rebuild` compares each sealed segment it writes with the one on disk;
   any difference in metadata or text refuses the write
@@ -288,7 +301,7 @@ config tag claims is dropped with a warning naming both.
   windows to `.<id>.rebuild.md` beside the record and replaces the record
   under the lock only if the record's `updated` is unchanged since the
   rebuild began.
-- **Activity** *(S8, S10)*. `Store::set_active` changes `active` or
+- **Activity** *(S10)*. `Store::set_active` changes `active` or
   `keep_active` and `active_change` under the lock, and nothing else on
   the record (`updated` included); it writes only when something changed.
 - **Agent writes** *(S12)*. Each write verb takes the lock, checks the
@@ -317,11 +330,11 @@ config tag claims is dropped with a warning naming both.
   `AKIA…`, `xox[bp]-`, PEM private-key blocks) with a labelled marker, in
   every field of `REDACTED_FIELDS`: `entry.said`,
   `entry.content`, `session.title`, `session.summary`, `session.goals`,
-  `session.outcome`, `session.next`, `session.terms.term`,
-  `session.terms.said`, `proposal.reason` and
-  `proposal.quotes.text`; *(format 4)* also `session.log.heading`,
-  `session.log.text`, `session.active_change.reason` and
-  `tag.description`. Values shorter than 8 characters are not masked;
+  `session.next`, `session.terms.term`, `session.terms.said`,
+  `session.log.heading`, `session.log.text`,
+  `session.active_change.reason`, `proposal.reason` and
+  `proposal.quotes.text`; *(S12)* also `tag.description`. A masked segment
+  heading is cut back to 80 characters. Values shorter than 8 characters are not masked;
   identifiers, timestamps and paths are not free text. A `[redact] env`
   name with no value in the writer's environment refuses the write
   (`redact_env_unset`) before anything is stored; already-stored records

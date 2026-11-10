@@ -1,13 +1,15 @@
-Show one session record in full: its metadata, links, children and four sections
+Show one session record: its metadata, links, children, header and the log's table of contents
 
 Usage: scribe session show [OPTIONS] <ID>
 
 Arguments:
-  <ID>  The session's id, as printed by `session list`
+  <ID>  The session's id, as printed by `session list`, or a cite: session:<id>, or session:<id>#<n> for one segment
 
 Options:
-  -h, --help     Print help
-  -V, --version  Print version
+      --log          Print every segment's text after the log's table of contents
+      --segment <N>  Print only segment N of the log, with its text (from 1)
+  -h, --help         Print help
+  -V, --version      Print version
 
 Global options:
       --root <DIR>       Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
@@ -16,4 +18,7 @@ Global options:
 
 Examples:
   scribe session show <id>
-  scribe session show <id> --json | jq -r .next
+  scribe session show <id> --log
+  scribe session show <id> --segment 2
+  scribe session show 'session:<id>#2'
+  scribe session show <id> --json | jq -r '.log[].heading'

@@ -2,7 +2,7 @@ use super::{SESSION_BODY, entry_text, session_text};
 use crate::error::Error;
 use crate::store::format::{
     FORMAT, UPGRADES, decode_control, decode_entry, decode_proposals, decode_session,
-    split_frontmatter, split_sections,
+    split_frontmatter, split_sections_v3,
 };
 use std::path::Path;
 
@@ -185,9 +185,9 @@ fn sections_must_all_appear_in_order() {
         "text first\n## Summary\ns\n## Goals\ng\n## Outcome\no\n## Next\nn\n",
         "",
     ] {
-        assert!(split_sections(path, body).is_err(), "{body:?}");
+        assert!(split_sections_v3(path, body).is_err(), "{body:?}");
     }
-    let [s, _, o, _] = split_sections(
+    let [s, _, o, _] = split_sections_v3(
         path,
         "## Summary\n## Other\ns\n## Goals\n## Outcome\no\n## Next\n",
     )
@@ -265,30 +265,214 @@ fn encoded_control_reads_back_as_the_same_state() {
     assert_eq!(value["sessions"]["s-1"]["final"], false);
 }
 
+/// A format-4 session record for `s-1` whose `log` metadata is `log` (YAML
+/// list items) and whose body is `body`.
+fn session_v4(log: &str, body: &str) -> String {
+    session_text(
+        &format!(
+            "links: []\nactive: true\nkeep_active: false\nactive_change: null\ncataloged_by: null\nlog:\n{log}"
+        ),
+        body,
+    )
+    .replacen("format: 1", &format!("format: {FORMAT}"), 1)
+}
+
+fn segment_yaml(n: u32, heading: &str, state: &str) -> String {
+    format!(
+        "  - {{n: {n}, heading: {heading}, first_message: m-{n}a, last_message: m-{n}b, \
+         from: 2026-11-01T09:00:00Z, to: 2026-11-01T10:00:00Z, state: {state}, windows: 1, \
+         origin: pass, topics: [], related: []}}\n"
+    )
+}
+
+const V4_HEADER: &str = "## Summary\nsum\n\n## Goals\ngoal\n\n## Next\n- one\n\n";
+
+fn two_segments() -> String {
+    session_v4(
+        &[
+            segment_yaml(1, "first part", "sealed"),
+            segment_yaml(2, "second part", "open"),
+        ]
+        .concat(),
+        &format!("{V4_HEADER}## Log\n### 1. first part\none\n\n### 2. second part\ntwo\n"),
+    )
+}
+
 #[test]
-fn a_legacy_session_record_loads_with_no_links_and_a_current_one_requires_them() {
-    // Formats 1 and 2 predate links: they read with an empty list.
-    for format in ["format: 1", "format: 2"] {
-        let text = session_text("", SESSION_BODY).replacen("format: 1", format, 1);
+fn a_legacy_session_record_reads_as_a_header_over_one_sealed_upgrade_segment() {
+    // Formats 1 and 2 predate links; formats 1 to 3 predate the log.
+    for format in ["format: 1", "format: 2", "format: 3"] {
+        let mut text = session_text("", SESSION_BODY).replacen("format: 1", format, 1);
+        if format == "format: 3" {
+            text = text.replacen("next_open: 0\n", "next_open: 0\nlinks: []\n", 1);
+        }
         let r = session(&text).unwrap();
         assert!(r.links.is_empty(), "{format}");
-        assert_eq!(r.related, Vec::new(), "{format}: related is unchanged");
+        assert!(r.active && !r.keep_active, "{format}");
+        assert_eq!(r.active_change, None, "{format}");
+        assert_eq!(r.cataloged_by, None, "{format}");
+        assert_eq!((r.summary.as_str(), r.goals.as_str()), ("sum", "goal"));
+        assert_eq!(r.next, "- one\n- two");
+        assert_eq!(r.log.len(), 1, "{format}");
+        let one = &r.log[0];
+        assert_eq!(one.n.get(), 1);
+        assert_eq!(one.state, crate::session::SegmentState::Sealed);
+        assert_eq!(one.origin, crate::session::SegmentOrigin::Upgrade);
+        assert_eq!(one.heading, "a session");
+        assert_eq!(one.text, "sum\n\nout", "{format}: old summary and outcome");
+        assert_eq!(one.first_message, None);
+        assert_eq!(one.last_message, r.scribed_through);
+        assert_eq!((one.from, one.to), (r.started, r.updated));
+        assert_eq!(one.windows.get(), 1);
     }
-    let current = session_text(
-        "links:\n  - {type: spawned_from, session: s-0}\n",
-        SESSION_BODY,
-    )
-    .replacen("format: 1", &format!("format: {FORMAT}"), 1);
-    let r = session(&current).unwrap();
-    assert_eq!(r.links.len(), 1);
-    assert_eq!(r.links[0].kind, crate::session::LinkType::SpawnedFrom);
-    assert_eq!(r.links[0].session.as_str(), "s-0");
-    // At the current format the key is required, and its shape strict.
-    let missing =
-        session_text("", SESSION_BODY).replacen("format: 1", &format!("format: {FORMAT}"), 1);
-    assert!(corrupt_message(&session(&missing).unwrap_err()).contains("links"));
-    let bad_type = current.replace("spawned_from", "related_to");
-    assert!(session(&bad_type).is_err());
+    // At the current format each new key is required.
+    for key in [
+        "links",
+        "active",
+        "keep_active",
+        "active_change",
+        "cataloged_by",
+        "log",
+    ] {
+        let missing: String = two_segments()
+            .split_inclusive('\n')
+            .filter(|l| !l.starts_with(&format!("{key}:")))
+            .collect();
+        let missing = if key == "log" {
+            missing
+                .lines()
+                .filter(|l| !l.starts_with("  - "))
+                .map(|l| format!("{l}\n"))
+                .collect()
+        } else {
+            missing
+        };
+        assert!(
+            corrupt_message(&session(&missing).unwrap_err()).contains(key),
+            "{key}"
+        );
+    }
+}
+
+#[test]
+fn a_current_session_record_reads_its_header_and_log() {
+    let r = session(&two_segments()).unwrap();
+    assert_eq!((r.summary.as_str(), r.goals.as_str()), ("sum", "goal"));
+    assert_eq!(r.next, "- one");
+    let texts: Vec<_> = r
+        .log
+        .iter()
+        .map(|s| (s.heading.as_str(), s.text.as_str()))
+        .collect();
+    assert_eq!(texts, [("first part", "one"), ("second part", "two")]);
+    assert_eq!(r.open_segment().map(|s| s.n.get()), Some(2));
+    assert_eq!(r.segment(1).map(|s| s.text.as_str()), Some("one"));
+    assert!(r.segment(3).is_none());
+}
+
+#[test]
+fn a_log_whose_body_and_metadata_disagree_is_corrupt_naming_the_file() {
+    let good = two_segments();
+    let open_twice = good.replacen("state: sealed", "state: open", 1);
+    let cases = [
+        good.replace("### 2. second part", "### 2. another part"),
+        good.replace("\n\n### 2. second part\ntwo\n", "\n"),
+        good.replace(
+            "### 2. second part\ntwo\n",
+            "### 2. second part\ntwo\n\n### 3. third\nthree\n",
+        ),
+        good.replace("## Log\n", "## Outcome\nout\n\n## Log\n"),
+        good.replace("## Log\n### 1.", "## Log\nloose text\n### 1."),
+        good.replace("n: 2,", "n: 3,").replace("### 2.", "### 3."),
+        open_twice,
+        good.replace("status: open", "status: final"),
+    ];
+    for text in cases {
+        let message = corrupt_message(&session(&text).unwrap_err());
+        assert!(message.contains(SESSION), "{message}");
+    }
+}
+
+#[test]
+fn the_activity_and_author_fields_round_trip() {
+    let mut original = session(&two_segments()).unwrap();
+    let daniel = crate::record::Author::daniel();
+    let at = time::macros::datetime!(2026-11-02 08:00 UTC);
+    original.active = false;
+    original.keep_active = true;
+    original.active_change = Some(crate::activity::ActiveChange {
+        at,
+        by: daniel.clone(),
+        route: crate::activity::ActiveRoute::Manual,
+        reason: String::from("the feature was removed: \"all\" of it"),
+        cite: Some(String::from("session:s-0#2")),
+    });
+    original.cataloged_by = Some(crate::activity::CatalogedBy { at, by: daniel });
+    let bytes = crate::store::format::encode_session(Path::new(SESSION), &original).unwrap();
+    let text = String::from_utf8(bytes).unwrap();
+    assert!(
+        text.contains("\n## Log\n### 1. first part\none\n"),
+        "{text}"
+    );
+    assert!(!text.contains("## Outcome"), "{text}");
+    assert_eq!(session(&text).unwrap(), original);
+
+    let mut e = entry(&entry_text("")).unwrap();
+    e.updated_by = Some(crate::record::Author::consistency());
+    let bytes = crate::store::format::encode_entry(Path::new(ENTRY), &e).unwrap();
+    let back = entry(&String::from_utf8(bytes).unwrap()).unwrap();
+    assert_eq!(back, e);
+    assert_eq!(back.author.to_string(), "daniel:daniel");
+    assert_eq!(back.updated_by.unwrap().to_string(), "scribe:consistency");
+}
+
+#[test]
+fn a_session_the_writer_cannot_keep_apart_is_refused() {
+    let mut r = session(&two_segments()).unwrap();
+    r.log[0].text = String::from("one\n### 2. forged");
+    assert!(crate::store::format::encode_session(Path::new(SESSION), &r).is_err());
+    let mut r = session(&two_segments()).unwrap();
+    r.summary = String::from("sum\n## Log");
+    assert!(crate::store::format::encode_session(Path::new(SESSION), &r).is_err());
+}
+
+#[test]
+fn legacy_entries_proposals_and_control_gain_their_authors() {
+    let e = entry(&entry_text("")).unwrap();
+    assert_eq!(e.author, crate::record::Author::daniel());
+    assert_eq!(e.updated_by, None);
+    let current = entry_text("").replacen("format: 1", &format!("format: {FORMAT}"), 1);
+    assert!(corrupt_message(&entry(&current).unwrap_err()).contains("author"));
+
+    let proposals = br#"{"format":3,"proposals":[
+        {"id":"p-1","kind":"stale","older":"decisions-1","newer":null,"reason":"r",
+         "quotes":[{"entry":"decisions-1","text":"t"}],"state":"open",
+         "opened_at":"2026-11-01T10:00:00Z","settled_at":null,"settled_by":null},
+        {"id":"p-2","kind":"stale","older":"decisions-1","newer":null,"reason":"r",
+         "quotes":[{"entry":"decisions-1","text":"t"}],"state":"rejected",
+         "opened_at":"2026-11-01T10:00:00Z","settled_at":"2026-11-01T11:00:00Z","settled_by":null}]}"#;
+    let list = decode_proposals(Path::new("proposals.json"), proposals).unwrap();
+    for p in &list {
+        assert_eq!(p.author, crate::record::Author::consistency());
+    }
+    assert_eq!(list[0].settled_author, None, "open: not settled");
+    assert_eq!(
+        list[1].settled_author,
+        Some(crate::record::Author::daniel())
+    );
+
+    let control = br#"{"format":3,"sessions":{"s-1":{"on":true,"since":null,"due":false,
+        "final":false,"consecutive_failures":0,"retry_after":null,"pending_links":[]}}}"#;
+    let state = decode_control(Path::new("control.json"), control).unwrap();
+    assert_eq!(state.sessions[&"s-1".parse().unwrap()].cataloged_by, None);
+    let unknown = String::from_utf8(control.to_vec()).unwrap().replace(
+        "\"pending_links\":[]",
+        "\"pending_links\":[],\"cataloged_by\":null",
+    );
+    assert!(
+        decode_control(Path::new("control.json"), unknown.as_bytes()).is_err(),
+        "a format-3 switch has no cataloged_by"
+    );
 }
 
 #[test]

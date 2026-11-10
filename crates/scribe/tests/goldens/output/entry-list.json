@@ -30,7 +30,12 @@
         "cwd": "/home/daniel/workspace/orbit"
       },
       "superseded_by": null,
-      "review_after": null
+      "review_after": null,
+      "author": {
+        "kind": "daniel",
+        "name": "daniel"
+      },
+      "updated_by": null
     },
     {
       "id": "preferences-1",
@@ -60,7 +65,12 @@
         "cwd": "/home/daniel/workspace/orbit"
       },
       "superseded_by": null,
-      "review_after": "2027-03-30"
+      "review_after": "2027-03-30",
+      "author": {
+        "kind": "daniel",
+        "name": "daniel"
+      },
+      "updated_by": null
     },
     {
       "id": "decisions-1",
@@ -94,7 +104,12 @@
         "cwd": "/home/daniel/workspace/scribe"
       },
       "superseded_by": "decisions-2",
-      "review_after": null
+      "review_after": null,
+      "author": {
+        "kind": "daniel",
+        "name": "daniel"
+      },
+      "updated_by": null
     },
     {
       "id": "decisions-2",
@@ -129,7 +144,12 @@
         "cwd": "/home/daniel/workspace/scribe"
       },
       "superseded_by": null,
-      "review_after": null
+      "review_after": null,
+      "author": {
+        "kind": "daniel",
+        "name": "daniel"
+      },
+      "updated_by": null
     }
   ],
   "total": 4,

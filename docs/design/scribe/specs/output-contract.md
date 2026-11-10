@@ -10,8 +10,8 @@ Every data command renders one typed payload in the mode the sink resolved;
 stdout carries only that payload; warnings, notices and errors go to stderr;
 the exit code says whether it worked. The JSON form is a public contract,
 pinned by the output goldens in `crates/scribe/tests/goldens/output/`.
-Parts marked *(S8–S14)* are designed ([ORB-23892]) and not yet built; each
-only adds fields, columns, commands and codes.
+Parts marked *(S9)* to *(S14)* are designed ([ORB-23892]) and not yet
+built; each only adds fields, columns, commands and codes.
 
 ## Why This Exists
 
@@ -41,7 +41,7 @@ is `-`, lists are comma-joined, and timestamps are RFC 3339.
 | `entry list` | `id status project topics created content` |
 | `session list` | `id status due project topics updated title` (`due` is `yes` or `no`) |
 | `session list --tree` | `id parent status due project topics updated title` (`parent` is the session the row nests under, its `spawned_from` link else its first `continues` link, or `-`) |
-| `session list --include-inactive` *(S8)* | `id status active due project topics updated title` (`active` is `yes` or `no`); without the flag the columns are unchanged |
+| `session list --include-inactive` | `id status active due project topics updated title` (`active` is `yes` or `no`); without the flag the columns are unchanged, inactive sessions are left out, and when any matched the notice `<n> inactive session(s) also match and are hidden; --include-inactive lists them` goes to stderr. With `--tree` too, `active` follows `status` |
 | `proposal list` | `id kind state older newer opened_at reason` |
 | `tag list` | `name entries stale_after_days aliases description`, and *(S12)* a last column `source` (`config` or `store`) |
 | `record search` *(S11)* | `cite kind score updated title snippet` |
@@ -84,9 +84,9 @@ are RFC 3339 with offset.
 `kind` is `instruction` or `message`, the other three `null` for an
 instruction), `cite` (`{session, message, at, prompt_sha256, line, cwd}`;
 `message` may be `null`), `superseded_by` (an id or `null`),
-`review_after` (`YYYY-MM-DD` or `null`). *(S8, S12)* Adds `author`
-(`{kind, name}`, `kind` `daniel` or `agent`) and `updated_by` (an author or
-`null`). An agent entry has `said` `""`, `content_from` `{kind: "agent",
+`review_after` (`YYYY-MM-DD` or `null`), `author` (`{kind, name}`, `kind`
+`daniel` or `agent`) and `updated_by` (an author or `null`). *(S12)* An
+agent entry has `said` `""`, `content_from` `{kind: "agent",
 role: null, message: null, at: null}` and `cite` `null`; a Daniel entry's
 `cite` is never `null`, so a reader of Daniel's entries sees no change.
 
@@ -106,16 +106,22 @@ when the session has no switch). The four text fields are model-written.
 `links` and `children` were added with session links (store format 3);
 every other field is unchanged.
 
-*(S8)* Adds `active`, `keep_active`, `active_change` (`null` or `{at, by,
-route, reason, cite}`), `cataloged_by` (`null` or `{at, by}`) and `log`:
-in `session show` the segments `[{n, heading, first_message,
+Store format 4 adds `active`, `keep_active`, `active_change` (`null` or
+`{at, by, route, reason, cite}`), `cataloged_by` (`null` or `{at, by}`)
+and `log`: in `session show` the segments `[{n, heading, first_message,
 last_message, from, to, state, windows, origin, topics, related, text}]`,
-oldest first; in `session list` `null` (use `show`). `outcome` stays and
+oldest first; a `session list` row has no `log` key (use `show`). `outcome` stays and
 is `""` for every format-4 record; what it held is in `log`. `--segment
 <n>` and `session show session:<id>#<n>` print the record with `log`
-holding that one segment. The table detail view prints the header, then a
-table of contents (`n state from to heading`), then with `--log` each
-segment as `### <n>. <heading>` and its text; plain prints the record's
+holding that one segment; `--segment <n>` with a cite naming another
+segment is `usage_error`, and a segment the log lacks is
+`segment_not_found`. The table detail view adds the lines `active`, `keep
+active`, `change` (`<at> <route> by <kind>:<name> (<reason>)`, then `,
+cite <cite>` when there is one, or `-`) and `cataloged` (`<at> by
+<kind>:<name>` or `-`), prints the header (`## Summary`, `## Goals`, `##
+Next`), then `## Log` and a table of contents (`n state from to heading`),
+then with `--log` or one segment each segment as `### <n>. <heading>` and
+its text; plain prints the record's
 list line, then one `segment\t<n>\t<state>\t<from>\t<to>\t<heading>`
 line per segment. `session list --tree --json` is the same
 envelope with the same objects, in tree order. The table detail view of
@@ -125,8 +131,8 @@ as `<id> <type> (<title>)`, one per line, or `-`.
 **Proposal** (`proposals[]`): `id` (`p-<n>`), `kind` (`supersedes`,
 `stale`), `older`, `newer` (or `null`), `reason`, `quotes` (`[{entry,
 text}]`), `state` (`open`, `approved`, `rejected`), `opened_at`,
-`settled_at` (or `null`), `settled_by` (a cite or `null`). *(S8)* Adds
-`author` and `settled_author` (`{kind, name}` or `null`).
+`settled_at` (or `null`), `settled_by` (a cite or `null`), `author` and
+`settled_author` (`{kind, name}` or `null`).
 
 **Tag** (`tags[]`): `name`, `aliases`, `description` (or `null`),
 `stale_after_days` (integer or `null`), `configured` (false for a directory
@@ -169,9 +175,9 @@ breaking change and shows up as a golden diff.
 Stable codes: `entry_not_found`, `session_not_found`, `io_error`,
 `store_corrupt`, `config_invalid`, `store_too_new`, `store_locked`,
 `store_symlink`, `store_foreign_owner`, `store_permissions`, `no_data_dir`,
-`output_error`, `usage_error`, `hook_payload_invalid`, *(S8–S14)*
-`id_ambiguous` (exit 2, listing up to ten candidates), `segment_not_found`,
-`daniel_only`, `tag_not_found`, `tag_conflict`, `tag_configured`,
+`output_error`, `usage_error`, `hook_payload_invalid`,
+`segment_not_found` (exit 1), *(S9–S14)* `id_ambiguous` (exit 2, listing
+up to ten candidates), `daniel_only`, `tag_not_found`, `tag_conflict`, `tag_configured`,
 `proposal_not_found`, `proposal_settled`, `entry_not_active`,
 `confirm_required`, `transcript_missing`, `session_busy`,
 `session_cataloged`, `transcript_not_found`, for `session pass`
@@ -337,10 +343,14 @@ return the same object (2_design.md §6.1, §6.6):
 }
 ```
 
-`cite` is an entry id, `session:<id>`, *(S8)* `session:<id>#<n>` or
-`task:<id>`; every `quote` was found verbatim in the item it cites.
-*(S8)* `hidden_matches` also counts inactive sessions left out; a
-`session` record carries `log` with every segment. `evidence_considered` is the number of
+`cite` is an entry id, `session:<id>` (a session's header: title,
+summary, goals and next), `session:<id>#<n>` (one log segment: heading and
+text) or `task:<id>`; every `quote` was found verbatim in the item it
+cites. Inactive sessions are left out of evidence and lookups unless
+`include_hidden`; `hidden_matches` also counts inactive sessions that
+retrieval matched and left out. A `session` record carries `log` with
+every segment and its text; the table view prints the header and the
+log's table of contents. `evidence_considered` is the number of
 items the model read, or of records a lookup returned; `dropped_quotes`
 counts claims dropped by the check; `hidden_matches` counts superseded or
 retired entries that matched and were left out (0 with `include_hidden`).

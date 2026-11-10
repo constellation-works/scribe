@@ -52,9 +52,37 @@ const OUTPUT: &[(&str, &[&str])] = &[
     ("entry-show", &["entry", "show", "decisions-2"]),
     ("session-list", &["session", "list"]),
     ("session-list-tree", &["session", "list", "--tree"]),
+    // An inactive session is listed only on request, with an ACTIVE column.
+    (
+        "session-list-inactive",
+        &["session", "list", "--include-inactive"],
+    ),
     (
         "session-show",
         &["session", "show", "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02"],
+    ),
+    // The log's texts, and one segment by its citation.
+    (
+        "session-show-log",
+        &[
+            "session",
+            "show",
+            "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02",
+            "--log",
+        ],
+    ),
+    (
+        "session-show-segment",
+        &[
+            "session",
+            "show",
+            "session:7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02#2",
+        ],
+    ),
+    // An inactive record, with the change that hid it.
+    (
+        "session-show-inactive",
+        &["session", "show", "3d5e7f90-1a2b-4c3d-8e9f-0a1b2c3d4e05"],
     ),
     // A legacy (format 1) record whose child is derived from the other's link.
     (

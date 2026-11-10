@@ -30,8 +30,32 @@
   "next_open": 1,
   "summary": "Settled the store layout: one Markdown file per record with YAML\nfrontmatter.",
   "goals": "Pick a layout that filters by metadata.",
-  "outcome": "Entries and session records are Markdown files; control and proposals stay JSON.",
+  "outcome": "",
   "next": "- choose the YAML crate",
   "on": false,
-  "due": false
+  "due": false,
+  "active": true,
+  "keep_active": false,
+  "active_change": null,
+  "cataloged_by": null,
+  "log": [
+    {
+      "n": 1,
+      "heading": "Scribe store layout",
+      "first_message": null,
+      "last_message": "9a1b2c3d-0000-4000-8000-0000000000ff",
+      "from": "2026-10-20T09:00:00Z",
+      "to": "2026-10-20T11:02:00Z",
+      "state": "sealed",
+      "windows": 3,
+      "origin": "upgrade",
+      "topics": [
+        "design"
+      ],
+      "related": [
+        "repo:constellation-works/scribe"
+      ],
+      "text": "Settled the store layout: one Markdown file per record with YAML\nfrontmatter.\n\nEntries and session records are Markdown files; control and proposals stay JSON."
+    }
+  ]
 }

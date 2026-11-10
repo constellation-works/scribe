@@ -5,7 +5,7 @@ last_updated: 2026-11-10
 last_validated: 2026-11-02
 status: Draft
 stage: building
-next: S8 store format 4 (session header and log, active flag, authors), then S9–S14; S7 discussions unfiled
+next: S9 segment-writing passes and session rebuild, then S10–S14 (S8 store format 4 built); S7 discussions unfiled
 feature: scribe
 doc_role: overview
 type: design
@@ -151,7 +151,7 @@ can override.
 | Consistency routine | `crates/scribe-core/src/consistency.rs`, `commands/consistency.rs` | S6 |
 | Orbit plugin tree | `plugin/.orbit-plugin/` | S5 |
 | Claude Code hooks package | `plugin/claude-code/` | S2 |
-| Store format 4: session header and log, `active`, authors, tags store | `crates/scribe-core/src/{session,record,activity,tag}.rs`, `store/` | S8 |
+| Store format 4: session header and log, `active`, authors (the tags store is S12) | `crates/scribe-core/src/{session,record,activity}.rs`, `store/` | S8 |
 | Segment-writing passes, `session rebuild` | `crates/scribe-core/src/pass.rs`, `commands/session/rebuild.rs` | S9 |
 | Deactivation routes | `crates/scribe-core/src/{activity,consistency}.rs`, `commands/session/activate.rs` | S10 |
 | `record search`, list filters, id prefixes | `crates/scribe-core/src/search.rs`, `commands/record.rs` | S11 |

@@ -31,5 +31,10 @@
     "cwd": "/home/daniel/workspace/scribe"
   },
   "superseded_by": null,
-  "review_after": null
+  "review_after": null,
+  "author": {
+    "kind": "daniel",
+    "name": "daniel"
+  },
+  "updated_by": null
 }

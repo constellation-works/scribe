@@ -20,6 +20,13 @@
 //!    its `said` is a verbatim span of one of Daniel's own turns;
 //! 5. [`record`]: the new record, `scribed_through` advanced.
 //!
+//! Until S9 gives the model the log itself, a pass writes the header
+//! (title, summary, goals, next) and puts the answer's `outcome` in the
+//! record's open segment: it opens one (`origin: pass`) when there is none,
+//! extends its message range and `windows` otherwise, and seals it at the
+//! final pass. Sealed segments, the upgraded one included, are never
+//! touched.
+//!
 //! A pass writes no tag entries, whatever the transcript holds. No I/O
 //! (STD-02 R5).
 
@@ -30,9 +37,13 @@ use crate::models::{
     SessionRequest,
 };
 use crate::record::{Label, Project, Related, Topic, Topics};
-use crate::session::{SECTIONS, SessionId, SessionLink, SessionRecord, SessionStatus, Term};
+use crate::session::{
+    HEADER_SECTIONS, LOG_SECTION, SEGMENT_HEADING_CHARS, Segment, SegmentOrigin, SegmentState,
+    SessionId, SessionLink, SessionRecord, SessionStatus, Term,
+};
 use crate::transcript::Message;
 use crate::verbatim;
+use std::num::NonZeroU32;
 use time::OffsetDateTime;
 
 /// The default characters of message content in one window (2_design.md §5.3).
@@ -69,14 +80,15 @@ pub const TERM_CHARS: usize = 80;
 /// The longest `said` span of a term, in characters.
 pub const SAID_CHARS: usize = 400;
 
-/// The character budgets of a record (2_design.md §3): the title, then the
-/// four sections as [`SECTIONS`] lists them.
+/// The character budgets of an answer: the title, the header's sections,
+/// and `outcome`, the open segment's text. S9 replaces these with the
+/// segment budgets of 2_design.md §5.5.
 pub const BUDGETS: Budgets = Budgets {
     title: 120,
-    summary: SECTIONS[0].1,
-    goals: SECTIONS[1].1,
-    outcome: SECTIONS[2].1,
-    next: SECTIONS[3].1,
+    summary: 1500,
+    goals: 600,
+    outcome: 2500,
+    next: 1000,
 };
 
 /// User turns that Claude Code writes itself, not Daniel: a turn whose text
@@ -299,7 +311,7 @@ pub fn request(
             title: r.title.clone(),
             summary: r.summary.clone(),
             goals: r.goals.clone(),
-            outcome: r.outcome.clone(),
+            outcome: r.open_segment().map(|s| s.text.clone()).unwrap_or_default(),
             next: r.next.clone(),
             topics: r
                 .topics
@@ -357,7 +369,7 @@ pub struct Distilled {
     pub summary: String,
     /// `## Goals`.
     pub goals: String,
-    /// `## Outcome`.
+    /// The open segment's text.
     pub outcome: String,
     /// `## Next`, one `- <item>` line per item.
     pub next: String,
@@ -461,13 +473,15 @@ fn within(field: &'static str, text: &str, max: usize) -> Result<(), Invalid> {
 }
 
 /// A section's text, trimmed and within its budget, with no line that the
-/// record parser would read as a section heading.
+/// record parser would read as a section or segment heading.
 fn section(name: &'static str, text: &str, max: usize) -> Result<String, Invalid> {
     let text = text.trim().to_owned();
     within(name, &text, max)?;
     let heading = text.lines().any(|line| {
-        line.strip_prefix("## ")
-            .is_some_and(|h| SECTIONS.iter().any(|(s, _)| *s == h))
+        line.starts_with("### ")
+            || line
+                .strip_prefix("## ")
+                .is_some_and(|h| h == LOG_SECTION || h == "Outcome" || HEADER_SECTIONS.contains(&h))
     });
     if heading {
         return Err(Invalid::Heading(name));
@@ -540,8 +554,14 @@ pub struct PassMeta {
     pub started: OffsetDateTime,
     /// When cataloging was last switched on.
     pub on_since: OffsetDateTime,
-    /// The last message folded in.
+    /// The last message folded in: the window's last.
     pub through: Option<String>,
+    /// The window's first message.
+    pub first_message: Option<String>,
+    /// When the window's first message was sent.
+    pub from: OffsetDateTime,
+    /// When the window's last message was sent.
+    pub to: OffsetDateTime,
     /// Now.
     pub now: OffsetDateTime,
     /// Whether this is the session-end pass.
@@ -550,14 +570,17 @@ pub struct PassMeta {
 
 /// The record a pass writes. A previous record keeps its `created`,
 /// `started`, `cwd`, `project`, `provider` and `host` (the file stays where
-/// it is) and its terms, the new ones appended; `passes` counts up and
-/// `scribed_through` advances to the last message the pass read.
+/// it is), its activity fields and catalog marker, its sealed segments and
+/// its terms, the new ones appended; `passes` counts up and
+/// `scribed_through` advances to the last message the pass read. The
+/// answer's `outcome` becomes the open segment's text ([`log_after`]).
 #[must_use]
 pub fn record(
     previous: Option<&SessionRecord>,
     distilled: Distilled,
     meta: PassMeta,
 ) -> SessionRecord {
+    let log = log_after(previous, &distilled, &meta);
     let terms = merge_terms(
         previous.map_or(&[][..], |p| p.terms.as_slice()),
         distilled.terms,
@@ -569,6 +592,10 @@ pub fn record(
         } else {
             SessionStatus::Open
         },
+        active: previous.is_none_or(|p| p.active),
+        keep_active: previous.is_some_and(|p| p.keep_active),
+        active_change: previous.and_then(|p| p.active_change.clone()),
+        cataloged_by: previous.and_then(|p| p.cataloged_by.clone()),
         project: previous.map_or(meta.project, |p| p.project.clone()),
         topics: distilled.topics,
         related: distilled.related,
@@ -587,19 +614,93 @@ pub fn record(
             .or_else(|| previous.and_then(|p| p.scribed_through.clone())),
         passes: previous.map_or(0, |p| p.passes).saturating_add(1),
         next_open: distilled.next_open,
+        log,
         summary: distilled.summary,
         goals: distilled.goals,
-        outcome: distilled.outcome,
         next: distilled.next,
     }
 }
 
+/// The log after one window: the previous record's segments, sealed ones
+/// unchanged. The open segment, when there is one, takes the answer's
+/// `outcome` as its text, the title as its heading, the answer's topics and
+/// references, and the window's last message and time; its `windows`
+/// counts up. Without one, a non-empty `outcome` opens segment `n + 1`
+/// over the window. The final pass seals the last segment.
+fn log_after(
+    previous: Option<&SessionRecord>,
+    distilled: &Distilled,
+    meta: &PassMeta,
+) -> Vec<Segment> {
+    let mut log = previous.map_or_else(Vec::new, |p| p.log.clone());
+    let heading = segment_heading(&distilled.title);
+    let through = meta.through.clone();
+    match log.last_mut().filter(|s| s.state == SegmentState::Open) {
+        Some(open) => {
+            open.heading = heading;
+            open.text.clone_from(&distilled.outcome);
+            open.topics = distilled.topics.clone();
+            open.related.clone_from(&distilled.related);
+            if through.is_some() {
+                open.last_message = through;
+                open.to = meta.to;
+            }
+            open.windows = open.windows.saturating_add(1);
+        }
+        None if !distilled.outcome.is_empty() => {
+            let n = u32::try_from(log.len())
+                .unwrap_or(u32::MAX)
+                .saturating_add(1);
+            log.push(Segment {
+                n: NonZeroU32::new(n).unwrap_or(NonZeroU32::MAX),
+                heading,
+                first_message: meta.first_message.clone().or_else(|| through.clone()),
+                last_message: through,
+                from: meta.from,
+                to: meta.to,
+                state: SegmentState::Open,
+                windows: NonZeroU32::MIN,
+                origin: SegmentOrigin::Pass,
+                topics: distilled.topics.clone(),
+                related: distilled.related.clone(),
+                text: distilled.outcome.clone(),
+            });
+        }
+        None => {}
+    }
+    if meta.final_pass {
+        seal(&mut log);
+    }
+    log
+}
+
+/// A segment heading from a title: one line, at most
+/// [`SEGMENT_HEADING_CHARS`] characters; `Session` when the title is empty.
+fn segment_heading(title: &str) -> String {
+    let flat = title.split_whitespace().collect::<Vec<_>>().join(" ");
+    let cut: String = flat.chars().take(SEGMENT_HEADING_CHARS).collect();
+    let cut = cut.trim_end().to_owned();
+    if cut.is_empty() {
+        String::from("Session")
+    } else {
+        cut
+    }
+}
+
+/// Seal the open segment, if there is one: a `final` record has none.
+fn seal(log: &mut [Segment]) {
+    if let Some(open) = log.last_mut() {
+        open.state = SegmentState::Sealed;
+    }
+}
+
 /// The session ended with nothing new since the last pass: the same record,
-/// marked final, without a model call.
+/// marked final, its open segment sealed, without a model call.
 #[must_use]
 pub fn finalized(previous: &SessionRecord, now: OffsetDateTime) -> SessionRecord {
     let mut record = previous.clone();
     record.status = SessionStatus::Final;
     record.updated = now;
+    seal(&mut record.log);
     record
 }

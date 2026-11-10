@@ -2,7 +2,10 @@
 //! on with `/scribe on`, and `pass`, which writes them. `show` and `list`
 //! carry each record's `links` (stored on the child) and its `children`
 //! (derived at read time from the other records' links); `list --tree`
-//! orders the records by that nesting. `list` and `show`
+//! orders the records by that nesting. `list` leaves inactive sessions out
+//! unless `--include-inactive`; `show` prints the header and the log's
+//! table of contents, `--log` every segment's text, and `--segment <n>` (or
+//! the id written as the cite `session:<id>#<n>`) one segment. `list` and `show`
 //! read only and make one store call each (STD-02 R2); `pass`, run by the
 //! enabled routine or by hand, lives in `pass.rs`.
 
@@ -15,7 +18,7 @@ use crate::error::CliError;
 use crate::output::{Kin, Output, Record, Records, SessionPayload, TreeRow};
 use clap::{Args, Subcommand};
 use scribe_core::{Project, SessionFilter, SessionId, SessionRecord, Topic};
-use std::num::NonZeroUsize;
+use std::num::{NonZeroU32, NonZeroUsize};
 
 pub(super) const SESSION_EXAMPLES: &str = "\
 Examples:
@@ -28,20 +31,24 @@ Examples:
   scribe session list
   scribe session list --tree
   scribe session list --topic release --limit 5
+  scribe session list --include-inactive
   scribe session list --json | jq '.sessions[] | select(.due)'";
 
 const SHOW_EXAMPLES: &str = "\
 Examples:
   scribe session show <id>
-  scribe session show <id> --json | jq -r .next";
+  scribe session show <id> --log
+  scribe session show <id> --segment 2
+  scribe session show 'session:<id>#2'
+  scribe session show <id> --json | jq -r '.log[].heading'";
 
 /// Verbs on the `session` noun.
 #[derive(Debug, Subcommand)]
 pub(crate) enum SessionCommand {
-    /// List session records, oldest first, with whether a pass is due
+    /// List session records, oldest first, with whether a pass is due; inactive sessions only with --include-inactive
     #[command(after_help = LIST_EXAMPLES)]
     List(ListArgs),
-    /// Show one session record in full: its metadata, links, children and four sections
+    /// Show one session record: its metadata, links, children, header and the log's table of contents
     #[command(after_help = SHOW_EXAMPLES)]
     Show(ShowArgs),
     /// Write the record of each session whose pass is due, or of the sessions named, with the session model
@@ -67,14 +74,49 @@ pub(crate) struct ListArgs {
     /// Order the sessions as a tree: each one under the session it was spawned from (else the one it continues), with a PARENT column; --json keeps the envelope, in tree order
     #[arg(long)]
     pub(crate) tree: bool,
+
+    /// Include inactive sessions (hidden by default), with an ACTIVE column
+    #[arg(long)]
+    pub(crate) include_inactive: bool,
 }
 
 /// Arguments to `session show`.
 #[derive(Debug, Args)]
 pub(crate) struct ShowArgs {
-    /// The session's id, as printed by `session list`
-    #[arg(value_name = "ID")]
+    /// The session's id, as printed by `session list`, or a cite: session:<id>, or session:<id>#<n> for one segment
+    #[arg(value_name = "ID", value_parser = parse_session_ref)]
+    pub(crate) id: SessionRef,
+
+    /// Print every segment's text after the log's table of contents
+    #[arg(long)]
+    pub(crate) log: bool,
+
+    /// Print only segment N of the log, with its text (from 1)
+    #[arg(long, value_name = "N")]
+    pub(crate) segment: Option<NonZeroU32>,
+}
+
+/// A session named by id or by its cite, optionally with a segment.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SessionRef {
     pub(crate) id: SessionId,
+    pub(crate) segment: Option<NonZeroU32>,
+}
+
+/// `<id>`, `session:<id>` or `session:<id>#<n>`.
+fn parse_session_ref(raw: &str) -> Result<SessionRef, String> {
+    let rest = raw.strip_prefix("session:").unwrap_or(raw);
+    let (id, segment) = match rest.split_once('#') {
+        Some((id, n)) => {
+            let n = n.parse::<NonZeroU32>().map_err(|_| {
+                format!("invalid segment '{n}' in '{raw}': expected session:<id>#<n> with n from 1")
+            })?;
+            (id, Some(n))
+        }
+        None => (rest, None),
+    };
+    let id = id.parse::<SessionId>().map_err(|e| e.to_string())?;
+    Ok(SessionRef { id, segment })
 }
 
 impl SessionCommand {
@@ -103,6 +145,7 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
     let filter = SessionFilter {
         project: args.project,
         topic: args.topic,
+        include_inactive: args.include_inactive,
         limit: args.limit,
     };
     let found = ctx.store().list_sessions(&filter)?;
@@ -130,9 +173,10 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
         )
     };
     let items = &found.listing.items;
+    let active_column = args.include_inactive;
     let records = if args.tree {
-        Records::SessionTree(
-            scribe_core::tree_order(items)
+        Records::SessionTree {
+            rows: scribe_core::tree_order(items)
                 .into_iter()
                 .map(|(depth, i)| {
                     let record = &items[i];
@@ -143,29 +187,64 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
                     }
                 })
                 .collect(),
-        )
+            active_column,
+        }
     } else {
-        Records::Sessions(items.iter().map(payload).collect())
+        Records::Sessions {
+            items: items.iter().map(payload).collect(),
+            active_column,
+        }
     };
-    Ok(list_output(
-        records,
-        found.listing.total,
-        &found.skipped,
-        &notice,
-    ))
+    let mut output = list_output(records, found.listing.total, &found.skipped, &notice);
+    if found.inactive_hidden > 0
+        && let Output::List { notices, .. } = &mut output
+    {
+        notices.push(format!(
+            "{} inactive session(s) also match and are hidden; --include-inactive lists them",
+            found.inactive_hidden
+        ));
+    }
+    Ok(output)
 }
 
+/// One record, inactive or not. The JSON carries every segment with its
+/// text, or the one asked for; the table prints the table of contents, and
+/// the text with `--log` or a segment.
 fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
-    let view = ctx.store().session(&args.id)?;
+    let segment = match (args.segment, args.id.segment) {
+        (Some(flag), Some(cite)) if flag != cite => {
+            return Err(CliError::Usage(format!(
+                "--segment {flag} and the cite's #{cite} name different segments; give one"
+            )));
+        }
+        (flag, cite) => flag.or(cite),
+    };
+    let view = ctx.store().session(&args.id.id)?;
+    let record = &view.record;
+    let payload = SessionPayload::new(
+        record,
+        view.control.as_ref(),
+        Kin {
+            children: &view.children,
+            titles: &view.linked_titles,
+        },
+    );
+    let mut payload = match segment {
+        Some(n) => {
+            let one = record
+                .segment(n.get())
+                .ok_or_else(|| CliError::SegmentNotFound {
+                    session: record.id.clone(),
+                    n: n.get(),
+                    count: record.log.len(),
+                })?;
+            payload.with_log([one])
+        }
+        None => payload.with_log(&record.log),
+    };
+    payload.log_text = args.log || segment.is_some();
     Ok(Output::Show {
-        record: Record::Session(Box::new(SessionPayload::new(
-            &view.record,
-            view.control.as_ref(),
-            Kin {
-                children: &view.children,
-                titles: &view.linked_titles,
-            },
-        ))),
+        record: Record::Session(Box::new(payload)),
     })
 }
 

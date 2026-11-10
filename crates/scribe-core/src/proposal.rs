@@ -7,7 +7,7 @@
 //! is required and an unknown one is refused.
 
 use crate::entry::{Cite, EntryId};
-use crate::record::nullable;
+use crate::record::{Author, nullable};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::num::NonZeroU64;
@@ -151,4 +151,9 @@ pub struct Proposal {
     /// The turn Daniel settled it in.
     #[serde(deserialize_with = "nullable")]
     pub settled_by: Option<Cite>,
+    /// Who opened it: `{kind: scribe, name: consistency}` for the routine.
+    pub author: Author,
+    /// Who settled it, set exactly when `state` is not `open`.
+    #[serde(deserialize_with = "nullable")]
+    pub settled_author: Option<Author>,
 }

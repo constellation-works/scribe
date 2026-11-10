@@ -10,13 +10,19 @@
 //!    Daniel defined, and the newest orchestration task for a workspace.
 //!    A lookup returns the stored records themselves (`status: record`)
 //!    without a model call; one that finds nothing falls through.
-//! 2. **Retrieval** (§6.2), model-free: scope filters, tokenizing, BM25 over
-//!    entries, session records and up to [`MAX_TASKS`] Orbit tasks, the top
+//! 2. **Retrieval** (§6.2, §6.7), model-free: scope filters, tokenizing,
+//!    BM25 over entries, session headers and session segments (separate
+//!    units, a segment cited `session:<id>#<n>`) and up to [`MAX_TASKS`]
+//!    Orbit tasks, the top
 //!    [`TOP_K`] packed newest-first within [`EVIDENCE_CHARS`]. Nothing
 //!    scoring above zero is `no_record` with no model call.
 //! 3. **Answering** (§6.3, §6.4): the `ask` model through the [`Models`]
 //!    port; every claim whose cite is not in the evidence, or whose quote is
 //!    not verbatim in that item, is dropped and counted.
+//!
+//! Inactive sessions, like superseded and retired entries, are left out of
+//! lookups and evidence unless `include_hidden`, and retrieval counts the
+//! ones that matched in `hidden_matches`.
 //!
 //! Orbit tasks arrive through the [`Tasks`] port, which the CLI crate
 //! implements over `orbit tool run` (`OrbitTasks`). A task source that
@@ -27,7 +33,7 @@
 use crate::entry::{ContentFrom, Entry, EntryStatus, Speaker, TagName};
 use crate::models::{ASK_BUDGET, AskAnswer, AskRequest, EvidenceItem, ModelError, Models};
 use crate::record::{Project, Topic};
-use crate::session::{SessionId, SessionRecord, Term};
+use crate::session::{Segment, SessionId, SessionRecord, Term};
 use crate::tag::TagTable;
 use crate::verbatim;
 use std::collections::{BTreeMap, BTreeSet};
@@ -149,7 +155,8 @@ pub struct Question {
     pub text: String,
     /// The candidate restriction.
     pub scope: Scope,
-    /// Whether superseded and retired entries are evidence too.
+    /// Whether superseded and retired entries and inactive sessions are
+    /// evidence too.
     pub include_hidden: bool,
 }
 
@@ -316,7 +323,8 @@ pub struct Claim {
     pub text: String,
     /// Words verbatim from the cited item.
     pub quote: String,
-    /// The item: an entry id, `session:<id>` or `task:<id>`.
+    /// The item: an entry id, `session:<id>`, `session:<id>#<n>` (a
+    /// segment) or `task:<id>`.
     pub cite: String,
 }
 
@@ -344,7 +352,9 @@ pub struct Answer {
     pub evidence_considered: usize,
     /// Claims dropped because their quote or cite failed.
     pub dropped_quotes: usize,
-    /// Hidden entries that matched but were left out (`include_hidden` off).
+    /// Hidden entries and inactive sessions that matched but were left out
+    /// (`include_hidden` off); a session counts once however many of its
+    /// units matched.
     pub hidden_matches: usize,
     /// Which lookup answered, if one did.
     pub lookup: Option<Lookup>,
@@ -354,9 +364,9 @@ pub struct Answer {
 
 /// The answer text when nothing recorded answers.
 pub const NO_RECORD: &str = "Nothing recorded answers this.";
-/// Appended when a hidden entry matched and was left out.
-pub const HIDDEN_NOTE: &str =
-    "A superseded or retired entry also matches; ask with include_hidden to see it.";
+/// Appended when a hidden entry or an inactive session matched and was
+/// left out.
+pub const HIDDEN_NOTE: &str = "A superseded or retired entry, or an inactive session, also matches; ask with include_hidden to see it.";
 
 /// Answer `question` from `corpus`, the tasks `tasks` finds and the `ask`
 /// model `model` (an id from `config.toml`), at time `now`.
@@ -578,7 +588,7 @@ fn lookup<T: Tasks + ?Sized>(
         corpus
             .sessions
             .iter()
-            .filter(|r| scope.keeps_session(r))
+            .filter(|r| scope.keeps_session(r) && (question.include_hidden || r.active))
             .collect(),
     );
     let entries: Vec<&Entry> = corpus
@@ -687,6 +697,8 @@ fn named_session(text: &str, sessions: &[&SessionRecord]) -> Option<Vec<Found>> 
         let Some(id) = token.strip_prefix("session:") else {
             continue;
         };
+        // A segment cite names its session: the lookup returns the record.
+        let id = id.split_once('#').map_or(id, |(id, _)| id);
         let id = id.trim_end_matches(|c: char| !(c.is_alphanumeric() || c == '-' || c == '_'));
         let Ok(id) = id.parse::<SessionId>() else {
             continue;
@@ -953,8 +965,12 @@ struct Retrieved {
     hidden_matches: usize,
 }
 
-/// A candidate record, ready to rank.
+/// A candidate unit, ready to rank: an entry, a session header or segment,
+/// or a task.
 struct Doc {
+    /// The record it belongs to (a session's units share one), for counting
+    /// hidden matches once per record.
+    record: String,
     item: EvidenceItem,
     tokens: Vec<String>,
     weight: f64,
@@ -988,6 +1004,7 @@ fn retrieve<T: Tasks + ?Sized>(question: &Question, corpus: Corpus<'_>, tasks: &
             1.0
         };
         docs.push(Doc {
+            record: entry.id.to_string(),
             tokens: tokens(&format!("{} {} {}", entry.content, entry.said, entry.tag)),
             weight: ENTRY_WEIGHT * boost,
             order: 0,
@@ -997,17 +1014,30 @@ fn retrieve<T: Tasks + ?Sized>(question: &Question, corpus: Corpus<'_>, tasks: &
         });
     }
     for record in corpus.sessions.iter().filter(|r| scope.keeps_session(r)) {
+        let key = format!("session:{}", record.id);
         docs.push(Doc {
+            record: key.clone(),
             tokens: tokens(&format!(
                 "{} {} {} {}",
-                record.summary, record.goals, record.outcome, record.next
+                record.title, record.summary, record.goals, record.next
             )),
             weight: 1.0,
             order: 1,
             at: record.updated,
-            hidden: false,
+            hidden: !record.active,
             item: session_item(record),
         });
+        for segment in &record.log {
+            docs.push(Doc {
+                record: key.clone(),
+                tokens: tokens(&format!("{} {}", segment.heading, segment.text)),
+                weight: 1.0,
+                order: 1,
+                at: segment.to,
+                hidden: !record.active,
+                item: segment_item(record, segment),
+            });
+        }
     }
     if scope.keeps_tasks() {
         let query_text: Vec<&str> = query.iter().map(String::as_str).collect();
@@ -1025,6 +1055,7 @@ fn retrieve<T: Tasks + ?Sized>(question: &Question, corpus: Corpus<'_>, tasks: &
                         .take(TASK_DESCRIPTION_CHARS)
                         .collect();
                     docs.push(Doc {
+                        record: format!("task:{}", task.id),
                         tokens: tokens(&format!("{} {description}", task.title)),
                         weight: 1.0,
                         order: 2,
@@ -1047,7 +1078,12 @@ fn retrieve<T: Tasks + ?Sized>(question: &Question, corpus: Corpus<'_>, tasks: &
     let hidden_matches = if question.include_hidden {
         0
     } else {
-        ranked.iter().filter(|(_, d)| d.hidden).count()
+        ranked
+            .iter()
+            .filter(|(_, d)| d.hidden)
+            .map(|(_, d)| d.record.as_str())
+            .collect::<BTreeSet<_>>()
+            .len()
     };
     ranked.retain(|(_, d)| question.include_hidden || !d.hidden);
     ranked.sort_by(|(sa, a), (sb, b)| {
@@ -1091,6 +1127,12 @@ fn narrow_docs(
                 .sessions
                 .iter()
                 .map(|r| (&r.project, r.topics.as_slice())),
+        )
+        .chain(
+            corpus
+                .sessions
+                .iter()
+                .flat_map(|r| r.log.iter().map(move |s| (&r.project, s.topics.as_slice()))),
         );
     for (project, topics) in known {
         for w in words {
@@ -1124,15 +1166,28 @@ fn narrow_docs(
     }
 }
 
-fn record_meta<'a>(corpus: Corpus<'a>, cite: &str) -> (Option<&'a str>, &'a [Topic]) {
-    if let Some(id) = cite.strip_prefix("session:") {
+/// The project and topics of the record a cite names. A segment carries the
+/// record's topics and its own.
+fn record_meta<'a>(corpus: Corpus<'a>, cite: &str) -> (Option<&'a str>, Vec<&'a Topic>) {
+    if let Some(rest) = cite.strip_prefix("session:") {
+        let (id, segment) = match rest.split_once('#') {
+            Some((id, n)) => (id, n.parse::<u32>().ok()),
+            None => (rest, None),
+        };
         if let Some(r) = corpus.sessions.iter().find(|r| r.id.as_str() == id) {
-            return (Some(r.project.as_str()), r.topics.as_slice());
+            let mut topics: Vec<&Topic> = r.topics.as_slice().iter().collect();
+            if let Some(s) = segment.and_then(|n| r.segment(n)) {
+                topics.extend(s.topics.as_slice());
+            }
+            return (Some(r.project.as_str()), topics);
         }
     } else if let Some(e) = corpus.entries.iter().find(|e| e.id.to_string() == cite) {
-        return (Some(e.project.as_str()), e.topics.as_slice());
+        return (
+            Some(e.project.as_str()),
+            e.topics.as_slice().iter().collect(),
+        );
     }
-    (None, &[])
+    (None, Vec::new())
 }
 
 /// BM25 scores of `docs` for the `query` tokens, each times its weight.
@@ -1204,10 +1259,11 @@ fn entry_item(entry: &Entry) -> EvidenceItem {
     }
 }
 
+/// A session's header as evidence, cited `session:<id>`.
 fn session_item(record: &SessionRecord) -> EvidenceItem {
     let mut text = format!(
-        "{}\n## Summary\n{}\n## Goals\n{}\n## Outcome\n{}\n## Next\n{}",
-        record.title, record.summary, record.goals, record.outcome, record.next
+        "{}\n## Summary\n{}\n## Goals\n{}\n## Next\n{}",
+        record.title, record.summary, record.goals, record.next
     );
     for term in &record.terms {
         text.push_str(&format!(
@@ -1222,6 +1278,22 @@ fn session_item(record: &SessionRecord) -> EvidenceItem {
         status: record.status.as_str().to_owned(),
         date: day(record.updated),
         text,
+    }
+}
+
+/// One segment of a session's log as evidence, cited `session:<id>#<n>`:
+/// a claim citing it is checked against its heading and text alone.
+fn segment_item(record: &SessionRecord, segment: &Segment) -> EvidenceItem {
+    EvidenceItem {
+        cite: format!("session:{}#{}", record.id, segment.n),
+        kind: "session",
+        whose: "session summary",
+        status: record.status.as_str().to_owned(),
+        date: day(segment.to),
+        text: format!(
+            "{} (segment {}): {}\n{}",
+            record.title, segment.n, segment.heading, segment.text
+        ),
     }
 }
 

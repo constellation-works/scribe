@@ -665,3 +665,69 @@ fn tokens_drop_stopwords_and_short_words_and_strip_suffixes() {
         vec!["releas", "releas", "releas", "releas", "class", "class"]
     );
 }
+
+#[test]
+fn a_log_segment_is_evidence_of_its_own_cited_by_number() {
+    let mut r = record("s-1", 1, "release planning");
+    r.log[0].heading = String::from("Merge policy");
+    r.log[0].text = String::from("Daniel chose to squash-merge agent PRs.");
+    let models = FakeModels::answering(answered(vec![
+        claim("squash", "squash-merge agent PRs", "session:s-1#1"),
+        claim("squash again", "squash-merge agent PRs", "session:s-1"),
+    ]));
+    let a = run(&question("merge agent PRs"), &[], &[r], &models, &NoTasks);
+    assert_eq!(models.cites(), vec![String::from("session:s-1#1")]);
+    assert_eq!(a.status, Status::Answered);
+    let kept: Vec<&str> = a.claims.iter().map(|c| c.cite.as_str()).collect();
+    assert_eq!(
+        kept,
+        ["session:s-1#1"],
+        "the header does not hold the quote"
+    );
+    assert_eq!(a.dropped_quotes, 1);
+}
+
+#[test]
+fn an_inactive_session_is_hidden_from_lookups_and_evidence_unless_include_hidden() {
+    let mut old = record("s-2", 9, "merge agent PRs by hand");
+    old.active = false;
+    let current = record("s-1", 5, "merge agent PRs with squash");
+    let sessions = [current, old];
+
+    let models = FakeModels::silent();
+    let a = run(
+        &question("can you fetch me last session summary?"),
+        &[],
+        &sessions,
+        &models,
+        &NoTasks,
+    );
+    assert_eq!(a.lookup, Some(Lookup::LastSession));
+    assert_eq!(
+        a.records[0].cite(),
+        "session:s-1",
+        "the inactive one is newer"
+    );
+
+    let models = FakeModels::silent();
+    let a = run(
+        &question("merge agent PRs"),
+        &[],
+        &sessions,
+        &models,
+        &NoTasks,
+    );
+    assert_eq!(models.cites(), vec![String::from("session:s-1")]);
+    assert_eq!(a.hidden_matches, 1);
+
+    let models = FakeModels::silent();
+    let mut q = question("merge agent PRs");
+    q.include_hidden = true;
+    let a = run(&q, &[], &sessions, &models, &NoTasks);
+    assert!(models.cites().contains(&String::from("session:s-2")));
+    assert_eq!(a.hidden_matches, 0);
+    let mut last = question("can you fetch me last session summary?");
+    last.include_hidden = true;
+    let a = run(&last, &[], &sessions, &FakeModels::silent(), &NoTasks);
+    assert_eq!(a.records[0].cite(), "session:s-2");
+}

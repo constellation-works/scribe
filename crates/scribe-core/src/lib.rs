@@ -5,9 +5,11 @@
 //! - business logic with no I/O: entries ([`Entry`], [`EntryId`],
 //!   [`TagName`], [`Cite`]) in `entry`; the tag table ([`TagTable`]) in
 //!   `tag`; session records, the on/off state and the due rule
-//!   ([`SessionRecord`], [`ControlState`], [`Cadence`]) in `session`;
+//!   ([`SessionRecord`], its log of [`Segment`]s, [`ControlState`],
+//!   [`Cadence`]) in `session`; whether a session is still current and who
+//!   cataloged it in [`activity`];
 //!   proposals ([`Proposal`]) in `proposal`; the shared metadata
-//!   ([`Project`], [`Topic`], [`Related`]) in `record`; `config.toml`
+//!   ([`Project`], [`Topic`], [`Related`], [`Author`]) in `record`; `config.toml`
 //!   ([`Config`]) in `config`; parsing a typed turn into `#scribe`
 //!   instructions in [`capture`]; `/scribe on|off|status` and the switch
 //!   transitions in [`control`]; a session pass, from transcript to record,
@@ -32,6 +34,7 @@
 // Unit tests use unwrap/expect for fixture setup; production call sites remain linted.
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
+pub mod activity;
 pub mod ask;
 pub mod capture;
 mod config;
@@ -57,11 +60,15 @@ pub use entry::{
 pub use error::{Error, Result};
 pub use models::Models;
 pub use proposal::{Proposal, ProposalError, ProposalId, ProposalKind, ProposalState, Quote};
-pub use record::{Label, Listing, Project, RecordError, Related, RelatedKind, Topic, Topics};
+pub use record::{
+    Author, AuthorKind, AuthorName, Label, Listing, Project, RecordError, Related, RelatedKind,
+    Topic, Topics,
+};
 pub use session::{
-    Cadence, Child, ControlState, LinkError, LinkType, SECTIONS, SessionControl, SessionError,
+    Cadence, Child, ControlState, HEADER_SECTIONS, LOG_SECTION, LinkError, LinkType, LogError,
+    SEGMENT_HEADING_CHARS, Segment, SegmentOrigin, SegmentState, SessionControl, SessionError,
     SessionFilter, SessionId, SessionLink, SessionRecord, SessionStatus, Term, check_link,
-    children, tree_order, tree_parent,
+    check_log, children, tree_order, tree_parent,
 };
 pub use store::{
     AUDIT_FILE, AuditEvent, AuditStatus, CONFIG_FILE, CONTROL_FILE, Captured, DEFAULT_LOCK_WAIT,

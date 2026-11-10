@@ -2,10 +2,15 @@
 //! session pass due.
 //!
 //! A session record is one file, `sessions/<yyyy>/<mm>/<id>.md`: YAML
-//! frontmatter and four Markdown sections, `## Summary`, `## Goals`,
-//! `## Outcome` and `## Next` (docs/design/scribe/2_design.md §3). The text
-//! is model-written: `ask` labels it a session summary and never quotes it
-//! as Daniel's words. Pure values (STD-02 R14) and no I/O (STD-02 R5).
+//! frontmatter, a **header** of three Markdown sections (`## Summary`,
+//! `## Goals`, `## Next`) that passes rewrite, and an append-only **log**,
+//! `## Log`, of numbered segments whose metadata is the frontmatter's `log`
+//! list (docs/design/scribe/2_design.md §3, §5.5; store format 4). Only the
+//! last segment may be open; sealed ones never change. The text is
+//! model-written: `ask` labels it a session summary and never quotes it as
+//! Daniel's words. A record also says whether it is `active` (still
+//! describes something current, §5.7), apart from its `status`. Pure values
+//! (STD-02 R14) and no I/O (STD-02 R5).
 //!
 //! As for entries, every frontmatter key is required and an unknown one is
 //! refused; never rename or retype a field without a store format bump.
@@ -17,6 +22,7 @@
 //! the parent record is never rewritten for them. [`check_link`] refuses an
 //! unknown target, a self-link and a cycle.
 
+use crate::activity::{ActiveChange, CatalogedBy};
 use crate::record::{Label, Listing, Project, Related, Topic, Topics, nullable};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -115,15 +121,168 @@ impl SessionStatus {
     }
 }
 
-/// The four body sections, in file order, with their character budgets.
-/// A pass that writes more than a budget is refused (S4); a stored record is
-/// read whatever its length.
-pub const SECTIONS: [(&str, usize); 4] = [
-    ("Summary", 1500),
-    ("Goals", 600),
-    ("Outcome", 2500),
-    ("Next", 1000),
-];
+/// The header's body sections, in file order. `## Log` follows them. A
+/// stored record is read whatever their length; the pass enforces budgets.
+pub const HEADER_SECTIONS: [&str; 3] = ["Summary", "Goals", "Next"];
+
+/// The heading of the log section, after the header's.
+pub const LOG_SECTION: &str = "Log";
+
+/// The longest segment heading, in characters.
+pub const SEGMENT_HEADING_CHARS: usize = 80;
+
+/// Whether a segment may still be rewritten.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SegmentState {
+    /// The last segment, which the next pass rewrites.
+    Open,
+    /// Never sent back to a model to rewrite and never changed.
+    Sealed,
+}
+
+impl SegmentState {
+    /// The canonical lowercase token.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Sealed => "sealed",
+        }
+    }
+}
+
+/// What wrote a segment.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SegmentOrigin {
+    /// A session pass.
+    Pass,
+    /// `session rebuild`.
+    Rebuild,
+    /// `session catalog`.
+    Catalog,
+    /// The format-3-to-4 upgrade: the old summary and outcome.
+    Upgrade,
+}
+
+impl SegmentOrigin {
+    /// The canonical lowercase token.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Rebuild => "rebuild",
+            Self::Catalog => "catalog",
+            Self::Upgrade => "upgrade",
+        }
+    }
+}
+
+/// One stretch of a session in the record's log: its metadata is an item of
+/// the frontmatter's `log`, its text the body under `### <n>. <heading>`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Segment {
+    /// Its number, from 1 with no gaps.
+    pub n: NonZeroU32,
+    /// At most [`SEGMENT_HEADING_CHARS`] characters, one line; equal to
+    /// the body's heading.
+    pub heading: String,
+    /// The first transcript message it covers; `null` only for an
+    /// upgraded segment, whose start is unknown.
+    #[serde(deserialize_with = "nullable")]
+    pub first_message: Option<String>,
+    /// The last transcript message it covers.
+    #[serde(deserialize_with = "nullable")]
+    pub last_message: Option<String>,
+    /// When its first message was sent.
+    #[serde(with = "time::serde::rfc3339")]
+    pub from: OffsetDateTime,
+    /// When its last message was sent.
+    #[serde(with = "time::serde::rfc3339")]
+    pub to: OffsetDateTime,
+    /// Open (the last segment only) or sealed.
+    pub state: SegmentState,
+    /// How many pass windows wrote it.
+    pub windows: NonZeroU32,
+    /// What wrote it.
+    pub origin: SegmentOrigin,
+    /// Its own filter labels.
+    pub topics: Topics,
+    /// References it mentions.
+    pub related: Vec<Related>,
+    /// What happened in it, model-written: the body under its heading.
+    #[serde(skip)]
+    pub text: String,
+}
+
+/// Why a record's log is malformed. The store reports it as
+/// `store_corrupt`, naming the file.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum LogError {
+    /// Segment numbers are not 1, 2, 3, … in order.
+    #[error("log item {index} has n {found}; segments are numbered from 1 without gaps")]
+    Numbering {
+        /// The position, from 1.
+        index: usize,
+        /// The number found.
+        found: u32,
+    },
+    /// A segment other than the last is open, or a final record has one.
+    #[error("segment {0} is open; only the last segment of an open record may be open")]
+    Open(u32),
+    /// A heading is empty, too long or more than one line.
+    #[error("segment {0}'s heading must be one line of 1-{max} characters", max = SEGMENT_HEADING_CHARS)]
+    Heading(u32),
+    /// A segment not written by the upgrade has no message range.
+    #[error("segment {0} has no first_message or last_message; only an upgraded segment may")]
+    Messages(u32),
+    /// `active_change.reason` is over its budget.
+    #[error("active_change.reason has {0} characters; the limit is {max}", max = crate::activity::REASON_CHARS)]
+    Reason(usize),
+}
+
+/// Check a record's log and activity metadata: segments numbered from 1
+/// without gaps, only the last one open and none when `final`, headings one
+/// line of at most [`SEGMENT_HEADING_CHARS`], message ids present unless
+/// the segment came from the upgrade, and the change reason within budget.
+///
+/// # Errors
+///
+/// The first rule broken.
+pub fn check_log(record: &SessionRecord) -> Result<(), LogError> {
+    let last = record.log.len();
+    for (i, segment) in record.log.iter().enumerate() {
+        let n = segment.n.get();
+        if usize::try_from(n).ok() != Some(i + 1) {
+            return Err(LogError::Numbering {
+                index: i + 1,
+                found: n,
+            });
+        }
+        let open_allowed = i + 1 == last && record.status == SessionStatus::Open;
+        if segment.state == SegmentState::Open && !open_allowed {
+            return Err(LogError::Open(n));
+        }
+        let chars = segment.heading.chars().count();
+        if chars == 0 || chars > SEGMENT_HEADING_CHARS || segment.heading.contains('\n') {
+            return Err(LogError::Heading(n));
+        }
+        if segment.origin != SegmentOrigin::Upgrade
+            && (segment.first_message.is_none() || segment.last_message.is_none())
+        {
+            return Err(LogError::Messages(n));
+        }
+    }
+    if let Some(change) = &record.active_change {
+        let chars = change.reason.chars().count();
+        if chars > crate::activity::REASON_CHARS {
+            return Err(LogError::Reason(chars));
+        }
+    }
+    Ok(())
+}
 
 /// A phrase Daniel coined or defined in a session, kept in his exact words
 /// so `ask` can find where he said it.
@@ -366,6 +525,18 @@ pub struct SessionRecord {
     pub id: SessionId,
     /// Whether more passes will update it.
     pub status: SessionStatus,
+    /// Whether its content still describes something current; an inactive
+    /// session is hidden from lists and `ask` by default, never removed.
+    pub active: bool,
+    /// Exempts the session from automatic deactivation.
+    pub keep_active: bool,
+    /// The last change of `active` or `keep_active`, or `null`.
+    #[serde(deserialize_with = "nullable")]
+    pub active_change: Option<ActiveChange>,
+    /// `null` for a session switched on with `/scribe on`; who cataloged it
+    /// by name otherwise.
+    #[serde(deserialize_with = "nullable")]
+    pub cataloged_by: Option<CatalogedBy>,
     /// The repository the session ran in.
     pub project: Project,
     /// Filter labels the session model chose, reusing existing ones first.
@@ -404,18 +575,32 @@ pub struct SessionRecord {
     pub passes: u32,
     /// How many items `next` lists.
     pub next_open: u32,
-    /// `## Summary`.
+    /// The log's segments, oldest first; their texts are the body's
+    /// `## Log`.
+    pub log: Vec<Segment>,
+    /// `## Summary`: a table of contents of the session.
     #[serde(skip)]
     pub summary: String,
     /// `## Goals`.
     #[serde(skip)]
     pub goals: String,
-    /// `## Outcome`.
-    #[serde(skip)]
-    pub outcome: String,
     /// `## Next`.
     #[serde(skip)]
     pub next: String,
+}
+
+impl SessionRecord {
+    /// The open segment: the last one, when it is open.
+    #[must_use]
+    pub fn open_segment(&self) -> Option<&Segment> {
+        self.log.last().filter(|s| s.state == SegmentState::Open)
+    }
+
+    /// Segment `n`, from 1.
+    #[must_use]
+    pub fn segment(&self, n: u32) -> Option<&Segment> {
+        self.log.iter().find(|s| s.n.get() == n)
+    }
 }
 
 /// Which session records a listing returns. Every field set must match.
@@ -425,6 +610,8 @@ pub struct SessionFilter {
     pub project: Option<Project>,
     /// Only sessions carrying this topic.
     pub topic: Option<Topic>,
+    /// Inactive sessions too; they are left out otherwise.
+    pub include_inactive: bool,
     /// At most this many of the matching sessions.
     pub limit: Option<NonZeroUsize>,
 }
@@ -433,7 +620,8 @@ impl SessionFilter {
     /// Whether `record` passes every criterion (the limit aside).
     #[must_use]
     pub fn matches(&self, record: &SessionRecord) -> bool {
-        self.project.as_ref().is_none_or(|p| &record.project == p)
+        (self.include_inactive || record.active)
+            && self.project.as_ref().is_none_or(|p| &record.project == p)
             && self
                 .topic
                 .as_ref()
@@ -471,6 +659,10 @@ pub struct SessionControl {
     /// Links Daniel asserted before the session had a record; the next
     /// pass that writes the record moves them onto it and clears this.
     pub pending_links: Vec<SessionLink>,
+    /// Who cataloged the session by name (`session catalog`, S14), copied
+    /// onto its record; `null` for a `/scribe on` switch.
+    #[serde(deserialize_with = "nullable")]
+    pub cataloged_by: Option<CatalogedBy>,
 }
 
 /// Every session's switch, keyed by session id.

@@ -240,8 +240,10 @@ fn the_table_view_shows_the_record_in_full() {
     assert_eq!(out.status.code(), Some(0));
     let shown = text(&out.stdout);
     assert!(shown.contains("last_session"), "{shown}");
+    // The header and the log's table of contents (2_design.md §6.7).
     assert!(
-        shown.contains("Squash-merge agent PRs; releases keep merge commits."),
+        shown.contains("Discussed how agent PRs are merged and recorded the decision."),
         "{shown}"
     );
+    assert!(shown.contains("## Log\n  1  sealed"), "{shown}");
 }
