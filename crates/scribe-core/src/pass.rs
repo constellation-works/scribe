@@ -29,8 +29,9 @@
 use crate::control;
 use crate::entry::Speaker;
 use crate::models::{
-    Budgets, CUT_MARK, LinkedRecord, PassMessage, PreviousRecord, SESSION_BUDGET, SegmentAnswer,
-    SegmentHeading, SessionAnswer, SessionRequest,
+    Budgets, CUT_MARK, LinkedRecord, NewSegmentAnswer, PassMessage, PreviousRecord, SESSION_BUDGET,
+    SegmentAnswer, SegmentHeading, SessionAnswer, SessionHeader, SessionHeaderRequest,
+    SessionRequest,
 };
 use crate::record::{Label, Project, Related, Topic, Topics};
 use crate::session::{
@@ -414,28 +415,106 @@ pub fn check(
     conversation: &[PassMessage],
     request: &SessionRequest,
 ) -> Result<Distilled, Invalid> {
+    check_with_budgets(answer, conversation, request, BUDGETS)
+}
+
+/// A header-only retry, only when every non-length check already passes.
+/// The caller keeps the original answer and replaces only its prose header,
+/// then checks the entire answer again with [`check`].
+#[must_use]
+pub fn compression_request(
+    answer: &SessionAnswer,
+    conversation: &[PassMessage],
+    request: &SessionRequest,
+) -> Option<SessionHeaderRequest> {
+    let refusal = check(answer.clone(), conversation, request).err()?;
+    if !matches!(
+        refusal,
+        Invalid::OverBudget {
+            field: "title" | "Summary" | "Goals" | "next",
+            ..
+        }
+    ) {
+        return None;
+    }
+    // Ignore only header lengths, never headings, topics, segment limits
+    // or ranges. A hidden second defect needs a full-window correction.
+    check_with_budgets(
+        answer.clone(),
+        conversation,
+        request,
+        Budgets {
+            title: usize::MAX,
+            summary: usize::MAX,
+            goals: usize::MAX,
+            next: usize::MAX,
+        },
+    )
+    .ok()?;
+    Some(SessionHeaderRequest {
+        model: request.model.clone(),
+        budget: request.budget,
+        header: SessionHeader {
+            title: answer.title.clone(),
+            summary: answer.summary.clone(),
+            goals: answer.goals.clone(),
+            next: answer.next.clone(),
+        },
+        budgets: BUDGETS,
+        correction: refusal.to_string(),
+    })
+}
+
+fn check_with_budgets(
+    mut answer: SessionAnswer,
+    conversation: &[PassMessage],
+    request: &SessionRequest,
+    budgets: Budgets,
+) -> Result<Distilled, Invalid> {
     let title = answer.title.trim().to_owned();
     if title.is_empty() || title.contains(['\n', '\r']) {
         return Err(Invalid::Title);
     }
-    within("title", &title, BUDGETS.title)?;
-    let summary = section("Summary", &answer.summary, BUDGETS.summary)?;
+    within("title", &title, budgets.title)?;
+    let summary = section("Summary", &answer.summary, budgets.summary)?;
     if summary.is_empty() {
         return Err(Invalid::EmptySummary);
     }
-    let goals = section("Goals", &answer.goals, BUDGETS.goals)?;
+    let goals = section("Goals", &answer.goals, budgets.goals)?;
     let expected = request.previous.as_ref().and_then(|p| p.open.as_ref());
-    if answer.open.is_some() != expected.is_some() {
-        return Err(Invalid::Segment(String::from(
-            "open must be present exactly when the request has an open segment",
-        )));
-    }
+    let open = match (expected, answer.open) {
+        (Some(previous), None) => Some(CheckedSegment {
+            heading: previous.heading.clone(),
+            text: previous.text.clone(),
+            topics: previous.topics.clone(),
+            related: previous.related.clone(),
+        }),
+        (Some(_), Some(open)) => Some(check_segment(open)?),
+        (None, None) => None,
+        (None, Some(open)) => {
+            let first = request.messages.first().ok_or_else(|| {
+                Invalid::Segment(String::from(
+                    "unexpected open cannot start a new segment in an empty window",
+                ))
+            })?;
+            answer.new.insert(
+                0,
+                NewSegmentAnswer {
+                    starts_at: first.uuid.clone(),
+                    heading: open.heading,
+                    text: open.text,
+                    topics: open.topics,
+                    related: open.related,
+                },
+            );
+            None
+        }
+    };
     if answer.new.len() > 3 {
         return Err(Invalid::Segment(String::from(
             "new must hold at most 3 segments",
         )));
     }
-    let open = answer.open.map(check_segment).transpose()?;
     let mut new = Vec::new();
     let mut last_start = None;
     for segment in answer.new {
@@ -492,7 +571,7 @@ pub fn check(
         .map(|item| format!("- {item}"))
         .collect::<Vec<_>>()
         .join("\n");
-    within("next", &next, BUDGETS.next)?;
+    within("next", &next, budgets.next)?;
 
     let mut topics: Vec<Topic> = Vec::new();
     for raw in &answer.topics {

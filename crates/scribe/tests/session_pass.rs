@@ -225,10 +225,30 @@ impl Setup {
     }
 }
 
-/// Generate an answer for the actual window. Explicit S9 answers are passed
-/// through unchanged; the generic fixture rewrites an open segment or starts
-/// a new one at the first message when scribe has sealed the preceding one.
+/// Generate an answer for the actual request. Compression returns only the
+/// prose header. Explicit S9 window answers are passed through unchanged;
+/// the generic fixture rewrites an open segment or starts a new one at the
+/// first message when scribe has sealed the preceding one.
 fn response(body: &Value) -> String {
+    let envelope = |body: &Value| {
+        json!({"type":"result", "subtype":"success", "is_error":false, "result":"", "structured_output":body}).to_string()
+    };
+    if body.get("new").is_some() {
+        let header = json!({"title": body["title"], "summary": body["summary"],
+                            "goals": body["goals"], "next": body["next"]});
+        let mut script = format!(
+            "if grep -q '^Compress only' \"$HOME/claude-stdin-$n\"; then\nprintf '%s\\n' '{}'\nelse\n",
+            envelope(&header)
+        );
+        script.push_str(&session_response(body));
+        script.push_str("\nfi");
+        script
+    } else {
+        format!("printf '%s\\n' '{}'", envelope(body))
+    }
+}
+
+fn session_response(body: &Value) -> String {
     let envelope = |body: &Value| {
         json!({"type":"result", "subtype":"success", "is_error":false, "result":"", "structured_output":body}).to_string()
     };
@@ -264,6 +284,267 @@ fn answer() -> Value {
              "message": "a-1"}
         ]
     })
+}
+
+#[test]
+fn header_overruns_retry_with_only_the_header_and_preserve_the_segments() {
+    let setup = Setup::new();
+    let mut over = answer();
+    over["summary"] = json!("é".repeat(1201));
+    let compressed = json!({
+        "title": "Defining crew levels",
+        "summary": "A compact summary.",
+        "goals": "Name the crew levels.",
+        "next": ["write it into the routing doc"]
+    });
+    setup.answers(&[Some(over), Some(compressed)]);
+    setup.scribe("/scribe on");
+
+    let report = setup.pass();
+
+    assert_eq!(report["passes"][0]["windows"], 1);
+    let prompts = setup.prompts();
+    assert_eq!(prompts.len(), 2);
+    assert!(prompts[0].contains(DEFINED));
+    assert!(
+        prompts[0].contains("summary: at most 900 characters"),
+        "ORB-23950: leave summary headroom"
+    );
+    assert!(
+        prompts[1].contains("Compress only"),
+        "ORB-23950: compress rather than resend the window"
+    );
+    assert!(
+        prompts[1].contains("Current summary length: 1201 characters"),
+        "ORB-23950: count Unicode characters for the model"
+    );
+    assert!(prompts[1].contains(&"é".repeat(1201)));
+    for excluded in [
+        DEFINED,
+        "Level 4 is defined.",
+        "--- user",
+        "--- assistant",
+        "terms:",
+    ] {
+        assert!(!prompts[1].contains(excluded), "{excluded} resent");
+    }
+    let record = setup.record(ON).unwrap();
+    assert_eq!(record["summary"], "A compact summary.");
+    assert_eq!(record["log"][0]["text"], "Level 4 is defined.");
+    assert_eq!(record["terms"].as_array().unwrap().len(), 1);
+    assert_eq!(setup.control()["due"], false);
+}
+
+#[test]
+fn omitted_or_null_open_keeps_its_content_and_still_advances_and_seals() {
+    for omitted in [true, false] {
+        let setup = Setup::new();
+        setup.scribe("/scribe on");
+        setup.pass();
+        let before = setup.record(ON).unwrap()["log"][0].clone();
+        setup.append(ON, &[line("user", "u-2", "Continue the thread.")]);
+        setup.hook("session-end", &setup.payload("SessionEnd"));
+        let mut body = answer();
+        body["new"] = json!([]);
+        if omitted {
+            body.as_object_mut().unwrap().remove("open");
+        }
+        setup.answer(&body);
+
+        setup.pass();
+
+        let record = setup.record(ON).unwrap();
+        let segment = &record["log"][0];
+        for field in [
+            "heading",
+            "text",
+            "topics",
+            "related",
+            "first_message",
+            "from",
+        ] {
+            assert_eq!(segment[field], before[field], "{field}");
+        }
+        assert_eq!(segment["last_message"], "u-2");
+        assert_eq!(segment["windows"], 2);
+        assert_eq!(segment["state"], "sealed");
+        assert_eq!(record["scribed_through"], "u-2");
+        assert_eq!(setup.prompts().len(), 2, "no retry needed");
+        assert!(
+            setup.prompts()[1].contains(&format!(
+                "Current summary length: {} characters",
+                answer()["summary"].as_str().unwrap().chars().count()
+            )),
+            "ORB-23950: tell the model the previous summary length"
+        );
+    }
+}
+
+#[test]
+fn unexpected_open_becomes_the_first_new_segment() {
+    let setup = Setup::new();
+    let mut body = answer();
+    body["open"] = json!({"heading": "Opening thread", "text": "Opening details.", "topics": [], "related": []});
+    body["new"][0]["starts_at"] = json!("a-1");
+    setup.answer(&body);
+    setup.scribe("/scribe on");
+
+    setup.pass();
+
+    let record = setup.record(ON).unwrap();
+    assert_eq!(record["log"].as_array().unwrap().len(), 2);
+    assert_eq!(record["log"][0]["text"], "Opening details.");
+    assert_eq!(record["log"][0]["first_message"], "u-1");
+    assert_eq!(record["log"][0]["last_message"], "u-1");
+    assert_eq!(record["log"][0]["state"], "sealed");
+    assert_eq!(record["log"][1]["first_message"], "a-1");
+    assert_eq!(setup.prompts().len(), 1);
+}
+
+#[test]
+fn header_length_retries_cover_every_prose_field_and_recheck_the_result() {
+    for (field, value) in [
+        ("title", json!("t".repeat(121))),
+        ("goals", json!("g".repeat(601))),
+        ("next", json!(["n".repeat(999)])),
+    ] {
+        let setup = Setup::new();
+        let mut over = answer();
+        over[field] = value;
+        over["summary"] = json!("é".repeat(1201));
+        setup.answers(&[Some(over), Some(answer())]);
+        setup.scribe("/scribe on");
+
+        assert_eq!(setup.pass()["passes"][0]["result"], "written", "{field}");
+        assert_eq!(setup.prompts().len(), 2);
+        assert!(
+            !setup.prompts()[1].contains(DEFINED),
+            "window resent for {field}"
+        );
+        assert_eq!(
+            setup.record(ON).unwrap()[field],
+            match field {
+                "next" => json!("- write it into the routing doc"),
+                _ => answer()[field].clone(),
+            }
+        );
+    }
+
+    // A shorter header can still be invalid; it receives no third attempt.
+    for (field, value, reason) in [
+        ("summary", json!(""), "summary is empty"),
+        (
+            "goals",
+            json!("## Injected"),
+            "Goals holds a section heading",
+        ),
+        (
+            "title",
+            json!("two\nlines"),
+            "title must be one non-empty line",
+        ),
+        ("model_failure", Value::Null, "the model failed"),
+    ] {
+        let setup = Setup::new();
+        setup.scribe("/scribe on");
+        setup.pass();
+        let before = std::fs::read(setup.record_file()).unwrap();
+        setup.append(ON, &[line("user", "u-2", "A new turn.")]);
+        setup.hook("session-end", &setup.payload("SessionEnd"));
+        let mut over = answer();
+        over["summary"] = json!("s".repeat(1201));
+        let mut invalid = answer();
+        invalid[field] = value;
+        // Script indices include the already successful initial pass.
+        setup.answers(&[
+            Some(answer()),
+            Some(over),
+            (field != "model_failure").then_some(invalid),
+        ]);
+
+        let out = setup.run_any(&["session", "pass", "--json"], b"");
+
+        assert_eq!(out.status.code(), Some(1));
+        let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(
+            report["passes"][0]["error_code"],
+            if field == "model_failure" {
+                "model_failed"
+            } else {
+                "session_answer_invalid"
+            }
+        );
+        let error = report["passes"][0]["error"].as_str().unwrap();
+        assert!(error.contains("Summary has 1201 characters"), "{error}");
+        assert!(error.contains(reason), "{error}");
+        assert_eq!(setup.prompts().len(), 3, "only one retry");
+        assert_eq!(std::fs::read(setup.record_file()).unwrap(), before);
+        assert_eq!(setup.control()["due"], true);
+    }
+}
+
+#[test]
+fn header_overruns_with_other_defects_use_the_full_window_retry() {
+    for defect in ["segment", "topics", "heading"] {
+        let setup = Setup::new();
+        let mut over = answer();
+        over["summary"] = json!("s".repeat(1201));
+        match defect {
+            "segment" => over["new"][0]["text"] = json!("s".repeat(901)),
+            "topics" => over["topics"] = json!(["Invalid Topic"]),
+            "heading" => over["summary"] = json!(format!("{}\n## Injected", "s".repeat(1201))),
+            _ => unreachable!(),
+        }
+        setup.answers(&[Some(over), Some(answer())]);
+        setup.scribe("/scribe on");
+
+        assert_eq!(setup.pass()["passes"][0]["result"], "written");
+
+        let prompts = setup.prompts();
+        assert_eq!(prompts.len(), 2);
+        assert!(
+            prompts[1].contains(DEFINED),
+            "{defect}: full window required"
+        );
+        assert!(prompts[1].contains("Summary has 1201 characters") || defect == "heading");
+        assert!(!prompts[1].starts_with("Compress only"), "{defect}");
+    }
+}
+
+#[test]
+fn impossible_unexpected_open_conversions_are_refused_with_a_reason() {
+    for (starts, reason) in [
+        (vec!["u-1"], "distinct and in transcript order"),
+        (vec!["a-1", "u-2", "a-2"], "at most 3 segments"),
+    ] {
+        let setup = Setup::new();
+        setup.append(
+            ON,
+            &[
+                line("user", "u-2", "More."),
+                line("assistant", "a-2", "Done."),
+            ],
+        );
+        let mut body = answer();
+        body["open"] =
+            json!({"heading": "Opening", "text": "Details.", "topics": [], "related": []});
+        body["new"] = json!(starts.iter().map(|id| json!({
+            "starts_at": id, "heading": "Another", "text": "Details.", "topics": [], "related": []
+        })).collect::<Vec<_>>());
+        setup.answer(&body);
+        setup.scribe("/scribe on");
+
+        let out = setup.run_any(&["session", "pass", "--json"], b"");
+
+        assert_eq!(out.status.code(), Some(1));
+        let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(report["passes"][0]["error_code"], "session_answer_invalid");
+        let error = report["passes"][0]["error"].as_str().unwrap();
+        assert!(error.contains(reason), "{error}");
+        assert_eq!(setup.prompts().len(), 2);
+        assert!(setup.record(ON).is_none());
+        assert_eq!(setup.control()["due"], true);
+    }
 }
 
 #[test]
@@ -1313,4 +1594,59 @@ fi
     let prompts = setup.prompts();
     assert!(prompts[2].contains("--- user · u-later ---"));
     assert!(!prompts[2].contains("--- user · u-1 ---"));
+}
+
+#[test]
+fn rebuild_compresses_an_overlong_third_window_header_even_when_open_is_omitted() {
+    let setup = Setup::new();
+    setup.scribe("/scribe on");
+    setup.pass();
+    setup.config("[catalog]\nwindow_messages = 2\n");
+    setup.append(
+        ON,
+        &[
+            line("user", "u-2", "Second window."),
+            line("assistant", "a-2", "Continue."),
+            line("user", "u-3", "Third window."),
+        ],
+    );
+    let mut over = answer();
+    over.as_object_mut().unwrap().remove("open");
+    over["new"] = json!([]);
+    over["summary"] = json!("s".repeat(1201));
+    let compressed = json!({"title": "Rebuilt session", "summary": "All three windows.",
+                            "goals": "Record the session.", "next": []});
+    setup.answers(&[
+        None,
+        Some(answer()),
+        Some(answer()),
+        Some(over),
+        Some(compressed),
+    ]);
+
+    let out = setup.run(&rebuild_args(true), b"");
+
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["passes"][0]["windows"], 3);
+    let prompts = setup.prompts();
+    assert_eq!(prompts.len(), 5);
+    assert!(prompts[3].contains("Third window."));
+    assert!(!prompts[4].contains("Third window."), "window not resent");
+    assert!(
+        !prompts[4].contains("Level 4 is defined."),
+        "segment not resent"
+    );
+    let record = setup.record(ON).unwrap();
+    assert_eq!(record["summary"], "All three windows.");
+    assert_eq!(record["scribed_through"], "u-3");
+    assert_eq!(record["log"][0]["text"], "Level 4 is defined.");
+    assert_eq!(record["log"][0]["windows"], 3);
+    assert_eq!(record["log"][0]["state"], "sealed");
+    assert_eq!(record["log"][0]["origin"], "rebuild");
+    assert!(
+        !setup
+            .record_file()
+            .with_file_name(format!(".{ON}.rebuild.md"))
+            .exists()
+    );
 }
