@@ -1,0 +1,16 @@
+{
+  "session": "8f6c2d1e-4b3a-4e5f-9a8b-7c6d5e4f3a2b",
+  "project": "-Users-example-work-scribe",
+  "author": "replay",
+  "expect": {
+    "windows": 5,
+    "segments": 6,
+    "warnings": [
+      "window 1: repaired next: cut at bullet boundary (budget 1000 characters)",
+      "window 2: repaired new segment 1 text: cut at sentence boundary (budget 900 characters)",
+      "window 2: repaired new segment 2 text: cut at sentence boundary (budget 900 characters)",
+      "window 3: repaired new segment 1 starts_at: opened at the first window message after the open segment",
+      "window 4: repaired new segment 1 starts_at: continued the open segment, cut at sentence boundary (budget 900 characters)"
+    ]
+  }
+}

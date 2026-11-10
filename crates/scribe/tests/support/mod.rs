@@ -9,6 +9,8 @@
 // subset of it.
 #![allow(dead_code)]
 
+pub mod replay;
+
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output};
 
