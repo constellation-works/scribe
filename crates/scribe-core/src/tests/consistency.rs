@@ -554,7 +554,9 @@ impl RefusalCode for Settled {
 
 // Removed-feature sessions (S10).
 
-use crate::consistency::{RemovalPair, has_removal_cue, judge_removals, removal_candidates};
+use crate::consistency::{
+    LaterRecord, RemovalPair, has_removal_cue, judge_removals, removal_candidates,
+};
 use crate::models::{RemovalAnswer, RemovalJudgementAnswer};
 use crate::session::{SegmentState, SessionRecord};
 
@@ -714,4 +716,32 @@ fn agent_note_and_model_segment_claiming_removal_deactivate_nothing() {
     let found = removal_candidates(&[digest], &[said], now, 20);
     assert_eq!(found.pairs.len(), 1);
     assert_eq!(found.pairs[0].later.cite, "decisions-10");
+}
+
+#[test]
+fn a_removed_label_citing_a_session_is_dropped_even_with_a_verbatim_quote() {
+    // removal_candidates never pairs session text, so this pair cannot come
+    // from a scan; judge_removals must still refuse to deactivate on it.
+    let digest = about("s-digest", 1, "digest feature");
+    let pair = RemovalPair {
+        session: digest.id.clone(),
+        last_message: T0 + Duration::days(1),
+        header: String::from("digest feature"),
+        later: LaterRecord {
+            cite: String::from("session:s-later#1"),
+            record: String::from("s-later"),
+            date: T0 + Duration::days(35),
+            text: REMOVAL.to_owned(),
+            topics: Vec::new(),
+        },
+    };
+    let judged = judge_removals(
+        removal_answer("1", "removed", "ripped out and replaced"),
+        &[pair],
+    );
+    assert!(
+        judged.removals.is_empty(),
+        "no deactivation on a session cite"
+    );
+    assert_eq!(judged.dropped, 1);
 }

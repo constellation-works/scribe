@@ -728,7 +728,7 @@ pub struct RemovalPair {
 /// The removed-feature pairs of one scan.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RemovalCandidates {
-    /// Pairs, newest later record first, at most the cap.
+    /// Pairs, newest later entry first, at most the cap.
     pub pairs: Vec<RemovalPair>,
     /// Pairs the cap left out.
     pub over_cap: usize,
@@ -901,9 +901,9 @@ pub struct Removal {
     pub session: SessionId,
     /// The model's reason, at most [`activity::REASON_CHARS`] characters.
     pub reason: String,
-    /// The later record's cite.
+    /// The later entry's cite.
     pub cite: String,
-    /// The verbatim span of the later record.
+    /// The verbatim span of the later entry.
     pub quote: String,
 }
 
@@ -927,7 +927,7 @@ pub struct RemovalJudged {
     pub removals: Vec<Removal>,
     /// Pairs labelled `still_current` or `unrelated`.
     pub kept: usize,
-    /// Labels dropped: a quote not verbatim in the later record, an
+    /// Labels dropped: a quote not verbatim in the later entry, an
     /// unknown pair or label, or a second label for the same pair.
     pub dropped: usize,
 }
