@@ -18,6 +18,7 @@ mod question;
 mod record;
 mod session;
 mod tag;
+mod transcript;
 
 use crate::app::Context;
 use crate::audit_middleware::{AuditGuard, AuditMeta};
@@ -43,9 +44,12 @@ pub(crate) enum Command {
     /// Read entries and write agent notes
     #[command(subcommand, after_help = entry::ENTRY_EXAMPLES)]
     Entry(EntryCommand),
-    /// List and show the records of sessions cataloged with /scribe on, and write them (pass)
+    /// List and show the records of sessions cataloged with /scribe on, and write them (pass, catalog)
     #[command(subcommand, after_help = session::SESSION_EXAMPLES)]
     Session(SessionCommand),
+    /// List uncataloged Claude Code transcripts and show one, writing nothing
+    #[command(subcommand, after_help = transcript::EXAMPLES)]
+    Transcript(transcript::TranscriptCommand),
     /// Read, open, update and settle proposals
     #[command(subcommand, after_help = proposal::PROPOSAL_EXAMPLES)]
     Proposal(ProposalCommand),
@@ -79,6 +83,7 @@ impl Command {
         match self {
             Self::Entry(command) => command.audit(),
             Self::Session(command) => command.audit(),
+            Self::Transcript(command) => command.audit(),
             Self::Proposal(command) => command.audit(),
             Self::Record(command) => command.audit(),
             Self::Consistency(command) => command.audit(),
@@ -98,22 +103,14 @@ pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
     let mut audit = command
         .audit()
         .map(|meta| AuditGuard::start(ctx.store(), meta, ctx.now()));
-    let rebuild_target = if let Command::Session(SessionCommand::Rebuild(args)) = &command {
-        // The audit line names the session, not the prefix typed for it.
-        let id = ctx
-            .store()
-            .resolve_session(&args.id)
-            .unwrap_or_else(|_| args.id.clone());
-        Some(format!("session:{id}"))
-    } else {
-        None
-    };
-    if let (Some(audit), Some(target)) = (audit.as_mut(), rebuild_target.as_deref()) {
+    let named_target = session_target(&command, ctx);
+    if let (Some(audit), Some(target)) = (audit.as_mut(), named_target.as_deref()) {
         audit.set_target(target);
     }
     let result = match command {
         Command::Entry(command) => entry::run(command, ctx),
         Command::Session(command) => session::run(command, ctx),
+        Command::Transcript(command) => transcript::run(command, ctx),
         Command::Proposal(command) => proposal::run(command, ctx),
         Command::Record(command) => record::run(command, ctx),
         Command::Consistency(command) => consistency::run(command, ctx),
@@ -124,11 +121,34 @@ pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
     };
     if let Some(audit) = audit.as_mut() {
         audit.mark_result(&result);
-        if let Some(target) = rebuild_target.as_deref() {
+        if let Some(target) = named_target.as_deref() {
             audit.set_target(target);
         }
     }
     result
+}
+
+/// The audit target for a session verb that names one session. A prefix is
+/// resolved before the line is written; a miss keeps the typed id.
+fn session_target(command: &Command, ctx: &Context) -> Option<String> {
+    let Command::Session(session) = command else {
+        return None;
+    };
+    let id = match session {
+        SessionCommand::Rebuild(args) => ctx
+            .store()
+            .resolve_session(&args.id)
+            .unwrap_or_else(|_| args.id.clone()),
+        SessionCommand::Catalog(args) => {
+            transcript::resolve_transcript(ctx, &args.id).unwrap_or_else(|_| args.id.clone())
+        }
+        SessionCommand::List(_)
+        | SessionCommand::Show(_)
+        | SessionCommand::Pass(_)
+        | SessionCommand::Deactivate(_)
+        | SessionCommand::Activate(_) => return None,
+    };
+    Some(format!("session:{id}"))
 }
 
 /// How much one run of a routine command may do: at most `max` units

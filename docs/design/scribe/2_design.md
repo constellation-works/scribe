@@ -2100,19 +2100,19 @@ labels instead of forwarding potentially misattributed model prose.
 honest adaptations to what the binary offers today. There is no
 `proposal show` (a proposal is read through `proposal list`), so the
 popup's proposal preview and Enter view format the proposal's list row
-field by field, which carries every field a proposal has. S14 has not
-landed, so `transcript list` does not exist yet: the backfill view's
-reload catches that failure and shows one notice row saying so (its
-preview explains why) instead of failing, and Enter on it does nothing;
-once S14 lands the same view lists candidates and Enter leaves
-`scribe session catalog <id> --author daniel` in the tmux paste buffer.
+field by field, which carries every field a proposal has. S14 has
+since landed: the backfill view runs `transcript list` for the last 30
+days and shows one notice row when that list is empty or fails, and
+Enter on a candidate leaves `scribe session catalog <id> --author daniel`
+in the tmux paste buffer.
 The script prefixes each row with a hidden kind field so one fzf
 invocation's `ctrl-s`/`ctrl-e`/`ctrl-p`/`ctrl-b` reloads, its
 `alt-a` hidden-toggle and its `ctrl-y` copy all know the record's noun
 and id; `crates/scribe/tests/tmux_popup.rs` drives it through a fake
 `fzf` against the real binary. The skill names only commands and flags
-the built binary has (checked against its `--help`), so it does not
-teach `transcript list/show` or `session catalog` until S14.
+the built binary has (checked against its `--help`). It teaches
+`transcript list` and `transcript show` as read-only, and it says
+`session catalog` is Daniel's.
 
 **S14 — Backfill by name.** Depends on S9.
 
@@ -2127,6 +2127,33 @@ teach `transcript list/show` or `session catalog` until S14.
   marks it `final` and off when its transcript is a day old, and writes no
   entries; a session with a record or a `/scribe on` switch is refused
   `session_cataloged`; a failed catalog resumes on the next run.
+
+**As built (S14).** `transcript list` and `transcript show` read only: no
+lock, no audit line, and they work when the store root is not writable.
+`--since` is required. `--until`, a repeated `--project` (any of them)
+and `--limit` are accepted, as §5.8 specifies; the task text named only
+one `--project`. Rows are newest first by `started`. A transcript is
+uncataloged when it has no session file — a file that did not parse still
+counts — and no switch. A provenance failure is skipped with no warning.
+`project_mentions` counts non-overlapping, case-sensitive path fragments
+and includes zeros; a tie takes the lexicographically smaller slug, else
+the cwd's project. `first_prompt` and each of the five show turns are
+whitespace-collapsed and cut to 300 characters, with no ellipsis. A file
+with no parsed times is left out, because a date bound is always set.
+`cwd` is on the row, as §5.8 specifies.
+
+`session catalog` checks the transcript and the redactor before it writes
+the switch. `cataloged_by.by` is `{kind: agent}` even when the name is
+`daniel`. Age is the last kept message's timestamp, not the file mtime;
+at least 24 hours old, the last window is final and the switch turns off
+in the same store lock. A newer transcript stays on and due, and that
+write clears retry backoff. An empty conversation writes no record, leaves
+the switch due, and calls no model. `--project` applies only when the
+session has no record yet. A failed catalog stays due; the next `catalog`
+resumes it without moving `since` or `cataloged_by.at`, and it does not
+wait out retry backoff. Segments are `origin: catalog`. No entries are
+written. The pass report's JSON stays `{passes, remaining}`. The run is
+audited like a pass, plus one success line when this run wrote the switch.
 
 **Outside this repository.** Retiring orbit-office's scribe (its hooks,
 `office.scribe-*` tools and `/scribe` command) is orbit-office work, filed

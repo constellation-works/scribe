@@ -11,12 +11,23 @@
 //! shape this build does not know, is skipped: the file is Claude Code's,
 //! and a new line type must not break capture.
 //!
-//! Bytes in, messages out: no I/O (STD-02 R5).
+//! Bytes in, messages out: no I/O (STD-02 R5). A survey of the same bytes
+//! counts Daniel's turns the way a pass does, for `transcript list`.
 
+use crate::control;
 use crate::entry::Speaker;
+use crate::record::Project;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
+
+/// How far `first_prompt` and each preview turn are cut, in characters.
+pub const PROMPT_CHARS: usize = 300;
+/// Turns `transcript show` returns.
+pub const FIRST_TURNS: usize = 5;
+/// A transcript whose last message is at least this old has ended.
+pub const ENDED_AFTER: time::Duration = time::Duration::hours(24);
 
 /// One message of the conversation.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -94,4 +105,209 @@ fn message(line: &Value) -> Option<Message> {
         at,
         blocks,
     })
+}
+
+/// User turns Claude Code writes itself, not Daniel. A turn whose text
+/// starts with one of these tags is dropped, the same rule a pass uses.
+const SYNTHETIC: &[&str] = &[
+    "<task-notification>",
+    "<command-name>",
+    "<command-message>",
+    "<command-args>",
+    "<local-command-stdout>",
+    "<local-command-stderr>",
+    "<local-command-caveat>",
+    "<system-reminder>",
+    "<bash-input>",
+    "<bash-stdout>",
+    "<bash-stderr>",
+    "<user-prompt-submit-hook>",
+];
+
+const PASTED_OPEN: &str = "<pasted_content";
+const PASTED_CLOSE: &str = "</pasted_content>";
+
+/// One of Daniel's turns: his own words, and the blocks pasted into it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UserTurn {
+    /// Words he typed, pasted blocks removed.
+    pub own: String,
+    /// Pasted blocks, in order, trimmed and without the tags.
+    pub pasted: Vec<String>,
+}
+
+impl UserTurn {
+    /// His own words when he typed any, otherwise the pasted text, on one
+    /// line and cut to [`PROMPT_CHARS`].
+    #[must_use]
+    pub fn prompt(&self) -> String {
+        let source = if self.own.is_empty() {
+            self.pasted.join(" ")
+        } else {
+            self.own.clone()
+        };
+        flatten_cut(&source, PROMPT_CHARS)
+    }
+}
+
+/// Daniel's turn, or `None` when `message` is not one: an assistant line,
+/// a synthetic tag, a `/scribe` control line, or a turn with no words.
+#[must_use]
+pub fn daniel_turn(message: &Message) -> Option<UserTurn> {
+    if message.role != Speaker::User {
+        return None;
+    }
+    let text = message.text();
+    let start = text.trim_start();
+    if SYNTHETIC.iter().any(|tag| start.starts_with(tag)) || control::parse(&text).is_some() {
+        return None;
+    }
+    let (own, pasted) = split_pasted(&text);
+    (!own.is_empty() || !pasted.is_empty()).then_some(UserTurn { own, pasted })
+}
+
+/// Daniel's turns, in transcript order.
+#[must_use]
+pub fn daniel_turns(messages: &[Message]) -> Vec<UserTurn> {
+    messages.iter().filter_map(daniel_turn).collect()
+}
+
+/// A model-free reading of a transcript (docs/design/scribe/2_design.md §5.8).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Survey {
+    /// The first kept message, if the file has one.
+    pub started: Option<OffsetDateTime>,
+    /// The last kept message.
+    pub ended: Option<OffsetDateTime>,
+    /// The file's length.
+    pub bytes: u64,
+    /// Daniel's turns ([`daniel_turn`]).
+    pub daniel_turns: u32,
+    /// His first turn, cut to [`PROMPT_CHARS`]. Empty when he has none.
+    pub first_prompt: String,
+    /// His first [`FIRST_TURNS`] turns, each cut the same way.
+    pub first_turns: Vec<String>,
+}
+
+/// Survey `bytes`. Times come from kept messages; turn counts use the pass's
+/// rule for whose turn is whose.
+#[must_use]
+pub fn survey(bytes: &[u8]) -> Survey {
+    let messages = parse(bytes);
+    let turns = daniel_turns(&messages);
+    let first_turns: Vec<String> = turns
+        .iter()
+        .take(FIRST_TURNS)
+        .map(UserTurn::prompt)
+        .collect();
+    Survey {
+        started: messages.first().map(|m| m.at),
+        ended: messages.last().map(|m| m.at),
+        bytes: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+        daniel_turns: u32::try_from(turns.len()).unwrap_or(u32::MAX),
+        first_prompt: first_turns.first().cloned().unwrap_or_default(),
+        first_turns,
+    }
+}
+
+/// Whether `last` is at least [`ENDED_AFTER`] before `now`. A message in
+/// the future has not ended.
+#[must_use]
+pub fn is_day_old(last: OffsetDateTime, now: OffsetDateTime) -> bool {
+    (now - last).max(time::Duration::ZERO) >= ENDED_AFTER
+}
+
+/// How often each configured project's paths occur in `bytes`, summed per
+/// project. Counts are non-overlapping within one path. Every project is
+/// present, including those with a count of zero. Duplicate paths of one
+/// project are counted once.
+#[must_use]
+pub fn mention_counts(
+    bytes: &[u8],
+    projects: &BTreeMap<Project, Vec<String>>,
+) -> BTreeMap<Project, u32> {
+    let text = String::from_utf8_lossy(bytes);
+    projects
+        .iter()
+        .map(|(project, paths)| {
+            let mut seen = Vec::new();
+            let mut count = 0u32;
+            for path in paths {
+                if path.is_empty() || seen.iter().any(|seen: &String| seen == path) {
+                    continue;
+                }
+                seen.push(path.clone());
+                count = count.saturating_add(count_non_overlapping(&text, path));
+            }
+            (project.clone(), count)
+        })
+        .collect()
+}
+
+/// The project with the highest mention count, or `cwd` when every count is
+/// zero. A tie takes the lexicographically smaller slug.
+#[must_use]
+pub fn attribute(counts: &BTreeMap<Project, u32>, cwd: &Project) -> Project {
+    let mut best: Option<(&Project, u32)> = None;
+    for (project, count) in counts {
+        if *count == 0 {
+            continue;
+        }
+        match best {
+            Some((_, n)) if *count > n => best = Some((project, *count)),
+            None => best = Some((project, *count)),
+            Some(_) => {}
+        }
+    }
+    best.map_or_else(|| cwd.clone(), |(project, _)| project.clone())
+}
+
+/// Whitespace collapsed to single spaces, then cut to `limit` characters.
+fn flatten_cut(text: &str, limit: usize) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(limit)
+        .collect()
+}
+
+/// A user turn's own words and the blocks pasted into it. An unclosed block
+/// runs to the end of the turn.
+fn split_pasted(text: &str) -> (String, Vec<String>) {
+    let mut own = String::new();
+    let mut pasted = Vec::new();
+    let mut rest = text;
+    while let Some(open) = rest.find(PASTED_OPEN) {
+        own.push_str(&rest[..open]);
+        let after = &rest[open..];
+        let body_start = after.find('>').map_or(after.len(), |i| i + 1);
+        let body = &after[body_start..];
+        match body.find(PASTED_CLOSE) {
+            Some(close) => {
+                pasted.push(body[..close].trim().to_owned());
+                rest = &body[close + PASTED_CLOSE.len()..];
+            }
+            None => {
+                pasted.push(body.trim().to_owned());
+                rest = "";
+            }
+        }
+    }
+    own.push_str(rest);
+    pasted.retain(|p| !p.is_empty());
+    (own.trim().to_owned(), pasted)
+}
+
+fn count_non_overlapping(haystack: &str, needle: &str) -> u32 {
+    if needle.is_empty() {
+        return 0;
+    }
+    let mut count = 0u32;
+    let mut rest = haystack;
+    while let Some(at) = rest.find(needle) {
+        count = count.saturating_add(1);
+        rest = &rest[at + needle.len()..];
+    }
+    count
 }

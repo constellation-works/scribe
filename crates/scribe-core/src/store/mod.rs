@@ -45,6 +45,7 @@ mod tags;
 pub use rebuild::RebuildGuard;
 
 pub use audit::{AUDIT_FILE, AuditEvent, AuditStatus};
+pub use ids::resolve_prefix;
 pub use redact::{MIN_SECRET_CHARS, REDACTED_FIELDS, Redactor, unresolved_redact_env};
 
 use crate::activity::{self, ActiveOutcome, SetActive};
@@ -170,6 +171,18 @@ impl Captured {
 pub struct Store {
     root: PathBuf,
     lock_wait: Duration,
+}
+
+/// How [`Store::write_pass`] leaves the switch.
+enum PassWrite {
+    /// An intermediate window. Force the session due.
+    Checkpoint,
+    /// The last window of an ordinary pass. `bool` is `ran_final`.
+    Settle(bool),
+    /// The last window of a live catalog: stay on and due, clear backoff.
+    CatalogLive,
+    /// The last window of an ended catalog: settle as final and switch off.
+    CatalogFinal,
 }
 
 impl Store {
@@ -695,7 +708,13 @@ impl Store {
         expected: Option<time::OffsetDateTime>,
         redactor: &Redactor,
     ) -> Result<Option<SessionRecord>> {
-        self.write_pass(session, record, Some(ran_final), expected, redactor)
+        self.write_pass(
+            session,
+            record,
+            PassWrite::Settle(ran_final),
+            expected,
+            redactor,
+        )
     }
 
     /// Persist one intermediate window under the store lock, redacted and
@@ -708,14 +727,52 @@ impl Store {
         redactor: &Redactor,
     ) -> Result<Option<SessionRecord>> {
         let session = record.id.clone();
-        self.write_pass(&session, Some(record), None, expected, redactor)
+        self.write_pass(
+            &session,
+            Some(record),
+            PassWrite::Checkpoint,
+            expected,
+            redactor,
+        )
+    }
+
+    /// The last window of a live `session catalog`: write the record and
+    /// leave the switch on and due, clearing retry backoff, so the hooks
+    /// carry on. `expected` is checked as in [`Store::settle_pass`].
+    pub fn checkpoint_catalog(
+        &self,
+        record: SessionRecord,
+        expected: Option<time::OffsetDateTime>,
+        redactor: &Redactor,
+    ) -> Result<Option<SessionRecord>> {
+        let session = record.id.clone();
+        self.write_pass(
+            &session,
+            Some(record),
+            PassWrite::CatalogLive,
+            expected,
+            redactor,
+        )
+    }
+
+    /// The last window of an ended `session catalog`, under one lock: write
+    /// the record, settle the pass as final, and switch the session off so
+    /// no hook passes it again. A crash cannot leave it on but not due.
+    pub fn settle_catalog_final(
+        &self,
+        session: &SessionId,
+        record: Option<SessionRecord>,
+        expected: Option<time::OffsetDateTime>,
+        redactor: &Redactor,
+    ) -> Result<Option<SessionRecord>> {
+        self.write_pass(session, record, PassWrite::CatalogFinal, expected, redactor)
     }
 
     fn write_pass(
         &self,
         session: &SessionId,
         record: Option<SessionRecord>,
-        ran_final: Option<bool>,
+        kind: PassWrite,
         expected: Option<time::OffsetDateTime>,
         redactor: &Redactor,
     ) -> Result<Option<SessionRecord>> {
@@ -739,10 +796,15 @@ impl Store {
         }
         // An explicit pass can start when not due. Publish the obligation
         // before the checkpoint, so interruption cannot strand its remainder.
-        if ran_final.is_none() {
+        // A live catalog also clears retry backoff: the hooks take it from here.
+        if matches!(kind, PassWrite::Checkpoint | PassWrite::CatalogLive) {
             self.change_control(|state| {
                 if let Some(control) = state.sessions.get_mut(session).filter(|c| c.on) {
                     control.due = true;
+                    if matches!(kind, PassWrite::CatalogLive) {
+                        control.consecutive_failures = 0;
+                        control.retry_after = None;
+                    }
                 }
             })?;
         }
@@ -807,8 +869,23 @@ impl Store {
             }
             None => None,
         };
-        if let Some(ran_final) = ran_final {
-            self.change_control(|state| control::settle(state, session, ran_final))?;
+        match kind {
+            PassWrite::Settle(ran_final) => {
+                self.change_control(|state| control::settle(state, session, ran_final))?;
+            }
+            PassWrite::CatalogFinal => {
+                // Settle and switch off together. Off does not record a time.
+                self.change_control(|state| {
+                    control::settle(state, session, true);
+                    let _ = control::switch(
+                        state,
+                        session,
+                        &control::Switch::Off,
+                        time::OffsetDateTime::UNIX_EPOCH,
+                    );
+                })?;
+            }
+            PassWrite::Checkpoint | PassWrite::CatalogLive => {}
         }
         Ok(written)
     }

@@ -4,7 +4,8 @@ Usage: scribe [OPTIONS] <COMMAND>
 
 Commands:
   entry        Read entries and write agent notes
-  session      List and show the records of sessions cataloged with /scribe on, and write them (pass)
+  session      List and show the records of sessions cataloged with /scribe on, and write them (pass, catalog)
+  transcript   List uncataloged Claude Code transcripts and show one, writing nothing
   proposal     Read, open, update and settle proposals
   record       Search every stored record for words, ranked as question ask ranks them, with no model call
   consistency  Propose superseding or retiring entries a later one replaced or that are due for review (scan)

@@ -35,6 +35,6 @@ The preview pane is `scribe session show <id>`, `scribe entry show <id>`,
 the proposal's list row formatted field by field, or `scribe transcript
 show <id>` for a candidate.
 
-Backfill candidates come from `scribe transcript list`, which arrives
-with S14. Until it lands (or it fails), the backfill view shows one line
-saying so instead of failing, and its preview explains why.
+Backfill candidates come from `scribe transcript list` over the last 30
+days. An empty list, or a list that fails, shows one notice row instead
+of failing the popup, and its preview says which case that row is.

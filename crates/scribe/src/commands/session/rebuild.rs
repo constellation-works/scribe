@@ -188,6 +188,8 @@ pub(in crate::commands) fn run_with<M: Models>(
                         notices: vec![String::from(
                             "rebuild checkpoint kept; repeat session rebuild with --confirm to resume",
                         )],
+                        catalog: false,
+                        switch_written: false,
                     }));
                 }
             };
@@ -255,6 +257,8 @@ pub(in crate::commands) fn run_with<M: Models>(
                     passes: vec![report],
                     remaining: 0,
                     notices: Vec::new(),
+                    catalog: false,
+                    switch_written: false,
                 }));
             }
             None => {

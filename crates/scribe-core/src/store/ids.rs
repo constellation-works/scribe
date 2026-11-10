@@ -41,6 +41,18 @@ pub(super) fn resolve(input: &str, ids: &[String], missing: WriteRefusal) -> Res
     }
 }
 
+/// The id in `ids` that `input` names: exact, else a unique prefix of at
+/// least [`MIN_PREFIX`] characters.
+///
+/// # Errors
+///
+/// `id_ambiguous` when several ids match; an entry-not-found refusal when
+/// none do (the caller maps that to its own noun).
+pub fn resolve_prefix(input: &str, ids: &[String]) -> Result<String> {
+    let index = resolve(input, ids, WriteRefusal::EntryNotFound)?;
+    Ok(ids[index].clone())
+}
+
 fn ambiguous<'a>(input: &str, candidates: impl Iterator<Item = &'a str>) -> Error {
     let mut candidates: Vec<&str> = candidates.collect();
     candidates.sort_unstable();

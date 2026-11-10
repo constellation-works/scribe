@@ -88,6 +88,52 @@ fn off_stops_passes_and_never_creates_a_switch() {
     assert_eq!(control::due(&state).len(), 1);
 }
 
+#[test]
+fn catalog_starts_only_a_session_with_no_record_and_no_switch() {
+    use crate::control::CatalogGate;
+    use crate::record::{Author, AuthorName};
+    let mut state = ControlState::default();
+    let s = id("s-1");
+    assert_eq!(control::catalog_gate(&state, &s, false), CatalogGate::Start);
+    assert_eq!(
+        control::catalog_gate(&state, &s, true),
+        CatalogGate::Refused,
+        "a record with no switch is refused"
+    );
+    control::switch(&mut state, &s, &Switch::On, T0);
+    assert_eq!(
+        control::catalog_gate(&state, &s, false),
+        CatalogGate::Refused,
+        "a /scribe on switch is refused"
+    );
+
+    let by = Author::agent(AuthorName::try_from(String::from("daniel")).unwrap());
+    control::catalog_on(&mut state, &s, by, T0);
+    let switch = state.get(&s).unwrap().clone();
+    assert_eq!(switch.since, Some(T0));
+    assert_eq!(switch.cataloged_by.as_ref().unwrap().at, T0);
+    assert!(switch.on && switch.due);
+    assert_eq!(
+        control::catalog_gate(&state, &s, true),
+        CatalogGate::Resume(switch.clone())
+    );
+    // A later resume does not move since or who cataloged it.
+    let again = state.clone();
+    assert_eq!(state, again);
+    control::fail(&mut state, &s, T0);
+    assert!(state.get(&s).unwrap().retry_after.is_some());
+    assert!(matches!(
+        control::catalog_gate(&state, &s, false),
+        CatalogGate::Resume(_)
+    ));
+    control::switch(&mut state, &s, &Switch::Off, T0);
+    assert_eq!(
+        control::catalog_gate(&state, &s, true),
+        CatalogGate::Refused,
+        "an ended catalog is not resumed"
+    );
+}
+
 fn cadence() -> Cadence {
     Cadence {
         every_minutes: NonZeroU32::new(20).unwrap(),

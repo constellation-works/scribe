@@ -1,0 +1,28 @@
+Switch a past session on by name and catalog every window of its transcript
+
+Usage: scribe session catalog [OPTIONS] --author <NAME> <ID>
+
+Arguments:
+  <ID>  The transcript's id, or a unique prefix of it (at least four characters)
+
+Options:
+      --author <NAME>      Who is asking: lowercase letters, digits, '.', '_' or '-', 1-40 characters
+      --project <PROJECT>  Record this project instead of the transcript's attribution [default: the attribution transcript list would use]
+  -h, --help               Print help
+  -V, --version            Print version
+
+Global options:
+      --root <DIR>       Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>  Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json             Shorthand for --format json
+
+Switches one past session on with cataloged_by and runs every window, with
+no deadline. Refuses a session that already has a record or a /scribe on
+switch. A transcript whose last message is at least a day old is marked
+final and switched off; a newer one stays on and due. A failed catalog
+keeps its checkpoint; run the same command again to resume. Writes no entries.
+
+Examples:
+  scribe session catalog <id> --author daniel
+  scribe session catalog <id> --author daniel --project scribe
+  scribe session catalog <id> --author daniel --json | jq '.passes[0].result'

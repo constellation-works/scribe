@@ -5,7 +5,7 @@ use super::color::{self, Role};
 use super::payload::{
     AskPayload, EntryPayload, FoundPayload, HitPayload, HookJson, HookReply, HookSpecificJson,
     PassPayload, PassReport, PluginReply, ProposalPayload, Record, Records, ScanReport,
-    SessionPayload, TagPayload, TaskPayload, TreeRow, WarningPayload,
+    SessionPayload, TagPayload, TaskPayload, TranscriptPayload, TreeRow, WarningPayload,
 };
 use super::sink::{OutputMode, Sink};
 use super::table::{self, Align, Cell, Column};
@@ -87,6 +87,16 @@ const TAG_COLUMNS: [Column; 6] = [
     col("SOURCE", Align::Left, false),
 ];
 
+const TRANSCRIPT_COLUMNS: [Column; 7] = [
+    col("SESSION", Align::Left, false),
+    col("PROJECT", Align::Left, false),
+    col("DANIEL_TURNS", Align::Right, false),
+    col("BYTES", Align::Right, false),
+    col("STARTED", Align::Left, false),
+    col("ENDED", Align::Left, false),
+    col("FIRST_PROMPT", Align::Left, true),
+];
+
 const HIT_COLUMNS: [Column; 6] = [
     col("CITE", Align::Left, false),
     col("KIND", Align::Left, false),
@@ -142,6 +152,9 @@ pub(crate) fn list(
             }
             Records::Tags(items) => write_json(out, &envelope("tags", items, total, warnings)),
             Records::Hits(items) => write_json(out, &envelope("hits", items, total, warnings)),
+            Records::Transcripts(items) => {
+                write_json(out, &envelope("transcripts", items, total, warnings))
+            }
         };
     }
     // An empty list prints nothing, not a lone header (STD-01 R16).
@@ -180,6 +193,10 @@ pub(crate) fn list(
         Records::Hits(items) => (
             HIT_COLUMNS.to_vec(),
             items.iter().map(|h| hit_row(h, sink.mode)).collect(),
+        ),
+        Records::Transcripts(items) => (
+            TRANSCRIPT_COLUMNS.to_vec(),
+            items.iter().map(transcript_row).collect(),
         ),
     };
     match sink.mode {
@@ -322,6 +339,18 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
         }
         (OutputMode::Table, Record::Entry(entry)) => entry_detail(out, sink, entry),
         (OutputMode::Table, Record::Session(session)) => session_detail(out, sink, session),
+        (OutputMode::Json, Record::Transcript(transcript)) => write_json(out, transcript),
+        (OutputMode::Plain, Record::Transcript(transcript)) => {
+            writeln!(out, "{}", plain_line(&transcript_row(transcript)))?;
+            if let Some(turns) = &transcript.daniel_first_turns {
+                for (n, turn) in turns.iter().enumerate() {
+                    let index = n.saturating_add(1);
+                    writeln!(out, "turn\t{index}\t{}", one_line(turn))?;
+                }
+            }
+            Ok(())
+        }
+        (OutputMode::Table, Record::Transcript(transcript)) => transcript_detail(out, transcript),
     }
 }
 
@@ -885,6 +914,59 @@ fn hit_row(h: &HitPayload, mode: OutputMode) -> Vec<Cell> {
 
 /// The widest title a hit's table row shows.
 const TITLE_CELL_CHARS: usize = 40;
+
+fn transcript_row(t: &TranscriptPayload) -> Vec<Cell> {
+    vec![
+        Cell::plain(t.session.clone()),
+        Cell::plain(t.project.clone()),
+        Cell::plain(t.daniel_turns.to_string()),
+        Cell::plain(t.bytes.to_string()),
+        Cell::plain(
+            t.started
+                .map(timestamp)
+                .unwrap_or_else(|| String::from("-")),
+        ),
+        Cell::plain(t.ended.map(timestamp).unwrap_or_else(|| String::from("-"))),
+        Cell::plain(one_line(&t.first_prompt)),
+    ]
+}
+
+fn transcript_detail(out: &mut dyn Write, t: &TranscriptPayload) -> io::Result<()> {
+    field(out, "session", &t.session)?;
+    field(out, "project", &t.project)?;
+    let mentions = if t.project_mentions.is_empty() {
+        String::from("-")
+    } else {
+        t.project_mentions
+            .iter()
+            .map(|(project, count)| format!("{project} {count}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    field(out, "project_mentions", &mentions)?;
+    field(out, "cwd", &one_line(&t.cwd))?;
+    field(
+        out,
+        "started",
+        &t.started
+            .map(timestamp)
+            .unwrap_or_else(|| String::from("-")),
+    )?;
+    field(
+        out,
+        "ended",
+        &t.ended.map(timestamp).unwrap_or_else(|| String::from("-")),
+    )?;
+    field(out, "bytes", &t.bytes.to_string())?;
+    field(out, "daniel_turns", &t.daniel_turns.to_string())?;
+    field(out, "first_prompt", &t.first_prompt)?;
+    if let Some(turns) = &t.daniel_first_turns {
+        for (n, turn) in turns.iter().enumerate() {
+            field(out, &format!("turn {}", n.saturating_add(1)), turn)?;
+        }
+    }
+    Ok(())
+}
 
 fn tag_row(t: &TagPayload) -> Vec<Cell> {
     vec![

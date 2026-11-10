@@ -10,10 +10,10 @@ Every data command renders one typed payload in the mode the sink resolved;
 stdout carries only that payload; warnings, notices and errors go to stderr;
 the exit code says whether it worked. The JSON form is a public contract,
 pinned by the output goldens in `crates/scribe/tests/goldens/output/`.
-S11's read surface and S12's writes are built, and S13's skill and tmux
-popup consume the plain rows below without changing them. Other parts
-marked *(S14)* are designed ([ORB-23892]) and not yet built; each only adds
-fields, columns, commands and codes.
+S11's read surface, S12's writes, S13's skill and tmux popup, and S14's
+transcript list and session catalog are built. Parts marked *(S14)* add
+fields, columns, commands and codes and do not rename or retype earlier
+ones.
 
 ## Why This Exists
 
@@ -350,8 +350,15 @@ with `session_pass_failed`, naming the failure and the rebuild command to
 resume; it does not change the control switch. `--confirm` missing refuses
 with `confirm_required`, naming the current segment and pass counts;
 `transcript_missing` and `session_busy` also refuse before model calls.
-One audit line names `session:<id>` for success or refusal. *(S14)* `session
-catalog` prints the report with its one session.
+One audit line names `session:<id>` for success or refusal. *(S14, built)*
+`session catalog` prints the same report with its one session and
+`remaining: 0`. `author` stays `null` (the catalog flag is not a JSON
+field). A failure exits 1 with `session_pass_failed` and names
+`session catalog` to resume. A session that already has a record or a
+switch catalog did not write is refused `session_cataloged` before a
+model call. When this run wrote the switch, the audit log gains a
+success line for that switch ahead of the pass line; both name
+`session:<id>`.
 `warnings` is an array of strings, empty when no deterministic repair was
 persisted in this invocation. After the existing one model retry, scribe
 repairs header budget overruns (sentence or bullet boundary, else a word

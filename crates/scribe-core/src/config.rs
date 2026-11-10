@@ -32,9 +32,13 @@
 //!
 //! [redact]
 //! env = ["GITHUB_TOKEN"]
+//!
+//! [projects.scribe]
+//! paths = ["codebases/scribe"]
 //! ```
 
 use crate::entry::TagName;
+use crate::record::{Label, Project, is_kebab};
 use crate::session::Cadence;
 use crate::tag::{TagDef, TagTable};
 use serde::Deserialize;
@@ -125,6 +129,9 @@ pub struct Config {
     pub sessions: SessionsConfig,
     /// Further environment variables whose values are masked.
     pub redact_env: Vec<String>,
+    /// Path fragments per project slug, for transcript attribution. None
+    /// by default (docs/design/scribe/2_design.md §5.8).
+    pub projects: BTreeMap<Project, Vec<String>>,
 }
 
 impl Default for Config {
@@ -137,6 +144,7 @@ impl Default for Config {
             segment_windows: crate::pass::SEGMENT_WINDOWS,
             sessions: SessionsConfig::default(),
             redact_env: Vec::new(),
+            projects: BTreeMap::new(),
         }
     }
 }
@@ -202,6 +210,7 @@ impl Config {
                     .unwrap_or(SessionsConfig::DEFAULT_INACTIVE_AFTER_DAYS),
             },
             redact_env: raw.redact.env,
+            projects: projects_from(text, raw.projects)?,
         })
     }
 
@@ -246,6 +255,8 @@ struct RawConfig {
     sessions: RawSessions,
     #[serde(default)]
     redact: RawRedact,
+    #[serde(default)]
+    projects: BTreeMap<String, RawProject>,
 }
 
 #[derive(Deserialize)]
@@ -314,4 +325,62 @@ struct RawSessions {
 struct RawRedact {
     #[serde(default)]
     env: Vec<String>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawProject {
+    #[serde(default)]
+    paths: Vec<String>,
+}
+
+/// `[projects.<slug>]` with a kebab-case slug and at least one path.
+fn projects_from(
+    text: &str,
+    raw: BTreeMap<String, RawProject>,
+) -> Result<BTreeMap<Project, Vec<String>>, ConfigError> {
+    let mut projects = BTreeMap::new();
+    for (slug, project) in raw {
+        let line = project_line(text, &slug);
+        let err = |message: String| ConfigError { line, message };
+        if !is_kebab(&slug, Label::MAX_CHARS) {
+            return Err(err(format!(
+                "projects.{slug}: slug must be lowercase kebab-case, at most {} characters",
+                Label::MAX_CHARS
+            )));
+        }
+        let project_id =
+            Project::try_from(slug.clone()).map_err(|e| err(format!("projects.{slug}: {e}")))?;
+        let mut paths = Vec::new();
+        for path in project.paths {
+            let path = path.trim().to_owned();
+            if path.is_empty() {
+                return Err(err(format!(
+                    "projects.{slug}.paths: a path must not be empty"
+                )));
+            }
+            if !paths.iter().any(|seen: &String| seen == &path) {
+                paths.push(path);
+            }
+        }
+        if paths.is_empty() {
+            return Err(err(format!(
+                "projects.{slug}.paths: give at least one path fragment"
+            )));
+        }
+        projects.insert(project_id, paths);
+    }
+    Ok(projects)
+}
+
+/// The line of `[projects.<slug>]`, in either bare or quoted form.
+fn project_line(text: &str, slug: &str) -> Option<usize> {
+    let needles = [
+        format!("[projects.{slug}]"),
+        format!("[projects.\"{slug}\"]"),
+        format!("[projects.'{slug}']"),
+    ];
+    needles
+        .iter()
+        .find_map(|needle| text.find(needle).map(|at| line_of(text, at)))
 }

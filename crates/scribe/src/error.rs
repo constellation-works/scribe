@@ -79,6 +79,20 @@ pub(crate) enum CliError {
     /// cause.
     #[error("{0}")]
     PassFailed(String),
+    /// `session catalog` named a session that already has a record or a
+    /// switch it did not write.
+    #[error(
+        "session {0} already has a record or was switched on; use 'scribe session pass --session {0}' or 'scribe session rebuild {0} --author <name> --confirm'"
+    )]
+    SessionCataloged(scribe_core::SessionId),
+    /// No Claude Code transcript has this id.
+    #[error("no transcript {id} under {}", dir.display())]
+    TranscriptNotFound {
+        /// The id that was looked up.
+        id: scribe_core::SessionId,
+        /// The transcripts directory that was searched.
+        dir: std::path::PathBuf,
+    },
     /// A model call failed (`question ask`).
     #[error(transparent)]
     Model(#[from] scribe_core::models::ModelError),
@@ -103,6 +117,8 @@ impl CliError {
             Self::TranscriptMissing(_) => "transcript_missing",
             Self::TranscriptRefused { .. } => "provenance_failed",
             Self::PassFailed(_) => "session_pass_failed",
+            Self::SessionCataloged(_) => "session_cataloged",
+            Self::TranscriptNotFound { .. } => "transcript_not_found",
             Self::Model(e) => e.code(),
             Self::Output(_) => "output_error",
         }
@@ -143,6 +159,8 @@ impl CliError {
             | Self::TranscriptMissing(_)
             | Self::TranscriptRefused { .. }
             | Self::PassFailed(_)
+            | Self::SessionCataloged(_)
+            | Self::TranscriptNotFound { .. }
             | Self::Model(_)
             | Self::Output(_) => None,
         }

@@ -131,8 +131,9 @@ and bind a key (its [README](plugin/tmux/README.md) has the details):
 bind-key S display-popup -E -w 90% -h 85% scribe-tmux
 ```
 
-Backfill candidates come from `scribe transcript list`, which arrives
-with S14; until then that view says so instead of failing.
+Backfill candidates come from `scribe transcript list` over the last 30
+days. An empty list, or a list that fails, is one notice row instead of
+a failed popup.
 
 | Setting | Flag | Environment | Default |
 |---------|------|-------------|---------|

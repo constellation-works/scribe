@@ -40,6 +40,8 @@ scribe proposal list [--state open|approved|rejected] [--since <date>] [--until 
 scribe tag list
 scribe entry show <id>
 scribe session show <id> [--log] [--segment <n>]
+scribe transcript list --since <date> [--until <date>] [--project <slug>]… [--min-turns <n>] [--limit <n>]
+scribe transcript show <id>
 scribe question ask "<question>" [--tag <tag>]… [--topic <t>]… [--project <p>] [--kind entry|session] [--since <date>] [--include-hidden]
 ```
 
@@ -61,10 +63,15 @@ scribe question ask "<question>" [--tag <tag>]… [--topic <t>]… [--project <p
   citation. Cite a segment as `session:<id>#<n>` when you rely on it.
 - Add `--json` (or `--format json`) to any command for the stable machine
   form: lists print one envelope (`entries`, `sessions`, `proposals`,
-  `tags` or `hits`, with `total`, `truncated` and `warnings`) and `show`
-  prints the record object. Prefer `--json` whenever a script or a later
-  step will read the output; in a pipe the plain form is tab-separated
-  lines with no header.
+  `tags`, `hits` or `transcripts`, with `total`, `truncated` and
+  `warnings`) and `show` prints the record object. Prefer `--json`
+  whenever a script or a later step will read the output; in a pipe the
+  plain form is tab-separated lines with no header.
+- `transcript list` and `transcript show` only read. They list Claude
+  Code transcripts that have no session record and no switch, so Daniel
+  can pick one to catalog. They call no model. `scribe session catalog`
+  is Daniel's: it writes a session record and calls the model. Do not
+  run it.
 
 ## What the records are
 

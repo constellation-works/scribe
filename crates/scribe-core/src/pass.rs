@@ -27,7 +27,6 @@
 //! A pass writes no tag entries, whatever the transcript holds. No I/O
 //! (STD-02 R5).
 
-use crate::control;
 use crate::entry::Speaker;
 use crate::models::{
     Budgets, CUT_MARK, LinkedRecord, NewSegmentAnswer, PassMessage, PreviousRecord, SESSION_BUDGET,
@@ -97,88 +96,33 @@ pub const SEGMENT_WINDOWS: NonZeroU32 = match NonZeroU32::new(3) {
     None => NonZeroU32::MIN,
 };
 
-/// User turns that Claude Code writes itself, not Daniel: a turn whose text
-/// starts with one of these tags is dropped.
-const SYNTHETIC: &[&str] = &[
-    "<task-notification>",
-    "<command-name>",
-    "<command-message>",
-    "<command-args>",
-    "<local-command-stdout>",
-    "<local-command-stderr>",
-    "<local-command-caveat>",
-    "<system-reminder>",
-    "<bash-input>",
-    "<bash-stdout>",
-    "<bash-stderr>",
-    "<user-prompt-submit-hook>",
-];
-
-const PASTED_OPEN: &str = "<pasted_content";
-const PASTED_CLOSE: &str = "</pasted_content>";
-
 /// The session's messages as a pass reads them, in transcript order.
+/// Daniel's turns are [`crate::transcript::daniel_turn`].
 #[must_use]
 pub fn conversation(messages: &[Message]) -> Vec<PassMessage> {
     messages
         .iter()
-        .filter_map(|m| {
-            let text = m.text();
-            match m.role {
-                Speaker::Assistant => {
-                    let text = text.trim().to_owned();
-                    (!text.is_empty()).then(|| PassMessage {
-                        uuid: m.uuid.clone(),
-                        role: Speaker::Assistant,
-                        text,
-                        pasted: Vec::new(),
-                    })
-                }
-                Speaker::User => {
-                    let start = text.trim_start();
-                    if SYNTHETIC.iter().any(|tag| start.starts_with(tag))
-                        || control::parse(&text).is_some()
-                    {
-                        return None;
-                    }
-                    let (own, pasted) = split_pasted(&text);
-                    (!own.is_empty() || !pasted.is_empty()).then(|| PassMessage {
-                        uuid: m.uuid.clone(),
-                        role: Speaker::User,
-                        text: own,
-                        pasted,
-                    })
-                }
+        .filter_map(|m| match m.role {
+            Speaker::Assistant => {
+                let text = m.text().trim().to_owned();
+                (!text.is_empty()).then(|| PassMessage {
+                    uuid: m.uuid.clone(),
+                    role: Speaker::Assistant,
+                    text,
+                    pasted: Vec::new(),
+                })
+            }
+            Speaker::User => {
+                let turn = crate::transcript::daniel_turn(m)?;
+                Some(PassMessage {
+                    uuid: m.uuid.clone(),
+                    role: Speaker::User,
+                    text: turn.own,
+                    pasted: turn.pasted,
+                })
             }
         })
         .collect()
-}
-
-/// A user turn's own words and the blocks pasted into it. An unclosed block
-/// runs to the end of the turn.
-fn split_pasted(text: &str) -> (String, Vec<String>) {
-    let mut own = String::new();
-    let mut pasted = Vec::new();
-    let mut rest = text;
-    while let Some(open) = rest.find(PASTED_OPEN) {
-        own.push_str(&rest[..open]);
-        let after = &rest[open..];
-        let body_start = after.find('>').map_or(after.len(), |i| i + 1);
-        let body = &after[body_start..];
-        match body.find(PASTED_CLOSE) {
-            Some(close) => {
-                pasted.push(body[..close].trim().to_owned());
-                rest = &body[close + PASTED_CLOSE.len()..];
-            }
-            None => {
-                pasted.push(body.trim().to_owned());
-                rest = "";
-            }
-        }
-    }
-    own.push_str(rest);
-    pasted.retain(|p| !p.is_empty());
-    (own.trim().to_owned(), pasted)
 }
 
 /// How many of Daniel's turns the conversation holds after the message
