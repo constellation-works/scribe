@@ -15,8 +15,9 @@
 //!    latest records of the sessions this one links to ([`linked_context`]:
 //!    context only, the prompt says not to retell them) and the store's
 //!    existing topics and terms;
-//! 4. [`check`]: the answer's budgets and shape, refused whole when wrong
-//!    (the caller keeps the previous record), and every term kept only when
+//! 4. [`check`]: the answer's budgets and shape, with [`repair`] available
+//!    after the caller's one retry for bounded prose and start misses;
+//!    every term kept only when
 //!    its `said` is a verbatim span of one of Daniel's own turns;
 //! 5. [`record`]: the new record, `scribed_through` advanced.
 //!
@@ -42,6 +43,9 @@ use crate::transcript::Message;
 use crate::verbatim;
 use std::num::NonZeroU32;
 use time::OffsetDateTime;
+
+mod repair;
+pub use repair::repair;
 
 /// The default characters of message content in one window (2_design.md §5.3).
 pub const WINDOW_CHARS: usize = 15_000;
@@ -403,6 +407,10 @@ pub struct Distilled {
     /// Terms dropped: not verbatim from one of Daniel's turns, or over a
     /// length limit.
     pub dropped_terms: usize,
+    /// Deterministic repairs made after the model retry; no model prose.
+    pub repairs: Vec<String>,
+    /// An overlong open text with no successor seals at this window's end.
+    pub seal_open: bool,
 }
 
 /// Check `answer` against the budgets and shape, and keep each term only
@@ -466,10 +474,22 @@ pub fn compression_request(
 }
 
 fn check_with_budgets(
+    answer: SessionAnswer,
+    conversation: &[PassMessage],
+    request: &SessionRequest,
+    budgets: Budgets,
+) -> Result<Distilled, Invalid> {
+    check_with_rules(answer, conversation, request, budgets, false)
+}
+
+/// Relax only the rules the deterministic repair owns, checking the original
+/// uncut prose so a cut cannot hide an invalid heading or topic.
+fn check_with_rules(
     mut answer: SessionAnswer,
     conversation: &[PassMessage],
     request: &SessionRequest,
     budgets: Budgets,
+    repairable: bool,
 ) -> Result<Distilled, Invalid> {
     let title = answer.title.trim().to_owned();
     if title.is_empty() || title.contains(['\n', '\r']) {
@@ -489,7 +509,7 @@ fn check_with_budgets(
             topics: previous.topics.clone(),
             related: previous.related.clone(),
         }),
-        (Some(_), Some(open)) => Some(check_segment(open)?),
+        (Some(_), Some(open)) => Some(check_segment(open, repairable)?),
         (None, None) => None,
         (None, Some(open)) => {
             let first = request.messages.first().ok_or_else(|| {
@@ -517,25 +537,29 @@ fn check_with_budgets(
     }
     let mut new = Vec::new();
     let mut last_start = None;
+    let mut seen_starts = std::collections::BTreeSet::new();
     for segment in answer.new {
         let start = request
             .messages
             .iter()
-            .position(|m| m.uuid == segment.starts_at)
-            .ok_or_else(|| {
-                Invalid::Segment(format!(
-                    "starts_at '{}' is outside the window",
-                    segment.starts_at
-                ))
-            })?;
-        if last_start.is_some_and(|last| start <= last) {
+            .position(|m| m.uuid == segment.starts_at);
+        if start.is_none() && !repairable {
+            return Err(Invalid::Segment(format!(
+                "starts_at '{}' is outside the window",
+                segment.starts_at
+            )));
+        }
+        if !seen_starts.insert(segment.starts_at.clone())
+            || start.is_some_and(|start| last_start.is_some_and(|last| start <= last))
+        {
             return Err(Invalid::Segment(String::from(
                 "starts_at ids must be distinct and in transcript order",
             )));
         }
-        if let Some(last) = expected
-            .and_then(|s| s.last_message.as_ref())
-            .and_then(|id| conversation.iter().position(|m| &m.uuid == id))
+        if !repairable
+            && let Some(last) = expected
+                .and_then(|s| s.last_message.as_ref())
+                .and_then(|id| conversation.iter().position(|m| &m.uuid == id))
             && conversation
                 .iter()
                 .position(|m| m.uuid == segment.starts_at)
@@ -545,27 +569,31 @@ fn check_with_budgets(
                 "starts_at must follow the open segment's last message",
             )));
         }
-        last_start = Some(start);
-        let checked = check_segment(SegmentAnswer {
-            heading: segment.heading,
-            text: segment.text,
-            topics: segment.topics,
-            related: segment.related,
-        })?;
-        new.push((start, checked));
+        if let Some(start) = start {
+            last_start = Some(start);
+        }
+        let checked = check_segment(
+            SegmentAnswer {
+                heading: segment.heading,
+                text: segment.text,
+                topics: segment.topics,
+                related: segment.related,
+            },
+            repairable,
+        )?;
+        // This sentinel is used only in the discarded repair eligibility check.
+        new.push((start.unwrap_or(usize::MAX), checked));
     }
-    if expected.is_none() && new.first().is_none_or(|(start, _)| *start != 0) {
+    if expected.is_none()
+        && new
+            .first()
+            .is_none_or(|(start, _)| *start != 0 && !(repairable && *start == usize::MAX))
+    {
         return Err(Invalid::Segment(String::from(
             "without an open segment, new must start at the window's first message",
         )));
     }
-    let items: Vec<String> = answer
-        .next
-        .iter()
-        .map(|item| item.split_whitespace().collect::<Vec<_>>().join(" "))
-        .map(|item| item.trim_start_matches("- ").to_owned())
-        .filter(|item| !item.is_empty())
-        .collect();
+    let items = next_items(&answer.next);
     let next = items
         .iter()
         .map(|item| format!("- {item}"))
@@ -618,6 +646,8 @@ fn check_with_budgets(
         related,
         terms,
         dropped_terms,
+        repairs: Vec::new(),
+        seal_open: false,
     })
 }
 
@@ -634,7 +664,7 @@ pub struct CheckedSegment {
     pub related: Vec<Related>,
 }
 
-fn check_segment(answer: SegmentAnswer) -> Result<CheckedSegment, Invalid> {
+fn check_segment(answer: SegmentAnswer, repairable: bool) -> Result<CheckedSegment, Invalid> {
     let heading = answer.heading.trim().to_owned();
     within("segment heading", &heading, SEGMENT_HEADING_CHARS)?;
     if heading.is_empty() || heading.contains(['\n', '\r']) {
@@ -643,7 +673,7 @@ fn check_segment(answer: SegmentAnswer) -> Result<CheckedSegment, Invalid> {
         )));
     }
     let text = answer.text.trim().to_owned();
-    if text.chars().count() > SEGMENT_CHARS {
+    if !repairable && text.chars().count() > SEGMENT_CHARS {
         return Err(Invalid::Segment(format!(
             "segment text has {} characters; the budget is {SEGMENT_CHARS}; seal it and start a new segment",
             text.chars().count()
@@ -686,6 +716,14 @@ fn within(field: &'static str, text: &str, max: usize) -> Result<(), Invalid> {
         return Err(Invalid::OverBudget { field, chars, max });
     }
     Ok(())
+}
+
+fn next_items(next: &[String]) -> Vec<String> {
+    next.iter()
+        .map(|item| item.split_whitespace().collect::<Vec<_>>().join(" "))
+        .map(|item| item.trim_start_matches("- ").to_owned())
+        .filter(|item| !item.is_empty())
+        .collect()
 }
 
 /// A section's text, trimmed and within its budget, with no line that the
@@ -899,6 +937,7 @@ fn log_after(
         });
     }
     if meta.final_pass
+        || distilled.seal_open
         || log
             .last()
             .is_some_and(|s| s.windows >= meta.segment_windows)

@@ -327,7 +327,7 @@ most five, by session id, or explicitly named sessions) and the due sessions
 left for the next run, including those waiting for retry backoff and a
 partly processed session stopped between windows by the routine deadline. A
 pass is `{"session", "result", "error_code", "passes", "dropped_terms",
-"gave_up", "windows", "error"}`: `result` is `written`, `unchanged`
+"gave_up", "windows", "warnings", "error"}`: `result` is `written`, `unchanged`
 (nothing new; `due` cleared without a model call), `waiting` (no transcript
 or message yet; still due) or `failed` (the previous record kept, still due);
 `error_code` is a stable code or `null`; `error` is present only on a failed
@@ -352,6 +352,25 @@ with `confirm_required`, naming the current segment and pass counts;
 `transcript_missing` and `session_busy` also refuse before model calls.
 One audit line names `session:<id>` for success or refusal. *(S14)* `session
 catalog` prints the report with its one session.
+`warnings` is an array of strings, empty when no deterministic repair was
+persisted in this invocation. After the existing one model retry, scribe
+repairs header budget overruns (sentence or bullet boundary, else a word
+boundary with `…`), segment texts over 900 (cut and seal at window end when
+no new segment follows), and new starts outside the window or at/before the
+open segment's last message (continue the open segment when it fits, else
+start at the window's first message). New segments with cut text are kept;
+sealed segments stay unchanged. Other shape defects still fail the window,
+and the entire repaired answer is revalidated before redaction and writing
+([design §5.5](../2_design.md#55-the-log-segments-and-sealing)).
+Warnings name the window (1-based within this invocation), field or new
+segment index and action, such as `window 1: repaired next: cut at bullet
+boundary (budget 1000 characters)` or `window 2: repaired new segment 1
+starts_at: continued the open segment`. They contain no model prose or
+message ids. They accumulate in persisted-window order, including progress
+before a later failure; failed/unwritten repairs are not reported. Rebuild
+reports only repairs persisted by this invocation, not earlier checkpoints.
+Each warning also prints on stderr in every CLI mode as `warning: session
+<id>: <warning>`; the plugin reply includes the same `warnings` array.
 Plain and table
 print one row per pass (`session result error_code passes dropped_terms`);
 with nothing due stdout is empty, stderr says `no session pass is due` and

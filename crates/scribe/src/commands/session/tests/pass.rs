@@ -300,7 +300,7 @@ fn an_invalid_answer_keeps_the_previous_record_and_the_pass_due() {
     setup.mark_due();
 
     let mut over = answer();
-    over.summary = "s".repeat(1201);
+    over.summary = format!("{}\n## Injected", "s".repeat(1201));
     for bad in [
         Ok(over),
         Err(ModelError::Timeout {
@@ -350,6 +350,166 @@ fn an_over_budget_header_is_compressed_once_without_resending_the_window() {
     assert_eq!(compressed[0].header.summary, "s".repeat(1201));
     assert!(!compressed[0].prompt().contains(DEFINED));
     assert!(!setup.due());
+}
+
+#[test]
+fn repeated_header_misses_are_repaired_after_the_fake_models_retry() {
+    for field in ["summary", "goals", "next", "title"] {
+        let setup = Setup::new();
+        setup.switch_on();
+        let mut a = answer();
+        match field {
+            "summary" => a.summary = format!("A sentence. {}", "é".repeat(1200)),
+            "goals" => a.goals = format!("A sentence. {}", "é".repeat(600)),
+            "next" => a.next = vec![String::from("Keep this bullet"), "é".repeat(1000)],
+            "title" => a.title = format!("A sentence. {}", "é".repeat(120)),
+            _ => unreachable!(),
+        }
+        let models = fake(Ok(a));
+
+        let passes = setup.run(&models);
+
+        assert_eq!(passes[0].result, "written", "{field}: {passes:?}");
+        assert_eq!(models.asked.borrow().len(), 1);
+        assert_eq!(models.compressed.borrow().len(), 1);
+        let report = serde_json::to_value(&passes[0]).unwrap();
+        assert!(report["warnings"][0].as_str().unwrap().contains(field));
+        let record = setup
+            .ctx
+            .store()
+            .session(&ON.parse().unwrap())
+            .unwrap()
+            .record;
+        assert_eq!(
+            match field {
+                "summary" => record.summary,
+                "goals" => record.goals,
+                "next" => record.next,
+                "title" => record.title,
+                _ => unreachable!(),
+            },
+            if field == "next" {
+                "- Keep this bullet"
+            } else {
+                "A sentence."
+            }
+        );
+        assert!(!setup.due());
+    }
+}
+
+#[test]
+fn repeated_segment_misses_are_repaired_without_changing_sealed_history() {
+    for case in [
+        "open-length",
+        "new-length",
+        "old-start",
+        "overlap-start",
+        "outside-start",
+        "overflow-start",
+    ] {
+        let setup = Setup::new();
+        setup.switch_on();
+        let mut first = answer();
+        first.new[0].starts_at = String::from("u-1");
+        let mut second = first.new[0].clone();
+        second.starts_at = String::from("a-1");
+        first.new.push(second);
+        setup.run(&fake(Ok(first)));
+        let id = ON.parse().unwrap();
+        let before = setup.ctx.store().session(&id).unwrap().record;
+        assert_eq!(before.log[0].state, scribe_core::SegmentState::Sealed);
+        if case == "overlap-start" {
+            // A retained range ahead of the cursor puts a named start inside
+            // the window but not after the open segment's last message.
+            let mut overlap = before.clone();
+            overlap.scribed_through = Some(String::from("u-1"));
+            setup
+                .ctx
+                .store()
+                .settle_pass(
+                    &id,
+                    Some(overlap),
+                    false,
+                    Some(before.updated),
+                    &Redactor::new([]),
+                )
+                .unwrap();
+        }
+        setup.append(&[
+            line("user", "u-2", "More."),
+            line("assistant", "a-2", "Done."),
+        ]);
+        setup.mark_due();
+        let mut a = answer();
+        a.new[0].starts_at = String::from("u-2");
+        match case {
+            "open-length" => {
+                let segment = a.new.remove(0);
+                a.open = Some(SegmentAnswer {
+                    heading: segment.heading,
+                    text: format!("Keep this sentence. {}", "é".repeat(900)),
+                    topics: segment.topics,
+                    related: segment.related,
+                });
+            }
+            "new-length" => a.new[0].text = format!("Keep this sentence. {}", "é".repeat(900)),
+            "old-start" | "overlap-start" => a.new[0].starts_at = String::from("a-1"),
+            "outside-start" => a.new[0].starts_at = String::from("missing"),
+            "overflow-start" => {
+                a.new[0].starts_at = String::from("a-1");
+                a.new[0].text = "é".repeat(890);
+            }
+            _ => unreachable!(),
+        }
+        let models = fake(Ok(a));
+
+        let passes = setup.run(&models);
+
+        assert_eq!(passes[0].result, "written", "{case}: {passes:?}");
+        assert_eq!(models.asked.borrow().len(), 2, "one retry: {case}");
+        assert!(models.compressed.borrow().is_empty());
+        let report = serde_json::to_value(&passes[0]).unwrap();
+        let warning = report["warnings"][0].as_str().unwrap();
+        assert!(
+            warning.contains(if case.ends_with("length") {
+                "text"
+            } else {
+                "starts_at"
+            }),
+            "{warning}"
+        );
+        let record = setup.ctx.store().session(&id).unwrap().record;
+        assert_eq!(record.log[0], before.log[0], "sealed history: {case}");
+        assert_eq!(record.scribed_through.as_deref(), Some("a-2"));
+        match case {
+            "open-length" => {
+                assert_eq!(record.log.len(), 2);
+                assert_eq!(record.log[1].text, "Keep this sentence.");
+                assert_eq!(record.log[1].state, scribe_core::SegmentState::Sealed);
+            }
+            "new-length" | "overflow-start" => {
+                assert_eq!(record.log.len(), 3, "never drop a new segment");
+                assert_eq!(record.log[2].first_message.as_deref(), Some("u-2"));
+                assert_eq!(
+                    record.log[2].text,
+                    if case == "new-length" {
+                        "Keep this sentence.".to_owned()
+                    } else {
+                        "é".repeat(890)
+                    }
+                );
+            }
+            "old-start" | "overlap-start" | "outside-start" => {
+                assert_eq!(record.log.len(), 2);
+                assert_eq!(
+                    record.log[1].text,
+                    "Level 4 is defined.\n\nLevel 4 is defined."
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
 }
 
 #[test]
@@ -480,13 +640,17 @@ fn invalid_segment_answers_retry_once_with_the_refusal_and_preserve_the_record()
     };
     let mut cases = Vec::new();
     let mut a = valid();
-    a.open.as_mut().unwrap().text = "é".repeat(901);
+    a.open.as_mut().unwrap().text = format!("{}\n# Injected", "é".repeat(901));
     cases.push((a, "seal it and start a new segment"));
     let mut a = valid();
     a.open.as_mut().unwrap().heading = "h".repeat(81);
     cases.push((a, "segment heading"));
     let mut a = valid();
     a.new = vec![new("outside")];
+    a.new[0].topics = vec![String::from("Invalid Topic")];
+    cases.push((a, "outside the window"));
+    let mut a = valid();
+    a.new = vec![new("outside"), new("outside")];
     cases.push((a, "outside the window"));
     let mut a = valid();
     a.new = vec![new("a-2"), new("u-2")];
@@ -495,13 +659,14 @@ fn invalid_segment_answers_retry_once_with_the_refusal_and_preserve_the_record()
     a.new = vec![new("u-2"), new("u-2")];
     cases.push((a, "distinct"));
     let mut a = valid();
-    a.summary = "s".repeat(1201);
+    a.summary = format!("{}\n## Injected", "s".repeat(1201));
     cases.push((a, "Summary"));
     let mut a = valid();
-    a.goals = "g".repeat(601);
+    a.goals = format!("{}\n## Injected", "g".repeat(601));
     cases.push((a, "Goals"));
     let mut a = valid();
     a.next = vec!["n".repeat(999)];
+    a.topics = vec![String::from("Invalid Topic")];
     cases.push((a, "next"));
     let mut a = valid();
     a.open.as_mut().unwrap().text.clear();

@@ -11,7 +11,8 @@
       "segments": null,
       "author": null,
       "gave_up": false,
-      "error": "the model failed: golden model refusal"
+      "error": "the model failed: golden model refusal",
+      "warnings": []
     }
   ],
   "remaining": 0

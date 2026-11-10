@@ -1,7 +1,7 @@
 //! Rebuild a record from the first transcript message. Each window is written
 //! to an isolated dot-file; only the complete rebuild replaces the record.
 
-use super::pass::{self as command_pass, distill, short_reason};
+use super::pass::{self as command_pass, distill, short_reason, window_warnings};
 use crate::app::Context;
 use crate::commands::hook::payload::{self, Transcript};
 use crate::error::CliError;
@@ -85,6 +85,7 @@ pub(in crate::commands) fn run_with<M: Models>(
         error_code: None,
         passes: None,
         dropped_terms: 0,
+        warnings: Vec::new(),
         windows: 0,
         gave_up: false,
         error: None,
@@ -191,6 +192,7 @@ pub(in crate::commands) fn run_with<M: Models>(
                 }
             };
             let dropped = answer.dropped_terms;
+            let warnings = window_warnings(report.windows + 1, &answer);
             let meta = pass::PassMeta {
                 id: id.clone(),
                 project: original.project.clone(),
@@ -229,6 +231,7 @@ pub(in crate::commands) fn run_with<M: Models>(
             report.passes = Some(record.passes);
             report.windows += 1;
             report.dropped_terms += dropped;
+            report.warnings.extend(warnings);
             previous = Some(record);
             offset = end;
         }

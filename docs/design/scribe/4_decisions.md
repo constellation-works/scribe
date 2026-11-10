@@ -1655,8 +1655,11 @@ decided, by a fixed size, segments would cut threads in the middle.
 - The model opens a new segment (sealing the open one) when the thread
   changes, by naming the message it starts at.
 - scribe enforces the budget: an open segment's text over 900 characters
-  is refused with "seal it and start a new segment", so a full segment
-  seals.
+  is refused with "seal it and start a new segment". After the one model
+  retry, a remaining text overrun is cut deterministically and, if no new
+  segment follows, sealed at the window's end. Header budget and misplaced
+  start repairs follow [§5.5](./2_design.md#55-the-log-segments-and-sealing),
+  with a warning per repair; other shape defects still refuse the window.
 - scribe seals the open segment itself after `[catalog] segment_windows`
   (3) windows, and at the end of the final pass.
 - At most three new segments per window.

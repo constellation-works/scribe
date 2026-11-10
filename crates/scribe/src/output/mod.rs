@@ -139,6 +139,11 @@ fn emit(sink: &Sink, output: &Output) -> io::Result<()> {
     }
     if let Output::Pass(report) = output {
         let mut err = io::stderr().lock();
+        for pass in &report.passes {
+            for warning in &pass.warnings {
+                let _ = writeln!(err, "warning: session {}: {warning}", pass.session);
+            }
+        }
         for notice in &report.notices {
             let _ = writeln!(err, "{notice}");
         }
