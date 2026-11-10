@@ -36,6 +36,19 @@ pub enum Error {
         /// The directory searched.
         path: PathBuf,
     },
+    /// An ordinary pass attempted to rewrite an already sealed segment.
+    #[error("session {id} would change sealed segment {n}; keep sealed segments unchanged")]
+    SealedSegmentChanged {
+        /// Session being written.
+        id: SessionId,
+        /// Sealed segment number.
+        n: u32,
+    },
+    /// A due live session must finish its pass before rebuilding.
+    #[error(
+        "session {0} is on and due; run 'scribe session pass --session <id>' before rebuilding"
+    )]
+    SessionBusy(SessionId),
     /// A session link was refused: unknown target, self-link, cycle,
     /// a second parent, or a session not cataloged.
     #[error("cannot link this session: {0}")]
@@ -144,6 +157,8 @@ impl Error {
         match self {
             Self::EntryNotFound { .. } => "entry_not_found",
             Self::SessionNotFound { .. } => "session_not_found",
+            Self::SealedSegmentChanged { .. } => "sealed_segment_changed",
+            Self::SessionBusy(_) => "session_busy",
             Self::Link(err) => err.code(),
             Self::Io { .. } => "io_error",
             Self::Corrupt { .. } => "store_corrupt",

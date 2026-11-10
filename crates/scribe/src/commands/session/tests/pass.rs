@@ -8,7 +8,8 @@ use crate::commands::session::pass::{run_with, short_reason};
 use crate::output::{Output, PassPayload};
 use scribe_core::control::{self, Switch};
 use scribe_core::models::{
-    ModelError, ReferentAnswer, ReferentRequest, SessionAnswer, SessionRequest, TermAnswer,
+    ModelError, NewSegmentAnswer, ReferentAnswer, ReferentRequest, SegmentAnswer, SessionAnswer,
+    SessionRequest, TermAnswer,
 };
 use scribe_core::{Models, Redactor, SessionId};
 use serde_json::json;
@@ -36,7 +37,30 @@ impl Models for &FakeModels {
 
     fn session(&self, request: &SessionRequest) -> Result<SessionAnswer, ModelError> {
         self.asked.borrow_mut().push(request.clone());
-        self.first.take().unwrap_or_else(|| self.answer.clone())
+        self.first
+            .take()
+            .unwrap_or_else(|| self.answer.clone())
+            .map(|mut answer| {
+                if answer.new.first().is_some_and(|s| s.starts_at == "auto") {
+                    if request
+                        .previous
+                        .as_ref()
+                        .and_then(|p| p.open.as_ref())
+                        .is_some()
+                    {
+                        let segment = answer.new.remove(0);
+                        answer.open = Some(SegmentAnswer {
+                            heading: segment.heading,
+                            text: segment.text,
+                            topics: segment.topics,
+                            related: segment.related,
+                        });
+                    } else {
+                        answer.new[0].starts_at = request.messages[0].uuid.clone();
+                    }
+                }
+                answer
+            })
     }
 }
 
@@ -45,7 +69,14 @@ fn answer() -> SessionAnswer {
         title: String::from("Defining crew levels"),
         summary: String::from("Daniel defined what level 4 means for crews."),
         goals: String::from("Name the crew levels."),
-        outcome: String::from("Level 4 is defined."),
+        open: None,
+        new: vec![NewSegmentAnswer {
+            starts_at: String::from("auto"),
+            heading: String::from("Crew levels"),
+            text: String::from("Level 4 is defined."),
+            topics: Vec::new(),
+            related: Vec::new(),
+        }],
         next: vec![String::from("write it into the routing doc")],
         topics: vec![String::from("crew-routing")],
         related: vec![String::from("task:ORB-7")],
@@ -257,7 +288,7 @@ fn an_invalid_answer_keeps_the_previous_record_and_the_pass_due() {
     setup.mark_due();
 
     let mut over = answer();
-    over.summary = "s".repeat(1501);
+    over.summary = "s".repeat(1201);
     for bad in [
         Ok(over),
         Err(ModelError::Timeout {
@@ -289,7 +320,7 @@ fn an_over_budget_answer_is_asked_again_once_and_the_valid_retry_is_written() {
     let setup = Setup::new();
     setup.switch_on();
     let mut over = answer();
-    over.summary = "s".repeat(1501);
+    over.summary = "s".repeat(1201);
     let models = fake(Ok(answer()));
     *models.first.borrow_mut() = Some(Ok(over));
 
@@ -300,7 +331,7 @@ fn an_over_budget_answer_is_asked_again_once_and_the_valid_retry_is_written() {
     assert_eq!(asked.len(), 2);
     assert_eq!(asked[0].correction, None);
     let correction = asked[1].correction.as_deref().unwrap();
-    assert!(correction.contains("Summary has 1501 characters; the budget is 1500"));
+    assert!(correction.contains("Summary has 1201 characters; the budget is 1200"));
     assert!(asked[1].prompt().contains(correction));
     assert!(!setup.due());
 }
@@ -377,4 +408,241 @@ fn surfaced_failure_reason_is_redacted_flattened_and_limited() {
     assert!(!reason.contains(&secret), "{reason}");
     assert!(!reason.contains('\n'), "{reason}");
     assert_eq!(reason.chars().count(), 300, "{reason}");
+}
+
+#[test]
+fn invalid_segment_answers_retry_once_with_the_refusal_and_preserve_the_record() {
+    let setup = Setup::new();
+    setup.switch_on();
+    setup.run(&fake(Ok(answer())));
+    let before = std::fs::read(setup.record_file()).unwrap();
+    setup.append(&[
+        line("user", "u-2", "New thread."),
+        line("assistant", "a-2", "Another message."),
+    ]);
+    let valid = || {
+        let mut a = answer();
+        let s = a.new.remove(0);
+        a.open = Some(SegmentAnswer {
+            heading: s.heading,
+            text: s.text,
+            topics: s.topics,
+            related: s.related,
+        });
+        a
+    };
+    let new = |id: &str| NewSegmentAnswer {
+        starts_at: id.to_owned(),
+        heading: String::from("New thread"),
+        text: String::from("Built it."),
+        topics: Vec::new(),
+        related: Vec::new(),
+    };
+    let mut cases = Vec::new();
+    let mut a = valid();
+    a.open.as_mut().unwrap().text = "é".repeat(901);
+    cases.push((a, "seal it and start a new segment"));
+    let mut a = valid();
+    a.open.as_mut().unwrap().heading = "h".repeat(81);
+    cases.push((a, "segment heading"));
+    let mut a = valid();
+    a.new = vec![new("outside")];
+    cases.push((a, "outside the window"));
+    let mut a = valid();
+    a.new = vec![new("a-2"), new("u-2")];
+    cases.push((a, "transcript order"));
+    let mut a = valid();
+    a.new = vec![new("u-2"), new("u-2")];
+    cases.push((a, "distinct"));
+    let mut a = valid();
+    a.summary = "s".repeat(1201);
+    cases.push((a, "Summary"));
+    let mut a = valid();
+    a.goals = "g".repeat(601);
+    cases.push((a, "Goals"));
+    let mut a = valid();
+    a.next = vec!["n".repeat(999)];
+    cases.push((a, "next"));
+    let mut a = valid();
+    a.open.as_mut().unwrap().text.clear();
+    cases.push((a, "1-900"));
+    let mut a = valid();
+    a.open.as_mut().unwrap().text = String::from("# Injected heading");
+    cases.push((a, "heading line"));
+    let mut a = valid();
+    a.open = None;
+    cases.push((a, "open must be present"));
+    let mut a = valid();
+    a.new = vec![new("u-2"); 4];
+    cases.push((a, "at most 3"));
+    for (bad, reason) in cases {
+        let models = fake(Ok(bad));
+        let Output::Pass(report) = run_with(
+            &setup.ctx,
+            |_| &models,
+            crate::commands::RunLimits::new(1),
+            &[ON.parse().unwrap()],
+        )
+        .unwrap() else {
+            panic!("report")
+        };
+        assert_eq!(report.passes[0].error_code, Some("session_answer_invalid"));
+        let asked = models.asked.borrow();
+        assert_eq!(asked.len(), 2);
+        assert!(
+            asked[1].correction.as_deref().unwrap().contains(reason),
+            "{:?}",
+            asked[1].correction
+        );
+        assert_eq!(std::fs::read(setup.record_file()).unwrap(), before);
+        assert!(setup.due());
+    }
+}
+
+#[test]
+fn new_segments_derive_ranges_and_sealed_text_is_absent_from_later_requests() {
+    let setup = Setup::new();
+    setup.switch_on();
+    setup.run(&fake(Ok(answer())));
+    let mut turns = vec![
+        line("user", "u-2", "Finish first thread."),
+        line("assistant", "a-2", "Second thread."),
+        line("user", "u-3", "Third thread."),
+    ];
+    for (i, turn) in turns.iter_mut().enumerate() {
+        turn["timestamp"] = json!(format!("2026-11-03T06:0{}:00Z", i + 1));
+    }
+    setup.append(&turns);
+    setup.mark_due();
+    let mut a = answer();
+    a.new.clear();
+    a.open = Some(SegmentAnswer {
+        heading: String::from("First thread"),
+        text: String::from("UNIQUE SEALED FIRST TEXT"),
+        topics: Vec::new(),
+        related: Vec::new(),
+    });
+    a.new = ["a-2", "u-3"]
+        .map(|id| NewSegmentAnswer {
+            starts_at: id.to_owned(),
+            heading: format!("Thread {id}"),
+            text: format!("Body {id}"),
+            topics: vec![String::from("ci")],
+            related: vec![String::from("repo:scribe")],
+        })
+        .to_vec();
+    assert_eq!(setup.run(&fake(Ok(a)))[0].result, "written");
+    let record = setup
+        .ctx
+        .store()
+        .session(&ON.parse().unwrap())
+        .unwrap()
+        .record;
+    assert_eq!(record.log.len(), 3);
+    assert_eq!(record.log[0].last_message.as_deref(), Some("u-2"));
+    assert_eq!(record.log[0].windows.get(), 2);
+    assert_eq!(record.log[1].first_message.as_deref(), Some("a-2"));
+    assert_eq!(record.log[1].last_message.as_deref(), Some("a-2"));
+    assert_eq!(record.log[1].windows.get(), 1);
+    assert_eq!(
+        record.log[1].from,
+        time::macros::datetime!(2026-11-03 06:02 UTC)
+    );
+    assert_eq!(
+        record.log[0].to,
+        time::macros::datetime!(2026-11-03 06:01 UTC)
+    );
+    let file_before = std::fs::read_to_string(setup.record_file()).unwrap();
+    let sealed_body = file_before
+        .split("## Log\n")
+        .nth(1)
+        .unwrap()
+        .split("### 3.")
+        .next()
+        .unwrap();
+    setup.append(&[line("assistant", "a-3", "Continue third thread.")]);
+    setup.mark_due();
+    let models = fake(Ok(answer()));
+    setup.run(&models);
+    let asked = models.asked.borrow();
+    let p = asked[0].previous.as_ref().unwrap();
+    assert_eq!(p.sealed.len(), 2);
+    assert_eq!(p.open.as_ref().unwrap().text, "Body u-3");
+    assert!(!asked[0].prompt().contains("UNIQUE SEALED FIRST TEXT"));
+    assert!(!asked[0].prompt().contains("Body a-2"));
+    assert!(asked[0].prompt().contains("First thread"));
+    let after = std::fs::read_to_string(setup.record_file()).unwrap();
+    assert_eq!(
+        after
+            .split("## Log\n")
+            .nth(1)
+            .unwrap()
+            .split("### 3.")
+            .next()
+            .unwrap(),
+        sealed_body
+    );
+}
+
+#[test]
+fn windows_seal_at_the_configured_limit_and_the_last_final_window() {
+    for (limit, final_pass) in [(3, false), (2, false), (3, true)] {
+        let setup = Setup::new();
+        setup.write(
+            ON,
+            &(0..7)
+                .map(|i| line("user", &format!("m-{i}"), "Work."))
+                .collect::<Vec<_>>(),
+        );
+        setup.switch_on();
+        let config = setup.ctx.store().root().join("config.toml");
+        std::fs::write(
+            &config,
+            format!("[catalog]\nwindow_messages = 1\nsegment_windows = {limit}\n"),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        if final_pass {
+            setup
+                .ctx
+                .store()
+                .update_control(|s| control::mark_final(s, &ON.parse().unwrap()))
+                .unwrap();
+        }
+        let models = fake(Ok(answer()));
+        let report = setup.run(&models);
+        let record = setup
+            .ctx
+            .store()
+            .session(&ON.parse().unwrap())
+            .unwrap()
+            .record;
+        assert_eq!(record.log.len(), if limit == 3 { 3 } else { 4 });
+        for segment in &record.log[..record.log.len() - 1] {
+            assert_eq!(segment.windows.get(), limit);
+            assert_eq!(segment.state, scribe_core::SegmentState::Sealed);
+        }
+        assert_eq!(
+            record.log.last().unwrap().state,
+            if final_pass {
+                scribe_core::SegmentState::Sealed
+            } else {
+                scribe_core::SegmentState::Open
+            }
+        );
+        assert_eq!(
+            report[0].segments_sealed,
+            record
+                .log
+                .iter()
+                .filter(|s| s.state == scribe_core::SegmentState::Sealed)
+                .count()
+        );
+        assert_eq!(models.asked.borrow().len(), 7);
+        assert_eq!(models.asked.borrow()[6].final_pass, final_pass);
+    }
 }

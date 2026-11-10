@@ -1,7 +1,7 @@
 ---
 type: design
 summary: "Spec: output contract — streams, modes, plain columns, the JSON list envelope and record fields (format 4: segments, activity, authors, search hits, transcripts), warnings, errors and exit codes"
-last_validated: 2026-11-02
+last_validated: 2026-11-10
 ---
 
 # Spec: Output contract
@@ -10,7 +10,7 @@ Every data command renders one typed payload in the mode the sink resolved;
 stdout carries only that payload; warnings, notices and errors go to stderr;
 the exit code says whether it worked. The JSON form is a public contract,
 pinned by the output goldens in `crates/scribe/tests/goldens/output/`.
-Parts marked *(S9)* to *(S14)* are designed ([ORB-23892]) and not yet
+Parts marked *(S10)* to *(S14)* are designed ([ORB-23892]) and not yet
 built; each only adds fields, columns, commands and codes.
 
 ## Why This Exists
@@ -176,10 +176,10 @@ Stable codes: `entry_not_found`, `session_not_found`, `io_error`,
 `store_corrupt`, `config_invalid`, `store_too_new`, `store_locked`,
 `store_symlink`, `store_foreign_owner`, `store_permissions`, `no_data_dir`,
 `output_error`, `usage_error`, `hook_payload_invalid`,
-`segment_not_found` (exit 1), *(S9–S14)* `id_ambiguous` (exit 2, listing
+`segment_not_found`, `sealed_segment_changed`, `confirm_required`,
+`transcript_missing`, `session_busy` (exit 1), *(S10–S14)* `id_ambiguous` (exit 2, listing
 up to ten candidates), `daniel_only`, `tag_not_found`, `tag_conflict`, `tag_configured`,
 `proposal_not_found`, `proposal_settled`, `entry_not_active`,
-`confirm_required`, `transcript_missing`, `session_busy`,
 `session_cataloged`, `transcript_not_found`, for `session pass`
 `session_pass_failed` and `session_not_on`, and for `question
 ask` the model codes `model_timeout`, `model_unavailable`, `model_failed`,
@@ -276,9 +276,17 @@ counts terms dropped across persisted windows whose
 `said` was not verbatim from its named user turn, whose message id was
 unknown or future, or whose lengths were invalid; `gave_up` is always
 `false` (a failed pass is never given up; the field is kept for the
-shape). *(S9)* A pass adds `segments_sealed` (segments sealed in this
-invocation) and `segments` (the record's segment count, or `null`). `session
-rebuild` and `session catalog` print this report with their one session.
+shape). A pass also carries `segments_sealed` (segments sealed in this
+invocation) and `segments` (the latest persisted record/checkpoint's segment
+count, or `null`). `session rebuild` prints this report with its one session,
+`remaining: 0` and an additional `author: {kind: agent, name: <name>}` naming
+its requester (`author` is `null` for ordinary passes). A failed rebuild keeps its private checkpoint and exits 1
+with `session_pass_failed`, naming the failure and the rebuild command to
+resume; it does not change the control switch. `--confirm` missing refuses
+with `confirm_required`, naming the current segment and pass counts;
+`transcript_missing` and `session_busy` also refuse before model calls.
+One audit line names `session:<id>` for success or refusal. *(S14)* `session
+catalog` prints the report with its one session.
 Plain and table
 print one row per pass (`session result error_code passes dropped_terms`);
 with nothing due stdout is empty, stderr says `no session pass is due` and

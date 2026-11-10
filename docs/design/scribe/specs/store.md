@@ -1,7 +1,7 @@
 ---
 type: design
 summary: "Spec: store — layout, record files with YAML frontmatter (format 4: session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
-last_validated: 2026-11-02
+last_validated: 2026-11-10
 ---
 
 # Spec: Store
@@ -10,7 +10,7 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-The code is format 4 since S8. Parts marked *(S9)* to *(S14)* are designed
+The code is format 4 since S8. Parts marked *(S10)* to *(S14)* are designed
 ([ORB-23892]) and not yet built.
 
 ## Why This Exists
@@ -174,14 +174,12 @@ every_minutes = 20
 every_turns = 10
 window_messages = 40              # max messages per model call
 window_chars = 15000              # max content characters per call
+segment_windows = 3               # windows before scribe seals an open segment
 
 [redact]
 env = []                         # more variables whose values are masked
 
-# format 4, S9/S10/S14
-[catalog]
-segment_windows = 3              # windows before scribe seals an open segment
-
+# Designed for S10/S14 (not yet accepted by the parser):
 [sessions]
 inactive_after_days = 120        # days since a session's last message
 
@@ -231,12 +229,15 @@ config tag claims is dropped with a warning naming both.
   (redacted, `sessions/<yyyy>/<mm>/` from its `started`, created `0700`)
   and settles its switch (`due` cleared, `final` too when the final pass
   ran; a `final` set while a non-final pass ran is kept) in one locked
-  call. Until S9 rewrites passes, a pass keeps the answer's `outcome` as
-  the text of the open segment (heading from the title, `windows` counted
-  up, `to` and `last_message` from the window), opens segment `n + 1`
-  when the log has no open segment and the outcome is not empty, and the
-  final pass seals the last segment; `active`, `keep_active`,
-  `active_change` and `cataloged_by` are carried from the record on
+  call. Each window rewrites the header and open segment, appends up to
+  three new segments, and derives message ranges and dates from the new
+  segments' `starts_at` ids. A segment seals when another starts, after
+  `segment_windows` windows, or in the final pass's last window. The
+  header budgets are title 120, summary 1200, goals 600 and next 1000;
+  each segment has a 1–80-character heading and 1–900-character text.
+  Refused answers get one retry naming the refusal before failing with
+  `session_answer_invalid`. `active`, `keep_active`, `active_change` and
+  `cataloged_by` are carried from the record on
   disk. `Store::checkpoint_pass` writes intermediate windows with the same
   lock, redaction and atomic replacement, keeping `due` set. An explicit
   pass starting while not due publishes that obligation before its first
@@ -294,13 +295,26 @@ config tag claims is dropped with a warning naming both.
   place an upgraded segment may exceed 900 characters. The first write of
   an upgraded document persists it at format 4; a build older than S8
   refuses format 4 (`store_too_new`).
-- **The log is append-only** *(S9)*. Every session write except `session
+- **The log is append-only** (S9). Every session write except `session
   rebuild` compares each sealed segment it writes with the one on disk;
   any difference in metadata or text refuses the write
   (`sealed_segment_changed`) and keeps the record. A rebuild writes its
   windows to `.<id>.rebuild.md` beside the record and replaces the record
   under the lock only if the record's `updated` is unchanged since the
-  rebuild began.
+  rebuild began. Checkpoints use the same format-4 session shape; their
+  `updated` pins that visible revision rather than the checkpoint write time.
+  No new persisted field or store version is needed. Each rebuilt segment
+  has `origin: rebuild`. A per-session `.<id>.rebuild.lock` serializes
+  rebuilders without holding the store lock over model calls. The lock file
+  remains after release; ordinary reads skip it. A changed visible revision
+  causes rebuild to read the transcript again and fold in newer messages
+  before retrying replacement. A successful replacement removes its
+  checkpoint. Identity, creation time, links and activity/catalog fields
+  come from the latest visible record; the control switch stays unchanged.
+  `--confirm` is mandatory, missing transcripts refuse `transcript_missing`,
+  and on-and-due sessions refuse `session_busy`. Sealed segments are checked
+  before redaction and retained verbatim, so a later redaction setting does
+  not rewrite already sealed history.
 - **Activity** *(S10)*. `Store::set_active` changes `active` or
   `keep_active` and `active_change` under the lock, and nothing else on
   the record (`updated` included); it writes only when something changed.

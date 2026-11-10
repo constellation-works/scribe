@@ -682,6 +682,12 @@ pub(crate) struct PassPayload {
     pub(crate) dropped_terms: usize,
     /// Successfully persisted model windows for this session in this run.
     pub(crate) windows: usize,
+    /// Segments newly sealed in this invocation.
+    pub(crate) segments_sealed: usize,
+    /// Segment count in the latest persisted record/checkpoint.
+    pub(crate) segments: Option<usize>,
+    /// The requesting agent for a rebuild; null for routine passes.
+    pub(crate) author: Option<scribe_core::Author>,
     /// Always `false`: a failed pass stays due and is never given up. Kept
     /// because the `--json` shape is a contract.
     pub(crate) gave_up: bool,
@@ -717,6 +723,9 @@ impl PassReport {
             })
             .collect();
         (!failed.is_empty()).then(|| {
+            if self.passes.iter().any(|p| p.author.is_some()) {
+                return crate::error::CliError::PassFailed(format!("{} session rebuild(s) failed: {}; checkpoint kept; repeat 'scribe session rebuild <id> --author <name> --confirm' to resume", failed.len(), failed.join(", ")));
+            }
             crate::error::CliError::PassFailed(format!(
                 "{} session pass(es) failed: {}; each stays due with retry backoff; use 'scribe session pass --session <id>' to retry now",
                 failed.len(),

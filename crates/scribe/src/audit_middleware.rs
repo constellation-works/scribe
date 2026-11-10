@@ -142,6 +142,13 @@ impl<'a> AuditGuard<'a> {
         };
     }
 
+    /// Name the known target even when a command refuses before a payload exists.
+    pub(crate) fn set_target(&mut self, target: &str) {
+        for line in &mut self.lines {
+            line.target = Some(target.to_owned());
+        }
+    }
+
     /// The lines this guard will write, in order.
     pub(crate) fn events(&self) -> Vec<AuditEvent> {
         let duration_ms = u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);

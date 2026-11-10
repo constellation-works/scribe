@@ -25,6 +25,7 @@
 //! every_turns = 10
 //! window_messages = 40
 //! window_chars = 15000
+//! segment_windows = 3
 //!
 //! [redact]
 //! env = ["GITHUB_TOKEN"]
@@ -90,6 +91,8 @@ pub struct Config {
     pub catalog: Cadence,
     /// Per-call message bounds, also configured under `[catalog]`.
     pub catalog_window: crate::pass::WindowLimits,
+    /// Windows before scribe seals an open segment (default 3).
+    pub segment_windows: NonZeroU32,
     /// Further environment variables whose values are masked.
     pub redact_env: Vec<String>,
 }
@@ -101,6 +104,7 @@ impl Default for Config {
             models: ModelIds::default(),
             catalog: Cadence::default(),
             catalog_window: crate::pass::WindowLimits::default(),
+            segment_windows: crate::pass::SEGMENT_WINDOWS,
             redact_env: Vec::new(),
         }
     }
@@ -156,6 +160,10 @@ impl Config {
                 messages: raw.catalog.window_messages.unwrap_or(window.messages),
                 chars: raw.catalog.window_chars.unwrap_or(window.chars),
             },
+            segment_windows: raw
+                .catalog
+                .segment_windows
+                .unwrap_or(crate::pass::SEGMENT_WINDOWS),
             redact_env: raw.redact.env,
         })
     }
@@ -253,6 +261,7 @@ struct RawCatalog {
     every_turns: Option<NonZeroU32>,
     window_messages: Option<NonZeroUsize>,
     window_chars: Option<NonZeroUsize>,
+    segment_windows: Option<NonZeroU32>,
 }
 
 #[derive(Default, Deserialize)]

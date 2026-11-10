@@ -297,3 +297,17 @@ fn read_holder(file: &mut File) -> String {
         Ok(_) | Err(_) => String::from("an unknown process"),
     }
 }
+
+/// Remove a checked owner-only file and durably publish its absence.
+pub(super) fn remove_private(path: &Path) -> Result<()> {
+    if !inspect_file(path)? {
+        return Ok(());
+    }
+    fs::remove_file(path).map_err(|e| Error::io("remove", path, e))?;
+    if let Some(parent) = path.parent() {
+        File::open(parent)
+            .and_then(|dir| dir.sync_all())
+            .map_err(|e| Error::io("sync directory", parent, e))?;
+    }
+    Ok(())
+}

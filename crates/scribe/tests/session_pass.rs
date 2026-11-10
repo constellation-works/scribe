@@ -87,21 +87,11 @@ impl Setup {
     /// The fake `claude`: saves its stdin (the prompt) and answers `body`
     /// as `claude -p --output-format json` does.
     fn answer(&self, body: &Value) {
-        let envelope = json!({"type": "result", "subtype": "success", "is_error": false,
-                              "result": "", "structured_output": body});
         let script = format!(
-            "#!/bin/sh\n\
-             n=$(ls \"$HOME\" | grep -c '^claude-stdin')\n\
-             cat > \"$HOME/claude-stdin-$n\"\n\
-             echo '{envelope}'\n"
+            "#!/bin/sh\nn=$(ls \"$HOME\" | grep -c '^claude-stdin')\ncat > \"$HOME/claude-stdin-$n\"\n{}",
+            response(body)
         );
-        let file = self.fx.elsewhere("bin/claude");
-        std::fs::write(&file, script).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o700)).unwrap();
-        }
+        self.fx.fake_program("claude", &script);
     }
 
     /// Every prompt the fake `claude` received, oldest first.
@@ -121,9 +111,7 @@ impl Setup {
         for (n, answer) in answers.iter().enumerate() {
             match answer {
                 Some(body) => {
-                    let envelope = json!({"type": "result", "subtype": "success",
-                        "is_error": false, "result": "", "structured_output": body});
-                    script.push_str(&format!("{n}) echo '{envelope}' ;;\n"));
+                    script.push_str(&format!("{n}) {} ;;\n", response(body)));
                 }
                 None => script.push_str(&format!("{n}) exit 3 ;;\n")),
             }
@@ -237,12 +225,36 @@ impl Setup {
     }
 }
 
+/// Generate an answer for the actual window. Explicit S9 answers are passed
+/// through unchanged; the generic fixture rewrites an open segment or starts
+/// a new one at the first message when scribe has sealed the preceding one.
+fn response(body: &Value) -> String {
+    let envelope = |body: &Value| {
+        json!({"type":"result", "subtype":"success", "is_error":false, "result":"", "structured_output":body}).to_string()
+    };
+    if body["new"][0]["starts_at"] == "__window_first__" {
+        let mut open = body.clone();
+        let mut segment = open["new"][0].clone();
+        segment.as_object_mut().unwrap().remove("starts_at");
+        open["open"] = segment;
+        open["new"] = json!([]);
+        format!(
+            "if grep -q '^Open segment ' \"$HOME/claude-stdin-$n\"; then\nprintf '%s\\n' '{}'\nelse\nfirst=$(sed -n 's/^--- .* · \\(.*\\) ---$/\\1/p' \"$HOME/claude-stdin-$n\" | head -1)\nprintf '%s\\n' '{}' | sed \"s/__window_first__/$first/g\"\nfi",
+            envelope(&open),
+            envelope(body)
+        )
+    } else {
+        format!("printf '%s\\n' '{}'", envelope(body))
+    }
+}
+
 fn answer() -> Value {
     json!({
         "title": "Defining crew levels",
         "summary": "Daniel defined what level 4 means for crews.",
         "goals": "Name the crew levels.",
-        "outcome": "Level 4 is defined.",
+        "open": null,
+        "new": [{"starts_at": "__window_first__", "heading": "Crew levels", "text": "Level 4 is defined.", "topics": [], "related": []}],
         "next": ["write it into the routing doc"],
         "topics": ["crew-routing"],
         "related": [],
@@ -368,7 +380,7 @@ fn character_windows_and_each_windows_field_limits_are_enforced() {
             .collect::<Vec<_>>(),
     );
     let mut over = answer();
-    over["summary"] = json!("s".repeat(1501));
+    over["summary"] = json!("s".repeat(1201));
     setup.answers(&[Some(answer()), Some(over.clone()), Some(over)]);
     setup.scribe("/scribe on");
     let out = setup.run_any(&["session", "pass", "--json"], b"");
@@ -604,7 +616,7 @@ fn a_pass_writes_one_record_of_daniels_terms_and_never_reads_a_session_never_swi
     );
     assert!(!setup.fx.root().join("entries").exists(), "no entries");
     // The record is written at format 4: a header and one open segment
-    // holding this pass's outcome.
+    // holding this pass's segment text.
     let file = std::fs::read_to_string(setup.record_file()).unwrap();
     assert!(file.starts_with("---\nformat: 4\n"), "{file}");
     assert!(file.contains("\n## Log\n### 1. "), "{file}");
@@ -631,7 +643,7 @@ fn a_pass_writes_one_record_of_daniels_terms_and_never_reads_a_session_never_swi
     setup.scribe("/scribe off");
     setup.scribe("/scribe on");
     let mut over = answer();
-    over["summary"] = json!("s".repeat(1501));
+    over["summary"] = json!("s".repeat(1201));
     setup.answer(&over);
     let out = setup.run_any(&["session", "pass", "--json"], b"");
     assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
@@ -992,4 +1004,239 @@ fn a_session_links_to_its_parent_and_its_pass_reads_the_parent_as_context() {
         [CHILD.to_owned(), ON.to_owned()],
         "PARENT column"
     );
+}
+
+#[test]
+fn s9_answers_write_bounded_segments_instead_of_one_outcome() {
+    let setup = Setup::new();
+    setup.append(
+        ON,
+        &[
+            line("user", "u-2", "A second thread."),
+            line("assistant", "a-2", "A third thread."),
+        ],
+    );
+    setup.scribe("/scribe on");
+    let mut body = answer();
+    body.as_object_mut().unwrap().remove("outcome");
+    body["open"] = Value::Null;
+    body["new"] = json!(["u-1", "u-2", "a-2"].map(|id| json!({
+        "starts_at": id, "heading": format!("Thread {id}"), "text": "é".repeat(900),
+        "topics": [], "related": []
+    })));
+    setup.answer(&body);
+    let out = setup.run_any(&["session", "pass", "--json"], b"");
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let record = setup.record(ON).unwrap();
+    assert_eq!(record["log"].as_array().unwrap().len(), 3);
+    assert_eq!(record["log"][0]["state"], "sealed");
+    assert_eq!(record["log"][0]["last_message"], "a-1");
+    assert_eq!(record["log"][1]["last_message"], "u-2");
+    assert_eq!(record["log"][2]["state"], "open");
+}
+
+fn rebuild_args(confirm: bool) -> Vec<&'static str> {
+    let mut args = vec!["session", "rebuild", ON, "--author", "test-agent", "--json"];
+    if confirm {
+        args.push("--confirm");
+    }
+    args
+}
+
+#[test]
+fn rebuild_refusals_are_audited_and_leave_the_record_unchanged() {
+    let setup = Setup::new();
+    setup.scribe("/scribe on");
+    setup.pass();
+    let before = std::fs::read(setup.record_file()).unwrap();
+    let out = setup.run_any(&rebuild_args(false), b"");
+    assert_eq!(out.status.code(), Some(1));
+    let error: Value = serde_json::from_slice(&out.stderr).unwrap();
+    assert_eq!(error["code"], "confirm_required");
+    assert!(
+        error["error"]
+            .as_str()
+            .unwrap()
+            .contains("1 segment(s) and 1 pass(es)")
+    );
+    setup.scribe("/scribe off");
+    setup.scribe("/scribe on");
+    let out = setup.run_any(&rebuild_args(true), b"");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&out.stderr).unwrap()["code"],
+        "session_busy"
+    );
+    setup.scribe("/scribe off");
+    std::fs::remove_file(setup.transcript(ON)).unwrap();
+    let out = setup.run_any(&rebuild_args(true), b"");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&out.stderr).unwrap()["code"],
+        "transcript_missing"
+    );
+    assert_eq!(std::fs::read(setup.record_file()).unwrap(), before);
+    assert_eq!(setup.prompts().len(), 1, "no model calls for refusals");
+    let audit = std::fs::read_to_string(setup.fx.root().join("audit.jsonl")).unwrap();
+    let rebuilds: Vec<Value> = audit
+        .lines()
+        .map(|l| serde_json::from_str::<Value>(l).unwrap())
+        .filter(|l| l["command"] == "session rebuild")
+        .collect();
+    assert_eq!(rebuilds.len(), 3);
+    for line in rebuilds {
+        assert_eq!(line["target"], format!("session:{ON}"));
+        assert_eq!(line["status"], "failure");
+    }
+}
+
+#[test]
+fn rebuild_resumes_hidden_checkpoints_and_preserves_identity_links_and_activity() {
+    use scribe_core::activity::CatalogedBy;
+    use scribe_core::{Author, AuthorKind, LinkType, Redactor, SessionLink, Store};
+    let setup = Setup::new();
+    setup.scribe("/scribe on");
+    setup.pass();
+    let store = Store::open(setup.fx.root());
+    let id = ON.parse().unwrap();
+    let mut original = store.session(&id).unwrap().record;
+    original.active = false;
+    original.keep_active = true;
+    original.active_change = Some(scribe_core::activity::ActiveChange {
+        at: original.created,
+        by: Author {
+            kind: AuthorKind::Agent,
+            name: "curator".parse().unwrap(),
+        },
+        route: scribe_core::activity::ActiveRoute::Manual,
+        reason: String::from("No longer current"),
+        cite: Some(String::from("session:source#1")),
+    });
+    original.links = vec![SessionLink {
+        kind: LinkType::Continues,
+        session: NEVER.parse().unwrap(),
+    }];
+    original.cataloged_by = Some(CatalogedBy {
+        at: original.created,
+        by: Author {
+            kind: AuthorKind::Agent,
+            name: "cataloger".parse().unwrap(),
+        },
+    });
+    original.status = scribe_core::SessionStatus::Final;
+    original.log[0].state = scribe_core::SegmentState::Sealed;
+    original.log[0].origin = scribe_core::SegmentOrigin::Upgrade;
+    store
+        .settle_pass(&id, Some(original.clone()), false, &Redactor::new([]))
+        .unwrap();
+    let before = std::fs::read(setup.record_file()).unwrap();
+    setup.config("[catalog]\nwindow_messages = 2\nsegment_windows = 2\n");
+    setup.append(
+        ON,
+        &[
+            line("user", "u-2", "New work."),
+            line("assistant", "a-2", "Built it."),
+            line("user", "u-3", "Finish."),
+        ],
+    );
+    setup.answers(&[None, Some(answer()), None, Some(answer()), Some(answer())]);
+    let out = setup.run_any(&rebuild_args(true), b"");
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["passes"][0]["windows"], 1);
+    assert_eq!(report["passes"][0]["error_code"], "model_failed");
+    let checkpoint = setup
+        .record_file()
+        .with_file_name(format!(".{ON}.rebuild.md"));
+    assert!(checkpoint.is_file());
+    assert_eq!(std::fs::read(setup.record_file()).unwrap(), before);
+    assert_eq!(
+        store
+            .list_sessions(&scribe_core::SessionFilter {
+                include_inactive: true,
+                ..Default::default()
+            })
+            .unwrap()
+            .listing
+            .items
+            .len(),
+        1
+    );
+    let out = setup.run(&rebuild_args(true), b"");
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["passes"][0]["windows"], 2);
+    assert_eq!(
+        report["passes"][0]["author"],
+        json!({"kind": "agent", "name": "test-agent"})
+    );
+    let rebuilt = store.session(&id).unwrap().record;
+    assert_eq!(rebuilt.id, original.id);
+    assert_eq!(rebuilt.created, original.created);
+    assert_eq!(rebuilt.links, original.links);
+    assert_eq!(rebuilt.active, original.active);
+    assert_eq!(rebuilt.keep_active, original.keep_active);
+    assert_eq!(rebuilt.active_change, original.active_change);
+    assert_eq!(rebuilt.cataloged_by, original.cataloged_by);
+    assert_eq!(rebuilt.scribed_through.as_deref(), Some("u-3"));
+    assert_eq!(rebuilt.passes, 3);
+    assert_eq!(rebuilt.status, scribe_core::SessionStatus::Final);
+    assert!(
+        rebuilt
+            .log
+            .iter()
+            .all(|s| s.origin == scribe_core::SegmentOrigin::Rebuild
+                && s.state == scribe_core::SegmentState::Sealed)
+    );
+    assert!(!checkpoint.exists());
+    let prompts = setup.prompts();
+    assert!(
+        !prompts[3].contains("--- user · u-1 ---"),
+        "resume starts at failed window"
+    );
+    assert!(prompts[3].contains("--- user · u-2 ---"));
+    assert!(
+        prompts[1].contains("There is no record yet"),
+        "first rebuild window has no previous record"
+    );
+}
+
+#[test]
+fn rebuild_folds_newer_transcript_messages_after_a_visible_revision_changes() {
+    let setup = Setup::new();
+    setup.scribe("/scribe on");
+    setup.pass();
+    let extra = line("user", "u-later", "Work arriving during the rebuild.");
+    let extra_file = setup.fx.home().join("later.jsonl");
+    std::fs::write(&extra_file, format!("{extra}\n")).unwrap();
+    // The fake model deterministically performs the competing writer's
+    // publication before returning its first rebuild answer. No timing race,
+    // sleeps or concurrent test load is involved.
+    let quote = |path: PathBuf| format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"));
+    let record = quote(setup.record_file());
+    let transcript = quote(setup.transcript(ON));
+    let extra_file = quote(extra_file);
+    let script = format!(
+        r#"#!/bin/sh
+n=$(ls "$HOME" | grep -c '^claude-stdin')
+cat > "$HOME/claude-stdin-$n"
+if [ "$n" = 1 ]; then
+  sed 's/^updated: .*/updated: 2030-01-01T00:00:00Z/' {record} > "$HOME/revised.md"
+  chmod 600 "$HOME/revised.md"
+  mv "$HOME/revised.md" {record}
+  cat {extra_file} >> {transcript}
+fi
+{response}
+"#,
+        response = response(&answer())
+    );
+    setup.fx.fake_program("claude", &script);
+    let control_before = setup.control_bytes();
+    let out = setup.run(&rebuild_args(true), b"");
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["passes"][0]["windows"], 2);
+    let record = setup.record(ON).unwrap();
+    assert_eq!(record["scribed_through"], "u-later");
+    assert_eq!(record["log"][0]["origin"], "rebuild");
+    assert_eq!(setup.control_bytes(), control_before);
+    let prompts = setup.prompts();
+    assert!(prompts[2].contains("--- user · u-later ---"));
+    assert!(!prompts[2].contains("--- user · u-1 ---"));
 }

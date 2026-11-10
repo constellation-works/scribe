@@ -37,7 +37,9 @@
 mod audit;
 mod format;
 mod fsio;
+mod rebuild;
 mod redact;
+pub use rebuild::RebuildGuard;
 
 pub use audit::{AUDIT_FILE, AuditEvent, AuditStatus};
 pub use redact::{MIN_SECRET_CHARS, REDACTED_FIELDS, Redactor, unresolved_redact_env};
@@ -585,12 +587,25 @@ impl Store {
             Some(mut record) => {
                 // A link written while the model ran, or one waiting on the
                 // switch for the first record, is kept: never lost to a pass.
-                if let Some(file) = self
+                let current = self
                     .session_files()?
                     .into_iter()
                     .find(|f| f.stem == session.as_str())
-                    && let Ok(current) = file.load()
-                {
+                    .map(|f| f.load())
+                    .transpose()?;
+                if let Some(current) = &current {
+                    for sealed in current
+                        .log
+                        .iter()
+                        .filter(|s| s.state == crate::SegmentState::Sealed)
+                    {
+                        if record.segment(sealed.n.get()) != Some(sealed) {
+                            return Err(Error::SealedSegmentChanged {
+                                id: session.clone(),
+                                n: sealed.n.get(),
+                            });
+                        }
+                    }
                     merge_links(&mut record.links, &current.links);
                 }
                 let pending = self
@@ -600,6 +615,18 @@ impl Store {
                     .unwrap_or_default();
                 merge_links(&mut record.links, &pending);
                 redactor.session(&mut record);
+                // A changed redaction configuration cannot rewrite sealed history.
+                if let Some(current) = current {
+                    for sealed in current
+                        .log
+                        .into_iter()
+                        .filter(|s| s.state == crate::SegmentState::Sealed)
+                    {
+                        if let Some(segment) = record.log.iter_mut().find(|s| s.n == sealed.n) {
+                            *segment = sealed;
+                        }
+                    }
+                }
                 let path = self.session_path(&record);
                 let mut dir = self.root.join(SESSIONS_DIR);
                 self.prepare_subdir(&dir)?;

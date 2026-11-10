@@ -1859,6 +1859,33 @@ As built (S8):
   session is `session_busy`; an interrupted rebuild resumes from its
   checkpoint and the record is untouched until the last window.
 
+As built (S9):
+
+- The model port now answers with the header, `open` and `new` of §5.5;
+  the legacy `outcome` is no longer requested. The public record JSON keeps
+  `outcome: ""`. Header summary is bounded to 1200 characters. Segment
+  content, ordered starts, ranges, timestamps and sealing are checked in
+  `scribe-core::pass`; a refusal retries once and retains the bounded,
+  redacted pass failure reason introduced before S9.
+- `[catalog] segment_windows` parses as a positive integer (default 3).
+  The store compares every sealed segment before any record replacement
+  by a pass and retains its bytes through redaction. Pass reports add
+  `segments` and `segments_sealed`; a final pass with no new messages also
+  counts the segment it seals without calling a model.
+- `session rebuild` checkpoints the same session shape in
+  `.<id>.rebuild.md`, with `updated` pinning the visible record revision.
+  A separate owner-only `.<id>.rebuild.lock` serializes rebuilders; it is
+  released by the OS on interruption and skipped by readers. Every window
+  is redacted and written under the store lock. Final replacement compares
+  the visible revision, and a mismatch re-reads the transcript, folds in
+  newer messages and retries. The successful replacement removes the
+  checkpoint and preserves the latest identity, links and activity fields.
+- `--author` names the requesting agent in the rebuild's pass report;
+  `cataloged_by` keeps its original attribution. Rebuild does not alter
+  control state. Its refusal and success each write one audit line with
+  the session target. Repeating the confirmed command resumes after a
+  failed model window. No persisted shape changes beyond S8 were needed.
+
 **S10 — Active routes.** Depends on S8.
 
 - `scribe session deactivate <id> --author <name> --reason <text> [--cite

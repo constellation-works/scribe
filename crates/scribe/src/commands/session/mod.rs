@@ -7,9 +7,11 @@
 //! table of contents, `--log` every segment's text, and `--segment <n>` (or
 //! the id written as the cite `session:<id>#<n>`) one segment. `list` and `show`
 //! read only and make one store call each (STD-02 R2); `pass`, run by the
-//! enabled routine or by hand, lives in `pass.rs`.
+//! enabled routine or by hand, lives in `pass.rs`; `rebuild` replaces a
+//! record from its transcript with resumable private checkpoints in `rebuild.rs`.
 
 pub(in crate::commands) mod pass;
+pub(in crate::commands) mod rebuild;
 
 use super::{ListNotice, list_output};
 use crate::app::Context;
@@ -54,6 +56,9 @@ pub(crate) enum SessionCommand {
     /// Write the record of each session whose pass is due, or of the sessions named, with the session model
     #[command(after_help = pass::PASS_EXAMPLES)]
     Pass(pass::PassArgs),
+    /// Replace a session record with a log rebuilt from its transcript, resuming interrupted windows
+    #[command(after_help = rebuild::EXAMPLES)]
+    Rebuild(rebuild::RebuildArgs),
 }
 
 /// Arguments to `session list`.
@@ -125,6 +130,9 @@ impl SessionCommand {
     pub(super) fn audit(&self) -> Option<AuditMeta> {
         match self {
             Self::List(_) | Self::Show(_) => None,
+            Self::Rebuild(_) => Some(AuditMeta {
+                command: rebuild::COMMAND,
+            }),
             Self::Pass(_) => Some(AuditMeta {
                 command: pass::COMMAND,
             }),
@@ -137,6 +145,7 @@ pub(super) fn run(command: SessionCommand, ctx: &Context) -> Result<Output, CliE
     match command {
         SessionCommand::List(args) => list(args, ctx),
         SessionCommand::Show(args) => show(&args, ctx),
+        SessionCommand::Rebuild(args) => rebuild::run(&args, ctx),
         SessionCommand::Pass(args) => pass::run(&args, ctx),
     }
 }

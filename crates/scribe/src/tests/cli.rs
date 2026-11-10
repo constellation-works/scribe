@@ -197,7 +197,11 @@ fn documented_invocation(line: &str) -> Option<Vec<OsString>> {
     // A stdin redirection is the shell's, not an argument.
     let command = command.split(" < ").next().unwrap_or(command);
     let command = command.split("  #").next().unwrap_or(command);
-    let words = shell_words(&command.replace("<id>", "decisions-1"));
+    let words = shell_words(
+        &command
+            .replace("<id>", "decisions-1")
+            .replace("<name>", "test-agent"),
+    );
     Some(words.into_iter().map(OsString::from).collect())
 }
 

@@ -1,6 +1,6 @@
 use super::{T0, session};
 use crate::entry::Speaker;
-use crate::models::{PassMessage, SessionAnswer, TermAnswer};
+use crate::models::{NewSegmentAnswer, PassMessage, SegmentAnswer, SessionAnswer, TermAnswer};
 use crate::pass::{self, Invalid, PassMeta, WINDOW_CHARS};
 use crate::session::{SegmentOrigin, SegmentState, SessionStatus};
 use crate::transcript::Message;
@@ -120,12 +120,33 @@ fn answer() -> SessionAnswer {
         title: String::from("Planning the orchestrator"),
         summary: String::from("Daniel planned the resident orchestrator."),
         goals: String::from("Define the orchestrator."),
-        outcome: String::from("A definition."),
+        open: None,
+        new: vec![NewSegmentAnswer {
+            starts_at: String::from("u-1"),
+            heading: String::from("Planning the orchestrator"),
+            text: String::from("A definition."),
+            topics: Vec::new(),
+            related: Vec::new(),
+        }],
         next: vec![String::from("write the design"), String::from(" ")],
         topics: vec![String::from("orchestration"), String::from("orchestration")],
         related: vec![String::from("task:ORB-1"), String::from("not a reference")],
         terms: Vec::new(),
     }
+}
+
+fn check(answer: SessionAnswer, conversation: &[PassMessage]) -> Result<pass::Distilled, Invalid> {
+    let previous = answer.open.as_ref().map(|_| session("s-1", T0));
+    let request = pass::request(
+        "fake",
+        previous.as_ref(),
+        Vec::new(),
+        pass::window(conversation, None, WINDOW_CHARS),
+        Vec::new(),
+        Vec::new(),
+        false,
+    );
+    pass::check(answer, conversation, &request)
 }
 
 fn term(term: &str, said: &str, message: &str) -> TermAnswer {
@@ -156,7 +177,7 @@ fn a_term_is_kept_only_when_said_is_verbatim_from_daniels_own_turn() {
         // The same term again, differently cased.
         term("Resident  Orchestrator", DEFINED, "u-1"),
     ];
-    let distilled = pass::check(a, &conversation).unwrap();
+    let distilled = check(a, &conversation).unwrap();
     assert_eq!(distilled.terms.len(), 1);
     let kept = &distilled.terms[0];
     assert_eq!(kept.term, "resident orchestrator");
@@ -175,48 +196,45 @@ fn a_term_is_kept_only_when_said_is_verbatim_from_daniels_own_turn() {
 fn an_answer_over_budget_or_out_of_shape_is_refused_whole() {
     let conversation = pass::conversation(&transcript());
     let mut over = answer();
-    over.summary = "s".repeat(1501);
+    over.summary = "s".repeat(1201);
     assert_eq!(
-        pass::check(over, &conversation),
+        check(over, &conversation),
         Err(Invalid::OverBudget {
             field: "Summary",
-            chars: 1501,
-            max: 1500
+            chars: 1201,
+            max: 1200
         })
     );
     let mut next = answer();
     next.next = vec!["n".repeat(999)];
     assert!(matches!(
-        pass::check(next, &conversation),
+        check(next, &conversation),
         Err(Invalid::OverBudget { field: "next", .. })
     ));
     let mut title = answer();
     title.title = String::from("two\nlines");
-    assert_eq!(pass::check(title, &conversation), Err(Invalid::Title));
+    assert_eq!(check(title, &conversation), Err(Invalid::Title));
     let mut heading = answer();
-    heading.outcome = String::from("done\n## Next\nmore");
+    heading.summary = String::from("done\n## Next\nmore");
     assert_eq!(
-        pass::check(heading, &conversation),
-        Err(Invalid::Heading("Outcome"))
+        check(heading, &conversation),
+        Err(Invalid::Heading("Summary"))
     );
     let mut topics = answer();
     topics.topics = vec![String::from("Continuous Integration")];
     assert!(matches!(
-        pass::check(topics, &conversation),
+        check(topics, &conversation),
         Err(Invalid::Topics(_))
     ));
     let mut many = answer();
     many.topics = (0..6).map(|n| format!("t{n}")).collect();
     assert!(matches!(
-        pass::check(many, &conversation),
+        check(many, &conversation),
         Err(Invalid::Topics(_))
     ));
     let mut empty = answer();
     empty.summary = String::from("  ");
-    assert_eq!(
-        pass::check(empty, &conversation),
-        Err(Invalid::EmptySummary)
-    );
+    assert_eq!(check(empty, &conversation), Err(Invalid::EmptySummary));
 }
 
 fn meta(now: time::OffsetDateTime, through: &str, final_pass: bool) -> PassMeta {
@@ -234,6 +252,9 @@ fn meta(now: time::OffsetDateTime, through: &str, final_pass: bool) -> PassMeta 
         first_message: Some(String::from("m-1")),
         from: T0,
         to: now,
+        window: vec![(String::from("m-1"), T0), (through.to_owned(), now)],
+        segment_windows: pass::SEGMENT_WINDOWS,
+        origin: SegmentOrigin::Pass,
     }
 }
 
@@ -245,7 +266,7 @@ fn a_record_advances_scribed_through_and_keeps_where_it_lives() {
     let now = T0 + Duration::minutes(30);
     let first = pass::record(
         None,
-        pass::check(a, &conversation).unwrap(),
+        check(a, &conversation).unwrap(),
         meta(now, "a-1", false),
     );
     assert_eq!(first.passes, 1);
@@ -263,7 +284,7 @@ fn a_record_advances_scribed_through_and_keeps_where_it_lives() {
     b.terms = vec![term("RESIDENT orchestrator", DEFINED, "u-1")];
     let second = pass::record(
         Some(&previous),
-        pass::check(b, &conversation).unwrap(),
+        check(b, &conversation).unwrap(),
         meta(later, "a-2", true),
     );
     assert_eq!(second.passes, 5);
@@ -282,13 +303,12 @@ fn a_record_advances_scribed_through_and_keeps_where_it_lives() {
 
 #[test]
 fn passes_grow_the_open_segment_and_the_last_one_seals_it() {
-    // Interim S8 log behaviour: the answer's outcome is the open segment's
-    // text; a sealed log (an upgraded record) gains segment n + 1.
+    // An open segment is rewritten; an upgraded sealed log gains segment n + 1.
     let conversation = pass::conversation(&transcript());
     let now = T0 + Duration::minutes(30);
     let first = pass::record(
         None,
-        pass::check(answer(), &conversation).unwrap(),
+        check(answer(), &conversation).unwrap(),
         meta(now, "a-1", false),
     );
     assert_eq!(first.log.len(), 1);
@@ -304,10 +324,16 @@ fn passes_grow_the_open_segment_and_the_last_one_seals_it() {
 
     let later = now + Duration::minutes(20);
     let mut b = answer();
-    b.outcome = String::from("A definition, and a plan.");
+    b.open = Some(SegmentAnswer {
+        heading: b.new[0].heading.clone(),
+        text: String::from("A definition, and a plan."),
+        topics: Vec::new(),
+        related: Vec::new(),
+    });
+    b.new.clear();
     let second = pass::record(
         Some(&first),
-        pass::check(b, &conversation).unwrap(),
+        check(b, &conversation).unwrap(),
         meta(later, "a-2", false),
     );
     assert_eq!(second.log.len(), 1, "the open segment grows");
@@ -325,7 +351,7 @@ fn passes_grow_the_open_segment_and_the_last_one_seals_it() {
     upgraded.log[0].origin = SegmentOrigin::Upgrade;
     let next = pass::record(
         Some(&upgraded),
-        pass::check(answer(), &conversation).unwrap(),
+        check(answer(), &conversation).unwrap(),
         meta(later, "a-2", true),
     );
     assert_eq!(next.log.len(), 2);
