@@ -55,7 +55,26 @@ pub(super) fn run(command: TagCommand, ctx: &Context) -> Result<Output, CliError
     match command {
         TagCommand::List(ListArgs {}) => list(ctx),
         TagCommand::Add(args) => {
-            let redactor = ctx.redactor(&ctx.store().config()?)?;
+            if args.description.trim().is_empty() || args.description.chars().count() > 300 {
+                return Err(super::entry::agent_refusal(
+                    scribe_core::WriteRefusal::InvalidText,
+                    "description must contain 1-300 characters",
+                ));
+            }
+            let config = ctx.store().config()?;
+            if config.tags.get(&args.name).is_some()
+                || ctx
+                    .store()
+                    .store_tags()?
+                    .iter()
+                    .any(|t| t.name == args.name)
+            {
+                return Err(super::entry::agent_refusal(
+                    scribe_core::WriteRefusal::TagConflict,
+                    "tag already exists",
+                ));
+            }
+            let redactor = ctx.redactor(&config)?;
             let now = ctx.now();
             let tag = ctx.store().add_agent_tag(
                 scribe_core::StoreTag {
@@ -73,6 +92,35 @@ pub(super) fn run(command: TagCommand, ctx: &Context) -> Result<Output, CliError
             Ok(Output::written(Record::Tag(Box::new(tag)), true))
         }
         TagCommand::Update(args) => {
+            if let Some(description) = &args.description
+                && (description.trim().is_empty() || description.chars().count() > 300)
+            {
+                return Err(super::entry::agent_refusal(
+                    scribe_core::WriteRefusal::InvalidText,
+                    "description must contain 1-300 characters",
+                ));
+            }
+            {
+                let stored = ctx.store().store_tags()?;
+                if !stored.iter().any(|t| t.name == args.name) {
+                    if ctx
+                        .store()
+                        .config()?
+                        .tags
+                        .resolve(args.name.as_str())
+                        .is_some()
+                    {
+                        return Err(super::entry::agent_refusal(
+                            scribe_core::WriteRefusal::TagConfigured,
+                            "edit config.toml to change a configured tag",
+                        ));
+                    }
+                    return Err(super::entry::agent_refusal(
+                        scribe_core::WriteRefusal::TagNotFound,
+                        "no store tag with that name",
+                    ));
+                }
+            }
             let redactor = ctx.redactor(&ctx.store().config()?)?;
             let (tag, changed) = ctx.store().update_agent_tag(
                 &args.name,

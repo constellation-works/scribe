@@ -123,7 +123,7 @@ pub(in crate::commands) fn resolve_transcript(
         Ok(full) => full
             .parse::<SessionId>()
             .map_err(|e| CliError::Usage(e.to_string())),
-        Err(err) if err.code() == "id_ambiguous" => Err(err.into()),
+        Err(err) if matches!(err.code(), "id_ambiguous" | "usage_error") => Err(err.into()),
         Err(_) => Err(CliError::TranscriptNotFound {
             id: input.clone(),
             dir,

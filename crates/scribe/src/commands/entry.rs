@@ -153,9 +153,24 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
         EntryCommand::List(args) => list(args, ctx),
         EntryCommand::Show(args) => show(&args, ctx),
         EntryCommand::Add(args) => {
-            let redactor = ctx.redactor(&ctx.store().config()?)?;
-            let topics = scribe_core::Topics::try_from(args.topic)
+            // Validate arguments before the redactor, so a bad tag or empty
+            // content is reported before a `[redact] env` problem.
+            let topics = scribe_core::Topics::try_from(args.topic.clone())
                 .map_err(|e| CliError::Usage(e.to_string()))?;
+            if args.content.trim().is_empty() {
+                return Err(agent_refusal(
+                    scribe_core::WriteRefusal::InvalidText,
+                    "text must not be empty",
+                ));
+            }
+            let config = ctx.store().config()?;
+            if config.tags.resolve(args.tag.as_str()).is_none() {
+                return Err(agent_refusal(
+                    scribe_core::WriteRefusal::TagNotFound,
+                    "unknown tag; run 'scribe tag list'",
+                ));
+            }
+            let redactor = ctx.redactor(&config)?;
             let entry = ctx.store().add_agent_entry(
                 scribe_core::AgentEntry {
                     tag: args.tag,
@@ -172,6 +187,19 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
             Ok(written(entry, true))
         }
         EntryCommand::Update(args) => {
+            if args.content.as_deref().is_some_and(|c| c.trim().is_empty()) {
+                return Err(agent_refusal(
+                    scribe_core::WriteRefusal::InvalidText,
+                    "text must not be empty",
+                ));
+            }
+            let existing = ctx.store().resolve_entry(&args.id)?;
+            if args.content.is_some() && existing.author.kind != AuthorKind::Agent {
+                return Err(agent_refusal(
+                    scribe_core::WriteRefusal::DanielOnly,
+                    "Daniel's content changes only through #scribe",
+                ));
+            }
             let redactor = ctx.redactor(&ctx.store().config()?)?;
             let (entry, changed) = ctx.store().update_agent_entry(
                 &args.id,
@@ -189,6 +217,8 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
             Ok(written(entry, changed))
         }
         EntryCommand::Retire(args) => {
+            check_reason(&args.reason)?;
+            ctx.store().resolve_entry(&args.id)?;
             let redactor = ctx.redactor(&ctx.store().config()?)?;
             let (entry, changed) = ctx.store().retire_agent_entry(
                 &args.id,
@@ -325,6 +355,29 @@ pub(crate) struct RetireArgs {
     /// Why the note no longer applies
     #[arg(long)]
     reason: String,
+}
+
+pub(super) fn agent_refusal(kind: scribe_core::WriteRefusal, message: &str) -> CliError {
+    CliError::Core(scribe_core::Error::AgentWrite {
+        kind,
+        message: message.to_owned(),
+    })
+}
+
+pub(super) fn check_reason(reason: &str) -> Result<(), CliError> {
+    if reason.trim().is_empty() {
+        return Err(agent_refusal(
+            scribe_core::WriteRefusal::InvalidText,
+            "text must not be empty",
+        ));
+    }
+    if reason.chars().count() > 300 {
+        return Err(agent_refusal(
+            scribe_core::WriteRefusal::InvalidText,
+            "reason must contain at most 300 characters",
+        ));
+    }
+    Ok(())
 }
 
 fn written(entry: scribe_core::Entry, changed: bool) -> Output {

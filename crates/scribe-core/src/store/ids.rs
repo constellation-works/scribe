@@ -25,17 +25,25 @@ pub(super) fn resolve(input: &str, ids: &[String], missing: WriteRefusal) -> Res
     if let Some(i) = ids.iter().position(|id| id == input) {
         return Ok(i);
     }
+    if input.chars().count() < MIN_PREFIX {
+        return Err(refusal(
+            WriteRefusal::InvalidId,
+            format!(
+                "id prefix '{input}' is too short; use at least {MIN_PREFIX} characters or the full id"
+            ),
+        ));
+    }
     let matches: Vec<usize> = ids
         .iter()
         .enumerate()
-        .filter(|(_, id)| input.chars().count() >= MIN_PREFIX && id.starts_with(input))
+        .filter(|(_, id)| id.starts_with(input))
         .map(|(i, _)| i)
         .collect();
     match matches.as_slice() {
         [i] => Ok(*i),
         [] => Err(refusal(
             missing,
-            "no matching id; list records with the same --root",
+            format!("no matching id '{input}'; list records with the same --root"),
         )),
         _ => Err(ambiguous(input, matches.iter().map(|i| ids[*i].as_str()))),
     }

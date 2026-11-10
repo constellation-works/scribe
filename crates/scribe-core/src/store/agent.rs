@@ -91,6 +91,14 @@ impl Store {
         self.entry(&id)
     }
 
+    /// Resolve an exact proposal id or a unique prefix of at least four characters.
+    pub fn resolve_proposal(&self, input: &str) -> Result<Proposal> {
+        let proposals = self.proposals()?;
+        let ids: Vec<String> = proposals.iter().map(|p| p.id.to_string()).collect();
+        let i = resolve(input, &ids, WriteRefusal::ProposalNotFound)?;
+        Ok(proposals[i].clone())
+    }
+
     /// Create a note with agent provenance, allocating an unused id under the lock.
     pub fn add_agent_entry(
         &self,

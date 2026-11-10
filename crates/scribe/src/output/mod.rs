@@ -107,8 +107,17 @@ pub(crate) fn finish_parse_error(err: &clap::Error, args: &[OsString]) -> ExitCo
     let env_format = std::env::var(FORMAT_ENV).ok();
     let rendered = err.render().to_string();
     if sink::raw_args_request_json(args, env_format.as_deref()) {
-        let first = rendered.lines().next().unwrap_or_default();
-        let message = first.strip_prefix("error: ").unwrap_or(first);
+        // Keep the whole detail block (the arguments clap names), not just
+        // its first line: drop the `Usage:`/`For more information` tail.
+        let detail = rendered
+            .split("\nUsage:")
+            .next()
+            .unwrap_or_default()
+            .split("\n\nFor more information")
+            .next()
+            .unwrap_or_default()
+            .trim_end();
+        let message = detail.strip_prefix("error: ").unwrap_or(detail);
         write_json_error(message, "usage_error");
     } else {
         let _ = io::stderr().lock().write_all(rendered.as_bytes());

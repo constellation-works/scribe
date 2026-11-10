@@ -3,6 +3,6 @@ description Agent notes
 aliases     note
 author      agent:opus
 updated_by  -
-stale_after_days-
+stale_after_days -
 created     2026-11-10T01:00:00Z
 updated     2026-11-10T01:00:00Z

@@ -106,6 +106,25 @@ pub(super) fn run(command: ProposalCommand, ctx: &Context) -> Result<Output, Cli
     match command {
         ProposalCommand::List(args) => list(&args, ctx),
         ProposalCommand::Add(args) => {
+            super::entry::check_reason(&args.reason)?;
+            let older = ctx.store().resolve_entry(&args.older)?;
+            let newer = args
+                .newer
+                .as_deref()
+                .map(|id| ctx.store().resolve_entry(id))
+                .transpose()?;
+            if matches!(args.kind, Kind::Supersedes) != newer.is_some() {
+                return Err(super::entry::agent_refusal(
+                    scribe_core::WriteRefusal::ProposalInvalid,
+                    "supersedes requires --newer; stale forbids it",
+                ));
+            }
+            if newer.as_ref().is_some_and(|e| e.id == older.id) {
+                return Err(super::entry::agent_refusal(
+                    scribe_core::WriteRefusal::ProposalInvalid,
+                    "older and newer must differ",
+                ));
+            }
             let redactor = ctx.redactor(&ctx.store().config()?)?;
             let kind = match args.kind {
                 Kind::Stale => scribe_core::ProposalKind::Stale,
@@ -123,6 +142,8 @@ pub(super) fn run(command: ProposalCommand, ctx: &Context) -> Result<Output, Cli
             Ok(written(proposal, changed))
         }
         ProposalCommand::Update(args) => {
+            super::entry::check_reason(&args.reason)?;
+            ctx.store().resolve_proposal(&args.id)?;
             let redactor = ctx.redactor(&ctx.store().config()?)?;
             let (proposal, changed) = ctx.store().change_agent_proposal(
                 &args.id,
@@ -135,6 +156,10 @@ pub(super) fn run(command: ProposalCommand, ctx: &Context) -> Result<Output, Cli
             Ok(written(proposal, changed))
         }
         ProposalCommand::Settle(args) => {
+            if let Some(reason) = &args.reason {
+                super::entry::check_reason(reason)?;
+            }
+            ctx.store().resolve_proposal(&args.id)?;
             let redactor = ctx.redactor(&ctx.store().config()?)?;
             let (proposal, changed) = ctx.store().change_agent_proposal(
                 &args.id,

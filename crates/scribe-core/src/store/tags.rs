@@ -36,13 +36,13 @@ impl Store {
         tag.author.kind = AuthorKind::Agent;
         tag.updated_by = None;
         let config = self.config()?;
+        let mut tags = self.store_tags()?;
+        if config.tags.get(&tag.name).is_some() || tags.iter().any(|t| t.name == tag.name) {
+            return Err(refusal(WriteRefusal::TagConflict, "tag already exists"));
+        }
         let mut defs = config.tags.tags().to_vec();
         defs.push(tag.definition());
         TagTable::new(defs).map_err(|e| refusal(WriteRefusal::TagConflict, e.to_string()))?;
-        let mut tags = self.store_tags()?;
-        if tags.iter().any(|t| t.name == tag.name) {
-            return Err(refusal(WriteRefusal::TagConflict, "tag already exists"));
-        }
         redactor.tag(&mut tag);
         tags.push(tag.clone());
         self.write_tags(&tags)?;

@@ -28,9 +28,8 @@ pub enum Error {
         message: String,
     },
 
-    /// No entry has this id. The message names the file looked for, so a
-    /// mis-resolved data directory is visible (STD-02 R26).
-    #[error("no entry {id}: {} does not exist", path.display())]
+    /// No entry has this id.
+    #[error("no entry {id}")]
     EntryNotFound {
         /// The id that was looked up.
         id: EntryId,
@@ -38,7 +37,7 @@ pub enum Error {
         path: PathBuf,
     },
     /// No session record has this id.
-    #[error("no session record {id} under {}", path.display())]
+    #[error("no session record {id}")]
     SessionNotFound {
         /// The id that was looked up.
         id: SessionId,

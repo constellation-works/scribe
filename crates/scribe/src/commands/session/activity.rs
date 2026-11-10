@@ -95,7 +95,11 @@ pub(crate) struct ActivateArgs {
 pub(super) fn deactivate(args: DeactivateArgs, ctx: &Context) -> Result<Output, CliError> {
     let id = ctx.store().resolve_session(&whole_session(&args.id)?)?;
     let reason = reason("--reason", &args.reason)?;
-    let cite = args.cite.as_deref().map(cite).transpose()?;
+    let cite = args
+        .cite
+        .as_deref()
+        .map(|text| validated_cite(ctx.store(), text))
+        .transpose()?;
     let request = SetActive::Deactivate {
         by: Author::agent(args.author),
         route: ActiveRoute::Manual,
@@ -190,6 +194,53 @@ fn reason(flag: &str, text: &str) -> Result<String, CliError> {
         )));
     }
     Ok(text.to_owned())
+}
+
+/// A `--cite` that names a real record: `session:<id>`, `session:<id>#<n>`
+/// (that segment must exist) or an entry id. Returns the canonical cite.
+fn validated_cite(store: &scribe_core::Store, text: &str) -> Result<String, CliError> {
+    let text = cite(text)?;
+    let invalid = |why: String| {
+        CliError::Usage(format!(
+            "--cite '{text}' is not a known record: {why}; use session:<id>, session:<id>#<n> or an entry id"
+        ))
+    };
+    if let Some(rest) = text.strip_prefix("session:") {
+        let (id, segment) = match rest.split_once('#') {
+            Some((id, n)) => {
+                let n = n.parse::<std::num::NonZeroU32>().map_err(|_| {
+                    invalid(format!("invalid segment '{n}'; expected session:<id>#<n>"))
+                })?;
+                (id, Some(n))
+            }
+            None => (rest, None),
+        };
+        let id = id
+            .parse::<SessionId>()
+            .map_err(|e| invalid(e.to_string()))?;
+        let resolved = store
+            .resolve_session(&id)
+            .map_err(|e| invalid(e.to_string()))?;
+        if let Some(n) = segment {
+            let view = store
+                .session(&resolved)
+                .map_err(|e| invalid(e.to_string()))?;
+            if view.record.segment(n.get()).is_none() {
+                return Err(invalid(format!("session {resolved} has no segment {n}")));
+            }
+            return Ok(format!("session:{resolved}#{n}"));
+        }
+        return Ok(format!("session:{resolved}"));
+    }
+    if text.contains(':') || text.contains('#') {
+        return Err(invalid(String::from(
+            "expected session:<id>, session:<id>#<n> or an entry id",
+        )));
+    }
+    let entry = store
+        .resolve_entry(&text)
+        .map_err(|e| invalid(e.to_string()))?;
+    Ok(entry.id.to_string())
 }
 
 /// A cite: one token of at most [`CITE_CHARS`] characters.
