@@ -716,7 +716,7 @@ pub(crate) struct TranscriptPayload {
     pub(crate) daniel_first_turns: Option<Vec<String>>,
 }
 
-/// The reply a Claude Code hook prints: the same text for Daniel
+/// The reply a Claude Code hook prints: text for Daniel
 /// (`systemMessage`) and for the main agent (`additionalContext`), plus what
 /// the audit log records for the run. Its JSON shape is Claude Code's hook
 /// protocol, so it is the same in every output mode.
