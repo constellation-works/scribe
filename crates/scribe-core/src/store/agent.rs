@@ -337,6 +337,7 @@ impl Store {
         let i = resolve(id, &ids, WriteRefusal::ProposalNotFound)?;
         let p = &mut proposals[i];
         let before = p.clone();
+        let reason_changed = reason.is_some_and(|r| redactor.mask(r) != p.reason);
         let mut changed_entry = None;
         if change != crate::ProposalChange::Update {
             let approve = change == crate::ProposalChange::Approve;
@@ -374,9 +375,14 @@ impl Store {
                         "older entry is no longer active",
                     ));
                 }
+                if reason_changed {
+                    p.updated_by = Some(Author::agent(author.clone()));
+                }
                 p.settled_author = Some(Author::agent(author.clone()));
                 crate::consistency::apply_approval(p, &mut older, now);
                 changed_entry = Some(older);
+            } else if reason_changed {
+                p.updated_by = Some(Author::agent(author.clone()));
             }
             p.state = state;
             p.settled_at = Some(now);
@@ -396,7 +402,7 @@ impl Store {
                 ));
             }
             // Preserve the creator while recording who revised the reason.
-            if reason.is_some_and(|r| redactor.mask(r) != p.reason) {
+            if reason_changed {
                 p.updated_by = Some(Author::agent(author));
             }
         }

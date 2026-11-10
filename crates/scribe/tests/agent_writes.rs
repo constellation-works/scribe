@@ -230,6 +230,7 @@ fn proposals_update_settle_and_replay_with_agent_authorship() {
         serde_json::json!({"kind":"agent","name":"daniel"})
     );
     assert_eq!(settled["settled_by"], serde_json::Value::Null);
+    assert_eq!(settled["updated_by"]["name"], "daniel");
     let entry = json(&fx.ok(&["entry", "show", "decisions-1", "--json"]).stdout);
     assert_eq!(entry["status"], "superseded");
     assert_eq!(entry["superseded_by"], "decisions-2");
