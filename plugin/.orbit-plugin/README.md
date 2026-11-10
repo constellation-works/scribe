@@ -37,6 +37,14 @@ orbit plugin add plugin/.orbit-plugin
 orbit plugin enable scribe --grant fs,network,env_pass,orbit_tools
 ```
 
+An install after a plugin change runs:
+
+```sh
+claude plugin marketplace update scribe-local
+claude plugin update scribe@scribe-local
+orbit plugin upgrade scribe plugin/.orbit-plugin --grant fs,network,env_pass,orbit_tools
+```
+
 Then set the store root and the transcripts directory in the workspace's
 Orbit config and check one call:
 
@@ -71,8 +79,15 @@ session stays due; a completed pass resets backoff. JSON adds `windows`
 per session (persisted this run), and `remaining` includes sessions waiting
 for backoff or the routine's time budget. On macOS, verify `claude` is
 reachable from the clock's environment before enabling the routine.
-Reinstall the Claude Code package
-(`claude plugin install scribe --marketplace ./plugin`) so its
+After a plugin change, refresh the package and upgrade the plugin:
+
+```sh
+claude plugin marketplace update scribe-local
+claude plugin update scribe@scribe-local
+orbit plugin upgrade scribe plugin/.orbit-plugin --grant fs,network,env_pass,orbit_tools
+```
+
+(or `claude plugin install scribe --marketplace ./plugin` on a fresh install) so its
 `SessionStart` hook is registered.
 
 The grants are: `fs` (read and write the store root, read the transcripts
