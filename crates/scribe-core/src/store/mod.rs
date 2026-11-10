@@ -638,25 +638,35 @@ impl Store {
     /// pass produced one) whole with [`fsio::write_atomic`], its free text
     /// masked by `redactor`, then settle the session's switch with
     /// [`control::settle`]. Returns the record as written.
+    ///
+    /// `expected` is the `updated` revision the pass loaded (`None` when it
+    /// loaded no record). Under the lock it is compared with the record on
+    /// disk before anything is written; a mismatch refuses the write with
+    /// [`Error::RecordChanged`], leaving the record on disk unchanged and
+    /// the session due, so the next run starts from that record. This
+    /// mirrors [`Store::finish_rebuild`].
     pub fn settle_pass(
         &self,
         session: &SessionId,
         record: Option<SessionRecord>,
         ran_final: bool,
+        expected: Option<time::OffsetDateTime>,
         redactor: &Redactor,
     ) -> Result<Option<SessionRecord>> {
-        self.write_pass(session, record, Some(ran_final), redactor)
+        self.write_pass(session, record, Some(ran_final), expected, redactor)
     }
 
     /// Persist one intermediate window under the store lock, redacted and
     /// atomically replaced. Keep the pass due until its last window settles.
+    /// `expected` is checked as in [`Store::settle_pass`].
     pub fn checkpoint_pass(
         &self,
         record: SessionRecord,
+        expected: Option<time::OffsetDateTime>,
         redactor: &Redactor,
     ) -> Result<Option<SessionRecord>> {
         let session = record.id.clone();
-        self.write_pass(&session, Some(record), None, redactor)
+        self.write_pass(&session, Some(record), None, expected, redactor)
     }
 
     fn write_pass(
@@ -664,10 +674,27 @@ impl Store {
         session: &SessionId,
         record: Option<SessionRecord>,
         ran_final: Option<bool>,
+        expected: Option<time::OffsetDateTime>,
         redactor: &Redactor,
     ) -> Result<Option<SessionRecord>> {
         self.prepare_dir(&self.root)?;
         let _lock = self.lock("session pass")?;
+        // Compare the revision the pass loaded with the one on disk before
+        // any write (record or control), so a rebuild that finished while
+        // the model ran is never overwritten by this stale pass. A link
+        // keeps `updated`, so a linked record still matches and its links
+        // are merged below.
+        let current = self
+            .session_files()?
+            .into_iter()
+            .find(|f| f.stem == session.as_str())
+            .map(|f| f.load())
+            .transpose()?;
+        if current.as_ref().map(|c| c.updated) != expected {
+            return Err(Error::RecordChanged {
+                id: session.clone(),
+            });
+        }
         // An explicit pass can start when not due. Publish the obligation
         // before the checkpoint, so interruption cannot strand its remainder.
         if ran_final.is_none() {
@@ -681,12 +708,6 @@ impl Store {
             Some(mut record) => {
                 // A link written while the model ran, or one waiting on the
                 // switch for the first record, is kept: never lost to a pass.
-                let current = self
-                    .session_files()?
-                    .into_iter()
-                    .find(|f| f.stem == session.as_str())
-                    .map(|f| f.load())
-                    .transpose()?;
                 if let Some(current) = &current {
                     for sealed in current
                         .log

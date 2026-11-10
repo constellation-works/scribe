@@ -1035,6 +1035,73 @@ fn s9_answers_write_bounded_segments_instead_of_one_outcome() {
     assert_eq!(record["log"][2]["state"], "open");
 }
 
+#[test]
+fn a_pass_refuses_when_the_record_changed_since_it_was_loaded() {
+    let setup = Setup::new();
+    setup.scribe("/scribe on");
+    setup.pass();
+    // A rebuilt record, as `finish_rebuild` would publish it: same record
+    // with a new `updated` revision and a rebuilt summary.
+    let original = std::fs::read_to_string(setup.record_file()).unwrap();
+    let rebuilt_text: String = original
+        .lines()
+        .map(|line| {
+            if line.starts_with("updated: ") {
+                "updated: 2030-01-01T00:00:00Z".to_owned()
+            } else if line == "Daniel defined what level 4 means for crews." {
+                "Rebuilt summary.".to_owned()
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    assert_ne!(rebuilt_text, original);
+    let rebuilt_file = setup.fx.home().join("rebuilt.md");
+    std::fs::write(&rebuilt_file, &rebuilt_text).unwrap();
+    make_private(&rebuilt_file);
+    setup.append(
+        ON,
+        &[
+            line("user", "u-2", "More work."),
+            line("assistant", "a-2", "Done."),
+        ],
+    );
+    // The fake model deterministically publishes the rebuilt record before
+    // returning its answer for the pass's first window, as a rebuild that
+    // finished while the pass was running would. No timing race is involved.
+    let quote = |path: PathBuf| format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"));
+    let record = quote(setup.record_file());
+    let rebuilt = quote(rebuilt_file);
+    let script = format!(
+        "#!/bin/sh\nn=$(ls \"$HOME\" | grep -c '^claude-stdin')\ncat > \"$HOME/claude-stdin-$n\"\nif [ \"$n\" = 1 ]; then\n  cp {} {}\nfi\n{}",
+        rebuilt,
+        record,
+        response(&answer())
+    );
+    setup.fx.fake_program("claude", &script);
+    let out = setup.run_any(&["session", "pass", "--session", ON, "--json"], b"");
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["passes"][0]["result"], "failed");
+    assert_eq!(report["passes"][0]["error_code"], "record_changed");
+    assert!(
+        report["passes"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("changed since it was loaded"),
+        "{}",
+        report["passes"][0]["error"]
+    );
+    assert_eq!(
+        std::fs::read(setup.record_file()).unwrap(),
+        rebuilt_text.as_bytes(),
+        "the rebuilt record is left byte-identical"
+    );
+    assert_eq!(setup.control()["due"], true, "the session stays due");
+}
+
 fn rebuild_args(confirm: bool) -> Vec<&'static str> {
     let mut args = vec!["session", "rebuild", ON, "--author", "test-agent", "--json"];
     if confirm {
@@ -1124,8 +1191,15 @@ fn rebuild_resumes_hidden_checkpoints_and_preserves_identity_links_and_activity(
     original.status = scribe_core::SessionStatus::Final;
     original.log[0].state = scribe_core::SegmentState::Sealed;
     original.log[0].origin = scribe_core::SegmentOrigin::Upgrade;
+    let expected = original.updated;
     store
-        .settle_pass(&id, Some(original.clone()), false, &Redactor::new([]))
+        .settle_pass(
+            &id,
+            Some(original.clone()),
+            false,
+            Some(expected),
+            &Redactor::new([]),
+        )
         .unwrap();
     let before = std::fs::read(setup.record_file()).unwrap();
     setup.config("[catalog]\nwindow_messages = 2\nsegment_windows = 2\n");
