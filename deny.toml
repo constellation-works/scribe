@@ -2,6 +2,8 @@
 # Orbit's deny.toml. Every exception carries a reason and a re-review date.
 
 [advisories]
+# Keep cargo-deny's default directory; `make deny` rewrites this path only when it is not writable.
+db-path = "$CARGO_HOME/advisory-dbs"
 # A yanked crate can change under the locked graph without anyone editing code.
 yanked = "deny"
 ignore = [
