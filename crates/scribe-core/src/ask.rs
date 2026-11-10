@@ -1290,10 +1290,7 @@ fn segment_item(record: &SessionRecord, segment: &Segment) -> EvidenceItem {
         whose: "session summary",
         status: record.status.as_str().to_owned(),
         date: day(segment.to),
-        text: format!(
-            "{} (segment {}): {}\n{}",
-            record.title, segment.n, segment.heading, segment.text
-        ),
+        text: format!("{}\n{}", segment.heading, segment.text),
     }
 }
 

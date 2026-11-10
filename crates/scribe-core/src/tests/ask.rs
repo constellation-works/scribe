@@ -688,6 +688,30 @@ fn a_log_segment_is_evidence_of_its_own_cited_by_number() {
 }
 
 #[test]
+fn a_segment_cite_cannot_quote_the_session_title() {
+    let mut r = record("s-1", 1, "release planning");
+    r.log[0].heading = String::from("Merge policy");
+    r.log[0].text = String::from("Daniel chose to squash-merge agent PRs.");
+    let models = FakeModels::answering(answered(vec![claim(
+        "the session was release planning",
+        "release planning",
+        "session:s-1#1",
+    )]));
+
+    let a = run(
+        &question("release squash-merge"),
+        &[],
+        &[r],
+        &models,
+        &NoTasks,
+    );
+
+    assert_eq!(a.status, Status::NoRecord);
+    assert!(a.claims.is_empty());
+    assert_eq!(a.dropped_quotes, 1);
+}
+
+#[test]
 fn an_inactive_session_is_hidden_from_lookups_and_evidence_unless_include_hidden() {
     let mut old = record("s-2", 9, "merge agent PRs by hand");
     old.active = false;
