@@ -70,7 +70,12 @@ at}`), `cite` (`{session, message, at, prompt_sha256, line, cwd}`),
 `superseded_by`, `review_after`. The body is the entry's content, verbatim.
 
 **Session keys:** `format`, `kind`, `id`, `status` (`open`, `final`),
-`project`, `topics`, `related`, `terms` (a list, possibly empty, of
+`project`, `topics`, `related` (model-extracted references, unchanged by
+links), `links` (a list, possibly empty, of `{type, session}`: `type` is
+`spawned_from` or `continues`, `session` a session id; the links Daniel
+asserted for this session, stored once, on the child; a parent's children
+are derived at read time and its record is never rewritten for them),
+`terms` (a list, possibly empty, of
 `{term, said, message}`: a phrase Daniel coined or defined, the verbatim
 span of his turn that does so, and that message's uuid), `provider`, `host`, `created`, `updated`,
 `title`, `cwd`, `started`, `on_since`, `scribed_through`, `passes`,
@@ -82,14 +87,17 @@ heading is `store_corrupt`.
 
 ## JSON documents
 
-- `control.json`: `{"format": 2, "sessions": {"<session-id>": {"on",
-  "since", "due", "final", "consecutive_failures", "retry_after"}}}`.
+- `control.json`: `{"format": 3, "sessions": {"<session-id>": {"on",
+  "since", "due", "final", "consecutive_failures", "retry_after",
+  "pending_links"}}}`. `pending_links` holds `{type, session}` links
+  Daniel asserted before the session had a record; the pass that writes
+  the record moves them onto it, then clears them, in one locked call.
   `since` and `retry_after` are RFC 3339 timestamps or `null`; the failure
   count is a saturating unsigned integer. A failed pass stays due; its next
   automatic attempt waits 5, 10, 20, 40, then at most 60 minutes. Success
   or switching off resets both retry fields. Explicit `--session` bypasses
   the delay.
-- `proposals.json`: `{"format": 2, "proposals": [{"id": "p-<n>", "kind":
+- `proposals.json`: `{"format": 3, "proposals": [{"id": "p-<n>", "kind":
   "supersedes"|"stale", "older", "newer", "reason", "quotes": [{"entry",
   "text"}], "state": "open"|"approved"|"rejected", "opened_at",
   "settled_at", "settled_by"}]}`. `newer`, `settled_at` and `settled_by`
@@ -197,13 +205,22 @@ listed with `configured: false`.
   other refusal (a link, loose modes, a newer format, an I/O error) fails
   the whole command rather than skipping the file
   ([4_decisions.md](../4_decisions.md#one-malformed-record-makes-its-file-corrupt)).
-- **Format.** One `FORMAT` (2) covers every document. A shape change bumps
+- **Format.** One `FORMAT` (3) covers every document. A shape change bumps
   it and appends one step to `UPGRADES` in `store/format.rs`, which is
   given the document type it upgrades; shipped steps never change. Reads
   upgrade an older document in memory; a newer one is refused and left
   untouched. The format-1-to-2 step adds zero failures and a null retry
   timestamp to control switches; other document shapes are unchanged. The
-  old shape is validated strictly before upgrade, and reads never rewrite it.
+  format-2-to-3 step adds an empty `links` to each session record and an
+  empty `pending_links` to each control switch; entries and proposals are
+  unchanged. The old shape is validated strictly before upgrade, and reads
+  never rewrite it.
+- **Links** (§5.4). A link is written only by `/scribe on --from` or
+  `/scribe link`, under the store lock: onto the child's record when it has
+  one (no other field, `updated` included, changes), else onto its switch's
+  `pending_links`. Every pass write merges the record's links on disk and
+  the pending ones into the record it writes, so a link added while the
+  model ran is never lost.
 - **Writes** (S2). Every file except `audit.jsonl` is replaced whole by
   `fsio::write_atomic`: a temp file in the same directory, `fsync`, rename,
   `fsync` of the directory, under `.lock`. Lock acquisition gives up after

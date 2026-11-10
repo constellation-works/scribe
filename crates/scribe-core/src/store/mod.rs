@@ -49,9 +49,12 @@ use crate::entry::{Cite, Entry, EntryFilter, EntryId, NewEntry};
 use crate::error::{Error, Result};
 use crate::proposal::{Proposal, ProposalId};
 use crate::record::Listing;
-use crate::session::{ControlState, SessionFilter, SessionId, SessionRecord};
+use crate::session::{
+    self as session_mod, Child, ControlState, SessionFilter, SessionId, SessionLink, SessionRecord,
+};
 use crate::tag::{self, TagSummary};
 use fsio::LockGuard;
+use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -98,6 +101,11 @@ pub struct EntryList {
 pub struct SessionList {
     /// The matching session records, oldest first.
     pub listing: Listing<SessionRecord>,
+    /// Every session's children, derived from all records' links (not only
+    /// the listed ones), by the id they link to.
+    pub children: BTreeMap<SessionId, Vec<Child>>,
+    /// Every record's title, by id, for naming a linked session.
+    pub titles: BTreeMap<SessionId, String>,
     /// Every session's on/off switch, to show beside its record.
     pub control: ControlState,
     /// Record files left out because they did not parse.
@@ -111,6 +119,10 @@ pub struct SessionView {
     pub record: SessionRecord,
     /// Its switch in `control.json`, if it has one.
     pub control: Option<crate::session::SessionControl>,
+    /// The sessions that link to it, derived from their records.
+    pub children: Vec<Child>,
+    /// The titles of the sessions its links point at that have a record.
+    pub linked_titles: BTreeMap<SessionId, String>,
 }
 
 /// What [`Store::list_tags`] found.
@@ -250,27 +262,108 @@ impl Store {
             }
         }
         Ok(SessionList {
+            children: session_mod::children(&records),
+            titles: records
+                .iter()
+                .map(|r| (r.id.clone(), r.title.clone()))
+                .collect(),
             listing: filter.select(records),
             control,
             skipped,
         })
     }
 
-    /// The session record with this id, and its switch.
+    /// The session record with this id, its switch, the sessions that link
+    /// to it and the titles of those it links to. Other records that do not
+    /// parse are left out of the children.
     pub fn session(&self, id: &SessionId) -> Result<SessionView> {
         let control = self.control()?;
-        let file = self
-            .session_files()?
-            .into_iter()
+        let files = self.session_files()?;
+        let file = files
+            .iter()
             .find(|f| f.stem == id.as_str())
             .ok_or_else(|| Error::SessionNotFound {
                 id: id.clone(),
                 path: self.root.join(SESSIONS_DIR),
             })?;
+        let record = file.load()?;
+        let mut others = Vec::new();
+        for other in files.iter().filter(|f| f.stem != id.as_str()) {
+            match other.load() {
+                Ok(r) => others.push(r),
+                Err(Error::Corrupt { .. }) => {}
+                Err(err) => return Err(err),
+            }
+        }
+        let linked_titles = others
+            .iter()
+            .filter(|r| record.links.iter().any(|l| l.session == r.id))
+            .map(|r| (r.id.clone(), r.title.clone()))
+            .collect();
+        others.push(record.clone());
+        let children = session_mod::children(&others)
+            .remove(id)
+            .unwrap_or_default();
         Ok(SessionView {
-            record: file.load()?,
+            record,
             control: control.get(id).cloned(),
+            children,
+            linked_titles,
         })
+    }
+
+    /// Link `session` to another session, under the store lock
+    /// ([`control::link`]): when `on`, switch it on too. A new link is
+    /// added to the session's record when it has one (its other fields,
+    /// `updated` included, unchanged), else kept on its switch until the
+    /// first pass writes the record. Refused links write nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Link`] for a refused link; a store error otherwise. The
+    /// session's own record failing to parse is [`Error::Corrupt`].
+    pub fn link_session(
+        &self,
+        session: &SessionId,
+        link: &SessionLink,
+        on: bool,
+        now: time::OffsetDateTime,
+    ) -> Result<control::Linked> {
+        self.prepare_dir(&self.root)?;
+        let _lock = self.lock("link")?;
+        let mut own: Option<SessionRecord> = None;
+        let mut graph: BTreeMap<SessionId, Vec<SessionLink>> = BTreeMap::new();
+        for file in self.session_files()? {
+            match file.load() {
+                Ok(record) => {
+                    graph.insert(record.id.clone(), record.links.clone());
+                    if &record.id == session {
+                        own = Some(record);
+                    }
+                }
+                Err(err @ Error::Corrupt { .. }) if file.stem == session.as_str() => {
+                    return Err(err);
+                }
+                Err(Error::Corrupt { .. }) => {
+                    // Known by id, its links unreadable.
+                    if let Ok(id) = file.stem.parse() {
+                        graph.entry(id).or_default();
+                    }
+                }
+                Err(other) => return Err(other),
+            }
+        }
+        // A refused link changes nothing, so nothing is written.
+        let linked =
+            self.change_control(|state| control::link(state, &graph, session, link, on, now))??;
+        if linked.write_record
+            && let Some(mut record) = own
+        {
+            record.links.push(link.clone());
+            let path = self.session_path(&record);
+            fsio::write_atomic(&path, &format::encode_session(&path, &record)?)?;
+        }
+        Ok(linked)
     }
 
     /// The on/off state; empty when there is no `control.json`.
@@ -474,6 +567,22 @@ impl Store {
         }
         let written = match record {
             Some(mut record) => {
+                // A link written while the model ran, or one waiting on the
+                // switch for the first record, is kept: never lost to a pass.
+                if let Some(file) = self
+                    .session_files()?
+                    .into_iter()
+                    .find(|f| f.stem == session.as_str())
+                    && let Ok(current) = file.load()
+                {
+                    merge_links(&mut record.links, &current.links);
+                }
+                let pending = self
+                    .control()?
+                    .get(session)
+                    .map(|c| c.pending_links.clone())
+                    .unwrap_or_default();
+                merge_links(&mut record.links, &pending);
                 redactor.session(&mut record);
                 let path = self.session_path(&record);
                 let mut dir = self.root.join(SESSIONS_DIR);
@@ -486,6 +595,14 @@ impl Store {
                     self.prepare_subdir(&dir)?;
                 }
                 fsio::write_atomic(&path, &format::encode_session(&path, &record)?)?;
+                // Only once the record holds them: the links are stored once.
+                if !pending.is_empty() {
+                    self.change_control(|state| {
+                        if let Some(control) = state.sessions.get_mut(session) {
+                            control.pending_links.retain(|l| !pending.contains(l));
+                        }
+                    })?;
+                }
                 Some(record)
             }
             None => None,
@@ -726,6 +843,15 @@ impl Store {
             }
         }
         Ok(files)
+    }
+}
+
+/// Append each of `more` not already in `links`.
+fn merge_links(links: &mut Vec<SessionLink>, more: &[SessionLink]) {
+    for link in more {
+        if !links.contains(link) {
+            links.push(link.clone());
+        }
     }
 }
 

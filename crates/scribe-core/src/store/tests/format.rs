@@ -264,3 +264,41 @@ fn encoded_control_reads_back_as_the_same_state() {
     assert_eq!(value["format"], FORMAT);
     assert_eq!(value["sessions"]["s-1"]["final"], false);
 }
+
+#[test]
+fn a_legacy_session_record_loads_with_no_links_and_a_current_one_requires_them() {
+    // Formats 1 and 2 predate links: they read with an empty list.
+    for format in ["format: 1", "format: 2"] {
+        let text = session_text("", SESSION_BODY).replacen("format: 1", format, 1);
+        let r = session(&text).unwrap();
+        assert!(r.links.is_empty(), "{format}");
+        assert_eq!(r.related, Vec::new(), "{format}: related is unchanged");
+    }
+    let current = session_text(
+        "links:\n  - {type: spawned_from, session: s-0}\n",
+        SESSION_BODY,
+    )
+    .replacen("format: 1", &format!("format: {FORMAT}"), 1);
+    let r = session(&current).unwrap();
+    assert_eq!(r.links.len(), 1);
+    assert_eq!(r.links[0].kind, crate::session::LinkType::SpawnedFrom);
+    assert_eq!(r.links[0].session.as_str(), "s-0");
+    // At the current format the key is required, and its shape strict.
+    let missing =
+        session_text("", SESSION_BODY).replacen("format: 1", &format!("format: {FORMAT}"), 1);
+    assert!(corrupt_message(&session(&missing).unwrap_err()).contains("links"));
+    let bad_type = current.replace("spawned_from", "related_to");
+    assert!(session(&bad_type).is_err());
+}
+
+#[test]
+fn a_format_two_control_reads_with_no_pending_links() {
+    let text = r#"{"format": 2, "sessions": {"s-1": {"on": true, "since": null, "due": false,
+        "final": false, "consecutive_failures": 1, "retry_after": null}}}"#;
+    let state = decode_control(Path::new("control.json"), text.as_bytes()).unwrap();
+    let switch = &state.sessions[&"s-1".parse().unwrap()];
+    assert_eq!(switch.consecutive_failures, 1);
+    assert!(switch.pending_links.is_empty());
+    let unknown = text.replace("\"retry_after\": null", "\"retry_after\": null, \"x\": 1");
+    assert!(decode_control(Path::new("control.json"), unknown.as_bytes()).is_err());
+}

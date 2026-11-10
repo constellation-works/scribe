@@ -11,7 +11,7 @@ summary: Why superseded entries are hidden not removed, why one JSON file per ta
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849]
 ---
 
 # scribe — Decisions
@@ -1486,6 +1486,55 @@ read-only or missing store (a read error is logged and counts as none).
   writes it for him.
 - Cost: no file on disk to show the defaults; `scribe tag list` shows them.
 
+## Session links are typed, stored on the child, and manual
+
+**Recorded:** 2026-11 · [ORB-23849]
+**Code anchors:** `crates/scribe-core/src/session.rs` (`SessionLink`, `check_link`, `children`), `crates/scribe-core/src/control.rs` (`link`), `crates/scribe-core/src/store/mod.rs` (`link_session`), `crates/scribe/src/commands/hook/scribe_command.rs`
+
+### Context
+
+Daniel, 2026-11-10: "we need a way to indicate relationships between
+sessions, e.g. I have nested scribed sessions between this session and one
+of the branched agent sessions." Every session record stood alone, so an
+orchestration session and the side session it started each retold the
+shared story. The existing `related` field lists `session:<id>` references
+the model extracted, which says what a session mentions, not how sessions
+are structured.
+
+### Decision
+
+- A new `links` field, `[{type, session}]` with `type` `spawned_from` or
+  `continues`, mirrors Orbit task relations. `related` keeps its type and
+  meaning; no free-form `related_to` until a real case needs one.
+- A link is stored once, on the child. Children are derived at read time;
+  a parent record is never rewritten because a child appeared.
+- Links are manual: `/scribe on --from <id>` and `/scribe link <id>
+  [--type …]`, typed by Daniel in the child. An unknown target, a
+  self-link, a cycle (through links of either type), a second parent and a
+  `link` in an uncataloged session are refused with stable codes and change
+  nothing. Neither the hook inputs nor the transcripts carry a parent
+  session id (checked across 4,970 transcripts on dk-server-1,
+  [2_design.md §5.4](./2_design.md#54-session-links)), so nothing is
+  linked automatically.
+- A link typed before the session has a record waits on its switch
+  (`pending_links` in `control.json`) and moves onto the record with the
+  first pass write. Store format 3 adds `links` and `pending_links`; the
+  2-to-3 upgrade gives older documents empty lists in memory.
+- A child's pass is given each linked session's latest title and summary as
+  data and told to summarize only its own slice.
+
+### Consequences
+
+- Records written before format 3 load unchanged but for an empty `links`,
+  and the next write persists format 3; an older build refuses format 3
+  instead of dropping links (STD-03 R10).
+- A link write rewrites only the child's record, keeping its `updated`, so
+  it does not count as a pass for the `Stop` hook's cadence.
+- Cost: links exist only where Daniel types them; a forked or side session
+  he forgets to link stands alone, as before.
+- Cost: `ask` does not follow links yet; a linked record is evidence only
+  on its own merits.
+
 ## Task References
 
 - [ORB-21747] — designed the standalone scribe plugin and recorded its decisions.
@@ -1498,5 +1547,6 @@ read-only or missing store (a read error is logged and counts as none).
 - [ORB-21784] — S4: `/scribe on|off|status`, session-pass cadence and session records.
 - [ORB-21787] — S5: the Orbit plugin tree and `ask`.
 - [ORB-21795] — S6: the consistency routine, the settling verbs and the routines.
+- [ORB-23849] — session links (`spawned_from`, `continues`) between session records.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.

@@ -60,6 +60,7 @@ pub(crate) fn session(id: &str, started: OffsetDateTime) -> SessionRecord {
         project: "scribe".parse().unwrap(),
         topics: crate::record::Topics::default(),
         related: Vec::new(),
+        links: Vec::new(),
         terms: Vec::new(),
         provider: String::from("claude-code").try_into().unwrap(),
         host: String::from("host").try_into().unwrap(),

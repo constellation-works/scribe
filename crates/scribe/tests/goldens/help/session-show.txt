@@ -1,4 +1,4 @@
-Show one session record in full: its metadata and its four sections
+Show one session record in full: its metadata, links, children and four sections
 
 Usage: scribe session show [OPTIONS] <ID>
 

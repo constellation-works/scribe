@@ -11,7 +11,7 @@
 
 use crate::app::Context;
 use crate::error::CliError;
-use crate::output::{AskPayload, Output};
+use crate::output::{AskPayload, Output, SessionsContext};
 use clap::{Args, Subcommand, ValueEnum};
 use scribe_core::ask::{self, Corpus, Question, RecordKind, Scope, Tasks};
 use scribe_core::{Config, EntryFilter, Models, Project, SessionFilter, Store, TagName, Topic};
@@ -151,7 +151,12 @@ pub(super) fn answer_with<M: Models, T: Tasks + ?Sized>(
     let answer = ask::answer(&question, corpus, &adapter, tasks, &config.models.ask, now)?;
     let mut skipped = entries.skipped;
     skipped.extend(sessions.skipped);
-    Ok(AskPayload::new(&answer, &sessions.control, &skipped))
+    let context = SessionsContext {
+        control: &sessions.control,
+        children: &sessions.children,
+        titles: &sessions.titles,
+    };
+    Ok(AskPayload::new(&answer, &context, &skipped))
 }
 
 /// A question: not blank, at most 2000 characters.

@@ -29,7 +29,7 @@ use std::path::Path;
 
 /// The newest store format: this build reads formats 1 to `FORMAT` of every
 /// document and would write `FORMAT`.
-pub(super) const FORMAT: u32 = 2;
+pub(super) const FORMAT: u32 = 3;
 
 /// Which document an upgrade step is applied to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,7 +56,7 @@ pub(super) type Upgrade = fn(Document, serde_json::Value) -> serde_json::Result<
 /// (STD-02 R16, STD-03 R10). A shipped step is never edited, reordered or
 /// removed. Reads upgrade in memory only; the next write persists the
 /// current format. The template's `notes.json` is not carried over.
-pub(super) const UPGRADES: &[Upgrade] = &[retry_state];
+pub(super) const UPGRADES: &[Upgrade] = &[retry_state, session_links];
 
 /// Format 1 -> 2 adds bounded retry state to each session switch. Other
 /// document shapes are unchanged. Reads upgrade only in memory.
@@ -82,6 +82,69 @@ fn retry_state(
         }
     }
     Ok(value)
+}
+
+/// Format 2 -> 3 adds session links: an empty `links` on each session
+/// record and an empty `pending_links` on each session switch. Entries and
+/// proposals are unchanged. Reads upgrade only in memory.
+fn session_links(
+    document: Document,
+    mut value: serde_json::Value,
+) -> serde_json::Result<serde_json::Value> {
+    match document {
+        Document::Session => {
+            if let Some(record) = value.as_object_mut() {
+                record.entry("links").or_insert(serde_json::json!([]));
+            }
+        }
+        Document::Control => {
+            if let Some(sessions) = value
+                .get_mut("sessions")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                for session in sessions
+                    .values_mut()
+                    .filter_map(serde_json::Value::as_object_mut)
+                {
+                    session
+                        .entry("pending_links")
+                        .or_insert(serde_json::json!([]));
+                }
+            }
+        }
+        Document::Entry | Document::Proposals => {}
+    }
+    Ok(value)
+}
+
+/// Frozen format-2 `control.json` shape, validated before upgrading.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ControlV2 {
+    #[allow(dead_code, reason = "format-2 validation before upgrade")]
+    format: u32,
+    #[allow(dead_code, reason = "format-2 validation before upgrade")]
+    sessions: BTreeMap<SessionId, SwitchV2>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SwitchV2 {
+    #[allow(dead_code, reason = "format-2 validation before upgrade")]
+    on: bool,
+    #[allow(dead_code, reason = "format-2 validation before upgrade")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    since: Option<time::OffsetDateTime>,
+    #[allow(dead_code, reason = "format-2 validation before upgrade")]
+    due: bool,
+    #[allow(dead_code, reason = "format-2 validation before upgrade")]
+    #[serde(rename = "final")]
+    final_pass: bool,
+    #[allow(dead_code, reason = "format-2 validation before upgrade")]
+    consecutive_failures: u32,
+    #[allow(dead_code, reason = "format-2 validation before upgrade")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    retry_after: Option<time::OffsetDateTime>,
 }
 
 /// Frozen format-1 shape. Validate before upgrading so unknown or repeated
@@ -422,8 +485,11 @@ fn decode_json<T: DeserializeOwned>(path: &Path, bytes: &[u8], document: Documen
         return serde_json::from_slice(bytes).map_err(|e| Error::corrupt(path, e));
     }
     match document {
-        Document::Control => {
+        Document::Control if from == 1 => {
             serde_json::from_slice::<ControlV1>(bytes).map_err(|e| Error::corrupt(path, e))?;
+        }
+        Document::Control => {
+            serde_json::from_slice::<ControlV2>(bytes).map_err(|e| Error::corrupt(path, e))?;
         }
         Document::Proposals => {
             serde_json::from_slice::<ProposalsDocument>(bytes)

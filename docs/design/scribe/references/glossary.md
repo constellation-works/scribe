@@ -16,6 +16,7 @@ exists today and is reshaped by slice S1.
 | **Entry** | One record in a tag: `said` (Daniel's `#scribe` line verbatim), `content` (what it records, verbatim from that line or from the message it points at), `cite` and `status`. See [2_design.md §3](../2_design.md#3-storage). |
 | **Instruction** | One line of a user-typed turn starting with `#scribe`. Each yields exactly one entry or one refusal. See [2_design.md §4](../2_design.md#4-scribe). |
 | **Referent** | The earlier message "this"/"it" in an instruction points at, chosen by the referent model and verbatim-checked. See [2_design.md §4.3](../2_design.md#43-resolving-this-and-it). |
+| **Session link** | A typed link (`spawned_from` or `continues`) from one session record to another, typed by Daniel with `/scribe on --from <id>` or `/scribe link <id>` and stored on the child; children are derived. Distinct from `related`, the references a session mentions. See [2_design.md §5.4](../2_design.md#54-session-links). |
 | **Session record** | The one model-written catalog record (summary, goals, outcome, next) of a session Daniel switched on with `/scribe on`. See [2_design.md §5](../2_design.md#5-scribe-on). |
 | **Pass** | One refresh of a session record by the session-pass routine. |
 | **Proposal** | A consistency finding (`supersedes` or `stale`) waiting for `#scribe approve` or `reject`. See [2_design.md §7](../2_design.md#7-consistency-routine). |

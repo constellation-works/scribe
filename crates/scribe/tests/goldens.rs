@@ -48,9 +48,15 @@ const OUTPUT: &[(&str, &[&str])] = &[
     ("entry-list", &["entry", "list"]),
     ("entry-show", &["entry", "show", "decisions-2"]),
     ("session-list", &["session", "list"]),
+    ("session-list-tree", &["session", "list", "--tree"]),
     (
         "session-show",
         &["session", "show", "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02"],
+    ),
+    // A legacy (format 1) record whose child is derived from the other's link.
+    (
+        "session-show-parent",
+        &["session", "show", "0f8e7a52-3c1d-4b6e-9a2f-5d4c3b2a1e01"],
     ),
     ("proposal-list", &["proposal", "list"]),
     ("tag-list", &["tag", "list"]),

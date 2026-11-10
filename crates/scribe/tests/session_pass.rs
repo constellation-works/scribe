@@ -429,10 +429,11 @@ fn legacy_control_is_read_without_writes_and_new_retry_state_is_strict() {
     );
     setup.pass();
     let current: Value = serde_json::from_slice(&setup.control_bytes()).unwrap();
-    assert_eq!(current["format"], 2);
+    assert_eq!(current["format"], 3);
     assert_eq!(current["sessions"][ON]["consecutive_failures"], 0);
     assert_eq!(current["sessions"][ON]["retry_after"], Value::Null);
-    for missing in ["consecutive_failures", "retry_after"] {
+    assert_eq!(current["sessions"][ON]["pending_links"], json!([]));
+    for missing in ["consecutive_failures", "retry_after", "pending_links"] {
         let mut broken = current.clone();
         broken["sessions"][ON]
             .as_object_mut()
@@ -773,4 +774,152 @@ fn the_plugin_tool_answers_session_pass_failed_and_keeps_the_session_due() {
     assert_eq!(reply["ok"], true, "{reply}");
     assert_eq!(reply["output"]["passes"][0]["result"], "written", "{reply}");
     assert_eq!(setup.control()["due"], false);
+}
+
+/// A second session, spawned from `ON`.
+const CHILD: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e61";
+/// A well-formed id scribe has never seen.
+const UNKNOWN: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e62";
+
+impl Setup {
+    /// `/scribe …` typed in `session`: the hook's block reason.
+    fn scribe_in(&self, session: &str, prompt: &str) -> String {
+        let payload = json!({"session_id": session,
+               "transcript_path": self.transcript(session),
+               "cwd": self.cwd,
+               "permission_mode": "default",
+               "hook_event_name": "UserPromptSubmit",
+               "prompt": prompt});
+        let out = self.hook("user-prompt-submit", &payload);
+        let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(reply["decision"], "block", "{reply}");
+        reply["reason"].as_str().unwrap().to_owned()
+    }
+
+    /// The `error_code` of every audit line, oldest first.
+    fn audit_codes(&self) -> Vec<Value> {
+        std::fs::read_to_string(self.fx.root().join("audit.jsonl"))
+            .unwrap_or_default()
+            .lines()
+            .map(|l| serde_json::from_str::<Value>(l).unwrap()["error_code"].clone())
+            .collect()
+    }
+
+    fn switch_of(&self, session: &str) -> Value {
+        let text = std::fs::read_to_string(self.fx.root().join("control.json")).unwrap();
+        serde_json::from_str::<Value>(&text).unwrap()["sessions"][session].clone()
+    }
+}
+
+#[test]
+fn a_session_links_to_its_parent_and_its_pass_reads_the_parent_as_context() {
+    let setup = Setup::new();
+    setup.scribe("/scribe on");
+    assert_eq!(setup.pass()["passes"][0]["result"], "written");
+    setup.write(
+        CHILD,
+        &[line(
+            "user",
+            "c-1",
+            "Side session: fix the flaky test only.",
+        )],
+    );
+
+    // Refused, each with its code, and nothing switched or linked.
+    let reason = setup.scribe_in(CHILD, &format!("/scribe link {ON}"));
+    assert!(reason.contains("refused"), "{reason}");
+    let reason = setup.scribe_in(CHILD, &format!("/scribe on --from {UNKNOWN}"));
+    assert!(reason.contains("refused"), "{reason}");
+    let reason = setup.scribe_in(CHILD, &format!("/scribe on --from {CHILD}"));
+    assert!(reason.contains("cannot link to itself"), "{reason}");
+    assert_eq!(
+        setup.switch_of(CHILD),
+        Value::Null,
+        "a refusal switches nothing"
+    );
+    assert_eq!(
+        setup.audit_codes()[2..],
+        [
+            json!("link_session_off"),
+            json!("link_unknown_session"),
+            json!("link_self")
+        ]
+    );
+
+    // Switched on and linked in one command; the link waits on the switch
+    // until the first pass writes the record.
+    let reason = setup.scribe_in(CHILD, &format!("/scribe on --from {ON}"));
+    assert!(
+        reason.starts_with(&format!(
+            "scribe: on — this session is cataloged from now on and linked: spawned_from {ON}"
+        )),
+        "{reason}"
+    );
+    assert_eq!(setup.switch_of(CHILD)["on"], true);
+    assert_eq!(
+        setup.switch_of(CHILD)["pending_links"],
+        json!([{"type": "spawned_from", "session": ON}])
+    );
+    let reason = setup.scribe_in(CHILD, &format!("/scribe link {ON}"));
+    assert!(reason.ends_with("nothing changed"), "{reason}");
+
+    // The parent links back to its child: a cycle, refused.
+    let audit = setup.audit_lines();
+    let reason = setup.scribe_in(ON, &format!("/scribe link {CHILD} --type continues"));
+    assert!(reason.contains("cycle"), "{reason}");
+    assert_eq!(setup.audit_codes()[audit..], [json!("link_cycle")]);
+
+    // The child's pass carries the parent's latest record as context.
+    let before = setup.prompts().len();
+    let report = setup.pass();
+    assert_eq!(report["passes"][0]["session"], CHILD, "{report}");
+    let prompts = setup.prompts();
+    assert_eq!(prompts.len(), before + 1);
+    let prompt = &prompts[before];
+    for part in [
+        format!("--- Linked session (data): this session was spawned from session {ON} ---"),
+        String::from("title: Defining crew levels"),
+        String::from("Daniel defined what level 4 means for crews."),
+        String::from("do not retell the linked session"),
+    ] {
+        assert!(prompt.contains(&part), "{part:?} missing from:\n{prompt}");
+    }
+
+    // The link moved onto the child's record; the parent shows the child.
+    assert_eq!(setup.switch_of(CHILD)["pending_links"], json!([]));
+    let child = setup.record(CHILD).unwrap();
+    assert_eq!(
+        child["links"],
+        json!([{"type": "spawned_from", "session": ON, "title": "Defining crew levels"}])
+    );
+    assert_eq!(child["related"], json!([]), "related is unchanged");
+    let parent = setup.record(ON).unwrap();
+    assert_eq!(parent["links"], json!([]));
+    assert_eq!(
+        parent["children"],
+        json!([{"type": "spawned_from", "session": CHILD, "title": "Defining crew levels"}])
+    );
+    let tree: Value = serde_json::from_slice(
+        &setup
+            .run(&["session", "list", "--tree", "--json"], b"")
+            .stdout,
+    )
+    .unwrap();
+    let order: Vec<&str> = tree["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(order, [ON, CHILD]);
+    let plain = setup.run(&["session", "list", "--tree"], b"");
+    let rows: Vec<Vec<String>> = text(&plain.stdout)
+        .lines()
+        .map(|l| l.split('\t').map(str::to_owned).collect())
+        .collect();
+    assert_eq!(
+        rows[1][..2],
+        [CHILD.to_owned(), ON.to_owned()],
+        "PARENT column"
+    );
 }

@@ -13,9 +13,9 @@ mod sink;
 mod table;
 
 pub(crate) use payload::{
-    AskPayload, BatchFailure, EntryPayload, HookOutcome, HookReply, Output, PassPayload,
+    AskPayload, BatchFailure, EntryPayload, HookOutcome, HookReply, Kin, Output, PassPayload,
     PassReport, PluginError, PluginReply, ProposalPayload, ReappliedPayload, Record, Records,
-    ScanReport, SessionPayload, TagPayload, WarningPayload,
+    ScanReport, SessionPayload, SessionsContext, TagPayload, TreeRow, WarningPayload,
 };
 pub(crate) use sink::{FORMAT_ENV, FormatArg, Sink};
 

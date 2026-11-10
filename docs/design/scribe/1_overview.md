@@ -13,7 +13,7 @@ summary: A standalone Orbit plugin that keeps Daniel's explicitly marked prefere
 tags: [scribe]
 paths: ["crates/**", "plugin/**"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21744, ORB-21404]
+related_artifacts: [ORB-21747, ORB-21744, ORB-21404, ORB-23849]
 ---
 
 # scribe — Overview
@@ -70,7 +70,7 @@ Quoted verbatim; these are the requirements this design starts from.
 | Part | Does | Model |
 |---|---|---|
 | `#scribe <instruction>` | In a user-typed turn, in any session whether on or off, adds exactly one entry to the named tag. It quotes Daniel verbatim, cites the message, and echoes the tag, text and id. An unknown tag is refused with the configured list. A bare `#decision` captures nothing. | None, unless the instruction says "this"/"it": then Haiku picks the referenced message |
-| `/scribe on` | Catalogs that session into one session record (summary, goals, outcome, next), refreshed on cadence and at session end. Writes no tag entries. No backfill of other sessions. | Haiku |
+| `/scribe on` | Catalogs that session into one session record (summary, goals, outcome, next), refreshed on cadence and at session end. Writes no tag entries. No backfill of other sessions. `/scribe on --from <id>` or `/scribe link <id>` links it to the session it was spawned from or continues ([§5.4](./2_design.md#54-session-links)); its pass reads that session's summary as context. | Haiku |
 | `ask` | The one MCP tool exposed to main agents. Retrieval is model-free (lexical ranking over entries, session records and Orbit tasks); a decision model answers only from the retrieved evidence, every quote is verbatim-checked, it says "no record" rather than infer, and reports conflicts instead of picking a side. | Decision model (Sonnet by default) |
 | Consistency routine | Flags contradictions and stale entries and proposes "B supersedes A" or "retire A". Daniel approves with `#scribe approve <id>`. A superseded entry stays on disk, is marked, and is hidden from answers by default. | Haiku, on model-free candidate pairs |
 
@@ -111,6 +111,7 @@ can override.
 | Entries, session records, proposals; the store | `crates/scribe-core/src/{entry,session,consistency}.rs`, `store/` | S1 |
 | `#scribe` parsing and capture | `crates/scribe-core/src/capture.rs`, `crates/scribe/src/commands/hook/` | S2, S3 |
 | `/scribe on` and session passes | `crates/scribe-core/src/{session,transcript}.rs`, `commands/hook/`, `commands/session.rs` | S4 |
+| Session links (`spawned_from`, `continues`) | `crates/scribe-core/src/{session,control}.rs`, `store/`, `commands/hook/scribe_command.rs`, `commands/session/` | ORB-23849 |
 | `ask` | `crates/scribe-core/src/ask/`, `commands/question.rs` | S5 |
 | Consistency routine | `crates/scribe-core/src/consistency.rs`, `commands/consistency.rs` | S6 |
 | Orbit plugin tree | `plugin/.orbit-plugin/` | S5 |
@@ -121,5 +122,6 @@ can override.
 - [ORB-21747] — designed the standalone scribe plugin.
 - [ORB-21744] — the orbit-office scribe redesign this plugin supersedes (archived).
 - [ORB-21404] — the on-call task the scribe redesign was spawned from.
+- [ORB-23849] — session links between session records.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.

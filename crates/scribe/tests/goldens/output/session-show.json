@@ -7,6 +7,14 @@
     "merge-policy"
   ],
   "related": [],
+  "links": [
+    {
+      "type": "continues",
+      "session": "0f8e7a52-3c1d-4b6e-9a2f-5d4c3b2a1e01",
+      "title": "Scribe store layout"
+    }
+  ],
+  "children": [],
   "terms": [
     {
       "term": "agent PR",
