@@ -1,6 +1,6 @@
 ---
 type: design
-summary: "Spec: output contract — streams, modes, plain columns, the JSON list envelope and record fields, warnings, errors and exit codes"
+summary: "Spec: output contract — streams, modes, plain columns, the JSON list envelope and record fields (format 4: segments, activity, authors, search hits, transcripts), warnings, errors and exit codes"
 last_validated: 2026-11-02
 ---
 
@@ -10,6 +10,8 @@ Every data command renders one typed payload in the mode the sink resolved;
 stdout carries only that payload; warnings, notices and errors go to stderr;
 the exit code says whether it worked. The JSON form is a public contract,
 pinned by the output goldens in `crates/scribe/tests/goldens/output/`.
+Parts marked *(S8–S14)* are designed ([ORB-23892]) and not yet built; each
+only adds fields, columns, commands and codes.
 
 ## Why This Exists
 
@@ -39,10 +41,14 @@ is `-`, lists are comma-joined, and timestamps are RFC 3339.
 | `entry list` | `id status project topics created content` |
 | `session list` | `id status due project topics updated title` (`due` is `yes` or `no`) |
 | `session list --tree` | `id parent status due project topics updated title` (`parent` is the session the row nests under, its `spawned_from` link else its first `continues` link, or `-`) |
+| `session list --include-inactive` *(S8)* | `id status active due project topics updated title` (`active` is `yes` or `no`); without the flag the columns are unchanged |
 | `proposal list` | `id kind state older newer opened_at reason` |
-| `tag list` | `name entries stale_after_days aliases description` |
+| `tag list` | `name entries stale_after_days aliases description`, and *(S12)* a last column `source` (`config` or `store`) |
+| `record search` *(S11)* | `cite kind score updated title snippet` |
+| `transcript list` *(S14)* | `session project daniel_turns bytes started ended first_prompt` |
 
-Entries and sessions are oldest first (by `created`, then `started`, ties by
+Search hits are best first, ties newest first; transcripts newest first by
+`started`. Entries and sessions are oldest first (by `created`, then `started`, ties by
 id); proposals by number; tags by name. `session list --tree` keeps that
 order among siblings but lists each session right after the one it nests
 under, depth first; a session whose parent is not listed is a root. The
@@ -54,7 +60,8 @@ indent, and the `parent` column carries the nesting.
 Every list is
 `{"<key>": [<record>, ...], "total": <integer>, "truncated": <boolean>,
 "warnings": [<warning>, ...]}`, with `<key>` `entries`, `sessions`,
-`proposals` or `tags`. `total` counts the records that matched the filters;
+`proposals` or `tags`, and *(S11, S14)* `hits` for `record search` and
+`transcripts` for `transcript list`. `total` counts the records that matched the filters;
 `truncated` is true when `--limit` returned fewer. No matches is the same
 envelope with an empty array. A warning is `{"path", "code", "error"}` for a
 record file the list skipped because it did not parse (`code` is
@@ -77,7 +84,11 @@ are RFC 3339 with offset.
 `kind` is `instruction` or `message`, the other three `null` for an
 instruction), `cite` (`{session, message, at, prompt_sha256, line, cwd}`;
 `message` may be `null`), `superseded_by` (an id or `null`),
-`review_after` (`YYYY-MM-DD` or `null`).
+`review_after` (`YYYY-MM-DD` or `null`). *(S8, S12)* Adds `author`
+(`{kind, name}`, `kind` `daniel` or `agent`) and `updated_by` (an author or
+`null`). An agent entry has `said` `""`, `content_from` `{kind: "agent",
+role: null, message: null, at: null}` and `cite` `null`; a Daniel entry's
+`cite` is never `null`, so a reader of Daniel's entries sees no change.
 
 **Session** (`sessions[]`, `session show`): `id`, `status` (`open`,
 `final`), `project`, `topics`, `related` (unchanged: model-extracted
@@ -93,7 +104,20 @@ message id or `null`), `passes`, `next_open`, `summary`, `goals`,
 `outcome`, `next`, and from `control.json` `on` and `due` (both `false`
 when the session has no switch). The four text fields are model-written.
 `links` and `children` were added with session links (store format 3);
-every other field is unchanged. `session list --tree --json` is the same
+every other field is unchanged.
+
+*(S8)* Adds `active`, `keep_active`, `active_change` (`null` or `{at, by,
+route, reason, cite}`), `cataloged_by` (`null` or `{at, by}`) and `log`:
+in `session show` the segments `[{n, heading, first_message,
+last_message, from, to, state, windows, origin, topics, related, text}]`,
+oldest first; in `session list` `null` (use `show`). `outcome` stays and
+is `""` for every format-4 record; what it held is in `log`. `--segment
+<n>` and `session show session:<id>#<n>` print the record with `log`
+holding that one segment. The table detail view prints the header, then a
+table of contents (`n state from to heading`), then with `--log` each
+segment as `### <n>. <heading>` and its text; plain prints the record's
+list line, then one `segment\t<n>\t<state>\t<from>\t<to>\t<heading>`
+line per segment. `session list --tree --json` is the same
 envelope with the same objects, in tree order. The table detail view of
 `session show` prints `links` as `<type> <id> (<title>)` and `children`
 as `<id> <type> (<title>)`, one per line, or `-`.
@@ -101,11 +125,35 @@ as `<id> <type> (<title>)`, one per line, or `-`.
 **Proposal** (`proposals[]`): `id` (`p-<n>`), `kind` (`supersedes`,
 `stale`), `older`, `newer` (or `null`), `reason`, `quotes` (`[{entry,
 text}]`), `state` (`open`, `approved`, `rejected`), `opened_at`,
-`settled_at` (or `null`), `settled_by` (a cite or `null`).
+`settled_at` (or `null`), `settled_by` (a cite or `null`). *(S8)* Adds
+`author` and `settled_author` (`{kind, name}` or `null`).
 
 **Tag** (`tags[]`): `name`, `aliases`, `description` (or `null`),
 `stale_after_days` (integer or `null`), `configured` (false for a directory
-no configured tag names), `entries` (count, any status).
+no configured tag names), `entries` (count, any status). *(S12)* Adds
+`source` (`config`, `store`, or `null` for a directory no tag names) and
+`author` (`null` for a config tag).
+
+**Hit** *(S11, `hits[]`)*: `kind` (`entry`, `session`, `discussion`),
+`cite` (an entry id, `session:<id>`, `session:<id>#<n>` or a discussion
+slug), `id`, `segment` (integer or `null`), `score` (number), `title` (a
+session's title, a discussion's title, or an entry's tag and id), `snippet`
+(up to 240 characters), `project`, `topics`, `author` (or `null`),
+`active` (sessions; `null` otherwise), `updated`.
+
+**Transcript** *(S14, `transcripts[]`, `transcript show`)*: `session`,
+`project` (the attributed slug), `project_mentions` (`{"<slug>":
+<count>}`), `cwd`, `started`, `ended` (the last message's time), `bytes`,
+`daniel_turns`, `first_prompt` (at most 300 characters); `transcript show`
+adds `daniel_first_turns` (up to five strings of at most 300 characters).
+
+**Write verbs** *(S10, S12)*: `entry add`, `entry update`, `entry
+retire`, `tag add`, `tag update`, `proposal add`, `proposal update`,
+`proposal settle`, `session activate` and `session deactivate` print the
+record they wrote in its `show` shape (`--json`: the record object). A
+write that changed nothing prints the record unchanged and `nothing
+changed` on stderr. `session rebuild` and `session catalog` print the
+session pass report.
 
 Adding a field is compatible. Renaming, removing or retyping one is a
 breaking change and shows up as a golden diff.
@@ -121,7 +169,12 @@ breaking change and shows up as a golden diff.
 Stable codes: `entry_not_found`, `session_not_found`, `io_error`,
 `store_corrupt`, `config_invalid`, `store_too_new`, `store_locked`,
 `store_symlink`, `store_foreign_owner`, `store_permissions`, `no_data_dir`,
-`output_error`, `usage_error`, `hook_payload_invalid`, for `session pass`
+`output_error`, `usage_error`, `hook_payload_invalid`, *(S8–S14)*
+`id_ambiguous` (exit 2, listing up to ten candidates), `segment_not_found`,
+`daniel_only`, `tag_not_found`, `tag_conflict`, `tag_configured`,
+`proposal_not_found`, `proposal_settled`, `entry_not_active`,
+`confirm_required`, `transcript_missing`, `session_busy`,
+`session_cataloged`, `transcript_not_found`, for `session pass`
 `session_pass_failed` and `session_not_on`, and for `question
 ask` the model codes `model_timeout`, `model_unavailable`, `model_failed`,
 `model_malformed`. A hook's refusals
@@ -215,7 +268,10 @@ counts terms dropped across persisted windows whose
 `said` was not verbatim from its named user turn, whose message id was
 unknown or future, or whose lengths were invalid; `gave_up` is always
 `false` (a failed pass is never given up; the field is kept for the
-shape). Plain and table
+shape). *(S9)* A pass adds `segments_sealed` (segments sealed in this
+invocation) and `segments` (the record's segment count, or `null`). `session
+rebuild` and `session catalog` print this report with their one session.
+Plain and table
 print one row per pass (`session result error_code passes dropped_terms`);
 with nothing due stdout is empty, stderr says `no session pass is due` and
 the exit is 0. If all due sessions are waiting for backoff, `passes` is
@@ -243,7 +299,11 @@ the cap of 40 or not reached in this call's time, `unrelated_pairs` those
 labelled `unrelated`, `dropped_labels` labels refused (a quote not verbatim,
 an unknown or repeated pair, an unknown label); `stale_entries` counts
 active entries past `review_after` without a stale proposal;
-`failed_batches` names each batch of ten the model failed, from 1. Plain and
+`failed_batches` names each batch of ten the model failed, from 1.
+*(S10)* Adds `deactivated` (`[{session, route, reason, cite}]`, `route`
+`age` or `removed`), `removal_pairs_judged`, `removal_pairs_left` and
+`dropped_removal_labels`; each deactivation is also a plain row
+`deactivated <session> <route> <cite or -> -`. Plain and
 table print one row per change: `reapplied p-<n> <status> <entry> -`,
 `opened p-<n> <kind> <older> <newer or ->` and `failed batch-<n> <code> -
 -` (columns `action id what older newer`). When nothing was reapplied,
@@ -274,8 +334,10 @@ return the same object (2_design.md §6.1, §6.6):
 }
 ```
 
-`cite` is an entry id, `session:<id>` or `task:<id>`; every `quote` was
-found verbatim in the item it cites. `evidence_considered` is the number of
+`cite` is an entry id, `session:<id>`, *(S8)* `session:<id>#<n>` or
+`task:<id>`; every `quote` was found verbatim in the item it cites.
+*(S8)* `hidden_matches` also counts inactive sessions left out; a
+`session` record carries `log` with every segment. `evidence_considered` is the number of
 items the model read, or of records a lookup returned; `dropped_quotes`
 counts claims dropped by the check; `hidden_matches` counts superseded or
 retired entries that matched and were left out (0 with `include_hidden`).

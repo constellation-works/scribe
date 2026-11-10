@@ -1,6 +1,6 @@
 ---
 type: design
-summary: "Spec: store — layout, record files with YAML frontmatter, JSON documents, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
+summary: "Spec: store — layout, record files with YAML frontmatter (format 4: session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
 last_validated: 2026-11-02
 ---
 
@@ -10,6 +10,8 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
+Parts marked *(format 4, S8–S14)* are designed ([ORB-23892]) and not yet
+built; until S8 lands the code is format 3.
 
 ## Why This Exists
 
@@ -27,6 +29,7 @@ user's file could pass for one of Daniel's records.
 ├── sessions/<yyyy>/<mm>/<session-id>.md 0600, one file per session record
 ├── control.json                         0600, optional
 ├── proposals.json                       0600, optional
+├── tags.json                            0600, optional (format 4, S12)
 ├── audit.jsonl                          0600, created by the first audited command
 └── .lock                                0600, created by the first writer, never deleted
 ```
@@ -34,7 +37,7 @@ user's file could pass for one of Daniel's records.
 The root is `--root` > `SCRIBE_ROOT` > `~/.scribe`. A missing root, a
 missing subdirectory or a missing optional file is empty, not an error.
 Names starting with `.` are never records (a writer's temp file, an
-editor's swap file), nor is a file without the `.md` extension; under
+editor's swap file, a rebuild checkpoint `.<id>.rebuild.md`), nor is a file without the `.md` extension; under
 `sessions/`, only four-digit year and two-digit month directories are
 walked.
 
@@ -69,6 +72,12 @@ Frontmatter is read strictly:
 at}`), `cite` (`{session, message, at, prompt_sha256, line, cwd}`),
 `superseded_by`, `review_after`. The body is the entry's content, verbatim.
 
+*(format 4, S8, S12)* Entries add `author` (`{kind: daniel|agent, name}`;
+`name` lowercase `[a-z0-9._-]`, 1–40 characters) and `updated_by` (an
+author or `null`). An agent entry (`author.kind: agent`) has `said: ""`,
+`content_from: {kind: agent}` and `cite: null`; a Daniel entry always has a
+cite. Any other combination is `store_corrupt`.
+
 **Session keys:** `format`, `kind`, `id`, `status` (`open`, `final`),
 `project`, `topics`, `related` (model-extracted references, unchanged by
 links), `links` (a list, possibly empty, of `{type, session}`: `type` is
@@ -84,6 +93,26 @@ span of his turn that does so, and that message's uuid), `provider`, `host`, `cr
 other line, another `##` heading included, is section text, and blank lines
 around a section's text are dropped. Text before `## Summary` or a missing
 heading is `store_corrupt`.
+
+*(format 4, S8)* Session keys add `active` (bool), `keep_active` (bool),
+`active_change` (`null` or `{at, by, route, reason, cite}`: `by` an author
+of any kind, `route` `age`, `removed` or `manual`, `reason` at most 300
+characters, `cite` a reference or `null`), `cataloged_by` (`null` or `{at,
+by}`) and `log`, a list of segments `{n, heading, first_message,
+last_message, from, to, state, windows, origin, topics, related}`: `n`
+counts from 1 without gaps; `heading` at most 80 characters with no line
+break; `first_message` and `last_message` message ids, `null` only when
+`origin` is `upgrade`; `from` and `to` RFC 3339; `state` `open` or
+`sealed`, and only the last segment may be `open` (none when `status` is
+`final`); `windows` a positive integer; `origin` `pass`, `rebuild`,
+`catalog` or `upgrade`; `topics` and `related` as for the record. The body
+is exactly `## Summary`, `## Goals`, `## Next` and `## Log`, in that order;
+under `## Log`, one `### <n>. <heading>` line per `log` item, in order and
+equal to it, each followed by its text. Under `## Log`, text before the
+first `### ` line, a heading that disagrees with `log`, or a `### ` line
+that starts no segment is `store_corrupt`; a segment's text is every other
+line up to the next `### <n+1>. ` line. A format-4 record with `##
+Outcome` is `store_corrupt`.
 
 ## JSON documents
 
@@ -102,6 +131,17 @@ heading is `store_corrupt`.
   "text"}], "state": "open"|"approved"|"rejected", "opened_at",
   "settled_at", "settled_by"}]}`. `newer`, `settled_at` and `settled_by`
   (a cite) may be `null`. Proposals are returned sorted by number.
+  *(format 4, S8)* Each proposal adds `author` (`{kind:
+  scribe|agent|daniel, name}`) and `settled_author` (an author or `null`;
+  set exactly when `state` is not `open`). An agent's settle leaves
+  `settled_by` `null`.
+- *(format 4, S8)* `control.json` switches add `cataloged_by` (`null` or
+  `{at, by}`), set by `session catalog` and copied onto the record.
+- *(format 4, S12)* `tags.json`: `{"format": 4, "tags": [{"name",
+  "aliases", "description", "stale_after_days", "author", "created",
+  "updated"}]}`, sorted by name; `name` and aliases as for config tags,
+  `description` at most 300 characters, `stale_after_days` a positive
+  integer or `null`, `author` of kind `agent`. Absent is no store tags.
 
 Both are strict in the same way as frontmatter: format first, then no
 unknown, missing or repeated key.
@@ -132,6 +172,16 @@ window_chars = 15000              # max content characters per call
 
 [redact]
 env = []                         # more variables whose values are masked
+
+# format 4, S9/S10/S14
+[catalog]
+segment_windows = 3              # windows before scribe seals an open segment
+
+[sessions]
+inactive_after_days = 120        # days since a session's last message
+
+[projects.orbit]                 # none by default
+paths = ["codebases/orbit"]      # path fragments counted by transcript list
 ```
 
 The default tags are `decisions` (aliases `decision`, `dec`) and
@@ -139,11 +189,16 @@ The default tags are `decisions` (aliases `decision`, `dec`) and
 name must already be lowercase kebab-case, since it is a directory; aliases
 are matched case-insensitively. A word that two tags claim, an unknown key,
 a zero cadence/window bound or an invalid variable name is `config_invalid`, naming the
-file and, where the parser knows it, the line.
+file and, where the parser knows it, the line. So is a zero
+`segment_windows` or `inactive_after_days`, a project slug that is not
+lowercase kebab-case, or an empty `paths`.
 
 `tag list` reports every configured tag and every directory under
 `entries/` with its entry count; a directory no configured tag names is
-listed with `configured: false`.
+listed with `configured: false`. *(format 4, S12)* The tag table is the
+config's tags merged with `tags.json`'s; config tags win
+([2_design.md §3](../2_design.md#3-storage)), and a store tag's word a
+config tag claims is dropped with a warning naming both.
 
 ## Invariants
 
@@ -205,7 +260,7 @@ listed with `configured: false`.
   other refusal (a link, loose modes, a newer format, an I/O error) fails
   the whole command rather than skipping the file
   ([4_decisions.md](../4_decisions.md#one-malformed-record-makes-its-file-corrupt)).
-- **Format.** One `FORMAT` (3) covers every document. A shape change bumps
+- **Format.** One `FORMAT` (3; 4 from S8) covers every document. A shape change bumps
   it and appends one step to `UPGRADES` in `store/format.rs`, which is
   given the document type it upgrades; shipped steps never change. Reads
   upgrade an older document in memory; a newer one is refused and left
@@ -215,6 +270,36 @@ listed with `configured: false`.
   empty `pending_links` to each control switch; entries and proposals are
   unchanged. The old shape is validated strictly before upgrade, and reads
   never rewrite it.
+- **Format 4** *(S8)*. The format-3-to-4 step converts in memory: a
+  session record's `## Summary`, `## Goals` and `## Next` become the
+  header, and one sealed segment `{n: 1, heading: <title>, first_message:
+  null, last_message: <scribed_through>, from: <started>, to: <updated>,
+  windows: <passes, at least 1>, origin: upgrade}` holds the summary, a blank line and
+  the outcome; `active: true`, `keep_active: false`, `active_change: null`,
+  `cataloged_by: null`. Entries gain `author: {kind: daniel, name:
+  daniel}` and `updated_by: null`; proposals `author: {kind: scribe, name:
+  consistency}` and `settled_author` (Daniel's for a settled one, else
+  `null`); control switches `cataloged_by: null`. The step is the only
+  place an upgraded segment may exceed 900 characters.
+- **The log is append-only** *(S9)*. Every session write except `session
+  rebuild` compares each sealed segment it writes with the one on disk;
+  any difference in metadata or text refuses the write
+  (`sealed_segment_changed`) and keeps the record. A rebuild writes its
+  windows to `.<id>.rebuild.md` beside the record and replaces the record
+  under the lock only if the record's `updated` is unchanged since the
+  rebuild began.
+- **Activity** *(S8, S10)*. `Store::set_active` changes `active` or
+  `keep_active` and `active_change` under the lock, and nothing else on
+  the record (`updated` included); it writes only when something changed.
+- **Agent writes** *(S12)*. Each write verb takes the lock, checks the
+  author guard (a Daniel entry's content, retirement and the settling of a
+  proposal whose `older` is a Daniel entry are refused `daniel_only`),
+  redacts, and writes the entry, `proposals.json` or `tags.json` through
+  `write_atomic`. `entry add` numbers like capture. An agent settle uses the
+  same two-write order as `#scribe approve`.
+- **Transcripts** *(S14)*. `transcript list` and `transcript show` read
+  Claude Code transcripts through the hooks' provenance check and write
+  nothing, take no lock and create nothing.
 - **Links** (§5.4). A link is written only by `/scribe on --from` or
   `/scribe link`, under the store lock: onto the child's record when it has
   one (no other field, `updated` included, changes), else onto its switch's
@@ -234,7 +319,9 @@ listed with `configured: false`.
   `entry.content`, `session.title`, `session.summary`, `session.goals`,
   `session.outcome`, `session.next`, `session.terms.term`,
   `session.terms.said`, `proposal.reason` and
-  `proposal.quotes.text`. Values shorter than 8 characters are not masked;
+  `proposal.quotes.text`; *(format 4)* also `session.log.heading`,
+  `session.log.text`, `session.active_change.reason` and
+  `tag.description`. Values shorter than 8 characters are not masked;
   identifiers, timestamps and paths are not free text. A `[redact] env`
   name with no value in the writer's environment refuses the write
   (`redact_env_unset`) before anything is stored; already-stored records

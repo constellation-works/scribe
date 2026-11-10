@@ -1,17 +1,17 @@
 ---
 title: scribe — Decisions
 owner: claude
-last_updated: 2026-11-03
+last_updated: 2026-11-10
 last_validated: 2026-11-02
 status: Draft
 feature: scribe
 doc_role: decisions
 type: design
-summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, plus the engineering decisions carried over from the Rust CLI template.
+summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, plus the engineering decisions carried over from the Rust CLI template.
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892]
 ---
 
 # scribe — Decisions
@@ -210,6 +210,12 @@ unknown tag is refused with the list.
 
 - The refusal message is short and the tag list is Daniel's.
 - Cost: a new tag needs a file edit rather than a `#scribe` instruction.
+- Amended 2026-11-10 ([ORB-23892]): agents may now create tags with
+  `scribe tag add`; they live in the store, not the config, and config tags
+  win. See
+  [agent-created tags live in the store](#agent-created-tags-live-in-the-store-and-config-tags-win).
+  The two defaults and "scribe never creates a tag on its own" stand:
+  scribe's own model work still creates none.
 
 ## Hooks call the scribe binary directly, not Orbit
 
@@ -240,6 +246,12 @@ write for an agent to be granted.
 - Cost: the binary must be on `PATH`. The plugin's `bin/scribe` launcher
   execs that same binary, so hooks, routines and `ask` share one version;
   the hooks work without Orbit, the session passes and `ask` do not.
+- Amended 2026-11-10 ([ORB-23892]): "Writes must come only from provider
+  hooks" no longer holds. Daniel's entries still come only from his typed
+  `#scribe` lines, and still never through Orbit; from S12 agents also
+  write, through the CLI, with `author.kind: agent`
+  ([agents read and write through the CLI](#agents-read-and-write-through-the-cli-taught-by-one-skill)).
+  No Orbit tool gains a write.
 
 ## ask is the only tool advertised to agents
 
@@ -267,6 +279,12 @@ is advertised.
 - Cost: an agent cannot list tags or entries except by asking; the
   read-only CLI (`scribe entry list`) remains reachable from a shell, which
   is acceptable because it only reads.
+- Superseded in part, 2026-11-10 ([ORB-23892]): the MCP surface is
+  unchanged (`scribe.ask` is still the only advertised tool, and the
+  conformance test stays), but agents now read and write through the CLI,
+  which one skill teaches. "Only reads" no longer describes the shell
+  surface. See
+  [agents read and write through the CLI](#agents-read-and-write-through-the-cli-taught-by-one-skill).
 
 ## Models are called through the claude CLI
 
@@ -386,6 +404,14 @@ transcripts it was not switched on for.
 - Cost: messages typed before `/scribe on` are summarised, which Daniel may
   not expect; `/scribe off` stops future passes but does not shrink the
   record.
+- Amended 2026-11-10 ([ORB-23892]): "no other session is ever read" now
+  has one exception, a past session Daniel names with `scribe session
+  catalog <id>`; and `scribe transcript list` reads transcripts, writing
+  nothing, to help him choose. scribe still never scans or catalogs on its
+  own. See [backfill is by name](#backfill-is-by-name-a-session-daniel-picks).
+  The whole-session rule itself stands, and from format 4 a session's
+  record grows a log instead of being rewritten in one budget
+  ([a rewritable header over an append-only log](#a-session-record-is-a-rewritable-header-over-an-append-only-log)).
 
 ## The #scribe grammar is model-free
 
@@ -437,6 +463,12 @@ proposal or changes an entry's status.
 - Cost: approving needs a Claude Code session, and the guard is the same
   accident guard as capture (STD-05@1 §R5): a process running as Daniel can
   still forge a hook call.
+- Superseded 2026-11-10 ([ORB-23892]) by
+  [entries Daniel wrote are settled only by Daniel](#entries-daniel-wrote-are-settled-only-by-daniel):
+  agents may now open proposals, and settle those whose older entry an
+  agent wrote, through `scribe proposal settle`. A proposal about an entry
+  Daniel wrote is still settled only by his `#scribe approve|reject`, and
+  `#scribe forget` stays his alone.
 
 ## Persisted free text passes one redactor
 
@@ -1535,6 +1567,409 @@ are structured.
 - Cost: `ask` does not follow links yet; a linked record is evidence only
   on its own merits.
 
+## A session record is a rewritable header over an append-only log
+
+**Recorded:** 2026-11-10 · [ORB-23892] · **Daniel's choice**
+**Code anchors:** `crates/scribe-core/src/session.rs`, `crates/scribe-core/src/pass.rs`, `store/format.rs` (from S8, S9)
+
+### Context
+
+A session record had four sections under fixed budgets, the whole record
+rewritten by every window. Daniel, 2026-11-10: "limiting each session to
+2500 is insufficient for long sessions - e.g. after writing first version
+of the session using all 2500 characters, the next update must remove a
+part of the original. So over multiple re-writes, the beginning session's
+context will get lost, defeating the purpose." Raising the budgets only
+moves the point where history is cut. Starting a new record each time the
+budget fills was ruled out: it pollutes the store with partial records of
+one session.
+
+### Decision
+
+One record per session, in two parts
+([2_design.md §3](./2_design.md#3-storage),
+[§5.5](./2_design.md#55-the-log-segments-and-sealing)):
+
+- A **header** every pass rewrites: the whole session's title, goals, next,
+  and a short summary written as a table of contents.
+- An append-only **log** in the same file: `## Log`, one segment per
+  stretch of the session, each with its number, message range, dates, a
+  heading, about 800 characters of text, and its own topics and `related`.
+  Only the last segment is open; the others are sealed and never sent back
+  to the model to rewrite. The store refuses a write that changes a sealed
+  segment.
+- `session show` prints the header and the log's table of contents;
+  `--log` adds the text. `ask` and `record search` rank segments and cite
+  `session:<id>#<n>`.
+
+### Consequences
+
+- A long session keeps its beginning: the cost of length is more segments,
+  not lost text. One file still answers "what was this session about".
+- Retrieval gets finer: a segment is a unit with its own dates and topics,
+  so a hit points at the part of a session that matters.
+- Cost: a persisted-shape change (format 4) with an upgrade step, a body
+  parser that must keep frontmatter and headings in step, and a model
+  prompt that must give segment boundaries the code can check. A segment
+  sealed with a poor summary stays poor until `session rebuild`.
+
+## Outcome folds into the log
+
+**Recorded:** 2026-11-10 · [ORB-23892] · **Overridable by Daniel**
+
+### Context
+
+The header could keep `## Outcome`. But an outcome rewritten every pass is
+the same 2,500-character budget that lost the start of long sessions, and
+"what happened" is exactly what the log records in order.
+
+### Decision
+
+The format-4 header is title (120), summary (1200, a table of contents),
+goals (600) and next (1000). There is no outcome section: each segment's
+text says what was reached in it. The JSON payload keeps `outcome`, always
+`""` for a format-4 record, so no reader breaks. The upgrade step moves an
+old record's outcome into segment 1, after its summary.
+
+### Consequences
+
+- The header stays small (under 3,000 characters), so every pass's
+  rewrite is cheap and nothing in it needs history.
+- Cost: no one field answers "how did it end"; a reader takes the last
+  segments or `next`. Scripts that read `.outcome` get `""` and must move
+  to `.log`.
+
+## A segment seals when it is full, when the thread changes, or after three windows
+
+**Recorded:** 2026-11-10 · [ORB-23892] · **Overridable by Daniel**
+
+### Context
+
+If the model alone decided when to start a segment, a cheap model could
+keep one segment open for a whole session and rewrite it down to 800
+characters, which is the loss the log exists to prevent. If scribe alone
+decided, by a fixed size, segments would cut threads in the middle.
+
+### Decision
+
+- The model opens a new segment (sealing the open one) when the thread
+  changes, by naming the message it starts at.
+- scribe enforces the budget: an open segment's text over 900 characters
+  is refused with "seal it and start a new segment", so a full segment
+  seals.
+- scribe seals the open segment itself after `[catalog] segment_windows`
+  (3) windows, and at the end of the final pass.
+- At most three new segments per window.
+
+### Consequences
+
+- One segment summarizes at most about 120 messages or 45,000 characters,
+  bounding what any rewrite can compress away.
+- Cost: a long single-topic stretch is split into several segments whose
+  headings repeat; a configurable bound is one more setting.
+
+## Store format 4 carries the log, active and author in one step
+
+**Recorded:** 2026-11-10 · [ORB-23892]
+**Code anchors:** `store/format.rs::UPGRADES` (from S8)
+
+### Context
+
+The log, the `active` flag, entry and proposal authors, the catalog marker
+and the tags store all change persisted shapes. Each could bump the format
+on its own, in the slice that needs it.
+
+### Decision
+
+One bump, format 4, in S8, with one appended upgrade step covering every
+new field; the slices after it fill fields that already exist. The step
+converts in memory: a session's summary and outcome become sealed segment
+1 (`origin: upgrade`), sessions are active, entries are Daniel's (every
+entry so far came from a typed `#scribe` line), proposals are the
+consistency routine's. A session whose transcript remains can be rebuilt
+into real segments with `scribe session rebuild <id>`; one whose
+transcript is gone keeps the converted segment.
+
+### Consequences
+
+- One migration for Daniel's store, one refusal point for older builds.
+- Cost: S8 is larger than the slices after it, and fields such as
+  `cataloged_by` exist (always `null`) before the slice that sets them.
+
+## Sessions carry an active flag, separate from status
+
+**Recorded:** 2026-11-10 · [ORB-23892] · **Daniel's choice**
+**Code anchors:** `crates/scribe-core/src/activity.rs` (from S8)
+
+### Context
+
+Daniel, 2026-11-10: "we should add \"isActive\" field to sessions so that
+scribe or based on configurable duration limit can periodically deactivate
+stale sessions", and "A feature that no longer exists (if it exists in
+session store) should be deactivated." `status` already says whether a
+session has ended, which is a different question from whether its content
+still describes something current.
+
+### Decision
+
+`active` (default `true`) in a session's frontmatter, beside `status`,
+with `keep_active` (an exemption) and `active_change` (`{at, by, route,
+reason, cite}` of the last change). An inactive session is hidden, not
+removed, like a superseded entry: left out of `session list`, `record
+search` and `ask` evidence by default, shown with `--include-inactive`,
+`--include-hidden` or `include_hidden`, and always by `session show`.
+Every change is audited and reversible with `session activate`.
+
+### Consequences
+
+- Records about removed features stop answering questions without losing
+  their history.
+- Cost: a second state axis readers must learn (`final` and active, `open`
+  and inactive are both possible), and hidden sessions can surprise a
+  reader who forgets the flag.
+
+## Removal of the feature is the main deactivation route; age is a generous backstop
+
+**Recorded:** 2026-11-10 · [ORB-23892] · **Overridable by Daniel**
+**Code anchors:** `crates/scribe-core/src/activity.rs`, `crates/scribe-core/src/consistency.rs` (from S10)
+
+### Context
+
+Daniel asked for both a configurable age limit and deactivation of
+sessions about features that no longer exist. The two pull apart: the goal
+is context for features that still exist, and such a session can be old,
+so an age rule alone would hide the sessions that explain long-lived
+features.
+
+### Decision
+
+- Three audited routes, each with a reason: `removed` (the consistency
+  routine, when a later record says the session's feature was removed or
+  replaced; model judgement whose quote of the later record is verbatim-
+  checked, citing it); `age` (the same routine, model-free, when the last
+  message is older than `[sessions] inactive_after_days`, default 120);
+  `manual` (`scribe session deactivate <id> --reason …` and `scribe session
+  activate <id>`, by an agent or Daniel).
+- `keep_active: true`, set with `session activate <id> --pin`, exempts a
+  session from both automatic routes.
+- Age counts from the last message, not `updated`, because rebuilds,
+  links and catalogs rewrite `updated`.
+- The routine deactivates directly instead of opening a proposal: the
+  change hides, never alters, and is one command to reverse.
+- scribe never reads a repository to decide whether a feature exists. That
+  check belongs to the agent or routine that calls `deactivate`.
+
+### Consequences
+
+- An old session about a living feature stays active for four months
+  without anyone touching it, and indefinitely once pinned.
+- Cost: a wrong `removed` judgement hides a useful session until someone
+  looks with `--include-inactive`; the age limit still hides an unpinned
+  session about a long-lived feature after 120 days.
+
+## Agents read and write through the CLI, taught by one skill
+
+**Recorded:** 2026-11-10 · [ORB-23892] · **Daniel's choice**
+**Code anchors:** `plugin/claude-code/skills/scribe/SKILL.md`, `crates/scribe/src/commands/record.rs` (from S11–S13)
+
+### Context
+
+Daniel, 2026-11-10: "I don't want to keep having to manually search for
+specific session id's to hand to agents; and I am not sure about adding
+another set of MCP tools. so I think a single scribe skill that teaches
+terminal commands will suffice." Agents "should able to filter sessions by
+topics, tags, bm25 search, date range, add/update proposals, tags and
+entries directly", with `scribe.ask` kept for intensive and vague
+searches. He confirmed the division of work the same day: scribe's own job
+is summarizing and cataloging sessions; agents do the direct writes.
+
+### Decision
+
+- The MCP surface stays `scribe.ask` alone. Agents use the CLI: `record
+  search` (BM25 without a model), list filters (`--since`, `--until`,
+  `--status`, repeated `--topic` and `--related`), unique id prefixes, and
+  write verbs for entries, tags and proposals, each audited and recording
+  its author ([2_design.md §1.1](./2_design.md#11-the-cli-agent-surface)).
+- One `scribe` skill in the Claude Code package teaches the commands and
+  when to `ask` instead; a route under the constellation umbrella's
+  `.agents/skills/scribe/` serves other providers.
+- Names follow STD-01 R1–R2: the search is `record search`, not a bare
+  `scribe search`, since one tool must not mix verb-first and noun-first
+  orders; backfill candidates are `transcript list`.
+- scribe's model work stays the session pass, `ask` and the consistency
+  routine; no model writes an entry, tag or proposal for an agent.
+
+### Consequences
+
+- An agent finds a session by topic, date or word without Daniel handing
+  it an id, and records what it learns without a new MCP tool.
+- The store is on the Mac, so the skill serves Mac sessions; box workers
+  still cannot read scribe.
+- Cost: the write path is no longer agent-free, which was this plugin's
+  distinctive claim ([3_vision.md](./3_vision.md)); the author field and the
+  guard on Daniel's entries are what keep his words distinguishable.
+
+## Every entry and proposal records its author
+
+**Recorded:** 2026-11-10 · [ORB-23892] · **Overridable by Daniel**
+**Code anchors:** `crates/scribe-core/src/record.rs` (`Author`, from S8)
+
+### Context
+
+Once agents write, an entry no longer implies "Daniel said this". `ask`
+quotes entries as Daniel's words and weights them 1.5×. Scribe cannot
+verify who ran a CLI command: any process running as Daniel can.
+
+### Decision
+
+- Every entry and proposal records `author: {kind, name}`. `kind` is
+  `daniel` for a typed `#scribe` turn (the hooks write it), `agent` for any
+  CLI write verb, and `scribe` for scribe's own routine (proposals only).
+- Every CLI write verb requires `--author <name>` (by convention the
+  agent's crew or model) and records `kind: agent` whatever the name;
+  `kind` means the channel, not a claimed identity, so `--author daniel`
+  still writes `kind: agent`.
+- An agent entry has no typed line to cite: `said` is `""` and `cite` is
+  `null`.
+- Existing entries upgrade to `daniel`; existing proposals to `scribe`.
+
+### Consequences
+
+- `ask` can label and weight by channel, and Daniel's words stay marked by
+  the one channel only he uses.
+- Cost: Daniel at a terminal writing through the CLI is recorded as an
+  agent; `--author` is an unchecked label; `cite` can now be `null` in an
+  entry's JSON, which readers of agent entries must handle.
+
+## Agent-created tags live in the store, and config tags win
+
+**Recorded:** 2026-11-10 · [ORB-23892] · **Overridable by Daniel**
+**Code anchors:** `crates/scribe-core/src/tag.rs`, `store/` (`tags.json`, from S12)
+
+### Context
+
+Agents may now add tags. Tags are defined in `config.toml`, which is
+Daniel's and which scribe never rewrites. Writing agent tags into the config
+would break that rule, lose Daniel's comments and formatting on a TOML
+rewrite, and put agent writes outside the store lock and audit.
+
+### Decision
+
+Agent tags live in `tags.json` in the store (format 4): written under the
+lock, audited, redacted, with an author. The tag table is the config's tags
+merged with the store's. Config tags win: a store tag may not take a name
+or alias a config tag claims (`tag_conflict`), a later config edit that
+claims one drops it from the store tag with a warning, and `tag update`
+refuses a config tag (`tag_configured`). Daniel promotes a store tag by
+adding it to his config.
+
+### Consequences
+
+- `config.toml` stays Daniel's alone, and his edits always prevail.
+- Cost: tags live in two places; `tag list` shows a `source` column so a
+  reader can tell which.
+
+## Entries Daniel wrote are settled only by Daniel
+
+**Recorded:** 2026-11-10 · [ORB-23892] · **Overridable by Daniel**
+**Code anchors:** `crates/scribe-core/src/consistency.rs` (`settle`, from S12)
+
+### Context
+
+Agents may now open, update and settle proposals. Settling a proposal
+supersedes or retires an entry; if an agent could do that to an entry
+Daniel wrote, an agent could hide his words.
+
+### Decision
+
+- Agents may open a proposal against any entry, update the reason of an
+  open proposal an agent opened, and settle a proposal whose older entry
+  is agent-authored.
+- A proposal whose older entry Daniel wrote is settled only by his
+  `#scribe approve|reject`; `proposal settle` refuses it (`daniel_only`).
+- Agents may change only the topics and related references of a Daniel
+  entry, never its content, and may not retire it. `#scribe forget` stays
+  Daniel's alone.
+- `ask` never presents an agent entry as Daniel's words and gives it no
+  1.5× weight.
+
+### Consequences
+
+- An agent can tidy its own notes without waiting for Daniel, and Daniel's
+  words leave answers only by his hand.
+- Cost: agent proposals against Daniel's entries wait in the session-start
+  count until he settles them; the refusal is an accident guard, not a
+  permission (STD-05@1 §R5).
+
+## Humans browse scribe in a tmux popup over fzf
+
+**Recorded:** 2026-11-10 · [ORB-23892] · **Daniel's choice**
+**Code anchors:** `plugin/tmux/scribe-tmux` (from S13)
+
+### Context
+
+Daniel: "we need a very simple desktop UI or tmux UI for humans. perhaps
+tmux will be better - having another desktop app will be cumbersome." A
+Rust TUI (ratatui) would add dependencies under `cargo deny` and code to
+maintain for what is mostly a list and a preview.
+
+### Decision
+
+A POSIX shell script, `scribe-tmux`, of about 60 lines over `fzf`, bound to
+a tmux key with `display-popup`: sessions, entries, proposals and backfill
+candidates in one list, `scribe … show` as the preview, Enter opens the
+record in the pager, a key copies the id. No new Rust dependency. A real
+TUI is built only if this proves too small.
+
+### Consequences
+
+- Daniel browses in the terminal he already uses, and the script reuses
+  the CLI's plain output, so it changes when the CLI does.
+- Cost: `fzf` must be installed; the script parses tab-separated columns,
+  so a column change in plain output is a change to the script too.
+
+## Backfill is by name: a session Daniel picks
+
+**Recorded:** 2026-11-10 · [ORB-23892] · **Daniel's choice**
+**Code anchors:** `crates/scribe/src/commands/session/catalog.rs`, `crates/scribe/src/commands/transcript.rs` (from S14)
+
+### Context
+
+Daniel: "we need to backfill some of important chat sessions on orbit and
+scribe projects. not everything but certain long ones", then "we don't need
+to go all the way back to aug. those will just add noise. the primary goal
+is to understand the context of existing features, to provide continuity
+... month of oct will be a good starting point." `session pass --session`
+refuses a session never switched on (`session_not_on`), and the original
+design read no other session. Most sessions start from the constellation
+root (463 of 947 transcripts on the Mac), so the cwd does not say which
+project a session was about.
+
+### Decision
+
+- `scribe session catalog <id>` switches a past session on by name,
+  recording `cataloged_by`, runs its passes to the end with no routine
+  deadline, and marks it final when its transcript is a day old. It writes
+  a session record, labelled as a summary, and no entries.
+- `scribe transcript list --since <date>` lists uncataloged transcripts,
+  model-free and writing nothing, with project, dates, size and Daniel's
+  turn count, at least 20 turns by default. A transcript's project is the
+  configured project (`[projects.<slug>] paths`) whose paths it mentions
+  most, else its cwd's.
+- Daniel picks and runs `catalog` by hand, a few at a time; scribe never
+  scans or catalogs on its own. A session only about a removed feature is
+  skipped, or deactivated if cataloged; the few that matter most are also
+  distilled into discussions (S7).
+
+### Consequences
+
+- October's long orbit, scribe and constellation-site sessions can give
+  agents the context of existing features without cataloging everything.
+- Path counting keeps scribe generic: it knows no project names, only the
+  paths Daniel configures.
+- Cost: the attribution is a heuristic that a session touching many repos
+  can fool; each catalog is a full model run over a long transcript.
+
 ## Task References
 
 - [ORB-21747] — designed the standalone scribe plugin and recorded its decisions.
@@ -1548,5 +1983,7 @@ are structured.
 - [ORB-21787] — S5: the Orbit plugin tree and `ask`.
 - [ORB-21795] — S6: the consistency routine, the settling verbs and the routines.
 - [ORB-23849] — session links (`spawned_from`, `continues`) between session records.
+- [ORB-23892] — session records with a log, the `active` flag, the CLI agent
+  surface and skill, the tmux popup and backfill by name (designed).
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
