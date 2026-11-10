@@ -2065,6 +2065,24 @@ labels instead of forwarding potentially misattributed model prose.
   with an install hint without `fzf`; the README documents the
   `display-popup` binding.
 
+**As built (S13).** The skill and the popup ship as designed, with two
+honest adaptations to what the binary offers today. There is no
+`proposal show` (a proposal is read through `proposal list`), so the
+popup's proposal preview and Enter view format the proposal's list row
+field by field, which carries every field a proposal has. S14 has not
+landed, so `transcript list` does not exist yet: the backfill view's
+reload catches that failure and shows one notice row saying so (its
+preview explains why) instead of failing, and Enter on it does nothing;
+once S14 lands the same view lists candidates and Enter leaves
+`scribe session catalog <id> --author daniel` in the tmux paste buffer.
+The script prefixes each row with a hidden kind field so one fzf
+invocation's `ctrl-s`/`ctrl-e`/`ctrl-p`/`ctrl-b` reloads, its
+`alt-a` hidden-toggle and its `ctrl-y` copy all know the record's noun
+and id; `crates/scribe/tests/tmux_popup.rs` drives it through a fake
+`fzf` against the real binary. The skill names only commands and flags
+the built binary has (checked against its `--help`), so it does not
+teach `transcript list/show` or `session catalog` until S14.
+
 **S14 — Backfill by name.** Depends on S9.
 
 - `scribe transcript list --since <date>` lists uncataloged transcripts
