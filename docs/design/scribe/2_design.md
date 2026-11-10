@@ -11,7 +11,7 @@ summary: How the scribe plugin is bounded (one binary; Daniel writes through hoo
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892]
+related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995]
 ---
 
 # scribe — Design
@@ -1104,6 +1104,12 @@ prompt fix is redone.
 - A session that is on and due is refused `session_busy`; `scribe session
   pass --session <id>` first, or wait for the routine.
 - It is a mutating command: one audit line (`target` `session:<id>`).
+- Its tests replay recorded model answers through the built binary with no
+  live model ([specs/replay-fixtures.md](specs/replay-fixtures.md)): a
+  checked-in synthetic recording reproduces each budget, `starts_at` and
+  open-segment failure seen on a real long session, and
+  `scripts/redact-recording.sh` turns a real recording into one that holds
+  no readable text ([ORB-23995]).
 
 ### 5.7 Active and inactive sessions
 
@@ -2182,5 +2188,7 @@ pointing at the same commands; that is a constellation change.
 - [ORB-23892] — designed S8–S14: the header-and-log session record, the
   `active` flag, the CLI agent surface and skill, the tmux popup and
   backfill by name.
+- [ORB-23995] — session rebuild replay fixtures: the replay harness, the
+  synthetic recording and the redaction tool.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.

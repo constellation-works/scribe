@@ -184,12 +184,15 @@ crates/scribe/        the binary: cli.rs (root flags), app.rs (composition),
                         output/ (sink, rendering, errors)
 crates/*/tests/         integration tests; crates/scribe/tests/goldens/ holds the
                         help and output goldens, tests/fixtures/store/ the
-                        fixture store they read
+                        fixture store they read, tests/fixtures/replay/ the
+                        session rebuild replay recordings
+                        (docs/design/scribe/specs/replay-fixtures.md)
 plugin/claude-code/     the Claude Code package (hooks, /scribe command), and plugin/.claude-plugin/
                         the local marketplace that installs it
 plugin/.orbit-plugin/   the Orbit plugin tree (manifest, launcher, schemas,
                         conformance goldens and the manifest contract test)
-scripts/                structure gates run by `make ci-fast`
+scripts/                structure gates run by `make ci-fast`, and
+                        redact-recording.sh (redacts a replay recording)
 docs/design/            design docs: _templates/ to copy, scribe/ for this tool
 ```
 

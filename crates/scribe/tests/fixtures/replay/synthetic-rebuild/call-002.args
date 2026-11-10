@@ -1,0 +1,10 @@
+-p
+--safe-mode
+--tools
+
+--model
+claude-haiku-5-5
+--output-format
+json
+--json-schema
+{"type":"object","properties":{"title":{"type":"string"},"summary":{"type":"string","description":"shortened summary; aim for at most 900 characters, hard limit 1200"},"goals":{"type":"string"},"next":{"type":"array","items":{"type":"string"}}},"required":["title","summary","goals","next"],"additionalProperties":false}
