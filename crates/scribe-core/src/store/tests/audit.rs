@@ -9,6 +9,7 @@ fn failed_add() -> AuditEvent {
         status: AuditStatus::Failure,
         target: None,
         error_code: Some(String::from("store_locked")),
+        author: None,
         duration_ms: 42,
     }
 }
@@ -49,6 +50,7 @@ fn an_event_has_no_field_for_arguments_or_error_text() {
         keys,
         [
             "at",
+            "author",
             "command",
             "duration_ms",
             "error_code",
@@ -57,4 +59,14 @@ fn an_event_has_no_field_for_arguments_or_error_text() {
             "target"
         ]
     );
+}
+
+#[test]
+fn a_format_one_line_reads_with_no_author() {
+    // STD-02 R16: the log written before `author` existed still reads.
+    let old = br#"{"format":1,"at":"2026-09-26T12:00:00Z","command":"hook stop","status":"success","target":null,"error_code":null,"duration_ms":3}"#;
+    let line: AuditLine = serde_json::from_slice(old).unwrap();
+    assert_eq!(line.format, 1);
+    assert_eq!(line.event.author, None);
+    assert_eq!(line.event.command, "hook stop");
 }

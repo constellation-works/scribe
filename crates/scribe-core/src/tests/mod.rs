@@ -66,6 +66,7 @@ pub(crate) fn session(id: &str, started: OffsetDateTime) -> SessionRecord {
         keep_active: false,
         active_change: None,
         cataloged_by: None,
+        rebuilt_by: None,
         project: "scribe".parse().unwrap(),
         topics: crate::record::Topics::default(),
         related: Vec::new(),

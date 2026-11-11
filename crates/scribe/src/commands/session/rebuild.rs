@@ -8,8 +8,8 @@ use crate::error::CliError;
 use crate::output::{Output, PassPayload, PassReport};
 use clap::Args;
 use scribe_core::{
-    AuthorName, Config, Models, SegmentOrigin, SegmentState, SessionId, SessionStatus, pass,
-    transcript,
+    Author, AuthorName, Config, Models, SegmentOrigin, SegmentState, SessionId, SessionStatus,
+    pass, transcript,
 };
 use std::collections::BTreeSet;
 
@@ -249,6 +249,7 @@ pub(in crate::commands) fn run_with<M: Models>(
             finished = pass::finalized(&finished, ctx.now());
         }
         finished.updated = ctx.now();
+        finished.rebuilt_by = Some(Author::agent(args.author.clone()));
         match store.finish_rebuild(finished, expected, &redactor)? {
             Some(written) => {
                 report.segments_sealed += usize::from(sealed_at_finish);

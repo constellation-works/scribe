@@ -23,7 +23,7 @@
 //! unknown target, a self-link and a cycle.
 
 use crate::activity::{ActiveChange, CatalogedBy};
-use crate::record::{DateRange, Label, Listing, Project, Related, Topic, Topics, nullable};
+use crate::record::{Author, DateRange, Label, Listing, Project, Related, Topic, Topics, nullable};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -537,6 +537,10 @@ pub struct SessionRecord {
     /// by name otherwise.
     #[serde(deserialize_with = "nullable")]
     pub cataloged_by: Option<CatalogedBy>,
+    /// The agent that ran `session rebuild` to write this record, as its
+    /// `--author`; `null` when no rebuild wrote it.
+    #[serde(deserialize_with = "nullable")]
+    pub rebuilt_by: Option<Author>,
     /// The repository the session ran in.
     pub project: Project,
     /// Filter labels the session model chose, reusing existing ones first.

@@ -379,6 +379,8 @@ pub(crate) struct SessionPayload {
     pub(crate) keep_active: bool,
     pub(crate) active_change: Option<ActiveChangePayload>,
     pub(crate) cataloged_by: Option<CatalogedByPayload>,
+    /// The agent that ran `session rebuild` to write this record, or `null`.
+    pub(crate) rebuilt_by: Option<AuthorPayload>,
     /// The log's segments with their text, oldest first (one with
     /// `--segment`); absent from a list, whose rows carry no log.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -433,6 +435,7 @@ impl SessionPayload {
             keep_active: record.keep_active,
             active_change: record.active_change.as_ref().map(ActiveChangePayload::from),
             cataloged_by: record.cataloged_by.as_ref().map(CatalogedByPayload::from),
+            rebuilt_by: record.rebuilt_by.as_ref().map(AuthorPayload::from),
             log: None,
             log_text: false,
         }

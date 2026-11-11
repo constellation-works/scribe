@@ -127,6 +127,10 @@ when the session has no switch). The four text fields are model-written.
 `links` and `children` were added with session links (store format 3);
 every other field is unchanged.
 
+Store format 6 adds `rebuilt_by` (`null` or `{kind, name}`): the agent whose
+`--author` ran the `session rebuild` that wrote the record. It is in `--json`
+only; the table view does not print it.
+
 Store format 4 adds `active`, `keep_active`, `active_change` (`null` or
 `{at, by, route, reason, cite}`), `cataloged_by` (`null` or `{at, by}`)
 and `log`: in `session show` the segments `[{n, heading, first_message,
@@ -233,7 +237,9 @@ four characters. An exact id wins over a prefix; several matches are
 `id_ambiguous` (exit 2); none is the noun's not-found (`entry_not_found`,
 `proposal_not_found`, `session_not_found`, exit 1). A session's prefix is
 matched against its record and its switch in `control.json`, and the
-audit line of a write names the full id.
+audit line of a write names the full id; a write that takes `--author` also
+names that author in `author`, and a refused write names both its resolved
+target and its author.
 
 Stable codes: `entry_not_found`, `session_not_found`, `io_error`,
 `store_corrupt`, `config_invalid`, `store_too_new`, `store_locked`,

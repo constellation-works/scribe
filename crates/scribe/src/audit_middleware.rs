@@ -10,8 +10,9 @@
 //! Which commands are audited is declared per command in
 //! `commands::Command::audit`; read-only commands are not, because they must
 //! not write (STD-01 R31). The line holds the command path, the record acted
-//! on, the outcome and the stable error code: never argument values or error
-//! text, which can carry entry contents or paths (STD-05 R13).
+//! on, the outcome, the stable error code and, for a command that takes an
+//! `--author`, that name (STD-05 R2): never argument values or error text,
+//! which can carry entry contents or paths (STD-05 R13).
 //!
 //! A hook run writes one line per record it wrote or refused (two `#scribe`
 //! lines in one prompt are two lines in the log), and none when it changed
@@ -53,6 +54,30 @@ struct Line {
     error_code: Option<&'static str>,
 }
 
+/// What a write verb names before it runs, so a refused write is still
+/// attributable: the record it targets, resolved to its id, and the
+/// `--author` it acted as. Ids and names only, never argument values
+/// (STD-05 R2, R13). `None` where the command names neither.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct AuditSubject {
+    /// The resolved id of the record, or `None` when it does not resolve.
+    pub(crate) target: Option<String>,
+    /// The agent's `--author` name, or `None` for a command without one.
+    pub(crate) author: Option<String>,
+}
+
+impl AuditSubject {
+    /// Apply the subject to a guard, which keeps it for every line it writes.
+    pub(crate) fn apply(&self, audit: &mut AuditGuard<'_>) {
+        if let Some(target) = &self.target {
+            audit.set_target(target);
+        }
+        if let Some(author) = &self.author {
+            audit.set_author(author);
+        }
+    }
+}
+
 /// Records one command in the audit log when dropped.
 #[must_use = "the audit line is written when the guard is dropped"]
 #[derive(Debug)]
@@ -62,6 +87,7 @@ pub(crate) struct AuditGuard<'a> {
     at: OffsetDateTime,
     started: Instant,
     lines: Vec<Line>,
+    author: Option<String>,
 }
 
 impl<'a> AuditGuard<'a> {
@@ -78,6 +104,7 @@ impl<'a> AuditGuard<'a> {
                 target: None,
                 error_code: None,
             }],
+            author: None,
         }
     }
 
@@ -185,6 +212,12 @@ impl<'a> AuditGuard<'a> {
         }
     }
 
+    /// Name the agent a command acted as, on every line it writes: the
+    /// `--author` name, a self-reported identity kept in its own field (STD-05 R2).
+    pub(crate) fn set_author(&mut self, author: &str) {
+        self.author = Some(author.to_owned());
+    }
+
     /// The lines this guard will write, in order.
     pub(crate) fn events(&self) -> Vec<AuditEvent> {
         let duration_ms = u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
@@ -196,6 +229,7 @@ impl<'a> AuditGuard<'a> {
                 status: line.status,
                 target: line.target.clone(),
                 error_code: line.error_code.map(str::to_owned),
+                author: self.author.clone(),
                 duration_ms,
             })
             .collect()

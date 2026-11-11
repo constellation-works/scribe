@@ -18,8 +18,9 @@ use time::OffsetDateTime;
 pub const AUDIT_FILE: &str = "audit.jsonl";
 
 /// The newest audit line format. Bump it, and keep reading the old one, when
-/// the line's shape changes (STD-02 R16).
-pub(super) const AUDIT_FORMAT: u32 = 1;
+/// the line's shape changes (STD-02 R16). Format 2 adds `author`; a format 1
+/// line reads with none.
+pub(super) const AUDIT_FORMAT: u32 = 2;
 
 /// How an audited command ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,6 +49,11 @@ pub struct AuditEvent {
     /// The stable error code on failure (STD-01 R19); never the message.
     #[serde(default)]
     pub error_code: Option<String>,
+    /// The agent's `--author` name, for a command that takes one, on success
+    /// and refusal alike. A self-reported identity, kept apart from the
+    /// command's arguments (STD-05 R2); `null` when none was given.
+    #[serde(default)]
+    pub author: Option<String>,
     /// Wall time from start to result, in milliseconds.
     pub duration_ms: u64,
 }

@@ -491,6 +491,7 @@ fn the_audit_log_holds_ids_and_codes_never_what_was_said() {
             keys,
             [
                 "at",
+                "author",
                 "command",
                 "duration_ms",
                 "error_code",

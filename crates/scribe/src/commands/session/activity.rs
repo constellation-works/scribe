@@ -14,6 +14,7 @@
 
 use super::{SessionRef, parse_session_ref};
 use crate::app::Context;
+use crate::audit_middleware::AuditSubject;
 use crate::error::CliError;
 use crate::output::{Kin, Output, Record, SessionPayload};
 use clap::Args;
@@ -89,6 +90,19 @@ pub(crate) struct ActivateArgs {
     /// Lift the exemption, so the consistency routine may deactivate it again
     #[arg(long)]
     pub(crate) unpin: bool,
+}
+
+/// What the audit log names for `deactivate` and `activate`: the session the
+/// id resolves to, and the agent it acts as.
+pub(super) fn subject(ctx: &Context, id: &SessionRef, author: &AuthorName) -> AuditSubject {
+    let target = whole_session(id)
+        .ok()
+        .and_then(|id| ctx.store().resolve_session(&id).ok())
+        .map(|id| format!("session:{id}"));
+    AuditSubject {
+        target,
+        author: Some(author.as_str().to_owned()),
+    }
 }
 
 /// `session deactivate`.

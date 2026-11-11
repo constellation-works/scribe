@@ -39,7 +39,7 @@ use std::path::Path;
 
 /// The newest store format: this build reads formats 1 to `FORMAT` of every
 /// document and would write `FORMAT`.
-pub(super) const FORMAT: u32 = 5;
+pub(super) const FORMAT: u32 = 6;
 
 /// Which document an upgrade step is applied to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,8 +66,30 @@ pub(super) type Upgrade = fn(Document, serde_json::Value) -> serde_json::Result<
 /// (STD-02 R16, STD-03 R10). A shipped step is never edited, reordered or
 /// removed. Reads upgrade in memory only; the next write persists the
 /// current format. The template's `notes.json` is not carried over.
-pub(super) const UPGRADES: &[Upgrade] =
-    &[retry_state, session_links, log_active_author, agent_writes];
+pub(super) const UPGRADES: &[Upgrade] = &[
+    retry_state,
+    session_links,
+    log_active_author,
+    agent_writes,
+    session_rebuilt_by,
+];
+
+/// Format 5 -> 6 adds `rebuilt_by` to each session record: the agent that
+/// ran `session rebuild`, or `null` for a record no rebuild wrote. Other
+/// documents are unchanged. Reads upgrade only in memory.
+fn session_rebuilt_by(
+    document: Document,
+    mut value: serde_json::Value,
+) -> serde_json::Result<serde_json::Value> {
+    if document == Document::Session
+        && let Some(record) = value.as_object_mut()
+    {
+        record
+            .entry("rebuilt_by")
+            .or_insert(serde_json::Value::Null);
+    }
+    Ok(value)
+}
 
 /// Format 4 -> 5 permits agent provenance and adds retirement reasons and proposal updaters.
 fn agent_writes(
@@ -889,22 +911,29 @@ fn decode_json<T: DeserializeOwned>(path: &Path, bytes: &[u8], document: Documen
         // Straight from the bytes, so a repeated key is refused too.
         return serde_json::from_slice(bytes).map_err(|e| Error::corrupt(path, e));
     }
+    // Each older shape is checked strictly. Formats 4 and 5 left control.json
+    // and proposals.json at their current shapes (format 5 -> 6 changed
+    // neither), so those formats check against the current structs.
     match document {
-        Document::Control if from == 4 => {
-            serde_json::from_slice::<ControlDocument>(bytes)
-                .map_err(|e| Error::corrupt(path, e))?;
-        }
-        Document::Proposals if from == 4 => {
-            serde_json::from_slice::<ProposalsV4>(bytes).map_err(|e| Error::corrupt(path, e))?;
-        }
         Document::Control if from == 1 => {
             serde_json::from_slice::<ControlV1>(bytes).map_err(|e| Error::corrupt(path, e))?;
         }
         Document::Control if from == 2 => {
             serde_json::from_slice::<ControlV2>(bytes).map_err(|e| Error::corrupt(path, e))?;
         }
-        Document::Control => {
+        Document::Control if from == 3 => {
             serde_json::from_slice::<ControlV3>(bytes).map_err(|e| Error::corrupt(path, e))?;
+        }
+        Document::Control => {
+            serde_json::from_slice::<ControlDocument>(bytes)
+                .map_err(|e| Error::corrupt(path, e))?;
+        }
+        Document::Proposals if from == 4 => {
+            serde_json::from_slice::<ProposalsV4>(bytes).map_err(|e| Error::corrupt(path, e))?;
+        }
+        Document::Proposals if from == 5 => {
+            serde_json::from_slice::<ProposalsDocument>(bytes)
+                .map_err(|e| Error::corrupt(path, e))?;
         }
         Document::Proposals => {
             serde_json::from_slice::<ProposalsV3>(bytes).map_err(|e| Error::corrupt(path, e))?;

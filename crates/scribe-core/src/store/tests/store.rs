@@ -16,6 +16,7 @@ fn event(command: &str) -> AuditEvent {
         status: AuditStatus::Success,
         target: None,
         error_code: None,
+        author: None,
         duration_ms: 0,
     }
 }

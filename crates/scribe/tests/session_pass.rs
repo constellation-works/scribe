@@ -883,7 +883,7 @@ fn legacy_control_is_read_without_writes_and_new_retry_state_is_strict() {
     );
     setup.pass();
     let current: Value = serde_json::from_slice(&setup.control_bytes()).unwrap();
-    assert_eq!(current["format"], 5);
+    assert_eq!(current["format"], 6);
     assert_eq!(current["sessions"][ON]["consecutive_failures"], 0);
     assert_eq!(current["sessions"][ON]["retry_after"], Value::Null);
     assert_eq!(current["sessions"][ON]["pending_links"], json!([]));
@@ -1057,10 +1057,10 @@ fn a_pass_writes_one_record_of_daniels_terms_and_never_reads_a_session_never_swi
         json!([{"term": "graduate to level 4", "said": DEFINED, "message": "u-1"}])
     );
     assert!(!setup.fx.root().join("entries").exists(), "no entries");
-    // The record is written at format 5: a header and one open segment
+    // The record is written at format 6: a header and one open segment
     // holding this pass's segment text.
     let file = std::fs::read_to_string(setup.record_file()).unwrap();
-    assert!(file.starts_with("---\nformat: 5\n"), "{file}");
+    assert!(file.starts_with("---\nformat: 6\n"), "{file}");
     assert!(file.contains("\n## Log\n### 1. "), "{file}");
     assert!(!file.contains("## Outcome"), "{file}");
     assert_eq!(record["active"], true);
@@ -1683,6 +1683,20 @@ fn rebuild_resumes_hidden_checkpoints_and_preserves_identity_links_and_activity(
         report["passes"][0]["author"],
         json!({"kind": "agent", "name": "test-agent"})
     );
+    let shown: Value =
+        serde_json::from_slice(&setup.run(&["session", "show", ON, "--json"], b"").stdout).unwrap();
+    assert_eq!(
+        shown["rebuilt_by"],
+        json!({"kind": "agent", "name": "test-agent"})
+    );
+    let rebuild_line = std::fs::read_to_string(store.audit_path())
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str::<Value>(l).unwrap())
+        .rfind(|l| l["command"] == "session rebuild")
+        .unwrap();
+    assert_eq!(rebuild_line["status"], "success");
+    assert_eq!(rebuild_line["author"], "test-agent");
     let rebuilt = store.session(&id).unwrap().record;
     assert_eq!(rebuilt.id, original.id);
     assert_eq!(rebuilt.created, original.created);
