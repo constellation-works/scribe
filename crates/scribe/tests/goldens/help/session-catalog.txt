@@ -22,7 +22,11 @@ switch. A transcript whose last message is at least a day old is marked
 final and switched off; a newer one stays on and due. A failed catalog
 keeps its checkpoint; run the same command again to resume. Writes no entries.
 
+--author daniel is Daniel's channel: it records kind daniel only from an
+interactive terminal and is refused otherwise. An agent catalogs under its
+own name, recorded as kind agent.
+
 Examples:
   scribe session catalog <id> --author daniel
   scribe session catalog <id> --author daniel --project scribe
-  scribe session catalog <id> --author daniel --json | jq '.passes[0].result'
+  scribe session catalog <id> --author opus --json | jq '.passes[0].result'

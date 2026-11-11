@@ -10,7 +10,7 @@
 //! change; review that diff as a contract change, like the goldens.
 //!
 //! `redact_a_recording` is also the redaction tool: with
-//! `SCRIBE_REDACT_FROM`, `SCRIBE_REDACT_TO` and `SCRIBE_REDACT_KEY` set
+//! `SCRIBE_REDACT_FROM` and `SCRIBE_REDACT_TO` set and the key on stdin
 //! (`scripts/redact-recording.sh`), it redacts that recording instead of
 //! the synthetic one.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
@@ -204,17 +204,28 @@ fn tree(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
         .collect()
 }
 
-/// The redaction tool. Without the `SCRIBE_REDACT_*` variables it redacts
-/// the synthetic recording into a temp directory and checks what the
-/// redaction keeps; with them, it redacts the recording they name.
+/// The redaction key: one line on stdin, which `scripts/redact-recording.sh`
+/// writes. It is never in argv or the environment (STD-05 R12).
+fn redaction_key_from_stdin() -> String {
+    let mut line = String::new();
+    std::io::stdin()
+        .read_line(&mut line)
+        .expect("read the redaction key from stdin");
+    line.trim_end_matches(['\r', '\n']).to_owned()
+}
+
+/// The redaction tool. Without `SCRIBE_REDACT_FROM` it redacts the synthetic
+/// recording into a temp directory and checks what the redaction keeps; with
+/// it, it redacts the recording it names, to `SCRIBE_REDACT_TO`, under the
+/// key read from stdin.
 #[test]
 fn redact_a_recording() {
     let fx = Fixture::new();
     let named = std::env::var_os("SCRIBE_REDACT_FROM").map(PathBuf::from);
     if let Some(from) = named {
         let to = std::env::var_os("SCRIBE_REDACT_TO").expect("SCRIBE_REDACT_TO");
-        let key = std::env::var("SCRIBE_REDACT_KEY").expect("SCRIBE_REDACT_KEY");
-        assert!(!key.is_empty(), "SCRIBE_REDACT_KEY is empty");
+        let key = redaction_key_from_stdin();
+        assert!(!key.is_empty(), "the redaction key on stdin is empty");
         replay::redact_recording(&from, Path::new(&to), &Key::new(&key))
             .unwrap_or_else(|e| panic!("redaction refused: {e}"));
         return;

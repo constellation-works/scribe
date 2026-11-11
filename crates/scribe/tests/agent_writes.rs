@@ -16,7 +16,7 @@ fn agent_entry_verbs_record_authors_redact_and_audit_only_changes() {
             "--tag",
             "dec",
             "--author",
-            "daniel",
+            "opus",
             "agent note ghp_abcdefghijklmnop",
             "--json",
         ])
@@ -24,7 +24,7 @@ fn agent_entry_verbs_record_authors_redact_and_audit_only_changes() {
     );
     assert_eq!(
         added["author"],
-        serde_json::json!({"kind":"agent","name":"daniel"})
+        serde_json::json!({"kind":"agent","name":"opus"})
     );
     assert_eq!(added["cite"], serde_json::Value::Null);
     assert_eq!(added["said"], "");
@@ -91,7 +91,7 @@ fn daniel_guards_preserve_records_but_allow_metadata_and_open_proposals() {
             "--content",
             "rewritten",
             "--author",
-            "daniel",
+            "opus",
             "--json",
         ],
         vec![
@@ -203,7 +203,7 @@ fn proposals_update_settle_and_replay_with_agent_authorship() {
             "update",
             "p-1",
             "--author",
-            "astra",
+            "opus",
             "--reason",
             "better explanation",
             "--json",
@@ -212,14 +212,14 @@ fn proposals_update_settle_and_replay_with_agent_authorship() {
     );
     assert_eq!(updated["reason"], "better explanation");
     assert_eq!(updated["author"]["name"], "opus");
-    assert_eq!(updated["updated_by"]["name"], "astra");
+    assert_eq!(updated["updated_by"]["name"], "opus");
     let args = [
         "proposal",
         "settle",
         "p-1",
         "--approve",
         "--author",
-        "daniel",
+        "sonnet",
         "--reason",
         "accepted",
         "--json",
@@ -227,10 +227,10 @@ fn proposals_update_settle_and_replay_with_agent_authorship() {
     let settled = json(&fx.ok(&args).stdout);
     assert_eq!(
         settled["settled_author"],
-        serde_json::json!({"kind":"agent","name":"daniel"})
+        serde_json::json!({"kind":"agent","name":"sonnet"})
     );
     assert_eq!(settled["settled_by"], serde_json::Value::Null);
-    assert_eq!(settled["updated_by"]["name"], "daniel");
+    assert_eq!(settled["updated_by"]["name"], "sonnet");
     let entry = json(&fx.ok(&["entry", "show", "decisions-1", "--json"]).stdout);
     assert_eq!(entry["status"], "superseded");
     assert_eq!(entry["superseded_by"], "decisions-2");
@@ -530,7 +530,7 @@ fn invalid_or_settled_proposals_never_silently_drop_changed_inputs() {
         "--reason",
         "review",
     ]);
-    fx.ok(&["proposal", "settle", "p-1", "--reject", "--author", "opus"]);
+    fx.ok(&["proposal", "settle", "p-1", "--reject", "--author", "astra"]);
     let before = std::fs::read(fx.root().join("proposals.json")).unwrap();
     for args in [
         vec![
@@ -708,4 +708,307 @@ fn a_session_id_that_resolves_to_no_record_leaves_the_audit_target_null() {
     assert_eq!(line["target"], serde_json::Value::Null);
     assert_eq!(line["author"], "opus");
     assert!(!audit.contains("s-missing-1"));
+}
+
+#[test]
+fn reserved_author_names_are_refused_on_every_agent_write() {
+    let fx = Fixture::new();
+    for name in ["daniel", "scribe", "consistency"] {
+        for args in [
+            vec![
+                "entry",
+                "add",
+                "--tag",
+                "decisions",
+                "--author",
+                name,
+                "note",
+                "--json",
+            ],
+            vec![
+                "entry",
+                "update",
+                "decisions-1",
+                "--author",
+                name,
+                "--content",
+                "x",
+                "--json",
+            ],
+            vec![
+                "entry",
+                "retire",
+                "decisions-1",
+                "--author",
+                name,
+                "--reason",
+                "old",
+                "--json",
+            ],
+            vec![
+                "tag",
+                "add",
+                "notes",
+                "--author",
+                name,
+                "--description",
+                "notes",
+                "--json",
+            ],
+            vec![
+                "tag",
+                "update",
+                "notes",
+                "--author",
+                name,
+                "--description",
+                "new",
+                "--json",
+            ],
+            vec![
+                "proposal",
+                "add",
+                "--kind",
+                "stale",
+                "--older",
+                "decisions-1",
+                "--reason",
+                "old",
+                "--author",
+                name,
+                "--json",
+            ],
+            vec![
+                "proposal", "update", "p-1", "--author", name, "--reason", "new", "--json",
+            ],
+            vec![
+                "proposal",
+                "settle",
+                "p-1",
+                "--approve",
+                "--author",
+                name,
+                "--json",
+            ],
+            vec![
+                "session",
+                "catalog",
+                "0a1b2c3d-0000-4000-8000-0000000000c1",
+                "--author",
+                name,
+                "--json",
+            ],
+            vec![
+                "session",
+                "rebuild",
+                "0a1b2c3d-0000-4000-8000-0000000000c1",
+                "--author",
+                name,
+                "--confirm",
+                "--json",
+            ],
+            vec![
+                "session",
+                "deactivate",
+                "0a1b2c3d-0000-4000-8000-0000000000c1",
+                "--author",
+                name,
+                "--reason",
+                "gone",
+                "--json",
+            ],
+            vec![
+                "session",
+                "activate",
+                "0a1b2c3d-0000-4000-8000-0000000000c1",
+                "--author",
+                name,
+                "--json",
+            ],
+        ] {
+            let out = fx.run(&args);
+            assert_eq!(
+                json(&out.stderr)["code"],
+                "reserved_author",
+                "{args:?}: {}",
+                text(&out.stderr)
+            );
+        }
+    }
+    // Reads still accept the name as a filter.
+    fx.ok(&["entry", "list", "--author", "daniel", "--json"]);
+    assert!(!fx.root().join("entries").exists());
+    assert!(!fx.root().join("control.json").exists());
+}
+
+#[test]
+fn agents_edit_only_their_own_notes_and_proposals() {
+    let fx = Fixture::new();
+    fx.ok(&[
+        "entry",
+        "add",
+        "--tag",
+        "decisions",
+        "--author",
+        "opus",
+        "opus note",
+    ]);
+    for args in [
+        vec![
+            "entry",
+            "update",
+            "decisions-1",
+            "--author",
+            "sonnet",
+            "--content",
+            "rewritten",
+            "--json",
+        ],
+        vec![
+            "entry",
+            "update",
+            "decisions-1",
+            "--author",
+            "sonnet",
+            "--add-topic",
+            "api",
+            "--json",
+        ],
+        vec![
+            "entry",
+            "retire",
+            "decisions-1",
+            "--author",
+            "sonnet",
+            "--reason",
+            "old",
+            "--json",
+        ],
+    ] {
+        let out = fx.run(&args);
+        assert_eq!(json(&out.stderr)["code"], "not_author", "{args:?}");
+    }
+    let entry = json(&fx.ok(&["entry", "show", "decisions-1", "--json"]).stdout);
+    assert_eq!(entry["content"], "opus note");
+    assert_eq!(entry["status"], "active");
+    // The author still can, and a retired note then refuses further updates.
+    fx.ok(&[
+        "entry",
+        "retire",
+        "decisions-1",
+        "--author",
+        "opus",
+        "--reason",
+        "done",
+    ]);
+    let out = fx.run(&[
+        "entry",
+        "update",
+        "decisions-1",
+        "--author",
+        "opus",
+        "--content",
+        "back",
+        "--json",
+    ]);
+    assert_eq!(json(&out.stderr)["code"], "entry_not_active");
+
+    fx.ok(&[
+        "entry",
+        "add",
+        "--tag",
+        "decisions",
+        "--author",
+        "opus",
+        "second note",
+    ]);
+    fx.ok(&[
+        "proposal",
+        "add",
+        "--kind",
+        "stale",
+        "--older",
+        "decisions-2",
+        "--reason",
+        "review",
+        "--author",
+        "opus",
+    ]);
+    let out = fx.run(&[
+        "proposal", "update", "p-1", "--author", "sonnet", "--reason", "hijack", "--json",
+    ]);
+    assert_eq!(json(&out.stderr)["code"], "not_author");
+    // The proposer cannot settle its own proposal; another agent can.
+    let out = fx.run(&[
+        "proposal", "settle", "p-1", "--reject", "--author", "opus", "--json",
+    ]);
+    assert_eq!(json(&out.stderr)["code"], "not_author");
+    let settled = json(
+        &fx.ok(&[
+            "proposal", "settle", "p-1", "--reject", "--author", "sonnet", "--json",
+        ])
+        .stdout,
+    );
+    assert_eq!(settled["state"], "rejected");
+    assert_eq!(settled["reason"], "review");
+    assert_eq!(settled["author"]["name"], "opus");
+}
+
+#[test]
+fn settling_a_scribe_proposal_cannot_replace_its_reason() {
+    let fx = Fixture::new();
+    fx.ok(&[
+        "entry",
+        "add",
+        "--tag",
+        "decisions",
+        "--author",
+        "opus",
+        "opus note",
+    ]);
+    fx.ok(&[
+        "proposal",
+        "add",
+        "--kind",
+        "stale",
+        "--older",
+        "decisions-1",
+        "--reason",
+        "routine reason",
+        "--author",
+        "opus",
+    ]);
+    // Make it a routine-opened (scribe) proposal, as `consistency scan` writes.
+    let path = fx.root().join("proposals.json");
+    let mut doc: serde_json::Value = json(&std::fs::read(&path).unwrap());
+    doc["proposals"][0]["author"] = serde_json::json!({"kind": "scribe", "name": "consistency"});
+    std::fs::write(&path, serde_json::to_vec(&doc).unwrap()).unwrap();
+    support::make_private(&path);
+
+    let out = fx.run(&[
+        "proposal",
+        "settle",
+        "p-1",
+        "--reject",
+        "--author",
+        "sonnet",
+        "--reason",
+        "rewritten by agent",
+        "--json",
+    ]);
+    assert_eq!(json(&out.stderr)["code"], "proposal_not_agent");
+    let list = json(&fx.ok(&["proposal", "list", "--json"]).stdout);
+    assert_eq!(list["proposals"][0]["state"], "open");
+    assert_eq!(list["proposals"][0]["reason"], "routine reason");
+
+    // Settling without a new reason keeps the routine's reason.
+    let settled = json(
+        &fx.ok(&[
+            "proposal", "settle", "p-1", "--reject", "--author", "sonnet", "--json",
+        ])
+        .stdout,
+    );
+    assert_eq!(settled["state"], "rejected");
+    assert_eq!(settled["reason"], "routine reason");
+    assert_eq!(settled["settled_author"]["name"], "sonnet");
 }

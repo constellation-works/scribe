@@ -706,7 +706,8 @@ fn session_files() -> [SessionFile<'static>; 5] {
             keep_active: false,
             segment: "Tuned the digest settings.",
         },
-        // The later record: recent, same topic, with a removal cue.
+        // A later session whose model-written segment claims removal:
+        // never evidence on its own (see `removal_entry`).
         SessionFile {
             id: "s-later",
             days_ago: 2,
@@ -719,14 +720,30 @@ fn session_files() -> [SessionFile<'static>; 5] {
     ]
 }
 
+/// Daniel's own entry saying the digest was removed, five days ago:
+/// after the digest sessions and within the scan's 8-day window, but
+/// before `s-later`'s last message so that session never pairs with it.
+/// Its words name both digest sessions so each pairs by token overlap.
+fn removal_entry(s: &Setup) {
+    s.entry(
+        "decisions-9",
+        &rfc3339(days_ago(5)),
+        "The digest feature was ripped out and replaced by the weekly \
+         report; built the digest settings.",
+        "active",
+        None,
+    );
+}
+
 #[test]
 fn a_scan_deactivates_old_sessions_and_removed_features_but_never_a_pinned_one() {
     let s = Setup::new();
     for file in &session_files() {
         s.session(file);
     }
-    // Pair 1 is s-a-digest (ties on the later record break by session
-    // id), pair 2 s-b-digest, whose quote is not in the later record.
+    removal_entry(&s);
+    // Pair 1 is s-a-digest (ties on the later entry break by session
+    // id), pair 2 s-b-digest, whose quote is not in the later entry.
     s.answer_both(&json!({"judgements": [
         {"pair": "1", "label": "removed", "feature": "the digest",
          "reason": "The weekly report replaced the digest.", "quote": "ripped out and replaced"},
@@ -750,7 +767,7 @@ fn a_scan_deactivates_old_sessions_and_removed_features_but_never_a_pinned_one()
     );
     assert_eq!(deactivated[1]["session"], "s-a-digest");
     assert_eq!(deactivated[1]["route"], "removed");
-    assert_eq!(deactivated[1]["cite"], "session:s-later#1");
+    assert_eq!(deactivated[1]["cite"], "decisions-9");
     assert_eq!(deactivated[1]["quote"], "ripped out and replaced");
     assert_eq!(report["removal_pairs_judged"], 2);
     assert_eq!(report["removal_pairs_left"], 0);
@@ -765,7 +782,7 @@ fn a_scan_deactivates_old_sessions_and_removed_features_but_never_a_pinned_one()
     let digest = s.session_json("s-a-digest");
     assert_eq!(digest["active"], false);
     assert_eq!(digest["active_change"]["route"], "removed");
-    assert_eq!(digest["active_change"]["cite"], "session:s-later#1");
+    assert_eq!(digest["active_change"]["cite"], "decisions-9");
     assert_eq!(
         digest["active_change"]["reason"],
         "The weekly report replaced the digest."
@@ -796,10 +813,7 @@ fn a_scan_deactivates_old_sessions_and_removed_features_but_never_a_pinned_one()
         .filter(|l| l.starts_with("deactivated"))
         .map(str::to_owned)
         .collect();
-    assert_eq!(
-        rows,
-        ["deactivated\ts-b-digest\tremoved\tsession:s-later#1\t-"]
-    );
+    assert_eq!(rows, ["deactivated\ts-b-digest\tremoved\tdecisions-9\t-"]);
 }
 
 #[test]
@@ -808,6 +822,7 @@ fn a_failed_removal_deactivation_is_reported_and_other_sessions_continue() {
     for file in &session_files() {
         s.session(file);
     }
+    removal_entry(&s);
     let started = days_ago(20);
     let path =
         s.fx.root()

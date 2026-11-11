@@ -7,11 +7,11 @@ status: Draft
 feature: scribe
 doc_role: decisions
 type: design
-summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, plus the engineering decisions carried over from the Rust CLI template.
+summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, plus the engineering decisions carried over from the Rust CLI template.
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006]
 ---
 
 # scribe — Decisions
@@ -824,6 +824,41 @@ non-unix platforms the checks are no-ops.
 - Another local user can neither read the store nor plant one.
 - Cost: a store copied in under a loose umask is refused until Daniel runs
   the named `chmod`.
+- Superseded in part, 2026-11-10 ([ORB-24006]): the check refused only group
+  and other write bits, so a group or other read bit was accepted. See
+  [store state refuses any group or other mode bit](#store-state-refuses-any-group-or-other-mode-bit).
+
+## Store state refuses any group or other mode bit
+
+**Recorded:** 2026-11-10 · [ORB-24006]
+**Code anchors:** `crates/scribe-core/src/store/fsio.rs::check_owner_and_mode`, `crates/scribe-core/src/error.rs::Error::Permissions`
+
+### Context
+
+The security and QA review of 2026-11-10 found that the load check refused
+only group and other write bits. A `0755` root and a `0644` `config.toml` were
+read without a refusal, so another local user could read Daniel's entries and
+config. That contradicts the consequence recorded above, that another local
+user can neither read the store. STD-05@1 §R9 asks only that state not be
+writable by others; §R8 asks for owner-only modes.
+
+### Decision
+
+Every load refuses a root, subdirectory, record file, document or `config.toml`
+that any group or other mode bit reaches (`mode & 0o077 != 0`), read and
+execute bits included. A write refuses the same way for the lock file, since
+loads take no lock. It names the `chmod 700` or `chmod 600` that fixes it. Nothing is repaired automatically, and reads still never write.
+This supersedes the write-only check recorded above.
+
+### Consequences
+
+- Another local user can neither read nor traverse the store, as the
+  decision above claimed.
+- Cost: a `config.toml` made under a `022` umask (`0644`, the usual mode of a
+  hand-written file) is refused until `chmod 600`, and a `0755` root until
+  `chmod 700`. The refusal names the fix.
+- STD-05@1 §R9 requires less than this (no group or other write). Owner-only
+  is stricter than the standard, so it is a tightening, not a deviation.
 
 ## One malformed record makes its file corrupt
 
@@ -1770,6 +1805,44 @@ features.
   looks with `--include-inactive`; the age limit still hides an unpinned
   session about a long-lived feature after 120 days.
 
+## Removal evidence is Daniel-authored entries only
+
+**Recorded:** 2026-11-10 · [ORB-24005] · **Overridable by Daniel**
+**Code anchors:** `crates/scribe-core/src/consistency.rs` (`later_records`, `judge_removals`)
+
+### Context
+
+Security review of the 2026-11-10 shift: the `removed` route paired a
+session with any later record — a session header, a segment, or an
+entry — and kept a `removed` label whenever the model's quote appeared
+verbatim in that record. Session text is model-written: a pass
+summarizes a cataloged transcript, so text injected into a transcript
+can surface in a segment, and an agent can write `entry add "X was
+removed"` directly. Either gives the model a quote it can always
+satisfy, and the scan deactivates the related sessions, hiding them
+from `ask` (reversible and audited, but silent until looked for).
+
+### Decision
+
+- Only active entries Daniel wrote (`author.kind` is `daniel`) are
+  removal evidence. Session headers and segments — open or sealed —
+  and agent-written entries never pair and never deactivate.
+- Sealed segments stay excluded: sealing proves a segment never
+  changed after it was written, not that Daniel wrote it; its words
+  are still a model's summary of a transcript.
+- `judge_removals` re-checks the cite as defence in depth: a `removed`
+  label whose later cite is not an entry id is dropped, so a pair
+  built from model-written or agent-written text deactivates nothing
+  even if it reaches the judge.
+
+### Consequences
+
+- Injected or agent-supplied words cannot hide a session; only
+  Daniel's own marked words can, through the one channel only he uses.
+- Cost: a removal Daniel mentions only in conversation (never in a
+  `#scribe` entry) no longer deactivates anything; the session waits
+  for the age route, a pin, or a manual `session deactivate`.
+
 ## Agents read and write through the CLI, taught by one skill
 
 **Recorded:** 2026-11-10 · [ORB-23892] · **Daniel's choice**
@@ -2011,6 +2084,8 @@ show` prints `rebuilt_by` only in `--json`.
 - [ORB-23849] — session links (`spawned_from`, `continues`) between session records.
 - [ORB-23892] — session records with a log, the `active` flag, the CLI agent
   surface and skill, the tmux popup and backfill by name (designed).
+- [ORB-24006] — store state refuses any group or other mode bit; the
+  redaction script takes its key on stdin.
 - [ORB-24003] — `rebuilt_by` on session records (format 6) and the author and
   resolved target on audit lines, including refusals (audit format 2).
 
@@ -2046,3 +2121,60 @@ and uses a fixed conflict notice with the checked cites. This gives up
 some synthesized prose in mixed-source answers to enforce that an agent's
 words never become Daniel's. Agent evidence has base weight 1.0×;
 the ordinary named-tag boost is independent of author.
+
+## Agent writes use their own name and edit only their own work
+
+**Recorded:** 2026-11-10 · [ORB-24002] · **Overridable by Daniel**
+**Code anchors:** `crates/scribe-core/src/store/agent.rs` (`check_agent_author`, the agent write guards), `crates/scribe/src/commands/session/catalog.rs` (`catalog_author`)
+
+### Context
+
+"Every entry and proposal records its author" recorded `kind: agent`
+whatever `--author` name a CLI write passed, so `entry add --author
+daniel` mixed with Daniel's entries under `entry list --author daniel`,
+and `session catalog --author daniel` from any agent's shell produced a
+`cataloged_by` identical to Daniel's popup catalog. The agent write verbs
+also let any agent rewrite another agent's note, update a retired note,
+replace the reason on a proposal Daniel or the consistency routine
+opened while settling it, and settle its own proposal — looser than the
+skill's "an open proposal you opened" and than "agents never change,
+retire or settle against Daniel's entries" (STD-05@1 §R1, §R2, §R5).
+
+### Decision
+
+- `daniel`, `scribe` and `consistency` are reserved author names. Every
+  agent-channel write (entry, tag and proposal writes, `session
+  activate|deactivate`, `session rebuild`, `session catalog`) using one
+  is refused `reserved_author`; reads still accept them as filters.
+- `session catalog` keeps a Daniel channel: `--author daniel` records
+  `cataloged_by: {kind: daniel}` only when stdin is a terminal — Daniel
+  typing or pasting the tmux popup's command in a shell — and is refused
+  through a pipe. An agent catalogs under its own name, recorded
+  `{kind: agent}`, so the two are distinguishable in the record and the
+  switch.
+- Between agents, an agent edits only its own work. `entry update` and
+  `entry retire` of an agent entry and `proposal update` require the
+  record's author name (`not_author`); a non-active agent entry refuses
+  updates (`entry_not_active`). `proposal settle` is the mirror image:
+  the proposal's author cannot settle it (`not_author`), so a second
+  agent settles a proposal about an agent entry. Daniel entries keep the
+  metadata-only rule for every agent, and store tags stay shared
+  vocabulary any agent may update, recorded in `updated_by`.
+- Settling with `--reason` replaces the proposal's reason, so it is
+  allowed only on an agent-opened proposal. On a proposal Daniel or
+  scribe opened, a changed reason is refused `proposal_not_agent`;
+  settling without `--reason` keeps the original reason, with the settler
+  recorded in `settled_author`.
+
+### Consequences
+
+- Daniel's words and catalogs are marked by channels an agent cannot
+  claim from its usual pipe, and one agent cannot silently rewrite
+  another's note, a routine proposal's reason, or its own proposal's
+  verdict.
+- Cost: `--author` is still an unchecked label — a process running as
+  Daniel can choose another agent's name or edit the store directly, and
+  a script Daniel runs non-interactively cannot catalog as `daniel`
+  (it can under an agent name). These refusals are accident guards, not
+  permissions (STD-05@1 §R5). Cross-agent tidying of a note now goes
+  through its author or a new note.

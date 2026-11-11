@@ -16,11 +16,12 @@
 //!   `fsync`s it; the caller holds the lock, so records never interleave.
 //! - [`create_private_dir`], [`inspect_dir`] and [`inspect_file`] keep store
 //!   state owner-only: created `0700`/`0600` explicitly, and refused on load
-//!   when it is a symbolic link, another user's, or writable by others. These
-//!   checks fail closed (STD-02 R31). Because the directory is verified
-//!   owner-only first, no other user can swap an entry between a check and the
-//!   open that follows; a process of the same user is not a boundary
-//!   (STD-05 R5). Windows has no mode bits, so there the checks are no-ops.
+//!   when it is a symbolic link, another user's, or open to any group or other
+//!   mode bit, read included. These checks fail closed (STD-02 R31). Because
+//!   the directory is verified owner-only first, no other user can swap an
+//!   entry between a check and the open that follows; a process of the same
+//!   user is not a boundary (STD-05 R5). Windows has no mode bits, so there the
+//!   checks are no-ops.
 
 use crate::error::{Error, Result};
 use std::fs::{self, File, Metadata, OpenOptions, TryLockError};
@@ -178,6 +179,9 @@ fn refuse_symlink(path: &Path, meta: &Metadata) -> Result<()> {
     Ok(())
 }
 
+/// Refuse state that another user owns or that any group or other mode bit
+/// reaches: owner-only (STD-05 R8, R9), so a read by another user is refused
+/// just as a write is.
 #[cfg(unix)]
 fn check_owner_and_mode(path: &Path, meta: &Metadata, fix: &'static str) -> Result<()> {
     use std::os::unix::fs::MetadataExt;
@@ -190,7 +194,7 @@ fn check_owner_and_mode(path: &Path, meta: &Metadata, fix: &'static str) -> Resu
         });
     }
     let mode = meta.mode() & 0o7777;
-    if mode & 0o022 != 0 {
+    if mode & 0o077 != 0 {
         return Err(Error::Permissions {
             path: path.to_path_buf(),
             mode,
@@ -223,12 +227,9 @@ impl LockGuard {
     /// `label` says what the holder is doing; it is recorded with the pid and
     /// time so a writer that times out can say who is in the way.
     pub(super) fn acquire(path: &Path, label: &str, wait: Duration) -> Result<Self> {
-        // Never create or truncate through a link (STD-05 R7).
-        match fs::symlink_metadata(path) {
-            Ok(meta) => refuse_symlink(path, &meta)?,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(e) => return Err(Error::io("inspect", path, e)),
-        }
+        // Never create or truncate through a link, and never lock a file that
+        // another user can reach (STD-05 R7, R9): inspect it like any store file.
+        inspect_file(path)?;
         let mut options = OpenOptions::new();
         options.create(true).truncate(false).read(true).write(true);
         #[cfg(unix)]

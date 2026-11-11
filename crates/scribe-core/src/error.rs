@@ -148,9 +148,10 @@ pub enum Error {
         /// This process's effective uid.
         uid: u32,
     },
-    /// Store state is writable by other users (STD-05 R9).
+    /// Store state is open to other users: a group or other mode bit is set
+    /// (STD-05 R8, R9).
     #[error(
-        "refusing {}: mode {mode:o} lets other users write it; fix with: chmod {fix} {}",
+        "refusing {}: mode {mode:o} is open to other users; fix with: chmod {fix} {}",
         path.display(),
         path.display()
     )]
@@ -215,6 +216,10 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 pub enum WriteRefusal {
     /// `daniel_only`.
     DanielOnly,
+    /// `reserved_author`.
+    ReservedAuthor,
+    /// `not_author`.
+    NotAuthor,
     /// `invalid_text`.
     InvalidText,
     /// `invalid_topics`.
@@ -248,6 +253,8 @@ impl WriteRefusal {
     pub fn code(self) -> &'static str {
         match self {
             Self::DanielOnly => "daniel_only",
+            Self::ReservedAuthor => "reserved_author",
+            Self::NotAuthor => "not_author",
             Self::InvalidText => "invalid_text",
             Self::InvalidTopics => "invalid_topics",
             Self::TagNotFound => "tag_not_found",

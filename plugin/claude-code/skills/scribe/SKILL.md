@@ -87,13 +87,27 @@ scribe question ask "<question>" [--tag <tag>]… [--topic <t>]… [--project <p
 
 ## Writing (agents)
 
+**Until ORB-24002 lands, write only with `add`.** `--author` is a name you
+claim, not an identity scribe can check, so the guards below can be talked
+past. Until then, use the read surface and `entry add`, `tag add` and
+`proposal add` under your own crew name only. Do not run `session catalog`,
+pass an `--author` other than your own crew, update or retire another
+agent's notes, run `proposal update` or `proposal settle`, or run
+`session deactivate|activate`.
+
 Every write verb requires `--author <name>`: lowercase letters, digits,
 `.`, `_` or `-`, 1–40 characters — by convention your crew or model name,
-such as `opus`. It records `author: {kind: agent, name: <name>}` whatever
-name you pass (even `daniel`), because `kind` names the channel, not a
-claimed identity. Each write prints the record it wrote, so read the id
-back from that output. A write that changes nothing prints the unchanged
-record, says `nothing changed` on stderr and writes no audit line.
+such as `opus`. It records `author: {kind: agent, name: <name>}`, because
+`kind` names the channel, not a claimed identity. The names `daniel`,
+`scribe` and `consistency` are reserved for Daniel's and scribe's own
+channels: an agent write with one is refused `reserved_author` (reads
+still accept them as filters). `scribe session catalog --author daniel`
+is Daniel's alone: it records `kind: daniel` only from an interactive
+terminal, and the skill rule stands — do not run `session catalog`; if
+you must, under your own name it is recorded `kind: agent`. Each write
+prints the record it wrote, so read the id back from that output. A write
+that changes nothing prints the unchanged record, says `nothing changed`
+on stderr and writes no audit line.
 
 ```sh
 scribe entry add --tag <tag> --author <name> [--project <p>] [--topic <t>]… [--related <ref>]… <content>
@@ -130,5 +144,25 @@ Daniel's own entries are settled only by Daniel:
   Daniel settles it with `#scribe approve|reject`. `#scribe forget` is
   Daniel's alone.
 
+### Your own work, and other agents'
+
+An agent edits only its own work:
+
+- `entry update` and `entry retire` of an agent entry are allowed only
+  under that entry's `--author` name; another name is refused
+  `not_author`. A retired, superseded or forgotten agent entry refuses
+  any update (`entry_not_active`). (Daniel entries keep the
+  metadata-only rule above for every agent.)
+- `proposal update` is allowed only to the proposal's author
+  (`not_author` otherwise). `proposal settle` is the mirror image: the
+  proposal's author cannot settle it (`not_author`); another agent
+  settles a proposal about an agent entry.
+- Settling with `--reason` replaces the proposal's reason, so it is
+  allowed only on an agent-opened proposal. A proposal Daniel or the
+  consistency routine opened keeps its reason: settle it without
+  `--reason`, or the write is refused `proposal_not_agent`.
+- Tags are shared vocabulary: any agent may `tag update` a store tag,
+  recorded in its `updated_by`.
+
 Record what you learn as an agent entry with your own `--author` instead
-of editing Daniel's words.
+of editing Daniel's words or another agent's note.

@@ -247,7 +247,7 @@ Stable codes: `entry_not_found`, `session_not_found`, `io_error`,
 `output_error`, `usage_error`, `hook_payload_invalid`,
 `segment_not_found`, `sealed_segment_changed`, `confirm_required`,
 `transcript_missing`, `session_busy` (exit 1), (S11) `id_ambiguous` (exit 2;
-the message lists up to ten candidates, sorted, and how many more), `daniel_only`, `tag_not_found`, `tag_conflict`, `tag_configured`,
+the message lists up to ten candidates, sorted, and how many more), `daniel_only`, `reserved_author`, `not_author`, `tag_not_found`, `tag_conflict`, `tag_configured`,
 `proposal_not_found`, `proposal_settled`, `entry_not_active`,
 (S12) `invalid_text`, `invalid_topics`,
 `proposal_invalid`, `proposal_not_agent`,
@@ -426,7 +426,7 @@ an unknown or repeated pair, an unknown label); `stale_entries` counts
 active entries past `review_after` without a stale proposal;
 `failed_batches` names each batch of ten the model failed, from 1.
 *(S10)* Adds `deactivated` (`[{session, route, reason, cite, quote}]`,
-`route` `age` or `removed`; `cite` and `quote`, the later record and its
+`route` `age` or `removed`; `cite` and `quote`, the later entry and its
 verbatim words, are `null` for `age`), `removal_pairs_judged`,
 `removal_pairs_left` (past the cap of 20 or not reached in this call's
 time), `dropped_removal_labels` and `failed_removal_batches` (`[{batch,

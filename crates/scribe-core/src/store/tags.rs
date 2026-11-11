@@ -1,5 +1,5 @@
 //! Store tags and their config-first routing table.
-use super::agent::refusal;
+use super::agent::{check_agent_author, refusal};
 use super::{Redactor, Store, format, fsio};
 use crate::WriteRefusal;
 use crate::record::patch;
@@ -25,6 +25,7 @@ impl Store {
 
     /// Add an agent tag without changing config.toml.
     pub fn add_agent_tag(&self, mut tag: StoreTag, redactor: &Redactor) -> Result<StoreTag> {
+        check_agent_author(&tag.author.name)?;
         self.prepare_dir(&self.root)?;
         let _lock = self.lock("tag add")?;
         if tag.description.trim().is_empty() || tag.description.chars().count() > 300 {
@@ -58,6 +59,7 @@ impl Store {
         now: OffsetDateTime,
         redactor: &Redactor,
     ) -> Result<(StoreTag, bool)> {
+        check_agent_author(&author)?;
         self.prepare_dir(&self.root)?;
         let _lock = self.lock("tag update")?;
         let configured = self.config_only()?.tags;

@@ -77,8 +77,8 @@ pub use session::{
 pub use store::{
     AUDIT_FILE, AuditEvent, AuditStatus, CONFIG_FILE, CONTROL_FILE, Captured, DEFAULT_LOCK_WAIT,
     ENTRIES_DIR, EntryList, MIN_SECRET_CHARS, PROPOSALS_FILE, REDACTED_FIELDS, RebuildGuard,
-    Redactor, SESSIONS_DIR, SessionList, SessionView, Skipped, Store, TagList, resolve_prefix,
-    unresolved_redact_env,
+    Redactor, SESSIONS_DIR, SessionList, SessionView, Skipped, Store, TagList, check_agent_author,
+    resolve_prefix, unresolved_redact_env,
 };
 pub use tag::{StoreTag, TagDef, TagError, TagPatch, TagSummary, TagTable};
 

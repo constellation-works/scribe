@@ -11,7 +11,7 @@ summary: How the scribe plugin is bounded (one binary; Daniel writes through hoo
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995]
+related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005]
 ---
 
 # scribe — Design
@@ -185,6 +185,12 @@ Rules every verb keeps:
   such as `opus`) and records `{kind: agent, name}`. `kind: agent` means
   "written through the CLI"; Daniel's channel is still `#scribe`, which
   records `kind: daniel` ([4_decisions.md](./4_decisions.md#every-entry-and-proposal-records-its-author)).
+  The names `daniel`, `scribe` and `consistency` are reserved for the
+  non-agent channels: an agent write using one is refused
+  `reserved_author` (reads still accept them as filters). The one
+  exception is `session catalog --author daniel` from an interactive
+  terminal, Daniel's channel for cataloging, which records
+  `kind: daniel` ([§5.8](#58-cataloging-a-past-session)).
 - **The guard.** `ask` never presents an agent's entry as Daniel's words
   and gives it no 1.5× weight ([§6.7](#67-segments-authors-and-inactive-sessions)).
   Agents never change the content of, retire or settle a proposal about an
@@ -194,6 +200,16 @@ Rules every verb keeps:
   Daniel's. Agents may open a proposal against a Daniel entry; Daniel
   settles it with `#scribe approve|reject`. `#scribe forget` stays
   Daniel's alone ([4_decisions.md](./4_decisions.md#entries-daniel-wrote-are-settled-only-by-daniel)).
+  Between agents, an agent edits only its own work: `entry update` and
+  `entry retire` of an agent entry, and `proposal update`, require the
+  record's author name (`not_author` otherwise), a non-active agent entry
+  refuses updates (`entry_not_active`), and a proposal's author cannot
+  settle it — another agent does. Settling with `--reason` replaces the
+  proposal's reason, so on a proposal Daniel or scribe opened it is
+  refused `proposal_not_agent`; settling without `--reason` keeps the
+  original. Tags stay shared vocabulary: any agent may update a store
+  tag, recorded in `updated_by`
+  ([4_decisions.md](./4_decisions.md#agent-writes-use-their-own-name-and-edit-only-their-own-work)).
 - **Audit and redaction.** Each write verb is a mutating command: one
   audit line per change or refusal (ids and codes only), store lock,
   `write_atomic`, and every free-text argument passes the redactor before
@@ -1139,7 +1155,7 @@ route, reason, cite}` in `active_change`:
 
 | Route | By | When | Reason / cite |
 |---|---|---|---|
-| `removed` | the consistency routine, `{kind: scribe, name: consistency}` | a later record says the session's feature was removed or replaced ([§7](#7-consistency-routine)) | the model's reason; cite the later record (`session:<id>#<n>`, an entry id or a discussion) |
+| `removed` | the consistency routine, `{kind: scribe, name: consistency}` | a later entry Daniel wrote says the session's feature was removed or replaced ([§7](#7-consistency-routine)) | the model's reason; cite the later entry (its entry id) |
 | `age` | the consistency routine | the session's last message (its last segment's `to`) is older than `[sessions] inactive_after_days` (120) | `no messages since <date> (limit <n> days)`; no cite |
 | `manual` | an agent or Daniel: `scribe session deactivate <id> --author <name> --reason <text> [--cite <ref>]`, `scribe session activate <id> --author <name> [--reason <text>] [--pin\|--unpin]` | any time | the given reason and cite |
 
@@ -1197,7 +1213,12 @@ names of its own.
 
 **Cataloging: `scribe session catalog <id>`.** `scribe session catalog <id>
 --author <name> [--project <slug>]` switches the named session on as a
-cataloged-by-name session and runs its passes to the end:
+cataloged-by-name session and runs its passes to the end. Who cataloged
+it is a channel: `--author daniel` records `kind: daniel` only when stdin
+is a terminal (Daniel typing or pasting the popup's command in a shell)
+and is refused `reserved_author` through a pipe, so an agent cannot
+catalog as Daniel; an agent's own name records `kind: agent`, and
+`scribe`/`consistency` are refused as reserved:
 
 - The transcript is found and checked as a pass finds it. A session that
   already has a record or a switch is refused `session_cataloged` (use
@@ -1510,13 +1531,22 @@ After the entry steps the scan runs two session steps, skipping pinned
 1. **Age, model-free.** Every session whose last message is older than
    `[sessions] inactive_after_days` is deactivated, route `age`.
 2. **Removed features, model judgement.** Candidates are model-free pairs
-   of an active session S and a later record R (a session unit, an entry or
-   a discussion whose date is after S's last message, written or updated in
-   the last 8 days, so a weekly scan sees each new record once) that share
-   a topic or a term with S or overlap its header by at least one token in
-   four, and whose text has a removal cue (`removed`, `deleted`, `dropped`,
-   `decommissioned`, `retired`, `replaced`, `superseded`, `ripped out`,
-   `sunset`). At most 20 pairs per scan, ten per call, within 120 s each.
+   of an active session S and a later entry R Daniel wrote (`author.kind`
+   is `daniel`, active, whose date is after S's last message, written or
+   updated in the last 8 days, so a weekly scan sees each new entry once)
+   that share a topic or a term with S or overlap its header by at least
+   one token in four, and whose text has a removal cue (`removed`,
+   `deleted`, `dropped`, `decommissioned`, `retired`, `replaced`,
+   `superseded`, `ripped out`, `sunset`). **Evidence rule:** only
+   Daniel-authored entries count. Session headers and segments are
+   model-written — a pass summarizes a transcript that may hold injected
+   text — and agent entries are agent-written (`entry add`), so counting
+   either would let supplied words always satisfy the verbatim quote
+   check and hide a session from `ask`. Sealed segments are excluded too:
+   sealing proves a segment never changed after it was written, not that
+   Daniel wrote it
+   ([4_decisions.md](./4_decisions.md#removal-evidence-is-daniel-authored-entries-only)).
+   At most 20 pairs per scan, ten per call, within 120 s each.
    The `consistency` model labels each pair `removed` (R says the feature S
    is about was removed or replaced), `still_current` or `unrelated`, with
    the feature's name and a verbatim quote from R. A `removed` label whose
@@ -1725,16 +1755,22 @@ writes none.
   write scribe. A worker that needs Daniel's context gets it in its task.
 - **An agent write is an accident guard too.** `--author` is a label an
   agent chooses, not an identity; `kind: agent` is what scribe can know
-  ("written through the CLI"). The guard that keeps agents from settling
-  Daniel's entries is a refusal in the CLI, not a permission: a process
-  running as Daniel can still edit `~/.scribe` (STD-05 R5). The audit log
-  records every write's command and target.
+  ("written through the CLI"). Reserved names, own-author edits and the
+  interactive-terminal test for `catalog --author daniel` only separate
+  the channels a caller claims: an agent can still choose another agent's
+  name, and a process running as Daniel can still edit `~/.scribe`
+  (STD-05 R5). The guard that keeps agents from settling Daniel's entries
+  is a refusal in the CLI, not a permission. The audit log records every
+  write's command and target.
 - **Removed-feature judgement can be wrong.** Haiku may read "removed the
-  old flag" as the removal of the session's feature. The quote is checked,
-  the session is only hidden, and `session activate` brings it back, but a
-  wrong deactivation is silent until someone looks with
-  `--include-inactive`. `session list --include-inactive` shows `active`
-  and the scan report lists every deactivation.
+  old flag" as the removal of the session's feature. The quote is checked
+  against a Daniel-authored entry only — model-written session text and
+  agent-written entries never count, so injected or agent-supplied words
+  cannot satisfy the check — the session is only hidden, and
+  `session activate` brings it back, but a wrong deactivation is silent
+  until someone looks with `--include-inactive`.
+  `session list --include-inactive` shows `active` and the scan report
+  lists every deactivation.
 - **Path mentions guess a project.** `transcript list` attributes a
   constellation-root session by counting path mentions; a session that
   reads many orbit files to change scribe is attributed to orbit. Daniel
@@ -1769,8 +1805,9 @@ session records, control state and proposals, and the read-only CLI.
   [--topic <t>]`, `session show <id>`, `proposal list`, `tag list` work in
   table, plain and `--json` modes against a fixture store, and against a
   read-only root.
-- A store with a newer `format`, a group-writable root or a linked file is
-  refused with the template's errors; golden tests cover every help page.
+- A store with a newer `format`, a root open to group or others, or a linked
+  file is refused with the template's errors; golden tests cover every help
+  page.
 - The redactor masks a configured credential value in every free-text
   field it covers, and a unit test pins that inventory.
 - `specs/store.md` and `specs/output-contract.md` describe the new
@@ -1998,7 +2035,7 @@ As built (S9):
 - `scribe consistency scan` deactivates every active, unpinned session
   whose last message is older than the limit (route `age`), and, with a
   fake `Models`, a session whose removed-feature pair is labelled
-  `removed` with a verbatim quote (route `removed`, cite the later record);
+  `removed` with a verbatim quote (route `removed`, cite the later entry);
   a label whose quote fails is dropped and counted; pinned sessions are
   never deactivated by the scan. The report lists `deactivated`.
 
@@ -2019,9 +2056,9 @@ As built (S10):
   ([§1.1](#11-the-cli-agent-surface)), to both verbs.
 - A record with no segment yet counts its age from the later of `started`
   and `on_since`, never from `updated`.
-- Removed-feature candidates are built from session headers and segments
-  and from active entries; discussions join when they are stored. One
-  unit of each later record is paired with a session (its newest), ties
+- Removed-feature candidates are built only from active entries Daniel
+  wrote; session headers, segments and agent-written entries are never
+  evidence. One unit of each later entry is paired with a session (its newest), ties
   are broken by session id, and the model call is a separate
   `Models::removal` request (`REMOVAL_SCHEMA`: `pair`, `label`, `feature`,
   `reason`, `quote`) on `models.consistency`. A `removed` label with an
@@ -2159,8 +2196,10 @@ with no parsed times is left out, because a date bound is always set.
 `cwd` is on the row, as §5.8 specifies.
 
 `session catalog` checks the transcript and the redactor before it writes
-the switch. `cataloged_by.by` is `{kind: agent}` even when the name is
-`daniel`. Age is the last kept message's timestamp, not the file mtime;
+the switch. `cataloged_by.by` is `{kind: daniel}` for Daniel's interactive
+`--author daniel` channel and `{kind: agent, name}` under an agent's own
+name; a reserved name off that channel is refused `reserved_author`
+before the transcript is resolved. Age is the last kept message's timestamp, not the file mtime;
 at least 24 hours old, the last window is final and the switch turns off
 in the same store lock. A newer transcript stays on and due, and that
 write clears retry backoff. An empty conversation writes no record, leaves

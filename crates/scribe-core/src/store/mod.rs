@@ -28,8 +28,8 @@
 //! Reads take no lock and write nothing (STD-01 R31): every file is only
 //! ever replaced by an atomic rename, so a reader sees a whole old version or
 //! a whole new one, and the CLI works on a read-only root. Every load refuses
-//! state that is a link, another user's, or writable by others
-//! (STD-05 R7–R9), and a newer format (STD-03 R10). A record that does not
+//! state that is a link, another user's, or open to any group or other mode
+//! bit (STD-05 R7–R9), and a newer format (STD-03 R10). A record that does not
 //! parse is refused naming its file; a listing skips it and reports it in
 //! [`Skipped`], so one bad file does not hide the rest (4_decisions.md, "One
 //! malformed record makes its file corrupt").
@@ -44,6 +44,7 @@ mod redact;
 mod tags;
 pub use rebuild::RebuildGuard;
 
+pub use agent::check_agent_author;
 pub use audit::{AUDIT_FILE, AuditEvent, AuditStatus};
 pub use ids::resolve_prefix;
 pub use redact::{MIN_SECRET_CHARS, REDACTED_FIELDS, Redactor, unresolved_redact_env};
@@ -426,6 +427,7 @@ impl Store {
         now: time::OffsetDateTime,
         redactor: &Redactor,
     ) -> Result<(SessionRecord, ActiveOutcome)> {
+        check_active_author(request)?;
         self.prepare_dir(&self.root)?;
         let _lock = self.lock("session activity")?;
         let file = self
@@ -489,6 +491,7 @@ impl Store {
         now: time::OffsetDateTime,
         redactor: &Redactor,
     ) -> Result<ActiveOutcome> {
+        check_active_author(request)?;
         let outcome = activity::set_active(record, request, now);
         if outcome.changed() {
             if let Some(change) = record.active_change.as_mut() {
@@ -1124,6 +1127,18 @@ impl Store {
 }
 
 /// Append each of `more` not already in `links`.
+/// The routine's own routes carry a scribe author; an agent author here
+/// is a CLI write verb, which may not use a reserved name.
+fn check_active_author(request: &SetActive) -> Result<()> {
+    let by = match request {
+        SetActive::Deactivate { by, .. } | SetActive::Activate { by, .. } => by,
+    };
+    if by.kind == crate::AuthorKind::Agent {
+        agent::check_agent_author(&by.name)?;
+    }
+    Ok(())
+}
+
 fn merge_links(links: &mut Vec<SessionLink>, more: &[SessionLink]) {
     for link in more {
         if !links.contains(link) {

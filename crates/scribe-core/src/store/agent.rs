@@ -17,6 +17,25 @@ pub(super) fn refusal(kind: WriteRefusal, message: impl Into<String>) -> Error {
     }
 }
 
+/// Refuse a reserved name on an agent-channel write: `daniel`, `scribe`
+/// and `consistency` name Daniel's and scribe's own channels, so a record
+/// written with one could be mistaken for theirs.
+///
+/// # Errors
+///
+/// [`WriteRefusal::ReservedAuthor`] when `author` is reserved.
+pub fn check_agent_author(author: &AuthorName) -> Result<()> {
+    if author.is_reserved() {
+        return Err(refusal(
+            WriteRefusal::ReservedAuthor,
+            format!(
+                "'{author}' is reserved for Daniel's and scribe's own channels; pass your own crew or model name as --author"
+            ),
+        ));
+    }
+    Ok(())
+}
+
 fn required(text: &str) -> Result<()> {
     if text.trim().is_empty() {
         return Err(refusal(WriteRefusal::InvalidText, "text must not be empty"));
@@ -108,6 +127,7 @@ impl Store {
         now: OffsetDateTime,
         redactor: &Redactor,
     ) -> Result<Entry> {
+        check_agent_author(&author)?;
         required(&draft.content)?;
         self.prepare_dir(&self.root)?;
         let _lock = self.lock("entry add")?;
@@ -160,10 +180,27 @@ impl Store {
         now: OffsetDateTime,
         redactor: &Redactor,
     ) -> Result<(Entry, bool)> {
+        check_agent_author(&author)?;
         self.prepare_dir(&self.root)?;
         let _lock = self.lock("entry update")?;
         let mut entry = self.resolve_entry(id)?;
         let before = entry.clone();
+        // An agent edits only its own note, and only while it is active;
+        // a Daniel entry keeps the metadata-only rule below.
+        if entry.author.kind == AuthorKind::Agent {
+            if entry.author.name != author {
+                return Err(refusal(
+                    WriteRefusal::NotAuthor,
+                    "only the entry's author may update it; record your own note with 'scribe entry add'",
+                ));
+            }
+            if entry.status != EntryStatus::Active {
+                return Err(refusal(
+                    WriteRefusal::EntryNotActive,
+                    "only an active entry can be updated",
+                ));
+            }
+        }
         if let Some(content) = patching.content {
             if entry.author.kind != AuthorKind::Agent {
                 return Err(refusal(
@@ -207,6 +244,7 @@ impl Store {
         now: OffsetDateTime,
         redactor: &Redactor,
     ) -> Result<(Entry, bool)> {
+        check_agent_author(&author)?;
         required_reason(reason)?;
         self.prepare_dir(&self.root)?;
         let _lock = self.lock("entry retire")?;
@@ -215,6 +253,12 @@ impl Store {
             return Err(refusal(
                 WriteRefusal::DanielOnly,
                 "Daniel retires his entries through #scribe retire",
+            ));
+        }
+        if entry.author.name != author {
+            return Err(refusal(
+                WriteRefusal::NotAuthor,
+                "only the entry's author may retire it",
             ));
         }
         if entry.status == EntryStatus::Retired
@@ -251,6 +295,7 @@ impl Store {
         now: OffsetDateTime,
         redactor: &Redactor,
     ) -> Result<(Proposal, bool)> {
+        check_agent_author(&author)?;
         required_reason(reason)?;
         self.prepare_dir(&self.root)?;
         let _lock = self.lock("proposal add")?;
@@ -337,6 +382,7 @@ impl Store {
         now: OffsetDateTime,
         redactor: &Redactor,
     ) -> Result<(Proposal, bool)> {
+        check_agent_author(&author)?;
         if let Some(reason) = reason {
             required_reason(reason)?;
         }
@@ -378,6 +424,22 @@ impl Store {
                     "proposal is already settled",
                 ));
             }
+            // The settler's `--reason` replaces the proposal's reason below,
+            // so it may only do so on an agent-opened proposal: a reason
+            // Daniel or scribe wrote stays as written, and settling without
+            // `--reason` (or repeating theirs) keeps it.
+            if reason_changed && p.author.kind != AuthorKind::Agent {
+                return Err(refusal(
+                    WriteRefusal::ProposalNotAgent,
+                    "only an agent-opened proposal's reason can be changed; settle without --reason to keep the original reason",
+                ));
+            }
+            if p.author == Author::agent(author.clone()) {
+                return Err(refusal(
+                    WriteRefusal::NotAuthor,
+                    "the proposal's author cannot settle it; another agent must settle it",
+                ));
+            }
             if approve {
                 if older.status != EntryStatus::Active {
                     return Err(refusal(
@@ -409,6 +471,12 @@ impl Store {
                 return Err(refusal(
                     WriteRefusal::ProposalNotAgent,
                     "only agent-opened proposals can be updated",
+                ));
+            }
+            if p.author.name != author {
+                return Err(refusal(
+                    WriteRefusal::NotAuthor,
+                    "only the proposal's author may update it",
                 ));
             }
             // Preserve the creator while recording who revised the reason.
