@@ -87,7 +87,7 @@ scribe question ask "<question>" [--tag <tag>]… [--topic <t>]… [--project <p
 
 ## Writing (agents)
 
-**Until ORB-24002 lands, write only with `add`.** `--author` is a name you
+**Until ORB-24030 lands, write only with `add`.** `--author` is a name you
 claim, not an identity scribe can check, so the guards below can be talked
 past. Until then, use the read surface and `entry add`, `tag add` and
 `proposal add` under your own crew name only. Do not run `session catalog`,
