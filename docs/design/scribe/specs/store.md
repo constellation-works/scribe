@@ -356,8 +356,13 @@ config tag claims is dropped with a warning naming both.
   `content_from: {kind: agent}`. Agent tags are a new optional document.
   A format-4 reader refuses format-5 records rather than misreading them.
 - **Agent writes** (S12). Each write verb takes the lock, checks the
-  author guard (a Daniel entry's content, retirement and the settling of a
-  proposal whose `older` is a Daniel entry are refused `daniel_only`),
+  author guards (a reserved `--author` name — `daniel`, `scribe`,
+  `consistency` — is refused `reserved_author`; a Daniel entry's content,
+  retirement and the settling of a proposal whose `older` is a Daniel
+  entry are refused `daniel_only`; an agent entry's or proposal's update
+  or retirement by another agent name, and a proposal settled by its own
+  author, are refused `not_author`; a changed `--reason` when settling a
+  proposal Daniel or scribe opened is refused `proposal_not_agent`),
   redacts, and writes the entry, `proposals.json` or `tags.json` through
   `write_atomic`. `entry add` numbers like capture. An agent settle uses the
   same two-write order as `#scribe approve`; both and recovery call the

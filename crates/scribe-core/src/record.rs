@@ -90,6 +90,15 @@ impl AuthorName {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Whether this name belongs to a non-agent channel (`daniel`, or
+    /// scribe's routine: `scribe` and its `consistency` name), so a CLI
+    /// write verb recording `kind: agent` may never use it. Reads still
+    /// accept it as a filter.
+    #[must_use]
+    pub fn is_reserved(&self) -> bool {
+        matches!(self.0.as_str(), "daniel" | "scribe" | "consistency")
+    }
 }
 
 impl TryFrom<String> for AuthorName {
