@@ -2222,3 +2222,24 @@ provides useful offline distribution after a binary install; project hooks use
 the resolved absolute binary. A local Codex marketplace is an alternate install,
 not a public release. Digest-owned receipts and conflict refusal preserve edits;
 trust remains Codex's digest-bound host action (STD-05 §R21).
+
+## Narrow provider startup writes use a generated Orbit variant
+
+An actual sandboxed Luna pass exposed two startup writes outside Codex's
+ephemeral log/sqlite directories: its `tmp` subtree and existing
+`installation_id`. A read-only Codex home was insufficient before inference.
+A native sandbox probe succeeded with only those two writes; sibling auth and
+configuration files remained unwritable. Do not copy authentication or grant
+the whole provider home write access (STD-05 §R1, §R4).
+
+Orbit's generic `fs.write_files` capability expresses the installation file
+without granting its parent. Directory `fs.write` keeps its existing semantics.
+The Codex-enabled package therefore requires three explicit provider paths and
+the `codex` executable. It is generated from the canonical Orbit package, with
+byte/mode parity checked in `ci-fast`, retaining the same tools, schemas, jobs
+and disabled schedules except for the required configuration and narrow grants.
+The default package stays usable without Codex or extra filesystem permissions.
+This avoids conditional template syntax, broad fallback paths and manually
+maintained provider manifests. The runtime smoke must exercise the actual
+Orbit sandbox with synthetic transcript/store data; direct Luna success alone
+does not establish plugin compatibility.

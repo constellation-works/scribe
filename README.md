@@ -181,14 +181,16 @@ bounds time/output and terminates the process group. Schemas are validated, tool
 items refused, secrets masked in diagnostics, and temporary schemas/logs removed.
 Missing CLI/auth/model availability is an error, never a Claude fallback.
 
-The existing Orbit session-pass routine supports an optional
-`[plugins.scribe] codex_home = "/absolute/path/to/.codex"` in addition to Claude's
-`transcripts` setting. It needs read access to that state root (including existing
-provider auth), `codex` on its execution PATH, and any configured credential env
-pass-through. Scribe copies no provider credentials and grants no broad write
-access to Codex state. Upgrade/re-consent the plugin grants before using that
-setting. Existing Claude-only configurations remain valid, and ask remains the
-only agent-callable MCP tool. Routine schedules are unchanged by this feature.
+For Luna-backed Orbit session passes, install the generated
+[`plugin/orbit-codex/`](plugin/orbit-codex/README.md) variant. Alongside `codex_home`,
+it requires explicit `codex_runtime_tmp` and `codex_installation_id` settings and
+an Orbit build with exact-file plugin writes. Codex needs its `tmp` directory
+and `installation_id` file writable at startup, even for ephemeral model calls;
+its auth, configuration and transcripts stay read-only. Scribe copies no
+credentials and requests no whole-home write or unsandboxed permission. The
+default `plugin/.orbit-plugin/` remains compatible with Claude-only setups.
+Both variants keep ask as the only agent-callable MCP tool and ship routines
+disabled; upgrading preserves existing enablement and schedules.
 
 Official lifecycle/trust contract: [Codex hooks](https://learn.chatgpt.com/docs/hooks);
 packaging: [Build plugins](https://developers.openai.com/plugins/build/plugins#bundled-mcp-servers-and-lifecycle-hooks).

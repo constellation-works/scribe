@@ -117,3 +117,42 @@ fn no_tool_settles_a_proposal_or_changes_an_entry_by_id() {
     assert_eq!(empty["additionalProperties"].as_bool(), Some(false));
     assert!(empty.get("properties").is_none());
 }
+
+#[test]
+fn codex_package_keeps_the_tool_boundary_and_only_adds_narrow_runtime_writes() {
+    let base = manifest();
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../plugin/orbit-codex/.orbit-plugin/plugin.yaml");
+    let codex: Value = yaml_serde::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    assert_eq!(codex["metadata"], base["metadata"]);
+    assert_eq!(codex["spec"]["tools"], base["spec"]["tools"]);
+    assert_eq!(codex["spec"]["definitions"], base["spec"]["definitions"]);
+    assert_eq!(codex["spec"]["backend"], base["spec"]["backend"]);
+    let fs = &codex["spec"]["permissions"]["fs"];
+    let writes: Vec<_> = fs["write"]
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert_eq!(
+        writes,
+        [
+            "{{config.root}}",
+            "{{plugin_state}}",
+            "{{config.codex_runtime_tmp}}"
+        ]
+    );
+    let files: Vec<_> = fs["write_files"]
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert_eq!(files, ["{{config.codex_installation_id}}"]);
+    assert!(
+        base["spec"]["permissions"]["fs"]
+            .get("write_files")
+            .is_none()
+    );
+}

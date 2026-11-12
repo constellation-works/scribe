@@ -113,11 +113,13 @@ PATH="$PWD/target/debug:$PATH" orbit plugin test plugin/.orbit-plugin \
   --grant fs,network,env_pass,orbit_tools  # the YAML goldens
 ```
 
-Codex support is optional: leave `codex_home` empty to retain Claude-only behavior.
-When set, re-consent the added read grant for that absolute state root and ensure
-`codex` is executable from the routine environment. `OPENAI_API_KEY` is an allowed
-credential alternative to the provider's existing login. The model child reads
-auth in place, writes ephemeral logs/sqlite data in its own private temporary
-directory, and receives no scribe privilege variables. No Codex-home write grant
-is requested. Active and archived rollouts are both available to due passes;
-never-on sessions remain untouched. Ask is still the sole MCP-facing tool.
+This default package preserves Claude-only installations. Its optional
+`codex_home` read setting permits Codex transcript discovery, but read access
+alone is insufficient for a Codex model child: even ephemeral Codex startup
+needs narrow writes to its `tmp` directory and `installation_id` file. For
+Luna-backed passes, use the generated Codex-enabled variant in
+[`../orbit-codex/`](../orbit-codex/README.md), configure its three explicit paths,
+and re-consent the rendered grants. It keeps provider auth/config/transcripts
+read-only and copies no credentials. `OPENAI_API_KEY` remains an alternative to
+existing login. Both variants retain the same tool/routine surface; never-on
+sessions remain untouched.

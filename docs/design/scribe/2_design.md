@@ -2306,8 +2306,14 @@ tool events and has no fallback. Provider credentials stay in the provider's
 existing store. Model temp artifacts/logs/sqlite state live in private scratch
 and are reclaimed by RAII.
 
-The Orbit plugin optionally accepts `codex_home`; it grants read access to
+The default Orbit plugin optionally accepts `codex_home`; it grants read access to
 active/archive transcripts and existing auth, exposes no new agent-callable
 write tool, and preserves existing routine schedules and Claude-only config.
+Luna-backed Orbit execution uses `plugin/orbit-codex/.orbit-plugin`, generated
+from the default package. It additionally requires `codex_runtime_tmp` and
+`codex_installation_id`: one directory write and one exact-file write for the
+provider's startup state. Auth/config/transcripts receive no write grant. The
+same identity, tools, jobs and disabled routine defaults are preserved. Explicit
+settings and consent are required; no provider-specific logic enters Orbit.
 See README's Codex section for current installation/trust prerequisites and the
 explicit same-OS-user accident-guard limitation.

@@ -21,7 +21,7 @@
     },
     "codex_home": {
       "type": "string",
-      "description": "Optional absolute Codex state directory (~/.codex or CODEX_HOME). Enables provider-tagged session passes over sessions and archived_sessions and lets Codex read its existing authentication. Empty disables Codex discovery; Claude configuration remains valid. Configure a read grant for this path and ensure codex is on the routine PATH. Scribe never copies credentials."
+      "description": "Optional absolute Codex state directory (~/.codex or CODEX_HOME) for active/archive transcript discovery and existing auth. Empty disables Codex discovery; Claude configuration remains valid. Model-backed Orbit execution also needs the Codex-enabled package and its narrow runtime write settings; read access alone is insufficient. Scribe never copies credentials."
     }
   },
   "additionalProperties": false
