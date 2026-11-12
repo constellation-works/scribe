@@ -12,6 +12,8 @@ use crate::app::Context;
 use crate::error::CliError;
 use crate::output::{FORMAT_ENV, Output};
 use crate::popup;
+
+mod internal;
 use clap::Args;
 
 pub(super) const EXAMPLES: &str = "\
@@ -22,6 +24,17 @@ PATH; run it from a terminal, usually in a tmux popup. Add this to
 then S:
 
   bind-key S display-popup -E -w 90% -h 85% scribe tmux
+
+Rows read as a start date (MM-DD, or YYYY-MM-DD for another year), then:
+  sessions     status (open or final), title, project; newest started first
+  entries      tag, the first line of the text
+  proposals    state, what is proposed
+  backfill     project, the first prompt
+The id is not shown; it stays attached to the row for the preview, enter and
+ctrl-y, and topics stay searchable. The preview leads with the title and
+summary (or the entry's text), then goals and next steps, then the id, host,
+cwd and other metadata; enter opens the whole record. Color follows NO_COLOR
+and TERM, and inactive sessions are dimmed.
 
 Keys:
   enter       open the record in $PAGER (else less): a session with its log,
@@ -44,12 +57,21 @@ Examples:
   scribe tmux
   scribe tmux --root ~/.scribe";
 
-/// Arguments to `tmux`: none beyond the global flags.
+/// Arguments to `tmux`: none beyond the global flags. The hidden
+/// subcommands are the popup's own callbacks, not part of the documented
+/// surface: they read the same records the list and show commands do and
+/// print rows or a preview for the popup's fzf, and they write nothing.
 #[derive(Debug, Args)]
-pub(crate) struct TmuxArgs {}
+pub(crate) struct TmuxArgs {
+    #[command(subcommand)]
+    internal: Option<internal::Internal>,
+}
 
 /// Run the popup and wait for it. Read-only: nothing here touches the store.
-pub(super) fn run(_args: &TmuxArgs, ctx: &Context) -> Result<Output, CliError> {
+pub(super) fn run(args: TmuxArgs, ctx: &Context) -> Result<Output, CliError> {
+    if let Some(internal) = args.internal {
+        return internal::run(internal, ctx);
+    }
     if !popup::on_path("fzf") {
         return Err(CliError::FzfMissing);
     }

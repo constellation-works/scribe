@@ -278,7 +278,11 @@ fn target_of(output: &Output) -> Option<String> {
         // `mark_result`.
         Output::Hook(_) | Output::Pass(_) | Output::Scan(_) => None,
         // Read-only: never audited (`question ask`, `plugin call`).
-        Output::Ask(_) | Output::Plugin(_) | Output::Popup => None,
+        Output::Ask(_)
+        | Output::Plugin(_)
+        | Output::Popup
+        | Output::PopupRows(_)
+        | Output::PopupPreview(_) => None,
     }
 }
 

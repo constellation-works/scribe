@@ -259,17 +259,29 @@ was started, not whichever `scribe` is first on `PATH`. It needs `fzf` on
 bind-key S display-popup -E -w 90% -h 85% scribe tmux
 ```
 
-- It lists sessions first (`scribe session list`, which prints
-  tab-separated rows into a pipe); `ctrl-s`, `ctrl-e`, `ctrl-p` and
-  `ctrl-b` reload the list with sessions, active entries, open proposals or
-  backfill candidates (`scribe transcript list --since <30 days ago>`,
-  [§5.8](#58-cataloging-a-past-session)).
-- The preview pane is `scribe <noun> show <id> --format table`: `session`,
-  `entry` or `transcript`, and a proposal's `proposal list` row. The format
-  is explicit because `show` prints only its list line when stdout is not a
-  terminal, and the preview reads through a pipe.
-- Enter opens `scribe <noun> show <id> --format table` (with `--log` for a
-  session) in `$PAGER` (else `less`).
+- It lists sessions first (`session list`); `ctrl-s`, `ctrl-e`, `ctrl-p`
+  and `ctrl-b` reload the list with sessions, active entries, open
+  proposals or backfill candidates (`transcript list --since <30 days
+  ago>`, [§5.8](#58-cataloging-a-past-session)). Rows are for reading, not
+  for ids: a start date (`MM-DD`, or `YYYY-MM-DD` when the year is not the
+  current one), then for a session its status (`open` green, `final`
+  dimmed), its title and its project (dimmed), newest started first;
+  an entry shows its tag and the first line of its text, a proposal its
+  state and what it proposes, a candidate its project and first prompt.
+  Inactive sessions (after `alt-a`) are dimmed. The id is a hidden first
+  field of the row (`kind<TAB>id<TAB>display`, fzf `--with-nth=3`) so the
+  preview, Enter and `ctrl-y` act on the same record; topics follow the
+  columns past any terminal width, where `--no-hscroll` never shows them but
+  fzf still searches them. Rows are built in Rust, from the same list
+  commands' records, by a hidden `scribe tmux rows <view>` mode.
+- The preview pane is a hidden `scribe tmux preview <kind> <id>`: for a
+  session its title and summary, then goals and next steps, then the id,
+  host, cwd and other metadata; for an entry its text then its metadata;
+  for a proposal what it proposes, its reason, then its fields; a
+  candidate is `transcript show --format table`. Enter opens the whole
+  record with `--format table` (`--log` for a session), because `show`
+  prints only its list line when stdout is not a terminal.
+- Enter opens the full record in `$PAGER` (else `less`).
   On a candidate, Enter puts `scribe session catalog <id> --author daniel`
   in the tmux paste buffer and says so; cataloging runs from a shell, where
   its progress is visible.
@@ -2174,7 +2186,15 @@ script embedded in the binary, with its README folded into
 `scribe tmux --help`), and the Enter and preview views request
 `--format table` explicitly, because `show` through a pipe prints only its
 list line, so the first version's preview and Enter views showed no
-summary, log text or entry detail. The script prefixes each row with a hidden kind field so one fzf
+summary, log text or entry detail. The list rows then started with the
+36-character id and cut the title off; rows now lead with the date, status
+and title as above (hidden `tmux rows` and `tmux preview` modes of the same
+binary build them; `session list`, `entry list`, `proposal list` and
+`transcript list` print what they always did, and the popup reads their
+records in process). The hidden modes are not listed in help (STD-01 R25,
+R31: they are read-only, write nothing and exit 0, 1 or 2 like any command,
+and `--help` on them works) and follow the output rules: payload on stdout,
+color only when asked for and allowed by `NO_COLOR` and `TERM`. The script prefixes each row with a hidden kind field so one fzf
 invocation's `ctrl-s`/`ctrl-e`/`ctrl-p`/`ctrl-b` reloads, its
 `alt-a` hidden-toggle and its `ctrl-y` copy all know the record's noun
 and id; `crates/scribe/tests/tmux_popup.rs` drives `scribe tmux` through a fake

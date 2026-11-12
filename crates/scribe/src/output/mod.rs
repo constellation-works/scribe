@@ -8,6 +8,7 @@
 
 mod color;
 mod payload;
+mod popup;
 mod render;
 mod sink;
 mod table;
@@ -15,7 +16,7 @@ mod table;
 pub(crate) use payload::{
     AskPayload, BatchFailure, DeactivatedPayload, DeactivationFailure, EntryPayload, HitPayload,
     HookOutcome, HookReply, Kin, Output, PassPayload, PassReport, PluginError, PluginReply,
-    ProposalPayload, ReappliedPayload, Record, Records, ScanReport, SessionPayload,
+    PopupRows, ProposalPayload, ReappliedPayload, Record, Records, ScanReport, SessionPayload,
     SessionsContext, TagPayload, TranscriptPayload, TreeRow, WarningPayload,
 };
 pub(crate) use sink::{FORMAT_ENV, FormatArg, Sink, stdin_interactive};
@@ -79,7 +80,9 @@ pub(crate) fn finish(sink: &Sink, outcome: Result<Output, CliError>) -> ExitCode
             | Output::Scan(_)
             | Output::Ask(_)
             | Output::Plugin(_)
-            | Output::Popup => Ok(()),
+            | Output::Popup
+            | Output::PopupRows(_)
+            | Output::PopupPreview(_) => Ok(()),
         }
     });
     match result {
@@ -178,6 +181,11 @@ fn emit(sink: &Sink, output: &Output) -> io::Result<()> {
         Output::Ask(payload) => render::ask(&mut out, sink, payload)?,
         Output::Plugin(reply) => render::plugin(&mut out, reply)?,
         Output::Popup => {}
+        Output::PopupRows(rows) => {
+            let color = rows.color && sink::resolve_color(true, &sink::SinkEnv::from_process());
+            popup::rows(&mut out, rows, color)?;
+        }
+        Output::PopupPreview(record) => popup::preview(&mut out, record)?,
     }
     out.flush()
 }

@@ -26,41 +26,17 @@ hidden_file=$state/hidden
 
 hidden() { [ -f "$hidden_file" ] && [ "$(cat "$hidden_file")" = 1 ]; }
 
-# rows <kind> <list command...>: prefix each tab-separated row with its
-# kind so the preview, copy and Enter actions know which noun it is. A
-# failed list becomes one notice row (id "-") instead of failing the popup.
-rows() {
-	kind=$1; shift
-	if ! out=$("$@" 2>/dev/null); then
-		printf '%s\t-\t%s\n' "$kind" "scribe $kind list is unavailable; run it in a shell for the reason"
-		return 0
-	fi
-	[ -n "$out" ] || return 0
-	printf '%s\n' "$out" | awk -v k="$kind" 'BEGIN { OFS = "\t" } { print k, $0 }'
-}
-
+# The rows come from the binary's hidden `tmux rows` mode: one
+# `kind<TAB>id<TAB>display` line per record, built from the same lists the
+# list commands report, with a notice row for an empty or failed list. fzf
+# shows only the display field. Color is requested when the terminal has one
+# (the binary still honors NO_COLOR and TERM=dumb).
 list_view() {
-	case $1 in
-	sessions)
-		if hidden; then rows session scribe session list --include-inactive
-		else rows session scribe session list; fi ;;
-	entries)
-		if hidden; then rows entry scribe entry list
-		else rows entry scribe entry list --status active; fi ;;
-	proposals)
-		rows proposal scribe proposal list --state open ;;
-	transcripts)
-		# Backfill candidates are `transcript list` for the last 30 days.
-		# An empty list and a failed list are both one notice row.
-		since=$(date -d '30 days ago' +%F 2>/dev/null || date -v-30d +%F 2>/dev/null || date +%F)
-		if ! out=$(scribe transcript list --since "$since" 2>/dev/null); then
-			printf '%s\n' 'transcript	-	backfill candidates are unavailable: scribe transcript list failed; run it in a shell for the reason'
-		elif [ -n "$out" ]; then
-			printf '%s\n' "$out" | awk 'BEGIN { OFS = "\t" } { print "transcript", $0 }'
-		else
-			printf '%s\n' 'transcript	-	no uncataloged transcripts in the last 30 days'
-		fi ;;
-	esac
+	flags=
+	if hidden; then flags=--hidden; fi
+	case ${TERM:-} in '' | dumb) ;; *) flags="$flags --color" ;; esac
+	# shellcheck disable=SC2086
+	scribe tmux rows "$1" $flags
 }
 
 preview() {
@@ -76,14 +52,9 @@ preview() {
 		return 0
 	fi
 	case $kind in
-	session) detail session show "$id" ;;
-	entry) detail entry show "$id" ;;
-	# There is no `proposal show`: the preview formats the proposal's
-	# `proposal list` row, which carries every field a proposal has.
-	proposal)
-		scribe proposal list 2>/dev/null | awk -F '\t' -v id="$id" '
-			$1 == id { printf "id: %s\nkind: %s\nstate: %s\nolder: %s\nnewer: %s\nopened: %s\nreason: %s\n", $1, $2, $3, $4, $5, $6, $7; found = 1 }
-			END { if (!found) printf "proposal %s not found\n", id }' ;;
+	# What the record says first, then its metadata; the pager view keeps
+	# the whole record.
+	session | entry | proposal) scribe tmux preview "$kind" "$id" ;;
 	transcript) detail transcript show "$id" 2>/dev/null || preview transcript - ;;
 	*) printf 'unknown record kind: %s\n' "$kind" ;;
 	esac
@@ -100,7 +71,7 @@ open_record() {
 	case $kind in
 	session) detail session show "$id" --log | ${PAGER:-less} ;;
 	entry) detail entry show "$id" | ${PAGER:-less} ;;
-	proposal) preview proposal "$id" | ${PAGER:-less} ;;
+	proposal) scribe tmux preview proposal "$id" | ${PAGER:-less} ;;
 	transcript)
 		if [ "$id" = - ]; then preview transcript -; return 0; fi
 		# Cataloging runs from a shell, where its progress is visible:
@@ -136,7 +107,7 @@ printf sessions > "$state/view"
 printf 0 > "$state/hidden"
 
 selection=$(self_call _list-current | fzf \
-	--delimiter='	' --with-nth='2..' \
+	--delimiter='	' --with-nth=3 --ansi --no-hscroll --ellipsis= \
 	--prompt='scribe> ' \
 	--header='enter: open in pager · ctrl-y: copy id · ctrl-s sessions · ctrl-e entries · ctrl-p proposals · ctrl-b backfill · alt-a: show hidden' \
 	--preview "$self _preview {1} {2}" \

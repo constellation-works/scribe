@@ -19,6 +19,17 @@ then S:
 
   bind-key S display-popup -E -w 90% -h 85% scribe tmux
 
+Rows read as a start date (MM-DD, or YYYY-MM-DD for another year), then:
+  sessions     status (open or final), title, project; newest started first
+  entries      tag, the first line of the text
+  proposals    state, what is proposed
+  backfill     project, the first prompt
+The id is not shown; it stays attached to the row for the preview, enter and
+ctrl-y, and topics stay searchable. The preview leads with the title and
+summary (or the entry's text), then goals and next steps, then the id, host,
+cwd and other metadata; enter opens the whole record. Color follows NO_COLOR
+and TERM, and inactive sessions are dimmed.
+
 Keys:
   enter       open the record in $PAGER (else less): a session with its log,
               an entry in full, a proposal as its fields. On a backfill
