@@ -38,10 +38,5 @@
       "pattern": "^/"
     }
   },
-  "additionalProperties": false,
-  "required": [
-    "codex_home",
-    "codex_runtime_tmp",
-    "codex_installation_id"
-  ]
+  "additionalProperties": false
 }

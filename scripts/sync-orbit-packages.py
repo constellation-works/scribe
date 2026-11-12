@@ -47,7 +47,9 @@ def codex_schema(raw):
     }
     for key in ("codex_home", "codex_runtime_tmp", "codex_installation_id"):
         schema["properties"][key].update(minLength=1, pattern="^/")
-    schema["required"] = ["codex_home", "codex_runtime_tmp", "codex_installation_id"]
+    # Orbit validates defaults alone before merging workspace settings. The
+    # three mandatory path templates enforce presence at rendered admission;
+    # properties constrain supplied values without invalidating empty defaults.
     return (json.dumps(schema, indent=2) + "\n").encode()
 
 
