@@ -268,7 +268,10 @@ bind-key S display-popup -E -w 90% -h 85% scribe tmux
   dimmed), its title and its project (dimmed), newest started first;
   an entry shows its tag and the first line of its text, a proposal its
   state and what it proposes, a candidate its project and first prompt.
-  Inactive sessions (after `alt-a`) are dimmed. The id is a hidden first
+  Inactive sessions (after `alt-a`) are dimmed. A list that is empty or fails is
+  one notice row (id `-`) that says which ("no active entries; alt-a shows
+  every status", "no open proposals"); its preview says the same and Enter and
+  `ctrl-y` do nothing on it. The id is a hidden first
   field of the row (`kind<TAB>id<TAB>display`, fzf `--with-nth=3`) so the
   preview, Enter and `ctrl-y` act on the same record; topics follow the
   columns past any terminal width, where `--no-hscroll` never shows them but

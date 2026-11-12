@@ -91,6 +91,19 @@ fn list(ctx: &Context, argv: &[&str]) -> Result<Records, CliError> {
     Ok(records)
 }
 
+/// The notice row for a list that succeeded with nothing in it, worded for
+/// the view and for the filter it applied.
+fn empty_notice(args: &RowsArgs) -> &'static str {
+    match (args.view, args.hidden) {
+        (View::Sessions, false) => "no active sessions; alt-a shows inactive ones",
+        (View::Sessions, true) => "no sessions",
+        (View::Entries, false) => "no active entries; alt-a shows every status",
+        (View::Entries, true) => "no entries",
+        (View::Proposals, _) => "no open proposals",
+        (View::Transcripts, _) => "no uncataloged transcripts in the last 30 days",
+    }
+}
+
 fn rows(args: &RowsArgs, ctx: &Context) -> Result<Output, CliError> {
     let year = args.year.unwrap_or_else(|| ctx.now().year());
     let (kind, listed) = match args.view {
@@ -129,10 +142,7 @@ fn rows(args: &RowsArgs, ctx: &Context) -> Result<Output, CliError> {
         }
     };
     let (records, notice) = match listed {
-        Ok(records) if kind == "transcript" && records.len() == 0 => (
-            None,
-            Some("no uncataloged transcripts in the last 30 days".to_owned()),
-        ),
+        Ok(records) if records.len() == 0 => (None, Some(empty_notice(args).to_owned())),
         Ok(records) => (Some(records), None),
         Err(_) if kind == "transcript" => (
             None,

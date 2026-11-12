@@ -47,7 +47,8 @@ preview() {
 				'An empty list means no uncataloged transcripts in the window.' \
 				'A failed list is this same row; run `scribe transcript list --since <date>` in a shell for the reason.'
 		else
-			printf '%s list is unavailable; run the list command in a shell for the reason.\n' "$kind"
+			printf '%s\n' 'Nothing is selected: this row is a notice.' \
+				'An empty list says so in this row; a failed list shows it too, and running the list command in a shell gives the reason.'
 		fi
 		return 0
 	fi
@@ -68,6 +69,8 @@ copy_id() {
 
 open_record() {
 	kind=$1 id=$2
+	# A notice row (id "-") opens nothing.
+	if [ "$id" = - ] && [ "$kind" != transcript ]; then preview "$kind" -; return 0; fi
 	case $kind in
 	session) detail session show "$id" --log | ${PAGER:-less} ;;
 	entry) detail entry show "$id" | ${PAGER:-less} ;;

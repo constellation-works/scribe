@@ -666,3 +666,53 @@ fn enter_preview_and_ctrl_y_act_on_the_full_id_in_every_view() {
         assert!(!read(&cap, "pager.txt").is_empty(), "{key}");
     }
 }
+
+#[test]
+fn an_empty_view_is_one_notice_row_worded_for_the_view_and_its_filter() {
+    // A store with nothing in it: every list succeeds empty.
+    let fx = Fixture::new();
+    std::fs::create_dir_all(fx.root()).unwrap();
+    support::make_private(&fx.root());
+    for (args, kind, text) in [
+        (
+            &["sessions"][..],
+            "session",
+            "no active sessions; alt-a shows inactive ones",
+        ),
+        (&["sessions", "--hidden"][..], "session", "no sessions"),
+        (
+            &["entries"][..],
+            "entry",
+            "no active entries; alt-a shows every status",
+        ),
+        (&["entries", "--hidden"][..], "entry", "no entries"),
+        (&["proposals"][..], "proposal", "no open proposals"),
+    ] {
+        let got = fields(&rows(&fx, args, &[]));
+        assert_eq!(got.len(), 1, "{args:?}");
+        assert_eq!(
+            (got[0].0.as_str(), got[0].1.as_str(), got[0].2.as_str()),
+            (kind, "-", text),
+            "{args:?}"
+        );
+    }
+}
+
+#[test]
+fn enter_and_ctrl_y_on_a_notice_row_do_nothing_and_its_preview_says_so() {
+    let fx = Fixture::new();
+    std::fs::create_dir_all(fx.root()).unwrap();
+    support::make_private(&fx.root());
+    let (mut cmd, cap) = popup(&fx);
+    let out = cmd
+        .env("FAKE_FZF_PREVIEW", "1")
+        .env("FAKE_FZF_COPY", "1")
+        .output()
+        .expect("run tmux");
+    assert_eq!(out.status.code(), Some(0));
+    assert!(read(&cap, "fzf-input.txt").contains("session\t-\tno active sessions"));
+    assert!(read(&cap, "preview.txt").contains("this row is a notice"));
+    assert!(read(&cap, "pager.txt").is_empty());
+    assert!(read(&cap, "pbcopy.txt").is_empty());
+    assert!(read(&cap, "tmux-args.txt").is_empty());
+}
