@@ -98,7 +98,7 @@ Quoted verbatim; these are the requirements this design starts from.
 | `ask` | The one MCP tool exposed to main agents. Retrieval is model-free (lexical ranking over entries, session records and Orbit tasks); a decision model answers only from the retrieved evidence, every quote is verbatim-checked, it says "no record" rather than infer, and reports conflicts instead of picking a side. | Decision model (Sonnet by default) |
 | Consistency routine | Flags contradictions and stale entries and proposes "B supersedes A" or "retire A". Daniel approves with `#scribe approve <id>`. A superseded entry stays on disk, is marked, and is hidden from answers by default. From S10 it also deactivates sessions whose feature a later entry Daniel wrote says was removed (only Daniel-authored entries count as removal evidence), and sessions past a generous age limit unless pinned. | Haiku, on model-free candidate pairs |
 | CLI agent surface (S11–S13) | Agents on the Mac search (`scribe record search`, BM25), filter lists by date, status, topic and task, and add or update entries, tags and proposals with `--author`; one `scribe` skill teaches it. Agent writes are marked `author.kind: agent`, never quoted as Daniel's words, and never settle an entry Daniel wrote. | None |
-| tmux popup (S13) | `scribe-tmux` lists sessions, entries, proposals and backfill candidates in fzf with `show` as the preview. | None |
+| tmux popup (S13) | `scribe tmux` lists sessions, entries, proposals and backfill candidates in fzf with `show` as the preview. | None |
 | Backfill by name (S14) | `scribe transcript list --since 2026-10-01` lists long uncataloged sessions; Daniel picks and runs `scribe session catalog <id>`. | Haiku (the session pass) |
 
 Daniel's own entries and settlements come only from his typed `#scribe`
@@ -156,7 +156,7 @@ can override.
 | Deactivation routes | `crates/scribe-core/src/{activity,consistency}.rs`, `commands/session/activate.rs` | S10 |
 | `record search`, list filters, id prefixes | `crates/scribe-core/src/search.rs`, `commands/record.rs` | S11 |
 | Agent write verbs and the author guard | `commands/{entry,tag,proposal}.rs` | S12 |
-| The `scribe` skill, the tmux popup | `plugin/claude-code/skills/scribe/`, `plugin/tmux/` | S13 |
+| The `scribe` skill, the tmux popup | `plugin/claude-code/skills/scribe/`, `crates/scribe/src/popup.rs` (`scribe tmux`) | S13 |
 | `session catalog`, `transcript list/show` | `commands/session/catalog.rs`, `commands/transcript.rs` | S14 |
 
 ## Task References

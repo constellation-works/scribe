@@ -96,6 +96,15 @@ pub(crate) enum CliError {
     /// A model call failed (`question ask`).
     #[error(transparent)]
     Model(#[from] scribe_core::models::ModelError),
+    /// `tmux` needs `fzf` and it is not on `PATH`.
+    #[error("fzf is not installed, and the popup is an fzf list")]
+    FzfMissing,
+    /// `tmux` could not start its popup (`sh`, or this executable's path).
+    #[error("cannot start the tmux popup")]
+    TmuxSpawn(#[source] io::Error),
+    /// The popup ended with a failure status (`None`: killed by a signal).
+    #[error("the tmux popup failed ({})", .0.map_or_else(|| "killed by a signal".to_owned(), |c| format!("exit {c}")))]
+    TmuxFailed(Option<i32>),
     /// Writing the result to stdout failed for a reason other than a closed pipe.
     #[error("cannot write output")]
     Output(#[source] io::Error),
@@ -120,6 +129,9 @@ impl CliError {
             Self::SessionCataloged(_) => "session_cataloged",
             Self::TranscriptNotFound { .. } => "transcript_not_found",
             Self::Model(e) => e.code(),
+            Self::FzfMissing => "fzf_missing",
+            Self::TmuxSpawn(_) => "io_error",
+            Self::TmuxFailed(_) => "tmux_failed",
             Self::Output(_) => "output_error",
         }
     }
@@ -144,6 +156,9 @@ impl CliError {
             Self::Core(scribe_core::Error::SessionNotFound { .. }) => {
                 Some("run 'scribe session list' with the same --root to see existing ids")
             }
+            Self::FzfMissing => Some(
+                "install fzf (for example 'brew install fzf' on macOS, or your package manager) and try again",
+            ),
             Self::SegmentNotFound { .. } => Some(
                 "run 'scribe session show' on the same id, without --segment, to see its segments",
             ),
@@ -162,6 +177,8 @@ impl CliError {
             | Self::SessionCataloged(_)
             | Self::TranscriptNotFound { .. }
             | Self::Model(_)
+            | Self::TmuxSpawn(_)
+            | Self::TmuxFailed(_)
             | Self::Output(_) => None,
         }
     }

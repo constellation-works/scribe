@@ -5,7 +5,7 @@
 //! (STD-02 R24): today the audit log, through [`crate::audit_middleware`].
 //! Each noun lives in its own module with its subcommands, flags, help and
 //! handlers (`entry.rs`, `session/`, `proposal.rs`, `record.rs`, `tag.rs`, `question.rs`,
-//! `plugin.rs`); a noun that
+//! `plugin.rs`, `tmux.rs`); a noun that
 //! outgrows one file becomes a directory, `<noun>/mod.rs` plus one file per
 //! verb, as `hook/` is (STD-02 R18: split along responsibilities, not by length alone).
 
@@ -18,6 +18,7 @@ mod question;
 mod record;
 mod session;
 mod tag;
+mod tmux;
 mod transcript;
 
 use crate::app::Context;
@@ -37,6 +38,7 @@ pub(crate) use question::QuestionCommand;
 pub(crate) use record::RecordCommand;
 pub(crate) use session::SessionCommand;
 pub(crate) use tag::TagCommand;
+pub(crate) use tmux::TmuxArgs;
 
 /// Top-level nouns.
 #[derive(Debug, Subcommand)]
@@ -68,6 +70,9 @@ pub(crate) enum Command {
     /// Run a Claude Code hook: record #scribe lines and settle proposals, switch /scribe on and off, mark session passes due, report open proposals
     #[command(subcommand, after_help = hook::HOOK_EXAMPLES)]
     Hook(HookCommand),
+    /// Browse sessions, entries, proposals and backfill candidates in an fzf popup, writing nothing
+    #[command(after_help = tmux::EXAMPLES)]
+    Tmux(TmuxArgs),
     /// Serve the Orbit plugin's tools (the plugin backend runs this)
     #[command(subcommand, after_help = plugin::PLUGIN_EXAMPLES)]
     Plugin(PluginCommand),
@@ -87,6 +92,7 @@ impl Command {
             | Self::Tag(_)
             | Self::Hook(_)
             | Self::Question(_)
+            | Self::Tmux(_)
             | Self::Plugin(_) => AuditSubject::default(),
         }
     }
@@ -107,6 +113,8 @@ impl Command {
             Self::Tag(command) => command.audit(),
             Self::Hook(command) => command.audit(),
             Self::Question(command) => command.audit(),
+            // Read-only: the popup only lists and shows (STD-01 R31).
+            Self::Tmux(_) => None,
             Self::Plugin(command) => command.audit(),
         }
     }
@@ -134,6 +142,7 @@ pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
         Command::Tag(command) => tag::run(command, ctx),
         Command::Hook(command) => hook::run(command, ctx),
         Command::Question(command) => question::run(command, ctx),
+        Command::Tmux(args) => tmux::run(&args, ctx),
         Command::Plugin(command) => plugin::run(command, ctx),
     };
     if let Some(audit) = audit.as_mut() {

@@ -12,6 +12,7 @@ Commands:
   tag          List tags and manage agent-created store tags
   question     Answer a question from the records, citing a verbatim quote for every claim
   hook         Run a Claude Code hook: record #scribe lines and settle proposals, switch /scribe on and off, mark session passes due, report open proposals
+  tmux         Browse sessions, entries, proposals and backfill candidates in an fzf popup, writing nothing
   plugin       Serve the Orbit plugin's tools (the plugin backend runs this)
   help         Print this message or the help of the given subcommand(s)
 

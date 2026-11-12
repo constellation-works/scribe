@@ -1,19 +1,25 @@
-#!/bin/sh
-# scribe-tmux — browse scribe's sessions, entries, proposals and backfill
-# candidates in an fzf popup, previewing each record with `scribe … show`.
-# It only reads: every command it runs is a list or a show. See README.md
-# in this directory for the tmux key binding.
+# scribe tmux — the popup behind `scribe tmux`: sessions, entries,
+# proposals and backfill candidates in one fzf list, each record previewed
+# with `scribe … show`. It only reads: every command it runs is a list or a
+# show. The binary runs this text with `sh -c`, and exports:
+#   SCRIBE_TMUX_BIN  the scribe executable that was started; every child
+#                      command runs it, never whichever scribe is on PATH
+#   SCRIBE_TMUX_SH   this text, so fzf's binds and preview can call back in
 #
-# Keys: enter opens the record (sessions with --log) in $PAGER (else
-# less); ctrl-y copies the id (tmux buffer, and pbcopy when present);
+# Keys: enter opens the record (sessions with --log) in $PAGER (else less);
+# ctrl-y copies the id (tmux buffer, and pbcopy when present);
 # ctrl-s/ctrl-e/ctrl-p/ctrl-b switch to sessions, entries, proposals or
 # backfill candidates; alt-a toggles inactive sessions and hidden entries.
 set -u
 
-self=$(command -v "$0" 2>/dev/null || printf '%s' "$0")
+scribe() { "$SCRIBE_TMUX_BIN" "$@"; }
+# `show` prints only its list line when stdout is not a terminal (the
+# output contract), so the detail views ask for the table format.
+detail() { scribe "$@" --format table; }
+# `self` is text for fzf's own shell; the popup's direct call uses the function.
+self='sh -c "$SCRIBE_TMUX_SH" scribe-tmux'
+self_call() { sh -c "$SCRIBE_TMUX_SH" scribe-tmux "$@"; }
 state=${SCRIBE_TMUX_STATE:-}
-
-# --- helpers (also the commands fzf's binds and preview call back into) ---
 
 view_file=$state/view
 hidden_file=$state/hidden
@@ -70,15 +76,15 @@ preview() {
 		return 0
 	fi
 	case $kind in
-	session) scribe session show "$id" ;;
-	entry) scribe entry show "$id" ;;
+	session) detail session show "$id" ;;
+	entry) detail entry show "$id" ;;
 	# There is no `proposal show`: the preview formats the proposal's
 	# `proposal list` row, which carries every field a proposal has.
 	proposal)
 		scribe proposal list 2>/dev/null | awk -F '\t' -v id="$id" '
 			$1 == id { printf "id: %s\nkind: %s\nstate: %s\nolder: %s\nnewer: %s\nopened: %s\nreason: %s\n", $1, $2, $3, $4, $5, $6, $7; found = 1 }
 			END { if (!found) printf "proposal %s not found\n", id }' ;;
-	transcript) scribe transcript show "$id" 2>/dev/null || preview transcript - ;;
+	transcript) detail transcript show "$id" 2>/dev/null || preview transcript - ;;
 	*) printf 'unknown record kind: %s\n' "$kind" ;;
 	esac
 }
@@ -92,8 +98,8 @@ copy_id() {
 open_record() {
 	kind=$1 id=$2
 	case $kind in
-	session) scribe session show "$id" --log | ${PAGER:-less} ;;
-	entry) scribe entry show "$id" | ${PAGER:-less} ;;
+	session) detail session show "$id" --log | ${PAGER:-less} ;;
+	entry) detail entry show "$id" | ${PAGER:-less} ;;
 	proposal) preview proposal "$id" | ${PAGER:-less} ;;
 	transcript)
 		if [ "$id" = - ]; then preview transcript -; return 0; fi
@@ -103,38 +109,25 @@ open_record() {
 		# Daniel's channel; scribe refuses it through a pipe.
 		cmd="scribe session catalog $id --author daniel"
 		if command -v tmux >/dev/null 2>&1 && tmux set-buffer -- "$cmd" 2>/dev/null; then
-			printf 'scribe-tmux: paste buffer holds: %s\n' "$cmd"
+			printf 'scribe tmux: paste buffer holds: %s\n' "$cmd"
 		else
-			printf 'scribe-tmux: run from a shell: %s\n' "$cmd"
+			printf 'scribe tmux: run from a shell: %s\n' "$cmd"
 		fi ;;
 	*) preview "$kind" "$id" ;;
 	esac
 }
 
+# The popup's callbacks: fzf's binds and preview run this text again with
+# one of these words first.
 case ${1:-} in
-_list) list_view "$2" ;;
-_list-current) list_view "$(cat "$view_file" 2>/dev/null || printf sessions)" ;;
-_view) printf '%s' "$2" > "$view_file" ;;
-_toggle) if hidden; then printf 0 > "$hidden_file"; else printf 1 > "$hidden_file"; fi ;;
-_preview) preview "$2" "$3" ;;
-_copy) copy_id "$2" ;;
-'') : ;;
-*) printf 'usage: scribe-tmux (no arguments; it is run by the tmux popup)\n' >&2; exit 2 ;;
+_list-current) list_view "$(cat "$view_file" 2>/dev/null || printf sessions)"; exit 0 ;;
+_view) printf '%s' "$2" > "$view_file"; exit 0 ;;
+_toggle) if hidden; then printf 0 > "$hidden_file"; else printf 1 > "$hidden_file"; fi; exit 0 ;;
+_preview) preview "$2" "$3"; exit 0 ;;
+_copy) copy_id "$2"; exit 0 ;;
 esac
-[ $# -gt 0 ] && exit 0
 
 # --- the popup itself ---
-
-if ! command -v fzf >/dev/null 2>&1; then
-	printf '%s\n' 'scribe-tmux: fzf is not installed, and the popup is an fzf list.' \
-		'Install fzf (for example `brew install fzf` on macOS, or your package manager) and try again.' >&2
-	exit 1
-fi
-if ! command -v scribe >/dev/null 2>&1; then
-	printf '%s\n' 'scribe-tmux: the scribe binary is not on PATH.' \
-		'Install it (for example `make install` in the scribe checkout) and try again.' >&2
-	exit 1
-fi
 
 state=$(mktemp -d "${TMPDIR:-/tmp}/scribe-tmux.XXXXXX") || exit 1
 SCRIBE_TMUX_STATE=$state; export SCRIBE_TMUX_STATE
@@ -142,7 +135,7 @@ trap 'rm -rf "$state"' EXIT
 printf sessions > "$state/view"
 printf 0 > "$state/hidden"
 
-selection=$("$self" _list-current | fzf \
+selection=$(self_call _list-current | fzf \
 	--delimiter='	' --with-nth='2..' \
 	--prompt='scribe> ' \
 	--header='enter: open in pager · ctrl-y: copy id · ctrl-s sessions · ctrl-e entries · ctrl-p proposals · ctrl-b backfill · alt-a: show hidden' \

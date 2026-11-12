@@ -1,0 +1,41 @@
+Browse sessions, entries, proposals and backfill candidates in an fzf popup, writing nothing
+
+Usage: scribe tmux [OPTIONS]
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Global options:
+      --root <DIR>       Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>  Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json             Shorthand for --format json
+
+Browse scribe in an fzf list: sessions, entries, proposals and backfill
+candidates, each record previewed in full. It only reads and needs fzf on
+PATH; run it from a terminal, usually in a tmux popup. Add this to
+~/.tmux.conf, reload it (tmux source-file ~/.tmux.conf), and press prefix
+then S:
+
+  bind-key S display-popup -E -w 90% -h 85% scribe tmux
+
+Keys:
+  enter       open the record in $PAGER (else less): a session with its log,
+              an entry in full, a proposal as its fields. On a backfill
+              candidate, put 'scribe session catalog <id> --author daniel' in
+              the tmux paste buffer and say so; cataloging runs from a shell,
+              where its progress is visible and --author daniel is Daniel's
+              channel (scribe refuses it through a pipe)
+  ctrl-y      copy the record's id (tmux buffer, and pbcopy when present)
+  ctrl-s      sessions            ctrl-e  active entries
+  ctrl-p      open proposals      ctrl-b  backfill candidates (uncataloged
+                                          transcripts of the last 30 days)
+  alt-a       toggle hidden records: inactive sessions, and non-active entries
+
+A list that is empty or fails shows one notice row instead of failing the
+popup. The popup's commands use the same data directory (--root or
+SCRIBE_ROOT) and the executable you started.
+
+Examples:
+  scribe tmux
+  scribe tmux --root ~/.scribe

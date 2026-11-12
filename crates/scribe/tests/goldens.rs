@@ -58,6 +58,7 @@ const HELP: &[(&str, &[&str])] = &[
     ),
     ("hook-stop", &["hook", "stop", "--help"]),
     ("hook-session-end", &["hook", "session-end", "--help"]),
+    ("tmux", &["tmux", "--help"]),
     ("plugin", &["plugin", "--help"]),
     ("plugin-call", &["plugin", "call", "--help"]),
 ];
