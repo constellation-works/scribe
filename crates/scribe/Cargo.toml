@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 scribe-core = { workspace = true }
+tempfile = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

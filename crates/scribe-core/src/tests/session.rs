@@ -17,6 +17,7 @@ fn session_ids_are_safe_file_names() {
 
 fn on(due: bool) -> SessionControl {
     SessionControl {
+        provider: crate::Provider::ClaudeCode,
         on: true,
         since: Some(T0),
         due,
@@ -44,6 +45,7 @@ fn a_pass_is_due_after_the_minutes_or_the_turns_and_never_when_off() {
     assert!(c.pass_due(&on(false), last, last + Duration::minutes(1), 10));
     assert!(c.pass_due(&on(true), last, last, 0), "a due pass stays due");
     let off = SessionControl {
+        provider: crate::Provider::ClaudeCode,
         on: false,
         ..on(true)
     };

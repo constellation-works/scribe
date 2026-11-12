@@ -1,7 +1,7 @@
 //! Rebuild a record from the first transcript message. Each window is written
 //! to an isolated dot-file; only the complete rebuild replaces the record.
 
-use super::pass::{self as command_pass, distill, short_reason, window_warnings};
+use super::pass::{distill, short_reason, window_warnings};
 use crate::app::Context;
 use crate::commands::hook::payload::{self, Transcript};
 use crate::error::CliError;
@@ -48,6 +48,14 @@ pub(in crate::commands) fn run_with<M: Models>(
     let store = ctx.store();
     let id = store.resolve_session(&args.id)?;
     let mut original = store.session(&id)?.record;
+    let scoped = ctx.with_provider(
+        original
+            .provider
+            .as_str()
+            .parse()
+            .map_err(CliError::Usage)?,
+    );
+    let ctx = &scoped;
     if !args.confirm {
         return Err(CliError::ConfirmRequired {
             id: id.clone(),
@@ -58,11 +66,8 @@ pub(in crate::commands) fn run_with<M: Models>(
     if store.control()?.get(&id).is_some_and(|c| c.on && c.due) {
         return Err(scribe_core::Error::SessionBusy(id.clone()).into());
     }
-    let path = ctx
-        .transcripts()
-        .and_then(|dir| command_pass::find(dir, &id))
-        .ok_or_else(|| CliError::TranscriptMissing(id.clone()))?;
-    match payload::check_transcript(&path, &id, ctx.transcripts()) {
+    let path = payload::locate(ctx, &id)?.ok_or_else(|| CliError::TranscriptMissing(id.clone()))?;
+    match payload::check(ctx, &path, &id) {
         Ok(Transcript::Present) => {}
         Ok(Transcript::Missing) => return Err(CliError::TranscriptMissing(id.clone())),
         Err(reason) => {
@@ -72,7 +77,7 @@ pub(in crate::commands) fn run_with<M: Models>(
             });
         }
     }
-    let config = store.config()?;
+    let config = ctx.config()?;
     let redactor = ctx.redactor(&config)?;
     let adapter = models(&config);
     let _rebuild = store.lock_rebuild(&original)?;
@@ -115,7 +120,7 @@ pub(in crate::commands) fn run_with<M: Models>(
         .collect();
     loop {
         // Re-check provenance when re-reading a growing transcript.
-        match payload::check_transcript(&path, &id, ctx.transcripts()) {
+        match payload::check(ctx, &path, &id) {
             Ok(Transcript::Present) => {}
             Ok(Transcript::Missing) => return Err(CliError::TranscriptMissing(id.clone())),
             Err(reason) => {
@@ -125,7 +130,7 @@ pub(in crate::commands) fn run_with<M: Models>(
                 });
             }
         }
-        let bytes = std::fs::read(&path).map_err(|source| CliError::Read {
+        let bytes = payload::read_for(ctx, &path).map_err(|source| CliError::Read {
             what: path.display().to_string(),
             source,
         })?;

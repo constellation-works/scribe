@@ -12,6 +12,7 @@
 mod consistency;
 mod entry;
 mod hook;
+mod init;
 mod plugin;
 mod proposal;
 mod question;
@@ -43,13 +44,15 @@ pub(crate) use tmux::TmuxArgs;
 /// Top-level nouns.
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
+    /// Scaffold the embedded skill and selected provider hooks; requires --provider, preserves existing edits, never trusts hooks
+    Init(init::InitArgs),
     /// Read entries and write agent notes
     #[command(subcommand, after_help = entry::ENTRY_EXAMPLES)]
     Entry(EntryCommand),
     /// List and show the records of sessions cataloged with /scribe on, and write them (pass, catalog)
     #[command(subcommand, after_help = session::SESSION_EXAMPLES)]
     Session(SessionCommand),
-    /// List uncataloged Claude Code transcripts and show one, writing nothing
+    /// List uncataloged provider transcripts and show one, writing nothing
     #[command(subcommand, after_help = transcript::EXAMPLES)]
     Transcript(transcript::TranscriptCommand),
     /// Read, open, update and settle proposals
@@ -67,7 +70,7 @@ pub(crate) enum Command {
     /// Answer a question from the records, citing a verbatim quote for every claim
     #[command(subcommand, after_help = question::QUESTION_EXAMPLES)]
     Question(QuestionCommand),
-    /// Run a Claude Code hook: record #scribe lines and settle proposals, switch /scribe on and off, mark session passes due, report open proposals
+    /// Run a provider hook: record #scribe lines and settle proposals, switch /scribe on and off, mark session passes due, report open proposals
     #[command(subcommand, after_help = hook::HOOK_EXAMPLES)]
     Hook(HookCommand),
     /// Browse sessions, entries, proposals and backfill candidates in an fzf popup, writing nothing
@@ -86,7 +89,8 @@ impl Command {
             Self::Entry(command) => command.subject(ctx),
             Self::Session(command) => command.subject(ctx),
             Self::Proposal(command) => command.subject(ctx),
-            Self::Transcript(_)
+            Self::Init(_)
+            | Self::Transcript(_)
             | Self::Record(_)
             | Self::Consistency(_)
             | Self::Tag(_)
@@ -104,6 +108,7 @@ impl Command {
     /// compile without deciding (STD-02 R27).
     pub(crate) fn audit(&self) -> Option<AuditMeta> {
         match self {
+            Self::Init(_) => Some(AuditMeta { command: "init" }),
             Self::Entry(command) => command.audit(),
             Self::Session(command) => command.audit(),
             Self::Transcript(command) => command.audit(),
@@ -133,6 +138,7 @@ pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
         subject.apply(audit);
     }
     let result = match command {
+        Command::Init(args) => init::run(args, ctx),
         Command::Entry(command) => entry::run(command, ctx),
         Command::Session(command) => session::run(command, ctx),
         Command::Transcript(command) => transcript::run(command, ctx),

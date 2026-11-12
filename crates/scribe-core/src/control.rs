@@ -235,6 +235,7 @@ pub fn catalog_on(state: &mut ControlState, session: &SessionId, by: Author, now
     state.sessions.insert(
         session.clone(),
         SessionControl {
+            provider: crate::Provider::ClaudeCode,
             on: true,
             since: Some(now),
             due: true,
@@ -245,6 +246,21 @@ pub fn catalog_on(state: &mut ControlState, session: &SessionId, by: Author, now
             cataloged_by: Some(CatalogedBy { at: now, by }),
         },
     );
+}
+
+/// Switch and stamp provider in the same control-state transaction.
+pub fn switch_for_provider(
+    state: &mut ControlState,
+    session: &SessionId,
+    request: &Switch,
+    now: OffsetDateTime,
+    provider: crate::Provider,
+) -> Change {
+    let change = switch(state, session, request, now);
+    if let Some(control) = state.sessions.get_mut(session) {
+        control.provider = provider;
+    }
+    change
 }
 
 /// Apply `request` to `session`'s switch at `now`.
@@ -271,6 +287,7 @@ pub fn switch(
                 state.sessions.insert(
                     session.clone(),
                     SessionControl {
+                        provider: crate::Provider::ClaudeCode,
                         on: true,
                         since: Some(now),
                         due: true,

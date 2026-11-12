@@ -1045,3 +1045,21 @@ fn write_json<T: Serialize + ?Sized>(out: &mut dyn Write, value: &T) -> io::Resu
     serde_json::to_writer_pretty(&mut *out, value).map_err(io::Error::from)?;
     writeln!(out)
 }
+
+/// Render scaffold artifacts and actionable next steps without claiming capture.
+pub(super) fn init(
+    out: &mut dyn Write,
+    sink: &Sink,
+    report: &scribe_core::InitReport,
+) -> io::Result<()> {
+    if sink.mode == OutputMode::Json {
+        return write_json(out, report);
+    }
+    for file in &report.files {
+        writeln!(out, "{}\t{}", file.status, file.path.display())?;
+    }
+    for step in &report.next {
+        writeln!(out, "{step}")?;
+    }
+    Ok(())
+}

@@ -18,6 +18,7 @@ use support::{Fixture, text};
 
 const HELP: &[(&str, &[&str])] = &[
     ("root", &["--help"]),
+    ("init", &["init", "--help"]),
     ("entry", &["entry", "--help"]),
     ("entry-add", &["entry", "add", "--help"]),
     ("entry-update", &["entry", "update", "--help"]),

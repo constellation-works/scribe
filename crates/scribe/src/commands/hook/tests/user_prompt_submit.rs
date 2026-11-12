@@ -58,6 +58,7 @@ impl Setup {
             root: None,
             home: Some(home.into_os_string()),
             claude_config_dir: None,
+            codex_home: None,
         };
         let ctx = Context::resolve(Some(&dir.path().join("root")), &env).unwrap();
         Self { dir, ctx }

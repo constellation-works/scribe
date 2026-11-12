@@ -53,6 +53,12 @@ impl Message {
 /// The messages of a transcript, in file order.
 #[must_use]
 pub fn parse(bytes: &[u8]) -> Vec<Message> {
+    if is_codex(bytes) {
+        return crate::codex::parse(bytes)
+            .map(|r| r.messages)
+            .unwrap_or_default();
+    }
+
     bytes
         .split(|&b| b == b'\n')
         .filter_map(|line| serde_json::from_slice::<Value>(line).ok())
@@ -64,6 +70,10 @@ pub fn parse(bytes: &[u8]) -> Vec<Message> {
 /// (each line carries Claude Code's `cwd`), if any line names one.
 #[must_use]
 pub fn cwd(bytes: &[u8]) -> Option<String> {
+    if is_codex(bytes) {
+        return crate::codex::parse(bytes).ok().map(|r| r.cwd);
+    }
+
     bytes
         .split(|&b| b == b'\n')
         .filter_map(|line| serde_json::from_slice::<Value>(line).ok())
@@ -74,6 +84,18 @@ pub fn cwd(bytes: &[u8]) -> Option<String> {
                 .and_then(Value::as_str)
                 .filter(|cwd| !cwd.is_empty())
                 .map(str::to_owned)
+        })
+}
+
+fn is_codex(bytes: &[u8]) -> bool {
+    bytes
+        .split(|b| *b == b'\n')
+        .filter_map(|line| serde_json::from_slice::<Value>(line).ok())
+        .any(|row| {
+            matches!(
+                row["type"].as_str(),
+                Some("session_meta" | "response_item" | "turn_context")
+            )
         })
 }
 

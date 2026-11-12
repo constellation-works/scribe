@@ -9,7 +9,11 @@ fn an_empty_config_is_the_defaults() {
     assert_eq!(config.catalog.every_minutes.get(), 20);
     assert_eq!(
         config.secret_names(),
-        ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"]
+        [
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY"
+        ]
     );
 }
 
@@ -47,7 +51,10 @@ env = ["GITHUB_TOKEN", "ANTHROPIC_API_KEY"]
         "an unset key keeps its default"
     );
     assert_eq!(config.catalog.every_turns.get(), 3);
-    assert_eq!(config.secret_names(), ["ANTHROPIC_API_KEY", "GITHUB_TOKEN"]);
+    assert_eq!(
+        config.secret_names(),
+        ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GITHUB_TOKEN"]
+    );
 }
 
 #[test]
@@ -132,4 +139,18 @@ fn sessions_inactive_after_days_defaults_to_120_and_must_be_a_positive_integer()
     }
     let err = Config::parse("[sessions]\nactive_days = 3\n").unwrap_err();
     assert!(err.message.contains("active_days"), "{err}");
+}
+
+#[test]
+fn provider_model_tables_preserve_explicit_ids_and_transports() {
+    let config = Config::parse("[models]\nprovider='codex'\nask='custom-global'\n[codex.models]\nprovider='claude-code'\nsession='explicit-claude'\n").unwrap();
+    assert_eq!(config.models.provider, crate::Provider::Codex);
+    assert_eq!(config.models.ask, "custom-global");
+    assert_eq!(config.models.session, "gpt-6-luna");
+    let codex = config.for_provider(crate::Provider::Codex);
+    assert_eq!(codex.models.provider, crate::Provider::ClaudeCode);
+    assert_eq!(codex.models.session, "explicit-claude");
+    assert_eq!(codex.models.ask, "claude-sonnet-5-5");
+    assert!(Config::parse("[codex.models]\nprovider='unknown'\n").is_err());
+    assert!(Config::parse("[codex.models]\nsession=''\n").is_err());
 }

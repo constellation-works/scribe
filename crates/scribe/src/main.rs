@@ -32,7 +32,12 @@ fn main() -> ExitCode {
     let sink = output::Sink::from_process(cli.global.requested_format());
     output::init_logging();
     let outcome = app::Context::resolve(cli.global.root.as_deref(), &app::AppEnv::from_process())
-        .and_then(|ctx| commands::run(cli.command, &ctx));
+        .and_then(|ctx| {
+            commands::run(
+                cli.command,
+                &ctx.with_provider(cli.global.provider.unwrap_or_default()),
+            )
+        });
     output::finish(&sink, outcome)
 }
 

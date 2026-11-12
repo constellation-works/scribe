@@ -44,9 +44,7 @@ pub(super) fn run(
     ctx: &Context,
 ) -> Output {
     let target = || Some(format!("session:{session}"));
-    if let Err(reason) =
-        payload::check_transcript(&payload.transcript_path, session, ctx.transcripts())
-    {
+    if let Err(reason) = payload::check(ctx, &payload.transcript_path, session) {
         return blocked(
             format!(
                 "scribe: {} not applied — the hook payload failed the transcript check: {reason}",
@@ -67,9 +65,9 @@ pub(super) fn run(
             .control()
             .map(|state| Change::Status(state.get(session).cloned())),
         Switch::Unknown(arg) => Ok(Change::Unknown(arg.clone())),
-        Switch::On | Switch::Off => {
-            store.update_control(|state| control::switch(state, session, switch, ctx.now()))
-        }
+        Switch::On | Switch::Off => store.update_control(|state| {
+            control::switch_for_provider(state, session, switch, ctx.now(), ctx.provider())
+        }),
     };
     let change = match change {
         Ok(change) => change,
@@ -137,7 +135,10 @@ fn run_link(
 ) -> Output {
     let target = || Some(format!("session:{session}"));
     let relation = format!("{} {}", link.kind, link.session);
-    match ctx.store().link_session(session, link, on, ctx.now()) {
+    match ctx
+        .store()
+        .link_session_for_provider(session, link, on, ctx.now(), ctx.provider())
+    {
         Ok(linked) => {
             let outcomes = if linked.added || linked.switched_on {
                 vec![HookOutcome {

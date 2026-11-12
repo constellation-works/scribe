@@ -112,7 +112,9 @@ pub(super) fn run(command: QuestionCommand, ctx: &Context) -> Result<Output, Cli
                 },
                 include_hidden: args.include_hidden,
             };
-            let payload = answer_with(
+            let config = ctx.config()?;
+            let payload = answer_with_config(
+                &config,
                 ctx.store(),
                 question,
                 |config| ctx.models(config),
@@ -129,12 +131,23 @@ pub(super) fn run(command: QuestionCommand, ctx: &Context) -> Result<Output, Cli
 /// scope are resolved through the configured aliases.
 pub(super) fn answer_with<M: Models, T: Tasks + ?Sized>(
     store: &Store,
-    mut question: Question,
+    question: Question,
     models: impl FnOnce(&Config) -> M,
     tasks: &T,
     now: OffsetDateTime,
 ) -> Result<AskPayload, CliError> {
     let config = store.config()?;
+    answer_with_config(&config, store, question, models, tasks, now)
+}
+
+fn answer_with_config<M: Models, T: Tasks + ?Sized>(
+    config: &Config,
+    store: &Store,
+    mut question: Question,
+    models: impl FnOnce(&Config) -> M,
+    tasks: &T,
+    now: OffsetDateTime,
+) -> Result<AskPayload, CliError> {
     let entries = store.list_entries(&EntryFilter::default())?;
     let sessions = store.list_sessions(&SessionFilter::default())?;
     for tag in &mut question.scope.tags {
@@ -147,7 +160,7 @@ pub(super) fn answer_with<M: Models, T: Tasks + ?Sized>(
         sessions: &sessions.listing.items,
         tags: &config.tags,
     };
-    let adapter = models(&config);
+    let adapter = models(config);
     let answer = ask::answer(&question, corpus, &adapter, tasks, &config.models.ask, now)?;
     let mut skipped = entries.skipped;
     skipped.extend(sessions.skipped);

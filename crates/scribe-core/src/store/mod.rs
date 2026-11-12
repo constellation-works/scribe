@@ -39,6 +39,8 @@ mod audit;
 mod format;
 mod fsio;
 mod ids;
+mod init;
+pub use init::{InitFile, InitReport, init_project, integration_hooks};
 mod rebuild;
 mod redact;
 mod tags;
@@ -373,6 +375,18 @@ impl Store {
         on: bool,
         now: time::OffsetDateTime,
     ) -> Result<control::Linked> {
+        self.link_session_for_provider(session, link, on, now, crate::Provider::ClaudeCode)
+    }
+
+    /// Link and stamp the origin provider under the same store lock.
+    pub fn link_session_for_provider(
+        &self,
+        session: &SessionId,
+        link: &SessionLink,
+        on: bool,
+        now: time::OffsetDateTime,
+        provider: crate::Provider,
+    ) -> Result<control::Linked> {
         self.prepare_dir(&self.root)?;
         let _lock = self.lock("link")?;
         let mut own: Option<SessionRecord> = None;
@@ -398,8 +412,15 @@ impl Store {
             }
         }
         // A refused link changes nothing, so nothing is written.
-        let linked =
-            self.change_control(|state| control::link(state, &graph, session, link, on, now))??;
+        let linked = self.change_control(|state| {
+            let result = control::link(state, &graph, session, link, on, now);
+            if result.is_ok()
+                && let Some(control) = state.sessions.get_mut(session)
+            {
+                control.provider = provider;
+            }
+            result
+        })??;
         if linked.write_record
             && let Some(mut record) = own
         {

@@ -37,3 +37,8 @@ Checked by grep over non-test sources:
 - `scribe/src/audit_middleware.rs` imports no `cli` or `commands`: dispatch depends on it, not the reverse.
 - `scribe/src/commands/` writes no file (`std::fs::write`, `create`, `rename`, `remove`, `copy`, `set_permissions`, `OpenOptions`): a hook or `session pass` reads its transcript and git config, and every write goes through the store.
 - Only `scribe/src/output/` touches stdout, stderr, `IsTerminal` or the color/format variables (`scripts/check-terminal-guard.sh`).
+
+Codex model transport lives in `crates/scribe/src/models/codex.rs`, beneath the
+existing Models adapter. It reuses the process supervisor in `models.rs`; `tempfile`
+(previously a test dependency) supplies private, automatically removed schema and
+instruction files and an isolated working directory. No domain layer spawns processes.

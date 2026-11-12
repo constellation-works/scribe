@@ -39,7 +39,7 @@ use std::path::Path;
 
 /// The newest store format: this build reads formats 1 to `FORMAT` of every
 /// document and would write `FORMAT`.
-pub(super) const FORMAT: u32 = 6;
+pub(super) const FORMAT: u32 = 7;
 
 /// Which document an upgrade step is applied to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,7 +72,33 @@ pub(super) const UPGRADES: &[Upgrade] = &[
     log_active_author,
     agent_writes,
     session_rebuilt_by,
+    codex_controls,
 ];
+
+/// Format 6 -> 7 adds transcript provider identity and Codex ingestion cursors.
+fn codex_controls(
+    document: Document,
+    mut value: serde_json::Value,
+) -> serde_json::Result<serde_json::Value> {
+    if document == Document::Control
+        && let Some(doc) = value.as_object_mut()
+    {
+        doc.entry("codex_cursors").or_insert(serde_json::json!({}));
+        if let Some(sessions) = doc
+            .get_mut("sessions")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            for switch in sessions.values_mut() {
+                if let Some(switch) = switch.as_object_mut() {
+                    switch
+                        .entry("provider")
+                        .or_insert(serde_json::json!("claude-code"));
+                }
+            }
+        }
+    }
+    Ok(value)
+}
 
 /// Format 5 -> 6 adds `rebuilt_by` to each session record: the agent that
 /// ran `session rebuild`, or `null` for a record no rebuild wrote. Other
@@ -274,6 +300,34 @@ fn upgrade_heading(title: &str) -> String {
     } else {
         cut
     }
+}
+
+/// Frozen format-4-through-6 control shape. Typed validation runs again after
+/// the append-only upgrade; these strict structs preserve duplicate/key checks.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "frozen shape checked before upgrade")]
+struct ControlV6 {
+    format: u32,
+    sessions: BTreeMap<SessionId, SwitchV6>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "frozen shape checked before upgrade")]
+struct SwitchV6 {
+    on: bool,
+    #[serde(with = "time::serde::rfc3339::option")]
+    since: Option<time::OffsetDateTime>,
+    due: bool,
+    #[serde(rename = "final")]
+    final_pass: bool,
+    consecutive_failures: u32,
+    #[serde(with = "time::serde::rfc3339::option")]
+    retry_after: Option<time::OffsetDateTime>,
+    pending_links: Vec<SessionLink>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    cataloged_by: Option<crate::activity::CatalogedBy>,
 }
 
 /// Frozen format-3 `control.json` shape, validated before upgrading.
@@ -888,6 +942,7 @@ pub(super) fn split_sections_v3(path: &Path, body: &str) -> Result<[String; 4]> 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ControlDocument {
+    codex_cursors: BTreeMap<SessionId, String>,
     #[allow(dead_code, reason = "checked by the format probe before this parse")]
     format: u32,
     sessions: BTreeMap<SessionId, SessionControl>,
@@ -925,13 +980,12 @@ fn decode_json<T: DeserializeOwned>(path: &Path, bytes: &[u8], document: Documen
             serde_json::from_slice::<ControlV3>(bytes).map_err(|e| Error::corrupt(path, e))?;
         }
         Document::Control => {
-            serde_json::from_slice::<ControlDocument>(bytes)
-                .map_err(|e| Error::corrupt(path, e))?;
+            serde_json::from_slice::<ControlV6>(bytes).map_err(|e| Error::corrupt(path, e))?;
         }
         Document::Proposals if from == 4 => {
             serde_json::from_slice::<ProposalsV4>(bytes).map_err(|e| Error::corrupt(path, e))?;
         }
-        Document::Proposals if from == 5 => {
+        Document::Proposals if from >= 5 => {
             serde_json::from_slice::<ProposalsDocument>(bytes)
                 .map_err(|e| Error::corrupt(path, e))?;
         }
@@ -948,12 +1002,14 @@ pub(super) fn decode_control(path: &Path, bytes: &[u8]) -> Result<ControlState> 
     let doc: ControlDocument = decode_json(path, bytes, Document::Control)?;
     Ok(ControlState {
         sessions: doc.sessions,
+        codex_cursors: doc.codex_cursors,
     })
 }
 
 /// `control.json` as written.
 #[derive(Serialize)]
 struct ControlOut<'a> {
+    codex_cursors: &'a BTreeMap<SessionId, String>,
     format: u32,
     sessions: &'a BTreeMap<SessionId, SessionControl>,
 }
@@ -964,6 +1020,7 @@ pub(super) fn encode_control(path: &Path, state: &ControlState) -> Result<Vec<u8
     let mut bytes = serde_json::to_vec_pretty(&ControlOut {
         format: FORMAT,
         sessions: &state.sessions,
+        codex_cursors: &state.codex_cursors,
     })
     .map_err(|e| Error::corrupt(path, e))?;
     bytes.push(b'\n');

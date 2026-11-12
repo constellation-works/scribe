@@ -17,9 +17,10 @@ Options:
   -V, --version            Print version
 
 Global options:
-      --root <DIR>       Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
-      --format <FORMAT>  Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
-      --json             Shorthand for --format json
+      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json                 Shorthand for --format json
 
 Ranks each entry, each session header and each segment of a session's log
 with BM25, as question ask does, and prints the best first; Daniel's own

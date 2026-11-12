@@ -1184,6 +1184,8 @@ pub(crate) struct PopupRows {
 /// What a command produced, before rendering.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Output {
+    /// Provider integration scaffold result.
+    Init(scribe_core::InitReport),
     /// A list result.
     List {
         /// The records returned, in order.

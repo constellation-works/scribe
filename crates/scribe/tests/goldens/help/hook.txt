@@ -1,4 +1,4 @@
-Run a Claude Code hook: record #scribe lines and settle proposals, switch /scribe on and off, mark session passes due, report open proposals
+Run a provider hook: record #scribe lines and settle proposals, switch /scribe on and off, mark session passes due, report open proposals
 
 Usage: scribe hook [OPTIONS] <COMMAND>
 
@@ -14,11 +14,13 @@ Options:
   -V, --version  Print version
 
 Global options:
-      --root <DIR>       Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
-      --format <FORMAT>  Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
-      --json             Shorthand for --format json
+      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json                 Shorthand for --format json
 
-These run from the Claude Code package (plugin/claude-code), not by hand.
+These run from provider packages or scribe init hooks, not by hand.
+Use --provider codex for Codex; the default is claude-code.
 
 Examples:
   scribe hook session-start < <payload.json>

@@ -2192,3 +2192,33 @@ retire or settle against Daniel's entries" (STD-05@1 §R1, §R2, §R5).
   (it can under an agent name). These refusals are accident guards, not
   permissions (STD-05@1 §R5). Cross-agent tidying of a note now goes
   through its author or a new note.
+
+## Codex defaults to Luna and shares the domain
+
+Daniel requested complete Codex capture/catalog support, Luna as its default
+scribe, a generic distributable skill and an initializer. Keep the existing
+Claude contract and Models port. A provider-tagged control upgrade is preferable
+to guessing provenance or transport from model names. Codex defaults to the
+configured Luna id `gpt-6-luna`; explicit provider/model overrides are honored,
+with no silent Claude fallback. Global jobs preserve their existing model table
+unless the caller explicitly selects Codex.
+
+Host transcript content provenance, not an invoked skill or a hook's own claim,
+is required for human writes (STD-05 §R1). Metadata absence refuses recording;
+unknown transcript versions never block ordinary coding. Checks remain accident
+guards against confused same-user processes (STD-05 §R5), and do not replace the
+pending host-controlled author identity design or relax agent author limits.
+Current-turn bootstrap avoids replaying historical settlement commands. Effects
+precede the cursor and existing idempotent actions make crash replay safe.
+
+Codex exec uses the existing bounded process-group supervisor (STD-03 §R11–R15).
+Private isolated cwd/schema/instructions and disabled hooks/plugins/tool features
+prevent recursive writes; an installed-CLI synthetic local provider probe
+confirmed no tools were advertised. Optional session fields are made required
+and nullable on the Codex strict wire, without changing the Claude schema.
+
+The generic skill is a first-class source and embedded binary asset. `scribe init`
+provides useful offline distribution after a binary install; project hooks use
+the resolved absolute binary. A local Codex marketplace is an alternate install,
+not a public release. Digest-owned receipts and conflict refusal preserve edits;
+trust remains Codex's digest-bound host action (STD-05 §R21).

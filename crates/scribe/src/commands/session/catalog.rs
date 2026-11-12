@@ -15,7 +15,7 @@
 //! cannot catalog as Daniel. Any other name records `kind: agent`, and the
 //! reserved names (`scribe`, `consistency`) are refused the same way.
 
-use super::pass::{self, find};
+use super::pass;
 use crate::app::Context;
 use crate::commands::hook::payload::{self, Transcript as Checked};
 use crate::error::CliError;
@@ -85,39 +85,48 @@ pub(in crate::commands) fn run_with<M: Models>(
             id: id.clone(),
             dir: PathBuf::from("(no transcripts directory)"),
         })?;
-    let path = find(&dir, &id).ok_or_else(|| CliError::TranscriptNotFound {
+    let path = payload::locate(ctx, &id)?.ok_or_else(|| CliError::TranscriptNotFound {
         id: id.clone(),
         dir: dir.clone(),
     })?;
-    match payload::check_transcript(&path, &id, Some(&dir)) {
+    match payload::check(ctx, &path, &id) {
         Ok(Checked::Present) => {}
         Ok(Checked::Missing) => return Err(CliError::TranscriptNotFound { id, dir }),
         Err(reason) => return Err(CliError::TranscriptRefused { id, reason }),
     }
-    let bytes = std::fs::read(&path).map_err(|source| CliError::Read {
+    let bytes = payload::read_for(ctx, &path).map_err(|source| CliError::Read {
         what: path.display().to_string(),
         source,
     })?;
     let store = ctx.store();
     // Refuse a missing redaction value before the switch is written.
-    let config = store.config()?;
+    let config = ctx.config()?;
     let _redactor = ctx.redactor(&config)?;
     let has_record = recorded(ctx, &id)?;
-    let state = store.control()?;
-    let (switch, wrote_switch) = match control::catalog_gate(&state, &id, has_record) {
-        CatalogGate::Refused => return Err(CliError::SessionCataloged(id)),
-        CatalogGate::Resume(switch) => (switch, false),
-        CatalogGate::Start => {
-            store.update_control(|state| control::catalog_on(state, &id, by, ctx.now()))?;
-            let switch = store.control()?.get(&id).cloned().ok_or_else(|| {
-                CliError::Core(scribe_core::Error::SessionNotFound {
-                    id: id.clone(),
-                    path: store.root().join("control.json"),
-                })
-            })?;
-            (switch, true)
+    let (switch, wrote_switch) = store.update_control(|state| -> Result<_, CliError> {
+        match control::catalog_gate(state, &id, has_record) {
+            CatalogGate::Refused => Err(CliError::SessionCataloged(id.clone())),
+            CatalogGate::Resume(switch) => {
+                if switch.provider != ctx.provider() {
+                    return Err(CliError::Usage(String::from(
+                        "catalog switch belongs to another provider",
+                    )));
+                }
+                Ok((switch, false))
+            }
+            CatalogGate::Start => {
+                control::catalog_on(state, &id, by, ctx.now());
+                let switch = state.sessions.get_mut(&id).ok_or_else(|| {
+                    CliError::Core(scribe_core::Error::SessionNotFound {
+                        id: id.clone(),
+                        path: store.root().join("control.json"),
+                    })
+                })?;
+                switch.provider = ctx.provider();
+                Ok((switch.clone(), true))
+            }
         }
-    };
+    })??;
     let project = args
         .project
         .clone()

@@ -73,7 +73,8 @@ pub(crate) fn finish(sink: &Sink, outcome: Result<Output, CliError>) -> ExitCode
         emit(sink, &output).map_err(CliError::Output)?;
         match &output {
             Output::Pass(report) => report.failure().map_or(Ok(()), Err),
-            Output::List { .. }
+            Output::Init(_)
+            | Output::List { .. }
             | Output::Show { .. }
             | Output::Written { .. }
             | Output::Hook(_)
@@ -166,6 +167,7 @@ fn emit(sink: &Sink, output: &Output) -> io::Result<()> {
     }
     let mut out = io::stdout().lock();
     match output {
+        Output::Init(report) => render::init(&mut out, sink, report)?,
         Output::List {
             records,
             total,

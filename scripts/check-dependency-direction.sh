@@ -113,6 +113,7 @@ ban "$CORE"          'std::env::|home_dir|current_dir'           "the core crate
 ban "$CLI/app.rs"    'crate::(cli|commands|output|audit_middleware)' "app.rs (composition) must not import surface modules"
 # The model adapter is composed by app.rs and knows nothing of the surface (R2).
 ban "$CLI/models.rs" 'crate::(cli|commands|output|audit_middleware)' "models.rs (the model adapter) must not import surface modules"
+ban "$CLI/models" 'crate::(cli|commands|output|audit_middleware)' "model transport modules must not import surface modules"
 # So is the Orbit task adapter, which reuses the model adapter's supervisor.
 ban "$CLI/tasks.rs"  'crate::(cli|commands|output|audit_middleware)' "tasks.rs (the Orbit task adapter) must not import surface modules"
 # The popup adapter is composed by commands/tmux.rs and knows nothing of the surface.
@@ -123,7 +124,7 @@ ban "$CLI/popup.rs"  'crate::(cli|commands|output|audit_middleware)' "popup.rs (
 # runs the interactive popup, which owns the terminal and so cannot be
 # supervised that way (decision: the tmux popup).
 for path in "$CLI"/*; do
-  case "$(basename "$path")" in models.rs | tasks.rs | popup.rs | tests) continue ;; esac
+  case "$(basename "$path")" in models.rs | models | tasks.rs | popup.rs | tests) continue ;; esac
   ban "$path" 'process::(Command|Child)|Command::new' "only models.rs, tasks.rs and popup.rs spawn processes: reach a model through the Models port, Orbit through the Tasks port, the popup through popup.rs"
 done
 ban "$CLI/tasks.rs" 'process::Child|\.spawn\(' "tasks.rs runs children only through models::supervise"

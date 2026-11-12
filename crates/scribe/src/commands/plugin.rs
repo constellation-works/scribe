@@ -300,21 +300,38 @@ fn audited(
     }
 }
 
-fn session_pass(input: &Value, config: &Value, ctx: &Context) -> PluginReply {
+fn session_pass(input: &Value, config: &Value, _ctx: &Context) -> PluginReply {
     if let Err(reply) = routine_input("scribe.session-pass", input) {
         return reply;
     }
-    let (root, transcripts) = match (store_root(config), transcripts_dir(config)) {
-        (Ok(root), Ok(transcripts)) => (root, transcripts),
-        (Err(reply), _) | (_, Err(reply)) => return reply,
+    let root = match store_root(config) {
+        Ok(root) => root,
+        Err(reply) => return reply,
     };
+    let codex_home = match codex_home(config) {
+        Ok(path) => path,
+        Err(reply) => return reply,
+    };
+    let transcripts = match transcripts_dir(config) {
+        Ok(path) => Some(path),
+        Err(_)
+            if codex_home.is_some()
+                && config
+                    .get("transcripts")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .is_empty() =>
+        {
+            None
+        }
+        Err(reply) => return reply,
+    };
+    let routine = Context::at(root, transcripts).with_codex_home(codex_home);
     let limits =
         RunLimits::new(scribe_core::pass::MAX_PER_RUN).start_by(Instant::now() + PASS_START_BY);
-    let reply = audited(
-        &Context::at(root, Some(transcripts)),
-        session::pass::COMMAND,
-        |routine| session::pass::run_with(routine, |config| ctx.models(config), limits, &[]),
-    );
+    let reply = audited(&routine, session::pass::COMMAND, |routine| {
+        session::pass::run_with(routine, |config| routine.models(config), limits, &[])
+    });
     pass_reply(reply)
 }
 
@@ -338,7 +355,25 @@ fn failed_passes(report: &PassReport) -> Option<PluginReply> {
     Some(failure(err.code(), err.to_string(), false))
 }
 
-fn consistency_scan(input: &Value, config: &Value, ctx: &Context) -> PluginReply {
+/// Optional explicit provider state root shared by every plugin model path.
+fn codex_home(config: &Value) -> Result<Option<PathBuf>, PluginReply> {
+    match config
+        .get("codex_home")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    {
+        Some(_) => setting_path(
+            config,
+            "codex_home",
+            "",
+            "Codex's state directory, an absolute path such as /home/<user>/.codex",
+        )
+        .map(Some),
+        None => Ok(None),
+    }
+}
+
+fn consistency_scan(input: &Value, config: &Value, _ctx: &Context) -> PluginReply {
     if let Err(reply) = routine_input("scribe.consistency-scan", input) {
         return reply;
     }
@@ -348,8 +383,13 @@ fn consistency_scan(input: &Value, config: &Value, ctx: &Context) -> PluginReply
     };
     let limits =
         RunLimits::new(consistency::max_batches()).start_by(Instant::now() + SCAN_START_BY);
-    audited(&Context::at(root, None), consistency::COMMAND, |routine| {
-        consistency::scan(routine, |config| ctx.models(config), limits)
+    let codex_home = match codex_home(config) {
+        Ok(path) => path,
+        Err(reply) => return reply,
+    };
+    let routine = Context::at(root, None).with_codex_home(codex_home);
+    audited(&routine, consistency::COMMAND, |routine| {
+        consistency::scan(routine, |config| routine.models(config), limits)
     })
 }
 
@@ -366,11 +406,16 @@ fn ask(input: Value, config: &Value, ctx: &Context) -> PluginReply {
         Ok(root) => root,
         Err(reply) => return reply,
     };
+    let codex_home = match codex_home(config) {
+        Ok(path) => path,
+        Err(reply) => return reply,
+    };
+    let model_ctx = Context::at(root.clone(), None).with_codex_home(codex_home);
     let store = Store::open(root);
     match answer_with(
         &store,
         question,
-        |config| ctx.models(config),
+        |config| model_ctx.models(config),
         &ctx.tasks().with_workspaces(task_workspaces(config)),
         ctx.now(),
     ) {

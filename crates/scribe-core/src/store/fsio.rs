@@ -158,6 +158,94 @@ pub(super) fn read(path: &Path) -> Result<Vec<u8>> {
     fs::read(path).map_err(|e| Error::io("read", path, e))
 }
 
+/// Read a bounded file through no-follow descriptors beneath a checked root.
+/// Missing files remain missing; all relative ancestors are directories.
+#[cfg(unix)]
+pub(super) fn read_bounded_beneath(
+    root: &Path,
+    path: &Path,
+    limit: u64,
+) -> Result<Option<Vec<u8>>> {
+    use rustix::fs::{Mode, OFlags, open, openat};
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|e| Error::io("resolve scaffold", path, io::Error::other(e)))?;
+    let parts: Vec<_> = relative.components().collect();
+    let mut fd = open(
+        root,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|e| Error::io("open scaffold root", root, e.into()))?;
+    for (n, part) in parts.iter().enumerate() {
+        if !matches!(part, std::path::Component::Normal(_)) {
+            return Err(Error::io(
+                "resolve scaffold",
+                path,
+                io::Error::other("non-normal path"),
+            ));
+        }
+        let mut flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+        if n + 1 < parts.len() {
+            flags |= OFlags::DIRECTORY;
+        }
+        fd = match openat(&fd, part.as_os_str(), flags, Mode::empty()) {
+            Ok(fd) => fd,
+            Err(rustix::io::Errno::NOENT) => return Ok(None),
+            Err(e) => {
+                return Err(Error::io(
+                    "open scaffold without following links",
+                    path,
+                    e.into(),
+                ));
+            }
+        };
+    }
+    let file = fs::File::from(fd);
+    let meta = file
+        .metadata()
+        .map_err(|e| Error::io("inspect opened scaffold", path, e))?;
+    use std::os::unix::fs::MetadataExt;
+    if !meta.is_file()
+        || meta.uid() != rustix::process::geteuid().as_raw()
+        || meta.mode() & 0o022 != 0
+    {
+        return Err(Error::io(
+            "read scaffold",
+            path,
+            io::Error::other("opened file is foreign-owned, writable by others or not regular"),
+        ));
+    }
+    let mut bytes = Vec::new();
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| Error::io("read scaffold", path, e))?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > limit {
+        return Err(Error::io(
+            "read scaffold",
+            path,
+            io::Error::other("file exceeds 1 MiB"),
+        ));
+    }
+    Ok(Some(bytes))
+}
+
+#[cfg(not(unix))]
+pub(super) fn read_bounded_beneath(
+    _root: &Path,
+    path: &Path,
+    _limit: u64,
+) -> Result<Option<Vec<u8>>> {
+    Err(Error::io(
+        "read scaffold",
+        path,
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            "safe project initialization requires Unix",
+        ),
+    ))
+}
+
 /// Check an existing store file; `Ok(false)` when it does not exist. A file
 /// reached through a symbolic link is refused, not followed.
 pub(super) fn inspect_file(path: &Path) -> Result<bool> {

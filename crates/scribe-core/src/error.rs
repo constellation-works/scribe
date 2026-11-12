@@ -19,6 +19,14 @@ use std::path::PathBuf;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
+    /// Project scaffold would overwrite an unowned or modified artifact.
+    #[error("cannot initialize {}: {reason}", path.display())]
+    InitConflict {
+        /// Conflicting target.
+        path: PathBuf,
+        /// Actionable refusal.
+        reason: String,
+    },
     /// A direct write violated a domain rule.
     #[error("{message}")]
     AgentWrite {
@@ -171,6 +179,7 @@ impl Error {
     #[must_use]
     pub fn code(&self) -> &'static str {
         match self {
+            Self::InitConflict { .. } => "init_conflict",
             Self::AgentWrite { kind, .. } => kind.code(),
             Self::EntryNotFound { .. } => "entry_not_found",
             Self::SessionNotFound { .. } => "session_not_found",

@@ -22,7 +22,8 @@ use time::Date;
 const DEFAULT_MIN_TURNS: u32 = 20;
 
 pub(super) const EXAMPLES: &str = "\
-Lists Claude Code transcripts that have no session record and no switch,
+Lists provider transcripts that have no session record and no switch,
+selected with --provider codex or claude-code (the default),
 newest first, and writes nothing. --min-turns defaults to 20. project is
 the configured [projects.<slug>] path with the most mentions, else the
 cwd's project. show prints one transcript with Daniel's first five turns.
@@ -117,7 +118,7 @@ pub(in crate::commands) fn resolve_transcript(
             dir: PathBuf::from("(no transcripts directory)"),
         });
     };
-    let files = transcript_files(&dir)?;
+    let files = payload::files_for(ctx)?;
     let ids: Vec<String> = files.into_iter().map(|(id, _)| id.to_string()).collect();
     match scribe_core::resolve_prefix(input.as_str(), &ids) {
         Ok(full) => full
@@ -145,28 +146,28 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
         criteria.push(format!("--project {project}"));
     }
     criteria.push(format!("--min-turns {}", args.min_turns));
-    let Some(dir) = ctx.transcripts() else {
+    let Some(_dir) = ctx.transcripts() else {
         return Ok(Output::List {
             notices: vec![String::from(
-                "no transcripts directory: set HOME or CLAUDE_CONFIG_DIR",
+                "no transcripts directory: set HOME, CLAUDE_CONFIG_DIR or CODEX_HOME for the selected provider",
             )],
             records: Records::Transcripts(Vec::new()),
             total: 0,
             warnings: Vec::new(),
         });
     };
-    let config = ctx.store().config()?;
+    let config = ctx.config()?;
     let cataloged = cataloged(ctx)?;
     let mut warnings = Vec::new();
     let mut rows = Vec::new();
-    for (id, path) in transcript_files(dir)? {
+    for (id, path) in payload::files_for(ctx)? {
         if cataloged.contains(id.as_str()) {
             continue;
         }
-        if payload::check_transcript(&path, &id, Some(dir)).is_err() {
+        if payload::check(ctx, &path, &id).is_err() {
             continue;
         }
-        let bytes = match std::fs::read(&path) {
+        let bytes = match payload::read_for(ctx, &path) {
             Ok(bytes) => bytes,
             Err(err) => {
                 warnings.push(WarningPayload {
@@ -223,11 +224,11 @@ fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
                 id: id.clone(),
                 dir: PathBuf::from("(no transcripts directory)"),
             })?;
-    let path = find_transcript(&dir, &id).ok_or_else(|| CliError::TranscriptNotFound {
+    let path = payload::locate(ctx, &id)?.ok_or_else(|| CliError::TranscriptNotFound {
         id: id.clone(),
         dir: dir.clone(),
     })?;
-    match payload::check_transcript(&path, &id, Some(&dir)) {
+    match payload::check(ctx, &path, &id) {
         Ok(Transcript::Present) => {}
         Ok(Transcript::Missing) => {
             return Err(CliError::TranscriptNotFound { id, dir });
@@ -236,11 +237,11 @@ fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
             return Err(CliError::TranscriptRefused { id, reason });
         }
     }
-    let bytes = std::fs::read(&path).map_err(|source| CliError::Read {
+    let bytes = payload::read_for(ctx, &path).map_err(|source| CliError::Read {
         what: path.display().to_string(),
         source,
     })?;
-    let config = ctx.store().config()?;
+    let config = ctx.config()?;
     Ok(Output::Show {
         record: Record::Transcript(Box::new(payload_from(&id, &bytes, &config, true))),
     })
@@ -321,54 +322,4 @@ fn cataloged(ctx: &Context) -> Result<BTreeSet<String>, CliError> {
         ids.insert(id.to_string());
     }
     Ok(ids)
-}
-
-/// `<projects-dir>/<project-dir>/<id>.jsonl`, the first project directory
-/// (by name) that has one. A stem that is not a session id is skipped.
-fn transcript_files(dir: &Path) -> Result<Vec<(SessionId, PathBuf)>, CliError> {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(source) => {
-            return Err(CliError::Read {
-                what: dir.display().to_string(),
-                source,
-            });
-        }
-    };
-    let mut projects: Vec<PathBuf> = entries
-        .filter_map(Result::ok)
-        .filter(|item| item.file_type().is_ok_and(|kind| kind.is_dir()))
-        .map(|item| item.path())
-        .collect();
-    projects.sort();
-    let mut by_id: BTreeMap<SessionId, PathBuf> = BTreeMap::new();
-    for project in projects {
-        let Ok(files) = std::fs::read_dir(&project) else {
-            continue;
-        };
-        for file in files.filter_map(Result::ok) {
-            let path = file.path();
-            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-                continue;
-            };
-            let Some(stem) = name.strip_suffix(".jsonl") else {
-                continue;
-            };
-            let Ok(id) = stem.parse::<SessionId>() else {
-                continue;
-            };
-            by_id.entry(id).or_insert(path);
-        }
-    }
-    Ok(by_id.into_iter().collect())
-}
-
-fn find_transcript(dir: &Path, id: &SessionId) -> Option<PathBuf> {
-    transcript_files(dir).ok().and_then(|files| {
-        files
-            .into_iter()
-            .find(|(found, _)| found == id)
-            .map(|(_, path)| path)
-    })
 }

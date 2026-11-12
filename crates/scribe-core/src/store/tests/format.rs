@@ -285,6 +285,39 @@ fn a_format_five_control_and_proposals_document_reads_at_its_own_shape() {
     assert!(decode_proposals(Path::new("proposals.json"), stray).is_err());
 }
 
+#[test]
+fn format_six_proposals_keep_agent_metadata_and_format_seven_controls_require_identity() {
+    let old = br#"{"format":3,"proposals":[{"id":"p-1","kind":"stale","older":"decisions-1","newer":null,"reason":"review","quotes":[],"state":"open","opened_at":"2026-11-01T10:00:00Z","settled_at":null,"settled_by":null}]}"#;
+    let path = Path::new("proposals.json");
+    let mut proposals = decode_proposals(path, old).unwrap();
+    proposals[0].updated_by = Some(crate::Author::agent("sol".parse().unwrap()));
+    let encoded = crate::store::format::encode_proposals(path, &proposals).unwrap();
+    let mut value: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+    value["format"] = serde_json::json!(6);
+    let back = decode_proposals(path, &serde_json::to_vec(&value).unwrap()).unwrap();
+    assert_eq!(back, proposals);
+    let missing = br#"{"format":7,"sessions":{}}"#;
+    assert!(decode_control(Path::new("control.json"), missing).is_err());
+    let missing_provider = br#"{"format":7,"codex_cursors":{},"sessions":{"s-1":{"on":false,"since":null,"due":false,"final":false,"consecutive_failures":0,"retry_after":null,"pending_links":[],"cataloged_by":null}}}"#;
+    assert!(decode_control(Path::new("control.json"), missing_provider).is_err());
+}
+
+#[test]
+fn format_six_controls_reject_duplicate_and_unknown_nested_author_fields() {
+    for author in [
+        r#"{"kind":"agent","name":"sol","name":"opus"}"#,
+        r#"{"kind":"agent","name":"sol","unexpected":true}"#,
+    ] {
+        let input = format!(
+            r#"{{"format":6,"sessions":{{"s-1":{{"on":true,"since":null,"due":true,"final":false,"consecutive_failures":0,"retry_after":null,"pending_links":[],"cataloged_by":{{"at":"2026-11-01T10:00:00Z","by":{author}}}}}}}}}"#
+        );
+        assert!(
+            decode_control(Path::new("control.json"), input.as_bytes()).is_err(),
+            "{input}"
+        );
+    }
+}
+
 /// A format-4 session record for `s-1` whose `log` metadata is `log` (YAML
 /// list items) and whose body is `body`.
 fn session_v4(log: &str, body: &str) -> String {
@@ -452,7 +485,11 @@ fn the_activity_and_author_fields_round_trip() {
 fn a_format_five_session_record_reads_with_no_rebuilder() {
     // Format 5 -> 6 adds `rebuilt_by`; a record no rebuild wrote reads as null.
     let text = two_segments()
-        .replacen("format: 6", "format: 5", 1)
+        .replacen(
+            &format!("format: {}", crate::store::format::FORMAT),
+            "format: 5",
+            1,
+        )
         .replacen("rebuilt_by: null\n", "", 1);
     let r = session(&text).unwrap();
     assert_eq!(r.rebuilt_by, None);

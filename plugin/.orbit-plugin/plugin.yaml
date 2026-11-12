@@ -35,7 +35,7 @@ spec:
     fs:
       # The store, which ask only reads and the routine tools write; and
       # Claude Code's transcripts, which session-pass reads.
-      read: ["{{config.root}}", "{{config.transcripts}}"]
+      read: ["{{config.root}}", "{{config.transcripts}}", "{{config.codex_home}}"]
       write: ["{{config.root}}", "{{plugin_state}}"]
     # The ask, session and consistency models, through the claude CLI.
     network: any
@@ -43,7 +43,7 @@ spec:
     # `[redact] env` name in the store's config.toml must be added here
     # too: without a value in the routine's environment, the mutating
     # routine tools refuse (redact_env_unset) rather than write unmasked.
-    env_pass: [CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY]
+    env_pass: [CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY, OPENAI_API_KEY]
     # Read-only task evidence for ask.
     orbit_tools: [orbit.search, orbit.task.show]
 
@@ -60,6 +60,8 @@ spec:
       # Claude Code's projects directory, an absolute path; session-pass
       # answers `not_configured` until it is set.
       transcripts: ""
+      # Optional Codex provider state: active/archive rollouts and existing auth.
+      codex_home: ""
       task_workspaces: []
 
   tools:
@@ -83,7 +85,7 @@ spec:
       description: >-
         The scribe-session-pass routine's job: write the record of each
         session whose pass is due, at most five per call, as `scribe session
-        pass --json` does. Needs [plugins.scribe] root and transcripts.
+        pass --json` does. Needs [plugins.scribe] root and transcripts or codex_home.
       execution_kind: mutating
       agent_callable: false
       mcp_scope: none

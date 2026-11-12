@@ -113,6 +113,7 @@ impl<'a> AuditGuard<'a> {
     /// per write or refusal.
     pub(crate) fn mark_result(&mut self, result: &Result<Output, CliError>) {
         self.lines = match result {
+            Ok(Output::Init(report)) if !report.changed => Vec::new(),
             Ok(Output::Written { changed: false, .. }) => Vec::new(),
             Ok(Output::Hook(reply)) => reply
                 .outcomes
@@ -257,6 +258,7 @@ impl Drop for AuditGuard<'_> {
 /// Exhaustive, so a new payload decides what it contributes (STD-02 R27).
 fn target_of(output: &Output) -> Option<String> {
     match output {
+        Output::Init(report) => Some(report.provider.to_string()),
         Output::Written { record, .. } => record_target(record),
         Output::Show {
             record: Record::Tag(tag),

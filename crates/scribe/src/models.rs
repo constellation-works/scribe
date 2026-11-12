@@ -26,7 +26,8 @@
 //! The adapter spawns processes, so it lives in the CLI crate and the core
 //! stays free of `std::process` (ARCHITECTURE.md).
 
-use scribe_core::Models;
+mod codex;
+
 use scribe_core::models::{
     ASK_SCHEMA, AskAnswer, AskRequest, CONSISTENCY_SCHEMA, ClaimAnswer, ConflictAnswer,
     ConsistencyAnswer, ConsistencyRequest, JudgementAnswer, ModelError, REFERENT_SCHEMA,
@@ -34,6 +35,7 @@ use scribe_core::models::{
     RemovalRequest, SESSION_HEADER_SCHEMA, SESSION_SCHEMA, SessionAnswer, SessionHeader,
     SessionHeaderRequest, SessionRequest,
 };
+use scribe_core::{Models, Provider};
 use serde::Deserialize;
 use serde_json::Value;
 use std::ffi::{OsStr, OsString};
@@ -110,6 +112,7 @@ pub(crate) fn argv(model: &str, schema: &str) -> Vec<String> {
 /// The `Models` port over the `claude` CLI.
 #[derive(Clone, Debug)]
 pub(crate) struct ClaudeCliModels {
+    provider: Provider,
     program: OsString,
     env: Vec<(OsString, OsString)>,
 }
@@ -118,9 +121,16 @@ impl ClaudeCliModels {
     /// Run [`PROGRAM`] with exactly `env` (see [`allowed_env`]).
     pub(crate) fn new(env: Vec<(OsString, OsString)>) -> Self {
         Self {
+            provider: Provider::ClaudeCode,
             program: OsString::from(PROGRAM),
             env,
         }
+    }
+
+    /// Select the configured executable transport, with no model-name guessing.
+    pub(crate) fn with_provider(mut self, provider: Provider) -> Self {
+        self.provider = provider;
+        self
     }
 
     /// One call: the model's structured answer.
@@ -131,6 +141,9 @@ impl ClaudeCliModels {
         prompt: String,
         budget: Duration,
     ) -> Result<Value, ModelError> {
+        if self.provider == Provider::Codex {
+            return codex::call(&self.env, model, schema, prompt, budget);
+        }
         let ran = supervise(
             self.command(&argv(model, schema)),
             prompt.into_bytes(),

@@ -1,4 +1,4 @@
-List uncataloged Claude Code transcripts and show one, writing nothing
+List uncataloged provider transcripts and show one, writing nothing
 
 Usage: scribe transcript [OPTIONS] <COMMAND>
 
@@ -12,11 +12,13 @@ Options:
   -V, --version  Print version
 
 Global options:
-      --root <DIR>       Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
-      --format <FORMAT>  Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
-      --json             Shorthand for --format json
+      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json                 Shorthand for --format json
 
-Lists Claude Code transcripts that have no session record and no switch,
+Lists provider transcripts that have no session record and no switch,
+selected with --provider codex or claude-code (the default),
 newest first, and writes nothing. --min-turns defaults to 20. project is
 the configured [projects.<slug>] path with the most mentions, else the
 cwd's project. show prints one transcript with Daniel's first five turns.

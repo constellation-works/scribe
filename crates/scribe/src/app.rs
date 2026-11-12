@@ -9,7 +9,7 @@
 use crate::error::CliError;
 use crate::models::{ClaudeCliModels, allowed_env};
 use crate::tasks::{self, OrbitTasks};
-use scribe_core::{Config, Label, Redactor, Store, unresolved_redact_env};
+use scribe_core::{Config, Label, Provider, Redactor, Store, unresolved_redact_env};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
@@ -36,6 +36,8 @@ pub(crate) struct AppEnv {
     /// `CLAUDE_CONFIG_DIR`: where Claude Code keeps its state instead of
     /// `~/.claude`, and so its transcripts.
     pub(crate) claude_config_dir: Option<OsString>,
+    /// Optional Codex state directory.
+    pub(crate) codex_home: Option<OsString>,
 }
 
 impl AppEnv {
@@ -45,15 +47,19 @@ impl AppEnv {
             root: std::env::var_os(ROOT_ENV),
             home: std::env::var_os("HOME"),
             claude_config_dir: std::env::var_os(CLAUDE_CONFIG_ENV),
+            codex_home: std::env::var_os("CODEX_HOME"),
         }
     }
 }
 
 /// Everything a command needs, resolved.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct Context {
     store: Store,
     transcripts: Option<PathBuf>,
+    codex_transcripts: Option<PathBuf>,
+    codex_archived: Option<PathBuf>,
+    provider: Provider,
 }
 
 impl Context {
@@ -65,6 +71,19 @@ impl Context {
         Ok(Self {
             store: Store::open(root),
             transcripts: transcripts_dir(env),
+            codex_transcripts: env
+                .codex_home
+                .clone()
+                .map(PathBuf::from)
+                .or_else(|| env.home.clone().map(|h| PathBuf::from(h).join(".codex")))
+                .map(|d| d.join("sessions")),
+            codex_archived: env
+                .codex_home
+                .clone()
+                .map(PathBuf::from)
+                .or_else(|| env.home.clone().map(|h| PathBuf::from(h).join(".codex")))
+                .map(|d| d.join("archived_sessions")),
+            provider: Provider::ClaudeCode,
         })
     }
 
@@ -75,7 +94,75 @@ impl Context {
         Self {
             store: Store::open(root),
             transcripts,
+            codex_transcripts: None,
+            codex_archived: None,
+            provider: Provider::ClaudeCode,
         }
+    }
+
+    /// A provider-scoped view sharing the same store.
+    pub(crate) fn with_provider(&self, provider: Provider) -> Self {
+        Self {
+            provider,
+            ..self.clone()
+        }
+    }
+    /// Explicit Codex state root for sandboxed plugin callers; no env fallback.
+    pub(crate) fn with_codex_home(mut self, root: Option<PathBuf>) -> Self {
+        self.codex_transcripts = root.as_ref().map(|r| r.join("sessions"));
+        self.codex_archived = root.map(|r| r.join("archived_sessions"));
+        self
+    }
+    /// All permitted transcript roots for this provider, including archives.
+    pub(crate) fn transcript_roots(&self) -> Vec<&Path> {
+        match self.provider {
+            Provider::ClaudeCode => self.transcripts.iter().map(PathBuf::as_path).collect(),
+            Provider::Codex => self
+                .codex_transcripts
+                .iter()
+                .chain(&self.codex_archived)
+                .map(PathBuf::as_path)
+                .collect(),
+        }
+    }
+
+    /// The active transcript provider.
+    pub(crate) fn provider(&self) -> Provider {
+        self.provider
+    }
+    /// Config with provider-specific model defaults resolved.
+    pub(crate) fn config(&self) -> Result<Config, CliError> {
+        Ok(self.store.config()?.for_provider(self.provider))
+    }
+
+    /// Refuse scaffolding when the selected runtime is not executable on PATH.
+    pub(crate) fn require_runtime(&self) -> Result<(), CliError> {
+        let program = match self.provider {
+            Provider::Codex => "codex",
+            Provider::ClaudeCode => "claude",
+        };
+        let found = std::env::var_os("PATH").is_some_and(|path| {
+            std::env::split_paths(&path).any(|dir| {
+                let path = dir.join(program);
+                std::fs::metadata(path).is_ok_and(|m| {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        m.is_file() && m.permissions().mode() & 0o111 != 0
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        m.is_file()
+                    }
+                })
+            })
+        });
+        if !found {
+            return Err(CliError::Usage(format!(
+                "{program} is not executable on PATH; install the selected runtime and rerun scribe init"
+            )));
+        }
+        Ok(())
     }
 
     /// The scribe store.
@@ -88,7 +175,10 @@ impl Context {
     /// when neither is set, which makes every transcript fail the
     /// provenance check.
     pub(crate) fn transcripts(&self) -> Option<&Path> {
-        self.transcripts.as_deref()
+        match self.provider {
+            Provider::ClaudeCode => self.transcripts.as_deref(),
+            Provider::Codex => self.codex_transcripts.as_deref(),
+        }
     }
 
     /// This host's name as a record label, for the records it stamps.
@@ -121,9 +211,18 @@ impl Context {
     /// `LANG` and the configured credential variables from this process's
     /// environment, and nothing else (STD-05 R10).
     pub(crate) fn models(&self, config: &Config) -> ClaudeCliModels {
-        ClaudeCliModels::new(allowed_env(&config.models.credentials, |name| {
-            std::env::var_os(name)
-        }))
+        let mut credentials = config.models.credentials.clone();
+        if config.models.provider == Provider::Codex {
+            credentials.push(String::from("CODEX_HOME"));
+        }
+        let mut env = allowed_env(&credentials, |name| std::env::var_os(name));
+        if config.models.provider == Provider::Codex
+            && let Some(root) = self.codex_transcripts.as_ref().and_then(|p| p.parent())
+        {
+            env.retain(|(key, _)| key != "CODEX_HOME");
+            env.push((OsString::from("CODEX_HOME"), root.as_os_str().to_owned()));
+        }
+        ClaudeCliModels::new(env).with_provider(config.models.provider)
     }
 
     /// The Orbit task adapter: `$ORBIT_BIN` (else `orbit`) run with `PATH`,

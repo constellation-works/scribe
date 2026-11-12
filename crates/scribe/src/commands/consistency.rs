@@ -129,7 +129,7 @@ pub(in crate::commands) fn scan<M: Models>(
 ) -> Result<Output, CliError> {
     let store = ctx.store();
     let now = ctx.now();
-    let config = store.config()?;
+    let config = ctx.config()?;
     // Fail closed before any write (the reapply below writes entries) when
     // a configured [redact] env name has no value in this environment.
     let redactor = ctx.redactor(&config)?;

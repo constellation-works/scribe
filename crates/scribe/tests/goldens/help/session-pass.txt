@@ -8,12 +8,14 @@ Options:
   -V, --version       Print version
 
 Global options:
-      --root <DIR>       Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
-      --format <FORMAT>  Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
-      --json             Shorthand for --format json
+      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json                 Shorthand for --format json
 
 The plugin routine ships disabled; once enabled on a host it runs every
-5 minutes. Also run this command by hand where claude is on PATH. Takes
+5 minutes. Also run this command by hand where each configured provider CLI
+is on PATH. Each session uses its stored provider (Codex defaults to Luna). Takes
 at most five due sessions per run, processing every new-message window
 (default 40 messages / 15000 characters; [catalog] window_messages and
 window_chars). Each window rewrites the header and open segment, appends

@@ -1,0 +1,17 @@
+#!/bin/sh
+# Codex desktop may have a GUI PATH without ~/.cargo/bin. Prefer an explicit
+# executable, then PATH, then the standard user installation. Never bypass trust.
+set -eu
+if [ -n "${SCRIBE_BIN:-}" ]; then
+    case "$SCRIBE_BIN" in /*) bin=$SCRIBE_BIN ;; *) bin= ;; esac
+elif command -v scribe >/dev/null 2>&1; then
+    bin=$(command -v scribe)
+else
+    bin=${HOME:-}/.cargo/bin/scribe
+fi
+if [ -z "$bin" ] || [ ! -x "$bin" ]; then
+    cat >/dev/null
+    printf '%s\n' '{"systemMessage":"scribe: not recorded — install scribe in ~/.cargo/bin or set SCRIBE_BIN to its absolute executable path, then restart Codex and review hooks"}'
+    exit 0
+fi
+exec "$bin" --provider codex hook "$1"

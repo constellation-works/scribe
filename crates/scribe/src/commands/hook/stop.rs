@@ -83,7 +83,7 @@ fn mark_due(
         turns: 0,
     };
     if !cadence.pass_due(switch, last_pass, now, 0) {
-        match payload::check_transcript(&payload.transcript_path, session, ctx.transcripts()) {
+        match payload::check(ctx, &payload.transcript_path, session) {
             Ok(Transcript::Present) => {}
             Ok(Transcript::Missing) => return Ok(Vec::new()),
             Err(reason) => {
@@ -94,7 +94,7 @@ fn mark_due(
                 }]);
             }
         }
-        let bytes = read_transcript(payload)?;
+        let bytes = read_transcript(ctx, payload)?;
         let conversation = pass::conversation(&transcript::parse(&bytes));
         since.turns = pass::user_turns_after(
             &conversation,
@@ -116,8 +116,8 @@ fn mark_due(
     })
 }
 
-fn read_transcript(payload: &StopPayload) -> Result<Vec<u8>, CliError> {
-    std::fs::read(&payload.transcript_path).map_err(|source| CliError::Read {
+fn read_transcript(ctx: &Context, payload: &StopPayload) -> Result<Vec<u8>, CliError> {
+    payload::read_for(ctx, &payload.transcript_path).map_err(|source| CliError::Read {
         what: payload.transcript_path.display().to_string(),
         source,
     })
@@ -134,7 +134,7 @@ fn fill_cites(
     if !ctx.store().has_unfilled_cites(&session)? {
         return Ok(Vec::new());
     }
-    match payload::check_transcript(&payload.transcript_path, &session, ctx.transcripts()) {
+    match payload::check(ctx, &payload.transcript_path, &session) {
         Ok(Transcript::Present) => {}
         Ok(Transcript::Missing) => return Ok(Vec::new()),
         Err(reason) => {
@@ -145,7 +145,7 @@ fn fill_cites(
             }]);
         }
     }
-    let bytes = read_transcript(payload)?;
+    let bytes = read_transcript(ctx, payload)?;
     let prompts: Vec<Hashed> = transcript::parse(&bytes)
         .into_iter()
         .filter(|m| m.role == Speaker::User)

@@ -2275,3 +2275,39 @@ pointing at the same commands; that is a constellation change.
   synthetic recording and the redaction tool.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
+
+## Codex integration and portable skill
+
+The provider-neutral source is `skills/scribe/SKILL.md`, embedded by `scribe init`
+and deterministically copied into both provider packages. Init takes an explicit
+provider and project target, reconciles digest-owned artifacts, preserves
+unrelated hook groups and refuses edits/symlinks. It never trusts hooks or enables
+cataloging. The native Codex marketplace installs `plugin/codex/` independently
+of project scaffolding; its launcher handles GUI PATH omissions.
+
+Codex has separate lifecycle/schema handling in `commands/hook/codex.rs` and
+pure transcript parsing in `scribe-core::codex`. A supported main user rollout
+must carry per-content host user provenance and turn ids. Hooks alone are not
+identity. Exact typed skill controls normalize only after that evidence is read;
+ordinary prompt text is preserved. Before persistence, input is deferred to Stop.
+Current-turn bootstrap and durable id-only cursors avoid historical settlement
+replay. Unsupported metadata returns a nonblocking refusal. Descriptor-rooted
+no-follow reads validate the opened file before parsing, bounded at 64 MiB.
+`archived_sessions` remains discoverable for post-archive final passes.
+
+Provider-tagged controls (store format 7) route shared passes and rebuilds.
+Codex defaults to Luna (`gpt-6-luna`) for session, referent, ask and consistency
+work. `[codex.models]` overrides those choices; `[models]` preserves Claude/global
+routing unless explicitly changed. `--provider codex` selects Codex for global
+CLI ask/consistency. `models/codex.rs` reuses the existing supervisor, disables
+hook/plugin/tool capabilities and external instructions, uses strict structured
+output with optional fields normalized on the wire, validates the result, refuses
+tool events and has no fallback. Provider credentials stay in the provider's
+existing store. Model temp artifacts/logs/sqlite state live in private scratch
+and are reclaimed by RAII.
+
+The Orbit plugin optionally accepts `codex_home`; it grants read access to
+active/archive transcripts and existing auth, exposes no new agent-callable
+write tool, and preserves existing routine schedules and Claude-only config.
+See README's Codex section for current installation/trust prerequisites and the
+explicit same-OS-user accident-guard limitation.

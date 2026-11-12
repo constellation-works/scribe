@@ -53,7 +53,8 @@ Orbit config and check one call:
 ```toml
 [plugins.scribe]
 root = "/home/<user>/.scribe"     # absolute; every tool answers not_configured until set
-transcripts = "/home/<user>/.claude/projects"   # absolute; session-pass needs it
+transcripts = "/home/<user>/.claude/projects"   # optional when codex_home is set
+codex_home = "/home/<user>/.codex"             # optional Codex active/archive transcripts + existing auth
 # task_workspaces = ["ws_constellation"]   # optional: where orchestration tasks live
 ```
 
@@ -111,3 +112,12 @@ cargo test -p scribe --test plugin        # envelope behaviour and the manifest 
 PATH="$PWD/target/debug:$PATH" orbit plugin test plugin/.orbit-plugin \
   --grant fs,network,env_pass,orbit_tools  # the YAML goldens
 ```
+
+Codex support is optional: leave `codex_home` empty to retain Claude-only behavior.
+When set, re-consent the added read grant for that absolute state root and ensure
+`codex` is executable from the routine environment. `OPENAI_API_KEY` is an allowed
+credential alternative to the provider's existing login. The model child reads
+auth in place, writes ephemeral logs/sqlite data in its own private temporary
+directory, and receives no scribe privilege variables. No Codex-home write grant
+is requested. Active and archived rollouts are both available to due passes;
+never-on sessions remain untouched. Ask is still the sole MCP-facing tool.

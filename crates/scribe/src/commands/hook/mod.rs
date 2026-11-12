@@ -23,6 +23,7 @@
 //! writes is audited (`session-start` reads only), and none calls a model
 //! except the form-3 referent in `user_prompt_submit.rs`.
 
+mod codex;
 pub(super) mod payload;
 pub(super) mod project;
 mod proposal_command;
@@ -39,7 +40,8 @@ use crate::output::Output;
 use clap::{Args, Subcommand};
 
 pub(super) const HOOK_EXAMPLES: &str = "\
-These run from the Claude Code package (plugin/claude-code), not by hand.
+These run from provider packages or scribe init hooks, not by hand.
+Use --provider codex for Codex; the default is claude-code.
 
 Examples:
   scribe hook session-start < <payload.json>
@@ -125,6 +127,15 @@ impl HookCommand {
 /// Run one `hook` verb on the payload read from stdin.
 pub(super) fn run(command: HookCommand, ctx: &Context) -> Result<Output, CliError> {
     let input = payload::read_stdin()?;
+    if ctx.provider() == scribe_core::Provider::Codex {
+        let event = match command {
+            HookCommand::SessionStart(_) => "SessionStart",
+            HookCommand::UserPromptSubmit(_) => "UserPromptSubmit",
+            HookCommand::Stop(_) => "Stop",
+            HookCommand::SessionEnd(_) => "SessionEnd",
+        };
+        return codex::run(event, &input, ctx);
+    }
     match command {
         HookCommand::SessionStart(HookArgs {}) => session_start::run(&input, ctx),
         HookCommand::UserPromptSubmit(HookArgs {}) => user_prompt_submit::run(&input, ctx),

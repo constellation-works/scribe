@@ -3,5 +3,6 @@
 mod app;
 mod audit_middleware;
 mod cli;
+mod codex_models;
 mod models;
 mod tasks;

@@ -48,6 +48,9 @@ pub(crate) struct Cli {
 /// Flags accepted before or after any subcommand (STD-01 R4).
 #[derive(Debug, Args)]
 pub(crate) struct GlobalArgs {
+    /// Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+    #[arg(long, global = true, value_name = "PROVIDER", help_heading = GLOBAL)]
+    pub(crate) provider: Option<scribe_core::Provider>,
     /// Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
     #[arg(long, global = true, value_name = "DIR", help_heading = GLOBAL)]
     pub(crate) root: Option<PathBuf>,
@@ -74,6 +77,12 @@ impl Cli {
             return Err(Self::command().error(
                 ErrorKind::ArgumentConflict,
                 "--json cannot be used with a --format other than json",
+            ));
+        }
+        if matches!(cli.command, Command::Init(_)) && cli.global.provider.is_none() {
+            return Err(Self::command().error(
+                ErrorKind::MissingRequiredArgument,
+                "scribe init requires --provider codex or --provider claude-code",
             ));
         }
         Ok(cli)

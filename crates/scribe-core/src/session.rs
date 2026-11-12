@@ -659,6 +659,8 @@ impl SessionFilter {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SessionControl {
+    /// Transcript provider; old controls are Claude Code.
+    pub provider: crate::Provider,
     /// Whether cataloging is on.
     pub on: bool,
     /// When it was last switched on.
@@ -686,6 +688,8 @@ pub struct SessionControl {
 /// Every session's switch, keyed by session id.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ControlState {
+    /// Last verified Codex instruction message processed in each session.
+    pub codex_cursors: BTreeMap<SessionId, String>,
     /// The sessions that were ever switched on.
     pub sessions: BTreeMap<SessionId, SessionControl>,
 }

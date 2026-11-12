@@ -38,6 +38,7 @@ fn on_marks_a_pass_due_and_on_twice_changes_nothing() {
     assert_eq!(change, Change::SwitchedOn);
     assert!(change.changed());
     let on = SessionControl {
+        provider: crate::Provider::ClaudeCode,
         on: true,
         since: Some(T0),
         due: true,

@@ -52,6 +52,7 @@ fmt-check:
 # Source-only structure checks: dependency direction (STD-02 R1-R6), unit-test
 # module reachability (STD-02 R19), terminal/stream ownership (STD-01 R17).
 structure:
+	python3 scripts/sync-skills.py --check
 	./scripts/check-dependency-direction.sh
 	./scripts/check-test-modules.sh
 	./scripts/check-terminal-guard.sh

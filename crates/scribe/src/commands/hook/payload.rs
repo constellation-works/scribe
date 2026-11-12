@@ -184,10 +184,15 @@ pub(in crate::commands) fn check_transcript(
             root.display()
         ));
     }
+    let codex_name = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .is_some_and(|s| s.starts_with("rollout-") && s.ends_with(&format!("-{session}")));
     let named = path.extension().is_some_and(|e| e == "jsonl")
         && path
             .file_stem()
-            .is_some_and(|stem| stem == session.as_str());
+            .is_some_and(|stem| stem == session.as_str())
+        || (path.extension().is_some_and(|e| e == "jsonl") && codex_name);
     if !named {
         return Err(String::from(
             "the transcript is not named for the payload's session_id",
@@ -200,6 +205,13 @@ pub(in crate::commands) fn check_transcript(
     };
     if !meta.file_type().is_file() {
         return Err(String::from("the transcript is not a regular file"));
+    }
+    let real_root =
+        std::fs::canonicalize(root).map_err(|e| format!("cannot resolve transcript root: {e}"))?;
+    let real =
+        std::fs::canonicalize(path).map_err(|e| format!("cannot resolve transcript: {e}"))?;
+    if !real.starts_with(&real_root) {
+        return Err(String::from("transcript escapes its physical root"));
     }
     owned_by_this_user(&meta)?;
     Ok(Transcript::Present)
@@ -222,4 +234,226 @@ fn owned_by_this_user(meta: &std::fs::Metadata) -> Result<(), String> {
 #[cfg(not(unix))]
 fn owned_by_this_user(_meta: &std::fs::Metadata) -> Result<(), String> {
     Ok(())
+}
+
+/// Provider-aware check. Codex names rollouts with a timestamp prefix and
+/// supplies the session identity in host metadata, which must agree.
+pub(in crate::commands) fn check(
+    ctx: &crate::app::Context,
+    path: &Path,
+    session: &SessionId,
+) -> Result<Transcript, String> {
+    let root = ctx
+        .transcript_roots()
+        .into_iter()
+        .find(|root| path.starts_with(root));
+    let found = check_transcript(path, session, root)?;
+    let codex_name = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .is_some_and(|s| s.starts_with("rollout-"));
+    if codex_name != (ctx.provider() == scribe_core::Provider::Codex) {
+        return Err(String::from(
+            "transcript provider does not match --provider",
+        ));
+    }
+    if matches!(found, Transcript::Present) && ctx.provider() == scribe_core::Provider::Codex {
+        let bytes = read_for(ctx, path).map_err(|e| e.to_string())?;
+        let rollout = scribe_core::codex::parse(&bytes)?;
+        if rollout.session != *session {
+            return Err(String::from("Codex session_meta does not match session_id"));
+        }
+    }
+    Ok(found)
+}
+
+/// Read Codex through a root-anchored descriptor walk. Every relative
+/// component is opened without following links; identity and ownership are
+/// validated on the opened file, and those exact bytes supply provenance.
+pub(in crate::commands) fn read_for(
+    ctx: &crate::app::Context,
+    path: &Path,
+) -> std::io::Result<Vec<u8>> {
+    if ctx.provider() != scribe_core::Provider::Codex {
+        return std::fs::read(path);
+    }
+    let invalid = |why: String| std::io::Error::new(std::io::ErrorKind::InvalidInput, why);
+    let root = ctx
+        .transcript_roots()
+        .into_iter()
+        .find(|root| path.starts_with(root))
+        .ok_or_else(|| {
+            invalid(String::from(
+                "Codex transcript is outside configured active/archive roots",
+            ))
+        })?;
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|_| invalid(String::from("Codex transcript escapes configured root")))?;
+    let parts: Vec<_> = relative.components().collect();
+    if parts.is_empty() || parts.iter().any(|p| !matches!(p, Component::Normal(_))) {
+        return Err(invalid(String::from("invalid Codex transcript path")));
+    }
+    let mut file = open_beneath(root, &parts)?;
+    let meta = file.metadata()?;
+    if !meta.is_file() {
+        return Err(invalid(String::from(
+            "Codex transcript is not a regular file",
+        )));
+    }
+    owned_by_this_user(&meta).map_err(invalid)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if meta.mode() & 0o022 != 0 {
+            return Err(invalid(String::from(
+                "Codex transcript is writable by another user",
+            )));
+        }
+    }
+    const MAX: u64 = 64 * 1024 * 1024;
+    let mut bytes = Vec::new();
+    (&mut file).take(MAX + 1).read_to_end(&mut bytes)?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX {
+        return Err(invalid(String::from("Codex transcript exceeds 64 MiB")));
+    }
+    let rollout = scribe_core::codex::parse(&bytes).map_err(invalid)?;
+    let named = path.file_stem().and_then(|s| s.to_str()).is_some_and(|s| {
+        s.starts_with("rollout-") && s.ends_with(&format!("-{}", rollout.session))
+    });
+    if !named {
+        return Err(invalid(String::from(
+            "Codex transcript name and host session identity disagree",
+        )));
+    }
+    Ok(bytes)
+}
+
+#[cfg(unix)]
+fn open_beneath(root: &Path, parts: &[Component<'_>]) -> std::io::Result<std::fs::File> {
+    use rustix::fs::{Mode, OFlags, open, openat};
+    let root = std::fs::canonicalize(root)?;
+    let mut dir = open(
+        &root,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )?;
+    for (n, part) in parts.iter().enumerate() {
+        let mut flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+        if n + 1 != parts.len() {
+            flags |= OFlags::DIRECTORY;
+        }
+        dir = openat(&dir, part.as_os_str(), flags, Mode::empty())?;
+    }
+    Ok(std::fs::File::from(dir))
+}
+
+#[cfg(not(unix))]
+fn open_beneath(_root: &Path, _parts: &[Component<'_>]) -> std::io::Result<std::fs::File> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "Codex transcript descriptor containment requires Unix",
+    ))
+}
+
+/// Discover only the provider's expected layout; never follow directory links.
+pub(in crate::commands) fn files(
+    dir: &Path,
+    provider: scribe_core::Provider,
+) -> Result<Vec<(SessionId, PathBuf)>, CliError> {
+    let mut pending = vec![(dir.to_path_buf(), 0usize)];
+    let mut found = std::collections::BTreeMap::new();
+    let mut count = 0usize;
+    while let Some((parent, depth)) = pending.pop() {
+        let entries = match std::fs::read_dir(&parent) {
+            Ok(e) => e,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(source) => {
+                return Err(CliError::Read {
+                    what: parent.display().to_string(),
+                    source,
+                });
+            }
+        };
+        for entry in entries {
+            let entry = entry.map_err(|source| CliError::Read {
+                what: parent.display().to_string(),
+                source,
+            })?;
+            count += 1;
+            if count > 100_000 {
+                return Err(CliError::Usage(String::from(
+                    "transcript discovery exceeds 100000 files/directories",
+                )));
+            }
+            let kind = entry.file_type().map_err(|source| CliError::Read {
+                what: entry.path().display().to_string(),
+                source,
+            })?;
+            let max_depth = if provider == scribe_core::Provider::Codex {
+                3
+            } else {
+                1
+            };
+            if kind.is_dir() && depth < max_depth {
+                pending.push((entry.path(), depth + 1));
+                continue;
+            }
+            if !kind.is_file() {
+                continue;
+            }
+            let name = entry.file_name();
+            let Some(stem) = name.to_str().and_then(|s| s.strip_suffix(".jsonl")) else {
+                continue;
+            };
+            let raw = if provider == scribe_core::Provider::Codex {
+                if !stem.starts_with("rollout-") || stem.len() < 36 {
+                    continue;
+                }
+                let Some(id) = stem.get(stem.len() - 36..) else {
+                    continue;
+                };
+                id
+            } else {
+                stem
+            };
+            let Ok(id) = raw.parse::<SessionId>() else {
+                continue;
+            };
+            if found.insert(id, entry.path()).is_some() {
+                return Err(CliError::Usage(String::from(
+                    "ambiguous duplicate transcript session id",
+                )));
+            }
+        }
+    }
+    Ok(found.into_iter().collect())
+}
+
+/// Discover the active provider's live and archived rollouts without duplicates.
+pub(in crate::commands) fn files_for(
+    ctx: &crate::app::Context,
+) -> Result<Vec<(SessionId, PathBuf)>, CliError> {
+    let mut all = std::collections::BTreeMap::new();
+    for root in ctx.transcript_roots() {
+        for (id, path) in files(root, ctx.provider())? {
+            if all.insert(id, path).is_some() {
+                return Err(CliError::Usage(String::from(
+                    "session exists in both active and archived transcript roots",
+                )));
+            }
+        }
+    }
+    Ok(all.into_iter().collect())
+}
+
+/// Resolve a provider transcript, preserving discovery errors.
+pub(in crate::commands) fn locate(
+    ctx: &crate::app::Context,
+    id: &SessionId,
+) -> Result<Option<PathBuf>, CliError> {
+    Ok(files_for(ctx)?
+        .into_iter()
+        .find(|(found, _)| found == id)
+        .map(|(_, path)| path))
 }

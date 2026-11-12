@@ -51,19 +51,18 @@ use scribe_core::{
     SessionRecord, pass, transcript,
 };
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// The command path in the audit log; also what the failure count reads.
 pub(in crate::commands) const COMMAND: &str = "session pass";
 
-/// The tool sessions are recorded through.
-const PROVIDER: &str = "claude-code";
 /// The most existing topics, and terms, a request lists.
 const MAX_LISTED: usize = 200;
 
 pub(super) const PASS_EXAMPLES: &str = "\
 The plugin routine ships disabled; once enabled on a host it runs every
-5 minutes. Also run this command by hand where claude is on PATH. Takes
+5 minutes. Also run this command by hand where each configured provider CLI
+is on PATH. Each session uses its stored provider (Codex defaults to Luna). Takes
 at most five due sessions per run, processing every new-message window
 (default 40 messages / 15000 characters; [catalog] window_messages and
 window_chars). Each window rewrites the header and open segment, appends
@@ -120,7 +119,7 @@ pub(super) fn run(args: &PassArgs, ctx: &Context) -> Result<Output, CliError> {
 /// not they are due; empty takes the due ones.
 pub(in crate::commands) fn run_with<M: Models>(
     ctx: &Context,
-    models: impl FnOnce(&Config) -> M,
+    mut models: impl FnMut(&Config) -> M,
     limits: RunLimits,
     only: &[SessionId],
 ) -> Result<Output, CliError> {
@@ -182,15 +181,17 @@ pub(in crate::commands) fn run_with<M: Models>(
             ))
         })
         .collect();
-    let adapter = models(&config);
     let mut passes = Vec::new();
     for (n, (id, switch)) in due.into_iter().enumerate() {
         if !limits.may_start(n) {
             remaining = remaining.saturating_add(1);
             continue;
         }
+        let scoped = ctx.with_provider(switch.provider);
+        let config = config.for_provider(switch.provider);
+        let adapter = models(&config);
         let mut job = Job {
-            ctx,
+            ctx: &scoped,
             config: &config,
             redactor: &redactor,
             id: &id,
@@ -239,7 +240,7 @@ pub(in crate::commands) fn run_catalog<M: Models>(
     ended: bool,
 ) -> Result<PassReport, CliError> {
     let store = ctx.store();
-    let config = store.config()?;
+    let config = ctx.config()?;
     let redactor = ctx.redactor(&config)?;
     let found = store.list_sessions(&SessionFilter {
         include_inactive: true,
@@ -388,10 +389,12 @@ impl Job<'_> {
             Some(catalog) => catalog.ended,
             None => self.switch.final_pass,
         };
-        let Some(path) = self.ctx.transcripts().and_then(|dir| find(dir, self.id)) else {
+        let Some(path) = payload::locate(self.ctx, self.id)
+            .map_err(|e| PassError::new(e.code(), e.to_string()))?
+        else {
             return self.nothing_new(previous, true);
         };
-        match payload::check_transcript(&path, self.id, self.ctx.transcripts()) {
+        match payload::check(self.ctx, &path, self.id) {
             Ok(Transcript::Present) => {}
             Ok(Transcript::Missing) => return self.nothing_new(previous, true),
             Err(reason) => {
@@ -399,7 +402,7 @@ impl Job<'_> {
                 return Err(PassError::new("provenance_failed", reason));
             }
         }
-        let bytes = std::fs::read(&path).map_err(|err| {
+        let bytes = payload::read_for(self.ctx, &path).map_err(|err| {
             tracing::warn!(session = %self.id, path = %path.display(), %err, "cannot read the transcript");
             PassError::new("io_error", format!("cannot read transcript: {err}"))
         })?;
@@ -494,7 +497,10 @@ impl Job<'_> {
             let meta = pass::PassMeta {
                 id: self.id.clone(),
                 project,
-                provider: Label::sanitized(PROVIDER, PROVIDER),
+                provider: Label::sanitized(
+                    self.ctx.provider().as_str(),
+                    self.ctx.provider().as_str(),
+                ),
                 host: self.ctx.host(),
                 cwd,
                 started: messages.first().map_or(now, |m| m.at),
@@ -722,21 +728,6 @@ impl Job<'_> {
 /// The session's transcript: `<dir>/<project-dir>/<id>.jsonl`, the first
 /// project directory (by name) that has one. Claude Code names the project
 /// directory after the session's cwd, which the store does not keep.
-pub(super) fn find(dir: &Path, id: &SessionId) -> Option<PathBuf> {
-    let name = format!("{id}.jsonl");
-    let mut projects: Vec<PathBuf> = std::fs::read_dir(dir)
-        .ok()?
-        .filter_map(Result::ok)
-        .filter(|item| item.file_type().is_ok_and(|t| t.is_dir()))
-        .map(|item| item.path())
-        .collect();
-    projects.sort();
-    projects
-        .into_iter()
-        .map(|project| project.join(&name))
-        .find(|path| std::fs::symlink_metadata(path).is_ok())
-}
-
 pub(super) fn distill<M: Models>(
     id: &SessionId,
     request: SessionRequest,

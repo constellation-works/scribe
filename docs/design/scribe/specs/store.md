@@ -1,6 +1,6 @@
 ---
 type: design
-summary: "Spec: store — layout, record files with YAML frontmatter (format 6: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
+summary: "Spec: store — layout, record files with YAML frontmatter (format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
 last_validated: 2026-11-10
 ---
 
@@ -10,7 +10,9 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-The code writes format 6 and reads formats 1–6. Format 6 adds the session
+The code writes format 7 and reads formats 1–7. Format 7 adds `provider` to each
+session control and `codex_cursors` to `control.json`; missing older values
+upgrade in memory to `claude-code` and an empty cursor map. Format 6 adds the session
 `rebuilt_by` field (ORB-24003); S12 is built;
 other future-slice markers describe work outside this slice.
 
@@ -433,3 +435,21 @@ config tag claims is dropped with a warning naming both.
   `control.json` before its first pass has no record yet and is not listed;
   `/scribe status` in that session reports it as on with no record yet.
 - `entry list --tag` matches a tag's name, not its aliases.
+
+## Codex ingestion state (format 7)
+
+`control.json` has `codex_cursors: {"<session-id>": "<host-message-id>"}`.
+Each session switch also stores `provider: claude-code|codex`. Provider stamping
+and switch mutation share one locked atomic control write. The Codex ingestion
+lock `.codex-<session-id>.lock` serializes lifecycle events independently of the
+store lock; actual records and cursors still use the store lock and atomic writes.
+The cursor advances only after effects, so an interruption can replay an
+idempotent capture/settlement/control; it cannot silently lose a pending write.
+Only ids are queued, never raw prompt text. A missing cursor in a rewritten
+transcript refuses replay. Bootstrap starts in the current verified hook turn,
+not at the beginning of a historical transcript. An earlier typed opt-in alone
+does not activate a newly installed hook in a different turn.
+
+Config adds `[codex.models]` (all uses default `gpt-6-luna`, transport `codex`).
+Both model tables accept an explicit `provider` and per-use ids. Existing
+`[models]` defaults and persisted entry/session shapes remain compatible.

@@ -51,8 +51,6 @@ use std::path::Path;
 
 /// The hook event this replies to.
 const EVENT: &str = "UserPromptSubmit";
-/// The tool the entries are recorded through.
-const PROVIDER: &str = "claude-code";
 /// The longest quote an echo shows, in characters; `entry show` has it all.
 const ECHO_CHARS: usize = 200;
 /// What the agent is told after a recorded echo, so it does not record it
@@ -119,6 +117,16 @@ pub(super) fn run_with<M: Models>(
 ) -> Result<Output, CliError> {
     let payload: PromptPayload = payload::decode(input)?;
     let session = payload::session(&payload.session_id)?;
+    if ctx
+        .store()
+        .control()?
+        .get(&session)
+        .is_some_and(|c| c.provider != ctx.provider())
+    {
+        return Err(CliError::Usage(String::from(
+            "session belongs to another transcript provider",
+        )));
+    }
     if payload::agent_originated(&payload) {
         return Ok(reply(Vec::new(), Vec::new()));
     }
@@ -145,19 +153,18 @@ pub(super) fn run_with<M: Models>(
 
     // A missing transcript passes: the first prompt of a session can
     // arrive before Claude Code has written the file.
-    let transcript =
-        match payload::check_transcript(&payload.transcript_path, &session, ctx.transcripts()) {
-            Ok(found) => found,
-            Err(reason) => {
-                return failed_all(
-                    &format!("the hook payload failed the transcript check: {reason}"),
-                    PROVENANCE_FAILED,
-                );
-            }
-        };
-    let config = match ctx.store().config() {
+    let transcript = match payload::check(ctx, &payload.transcript_path, &session) {
+        Ok(found) => found,
+        Err(reason) => {
+            return failed_all(
+                &format!("the hook payload failed the transcript check: {reason}"),
+                PROVENANCE_FAILED,
+            );
+        }
+    };
+    let config = match ctx.config() {
         Ok(config) => config,
-        Err(err) => return failed_all(&chain(&err), err.code()),
+        Err(err) => return failed_all(&err.to_string(), err.code()),
     };
     // Fail closed before recording anything when a configured [redact] env
     // name has no value here: the capture would store it unmasked.
@@ -173,7 +180,7 @@ pub(super) fn run_with<M: Models>(
         prompt_sha256: capture::prompt_sha256(&payload.prompt),
         cwd: payload.cwd.clone(),
         project: project::of(std::path::Path::new(&payload.cwd)),
-        provider: Label::sanitized(PROVIDER, PROVIDER),
+        provider: Label::sanitized(ctx.provider().as_str(), ctx.provider().as_str()),
         host: ctx.host(),
     };
     let parsed = capture::scan(&payload.prompt, &config.tags);
@@ -379,7 +386,7 @@ impl<'a> Referents<'a> {
         let (transcript, path) = (&self.transcript, self.path);
         self.messages.get_or_insert_with(|| match transcript {
             Transcript::Missing => Vec::new(),
-            Transcript::Present => match std::fs::read(path) {
+            Transcript::Present => match payload::read_for(self.ctx, path) {
                 Ok(bytes) => transcript::parse(&bytes),
                 Err(err) => {
                     tracing::warn!(path = %path.display(), %err, "cannot read the transcript");

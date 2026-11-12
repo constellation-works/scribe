@@ -15,6 +15,15 @@ pub struct RebuildGuard {
 }
 
 impl Store {
+    /// Serialize Codex prompt ingestion for one session across lifecycle hooks.
+    pub fn lock_codex_ingestion(&self, id: &SessionId) -> Result<RebuildGuard> {
+        self.prepare_dir(&self.root)?;
+        let path = self.root.join(format!(".codex-{id}.lock"));
+        Ok(RebuildGuard {
+            _lock: fsio::LockGuard::acquire(&path, "codex ingestion", self.lock_wait)?,
+        })
+    }
+
     /// Acquire the session's rebuild lock, with the store's bounded wait.
     pub fn lock_rebuild(&self, record: &SessionRecord) -> Result<RebuildGuard> {
         self.session(&record.id)?;

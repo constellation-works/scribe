@@ -59,6 +59,8 @@ pub struct ConfigError {
 /// The model each use runs, by id (docs/design/scribe/2_design.md §8).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModelIds {
+    /// Executable transport; independent of the transcript provider.
+    pub provider: crate::Provider,
     /// Answers `ask`.
     pub ask: String,
     /// Writes session records.
@@ -72,9 +74,24 @@ pub struct ModelIds {
     pub credentials: Vec<String>,
 }
 
+impl ModelIds {
+    /// Approved Codex default: Luna for every operation, with no fallback.
+    pub fn codex() -> Self {
+        Self {
+            provider: crate::Provider::Codex,
+            ask: String::from("gpt-6-luna"),
+            session: String::from("gpt-6-luna"),
+            consistency: String::from("gpt-6-luna"),
+            referent: String::from("gpt-6-luna"),
+            credentials: vec![String::from("OPENAI_API_KEY")],
+        }
+    }
+}
+
 impl Default for ModelIds {
     fn default() -> Self {
         Self {
+            provider: crate::Provider::ClaudeCode,
             ask: String::from("claude-sonnet-5-5"),
             session: String::from("claude-haiku-5-5"),
             consistency: String::from("claude-haiku-5-5"),
@@ -119,6 +136,8 @@ pub struct Config {
     pub tags: TagTable,
     /// The model ids and credential names.
     pub models: ModelIds,
+    /// Models for Codex-origin work, defaulting to Luna.
+    pub codex_models: ModelIds,
     /// How often an opted-in session gets a pass.
     pub catalog: Cadence,
     /// Per-call message bounds, also configured under `[catalog]`.
@@ -139,6 +158,7 @@ impl Default for Config {
         Self {
             tags: TagTable::defaults(),
             models: ModelIds::default(),
+            codex_models: ModelIds::codex(),
             catalog: Cadence::default(),
             catalog_window: crate::pass::WindowLimits::default(),
             segment_windows: crate::pass::SEGMENT_WINDOWS,
@@ -150,6 +170,16 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Resolve model routing for the originating transcript. Global jobs use
+    /// Claude defaults unless their caller explicitly selects Codex.
+    pub fn for_provider(&self, provider: crate::Provider) -> Self {
+        let mut config = self.clone();
+        if provider == crate::Provider::Codex {
+            config.models = self.codex_models.clone();
+        }
+        config
+    }
+
     /// Parse `config.toml`'s text. A missing table or key takes its default;
     /// an unknown key, a bad value or an ambiguous tag word is refused.
     pub fn parse(text: &str) -> Result<Self, ConfigError> {
@@ -171,19 +201,27 @@ impl Config {
                 TagTable::new(defs).map_err(|e| unlocated(e.to_string()))?
             }
         };
-        let defaults = ModelIds::default();
-        let models = ModelIds {
-            ask: raw.models.ask.unwrap_or(defaults.ask),
-            session: raw.models.session.unwrap_or(defaults.session),
-            consistency: raw.models.consistency.unwrap_or(defaults.consistency),
-            referent: raw.models.referent.unwrap_or(defaults.referent),
-            credentials: raw.models.credentials.unwrap_or(defaults.credentials),
-        };
-        for name in models.credentials.iter().chain(&raw.redact.env) {
+        let models = raw.models.resolve(ModelIds::default());
+        let codex_models = raw.codex.models.resolve(ModelIds::codex());
+        for name in models
+            .credentials
+            .iter()
+            .chain(&codex_models.credentials)
+            .chain(&raw.redact.env)
+        {
             if !is_env_name(name) {
                 return Err(unlocated(format!(
                     "'{name}' is not an environment variable name (letters, digits and '_', not starting with a digit)"
                 )));
+            }
+        }
+        for ids in [&models, &codex_models] {
+            for model in [&ids.ask, &ids.session, &ids.consistency, &ids.referent] {
+                if model.trim().is_empty() || model.chars().any(char::is_control) {
+                    return Err(unlocated(String::from(
+                        "model ids must be nonempty and contain no control characters",
+                    )));
+                }
             }
         }
         let cadence = Cadence::default();
@@ -191,6 +229,7 @@ impl Config {
         Ok(Self {
             tags,
             models,
+            codex_models,
             catalog: Cadence {
                 every_minutes: raw.catalog.every_minutes.unwrap_or(cadence.every_minutes),
                 every_turns: raw.catalog.every_turns.unwrap_or(cadence.every_turns),
@@ -219,7 +258,13 @@ impl Config {
     #[must_use]
     pub fn secret_names(&self) -> Vec<&str> {
         let mut names: Vec<&str> = Vec::new();
-        for name in self.models.credentials.iter().chain(&self.redact_env) {
+        for name in self
+            .models
+            .credentials
+            .iter()
+            .chain(&self.codex_models.credentials)
+            .chain(&self.redact_env)
+        {
             if !names.contains(&name.as_str()) {
                 names.push(name);
             }
@@ -249,6 +294,8 @@ struct RawConfig {
     tags: Option<BTreeMap<String, RawTag>>,
     #[serde(default)]
     models: RawModels,
+    #[serde(default)]
+    codex: RawCodex,
     #[serde(default)]
     catalog: RawCatalog,
     #[serde(default)]
@@ -297,11 +344,41 @@ impl RawTag {
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawModels {
+    provider: Option<crate::Provider>,
     ask: Option<String>,
     session: Option<String>,
     consistency: Option<String>,
     referent: Option<String>,
     credentials: Option<Vec<String>>,
+}
+
+impl RawModels {
+    fn resolve(self, default: ModelIds) -> ModelIds {
+        let provider = self.provider.unwrap_or(default.provider);
+        let defaults = if provider != default.provider {
+            match provider {
+                crate::Provider::Codex => ModelIds::codex(),
+                crate::Provider::ClaudeCode => ModelIds::default(),
+            }
+        } else {
+            default
+        };
+        ModelIds {
+            provider,
+            ask: self.ask.unwrap_or(defaults.ask),
+            session: self.session.unwrap_or(defaults.session),
+            consistency: self.consistency.unwrap_or(defaults.consistency),
+            referent: self.referent.unwrap_or(defaults.referent),
+            credentials: self.credentials.unwrap_or(defaults.credentials),
+        }
+    }
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawCodex {
+    #[serde(default)]
+    models: RawModels,
 }
 
 #[derive(Default, Deserialize)]
