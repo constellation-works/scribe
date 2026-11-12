@@ -1163,6 +1163,24 @@ impl Output {
     }
 }
 
+/// The rows of one popup list view: sessions, entries, proposals or
+/// transcripts, or one notice row when the list is empty or failed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PopupRows {
+    /// The record kind every row carries: `session`, `entry`, `proposal` or
+    /// `transcript`.
+    pub(crate) kind: &'static str,
+    /// The records to list; `None` when `notice` stands in for them.
+    pub(crate) records: Option<Records>,
+    /// The one row shown instead of records (an empty or failed list).
+    pub(crate) notice: Option<String>,
+    /// The current year, so a date of another year shows its year.
+    pub(crate) year: i32,
+    /// Whether the popup's terminal wants color (still off under `NO_COLOR`
+    /// and `TERM=dumb`).
+    pub(crate) color: bool,
+}
+
 /// What a command produced, before rendering.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Output {
@@ -1209,4 +1227,8 @@ pub(crate) enum Output {
     Plugin(PluginReply),
     /// `tmux` ran its popup, which owned the terminal; nothing to render.
     Popup,
+    /// The rows of one popup list view (the popup's hidden `tmux rows`).
+    PopupRows(PopupRows),
+    /// The popup's preview of one record (the hidden `tmux preview`).
+    PopupPreview(Record),
 }
