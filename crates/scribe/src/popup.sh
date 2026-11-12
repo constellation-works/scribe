@@ -1,10 +1,10 @@
-# scribe browse — the popup behind `scribe browse`: sessions, entries,
+# scribe tmux — the popup behind `scribe tmux`: sessions, entries,
 # proposals and backfill candidates in one fzf list, each record previewed
 # with `scribe … show`. It only reads: every command it runs is a list or a
 # show. The binary runs this text with `sh -c`, and exports:
-#   SCRIBE_BROWSE_BIN  the scribe executable that was started; every child
+#   SCRIBE_TMUX_BIN  the scribe executable that was started; every child
 #                      command runs it, never whichever scribe is on PATH
-#   SCRIBE_BROWSE_SH   this text, so fzf's binds and preview can call back in
+#   SCRIBE_TMUX_SH   this text, so fzf's binds and preview can call back in
 #
 # Keys: enter opens the record (sessions with --log) in $PAGER (else less);
 # ctrl-y copies the id (tmux buffer, and pbcopy when present);
@@ -12,14 +12,14 @@
 # backfill candidates; alt-a toggles inactive sessions and hidden entries.
 set -u
 
-scribe() { "$SCRIBE_BROWSE_BIN" "$@"; }
+scribe() { "$SCRIBE_TMUX_BIN" "$@"; }
 # `show` prints only its list line when stdout is not a terminal (the
 # output contract), so the detail views ask for the table format.
 detail() { scribe "$@" --format table; }
 # `self` is text for fzf's own shell; the popup's direct call uses the function.
-self='sh -c "$SCRIBE_BROWSE_SH" scribe-browse'
-self_call() { sh -c "$SCRIBE_BROWSE_SH" scribe-browse "$@"; }
-state=${SCRIBE_BROWSE_STATE:-}
+self='sh -c "$SCRIBE_TMUX_SH" scribe-tmux'
+self_call() { sh -c "$SCRIBE_TMUX_SH" scribe-tmux "$@"; }
+state=${SCRIBE_TMUX_STATE:-}
 
 view_file=$state/view
 hidden_file=$state/hidden
@@ -109,9 +109,9 @@ open_record() {
 		# Daniel's channel; scribe refuses it through a pipe.
 		cmd="scribe session catalog $id --author daniel"
 		if command -v tmux >/dev/null 2>&1 && tmux set-buffer -- "$cmd" 2>/dev/null; then
-			printf 'scribe browse: paste buffer holds: %s\n' "$cmd"
+			printf 'scribe tmux: paste buffer holds: %s\n' "$cmd"
 		else
-			printf 'scribe browse: run from a shell: %s\n' "$cmd"
+			printf 'scribe tmux: run from a shell: %s\n' "$cmd"
 		fi ;;
 	*) preview "$kind" "$id" ;;
 	esac
@@ -129,8 +129,8 @@ esac
 
 # --- the popup itself ---
 
-state=$(mktemp -d "${TMPDIR:-/tmp}/scribe-browse.XXXXXX") || exit 1
-SCRIBE_BROWSE_STATE=$state; export SCRIBE_BROWSE_STATE
+state=$(mktemp -d "${TMPDIR:-/tmp}/scribe-tmux.XXXXXX") || exit 1
+SCRIBE_TMUX_STATE=$state; export SCRIBE_TMUX_STATE
 trap 'rm -rf "$state"' EXIT
 printf sessions > "$state/view"
 printf 0 > "$state/hidden"

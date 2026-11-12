@@ -1,4 +1,4 @@
-//! `scribe browse`: the tmux popup, a read-only fzf list of sessions,
+//! `scribe tmux`: the tmux popup, a read-only fzf list of sessions,
 //! entries, proposals and backfill candidates (docs/design/scribe/2_design.md
 //! §1.2).
 //!
@@ -21,7 +21,7 @@ PATH; run it from a terminal, usually in a tmux popup. Add this to
 ~/.tmux.conf, reload it (tmux source-file ~/.tmux.conf), and press prefix
 then S:
 
-  bind-key S display-popup -E -w 90% -h 85% scribe browse
+  bind-key S display-popup -E -w 90% -h 85% scribe tmux
 
 Keys:
   enter       open the record in $PAGER (else less): a session with its log,
@@ -41,26 +41,26 @@ popup. The popup's commands use the same data directory (--root or
 SCRIBE_ROOT) and the executable you started.
 
 Examples:
-  scribe browse
-  scribe browse --root ~/.scribe";
+  scribe tmux
+  scribe tmux --root ~/.scribe";
 
-/// Arguments to `browse`: none beyond the global flags.
+/// Arguments to `tmux`: none beyond the global flags.
 #[derive(Debug, Args)]
-pub(crate) struct BrowseArgs {}
+pub(crate) struct TmuxArgs {}
 
 /// Run the popup and wait for it. Read-only: nothing here touches the store.
-pub(super) fn run(_args: &BrowseArgs, ctx: &Context) -> Result<Output, CliError> {
+pub(super) fn run(_args: &TmuxArgs, ctx: &Context) -> Result<Output, CliError> {
     if !popup::on_path("fzf") {
         return Err(CliError::FzfMissing);
     }
-    let exe = std::env::current_exe().map_err(CliError::BrowseSpawn)?;
+    let exe = std::env::current_exe().map_err(CliError::TmuxSpawn)?;
     // A format set for the whole session must not reshape the lists the
     // popup parses; its detail views ask for theirs explicitly.
     let status =
-        popup::run(&exe, ctx.store().root(), &[FORMAT_ENV]).map_err(CliError::BrowseSpawn)?;
+        popup::run(&exe, ctx.store().root(), &[FORMAT_ENV]).map_err(CliError::TmuxSpawn)?;
     if status.success() {
-        Ok(Output::Browsed)
+        Ok(Output::Popup)
     } else {
-        Err(CliError::BrowseFailed(status.code()))
+        Err(CliError::TmuxFailed(status.code()))
     }
 }

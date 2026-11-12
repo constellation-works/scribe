@@ -130,15 +130,15 @@ where the store lives.
 
 ## The tmux popup
 
-`scribe browse` browses sessions, entries, proposals and
+`scribe tmux` browses sessions, entries, proposals and
 backfill candidates in an `fzf` popup for Daniel, previewing each record
 with `scribe … show`, opening it in the pager on Enter and copying its
 id on `ctrl-y`; it only reads. It is part of the binary, so nothing else
 is installed; it needs `fzf` on `PATH`. Bind a key in `~/.tmux.conf`
-(`scribe browse --help` lists the keys):
+(`scribe tmux --help` lists the keys):
 
 ```tmux
-bind-key S display-popup -E -w 90% -h 85% scribe browse
+bind-key S display-popup -E -w 90% -h 85% scribe tmux
 ```
 
 Backfill candidates come from `scribe transcript list` over the last 30

@@ -10,7 +10,7 @@ Every data command renders one typed payload in the mode the sink resolved;
 stdout carries only that payload; warnings, notices and errors go to stderr;
 the exit code says whether it worked. The JSON form is a public contract,
 pinned by the output goldens in `crates/scribe/tests/goldens/output/`.
-S11's read surface, S12's writes, S13's skill and tmux popup (now the `scribe browse` subcommand), and S14's
+S11's read surface, S12's writes, S13's skill and tmux popup (now the `scribe tmux` subcommand), and S14's
 transcript list and session catalog are built. Parts marked *(S14)* add
 fields, columns, commands and codes and do not rename or retype earlier
 ones.
@@ -251,8 +251,8 @@ the message lists up to ten candidates, sorted, and how many more), `daniel_only
 `proposal_not_found`, `proposal_settled`, `entry_not_active`,
 (S12) `invalid_text`, `invalid_topics`,
 `proposal_invalid`, `proposal_not_agent`,
-`session_cataloged`, `transcript_not_found`, for `browse` `fzf_missing` and
-`browse_failed` (exit 1; `browse` renders no payload, its popup owns the
+`session_cataloged`, `transcript_not_found`, for `tmux` `fzf_missing` and
+`tmux_failed` (exit 1; `tmux` renders no payload, its popup owns the
 terminal), for `session pass`
 `session_pass_failed` and `session_not_on`, and for `question
 ask` the model codes `model_timeout`, `model_unavailable`, `model_failed`,

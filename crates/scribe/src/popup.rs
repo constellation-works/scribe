@@ -1,4 +1,4 @@
-//! The tmux popup adapter: runs the embedded fzf script that `scribe browse`
+//! The tmux popup adapter: runs the embedded fzf script that `scribe tmux`
 //! shows (docs/design/scribe/2_design.md §1.2).
 //!
 //! The script is a POSIX shell text embedded at build time and run with
@@ -22,10 +22,10 @@ use std::process::{Command, ExitStatus};
 const SCRIPT: &str = include_str!("popup.sh");
 
 /// The executable the popup's child commands run.
-const BIN_ENV: &str = "SCRIBE_BROWSE_BIN";
+const BIN_ENV: &str = "SCRIBE_TMUX_BIN";
 
 /// The script text, exported so fzf's binds and preview can run it again.
-const SCRIPT_ENV: &str = "SCRIBE_BROWSE_SH";
+const SCRIPT_ENV: &str = "SCRIBE_TMUX_SH";
 
 /// The variable naming the data directory the popup's commands read.
 const ROOT_ENV: &str = "SCRIBE_ROOT";
@@ -38,7 +38,7 @@ pub(crate) fn run(exe: &Path, root: &Path, unset: &[&str]) -> io::Result<ExitSta
     let mut sh = Command::new("sh");
     sh.arg("-c")
         .arg(SCRIPT)
-        .arg("scribe-browse")
+        .arg("scribe-tmux")
         .env(BIN_ENV, exe)
         .env(SCRIPT_ENV, SCRIPT)
         .env(ROOT_ENV, root);

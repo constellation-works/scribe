@@ -1207,6 +1207,6 @@ pub(crate) enum Output {
     Ask(Box<AskPayload>),
     /// A plugin tool call's envelope.
     Plugin(PluginReply),
-    /// `browse` ran its popup, which owned the terminal; nothing to render.
-    Browsed,
+    /// `tmux` ran its popup, which owned the terminal; nothing to render.
+    Popup,
 }

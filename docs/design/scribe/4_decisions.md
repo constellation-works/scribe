@@ -1980,7 +1980,7 @@ Daniel wrote, an agent could hide his words.
 ## Humans browse scribe in a tmux popup over fzf
 
 **Recorded:** 2026-11-10 · [ORB-23892] · **Daniel's choice**
-**Code anchors:** `crates/scribe/src/commands/browse.rs`, `crates/scribe/src/popup.rs`, `crates/scribe/src/popup.sh` (from S13)
+**Code anchors:** `crates/scribe/src/commands/tmux.rs`, `crates/scribe/src/popup.rs`, `crates/scribe/src/popup.sh` (from S13)
 
 ### Context
 
@@ -1996,7 +1996,7 @@ a tmux key with `display-popup`: sessions, entries, proposals and backfill
 candidates in one list, `scribe … show` as the preview, Enter opens the
 record in the pager, a key copies the id. No new Rust dependency. It first
 shipped as a standalone file, `scribe-tmux`, that nothing installed; it is
-now the read-only `scribe browse` subcommand, the script embedded in the
+now the read-only `scribe tmux` subcommand, the script embedded in the
 binary (`include_str!`, run with `sh -c`) so there is nothing to install
 and its child commands run the started executable, and its views ask for
 `--format table` because `show` through a pipe prints only its list line. A real

@@ -96,15 +96,15 @@ pub(crate) enum CliError {
     /// A model call failed (`question ask`).
     #[error(transparent)]
     Model(#[from] scribe_core::models::ModelError),
-    /// `browse` needs `fzf` and it is not on `PATH`.
+    /// `tmux` needs `fzf` and it is not on `PATH`.
     #[error("fzf is not installed, and the popup is an fzf list")]
     FzfMissing,
-    /// `browse` could not start its popup (`sh`, or this executable's path).
-    #[error("cannot start the browse popup")]
-    BrowseSpawn(#[source] io::Error),
+    /// `tmux` could not start its popup (`sh`, or this executable's path).
+    #[error("cannot start the tmux popup")]
+    TmuxSpawn(#[source] io::Error),
     /// The popup ended with a failure status (`None`: killed by a signal).
-    #[error("the browse popup failed ({})", .0.map_or_else(|| "killed by a signal".to_owned(), |c| format!("exit {c}")))]
-    BrowseFailed(Option<i32>),
+    #[error("the tmux popup failed ({})", .0.map_or_else(|| "killed by a signal".to_owned(), |c| format!("exit {c}")))]
+    TmuxFailed(Option<i32>),
     /// Writing the result to stdout failed for a reason other than a closed pipe.
     #[error("cannot write output")]
     Output(#[source] io::Error),
@@ -130,8 +130,8 @@ impl CliError {
             Self::TranscriptNotFound { .. } => "transcript_not_found",
             Self::Model(e) => e.code(),
             Self::FzfMissing => "fzf_missing",
-            Self::BrowseSpawn(_) => "io_error",
-            Self::BrowseFailed(_) => "browse_failed",
+            Self::TmuxSpawn(_) => "io_error",
+            Self::TmuxFailed(_) => "tmux_failed",
             Self::Output(_) => "output_error",
         }
     }
@@ -177,8 +177,8 @@ impl CliError {
             | Self::SessionCataloged(_)
             | Self::TranscriptNotFound { .. }
             | Self::Model(_)
-            | Self::BrowseSpawn(_)
-            | Self::BrowseFailed(_)
+            | Self::TmuxSpawn(_)
+            | Self::TmuxFailed(_)
             | Self::Output(_) => None,
         }
     }

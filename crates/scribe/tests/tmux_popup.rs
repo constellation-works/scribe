@@ -1,4 +1,4 @@
-//! Behaviour of `scribe browse` (S13, embedded in the binary since S14):
+//! Behaviour of `scribe tmux` (S13, embedded in the binary since S14):
 //! driven through a fake `fzf` (and fake `tmux`, `pbcopy` and pager) on
 //! `PATH` against the real binary and a seeded fixture store, so no test
 //! touches the real store, a real tmux server or the host clipboard.
@@ -60,7 +60,7 @@ const FAKE_TMUX: &str = "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$FAKE_CAP/tmux-arg
 const FAKE_PBCOPY: &str = "#!/bin/sh\ncat > \"$FAKE_CAP/pbcopy.txt\"\n";
 
 /// A fixture with the fakes and a capture directory wired up; the returned
-/// command runs `scribe browse` from the started binary.
+/// command runs `scribe tmux` from the started binary.
 fn popup(fx: &Fixture) -> (Command, PathBuf) {
     let path = fx.fake_program("fzf", FAKE_FZF);
     fx.fake_program("pager", FAKE_PAGER);
@@ -69,7 +69,7 @@ fn popup(fx: &Fixture) -> (Command, PathBuf) {
     let cap = fx.elsewhere("cap");
     std::fs::create_dir_all(&cap).expect("create capture dir");
     let mut cmd = Command::new(support::BIN);
-    cmd.arg("browse")
+    cmd.arg("tmux")
         .env_clear()
         .env("HOME", fx.home())
         .env("SCRIBE_ROOT", fx.root())
@@ -90,13 +90,13 @@ fn without_fzf_it_exits_1_with_an_install_hint() {
     let bin = fx.elsewhere("bin");
     std::fs::create_dir_all(&bin).expect("create bin");
     let out: Output = Command::new(support::BIN)
-        .arg("browse")
+        .arg("tmux")
         .env_clear()
         .env("HOME", fx.home())
         .env("SCRIBE_ROOT", fx.root())
         .env("PATH", &bin)
         .output()
-        .expect("run browse");
+        .expect("run tmux");
     assert_eq!(out.status.code(), Some(1));
     assert!(out.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -113,7 +113,7 @@ fn enter_opens_the_picked_session_with_its_log_in_the_pager() {
         .env("FAKE_PICK", "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02")
         .env("FAKE_FZF_PREVIEW", "1")
         .output()
-        .expect("run browse");
+        .expect("run tmux");
     assert_eq!(
         out.status.code(),
         Some(0),
@@ -160,7 +160,7 @@ fn the_entry_preview_and_open_show_full_detail_from_a_pipe() {
         .env("FAKE_PICK", "decisions-2")
         .env("FAKE_FZF_PREVIEW", "1")
         .output()
-        .expect("run browse");
+        .expect("run tmux");
     assert_eq!(
         out.status.code(),
         Some(0),
@@ -195,7 +195,7 @@ fn switching_to_entries_and_opening_one_shows_it_in_the_pager() {
         .env("FAKE_FZF_PRESS", "ctrl-e")
         .env("FAKE_PICK", "decisions-2")
         .output()
-        .expect("run browse");
+        .expect("run tmux");
     assert_eq!(
         out.status.code(),
         Some(0),
@@ -219,7 +219,7 @@ fn ctrl_y_copies_the_picked_id() {
         .env("FAKE_PICK", "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02")
         .env("FAKE_FZF_COPY", "1")
         .output()
-        .expect("run browse");
+        .expect("run tmux");
     assert_eq!(
         out.status.code(),
         Some(0),
@@ -243,7 +243,7 @@ fn the_proposals_view_previews_the_proposal() {
         .env("FAKE_PICK", "p-1")
         .env("FAKE_FZF_PREVIEW", "1")
         .output()
-        .expect("run browse");
+        .expect("run tmux");
     assert_eq!(
         out.status.code(),
         Some(0),
@@ -266,7 +266,7 @@ fn the_transcripts_view_says_when_nothing_is_uncataloged() {
     let out = cmd
         .env("FAKE_FZF_PRESS", "ctrl-b")
         .output()
-        .expect("run browse");
+        .expect("run tmux");
     assert_eq!(
         out.status.code(),
         Some(0),
@@ -296,7 +296,7 @@ fn the_popups_commands_run_the_started_binary_not_the_one_on_path() {
         .env("FAKE_PICK", "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02")
         .env("FAKE_FZF_PREVIEW", "1")
         .output()
-        .expect("run browse");
+        .expect("run tmux");
     assert_eq!(
         out.status.code(),
         Some(0),
@@ -315,7 +315,7 @@ fn the_popups_commands_run_the_started_binary_not_the_one_on_path() {
 }
 
 #[test]
-fn browse_writes_nothing() {
+fn tmux_writes_nothing() {
     let fx = Fixture::new();
     fx.seed();
     let before = support::snapshot(&fx.root());
@@ -326,7 +326,7 @@ fn browse_writes_nothing() {
         .env("FAKE_FZF_PREVIEW", "1")
         .env("FAKE_FZF_COPY", "1")
         .output()
-        .expect("run browse");
+        .expect("run tmux");
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(support::snapshot(&fx.root()), before, "the store changed");
     // The snapshot covers the whole root, so an audit line (a new file or

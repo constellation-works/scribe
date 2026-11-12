@@ -115,7 +115,7 @@ ban "$CLI/app.rs"    'crate::(cli|commands|output|audit_middleware)' "app.rs (co
 ban "$CLI/models.rs" 'crate::(cli|commands|output|audit_middleware)' "models.rs (the model adapter) must not import surface modules"
 # So is the Orbit task adapter, which reuses the model adapter's supervisor.
 ban "$CLI/tasks.rs"  'crate::(cli|commands|output|audit_middleware)' "tasks.rs (the Orbit task adapter) must not import surface modules"
-# The popup adapter is composed by commands/browse.rs and knows nothing of the surface.
+# The popup adapter is composed by commands/tmux.rs and knows nothing of the surface.
 ban "$CLI/popup.rs"  'crate::(cli|commands|output|audit_middleware)' "popup.rs (the tmux popup adapter) must not import surface modules"
 # Two adapters spawn supervised processes, and both go through models.rs's
 # supervisor, so process-group supervision, the cleared environment and the
