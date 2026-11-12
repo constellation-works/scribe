@@ -43,7 +43,7 @@ STD-01 grammar:
 |---|---|---|
 | `scribe hook <event>` | Claude Code hooks (the `plugin/claude-code/` package) | Reads the hook's JSON on stdin; captures `#scribe` instructions, switches cataloging on and off, marks session passes due. The only path that writes Daniel's entries (`author.kind: daniel`) and settles proposals about them. |
 | `scribe plugin call` | Orbit's exec backend (`plugin/.orbit-plugin/`) | Reads the Orbit tool request on stdin, writes the `{"ok", …}` envelope on stdout. Serves `scribe.ask` and the routines' tools. |
-| `scribe <noun> <verb>` | Daniel at a terminal, scripts, and agents through a shell (from S11) | Read-only `entry list/show`, `session list/show`, `proposal list`, `tag list`, `question ask`, plus `session pass` (Daniel runs it by hand) and `consistency scan` (its routine's job). From S8–S14: `record search`, list filters, the agent write verbs ([§1.1](#11-the-cli-agent-surface)), `session rebuild`, `session activate/deactivate`, `session catalog` and `transcript list/show`. |
+| `scribe <noun> <verb>` | Daniel at a terminal, scripts, and agents through a shell (from S11) | Read-only `entry list/show`, `session list/show`, `proposal list`, `tag list`, `question ask`, plus `session pass` (Daniel runs it by hand) and `consistency scan` (its routine's job). From S8–S14: `record search`, list filters, the agent write verbs ([§1.1](#11-the-cli-agent-surface)), `session rebuild`, `session activate/deactivate`, `session catalog`, `transcript list/show` and `browse` (the tmux popup, [§1.2](#12-the-tmux-popup)). |
 
 **The Orbit plugin tree** is `plugin/.orbit-plugin/`: `plugin.yaml`
 (`schemaVersion: 2`, `kind: Plugin`, `metadata.name: scribe`), `bin/scribe`
@@ -248,12 +248,15 @@ Mac. Box workers still cannot read scribe
 
 Daniel: "we need a very simple desktop UI or tmux UI for humans. perhaps
 tmux will be better - having another desktop app will be cumbersome."
-`plugin/tmux/scribe-tmux` is a POSIX shell script of about 60 lines that
-needs `fzf` and `scribe` on `PATH`; it adds no Rust dependency. Bound to a
-tmux key, it opens a popup:
+`scribe browse` runs the popup from inside the binary: a POSIX shell script
+of about 150 lines, embedded at build time and run with `sh -c`, over
+`fzf`. Nothing else is installed (an earlier standalone script had to be put
+on `PATH` and never was), and its child commands run the executable that
+was started, not whichever `scribe` is first on `PATH`. It needs `fzf` on
+`PATH` and adds no Rust dependency. Bound to a tmux key, it opens a popup:
 
 ```tmux
-bind-key S display-popup -E -w 90% -h 85% scribe-tmux
+bind-key S display-popup -E -w 90% -h 85% scribe browse
 ```
 
 - It lists sessions first (`scribe session list`, which prints
@@ -261,9 +264,12 @@ bind-key S display-popup -E -w 90% -h 85% scribe-tmux
   `ctrl-b` reload the list with sessions, active entries, open proposals or
   backfill candidates (`scribe transcript list --since <30 days ago>`,
   [§5.8](#58-cataloging-a-past-session)).
-- The preview pane is `scribe <noun> show <id>`: `session`, `entry`,
-  `proposal` or `transcript`.
-- Enter opens `scribe <noun> show <id> --log` in `$PAGER` (else `less`).
+- The preview pane is `scribe <noun> show <id> --format table`: `session`,
+  `entry` or `transcript`, and a proposal's `proposal list` row. The format
+  is explicit because `show` prints only its list line when stdout is not a
+  terminal, and the preview reads through a pipe.
+- Enter opens `scribe <noun> show <id> --format table` (with `--log` for a
+  session) in `$PAGER` (else `less`).
   On a candidate, Enter puts `scribe session catalog <id> --author daniel`
   in the tmux paste buffer and says so; cataloging runs from a shell, where
   its progress is visible.
@@ -271,9 +277,12 @@ bind-key S display-popup -E -w 90% -h 85% scribe-tmux
 - `alt-a` toggles inactive sessions and hidden entries (adds
   `--include-inactive` to the session list and drops `--status active`
   from the entry list).
+- Without `fzf` it exits 1 with an install hint (`fzf_missing`).
 
-It reads only, so it needs no audit. A real TUI is built only if this
-proves too small ([3_vision.md](./3_vision.md)).
+It reads only: `Command::audit` is `None`, it never opens the store, and it
+passes the data directory to its children as `SCRIBE_ROOT` (and drops
+`SCRIBE_FORMAT`, which would reshape the lists it parses). A real TUI is
+built only if this proves too small ([3_vision.md](./3_vision.md)).
 
 ## 2. Layering
 
@@ -318,7 +327,7 @@ port, its referent request and answer, and `ModelError`), form 3 in
 name it as the only module that spawns a process. The config's model ids
 are `ModelIds`, so the port alone is `Models`.
 
-S8–S14 add no crate and no process-spawning module. In the core, `session`
+S8–S14 add no crate and no process-spawning module, except that `browse` (the tmux popup) adds `popup.rs`, the adapter that runs its embedded script on the caller's terminal. In the core, `session`
 gains the header, the `Segment` log and the sealing rule; `record` gains
 `Author` (`{kind, name}`) and the date and related filters of `Listing`;
 `activity` (new, no I/O) holds the `active` flag, the age rule and the
@@ -2143,11 +2152,12 @@ labels instead of forwarding potentially misattributed model prose.
   in [§1.1](#11-the-cli-agent-surface), when to `ask` instead, the
   `--author` rule and the guard, and every command it names exists with
   the flags it shows.
-- `plugin/tmux/scribe-tmux` lists sessions, entries, proposals and
+- The popup lists sessions, entries, proposals and
   transcripts in fzf with `show` as the preview, opens a record with
   `--log` in the pager on Enter, copies the id on `ctrl-y`, and exits 1
-  with an install hint without `fzf`; the README documents the
-  `display-popup` binding.
+  with an install hint without `fzf`; the `display-popup` binding is
+  documented in `scribe browse --help`. (Shipped first as
+  `plugin/tmux/scribe-tmux`; see the note below.)
 
 **As built (S13).** The skill and the popup ship as designed, with two
 honest adaptations to what the binary offers today. There is no
@@ -2158,10 +2168,16 @@ since landed: the backfill view runs `transcript list` for the last 30
 days and shows one notice row when that list is empty or fails, and
 Enter on a candidate leaves `scribe session catalog <id> --author daniel`
 in the tmux paste buffer.
-The script prefixes each row with a hidden kind field so one fzf
+The popup was first a standalone script, `plugin/tmux/scribe-tmux`, that
+nothing installed; it is now the `scribe browse` subcommand (the same
+script embedded in the binary, with its README folded into
+`scribe browse --help`), and the Enter and preview views request
+`--format table` explicitly, because `show` through a pipe prints only its
+list line, so the first version's preview and Enter views showed no
+summary, log text or entry detail. The script prefixes each row with a hidden kind field so one fzf
 invocation's `ctrl-s`/`ctrl-e`/`ctrl-p`/`ctrl-b` reloads, its
 `alt-a` hidden-toggle and its `ctrl-y` copy all know the record's noun
-and id; `crates/scribe/tests/tmux_popup.rs` drives it through a fake
+and id; `crates/scribe/tests/tmux_popup.rs` drives `scribe browse` through a fake
 `fzf` against the real binary. The skill names only commands and flags
 the built binary has (checked against its `--help`). It teaches
 `transcript list` and `transcript show` as read-only, and it says

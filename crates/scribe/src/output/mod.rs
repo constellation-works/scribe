@@ -78,7 +78,8 @@ pub(crate) fn finish(sink: &Sink, outcome: Result<Output, CliError>) -> ExitCode
             | Output::Hook(_)
             | Output::Scan(_)
             | Output::Ask(_)
-            | Output::Plugin(_) => Ok(()),
+            | Output::Plugin(_)
+            | Output::Browsed => Ok(()),
         }
     });
     match result {
@@ -176,6 +177,7 @@ fn emit(sink: &Sink, output: &Output) -> io::Result<()> {
         Output::Scan(report) => render::scan(&mut out, sink, report)?,
         Output::Ask(payload) => render::ask(&mut out, sink, payload)?,
         Output::Plugin(reply) => render::plugin(&mut out, reply)?,
+        Output::Browsed => {}
     }
     out.flush()
 }

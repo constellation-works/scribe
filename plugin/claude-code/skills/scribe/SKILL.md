@@ -21,7 +21,7 @@ rather than guess from memory.
 |---|---|
 | Words you expect to appear in a record | `scribe record search "<terms>"` |
 | A date range, topic, status, project, task id or author | `scribe entry list`, `scribe session list` or `scribe proposal list` with the filters below |
-| One record's id (or the first four or more characters of it) | `scribe entry show <id>` or `scribe session show <id>` |
+| One record's id (or the first four or more characters of it) | `scribe entry show <id> --json` or `scribe session show <id> --json` |
 | A vague question, or one that needs weighing several records into an answer | `scribe question ask "<question>"` (the same answer as the `scribe.ask` MCP tool) |
 
 `record search` and the lists call no model and answer at once; reach for
@@ -38,10 +38,10 @@ scribe entry list [--tag <tag>] [--status active|superseded|retired|forgotten] [
 scribe session list [--project <p>] [--topic <t>]… [--related <ref>]… [--status open|final] [--since <date>] [--until <date>] [--limit <n>] [--tree] [--include-inactive]
 scribe proposal list [--state open|approved|rejected] [--since <date>] [--until <date>] [--entry <id>] [--author-kind daniel|agent|scribe]
 scribe tag list
-scribe entry show <id>
-scribe session show <id> [--log] [--segment <n>]
+scribe entry show <id> --json
+scribe session show <id> --json [--log] [--segment <n>]
 scribe transcript list --since <date> [--until <date>] [--project <slug>]… [--min-turns <n>] [--limit <n>]
-scribe transcript show <id>
+scribe transcript show <id> --json
 scribe question ask "<question>" [--tag <tag>]… [--topic <t>]… [--project <p>] [--kind entry|session] [--since <date>] [--include-hidden]
 ```
 
@@ -56,11 +56,14 @@ scribe question ask "<question>" [--tag <tag>]… [--topic <t>]… [--project <p
 - Every command that takes an id accepts a unique prefix of at least four
   characters. An exact id wins. An ambiguous prefix fails with exit 2 and
   `id_ambiguous`, listing the candidates; pick the full id and retry.
-- `session show <id>` prints the record's header (summary, goals, next
-  steps) and its log's table of contents. `--log` prints every segment's
-  text, `--segment <n>` only one segment, and
-  `scribe session show 'session:<id>#<n>'` shows one segment by its
-  citation. Cite a segment as `session:<id>#<n>` when you rely on it.
+- Your shell's stdout is a pipe, not a terminal, and `show` prints only
+  its one list line there (a session also one line per segment). The
+  detail needs `--json` (the whole record as an object) or, for reading
+  text, `--format table` (the header, summary, goals, next steps and the
+  log's table of contents). Every `show` example here carries `--json`.
+  With it, `--log` adds every segment's text, `--segment <n>` only one
+  segment, and `scribe session show 'session:<id>#<n>' --json` shows one
+  segment by its citation. Cite a segment as `session:<id>#<n>` when you rely on it.
 - Add `--json` (or `--format json`) to any command for the stable machine
   form: lists print one envelope (`entries`, `sessions`, `proposals`,
   `tags`, `hits` or `transcripts`, with `total`, `truncated` and

@@ -1980,7 +1980,7 @@ Daniel wrote, an agent could hide his words.
 ## Humans browse scribe in a tmux popup over fzf
 
 **Recorded:** 2026-11-10 · [ORB-23892] · **Daniel's choice**
-**Code anchors:** `plugin/tmux/scribe-tmux` (from S13)
+**Code anchors:** `crates/scribe/src/commands/browse.rs`, `crates/scribe/src/popup.rs`, `crates/scribe/src/popup.sh` (from S13)
 
 ### Context
 
@@ -1991,10 +1991,15 @@ maintain for what is mostly a list and a preview.
 
 ### Decision
 
-A POSIX shell script, `scribe-tmux`, of about 60 lines over `fzf`, bound to
+A POSIX shell script of about 150 lines over `fzf`, bound to
 a tmux key with `display-popup`: sessions, entries, proposals and backfill
 candidates in one list, `scribe … show` as the preview, Enter opens the
-record in the pager, a key copies the id. No new Rust dependency. A real
+record in the pager, a key copies the id. No new Rust dependency. It first
+shipped as a standalone file, `scribe-tmux`, that nothing installed; it is
+now the read-only `scribe browse` subcommand, the script embedded in the
+binary (`include_str!`, run with `sh -c`) so there is nothing to install
+and its child commands run the started executable, and its views ask for
+`--format table` because `show` through a pipe prints only its list line. A real
 TUI is built only if this proves too small.
 
 ### Consequences
@@ -2003,6 +2008,15 @@ TUI is built only if this proves too small.
   the CLI's plain output, so it changes when the CLI does.
 - Cost: `fzf` must be installed; the script parses tab-separated columns,
   so a column change in plain output is a change to the script too.
+- Deviation from `STD-03@2 §R11` (own process group) and the supervisor
+  path of `§R12–R13`: the popup child is interactive. fzf and the pager
+  read the tty, which a background process group cannot do (SIGTTIN), and
+  a person ends the session, so there is no budget to enforce. `popup.rs`
+  runs it in the caller's foreground group, waits for it, and reports its
+  exit status (`§R13`'s reaping holds). It is not an untrusted child, so
+  it inherits the environment (`STD-05@1 §R10` covers children that are
+  not fully trusted); its commands are the started executable's own
+  list and show verbs, and it drops `SCRIBE_FORMAT`.
 
 ## Backfill is by name: a session Daniel picks
 
