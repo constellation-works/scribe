@@ -12,21 +12,26 @@ refuse the manifest. Authenticate the Codex CLI normally first. The existing
 without symlink components or group/other write access. Scribe copies no auth
 and never creates or changes the permissions of provider files for setup.
 
-Configure the paths in the intended Orbit workspace **before** validating or
-upgrading this variant. Use the actual provider state directory; do not point
-runtime writes at its parent, auth file or configuration:
+First register this variant **without grants** in the intended Orbit workspace.
+For an existing Scribe install, the widened upgrade disables the plugin and
+clears its grants while preserving configuration and routines. Its new settings
+then become available through `orbit config set`. Use the actual provider state
+directory; do not point runtime writes at its parent, auth file or configuration:
 
 ```sh
+orbit plugin upgrade scribe plugin/orbit-codex/.orbit-plugin
 orbit config set plugins.scribe.codex_home /home/<user>/.codex
 orbit config set plugins.scribe.codex_runtime_tmp /home/<user>/.codex/tmp
 orbit config set plugins.scribe.codex_installation_id /home/<user>/.codex/installation_id
 orbit plugin validate plugin/orbit-codex/.orbit-plugin --render
-orbit plugin upgrade scribe plugin/orbit-codex/.orbit-plugin --grant fs,network,env_pass,orbit_tools
+orbit plugin enable scribe --grant fs,network,env_pass,orbit_tools
 ```
 
-On a fresh setup use `orbit plugin add` then `orbit plugin enable` with the same
-grant set, and configure the store root and Claude transcripts as described in
-the default package README. Inspect and accept the rendered filesystem grants:
+On a fresh setup use `orbit plugin add plugin/orbit-codex/.orbit-plugin` without
+`--enable`, configure these paths plus the store root and Claude transcripts,
+then validate and enable as above. The default package's settings API does not
+declare the two new runtime keys, so configure them only after registration.
+Inspect and accept the rendered filesystem grants:
 Codex's state root is read-only except for its `tmp` subtree and the exact
 `installation_id` file. Its auth, configuration and transcripts receive no write
 grant. No unsandboxed permission is requested. `codex` and `claude` must both be
