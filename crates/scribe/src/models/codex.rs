@@ -160,17 +160,26 @@ fn structured(bytes: &[u8]) -> Result<Value, ModelError> {
     let mut completed = false;
     for line in bytes.split(|b| *b == b'\n').filter(|l| !l.is_empty()) {
         let row: Value = serde_json::from_slice(line).map_err(|_| bad("invalid JSONL"))?;
+        if completed {
+            return Err(bad("event after completed turn"));
+        }
         match row["type"].as_str() {
             Some("thread.started" | "turn.started") => {}
+            // The CLI reports recoverable transport retries as error
+            // notifications, including a completed error item when falling
+            // back to HTTPS. They are diagnostics, never an answer. Exit
+            // zero, a completed turn and one schema-valid answer are still
+            // required; turn.failed and every tool item remain refusals.
+            Some("error") if row["message"].is_string() => {}
             Some("turn.completed") => {
-                if completed {
-                    return Err(bad("multiple completed turns"));
-                }
                 completed = true;
             }
             Some("item.started" | "item.updated" | "item.completed") => {
                 match row["item"]["type"].as_str() {
                     Some("reasoning") => {}
+                    Some("error")
+                        if row["type"] == "item.completed"
+                            && row["item"]["message"].is_string() => {}
                     Some("agent_message") => {
                         if row["type"] == "item.completed" {
                             let text = row["item"]["text"]

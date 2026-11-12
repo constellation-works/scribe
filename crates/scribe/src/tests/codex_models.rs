@@ -150,3 +150,32 @@ fn codex_failure_diagnostics_mask_configured_credentials() {
     assert!(!error.contains("synthetic-secret-for-redaction"));
     assert!(error.contains("[redacted:OPENAI_API_KEY]"));
 }
+
+#[test]
+fn codex_transport_notifications_require_a_successful_validated_completion() {
+    // Observed with the real CLI: WebSocket retry diagnostics and an HTTPS
+    // fallback error item precede a successful data-only answer, exit zero.
+    let diagnostics = [
+        serde_json::json!({"type":"error","message":"Reconnecting... 2/5 (stream disconnected before completion: invalid peer certificate: UnknownIssuer)"}),
+        serde_json::json!({"type":"item.completed","item":{"type":"error","message":"Falling back from WebSockets to HTTPS transport. stream disconnected before completion: invalid peer certificate: UnknownIssuer"}}),
+    ].into_iter().map(|row| format!("printf '%s\\n' '{row}'\n")).collect::<String>();
+    let valid = answer(serde_json::json!({"message":"a","span":"valid quote"}));
+    let fake = Fake::new(&format!("{diagnostics}{valid}"));
+    assert!(fake.model().referent(&request()).is_ok());
+
+    for invalid in [
+        diagnostics.clone(),
+        format!("{diagnostics}printf '%s\\n' '{{\"type\":\"turn.failed\"}}'\n{valid}"),
+        format!(
+            "{diagnostics}printf '%s\\n' '{{\"type\":\"item.completed\",\"item\":{{\"type\":\"command_execution\"}}}}'\n{valid}"
+        ),
+        format!("printf '%s\\n' '{{\"type\":\"error\",\"message\":null}}'\n{valid}"),
+        format!(
+            "printf '%s\\n' '{{\"type\":\"item.completed\",\"item\":{{\"type\":\"error\"}}}}'\n{valid}"
+        ),
+        format!("{valid}{diagnostics}"),
+    ] {
+        let fake = Fake::new(&invalid);
+        assert!(fake.model().referent(&request()).is_err(), "{invalid}");
+    }
+}

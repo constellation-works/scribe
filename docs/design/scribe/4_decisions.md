@@ -2243,3 +2243,14 @@ This avoids conditional template syntax, broad fallback paths and manually
 maintained provider manifests. The runtime smoke must exercise the actual
 Orbit sandbox with synthetic transcript/store data; direct Luna success alone
 does not establish plugin compatibility.
+
+Codex can report nonterminal `error` notifications and completed error items
+while retrying WebSockets or falling back to HTTPS, then return a valid model
+answer and complete successfully. An actual sandboxed session pass exposed
+this sequence. Recognize those typed diagnostic events with string messages;
+do not classify success by matching English retry text. Accept only after
+exit zero, exactly one schema-valid answer and a completed turn, with no later
+events. Failed turns, tool activity, unknown events and malformed diagnostics
+still refuse. The [Codex JSONL contract](https://learn.chatgpt.com/docs/non-interactive-mode#make-output-machine-readable)
+documents `error` separately from `turn.failed`; the native runtime probe
+establishes the observed recovery behavior.
