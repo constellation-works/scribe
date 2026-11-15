@@ -120,12 +120,11 @@ pub(in crate::commands) fn resolve_transcript(
     };
     let files = payload::files_for(ctx)?;
     let ids: Vec<String> = files.into_iter().map(|(id, _)| id.to_string()).collect();
-    match scribe_core::resolve_prefix(input.as_str(), &ids) {
-        Ok(full) => full
+    match scribe_core::resolve_prefix(input.as_str(), &ids)? {
+        Some(full) => full
             .parse::<SessionId>()
             .map_err(|e| CliError::Usage(e.to_string())),
-        Err(err) if err.code() == "id_ambiguous" => Err(err.into()),
-        Err(_) => Err(CliError::TranscriptNotFound {
+        None => Err(CliError::TranscriptNotFound {
             id: input.clone(),
             dir,
         }),

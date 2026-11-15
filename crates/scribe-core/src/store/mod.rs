@@ -46,10 +46,11 @@ mod redact;
 mod tags;
 pub use rebuild::RebuildGuard;
 
-pub use agent::check_agent_author;
+pub use agent::{check_agent_author, check_content, check_reason};
 pub use audit::{AUDIT_FILE, AuditEvent, AuditStatus};
 pub use ids::resolve_prefix;
 pub use redact::{MIN_SECRET_CHARS, REDACTED_FIELDS, Redactor, unresolved_redact_env};
+pub use tags::check_description;
 
 use crate::activity::{self, ActiveOutcome, SetActive};
 use crate::config::Config;

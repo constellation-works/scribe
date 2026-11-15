@@ -179,7 +179,15 @@ Rules every verb keeps:
 - **Ids.** Every command that takes an id takes a unique prefix of it (at
   least four characters). An exact id wins over a prefix. An ambiguous
   prefix is refused with exit 2 and `id_ambiguous`, listing up to ten
-  candidates; no prefix matches is the noun's `*_not_found`.
+  candidates; an input that is not an id and is shorter than four
+  characters is a usage error (exit 2) for every noun; no match is the
+  noun's `*_not_found` (exit 1), whose message names the id and the store
+  path searched (`entries/…`, `sessions`, `proposals.json`, the
+  transcripts directory) so a wrong `--root` shows.
+- **Argument checks come first.** A write verb refuses a bad argument
+  (unknown tag, blank content or reason, an id that matches nothing, a
+  repeated tag) before it reports an unset `[redact] env` name, so the
+  first error is about what the caller can fix in the command line.
 - **Authors.** Every write verb requires `--author <name>` (lowercase
   `[a-z0-9._-]`, 1–40 characters, by convention the agent's crew or model,
   such as `opus`) and records `{kind: agent, name}`. `kind: agent` means
@@ -2084,8 +2092,11 @@ As built (S10):
   scribe's sentence (`activated by hand`, `pinned by hand`, `activated
   and pinned by hand`, …); a `--reason` over 300 characters is refused as
   a usage error rather than cut (a model's reason is cut). `--cite` is
-  free text of one token, at most 200 characters, not resolved against
-  the store; activity belongs to the whole session, so a segment cite as
+  one token of at most 200 characters and must name a record that
+  exists: `session:<id>` (a unique prefix is stored in full),
+  `session:<id>#<n>` (segment `n` must exist) or an entry id; anything
+  else, or a record that is not in the store, is a usage error and nothing
+  is written. Activity belongs to the whole session, so a segment cite as
   the id is a usage error.
 - Ids were exact (or `session:<id>`) in S10; S11 added unique-prefix
   resolution (`id_ambiguous`), the CLI agent surface's rule

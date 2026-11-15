@@ -6,6 +6,21 @@ use crate::record::patch;
 use crate::{Author, AuthorKind, AuthorName, Result, StoreTag, TagName, TagPatch, TagTable};
 use time::OffsetDateTime;
 
+/// Refuse a tag description that is blank or over 300 characters.
+///
+/// # Errors
+///
+/// [`WriteRefusal::InvalidText`] for either.
+pub fn check_description(description: &str) -> Result<()> {
+    if description.trim().is_empty() || description.chars().count() > 300 {
+        return Err(refusal(
+            WriteRefusal::InvalidText,
+            "description must contain 1-300 characters",
+        ));
+    }
+    Ok(())
+}
+
 impl Store {
     /// Load the optional agent tag document without writing or locking.
     pub fn store_tags(&self) -> Result<Vec<StoreTag>> {
@@ -23,31 +38,107 @@ impl Store {
             .map_err(|e| refusal(WriteRefusal::TagConflict, e.to_string()))
     }
 
+    /// Check a new tag as `add_agent_tag` does, without locking or writing:
+    /// the description, a name no configured or stored tag already holds,
+    /// and a routing table that stays unambiguous with it.
+    ///
+    /// # Errors
+    ///
+    /// `invalid_text` for a bad description; `tag_conflict` saying the tag
+    /// already exists (in `config.toml` or the store) or which tag already
+    /// holds the name or an alias.
+    pub fn check_new_tag(&self, tag: &StoreTag) -> Result<()> {
+        check_description(&tag.description)?;
+        let configured = self.config_only()?.tags;
+        if let Some(held) = configured.resolve(tag.name.as_str()) {
+            let message = if held.name == tag.name {
+                format!(
+                    "tag '{}' already exists; it is configured in {}",
+                    tag.name,
+                    self.root.join(super::CONFIG_FILE).display()
+                )
+            } else {
+                format!(
+                    "'{}' is already an alias of the configured tag '{}'",
+                    tag.name, held.name
+                )
+            };
+            return Err(refusal(WriteRefusal::TagConflict, message));
+        }
+        if self.store_tags()?.iter().any(|t| t.name == tag.name) {
+            return Err(refusal(
+                WriteRefusal::TagConflict,
+                format!(
+                    "tag '{}' already exists in {}",
+                    tag.name,
+                    self.root.join("tags.json").display()
+                ),
+            ));
+        }
+        let mut defs = self.config()?.tags.tags().to_vec();
+        defs.push(tag.definition());
+        TagTable::new(defs).map_err(|e| refusal(WriteRefusal::TagConflict, e.to_string()))?;
+        Ok(())
+    }
+
     /// Add an agent tag without changing config.toml.
     pub fn add_agent_tag(&self, mut tag: StoreTag, redactor: &Redactor) -> Result<StoreTag> {
         check_agent_author(&tag.author.name)?;
         self.prepare_dir(&self.root)?;
         let _lock = self.lock("tag add")?;
-        if tag.description.trim().is_empty() || tag.description.chars().count() > 300 {
-            return Err(refusal(
-                WriteRefusal::InvalidText,
-                "description must contain 1-300 characters",
-            ));
-        }
+        self.check_new_tag(&tag)?;
         tag.author.kind = AuthorKind::Agent;
         tag.updated_by = None;
-        let config = self.config()?;
-        let mut defs = config.tags.tags().to_vec();
-        defs.push(tag.definition());
-        TagTable::new(defs).map_err(|e| refusal(WriteRefusal::TagConflict, e.to_string()))?;
         let mut tags = self.store_tags()?;
-        if tags.iter().any(|t| t.name == tag.name) {
-            return Err(refusal(WriteRefusal::TagConflict, "tag already exists"));
-        }
         redactor.tag(&mut tag);
         tags.push(tag.clone());
         self.write_tags(&tags)?;
         Ok(tag)
+    }
+
+    /// Check a tag update without locking or writing, so the CLI can report
+    /// an invalid target or alias before constructing a redactor. The write
+    /// path repeats these checks under the store lock.
+    pub fn check_agent_tag_update(&self, name: &TagName, patching: &TagPatch) -> Result<()> {
+        let configured = self.config_only()?.tags;
+        if configured.resolve(name.as_str()).is_some() {
+            return Err(refusal(
+                WriteRefusal::TagConfigured,
+                "edit config.toml to change a configured tag",
+            ));
+        }
+        let tags = self.store_tags()?;
+        let mut tag = tags
+            .iter()
+            .find(|tag| &tag.name == name)
+            .cloned()
+            .ok_or_else(|| refusal(WriteRefusal::TagNotFound, "no store tag with that name"))?;
+        if let Some(description) = &patching.description {
+            check_description(description)?;
+            tag.description.clone_from(description);
+        }
+        tag.aliases
+            .retain(|alias| configured.resolve(alias.as_str()).is_none());
+        patch(
+            &mut tag.aliases,
+            &patching.add_aliases,
+            &patching.remove_aliases,
+        );
+        if let Some(days) = patching.stale_after_days {
+            tag.stale_after_days = Some(days);
+        }
+        let (merged, _) = configured
+            .merge_store(&tags)
+            .map_err(|e| refusal(WriteRefusal::TagConflict, e.to_string()))?;
+        let mut defs = merged
+            .tags()
+            .iter()
+            .filter(|existing| existing.name != tag.name)
+            .cloned()
+            .collect::<Vec<_>>();
+        defs.push(tag.definition());
+        TagTable::new(defs).map_err(|e| refusal(WriteRefusal::TagConflict, e.to_string()))?;
+        Ok(())
     }
 
     /// Update an agent tag under the lock, preserving its creator.
@@ -79,12 +170,7 @@ impl Store {
         tag.aliases
             .retain(|a| configured.resolve(a.as_str()).is_none());
         if let Some(description) = patching.description {
-            if description.trim().is_empty() || description.chars().count() > 300 {
-                return Err(refusal(
-                    WriteRefusal::InvalidText,
-                    "description must contain 1-300 characters",
-                ));
-            }
+            check_description(&description)?;
             tag.description = redactor.mask(&description);
         }
         patch(

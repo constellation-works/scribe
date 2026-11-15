@@ -6,6 +6,6 @@ newer       -
 reason      Review this note.
 author      agent:opus
 updated_by  -
-settled_author-
+settled_author -
 opened      2026-11-10T01:00:00Z
 settled     -

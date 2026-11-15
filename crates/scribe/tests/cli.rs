@@ -324,7 +324,7 @@ fn in_json_mode_an_error_is_one_json_object_on_stderr() {
     let err = json(&out.stderr);
     assert_eq!(err["code"], "entry_not_found");
     assert!(err["error"].as_str().unwrap().contains("decisions-7"));
-    let out = fx.run(&["session", "show", "s-9", "--json"]);
+    let out = fx.run(&["session", "show", "s-9-missing", "--json"]);
     assert_eq!(json(&out.stderr)["code"], "session_not_found");
 }
 

@@ -2,7 +2,9 @@
 //! (docs/design/scribe/2_design.md §1.1): an exact id, or a unique prefix of
 //! at least [`MIN_PREFIX`] characters. An exact id wins over a prefix; an
 //! ambiguous prefix is refused `id_ambiguous` naming up to
-//! [`MAX_CANDIDATES`] candidates; no match is the noun's not-found.
+//! [`MAX_CANDIDATES`] candidates; an input that is not an id and is shorter
+//! than [`MIN_PREFIX`] is a usage error; no match is the noun's not-found,
+//! which names the id and the place searched.
 //! Resolution reads only: no lock, no write.
 
 use super::Store;
@@ -15,42 +17,50 @@ pub(crate) const MIN_PREFIX: usize = 4;
 pub(crate) const MAX_CANDIDATES: usize = 10;
 
 /// The index in `ids` of `input`: the id equal to it, else the one id it is
-/// a prefix of (at least [`MIN_PREFIX`] characters).
+/// a prefix of (at least [`MIN_PREFIX`] characters). `None` means nothing
+/// matched; the caller builds its noun's not-found error, which names the id
+/// and the place searched (STD-02 R26).
 ///
 /// # Errors
 ///
-/// `missing` when nothing matches; `id_ambiguous` listing the candidates
-/// when several do.
-pub(super) fn resolve(input: &str, ids: &[String], missing: WriteRefusal) -> Result<usize> {
+/// `usage_error` when `input` is not an id and is shorter than
+/// [`MIN_PREFIX`] characters; `id_ambiguous` listing the candidates when
+/// several ids match.
+pub(super) fn resolve(input: &str, ids: &[String]) -> Result<Option<usize>> {
     if let Some(i) = ids.iter().position(|id| id == input) {
-        return Ok(i);
+        return Ok(Some(i));
+    }
+    if input.chars().count() < MIN_PREFIX {
+        return Err(refusal(
+            WriteRefusal::InvalidId,
+            format!(
+                "'{input}' is not an id and too short to be a prefix; give an id or a unique prefix of at least four characters"
+            ),
+        ));
     }
     let matches: Vec<usize> = ids
         .iter()
         .enumerate()
-        .filter(|(_, id)| input.chars().count() >= MIN_PREFIX && id.starts_with(input))
+        .filter(|(_, id)| id.starts_with(input))
         .map(|(i, _)| i)
         .collect();
     match matches.as_slice() {
-        [i] => Ok(*i),
-        [] => Err(refusal(
-            missing,
-            "no matching id; list records with the same --root",
-        )),
+        [i] => Ok(Some(*i)),
+        [] => Ok(None),
         _ => Err(ambiguous(input, matches.iter().map(|i| ids[*i].as_str()))),
     }
 }
 
 /// The id in `ids` that `input` names: exact, else a unique prefix of at
-/// least [`MIN_PREFIX`] characters.
+/// least [`MIN_PREFIX`] characters. `None` when none does, so the caller can
+/// report its own noun's not-found with the place it searched.
 ///
 /// # Errors
 ///
-/// `id_ambiguous` when several ids match; an entry-not-found refusal when
-/// none do (the caller maps that to its own noun).
-pub fn resolve_prefix(input: &str, ids: &[String]) -> Result<String> {
-    let index = resolve(input, ids, WriteRefusal::EntryNotFound)?;
-    Ok(ids[index].clone())
+/// `usage_error` for an input shorter than [`MIN_PREFIX`] that is not an id;
+/// `id_ambiguous` when several ids match.
+pub fn resolve_prefix(input: &str, ids: &[String]) -> Result<Option<String>> {
+    Ok(resolve(input, ids)?.map(|i| ids[i].clone()))
 }
 
 fn ambiguous<'a>(input: &str, candidates: impl Iterator<Item = &'a str>) -> Error {
@@ -76,7 +86,8 @@ impl Store {
     ///
     /// # Errors
     ///
-    /// [`Error::SessionNotFound`] when nothing matches; an `id_ambiguous`
+    /// [`Error::SessionNotFound`] when nothing matches; a usage error for a
+    /// short input; an `id_ambiguous`
     /// [`Error::AgentWrite`] naming the candidates when several do; a store
     /// error otherwise.
     pub fn resolve_session(&self, input: &SessionId) -> Result<SessionId> {
@@ -89,18 +100,14 @@ impl Store {
         );
         ids.sort();
         ids.dedup();
-        match resolve(input.as_str(), &ids, WriteRefusal::EntryNotFound) {
-            Ok(i) => ids[i]
+        match resolve(input.as_str(), &ids)? {
+            Some(i) => ids[i]
                 .parse::<SessionId>()
                 .map_err(|e| refusal(WriteRefusal::InvalidId, e.to_string())),
-            Err(Error::AgentWrite {
-                kind: WriteRefusal::EntryNotFound,
-                ..
-            }) => Err(Error::SessionNotFound {
+            None => Err(Error::SessionNotFound {
                 id: input.clone(),
                 path: self.root.join(super::SESSIONS_DIR),
             }),
-            Err(other) => Err(other),
         }
     }
 }

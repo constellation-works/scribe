@@ -112,13 +112,24 @@ pub(crate) fn finish_parse_error(err: &clap::Error, args: &[OsString]) -> ExitCo
     let env_format = std::env::var(FORMAT_ENV).ok();
     let rendered = err.render().to_string();
     if sink::raw_args_request_json(args, env_format.as_deref()) {
-        let first = rendered.lines().next().unwrap_or_default();
-        let message = first.strip_prefix("error: ").unwrap_or(first);
-        write_json_error(message, "usage_error");
+        write_json_error(&usage_message(&rendered), "usage_error");
     } else {
         let _ = io::stderr().lock().write_all(rendered.as_bytes());
     }
     ExitCode::from(code)
+}
+
+/// The message of a rendered clap error: everything before its `Usage:`
+/// block, without the `error: ` prefix, as one line. clap puts the detail
+/// (the missing argument, the rejected value) on the lines after the first.
+fn usage_message(rendered: &str) -> String {
+    let detail: Vec<&str> = rendered
+        .lines()
+        .take_while(|line| !line.trim().is_empty())
+        .map(str::trim)
+        .collect();
+    let joined = detail.join(" ");
+    joined.strip_prefix("error: ").unwrap_or(&joined).to_owned()
 }
 
 fn emit(sink: &Sink, output: &Output) -> io::Result<()> {

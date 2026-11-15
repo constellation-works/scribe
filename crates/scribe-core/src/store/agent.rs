@@ -6,7 +6,7 @@ use crate::entry::{AgentEntry, EntryPatch};
 use crate::record::patch;
 use crate::{
     Author, AuthorKind, AuthorName, ContentFrom, Entry, EntryId, EntryStatus, Error, Label,
-    Proposal, ProposalId, ProposalKind, ProposalState, Result, Topics,
+    Proposal, ProposalId, ProposalKind, ProposalState, Result, TagName, Topics,
 };
 use time::OffsetDateTime;
 
@@ -36,6 +36,31 @@ pub fn check_agent_author(author: &AuthorName) -> Result<()> {
     Ok(())
 }
 
+/// Refuse blank free text: an entry's content or a proposal's text.
+///
+/// # Errors
+///
+/// [`WriteRefusal::InvalidText`] when `text` is empty or only whitespace.
+pub fn check_content(text: &str) -> Result<()> {
+    required(text)
+}
+
+/// Refuse a blank reason, or one over 300 characters.
+///
+/// # Errors
+///
+/// [`WriteRefusal::InvalidText`] for either.
+pub fn check_reason(reason: &str) -> Result<()> {
+    required_reason(reason)
+}
+
+fn unknown_tag() -> Error {
+    refusal(
+        WriteRefusal::TagNotFound,
+        "unknown tag; run 'scribe tag list'",
+    )
+}
+
 fn required(text: &str) -> Result<()> {
     if text.trim().is_empty() {
         return Err(refusal(WriteRefusal::InvalidText, "text must not be empty"));
@@ -55,12 +80,33 @@ fn required_reason(reason: &str) -> Result<()> {
 }
 
 impl Store {
+    /// The index in `ids` of the proposal `input` names; a miss is
+    /// `proposal_not_found`, naming the id and the file searched.
+    fn proposal_index(&self, input: &str, ids: &[String]) -> Result<usize> {
+        // A well-formed id is an exact lookup, as for entries; only other
+        // input is a prefix, which needs four characters.
+        let found = if input.parse::<ProposalId>().is_ok() {
+            ids.iter().position(|id| id == input)
+        } else {
+            resolve(input, ids)?
+        };
+        found.ok_or_else(|| {
+            refusal(
+                WriteRefusal::ProposalNotFound,
+                format!(
+                    "no proposal {input} in {}; run 'scribe proposal list' with the same --root to see existing ids",
+                    self.root.join(super::PROPOSALS_FILE).display()
+                ),
+            )
+        })
+    }
+
     /// Resolve an exact proposal id or a unique prefix of at least four
     /// characters, as the write verbs do, without locking or writing.
     pub fn resolve_proposal(&self, input: &str) -> Result<Proposal> {
         let proposals = self.proposals()?;
         let ids: Vec<String> = proposals.iter().map(|p| p.id.to_string()).collect();
-        let i = resolve(input, &ids, WriteRefusal::ProposalNotFound)?;
+        let i = self.proposal_index(input, &ids)?;
         Ok(proposals[i].clone())
     }
 
@@ -98,25 +144,57 @@ impl Store {
         }));
         ids.sort();
         ids.dedup();
-        let i = match resolve(input, &ids, WriteRefusal::EntryNotFound) {
-            Ok(i) => i,
-            Err(Error::AgentWrite {
-                kind: WriteRefusal::EntryNotFound,
-                ..
-            }) if exact.is_some() => {
-                let id =
-                    exact.ok_or_else(|| refusal(WriteRefusal::EntryNotFound, "entry missing"))?;
-                return Err(Error::EntryNotFound {
+        let Some(i) = resolve(input, &ids)? else {
+            return Err(match exact {
+                Some(id) => Error::EntryNotFound {
                     path: self.entry_path(&id),
                     id,
-                });
-            }
-            Err(e) => return Err(e),
+                },
+                None => refusal(
+                    WriteRefusal::EntryNotFound,
+                    format!(
+                        "no entry matches '{input}' under {}; run 'scribe entry list' with the same --root to see existing ids",
+                        self.root.join(super::ENTRIES_DIR).display()
+                    ),
+                ),
+            });
         };
         let id = ids[i]
             .parse::<EntryId>()
             .map_err(|e| refusal(WriteRefusal::InvalidId, e.to_string()))?;
         self.entry(&id)
+    }
+
+    /// Check a new note's arguments (content and tag) as `add_agent_entry`
+    /// does, without locking or writing, so a caller can refuse a bad
+    /// argument before it sets up anything a write needs.
+    ///
+    /// # Errors
+    ///
+    /// `invalid_text` for blank content; `tag_not_found` for a tag no
+    /// config or store tag names.
+    pub fn check_new_entry(&self, tag: &TagName, content: &str) -> Result<()> {
+        required(content)?;
+        self.config()?
+            .tags
+            .resolve(tag.as_str())
+            .map(|_| ())
+            .ok_or_else(unknown_tag)
+    }
+
+    /// Check an agent entry patch without locking or writing, so invalid
+    /// content, topics or ids can be reported before a caller constructs a
+    /// redactor. The write path repeats these checks under the store lock.
+    pub fn check_agent_entry_update(&self, id: &str, patching: &EntryPatch) -> Result<()> {
+        if let Some(content) = &patching.content {
+            required(content)?;
+        }
+        let entry = self.resolve_entry(id)?;
+        let mut topics = entry.topics.as_slice().to_vec();
+        patch(&mut topics, &patching.add_topics, &patching.remove_topics);
+        Topics::try_from(topics)
+            .map(|_| ())
+            .map_err(|e| refusal(WriteRefusal::InvalidTopics, e.to_string()))
     }
 
     /// Create a note with agent provenance, allocating an unused id under the lock.
@@ -132,12 +210,10 @@ impl Store {
         self.prepare_dir(&self.root)?;
         let _lock = self.lock("entry add")?;
         let config = self.config()?;
-        let tag = config.tags.resolve(draft.tag.as_str()).ok_or_else(|| {
-            refusal(
-                WriteRefusal::TagNotFound,
-                "unknown tag; run 'scribe tag list'",
-            )
-        })?;
+        let tag = config
+            .tags
+            .resolve(draft.tag.as_str())
+            .ok_or_else(unknown_tag)?;
         let (entries, skipped) = self.load_entries()?;
         let mut ids: Vec<EntryId> = entries.iter().map(|e| e.id.clone()).collect();
         ids.extend(
@@ -390,7 +466,7 @@ impl Store {
         let _lock = self.lock("proposal change")?;
         let mut proposals = self.proposals()?;
         let ids: Vec<String> = proposals.iter().map(|p| p.id.to_string()).collect();
-        let i = resolve(id, &ids, WriteRefusal::ProposalNotFound)?;
+        let i = self.proposal_index(id, &ids)?;
         let p = &mut proposals[i];
         let before = p.clone();
         let reason_changed = reason.is_some_and(|r| redactor.mask(r) != p.reason);

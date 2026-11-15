@@ -55,33 +55,41 @@ pub(super) fn run(command: TagCommand, ctx: &Context) -> Result<Output, CliError
     match command {
         TagCommand::List(ListArgs {}) => list(ctx),
         TagCommand::Add(args) => {
-            let redactor = ctx.redactor(&ctx.store().config()?)?;
             let now = ctx.now();
-            let tag = ctx.store().add_agent_tag(
-                scribe_core::StoreTag {
-                    name: args.name,
-                    aliases: args.alias,
-                    description: args.description,
-                    stale_after_days: args.stale_after_days,
-                    author: scribe_core::Author::agent(args.author),
-                    updated_by: None,
-                    created: now,
-                    updated: now,
-                },
-                &redactor,
-            )?;
+            let tag = scribe_core::StoreTag {
+                name: args.name,
+                aliases: args.alias,
+                description: args.description,
+                stale_after_days: args.stale_after_days,
+                author: scribe_core::Author::agent(args.author),
+                updated_by: None,
+                created: now,
+                updated: now,
+            };
+            // Arguments first: a bad or repeated tag is reported before an
+            // unset [redact] env name.
+            scribe_core::check_agent_author(&tag.author.name)?;
+            ctx.store().check_new_tag(&tag)?;
+            let redactor = ctx.redactor(&ctx.store().config()?)?;
+            let tag = ctx.store().add_agent_tag(tag, &redactor)?;
             Ok(Output::written(Record::Tag(Box::new(tag)), true))
         }
         TagCommand::Update(args) => {
+            scribe_core::check_agent_author(&args.author)?;
+            if let Some(description) = &args.description {
+                scribe_core::check_description(description)?;
+            }
+            let patch = scribe_core::TagPatch {
+                description: args.description,
+                add_aliases: args.add_alias,
+                remove_aliases: args.remove_alias,
+                stale_after_days: args.stale_after_days,
+            };
+            ctx.store().check_agent_tag_update(&args.name, &patch)?;
             let redactor = ctx.redactor(&ctx.store().config()?)?;
             let (tag, changed) = ctx.store().update_agent_tag(
                 &args.name,
-                scribe_core::TagPatch {
-                    description: args.description,
-                    add_aliases: args.add_alias,
-                    remove_aliases: args.remove_alias,
-                    stale_after_days: args.stale_after_days,
-                },
+                patch,
                 args.author,
                 ctx.now(),
                 &redactor,
