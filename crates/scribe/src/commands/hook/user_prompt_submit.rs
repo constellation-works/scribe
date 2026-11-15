@@ -179,6 +179,8 @@ pub(super) fn run_with<M: Models>(
         at,
         prompt_sha256: capture::prompt_sha256(&payload.prompt),
         cwd: payload.cwd.clone(),
+        // The cwd's project. A line that opens with `#scribe/global`
+        // overrides this when its draft is built.
         project: project::of(std::path::Path::new(&payload.cwd)),
         provider: Label::sanitized(ctx.provider().as_str(), ctx.provider().as_str()),
         host: ctx.host(),
@@ -207,10 +209,12 @@ pub(super) fn run_with<M: Models>(
                 } else {
                     let window = capture::window(referents.messages(), &turn.prompt_sha256);
                     if window.is_empty() {
+                        let marked = referent.global;
                         Plan::Refused(Refused {
                             line: referent.line,
                             said: referent.said,
                             reason: Refusal::NoReferent,
+                            marked,
                         })
                     } else {
                         if adapter.is_none() {
@@ -231,11 +235,15 @@ pub(super) fn run_with<M: Models>(
                                     guess,
                                 }
                             }
-                            None => Plan::Refused(Refused {
-                                line: referent.line,
-                                said: referent.said,
-                                reason: Refusal::NoReferent,
-                            }),
+                            None => {
+                                let marked = referent.global;
+                                Plan::Refused(Refused {
+                                    line: referent.line,
+                                    said: referent.said,
+                                    reason: Refusal::NoReferent,
+                                    marked,
+                                })
+                            }
                         }
                     }
                 }
@@ -266,7 +274,7 @@ pub(super) fn run_with<M: Models>(
                 echoes.push(Echo::not_recorded(format!(
                     "scribe: refused \"{}\" — {}",
                     quote(&refused.said),
-                    refused.reason
+                    refused.message()
                 )));
                 outcomes.push(refusal(&session, refused.reason.code()));
             }

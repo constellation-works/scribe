@@ -5,7 +5,9 @@ A standalone Orbit plugin that keeps Daniel's explicitly marked preferences and 
 A `#scribe` line Daniel types in Claude Code or a supported Codex desktop user thread is recorded as an entry by the
 `UserPromptSubmit` hook (forms `#scribe <tag>: <content>` and `#scribe add
 <content> to <tag>`, and `#scribe add this to <tag>`, whose "this" a model
-resolves). `/scribe on` in a session catalogs it: `scribe session pass`
+resolves). The same line opening `#scribe/global` instead of `#scribe` stores
+`project: global`, for every repository; without it the entry keeps the
+working directory's project. `/scribe on` in a session catalogs it: `scribe session pass`
 writes one record per session whose pass is due. The CLI reads the store and accepts authored agent notes,
 and `scribe question ask` answers from it, quoting each record it cites
 verbatim; the Orbit plugin in `plugin/.orbit-plugin/` serves the same

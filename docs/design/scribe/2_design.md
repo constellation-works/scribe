@@ -424,7 +424,7 @@ by fields before any ranking. Every record carries:
 | `format`, `kind` | `3` (`4` from S8); `entry` or `session` |
 | `id` | `decisions-12`, or the session id |
 | `status` | entry: `active`, `superseded`, `retired`, `forgotten`; session: `open`, `final` |
-| `project` | the repository slug from the cwd's git remote, else the cwd's basename; `global` when Daniel says so |
+| `project` | the repository slug from the cwd's git remote, else the cwd's basename; `global` when the line opens with `#scribe/global` instead of `#scribe` ([§4.2](#42-parsing-an-instruction)) |
 | `topics` | 0–5 lowercase kebab-case labels (`ci`, `crew-routing`, `release`) |
 | `related` | references the record mentions: `task:ORB-123`, `pr:<owner>/<repo>#7`, `repo:<slug>`, `session:<id>` (model-extracted for a session) |
 | `links` | sessions only: `[{type, session}]`, `type` `spawned_from` or `continues`; the session structure Daniel asserted ([§5.4](#54-session-links)), stored on the child only |
@@ -664,11 +664,14 @@ environment refuses the write instead of storing text unmasked
 ### 4.1 Detection
 
 `scribe hook user-prompt-submit` receives `session_id`, `transcript_path`,
-`cwd` and `prompt`. `capture::instructions` finds every line of `prompt`
-that starts with `#scribe ` (after optional leading whitespace), skipping
-lines inside code fences, blockquotes and `<pasted_content>` blocks (the
-orbit-office `markers.rs` rule). Each such line is one instruction; a turn
-with two lines writes two entries. A bare `#decision`, `#preferences` or any
+`cwd` and `prompt`. `capture::lines` finds every line of `prompt`
+that starts with `#scribe` or `#scribe/` (after optional leading
+whitespace). A `#scribe` line must end there or continue with whitespace;
+`#scribe/` is the global-marker attempt, including a malformed one.
+Lines inside code fences, blockquotes and `<pasted_content>` blocks are
+skipped (the orbit-office `markers.rs` rule). Each such line is one
+instruction; a turn with two lines writes two entries. A bare `#decision`,
+`#preferences` or any
 other hashtag is not an instruction and captures nothing, with no reply.
 
 Only Daniel writes scribe: a user-role turn that is not plainly typed by
@@ -750,6 +753,24 @@ below. Form 3 is a line whose content is exactly one of the four referent
 words, with or without a verb (`#scribe that to decisions`); `#scribe add
 this rule to decisions` is form 2 with the content `this rule`.
 The tag word of form 2 may end in `.`, `!`, `,` or `;`.
+
+A line records `project: global` when its first word is `#scribe/global`
+instead of `#scribe`. The rest of the line is one of the three capture
+forms: `#scribe/global <tag>: <content>`,
+`#scribe/global [add|record|note] <content> (to|in|under) [my|the] <tag>`,
+and `#scribe/global [add|record] (this|that|it|these) (to|in|under) [my|the] <tag>`.
+A line that opens with `#scribe` records the cwd's project, as before.
+`author.kind` stays `daniel` either way: this is still Daniel's typed line,
+not `scribe entry add`. The opener is not a topic hashtag and not a tag
+name. `#global` at the end of a line is still a topic, and a tag or alias
+named `global` is still named by the tag word (`#scribe global: …`,
+`#scribe add … to global`). Anything else in that first word
+(`#scribe/Global`, `#scribe/all`, a bare `#scribe/`) is refused with
+`unparsed_instruction` and writes nothing. The same refusal applies when
+`#scribe/global` opens a line that does not record an entry (`approve`,
+`reject`, `retire`, `forget`, `distill`): nothing is settled and nothing is
+written. A refused line, marked or not, writes no entry. The forms text in
+that refusal (`FORMS`) includes `#scribe/global`.
 
 ### 4.3 Resolving "this" and "it"
 
