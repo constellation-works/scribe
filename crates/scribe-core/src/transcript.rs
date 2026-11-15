@@ -9,7 +9,10 @@
 //! (a subagent's) and meta lines (`isMeta`, the harness's own) are not the
 //! conversation and are dropped too. A line that does not parse, or has a
 //! shape this build does not know, is skipped: the file is Claude Code's,
-//! and a new line type must not break capture.
+//! and a new line type must not break capture. A uuid names one message:
+//! Claude Code rewrites earlier lines into the file again (with their uuid,
+//! timestamp and text) when a session is resumed, so a line whose uuid an
+//! earlier line already used is a replay and only its first copy is kept.
 //!
 //! Bytes in, messages out: no I/O (STD-02 R5). A survey of the same bytes
 //! counts Daniel's turns the way a pass does, for `transcript list`.
@@ -50,7 +53,8 @@ impl Message {
     }
 }
 
-/// The messages of a transcript, in file order.
+/// The messages of a transcript, in file order, each uuid once: a replayed
+/// line keeps the position of its first copy.
 #[must_use]
 pub fn parse(bytes: &[u8]) -> Vec<Message> {
     if is_codex(bytes) {
@@ -59,10 +63,12 @@ pub fn parse(bytes: &[u8]) -> Vec<Message> {
             .unwrap_or_default();
     }
 
+    let mut seen = std::collections::HashSet::new();
     bytes
         .split(|&b| b == b'\n')
         .filter_map(|line| serde_json::from_slice::<Value>(line).ok())
         .filter_map(|value| message(&value))
+        .filter(|m| seen.insert(m.uuid.clone()))
         .collect()
 }
 

@@ -335,6 +335,161 @@ fn header_overruns_retry_with_only_the_header_and_preserve_the_segments() {
     assert_eq!(setup.control()["due"], false);
 }
 
+/// A line Claude Code wrote again on resume: the same uuid, timestamp and
+/// text as the first copy, from another working directory.
+fn replayed(kind: &str, uuid: &str, text: &str) -> Value {
+    let mut line = line(kind, uuid, text);
+    line["cwd"] = json!("/nonexistent/work/elsewhere");
+    line
+}
+
+/// The fake `claude` answers `body` with every `__window_first__` replaced
+/// by the id of the first message in the window it was sent, as a model
+/// opening a new segment at the window's first message does.
+fn answer_at_window_first(setup: &Setup, body: &Value) {
+    let envelope = json!({"type":"result", "subtype":"success", "is_error":false,
+                          "result":"", "structured_output":body});
+    setup.fx.fake_program(
+        "claude",
+        &format!(
+            "#!/bin/sh\nn=$(ls \"$HOME\" | grep -c '^claude-stdin')\ncat > \"$HOME/claude-stdin-$n\"\nfirst=$(sed -n 's/^--- .* · \\(.*\\) ---$/\\1/p' \"$HOME/claude-stdin-$n\" | head -1)\nprintf '%s\\n' '{envelope}' | sed \"s/__window_first__/$first/g\"\n"
+        ),
+    );
+}
+
+#[test]
+fn a_replayed_transcript_is_read_once_and_a_segment_after_the_replay_is_accepted() {
+    // ORB-24918: Claude Code wrote earlier lines into the transcript again on
+    // resume. The pass resumed after the first copy of `scribed_through`,
+    // re-read the replay, and refused every start in it as not following the
+    // open segment.
+    let setup = Setup::new();
+    setup.scribe("/scribe on");
+    setup.pass();
+    assert_eq!(setup.record(ON).unwrap()["scribed_through"], "a-1");
+    setup.append(
+        ON,
+        &[
+            replayed("user", "u-1", &format!("Crews. {DEFINED}.")),
+            replayed(
+                "assistant",
+                "a-1",
+                "Level 4 crews merge their own pull requests after green CI.",
+            ),
+            line("user", "u-2", "Fresh work after the resume."),
+        ],
+    );
+    let mut body = answer();
+    body["terms"] = json!([]);
+    body["new"][0]["heading"] = json!("After the resume");
+    body["new"][0]["text"] = json!("Fresh work.");
+    answer_at_window_first(&setup, &body);
+
+    let out = setup.run(&["session", "pass", "--session", ON, "--json"], b"");
+
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["passes"][0]["result"], "written", "{report}");
+    assert_eq!(report["passes"][0]["windows"], 1);
+    assert_eq!(report["passes"][0]["warnings"], json!([]), "{report}");
+    assert!(
+        !text(&out.stderr).contains("refused"),
+        "{}",
+        text(&out.stderr)
+    );
+    let prompts = setup.prompts();
+    assert_eq!(prompts.len(), 2, "one call per pass, no retry");
+    assert!(prompts[1].contains("· u-2 ---"));
+    for replay in ["· u-1 ---", "· a-1 ---"] {
+        assert!(!prompts[1].contains(replay), "{replay} read again");
+    }
+    let record = setup.record(ON).unwrap();
+    let log = record["log"].as_array().unwrap();
+    assert_eq!(log.len(), 2);
+    assert_eq!(log[0]["state"], "sealed");
+    assert_eq!(log[0]["last_message"], "a-1");
+    assert_eq!(log[1]["first_message"], "u-2");
+    assert_eq!(log[1]["heading"], "After the resume");
+    assert_eq!(record["scribed_through"], "u-2");
+
+    // A second replay with nothing new needs no model call.
+    setup.append(
+        ON,
+        &[
+            replayed("user", "u-1", &format!("Crews. {DEFINED}.")),
+            replayed("user", "u-2", "Fresh work after the resume."),
+        ],
+    );
+    setup.run(&["session", "pass", "--session", ON, "--json"], b"");
+    assert_eq!(setup.prompts().len(), 2);
+    assert_eq!(setup.record(ON).unwrap()["passes"], record["passes"]);
+}
+
+#[test]
+fn next_and_segment_text_get_a_target_and_their_current_length() {
+    // ORB-24918: `next` and segment text had only their hard limits, so a
+    // record carrying ~900 characters of `next` forward overshot 1000 when
+    // the model added an item.
+    let setup = Setup::new();
+    let mut first = answer();
+    let items: Vec<String> = (0..9)
+        .map(|n| format!("item {n} {}", "x".repeat(100)))
+        .collect();
+    first["next"] = json!(items);
+    first["new"][0]["text"] = json!("é".repeat(650));
+    setup.answer(&first);
+    setup.scribe("/scribe on");
+    setup.pass();
+    let record = setup.record(ON).unwrap();
+    let next_chars = record["next"].as_str().unwrap().chars().count();
+    assert!(next_chars > 900, "{next_chars}");
+
+    setup.append(ON, &[line("user", "u-2", "One more step.")]);
+    let mut over = answer();
+    over["new"] = json!([]);
+    over["open"] = json!(null);
+    let mut more = items.clone();
+    more.push(format!("item 9 {}", "x".repeat(100)));
+    over["next"] = json!(more);
+    let compressed = json!({
+        "title": "Defining crew levels",
+        "summary": "Daniel defined what level 4 means for crews.",
+        "goals": "Name the crew levels.",
+        "next": ["write it into the routing doc"]
+    });
+    // The fake numbers calls across runs: the first pass was call 0.
+    setup.answers(&[None, Some(over), Some(compressed)]);
+
+    let out = setup.run(&["session", "pass", "--session", ON], b"");
+
+    let prompts = setup.prompts();
+    assert_eq!(prompts.len(), 3);
+    let window = &prompts[1];
+    assert!(
+        window.contains(
+            "next: the open next steps, one short item each, at most 750 characters in all \
+             (hard limit 1000), counting a `- ` prefix per item and a newline between items"
+        ),
+        "{window}"
+    );
+    assert!(window.contains(&format!("Current next length: {next_chars} characters.")));
+    assert!(window.contains("Segment text is at most 700 characters (hard limit 900)"));
+    assert!(window.contains("text length: 650 characters\n"));
+    let compress = &prompts[2];
+    assert!(compress.starts_with("Compress only"));
+    assert!(compress.contains("next: at most 750 characters total (hard limit 1000)"));
+    assert!(compress.contains("Current next length: 1099 characters."));
+    // The retry resolved the refusal: nothing at warn level.
+    assert!(
+        !text(&out.stderr).contains("refused"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(
+        setup.record(ON).unwrap()["next"],
+        "- write it into the routing doc"
+    );
+}
+
 #[test]
 fn omitted_or_null_open_keeps_its_content_and_still_advances_and_seals() {
     for omitted in [true, false] {

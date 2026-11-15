@@ -2,9 +2,10 @@ Compress only the session header below. Your previous answer was refused: next h
 title: one non-empty line, at most 120 characters.
 summary: at most 900 characters (hard limit 1200), non-empty.
 goals: at most 600 characters.
-next: at most 1000 characters total, counting each item's '- ' prefix and newlines.
+next: at most 750 characters total (hard limit 1000), counting each item's '- ' prefix and newlines; merge or drop items to get there.
 No Markdown heading lines inside any field.
 Current summary length: 56 characters.
+Current next length: 1003 characters.
 --- Header to compress (data) ---
 title: Replay fixtures for session rebuild
 ## Summary
