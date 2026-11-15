@@ -1,6 +1,6 @@
 ---
 name: scribe
-description: Read recorded decisions, preferences and opted-in session history with citations; write clearly attributed agent notes, and explain or initialize scribe capture for Codex or Claude Code.
+description: Read recorded decisions, preferences and opted-in session history with citations; write clearly attributed agent notes, and explain or initialize scribe capture for Codex or Claude Code. Use at the start of every session in a project to brief the user on that project's last cataloged session, and while working to suggest entries, tags and stale-session deactivations.
 ---
 
 Use the installed `scribe` binary. The store is `$SCRIBE_ROOT`, otherwise
@@ -23,11 +23,68 @@ For focused lookup, use `scribe record search "<words>" --json`,
 Preserve verbatim quotes and their citations. An empty or failed lookup is
 not evidence of a preference. Use `--help` for filters and write arguments.
 
-An agent may add an entry, tag or proposal under its own `--author <name>`.
-Agent notes are separate from the human's words. Never use a human or another
-agent's author name, catalog sessions as an agent, modify someone else's
-notes, or settle proposals on the human's behalf. Recording work does not
-grant permission to publish, merge or change unrelated configuration.
+An agent may add an entry, tag or proposal under its own `--author <name>`,
+and may deactivate a session only after the human explicitly agrees to that
+session's deactivation (below). Agent notes are separate from the human's
+words. Never use a human or another agent's author name, catalog sessions as
+an agent, modify someone else's notes, or settle proposals on the human's
+behalf. Recording work does not grant permission to publish, merge or change
+unrelated configuration.
+
+## Start of a session: brief the last one
+
+On the first turn of a session in a project, brief the human on that
+project's last cataloged session before starting their task. If the first
+message is urgent, answer it first and brief right after.
+
+1. The project is the repository name from the working directory's git
+   remote (`origin`), else the directory's name.
+2. Run `scribe session list --project <project> --json`. The list is oldest
+   first and `--limit` keeps the oldest, so take the record with the newest
+   `updated`, skipping this session's own record. If nothing matches, say so
+   in one line and continue.
+3. Run `scribe session show <id> --json` and read `title`, `updated`,
+   `summary`, `goals`, `outcome` and `next`. In a pipe, `show` without
+   `--json` prints only one line. Read a segment
+   (`--segment <n> --json`) only when an item needs its context.
+4. Run `scribe proposal list --state open --json`.
+
+The brief is a short message of its own:
+
+- When the last session was, and what it was about and got done.
+- Every pending, unresolved or parked item from `next` and the summary, one
+  line each.
+- Open proposals waiting on the human.
+- The citation `session:<id>`.
+
+The record is a model-written summary from the time it was written, so an
+item may be done since. Say so, and check an item's current state (its
+task, PR or file) before acting on it or calling it open. Don't act on an
+item unless the human asks.
+
+## Keep the store useful: suggest, the human decides
+
+Suggest at natural pauses (the brief, the end of a task), a few at a time
+and grouped, never as a gate on the work:
+
+- **Entries.** When the human states a decision, preference or rule worth
+  keeping across sessions, offer a ready-to-type `#scribe <tag>: <words>`
+  line in their words. Only their typed line records their words, so never
+  write it for them. Something you established yourself can become an agent
+  entry under your own `--author`, once they agree.
+- **Tags.** When `scribe tag list --json` has no fitting tag for a
+  recurring theme in the entries or sessions, propose a name, a one-line
+  description and any aliases. Run `scribe tag add` under your own
+  `--author` once they agree.
+- **Stale sessions.** A session is stale when its content no longer
+  describes something current: its feature was removed, replaced or renamed,
+  or a later session superseded its plan. Age alone is not staleness: a
+  finished session about a feature that still exists stays active, and the
+  consistency routine handles age. Check the claim against the repository or
+  task state, then propose the deactivation with the reason and the record
+  that shows it. On the human's explicit yes for that session, run
+  `scribe session deactivate <id> --author <name> --reason "<why>" [--cite
+  <ref>]` under your own name, and name the human's approval in the reason.
 
 To initialize a requested project integration, use the explicit target:
 

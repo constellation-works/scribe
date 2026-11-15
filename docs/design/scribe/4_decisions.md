@@ -1,7 +1,7 @@
 ---
 title: scribe — Decisions
 owner: claude
-last_updated: 2026-11-10
+last_updated: 2026-11-15
 last_validated: 2026-11-02
 status: Draft
 feature: scribe
@@ -2300,3 +2300,30 @@ events. Failed turns, tool activity, unknown events and malformed diagnostics
 still refuse. The [Codex JSONL contract](https://learn.chatgpt.com/docs/non-interactive-mode#make-output-machine-readable)
 documents `error` separately from `turn.failed`; the native runtime probe
 establishes the observed recovery behavior.
+
+## The skill briefs the last session and suggests store upkeep
+
+**Code anchors:** `skills/scribe/SKILL.md` (and its packaged copies)
+
+Daniel, 2026-11-15: "When starting a new session on a project, the agent
+should look up most recent scribe session note on that project. If there are
+any pending, unresolved, or parked items from last session, they should brief
+the user. in fact, they should just brief the user on the last session. The
+agent should proactively suggest potential entries, new tags for better
+cataloging, and deactivate stale sessions."
+
+- The skill, not a `SessionStart` hook, carries the brief. The project's own
+  last session is the one that matters, the agent can label the summary as
+  of its writing and check an item before acting on it, and the umbrella's
+  global-last-session hook was removed the day before for being stale and
+  not project-specific.
+- Entries stay the human's typed `#scribe` lines; the agent offers the line
+  to type. Tags are created under the agent's own name once the human
+  agrees.
+- Deactivation is the one write outside `add`, and only on the human's
+  explicit yes for that session. `session deactivate` refuses reserved
+  names, so the human cannot run it as themselves; the agent runs it under
+  its own name and names the approval in the reason. Age alone is not
+  staleness (§5.7): the agent proposes only a session whose feature was
+  removed, replaced or superseded, checked against the repository or task
+  state.
