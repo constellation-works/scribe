@@ -339,6 +339,72 @@ fn adding_an_existing_tag_says_it_exists() {
     );
 }
 
+#[test]
+fn an_unknown_tag_update_target_is_reported_before_an_unset_redact_name() {
+    let fx = seeded();
+    let err = without_secret(
+        &fx,
+        &[
+            "tag",
+            "update",
+            "missing-tag",
+            "--author",
+            "opus",
+            "--add-alias",
+            "fresh-alias",
+        ],
+    );
+    assert_eq!(err["code"], "tag_not_found");
+
+    ok(
+        &fx,
+        &[
+            "tag",
+            "add",
+            "qa-tag",
+            "--author",
+            "opus",
+            "--description",
+            "qa notes",
+        ],
+    );
+    let err = without_secret(
+        &fx,
+        &[
+            "tag",
+            "update",
+            "qa-tag",
+            "--author",
+            "opus",
+            "--add-alias",
+            "dec",
+        ],
+    );
+    assert_eq!(err["code"], "tag_conflict");
+}
+
+#[test]
+fn an_invalid_entry_topic_patch_is_reported_before_an_unset_redact_name() {
+    let fx = seeded();
+    let mut args = vec!["entry", "update", "decisions-1", "--author", "opus"];
+    args.extend([
+        "--add-topic",
+        "qa-one",
+        "--add-topic",
+        "qa-two",
+        "--add-topic",
+        "qa-three",
+        "--add-topic",
+        "qa-four",
+        "--add-topic",
+        "qa-five",
+        "--add-topic",
+        "qa-six",
+    ]);
+    let err = without_secret(&fx, &args);
+    assert_eq!(err["code"], "invalid_topics");
+}
+
 /// The fixture config names `GITHUB_TOKEN` in `[redact] env`; running without
 /// it set is the unresolved-name case.
 fn without_secret(fx: &Fixture, args: &[&str]) -> Value {

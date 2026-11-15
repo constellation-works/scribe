@@ -79,15 +79,17 @@ pub(super) fn run(command: TagCommand, ctx: &Context) -> Result<Output, CliError
             if let Some(description) = &args.description {
                 scribe_core::check_description(description)?;
             }
+            let patch = scribe_core::TagPatch {
+                description: args.description,
+                add_aliases: args.add_alias,
+                remove_aliases: args.remove_alias,
+                stale_after_days: args.stale_after_days,
+            };
+            ctx.store().check_agent_tag_update(&args.name, &patch)?;
             let redactor = ctx.redactor(&ctx.store().config()?)?;
             let (tag, changed) = ctx.store().update_agent_tag(
                 &args.name,
-                scribe_core::TagPatch {
-                    description: args.description,
-                    add_aliases: args.add_alias,
-                    remove_aliases: args.remove_alias,
-                    stale_after_days: args.stale_after_days,
-                },
+                patch,
                 args.author,
                 ctx.now(),
                 &redactor,

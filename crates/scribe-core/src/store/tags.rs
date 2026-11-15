@@ -96,6 +96,51 @@ impl Store {
         Ok(tag)
     }
 
+    /// Check a tag update without locking or writing, so the CLI can report
+    /// an invalid target or alias before constructing a redactor. The write
+    /// path repeats these checks under the store lock.
+    pub fn check_agent_tag_update(&self, name: &TagName, patching: &TagPatch) -> Result<()> {
+        let configured = self.config_only()?.tags;
+        if configured.resolve(name.as_str()).is_some() {
+            return Err(refusal(
+                WriteRefusal::TagConfigured,
+                "edit config.toml to change a configured tag",
+            ));
+        }
+        let tags = self.store_tags()?;
+        let mut tag = tags
+            .iter()
+            .find(|tag| &tag.name == name)
+            .cloned()
+            .ok_or_else(|| refusal(WriteRefusal::TagNotFound, "no store tag with that name"))?;
+        if let Some(description) = &patching.description {
+            check_description(description)?;
+            tag.description.clone_from(description);
+        }
+        tag.aliases
+            .retain(|alias| configured.resolve(alias.as_str()).is_none());
+        patch(
+            &mut tag.aliases,
+            &patching.add_aliases,
+            &patching.remove_aliases,
+        );
+        if let Some(days) = patching.stale_after_days {
+            tag.stale_after_days = Some(days);
+        }
+        let (merged, _) = configured
+            .merge_store(&tags)
+            .map_err(|e| refusal(WriteRefusal::TagConflict, e.to_string()))?;
+        let mut defs = merged
+            .tags()
+            .iter()
+            .filter(|existing| existing.name != tag.name)
+            .cloned()
+            .collect::<Vec<_>>();
+        defs.push(tag.definition());
+        TagTable::new(defs).map_err(|e| refusal(WriteRefusal::TagConflict, e.to_string()))?;
+        Ok(())
+    }
+
     /// Update an agent tag under the lock, preserving its creator.
     pub fn update_agent_tag(
         &self,

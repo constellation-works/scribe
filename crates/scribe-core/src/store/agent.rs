@@ -182,6 +182,21 @@ impl Store {
             .ok_or_else(unknown_tag)
     }
 
+    /// Check an agent entry patch without locking or writing, so invalid
+    /// content, topics or ids can be reported before a caller constructs a
+    /// redactor. The write path repeats these checks under the store lock.
+    pub fn check_agent_entry_update(&self, id: &str, patching: &EntryPatch) -> Result<()> {
+        if let Some(content) = &patching.content {
+            required(content)?;
+        }
+        let entry = self.resolve_entry(id)?;
+        let mut topics = entry.topics.as_slice().to_vec();
+        patch(&mut topics, &patching.add_topics, &patching.remove_topics);
+        Topics::try_from(topics)
+            .map(|_| ())
+            .map_err(|e| refusal(WriteRefusal::InvalidTopics, e.to_string()))
+    }
+
     /// Create a note with agent provenance, allocating an unused id under the lock.
     pub fn add_agent_entry(
         &self,

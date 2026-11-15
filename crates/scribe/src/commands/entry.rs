@@ -205,20 +205,18 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
         }
         EntryCommand::Update(args) => {
             scribe_core::check_agent_author(&args.author)?;
-            if let Some(content) = &args.content {
-                scribe_core::check_content(content)?;
-            }
-            ctx.store().resolve_entry(&args.id)?;
+            let patch = scribe_core::EntryPatch {
+                content: args.content,
+                add_topics: args.add_topic,
+                remove_topics: args.remove_topic,
+                add_related: args.add_related,
+                remove_related: args.remove_related,
+            };
+            ctx.store().check_agent_entry_update(&args.id, &patch)?;
             let redactor = ctx.redactor(&ctx.store().config()?)?;
             let (entry, changed) = ctx.store().update_agent_entry(
                 &args.id,
-                scribe_core::EntryPatch {
-                    content: args.content,
-                    add_topics: args.add_topic,
-                    remove_topics: args.remove_topic,
-                    add_related: args.add_related,
-                    remove_related: args.remove_related,
-                },
+                patch,
                 args.author,
                 ctx.now(),
                 &redactor,
