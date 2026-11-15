@@ -19,7 +19,7 @@ pub(crate) use payload::{
     PopupRows, ProposalPayload, ReappliedPayload, Record, Records, ScanReport, SessionPayload,
     SessionsContext, TagPayload, TranscriptPayload, TreeRow, WarningPayload,
 };
-pub(crate) use sink::{FORMAT_ENV, FormatArg, Sink, stdin_interactive};
+pub(crate) use sink::{FORMAT_ENV, FormatArg, Sink};
 
 use crate::error::CliError;
 use serde::Serialize;

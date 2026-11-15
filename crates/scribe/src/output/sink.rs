@@ -79,14 +79,6 @@ pub(crate) struct Sink {
     pub(crate) width: Option<usize>,
 }
 
-/// Whether stdin is a terminal: Daniel typing or pasting a command in a
-/// shell, as opposed to an agent or script driving the CLI through a pipe.
-/// The one place outside [`Sink`] that may ask, because `session catalog`
-/// records Daniel's channel only for an interactive invocation.
-pub(crate) fn stdin_interactive() -> bool {
-    std::io::stdin().is_terminal()
-}
-
 impl Sink {
     /// Resolve the sink from the real stdout and environment. Called once.
     pub(crate) fn from_process(requested: Option<FormatArg>) -> Self {

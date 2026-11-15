@@ -261,21 +261,14 @@ impl Store {
         let _lock = self.lock("entry update")?;
         let mut entry = self.resolve_entry(id)?;
         let before = entry.clone();
-        // An agent edits only its own note, and only while it is active;
-        // a Daniel entry keeps the metadata-only rule below.
-        if entry.author.kind == AuthorKind::Agent {
-            if entry.author.name != author {
-                return Err(refusal(
-                    WriteRefusal::NotAuthor,
-                    "only the entry's author may update it; record your own note with 'scribe entry add'",
-                ));
-            }
-            if entry.status != EntryStatus::Active {
-                return Err(refusal(
-                    WriteRefusal::EntryNotActive,
-                    "only an active entry can be updated",
-                ));
-            }
+        // Any agent may edit an agent note while it is active (author names
+        // are attribution, not ownership); a Daniel entry keeps the
+        // metadata-only rule below.
+        if entry.author.kind == AuthorKind::Agent && entry.status != EntryStatus::Active {
+            return Err(refusal(
+                WriteRefusal::EntryNotActive,
+                "only an active entry can be updated",
+            ));
         }
         if let Some(content) = patching.content {
             if entry.author.kind != AuthorKind::Agent {
@@ -329,12 +322,6 @@ impl Store {
             return Err(refusal(
                 WriteRefusal::DanielOnly,
                 "Daniel retires his entries through #scribe retire",
-            ));
-        }
-        if entry.author.name != author {
-            return Err(refusal(
-                WriteRefusal::NotAuthor,
-                "only the entry's author may retire it",
             ));
         }
         if entry.status == EntryStatus::Retired
@@ -510,12 +497,6 @@ impl Store {
                     "only an agent-opened proposal's reason can be changed; settle without --reason to keep the original reason",
                 ));
             }
-            if p.author == Author::agent(author.clone()) {
-                return Err(refusal(
-                    WriteRefusal::NotAuthor,
-                    "the proposal's author cannot settle it; another agent must settle it",
-                ));
-            }
             if approve {
                 if older.status != EntryStatus::Active {
                     return Err(refusal(
@@ -547,12 +528,6 @@ impl Store {
                 return Err(refusal(
                     WriteRefusal::ProposalNotAgent,
                     "only agent-opened proposals can be updated",
-                ));
-            }
-            if p.author.name != author {
-                return Err(refusal(
-                    WriteRefusal::NotAuthor,
-                    "only the proposal's author may update it",
                 ));
             }
             // Preserve the creator while recording who revised the reason.

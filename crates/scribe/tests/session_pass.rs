@@ -1098,6 +1098,54 @@ fn scribe_on_off_and_status_switch_the_session_and_block_the_prompt() {
 }
 
 #[test]
+fn scribe_catalog_in_a_typed_prompt_catalogs_a_past_session_as_daniel() {
+    let setup = Setup::new();
+    // An id that names no transcript is refused, audited by code, and
+    // writes no switch.
+    let reason = setup.scribe("/scribe catalog 0a1b2c3d-0000-4000-8000-00000000dead");
+    assert!(
+        reason.starts_with("scribe: /scribe catalog 0a1b2c3d-0000-4000-8000-00000000dead refused"),
+        "{reason}"
+    );
+    assert!(!setup.fx.root().join("control.json").exists());
+
+    // Typed by Daniel in another session: the switch is written as his,
+    // and no window runs in the hook.
+    let reason = setup.scribe(&format!("/scribe catalog {NEVER}"));
+    assert!(
+        reason.starts_with(&format!("scribe: cataloging {NEVER} as yours")),
+        "{reason}"
+    );
+    let text = std::fs::read_to_string(setup.fx.root().join("control.json")).unwrap();
+    let switch = serde_json::from_str::<Value>(&text).unwrap()["sessions"][NEVER].clone();
+    assert_eq!(switch["on"], true);
+    assert_eq!(switch["due"], true);
+    assert_eq!(switch["cataloged_by"]["by"]["kind"], "daniel");
+    assert!(setup.prompts().is_empty());
+    assert!(setup.record(NEVER).is_none());
+    let audited = setup.audit_lines();
+
+    // Again: nothing changes and nothing is audited.
+    let before = setup.control_bytes();
+    let reason = setup.scribe(&format!("/scribe catalog {NEVER}"));
+    assert!(reason.contains("already being cataloged"), "{reason}");
+    assert_eq!(setup.control_bytes(), before);
+    assert_eq!(setup.audit_lines(), audited);
+
+    // The next session pass runs its windows as a catalog and keeps
+    // Daniel's attribution; the transcript is days old, so it ends final
+    // and off.
+    let pass = setup.pass();
+    assert_eq!(pass["passes"][0]["result"], "written", "{pass}");
+    let record = setup.record(NEVER).unwrap();
+    assert_eq!(record["status"], "final", "{record}");
+    assert_eq!(record["cataloged_by"]["by"]["kind"], "daniel", "{record}");
+    let text = std::fs::read_to_string(setup.fx.root().join("control.json")).unwrap();
+    let switch = serde_json::from_str::<Value>(&text).unwrap()["sessions"][NEVER].clone();
+    assert_eq!(switch["on"], false);
+}
+
+#[test]
 fn stop_marks_due_by_turns_and_minutes_and_session_end_marks_final_without_a_model() {
     let setup = Setup::new();
     setup.config("[catalog]\nevery_turns = 2\nevery_minutes = 600\n");

@@ -250,7 +250,7 @@ Stable codes: `entry_not_found`, `session_not_found`, `io_error`,
 `output_error`, `usage_error`, `hook_payload_invalid`,
 `segment_not_found`, `sealed_segment_changed`, `confirm_required`,
 `transcript_missing`, `session_busy` (exit 1), (S11) `id_ambiguous` (exit 2;
-the message lists up to ten candidates, sorted, and how many more), `daniel_only`, `reserved_author`, `not_author`, `tag_not_found`, `tag_conflict`, `tag_configured`,
+the message lists up to ten candidates, sorted, and how many more), `daniel_only`, `reserved_author`, `tag_not_found`, `tag_conflict`, `tag_configured`,
 `proposal_not_found`, `proposal_settled`, `entry_not_active`,
 (S12) `invalid_text`, `invalid_topics`,
 `proposal_invalid`, `proposal_not_agent`,
@@ -313,7 +313,7 @@ never says no action is needed, even beside a recorded line.
 
 A prompt whose first line is `/scribe on`, `/scribe off`, `/scribe status`,
 `/scribe on --from <id> [--type <type>]`, `/scribe link <id> [--type
-<type>]` or a bare `/scribe` (also `/scribe:scribe …`, the plugin-namespaced form;
+<type>]`, `/scribe catalog <id>` or a bare `/scribe` (also `/scribe:scribe …`, the plugin-namespaced form;
 the argument is case-insensitive) is not scanned for `#scribe` lines: the
 reply is `{"decision": "block", "reason": "<status>"}`, which keeps the
 prompt from the model and shows Daniel the reason. The reason is one line:
@@ -322,7 +322,8 @@ prompt from the model and shows Daniel the reason. The reason is one line:
 `scribe: on since <time>[; a pass is due]; <record status>` or `scribe: off
 — this session was never switched on …` for a status, `scribe: unknown
 command "/scribe <arg>" — use /scribe on, /scribe off, /scribe status,
-/scribe on --from <id> or /scribe link <id> [--type spawned_from|continues]`,
+/scribe on --from <id>, /scribe link <id> [--type spawned_from|continues] or
+/scribe catalog <id>`,
 or `scribe: /scribe <arg> not applied — …` when the payload fails the
 transcript check. A status of a linked session ends `; linked: <type>
 <id>, …`. A link replies `scribe: on — this session is cataloged from now
@@ -333,8 +334,14 @@ already linked: <type> <id> — nothing changed`, or `scribe: /scribe
 `link_unknown_session` (no record and no switch for the target),
 `link_self`, `link_cycle` (the target's links lead back here),
 `link_conflict` (a second `spawned_from` parent) or `link_session_off`
-(`/scribe link` in a session neither switched on nor recorded). A switch
-or a new link writes one audit line (`target` `session:<id>`); a refusal
+(`/scribe link` in a session neither switched on nor recorded). A catalog
+replies `scribe: cataloging <id> as yours — its windows run at the next
+session pass, …` (the rest names `scribe session catalog <id> --author
+<name>` for running them now), `scribe: <id> is already being cataloged — nothing changed; …`
+(a catalog switch still due), or `scribe: /scribe catalog <id> refused —
+<message>` with the code `session catalog` would give
+(`session_cataloged`, `transcript_not_found`, `id_ambiguous`, …). A switch,
+a new link or a new catalog writes one audit line (`target` `session:<id>`); a refusal
 one line with its code; a no-op or a status writes none.
 
 ## Session pass report

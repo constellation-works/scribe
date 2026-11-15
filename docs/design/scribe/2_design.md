@@ -195,10 +195,11 @@ Rules every verb keeps:
   records `kind: daniel` ([4_decisions.md](./4_decisions.md#every-entry-and-proposal-records-its-author)).
   The names `daniel`, `scribe` and `consistency` are reserved for the
   non-agent channels: an agent write using one is refused
-  `reserved_author` (reads still accept them as filters). The one
-  exception is `session catalog --author daniel` from an interactive
-  terminal, Daniel's channel for cataloging, which records
-  `kind: daniel` ([§5.8](#58-cataloging-a-past-session)).
+  `reserved_author` (reads still accept them as filters), with or without
+  a terminal: no CLI write records `kind: daniel`. Daniel catalogs a past
+  session with `/scribe catalog <id>` in his typed prompt
+  ([§5.8](#58-cataloging-a-past-session),
+  [4_decisions.md](./4_decisions.md#daniel-writes-only-through-his-typed-prompt-agent-names-are-attribution)).
 - **The guard.** `ask` never presents an agent's entry as Daniel's words
   and gives it no 1.5× weight ([§6.7](#67-segments-authors-and-inactive-sessions)).
   Agents never change the content of, retire or settle a proposal about an
@@ -208,16 +209,16 @@ Rules every verb keeps:
   Daniel's. Agents may open a proposal against a Daniel entry; Daniel
   settles it with `#scribe approve|reject`. `#scribe forget` stays
   Daniel's alone ([4_decisions.md](./4_decisions.md#entries-daniel-wrote-are-settled-only-by-daniel)).
-  Between agents, an agent edits only its own work: `entry update` and
-  `entry retire` of an agent entry, and `proposal update`, require the
-  record's author name (`not_author` otherwise), a non-active agent entry
-  refuses updates (`entry_not_active`), and a proposal's author cannot
-  settle it — another agent does. Settling with `--reason` replaces the
+  Between agents, author names are attribution only: any agent may update
+  or retire another agent's entry, update an open agent proposal or settle
+  one, including its own, and the record keeps who changed it
+  (`updated_by`, `settled_author`). A non-active agent entry refuses
+  updates (`entry_not_active`). Settling with `--reason` replaces the
   proposal's reason, so on a proposal Daniel or scribe opened it is
   refused `proposal_not_agent`; settling without `--reason` keeps the
   original. Tags stay shared vocabulary: any agent may update a store
   tag, recorded in `updated_by`
-  ([4_decisions.md](./4_decisions.md#agent-writes-use-their-own-name-and-edit-only-their-own-work)).
+  ([4_decisions.md](./4_decisions.md#daniel-writes-only-through-his-typed-prompt-agent-names-are-attribution)).
 - **Audit and redaction.** Each write verb is a mutating command: one
   audit line per change or refusal (ids and codes only), store lock,
   `write_atomic`, and every free-text argument passes the redactor before
@@ -293,9 +294,9 @@ bind-key S display-popup -E -w 90% -h 85% scribe tmux
   record with `--format table` (`--log` for a session), because `show`
   prints only its list line when stdout is not a terminal.
 - Enter opens the full record in `$PAGER` (else `less`).
-  On a candidate, Enter puts `scribe session catalog <id> --author daniel`
-  in the tmux paste buffer and says so; cataloging runs from a shell, where
-  its progress is visible.
+  On a candidate, Enter puts `/scribe catalog <id>` in the tmux paste
+  buffer and says so; typed into a Claude Code prompt, it catalogs the
+  session as Daniel's ([§5.8](#58-cataloging-a-past-session)).
 - `ctrl-y` copies the id: `tmux set-buffer`, and `pbcopy` when present.
 - `alt-a` toggles inactive sessions and hidden entries (adds
   `--include-inactive` to the session list and drops `--status active`
@@ -850,7 +851,8 @@ The echo names the file path, the points added and any dropped quotes.
 ### 5.1 Switching on and off
 
 A prompt whose first line is `/scribe on`, `/scribe off` or `/scribe status`
-(or a link command, [§5.4](#54-session-links)) is intercepted by the `UserPromptSubmit` hook, which updates `control.json`
+(or a link command, [§5.4](#54-session-links), or `/scribe catalog <id>`,
+[§5.8](#58-cataloging-a-past-session)) is intercepted by the `UserPromptSubmit` hook, which updates `control.json`
 and returns `decision: "block"` with the status as `reason`, so no model
 turn is spent. Every session starts off. `on` records `on_since` and marks a
 pass due; `off` stops further passes and keeps the record. `/scribe on` in a
@@ -1258,11 +1260,18 @@ names of its own.
 **Cataloging: `scribe session catalog <id>`.** `scribe session catalog <id>
 --author <name> [--project <slug>]` switches the named session on as a
 cataloged-by-name session and runs its passes to the end. Who cataloged
-it is a channel: `--author daniel` records `kind: daniel` only when stdin
-is a terminal (Daniel typing or pasting the popup's command in a shell)
-and is refused `reserved_author` through a pipe, so an agent cannot
-catalog as Daniel; an agent's own name records `kind: agent`, and
-`scribe`/`consistency` are refused as reserved:
+it is a channel. The CLI records `kind: agent` under the caller's name and
+refuses the reserved names (`daniel`, `scribe`, `consistency`)
+`reserved_author`, with or without a terminal. Daniel catalogs as himself
+by typing `/scribe catalog <id>` (an id or a unique prefix) in a Claude
+Code prompt: the `UserPromptSubmit` hook makes the same checks, writes the
+same switch with `cataloged_by: {at, by: {kind: daniel}}` and blocks the
+prompt with what it did, but runs no window, because a catalog can be dozens
+of model calls. The next `session pass` runs them (a pass of a switch with
+`cataloged_by` runs as a catalog: `origin: catalog`, the attribution
+kept, final and off when the transcript has ended), or `session catalog
+<id>` in a shell runs them now; either keeps Daniel's attribution
+([4_decisions.md](./4_decisions.md#daniel-writes-only-through-his-typed-prompt-agent-names-are-attribution)):
 
 - The transcript is found and checked as a pass finds it. A session that
   already has a record or a switch is refused `session_cataloged` (use
@@ -1797,13 +1806,13 @@ writes none.
 - **The agent surface serves the Mac only.** The store is on the Mac, so
   the `scribe` skill helps sessions there; box workers still cannot read or
   write scribe. A worker that needs Daniel's context gets it in its task.
-- **An agent write is an accident guard too.** `--author` is a label an
-  agent chooses, not an identity; `kind: agent` is what scribe can know
-  ("written through the CLI"). Reserved names, own-author edits and the
-  interactive-terminal test for `catalog --author daniel` only separate
-  the channels a caller claims: an agent can still choose another agent's
-  name, and a process running as Daniel can still edit `~/.scribe`
-  (STD-05 R5). The guard that keeps agents from settling Daniel's entries
+- **An agent's name is attribution, not identity.** `--author` is a label
+  an agent chooses; `kind: agent` is what scribe can know ("written through
+  the CLI"). scribe enforces no ownership between agents: any agent may
+  update or retire another's note or settle any agent proposal, and the
+  record keeps who did. Daniel's words come only from his typed prompt
+  through the hook, so no CLI write records `kind: daniel`; a process
+  running as Daniel can still edit `~/.scribe` (STD-05 R5). The guard that keeps agents from settling Daniel's entries
   is a refusal in the CLI, not a permission. The audit log records every
   write's command and target.
 - **Removed-feature judgement can be wrong.** Haiku may read "removed the
@@ -2204,8 +2213,8 @@ popup's proposal preview and Enter view format the proposal's list row
 field by field, which carries every field a proposal has. S14 has
 since landed: the backfill view runs `transcript list` for the last 30
 days and shows one notice row when that list is empty or fails, and
-Enter on a candidate leaves `scribe session catalog <id> --author daniel`
-in the tmux paste buffer.
+Enter on a candidate leaves `/scribe catalog <id>` in the tmux paste buffer
+(`scribe session catalog <id> --author daniel` until ORB-24030).
 The popup was first a standalone script, `plugin/tmux/scribe-tmux`, that
 nothing installed; it is now the `scribe tmux` subcommand (the same
 script embedded in the binary, with its README folded into
@@ -2258,10 +2267,11 @@ with no parsed times is left out, because a date bound is always set.
 `cwd` is on the row, as §5.8 specifies.
 
 `session catalog` checks the transcript and the redactor before it writes
-the switch. `cataloged_by.by` is `{kind: daniel}` for Daniel's interactive
-`--author daniel` channel and `{kind: agent, name}` under an agent's own
-name; a reserved name off that channel is refused `reserved_author`
-before the transcript is resolved. Age is the last kept message's timestamp, not the file mtime;
+the switch. `cataloged_by.by` is `{kind: agent, name}` under the caller's
+name, and a reserved name is refused `reserved_author` before the
+transcript is resolved; `{kind: daniel}` comes only from `/scribe catalog
+<id>` (ORB-24030, which replaced an interactive-terminal `--author daniel`
+channel that a faked pty could pass). Age is the last kept message's timestamp, not the file mtime;
 at least 24 hours old, the last window is final and the switch turns off
 in the same store lock. A newer transcript stays on and due, and that
 write clears retry backoff. An empty conversation writes no record, leaves
@@ -2296,6 +2306,8 @@ pointing at the same commands; that is a constellation change.
   backfill by name.
 - [ORB-23995] — session rebuild replay fixtures: the replay harness, the
   synthetic recording and the redaction tool.
+- [ORB-24030] — `/scribe catalog <id>` as Daniel's only catalog channel; agent
+  author names as attribution only.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
 

@@ -385,10 +385,6 @@ impl Job<'_> {
         limits: &RunLimits,
     ) -> Result<PassPayload, PassError> {
         self.segments = previous.map(|p| p.log.len());
-        let final_pass = match &self.catalog {
-            Some(catalog) => catalog.ended,
-            None => self.switch.final_pass,
-        };
         let Some(path) = payload::locate(self.ctx, self.id)
             .map_err(|e| PassError::new(e.code(), e.to_string()))?
         else {
@@ -406,6 +402,22 @@ impl Job<'_> {
             tracing::warn!(session = %self.id, path = %path.display(), %err, "cannot read the transcript");
             PassError::new("io_error", format!("cannot read transcript: {err}"))
         })?;
+        // A catalog switch that `session catalog` did not run itself (one
+        // `/scribe catalog <id>` wrote, or a failed catalog left due) is
+        // passed as a catalog: its windows are `origin: catalog`, it keeps
+        // `cataloged_by`, and an ended transcript ends final and off.
+        if self.catalog.is_none() && self.switch.cataloged_by.is_some() {
+            self.catalog = Some(CatalogRun {
+                project: super::super::transcript::attributed_project(&bytes, self.config),
+                ended: transcript::survey(&bytes)
+                    .ended
+                    .is_some_and(|last| transcript::is_day_old(last, self.ctx.now())),
+            });
+        }
+        let final_pass = match &self.catalog {
+            Some(catalog) => catalog.ended,
+            None => self.switch.final_pass,
+        };
         let messages = transcript::parse(&bytes);
         let conversation = pass::conversation(&messages);
         if conversation.is_empty() {

@@ -842,7 +842,7 @@ fn reserved_author_names_are_refused_on_every_agent_write() {
 }
 
 #[test]
-fn agents_edit_only_their_own_notes_and_proposals() {
+fn agent_names_are_attribution_so_any_agent_may_tidy_another_agents_work() {
     let fx = Fixture::new();
     fx.ok(&[
         "entry",
@@ -853,8 +853,10 @@ fn agents_edit_only_their_own_notes_and_proposals() {
         "opus",
         "opus note",
     ]);
-    for args in [
-        vec![
+    // Another agent may rewrite and retag an agent note; the record keeps
+    // its author and who changed it.
+    let updated = json(
+        &fx.ok(&[
             "entry",
             "update",
             "decisions-1",
@@ -862,45 +864,31 @@ fn agents_edit_only_their_own_notes_and_proposals() {
             "sonnet",
             "--content",
             "rewritten",
-            "--json",
-        ],
-        vec![
-            "entry",
-            "update",
-            "decisions-1",
-            "--author",
-            "sonnet",
             "--add-topic",
             "api",
             "--json",
-        ],
-        vec![
+        ])
+        .stdout,
+    );
+    assert_eq!(updated["content"], "rewritten");
+    assert_eq!(updated["author"]["name"], "opus");
+    assert_eq!(updated["updated_by"]["name"], "sonnet");
+    let retired = json(
+        &fx.ok(&[
             "entry",
             "retire",
             "decisions-1",
             "--author",
             "sonnet",
             "--reason",
-            "old",
+            "done",
             "--json",
-        ],
-    ] {
-        let out = fx.run(&args);
-        assert_eq!(json(&out.stderr)["code"], "not_author", "{args:?}");
-    }
-    let entry = json(&fx.ok(&["entry", "show", "decisions-1", "--json"]).stdout);
-    assert_eq!(entry["content"], "opus note");
-    assert_eq!(entry["status"], "active");
-    // The author still can, and a retired note then refuses further updates.
-    fx.ok(&[
-        "entry",
-        "retire",
-        "decisions-1",
-        "--author",
-        "opus",
-        "--reason",
-        "done",
-    ]);
+        ])
+        .stdout,
+    );
+    assert_eq!(retired["status"], "retired");
+    assert_eq!(retired["author"]["name"], "opus");
+    // A retired note still refuses further updates, from anyone.
     let out = fx.run(&[
         "entry",
         "update",
@@ -934,24 +922,71 @@ fn agents_edit_only_their_own_notes_and_proposals() {
         "--author",
         "opus",
     ]);
-    let out = fx.run(&[
-        "proposal", "update", "p-1", "--author", "sonnet", "--reason", "hijack", "--json",
-    ]);
-    assert_eq!(json(&out.stderr)["code"], "not_author");
-    // The proposer cannot settle its own proposal; another agent can.
-    let out = fx.run(&[
-        "proposal", "settle", "p-1", "--reject", "--author", "opus", "--json",
-    ]);
-    assert_eq!(json(&out.stderr)["code"], "not_author");
+    // Another agent may revise an agent proposal's reason.
+    let revised = json(
+        &fx.ok(&[
+            "proposal", "update", "p-1", "--author", "sonnet", "--reason", "revised", "--json",
+        ])
+        .stdout,
+    );
+    assert_eq!(revised["reason"], "revised");
+    assert_eq!(revised["author"]["name"], "opus");
+    assert_eq!(revised["updated_by"]["name"], "sonnet");
+    // The proposer may settle its own proposal; the settler is recorded.
     let settled = json(
         &fx.ok(&[
-            "proposal", "settle", "p-1", "--reject", "--author", "sonnet", "--json",
+            "proposal", "settle", "p-1", "--reject", "--author", "opus", "--json",
         ])
         .stdout,
     );
     assert_eq!(settled["state"], "rejected");
-    assert_eq!(settled["reason"], "review");
+    assert_eq!(settled["reason"], "revised");
     assert_eq!(settled["author"]["name"], "opus");
+    assert_eq!(settled["settled_author"]["name"], "opus");
+}
+
+/// `session catalog --author daniel` under a pseudo-terminal, as
+/// `script` fakes one for any caller: refused like through a pipe.
+#[cfg(unix)]
+#[test]
+fn a_faked_terminal_cannot_catalog_as_daniel() {
+    let fx = Fixture::new();
+    let id = "0a1b2c3d-0000-4000-8000-0000000000c1";
+    let project = fx.home().join(".claude/projects/-work");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join(format!("{id}.jsonl")),
+        format!(
+            "{}\n",
+            serde_json::json!({"type": "user", "uuid": "u-1",
+                "timestamp": "2026-01-01T00:00:00Z", "cwd": "/nonexistent/work",
+                "message": {"role": "user", "content": "an old session"}})
+        ),
+    )
+    .unwrap();
+    let command = format!(
+        "{} session catalog {id} --author daniel --json",
+        support::BIN
+    );
+    let mut script = std::process::Command::new("script");
+    if cfg!(target_os = "macos") {
+        script.args(["-q", "/dev/null", "/bin/sh", "-c", &command]);
+    } else {
+        script.args(["-q", "-e", "-c", &command, "/dev/null"]);
+    }
+    let out = script
+        .env_clear()
+        .env("HOME", fx.home())
+        .env("SCRIBE_ROOT", fx.root())
+        .env("PATH", "/usr/bin:/bin")
+        .env("SHELL", "/bin/sh")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("run script(1)");
+    let shown = format!("{}{}", text(&out.stdout), text(&out.stderr));
+    assert!(shown.contains("reserved_author"), "{shown}");
+    assert!(!fx.root().join("control.json").exists());
+    assert!(!fx.root().join("sessions").exists());
 }
 
 #[test]

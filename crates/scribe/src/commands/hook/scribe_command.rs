@@ -1,6 +1,6 @@
-//! `/scribe on|off|status|link`, intercepted by
+//! `/scribe on|off|status|link|catalog`, intercepted by
 //! `scribe hook user-prompt-submit` (docs/design/scribe/2_design.md §5.1,
-//! §5.4).
+//! §5.4, §5.8).
 //!
 //! A prompt whose first line is a `/scribe` command never reaches the
 //! model: the hook switches the session in `control.json` and returns
@@ -13,6 +13,14 @@
 //! self-link, a cycle, a second parent or (for `link`) a session that is not
 //! cataloged is refused with its code and changes nothing.
 //!
+//! `/scribe catalog <id>` is Daniel's only way to catalog a past session by
+//! name: it writes the catalog switch with `cataloged_by: {kind: daniel}`
+//! (as `session catalog` does, with the same checks and the same
+//! `session_cataloged` refusal) and runs no window, because a catalog can
+//! take many model calls; `session catalog` or the next `session pass` runs
+//! them and keeps the attribution. Agents' prompts never reach here
+//! (`payload::agent_originated`), so no CLI path records Daniel.
+//!
 //! The payload is checked like a `#scribe` line's (an accident guard, not a
 //! security boundary): a transcript outside Claude Code's projects
 //! directory, or named for another session, switches nothing. A switch is
@@ -22,7 +30,7 @@ use super::payload::{self, PromptPayload};
 use crate::app::Context;
 use crate::output::{HookOutcome, HookReply, Output};
 use scribe_core::control::{self, Change, Switch};
-use scribe_core::{SessionControl, SessionId, SessionLink, SessionRecord};
+use scribe_core::{Author, SessionControl, SessionId, SessionLink, SessionRecord};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
@@ -33,7 +41,7 @@ const PROVENANCE_FAILED: &str = "provenance_failed";
 /// The code of a `/scribe` argument that is not a command.
 const UNKNOWN_COMMAND: &str = "unknown_scribe_command";
 /// The commands, for a refusal.
-const USAGE: &str = "use /scribe on, /scribe off, /scribe status, /scribe on --from <id> or /scribe link <id> [--type spawned_from|continues]";
+const USAGE: &str = "use /scribe on, /scribe off, /scribe status, /scribe on --from <id>, /scribe link <id> [--type spawned_from|continues] or /scribe catalog <id>";
 
 /// Apply `switch` for the payload's session and block the prompt with the
 /// result.
@@ -60,8 +68,11 @@ pub(super) fn run(
     if let Switch::Link { link, on } = switch {
         return run_link(switch, link, *on, session, ctx);
     }
+    if let Switch::Catalog(target) = switch {
+        return run_catalog(switch, target, ctx);
+    }
     let change = match switch {
-        Switch::Link { .. } | Switch::Status => store
+        Switch::Link { .. } | Switch::Catalog(_) | Switch::Status => store
             .control()
             .map(|state| Change::Status(state.get(session).cloned())),
         Switch::Unknown(arg) => Ok(Change::Unknown(arg.clone())),
@@ -77,7 +88,9 @@ pub(super) fn run(
                     target: target(),
                     error_code: Some(err.code()),
                 }],
-                Switch::Link { .. } | Switch::Status | Switch::Unknown(_) => Vec::new(),
+                Switch::Link { .. } | Switch::Catalog(_) | Switch::Status | Switch::Unknown(_) => {
+                    Vec::new()
+                }
             };
             return blocked(
                 format!("scribe: {} failed — {}", typed(switch), chain(&err)),
@@ -119,7 +132,44 @@ fn typed(switch: &Switch) -> String {
         Switch::Link { link, on: false } => {
             format!("/scribe link {} --type {}", link.session, link.kind)
         }
+        Switch::Catalog(id) => format!("/scribe catalog {id}"),
         Switch::Unknown(arg) => format!("/scribe {arg}"),
+    }
+}
+
+/// `/scribe catalog <id>`: start Daniel's catalog of a past session, or say
+/// that one is already under way. Audited as a write when the switch was
+/// written and as a refusal with its code; a resume writes nothing.
+fn run_catalog(switch: &Switch, target: &SessionId, ctx: &Context) -> Output {
+    match crate::commands::session::catalog::begin(ctx, target, Author::daniel()) {
+        Ok(begun) => {
+            let id = &begun.id;
+            if begun.wrote_switch {
+                blocked(
+                    format!(
+                        "scribe: cataloging {id} as yours — its windows run at the next session pass, or now with `scribe session catalog {id} --author <name>` in a shell; the record keeps cataloged_by daniel"
+                    ),
+                    vec![HookOutcome {
+                        target: Some(format!("session:{id}")),
+                        error_code: None,
+                    }],
+                )
+            } else {
+                blocked(
+                    format!(
+                        "scribe: {id} is already being cataloged — nothing changed; its windows run at the next session pass, or now with `scribe session catalog {id} --author <name>` in a shell"
+                    ),
+                    Vec::new(),
+                )
+            }
+        }
+        Err(err) => blocked(
+            format!("scribe: {} refused — {err}", typed(switch)),
+            vec![HookOutcome {
+                target: Some(format!("session:{target}")),
+                error_code: Some(err.code()),
+            }],
+        ),
     }
 }
 

@@ -2141,7 +2141,12 @@ the ordinary named-tag boost is independent of author.
 ## Agent writes use their own name and edit only their own work
 
 **Recorded:** 2026-11-10 · [ORB-24002] · **Overridable by Daniel**
-**Code anchors:** `crates/scribe-core/src/store/agent.rs` (`check_agent_author`, the agent write guards), `crates/scribe/src/commands/session/catalog.rs` (`catalog_author`)
+**Superseded in part:** by "Daniel writes only through his typed prompt;
+agent names are attribution" (2026-11-15): the `session catalog` Daniel
+channel and the between-agents ownership rule (`not_author`, the
+self-settle guard) are gone. The reserved names, `entry_not_active`, the
+Daniel-entry rules and the settle `--reason` rule still hold.
+**Code anchors:** `crates/scribe-core/src/store/agent.rs` (`check_agent_author`, the agent write guards), `crates/scribe/src/commands/session/catalog.rs`
 
 ### Context
 
@@ -2162,13 +2167,16 @@ retire or settle against Daniel's entries" (STD-05@1 §R1, §R2, §R5).
   agent-channel write (entry, tag and proposal writes, `session
   activate|deactivate`, `session rebuild`, `session catalog`) using one
   is refused `reserved_author`; reads still accept them as filters.
-- `session catalog` keeps a Daniel channel: `--author daniel` records
+- *(Superseded: no CLI path records Daniel; he types `/scribe catalog
+  <id>`.)* `session catalog` keeps a Daniel channel: `--author daniel` records
   `cataloged_by: {kind: daniel}` only when stdin is a terminal — Daniel
   typing or pasting the tmux popup's command in a shell — and is refused
   through a pipe. An agent catalogs under its own name, recorded
   `{kind: agent}`, so the two are distinguishable in the record and the
   switch.
-- Between agents, an agent edits only its own work. `entry update` and
+- *(Superseded: names are attribution only; `not_author` and the
+  self-settle guard are removed. `entry_not_active` stays.)* Between
+  agents, an agent edits only its own work. `entry update` and
   `entry retire` of an agent entry and `proposal update` require the
   record's author name (`not_author`); a non-active agent entry refuses
   updates (`entry_not_active`). `proposal settle` is the mirror image:
@@ -2200,6 +2208,7 @@ retire or settle against Daniel's entries" (STD-05@1 §R1, §R2, §R5).
 **Recorded:** 2026-11-15 · [ORB-24030] · **Daniel's decision**
 **Supersedes:** the `session catalog` Daniel channel and the between-agents
 rule of "Agent writes use their own name and edit only their own work"
+**Code anchors:** `crates/scribe/src/commands/hook/scribe_command.rs` (`run_catalog`), `crates/scribe/src/commands/session/catalog.rs` (`begin`), `crates/scribe/src/commands/session/pass.rs` (a catalog switch passed as a catalog), `crates/scribe-core/src/store/agent.rs`
 
 ### Context
 
@@ -2238,6 +2247,27 @@ Daniel chose on 2026-11-15, between the candidate shapes in ORB-24030:
   record keeps who wrote and who changed it (`updated_by`,
   `settled_author`), and the design no longer claims that one agent's work
   is protected from another.
+
+### As built
+
+- `/scribe catalog <id>` (an id or a unique prefix; also `$scribe catalog
+  <id>` in Codex) makes `session catalog`'s checks and writes its switch
+  with `cataloged_by: {kind: daniel}`, but runs no window in the hook: a
+  catalog is many model calls. `session pass` now runs any switch with
+  `cataloged_by` as a catalog (`origin: catalog`, attribution kept, final
+  and off once the transcript is a day old), so the next pass finishes it;
+  `session catalog <id> --author <name>` resumes it now, keeping Daniel's
+  attribution. The tmux popup's Enter on a backfill candidate leaves
+  `/scribe catalog <id>` in the paste buffer.
+- The `not_author` code is gone from the CLI's codes; scripts matching it
+  see the write succeed instead.
+- Outside this repository, the interim limits that wait on ORB-24030 are
+  to be removed by a constellation change: the "Until ORB-24030 lands"
+  sentence in the constellation `AGENTS.md` (scribe paragraph), the same
+  sentence and the "once ORB-24030 lands" clause in
+  `.claude/skills/orchestration-session/SKILL.md`, and the learnings entry
+  "Scribe's `--author` is a claim, not an identity" in
+  `.claude/skills/orchestration-session/references/learnings.md`.
 
 ## Codex defaults to Luna and shares the domain
 

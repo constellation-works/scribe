@@ -371,9 +371,9 @@ config tag claims is dropped with a warning naming both.
   author guards (a reserved `--author` name — `daniel`, `scribe`,
   `consistency` — is refused `reserved_author`; a Daniel entry's content,
   retirement and the settling of a proposal whose `older` is a Daniel
-  entry are refused `daniel_only`; an agent entry's or proposal's update
-  or retirement by another agent name, and a proposal settled by its own
-  author, are refused `not_author`; a changed `--reason` when settling a
+  entry are refused `daniel_only`; author names between agents are
+  attribution only, so any agent may update or retire an active agent
+  entry, update an open agent proposal or settle one; a changed `--reason` when settling a
   proposal Daniel or scribe opened is refused `proposal_not_agent`),
   redacts, and writes the entry, `proposals.json` or `tags.json` through
   `write_atomic`. `entry add` numbers like capture. An agent settle uses the
