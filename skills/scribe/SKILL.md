@@ -1,6 +1,6 @@
 ---
 name: scribe
-description: Read recorded decisions, preferences and opted-in session history with citations; write clearly attributed agent notes, and explain or initialize scribe capture for Codex or Claude Code. Use at the start of every session in a project to brief the user on that project's last cataloged session, and while working to suggest entries, tags and stale-session deactivations.
+description: Read recorded decisions, preferences and opted-in session history with citations; write clearly attributed agent notes, and explain or initialize scribe capture for Codex or Claude Code. Use at the start of every session in a project to read the user's global and project preferences and brief them on that project's last cataloged session, and while working to suggest entries, tags and stale-session deactivations.
 ---
 
 Use the installed `scribe` binary. The store is `$SCRIBE_ROOT`, otherwise
@@ -31,23 +31,31 @@ an agent, modify someone else's notes, or settle proposals on the human's
 behalf. Recording work does not grant permission to publish, merge or change
 unrelated configuration.
 
-## Start of a session: brief the last one
+## Start of a session: read preferences, brief the last session
 
-On the first turn of a session in a project, brief the human on that
-project's last cataloged session before starting their task. If the first
-message is urgent, answer it first and brief right after.
+On the first turn of a session in a project, read the human's preferences
+and brief them on that project's last cataloged session before starting
+their task. If the first message is urgent, answer it first and do this
+right after.
 
 1. The project is the repository name from the working directory's git
    remote (`origin`), else the directory's name.
-2. Run `scribe session list --project <project> --json`. The list is oldest
+2. Read the active preferences, the global ones and the project's own:
+   `scribe entry list --tag preferences --status active --project global --json`
+   and the same with `--project <project>`. `--tag` takes the tag's name as
+   `scribe tag list` prints it, not an alias. Follow them for the whole
+   session; where a project preference and a global one disagree, the
+   project's wins. Read `decisions` the same way when the task touches
+   something decided before. Don't recite the entries in the brief.
+3. Run `scribe session list --project <project> --json`. The list is oldest
    first and `--limit` keeps the oldest, so take the record with the newest
    `updated`, skipping this session's own record. If nothing matches, say so
    in one line and continue.
-3. Run `scribe session show <id> --json` and read `title`, `updated`,
+4. Run `scribe session show <id> --json` and read `title`, `updated`,
    `summary`, `goals`, `outcome` and `next`. In a pipe, `show` without
    `--json` prints only one line. Read a segment
    (`--segment <n> --json`) only when an item needs its context.
-4. Run `scribe proposal list --state open --json`.
+5. Run `scribe proposal list --state open --json`.
 
 The brief is a short message of its own:
 
