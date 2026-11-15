@@ -200,8 +200,9 @@ deactivate` or `session activate`, target `session:<id>`) and an
 unchanged write none, with `nothing changed: <id> is already <state>` on
 stderr; deactivating a pinned session also says on stderr that it
 unpinned it. A blank `--reason`, one over 300 characters, a `--cite`
-that is not one token of at most 200 characters, a segment cite as the
-id, or `--pin` with `--unpin` is a usage error (exit 2).
+that is not one token of at most 200 characters or names no record
+(`session:<id>`, `session:<id>#<n>` or an entry id that exists), a
+segment cite as the id, or `--pin` with `--unpin` is a usage error (exit 2).
 
 S12 tag writes return `name`, `aliases`, `description`, `stale_after_days`,
 `author`, `updated_by`, `created` and `updated`. Plain tag writes are one
@@ -227,15 +228,17 @@ breaking change and shows up as a golden diff.
 |------|---------|--------|
 | 0 | success, including an empty result and a closed stdout | warnings and at most one notice |
 | 1 | the command failed | `error: <message>` or `{"error": "...", "code": "..."}` |
-| 2 | usage error, including an invalid id, tag, topic, project or status | clap's rendering, or `{"error": "...", "code": "usage_error"}` |
+| 2 | usage error, including an invalid or too-short id, tag, topic, project or status | clap's rendering, or `{"error": "...", "code": "usage_error"}`; with `--json` the message keeps clap's detail (the argument name) on one line |
 
 (S11) Every command that takes an entry, proposal or session id (`entry
 show|update|retire`, `proposal add --older|--newer`, `proposal
 update|settle`, `proposal list --entry`, `session show|deactivate|activate|rebuild`
 and `session pass --session`) also takes a unique prefix of it of at least
 four characters. An exact id wins over a prefix; several matches are
-`id_ambiguous` (exit 2); none is the noun's not-found (`entry_not_found`,
-`proposal_not_found`, `session_not_found`, exit 1). A session's prefix is
+`id_ambiguous` (exit 2); an input that is not an id and is shorter than
+four characters is `usage_error` (exit 2); none is the noun's not-found
+(`entry_not_found`, `proposal_not_found`, `session_not_found`, exit 1),
+whose message names the id and the store path searched. A session's prefix is
 matched against its record and its switch in `control.json`, and the
 audit line of a write names the full id; a write that takes `--author` also
 names that author in `author`, and a refused write names both its resolved

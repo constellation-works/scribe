@@ -388,8 +388,8 @@ fn a_unique_prefix_names_a_session_and_an_exact_id_wins() {
     );
     // Fewer than four characters is never a prefix.
     let short = run(&fx, &["session", "show", "0f8", "--json"]);
-    assert_eq!(short.status.code(), Some(1));
-    assert_eq!(json(&short.stderr)["code"], "session_not_found");
+    assert_eq!(short.status.code(), Some(2));
+    assert_eq!(json(&short.stderr)["code"], "usage_error");
 }
 
 #[test]

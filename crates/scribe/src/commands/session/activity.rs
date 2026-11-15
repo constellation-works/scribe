@@ -110,7 +110,11 @@ pub(super) fn deactivate(args: DeactivateArgs, ctx: &Context) -> Result<Output, 
     scribe_core::check_agent_author(&args.author)?;
     let id = ctx.store().resolve_session(&whole_session(&args.id)?)?;
     let reason = reason("--reason", &args.reason)?;
-    let cite = args.cite.as_deref().map(cite).transpose()?;
+    let cite = args
+        .cite
+        .as_deref()
+        .map(|text| validated_cite(ctx, text))
+        .transpose()?;
     let request = SetActive::Deactivate {
         by: Author::agent(args.author),
         route: ActiveRoute::Manual,
@@ -209,7 +213,7 @@ fn reason(flag: &str, text: &str) -> Result<String, CliError> {
 }
 
 /// A cite: one token of at most [`CITE_CHARS`] characters.
-fn cite(text: &str) -> Result<String, CliError> {
+fn cite_token(text: &str) -> Result<&str, CliError> {
     let text = text.trim();
     let one_token = !text.is_empty() && !text.chars().any(char::is_whitespace);
     if !one_token || text.chars().count() > CITE_CHARS {
@@ -217,5 +221,54 @@ fn cite(text: &str) -> Result<String, CliError> {
             "--cite must be one reference of at most {CITE_CHARS} characters, such as session:<id>#<n> or an entry id"
         )));
     }
-    Ok(text.to_owned())
+    Ok(text)
+}
+
+/// A `--cite` that names a record in the store: `session:<id>`,
+/// `session:<id>#<n>` (the segment must exist) or an entry id. A unique
+/// prefix is accepted and stored as the full reference. A reference that is
+/// not of one of those shapes, or names nothing, is a usage error carrying the
+/// lookup's own message (which names the id and where it looked).
+fn validated_cite(ctx: &Context, text: &str) -> Result<String, CliError> {
+    let text = cite_token(text)?;
+    let store = ctx.store();
+    let not_a_record = |error: scribe_core::Error| {
+        let names_no_record = matches!(
+            error,
+            scribe_core::Error::EntryNotFound { .. }
+                | scribe_core::Error::SessionNotFound { .. }
+                | scribe_core::Error::AgentWrite {
+                    kind: scribe_core::WriteRefusal::EntryNotFound
+                        | scribe_core::WriteRefusal::InvalidId,
+                    ..
+                }
+        );
+        if names_no_record {
+            CliError::Usage(format!("--cite '{text}' is not a known record: {error}"))
+        } else {
+            CliError::from(error)
+        }
+    };
+    if text.starts_with("session:") {
+        let reference = parse_session_ref(text).map_err(|e| {
+            CliError::Usage(format!("--cite '{text}' is not a session reference: {e}"))
+        })?;
+        let id = store.resolve_session(&reference.id).map_err(not_a_record)?;
+        return match reference.segment {
+            None => Ok(format!("session:{id}")),
+            Some(n) => {
+                let view = store.session(&id)?;
+                if view.record.log.iter().any(|segment| segment.n == n) {
+                    Ok(format!("session:{id}#{n}"))
+                } else {
+                    Err(CliError::Usage(format!(
+                        "--cite '{text}' names segment {n}, but session {id} has {} segment(s)",
+                        view.record.log.len()
+                    )))
+                }
+            }
+        };
+    }
+    let entry = store.resolve_entry(text).map_err(not_a_record)?;
+    Ok(entry.id.to_string())
 }

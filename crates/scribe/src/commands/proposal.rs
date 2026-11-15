@@ -134,11 +134,25 @@ pub(super) fn run(command: ProposalCommand, ctx: &Context) -> Result<Output, Cli
     match command {
         ProposalCommand::List(args) => list(&args, ctx),
         ProposalCommand::Add(args) => {
-            let redactor = ctx.redactor(&ctx.store().config()?)?;
-            let kind = match args.kind {
-                Kind::Stale => scribe_core::ProposalKind::Stale,
-                Kind::Supersedes => scribe_core::ProposalKind::Supersedes,
+            scribe_core::check_agent_author(&args.author)?;
+            let (kind, needs_newer) = match args.kind {
+                Kind::Stale => (scribe_core::ProposalKind::Stale, false),
+                Kind::Supersedes => (scribe_core::ProposalKind::Supersedes, true),
             };
+            // Arguments first: they are refused before an unset [redact] env
+            // name is reported.
+            scribe_core::check_reason(&args.reason)?;
+            if needs_newer != args.newer.is_some() {
+                return Err(CliError::Core(scribe_core::Error::AgentWrite {
+                    kind: scribe_core::WriteRefusal::ProposalInvalid,
+                    message: String::from("supersedes requires --newer; stale forbids it"),
+                }));
+            }
+            ctx.store().resolve_entry(&args.older)?;
+            if let Some(newer) = &args.newer {
+                ctx.store().resolve_entry(newer)?;
+            }
+            let redactor = ctx.redactor(&ctx.store().config()?)?;
             let (proposal, changed) = ctx.store().add_agent_proposal(
                 kind,
                 &args.older,
@@ -151,6 +165,9 @@ pub(super) fn run(command: ProposalCommand, ctx: &Context) -> Result<Output, Cli
             Ok(written(proposal, changed))
         }
         ProposalCommand::Update(args) => {
+            scribe_core::check_agent_author(&args.author)?;
+            scribe_core::check_reason(&args.reason)?;
+            ctx.store().resolve_proposal(&args.id)?;
             let redactor = ctx.redactor(&ctx.store().config()?)?;
             let (proposal, changed) = ctx.store().change_agent_proposal(
                 &args.id,
@@ -163,6 +180,11 @@ pub(super) fn run(command: ProposalCommand, ctx: &Context) -> Result<Output, Cli
             Ok(written(proposal, changed))
         }
         ProposalCommand::Settle(args) => {
+            scribe_core::check_agent_author(&args.author)?;
+            if let Some(reason) = &args.reason {
+                scribe_core::check_reason(reason)?;
+            }
+            ctx.store().resolve_proposal(&args.id)?;
             let redactor = ctx.redactor(&ctx.store().config()?)?;
             let (proposal, changed) = ctx.store().change_agent_proposal(
                 &args.id,

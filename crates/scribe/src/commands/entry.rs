@@ -181,9 +181,13 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
         EntryCommand::List(args) => list(args, ctx),
         EntryCommand::Show(args) => show(&args, ctx),
         EntryCommand::Add(args) => {
-            let redactor = ctx.redactor(&ctx.store().config()?)?;
+            scribe_core::check_agent_author(&args.author)?;
+            // Arguments first: a bad tag or empty content is reported before
+            // an unset [redact] env name.
             let topics = scribe_core::Topics::try_from(args.topic)
                 .map_err(|e| CliError::Usage(e.to_string()))?;
+            ctx.store().check_new_entry(&args.tag, &args.content)?;
+            let redactor = ctx.redactor(&ctx.store().config()?)?;
             let entry = ctx.store().add_agent_entry(
                 scribe_core::AgentEntry {
                     tag: args.tag,
@@ -200,6 +204,11 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
             Ok(written(entry, true))
         }
         EntryCommand::Update(args) => {
+            scribe_core::check_agent_author(&args.author)?;
+            if let Some(content) = &args.content {
+                scribe_core::check_content(content)?;
+            }
+            ctx.store().resolve_entry(&args.id)?;
             let redactor = ctx.redactor(&ctx.store().config()?)?;
             let (entry, changed) = ctx.store().update_agent_entry(
                 &args.id,
@@ -217,6 +226,9 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
             Ok(written(entry, changed))
         }
         EntryCommand::Retire(args) => {
+            scribe_core::check_agent_author(&args.author)?;
+            scribe_core::check_reason(&args.reason)?;
+            ctx.store().resolve_entry(&args.id)?;
             let redactor = ctx.redactor(&ctx.store().config()?)?;
             let (entry, changed) = ctx.store().retire_agent_entry(
                 &args.id,

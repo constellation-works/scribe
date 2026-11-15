@@ -677,10 +677,13 @@ fn session_detail(out: &mut dyn Write, sink: &Sink, s: &SessionPayload) -> io::R
 /// The width of the detail view's label column.
 const LABEL_WIDTH: usize = 12;
 
-/// `label  value`, with continuation lines indented under the value.
+/// `label  value`, with continuation lines indented under the value. A label
+/// as long as the column or longer is followed by one space, never run into
+/// its value.
 fn field(out: &mut dyn Write, label: &str, value: &str) -> io::Result<()> {
-    let indent = format!("\n{}", " ".repeat(LABEL_WIDTH));
-    writeln!(out, "{label:<LABEL_WIDTH$}{}", value.replace('\n', &indent))
+    let width = LABEL_WIDTH.max(label.chars().count() + 1);
+    let indent = format!("\n{}", " ".repeat(width));
+    writeln!(out, "{label:<width$}{}", value.replace('\n', &indent))
 }
 
 fn entry_row(e: &EntryPayload) -> Vec<Cell> {
