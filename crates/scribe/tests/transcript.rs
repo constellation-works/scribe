@@ -87,3 +87,60 @@ fn list_and_show_read_a_read_only_root_and_a_missing_catalog_is_not_found() {
     assert!(audit.contains("session catalog"), "{audit}");
     assert!(audit.contains("transcript_not_found"), "{audit}");
 }
+
+#[test]
+fn list_skips_a_transcript_whose_mtime_is_before_since() {
+    let fx = Fixture::new();
+    let project = fx.home().join(".claude/projects/-work");
+    std::fs::create_dir_all(&project).unwrap();
+    let old_id = "aaaaaaaa-1111-4222-8333-444455556666";
+    let new_id = "bbbbbbbb-1111-4222-8333-444455556666";
+    let write_one = |id: &str, mtime_secs: u64| {
+        let path = project.join(format!("{id}.jsonl"));
+        std::fs::write(
+            &path,
+            format!(
+                "{}\n",
+                json!({
+                    "type": "user",
+                    "uuid": "u-1",
+                    "timestamp": "2026-11-15T10:00:00Z",
+                    "cwd": "/work/scribe",
+                    "message": {"role": "user", "content": "hello from a transcript"}
+                })
+            ),
+        )
+        .unwrap();
+        let file = std::fs::File::options().write(true).open(&path).unwrap();
+        file.set_modified(
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(mtime_secs),
+        )
+        .unwrap();
+    };
+    // Both carry an in-range message timestamp; only mtime differs.
+    write_one(old_id, 1_790_812_800); // 2026-10-01, before --since 2026-11-01
+    write_one(new_id, 1_794_700_800); // 2026-11-15, on/after --since
+
+    let listed = fx.ok(&[
+        "transcript",
+        "list",
+        "--since",
+        "2026-11-01",
+        "--min-turns",
+        "1",
+        "--json",
+    ]);
+    let list = serde_json::from_slice::<serde_json::Value>(&listed.stdout).unwrap();
+    let sessions: Vec<&str> = list["transcripts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["session"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        sessions,
+        [new_id],
+        "the pre-since-mtime file is skipped without being read, the newer one is listed"
+    );
+    assert_eq!(list["total"], 1);
+}

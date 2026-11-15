@@ -157,10 +157,19 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
     };
     let config = ctx.config()?;
     let cataloged = cataloged(ctx)?;
+    let since_start = since_start(args.since);
     let mut warnings = Vec::new();
     let mut rows = Vec::new();
     for (id, path) in payload::files_for(ctx)? {
         if cataloged.contains(id.as_str()) {
+            continue;
+        }
+        // Skip without opening: a file last written before `--since`
+        // started cannot be read cheaply, and the acceptance rule is to
+        // skip it even if its message timestamps fall in range.
+        if let Ok(modified) = std::fs::metadata(&path).and_then(|meta| meta.modified())
+            && modified < since_start
+        {
             continue;
         }
         if payload::check(ctx, &path, &id).is_err() {
@@ -252,8 +261,8 @@ fn payload_from(
     config: &Config,
     with_turns: bool,
 ) -> TranscriptPayload {
-    let survey = transcript::survey(bytes);
-    let cwd = transcript::cwd(bytes).unwrap_or_default();
+    let (survey, cwd) = transcript::survey_with_cwd(bytes);
+    let cwd = cwd.unwrap_or_default();
     let cwd_project = if cwd.is_empty() {
         Project::sanitized("")
     } else {
@@ -291,6 +300,18 @@ pub(in crate::commands) fn attributed_project(bytes: &[u8], config: &Config) -> 
         &transcript::mention_counts(bytes, &config.projects),
         &cwd_project,
     )
+}
+
+/// The start of the `--since` day as a system time (midnight UTC).
+fn since_start(since: Date) -> std::time::SystemTime {
+    let start = since.midnight().assume_utc().unix_timestamp();
+    if start >= 0 {
+        std::time::SystemTime::UNIX_EPOCH
+            + std::time::Duration::from_secs(u64::try_from(start).unwrap_or(0))
+    } else {
+        std::time::SystemTime::UNIX_EPOCH
+            - std::time::Duration::from_secs(u64::try_from(-start).unwrap_or(0))
+    }
 }
 
 fn dates(since: Date, until: Option<Date>) -> Result<DateRange, CliError> {
