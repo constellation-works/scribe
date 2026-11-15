@@ -2102,6 +2102,8 @@ show` prints `rebuilt_by` only in `--json`.
   redaction script takes its key on stdin.
 - [ORB-24003] — `rebuilt_by` on session records (format 6) and the author and
   resolved target on audit lines, including refusals (audit format 2).
+- [ORB-24030] — host-controlled identity: Daniel's writes only through his
+  typed prompt, agent author names as attribution only.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
 
@@ -2192,6 +2194,50 @@ retire or settle against Daniel's entries" (STD-05@1 §R1, §R2, §R5).
   (it can under an agent name). These refusals are accident guards, not
   permissions (STD-05@1 §R5). Cross-agent tidying of a note now goes
   through its author or a new note.
+
+## Daniel writes only through his typed prompt; agent names are attribution
+
+**Recorded:** 2026-11-15 · [ORB-24030] · **Daniel's decision**
+**Supersedes:** the `session catalog` Daniel channel and the between-agents
+rule of "Agent writes use their own name and edit only their own work"
+
+### Context
+
+After ORB-24002, `--author` is still a name the caller claims. Any process
+can pass `--author opus` and edit an opus note. `script -q /dev/null scribe
+session catalog <id> --author daniel` gets past the terminal check with a
+fake pty. Agents and Daniel run as the same Unix user, so a terminal is no
+proof that Daniel is the one writing (STD-05@1 §R5).
+
+### Decision
+
+Daniel chose on 2026-11-15, between the candidate shapes in ORB-24030:
+
+- **Daniel's writes go only through a channel agents cannot drive: the
+  `#scribe` and `/scribe` lines in his typed prompt, read by the hook.**
+  Cataloging a past session by name becomes the prompt command `/scribe
+  catalog <id>`. The CLI refuses `--author daniel` on every write,
+  including `session catalog`, whether or not stdin is a terminal. No CLI
+  path records `{kind: daniel}`. Rejected alternatives: a secret that agent
+  sandboxes cannot read (interactive sessions on the Mac run outside the
+  sandbox as Daniel) and an OS confirmation prompt (a dialog on every
+  catalog).
+- **Between agents, author names are attribution only.** scribe records the
+  name an agent gives, but no longer enforces ownership between agents.
+  This removes `not_author` on `entry update|retire` and `proposal update`,
+  and the self-settle guard. Per-crew credentials from Orbit were rejected
+  as more work than this is worth. Daniel's entries keep the metadata-only
+  rule for every agent, and the reserved names (`daniel`, `scribe`,
+  `consistency`) are still refused.
+
+### Consequences
+
+- Only Daniel's typed prompt can create a Daniel-attributed record. A faked
+  pty or a claimed name no longer reaches it.
+- Any agent may tidy another agent's note or settle any agent proposal. The
+  record keeps who wrote and who changed it (`updated_by`,
+  `settled_author`), and the design no longer claims that one agent's work
+  is protected from another.
 
 ## Codex defaults to Luna and shares the domain
 
