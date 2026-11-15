@@ -1,9 +1,9 @@
-//! `/scribe on|off|status|link` and the switch transitions behind it
-//! (docs/design/scribe/2_design.md §5.1, §5.2, §5.4).
+//! `/scribe on|off|status|link|catalog` and the switch transitions behind it
+//! (docs/design/scribe/2_design.md §5.1, §5.2, §5.4, §5.8).
 //!
 //! A prompt whose first line is `/scribe on`, `/scribe off`,
-//! `/scribe status`, `/scribe on --from <id>` or `/scribe link <id>` is a
-//! control command, not a turn: the `UserPromptSubmit`
+//! `/scribe status`, `/scribe on --from <id>`, `/scribe link <id>` or
+//! `/scribe catalog <id>` is a control command, not a turn: the `UserPromptSubmit`
 //! hook applies it to `control.json` and blocks the prompt. This module
 //! recognises the line ([`parse`]) and changes a [`ControlState`] in memory
 //! ([`switch`], [`mark_due`], [`mark_final`], [`settle`]); the store persists
@@ -44,6 +44,9 @@ pub enum Switch {
         /// Whether to switch the session on as well.
         on: bool,
     },
+    /// Catalog a past session by name as Daniel (`/scribe catalog <id>`):
+    /// the id, or a unique prefix of it, of the session to catalog.
+    Catalog(SessionId),
     /// Any other argument: refused with the usage.
     Unknown(String),
 }
@@ -66,6 +69,9 @@ pub fn parse(prompt: &str) -> Option<Switch> {
         [arg] if arg.eq_ignore_ascii_case("on") => Switch::On,
         [arg] if arg.eq_ignore_ascii_case("off") => Switch::Off,
         [arg] if arg.eq_ignore_ascii_case("status") => Switch::Status,
+        [arg, id] if arg.eq_ignore_ascii_case("catalog") => id
+            .parse()
+            .map_or_else(|_| Switch::Unknown(words.join(" ")), Switch::Catalog),
         [arg, rest @ ..] if arg.eq_ignore_ascii_case("on") || arg.eq_ignore_ascii_case("link") => {
             link_args(rest, arg.eq_ignore_ascii_case("on"))
                 .unwrap_or_else(|| Switch::Unknown(words.join(" ")))
@@ -313,8 +319,9 @@ pub fn switch(
             Some(_) | None => Change::AlreadyOff,
         },
         Switch::Status => Change::Status(current),
-        // A link is applied by the store's link call, not here.
-        Switch::Link { .. } => Change::Status(current),
+        // A link is applied by the store's link call, and a catalog by
+        // `catalog_gate` and `catalog_on`, not here.
+        Switch::Link { .. } | Switch::Catalog(_) => Change::Status(current),
         Switch::Unknown(arg) => Change::Unknown(arg.clone()),
     }
 }

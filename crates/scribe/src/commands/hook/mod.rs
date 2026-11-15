@@ -4,8 +4,8 @@
 //!
 //! - `user_prompt_submit.rs`: record each `#scribe` line of a typed prompt
 //!   and reply with what was recorded or refused; a prompt whose first line
-//!   is `/scribe on|off|status` goes to `scribe_command.rs` instead, which
-//!   switches cataloging and blocks the prompt (§5.1);
+//!   is `/scribe on|off|status|link|catalog` goes to `scribe_command.rs`
+//!   instead, which switches cataloging and blocks the prompt (§5.1, §5.8);
 //! - `stop.rs`: after a reply, fill in the message uuid of the entries the
 //!   prompt wrote, from the transcript, and mark a switched-on session's
 //!   pass due by minutes or turns (§5.2);
@@ -56,7 +56,9 @@ and nothing otherwise; never blocks such a prompt. #scribe approve <p-id>,
 #scribe reject <p-id>, #scribe retire <entry-id> and #scribe forget
 <entry-id> settle a proposal or hide or blank an entry. A prompt whose first
 line is /scribe on, /scribe off or /scribe status switches this session's
-cataloging and is blocked, its status given as the reason.
+cataloging and is blocked, its status given as the reason; /scribe catalog
+<id> starts Daniel's catalog of a past session, whose windows the next
+session pass runs.
 
 Examples:
   scribe hook user-prompt-submit < <payload.json>";

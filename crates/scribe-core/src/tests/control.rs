@@ -268,6 +268,33 @@ fn chosen_takes_sessions_that_are_on_whether_or_not_due_and_refuses_the_rest() {
 }
 
 #[test]
+fn catalog_parses_with_exactly_one_session_id() {
+    assert_eq!(
+        control::parse("/scribe catalog 0a1b2c3d"),
+        Some(Switch::Catalog(id("0a1b2c3d")))
+    );
+    assert_eq!(
+        control::parse("/scribe:scribe CATALOG s-1\nlater lines"),
+        Some(Switch::Catalog(id("s-1")))
+    );
+    for bad in [
+        "/scribe catalog",
+        "/scribe catalog a/b",
+        "/scribe catalog s-1 s-2",
+    ] {
+        assert!(
+            matches!(control::parse(bad), Some(Switch::Unknown(_))),
+            "{bad}"
+        );
+    }
+    // A catalog is applied by the catalog gate, not by `switch`.
+    let mut state = ControlState::default();
+    let change = control::switch(&mut state, &id("s-1"), &Switch::Catalog(id("s-2")), T0);
+    assert_eq!(change, Change::Status(None));
+    assert!(state.sessions.is_empty());
+}
+
+#[test]
 fn link_commands_parse_with_a_target_and_an_optional_type() {
     use crate::control::{Switch, parse};
     use crate::session::{LinkType, SessionLink};

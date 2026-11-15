@@ -8,12 +8,14 @@
 //! marks the record final and the switch off; newer, the switch stays on
 //! and due. No entries are written.
 //!
-//! Who cataloged it is a channel, like every `author`: `--author daniel`
-//! records `kind: daniel` only when stdin is a terminal (Daniel typing or
-//! pasting the popup's command in a shell) and is refused
-//! `reserved_author` otherwise, so an agent driving the CLI through a pipe
-//! cannot catalog as Daniel. Any other name records `kind: agent`, and the
-//! reserved names (`scribe`, `consistency`) are refused the same way.
+//! Who cataloged it is a channel, like every `author`. The CLI records
+//! `kind: agent` under the caller's `--author` and refuses the reserved
+//! names (`daniel`, `scribe`, `consistency`) `reserved_author`, with or
+//! without a terminal: Daniel catalogs by typing `/scribe catalog <id>` in
+//! his prompt, which the hook turns into a catalog switch with
+//! `cataloged_by: {kind: daniel}` ([`begin`]); this command, or the next
+//! `session pass`, then runs its windows and keeps that attribution
+//! (4_decisions.md "Daniel writes only through his typed prompt").
 
 use super::pass;
 use crate::app::Context;
@@ -35,13 +37,14 @@ switch. A transcript whose last message is at least a day old is marked
 final and switched off; a newer one stays on and due. A failed catalog
 keeps its checkpoint; run the same command again to resume. Writes no entries.
 
---author daniel is Daniel's channel: it records kind daniel only from an
-interactive terminal and is refused otherwise. An agent catalogs under its
-own name, recorded as kind agent.
+A new catalog is recorded as kind agent under --author; the reserved names
+daniel, scribe and consistency are refused. Daniel catalogs as himself by
+typing /scribe catalog <id> in his prompt; running this command on that
+session afterwards runs its windows and keeps cataloged_by daniel.
 
 Examples:
-  scribe session catalog <id> --author daniel
-  scribe session catalog <id> --author daniel --project scribe
+  scribe session catalog <id> --author opus
+  scribe session catalog <id> --author opus --project scribe
   scribe session catalog <id> --author opus --json | jq '.passes[0].result'";
 
 /// Arguments to `session catalog`.
@@ -62,22 +65,60 @@ pub(crate) struct CatalogArgs {
 
 /// Catalog with the `claude` CLI as the session model.
 pub(super) fn run(args: &CatalogArgs, ctx: &Context) -> Result<Output, CliError> {
-    run_with(args, ctx, crate::output::stdin_interactive(), |config| {
-        ctx.models(config)
-    })
+    run_with(args, ctx, |config| ctx.models(config))
 }
 
 /// [`run`] with the `Models` adapter `models` builds, so a test can answer
-/// with a fake. `interactive` is whether stdin is a terminal; it decides
-/// the `--author daniel` channel (see the module comment).
+/// with a fake.
 pub(in crate::commands) fn run_with<M: Models>(
     args: &CatalogArgs,
     ctx: &Context,
-    interactive: bool,
     models: impl FnOnce(&scribe_core::Config) -> M,
 ) -> Result<Output, CliError> {
-    let by = catalog_author(&args.author, interactive)?;
-    let id = super::super::transcript::resolve_transcript(ctx, &args.id)?;
+    scribe_core::check_agent_author(&args.author)?;
+    let begun = begin(ctx, &args.id, Author::agent(args.author.clone()))?;
+    let config = ctx.config()?;
+    let project = args
+        .project
+        .clone()
+        .unwrap_or_else(|| super::super::transcript::attributed_project(&begun.bytes, &config));
+    let ended = transcript::survey(&begun.bytes)
+        .ended
+        .is_some_and(|last| transcript::is_day_old(last, ctx.now()));
+    let mut report: PassReport =
+        pass::run_catalog(ctx, models, &begun.id, &begun.switch, project, ended)?;
+    report.switch_written = begun.wrote_switch;
+    Ok(Output::Pass(report))
+}
+
+/// A catalog switch, started or resumed by [`begin`].
+pub(in crate::commands) struct Begun {
+    /// The resolved session id.
+    pub(in crate::commands) id: SessionId,
+    /// The switch as it now stands.
+    pub(in crate::commands) switch: scribe_core::SessionControl,
+    /// Whether this call wrote the switch (a start, not a resume).
+    pub(in crate::commands) wrote_switch: bool,
+    /// The transcript, read once for the caller's attribution and age.
+    pub(in crate::commands) bytes: Vec<u8>,
+}
+
+/// Resolve `input` to a transcript, check it, refuse a missing redaction
+/// value, and start a catalog switch recorded as cataloged by `by`, or
+/// resume one a catalog already wrote (keeping its `since` and
+/// `cataloged_by`). Shared by this command (`by` an agent) and the
+/// `/scribe catalog <id>` prompt command (`by` Daniel). Runs no window.
+///
+/// # Errors
+///
+/// The transcript's refusal, `session_cataloged` for a session that already
+/// has a record or a non-catalog switch, or a store or config error.
+pub(in crate::commands) fn begin(
+    ctx: &Context,
+    input: &SessionId,
+    by: Author,
+) -> Result<Begun, CliError> {
+    let id = super::super::transcript::resolve_transcript(ctx, input)?;
     let dir = ctx
         .transcripts()
         .map(PathBuf::from)
@@ -127,27 +168,12 @@ pub(in crate::commands) fn run_with<M: Models>(
             }
         }
     })??;
-    let project = args
-        .project
-        .clone()
-        .unwrap_or_else(|| super::super::transcript::attributed_project(&bytes, &config));
-    let ended = transcript::survey(&bytes)
-        .ended
-        .is_some_and(|last| transcript::is_day_old(last, ctx.now()));
-    let mut report: PassReport = pass::run_catalog(ctx, models, &id, &switch, project, ended)?;
-    report.switch_written = wrote_switch;
-    Ok(Output::Pass(report))
-}
-
-/// The `cataloged_by` author for `--author <name>`: Daniel's channel only
-/// from an interactive terminal, an agent channel under an agent's own
-/// name, and a reserved name refused (`reserved_author`) either way.
-fn catalog_author(name: &AuthorName, interactive: bool) -> Result<Author, CliError> {
-    if name.as_str() == "daniel" && interactive {
-        return Ok(Author::daniel());
-    }
-    scribe_core::check_agent_author(name)?;
-    Ok(Author::agent(name.clone()))
+    Ok(Begun {
+        id,
+        switch,
+        wrote_switch,
+        bytes,
+    })
 }
 
 /// Whether a session file for `id` exists, including one that did not parse.

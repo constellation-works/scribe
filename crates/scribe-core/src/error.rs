@@ -227,8 +227,6 @@ pub enum WriteRefusal {
     DanielOnly,
     /// `reserved_author`.
     ReservedAuthor,
-    /// `not_author`.
-    NotAuthor,
     /// `invalid_text`.
     InvalidText,
     /// `invalid_topics`.
@@ -263,7 +261,6 @@ impl WriteRefusal {
         match self {
             Self::DanielOnly => "daniel_only",
             Self::ReservedAuthor => "reserved_author",
-            Self::NotAuthor => "not_author",
             Self::InvalidText => "invalid_text",
             Self::InvalidTopics => "invalid_topics",
             Self::TagNotFound => "tag_not_found",
