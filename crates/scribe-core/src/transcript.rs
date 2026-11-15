@@ -20,8 +20,11 @@
 use crate::control;
 use crate::entry::Speaker;
 use crate::record::Project;
-use serde_json::Value;
+use serde::Deserialize;
+use serde::de::{IgnoredAny, MapAccess, SeqAccess, Visitor};
+use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::fmt;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
@@ -57,75 +60,101 @@ impl Message {
 /// line keeps the position of its first copy.
 #[must_use]
 pub fn parse(bytes: &[u8]) -> Vec<Message> {
-    if is_codex(bytes) {
-        return crate::codex::parse(bytes)
-            .map(|r| r.messages)
-            .unwrap_or_default();
-    }
-
-    let mut seen = std::collections::HashSet::new();
-    bytes
-        .split(|&b| b == b'\n')
-        .filter_map(|line| serde_json::from_slice::<Value>(line).ok())
-        .filter_map(|value| message(&value))
-        .filter(|m| seen.insert(m.uuid.clone()))
-        .collect()
+    analyze(bytes).messages
 }
 
 /// The working directory the transcript's first message was written in
 /// (each line carries Claude Code's `cwd`), if any line names one.
 #[must_use]
 pub fn cwd(bytes: &[u8]) -> Option<String> {
-    if is_codex(bytes) {
-        return crate::codex::parse(bytes).ok().map(|r| r.cwd);
-    }
-
-    bytes
-        .split(|&b| b == b'\n')
-        .filter_map(|line| serde_json::from_slice::<Value>(line).ok())
-        .filter(|value| message(value).is_some())
-        .find_map(|value| {
-            value
-                .get("cwd")
-                .and_then(Value::as_str)
-                .filter(|cwd| !cwd.is_empty())
-                .map(str::to_owned)
-        })
+    analyze(bytes).cwd
 }
 
-fn is_codex(bytes: &[u8]) -> bool {
-    bytes
-        .split(|b| *b == b'\n')
-        .filter_map(|line| serde_json::from_slice::<Value>(line).ok())
-        .any(|row| {
-            matches!(
-                row["type"].as_str(),
+/// Survey and cwd from a single pass over `bytes`.
+#[must_use]
+pub fn survey_with_cwd(bytes: &[u8]) -> (Survey, Option<String>) {
+    let analysis = analyze(bytes);
+    (survey_from(&analysis.messages, bytes.len()), analysis.cwd)
+}
+
+struct Analysis {
+    messages: Vec<Message>,
+    cwd: Option<String>,
+}
+
+/// One pass over `bytes`: Codex is detected from the first parseable line,
+/// and Claude lines are deserialized into a typed borrowed view, so no
+/// `serde_json::Value` DOM is built per line.
+fn analyze(bytes: &[u8]) -> Analysis {
+    let mut seen = std::collections::HashSet::new();
+    let mut messages = Vec::new();
+    let mut cwd: Option<String> = None;
+    let mut decided = false;
+    for line in bytes.split(|&b| b == b'\n') {
+        let raw = match serde_json::from_slice::<RawLine<'_>>(line) {
+            Ok(raw) => raw,
+            Err(_) => {
+                if !decided && serde_json::from_slice::<IgnoredAny>(line).is_ok() {
+                    decided = true;
+                }
+                continue;
+            }
+        };
+        if !decided {
+            decided = true;
+            if matches!(
+                raw.kind.as_deref(),
                 Some("session_meta" | "response_item" | "turn_context")
-            )
-        })
+            ) {
+                return match crate::codex::parse(bytes) {
+                    Ok(rollout) => Analysis {
+                        messages: rollout.messages,
+                        cwd: Some(rollout.cwd),
+                    },
+                    Err(_) => Analysis {
+                        messages: Vec::new(),
+                        cwd: None,
+                    },
+                };
+            }
+        }
+        if let Some(message) = message_from(&raw) {
+            if cwd.is_none() {
+                cwd = raw
+                    .cwd
+                    .as_deref()
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned);
+            }
+            if seen.insert(message.uuid.clone()) {
+                messages.push(message);
+            }
+        }
+    }
+    Analysis { messages, cwd }
 }
 
-fn message(line: &Value) -> Option<Message> {
-    let role = match line.get("type")?.as_str()? {
+fn message_from(line: &RawLine<'_>) -> Option<Message> {
+    let role = match line.kind.as_deref()? {
         "user" => Speaker::User,
         "assistant" => Speaker::Assistant,
         _ => return None,
     };
-    let flag = |key: &str| line.get(key).and_then(Value::as_bool).unwrap_or(false);
-    if flag("isSidechain") || flag("isMeta") {
+    if line.is_sidechain.0 || line.is_meta.0 {
         return None;
     }
-    let uuid = line.get("uuid")?.as_str()?.to_owned();
-    let at = OffsetDateTime::parse(line.get("timestamp")?.as_str()?, &Rfc3339).ok()?;
-    let blocks = match line.get("message")?.get("content")? {
-        Value::String(text) => vec![text.clone()],
-        Value::Array(items) => items
+    let uuid = line.uuid.as_deref()?.to_owned();
+    let at = OffsetDateTime::parse(line.timestamp.as_deref()?, &Rfc3339).ok()?;
+    let blocks = match line.message.as_ref()?.content.as_ref()? {
+        RawContent::Text(text) => vec![text.clone().into_owned()],
+        RawContent::Blocks(items) => items
             .iter()
-            .filter(|b| b.get("type").and_then(Value::as_str) == Some("text"))
-            .filter_map(|b| b.get("text").and_then(Value::as_str))
-            .map(str::to_owned)
+            .filter_map(|block| match block {
+                RawBlock::Text(text) => Some(text.clone().into_owned()),
+                RawBlock::Other => None,
+            })
             .collect(),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_) => return None,
+        RawContent::Other => return None,
     };
     (!blocks.is_empty()).then_some(Message {
         uuid,
@@ -133,6 +162,358 @@ fn message(line: &Value) -> Option<Message> {
         at,
         blocks,
     })
+}
+
+/// A string field that is `None` when the JSON value is not a string; the
+/// rest of the value is consumed without allocation.
+#[derive(Default)]
+struct MaybeStr<'a>(Option<Cow<'a, str>>);
+
+impl MaybeStr<'_> {
+    fn as_deref(&self) -> Option<&str> {
+        self.0.as_deref()
+    }
+}
+
+impl<'de, 'a> Deserialize<'de> for MaybeStr<'a>
+where
+    'de: 'a,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct V<'a>(std::marker::PhantomData<&'a ()>);
+        impl<'de, 'a> Visitor<'de> for V<'a>
+        where
+            'de: 'a,
+        {
+            type Value = MaybeStr<'a>;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a string or any other JSON value")
+            }
+            fn visit_borrowed_str<E>(self, value: &'de str) -> Result<Self::Value, E> {
+                Ok(MaybeStr(Some(Cow::Borrowed(value))))
+            }
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E> {
+                Ok(MaybeStr(Some(Cow::Owned(value.to_owned()))))
+            }
+            fn visit_string<E>(self, value: String) -> Result<Self::Value, E> {
+                Ok(MaybeStr(Some(Cow::Owned(value))))
+            }
+            fn visit_bool<E>(self, _value: bool) -> Result<Self::Value, E> {
+                Ok(MaybeStr(None))
+            }
+            fn visit_i64<E>(self, _value: i64) -> Result<Self::Value, E> {
+                Ok(MaybeStr(None))
+            }
+            fn visit_u64<E>(self, _value: u64) -> Result<Self::Value, E> {
+                Ok(MaybeStr(None))
+            }
+            fn visit_f64<E>(self, _value: f64) -> Result<Self::Value, E> {
+                Ok(MaybeStr(None))
+            }
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                Ok(MaybeStr(None))
+            }
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                Ok(MaybeStr(None))
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                while seq.next_element::<IgnoredAny>()?.is_some() {}
+                Ok(MaybeStr(None))
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+                Ok(MaybeStr(None))
+            }
+        }
+        deserializer.deserialize_any(V(std::marker::PhantomData))
+    }
+}
+
+/// A boolean flag that is `false` when the JSON value is not a boolean.
+#[derive(Clone, Copy, Default)]
+struct LooseBool(bool);
+
+impl<'de> Deserialize<'de> for LooseBool {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = LooseBool;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a boolean or any other JSON value")
+            }
+            fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E> {
+                Ok(LooseBool(value))
+            }
+            fn visit_i64<E>(self, _value: i64) -> Result<Self::Value, E> {
+                Ok(LooseBool(false))
+            }
+            fn visit_u64<E>(self, _value: u64) -> Result<Self::Value, E> {
+                Ok(LooseBool(false))
+            }
+            fn visit_f64<E>(self, _value: f64) -> Result<Self::Value, E> {
+                Ok(LooseBool(false))
+            }
+            fn visit_borrowed_str<E>(self, _value: &str) -> Result<Self::Value, E> {
+                Ok(LooseBool(false))
+            }
+            fn visit_str<E>(self, _value: &str) -> Result<Self::Value, E> {
+                Ok(LooseBool(false))
+            }
+            fn visit_string<E>(self, _value: String) -> Result<Self::Value, E> {
+                Ok(LooseBool(false))
+            }
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                Ok(LooseBool(false))
+            }
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                Ok(LooseBool(false))
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                while seq.next_element::<IgnoredAny>()?.is_some() {}
+                Ok(LooseBool(false))
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+                Ok(LooseBool(false))
+            }
+        }
+        deserializer.deserialize_any(V)
+    }
+}
+
+#[derive(Deserialize)]
+struct RawLine<'a> {
+    #[serde(rename = "type", default, borrow)]
+    kind: MaybeStr<'a>,
+    #[serde(default, borrow)]
+    uuid: MaybeStr<'a>,
+    #[serde(default, borrow)]
+    timestamp: MaybeStr<'a>,
+    #[serde(rename = "isSidechain", default)]
+    is_sidechain: LooseBool,
+    #[serde(rename = "isMeta", default)]
+    is_meta: LooseBool,
+    #[serde(default, borrow)]
+    cwd: MaybeStr<'a>,
+    #[serde(default, borrow)]
+    message: Option<RawMessage<'a>>,
+}
+
+struct RawMessage<'a> {
+    content: Option<RawContent<'a>>,
+}
+
+impl<'de, 'a> Deserialize<'de> for RawMessage<'a>
+where
+    'de: 'a,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct V<'a>(std::marker::PhantomData<&'a ()>);
+        impl<'de, 'a> Visitor<'de> for V<'a>
+        where
+            'de: 'a,
+        {
+            type Value = RawMessage<'a>;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a message object or any other JSON value")
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let mut content = None;
+                while let Some(key) = map.next_key::<Cow<'_, str>>()? {
+                    if key.as_ref() == "content" {
+                        content = Some(map.next_value::<RawContent<'a>>()?);
+                    } else {
+                        let _ = map.next_value::<IgnoredAny>()?;
+                    }
+                }
+                Ok(RawMessage { content })
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                while seq.next_element::<IgnoredAny>()?.is_some() {}
+                Ok(RawMessage { content: None })
+            }
+            fn visit_borrowed_str<E>(self, _value: &str) -> Result<Self::Value, E> {
+                Ok(RawMessage { content: None })
+            }
+            fn visit_str<E>(self, _value: &str) -> Result<Self::Value, E> {
+                Ok(RawMessage { content: None })
+            }
+            fn visit_string<E>(self, _value: String) -> Result<Self::Value, E> {
+                Ok(RawMessage { content: None })
+            }
+            fn visit_bool<E>(self, _value: bool) -> Result<Self::Value, E> {
+                Ok(RawMessage { content: None })
+            }
+            fn visit_i64<E>(self, _value: i64) -> Result<Self::Value, E> {
+                Ok(RawMessage { content: None })
+            }
+            fn visit_u64<E>(self, _value: u64) -> Result<Self::Value, E> {
+                Ok(RawMessage { content: None })
+            }
+            fn visit_f64<E>(self, _value: f64) -> Result<Self::Value, E> {
+                Ok(RawMessage { content: None })
+            }
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                Ok(RawMessage { content: None })
+            }
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                Ok(RawMessage { content: None })
+            }
+        }
+        deserializer.deserialize_any(V(std::marker::PhantomData))
+    }
+}
+
+enum RawContent<'a> {
+    Text(Cow<'a, str>),
+    Blocks(Vec<RawBlock<'a>>),
+    Other,
+}
+
+impl<'de, 'a> Deserialize<'de> for RawContent<'a>
+where
+    'de: 'a,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct V<'a>(std::marker::PhantomData<&'a ()>);
+        impl<'de, 'a> Visitor<'de> for V<'a>
+        where
+            'de: 'a,
+        {
+            type Value = RawContent<'a>;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("message content")
+            }
+            fn visit_borrowed_str<E>(self, value: &'de str) -> Result<Self::Value, E> {
+                Ok(RawContent::Text(Cow::Borrowed(value)))
+            }
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E> {
+                Ok(RawContent::Text(Cow::Owned(value.to_owned())))
+            }
+            fn visit_string<E>(self, value: String) -> Result<Self::Value, E> {
+                Ok(RawContent::Text(Cow::Owned(value)))
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let mut blocks = Vec::new();
+                while let Some(block) = seq.next_element::<RawBlock<'a>>()? {
+                    blocks.push(block);
+                }
+                Ok(RawContent::Blocks(blocks))
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+                Ok(RawContent::Other)
+            }
+            fn visit_bool<E>(self, _value: bool) -> Result<Self::Value, E> {
+                Ok(RawContent::Other)
+            }
+            fn visit_i64<E>(self, _value: i64) -> Result<Self::Value, E> {
+                Ok(RawContent::Other)
+            }
+            fn visit_u64<E>(self, _value: u64) -> Result<Self::Value, E> {
+                Ok(RawContent::Other)
+            }
+            fn visit_f64<E>(self, _value: f64) -> Result<Self::Value, E> {
+                Ok(RawContent::Other)
+            }
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                Ok(RawContent::Other)
+            }
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                Ok(RawContent::Other)
+            }
+        }
+        deserializer.deserialize_any(V(std::marker::PhantomData))
+    }
+}
+
+enum RawBlock<'a> {
+    Text(Cow<'a, str>),
+    Other,
+}
+
+impl<'de, 'a> Deserialize<'de> for RawBlock<'a>
+where
+    'de: 'a,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct V<'a>(std::marker::PhantomData<&'a ()>);
+        impl<'de, 'a> Visitor<'de> for V<'a>
+        where
+            'de: 'a,
+        {
+            type Value = RawBlock<'a>;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a content block or any other JSON value")
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let mut kind: Option<Cow<'_, str>> = None;
+                let mut text: Option<Cow<'_, str>> = None;
+                while let Some(key) = map.next_key::<Cow<'_, str>>()? {
+                    match key.as_ref() {
+                        "type" => kind = map.next_value::<MaybeStr<'a>>()?.0,
+                        "text" => text = map.next_value::<MaybeStr<'a>>()?.0,
+                        _ => {
+                            let _ = map.next_value::<IgnoredAny>()?;
+                        }
+                    }
+                }
+                match (kind.as_deref(), text) {
+                    (Some("text"), Some(value)) => Ok(RawBlock::Text(value)),
+                    (Some("text"), None) => Ok(RawBlock::Other),
+                    (Some(_), _) => Ok(RawBlock::Other),
+                    (None, _) => Ok(RawBlock::Other),
+                }
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                while seq.next_element::<IgnoredAny>()?.is_some() {}
+                Ok(RawBlock::Other)
+            }
+            fn visit_borrowed_str<E>(self, _value: &str) -> Result<Self::Value, E> {
+                Ok(RawBlock::Other)
+            }
+            fn visit_str<E>(self, _value: &str) -> Result<Self::Value, E> {
+                Ok(RawBlock::Other)
+            }
+            fn visit_string<E>(self, _value: String) -> Result<Self::Value, E> {
+                Ok(RawBlock::Other)
+            }
+            fn visit_bool<E>(self, _value: bool) -> Result<Self::Value, E> {
+                Ok(RawBlock::Other)
+            }
+            fn visit_i64<E>(self, _value: i64) -> Result<Self::Value, E> {
+                Ok(RawBlock::Other)
+            }
+            fn visit_u64<E>(self, _value: u64) -> Result<Self::Value, E> {
+                Ok(RawBlock::Other)
+            }
+            fn visit_f64<E>(self, _value: f64) -> Result<Self::Value, E> {
+                Ok(RawBlock::Other)
+            }
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                Ok(RawBlock::Other)
+            }
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                Ok(RawBlock::Other)
+            }
+        }
+        deserializer.deserialize_any(V(std::marker::PhantomData))
+    }
 }
 
 /// User turns Claude Code writes itself, not Daniel. A turn whose text
@@ -221,8 +602,11 @@ pub struct Survey {
 /// rule for whose turn is whose.
 #[must_use]
 pub fn survey(bytes: &[u8]) -> Survey {
-    let messages = parse(bytes);
-    let turns = daniel_turns(&messages);
+    survey_from(&parse(bytes), bytes.len())
+}
+
+fn survey_from(messages: &[Message], len: usize) -> Survey {
+    let turns = daniel_turns(messages);
     let first_turns: Vec<String> = turns
         .iter()
         .take(FIRST_TURNS)
@@ -231,7 +615,7 @@ pub fn survey(bytes: &[u8]) -> Survey {
     Survey {
         started: messages.first().map(|m| m.at),
         ended: messages.last().map(|m| m.at),
-        bytes: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+        bytes: u64::try_from(len).unwrap_or(u64::MAX),
         daniel_turns: u32::try_from(turns.len()).unwrap_or(u32::MAX),
         first_prompt: first_turns.first().cloned().unwrap_or_default(),
         first_turns,

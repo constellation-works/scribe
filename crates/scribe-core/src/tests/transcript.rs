@@ -129,6 +129,20 @@ fn user(uuid: &str, at: &str, text: &str) -> String {
 }
 
 #[test]
+fn survey_with_cwd_matches_survey_and_cwd_from_one_pass() {
+    let raw = format!(
+        "{}\n{}\n",
+        r#"{"type":"user","uuid":"u-1","timestamp":"2026-11-01T10:00:00Z","cwd":"/work/first","message":{"role":"user","content":"hello"}}"#,
+        r#"{"type":"user","uuid":"u-2","timestamp":"2026-11-01T11:00:00Z","cwd":"/work/second","message":{"role":"user","content":"again"}}"#,
+    );
+    let (survey, cwd) = transcript::survey_with_cwd(raw.as_bytes());
+    assert_eq!(survey, transcript::survey(raw.as_bytes()));
+    assert_eq!(cwd.as_deref(), Some("/work/first"));
+    assert_eq!(cwd, transcript::cwd(raw.as_bytes()));
+    assert_eq!(survey.daniel_turns, 2);
+}
+
+#[test]
 fn an_empty_or_unreadable_transcript_has_no_messages() {
     assert!(transcript::parse(b"").is_empty());
     assert!(transcript::parse(&[0xff, 0xfe, b'\n']).is_empty());
