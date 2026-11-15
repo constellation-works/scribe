@@ -905,7 +905,12 @@ counted in `remaining` alongside sessions waiting for backoff or the next run
 1. Parse the transcript from its first message (the whole opted-in
    session, not only messages since `on_since`), dropping tool payloads,
    `<task-notification>` and other synthetic turns, and attributing pasted
-   blocks as pasted.
+   blocks as pasted. A message uuid counts once: Claude Code writes earlier
+   lines into the file again when a session is resumed (same uuid,
+   timestamp and text), and only the first copy is kept, at its position.
+   Without that, `scribed_through` inside a replay resumed after its first
+   copy and the pass read the replay again, and a start in it was refused
+   as not following the open segment ([ORB-24918]).
 2. Split messages after `scribed_through` into consecutive windows, oldest
    first: at most `[catalog] window_messages = 40` messages or
    `window_chars = 15000` Unicode characters of content, whichever binds
@@ -1019,7 +1024,14 @@ Then the window's messages, and linked sessions' summaries as before.
 The prompt asks for a summary of at most 900 characters, leaving room below
 the 1200-character hard limit, and states the current summary's Unicode
 character count (0 for a first pass). The summary stays a compact overview;
-the log carries the details as the session grows.
+the log carries the details as the session grows. `next` and segment text
+get the same headroom ([ORB-24918]): `next` aims for 750 of its 1000
+characters, counting a `- ` prefix per item and a newline between items,
+with the current `next`'s count and the instruction to drop done or
+superseded steps rather than only add; segment text aims for 700 of 900,
+with the open segment's count, and a segment that would pass 700 is left
+as it is and a new one started. A long session carries its `next` forward
+near the limit, so without a target each added item overshot it.
 
 **Answered.** `{title, summary, goals, next, topics, related, terms, open,
 new}`: the rewritten header; `open`, the open segment's rewritten

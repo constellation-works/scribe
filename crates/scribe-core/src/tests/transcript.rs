@@ -133,3 +133,20 @@ fn an_empty_or_unreadable_transcript_has_no_messages() {
     assert!(transcript::parse(b"").is_empty());
     assert!(transcript::parse(&[0xff, 0xfe, b'\n']).is_empty());
 }
+
+#[test]
+fn a_replayed_line_keeps_its_first_position_and_counts_once() {
+    let raw = [
+        user("u-1", "2026-11-01T10:00:00Z", "first"),
+        user("u-2", "2026-11-01T10:01:00Z", "second"),
+        // Claude Code wrote both again on resume, then the session went on.
+        user("u-1", "2026-11-01T10:00:00Z", "first"),
+        user("u-2", "2026-11-01T10:01:00Z", "second"),
+        user("u-3", "2026-11-02T09:00:00Z", "after the resume"),
+    ]
+    .join("\n");
+    let messages = transcript::parse(raw.as_bytes());
+    let ids: Vec<&str> = messages.iter().map(|m| m.uuid.as_str()).collect();
+    assert_eq!(ids, ["u-1", "u-2", "u-3"]);
+    assert_eq!(transcript::survey(raw.as_bytes()).daniel_turns, 3);
+}

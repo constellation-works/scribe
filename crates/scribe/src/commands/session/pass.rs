@@ -739,14 +739,16 @@ pub(super) fn distill<M: Models>(
         PassError::new(err.code(), err.to_string())
     })?;
     // One more ask in the same pass, naming what was refused: a model
-    // can't count characters exactly, so a near miss is common.
+    // can't count characters exactly, so a near miss is common. A refusal
+    // the retry or the repair resolves is logged at info; only a pass that
+    // still fails warns, naming both refusals. Repairs reach the report.
     let distilled = match pass::check(answer.clone(), conversation, &request) {
         Ok(distilled) => distilled,
         Err(err) => {
-            tracing::warn!(session = %id, %err, "the session model's answer was refused; asking once more");
+            tracing::info!(session = %id, %err, "the session model's answer was refused; asking once more");
             let refusal = err.to_string();
             let retry_failure = |err: scribe_core::models::ModelError| {
-                tracing::warn!(session = %id, %err, "the session model failed");
+                tracing::warn!(session = %id, %refusal, %err, "the session model failed on the retry");
                 PassError::new(err.code(), format!("{refusal}; retry: {err}"))
             };
             if let Some(compress) = pass::compression_request(&answer, conversation, &request) {
@@ -765,7 +767,7 @@ pub(super) fn distill<M: Models>(
             pass::check(answer.clone(), conversation, &request)
                 .or_else(|_| pass::repair(answer, conversation, &request))
                 .map_err(|err| {
-                    tracing::warn!(session = %id, %err, "the session model's answer was refused");
+                    tracing::warn!(session = %id, %refusal, %err, "the session model's answer was refused twice");
                     PassError::new("session_answer_invalid", format!("{refusal}; retry: {err}"))
                 })?
         }
