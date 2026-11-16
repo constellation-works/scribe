@@ -44,6 +44,8 @@ fn entry(id: &str, content: &str) -> EntryPayload {
         superseded_by: None,
         review_after: None,
         quote: None,
+        evidence: None,
+        as_of: None,
         window_turns: None,
         window: None,
         action: None,

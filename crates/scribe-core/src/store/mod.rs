@@ -1057,6 +1057,10 @@ impl Store {
             settled = Settled::Recorded {
                 proposal: *id,
                 entry: proposal.older.clone(),
+                agent_authored: proposal
+                    .candidate
+                    .as_ref()
+                    .is_some_and(|c| c.role == crate::Speaker::Assistant),
             };
         }
         for (entry, before) in entries.iter().zip(&before_entries) {

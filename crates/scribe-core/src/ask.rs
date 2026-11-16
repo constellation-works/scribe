@@ -490,7 +490,9 @@ pub fn check(reply: AskAnswer, evidence: &[EvidenceItem], hidden: usize) -> Answ
     if status == Status::NoRecord {
         return no_record(evidence.len(), dropped, hidden);
     }
-    let has_agent = evidence.iter().any(|e| e.whose.starts_with("agent note ("));
+    let has_agent = evidence
+        .iter()
+        .any(|e| e.whose.starts_with("agent note (") || e.whose.starts_with("agent claim ("));
     let answer = if has_agent {
         claims
             .iter()
@@ -1394,17 +1396,38 @@ fn entry_item(entry: &Entry) -> EvidenceItem {
             ..
         } => "assistant (recorded by Daniel)",
     };
+    // A finding is that agent's claim as of its date, with the evidence
+    // pointer it can be checked against — never Daniel's words. The
+    // pointer rides in `whose` (which the deterministic check copies
+    // into each claim) and in the text a claim may quote.
+    let (whose, text) = if entry.author.kind == crate::AuthorKind::Agent && entry.is_finding() {
+        let evidence = entry.evidence.as_deref().unwrap_or_default();
+        (
+            format!(
+                "agent claim ({}) as of {}; evidence: {}",
+                entry.author.name,
+                entry
+                    .as_of
+                    .map_or_else(|| day(entry.created), crate::record::DateRange::day),
+                evidence
+            ),
+            format!("{}\nEvidence: {}", entry.content, evidence),
+        )
+    } else if entry.author.kind == crate::AuthorKind::Agent {
+        (
+            format!("agent note ({})", entry.author.name),
+            entry.content.clone(),
+        )
+    } else {
+        (whose.to_owned(), entry.content.clone())
+    };
     EvidenceItem {
         cite: entry.id.to_string(),
         kind: "entry",
-        whose: if entry.author.kind == crate::AuthorKind::Agent {
-            format!("agent note ({})", entry.author.name)
-        } else {
-            whose.to_owned()
-        },
+        whose,
         status: entry.status.as_str().to_owned(),
         date: day(entry.created),
-        text: entry.content.clone(),
+        text,
     }
 }
 

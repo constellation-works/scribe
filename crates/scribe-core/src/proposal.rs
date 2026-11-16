@@ -168,15 +168,26 @@ pub struct Proposal {
     pub settled_author: Option<Author>,
 }
 
-/// Checked user words offered by a session pass. Metadata is derived from
-/// the transcript and session, never supplied by the model.
+/// Checked words offered by a session pass: Daniel's unmarked statement, or
+/// an assistant turn's measured result or open item (format 10). Metadata
+/// is derived from the transcript and session, never supplied by the model.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EntryCandidate {
-    /// Suggested canonical memory tag.
+    /// Suggested canonical tag: a memory tag for Daniel's words, or the
+    /// fitting tag (`finding`, `task`, `remind`, `idea`, ...) for an
+    /// assistant turn.
     pub tag: TagName,
-    /// Exact span of Daniel's own turn, at most 400 characters.
+    /// Whose turn `quote` is verbatim from. Approval of a `user` candidate
+    /// writes Daniel's entry; approval of an `assistant` candidate writes
+    /// an agent-authored entry, never one attributed to Daniel.
+    pub role: Speaker,
+    /// Exact span of that turn, at most 400 characters.
     pub quote: String,
+    /// A finding candidate's evidence pointer, copied to the approved
+    /// entry; `null` for other tags (the cited turn is the pointer).
+    #[serde(deserialize_with = "nullable")]
+    pub evidence: Option<String>,
     /// The original turn, including its known message id.
     pub cite: Cite,
     /// Scope inherited from the opted-in session.
@@ -212,28 +223,41 @@ impl Proposal {
         let candidate = self.candidate.as_ref()?;
         let at = self.settled_at?;
         let message = candidate.cite.message.clone()?;
-        Some(
-            NewEntry {
-                tag: candidate.tag.clone(),
-                project: candidate.project.clone(),
-                topics: Topics::default(),
-                related: Vec::new(),
-                provider: candidate.provider.clone(),
-                host: candidate.host.clone(),
-                created: at,
-                said: format!("#scribe approve {}", self.id),
-                content: candidate.quote.clone(),
-                content_from: ContentFrom::Message {
-                    role: Speaker::User,
-                    message,
-                    at: candidate.cite.at,
-                },
-                cite: candidate.cite.clone(),
-                review_after,
-                window: None,
+        let mut entry = NewEntry {
+            tag: candidate.tag.clone(),
+            project: candidate.project.clone(),
+            topics: Topics::default(),
+            related: Vec::new(),
+            provider: candidate.provider.clone(),
+            host: candidate.host.clone(),
+            created: at,
+            said: format!("#scribe approve {}", self.id),
+            content: candidate.quote.clone(),
+            content_from: ContentFrom::Message {
+                role: candidate.role,
+                message,
+                at: candidate.cite.at,
+            },
+            cite: candidate.cite.clone(),
+            review_after,
+            window: None,
+        }
+        .into_entry(self.older.clone());
+        if candidate.role == Speaker::Assistant {
+            // The assistant's own words, kept on Daniel's typed approval:
+            // an agent-authored entry, never attributed to Daniel. A
+            // finding keeps its evidence pointer (the cited session when
+            // the candidate named none) and the turn's date as as-of.
+            entry.author = Author::assistant();
+            entry.evidence.clone_from(&candidate.evidence);
+            if entry.evidence.is_none() && candidate.tag.as_str() == crate::tag::FINDING_TAG {
+                entry.evidence = Some(format!("session:{}", candidate.cite.session));
             }
-            .into_entry(self.older.clone()),
-        )
+            if entry.evidence.is_some() {
+                entry.as_of = Some(candidate.cite.at.date());
+            }
+        }
+        Some(entry)
     }
 }
 

@@ -93,8 +93,11 @@ fn the_fixture_reads_whole_and_reading_writes_nothing() {
         rows,
         [
             (String::from("decisions"), 2, true),
+            (String::from("finding"), 0, true),
             (String::from("friction"), 0, true),
+            (String::from("idea"), 0, true),
             (String::from("preferences"), 1, true),
+            (String::from("remind"), 0, true),
             (String::from("rituals"), 1, false),
             (String::from("standard"), 0, true),
             (String::from("task"), 0, true),
@@ -148,11 +151,11 @@ fn a_record_from_a_newer_build_is_refused_not_rewritten() {
     let path = store.entry_path(&"decisions-2".parse().unwrap());
     let text = fs::read_to_string(&path)
         .unwrap()
-        .replace("format: 1", "format: 10");
+        .replace("format: 1", "format: 11");
     fs::write(&path, &text).unwrap();
     let err = store.list_entries(&EntryFilter::default()).unwrap_err();
     assert!(
-        matches!(err, Error::NewerFormat { found: 10, .. }),
+        matches!(err, Error::NewerFormat { found: 11, .. }),
         "got {err:?}"
     );
     assert_eq!(err.code(), "store_too_new");

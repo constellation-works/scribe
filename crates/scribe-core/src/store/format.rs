@@ -41,7 +41,7 @@ use time::OffsetDateTime;
 
 /// The newest store format: this build reads formats 1 to `FORMAT` of every
 /// document and would write `FORMAT`.
-pub(super) const FORMAT: u32 = 9;
+pub(super) const FORMAT: u32 = 10;
 
 /// Which document an upgrade step is applied to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,7 +77,40 @@ pub(super) const UPGRADES: &[Upgrade] = &[
     codex_controls,
     action_entries,
     entry_candidates,
+    finding_entries,
 ];
+
+/// Format 9 -> 10 adds `evidence` and `as_of` to each entry, both `null`
+/// for an entry written before findings, and `role` (`user`) and
+/// `evidence` (`null`) to each proposal candidate, which until now could
+/// only quote Daniel. Other documents are unchanged.
+fn finding_entries(
+    document: Document,
+    mut value: serde_json::Value,
+) -> serde_json::Result<serde_json::Value> {
+    if document == Document::Entry
+        && let Some(entry) = value.as_object_mut()
+    {
+        entry.entry("evidence").or_insert(serde_json::Value::Null);
+        entry.entry("as_of").or_insert(serde_json::Value::Null);
+    }
+    if document == Document::Proposals {
+        for candidate in value
+            .get_mut("proposals")
+            .and_then(serde_json::Value::as_array_mut)
+            .into_iter()
+            .flatten()
+            .filter_map(|p| p.get_mut("candidate"))
+            .filter_map(serde_json::Value::as_object_mut)
+        {
+            candidate.entry("role").or_insert(serde_json::json!("user"));
+            candidate
+                .entry("evidence")
+                .or_insert(serde_json::Value::Null);
+        }
+    }
+    Ok(value)
+}
 
 /// Format 8 -> 9 adds candidate payloads to proposals. Older proposals
 /// retain their subjects and provenance; only the new field is null.
@@ -513,6 +546,53 @@ struct ProposalV8 {
     settled_author: Option<Author>,
 }
 
+/// Frozen format-9 proposal shape (a candidate payload without `role` or
+/// `evidence`), checked before the 9 -> 10 upgrade.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "frozen shape checked before upgrade")]
+struct ProposalsV9 {
+    format: u32,
+    proposals: Vec<ProposalV9>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "frozen shape checked before upgrade")]
+struct ProposalV9 {
+    id: ProposalId,
+    kind: ProposalKind,
+    older: EntryId,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    candidate: Option<CandidateV9>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    newer: Option<EntryId>,
+    reason: String,
+    quotes: Vec<Quote>,
+    state: ProposalState,
+    #[serde(with = "time::serde::rfc3339")]
+    opened_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339::option")]
+    settled_at: Option<OffsetDateTime>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    settled_by: Option<Cite>,
+    author: Author,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    updated_by: Option<Author>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    settled_author: Option<Author>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "frozen shape checked before upgrade")]
+struct CandidateV9 {
+    tag: crate::TagName,
+    quote: String,
+    cite: Cite,
+    project: crate::Project,
+    provider: crate::Label,
+    host: crate::Label,
+}
+
 /// Frozen format-2 `control.json` shape, validated before upgrading.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -715,10 +795,25 @@ pub(super) fn decode_entry(
                 && entry.quote.is_none()
         }
         crate::AuthorKind::Agent => {
-            entry.cite.is_none()
+            // A direct CLI note, or (format 10) an assistant turn kept by
+            // a typed candidate approval: the cite is that turn, `said`
+            // the approval command, and the words are the assistant's.
+            let direct = entry.cite.is_none()
                 && entry.said.is_empty()
                 && entry.content_from == crate::ContentFrom::Agent
-                && entry.window.is_none()
+                && entry.window.is_none();
+            let approved_assistant = entry.cite.is_some()
+                && entry.said.starts_with("#scribe approve p-")
+                && matches!(
+                    entry.content_from,
+                    crate::ContentFrom::Message {
+                        role: crate::Speaker::Assistant,
+                        ..
+                    }
+                )
+                && entry.quote.is_none()
+                && entry.window.is_none();
+            direct || approved_assistant
         }
         crate::AuthorKind::Scribe => false,
     };
@@ -1075,6 +1170,9 @@ fn decode_json<T: DeserializeOwned>(path: &Path, bytes: &[u8], document: Documen
         }
         Document::Proposals if from == 4 => {
             serde_json::from_slice::<ProposalsV4>(bytes).map_err(|e| Error::corrupt(path, e))?;
+        }
+        Document::Proposals if from == 9 => {
+            serde_json::from_slice::<ProposalsV9>(bytes).map_err(|e| Error::corrupt(path, e))?;
         }
         Document::Proposals if from >= 5 => {
             serde_json::from_slice::<ProposalsV8>(bytes).map_err(|e| Error::corrupt(path, e))?;

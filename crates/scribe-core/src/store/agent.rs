@@ -89,6 +89,62 @@ fn check_quote(def: &crate::TagDef, quote: Option<&str>) -> Result<()> {
     }
 }
 
+/// An evidence pointer belongs on a `require_evidence` (finding) entry,
+/// and such a tag gets one: a result with nothing to check it against is
+/// just an agent's memory of itself.
+fn check_evidence(def: &crate::TagDef, evidence: Option<&str>) -> Result<()> {
+    match (def.require_evidence, evidence) {
+        (true, None) => Err(refusal(
+            WriteRefusal::EvidenceRequired,
+            format!(
+                "{} records a measured or verified result: pass --evidence with a pointer to its evidence (a path, task, run, experiment or commit)",
+                def.name
+            ),
+        )),
+        (true, Some(evidence)) if evidence.trim().is_empty() => Err(refusal(
+            WriteRefusal::EvidenceRequired,
+            "--evidence must not be empty",
+        )),
+        (false, Some(_)) => Err(refusal(
+            WriteRefusal::EvidenceRequired,
+            format!(
+                "{} does not take an evidence pointer; --evidence applies only to the finding tag",
+                def.name
+            ),
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// The session a direct finding write names (a `session:` reference), as
+/// the per-session cap counts it.
+fn draft_session(related: &[crate::Related]) -> Option<String> {
+    related
+        .iter()
+        .find(|r| r.kind() == crate::RelatedKind::Session)
+        .map(|r| r.target().to_owned())
+}
+
+/// Whether `entry` counts against this write's per-session finding cap:
+/// same named session, or, when the write names none, the same author's
+/// unnamed-session findings of the same day.
+fn counts_toward_cap(
+    entry: &Entry,
+    tag: &TagName,
+    session: Option<&str>,
+    author: &AuthorName,
+    now: OffsetDateTime,
+) -> bool {
+    if &entry.tag != tag || !entry.is_finding() {
+        return false;
+    }
+    match (session, entry.session_key()) {
+        (Some(named), Some(held)) => named == held,
+        (None, None) => &entry.author.name == author && entry.created.date() == now.date(),
+        _ => false,
+    }
+}
+
 fn required(text: &str) -> Result<()> {
     if text.trim().is_empty() {
         return Err(refusal(WriteRefusal::InvalidText, "text must not be empty"));
@@ -207,6 +263,18 @@ impl Store {
         content: &str,
         quote: Option<&str>,
     ) -> Result<crate::TagDef> {
+        self.check_new_entry_with_evidence(tag, content, quote, None)
+    }
+
+    /// [`Store::check_new_entry`] with an evidence pointer, for the
+    /// `require_evidence` (`finding`) tag.
+    pub fn check_new_entry_with_evidence(
+        &self,
+        tag: &TagName,
+        content: &str,
+        quote: Option<&str>,
+        evidence: Option<&str>,
+    ) -> Result<crate::TagDef> {
         required(content)?;
         let def = self
             .config()?
@@ -215,6 +283,7 @@ impl Store {
             .cloned()
             .ok_or_else(unknown_tag)?;
         check_quote(&def, quote)?;
+        check_evidence(&def, evidence)?;
         Ok(def)
     }
 
@@ -251,7 +320,25 @@ impl Store {
             .resolve(draft.tag.as_str())
             .ok_or_else(unknown_tag)?;
         check_quote(tag, draft.quote.as_deref())?;
+        check_evidence(tag, draft.evidence.as_deref())?;
         let (entries, skipped) = self.load_entries()?;
+        if tag.require_evidence {
+            let session = draft_session(&draft.related);
+            let held = entries
+                .iter()
+                .filter(|e| counts_toward_cap(e, &tag.name, session.as_deref(), &author, now))
+                .count();
+            if held >= crate::MAX_FINDINGS_PER_SESSION {
+                return Err(refusal(
+                    WriteRefusal::FindingCap,
+                    format!(
+                        "at most {} findings per session (cap {}); this session already holds {held}: record only a result that is costly to re-derive",
+                        crate::MAX_FINDINGS_PER_SESSION,
+                        crate::MAX_FINDINGS_PER_SESSION
+                    ),
+                ));
+            }
+        }
         let mut ids: Vec<EntryId> = entries.iter().map(|e| e.id.clone()).collect();
         ids.extend(
             skipped
@@ -280,6 +367,11 @@ impl Store {
             review_after: tag.review_after(now.date()),
             quote: draft.quote,
             window: None,
+            as_of: draft
+                .evidence
+                .as_ref()
+                .map(|_| draft.as_of.unwrap_or_else(|| now.date())),
+            evidence: draft.evidence,
             content: draft.content,
         };
         redactor.entry(&mut entry);

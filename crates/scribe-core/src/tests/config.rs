@@ -42,7 +42,9 @@ env = ["GITHUB_TOKEN", "ANTHROPIC_API_KEY"]
     let names: Vec<&str> = config.tags.tags().iter().map(|t| t.name.as_str()).collect();
     assert_eq!(
         names,
-        ["friction", "rituals", "standard", "task"],
+        [
+            "finding", "friction", "idea", "remind", "rituals", "standard", "task"
+        ],
         "a [tags] table replaces the defaults but keeps the shipped action tags"
     );
     assert_eq!(

@@ -45,8 +45,17 @@ fn an_empty_store_lists_nothing_on_stdout_and_says_why_on_stderr() {
         .collect();
     assert_eq!(
         names,
-        ["decisions", "friction", "preferences", "standard", "task"],
-        "the defaults plus the shipped action tags"
+        [
+            "decisions",
+            "finding",
+            "friction",
+            "idea",
+            "preferences",
+            "remind",
+            "standard",
+            "task"
+        ],
+        "the defaults plus the shipped action tags and finding"
     );
     assert!(!fx.root().exists(), "a read never creates the store");
 }
@@ -169,7 +178,7 @@ fn piped_output_is_one_undecorated_line_per_record() {
     // STD-01 R9, R12: no escapes, no header, N records → N lines; stderr silent.
     let fx = Fixture::new();
     fx.seed();
-    for ((args, _), (rows, fields)) in LISTS.iter().zip([(4, 8), (2, 7), (2, 7), (6, 9)]) {
+    for ((args, _), (rows, fields)) in LISTS.iter().zip([(4, 8), (2, 7), (2, 7), (9, 9)]) {
         let mut cmd = fx.cmd(args);
         cmd.env("CLICOLOR_FORCE", "1").env("TERM", "xterm-256color");
         let out = cmd.output().unwrap();
@@ -260,9 +269,9 @@ fn json_list_and_show_are_typed_documents() {
     assert_eq!(proposals["proposals"][1]["settled_by"]["line"], 1);
 
     let tags = json(&fx.ok(&["tag", "list", "--json"]).stdout);
-    assert_eq!(tags["tags"][3]["name"], "rituals");
-    assert_eq!(tags["tags"][3]["configured"], false);
-    assert_eq!(tags["tags"][2]["stale_after_days"], 180);
+    assert_eq!(tags["tags"][6]["name"], "rituals");
+    assert_eq!(tags["tags"][6]["configured"], false);
+    assert_eq!(tags["tags"][4]["stale_after_days"], 180);
 }
 
 #[test]

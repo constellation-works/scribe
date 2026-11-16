@@ -87,7 +87,10 @@ pub use store::{
     Store, TagList, check_agent_author, check_content, check_description, check_reason,
     init_project, integration_hooks, resolve_prefix, unresolved_redact_env,
 };
-pub use tag::{ActionTag, StoreTag, TagDef, TagError, TagPatch, TagSummary, TagTable};
+pub use tag::{
+    ActionTag, FINDING_TAG, MAX_FINDINGS_PER_SESSION, StoreTag, TagDef, TagError, TagPatch,
+    TagSummary, TagTable,
+};
 
 #[cfg(test)]
 mod tests;

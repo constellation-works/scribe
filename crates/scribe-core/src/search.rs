@@ -90,6 +90,10 @@ pub struct Hit {
     pub status: &'static str,
     /// When the entry or session last changed, or the segment's last message.
     pub updated: OffsetDateTime,
+    /// A finding entry's evidence pointer; `None` otherwise.
+    pub evidence: Option<String>,
+    /// The date a finding's result was true; `None` otherwise.
+    pub as_of: Option<time::Date>,
 }
 
 /// What a search found.
@@ -177,6 +181,22 @@ fn hit(score: f64, doc: &Doc, corpus: Corpus<'_>, wanted: &BTreeSet<String>) -> 
             } else {
                 &e.content
             };
+            // A finding reads as that agent's claim as of its date, with
+            // its evidence pointer, in every output mode.
+            let snippet = if e.author.kind == crate::AuthorKind::Agent && e.is_finding() {
+                format!(
+                    "{} [agent claim ({}) as of {}; evidence: {}]",
+                    snippet(text, wanted),
+                    e.author.name,
+                    e.as_of.map_or_else(
+                        || crate::record::DateRange::day(e.created.date()),
+                        crate::record::DateRange::day
+                    ),
+                    e.evidence.as_deref().unwrap_or_default()
+                )
+            } else {
+                snippet(text, wanted)
+            };
             Some(Hit {
                 kind: RecordKind::Entry,
                 cite,
@@ -184,13 +204,15 @@ fn hit(score: f64, doc: &Doc, corpus: Corpus<'_>, wanted: &BTreeSet<String>) -> 
                 segment: None,
                 score,
                 title: format!("{} ({})", e.id, e.tag),
-                snippet: snippet(text, wanted),
+                snippet,
                 project: e.project.clone(),
                 topics: e.topics.as_slice().to_vec(),
                 author: Some(e.author.clone()),
                 active: None,
                 status: e.status.as_str(),
                 updated: e.updated,
+                evidence: e.evidence.clone(),
+                as_of: e.as_of,
             })
         }
         Origin::Header(i) => {
@@ -210,6 +232,8 @@ fn hit(score: f64, doc: &Doc, corpus: Corpus<'_>, wanted: &BTreeSet<String>) -> 
                 active: Some(r.active),
                 status: r.status.as_str(),
                 updated: r.updated,
+                evidence: None,
+                as_of: None,
             })
         }
         Origin::Segment(i, j) => {
@@ -235,6 +259,8 @@ fn hit(score: f64, doc: &Doc, corpus: Corpus<'_>, wanted: &BTreeSet<String>) -> 
                 active: Some(r.active),
                 status: r.status.as_str(),
                 updated: s.to,
+                evidence: None,
+                as_of: None,
             })
         }
         Origin::Task => None,

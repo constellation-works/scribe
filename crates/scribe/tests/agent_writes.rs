@@ -1056,3 +1056,139 @@ fn settling_a_scribe_proposal_cannot_replace_its_reason() {
     assert_eq!(settled["reason"], "routine reason");
     assert_eq!(settled["settled_author"]["name"], "sonnet");
 }
+
+#[test]
+fn a_finding_without_evidence_is_refused_and_writes_nothing() {
+    let fx = Fixture::new();
+    let out = fx.run(&[
+        "entry",
+        "add",
+        "--tag",
+        "finding",
+        "--author",
+        "opus",
+        "The reviewer mix alone predicts a 7-point gap",
+        "--json",
+    ]);
+    assert_eq!(out.status.code(), Some(1));
+    let err = json(&out.stderr);
+    assert_eq!(err["code"], "evidence_required", "{err}");
+    assert!(
+        text(&out.stderr).contains("--evidence"),
+        "{}",
+        text(&out.stderr)
+    );
+    let list = json(
+        &fx.ok(&["entry", "list", "--tag", "finding", "--json"])
+            .stdout,
+    );
+    assert_eq!(list["total"], 0, "a refused finding writes nothing");
+
+    // Evidence belongs to a finding only.
+    let out = fx.run(&[
+        "entry",
+        "add",
+        "--tag",
+        "decisions",
+        "--author",
+        "opus",
+        "--evidence",
+        "exp-1",
+        "Use the stable API",
+        "--json",
+    ]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(json(&out.stderr)["code"], "evidence_required");
+}
+
+#[test]
+fn a_finding_records_its_pointer_as_of_date_and_agent_author() {
+    let fx = Fixture::new();
+    let added = json(
+        &fx.ok(&[
+            "entry",
+            "add",
+            "--tag",
+            "finding",
+            "--author",
+            "opus",
+            "--related",
+            "session:s-9",
+            "--evidence",
+            "exp-5342a4d6",
+            "--as-of",
+            "2026-11-14",
+            "The reviewer mix alone predicts a 7-point gap (51% against 58%)",
+            "--json",
+        ])
+        .stdout,
+    );
+    assert_eq!(added["id"], "finding-1");
+    assert_eq!(
+        added["author"],
+        serde_json::json!({"kind":"agent","name":"opus"})
+    );
+    assert_eq!(added["evidence"], "exp-5342a4d6");
+    assert_eq!(added["as_of"], "2026-11-14");
+    assert_eq!(added["action"], serde_json::Value::Null, "no worker");
+
+    // Search returns it as that agent's claim as of its date, with the
+    // pointer — never as Daniel's words.
+    let found = json(
+        &fx.ok(&["record", "search", "reviewer mix predicts gap", "--json"])
+            .stdout,
+    );
+    let hit = &found["hits"][0];
+    assert_eq!(hit["id"], "finding-1", "{found}");
+    assert_eq!(hit["author"]["kind"], "agent");
+    assert_eq!(hit["author"]["name"], "opus");
+    assert_eq!(hit["evidence"], "exp-5342a4d6");
+    assert_eq!(hit["as_of"], "2026-11-14");
+    let snippet = hit["snippet"].as_str().unwrap();
+    assert!(
+        snippet.contains("agent claim (opus) as of 2026-11-14; evidence: exp-5342a4d6"),
+        "{snippet}"
+    );
+}
+
+#[test]
+fn the_fourth_finding_of_a_session_is_refused_and_names_the_cap() {
+    let fx = Fixture::new();
+    let add = |session: &str, n: usize| {
+        fx.run(&[
+            "entry",
+            "add",
+            "--tag",
+            "finding",
+            "--author",
+            "opus",
+            "--related",
+            &format!("session:{session}"),
+            "--evidence",
+            "exp-1",
+            &format!("Measured result number {n} for the widget cache"),
+            "--json",
+        ])
+    };
+    for n in 1..=3 {
+        let out = add("s-cap", n);
+        assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    }
+    let out = add("s-cap", 4);
+    assert_eq!(out.status.code(), Some(1));
+    let err = json(&out.stderr);
+    assert_eq!(err["code"], "finding_cap", "{err}");
+    assert!(
+        text(&out.stderr).contains("at most 3 findings per session"),
+        "{}",
+        text(&out.stderr)
+    );
+    // Another session still has its own budget.
+    let out = add("s-other", 1);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let list = json(
+        &fx.ok(&["entry", "list", "--tag", "finding", "--json"])
+            .stdout,
+    );
+    assert_eq!(list["total"], 4);
+}

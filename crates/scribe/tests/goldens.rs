@@ -421,6 +421,8 @@ fn agent_write_shapes_match_goldens() {
                 related: Vec::new(),
                 host: Label::sanitized("host", "host"),
                 quote: None,
+                evidence: None,
+                as_of: None,
             },
             author(),
             now,

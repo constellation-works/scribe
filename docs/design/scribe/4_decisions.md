@@ -2587,3 +2587,40 @@ This refines the earlier skill decision to offer ready-to-type memory lines:
 in an on session, the skill stops doing that and briefs open proposals instead.
 Off or unknown sessions keep the manual suggestion flow. Action tags remain
 agent-written under their existing rules. Rebuilds create no proposals.
+
+## Findings are scribe entries with no worker
+
+**Recorded:** 2026-11-16 · ORB-25177 · background-agents candidate use 9
+**Code anchors:** `tag.rs`, `entry.rs`, `store/agent.rs`, `store/format.rs`,
+`pass/candidates.rs`, `ask.rs`, `search.rs`, `skills/scribe/SKILL.md`
+
+Daniel (2026-11-16) asked scribe to catalogue what agents state across
+sessions instead of letting it be forgotten or re-derived, and approved a
+`finding` tag ("have the doc session add the finding tag"). Pending work,
+check-backs and future considerations already had homes as the action
+tags `task`, `remind` and `idea`; findings were the gap. scribe does not
+become a second task tracker: a finding has no consumer, no transcript
+window and no pickup, and neither the session-start line nor the session
+brief ever lists findings, so neither grows with history.
+
+A finding is an agent's measured or verified result with a pointer to
+its evidence and the date it was true. `entry add --tag finding` refuses
+an entry with no evidence pointer (`evidence_required`) and refuses the
+fourth finding of a writing session (`finding_cap`, cap 3), both under
+the store lock; a write that names no session counts under its author
+and the write's day. `ask` and `record search` return a finding as that
+agent's claim as of its date, with its pointer, never as Daniel's words.
+Store format 10 adds `evidence`/`as_of` to entries (`null` on upgrade)
+and `role`/`evidence` to a candidate proposal, with an append-only 9→10
+upgrade.
+
+The session pass is the safety net for what agents did not record: it
+also reads an assistant turn's own recap and may propose, under the same
+3-per-pass and 20-open caps, a measured result as a `finding` candidate
+or something not done or not verified under `task`, `remind` or `idea`.
+Daniel's typed `#scribe approve <p-id>` on such a candidate writes
+exactly one agent-authored entry quoting and citing the assistant turn —
+never one attributed to him — and `#scribe reject` closes it for good.
+The added output per window stays bounded (design §5.3: at most 3,216
+value characters including an optional 512-character evidence pointer,
+STD-08 §R1, §R3), and no candidate is ever opened from a tool payload.

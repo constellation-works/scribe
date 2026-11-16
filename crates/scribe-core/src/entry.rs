@@ -357,6 +357,15 @@ pub struct Entry {
     /// (format 8); `null` for every other entry.
     #[serde(deserialize_with = "nullable")]
     pub window: Option<Window>,
+    /// A finding's evidence pointer: a path, task, run, experiment or
+    /// commit the result can be checked against (format 10); `null` for
+    /// every entry not under a `require_evidence` tag.
+    #[serde(deserialize_with = "nullable")]
+    pub evidence: Option<String>,
+    /// The date a finding's result was true (format 10); `null` beside a
+    /// `null` evidence pointer.
+    #[serde(with = "nullable_date")]
+    pub as_of: Option<Date>,
     /// What the entry records, verbatim: the file's body, not a frontmatter
     /// key. Empty once forgotten.
     #[serde(skip)]
@@ -508,8 +517,30 @@ impl NewEntry {
             review_after: self.review_after,
             quote: None,
             window: self.window,
+            evidence: None,
+            as_of: None,
             content: self.content,
         }
+    }
+}
+
+impl Entry {
+    /// Whether this entry is a finding: it carries an evidence pointer,
+    /// which only a `require_evidence` tag's agent entries may.
+    #[must_use]
+    pub fn is_finding(&self) -> bool {
+        self.evidence.is_some()
+    }
+
+    /// The session this entry names, for the per-session finding cap: a
+    /// `session:` reference it carries, else its cite's session.
+    #[must_use]
+    pub fn session_key(&self) -> Option<String> {
+        self.related
+            .iter()
+            .find(|r| r.kind() == crate::record::RelatedKind::Session)
+            .map(|r| r.target().to_owned())
+            .or_else(|| self.cite.as_ref().map(|c| c.session.to_string()))
     }
 }
 
@@ -544,6 +575,11 @@ pub struct AgentEntry {
     /// Daniel's correction that prompted it, verbatim; required under a
     /// tag configured with `require_quote`, refused under a memory tag.
     pub quote: Option<String>,
+    /// A finding's evidence pointer; required under a `require_evidence`
+    /// tag, refused under any other tag.
+    pub evidence: Option<String>,
+    /// The date the finding was true; `None` takes the write's date.
+    pub as_of: Option<Date>,
 }
 
 /// A metadata/content patch. Removals apply before additions.

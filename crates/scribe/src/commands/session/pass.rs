@@ -494,7 +494,15 @@ impl Job<'_> {
                 .tags
                 .tags()
                 .iter()
-                .filter(|tag| tag.action.is_none())
+                .filter(|tag| tag.require_evidence || tag.action.is_some_and(|a| !a.require_quote))
+                .map(|tag| tag.name.to_string())
+                .collect();
+            request.candidate_memory_tags = self
+                .config
+                .tags
+                .tags()
+                .iter()
+                .filter(|tag| tag.action.is_none() && !tag.require_evidence)
                 .map(|tag| tag.name.to_string())
                 .collect();
             let entries = self
