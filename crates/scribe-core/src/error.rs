@@ -253,6 +253,18 @@ pub enum WriteRefusal {
     IdAmbiguous,
     /// Invalid id syntax, retaining the CLI usage-error contract.
     InvalidId,
+    /// `quote_required`: an agent entry under a tag that requires Daniel's
+    /// quote came without one, or without the session to check it in.
+    QuoteRequired,
+    /// `quote_not_found`: the quote is not verbatim in Daniel's typed turns
+    /// of the session named, or that transcript cannot be read here.
+    QuoteNotFound,
+    /// `not_action_tag`: a quote or a pickup on a tag that is not an action
+    /// tag.
+    NotActionTag,
+    /// `cancel_window`: a pickup of an agent entry still inside its cancel
+    /// window.
+    CancelWindow,
 }
 impl WriteRefusal {
     /// Stable machine-readable code.
@@ -274,6 +286,10 @@ impl WriteRefusal {
             Self::ProposalNotFound => "proposal_not_found",
             Self::IdAmbiguous => "id_ambiguous",
             Self::InvalidId => "usage_error",
+            Self::QuoteRequired => "quote_required",
+            Self::QuoteNotFound => "quote_not_found",
+            Self::NotActionTag => "not_action_tag",
+            Self::CancelWindow => "cancel_window",
         }
     }
 }

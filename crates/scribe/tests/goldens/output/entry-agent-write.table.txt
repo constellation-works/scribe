@@ -14,4 +14,5 @@ from        agent note (opus)
 cite        agent note (opus)
 cwd         -
 said        -
+author      agent:opus
 content     Keep the API stable.

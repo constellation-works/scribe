@@ -39,7 +39,7 @@ use std::path::Path;
 
 /// The newest store format: this build reads formats 1 to `FORMAT` of every
 /// document and would write `FORMAT`.
-pub(super) const FORMAT: u32 = 7;
+pub(super) const FORMAT: u32 = 8;
 
 /// Which document an upgrade step is applied to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,7 +73,24 @@ pub(super) const UPGRADES: &[Upgrade] = &[
     agent_writes,
     session_rebuilt_by,
     codex_controls,
+    action_entries,
 ];
+
+/// Format 7 -> 8 adds `quote` and `window` to each entry, both `null` for
+/// an entry written before action tags. `pickups.json` is new at format 8
+/// and has no older form. Other documents are unchanged.
+fn action_entries(
+    document: Document,
+    mut value: serde_json::Value,
+) -> serde_json::Result<serde_json::Value> {
+    if document == Document::Entry
+        && let Some(entry) = value.as_object_mut()
+    {
+        entry.entry("quote").or_insert(serde_json::Value::Null);
+        entry.entry("window").or_insert(serde_json::Value::Null);
+    }
+    Ok(value)
+}
 
 /// Format 6 -> 7 adds transcript provider identity and Codex ingestion cursors.
 fn codex_controls(
@@ -622,19 +639,22 @@ pub(super) fn decode_entry(
     }
     let valid = match entry.author.kind {
         crate::AuthorKind::Daniel => {
-            entry.cite.is_some() && entry.content_from != crate::ContentFrom::Agent
+            entry.cite.is_some()
+                && entry.content_from != crate::ContentFrom::Agent
+                && entry.quote.is_none()
         }
         crate::AuthorKind::Agent => {
             entry.cite.is_none()
                 && entry.said.is_empty()
                 && entry.content_from == crate::ContentFrom::Agent
+                && entry.window.is_none()
         }
         crate::AuthorKind::Scribe => false,
     };
     if !valid {
         return Err(shape(
             path,
-            "entry author, said, content_from and cite disagree",
+            "entry author, said, content_from, cite, quote and window disagree",
         ));
     }
     body.clone_into(&mut entry.content);
@@ -1086,6 +1106,44 @@ pub(super) fn encode_tags(path: &Path, tags: &[crate::StoreTag]) -> Result<Vec<u
     let mut bytes = serde_json::to_vec_pretty(&TagsDocument {
         format: FORMAT,
         tags,
+    })
+    .map_err(|e| Error::corrupt(path, e))?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PickupsDocument {
+    format: u32,
+    pickups: Vec<crate::action::Pickup>,
+}
+
+/// Parse `pickups.json` (format 8 and later; there is no older form).
+pub(super) fn decode_pickups(path: &Path, bytes: &[u8]) -> Result<Vec<crate::action::Pickup>> {
+    check_format(
+        path,
+        serde_json::from_slice(bytes).map_err(|e| Error::corrupt(path, e)),
+    )?;
+    let doc: PickupsDocument =
+        serde_json::from_slice(bytes).map_err(|e| Error::corrupt(path, e))?;
+    if doc
+        .pickups
+        .iter()
+        .any(|p| p.author.kind != crate::AuthorKind::Agent)
+    {
+        return Err(shape(path, "pickups must have agent authors"));
+    }
+    Ok(doc.pickups)
+}
+
+/// `pickups.json`'s bytes at the current format, oldest first.
+pub(super) fn encode_pickups(path: &Path, pickups: &[crate::action::Pickup]) -> Result<Vec<u8>> {
+    let mut pickups = pickups.to_vec();
+    pickups.sort_by(|a, b| a.at.cmp(&b.at).then_with(|| a.entry.cmp(&b.entry)));
+    let mut bytes = serde_json::to_vec_pretty(&PickupsDocument {
+        format: FORMAT,
+        pickups,
     })
     .map_err(|e| Error::corrupt(path, e))?;
     bytes.push(b'\n');

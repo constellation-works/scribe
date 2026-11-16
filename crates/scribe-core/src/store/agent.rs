@@ -61,6 +61,33 @@ fn unknown_tag() -> Error {
     )
 }
 
+/// A quote belongs on an action entry, and a tag that requires one gets
+/// one. Whether it is verbatim in Daniel's turns is the caller's check: it
+/// needs the transcript.
+fn check_quote(def: &crate::TagDef, quote: Option<&str>) -> Result<()> {
+    match (def.action, quote) {
+        (None, Some(_)) => Err(refusal(
+            WriteRefusal::NotActionTag,
+            format!(
+                "{} is not an action tag; --quote applies only to an action tag",
+                def.name
+            ),
+        )),
+        (Some(action), None) if action.require_quote => Err(refusal(
+            WriteRefusal::QuoteRequired,
+            format!(
+                "{} requires Daniel's words: pass --quote with Daniel's correction and --related session:<id>; without a quote, file a friction instead",
+                def.name
+            ),
+        )),
+        (Some(_), Some(quote)) if quote.trim().is_empty() => Err(refusal(
+            WriteRefusal::QuoteRequired,
+            "--quote must not be empty",
+        )),
+        _ => Ok(()),
+    }
+}
+
 fn required(text: &str) -> Result<()> {
     if text.trim().is_empty() {
         return Err(refusal(WriteRefusal::InvalidText, "text must not be empty"));
@@ -173,13 +200,21 @@ impl Store {
     ///
     /// `invalid_text` for blank content; `tag_not_found` for a tag no
     /// config or store tag names.
-    pub fn check_new_entry(&self, tag: &TagName, content: &str) -> Result<()> {
+    pub fn check_new_entry(
+        &self,
+        tag: &TagName,
+        content: &str,
+        quote: Option<&str>,
+    ) -> Result<crate::TagDef> {
         required(content)?;
-        self.config()?
+        let def = self
+            .config()?
             .tags
             .resolve(tag.as_str())
-            .map(|_| ())
-            .ok_or_else(unknown_tag)
+            .cloned()
+            .ok_or_else(unknown_tag)?;
+        check_quote(&def, quote)?;
+        Ok(def)
     }
 
     /// Check an agent entry patch without locking or writing, so invalid
@@ -214,6 +249,7 @@ impl Store {
             .tags
             .resolve(draft.tag.as_str())
             .ok_or_else(unknown_tag)?;
+        check_quote(tag, draft.quote.as_deref())?;
         let (entries, skipped) = self.load_entries()?;
         let mut ids: Vec<EntryId> = entries.iter().map(|e| e.id.clone()).collect();
         ids.extend(
@@ -240,6 +276,8 @@ impl Store {
             retirement_reason: None,
             superseded_by: None,
             review_after: tag.review_after(now.date()),
+            quote: draft.quote,
+            window: None,
             content: draft.content,
         };
         redactor.entry(&mut entry);

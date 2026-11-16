@@ -1,6 +1,6 @@
 ---
 type: design
-summary: "Spec: store — layout, record files with YAML frontmatter (format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
+summary: "Spec: store — layout, record files with YAML frontmatter (format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
 last_validated: 2026-11-10
 ---
 
@@ -10,7 +10,9 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-The code writes format 7 and reads formats 1–7. Format 7 adds `provider` to each
+The code writes format 8 and reads formats 1–8. Format 8 adds an entry's
+`quote` and `window` and the `pickups.json` document (action tags,
+[2_design.md §4.6](../2_design.md#46-action-tags)). Format 7 adds `provider` to each
 session control and `codex_cursors` to `control.json`; missing older values
 upgrade in memory to `claude-code` and an empty cursor map. Format 6 adds the session
 `rebuilt_by` field (ORB-24003); S12 is built;
@@ -33,6 +35,7 @@ user's file could pass for one of Daniel's records.
 ├── control.json                         0600, optional
 ├── proposals.json                       0600, optional
 ├── tags.json                            0600, optional (format 5, S12)
+├── pickups.json                         0600, optional (format 8)
 ├── audit.jsonl                          0600, created by the first audited command
 └── .lock                                0600, created by the first writer, never deleted
 ```
@@ -82,6 +85,17 @@ Format 4 adds `author` (`{kind: daniel|agent, name}`; `name` lowercase
 cite. Any other combination is `store_corrupt`. Format 5 adds
 `retirement_reason` (redacted text or `null`) and enables this agent
 provenance; old entries upgrade with a null retirement reason.
+
+Format 8 adds `quote` and `window`, both nullable and both upgraded to
+`null`. `quote` is the human's correction an agent quoted under a tag
+with `require_quote` (redacted text); a Daniel entry's is always `null`.
+`window` is the transcript window a `#scribe` line under an action tag
+keeps: `{turns: [{role: user|assistant, message, at, text, cut}],
+truncated, omitted}`, where `message` is the turn's uuid or `null` for the
+prompt itself, `text` is redacted, `cut` says the turn was shortened to its
+cap, and `truncated`/`omitted` say whether and how many of the oldest turns
+were dropped. An agent entry's `window` is always `null`. Any other
+combination is `store_corrupt`.
 
 **Session keys:** `format`, `kind`, `id`, `status` (`open`, `final`),
 `project`, `topics`, `related` (model-extracted references, unchanged by
@@ -157,6 +171,13 @@ heading is `store_corrupt`. It reads as format 4 (see **Format 4** below).
   `description` accepts 1–300 characters before redaction, `stale_after_days` a positive
   integer or `null`, `author` of kind `agent`; `updated_by` is the last updating agent or
   `null`. Absent is no store tags.
+- (format 8) `pickups.json`: `{"format": 8, "pickups": [{"entry", "author",
+  "at", "result", "rejected"}]}`, oldest first: a consumer's note that it
+  picked up the action entry `entry` (`author` of kind `agent`, `result` a
+  reference or `null`), or with `rejected: true`, that the human rejected
+  its result. Written only by `entry pickup`, under the lock; an identical
+  note is not written twice. Absent is no pickups. Entries are never
+  edited by a consumer.
 
 Both are strict in the same way as frontmatter: format first, then no
 unknown, missing or repeated key.
@@ -171,6 +192,11 @@ without a table, it is the defaults. Every key is optional:
 aliases = ["decision", "dec"]
 description = "choices Daniel has made"
 stale_after_days = 180           # omit: entries never go stale
+
+[tags.idea]
+action = true                    # an action tag: work items for a consumer
+require_quote = false            # agents' entries must quote Daniel (action tags only)
+ask_first = false                # agents ask before writing (action tags only)
 
 [models]
 ask = "claude-sonnet-5-5"
@@ -198,7 +224,12 @@ paths = ["codebases/orbit"]      # path fragments counted by transcript list
 ```
 
 The default tags are `decisions` (aliases `decision`, `dec`) and
-`preferences` (aliases `preference`, `pref`; stale after 180 days). A tag
+`preferences` (aliases `preference`, `pref`; stale after 180 days). The
+action tags `standard` (`require_quote`), `task` and `friction` ship too,
+with no aliases, and stay when a config has its own `[tags]`, unless it
+claims their names; a config tag of the same name starts from the shipped
+settings and overrides what it sets. `require_quote` or `ask_first` on a tag
+without `action = true` is `config_invalid`. A tag
 name must already be lowercase kebab-case, since it is a directory; aliases
 are matched case-insensitively. A word that two tags claim, an unknown key,
 a zero cadence/window bound or an invalid variable name is `config_invalid`, naming the
@@ -318,6 +349,10 @@ config tag claims is dropped with a warning naming both.
   place an upgraded segment may exceed 900 characters. The first write of
   an upgraded document now persists it at format 5; a build older than S8
   refuses format 4 (`store_too_new`).
+- **Format 8**. The format-7-to-8 step adds `quote: null` and
+  `window: null` to each entry; `pickups.json` is new and has no older
+  form. Other document shapes are unchanged. An older build refuses format
+  8 (`store_too_new`).
 - **Format 6**. The format-5-to-6 step adds `rebuilt_by: null` to each session
   record. A rebuild sets it to its `--author` as it finishes (`finish_rebuild`
   writes the record it is given); a pass carries it forward unchanged, so it
@@ -413,7 +448,8 @@ config tag claims is dropped with a warning naming both.
   `session.log.heading`, `session.log.text`,
   `session.active_change.reason`, `proposal.reason` and
   `proposal.quotes.text`; (S12) also `tag.description` and
-  `entry.retirement_reason`. A masked segment
+  `entry.retirement_reason`; (format 8) also `entry.quote` and
+  `entry.window.text`. A masked segment
   heading is cut back to 80 characters. Values shorter than 8 characters are not masked;
   identifiers, timestamps and paths are not free text. A `[redact] env`
   name with no value in the writer's environment refuses the write

@@ -1,4 +1,7 @@
-NAME         ENTRIES  STALE DAYS  ALIASES          DESCRIPTION                   SOURCE
-decisions          2           -  decision,dec     choices Daniel has made       config
-preferences        1         180  preference,pref  how Daniel likes things done  config
-rituals            1           -  -                -                             -
+NAME         ENTRIES  STALE DAYS  ALIASES          DESCRIPTION                                                       SOURCE  ACTION      RETIRED  REJECTED
+decisions          2           -  decision,dec     choices Daniel has made                                           config  -                 -         -
+friction           0           -  -                a problem worth an Orbit friction record                          config  free              0         0
+preferences        1         180  preference,pref  how Daniel likes things done                                      config  -                 -         -
+rituals            1           -  -                -                                                                 -       -                 -         -
+standard           0           -  -                a rule change for the constellation standards, in Daniel's words  config  free,quote        0         0
+task               0           -  -                work worth an Orbit task                                          config  free              0         0

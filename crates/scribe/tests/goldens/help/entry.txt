@@ -8,6 +8,7 @@ Commands:
   retire  Retire an agent note with a reason
   list    List entries, oldest first
   show    Show one entry in full: what was said, its content and its cite
+  pickup  Record that a consumer picked up an action entry, or that its result was rejected
   help    Print this message or the help of the given subcommand(s)
 
 Options:

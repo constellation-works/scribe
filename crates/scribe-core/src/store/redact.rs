@@ -27,6 +27,8 @@ pub const REDACTED_FIELDS: &[&str] = &[
     "entry.said",
     "entry.content",
     "entry.retirement_reason",
+    "entry.quote",
+    "entry.window.text",
     "session.title",
     "session.summary",
     "session.goals",
@@ -296,6 +298,14 @@ pub(super) fn entry_fields(entry: &mut Entry) -> Vec<(&'static str, &mut String)
     ];
     if let Some(reason) = &mut entry.retirement_reason {
         fields.push(("entry.retirement_reason", reason));
+    }
+    if let Some(quote) = &mut entry.quote {
+        fields.push(("entry.quote", quote));
+    }
+    if let Some(window) = &mut entry.window {
+        for turn in &mut window.turns {
+            fields.push(("entry.window.text", &mut turn.text));
+        }
     }
     fields
 }

@@ -17,7 +17,10 @@ on stdin. Prints Claude Code hook JSON when the prompt has a #scribe line,
 and nothing otherwise; never blocks such a prompt. #scribe/global in
 place of #scribe on a line that records an entry stores it with project
 global, for every repository; the working directory's project stays the
-default. #scribe approve <p-id>,
+default. A line under an action tag (standard, task, friction, or any tag
+config marks action = true) also stores the turns since the previous
+#scribe line, capped at 40 turns and 12000 characters and cut from the
+oldest; no model is called. #scribe approve <p-id>,
 #scribe reject <p-id>, #scribe retire <entry-id> and #scribe forget
 <entry-id> settle a proposal or hide or blank an entry. A prompt whose first
 line is /scribe on, /scribe off or /scribe status switches this session's

@@ -1,8 +1,8 @@
 use super::{SESSION_BODY, entry_text, session_text};
 use crate::error::Error;
 use crate::store::format::{
-    FORMAT, UPGRADES, decode_control, decode_entry, decode_proposals, decode_session,
-    split_frontmatter, split_sections_v3,
+    FORMAT, UPGRADES, decode_control, decode_entry, decode_pickups, decode_proposals,
+    decode_session, encode_pickups, split_frontmatter, split_sections_v3,
 };
 use std::path::Path;
 
@@ -555,4 +555,61 @@ fn a_format_two_control_reads_with_no_pending_links() {
     assert!(switch.pending_links.is_empty());
     let unknown = text.replace("\"retry_after\": null", "\"retry_after\": null, \"x\": 1");
     assert!(decode_control(Path::new("control.json"), unknown.as_bytes()).is_err());
+}
+
+#[test]
+fn an_older_entry_reads_with_no_quote_and_no_window_and_a_window_round_trips() {
+    let old = entry(&entry_text("")).unwrap();
+    assert_eq!((old.quote.as_deref(), old.window.as_ref()), (None, None));
+
+    let mut original = old;
+    original.window = Some(crate::Window {
+        turns: vec![crate::WindowTurn {
+            role: crate::Speaker::Assistant,
+            message: Some(String::from("a-1")),
+            at: time::macros::datetime!(2026-11-01 09:59:00 UTC),
+            text: String::from("Bytes, then: --- \"quoted\""),
+            cut: true,
+        }],
+        truncated: true,
+        omitted: 3,
+    });
+    let bytes = crate::store::format::encode_entry(Path::new(ENTRY), &original).unwrap();
+    assert_eq!(entry(&String::from_utf8(bytes).unwrap()).unwrap(), original);
+
+    // Daniel's own entries never carry a quote: only an agent quotes Daniel.
+    let mut quoted = original;
+    quoted.quote = Some(String::from("Daniel's words"));
+    let bytes = crate::store::format::encode_entry(Path::new(ENTRY), &quoted).unwrap();
+    corrupt_message(&entry(&String::from_utf8(bytes).unwrap()).unwrap_err());
+}
+
+#[test]
+fn pickups_round_trip_oldest_first_and_only_agents_pick_up() {
+    let path = Path::new("pickups.json");
+    let author = |kind: &str, name: &str| -> crate::Author {
+        serde_json::from_value(serde_json::json!({"kind": kind, "name": name})).unwrap()
+    };
+    let pickup = |entry: &str, minutes: i64, rejected: bool| crate::action::Pickup {
+        entry: entry.parse().unwrap(),
+        author: author("agent", "intake"),
+        at: time::macros::datetime!(2026-11-01 10:00:00 UTC) + time::Duration::minutes(minutes),
+        result: if rejected {
+            None
+        } else {
+            Some("task:T-1".parse().unwrap())
+        },
+        rejected,
+    };
+    let pickups = [pickup("task-2", 5, true), pickup("task-1", 1, false)];
+    let bytes = encode_pickups(path, &pickups).unwrap();
+    let read = decode_pickups(path, &bytes).unwrap();
+    assert_eq!(read, [pickups[1].clone(), pickups[0].clone()]);
+
+    let mut doc: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(doc["format"], FORMAT);
+    doc["pickups"][0]["author"] = serde_json::json!({"kind": "daniel", "name": "daniel"});
+    corrupt_message(&decode_pickups(path, doc.to_string().as_bytes()).unwrap_err());
+    doc["pickups"][0]["colour"] = serde_json::json!("blue");
+    corrupt_message(&decode_pickups(path, doc.to_string().as_bytes()).unwrap_err());
 }

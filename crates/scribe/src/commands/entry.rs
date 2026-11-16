@@ -25,21 +25,32 @@ Examples:
   scribe entry list --topic ci --limit 10
   scribe entry list --since 2026-10-01 --until 2026-10-31 --author-kind daniel
   scribe entry list --related task:<id> --related pr:<owner>/<repo>#<n>
+  scribe entry list --tag standard --after 2026-11-15T09:00:00Z --window --json
   scribe entry list --json | jq '.entries[].content'
   scribe entry list | cut -f1,6";
 
 const SHOW_EXAMPLES: &str = "\
 Examples:
   scribe entry show <id>
+  scribe entry show <id> --window
   scribe entry show <id> --json";
+
+const ADD_EXAMPLES: &str = "\
+Examples:
+  scribe entry add --tag decisions --author opus 'Use the stable API'
+  scribe entry add --tag task --author opus --related session:<id> 'Add a --dry-run flag to the sync'
+  scribe entry add --tag standard --author opus --related session:<id> --quote '<quoted words>' 'Name the unit in every size'";
+
+const PICKUP_EXAMPLES: &str = "\
+Examples:
+  scribe entry pickup <id> --author standards-intake --result task:<id>
+  scribe entry pickup <id> --author standards-intake --rejected";
 
 /// Verbs on the `entry` noun.
 #[derive(Debug, Subcommand)]
 pub(crate) enum EntryCommand {
     /// Add an agent note (never attributed to Daniel)
-    #[command(
-        after_help = "Examples:\n  scribe entry add --tag decisions --author opus 'Use the stable API'"
-    )]
+    #[command(after_help = ADD_EXAMPLES)]
     Add(AddArgs),
     /// Update content or metadata; Daniel's entries allow metadata only
     #[command(after_help = "Examples:\n  scribe entry update <id> --author opus --add-topic api")]
@@ -55,6 +66,9 @@ pub(crate) enum EntryCommand {
     /// Show one entry in full: what was said, its content and its cite
     #[command(after_help = SHOW_EXAMPLES)]
     Show(ShowArgs),
+    /// Record that a consumer picked up an action entry, or that its result was rejected
+    #[command(after_help = PICKUP_EXAMPLES)]
+    Pickup(PickupArgs),
 }
 
 /// Arguments to `entry list`.
@@ -82,6 +96,14 @@ pub(crate) struct ListArgs {
 
     #[command(flatten)]
     pub(crate) dates: DateArgs,
+
+    /// Only entries created strictly after this instant (RFC 3339, such as 2026-11-15T09:00:00Z): an intake's cursor [default: any]
+    #[arg(long, value_name = "TIME", value_parser = parse_instant)]
+    pub(crate) after: Option<time::OffsetDateTime>,
+
+    /// Include each entry's transcript window (an action entry's chat before its #scribe line) [default: left out]
+    #[arg(long)]
+    pub(crate) window: bool,
 
     /// Only entries written under this author name, such as daniel or an agent's --author [default: any]
     #[arg(long, value_name = "NAME")]
@@ -120,6 +142,16 @@ pub(crate) struct ShowArgs {
     /// The entry's id, as printed by `entry list`, or a unique prefix of it (at least four characters)
     #[arg(value_name = "ID")]
     pub(crate) id: String,
+
+    /// Include the entry's transcript window in full [default: only its size]
+    #[arg(long)]
+    pub(crate) window: bool,
+}
+
+/// An RFC 3339 instant.
+fn parse_instant(text: &str) -> Result<time::OffsetDateTime, String> {
+    time::OffsetDateTime::parse(text, &time::format_description::well_known::Rfc3339)
+        .map_err(|_| format!("'{text}' is not an RFC 3339 time, such as 2026-11-15T09:00:00Z"))
 }
 
 /// Allowed statuses come from the domain type, so help and parsing cannot
@@ -146,6 +178,10 @@ impl EntryCommand {
                 target: resolved_entry(ctx, &args.id),
                 author: Some(args.author.as_str().to_owned()),
             },
+            Self::Pickup(args) => AuditSubject {
+                target: resolved_entry(ctx, &args.id),
+                author: Some(args.author.as_str().to_owned()),
+            },
         }
     }
 
@@ -162,6 +198,9 @@ impl EntryCommand {
             }),
             Self::Retire(_) => Some(AuditMeta {
                 command: "entry retire",
+            }),
+            Self::Pickup(_) => Some(AuditMeta {
+                command: "entry pickup",
             }),
         }
     }
@@ -186,7 +225,11 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
             // an unset [redact] env name.
             let topics = scribe_core::Topics::try_from(args.topic)
                 .map_err(|e| CliError::Usage(e.to_string()))?;
-            ctx.store().check_new_entry(&args.tag, &args.content)?;
+            ctx.store()
+                .check_new_entry(&args.tag, &args.content, args.quote.as_deref())?;
+            if let Some(quote) = &args.quote {
+                verify_quote(ctx, &args.related, quote)?;
+            }
             let redactor = ctx.redactor(&ctx.store().config()?)?;
             let entry = ctx.store().add_agent_entry(
                 scribe_core::AgentEntry {
@@ -196,12 +239,25 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
                     topics,
                     related: args.related,
                     host: ctx.host(),
+                    quote: args.quote,
                 },
                 args.author,
                 ctx.now(),
                 &redactor,
             )?;
-            Ok(written(entry, true))
+            written_with_action(ctx, entry, true)
+        }
+        EntryCommand::Pickup(args) => {
+            scribe_core::check_agent_author(&args.author)?;
+            let (pickup, changed) = ctx.store().record_pickup(
+                &args.id,
+                args.author,
+                args.result,
+                args.rejected,
+                ctx.now(),
+            )?;
+            let entry = ctx.store().entry(&pickup.entry)?;
+            written_with_action(ctx, entry, changed)
         }
         EntryCommand::Update(args) => {
             scribe_core::check_agent_author(&args.author)?;
@@ -221,7 +277,7 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
                 ctx.now(),
                 &redactor,
             )?;
-            Ok(written(entry, changed))
+            written_with_action(ctx, entry, changed)
         }
         EntryCommand::Retire(args) => {
             scribe_core::check_agent_author(&args.author)?;
@@ -235,7 +291,7 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
                 ctx.now(),
                 &redactor,
             )?;
-            Ok(written(entry, changed))
+            written_with_action(ctx, entry, changed)
         }
     }
 }
@@ -248,6 +304,7 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
         topics: args.topic,
         related: args.related,
         dates: args.dates.range()?,
+        after: args.after,
         author: args.author,
         author_kind: args.author_kind.map(AuthorKind::from),
         limit: args.limit,
@@ -259,12 +316,25 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
     );
     let mut criteria = criteria(&filter);
     criteria.extend(args.dates.criteria());
+    if let Some(after) = args.after
+        && let Ok(text) = after.format(&time::format_description::well_known::Rfc3339)
+    {
+        criteria.push(format!("--after {text}"));
+    }
     let notice = ListNotice {
         noun: "entries",
         criteria,
         empty: &empty,
     };
-    let records = Records::Entries(found.listing.items.iter().map(EntryPayload::from).collect());
+    let actions = Actions::load(ctx)?;
+    let records = Records::Entries(
+        found
+            .listing
+            .items
+            .iter()
+            .map(|e| actions.payload(e, args.window))
+            .collect(),
+    );
     Ok(list_output(
         records,
         found.listing.total,
@@ -303,9 +373,94 @@ pub(super) fn criteria(filter: &EntryFilter) -> Vec<String> {
 
 fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
     let entry = ctx.store().resolve_entry(&args.id)?;
+    let actions = Actions::load(ctx)?;
     Ok(Output::Show {
-        record: Record::Entry(Box::new(EntryPayload::from(&entry))),
+        record: Record::Entry(Box::new(actions.payload(&entry, args.window))),
     })
+}
+
+/// What an entry command needs to report action state: the tag table, the
+/// pickups and the time.
+struct Actions {
+    tags: scribe_core::TagTable,
+    pickups: Vec<scribe_core::action::Pickup>,
+    now: time::OffsetDateTime,
+}
+
+impl Actions {
+    fn load(ctx: &Context) -> Result<Self, CliError> {
+        Ok(Self {
+            tags: ctx.store().config()?.tags,
+            pickups: ctx.store().pickups()?,
+            now: ctx.now(),
+        })
+    }
+
+    /// `entry` as output, with its action state when its tag is an action
+    /// tag and its window when `window`.
+    fn payload(&self, entry: &scribe_core::Entry, window: bool) -> EntryPayload {
+        let state = self
+            .tags
+            .action(&entry.tag)
+            .map(|_| scribe_core::action::state(entry, &self.pickups, self.now));
+        let payload = EntryPayload::from(entry).with_action(state.as_ref());
+        if window {
+            payload.with_window(entry)
+        } else {
+            payload
+        }
+    }
+}
+
+/// Refuse a quote that is not verbatim in Daniel's typed turns of a session
+/// the entry names (`--related session:<id>`), or whose transcript cannot be
+/// read on this host (docs/design/scribe/2_design.md §4.6).
+fn verify_quote(ctx: &Context, related: &[Related], quote: &str) -> Result<(), CliError> {
+    use super::hook::payload;
+    let refuse = |kind, message: String| -> CliError {
+        scribe_core::Error::AgentWrite { kind, message }.into()
+    };
+    let sessions: Vec<scribe_core::SessionId> = related
+        .iter()
+        .filter(|r| r.kind() == scribe_core::RelatedKind::Session)
+        .filter_map(|r| r.target().parse().ok())
+        .collect();
+    if sessions.is_empty() {
+        return Err(refuse(
+            scribe_core::WriteRefusal::QuoteRequired,
+            String::from(
+                "a quote is checked against the session it was typed in; pass --related session:<id>",
+            ),
+        ));
+    }
+    for id in &sessions {
+        let Some(path) = payload::locate(ctx, id)? else {
+            continue;
+        };
+        if !matches!(
+            payload::check(ctx, &path, id),
+            Ok(payload::Transcript::Present)
+        ) {
+            continue;
+        }
+        match payload::read_for(ctx, &path) {
+            Ok(bytes) => {
+                let messages = scribe_core::transcript::parse(&bytes);
+                if scribe_core::action::quote_found(&messages, quote) {
+                    return Ok(());
+                }
+            }
+            Err(err) => {
+                tracing::warn!(path = %path.display(), %err, "cannot read the transcript");
+            }
+        }
+    }
+    Err(refuse(
+        scribe_core::WriteRefusal::QuoteNotFound,
+        String::from(
+            "the quote is not word for word in Daniel's typed turns of the session named, or its transcript is not readable on this host; quote Daniel's own words exactly, or file a friction instead",
+        ),
+    ))
 }
 
 #[derive(Debug, Args)]
@@ -324,9 +479,27 @@ pub(crate) struct AddArgs {
     /// Topic, repeatable (at most five)
     #[arg(long)]
     topic: Vec<Topic>,
-    /// Related reference, repeatable
+    /// Related reference, repeatable; under an action tag, name the session you write in (session:<id>)
     #[arg(long)]
     related: Vec<scribe_core::Related>,
+    /// Daniel's correction that prompted the entry, verbatim from one of Daniel's typed turns in the session named by --related; required under a tag that requires a quote
+    #[arg(long)]
+    quote: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct PickupArgs {
+    /// The action entry's id or a unique prefix (at least four characters)
+    id: String,
+    /// The consumer's name
+    #[arg(long)]
+    author: scribe_core::AuthorName,
+    /// What the consumer made of it (task:<id>, pr:<owner>/<repo>#<n>, repo:<slug> or session:<id>)
+    #[arg(long, value_name = "REF")]
+    result: Option<scribe_core::Related>,
+    /// Daniel rejected the result
+    #[arg(long)]
+    rejected: bool,
 }
 
 #[derive(Debug, Args)]
@@ -365,6 +538,11 @@ pub(crate) struct RetireArgs {
     reason: String,
 }
 
-fn written(entry: scribe_core::Entry, changed: bool) -> Output {
-    Output::written(Record::Entry(Box::new(EntryPayload::from(&entry))), changed)
+fn written_with_action(
+    ctx: &Context,
+    entry: scribe_core::Entry,
+    changed: bool,
+) -> Result<Output, CliError> {
+    let payload = Actions::load(ctx)?.payload(&entry, false);
+    Ok(Output::written(Record::Entry(Box::new(payload)), changed))
 }

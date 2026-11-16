@@ -22,13 +22,15 @@ const fn col(header: &'static str, align: Align, truncate: bool) -> Column {
     }
 }
 
-const ENTRY_COLUMNS: [Column; 6] = [
+const ENTRY_COLUMNS: [Column; 8] = [
     col("ID", Align::Left, false),
     col("STATUS", Align::Left, false),
     col("PROJECT", Align::Left, false),
     col("TOPICS", Align::Left, false),
     col("CREATED", Align::Left, false),
     col("CONTENT", Align::Left, true),
+    col("AUTHOR", Align::Left, false),
+    col("AGE", Align::Right, false),
 ];
 
 const SESSION_TREE_COLUMNS: [Column; 8] = [
@@ -78,13 +80,16 @@ const SCAN_COLUMNS: [Column; 5] = [
     col("NEWER", Align::Left, false),
 ];
 
-const TAG_COLUMNS: [Column; 6] = [
+const TAG_COLUMNS: [Column; 9] = [
     col("NAME", Align::Left, false),
     col("ENTRIES", Align::Right, false),
     col("STALE DAYS", Align::Right, false),
     col("ALIASES", Align::Left, false),
     col("DESCRIPTION", Align::Left, true),
     col("SOURCE", Align::Left, false),
+    col("ACTION", Align::Left, false),
+    col("RETIRED", Align::Right, false),
+    col("REJECTED", Align::Right, false),
 ];
 
 const TRANSCRIPT_COLUMNS: [Column; 7] = [
@@ -568,6 +573,62 @@ fn entry_detail(out: &mut dyn Write, sink: &Sink, e: &EntryPayload) -> io::Resul
     if let Some(reason) = &e.retirement_reason {
         field(out, "retirement_reason", reason)?;
     }
+    field(out, "author", &author(&e.author))?;
+    if let Some(quote) = &e.quote {
+        field(out, "quote", quote)?;
+    }
+    if let Some(action) = &e.action {
+        let cancel = match (action.cancel_window_ends, action.past_cancel_window) {
+            (None, _) => String::from("none (Daniel's own line)"),
+            (Some(ends), true) => format!("ended {}", timestamp(ends)),
+            (Some(ends), false) => format!("open until {}", timestamp(ends)),
+        };
+        field(out, "age", &age(action.age_seconds))?;
+        field(out, "cancel", &cancel)?;
+        let pickups: Vec<String> = action
+            .pickups
+            .iter()
+            .map(|p| {
+                format!(
+                    "{} by {}:{}{}{}",
+                    timestamp(p.at),
+                    p.author.kind,
+                    p.author.name,
+                    p.result
+                        .as_ref()
+                        .map_or_else(String::new, |r| format!(", result {r}")),
+                    if p.rejected { ", rejected" } else { "" }
+                )
+            })
+            .collect();
+        field(out, "pickups", &joined_lines(&pickups))?;
+    }
+    match (&e.window, e.window_turns) {
+        (Some(window), _) => {
+            let mut lines = Vec::new();
+            if window.truncated {
+                lines.push(format!("({} older turns cut)", window.omitted));
+            }
+            for turn in &window.turns {
+                lines.push(format!(
+                    "{} {}: {}{}",
+                    timestamp(turn.at),
+                    turn.role,
+                    one_line(&turn.text),
+                    if turn.cut { " [… cut]" } else { "" }
+                ));
+            }
+            field(out, "window", &joined_lines(&lines))?;
+        }
+        (None, Some(turns)) => {
+            field(
+                out,
+                "window",
+                &format!("{turns} turns (show with --window)"),
+            )?;
+        }
+        (None, None) => {}
+    }
     field(out, "content", or_dash(&e.content))
 }
 
@@ -697,7 +758,36 @@ fn entry_row(e: &EntryPayload) -> Vec<Cell> {
         Cell::plain(joined(&e.topics)),
         Cell::plain(timestamp(e.created)),
         Cell::plain(one_line(&e.content)),
+        Cell::plain(author(&e.author)),
+        Cell::plain(
+            e.action
+                .as_ref()
+                .map_or_else(|| String::from("-"), |a| age(a.age_seconds)),
+        ),
     ]
+}
+
+/// `daniel`, or `agent:<name>` for an agent's entry.
+fn author(a: &super::payload::AuthorPayload) -> String {
+    if a.kind == "daniel" {
+        a.name.clone()
+    } else {
+        format!("{}:{}", a.kind, a.name)
+    }
+}
+
+/// An age in its largest whole unit: `45s`, `12m`, `3h`, `9d`.
+fn age(seconds: i64) -> String {
+    let s = seconds.max(0);
+    if s < 60 {
+        format!("{s}s")
+    } else if s < 3_600 {
+        format!("{}m", s / 60)
+    } else if s < 86_400 {
+        format!("{}h", s / 3_600)
+    } else {
+        format!("{}d", s / 86_400)
+    }
 }
 
 /// A session pass's report: a table or tab-separated lines, one per
@@ -989,6 +1079,26 @@ fn tag_row(t: &TagPayload) -> Vec<Cell> {
         Cell::plain(joined(&t.aliases)),
         Cell::plain(one_line(t.description.as_deref().unwrap_or("-"))),
         Cell::plain(t.source.unwrap_or("-").to_owned()),
+        Cell::plain(t.action.as_ref().map_or_else(
+            || String::from("-"),
+            |a| {
+                if a.require_quote {
+                    format!("{},quote", a.mode)
+                } else {
+                    a.mode.to_owned()
+                }
+            },
+        )),
+        Cell::plain(
+            t.action
+                .as_ref()
+                .map_or_else(|| String::from("-"), |a| a.retired.to_string()),
+        ),
+        Cell::plain(
+            t.action
+                .as_ref()
+                .map_or_else(|| String::from("-"), |a| a.rejected.to_string()),
+        ),
     ]
 }
 

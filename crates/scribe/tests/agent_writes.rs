@@ -327,8 +327,17 @@ fn store_tags_merge_and_config_wins_without_writing_on_reads() {
     let out = fx.ok(&["tag", "list", "--json"]);
     assert!(text(&out.stderr).contains("shadowed"));
     let tags = json(&out.stdout);
-    assert_eq!(tags["tags"][0]["source"], "store");
-    assert_eq!(tags["tags"][1]["source"], "config");
+    let source = |name: &str| {
+        tags["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == name)
+            .map(|t| t["source"].clone())
+            .unwrap()
+    };
+    assert_eq!(source("notes"), "store");
+    assert_eq!(source("other"), "config");
     assert_eq!(support::snapshot(&fx.root()), before);
 }
 

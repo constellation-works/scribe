@@ -69,7 +69,11 @@ fn a_missing_root_reads_as_an_empty_store() {
     assert!(store.proposals().unwrap().is_empty());
     assert!(store.control().unwrap().sessions.is_empty());
     let tags = store.list_tags().unwrap();
-    assert_eq!(tags.tags.len(), 2, "the default tags, with no entries");
+    assert_eq!(
+        tags.tags.len(),
+        5,
+        "the default tags and the shipped action tags, with no entries"
+    );
     let err = store.entry(&"decisions-1".parse().unwrap()).unwrap_err();
     assert_eq!(err.code(), "entry_not_found");
     assert!(
@@ -220,6 +224,7 @@ mod capture {
                 cwd: String::from("/work"),
             },
             review_after: None,
+            window: None,
         }
     }
 

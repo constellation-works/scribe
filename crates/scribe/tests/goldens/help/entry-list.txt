@@ -10,6 +10,8 @@ Options:
       --related <REF>       Only entries mentioning this reference (task:<id>, pr:<owner>/<repo>#<n>, repo:<slug> or session:<id>); repeat it to accept any of them [default: any]
       --since <DATE>        Only records on or after this day, YYYY-MM-DD [default: no lower bound]
       --until <DATE>        Only records on or before this day, YYYY-MM-DD [default: no upper bound]
+      --after <TIME>        Only entries created strictly after this instant (RFC 3339, such as 2026-11-15T09:00:00Z): an intake's cursor [default: any]
+      --window              Include each entry's transcript window (an action entry's chat before its #scribe line) [default: left out]
       --author <NAME>       Only entries written under this author name, such as daniel or an agent's --author [default: any]
       --author-kind <KIND>  Only entries written through this channel: daniel (a #scribe line) or agent (entry add) [default: any] [possible values: daniel, agent]
       --limit <N>           Show at most this many of the matching entries, 1 or more; --json reports the total and whether the list was cut [default: all]
@@ -28,5 +30,6 @@ Examples:
   scribe entry list --topic ci --limit 10
   scribe entry list --since 2026-10-01 --until 2026-10-31 --author-kind daniel
   scribe entry list --related task:<id> --related pr:<owner>/<repo>#<n>
+  scribe entry list --tag standard --after 2026-11-15T09:00:00Z --window --json
   scribe entry list --json | jq '.entries[].content'
   scribe entry list | cut -f1,6

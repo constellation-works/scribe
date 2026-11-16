@@ -94,8 +94,9 @@ whichever form reaches the hook, typed or expanded, starts with `/scribe`
 ([4_decisions.md](./4_decisions.md#scribe-ships-a-command-file-that-expands-to-itself)).
 As built in S6, `SessionStart` (10 s) joins them: `scribe hook session-start`
 prints `scribe: <n> proposals to review — scribe proposal list` as a
-`systemMessage` for Daniel when any proposal is open, and nothing
-otherwise. It reads only; it does not create `config.toml`
+`systemMessage` for Daniel when any proposal is open, adds one line
+counting action entries left unpicked for over an hour
+([§4.6](#46-action-tags)), and prints nothing otherwise. It reads only; it does not create `config.toml`
 ([§3](#3-storage)).
 
 Entry writes never go through Orbit's tool surface: the hooks call the
@@ -381,6 +382,7 @@ serves every workspace on the host. The plugin's config key `root` (default
 ├── control.json                 {"format":4,"sessions":{"<id>":{"on","since","due","final","consecutive_failures","retry_after","pending_links","cataloged_by"}}}
 ├── proposals.json               {"format":4,"proposals":[…]}
 ├── tags.json                    {"format":4,"tags":[…]} agent-created tags (S12); optional
+├── pickups.json                 {"format":8,"pickups":[…]} consumers' pickups of action entries (§4.6); optional
 ├── audit.jsonl                  one line per mutating command (template shape)
 └── .lock
 ```
@@ -491,6 +493,10 @@ The body is `content`, verbatim.
   {kind: agent}` and `cite: null`; the agent's session, when it gives one,
   is a `related` `session:<id>`. `updated_by` is the author of the last
   `entry update` or `entry retire`, else `null`.
+- `quote` and `window` (store format 8, [§4.6](#46-action-tags)) are `null`
+  except on action entries: `window` is the transcript window a `#scribe`
+  line under an action tag keeps, `quote` the human's correction an agent
+  quoted under a tag with `require_quote`.
 
 **Session record** (`sessions/<yyyy>/<mm>/<id>.md`): the common
 frontmatter plus `links` (sessions only; `related` says what a session
@@ -866,6 +872,84 @@ file: new arc points are appended after the last numbered point,
 through-lines and takeaway are left as they are unless the extension adds a
 `Correction`, in which case the echo says the thesis may need Daniel's edit.
 The echo names the file path, the points added and any dropped quotes.
+
+### 4.6 Action tags
+
+[ORB-25112]. Most tags hold the human's memory: decisions and preferences
+`ask` answers from. An **action tag** holds work items instead, entries a
+consumer outside scribe picks up: an intake that turns a `task` entry into
+an Orbit task, a `friction` entry into a friction record, a `standard`
+entry into a change to the constellation standards. scribe never calls
+Orbit or any consumer; it keeps the entries and exposes them to read.
+
+**Which tags.** Config marks a tag `action = true` (`[tags.<name>]`), with
+two optional switches: `require_quote` (an agent's entry must quote the
+human) and `ask_first` (agents ask before writing). `standard`
+(`require_quote`), `task` and `friction` ship, with no aliases; a config
+with its own `[tags]` keeps them unless it claims their names, and a config
+tag of the same name starts from the shipped settings
+([4_decisions.md](./4_decisions.md#action-tags-are-marked-in-config-and-three-ship)).
+A new action tag needs no code change. `tag list` shows each action tag's
+mode (`free` or `ask-first`, `,quote`) and its counts of retired and
+rejected agent entries, the evidence for flipping a tag to ask-first.
+
+**The window.** A `#scribe` line under an action tag (instruction or
+referent form) also stores the transcript turns since the last user
+message that carried a `#scribe` line, oldest first, then the prompt
+itself, so the consumer sees what led to it. It is model-free. Each turn is
+cut to 4,000 characters (`cut: true`); then the oldest turns are dropped
+until at most 40 turns and 12,000 characters remain, and the window records
+`truncated: true` and how many it `omitted`; the prompt is always kept
+([4_decisions.md](./4_decisions.md#an-action-entrys-window-is-capped-at-40-turns-and-12000-characters)).
+Window text passes the redactor. Memory tags keep no window. An agent's
+`entry add` keeps none either; it names its session in `--related
+session:<id>`.
+
+**Agent entries.** An agent writes under an action tag with `entry add`
+like any agent note. The skill tells it to do so unasked, with one visible
+line naming the id and how to cancel, but only in an interactive session
+the human is in; every other session writes none; under an `ask_first`
+tag it asks first. Three guards sit in the CLI and store:
+
+- **Cancel window.** An agent-written action entry cannot be picked up for
+  five minutes after it was written
+  ([4_decisions.md](./4_decisions.md#agent-entries-have-a-five-minute-cancel-window)),
+  so the human's `#scribe retire <id>` (which already works on agent
+  entries) cancels it before any consumer acts. The read surface reports
+  `cancel_window_ends` and `past_cancel_window`; `entry pickup` refuses
+  inside it (`cancel_window`). The human's own entries have no window.
+- **Quote.** Under a `require_quote` tag `entry add` needs `--quote '<the
+  human's words>'` and a `--related session:<id>`; the CLI finds that
+  session's transcript on this host and refuses the entry unless the quote
+  is a verbatim span (§6.4's check) of one of the human's typed turns
+  (`quote_required`, `quote_not_found`). The quote is stored on the entry.
+- **Ask-first** is a switch the skill obeys and `tag list` shows; the CLI
+  does not enforce it, since it cannot tell whether the human said yes.
+
+**The read surface.** An intake reads `entry list --tag <tag> --after
+<cursor> --json`: `--after` is an RFC 3339 instant, strictly after; the
+window is left out unless `--window` is given (`window_turns` always says
+its size). Each action entry's `action` object reports its age, cancel
+window and pickups. `ask` leaves action entries out unless the question's
+scope names their tag; the skill leaves them out of the session brief.
+
+**Pickups.** A consumer records what it did with `entry pickup <id>
+--author <name> [--result <ref>] [--rejected]`, appended to `pickups.json`
+under the lock; consumers never edit entries. The same note twice changes
+nothing. A pickup of an entry that is not under an action tag
+(`not_action_tag`), inside its cancel window, or not active (unless
+`--rejected`: the result of an entry picked up and later rejected) is
+refused.
+
+**Stuck entries.** The `SessionStart` hook adds one line counting active
+action entries older than one hour with no pickup, per tag, and nothing
+when there are none
+([4_decisions.md](./4_decisions.md#an-action-entry-is-stuck-after-one-hour-without-a-pickup)).
+
+**Reaching the owner host.** The consumer runs on dk-server-2, and entries
+are captured on the Mac. The owner reads the Mac's store over SSH, with the
+same read surface; there is no replica
+([4_decisions.md](./4_decisions.md#the-owner-host-reads-action-entries-over-ssh)).
 
 ## 5. `/scribe on`
 

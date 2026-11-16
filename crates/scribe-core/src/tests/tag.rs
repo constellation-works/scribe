@@ -12,7 +12,14 @@ fn name(s: &str) -> TagName {
 fn the_defaults_are_decisions_and_preferences() {
     let table = TagTable::defaults();
     let names: Vec<&str> = table.tags().iter().map(|t| t.name.as_str()).collect();
-    assert_eq!(names, ["decisions", "preferences"]);
+    assert_eq!(
+        names,
+        ["decisions", "friction", "preferences", "standard", "task"]
+    );
+    assert!(table.action(&name("decisions")).is_none());
+    let standard = table.action(&name("standard")).unwrap();
+    assert!(standard.require_quote && !standard.ask_first);
+    assert!(!table.action(&name("task")).unwrap().require_quote);
     assert_eq!(
         table.resolve("Decision").unwrap().name.as_str(),
         "decisions"
@@ -32,6 +39,7 @@ fn a_word_claimed_by_two_tags_is_refused() {
         aliases: aliases.iter().map(|a| name(a)).collect(),
         description: None,
         stale_after_days: None,
+        action: None,
     };
     let err =
         TagTable::new(vec![tag("decisions", &["dec"]), tag("declines", &["dec"])]).unwrap_err();
@@ -53,6 +61,7 @@ fn review_after_counts_the_stale_days_from_creation() {
         aliases: Vec::new(),
         description: None,
         stale_after_days: NonZeroU32::new(180),
+        action: None,
     };
     assert_eq!(
         def.review_after(date!(2026 - 11 - 02)),
@@ -81,8 +90,11 @@ fn a_summary_counts_entries_per_tag_and_keeps_unconfigured_ones() {
         view,
         [
             ("decisions", 2, true),
+            ("friction", 0, true),
             ("preferences", 0, true),
-            ("rituals", 1, false)
+            ("rituals", 1, false),
+            ("standard", 0, true),
+            ("task", 0, true)
         ]
     );
 }

@@ -37,5 +37,9 @@
     "name": "daniel"
   },
   "updated_by": null,
-  "retirement_reason": null
+  "retirement_reason": null,
+  "quote": null,
+  "window_turns": null,
+  "window": null,
+  "action": null
 }

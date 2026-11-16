@@ -32,10 +32,15 @@
 //! recognised and refused as not supported by this build, never misread as
 //! form 2.
 //!
+//! A line under an action tag also keeps an [`action_window`]: the turns
+//! since the previous `#scribe` line of the session, capped by
+//! [`WINDOW_TURNS`] and [`WINDOW_CHARS`] and cut from the oldest turn (§4.6).
+//! It takes no model.
+//!
 //! Pure functions over text: no I/O (STD-02 R5).
 
 use crate::consistency::Settle;
-use crate::entry::{Cite, ContentFrom, EntryId, NewEntry, Speaker, TagName};
+use crate::entry::{Cite, ContentFrom, EntryId, NewEntry, Speaker, TagName, Window, WindowTurn};
 use crate::models::{Candidate, ModelError, REFERENT_BUDGET, ReferentAnswer, ReferentRequest};
 use crate::proposal::ProposalId;
 use crate::record::{Label, Project, Topic, Topics};
@@ -73,6 +78,15 @@ pub const WINDOW: usize = 12;
 /// How much of the previous assistant message a guessed referent records,
 /// in characters (§4.3).
 pub const FALLBACK_CHARS: usize = 600;
+
+/// The most turns an action entry's window keeps (§4.6).
+pub const WINDOW_TURNS: usize = 40;
+/// The most characters of turn text an action entry's window keeps, all
+/// turns together (§4.6).
+pub const WINDOW_CHARS: usize = 12_000;
+/// The most characters one turn of a window keeps; a longer turn keeps its
+/// first this many and is marked `cut`.
+pub const WINDOW_TURN_CHARS: usize = 4_000;
 
 /// The forms, as the refusal of an unparsed instruction lists them.
 ///
@@ -646,7 +660,88 @@ fn new_entry(
         review_after: tags
             .get(line.tag)
             .and_then(|def| def.review_after(turn.at.date())),
+        window: None,
     }
+}
+
+/// The window an action entry keeps (§4.6): the transcript's turns since
+/// the last user message before the prompt that carried a `#scribe` line,
+/// oldest first, then the prompt itself (`message: None`, at `at`). The
+/// prompt and everything after it are left out of the transcript part when
+/// a retried hook finds it there, as [`window`] does. Each turn is cut to
+/// [`WINDOW_TURN_CHARS`]; then the oldest turns are dropped until at most
+/// [`WINDOW_TURNS`] turns and [`WINDOW_CHARS`] characters remain, and the
+/// window records that it was truncated and how many turns it dropped. The
+/// prompt itself is always kept. Model-free.
+#[must_use]
+pub fn action_window(
+    messages: &[Message],
+    prompt_sha256: &str,
+    prompt: &str,
+    at: OffsetDateTime,
+) -> Window {
+    let end = prompt_index(messages, prompt_sha256).unwrap_or(messages.len());
+    let before = &messages[..end];
+    let start = before
+        .iter()
+        .rposition(|m| m.role == Speaker::User && !lines(&m.text()).is_empty())
+        .map_or(0, |i| i + 1);
+    let mut turns: Vec<WindowTurn> = before[start..]
+        .iter()
+        .filter(|m| !m.text().trim().is_empty())
+        .map(|m| window_turn(m.role, Some(m.uuid.clone()), m.at, &m.text()))
+        .collect();
+    turns.push(window_turn(Speaker::User, None, at, prompt));
+    let mut kept: Vec<WindowTurn> = Vec::new();
+    let mut chars = 0usize;
+    for turn in turns.iter().rev() {
+        let len = turn.text.chars().count();
+        if !kept.is_empty() && (kept.len() >= WINDOW_TURNS || chars + len > WINDOW_CHARS) {
+            break;
+        }
+        chars += len;
+        kept.push(turn.clone());
+    }
+    kept.reverse();
+    let omitted = turns.len() - kept.len();
+    Window {
+        turns: kept,
+        truncated: omitted > 0,
+        omitted: u32::try_from(omitted).unwrap_or(u32::MAX),
+    }
+}
+
+fn window_turn(
+    role: Speaker,
+    message: Option<String>,
+    at: OffsetDateTime,
+    text: &str,
+) -> WindowTurn {
+    let text = text.trim();
+    let cut = text.chars().count() > WINDOW_TURN_CHARS;
+    WindowTurn {
+        role,
+        message,
+        at,
+        text: if cut {
+            text.chars().take(WINDOW_TURN_CHARS).collect()
+        } else {
+            text.to_owned()
+        },
+        cut,
+    }
+}
+
+/// The index of the user message that carries the prompt hashed to
+/// `prompt_sha256`, the last one when there are several.
+fn prompt_index(messages: &[Message], prompt_sha256: &str) -> Option<usize> {
+    messages.iter().rposition(|m| {
+        m.role == Speaker::User
+            && (self::prompt_sha256(&m.text()) == prompt_sha256
+                || m.blocks
+                    .iter()
+                    .any(|b| self::prompt_sha256(b) == prompt_sha256))
+    })
 }
 
 /// The messages a referent may point at: the last [`WINDOW`] messages with
@@ -656,16 +751,7 @@ fn new_entry(
 /// hook finds it.
 #[must_use]
 pub fn window<'a>(messages: &'a [Message], prompt_sha256: &str) -> Vec<&'a Message> {
-    let end = messages
-        .iter()
-        .rposition(|m| {
-            m.role == Speaker::User
-                && (self::prompt_sha256(&m.text()) == prompt_sha256
-                    || m.blocks
-                        .iter()
-                        .any(|b| self::prompt_sha256(b) == prompt_sha256))
-        })
-        .unwrap_or(messages.len());
+    let end = prompt_index(messages, prompt_sha256).unwrap_or(messages.len());
     let with_text: Vec<&Message> = messages[..end]
         .iter()
         .filter(|m| !m.text().trim().is_empty())

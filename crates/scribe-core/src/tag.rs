@@ -4,7 +4,12 @@
 //! Tags come from `config.toml` (`[tags.<name>]`) and agent-created
 //! `tags.json`; config claims take precedence. Without a config the defaults below apply: `decisions` and
 //! `preferences` (docs/design/scribe/4_decisions.md, "Only decisions and
-//! preferences ship by default"). Pure values and no I/O (STD-02 R5).
+//! preferences ship by default"), plus the shipped action tags `standard`,
+//! `task` and `friction`, which a config with its own tags keeps unless it
+//! claims their names ("Action tags are marked in config, and three ship").
+//! An action tag's entries are work items a consumer outside scribe picks
+//! up; `ask` leaves them out unless asked. Pure values and no I/O
+//! (STD-02 R5).
 
 use crate::entry::{Entry, TagName};
 use std::collections::BTreeMap;
@@ -40,7 +45,45 @@ pub struct TagDef {
     pub description: Option<String>,
     /// Days after which an entry is due for review; `None` is never.
     pub stale_after_days: Option<NonZeroU32>,
+    /// `Some` for an action tag (config `action = true`): its entries are
+    /// work items for a consumer, captured with a transcript window.
+    pub action: Option<ActionTag>,
 }
+
+/// How an action tag treats agent-written entries
+/// (docs/design/scribe/2_design.md §4.6).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ActionTag {
+    /// An agent's entry must quote Daniel's correction, found verbatim in
+    /// one of Daniel's typed turns of the session it names (`standard`).
+    pub require_quote: bool,
+    /// Agents ask Daniel before writing an entry here, instead of writing it
+    /// unasked.
+    pub ask_first: bool,
+}
+
+impl ActionTag {
+    /// `ask-first` or `free`, as `tag list` shows it.
+    #[must_use]
+    pub fn mode(self) -> &'static str {
+        if self.ask_first { "ask-first" } else { "free" }
+    }
+}
+
+/// The action tags scribe ships: `(name, description, require_quote)`.
+pub const SHIPPED_ACTION_TAGS: [(&str, &str, bool); 3] = [
+    (
+        "friction",
+        "a problem worth an Orbit friction record",
+        false,
+    ),
+    (
+        "standard",
+        "a rule change for the constellation standards, in Daniel's words",
+        true,
+    ),
+    ("task", "work worth an Orbit task", false),
+];
 
 impl TagDef {
     /// The `review_after` date for an entry created on `created`.
@@ -118,17 +161,62 @@ impl TagTable {
                     aliases: vec![name("decision")?, name("dec")?],
                     description: Some(String::from("choices Daniel has made")),
                     stale_after_days: None,
+                    action: None,
                 },
                 TagDef {
                     name: name("preferences")?,
                     aliases: vec![name("preference")?, name("pref")?],
                     description: Some(String::from("how Daniel likes things done")),
                     stale_after_days: NonZeroU32::new(180),
+                    action: None,
                 },
             ])
         })()
         .unwrap_or_default();
-        Self { tags }
+        Self { tags }.with_shipped_actions()
+    }
+
+    /// The shipped action tag named `name`, as scribe defines it.
+    #[must_use]
+    pub fn shipped_action(name: &str) -> Option<TagDef> {
+        SHIPPED_ACTION_TAGS
+            .iter()
+            .find(|(n, _, _)| *n == name)
+            .and_then(|(n, description, require_quote)| {
+                Some(TagDef {
+                    name: TagName::try_from((*n).to_owned()).ok()?,
+                    aliases: Vec::new(),
+                    description: Some((*description).to_owned()),
+                    stale_after_days: None,
+                    action: Some(ActionTag {
+                        require_quote: *require_quote,
+                        ask_first: false,
+                    }),
+                })
+            })
+    }
+
+    /// This table plus every shipped action tag whose name it does not
+    /// already claim (as a name or an alias), so a config that declares its
+    /// own tags still has them; a config tag of the same name replaces one.
+    #[must_use]
+    pub fn with_shipped_actions(mut self) -> Self {
+        for (name, _, _) in SHIPPED_ACTION_TAGS {
+            if self.resolve(name).is_none()
+                && let Some(def) = Self::shipped_action(name)
+            {
+                self.tags.push(def);
+            }
+        }
+        self.tags.sort_by(|a, b| a.name.cmp(&b.name));
+        self
+    }
+
+    /// The action settings of the tag named `name`, or `None` for a memory
+    /// tag or an unknown one.
+    #[must_use]
+    pub fn action(&self, name: &TagName) -> Option<ActionTag> {
+        self.get(name).and_then(|def| def.action)
     }
 
     /// The tags, sorted by name.
@@ -167,6 +255,12 @@ pub struct TagSummary {
     pub def: Option<TagDef>,
     /// How many entries it holds, any status.
     pub entries: usize,
+    /// For an action tag: agent-written entries under it that were retired
+    /// or forgotten (cancelled).
+    pub retired: usize,
+    /// For an action tag: agent-written entries under it whose result a
+    /// consumer recorded as rejected.
+    pub rejected: usize,
 }
 
 /// Every configured tag, plus any tag that has entries but no
@@ -188,6 +282,8 @@ pub fn summarize(table: &TagTable, entries: &[Entry]) -> Vec<TagSummary> {
             def: table.get(&name).cloned(),
             name,
             entries,
+            retired: 0,
+            rejected: 0,
         })
         .collect()
 }
@@ -227,6 +323,7 @@ impl StoreTag {
             aliases: self.aliases.clone(),
             description: Some(self.description.clone()),
             stale_after_days: self.stale_after_days,
+            action: None,
         }
     }
 }

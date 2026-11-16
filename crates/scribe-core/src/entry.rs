@@ -346,10 +346,55 @@ pub struct Entry {
     /// When it is due for review, from the tag's `stale_after_days`.
     #[serde(with = "nullable_date")]
     pub review_after: Option<Date>,
+    /// An agent entry's quote of Daniel's correction that prompted it,
+    /// verbatim from one of Daniel's typed turns in the session the entry names
+    /// (format 8); `null` otherwise.
+    #[serde(deserialize_with = "nullable")]
+    pub quote: Option<String>,
+    /// The chat leading up to a typed `#scribe` line under an action tag
+    /// (format 8); `null` for every other entry.
+    #[serde(deserialize_with = "nullable")]
+    pub window: Option<Window>,
     /// What the entry records, verbatim: the file's body, not a frontmatter
     /// key. Empty once forgotten.
     #[serde(skip)]
     pub content: String,
+}
+
+/// The bounded excerpt of the chat before a typed `#scribe` line under an
+/// action tag: the turns since the previous `#scribe` line of the session,
+/// oldest first, then the prompt itself (docs/design/scribe/2_design.md
+/// §4.6). Its size is capped by [`crate::capture::WINDOW_TURNS`] and
+/// [`crate::capture::WINDOW_CHARS`]; turns past the cap are dropped from the
+/// oldest end and `truncated` says so.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Window {
+    /// The turns kept, oldest first.
+    pub turns: Vec<WindowTurn>,
+    /// Whether older turns were dropped to fit the cap.
+    pub truncated: bool,
+    /// How many older turns were dropped.
+    pub omitted: u32,
+}
+
+/// One turn of a [`Window`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WindowTurn {
+    /// Whose words they are.
+    pub role: Speaker,
+    /// The transcript message's uuid; `null` for the prompt the line was
+    /// typed in, which is not in the transcript yet when the hook runs.
+    #[serde(deserialize_with = "nullable")]
+    pub message: Option<String>,
+    /// When it was sent.
+    #[serde(with = "time::serde::rfc3339")]
+    pub at: OffsetDateTime,
+    /// Its text, cut to [`crate::capture::WINDOW_TURN_CHARS`].
+    pub text: String,
+    /// Whether `text` was cut.
+    pub cut: bool,
 }
 
 /// Which entries a listing returns. Every field set must match.
@@ -368,6 +413,8 @@ pub struct EntryFilter {
     pub related: Vec<Related>,
     /// Only entries created on a day in this range.
     pub dates: DateRange,
+    /// Only entries created strictly after this instant: an intake's cursor.
+    pub after: Option<OffsetDateTime>,
     /// Only entries written under this author name.
     pub author: Option<AuthorName>,
     /// Only entries written through this channel.
@@ -386,6 +433,7 @@ impl EntryFilter {
             && self.topics.iter().all(|t| entry.topics.contains(t))
             && (self.related.is_empty() || self.related.iter().any(|r| entry.related.contains(r)))
             && self.dates.contains(entry.created)
+            && self.after.is_none_or(|after| entry.created > after)
             && self.author.as_ref().is_none_or(|a| &entry.author.name == a)
             && self.author_kind.is_none_or(|k| entry.author.kind == k)
     }
@@ -429,6 +477,8 @@ pub struct NewEntry {
     pub cite: Cite,
     /// When it is due for review.
     pub review_after: Option<Date>,
+    /// The chat before the line, under an action tag only.
+    pub window: Option<Window>,
 }
 
 impl NewEntry {
@@ -454,6 +504,8 @@ impl NewEntry {
             retirement_reason: None,
             superseded_by: None,
             review_after: self.review_after,
+            quote: None,
+            window: self.window,
             content: self.content,
         }
     }
@@ -487,6 +539,9 @@ pub struct AgentEntry {
     pub related: Vec<Related>,
     /// Host supplied by composition.
     pub host: Label,
+    /// Daniel's correction that prompted it, verbatim; required under a
+    /// tag configured with `require_quote`, refused under a memory tag.
+    pub quote: Option<String>,
 }
 
 /// A metadata/content patch. Removals apply before additions.

@@ -11,7 +11,9 @@
 //!   proposals ([`Proposal`]) in `proposal`; the shared metadata
 //!   ([`Project`], [`Topic`], [`Related`], [`Author`]) in `record`; `config.toml`
 //!   ([`Config`]) in `config`; parsing a typed turn into `#scribe`
-//!   instructions in [`capture`]; `/scribe on|off|status` and the switch
+//!   instructions and an action entry's transcript window in [`capture`];
+//!   action entries' cancel window, pickups and stuck count in [`action`];
+//!   `/scribe on|off|status` and the switch
 //!   transitions in [`control`]; a session pass, from transcript to record,
 //!   in [`pass`]; the consistency routine's candidates and checks and the
 //!   settling verbs (`approve`, `reject`, `retire`, `forget`) in
@@ -34,6 +36,7 @@
 // Unit tests use unwrap/expect for fixture setup; production call sites remain linted.
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
+pub mod action;
 pub mod activity;
 pub mod ask;
 pub mod capture;
@@ -59,7 +62,7 @@ pub mod verbatim;
 pub use config::{Config, ConfigError, ModelIds, SessionsConfig};
 pub use entry::{
     AgentEntry, Cite, ContentFrom, Entry, EntryError, EntryFilter, EntryId, EntryPatch,
-    EntryStatus, NewEntry, Speaker, TagName,
+    EntryStatus, NewEntry, Speaker, TagName, Window, WindowTurn,
 };
 pub use error::{Error, Result, WriteRefusal};
 pub use models::Models;
@@ -84,7 +87,7 @@ pub use store::{
     Store, TagList, check_agent_author, check_content, check_description, check_reason,
     init_project, integration_hooks, resolve_prefix, unresolved_redact_env,
 };
-pub use tag::{StoreTag, TagDef, TagError, TagPatch, TagSummary, TagTable};
+pub use tag::{ActionTag, StoreTag, TagDef, TagError, TagPatch, TagSummary, TagTable};
 
 #[cfg(test)]
 mod tests;

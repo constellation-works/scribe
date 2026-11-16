@@ -1,5 +1,5 @@
-ID             STATUS      PROJECT                     TOPICS                CREATED               CONTENT
-rituals-1      retired     orbit                       ci                    2026-09-15T07:30:00Z  run the full gate before every push
-preferences-1  active      global                      -                     2026-10-01T12:00:00Z  short commit subjects, imperative mood
-decisions-1    superseded  constellation-works/scribe  merge-policy          2026-10-20T09:15:00Z  merge agent PRs with a merge commit
-decisions-2    active      constellation-works/scribe  merge-policy,release  2026-11-02T19:05:41Z  squash-merge agent PRs; keep merge commits for releases
+ID             STATUS      PROJECT                     TOPICS                CREATED               CONTENT                                                  AUTHOR  AGE
+rituals-1      retired     orbit                       ci                    2026-09-15T07:30:00Z  run the full gate before every push                      daniel    -
+preferences-1  active      global                      -                     2026-10-01T12:00:00Z  short commit subjects, imperative mood                   daniel    -
+decisions-1    superseded  constellation-works/scribe  merge-policy          2026-10-20T09:15:00Z  merge agent PRs with a merge commit                      daniel    -
+decisions-2    active      constellation-works/scribe  merge-policy,release  2026-11-02T19:05:41Z  squash-merge agent PRs; keep merge commits for releases  daniel    -

@@ -58,6 +58,18 @@ fn the_redacted_field_inventory_is_exactly_the_fields_masked() {
     // field list, or this fails.
     let mut e = entry("decisions-1", T0);
     e.retirement_reason = Some(String::new());
+    e.quote = Some(String::new());
+    e.window = Some(crate::Window {
+        turns: vec![crate::WindowTurn {
+            role: crate::Speaker::User,
+            message: None,
+            at: T0,
+            text: String::new(),
+            cut: false,
+        }],
+        truncated: false,
+        omitted: 0,
+    });
     let mut s = session_with_term();
     let mut p = proposal();
     let mut names: Vec<&str> = entry_fields(&mut e).into_iter().map(|(n, _)| n).collect();

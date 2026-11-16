@@ -213,6 +213,132 @@ pub(crate) struct EntryPayload {
     /// Who last updated or retired it through a CLI verb.
     pub(crate) updated_by: Option<AuthorPayload>,
     pub(crate) retirement_reason: Option<String>,
+    /// An agent entry's quote of Daniel's correction; `null` otherwise.
+    pub(crate) quote: Option<String>,
+    /// How many turns the entry's transcript window holds; `null` when it
+    /// has none (only typed lines under an action tag do).
+    pub(crate) window_turns: Option<usize>,
+    /// The window itself, only with `--window`; otherwise `null`.
+    pub(crate) window: Option<WindowPayload>,
+    /// For an entry under an action tag, where it stands for an intake
+    /// (`entry list`, `entry show`, `entry add`, `entry pickup`); `null`
+    /// for any other entry and in other commands' output.
+    pub(crate) action: Option<ActionPayload>,
+}
+
+/// An action entry's transcript window (docs/design/scribe/2_design.md §4.6).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct WindowPayload {
+    pub(crate) turns: Vec<WindowTurnPayload>,
+    /// Whether older turns were dropped to fit the cap.
+    pub(crate) truncated: bool,
+    /// How many older turns were dropped.
+    pub(crate) omitted: u32,
+}
+
+/// One turn of a window.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct WindowTurnPayload {
+    /// `user` or `assistant`.
+    pub(crate) role: &'static str,
+    /// The transcript message's uuid; `null` for the prompt the line was
+    /// typed in.
+    pub(crate) message: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub(crate) at: Timestamp,
+    pub(crate) text: String,
+    /// Whether `text` was cut.
+    pub(crate) cut: bool,
+}
+
+impl From<&scribe_core::Window> for WindowPayload {
+    fn from(window: &scribe_core::Window) -> Self {
+        Self {
+            turns: window
+                .turns
+                .iter()
+                .map(|t| WindowTurnPayload {
+                    role: t.role.as_str(),
+                    message: t.message.clone(),
+                    at: t.at,
+                    text: t.text.clone(),
+                    cut: t.cut,
+                })
+                .collect(),
+            truncated: window.truncated,
+            omitted: window.omitted,
+        }
+    }
+}
+
+/// An action entry's state for an intake, at the time of the command.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct ActionPayload {
+    /// Seconds since it was created.
+    pub(crate) age_seconds: i64,
+    /// When an agent-written entry's cancel window ends; `null` for
+    /// Daniel's, which have none.
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub(crate) cancel_window_ends: Option<Timestamp>,
+    /// Whether an intake may take it now.
+    pub(crate) past_cancel_window: bool,
+    /// Whether a consumer recorded a pickup.
+    pub(crate) picked_up: bool,
+    /// Whether a consumer recorded that Daniel rejected its result.
+    pub(crate) rejected: bool,
+    pub(crate) pickups: Vec<PickupPayload>,
+}
+
+/// A consumer's note on an action entry.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct PickupPayload {
+    pub(crate) entry: String,
+    pub(crate) author: AuthorPayload,
+    #[serde(with = "time::serde::rfc3339")]
+    pub(crate) at: Timestamp,
+    /// What the consumer made of it, such as `task:<id>`; `null` when it
+    /// named nothing.
+    pub(crate) result: Option<String>,
+    pub(crate) rejected: bool,
+}
+
+impl From<&scribe_core::action::Pickup> for PickupPayload {
+    fn from(p: &scribe_core::action::Pickup) -> Self {
+        Self {
+            entry: p.entry.to_string(),
+            author: AuthorPayload::from(&p.author),
+            at: p.at,
+            result: p.result.as_ref().map(ToString::to_string),
+            rejected: p.rejected,
+        }
+    }
+}
+
+impl From<&scribe_core::action::ActionState> for ActionPayload {
+    fn from(state: &scribe_core::action::ActionState) -> Self {
+        Self {
+            age_seconds: state.age.whole_seconds(),
+            cancel_window_ends: state.cancel_window_ends,
+            past_cancel_window: state.past_cancel_window,
+            picked_up: state.picked_up,
+            rejected: state.rejected,
+            pickups: state.pickups.iter().map(PickupPayload::from).collect(),
+        }
+    }
+}
+
+impl EntryPayload {
+    /// With the action state an `entry` command computed.
+    pub(crate) fn with_action(mut self, state: Option<&scribe_core::action::ActionState>) -> Self {
+        self.action = state.map(ActionPayload::from);
+        self
+    }
+
+    /// With the window included, for `--window`.
+    pub(crate) fn with_window(mut self, entry: &Entry) -> Self {
+        self.window = entry.window.as_ref().map(WindowPayload::from);
+        self
+    }
 }
 
 fn strings<T: ToString>(items: &[T]) -> Vec<String> {
@@ -251,6 +377,10 @@ impl From<&Entry> for EntryPayload {
             author: AuthorPayload::from(&entry.author),
             updated_by: entry.updated_by.as_ref().map(AuthorPayload::from),
             retirement_reason: entry.retirement_reason.clone(),
+            quote: entry.quote.clone(),
+            window_turns: entry.window.as_ref().map(|w| w.turns.len()),
+            window: None,
+            action: None,
         }
     }
 }
@@ -525,6 +655,22 @@ pub(crate) struct TagPayload {
     pub(crate) configured: bool,
     /// Entries in it, any status.
     pub(crate) entries: usize,
+    /// For an action tag, how agents use it and how often Daniel undid
+    /// their entries; `null` for a memory tag.
+    pub(crate) action: Option<TagActionPayload>,
+}
+
+/// An action tag's switch and counts, where Daniel decides to flip it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct TagActionPayload {
+    /// `free` (agents write unasked) or `ask-first`.
+    pub(crate) mode: &'static str,
+    /// Whether an agent's entry must quote Daniel's correction.
+    pub(crate) require_quote: bool,
+    /// Agent-written entries under it that were retired or forgotten.
+    pub(crate) retired: usize,
+    /// Agent-written entries under it whose result was rejected.
+    pub(crate) rejected: usize,
 }
 
 impl From<&TagSummary> for TagPayload {
@@ -546,6 +692,16 @@ impl From<&TagSummary> for TagPayload {
                 .map(|d| d.get()),
             configured: tag.source == Some("config"),
             entries: tag.entries,
+            action: tag
+                .def
+                .as_ref()
+                .and_then(|d| d.action)
+                .map(|a| TagActionPayload {
+                    mode: a.mode(),
+                    require_quote: a.require_quote,
+                    retired: tag.retired,
+                    rejected: tag.rejected,
+                }),
         }
     }
 }

@@ -11,7 +11,24 @@
       "description": "choices Daniel has made",
       "stale_after_days": null,
       "configured": true,
-      "entries": 2
+      "entries": 2,
+      "action": null
+    },
+    {
+      "author": null,
+      "source": "config",
+      "name": "friction",
+      "aliases": [],
+      "description": "a problem worth an Orbit friction record",
+      "stale_after_days": null,
+      "configured": true,
+      "entries": 0,
+      "action": {
+        "mode": "free",
+        "require_quote": false,
+        "retired": 0,
+        "rejected": 0
+      }
     },
     {
       "author": null,
@@ -24,7 +41,8 @@
       "description": "how Daniel likes things done",
       "stale_after_days": 180,
       "configured": true,
-      "entries": 1
+      "entries": 1,
+      "action": null
     },
     {
       "author": null,
@@ -34,10 +52,43 @@
       "description": null,
       "stale_after_days": null,
       "configured": false,
-      "entries": 1
+      "entries": 1,
+      "action": null
+    },
+    {
+      "author": null,
+      "source": "config",
+      "name": "standard",
+      "aliases": [],
+      "description": "a rule change for the constellation standards, in Daniel's words",
+      "stale_after_days": null,
+      "configured": true,
+      "entries": 0,
+      "action": {
+        "mode": "free",
+        "require_quote": true,
+        "retired": 0,
+        "rejected": 0
+      }
+    },
+    {
+      "author": null,
+      "source": "config",
+      "name": "task",
+      "aliases": [],
+      "description": "work worth an Orbit task",
+      "stale_after_days": null,
+      "configured": true,
+      "entries": 0,
+      "action": {
+        "mode": "free",
+        "require_quote": false,
+        "retired": 0,
+        "rejected": 0
+      }
     }
   ],
-  "total": 3,
+  "total": 6,
   "truncated": false,
   "warnings": []
 }

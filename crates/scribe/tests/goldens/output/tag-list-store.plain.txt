@@ -1,3 +1,6 @@
-decisions	0	-	decision,dec	choices Daniel has made	config
-notes	1	-	note	Agent notes	store
-preferences	0	180	preference,pref	how Daniel likes things done	config
+decisions	0	-	decision,dec	choices Daniel has made	config	-	-	-
+friction	0	-	-	a problem worth an Orbit friction record	config	free	0	0
+notes	1	-	note	Agent notes	store	-	-	-
+preferences	0	180	preference,pref	how Daniel likes things done	config	-	-	-
+standard	0	-	-	a rule change for the constellation standards, in Daniel's words	config	free,quote	0	0
+task	0	-	-	work worth an Orbit task	config	free	0	0
