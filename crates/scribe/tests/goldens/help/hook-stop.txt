@@ -1,4 +1,4 @@
-Fill in the message ids of entries this session recorded and mark a session pass due, from the Stop hook's JSON on stdin
+Recover missed #scribe entries, fill in message ids and mark a session pass due, from the Stop hook's JSON on stdin
 
 Usage: scribe hook stop [OPTIONS]
 
@@ -12,8 +12,11 @@ Global options:
       --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
       --json                 Shorthand for --format json
 
-Reads the Stop payload (session_id, transcript_path) on stdin. Prints
-nothing. Calls no model.
+Reads the Stop payload (session_id, transcript_path, optional cwd) on stdin.
+Recovers missed #scribe entry instructions from the transcript and prints
+hook JSON saying what was recorded or refused; otherwise prints nothing.
+Already captured lines are skipped. Calls no model; recovered referents use
+the guessed fallback. Session controls and settling commands are not replayed.
 
 Examples:
   scribe hook stop < <payload.json>

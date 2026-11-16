@@ -576,7 +576,8 @@ pub fn prompt_sha256(prompt: &str) -> String {
 pub struct Turn {
     /// The Claude Code session.
     pub session: SessionId,
-    /// When the hook received the prompt.
+    /// When the hook received the prompt, or the transcript timestamp for
+    /// a prompt recovered after its hook was missed.
     pub at: OffsetDateTime,
     /// [`prompt_sha256`] of the whole prompt.
     pub prompt_sha256: String,

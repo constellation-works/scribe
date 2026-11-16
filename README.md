@@ -225,8 +225,13 @@ records each `#scribe` line of the typed prompt (lines in code fences,
 blockquotes and pasted blocks are skipped), applies each `#scribe
 approve|reject|retire|forget`, and replies to Daniel and the
 agent with what it recorded, settled or refused; `Stop` runs `scribe hook stop`,
-which fills each new entry's cite with the transcript message's id and, for
-a session that is on, marks a pass due every `every_minutes` or
+which recovers entry instructions the prompt hook missed, echoes what it
+recorded or refused, and fills each new entry's cite with the transcript
+message's id. Already captured lines are skipped; recovery keeps the original
+message's time and cwd (falling back to the hook's cwd when absent), and uses
+the guessed fallback for referents without calling a model. It does not replay
+session controls or settling commands. For a session that is on, Stop also
+marks a pass due every `every_minutes` or
 `every_turns` (`[catalog]` in `config.toml`); `SessionEnd` runs `scribe
 hook session-end`, which marks the last pass due and final. A prompt whose
 first line is `/scribe on`, `/scribe off` or `/scribe status` is answered

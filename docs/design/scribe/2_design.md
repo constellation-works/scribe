@@ -728,15 +728,32 @@ file exists it must be a regular file (not a link) owned by this uid. A
 missing file passes, because a session's first prompt can reach the hook
 before Claude Code has written the transcript. A failed check records
 nothing; each `#scribe` line gets a `could not record` reply and an audit
-line with `error_code: provenance_failed`. The `Stop` hook first checks,
-reading only, whether any entry of the session still has `message: null`;
-when none does (the usual case) it returns without opening the transcript,
-locking or writing. Otherwise it parses the transcript
-([§2](#2-layering), `transcript`: user and assistant text only, tool
-payloads, sidechain and meta lines dropped), hashes each user message's whole
-text and each of its text blocks, and gives each waiting cite the uuid of the
-matching message written closest to the cite's `at`; a cite whose prompt is
-not in the transcript yet stays `null` for the next `Stop`.
+line with `error_code: provenance_failed`. The `Stop` hook checks the transcript's provenance and scans its user
+messages for entry instructions the prompt hook missed, including when the
+session is off. It uses the same parser, origin guard, redactor, store capture
+and echoes as the prompt hook. Tool payloads, assistant messages, sidechain
+and meta lines are excluded. Original origin fields are retained for the
+guard; each recovered entry cites the transcript message's uuid, timestamp,
+prompt hash, line number and cwd (the Stop payload's optional cwd is the
+fallback when the transcript line omits it). If neither provides a cwd,
+Stop reports the missing metadata and records nothing from that message.
+
+Recovery scans the whole conversation on each Stop and uses existing cites
+as its progress record rather than advancing a cursor past an unwritten
+line. It skips lines already captured for `(session, prompt_sha256, line)`,
+including individual text blocks of a multi-block message; the store checks
+the key again under its lock. This retries partial failures and remains
+silent and write-free when everything is recorded. Refusals and failures
+are echoed and audited, and retried on later Stops; they are never treated
+as successful captures. No model runs during recovery: referents use the
+existing guessed fallback over only the messages before that prompt, and
+the echo says why. Session controls (`/scribe …`) and settling commands
+are not replayed from history; they remain prompt-hook operations.
+
+Stop also fills waiting cites from prompt-hook captures: it hashes each user
+message's whole text and each of its text blocks, and gives each waiting cite
+the uuid of the matching message written closest to the cite's `at`; a cite
+whose prompt is not in the transcript yet stays `null` for the next Stop.
 
 ### 4.2 Parsing an instruction
 
@@ -867,7 +884,9 @@ the store or `config.toml` cannot be used, each line echoes `scribe: could
 not record "…" — <error>` and the hook still exits 0, so the prompt goes
 through. Quotes in an echo are flattened to one line and cut at 200
 characters (`scribe entry show <id>` has the whole text). The `Stop` hook
-prints nothing.
+emits the same `systemMessage` echoes for recovered or refused instructions;
+it prints nothing when recovery has nothing to report. Its Claude Code reply
+does not include prompt-only `additionalContext` or a blocking decision.
 
 ### 4.5 Distilling a discussion
 
@@ -1086,8 +1105,9 @@ Failures keep the session due and delay automatic retries by 5, 10, 20,
 `scribe session pass --session <id>` bypasses backoff.
 No process is detached from a hook ([4_decisions.md](./4_decisions.md#session-passes-run-from-an-orbit-routine-not-a-detached-hook-child)).
 
-As built (S4): the `Stop` hook reads `control.json` first and goes no
-further for a session that is not on or already due. The last pass is the
+For cadence (S4), after capture recovery and cite filling, the `Stop` hook
+reads `control.json` and goes no further for a session that is not on or
+already due. The last pass is the
 record's `updated`, else `since`; the minutes rule is checked before the
 transcript is read, and the turns rule counts Daniel's turns after
 `scribed_through` in the conversation [§5.3](#53-a-pass) builds.
@@ -1952,7 +1972,7 @@ lines hold ids and error codes only; `said`, `content` and model text never
 enter the audit log. A hook run writes one line per entry written
 (`target` the entry id), per refusal and per failed line (`target`
 `session:<id>`, with its `error_code`) and per cite filled; a run that
-changed nothing (no `#scribe` line, a replay, a `Stop` with nothing waiting)
+changed nothing (no `#scribe` line, a replay, a `Stop` with no missed instruction or waiting cite)
 writes none.
 
 ## 9. Concerns & Honest Limitations

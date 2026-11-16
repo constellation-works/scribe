@@ -122,6 +122,9 @@ pub(super) struct SessionEndPayload {
 pub(super) struct StopPayload {
     pub(super) session_id: String,
     pub(super) transcript_path: PathBuf,
+    /// Fallback for transcript lines from clients that omit their cwd.
+    #[serde(default)]
+    pub(super) cwd: Option<String>,
 }
 
 /// Read the whole of stdin, up to [`MAX_PAYLOAD`].

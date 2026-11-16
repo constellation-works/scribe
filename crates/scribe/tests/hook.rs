@@ -628,6 +628,318 @@ fn the_stop_hook_fills_the_cite_message_uuid_from_the_transcript() {
 }
 
 #[test]
+fn stop_recovers_a_missed_prompt_once_beside_a_prompt_hook_capture() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let mut payload = claude.payload("user-prompt-submit.json");
+    payload["prompt"] = json!("#scribe preference: short subjects");
+    hook_ok(&fx, "user-prompt-submit", &payload);
+    let original = entries(&fx).remove(0);
+    let missed = "An opening turn\n#scribe preference: keep the words #capture";
+    let lines = [
+        json!({"type":"user", "uuid":"u-recorded", "timestamp":now_rfc3339(),
+               "cwd":claude.cwd, "message":{"content":payload["prompt"]}}),
+        json!({"type":"user", "uuid":"u-missed", "timestamp":"2026-11-16T05:50:00Z",
+               "cwd":claude.cwd, "message":{"content":missed}}),
+    ];
+    std::fs::write(
+        &claude.transcript,
+        lines
+            .iter()
+            .map(|line| format!("{line}\n"))
+            .collect::<String>(),
+    )
+    .unwrap();
+    let out = hook_ok(&fx, "stop", &claude.payload("stop.json"));
+    let recorded = entries(&fx);
+    assert_eq!(
+        recorded.len(),
+        2,
+        "Stop must recover the missed prompt exactly once"
+    );
+    let old = recorded.iter().find(|e| e["id"] == original["id"]).unwrap();
+    assert_eq!(
+        old["cite"]["prompt_sha256"],
+        original["cite"]["prompt_sha256"]
+    );
+    assert_eq!(old["cite"]["message"], "u-recorded");
+    let recovered = recorded
+        .iter()
+        .find(|e| e["content"] == "keep the words")
+        .unwrap();
+    assert_eq!(
+        recovered["said"],
+        "#scribe preference: keep the words #capture"
+    );
+    assert_eq!(recovered["topics"], json!(["capture"]));
+    assert_eq!(recovered["cite"]["session"], SESSION);
+    assert_eq!(recovered["cite"]["message"], "u-missed");
+    assert_eq!(recovered["cite"]["at"], "2026-11-16T05:50:00Z");
+    assert_eq!(recovered["cite"]["cwd"], claude.cwd.to_str().unwrap());
+    assert_eq!(recovered["cite"]["line"], 2);
+    assert_eq!(
+        recovered["cite"]["prompt_sha256"],
+        scribe_core::capture::prompt_sha256(missed)
+    );
+    let echo = reply(&out);
+    assert_eq!(
+        echo["systemMessage"],
+        format!(
+            "scribe: added {} to preferences — \"keep the words\"",
+            recovered["id"].as_str().unwrap()
+        )
+    );
+    assert!(echo.get("decision").is_none());
+    let before = snapshot(&fx.root());
+    assert!(
+        hook_ok(&fx, "stop", &claude.payload("stop.json"))
+            .stdout
+            .is_empty()
+    );
+    assert_eq!(
+        snapshot(&fx.root()),
+        before,
+        "a second Stop neither writes nor audits"
+    );
+    hook_ok(
+        &fx,
+        "user-prompt-submit",
+        &json!({
+        "session_id":SESSION, "transcript_path":claude.transcript,
+        "cwd":claude.cwd, "prompt":missed}),
+    );
+    assert_eq!(
+        entries(&fx).len(),
+        2,
+        "a late prompt-hook replay is idempotent too"
+    );
+}
+
+#[test]
+fn stop_recovery_obeys_the_same_origin_and_quoted_text_guards_as_prompt_capture() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let cases = [
+        json!({"content":"<agent-message>\n#scribe preference: agent\n</agent-message>"}),
+        json!({"content":"#scribe preference: source", "source":"scheduled"}),
+        json!({"content":"#scribe preference: origin", "prompt_origin":"agent"}),
+        json!({"content":"#scribe preference: sidechain", "isSidechain":true}),
+        json!({"content":"#scribe preference: meta", "isMeta":true}),
+        json!({"content":"```\n#scribe preference: fenced\n```\n> #scribe preference: quoted\n<pasted_content>\n#scribe preference: pasted\n</pasted_content>"}),
+        json!({"content":"#scribe preference: assistant", "type":"assistant"}),
+        json!({"content":"/scribe on\n#scribe preference: command"}),
+    ];
+    let mut lines = Vec::new();
+    for (i, case) in cases.iter().enumerate() {
+        let mut line = case.clone();
+        line["type"] = case.get("type").cloned().unwrap_or(json!("user"));
+        line["uuid"] = json!(format!("u-{i}"));
+        line["timestamp"] = json!("2026-11-16T05:50:00Z");
+        line["cwd"] = json!(claude.cwd);
+        line["message"] = json!({"content":case["content"]});
+        lines.push(line);
+    }
+    std::fs::write(
+        &claude.transcript,
+        lines
+            .iter()
+            .map(|line| format!("{line}\n"))
+            .collect::<String>(),
+    )
+    .unwrap();
+    assert!(
+        hook_ok(&fx, "stop", &claude.payload("stop.json"))
+            .stdout
+            .is_empty()
+    );
+    assert!(
+        !fx.root().exists(),
+        "excluded turns must create no state or audit"
+    );
+}
+
+#[test]
+fn stop_recovers_only_the_missing_lines_of_a_partly_captured_block_message() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let first = "#scribe preference: already captured";
+    let second = "#scribe preference: missed block";
+    let mut payload = claude.payload("user-prompt-submit.json");
+    payload["prompt"] = json!(first);
+    hook_ok(&fx, "user-prompt-submit", &payload);
+    let line = json!({"type":"user", "uuid":"u-blocks", "timestamp":now_rfc3339(),
+        "cwd":claude.cwd, "message":{"content":[
+            {"type":"text", "text":first}, {"type":"text", "text":second}]}});
+    std::fs::write(&claude.transcript, format!("{line}\n{line}\n")).unwrap();
+    let out = hook_ok(&fx, "stop", &claude.payload("stop.json"));
+    assert_eq!(
+        entries(&fx).len(),
+        2,
+        "existing block hash and replayed uuid cannot duplicate entries"
+    );
+    assert_eq!(
+        reply(&out)["systemMessage"],
+        "scribe: added preferences-2 to preferences — \"missed block\""
+    );
+    let before = snapshot(&fx.root());
+    assert!(
+        hook_ok(&fx, "stop", &claude.payload("stop.json"))
+            .stdout
+            .is_empty()
+    );
+    assert_eq!(snapshot(&fx.root()), before);
+}
+
+#[test]
+fn stop_recovers_action_context_and_referents_from_before_the_missed_prompt_only() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let lines = [
+        json!({"type":"assistant", "uuid":"a-before", "timestamp":"2026-11-16T05:49:00Z",
+            "message":{"content":"The earlier verified answer."}}),
+        json!({"type":"user", "uuid":"u-missed", "timestamp":"2026-11-16T05:50:00Z",
+            "cwd":claude.cwd, "message":{"content":"#scribe standard: keep context\n#scribe add this to decisions"}}),
+        json!({"type":"assistant", "uuid":"a-after", "timestamp":"2026-11-16T05:51:00Z",
+            "message":{"content":"This later answer must not enter the capture."}}),
+    ];
+    std::fs::write(
+        &claude.transcript,
+        lines
+            .iter()
+            .map(|line| format!("{line}\n"))
+            .collect::<String>(),
+    )
+    .unwrap();
+    let out = hook_ok(&fx, "stop", &claude.payload("stop.json"));
+    let recorded = entries(&fx);
+    assert_eq!(recorded.len(), 2);
+    let referent = recorded.iter().find(|e| e["tag"] == "decisions").unwrap();
+    assert_eq!(referent["content"], "The earlier verified answer.");
+    assert_eq!(referent["content_from"]["message"], "a-before");
+    let action = recorded.iter().find(|e| e["tag"] == "standard").unwrap();
+    let detail = fx.ok(&[
+        "entry",
+        "show",
+        action["id"].as_str().unwrap(),
+        "--window",
+        "--json",
+    ]);
+    let detail: Value = serde_json::from_slice(&detail.stdout).unwrap();
+    let turns = detail["window"]["turns"].as_array().unwrap();
+    assert_eq!(turns.len(), 2);
+    assert_eq!(turns[0]["message"], "a-before");
+    assert_eq!(turns[1]["role"], "user");
+    assert!(
+        reply(&out)["systemMessage"]
+            .as_str()
+            .unwrap()
+            .contains("guessed:")
+    );
+    assert!(
+        reply(&out)["systemMessage"]
+            .as_str()
+            .unwrap()
+            .contains("Stop recovery does not call models")
+    );
+    let before = snapshot(&fx.root());
+    assert!(
+        hook_ok(&fx, "stop", &claude.payload("stop.json"))
+            .stdout
+            .is_empty()
+    );
+    assert_eq!(snapshot(&fx.root()), before);
+}
+
+#[test]
+fn stop_reports_refused_missed_lines_and_continues_recovering_other_prompts() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let lines = [
+        json!({"type":"user", "uuid":"u-bad", "timestamp":now_rfc3339(),
+            "cwd":claude.cwd, "message":{"content":"#scribe rituals: unsupported tag"}}),
+        json!({"type":"user", "uuid":"u-good", "timestamp":now_rfc3339(),
+            "cwd":claude.cwd, "message":{"content":"#scribe preference: keep going"}}),
+    ];
+    std::fs::write(
+        &claude.transcript,
+        lines
+            .iter()
+            .map(|line| format!("{line}\n"))
+            .collect::<String>(),
+    )
+    .unwrap();
+    let out = hook_ok(&fx, "stop", &claude.payload("stop.json"));
+    assert_eq!(entries(&fx).len(), 1);
+    let echo = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
+    assert!(echo.contains("scribe: refused"));
+    assert!(echo.contains("scribe: added preferences-1"));
+    assert_eq!(
+        audit(&fx)
+            .iter()
+            .filter(|line| line["error_code"] == "unknown_tag")
+            .count(),
+        1
+    );
+    assert_eq!(
+        audit(&fx)
+            .iter()
+            .filter(|line| line["target"] == "preferences-1")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn stop_reports_missing_citation_metadata_and_retries_when_it_becomes_available() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    claude.write_transcript("#scribe preference: recover with a cwd", "u-missed");
+    let mut payload = claude.payload("stop.json");
+    payload.as_object_mut().unwrap().remove("cwd");
+    let out = hook_ok(&fx, "stop", &payload);
+    assert!(
+        reply(&out)["systemMessage"]
+            .as_str()
+            .unwrap()
+            .contains("could not recover")
+    );
+    assert!(entries(&fx).is_empty());
+    assert_eq!(audit(&fx)[0]["error_code"], "hook_payload_invalid");
+    let out = hook_ok(&fx, "stop", &claude.payload("stop.json"));
+    assert!(
+        reply(&out)["systemMessage"]
+            .as_str()
+            .unwrap()
+            .contains("scribe: added")
+    );
+    assert_eq!(entries(&fx)[0]["cite"]["cwd"], claude.cwd.to_str().unwrap());
+    // The stored cite is sufficient even when later payloads lack cwd.
+    let before = snapshot(&fx.root());
+    assert!(hook_ok(&fx, "stop", &payload).stdout.is_empty());
+    assert_eq!(snapshot(&fx.root()), before);
+}
+
+#[test]
+fn stop_never_replays_historical_settling_commands() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let mut prompt = claude.payload("user-prompt-submit.json");
+    prompt["prompt"] = json!("#scribe decisions: keep this entry");
+    hook_ok(&fx, "user-prompt-submit", &prompt);
+    claude.write_transcript("#scribe forget decisions-1", "u-settle");
+    let before = entries_snapshot(&fx);
+    let audit_before = audit(&fx);
+    let out = hook_ok(&fx, "stop", &claude.payload("stop.json"));
+    assert!(out.stdout.is_empty(), "{}", text(&out.stdout));
+    assert_eq!(
+        entries_snapshot(&fx),
+        before,
+        "history cannot reapply a destructive instruction"
+    );
+    assert_eq!(audit(&fx), audit_before);
+}
+
+#[test]
 fn the_stop_hook_with_nothing_waiting_touches_nothing() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
