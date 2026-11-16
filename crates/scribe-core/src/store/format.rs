@@ -21,6 +21,7 @@
 //! Every document's `format` is read first, so a newer one is refused by
 //! version, not by whatever parse error its new shape would cause.
 
+use crate::Author;
 use crate::entry::Entry;
 use crate::entry::{Cite, EntryId};
 use crate::error::{Error, Result};
@@ -36,10 +37,11 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::num::NonZeroU32;
 use std::path::Path;
+use time::OffsetDateTime;
 
 /// The newest store format: this build reads formats 1 to `FORMAT` of every
 /// document and would write `FORMAT`.
-pub(super) const FORMAT: u32 = 8;
+pub(super) const FORMAT: u32 = 9;
 
 /// Which document an upgrade step is applied to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -74,7 +76,30 @@ pub(super) const UPGRADES: &[Upgrade] = &[
     session_rebuilt_by,
     codex_controls,
     action_entries,
+    entry_candidates,
 ];
+
+/// Format 8 -> 9 adds candidate payloads to proposals. Older proposals
+/// retain their subjects and provenance; only the new field is null.
+fn entry_candidates(
+    document: Document,
+    mut value: serde_json::Value,
+) -> serde_json::Result<serde_json::Value> {
+    if document == Document::Proposals {
+        for proposal in value
+            .get_mut("proposals")
+            .and_then(serde_json::Value::as_array_mut)
+            .into_iter()
+            .flatten()
+            .filter_map(serde_json::Value::as_object_mut)
+        {
+            proposal
+                .entry("candidate")
+                .or_insert(serde_json::Value::Null);
+        }
+    }
+    Ok(value)
+}
 
 /// Format 7 -> 8 adds `quote` and `window` to each entry, both `null` for
 /// an entry written before action tags. `pickups.json` is new at format 8
@@ -440,6 +465,52 @@ struct ProposalV4 {
     author: crate::Author,
     #[serde(deserialize_with = "crate::record::nullable")]
     settled_author: Option<crate::Author>,
+}
+
+/// Frozen format-5-to-8 proposal shape, checked before upgrade.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "frozen shape checked before upgrade")]
+struct ProposalsV8 {
+    format: u32,
+    proposals: Vec<ProposalV8>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "frozen shape checked before upgrade")]
+struct ProposalV8 {
+    /// `p-<n>`.
+    id: ProposalId,
+    /// What it would change.
+    kind: ProposalKind,
+    /// The entry that would be superseded or retired.
+    older: EntryId,
+    /// The entry that supersedes it; `null` for a stale proposal.
+    #[serde(deserialize_with = "crate::record::nullable")]
+    newer: Option<EntryId>,
+    /// Why, in the consistency model's words (at most 300 characters).
+    reason: String,
+    /// Verbatim spans from the entries involved.
+    quotes: Vec<Quote>,
+    /// Whether it is settled.
+    state: ProposalState,
+    /// When the routine opened it.
+    #[serde(with = "time::serde::rfc3339")]
+    opened_at: OffsetDateTime,
+    /// When Daniel settled it.
+    #[serde(with = "time::serde::rfc3339::option")]
+    settled_at: Option<OffsetDateTime>,
+    /// The turn Daniel settled it in.
+    #[serde(deserialize_with = "crate::record::nullable")]
+    settled_by: Option<Cite>,
+    /// Who opened it: `{kind: scribe, name: consistency}` for the routine.
+    author: Author,
+    /// Agent who last revised the reason, or null.
+    #[serde(deserialize_with = "crate::record::nullable")]
+    updated_by: Option<Author>,
+    /// Who settled it, set exactly when `state` is not `open`.
+    #[serde(deserialize_with = "crate::record::nullable")]
+    settled_author: Option<Author>,
 }
 
 /// Frozen format-2 `control.json` shape, validated before upgrading.
@@ -1006,8 +1077,7 @@ fn decode_json<T: DeserializeOwned>(path: &Path, bytes: &[u8], document: Documen
             serde_json::from_slice::<ProposalsV4>(bytes).map_err(|e| Error::corrupt(path, e))?;
         }
         Document::Proposals if from >= 5 => {
-            serde_json::from_slice::<ProposalsDocument>(bytes)
-                .map_err(|e| Error::corrupt(path, e))?;
+            serde_json::from_slice::<ProposalsV8>(bytes).map_err(|e| Error::corrupt(path, e))?;
         }
         Document::Proposals => {
             serde_json::from_slice::<ProposalsV3>(bytes).map_err(|e| Error::corrupt(path, e))?;
@@ -1050,6 +1120,22 @@ pub(super) fn encode_control(path: &Path, state: &ControlState) -> Result<Vec<u8
 /// Parse `proposals.json`.
 pub(super) fn decode_proposals(path: &Path, bytes: &[u8]) -> Result<Vec<Proposal>> {
     let doc: ProposalsDocument = decode_json(path, bytes, Document::Proposals)?;
+    for proposal in &doc.proposals {
+        match (&proposal.kind, &proposal.candidate) {
+            (ProposalKind::Candidate, Some(candidate))
+                if proposal.newer.is_none()
+                    && proposal.older.tag() == &candidate.tag
+                    && candidate.has_valid_provenance()
+                    && (!candidate.quote.is_empty()
+                        || proposal.state == ProposalState::Approved)
+                    && candidate.quote.chars().count() <= 400 => {}
+            (ProposalKind::Candidate, Some(_) | None)
+            | (ProposalKind::Supersedes | ProposalKind::Stale, Some(_)) => {
+                return Err(shape(path, "invalid candidate proposal payload"));
+            }
+            (ProposalKind::Supersedes | ProposalKind::Stale, None) => {}
+        }
+    }
     Ok(doc.proposals)
 }
 

@@ -121,6 +121,7 @@ impl Draft {
             author: Author::consistency(),
             updated_by: None,
             settled_author: None,
+            candidate: None,
         }
     }
 }
@@ -392,6 +393,7 @@ pub fn approved_status(proposal: &Proposal) -> (EntryStatus, Option<EntryId>) {
     match proposal.kind {
         ProposalKind::Supersedes => (EntryStatus::Superseded, proposal.newer.clone()),
         ProposalKind::Stale => (EntryStatus::Retired, None),
+        ProposalKind::Candidate => (EntryStatus::Active, None),
     }
 }
 
@@ -417,7 +419,7 @@ pub fn reapply(
     let mut out = Vec::new();
     for proposal in proposals
         .iter()
-        .filter(|p| p.state == ProposalState::Approved)
+        .filter(|p| p.state == ProposalState::Approved && p.kind != ProposalKind::Candidate)
     {
         let Some(entry) = entries
             .iter_mut()
@@ -516,6 +518,13 @@ impl fmt::Display for SettleRefusal {
 /// What [`settle`] did.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Settled {
+    /// An approved candidate creates a new Daniel-authored entry.
+    Recorded {
+        /// The approved candidate proposal.
+        proposal: ProposalId,
+        /// The new entry, under its reserved id.
+        entry: EntryId,
+    },
     /// The proposal was approved and its older entry changed.
     Approved {
         /// The proposal.
@@ -619,6 +628,9 @@ pub fn settle(
                 let about = proposal.older == *id || proposal.newer.as_ref() == Some(id);
                 if about {
                     proposal.reason.clear();
+                    if let Some(candidate) = &mut proposal.candidate {
+                        candidate.quote.clear();
+                    }
                 }
                 for quote in proposal.quotes.iter_mut().filter(|q| q.entry == *id) {
                     quote.text.clear();
@@ -648,6 +660,16 @@ fn approve(
             });
         }
         ProposalState::Open => {}
+    }
+    if proposal.kind == ProposalKind::Candidate {
+        proposal.state = ProposalState::Approved;
+        proposal.settled_at = Some(now);
+        proposal.settled_by = Some(cite.clone());
+        proposal.settled_author = Some(Author::daniel());
+        return Settled::Recorded {
+            proposal: id,
+            entry: proposal.older.clone(),
+        };
     }
     let Some(entry) = entries.iter_mut().find(|e| e.id == proposal.older) else {
         return Settled::Refused(SettleRefusal::NoEntry(proposal.older.clone()));

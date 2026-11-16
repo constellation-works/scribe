@@ -28,7 +28,7 @@ Author names are attribution, not ownership: any agent may add, update or
 retire an agent note, add or update a tag, and open, update or settle an agent
 proposal, and the record keeps who changed it. Agent notes are separate from
 the human's words. Never claim another agent's name. The human's name and
-scribe's (`daniel`, `scribe`, `consistency`) are refused on every write; the
+scribe's (`daniel`, `scribe`, `consistency`, `session-pass`) are refused on every write; the
 human's entries change only in topics and related references, and proposals
 about them are the human's to settle. Catalog a past session
 (`session catalog <id>`) only when asked; the human catalogs as themselves by
@@ -80,9 +80,19 @@ item unless the human asks.
 Suggest at natural pauses (the brief, the end of a task), a few at a time
 and grouped, never as a gate on the work:
 
-- **Entries.** When the human states a decision, preference or rule worth
-  keeping across sessions, offer a ready-to-type `#scribe <tag>: <words>`
-  line in their words. When it applies in every repository, offer
+- **Entries.** When this session is on (the hook acknowledged `/scribe on`,
+  or its `session show <id> --json` reports `on: true`), stop offering
+  ready-to-type lines for preferences and decisions. The session pass now
+  proposes unmarked statements from the human's own turns, with the exact
+  quote, source turn and suggested memory tag. It offers at most three per
+  session pass, with at most twenty open candidates in the store. Mention
+  open candidates in the brief; the human keeps one with `#scribe approve
+  <proposal-id>` or drops it for good with `#scribe reject <proposal-id>`.
+  Approval writes the entry as theirs, citing the original turn. No entry
+  exists before approval. Action tags follow their separate rules below.
+  When the session is off or its state is unknown, and the human states a
+  decision, preference or rule worth keeping, offer a ready-to-type
+  `#scribe <tag>: <words>` line in their words. When it applies in every repository, offer
   `#scribe/global <tag>: <words>` instead (the same `/global` opener works
   on `#scribe add <words> to <tag>` and `#scribe add this to <tag>`). Only
   their typed line records their words, so never write it for them.
@@ -134,8 +144,10 @@ about them; `question ask` skips them unless its scope names their tag.
   entry instead.
 - **An `ask-first` tag**: ask the human before writing, and write only on
   their yes.
-- **Their preferences and decisions stay theirs.** For those, still offer a
-  `#scribe <tag>: <words>` line for them to type, and never write it.
+- **Their preferences and decisions stay theirs.** In an on session, let
+  the pass propose them for typed approval. In an off session or when its
+  state is unknown, offer a `#scribe <tag>: <words>` line for them to type.
+  Never write their entry yourself.
 
 To initialize a requested project integration, use the explicit target:
 

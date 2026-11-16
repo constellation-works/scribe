@@ -2545,3 +2545,45 @@ network code and never calls Orbit.
   from that host's store.
 - Cost: the intake depends on the Mac being awake and reachable; entries
   wait, and are counted as stuck, while it is not.
+
+
+## Session passes propose unmarked statements; Daniel alone creates their entries
+
+**Recorded:** 2026-11-15 · ORB-25163 · background-agents candidate use 6
+**Code anchors:** `pass/candidates.rs`, `store/candidates.rs`, `proposal.rs`,
+`commands/session/pass.rs`, `skills/scribe/SKILL.md`
+
+Daniel approved the background-agent uses on 2026-11-15. The opted-in pass
+already reads these turns, so it returns up to three candidate preferences
+or decisions beside each window's record, sharing three slots across the
+session's invocation. Twenty open candidates bound the store-wide queue.
+The added output is at most 1,680 value characters per window plus JSON
+syntax (three quotes of 400, message ids of 128 and tags of 32), without an
+extra model call. Relevant duplicate context adds at most 6,000 value
+characters of input. These bounds implement STD-08 §R1 and §R3; full details
+are in design §5.3.
+
+The pass checks an exact span from the named user's own current-window turn
+and derives its provenance from the original transcript. Pasted and quoted
+material, assistant words, marked instructions and action tags are excluded.
+Model judgement handles semantic novelty; deterministic normalized and
+lexical checks under the store lock suppress existing and rejected statements.
+This may conservatively drop closely related new wording. A candidate whose
+quote would be redacted is omitted to retain exact quotation on approval.
+
+Store format 9 adds a nullable candidate payload and a new proposal kind,
+with an append-only 8→9 upgrade. Existing proposal fields keep their types;
+for this new kind, `older` is the reserved eventual entry id. Reserving it
+without a file preserves both the machine contract and idempotent approval
+recovery. Typed and agent entry allocators count every reservation.
+The approved proposal is the durable decision before writing its entry,
+matching consistency approvals' recovery journal (STD-03 §R8). A replay or
+consistency scan completes the exact reserved entry once, preserving any
+later retirement or forgetting. The original turn is the entry's cite;
+`settled_by` remains the separate approving turn. Rejection keeps its payload
+for suppression and creates nothing. Agent proposal mutation refuses this kind.
+
+This refines the earlier skill decision to offer ready-to-type memory lines:
+in an on session, the skill stops doing that and briefs open proposals instead.
+Off or unknown sessions keep the manual suggestion flow. Action tags remain
+agent-written under their existing rules. Rebuilds create no proposals.

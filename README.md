@@ -8,7 +8,11 @@ A `#scribe` line Daniel types in Claude Code or a supported Codex desktop user t
 resolves). The same line opening `#scribe/global` instead of `#scribe` stores
 `project: global`, for every repository; without it the entry keeps the
 working directory's project. `/scribe on` in a session catalogs it: `scribe session pass`
-writes one record per session whose pass is due. The CLI reads the store and accepts authored agent notes,
+writes one record per session whose pass is due and proposes unmarked preferences
+or decisions from Daniel's own turns (up to three per session pass, twenty open
+candidates store-wide). `scribe proposal list --state open --json` shows their
+quotes and source turns. `#scribe approve <id>` creates the entry as Daniel's,
+with the original turn's cite; `#scribe reject <id>` closes it for good. The CLI reads the store and accepts authored agent notes,
 and `scribe question ask` answers from it, quoting each record it cites
 verbatim; the Orbit plugin in `plugin/.orbit-plugin/` serves the same
 answer to agents as `scribe.ask` (install steps in its

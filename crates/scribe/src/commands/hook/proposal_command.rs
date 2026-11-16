@@ -58,6 +58,12 @@ pub(super) fn run(settling: &Settling, turn: &Turn, ctx: &Context) -> Reply {
         }),
     };
     match settled {
+        Settled::Recorded { proposal, entry } => done(
+            proposal.to_string(),
+            format!(
+                "scribe: approved {proposal} — recorded {entry} as Daniel's words with the original turn's cite"
+            ),
+        ),
         Settled::Approved {
             proposal,
             entry,

@@ -36,6 +36,7 @@
 
 mod agent;
 mod audit;
+mod candidates;
 mod format;
 mod fsio;
 mod ids;
@@ -180,8 +181,9 @@ pub struct Store {
     lock_wait: Duration,
 }
 
-/// How [`Store::write_pass`] leaves the switch.
-enum PassWrite {
+/// How [`Store::write_pass_window`] leaves the switch.
+#[derive(Clone, Copy, Debug)]
+pub enum PassWrite {
     /// An intermediate window. Force the session due.
     Checkpoint,
     /// The last window of an ordinary pass. `bool` is `ran_final`.
@@ -610,6 +612,7 @@ impl Store {
                 .iter()
                 .filter_map(|s| s.path.file_stem()?.to_str()?.parse().ok()),
         );
+        ids.extend(self.candidate_reserved_ids()?);
         let mut out = Vec::with_capacity(drafts.len());
         for draft in drafts {
             if let Some(found) = entries
@@ -802,12 +805,39 @@ impl Store {
         self.write_pass(session, record, PassWrite::CatalogFinal, expected, redactor)
     }
 
+    /// Write a checked pass window and its candidates under the same lock.
+    /// Candidates are persisted before advancing the record cursor, so an
+    /// interruption retries safely. Caps and duplicates are checked here.
+    pub fn write_pass_window(
+        &self,
+        record: SessionRecord,
+        expected: Option<time::OffsetDateTime>,
+        kind: PassWrite,
+        candidates: &[crate::EntryCandidate],
+        redactor: &Redactor,
+    ) -> Result<Option<SessionRecord>> {
+        let session = record.id.clone();
+        self.write_pass_candidates(&session, Some(record), kind, expected, candidates, redactor)
+    }
+
     fn write_pass(
         &self,
         session: &SessionId,
         record: Option<SessionRecord>,
         kind: PassWrite,
         expected: Option<time::OffsetDateTime>,
+        redactor: &Redactor,
+    ) -> Result<Option<SessionRecord>> {
+        self.write_pass_candidates(session, record, kind, expected, &[], redactor)
+    }
+
+    fn write_pass_candidates(
+        &self,
+        session: &SessionId,
+        record: Option<SessionRecord>,
+        kind: PassWrite,
+        expected: Option<time::OffsetDateTime>,
+        candidates: &[crate::EntryCandidate],
         redactor: &Redactor,
     ) -> Result<Option<SessionRecord>> {
         self.prepare_dir(&self.root)?;
@@ -890,6 +920,7 @@ impl Store {
                     dir = dir.join(part);
                     self.prepare_subdir(&dir)?;
                 }
+                self.open_pass_candidates(&record, candidates, redactor)?;
                 fsio::write_atomic(&path, &format::encode_session(&path, &record)?)?;
                 // Only once the record holds them: the links are stored once.
                 if !pending.is_empty() {
@@ -925,18 +956,20 @@ impl Store {
     }
 
     /// Re-apply, under the store lock, every approved proposal whose older
-    /// entry is still `active` ([`consistency::reapply`]): an approval
+    /// entry is still `active` ([`consistency::reapply`]), and create any
+    /// missing entry from an approved candidate. An approval
     /// writes `proposals.json` and then the entry, and this repairs a crash
     /// between the two. Writes only the entries it changes.
     pub fn reapply_approved(&self, now: time::OffsetDateTime) -> Result<Vec<Reapplied>> {
         if !self.root_exists()? {
             return Ok(Vec::new());
         }
+        let mut candidate_done = self.reapply_candidates()?;
         let proposals = self.proposals()?;
         let (entries, _) = self.load_entries()?;
         let mut probe = entries;
         if consistency::reapply(&proposals, &mut probe, now).is_empty() {
-            return Ok(Vec::new());
+            return Ok(candidate_done);
         }
         let _lock = self.lock("consistency scan")?;
         let proposals = self.proposals()?;
@@ -947,7 +980,8 @@ impl Store {
                 self.write_entry(entry, false)?;
             }
         }
-        Ok(done)
+        candidate_done.extend(done);
+        Ok(candidate_done)
     }
 
     /// Open one proposal per draft, under the store lock: a draft whose
@@ -1008,9 +1042,22 @@ impl Store {
         let (mut entries, _) = self.load_entries()?;
         let before_proposals = proposals.clone();
         let before_entries = entries.clone();
-        let settled = consistency::settle(action, &mut proposals, &mut entries, cite, now);
+        let mut settled = consistency::settle(action, &mut proposals, &mut entries, cite, now);
         if proposals != before_proposals {
             self.write_proposals(&proposals)?;
+        }
+        if let Settle::Approve(id) = action
+            && let Some(proposal) = proposals.iter().find(|p| {
+                p.id == *id
+                    && p.kind == crate::ProposalKind::Candidate
+                    && p.state == crate::ProposalState::Approved
+            })
+            && self.write_candidate_entry(proposal)?
+        {
+            settled = Settled::Recorded {
+                proposal: *id,
+                entry: proposal.older.clone(),
+            };
         }
         for (entry, before) in entries.iter().zip(&before_entries) {
             if entry != before {

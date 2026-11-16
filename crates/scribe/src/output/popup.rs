@@ -209,6 +209,7 @@ fn entries(items: &[EntryPayload], year: i32) -> Vec<Row> {
 /// What a proposal asks for, in words.
 fn proposed(p: &ProposalPayload) -> String {
     let what = match (p.kind, &p.newer) {
+        ("candidate", _) => format!("record {} after approval", p.older),
         ("supersedes", Some(newer)) => format!("{newer} supersedes {}", p.older),
         ("supersedes", None) => format!("supersede {}", p.older),
         _ => format!("retire {} as stale", p.older),
@@ -359,6 +360,16 @@ fn proposal_preview(out: &mut dyn Write, p: &ProposalPayload) -> io::Result<()> 
     detail(out, "kind", p.kind)?;
     detail(out, "state", p.state)?;
     detail(out, "older", &p.older)?;
+    if let Some(candidate) = &p.candidate {
+        detail(out, "tag", candidate.tag.as_str())?;
+        detail(out, "quote", &candidate.quote)?;
+        detail(out, "session", candidate.cite.session.as_str())?;
+        detail(
+            out,
+            "message",
+            candidate.cite.message.as_deref().unwrap_or("-"),
+        )?;
+    }
     detail(out, "newer", p.newer.as_deref().unwrap_or(""))?;
     detail(out, "opened", &long_time(p.opened_at))
 }

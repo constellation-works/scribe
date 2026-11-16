@@ -3,7 +3,7 @@
 //! consumer has picked up (§4.6).
 //!
 //! Read-only and model-free: it reads `proposals.json` and, when any
-//! proposal is open, prints one `systemMessage` line for Daniel, `scribe: 3
+//! proposal (including a session-pass candidate) is open, prints one `systemMessage` line for Daniel, `scribe: 3
 //! proposals to review — scribe proposal list`. It then counts the active
 //! entries under action tags older than `action::STUCK_AFTER` with no
 //! pickup in `pickups.json` and, when there are any, adds one line,

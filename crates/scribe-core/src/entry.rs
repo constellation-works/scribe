@@ -265,8 +265,8 @@ pub enum ContentFrom {
     Agent,
     /// A verbatim substring of the `#scribe` line itself.
     Instruction,
-    /// A verbatim span of an earlier message the instruction pointed at
-    /// ("this", "it").
+    /// A verbatim span of an earlier message selected by a referent
+    /// instruction or an approved session-pass candidate.
     Message {
         /// Whose words they are.
         role: Speaker,
@@ -278,7 +278,9 @@ pub enum ContentFrom {
     },
 }
 
-/// The provenance of an entry: the turn Daniel typed it in.
+/// The provenance of an entry: the original turn holding its words.
+/// An approved candidate keeps this source turn; its proposal separately
+/// records the typed approval in `settled_by`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Cite {
@@ -292,7 +294,7 @@ pub struct Cite {
     pub at: OffsetDateTime,
     /// SHA-256 of the prompt text, lowercase hex.
     pub prompt_sha256: String,
-    /// The `#scribe` line's number within the prompt, from 1.
+    /// The source line's number within the prompt, from 1.
     pub line: u32,
     /// The session's working directory.
     pub cwd: String,
@@ -329,8 +331,8 @@ pub struct Entry {
     /// When it last changed.
     #[serde(with = "time::serde::rfc3339")]
     pub updated: OffsetDateTime,
-    /// The full `#scribe` line exactly as Daniel typed it; empty once
-    /// forgotten.
+    /// The full `#scribe` line exactly as Daniel typed it, or a candidate
+    /// approval's canonical command; empty once forgotten.
     pub said: String,
     /// Where `content` came from.
     pub content_from: ContentFrom,

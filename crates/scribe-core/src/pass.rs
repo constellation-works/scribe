@@ -43,6 +43,9 @@ use crate::verbatim;
 use std::num::NonZeroU32;
 use time::OffsetDateTime;
 
+mod candidates;
+pub(crate) use candidates::same_statement;
+pub use candidates::{MAX_CANDIDATES, MAX_OPEN_CANDIDATES, candidate_drafts, candidate_exclusions};
 mod repair;
 pub use repair::repair;
 
@@ -287,6 +290,9 @@ pub fn request(
         dropped: window.dropped,
         topics,
         terms,
+        candidate_limit: 0,
+        candidate_tags: Vec::new(),
+        candidate_exclusions: Vec::new(),
         budgets: BUDGETS,
         final_pass,
         correction: None,
@@ -328,6 +334,8 @@ pub enum Invalid {
 /// A checked answer, ready to become a record.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Distilled {
+    /// Locally checked candidate statements from this window.
+    pub candidates: Vec<crate::models::EntryCandidateAnswer>,
     /// The title.
     pub title: String,
     /// `## Summary`.
@@ -578,7 +586,9 @@ fn check_with_rules(
         }
     }
 
+    let candidates = candidates::check(answer.candidates, request);
     Ok(Distilled {
+        candidates,
         title,
         summary,
         goals,

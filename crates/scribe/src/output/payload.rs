@@ -598,8 +598,9 @@ impl From<&Quote> for QuotePayload {
 /// One proposal as every output mode sees it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct ProposalPayload {
+    pub(crate) candidate: Option<scribe_core::EntryCandidate>,
     pub(crate) id: String,
-    /// `supersedes` or `stale`.
+    /// `supersedes`, `stale` or `candidate`.
     pub(crate) kind: &'static str,
     pub(crate) older: String,
     pub(crate) newer: Option<String>,
@@ -625,6 +626,7 @@ impl From<&Proposal> for ProposalPayload {
         Self {
             id: p.id.to_string(),
             kind: p.kind.as_str(),
+            candidate: p.candidate.clone(),
             older: p.older.to_string(),
             newer: p.newer.as_ref().map(ToString::to_string),
             reason: p.reason.clone(),

@@ -67,8 +67,8 @@ pub use entry::{
 pub use error::{Error, Result, WriteRefusal};
 pub use models::Models;
 pub use proposal::{
-    Proposal, ProposalChange, ProposalError, ProposalFilter, ProposalId, ProposalKind,
-    ProposalState, Quote,
+    EntryCandidate, Proposal, ProposalChange, ProposalError, ProposalFilter, ProposalId,
+    ProposalKind, ProposalState, Quote,
 };
 pub use record::{
     Author, AuthorKind, AuthorName, DateRange, Label, Listing, Project, RecordError, Related,
@@ -82,7 +82,7 @@ pub use session::{
 };
 pub use store::{
     AUDIT_FILE, AuditEvent, AuditStatus, CONFIG_FILE, CONTROL_FILE, Captured, DEFAULT_LOCK_WAIT,
-    ENTRIES_DIR, EntryList, InitFile, InitReport, MIN_SECRET_CHARS, PROPOSALS_FILE,
+    ENTRIES_DIR, EntryList, InitFile, InitReport, MIN_SECRET_CHARS, PROPOSALS_FILE, PassWrite,
     REDACTED_FIELDS, RebuildGuard, Redactor, SESSIONS_DIR, SessionList, SessionView, Skipped,
     Store, TagList, check_agent_author, check_content, check_description, check_reason,
     init_project, integration_hooks, resolve_prefix, unresolved_redact_env,

@@ -18,7 +18,8 @@ pub(super) fn refusal(kind: WriteRefusal, message: impl Into<String>) -> Error {
 }
 
 /// Refuse a reserved name on an agent-channel write: `daniel`, `scribe`
-/// and `consistency` name Daniel's and scribe's own channels, so a record
+/// and the routine names `consistency` and `session-pass` name Daniel's and
+/// scribe's own channels, so a record
 /// written with one could be mistaken for theirs.
 ///
 /// # Errors
@@ -257,6 +258,7 @@ impl Store {
                 .iter()
                 .filter_map(|s| s.path.file_stem()?.to_str()?.parse().ok()),
         );
+        ids.extend(self.candidate_reserved_ids()?);
         let mut entry = Entry {
             id: EntryId::next_in(&tag.name, &ids),
             tag: tag.name.clone(),
@@ -402,7 +404,8 @@ impl Store {
         let _lock = self.lock("proposal add")?;
         let older = self.resolve_entry(older)?;
         let newer = newer.map(|id| self.resolve_entry(id)).transpose()?;
-        if (kind == ProposalKind::Supersedes) != newer.is_some() {
+        if kind == ProposalKind::Candidate || (kind == ProposalKind::Supersedes) != newer.is_some()
+        {
             return Err(refusal(
                 WriteRefusal::ProposalInvalid,
                 "supersedes requires --newer; stale forbids it",
@@ -467,6 +470,7 @@ impl Store {
             author: Author::agent(author),
             updated_by: None,
             settled_author: None,
+            candidate: None,
         };
         proposals.push(proposal.clone());
         self.write_proposals(&proposals)?;
@@ -493,6 +497,12 @@ impl Store {
         let ids: Vec<String> = proposals.iter().map(|p| p.id.to_string()).collect();
         let i = self.proposal_index(id, &ids)?;
         let p = &mut proposals[i];
+        if p.kind == ProposalKind::Candidate {
+            return Err(refusal(
+                WriteRefusal::DanielOnly,
+                "Daniel settles candidate proposals through #scribe approve or reject",
+            ));
+        }
         let before = p.clone();
         let reason_changed = reason.is_some_and(|r| redactor.mask(r) != p.reason);
         let mut changed_entry = None;
