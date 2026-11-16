@@ -1,0 +1,40 @@
+{
+  "proposals": [
+    {
+      "candidate": {
+        "tag": "preferences",
+        "quote": "I prefer concise progress updates.",
+        "cite": {
+          "session": "s-1",
+          "message": "user-choice",
+          "at": "2026-11-15T00:00:00Z",
+          "prompt_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "line": 1,
+          "cwd": "/work/scribe"
+        },
+        "project": "scribe",
+        "provider": "claude-code",
+        "host": "host"
+      },
+      "id": "p-3",
+      "kind": "candidate",
+      "older": "preferences-1",
+      "newer": null,
+      "reason": "Unmarked preference: I prefer concise progress updates.",
+      "quotes": [],
+      "state": "open",
+      "opened_at": "2026-11-15T00:01:00Z",
+      "settled_at": null,
+      "settled_by": null,
+      "author": {
+        "kind": "scribe",
+        "name": "session-pass"
+      },
+      "settled_author": null,
+      "updated_by": null
+    }
+  ],
+  "total": 1,
+  "truncated": false,
+  "warnings": []
+}

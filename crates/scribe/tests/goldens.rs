@@ -472,3 +472,38 @@ fn agent_write_shapes_match_goldens() {
     }
     report(&failures);
 }
+
+#[test]
+fn candidate_proposal_list_matches_goldens() {
+    let fx = Fixture::new();
+    fx.seed();
+    let proposal = json!({
+        "id":"p-3", "kind":"candidate", "older":"preferences-1", "newer":null,
+        "candidate": {
+            "tag":"preferences", "quote":"I prefer concise progress updates.",
+            "cite": {"session":"s-1", "message":"user-choice", "at":"2026-11-15T00:00:00Z",
+                "prompt_sha256":"0".repeat(64), "line":1, "cwd":"/work/scribe"},
+            "project":"scribe", "provider":"claude-code", "host":"host"
+        },
+        "reason":"Unmarked preference: I prefer concise progress updates.", "quotes":[],
+        "state":"open", "opened_at":"2026-11-15T00:01:00Z", "settled_at":null,
+        "settled_by":null, "author":{"kind":"scribe", "name":"session-pass"},
+        "settled_author":null, "updated_by":null
+    });
+    let path = fx.root().join("proposals.json");
+    std::fs::write(
+        &path,
+        json!({"format":9, "proposals":[proposal]}).to_string(),
+    )
+    .unwrap();
+    support::make_private(&path);
+    let mut failures = Vec::new();
+    for (suffix, mode) in MODES {
+        let out = fx.ok(&[&["proposal", "list"][..], *mode].concat());
+        failures.extend(check(
+            &format!("output/proposal-list-candidate.{suffix}"),
+            &text(&out.stdout),
+        ));
+    }
+    report(&failures);
+}

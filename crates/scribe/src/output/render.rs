@@ -294,6 +294,16 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
             field(out, "kind", p.kind)?;
             field(out, "state", p.state)?;
             field(out, "older", &p.older)?;
+            if let Some(candidate) = &p.candidate {
+                field(out, "quote", &candidate.quote)?;
+                field(out, "tag", candidate.tag.as_str())?;
+                field(out, "session", candidate.cite.session.as_str())?;
+                field(
+                    out,
+                    "message",
+                    candidate.cite.message.as_deref().unwrap_or("-"),
+                )?;
+            }
             field(out, "newer", p.newer.as_deref().unwrap_or("-"))?;
             field(out, "reason", &p.reason)?;
             field(

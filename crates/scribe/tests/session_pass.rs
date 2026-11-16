@@ -23,6 +23,59 @@ const NEVER: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e60";
 const DEFINED: &str = "by graduate to level 4 I mean a crew that merges without review";
 const NEVER_SAID: &str = "a session never switched on, which scribe must never read";
 
+#[test]
+fn pass_candidate_waits_for_typed_approval_and_keeps_original_user_cite() {
+    let s = Setup::new();
+    let quote = "I prefer short progress updates while an agent is working.";
+    s.write(ON, &[line("user", "preference-turn", quote)]);
+    let mut body = answer();
+    body["candidates"] =
+        json!([{"quote": quote, "message": "preference-turn", "tag": "preferences"}]);
+    s.answer(&body);
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let proposals: Value =
+        serde_json::from_slice(&s.fx.ok(&["proposal", "list", "--json"]).stdout).unwrap();
+    let p = &proposals["proposals"][0];
+    assert_eq!(p["kind"], "candidate");
+    assert_eq!(p["candidate"]["quote"], quote);
+    assert_eq!(p["candidate"]["cite"]["message"], "preference-turn");
+    assert!(
+        !s.fx
+            .root()
+            .join("entries/preferences/preferences-1.md")
+            .exists()
+    );
+    let id = p["id"].as_str().unwrap();
+    let prompt = format!("#scribe approve {id}");
+    let mut payload = s.payload("UserPromptSubmit");
+    payload["prompt"] = json!(prompt);
+    let first = s.hook("user-prompt-submit", &payload);
+    assert!(
+        text(&first.stdout).contains("recorded"),
+        "{}",
+        text(&first.stdout)
+    );
+    s.hook("user-prompt-submit", &payload);
+    let entries: Value = serde_json::from_slice(
+        &s.fx
+            .ok(&["entry", "list", "--tag", "preferences", "--json"])
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(entries["entries"].as_array().unwrap().len(), 1);
+    let entry: Value = serde_json::from_slice(
+        &s.fx
+            .ok(&["entry", "show", "preferences-1", "--json"])
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(entry["content"], quote);
+    assert_eq!(entry["author"]["kind"], "daniel");
+    assert_eq!(entry["cite"]["message"], "preference-turn");
+    assert_eq!(entry["content_from"]["role"], "user");
+}
+
 /// A Claude Code layout under the fixture's home, a fake `claude` on PATH
 /// and helpers to run the binary with them.
 struct Setup {
@@ -1038,7 +1091,7 @@ fn legacy_control_is_read_without_writes_and_new_retry_state_is_strict() {
     );
     setup.pass();
     let current: Value = serde_json::from_slice(&setup.control_bytes()).unwrap();
-    assert_eq!(current["format"], 8);
+    assert_eq!(current["format"], 9);
     assert_eq!(current["sessions"][ON]["consecutive_failures"], 0);
     assert_eq!(current["sessions"][ON]["retry_after"], Value::Null);
     assert_eq!(current["sessions"][ON]["pending_links"], json!([]));
@@ -1260,10 +1313,10 @@ fn a_pass_writes_one_record_of_daniels_terms_and_never_reads_a_session_never_swi
         json!([{"term": "graduate to level 4", "said": DEFINED, "message": "u-1"}])
     );
     assert!(!setup.fx.root().join("entries").exists(), "no entries");
-    // The record is written at format 8: a header and one open segment
+    // The record is written at format 9: a header and one open segment
     // holding this pass's segment text.
     let file = std::fs::read_to_string(setup.record_file()).unwrap();
-    assert!(file.starts_with("---\nformat: 8\n"), "{file}");
+    assert!(file.starts_with("---\nformat: 9\n"), "{file}");
     assert!(file.contains("\n## Log\n### 1. "), "{file}");
     assert!(!file.contains("## Outcome"), "{file}");
     assert_eq!(record["active"], true);
@@ -2075,4 +2128,291 @@ fn rebuild_compresses_an_overlong_third_window_header_even_when_open_is_omitted(
             .with_file_name(format!(".{ON}.rebuild.md"))
             .exists()
     );
+}
+
+fn candidate_answer(quote: &str, message: &str, tag: &str) -> Value {
+    let mut body = answer();
+    body["candidates"] = json!([{"quote": quote, "message": message, "tag": tag}]);
+    body
+}
+
+fn proposals(s: &Setup) -> Value {
+    serde_json::from_slice(&s.fx.ok(&["proposal", "list", "--json"]).stdout).unwrap()
+}
+
+fn type_settlement(s: &Setup, prompt: &str) -> Output {
+    let mut payload = s.payload("UserPromptSubmit");
+    payload["prompt"] = json!(prompt);
+    s.hook("user-prompt-submit", &payload)
+}
+
+#[test]
+fn candidate_sources_and_existing_statements_are_checked_at_the_binary_boundary() {
+    let quote = "I prefer concise messages during lengthy builds.";
+    let cases = [
+        ("assistant", quote.to_owned(), "u-1", "preferences", false),
+        (
+            "user",
+            format!("Read this: <pasted_content>{quote}</pasted_content>"),
+            "u-1",
+            "preferences",
+            false,
+        ),
+        (
+            "user",
+            format!("```text\n{quote}\n```"),
+            "u-1",
+            "preferences",
+            false,
+        ),
+        ("user", format!("> {quote}"), "u-1", "preferences", false),
+        (
+            "user",
+            quote.to_owned(),
+            "missing-turn",
+            "preferences",
+            false,
+        ),
+        (
+            "user",
+            "I never said the model's proposed sentence.".to_owned(),
+            "u-1",
+            "preferences",
+            false,
+        ),
+        ("user", quote.to_owned(), "u-1", "task", false),
+        (
+            "user",
+            format!("#scribe preferences: {quote}"),
+            "u-1",
+            "preferences",
+            false,
+        ),
+        ("user", quote.to_owned(), "u-1", "preferences", true),
+    ];
+    for (role, text, message, tag, existing) in cases {
+        let s = Setup::new();
+        s.write(ON, &[line(role, "u-1", &text)]);
+        if existing {
+            let root = s.fx.root();
+            let dir = root.join("entries/decisions");
+            std::fs::create_dir_all(&dir).unwrap();
+            for path in [&root, &root.join("entries"), &dir] {
+                make_private(path);
+            }
+            let path = dir.join("decisions-1.md");
+            std::fs::write(&path, support::entry_text(1, quote)).unwrap();
+            make_private(&path);
+        }
+        s.answer(&candidate_answer(quote, message, tag));
+        s.scribe("/scribe on");
+        s.run(&["session", "pass", "--session", ON, "--json"], b"");
+        assert_eq!(
+            proposals(&s)["total"],
+            0,
+            "unsafe source or duplicate: {role} {text}"
+        );
+    }
+}
+
+#[test]
+fn rejected_candidates_are_never_repeated_and_are_counted_at_session_start() {
+    let s = Setup::new();
+    let quote = "I prefer concise messages during lengthy builds.";
+    s.write(ON, &[line("user", "u-1", quote)]);
+    s.answer(&candidate_answer(quote, "u-1", "preferences"));
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON], b"");
+    let start = s.hook("session-start", &s.payload("SessionStart"));
+    assert!(text(&start.stdout).contains("1 proposal to review"));
+    type_settlement(&s, "#scribe reject p-1");
+    type_settlement(&s, "#scribe reject p-1");
+    // New turn and punctuation/case changes still name the same statement.
+    let repeated = "I prefer concise messages during lengthy builds!";
+    s.append(ON, &[line("user", "u-2", repeated)]);
+    s.answer(&candidate_answer(repeated, "u-2", "preferences"));
+    s.run(&["session", "pass", "--session", ON], b"");
+    let ps = proposals(&s);
+    assert_eq!(ps["total"], 1);
+    assert_eq!(ps["proposals"][0]["state"], "rejected");
+    let es: Value = serde_json::from_slice(&s.fx.ok(&["entry", "list", "--json"]).stdout).unwrap();
+    assert_eq!(es["total"], 0);
+    assert_eq!(
+        s.hook("session-start", &s.payload("SessionStart")).stdout,
+        b""
+    );
+}
+
+#[test]
+fn candidates_share_a_three_slot_budget_across_windows_and_keep_cataloging() {
+    let s = Setup::new();
+    let lines: Vec<_> = (0..5)
+        .map(|n| line("user", &format!("u-{n}"), &format!("I choose option {n}.")))
+        .collect();
+    s.write(ON, &lines);
+    let answers: Vec<_> = (0..5)
+        .map(|n| {
+            Some(candidate_answer(
+                &format!("I choose option {n}."),
+                &format!("u-{n}"),
+                "decisions",
+            ))
+        })
+        .collect();
+    s.answers(&answers);
+    s.scribe("/scribe on");
+    let config = s.fx.root().join("config.toml");
+    std::fs::write(&config, "[catalog]\nwindow_messages = 1\n").unwrap();
+    make_private(&config);
+    s.run(&["session", "pass", "--session", ON], b"");
+    assert_eq!(proposals(&s)["total"], 3);
+    assert_eq!(s.record(ON).unwrap()["passes"], 5);
+    assert!(!s.control()["due"].as_bool().unwrap());
+}
+
+#[test]
+fn candidate_open_cap_is_enforced_even_when_the_model_ignores_it() {
+    let s = Setup::new();
+    s.write(ON, &[line("user", "u-1", "I choose option zero.")]);
+    s.answer(&candidate_answer(
+        "I choose option zero.",
+        "u-1",
+        "decisions",
+    ));
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON], b"");
+    let template = proposals(&s)["proposals"][0].clone();
+    let full: Vec<_> = (1..=19)
+        .map(|n| {
+            let mut p = template.clone();
+            p["id"] = json!(format!("p-{n}"));
+            p["older"] = json!(format!("decisions-{n}"));
+            p["candidate"]["quote"] = json!(format!("Stored preference {n}."));
+            p
+        })
+        .collect();
+    let path = s.fx.root().join("proposals.json");
+    std::fs::write(&path, json!({"format":9, "proposals":full}).to_string()).unwrap();
+    make_private(&path);
+    let quotes = [
+        "I prefer faster incremental compilation.",
+        "I choose a blue interface.",
+        "Always retain descriptive error messages.",
+    ];
+    let turns: Vec<_> = quotes
+        .iter()
+        .enumerate()
+        .map(|(n, quote)| line("user", &format!("cap-{n}"), quote))
+        .collect();
+    s.append(ON, &turns);
+    let mut body = answer();
+    body["candidates"] = json!(quotes.iter().enumerate().map(|(n, quote)| json!({"quote":quote, "message":format!("cap-{n}"), "tag":"preferences"})).collect::<Vec<_>>());
+    s.answer(&body);
+    s.run(&["session", "pass", "--session", ON], b"");
+    assert_eq!(proposals(&s)["total"], 20);
+    s.append(
+        ON,
+        &[line("user", "u-2", "I prefer detailed release notes.")],
+    );
+    s.answer(&candidate_answer(
+        "I prefer detailed release notes.",
+        "u-2",
+        "preferences",
+    ));
+    s.run(&["session", "pass", "--session", ON], b"");
+    assert_eq!(proposals(&s)["total"], 20);
+    assert_eq!(s.record(ON).unwrap()["scribed_through"], "u-2");
+}
+
+#[test]
+fn candidate_ids_are_reserved_for_approval_and_agent_settlement_is_refused() {
+    let s = Setup::new();
+    let quote = "I choose smaller pull requests for easier review.";
+    s.write(ON, &[line("user", "u-1", quote)]);
+    s.answer(&candidate_answer(quote, "u-1", "decisions"));
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON], b"");
+    let denied = s.fx.run(&[
+        "proposal",
+        "settle",
+        "p-1",
+        "--approve",
+        "--author",
+        "agent",
+        "--json",
+    ]);
+    assert_eq!(denied.status.code(), Some(1));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&denied.stderr).unwrap()["code"],
+        "daniel_only"
+    );
+    let direct: Value = serde_json::from_slice(
+        &s.fx
+            .ok(&[
+                "entry",
+                "add",
+                "--tag",
+                "decisions",
+                "--author",
+                "agent",
+                "Agent analysis with a different content.",
+                "--json",
+            ])
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(direct["id"], "decisions-2");
+    type_settlement(
+        &s,
+        "#scribe decisions: A separate decision Daniel explicitly marks.",
+    );
+    assert!(
+        s.fx.root()
+            .join("entries/decisions/decisions-3.md")
+            .exists()
+    );
+    type_settlement(&s, "#scribe approve p-1");
+    let entry: Value =
+        serde_json::from_slice(&s.fx.ok(&["entry", "show", "decisions-1", "--json"]).stdout)
+            .unwrap();
+    assert_eq!(entry["content"], quote);
+    type_settlement(&s, "#scribe forget decisions-1");
+    assert_eq!(proposals(&s)["proposals"][0]["candidate"]["quote"], "");
+    type_settlement(&s, "#scribe approve p-1");
+    let forgotten: Value =
+        serde_json::from_slice(&s.fx.ok(&["entry", "show", "decisions-1", "--json"]).stdout)
+            .unwrap();
+    assert_eq!(forgotten["status"], "forgotten");
+    assert_eq!(forgotten["content"], "");
+}
+
+#[test]
+fn interrupted_candidate_approval_is_replayed_once_from_the_durable_proposal() {
+    let s = Setup::new();
+    let quote = "I prefer short explanations beside each changed behavior.";
+    s.write(ON, &[line("user", "u-1", quote)]);
+    s.answer(&candidate_answer(quote, "u-1", "preferences"));
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON], b"");
+    // Approved journal durable; entry file not yet written at the crash point.
+    let path = s.fx.root().join("proposals.json");
+    let mut doc: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let p = &mut doc["proposals"][0];
+    p["state"] = json!("approved");
+    p["settled_at"] = json!("2026-11-15T23:00:00Z");
+    p["settled_author"] = json!({"kind":"daniel", "name":"daniel"});
+    p["settled_by"] = p["candidate"]["cite"].clone();
+    std::fs::write(&path, doc.to_string()).unwrap();
+    s.run(&["consistency", "scan", "--json"], b"");
+    s.run(&["consistency", "scan", "--json"], b"");
+    let es: Value = serde_json::from_slice(&s.fx.ok(&["entry", "list", "--json"]).stdout).unwrap();
+    assert_eq!(es["total"], 1);
+    let entry: Value = serde_json::from_slice(
+        &s.fx
+            .ok(&["entry", "show", "preferences-1", "--json"])
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(entry["content"], quote);
+    assert_eq!(entry["author"]["kind"], "daniel");
 }

@@ -31,6 +31,14 @@ fn proposal() -> Proposal {
         author: crate::record::Author::consistency(),
         updated_by: None,
         settled_author: None,
+        candidate: Some(crate::EntryCandidate {
+            tag: "preferences".parse().unwrap(),
+            quote: String::new(),
+            cite: entry("decisions-1", T0).cite.unwrap(),
+            project: crate::Project::sanitized("scribe"),
+            provider: crate::Label::sanitized("claude-code", "claude-code"),
+            host: crate::Label::sanitized("host", "host"),
+        }),
     }
 }
 

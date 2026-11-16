@@ -547,7 +547,8 @@ impl RefusalCode for Settled {
             | Settled::Rejected { .. }
             | Settled::Retired(_)
             | Settled::Forgotten(_)
-            | Settled::Already(_) => None,
+            | Settled::Already(_)
+            | Settled::Recorded { .. } => None,
         }
     }
 }

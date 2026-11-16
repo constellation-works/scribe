@@ -1,6 +1,7 @@
 {
   "proposals": [
     {
+      "candidate": null,
       "id": "p-1",
       "kind": "supersedes",
       "older": "decisions-1",
@@ -28,6 +29,7 @@
       "updated_by": null
     },
     {
+      "candidate": null,
       "id": "p-2",
       "kind": "stale",
       "older": "rituals-1",

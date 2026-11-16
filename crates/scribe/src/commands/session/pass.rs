@@ -35,7 +35,7 @@
 //! session); no transcript or messages yet leaves it waiting. Failed runs
 //! exit 1 with each failed session, code and short reason; the plugin answers
 //! `session_pass_failed`. A never-on session is never read. A pass writes
-//! no entries and one audit line per session handled (none for waiting).
+//! candidate proposals, no entries, and one audit line per session handled (none for waiting).
 
 use crate::app::Context;
 use crate::commands::RunLimits;
@@ -69,6 +69,9 @@ window_chars). Each window rewrites the header and open segment, appends
 new segments and checkpoints the record. Sealed segments stay unchanged;
 [catalog] segment_windows (default 3) bounds how long a segment stays open.
 --json reports windows, segments, seals and how many due sessions remain.
+Also proposes up to 3 unmarked preferences or decisions per session per run,
+until 20 candidate proposals are open. Review with scribe proposal list;
+only a typed #scribe approve <id> writes an entry; #scribe reject <id> drops it.
 A failed pass stays due with automatic retry delays of 5, 10, 20, 40,
 then at most 60 minutes. --session retries immediately. Exits 1 when any
 pass failed, naming each failed session, its error code and short reason.
@@ -196,6 +199,7 @@ pub(in crate::commands) fn run_with<M: Models>(
             redactor: &redactor,
             id: &id,
             switch: &switch,
+            candidate_slots: pass::MAX_CANDIDATES,
             windows: 0,
             segments_sealed: 0,
             segments: None,
@@ -274,6 +278,7 @@ pub(in crate::commands) fn run_catalog<M: Models>(
         redactor: &redactor,
         id,
         switch,
+        candidate_slots: pass::MAX_CANDIDATES,
         windows: 0,
         segments_sealed: 0,
         segments: None,
@@ -317,6 +322,7 @@ struct Job<'a> {
     redactor: &'a Redactor,
     id: &'a SessionId,
     switch: &'a SessionControl,
+    candidate_slots: usize,
     windows: usize,
     segments_sealed: usize,
     segments: Option<usize>,
@@ -473,7 +479,7 @@ impl Job<'_> {
                 topics.extend(record.topics.as_slice().iter().map(ToString::to_string));
                 terms.extend(record.terms.iter().map(|t| t.term.clone()));
             }
-            let request = pass::request(
+            let mut request = pass::request(
                 &self.config.models.session,
                 previous.as_ref(),
                 linked.clone(),
@@ -482,7 +488,43 @@ impl Job<'_> {
                 terms.into_iter().take(MAX_LISTED).collect(),
                 final_pass && last,
             );
+            request.candidate_limit = self.candidate_slots;
+            request.candidate_tags = self
+                .config
+                .tags
+                .tags()
+                .iter()
+                .filter(|tag| tag.action.is_none())
+                .map(|tag| tag.name.to_string())
+                .collect();
+            let entries = self
+                .ctx
+                .store()
+                .list_entries(&Default::default())
+                .map_err(|err| PassError::new(err.code(), err.to_string()))?;
+            let proposals = self
+                .ctx
+                .store()
+                .proposals()
+                .map_err(|err| PassError::new(err.code(), err.to_string()))?;
+            if proposals
+                .iter()
+                .filter(|p| {
+                    p.kind == scribe_core::ProposalKind::Candidate
+                        && p.state == scribe_core::ProposalState::Open
+                })
+                .count()
+                >= pass::MAX_OPEN_CANDIDATES
+            {
+                request.candidate_limit = 0;
+            }
+            request.candidate_exclusions =
+                pass::candidate_exclusions(&entries.listing.items, &proposals, &request);
             let distilled = distill(self.id, request, &conversation[..end], adapter)?;
+            self.candidate_slots = self
+                .candidate_slots
+                .saturating_sub(distilled.candidates.len());
+            let candidate_answers = distilled.candidates.clone();
             let dropped = distilled.dropped_terms;
             let warnings = window_warnings(self.windows + 1, &distilled);
             let cwd = transcript::cwd(&bytes).unwrap_or_default();
@@ -543,15 +585,21 @@ impl Job<'_> {
                 .iter()
                 .filter(|s| s.state == scribe_core::SegmentState::Sealed)
                 .count();
-            previous = if !last {
-                self.checkpoint(record, expected)?
+            let candidates = pass::candidate_drafts(&candidate_answers, &messages, &record);
+            let mode = if !last {
+                scribe_core::PassWrite::Checkpoint
             } else if self.catalog.as_ref().is_some_and(|c| c.ended) {
-                self.settle_off(Some(record), expected)?
+                scribe_core::PassWrite::CatalogFinal
             } else if self.catalog.is_some() {
-                self.checkpoint_live(record, expected)?
+                scribe_core::PassWrite::CatalogLive
             } else {
-                self.settle(Some(record), expected)?
+                scribe_core::PassWrite::Settle(self.switch.final_pass)
             };
+            previous = self
+                .ctx
+                .store()
+                .write_pass_window(record, expected, mode, &candidates, self.redactor)
+                .map_err(|err| PassError::new(err.code(), err.to_string()))?;
             expected = previous.as_ref().map(|p| p.updated);
             self.segments_sealed += sealed_after.saturating_sub(sealed_before);
             self.segments = previous.as_ref().map(|r| r.log.len());
@@ -626,35 +674,6 @@ impl Job<'_> {
             record.cataloged_by.clone_from(&self.switch.cataloged_by);
         }
         record
-    }
-
-    fn checkpoint(
-        &self,
-        record: SessionRecord,
-        expected: Option<time::OffsetDateTime>,
-    ) -> Result<Option<SessionRecord>, PassError> {
-        self.ctx
-            .store()
-            .checkpoint_pass(record, expected, self.redactor)
-            .map_err(|err| {
-                tracing::warn!(session = %self.id, %err, "cannot checkpoint the session window");
-                PassError::new(err.code(), err.to_string())
-            })
-    }
-
-    /// A live catalog's last window: the switch stays on and due.
-    fn checkpoint_live(
-        &self,
-        record: SessionRecord,
-        expected: Option<time::OffsetDateTime>,
-    ) -> Result<Option<SessionRecord>, PassError> {
-        self.ctx
-            .store()
-            .checkpoint_catalog(record, expected, self.redactor)
-            .map_err(|err| {
-                tracing::warn!(session = %self.id, %err, "cannot checkpoint the catalog window");
-                PassError::new(err.code(), err.to_string())
-            })
     }
 
     /// An ended catalog's last window: final record and the switch off,

@@ -608,9 +608,9 @@ change of mind headed `Correction #<n> —`; `## Through-lines`;
 discussions as `[[slug]]`). The quotes are Daniel's words; everything else
 is the model's interpretation and is labelled so in `ask` evidence.
 
-**Proposal** (`proposals.json`): `id` (`p-<n>`), `kind` (`supersedes` or
-`stale`), `older`, `newer` (entry ids), `reason` (model text, at most 300
-characters), `quotes` (verbatim spans from both entries), `state`
+**Proposal** (`proposals.json`): `id` (`p-<n>`), `kind` (`supersedes`,
+`stale` or `candidate`), `older`, `newer` (entry ids), `reason` (at most 300
+characters; model text for consistency proposals, a quote preview for candidates), `quotes` (verbatim spans from both entries), `state`
 (`open`, `approved`, `rejected`), `opened_at`, `settled_at`, `settled_by`
 (a `cite` of Daniel's approving turn). From format 4: `author` (who opened
 it: `{kind: scribe, name: consistency}` for the routine, `{kind: agent,
@@ -618,6 +618,16 @@ name}` for `proposal add`) and `settled_author` (`{kind: daniel, name:
 daniel}` for a `#scribe` settle, `{kind: agent, name}` for `proposal
 settle`, else `null`). An agent's settle has `settled_by: null`, since no
 typed turn exists to cite.
+
+Format 9 adds `candidate`, null for prior kinds, otherwise `{tag, quote,
+cite, project, provider, host}`. A candidate's `older` reserves the future
+entry id; no file exists for it until approval. All entry allocators count
+reservations, including rejected ones. `newer` is null and `quotes` is empty;
+the candidate's quote and cite live in its payload. Its author is
+`{kind: scribe, name: session-pass}`. `settled_by` cites the approving or
+rejecting turn; the eventual entry cites the original statement.
+Reads upgrade formats 1–8 in memory; writes use format 9. Prior proposal
+fields, values and attribution are preserved, with `candidate: null` added.
 
 **Tags store** (`tags.json`, from S12): `{"format": 4, "tags": [{"name",
 "aliases", "description", "stale_after_days", "author", "created",
@@ -1033,8 +1043,8 @@ counted in `remaining` alongside sessions waiting for backoff or the next run
    the character limit. No older messages are discarded to fit later ones.
 3. Send each window and the record so far to the `session` model (Haiku)
    for the whole updated `{title, summary, goals, outcome, next, topics,
-   related, terms}` record. A session with links also sends the latest
-   title and summary of each linked session that has a record, read once
+   related, terms, candidates}` record. A session with links also sends the
+   latest title and summary of each linked session that has a record, read once
    at the start of the pass, framed as data, with the instruction to
    summarize only this session's own work and not retell the linked one
    ([§5.4](#54-session-links)). The first window of a first pass has no prior
@@ -1063,8 +1073,9 @@ segment and may open new segments; the write appends, never rewrites, a
 sealed segment.
 
 A pass writes no tag entries, even if the transcript contains `#decision`
-or an unprocessed `#scribe` line. Up to S13 there is no backfill: sessions
-that were never switched on are never read. From S14 one more route reads
+or an unprocessed `#scribe` line. It may open candidate proposals as described
+below; only Daniel's later typed approval creates an entry. Up to S13 there
+is no backfill: sessions that were never switched on are never read. From S14 one more route reads
 a session: Daniel names a past session with `scribe session catalog <id>`
 ([§5.8](#58-cataloging-a-past-session)). scribe still never scans or
 catalogs a session on its own; `transcript list` reads transcripts to help
@@ -1111,6 +1122,64 @@ As built (S4), in `scribe-core::pass` and `commands/session/pass.rs`:
   without the five-per-run cap, so a session whose `due` was cleared can be passed
   again; a session that is not on is refused (`session_not_on`) and never
   read, and the switch's `final` flag counts as for a due pass.
+
+#### Unmarked preferences and decisions
+
+An on session's ordinary pass (including an explicitly requested catalog's
+windows) offers candidates beside the record in the same model call.
+`session rebuild` leaves this disabled. Never-on sessions remain unread by
+a pass; an explicit catalog is still required for past sessions.
+
+- **Bounds (STD-08 §R1, §R3).** At most **3 checked candidates per session
+  per pass invocation**, shared across all its windows; duplicate or otherwise
+  refused checked suggestions consume a slot too. At most **20 open candidate
+  proposals store-wide**, checked under the same lock as every proposal write.
+  Other proposal kinds do not count. At the cap the pass still updates its record,
+  requesting zero candidates. Rejecting or approving frees an open slot.
+- **Added output per window.** `candidates` is an array of at most 3
+  `{quote, message, tag}` objects. Each quote is 8–400 characters, each
+  message id at most 128, each tag at most 32: at most **1,680 value
+  characters plus JSON syntax**, and no extra model call or timeout budget.
+  A header compression retry keeps the original candidates locally. Older
+  model adapters may omit the field, which means none. Relevant recorded or
+  proposed statements add at most 6,000 value characters of input (15 spans
+  of at most 400), selected by word overlap with the window.
+- **Evidence.** The model suggests preferences and decisions only, with a
+  canonical configured non-action tag. Each candidate must name a user message
+  in the current window and quote its own text exactly. The pass checks again
+  against the original transcript and derives the cite, timestamp, prompt hash,
+  line, cwd, project, provider and host itself. Assistant words, pasted blocks,
+  fenced or indented code, blockquotes, marked `#scribe` lines, unknown or
+  future message ids, and truncation markers cannot supply a candidate.
+  Plain pasted prose without provider or textual paste markers cannot be
+  distinguished from typed prose; this remains an accident guard.
+- **Duplicates.** The model is instructed to exclude statements an entry or
+  proposal already records, including paraphrases, using the bounded relevant
+  context. Under the lock, every readable entry and every candidate in any
+  state is checked again, across tags and projects: normalized containment,
+  equal word sets or at least 80% Jaccard overlap suppress the suggestion.
+  This conservative lexical guard can omit a new closely related statement;
+  meaning-level comparison remains model judgement. Unreadable entries
+  suppress candidate creation for that window. Quotes needing redaction are
+  omitted so approved content can remain an exact quote.
+- **Persistence and consent.** Candidates are written before the record cursor
+  advances, after the record revision and sealed segments pass their checks.
+  Interrupted writes replay without duplicate proposals. No entry exists yet.
+  Session-start's open proposal count includes candidates, and `proposal list`
+  shows them with their source quote and turn. Only a typed `#scribe approve
+  <id>` creates the reserved entry as Daniel's, with the quote as content and
+  the original turn's cite and `content_from: message` (user). `said` records
+  the canonical approving command; the proposal also keeps the approving
+  turn's cite. Replaying approval creates no second entry. Approved proposals
+  journal the entry creation, recoverable by a repeated approval or the
+  consistency scan. Rejection writes no entry and keeps the statement in the
+  suppression set. Agents cannot settle or edit candidate proposals. Forgetting
+  the resulting entry blanks the candidate's copy too and recovery preserves
+  the forgotten entry.
+
+The in-session skill offers ready-to-type preference and decision lines only
+when the session is off or unknown. When on, it leaves proposals to this pass;
+action entries continue through their separate agent-write route.
 
 ### 5.4 Session links
 
@@ -1719,8 +1788,8 @@ entry in the scan report's `deactivated`.
 
 The settling verbs run in `scribe hook user-prompt-submit`, in prompt
 order after the transcript check, one locked `Store::settle` each:
-`approve` needs an open proposal whose older entry is still `active`
-(refused `entry_not_active` otherwise), and writes `proposals.json` before
+`approve` of a consistency proposal needs an open proposal whose older
+entry is still `active` (refused `entry_not_active` otherwise), and writes `proposals.json` before
 the entry, so a crash between them is what the next scan re-applies;
 `reject` of an approved proposal or `approve` of a rejected one is refused
 `proposal_settled`; `retire` takes an `active` entry; `forget` takes any

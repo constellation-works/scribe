@@ -40,6 +40,7 @@ pub const REDACTED_FIELDS: &[&str] = &[
     "session.active_change.reason",
     "proposal.reason",
     "proposal.quotes.text",
+    "proposal.candidate.quote",
     "tag.description",
 ];
 
@@ -342,6 +343,9 @@ pub(super) fn proposal_fields(proposal: &mut Proposal) -> Vec<(&'static str, &mu
             .iter_mut()
             .map(|q| ("proposal.quotes.text", &mut q.text)),
     );
+    if let Some(candidate) = &mut proposal.candidate {
+        fields.push(("proposal.candidate.quote", &mut candidate.quote));
+    }
     fields
 }
 

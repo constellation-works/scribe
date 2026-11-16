@@ -1,4 +1,4 @@
-//! Proposals: what the consistency routine suggests changing, held until
+//! Proposals from the consistency routine and opted-in session passes, held until
 //! Daniel settles each with `#scribe approve` or `#scribe reject`
 //! (docs/design/scribe/2_design.md §7). Nothing changes on an entry until a
 //! proposal is approved. Pure values (STD-02 R14) and no I/O (STD-02 R5).
@@ -6,8 +6,8 @@
 //! The serde shapes are persisted in `proposals.json` (STD-02 R16): every key
 //! is required and an unknown one is refused.
 
-use crate::entry::{Cite, EntryId};
-use crate::record::{Author, AuthorKind, DateRange, nullable};
+use crate::entry::{Cite, ContentFrom, Entry, EntryId, NewEntry, Speaker, TagName};
+use crate::record::{Author, AuthorKind, DateRange, Label, Project, Topics, nullable};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::num::NonZeroU64;
@@ -76,6 +76,8 @@ pub enum ProposalKind {
     Supersedes,
     /// The older entry is past its `review_after` and would be retired.
     Stale,
+    /// Daniel's unmarked words, awaiting his approval as a new entry.
+    Candidate,
 }
 
 impl ProposalKind {
@@ -85,6 +87,7 @@ impl ProposalKind {
         match self {
             Self::Supersedes => "supersedes",
             Self::Stale => "stale",
+            Self::Candidate => "candidate",
         }
     }
 }
@@ -131,8 +134,12 @@ pub struct Proposal {
     pub id: ProposalId,
     /// What it would change.
     pub kind: ProposalKind,
-    /// The entry that would be superseded or retired.
+    /// The entry that would be superseded or retired; for a candidate,
+    /// the reserved id of the entry approval will create.
     pub older: EntryId,
+    /// An unmarked statement from an opted-in session; null for consistency proposals.
+    #[serde(deserialize_with = "nullable")]
+    pub candidate: Option<EntryCandidate>,
     /// The entry that supersedes it; `null` for a stale proposal.
     #[serde(deserialize_with = "nullable")]
     pub newer: Option<EntryId>,
@@ -159,6 +166,75 @@ pub struct Proposal {
     /// Who settled it, set exactly when `state` is not `open`.
     #[serde(deserialize_with = "nullable")]
     pub settled_author: Option<Author>,
+}
+
+/// Checked user words offered by a session pass. Metadata is derived from
+/// the transcript and session, never supplied by the model.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EntryCandidate {
+    /// Suggested canonical memory tag.
+    pub tag: TagName,
+    /// Exact span of Daniel's own turn, at most 400 characters.
+    pub quote: String,
+    /// The original turn, including its known message id.
+    pub cite: Cite,
+    /// Scope inherited from the opted-in session.
+    pub project: Project,
+    /// Transcript provider.
+    pub provider: Label,
+    /// Host that read the transcript.
+    pub host: Label,
+}
+
+impl EntryCandidate {
+    /// Provenance fields a pass derives from the host transcript.
+    pub(crate) fn has_valid_provenance(&self) -> bool {
+        self.cite
+            .message
+            .as_ref()
+            .is_some_and(|id| !id.is_empty() && id.chars().count() <= 128)
+            && self.cite.line > 0
+            && self.cite.prompt_sha256.len() == 64
+            && self
+                .cite
+                .prompt_sha256
+                .bytes()
+                .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+    }
+}
+
+impl Proposal {
+    /// Reconstruct an approved candidate's entry, including after an
+    /// interrupted approval. The reserved id makes recovery idempotent.
+    #[must_use]
+    pub(crate) fn candidate_entry(&self, review_after: Option<time::Date>) -> Option<Entry> {
+        let candidate = self.candidate.as_ref()?;
+        let at = self.settled_at?;
+        let message = candidate.cite.message.clone()?;
+        Some(
+            NewEntry {
+                tag: candidate.tag.clone(),
+                project: candidate.project.clone(),
+                topics: Topics::default(),
+                related: Vec::new(),
+                provider: candidate.provider.clone(),
+                host: candidate.host.clone(),
+                created: at,
+                said: format!("#scribe approve {}", self.id),
+                content: candidate.quote.clone(),
+                content_from: ContentFrom::Message {
+                    role: Speaker::User,
+                    message,
+                    at: candidate.cite.at,
+                },
+                cite: candidate.cite.clone(),
+                review_after,
+                window: None,
+            }
+            .into_entry(self.older.clone()),
+        )
+    }
 }
 
 /// Direct proposal change requested by an agent.

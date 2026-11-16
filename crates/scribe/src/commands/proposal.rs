@@ -56,7 +56,7 @@ pub(crate) struct ListArgs {
     #[arg(long, value_name = "ID")]
     pub(crate) entry: Option<String>,
 
-    /// Only proposals opened through this channel: daniel, agent (proposal add) or scribe (the consistency routine) [default: any]
+    /// Only proposals opened through this channel: daniel, agent (proposal add) or scribe (consistency or session pass) [default: any]
     #[arg(long, value_name = "KIND", value_enum)]
     pub(crate) author_kind: Option<AuthorKindArg>,
 }

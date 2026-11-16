@@ -294,6 +294,10 @@ fn format_six_proposals_keep_agent_metadata_and_format_seven_controls_require_id
     let encoded = crate::store::format::encode_proposals(path, &proposals).unwrap();
     let mut value: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
     value["format"] = serde_json::json!(6);
+    value["proposals"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("candidate");
     let back = decode_proposals(path, &serde_json::to_vec(&value).unwrap()).unwrap();
     assert_eq!(back, proposals);
     let missing = br#"{"format":7,"sessions":{}}"#;
