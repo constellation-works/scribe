@@ -330,6 +330,50 @@ fn a_format_nine_candidate_reads_as_daniels_words_without_evidence() {
 }
 
 #[test]
+fn format_seven_through_nine_controls_decode_and_older_ones_refuse_cursors() {
+    // A format-7 `control.json` carries `codex_cursors` and a per-session
+    // `provider` (format 6 -> 7, `codex_controls`); formats 8 and 9 leave
+    // control.json unchanged, so all three share the shape and must decode.
+    let path = Path::new("control.json");
+    for format in [7, 8, 9] {
+        let input = format!(
+            r#"{{"format":{format},"codex_cursors":{{}},"sessions":{{"s-1":{{"provider":"claude-code","on":true,"since":null,"due":false,"final":false,"consecutive_failures":0,"retry_after":null,"pending_links":[],"cataloged_by":null}},"s-2":{{"provider":"codex","on":false,"since":null,"due":false,"final":false,"consecutive_failures":0,"retry_after":null,"pending_links":[],"cataloged_by":null}}}}}}"#
+        );
+        let state = decode_control(path, input.as_bytes())
+            .unwrap_or_else(|e| panic!("format {format} control should decode: {e:?}"));
+        assert_eq!(state.sessions.len(), 2, "format {format}");
+        assert_eq!(
+            state.sessions[&"s-1".parse().unwrap()].provider,
+            crate::Provider::ClaudeCode,
+            "format {format}"
+        );
+        assert_eq!(
+            state.sessions[&"s-2".parse().unwrap()].provider,
+            crate::Provider::Codex,
+            "format {format}"
+        );
+        assert!(state.codex_cursors.is_empty(), "format {format}");
+    }
+    // A format-7 cursor entry survives the upgrade to the current format.
+    let input = br#"{"format":7,"codex_cursors":{"s-1":"cursor-1"},"sessions":{"s-1":{"provider":"claude-code","on":true,"since":null,"due":false,"final":false,"consecutive_failures":0,"retry_after":null,"pending_links":[],"cataloged_by":null}}}"#;
+    let state = decode_control(path, input).unwrap();
+    assert_eq!(
+        state.codex_cursors[&"s-1".parse().unwrap()],
+        "cursor-1".to_string()
+    );
+    // Formats 4-6 predate `codex_cursors`: carrying it is corrupt.
+    for format in [4, 5, 6] {
+        let input = format!(
+            r#"{{"format":{format},"codex_cursors":{{}},"sessions":{{"s-1":{{"on":false,"since":null,"due":false,"final":false,"consecutive_failures":0,"retry_after":null,"pending_links":[],"cataloged_by":null}}}}}}"#
+        );
+        assert!(
+            decode_control(path, input.as_bytes()).is_err(),
+            "format {format} with codex_cursors must be refused"
+        );
+    }
+}
+
+#[test]
 fn format_six_controls_reject_duplicate_and_unknown_nested_author_fields() {
     for author in [
         r#"{"kind":"agent","name":"sol","name":"opus"}"#,

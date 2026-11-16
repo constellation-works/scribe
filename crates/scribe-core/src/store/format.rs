@@ -405,6 +405,37 @@ struct SwitchV6 {
     cataloged_by: Option<crate::activity::CatalogedBy>,
 }
 
+/// Frozen format-7-through-9 control shape: format 6 -> 7 (`codex_controls`)
+/// adds `codex_cursors` and a per-session `provider`. Formats 8 and 9 leave
+/// `control.json` unchanged, so all three check against this shape.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "frozen shape checked before upgrade")]
+struct ControlV7 {
+    format: u32,
+    codex_cursors: BTreeMap<SessionId, String>,
+    sessions: BTreeMap<SessionId, SwitchV7>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "frozen shape checked before upgrade")]
+struct SwitchV7 {
+    provider: crate::Provider,
+    on: bool,
+    #[serde(with = "time::serde::rfc3339::option")]
+    since: Option<time::OffsetDateTime>,
+    due: bool,
+    #[serde(rename = "final")]
+    final_pass: bool,
+    consecutive_failures: u32,
+    #[serde(with = "time::serde::rfc3339::option")]
+    retry_after: Option<time::OffsetDateTime>,
+    pending_links: Vec<SessionLink>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    cataloged_by: Option<crate::activity::CatalogedBy>,
+}
+
 /// Frozen format-3 `control.json` shape, validated before upgrading.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1165,8 +1196,11 @@ fn decode_json<T: DeserializeOwned>(path: &Path, bytes: &[u8], document: Documen
         Document::Control if from == 3 => {
             serde_json::from_slice::<ControlV3>(bytes).map_err(|e| Error::corrupt(path, e))?;
         }
-        Document::Control => {
+        Document::Control if from <= 6 => {
             serde_json::from_slice::<ControlV6>(bytes).map_err(|e| Error::corrupt(path, e))?;
+        }
+        Document::Control => {
+            serde_json::from_slice::<ControlV7>(bytes).map_err(|e| Error::corrupt(path, e))?;
         }
         Document::Proposals if from == 4 => {
             serde_json::from_slice::<ProposalsV4>(bytes).map_err(|e| Error::corrupt(path, e))?;
