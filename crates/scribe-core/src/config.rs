@@ -16,6 +16,13 @@
 //! aliases = ["preference", "pref"]
 //! stale_after_days = 180
 //!
+//! [tags.direction]
+//! action = true
+//! require_quote = true
+//!
+//! [tags.task]
+//! ask_first = true
+//!
 //! [models]
 //! ask = "claude-sonnet-5-5"
 //! credentials = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"]
@@ -40,7 +47,7 @@
 use crate::entry::TagName;
 use crate::record::{Label, Project, is_kebab};
 use crate::session::Cadence;
-use crate::tag::{TagDef, TagTable};
+use crate::tag::{ActionTag, TagDef, TagTable};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::num::{NonZeroU32, NonZeroUsize};
@@ -198,7 +205,9 @@ impl Config {
                     .into_iter()
                     .map(|(name, tag)| tag.into_def(name))
                     .collect::<Result<Vec<_>, _>>()?;
-                TagTable::new(defs).map_err(|e| unlocated(e.to_string()))?
+                TagTable::new(defs)
+                    .map_err(|e| unlocated(e.to_string()))?
+                    .with_shipped_actions()
             }
         };
         let models = raw.models.resolve(ModelIds::default());
@@ -315,6 +324,12 @@ struct RawTag {
     description: Option<String>,
     #[serde(default)]
     stale_after_days: Option<NonZeroU32>,
+    #[serde(default)]
+    action: Option<bool>,
+    #[serde(default)]
+    require_quote: Option<bool>,
+    #[serde(default)]
+    ask_first: Option<bool>,
 }
 
 impl RawTag {
@@ -328,6 +343,37 @@ impl RawTag {
             })
         };
         let key = format!("tags.{name}");
+        // A config tag named like a shipped action tag starts from the
+        // shipped settings, so `[tags.task] ask_first = true` keeps it an
+        // action tag; `action = false` makes it a memory tag.
+        let shipped = TagTable::shipped_action(&name);
+        let shipped_action = shipped.as_ref().and_then(|def| def.action);
+        let action = if self.action.unwrap_or(shipped_action.is_some()) {
+            Some(ActionTag {
+                require_quote: self
+                    .require_quote
+                    .unwrap_or_else(|| shipped_action.is_some_and(|a| a.require_quote)),
+                ask_first: self.ask_first.unwrap_or(false),
+            })
+        } else {
+            for (flag, set) in [
+                ("require_quote", self.require_quote),
+                ("ask_first", self.ask_first),
+            ] {
+                if set.is_some() {
+                    return Err(ConfigError {
+                        line: None,
+                        message: format!(
+                            "{key}.{flag} applies only to an action tag; add action = true"
+                        ),
+                    });
+                }
+            }
+            None
+        };
+        let description = self
+            .description
+            .or_else(|| shipped.and_then(|def| def.description));
         Ok(TagDef {
             aliases: self
                 .aliases
@@ -335,8 +381,9 @@ impl RawTag {
                 .map(|alias| word(format!("{key}.aliases"), alias.to_lowercase()))
                 .collect::<Result<_, _>>()?,
             name: word(key, name)?,
-            description: self.description,
+            description,
             stale_after_days: self.stale_after_days,
+            action,
         })
     }
 }

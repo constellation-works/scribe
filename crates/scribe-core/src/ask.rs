@@ -22,7 +22,9 @@
 //!
 //! Inactive sessions, like superseded and retired entries, are left out of
 //! lookups and evidence unless `include_hidden`, and retrieval counts the
-//! ones that matched in `hidden_matches`.
+//! ones that matched in `hidden_matches`. Entries under an action tag
+//! (`standard`, `task`, `friction`, …) are work items, not memory: they are
+//! left out unless the scope names their tag ([`without_actions`]).
 //!
 //! Orbit tasks arrive through the [`Tasks`] port, which the CLI crate
 //! implements over `orbit tool run` (`OrbitTasks`). A task source that
@@ -383,6 +385,13 @@ pub fn answer<M: Models + ?Sized, T: Tasks + ?Sized>(
     model: &str,
     now: OffsetDateTime,
 ) -> Result<Answer, ModelError> {
+    // Action entries are work items, not memory: they are evidence only
+    // when the question's scope names their tag (§4.6).
+    let kept = without_actions(question, corpus);
+    let corpus = Corpus {
+        entries: &kept,
+        ..corpus
+    };
     if let Some(found) = lookup(question, corpus, tasks, now) {
         return Ok(found);
     }
@@ -398,6 +407,18 @@ pub fn answer<M: Models + ?Sized, T: Tasks + ?Sized>(
     };
     let reply = models.ask(&request)?;
     Ok(check(reply, &request.evidence, retrieved.hidden_matches))
+}
+
+/// `corpus`'s entries less those under an action tag the question's scope
+/// does not name.
+#[must_use]
+pub fn without_actions(question: &Question, corpus: Corpus<'_>) -> Vec<Entry> {
+    corpus
+        .entries
+        .iter()
+        .filter(|e| corpus.tags.action(&e.tag).is_none() || question.scope.tags.contains(&e.tag))
+        .cloned()
+        .collect()
 }
 
 fn no_record(considered: usize, dropped: usize, hidden: usize) -> Answer {

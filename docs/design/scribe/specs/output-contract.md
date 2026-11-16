@@ -40,12 +40,12 @@ is `-`, lists are comma-joined, and timestamps are RFC 3339.
 
 | Command | Columns |
 |---------|---------|
-| `entry list` | `id status project topics created content` |
+| `entry list` | `id status project topics created content author age` (`author` is `daniel` or `agent:<name>`; `age` is an action entry's age, `45s`, `12m`, `3h` or `9d`, and `-` for any other entry) |
 | `session list` | `id status due project topics updated title` (`due` is `yes` or `no`) |
 | `session list --tree` | `id parent status due project topics updated title` (`parent` is the session the row nests under, its `spawned_from` link else its first `continues` link, or `-`) |
 | `session list --include-inactive` | `id status active due project topics updated title` (`active` is `yes` or `no`); without the flag the columns are unchanged, inactive sessions are left out, and when any matched the notice `<n> inactive session(s) also match and are hidden; --include-inactive lists them` goes to stderr. With `--tree` too, `active` follows `status` |
 | `proposal list` | `id kind state older newer opened_at reason` |
-| `tag list` | `name entries stale_after_days aliases description`, and (S12) a last column `source` (`config` or `store`) |
+| `tag list` | `name entries stale_after_days aliases description`, (S12) `source` (`config` or `store`), then `action` (`free` or `ask-first`, with `,quote` when the tag requires a quote), `retired` and `rejected` (counts of agent entries); the last three are `-` for a tag that is not an action tag |
 | `record search` (S11) | `cite kind score updated title snippet` (`score` to three decimals; the table cuts `title` to 40 characters and fits `snippet` to the width) |
 | `transcript list` *(S14)* | `session project daniel_turns bytes started ended first_prompt` |
 
@@ -111,6 +111,20 @@ agent entry has `said` `""`, `content_from` `{kind: "agent",
 role: null, message: null, at: null}` and `cite` `null`; a Daniel entry's
 `cite` is never `null`, so a reader of Daniel's entries sees no change.
 
+Store format 8 adds `quote` (the human's words an agent quoted, or
+`null`), `window_turns` (how many turns the entry's transcript window
+holds, or `null` when it has none), `window` (`{turns: [{role, message,
+at, text, cut}], truncated, omitted}`, or `null`; only `entry list
+--window` and `entry show --window` fill it) and `action` (`null` except
+for an entry under an action tag in `entry list`, `entry show` and the
+entry write verbs: `{age_seconds, cancel_window_ends, past_cancel_window,
+picked_up, rejected, pickups: [{author, at, result, rejected}]}`;
+`cancel_window_ends` is `null` for Daniel's entries, which have no cancel
+window). The table detail view adds `author`, and for such an entry
+`quote`, `age`, `cancel` (when the window ends, and whether it has),
+`pickups` and `window` (its turns with `--window`, else `<n> turns (show
+with --window)`).
+
 **Session** (`sessions[]`, `session show`): `id`, `status` (`open`,
 `final`), `project`, `topics`, `related` (unchanged: model-extracted
 `kind:target` strings), `links` (`[{type, session, title}]`: the links the
@@ -164,7 +178,12 @@ agent who revised the reason, or `null`).
 `stale_after_days` (integer or `null`), `configured` (false for a directory
 no configured tag names), `entries` (count, any status). (S12) Adds
 `source` (`config`, `store`, or `null` for a directory no tag names) and
-`author` (`null` for a config or orphaned tag). `configured` is true only
+`author` (`null` for a config or orphaned tag). Format 8 adds `action`:
+`null` for a tag that is not an action tag, else `{mode, require_quote,
+retired, rejected}` (`mode` `free` or `ask-first`; `retired` counts the
+agent entries under it that were retired or forgotten, `rejected` those a
+consumer recorded as rejected). A shipped action tag reports `source`
+`config`. `configured` is true only
 for config tags, even though a store tag is also routable.
 
 **Hit** (S11, `hits[]`): `kind` (`entry` or `session`; *(S7)*
@@ -188,7 +207,7 @@ session's `open` or `final`).
 adds `daniel_first_turns` (up to five strings of at most 300 characters).
 
 **Write verbs** (S12 built; S10 separately): `entry add`, `entry update`, `entry
-retire`, `tag add`, `tag update`, `proposal add`, `proposal update`,
+retire`, `entry pickup` (format 8; prints the entry it noted), `tag add`, `tag update`, `proposal add`, `proposal update`,
 `proposal settle`, `session activate` and `session deactivate` print the
 record they wrote in its `show` shape (`--json`: the record object). A
 write that changed nothing prints the record unchanged and `nothing
@@ -252,7 +271,8 @@ Stable codes: `entry_not_found`, `session_not_found`, `io_error`,
 `transcript_missing`, `session_busy` (exit 1), (S11) `id_ambiguous` (exit 2;
 the message lists up to ten candidates, sorted, and how many more), `daniel_only`, `reserved_author`, `tag_not_found`, `tag_conflict`, `tag_configured`,
 `proposal_not_found`, `proposal_settled`, `entry_not_active`,
-(S12) `invalid_text`, `invalid_topics`,
+(S12) `invalid_text`, `invalid_topics`, (format 8) `quote_required`,
+`quote_not_found`, `not_action_tag`, `cancel_window`,
 `proposal_invalid`, `proposal_not_agent`,
 `session_cataloged`, `transcript_not_found`, for `tmux` `fzf_missing` and
 `tmux_failed` (exit 1; `tmux` renders no payload, its popup owns the
@@ -277,9 +297,14 @@ for and the `list` command that shows the existing ids.
 `{"systemMessage": "...", "hookSpecificOutput": {"hookEventName":
 "UserPromptSubmit", "additionalContext": "..."}}`, or nothing at all when
 there is nothing to say (a prompt without `#scribe`, every `Stop` and
-`SessionEnd`, and a `SessionStart` with no open proposal). `SessionStart`
-with open proposals prints `{"systemMessage": "scribe: <n> proposals to
-review — scribe proposal list"}` (`1 proposal`), and nothing for the agent. It
+`SessionEnd`, and a `SessionStart` with no open proposal and no stuck
+action entry). `SessionStart` with open proposals prints
+`{"systemMessage": "scribe: <n> proposals to review — scribe proposal
+list"}` (`1 proposal`), and nothing for the agent. (Format 8) When active
+action entries older than one hour have no pickup it prints, as its own
+line of the same `systemMessage` (after the proposals line when there is
+one), `scribe: <n> action entries not picked up after 1 hour (<tag> <n>,
+…) — scribe entry list --tag <tag> --status active` (`1 action entry`). It
 exits 0 whenever the payload parsed, including when every line was refused
 or the store could not be used, so the prompt is never blocked; a payload
 that is not valid JSON, lacks a field or has an invalid `session_id` exits 1

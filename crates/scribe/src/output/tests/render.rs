@@ -43,6 +43,10 @@ fn entry(id: &str, content: &str) -> EntryPayload {
         }),
         superseded_by: None,
         review_after: None,
+        quote: None,
+        window_turns: None,
+        window: None,
+        action: None,
     }
 }
 
@@ -81,8 +85,8 @@ fn the_plain_form_is_one_tab_separated_line_per_record_with_text_flattened() {
     assert_eq!(
         lines,
         [
-            "decisions-1\tactive\tscribe\tci,release\t2026-01-02T03:04:05Z\tone two three",
-            "decisions-2\tactive\tscribe\tci,release\t2026-01-02T03:04:05Z\t-",
+            "decisions-1\tactive\tscribe\tci,release\t2026-01-02T03:04:05Z\tone two three\tdaniel\t-",
+            "decisions-2\tactive\tscribe\tci,release\t2026-01-02T03:04:05Z\t-\tdaniel\t-",
         ]
     );
 }
@@ -181,6 +185,7 @@ fn a_single_record_list_is_still_a_table_and_counts_align_right() {
         stale_after_days: None,
         configured: true,
         entries: 7,
+        action: None,
     };
     let text = render_list(OutputMode::Table, &Records::Tags(vec![tag]), 1, &[]);
     let lines: Vec<&str> = text.lines().collect();

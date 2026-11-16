@@ -40,6 +40,7 @@ mod format;
 mod fsio;
 mod ids;
 mod init;
+mod pickups;
 pub use init::{InitFile, InitReport, init_project, integration_hooks};
 mod rebuild;
 mod redact;
@@ -80,6 +81,8 @@ pub const SESSIONS_DIR: &str = "sessions";
 pub const CONTROL_FILE: &str = "control.json";
 /// The proposals document's name under the data directory.
 pub const PROPOSALS_FILE: &str = "proposals.json";
+/// Consumers' pickups of action entries, from format 8.
+pub const PICKUPS_FILE: &str = "pickups.json";
 
 /// The lock file's name under the data directory.
 const LOCK_FILE: &str = ".lock";
@@ -555,8 +558,14 @@ impl Store {
             .merge_store(&stored)
             .map_err(|e| agent::refusal(crate::WriteRefusal::TagConflict, e.to_string()))?;
         let (entries, skipped) = self.load_entries()?;
+        let pickups = self.pickups()?;
+        let counts = crate::action::tag_counts(&entries, &table, &pickups);
         let mut tags = tag::summarize(&table, &entries);
         for tag in &mut tags {
+            if let Some((retired, rejected)) = counts.get(&tag.name) {
+                tag.retired = *retired;
+                tag.rejected = *rejected;
+            }
             tag.source = if configured.get(&tag.name).is_some() {
                 Some("config")
             } else if table.get(&tag.name).is_some() {

@@ -24,6 +24,17 @@ session deactivate <id> --author <name> --reason <text>`, and `scribe
 session activate <id> --author <name> [--pin|--unpin]` shows one again or
 exempts it from the scan.
 
+Action tags hold work items for consumers outside scribe instead of
+Daniel's memory: `standard`, `task` and `friction` ship, and config marks
+any other tag `action = true`. A `#scribe` line under one also keeps the
+transcript turns since the previous `#scribe` line (at most 40 turns and
+12,000 characters, cut from the oldest). Agents write them with `entry add`
+in an interactive session, subject to a five-minute cancel window and,
+under `standard`, a quote of Daniel's own words; consumers read them with
+`entry list --tag <tag> --after <time> --window --json` and note what they
+did with `entry pickup`. `ask` leaves them out unless asked for them
+([2_design.md §4.6](docs/design/scribe/2_design.md#46-action-tags)).
+
 ```sh
 scribe entry list                       # a table on a terminal, tab-separated lines in a pipe
 scribe entry list --tag decisions --status active
@@ -32,6 +43,9 @@ scribe entry list --since 2026-11-01 --author-kind daniel --related task:<id>
 scribe entry list --json | jq -r '.entries[].content'
 scribe entry show <id>                  # or a unique prefix of at least four characters
 scribe entry add --tag decisions --author opus 'Keep the API stable.'
+scribe entry add --tag task --author opus --related session:<id> 'Add a --dry-run flag'
+scribe entry list --tag standard --after 2026-11-15T09:00:00Z --window --json
+scribe entry pickup <id> --author standards-intake --result task:<id>
 scribe entry update <id> --author opus --add-topic api
 scribe entry retire <id> --author opus --reason 'No longer applies'
 scribe tag add notes --author opus --description 'Agent notes'
@@ -61,7 +75,7 @@ The store is a directory: `--root <dir>`, else `$SCRIBE_ROOT`, else
 `entries/<tag>/<tag>-<n>.md`; session records are
 `sessions/<yyyy>/<mm>/<session-id>.md`; `control.json` holds which sessions
 are being cataloged, `proposals.json` holds routine and agent proposals,
-`tags.json` holds agent-created tags, and `config.toml` holds configured tags,
+`tags.json` holds agent-created tags, `pickups.json` holds consumers' pickups of action entries, and `config.toml` holds configured tags,
 models, catalog cadence, session age limit and redaction settings. Config names and aliases
 take precedence over store tags; `tag list` shows each source. The
 layout and every key are in
@@ -76,7 +90,7 @@ content, retire his entries or settle proposals about them. Daniel still
 settles those through `#scribe`. Agent notes have no typed-turn citation;
 `ask` labels them `agent note (<name>)`. Repeating an unchanged write prints
 the unchanged record with `nothing changed` on stderr and no audit event.
-The store now writes format 7 and reads older formats without rewriting them.
+The store now writes format 8 and reads older formats without rewriting them.
 Passes rewrite the header and open segment and append new
 segments; sealed segments stay unchanged. `[catalog] segment_windows`
 (default 3) bounds each segment's rewrites. Rebuild replaces a record from
@@ -294,7 +308,7 @@ so keep them runnable.
 ```
 crates/scribe-core/   domain library (no clap, no terminal): entry.rs, tag.rs,
                         session.rs, activity.rs, proposal.rs, record.rs, config.rs,
-                        capture.rs, control.rs, pass.rs, ask.rs, transcript.rs,
+                        capture.rs, control.rs, pass.rs, ask.rs, action.rs, transcript.rs,
                         verbatim.rs and models.rs (business
                         logic, no I/O), store/
                         (persistence: facade, format, redact, audit log,

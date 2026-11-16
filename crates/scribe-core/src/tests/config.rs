@@ -40,7 +40,11 @@ env = ["GITHUB_TOKEN", "ANTHROPIC_API_KEY"]
     )
     .unwrap();
     let names: Vec<&str> = config.tags.tags().iter().map(|t| t.name.as_str()).collect();
-    assert_eq!(names, ["rituals"], "a [tags] table replaces the defaults");
+    assert_eq!(
+        names,
+        ["friction", "rituals", "standard", "task"],
+        "a [tags] table replaces the defaults but keeps the shipped action tags"
+    );
     assert_eq!(
         config.tags.resolve("ritual").unwrap().name.as_str(),
         "rituals"
@@ -153,4 +157,36 @@ fn provider_model_tables_preserve_explicit_ids_and_transports() {
     assert_eq!(codex.models.ask, "claude-sonnet-5-5");
     assert!(Config::parse("[codex.models]\nprovider='unknown'\n").is_err());
     assert!(Config::parse("[codex.models]\nsession=''\n").is_err());
+}
+
+#[test]
+fn action_tags_come_from_config_and_shipped_ones_can_be_retuned() {
+    let config = Config::parse(
+        "[tags.idea]\ndescription = \"ideas to try\"\naction = true\nask_first = true\n\
+         [tags.standard]\nask_first = true\n\
+         [tags.notes]\ndescription = \"plain notes\"\n",
+    )
+    .unwrap();
+    let action = |n: &str| config.tags.action(&n.parse().unwrap());
+    let idea = action("idea").unwrap();
+    assert!(idea.ask_first && !idea.require_quote);
+    let standard = action("standard").unwrap();
+    assert!(
+        standard.ask_first && standard.require_quote,
+        "a config tag named like a shipped one starts from its settings"
+    );
+    assert_eq!(
+        config
+            .tags
+            .resolve("standard")
+            .unwrap()
+            .description
+            .as_deref(),
+        Some("a rule change for the constellation standards, in Daniel's words")
+    );
+    assert!(action("task").is_some() && action("friction").is_some());
+    assert!(action("notes").is_none());
+
+    let err = Config::parse("[tags.notes]\nrequire_quote = true\n").unwrap_err();
+    assert!(err.to_string().contains("add action = true"), "{err}");
 }

@@ -10,7 +10,8 @@
 //!   prompt wrote, from the transcript, and mark a switched-on session's
 //!   pass due by minutes or turns (§5.2);
 //! - `session_end.rs`: mark a switched-on session's last pass due and final;
-//! - `session_start.rs`: tell Daniel how many proposals are open (§7).
+//! - `session_start.rs`: tell Daniel how many proposals are open (§7) and
+//!   how many action entries no consumer has picked up (§4.6).
 //!
 //! A `#scribe approve|reject|retire|forget` line goes from
 //! `user_prompt_submit.rs` to `proposal_command.rs`, which settles a
@@ -55,7 +56,10 @@ on stdin. Prints Claude Code hook JSON when the prompt has a #scribe line,
 and nothing otherwise; never blocks such a prompt. #scribe/global in
 place of #scribe on a line that records an entry stores it with project
 global, for every repository; the working directory's project stays the
-default. #scribe approve <p-id>,
+default. A line under an action tag (standard, task, friction, or any tag
+config marks action = true) also stores the turns since the previous
+#scribe line, capped at 40 turns and 12000 characters and cut from the
+oldest; no model is called. #scribe approve <p-id>,
 #scribe reject <p-id>, #scribe retire <entry-id> and #scribe forget
 <entry-id> settle a proposal or hide or blank an entry. A prompt whose first
 line is /scribe on, /scribe off or /scribe status switches this session's
@@ -75,8 +79,8 @@ Examples:
 
 const SESSION_START_EXAMPLES: &str = "\
 Reads the SessionStart payload (session_id) on stdin. Prints a message for
-Daniel when proposals are open, and nothing otherwise. Reads only; calls no
-model.
+Daniel when proposals are open or action entries have waited over an hour
+with no pickup, and nothing otherwise. Reads only; calls no model.
 
 Examples:
   scribe hook session-start < <payload.json>";
@@ -91,7 +95,7 @@ Examples:
 /// Verbs on the `hook` noun: one per Claude Code hook event.
 #[derive(Debug, Subcommand)]
 pub(crate) enum HookCommand {
-    /// Tell Daniel how many proposals are open, from the SessionStart hook's JSON on stdin
+    /// Tell Daniel how many proposals are open and action entries unpicked, from the SessionStart hook's JSON on stdin
     #[command(after_help = SESSION_START_EXAMPLES)]
     SessionStart(HookArgs),
     /// Record each #scribe line of a typed prompt, or settle the proposal or entry it names, from the UserPromptSubmit hook's JSON on stdin

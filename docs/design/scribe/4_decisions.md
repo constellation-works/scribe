@@ -7,11 +7,11 @@ status: Draft
 feature: scribe
 doc_role: decisions
 type: design
-summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, plus the engineering decisions carried over from the Rust CLI template.
+summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, why action tags are config-marked with a capped window, a cancel window, pickups, a stuck line, a CLI quote check and SSH reads from the owner host, plus the engineering decisions carried over from the Rust CLI template.
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112]
 ---
 
 # scribe — Decisions
@@ -2402,3 +2402,146 @@ is settled. The refusal's forms text includes `#scribe/global`.
 - Cost: a line that used to be ignored because it began `#scribe/<word>`
   is now an instruction and is refused. `#scribe/global` is reserved, so
   it cannot be the start of content.
+
+## Action tags are marked in config, and three ship
+
+**Recorded:** 2026-11-15 · [ORB-25112] · **Overridable by Daniel**
+**Code anchors:** `crates/scribe-core/src/tag.rs` (`SHIPPED_ACTION_TAGS`, `ActionTag`), `crates/scribe-core/src/config.rs` (`RawTag`)
+
+### Context
+
+Daniel wants `#scribe standard:`, `#scribe task:` and `#scribe friction:`
+to capture work for consumers outside scribe (a standards intake, Orbit
+task and friction intakes), and agents to write such entries themselves,
+while decisions and preferences stay Daniel's memory. A new kind of work item
+should not need a code change.
+
+### Decision
+
+A tag is an action tag when config says `action = true`; `require_quote`
+and `ask_first` refine it and are refused on any other tag. `standard`
+(`require_quote`), `task` and `friction` ship with no aliases and survive a
+config that declares its own `[tags]`, unless it claims their names; a
+config tag of the same name starts from the shipped settings, so
+`[tags.task] ask_first = true` changes only the switch. An action entry is
+an ordinary entry under its tag: same id scheme, same settling verbs. What
+is added around it (window, quote, pickups) is null or absent for memory
+tags. `ask` and the session brief leave action entries out unless asked
+for them.
+
+### Consequences
+
+- `tag list`, the unknown-tag refusal and config without tags now name
+  five tags, not two; a store that already has a `task` directory under a
+  memory tag of that name keeps it only if config declares it.
+- Cost: three tags exist in every store whether or not a consumer reads
+  them; an entry nobody picks up shows in the stuck line instead of
+  disappearing.
+
+## An action entry's window is capped at 40 turns and 12,000 characters
+
+**Recorded:** 2026-11-15 · [ORB-25112]
+**Code anchors:** `crates/scribe-core/src/capture.rs` (`action_window`, `WINDOW_TURNS`, `WINDOW_CHARS`, `WINDOW_TURN_CHARS`)
+
+The window keeps the turns since the previous `#scribe` line, so a
+consumer sees the discussion that produced the entry without a model call.
+A long session between two `#scribe` lines could be megabytes; the cap
+keeps an entry file readable and a `--window` listing bounded. 40 turns
+and 12,000 characters (with any single turn cut to 4,000) hold a typical
+correction thread and match the order of the catalog window
+(`window_chars = 15000`). Oldest turns go first, because the turns nearest
+the line explain it; the prompt itself is always kept, and `truncated` and
+`omitted` say what was dropped. Cost: a correction whose context began
+more than 40 turns back loses its start; the consumer can still read the
+session transcript through the `session:<id>` cite.
+
+## Agent entries have a five-minute cancel window
+
+**Recorded:** 2026-11-15 · [ORB-25112] · **Overridable by Daniel**
+**Code anchors:** `crates/scribe-core/src/action.rs` (`CANCEL_WINDOW`), `crates/scribe-core/src/store/pickups.rs`
+
+Agents write action entries unasked and announce them in one line; the
+human cancels with `#scribe retire <id>`. That only works if no consumer
+has acted before the human reads the line. For five minutes after an agent wrote
+it, the read surface reports the entry as inside its cancel window and
+`entry pickup` refuses it; the human's own entries have none. Five minutes
+covers reading the reply and typing the retire line in the same session;
+longer would delay every intake run. Cost: an intake polling more often
+sees fresh agent entries it must skip and revisit.
+
+## Pickups live in their own document
+
+**Recorded:** 2026-11-15 · [ORB-25112]
+**Code anchors:** `crates/scribe-core/src/store/pickups.rs`, `crates/scribe-core/src/store/format.rs` (`PickupsDocument`)
+
+A consumer must record that it took an entry, and later that the human
+rejected its result, without rewriting the entry (entries are the human's
+words or an agent's attributed note, and their files are never rewritten
+by a third party). `pickups.json` holds `{entry, author, at, result,
+rejected}` notes, written by `entry pickup` under the lock and audited;
+the same note twice changes nothing. The stuck count, `tag list`'s rejected
+count and each entry's `action.pickups` are derived from it. Cost: a
+second document to keep consistent; a pickup naming an entry that is
+later forgotten stays as a dangling note.
+
+## An action entry is stuck after one hour without a pickup
+
+**Recorded:** 2026-11-15 · [ORB-25112] · **Overridable by Daniel**
+**Code anchors:** `crates/scribe-core/src/action.rs` (`STUCK_AFTER`), `crates/scribe/src/commands/hook/session_start.rs`
+
+The `SessionStart` hook prints one line counting active action entries
+older than one hour with no pickup, per tag, and nothing otherwise. An
+intake that runs at least hourly has picked up anything older, so the
+line means a consumer is down or the entry is under a tag nobody reads.
+Cost: with no intake running at all, every session start repeats the
+line until the entries are picked up or retired.
+
+## The quote check runs in the CLI against this host's transcript
+
+**Recorded:** 2026-11-15 · [ORB-25112]
+**Code anchors:** `crates/scribe/src/commands/entry.rs` (`verify_quote`), `crates/scribe-core/src/action.rs` (`quote_found`)
+
+A `standard` entry changes rules for every agent, so an agent may write
+one only from the human's own correction: `--quote` must be a verbatim
+span of one of the human's typed turns in the session named by `--related
+session:<id>`. The transcript lives on the host the session ran on, and
+reading it is I/O, so the CLI locates it as the hooks do (with the same
+provenance checks) and refuses `quote_not_found` when the words are not
+there; the store only enforces that a `require_quote` entry has one. Cost:
+an agent on another host than its session's transcript cannot write a
+`standard` entry; it files a friction instead.
+
+## The owner host reads action entries over SSH
+
+**Recorded:** 2026-11-15 · [ORB-25112] · **Overridable by Daniel**
+**Code anchors:** `crates/scribe/src/commands/entry.rs` (`list --after --window`, `pickup`)
+
+### Context
+
+Entries are captured where Daniel types, mostly the Mac. Their consumers
+(the standards, task and friction intakes) run on the owner host,
+dk-server-2. The store is one host, one store: nothing in scribe
+replicates or merges stores, and a second writer elsewhere would break the
+lock and the id scheme.
+
+### Decision
+
+The owner runs the read surface on the Mac over SSH, with no copy:
+`ssh <mac> scribe entry list --tag <tag> --after <cursor> --window --json`
+for new entries (the cursor is the newest `created` it has seen), and
+`ssh <mac> scribe entry pickup <id> --author <intake> [--result <ref>]
+[--rejected]` to note what it did. Both are ordinary CLI calls, audited on
+the Mac, and the store stays single-writer on its own host. scribe adds no
+network code and never calls Orbit.
+
+### Consequences
+
+- Precondition, unverified when this was recorded: a non-interactive SSH
+  login from dk-server-2 to the Mac with `scribe` on its `PATH`. The
+  documented route today is the reverse (Mac to the box). Until it exists,
+  the intake cannot read Mac entries; the stuck line on the Mac makes that
+  visible.
+- An entry captured on dk-server-1 or dk-server-2 is read the same way
+  from that host's store.
+- Cost: the intake depends on the Mac being awake and reachable; entries
+  wait, and are counted as stuck, while it is not.

@@ -50,7 +50,8 @@ right after.
    `scribe tag list` prints it, not an alias. Follow them for the whole
    session; where a project preference and a global one disagree, the
    project's wins. Read `decisions` the same way when the task touches
-   something decided before. Don't recite the entries in the brief.
+   something decided before. Don't recite the entries in the brief, and
+   leave action-tag entries (below) out of it.
 3. Run `scribe session list --project <project> --json`. The list is oldest
    first and `--limit` keeps the oldest, so take the record with the newest
    `updated`, skipping this session's own record. If nothing matches, say so
@@ -100,6 +101,41 @@ and grouped, never as a gate on the work:
   that shows it. On the human's explicit yes for that session, run
   `scribe session deactivate <id> --author <name> --reason "<why>" [--cite
   <ref>]` under your own name, and name the human's approval in the reason.
+
+## Action tags: work items you write yourself
+
+An action tag's entries are work for a consumer outside scribe (an intake
+that turns a `task` entry into an Orbit task, a `friction` entry into a
+friction record, a `standard` entry into a standards change). `scribe tag
+list` shows them in its ACTION column: `free` or `ask-first`, plus `quote`
+when an entry needs the human's own words. `standard`, `task` and `friction`
+ship; config can mark any other tag. Leave action entries out of the
+session brief and of preference reads, and out of answers unless asked
+about them; `question ask` skips them unless its scope names their tag.
+
+- **Only in an interactive session the human is in.** There, when the work
+  surfaces a task, a friction or a correction to a standard, write the entry
+  yourself, unasked, under a `free` tag:
+  `scribe entry add --tag <tag> --author <name> --related session:<id> '<words>'`.
+  Then tell the human in one visible line, for example
+  `scribe: wrote <id> (cancel: #scribe retire <id>)`, naming the entry id
+  and how to cancel it. Nothing picks an agent's entry up for five minutes,
+  so their `#scribe retire <id>` cancels it in time.
+  When they say in plain words to drop it, retire it yourself:
+  `scribe entry retire <id> --author <name> --reason '<their words>'`.
+- **Every other session writes none**: routines, scheduled or background
+  jobs, Orbit task runs, subagents and any session the human is not typing
+  in. Use `orbit.friction` and the Orbit task tools there, as before.
+- **A tag that needs a quote** (`quote` in the ACTION column, such as
+  `standard`): pass the human's correction word for word from one of their
+  typed turns of this session, `--quote '<their words>'` with
+  `--related session:<id>`. scribe refuses the entry when the quote is
+  missing or not in their typed turns. Without their words, write a `friction`
+  entry instead.
+- **An `ask-first` tag**: ask the human before writing, and write only on
+  their yes.
+- **Their preferences and decisions stay theirs.** For those, still offer a
+  `#scribe <tag>: <words>` line for them to type, and never write it.
 
 To initialize a requested project integration, use the explicit target:
 

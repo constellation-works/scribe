@@ -6,6 +6,7 @@ Arguments:
   <ID>  The entry's id, as printed by `entry list`, or a unique prefix of it (at least four characters)
 
 Options:
+      --window   Include the entry's transcript window in full [default: only its size]
   -h, --help     Print help
   -V, --version  Print version
 
@@ -17,4 +18,5 @@ Global options:
 
 Examples:
   scribe entry show <id>
+  scribe entry show <id> --window
   scribe entry show <id> --json

@@ -3,6 +3,7 @@
 //! they reach only `pub(crate)` items. The store's tests live in
 //! `store/tests/`.
 
+mod action;
 mod activity;
 mod ask;
 mod capture;
@@ -53,6 +54,8 @@ pub(crate) fn entry(id: &str, created: OffsetDateTime) -> Entry {
         }),
         superseded_by: None,
         review_after: None,
+        quote: None,
+        window: None,
         content: String::from("something"),
     }
 }

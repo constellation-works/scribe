@@ -10,7 +10,8 @@ Options:
       --author <AUTHOR>    Agent name (even daniel records the agent channel)
       --project <PROJECT>  Project slug [default: global]
       --topic <TOPIC>      Topic, repeatable (at most five)
-      --related <RELATED>  Related reference, repeatable
+      --related <RELATED>  Related reference, repeatable; under an action tag, name the session you write in (session:<id>)
+      --quote <QUOTE>      Daniel's correction that prompted the entry, verbatim from one of Daniel's typed turns in the session named by --related; required under a tag that requires a quote
   -h, --help               Print help
   -V, --version            Print version
 
@@ -22,3 +23,5 @@ Global options:
 
 Examples:
   scribe entry add --tag decisions --author opus 'Use the stable API'
+  scribe entry add --tag task --author opus --related session:<id> 'Add a --dry-run flag to the sync'
+  scribe entry add --tag standard --author opus --related session:<id> --quote '<quoted words>' 'Name the unit in every size'

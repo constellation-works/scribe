@@ -21,6 +21,13 @@
 //! and the echo says it was guessed. A session with no earlier message has
 //! nothing to point at and the line is refused as `no_referent`.
 //!
+//! A line under an action tag (`#scribe standard: …`, `task`, `friction`
+//! or any tag config marks `action = true`) also stores a transcript
+//! window on its entry: the turns since the previous `#scribe` line of the
+//! session, then the prompt, capped and cut from the oldest turn
+//! (`capture::action_window`, §4.6). It reads the transcript once and calls
+//! no model; other tags keep no window.
+//!
 //! A settling line (`#scribe approve|reject <p-id>`,
 //! `#scribe retire|forget <entry-id>`, form 4) goes to `proposal_command.rs`
 //! after the entries are recorded, and is echoed in its place.
@@ -196,7 +203,16 @@ pub(super) fn run_with<M: Models>(
             Parsed::Refused(refused) => Plan::Refused(refused),
             Parsed::Settle(settling) => Plan::Settle(settling),
             Parsed::Instruction(instruction) => {
-                drafts.push(capture::draft(&instruction, &turn, &config.tags));
+                let mut draft = capture::draft(&instruction, &turn, &config.tags);
+                if config.tags.action(&draft.tag).is_some() {
+                    draft.window = Some(capture::action_window(
+                        referents.messages(),
+                        &turn.prompt_sha256,
+                        &payload.prompt,
+                        turn.at,
+                    ));
+                }
+                drafts.push(draft);
                 Plan::Draft {
                     line: instruction.line,
                     said: instruction.said,
@@ -227,7 +243,15 @@ pub(super) fn run_with<M: Models>(
                             None => Err(ModelError::Unavailable(String::from("no model adapter"))),
                         };
                         match capture::resolve(&referent, &window, answer, &turn, &config.tags) {
-                            Some((draft, guess)) => {
+                            Some((mut draft, guess)) => {
+                                if config.tags.action(&draft.tag).is_some() {
+                                    draft.window = Some(capture::action_window(
+                                        referents.messages(),
+                                        &turn.prompt_sha256,
+                                        &payload.prompt,
+                                        turn.at,
+                                    ));
+                                }
                                 drafts.push(draft);
                                 Plan::Draft {
                                     line: referent.line,
