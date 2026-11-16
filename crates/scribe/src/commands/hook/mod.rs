@@ -52,7 +52,10 @@ Examples:
 const PROMPT_EXAMPLES: &str = "\
 Reads the UserPromptSubmit payload (session_id, transcript_path, cwd, prompt)
 on stdin. Prints Claude Code hook JSON when the prompt has a #scribe line,
-and nothing otherwise; never blocks such a prompt. #scribe approve <p-id>,
+and nothing otherwise; never blocks such a prompt. #scribe/global in
+place of #scribe on a line that records an entry stores it with project
+global, for every repository; the working directory's project stays the
+default. #scribe approve <p-id>,
 #scribe reject <p-id>, #scribe retire <entry-id> and #scribe forget
 <entry-id> settle a proposal or hide or blank an entry. A prompt whose first
 line is /scribe on, /scribe off or /scribe status switches this session's

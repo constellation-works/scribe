@@ -11,7 +11,7 @@ summary: Why superseded entries are hidden not removed, why one JSON file per ta
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080]
 ---
 
 # scribe — Decisions
@@ -2104,6 +2104,7 @@ show` prints `rebuilt_by` only in `--json`.
   resolved target on audit lines, including refusals (audit format 2).
 - [ORB-24030] — host-controlled identity: Daniel's writes only through his
   typed prompt, agent author names as attribution only.
+- [ORB-25080] — `#scribe/global` records a typed line with `project: global`.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
 
@@ -2357,3 +2358,47 @@ cataloging, and deactivate stale sessions."
   staleness (§5.7): the agent proposes only a session whose feature was
   removed, replaced or superseded, checked against the repository or task
   state.
+
+## A typed line is global only when it opens with #scribe/global
+
+**Recorded:** 2026-11-15 · [ORB-25080]
+**Code anchors:** `crates/scribe-core/src/capture.rs` (`GLOBAL_OPENER`, `FORMS`)
+
+### Context
+
+Every entry has a `project`, a repository slug or `global`, and
+`scribe entry list --project global` already filters on it. The design
+said `global` applies when Daniel says so, but a typed `#scribe` line
+always stored the cwd's project. The only way to write `project: global`
+was `scribe entry add --project global`, which records an agent author,
+not Daniel's own words.
+
+### Decision
+
+The global marker is the opener `#scribe/global` in place of `#scribe`.
+The rest of the line is unchanged, so it works on all three capture forms
+(`#scribe/global <tag>: <content>`, `#scribe/global add <content> to <tag>`,
+`#scribe/global add this to <tag>`). The entry is stored with
+`project: global` and `author.kind: daniel`. A line that still opens with
+`#scribe` keeps the cwd's project.
+
+The opener is a different token from a topic hashtag and from a tag word.
+`#global` at the end of a line stays a topic (`global` is ordinary
+kebab-case, and the topic scan would have consumed a `#global` marker).
+A tag or alias named `global` stays addressable as `#scribe global: …` or
+`#scribe add … to global`. A trailing word inside the content would have
+been ambiguous, so the marker is only the first word.
+
+`#scribe/` followed by anything other than `global` is refused, and so is
+`#scribe/global` on a line that does not record an entry (`approve`,
+`reject`, `retire`, `forget`, `distill`): nothing is written and nothing
+is settled. The refusal's forms text includes `#scribe/global`.
+
+### Consequences
+
+- Daniel can mark one line in a prompt as global and leave the next line
+  on the cwd's project. Moving an existing entry between projects is
+  unchanged and still out of scope.
+- Cost: a line that used to be ignored because it began `#scribe/<word>`
+  is now an instruction and is refused. `#scribe/global` is reserved, so
+  it cannot be the start of content.

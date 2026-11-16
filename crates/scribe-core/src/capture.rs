@@ -16,7 +16,9 @@
 //!
 //! 3. `#scribe [add|record] (this|that|it|these) (to|in|under) [my|the] <tag>`
 //!
-//! Hashtags at the end of the line are the entry's topics
+//! A line whose opener is [`GLOBAL_OPENER`] instead of `#scribe` is the same
+//! form and records `project: global`. Anything else after `#scribe/` is
+//! refused. Hashtags at the end of the line are the entry's topics
 //! (`#scribe decisions: squash-merge agent PRs #merge-policy`). Form 3 parses
 //! to a [`Referent`]: the content is an earlier message's passage, which a
 //! model picks from the [`window`] before the prompt and [`resolve`] checks
@@ -49,6 +51,11 @@ use time::OffsetDateTime;
 /// The marker that opens an instruction line.
 pub const MARKER: &str = "#scribe";
 
+/// The opener that records the entry with `project: global` instead of the
+/// cwd's project. It replaces [`MARKER`] as the line's first word
+/// (`#scribe/global decisions: …`). It is not a topic hashtag and not a tag.
+pub const GLOBAL_OPENER: &str = "#scribe/global";
+
 /// Words that point at an earlier message instead of giving the content
 /// (form 3, resolved by a model).
 const REFERENTS: [&str; 4] = ["this", "that", "it", "these"];
@@ -68,7 +75,11 @@ pub const WINDOW: usize = 12;
 pub const FALLBACK_CHARS: usize = 600;
 
 /// The forms, as the refusal of an unparsed instruction lists them.
-pub const FORMS: &str = "\"#scribe <tag>: <content>\" or \"#scribe add <content> to <tag>\"";
+///
+/// The global opener is part of this text so every refusal that prints it
+/// teaches how to record an entry for every repository.
+pub const FORMS: &str = "\"#scribe <tag>: <content>\" or \"#scribe add <content> to <tag>\"; \
+\"#scribe/global\" in place of \"#scribe\" records the entry for every repository";
 
 /// One `#scribe` line that parsed: where it goes and what it records.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -83,6 +94,9 @@ pub struct Instruction {
     pub content: String,
     /// The hashtags at the end of the line.
     pub topics: Topics,
+    /// The line opened with [`GLOBAL_OPENER`], so the entry's project is
+    /// `global` rather than the cwd's.
+    pub global: bool,
 }
 
 /// Why a `#scribe` line was not recorded.
@@ -114,6 +128,10 @@ pub enum Refusal {
         /// What it takes, for the reply.
         expected: &'static str,
     },
+    /// The line opened with `#scribe/` but not [`GLOBAL_OPENER`].
+    MalformedMarker,
+    /// [`GLOBAL_OPENER`] on a line that does not record an entry.
+    MarkerNotOnEntry,
 }
 
 impl Refusal {
@@ -122,7 +140,11 @@ impl Refusal {
     pub fn code(&self) -> &'static str {
         match self {
             Self::UnknownTag { .. } => "unknown_tag",
-            Self::Unparsed | Self::TooManyTopics | Self::BadId { .. } => "unparsed_instruction",
+            Self::Unparsed
+            | Self::TooManyTopics
+            | Self::BadId { .. }
+            | Self::MalformedMarker
+            | Self::MarkerNotOnEntry => "unparsed_instruction",
             Self::Unsupported { .. } => "unsupported_instruction",
             Self::NoReferent => "no_referent",
         }
@@ -151,6 +173,13 @@ impl fmt::Display for Refusal {
             Self::BadId { verb, expected } => {
                 write!(f, "#scribe {verb} takes {expected}")
             }
+            Self::MalformedMarker => {
+                write!(f, "\"#scribe/\" is not the global marker; use {FORMS}")
+            }
+            Self::MarkerNotOnEntry => write!(
+                f,
+                "the global marker records an entry, and this line does not; use {FORMS}"
+            ),
         }
     }
 }
@@ -164,6 +193,23 @@ pub struct Refused {
     pub said: String,
     /// Why.
     pub reason: Refusal,
+    /// The line carried [`GLOBAL_OPENER`] or a malformed `#scribe/` opener,
+    /// so the reply includes [`FORMS`] when the reason does not already.
+    pub marked: bool,
+}
+
+impl Refused {
+    /// The text the hook echoes. A marked line's reply includes [`FORMS`],
+    /// which teaches the global opener.
+    #[must_use]
+    pub fn message(&self) -> String {
+        let text = self.reason.to_string();
+        if self.marked && !text.contains(GLOBAL_OPENER) {
+            format!("{text}; use {FORMS}")
+        } else {
+            text
+        }
+    }
 }
 
 /// A form-3 line: its content is a passage of an earlier message, which
@@ -178,6 +224,8 @@ pub struct Referent {
     pub tag: TagName,
     /// The hashtags at the end of the line.
     pub topics: Topics,
+    /// The line opened with [`GLOBAL_OPENER`].
+    pub global: bool,
 }
 
 /// A form-4 line: settle a proposal, or hide or blank an entry.
@@ -281,6 +329,11 @@ fn fence_marker(trimmed: &str) -> Option<(char, usize)> {
 }
 
 fn is_instruction(trimmed: &str) -> bool {
+    // A `#scribe/` line is an attempted global marker, including a
+    // malformed one, so it is refused rather than ignored.
+    if trimmed.starts_with("#scribe/") {
+        return true;
+    }
     trimmed
         .strip_prefix(MARKER)
         .is_some_and(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace))
@@ -329,15 +382,27 @@ fn is(word: &str, set: &[&str]) -> bool {
 
 /// Parse one instruction line (already known to start with the marker).
 fn parse(line: u32, said: &str, tags: &TagTable) -> Parsed {
+    let all = words(said);
+    let opener = all.first().map(|word| word.text).unwrap_or("");
+    let (global, malformed) = if opener == GLOBAL_OPENER {
+        (true, false)
+    } else if opener.starts_with("#scribe/") {
+        (true, true)
+    } else {
+        (false, false)
+    };
     let refuse = |reason| {
         Parsed::Refused(Refused {
             line,
             said: said.to_owned(),
             reason,
+            marked: global || malformed,
         })
     };
-    let all = words(said);
-    // all[0] is the marker itself.
+    if malformed {
+        return refuse(Refusal::MalformedMarker);
+    }
+    // all[0] is the opener (`#scribe` or `#scribe/global`).
     let mut body: Vec<Word<'_>> = all.iter().skip(1).copied().collect();
 
     // Trailing hashtags are topics.
@@ -365,8 +430,12 @@ fn parse(line: u32, said: &str, tags: &TagTable) -> Parsed {
     let text = &said[first.start..last.end];
 
     // Form 4: a settling verb and one id; anything else after the verb is
-    // refused, never read as another form.
+    // refused, never read as another form. The global opener records an
+    // entry's project, so it does not belong on a line that settles one.
     if is(first.text, &SETTLING) {
+        if global {
+            return refuse(Refusal::MarkerNotOnEntry);
+        }
         let verb = first.text.to_lowercase();
         let id = if body.len() == 2 {
             last.text.trim_end_matches(['.', '!', ',', ';'])
@@ -406,9 +475,13 @@ fn parse(line: u32, said: &str, tags: &TagTable) -> Parsed {
         };
     }
     if is(first.text, &["distill"]) {
-        return refuse(Refusal::Unsupported {
-            form: "distilling a discussion",
-        });
+        return if global {
+            refuse(Refusal::MarkerNotOnEntry)
+        } else {
+            refuse(Refusal::Unsupported {
+                form: "distilling a discussion",
+            })
+        };
     }
 
     let instruction = |tag: TagName, content: &str| {
@@ -418,6 +491,7 @@ fn parse(line: u32, said: &str, tags: &TagTable) -> Parsed {
             tag,
             content: content.to_owned(),
             topics: topics.clone(),
+            global,
         })
     };
     let unknown = |word: &str| Refusal::UnknownTag {
@@ -464,6 +538,7 @@ fn parse(line: u32, said: &str, tags: &TagTable) -> Parsed {
             said: said.to_owned(),
             tag: def.name.clone(),
             topics,
+            global,
         });
     }
     instruction(def.name.clone(), content)
@@ -527,6 +602,7 @@ pub fn draft(instruction: &Instruction, turn: &Turn, tags: &TagTable) -> NewEntr
             said: &instruction.said,
             tag: &instruction.tag,
             topics: &instruction.topics,
+            global: instruction.global,
         },
         instruction.content.clone(),
         ContentFrom::Instruction,
@@ -541,6 +617,7 @@ struct Line<'a> {
     said: &'a str,
     tag: &'a TagName,
     topics: &'a Topics,
+    global: bool,
 }
 
 fn new_entry(
@@ -552,7 +629,11 @@ fn new_entry(
 ) -> NewEntry {
     NewEntry {
         tag: line.tag.clone(),
-        project: turn.project.clone(),
+        project: if line.global {
+            Project::sanitized(Project::GLOBAL)
+        } else {
+            turn.project.clone()
+        },
         topics: line.topics.clone(),
         related: Vec::new(),
         provider: turn.provider.clone(),
@@ -659,6 +740,7 @@ pub fn resolve(
         said: &referent.said,
         tag: &referent.tag,
         topics: &referent.topics,
+        global: referent.global,
     };
     let cite = |m: &Message| ContentFrom::Message {
         role: m.role,

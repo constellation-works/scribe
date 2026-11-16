@@ -5,7 +5,8 @@ use crate::entry::EntryId;
 use crate::entry::{ContentFrom, Speaker, TagName};
 use crate::models::{ModelError, Models, REFERENT_BUDGET, ReferentAnswer, ReferentRequest};
 use crate::proposal::ProposalId;
-use crate::tag::TagTable;
+use crate::record::Project;
+use crate::tag::{TagDef, TagTable};
 use crate::transcript::Message;
 use std::cell::RefCell;
 use std::time::Duration;
@@ -214,6 +215,7 @@ fn referent_lines_are_form_three_with_their_tag_and_topics() {
             said: String::from("#scribe add THIS to decisions #ci"),
             tag: "decisions".parse().unwrap(),
             topics: vec!["ci".parse().unwrap()].try_into().unwrap(),
+            global: false,
         })]
     );
     // More than the referent word is content, as form 2.
@@ -320,6 +322,156 @@ fn a_draft_carries_the_turn_and_the_tags_review_date() {
     let entry = draft.into_entry("preferences-3".parse().unwrap());
     assert_eq!(entry.updated, entry.created);
     assert_eq!(entry.status, crate::entry::EntryStatus::Active);
+    assert_eq!(entry.project.as_str(), "scribe");
+    assert_eq!(entry.author.kind, crate::AuthorKind::Daniel);
+}
+
+#[test]
+fn the_global_opener_marks_each_capture_form_without_taking_its_content() {
+    let form_one = capture::scan(
+        "#scribe/global decisions: squash-merge agent PRs #ci",
+        &tags(),
+    );
+    let Parsed::Instruction(one) = &form_one[0] else {
+        panic!("expected an instruction: {form_one:?}");
+    };
+    assert!(one.global);
+    assert_eq!(one.tag.as_str(), "decisions");
+    assert_eq!(one.content, "squash-merge agent PRs");
+    assert!(one.said.contains(&one.content));
+    assert_eq!(topic_names(&one.topics), ["ci"]);
+
+    let form_two = capture::scan(
+        "#scribe/global add short commit subjects to my preferences",
+        &tags(),
+    );
+    let Parsed::Instruction(two) = &form_two[0] else {
+        panic!("expected an instruction: {form_two:?}");
+    };
+    assert!(two.global);
+    assert_eq!(two.content, "short commit subjects");
+    assert_eq!(two.tag.as_str(), "preferences");
+
+    let form_three = capture::scan(
+        "#scribe/global add this to decisions #merge-policy",
+        &tags(),
+    );
+    let Parsed::Referent(three) = &form_three[0] else {
+        panic!("expected a referent: {form_three:?}");
+    };
+    assert!(three.global);
+    assert_eq!(three.tag.as_str(), "decisions");
+    assert_eq!(topic_names(&three.topics), ["merge-policy"]);
+
+    let turn = turn();
+    let draft = capture::draft(one, &turn, &tags());
+    assert_eq!(draft.project.as_str(), Project::GLOBAL);
+    assert_eq!(
+        draft.into_entry("decisions-1".parse().unwrap()).author.kind,
+        crate::AuthorKind::Daniel
+    );
+    let messages = conversation();
+    let window: Vec<&crate::transcript::Message> = messages.iter().collect();
+    let (referent_draft, _) = capture::resolve(
+        three,
+        &window,
+        span(
+            "a-1",
+            "squash-merge agent PRs and keep merge commits for releases.",
+        ),
+        &turn,
+        &tags(),
+    )
+    .expect("a window");
+    assert_eq!(referent_draft.project.as_str(), Project::GLOBAL);
+}
+
+#[test]
+fn a_topic_hashtag_or_a_tag_named_global_is_not_the_marker() {
+    let topical = capture::scan("#scribe decisions: run the gate #global #ci", &tags());
+    let Parsed::Instruction(topical) = &topical[0] else {
+        panic!("#global is a topic, not the marker: {topical:?}");
+    };
+    assert!(!topical.global);
+    assert_eq!(topic_names(&topical.topics), ["global", "ci"]);
+    assert_eq!(topical.content, "run the gate");
+    let table = TagTable::new(vec![
+        TagDef {
+            name: "decisions".parse().unwrap(),
+            aliases: vec!["decision".parse().unwrap()],
+            description: None,
+            stale_after_days: None,
+        },
+        TagDef {
+            name: "global".parse().unwrap(),
+            aliases: vec!["everywhere".parse().unwrap()],
+            description: None,
+            stale_after_days: None,
+        },
+    ])
+    .unwrap();
+    let named = capture::scan("#scribe global: keep the API stable", &table);
+    let Parsed::Instruction(named) = &named[0] else {
+        panic!("a tag named global is form 1: {named:?}");
+    };
+    assert!(!named.global);
+    assert_eq!(named.tag.as_str(), "global");
+    assert_eq!(named.content, "keep the API stable");
+    let aliased = capture::scan("#scribe add keep it to everywhere", &table);
+    let Parsed::Instruction(aliased) = &aliased[0] else {
+        panic!("an alias named everywhere is form 2: {aliased:?}");
+    };
+    assert!(!aliased.global);
+    assert_eq!(aliased.tag.as_str(), "global");
+    let marked = capture::scan("#scribe/global everywhere: keep it #ci", &table);
+    let Parsed::Instruction(marked) = &marked[0] else {
+        panic!("the opener still marks a tag named global: {marked:?}");
+    };
+    assert!(marked.global);
+    assert_eq!(marked.tag.as_str(), "global");
+    assert_eq!(marked.content, "keep it");
+    assert_eq!(topic_names(&marked.topics), ["ci"]);
+}
+
+fn topic_names(topics: &crate::Topics) -> Vec<&str> {
+    topics.as_slice().iter().map(crate::Topic::as_str).collect()
+}
+
+#[test]
+fn a_malformed_marker_or_a_marker_on_a_refused_line_is_refused_and_teaches_the_opener() {
+    for prompt in [
+        "#scribe/Global decisions: hello",
+        "#scribe/all decisions: hello",
+        "#scribe/",
+    ] {
+        let parsed = capture::scan(prompt, &tags());
+        let Parsed::Refused(refused) = &parsed[0] else {
+            panic!("expected a refusal: {parsed:?}");
+        };
+        assert_eq!(refused.reason, Refusal::MalformedMarker);
+        assert!(
+            refused.message().contains(capture::GLOBAL_OPENER),
+            "{prompt}"
+        );
+    }
+    let unknown = capture::scan("#scribe/global rituals: stand-up at nine", &tags());
+    let Parsed::Refused(unknown) = &unknown[0] else {
+        panic!("expected a refusal: {unknown:?}");
+    };
+    assert_eq!(unknown.reason.code(), "unknown_tag");
+    assert!(unknown.message().contains(capture::GLOBAL_OPENER));
+    let settle = capture::scan("#scribe/global approve p-4", &tags());
+    let Parsed::Refused(settle) = &settle[0] else {
+        panic!("a marker does not settle: {settle:?}");
+    };
+    assert_eq!(settle.reason, Refusal::MarkerNotOnEntry);
+    assert!(settle.message().contains(capture::GLOBAL_OPENER));
+    let bare = capture::scan("#scribe/global", &tags());
+    let Parsed::Refused(bare) = &bare[0] else {
+        panic!("expected a refusal: {bare:?}");
+    };
+    assert_eq!(bare.reason, Refusal::Unparsed);
+    assert!(bare.message().contains(capture::GLOBAL_OPENER));
 }
 
 // --- form 3: referents --------------------------------------------------

@@ -900,3 +900,166 @@ fn store_tag_capture_and_daniel_approval_of_agent_proposal() {
         "daniel"
     );
 }
+
+fn listed(fx: &Fixture, project: &str) -> Vec<Value> {
+    let out = fx.ok(&["entry", "list", "--project", project, "--json"]);
+    serde_json::from_slice::<Value>(&out.stdout).unwrap()["entries"]
+        .as_array()
+        .unwrap()
+        .clone()
+}
+
+fn frontmatter(fx: &Fixture, entry: &Value) -> String {
+    let id = entry["id"].as_str().unwrap();
+    let tag = entry["tag"].as_str().unwrap();
+    std::fs::read_to_string(fx.root().join("entries").join(tag).join(format!("{id}.md"))).unwrap()
+}
+
+fn by_said<'a>(entries: &'a [Value], said: &str) -> &'a Value {
+    entries
+        .iter()
+        .find(|entry| entry["said"] == said)
+        .unwrap_or_else(|| panic!("no entry said {said}: {entries:?}"))
+}
+
+#[test]
+fn each_capture_form_records_global_or_the_cwd_project() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    write_conversation(&claude);
+    let path = fake_claude(
+        &fx,
+        r#"echo '{"type":"result","subtype":"success","is_error":false,"result":"","structured_output":{"message":"a-1","span":"squash-merge agent PRs and keep merge commits for releases."}}'"#,
+    );
+    let prompt = "\
+#scribe/global decisions: squash-merge agent PRs
+#scribe decisions: keep merge commits for releases
+#scribe/global add short commit subjects to preferences
+#scribe add long commit subjects to preferences
+#scribe/global add this to decisions
+#scribe add this to decisions";
+    let out = hook_with_path(&fx, &referent_payload(&claude, prompt), &path);
+    let message = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
+    assert!(
+        !message.contains("refused") && !message.contains("could not record"),
+        "{message}"
+    );
+
+    let global = listed(&fx, "global");
+    let local = listed(&fx, "scribe");
+    assert_eq!(global.len(), 3, "{global:?}");
+    assert_eq!(local.len(), 3, "{local:?}");
+    assert_eq!(
+        claude_calls(&fx).len(),
+        2,
+        "one model call per referent line"
+    );
+
+    let span = "squash-merge agent PRs and keep merge commits for releases.";
+    let expect = [
+        (
+            &global,
+            "#scribe/global decisions: squash-merge agent PRs",
+            "decisions",
+            "squash-merge agent PRs",
+            "global",
+        ),
+        (
+            &local,
+            "#scribe decisions: keep merge commits for releases",
+            "decisions",
+            "keep merge commits for releases",
+            "scribe",
+        ),
+        (
+            &global,
+            "#scribe/global add short commit subjects to preferences",
+            "preferences",
+            "short commit subjects",
+            "global",
+        ),
+        (
+            &local,
+            "#scribe add long commit subjects to preferences",
+            "preferences",
+            "long commit subjects",
+            "scribe",
+        ),
+        (
+            &global,
+            "#scribe/global add this to decisions",
+            "decisions",
+            span,
+            "global",
+        ),
+        (
+            &local,
+            "#scribe add this to decisions",
+            "decisions",
+            span,
+            "scribe",
+        ),
+    ];
+    for (entries, said, tag, content, project) in expect {
+        let entry = by_said(entries, said);
+        assert_eq!(entry["tag"], tag);
+        assert_eq!(entry["content"], content);
+        assert_eq!(entry["project"], project);
+        assert_eq!(entry["author"]["kind"], "daniel");
+        let front = frontmatter(&fx, entry);
+        assert!(front.contains(&format!("project: {project}")), "{front}");
+        assert!(front.contains("kind: daniel"), "{front}");
+        assert!(!front.contains("kind: agent"), "{front}");
+    }
+}
+
+#[test]
+fn a_malformed_marker_or_a_marker_on_a_refused_line_writes_no_entry() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let mut payload = claude.payload("user-prompt-submit.json");
+    payload["prompt"] = json!(
+        "#scribe/all decisions: hello\n\
+         #scribe/global rituals: stand-up\n\
+         #scribe/global add this to decisions"
+    );
+    let out = hook_ok(&fx, "user-prompt-submit", &payload);
+    let message = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
+    assert_eq!(message.lines().count(), 3, "{message}");
+    for line in message.lines() {
+        let reason = line
+            .split(" — ")
+            .nth(1)
+            .unwrap_or_else(|| panic!("no reason: {line}"));
+        assert!(
+            reason.contains("#scribe/global"),
+            "forms text omits the marker: {reason}"
+        );
+    }
+    assert!(
+        !fx.root().join("entries").exists(),
+        "a refused marker wrote an entry"
+    );
+
+    payload["prompt"] = json!("#scribe decisions: keep settling unmarked");
+    hook_ok(&fx, "user-prompt-submit", &payload);
+    fx.ok(&[
+        "proposal",
+        "add",
+        "--kind",
+        "stale",
+        "--older",
+        "decisions-1",
+        "--reason",
+        "Review this",
+        "--author",
+        "opus",
+    ]);
+    payload["prompt"] = json!("#scribe/global approve p-1");
+    let out = hook_ok(&fx, "user-prompt-submit", &payload);
+    let message = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
+    let reason = message.split(" — ").nth(1).expect("reason");
+    assert!(reason.contains("#scribe/global"), "{message}");
+    assert_eq!(entries(&fx)[0]["status"], "active");
+    assert!(listed(&fx, "global").is_empty());
+}
