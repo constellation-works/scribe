@@ -39,6 +39,7 @@ const ADD_EXAMPLES: &str = "\
 Examples:
   scribe entry add --tag decisions --author opus 'Use the stable API'
   scribe entry add --tag task --author opus --related session:<id> 'Add a --dry-run flag to the sync'
+  scribe entry add --tag finding --author opus --related session:<id> --evidence 'exp-<id>' 'The mix alone predicts a 7-point gap'
   scribe entry add --tag standard --author opus --related session:<id> --quote '<quoted words>' 'Name the unit in every size'";
 
 const PICKUP_EXAMPLES: &str = "\
@@ -225,8 +226,12 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
             // an unset [redact] env name.
             let topics = scribe_core::Topics::try_from(args.topic)
                 .map_err(|e| CliError::Usage(e.to_string()))?;
-            ctx.store()
-                .check_new_entry(&args.tag, &args.content, args.quote.as_deref())?;
+            ctx.store().check_new_entry_with_evidence(
+                &args.tag,
+                &args.content,
+                args.quote.as_deref(),
+                args.evidence.as_deref(),
+            )?;
             if let Some(quote) = &args.quote {
                 verify_quote(ctx, &args.related, quote)?;
             }
@@ -240,6 +245,8 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
                     related: args.related,
                     host: ctx.host(),
                     quote: args.quote,
+                    evidence: args.evidence,
+                    as_of: args.as_of,
                 },
                 args.author,
                 ctx.now(),
@@ -485,6 +492,12 @@ pub(crate) struct AddArgs {
     /// Daniel's correction that prompted the entry, verbatim from one of Daniel's typed turns in the session named by --related; required under a tag that requires a quote
     #[arg(long)]
     quote: Option<String>,
+    /// A finding's evidence pointer (a path, task, run, experiment or commit); required under the finding tag, refused under any other tag
+    #[arg(long, value_name = "POINTER")]
+    evidence: Option<String>,
+    /// The date a finding's result was true, as YYYY-MM-DD [default: today]
+    #[arg(long, value_name = "DATE", value_parser = scribe_core::parse_day)]
+    as_of: Option<time::Date>,
 }
 
 #[derive(Debug, Args)]

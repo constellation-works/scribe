@@ -33,7 +33,9 @@ fn proposal() -> Proposal {
         settled_author: None,
         candidate: Some(crate::EntryCandidate {
             tag: "preferences".parse().unwrap(),
+            role: crate::Speaker::User,
             quote: String::new(),
+            evidence: Some(String::new()),
             cite: entry("decisions-1", T0).cite.unwrap(),
             project: crate::Project::sanitized("scribe"),
             provider: crate::Label::sanitized("claude-code", "claude-code"),
@@ -67,6 +69,7 @@ fn the_redacted_field_inventory_is_exactly_the_fields_masked() {
     let mut e = entry("decisions-1", T0);
     e.retirement_reason = Some(String::new());
     e.quote = Some(String::new());
+    e.evidence = Some(String::new());
     e.window = Some(crate::Window {
         turns: vec![crate::WindowTurn {
             role: crate::Speaker::User,

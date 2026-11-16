@@ -6,14 +6,16 @@ Arguments:
   <CONTENT>  Content to record
 
 Options:
-      --tag <TAG>          Tag name or alias
-      --author <AUTHOR>    Agent name (even daniel records the agent channel)
-      --project <PROJECT>  Project slug [default: global]
-      --topic <TOPIC>      Topic, repeatable (at most five)
-      --related <RELATED>  Related reference, repeatable; under an action tag, name the session you write in (session:<id>)
-      --quote <QUOTE>      Daniel's correction that prompted the entry, verbatim from one of Daniel's typed turns in the session named by --related; required under a tag that requires a quote
-  -h, --help               Print help
-  -V, --version            Print version
+      --tag <TAG>           Tag name or alias
+      --author <AUTHOR>     Agent name (even daniel records the agent channel)
+      --project <PROJECT>   Project slug [default: global]
+      --topic <TOPIC>       Topic, repeatable (at most five)
+      --related <RELATED>   Related reference, repeatable; under an action tag, name the session you write in (session:<id>)
+      --quote <QUOTE>       Daniel's correction that prompted the entry, verbatim from one of Daniel's typed turns in the session named by --related; required under a tag that requires a quote
+      --evidence <POINTER>  A finding's evidence pointer (a path, task, run, experiment or commit); required under the finding tag, refused under any other tag
+      --as-of <DATE>        The date a finding's result was true, as YYYY-MM-DD [default: today]
+  -h, --help                Print help
+  -V, --version             Print version
 
 Global options:
       --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
@@ -24,4 +26,5 @@ Global options:
 Examples:
   scribe entry add --tag decisions --author opus 'Use the stable API'
   scribe entry add --tag task --author opus --related session:<id> 'Add a --dry-run flag to the sync'
+  scribe entry add --tag finding --author opus --related session:<id> --evidence 'exp-<id>' 'The mix alone predicts a 7-point gap'
   scribe entry add --tag standard --author opus --related session:<id> --quote '<quoted words>' 'Name the unit in every size'

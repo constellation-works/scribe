@@ -164,14 +164,23 @@ fn an_unknown_tag_is_refused_with_every_configured_tag() {
         refused.reason,
         Refusal::UnknownTag {
             word: String::from("rituals"),
-            tags: ["decisions", "friction", "preferences", "standard", "task"]
-                .map(|t| TagName::try_from(String::from(t)).unwrap())
-                .to_vec(),
+            tags: [
+                "decisions",
+                "finding",
+                "friction",
+                "idea",
+                "preferences",
+                "remind",
+                "standard",
+                "task"
+            ]
+            .map(|t| TagName::try_from(String::from(t)).unwrap())
+            .to_vec(),
         }
     );
     assert_eq!(
         refused.reason.to_string(),
-        "no tag \"rituals\"; tags: decisions, friction, preferences, standard, task"
+        "no tag \"rituals\"; tags: decisions, finding, friction, idea, preferences, remind, standard, task"
     );
     assert_eq!(
         parse("#scribe rituals: stand-up at nine"),
@@ -401,6 +410,7 @@ fn a_topic_hashtag_or_a_tag_named_global_is_not_the_marker() {
             description: None,
             stale_after_days: None,
             action: None,
+            require_evidence: false,
         },
         TagDef {
             name: "global".parse().unwrap(),
@@ -408,6 +418,7 @@ fn a_topic_hashtag_or_a_tag_named_global_is_not_the_marker() {
             description: None,
             stale_after_days: None,
             action: None,
+            require_evidence: false,
         },
     ])
     .unwrap();

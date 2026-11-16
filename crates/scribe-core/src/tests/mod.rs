@@ -56,6 +56,8 @@ pub(crate) fn entry(id: &str, created: OffsetDateTime) -> Entry {
         review_after: None,
         quote: None,
         window: None,
+        evidence: None,
+        as_of: None,
         content: String::from("something"),
     }
 }

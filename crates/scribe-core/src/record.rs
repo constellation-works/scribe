@@ -171,6 +171,17 @@ impl Author {
         }
     }
 
+    /// The assistant of a cataloged session, whose turn Daniel kept by
+    /// approving a session-pass candidate: an agent-channel author, since
+    /// the words are the assistant's and the transcript names no crew.
+    #[must_use]
+    pub(crate) fn assistant() -> Self {
+        Self {
+            kind: AuthorKind::Agent,
+            name: AuthorName(String::from("assistant")),
+        }
+    }
+
     /// scribe's session pass, proposing unmarked user statements.
     #[must_use]
     pub(crate) fn session_pass() -> Self {

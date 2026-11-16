@@ -19,14 +19,31 @@ pub(super) fn check(
         if checked.len() >= request.candidate_limit.min(MAX_CANDIDATES) {
             break;
         }
+        // The named turn decides whose words these are. Daniel's own span
+        // keeps the fenced/quoted exclusion and may use a memory tag; an
+        // assistant turn's own text (never a tool payload: transcripts
+        // carry tool calls and results outside `text`) may use any tag
+        // offered, under the same cap.
+        let fits = request.messages.iter().any(|message| {
+            message.uuid == answer.message
+                && match message.role {
+                    Speaker::User => {
+                        request.candidate_memory_tags.contains(&answer.tag)
+                            && own_span(&message.text, &answer.quote)
+                    }
+                    Speaker::Assistant => {
+                        request.candidate_tags.contains(&answer.tag)
+                            && own_span(&message.text, &answer.quote)
+                    }
+                }
+        });
         if answer.quote.chars().count() > 400
             || answer.message.chars().count() > 128
-            || !request.candidate_tags.contains(&answer.tag)
-            || !request.messages.iter().any(|message| {
-                message.uuid == answer.message
-                    && message.role == Speaker::User
-                    && own_span(&message.text, &answer.quote)
-            })
+            || answer
+                .evidence
+                .as_deref()
+                .is_some_and(|e| e.trim().is_empty() || e.chars().count() > 512)
+            || !fits
             || checked
                 .iter()
                 .any(|prior| same_statement(&prior.quote, &answer.quote))
@@ -85,11 +102,26 @@ pub fn candidate_drafts(
         .iter()
         .filter_map(|answer| {
             let message = messages.iter().find(|m| m.uuid == answer.message)?;
-            let turn = transcript::daniel_turn(message)?;
             let raw = message.text();
             // The original text check also rejects a span joined across pasted data
-            // or a window's truncation marker.
-            if !own_span(&turn.own, &answer.quote) || !raw.contains(&answer.quote) {
+            // or a window's truncation marker. An assistant turn's text holds
+            // its own words only; tool payloads never reach `text()`.
+            let role = match message.role {
+                Speaker::User => {
+                    let turn = transcript::daniel_turn(message)?;
+                    if !own_span(&turn.own, &answer.quote) {
+                        return None;
+                    }
+                    Speaker::User
+                }
+                Speaker::Assistant => {
+                    if !own_span(&raw, &answer.quote) {
+                        return None;
+                    }
+                    Speaker::Assistant
+                }
+            };
+            if !raw.contains(&answer.quote) {
                 return None;
             }
             let start = raw.find(&answer.quote)?;
@@ -97,7 +129,14 @@ pub fn candidate_drafts(
                 u32::try_from(raw[..start].bytes().filter(|b| *b == b'\n').count() + 1).ok()?;
             Some(EntryCandidate {
                 tag: answer.tag.parse().ok()?,
+                role,
                 quote: answer.quote.clone(),
+                evidence: answer
+                    .evidence
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|e| !e.is_empty())
+                    .map(ToOwned::to_owned),
                 cite: Cite {
                     session: record.id.clone(),
                     message: Some(message.uuid.clone()),

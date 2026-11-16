@@ -497,6 +497,13 @@ The body is `content`, verbatim.
   except on action entries: `window` is the transcript window a `#scribe`
   line under an action tag keeps, `quote` the human's correction an agent
   quoted under a tag with `require_quote`.
+- `evidence` and `as_of` (store format 10, [§4.7](#47-findings)) are `null`
+  except on a finding: the pointer its result can be checked against and
+  the date the result was true. An assistant turn kept by approving a
+  session-pass candidate is the second agent shape beside the direct CLI
+  note: author `{kind: agent, name: assistant}`, `said` the canonical
+  approving command, `content_from: message` (assistant) and the turn's
+  cite; the persisted-shape check accepts exactly these two agent shapes.
 
 **Session record** (`sessions/<yyyy>/<mm>/<id>.md`): the common
 frontmatter plus `links` (sessions only; `related` says what a session
@@ -628,6 +635,10 @@ the candidate's quote and cite live in its payload. Its author is
 rejecting turn; the eventual entry cites the original statement.
 Reads upgrade formats 1–8 in memory; writes use format 9. Prior proposal
 fields, values and attribution are preserved, with `candidate: null` added.
+Format 10 adds `role` (`user` for an upgraded candidate) and `evidence`
+(`null`) to a candidate, so a pass can also quote an assistant turn
+([§4.7](#47-findings)); entry files gain `evidence` and `as_of`, both
+`null` on upgrade. Writes use format 10.
 
 **Tags store** (`tags.json`, from S12): `{"format": 4, "tags": [{"name",
 "aliases", "description", "stale_after_days", "author", "created",
@@ -895,7 +906,8 @@ Orbit or any consumer; it keeps the entries and exposes them to read.
 **Which tags.** Config marks a tag `action = true` (`[tags.<name>]`), with
 two optional switches: `require_quote` (an agent's entry must quote the
 human) and `ask_first` (agents ask before writing). `standard`
-(`require_quote`), `task` and `friction` ship, with no aliases; a config
+(`require_quote`), `task`, `friction`, `remind` and `idea` ship, with no
+aliases; a config
 with its own `[tags]` keeps them unless it claims their names, and a config
 tag of the same name starts from the shipped settings
 ([4_decisions.md](./4_decisions.md#action-tags-are-marked-in-config-and-three-ship)).
@@ -960,6 +972,77 @@ when there are none
 are captured on the Mac. The owner reads the Mac's store over SSH, with the
 same read surface; there is no replica
 ([4_decisions.md](./4_decisions.md#the-owner-host-reads-action-entries-over-ssh)).
+
+### 4.7 Findings
+
+[ORB-25177]. A **finding** is an agent's measured or verified result,
+recorded once so a later session finds it through `ask` or `record search`
+instead of re-deriving it: "In exp-5342a4d6, after the 11-14 memory
+rewrite, the reviewer mix alone predicts a first-pass gap of about 7
+points (51% against 58%); observed 44% against 67% on 32 and 27 tasks."
+Pending work is a `task` entry, a check-back a `remind` entry and a future
+consideration an `idea` entry — all action tags with consumers. A finding
+has no worker
+([4_decisions.md](./4_decisions.md#findings-are-scribe-entries-with-no-worker)).
+
+**Which tag.** `finding` ships as a memory tag, kept by a config with its
+own `[tags]` unless it claims the name, like the shipped action tags
+(`remind` and `idea` ship beside `standard`, `task` and `friction`). It is
+marked `require_evidence` (config `require_evidence = true` on a memory
+tag; an action tag refuses the flag). No consumer, no transcript window,
+nothing for an intake to read: `entry pickup` refuses it
+(`not_action_tag`), the `SessionStart` stuck-entries line never counts
+it, and neither the session-start line nor the skill's session brief
+lists findings, so neither grows with history. Findings are pulled
+through search only.
+
+**Writing one.** The agent that measured or verified the result writes it
+at the time, under the free-use guards of §4.6 (an interactive session
+Daniel is in, unasked, one visible line naming the entry id; Daniel
+cancels with `#scribe retire <id>`):
+
+```sh
+scribe entry add --tag finding --author <crew> --related session:<id> \
+  --evidence '<path, task, run, experiment or commit>' [--as-of YYYY-MM-DD] \
+  '<the result>'
+```
+
+The entry records the result as content, the `--evidence` pointer, and
+the as-of date (the write's date without `--as-of`). Two guards sit in
+the store, under the lock, so every route to `add_agent_entry` shares
+them:
+
+- **Evidence required.** A `require_evidence` entry without a non-empty
+  pointer is refused and writes nothing (`evidence_required`); an
+  `--evidence` under any other tag is refused the same way. A result with
+  nothing to check it against is just an agent's memory of itself.
+- **Per-session cap.** At most **3 findings per writing session**
+  (`MAX_FINDINGS_PER_SESSION`), counted over every finding already held
+  for the session a write names in `--related session:<id>`; a write that
+  names no session is counted under its author and the write's day,
+  against that author's other unnamed-session findings of that day. The
+  fourth is refused (`finding_cap`) and the refusal names the cap.
+  Daniel-approved pass candidates do not take this route; the candidate
+  caps below bound them instead.
+
+**Reading one.** `ask` evidence labels a finding `agent claim (<author>)
+as of <date>; evidence: <pointer>`, and the deterministic attribution
+check copies that label into each surviving claim, so an answer can
+never present it as Daniel's words (§6.4). `record search` returns the
+same marking in the snippet plus the hit's `evidence` and `as_of`
+fields; `entry show`/`list` carry both fields too. The skill says what
+qualifies — a number or a verified fact, an evidence pointer, and costly
+to re-derive — and to search findings before re-measuring something.
+
+**The pass as safety net.** What agents did not record, the session pass
+catches: beside Daniel's unmarked statements (§5.3) it may propose an
+assistant turn's own recap — a measured result under `finding`, or
+something the assistant says is not done or not verified under the
+fitting free action tag (`task`, `remind`, `idea`). Approval writes one
+agent-authored entry (`{kind: agent, name: assistant}`) quoting that
+turn and citing it, never an entry attributed to Daniel; a finding so
+kept carries the candidate's evidence pointer, or `session:<id>` when
+the turn named none, with the turn's date as its as-of.
 
 ## 5. `/scribe on`
 
@@ -1137,20 +1220,31 @@ a pass; an explicit catalog is still required for past sessions.
   Other proposal kinds do not count. At the cap the pass still updates its record,
   requesting zero candidates. Rejecting or approving frees an open slot.
 - **Added output per window.** `candidates` is an array of at most 3
-  `{quote, message, tag}` objects. Each quote is 8–400 characters, each
-  message id at most 128, each tag at most 32: at most **1,680 value
-  characters plus JSON syntax**, and no extra model call or timeout budget.
+  `{quote, message, tag, evidence?}` objects. Each quote is 8–400
+  characters, each message id at most 128, each tag at most 32, and a
+  finding candidate's evidence pointer at most 512 (omitted otherwise):
+  at most **3,216 value characters plus JSON syntax**, and no extra model
+  call or timeout budget. Assistant-turn candidates draw on the same
+  3-per-pass and 20-open caps above — no added budget.
   A header compression retry keeps the original candidates locally. Older
   model adapters may omit the field, which means none. Relevant recorded or
   proposed statements add at most 6,000 value characters of input (15 spans
   of at most 400), selected by word overlap with the window.
-- **Evidence.** The model suggests preferences and decisions only, with a
-  canonical configured non-action tag. Each candidate must name a user message
-  in the current window and quote its own text exactly. The pass checks again
-  against the original transcript and derives the cite, timestamp, prompt hash,
-  line, cwd, project, provider and host itself. Assistant words, pasted blocks,
-  fenced or indented code, blockquotes, marked `#scribe` lines, unknown or
-  future message ids, and truncation markers cannot supply a candidate.
+- **Evidence.** From Daniel's turns the model suggests preferences and
+  decisions only, with a canonical configured memory tag (never an action
+  tag or `finding`). From an assistant turn — read its own recap first —
+  it suggests a measured or verified result under `finding`, or something
+  it says is not done or not verified under a free action tag such as
+  `task`, `remind` or `idea`, with an evidence pointer when the turn names
+  one ([§4.7](#47-findings)). Each candidate must name a message in the
+  current window and quote its own text exactly. The pass checks again
+  against the original transcript and derives the cite, timestamp, prompt
+  hash, line, cwd, project, provider and host itself. Pasted blocks,
+  fenced or indented code, blockquotes, marked `#scribe` lines, unknown
+  or future message ids, and truncation markers cannot supply a
+  candidate; tool calls and tool results never reach a message's text
+  (§3, transcript parsing), so no candidate is ever opened from a tool
+  payload.
   Plain pasted prose without provider or textual paste markers cannot be
   distinguished from typed prose; this remains an accident guard.
 - **Duplicates.** The model is instructed to exclude statements an entry or
@@ -1170,7 +1264,13 @@ a pass; an explicit catalog is still required for past sessions.
   <id>` creates the reserved entry as Daniel's, with the quote as content and
   the original turn's cite and `content_from: message` (user). `said` records
   the canonical approving command; the proposal also keeps the approving
-  turn's cite. Replaying approval creates no second entry. Approved proposals
+  turn's cite. Approval of an assistant-turn candidate instead writes
+  exactly one agent-authored entry (`{kind: agent, name: assistant}`),
+  with `content_from: message` (assistant), the candidate's evidence
+  pointer (or `session:<id>` for a finding that named none) and the
+  turn's date as its as-of — never an entry attributed to Daniel; its
+  approval echo names the cancel. Replaying approval creates no second
+  entry. Approved proposals
   journal the entry creation, recoverable by a repeated approval or the
   consistency scan. Rejection writes no entry and keeps the statement in the
   suppression set. Agents cannot settle or edit candidate proposals. Forgetting

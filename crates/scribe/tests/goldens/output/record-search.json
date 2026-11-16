@@ -19,7 +19,9 @@
       },
       "active": null,
       "updated": "2026-11-02T19:05:41Z",
-      "status": "active"
+      "status": "active",
+      "evidence": null,
+      "as_of": null
     },
     {
       "kind": "session",
@@ -37,7 +39,9 @@
       "author": null,
       "active": true,
       "updated": "2026-11-02T19:20:00Z",
-      "status": "open"
+      "status": "open",
+      "evidence": null,
+      "as_of": null
     },
     {
       "kind": "session",
@@ -55,7 +59,9 @@
       "author": null,
       "active": true,
       "updated": "2026-11-02T19:40:00Z",
-      "status": "open"
+      "status": "open",
+      "evidence": null,
+      "as_of": null
     },
     {
       "kind": "session",
@@ -73,7 +79,9 @@
       "author": null,
       "active": true,
       "updated": "2026-11-02T19:40:00Z",
-      "status": "open"
+      "status": "open",
+      "evidence": null,
+      "as_of": null
     }
   ],
   "total": 4,

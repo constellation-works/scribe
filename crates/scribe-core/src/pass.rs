@@ -292,6 +292,7 @@ pub fn request(
         terms,
         candidate_limit: 0,
         candidate_tags: Vec::new(),
+        candidate_memory_tags: Vec::new(),
         candidate_exclusions: Vec::new(),
         budgets: BUDGETS,
         final_pass,

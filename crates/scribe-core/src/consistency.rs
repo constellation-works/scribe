@@ -518,12 +518,16 @@ impl fmt::Display for SettleRefusal {
 /// What [`settle`] did.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Settled {
-    /// An approved candidate creates a new Daniel-authored entry.
+    /// An approved candidate creates a new entry: Daniel-authored for a
+    /// candidate from his own turn, agent-authored for one from an
+    /// assistant turn.
     Recorded {
         /// The approved candidate proposal.
         proposal: ProposalId,
         /// The new entry, under its reserved id.
         entry: EntryId,
+        /// Whether the entry is the assistant's (`true`) or Daniel's.
+        agent_authored: bool,
     },
     /// The proposal was approved and its older entry changed.
     Approved {
@@ -669,6 +673,10 @@ fn approve(
         return Settled::Recorded {
             proposal: id,
             entry: proposal.older.clone(),
+            agent_authored: proposal
+                .candidate
+                .as_ref()
+                .is_some_and(|c| c.role == crate::Speaker::Assistant),
         };
     }
     let Some(entry) = entries.iter_mut().find(|e| e.id == proposal.older) else {

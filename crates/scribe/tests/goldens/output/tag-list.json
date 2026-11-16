@@ -17,9 +17,36 @@
     {
       "author": null,
       "source": "config",
+      "name": "finding",
+      "aliases": [],
+      "description": "a measured or verified result, with its evidence",
+      "stale_after_days": null,
+      "configured": true,
+      "entries": 0,
+      "action": null
+    },
+    {
+      "author": null,
+      "source": "config",
       "name": "friction",
       "aliases": [],
       "description": "a problem worth an Orbit friction record",
+      "stale_after_days": null,
+      "configured": true,
+      "entries": 0,
+      "action": {
+        "mode": "free",
+        "require_quote": false,
+        "retired": 0,
+        "rejected": 0
+      }
+    },
+    {
+      "author": null,
+      "source": "config",
+      "name": "idea",
+      "aliases": [],
+      "description": "a future consideration worth revisiting",
       "stale_after_days": null,
       "configured": true,
       "entries": 0,
@@ -43,6 +70,22 @@
       "configured": true,
       "entries": 1,
       "action": null
+    },
+    {
+      "author": null,
+      "source": "config",
+      "name": "remind",
+      "aliases": [],
+      "description": "something to check back on at a later time",
+      "stale_after_days": null,
+      "configured": true,
+      "entries": 0,
+      "action": {
+        "mode": "free",
+        "require_quote": false,
+        "retired": 0,
+        "rejected": 0
+      }
     },
     {
       "author": null,
@@ -88,7 +131,7 @@
       }
     }
   ],
-  "total": 6,
+  "total": 9,
   "truncated": false,
   "warnings": []
 }

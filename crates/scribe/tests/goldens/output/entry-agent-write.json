@@ -27,6 +27,8 @@
   "updated_by": null,
   "retirement_reason": null,
   "quote": null,
+  "evidence": null,
+  "as_of": null,
   "window_turns": null,
   "window": null,
   "action": null

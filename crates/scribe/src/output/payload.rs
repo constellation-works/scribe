@@ -215,6 +215,10 @@ pub(crate) struct EntryPayload {
     pub(crate) retirement_reason: Option<String>,
     /// An agent entry's quote of Daniel's correction; `null` otherwise.
     pub(crate) quote: Option<String>,
+    /// A finding's evidence pointer; `null` for other entries.
+    pub(crate) evidence: Option<String>,
+    /// The date a finding's result was true, `YYYY-MM-DD`; `null` otherwise.
+    pub(crate) as_of: Option<String>,
     /// How many turns the entry's transcript window holds; `null` when it
     /// has none (only typed lines under an action tag do).
     pub(crate) window_turns: Option<usize>,
@@ -378,6 +382,8 @@ impl From<&Entry> for EntryPayload {
             updated_by: entry.updated_by.as_ref().map(AuthorPayload::from),
             retirement_reason: entry.retirement_reason.clone(),
             quote: entry.quote.clone(),
+            evidence: entry.evidence.clone(),
+            as_of: entry.as_of.map(date),
             window_turns: entry.window.as_ref().map(|w| w.turns.len()),
             window: None,
             action: None,
@@ -800,6 +806,10 @@ pub(crate) struct HitPayload {
     /// The entry's status (`active`, `superseded`, `retired`) or the
     /// session's (`open`, `final`); added beside the designed fields.
     pub(crate) status: &'static str,
+    /// A finding entry's evidence pointer; `null` otherwise.
+    pub(crate) evidence: Option<String>,
+    /// The date a finding's result was true, `YYYY-MM-DD`; `null` otherwise.
+    pub(crate) as_of: Option<String>,
 }
 
 impl From<&scribe_core::search::Hit> for HitPayload {
@@ -819,6 +829,8 @@ impl From<&scribe_core::search::Hit> for HitPayload {
             active: hit.active,
             updated: hit.updated,
             status: hit.status,
+            evidence: hit.evidence.clone(),
+            as_of: hit.as_of.map(date),
         }
     }
 }

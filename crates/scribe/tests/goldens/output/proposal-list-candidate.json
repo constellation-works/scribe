@@ -3,7 +3,9 @@
     {
       "candidate": {
         "tag": "preferences",
+        "role": "user",
         "quote": "I prefer concise progress updates.",
+        "evidence": null,
         "cite": {
           "session": "s-1",
           "message": "user-choice",

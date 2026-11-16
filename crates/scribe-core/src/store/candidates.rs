@@ -61,15 +61,34 @@ impl Store {
             if open >= MAX_OPEN_CANDIDATES {
                 break;
             }
+            // Whose turn it is decides the tag rule, repeated under the
+            // lock: Daniel's words take a plain memory tag; an assistant
+            // turn takes a finding (evidence named, or the cited session
+            // at approval) or a free action tag — never a tag requiring
+            // Daniel's quote, which an assistant turn cannot supply.
+            let tag_refused = config
+                .tags
+                .get(&draft.tag)
+                .is_none_or(|tag| match draft.role {
+                    crate::Speaker::User => {
+                        tag.action.is_some() || tag.require_evidence || draft.evidence.is_some()
+                    }
+                    crate::Speaker::Assistant => {
+                        (!tag.require_evidence && tag.action.is_none())
+                            || tag.action.is_some_and(|a| a.require_quote)
+                            || (!tag.require_evidence && draft.evidence.is_some())
+                    }
+                });
             if !draft.has_valid_provenance()
                 || !(8..=400).contains(&draft.quote.chars().count())
                 || draft.cite.session != record.id
                 || draft.project != record.project
                 || draft.quote != redactor.mask(&draft.quote)
-                || config
-                    .tags
-                    .get(&draft.tag)
-                    .is_none_or(|tag| tag.action.is_some())
+                || draft
+                    .evidence
+                    .as_deref()
+                    .is_some_and(|e| e.trim().is_empty() || e != redactor.mask(e))
+                || tag_refused
                 || entries
                     .iter()
                     .any(|entry| same_statement(&entry.content, &draft.quote))
@@ -95,7 +114,15 @@ impl Store {
                 older,
                 newer: None,
                 candidate: Some(draft.clone()),
-                reason: format!("Unmarked {} statement: {}", draft.tag, draft.quote),
+                reason: format!(
+                    "{} {} statement: {}",
+                    match draft.role {
+                        crate::Speaker::User => "Unmarked",
+                        crate::Speaker::Assistant => "Assistant",
+                    },
+                    draft.tag,
+                    draft.quote
+                ),
                 quotes: Vec::new(),
                 state: ProposalState::Open,
                 opened_at: record.updated,
@@ -134,7 +161,7 @@ impl Store {
         match self.entry(&entry.id) {
             // A previously completed approval keeps later retirement/forgetting.
             Ok(existing) => {
-                if existing.author != Author::daniel() || existing.cite != entry.cite {
+                if existing.author != entry.author || existing.cite != entry.cite {
                     return Err(Error::corrupt(
                         self.entry_path(&entry.id),
                         "reserved candidate id belongs to another entry",

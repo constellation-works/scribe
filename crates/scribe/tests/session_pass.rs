@@ -76,6 +76,149 @@ fn pass_candidate_waits_for_typed_approval_and_keeps_original_user_cite() {
     assert_eq!(entry["content_from"]["role"], "user");
 }
 
+#[test]
+fn pass_proposes_an_assistant_finding_and_approval_writes_one_agent_entry() {
+    let s = Setup::new();
+    let quote = "Measured: the reviewer mix alone predicts a 7-point first-pass gap.";
+    s.write(
+        ON,
+        &[
+            line("user", "u-1", "Please measure the reviewer mix effect."),
+            line("assistant", "a-find", quote),
+        ],
+    );
+    let mut body = answer();
+    body["candidates"] = json!([{
+        "quote": quote, "message": "a-find", "tag": "finding", "evidence": "exp-5342a4d6"
+    }]);
+    s.answer(&body);
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let ps = proposals(&s);
+    assert_eq!(ps["total"], 1, "{ps}");
+    let p = &ps["proposals"][0];
+    assert_eq!(p["candidate"]["tag"], "finding");
+    assert_eq!(p["candidate"]["role"], "assistant");
+    assert_eq!(p["candidate"]["quote"], quote, "quoted verbatim");
+    assert_eq!(p["candidate"]["cite"]["message"], "a-find");
+    assert_eq!(p["candidate"]["evidence"], "exp-5342a4d6");
+
+    let approved = type_settlement(&s, "#scribe approve p-1");
+    assert!(
+        text(&approved.stdout).contains("recorded finding-1 as the agent's entry"),
+        "{}",
+        text(&approved.stdout)
+    );
+    type_settlement(&s, "#scribe approve p-1");
+    let entries: Value = serde_json::from_slice(
+        &s.fx
+            .ok(&["entry", "list", "--tag", "finding", "--json"])
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(entries["entries"].as_array().unwrap().len(), 1);
+    let entry = &entries["entries"][0];
+    assert_eq!(entry["content"], quote);
+    assert_eq!(entry["author"]["kind"], "agent", "never Daniel's");
+    assert_eq!(entry["author"]["name"], "assistant");
+    assert_eq!(entry["content_from"]["role"], "assistant");
+    assert_eq!(entry["cite"]["message"], "a-find");
+    assert_eq!(entry["evidence"], "exp-5342a4d6");
+    assert_eq!(entry["as_of"], "2026-11-03");
+}
+
+#[test]
+fn pass_proposes_open_work_from_an_assistant_recap_and_reject_closes_it() {
+    let s = Setup::new();
+    let quote = "The flaky cache test is not verified yet on this host.";
+    s.write(
+        ON,
+        &[
+            line("user", "u-1", "Please check the cache test."),
+            line("assistant", "a-open", quote),
+        ],
+    );
+    let mut body = answer();
+    body["candidates"] = json!([{"quote": quote, "message": "a-open", "tag": "task"}]);
+    s.answer(&body);
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let ps = proposals(&s);
+    assert_eq!(ps["total"], 1, "{ps}");
+    assert_eq!(ps["proposals"][0]["candidate"]["tag"], "task");
+    assert_eq!(ps["proposals"][0]["candidate"]["role"], "assistant");
+
+    type_settlement(&s, "#scribe reject p-1");
+    let entries: Value =
+        serde_json::from_slice(&s.fx.ok(&["entry", "list", "--json"]).stdout).unwrap();
+    assert_eq!(entries["total"], 0, "rejection writes no entry");
+
+    // The same statement in a later turn is not proposed again.
+    s.append(ON, &[line("assistant", "a-open-2", quote)]);
+    let mut again = answer();
+    again["candidates"] = json!([{"quote": quote, "message": "a-open-2", "tag": "task"}]);
+    s.answer(&again);
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    assert_eq!(proposals(&s)["total"], 1);
+}
+
+#[test]
+fn no_candidate_is_opened_from_a_tool_payload() {
+    let s = Setup::new();
+    let payload_text = "Measured: the cache holds 42 entries after warmup.";
+    let tool_line = json!({
+        "type": "assistant", "uuid": "a-tool", "timestamp": "2026-11-03T06:00:00Z",
+        "cwd": "/nonexistent/work/scribe",
+        "message": {"role": "assistant", "content": [
+            {"type": "text", "text": "Running the check now."},
+            {"type": "tool_use", "name": "Bash", "input": {"command": payload_text}}
+        ]}
+    });
+    s.write(
+        ON,
+        &[line("user", "u-1", "Please check the cache."), tool_line],
+    );
+    let mut body = answer();
+    body["candidates"] = json!([{
+        "quote": payload_text, "message": "a-tool", "tag": "finding", "evidence": "run-1"
+    }]);
+    s.answer(&body);
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    assert_eq!(proposals(&s)["total"], 0, "tool payloads are not turns");
+}
+
+#[test]
+fn session_start_output_is_the_same_with_many_findings() {
+    let s = Setup::new();
+    let before = s.hook("session-start", &s.payload("SessionStart")).stdout;
+    for n in 0..6 {
+        s.fx.ok(&[
+            "entry",
+            "add",
+            "--tag",
+            "finding",
+            "--author",
+            "opus",
+            "--related",
+            &format!("session:s-{n}"),
+            "--evidence",
+            "exp-1",
+            &format!("Measured widget result {n} holds under load"),
+            "--json",
+        ]);
+    }
+    let after = s.hook("session-start", &s.payload("SessionStart")).stdout;
+    assert_eq!(before, after, "findings never grow the start line");
+
+    // An intake's pickup refuses a finding: it has no worker.
+    let out =
+        s.fx.run(&["entry", "pickup", "finding-1", "--author", "opus", "--json"]);
+    assert_eq!(out.status.code(), Some(1));
+    let err: Value = serde_json::from_slice(&out.stderr).unwrap();
+    assert_eq!(err["code"], "not_action_tag", "{err}");
+}
+
 /// A Claude Code layout under the fixture's home, a fake `claude` on PATH
 /// and helpers to run the binary with them.
 struct Setup {
@@ -1091,7 +1234,7 @@ fn legacy_control_is_read_without_writes_and_new_retry_state_is_strict() {
     );
     setup.pass();
     let current: Value = serde_json::from_slice(&setup.control_bytes()).unwrap();
-    assert_eq!(current["format"], 9);
+    assert_eq!(current["format"], 10);
     assert_eq!(current["sessions"][ON]["consecutive_failures"], 0);
     assert_eq!(current["sessions"][ON]["retry_after"], Value::Null);
     assert_eq!(current["sessions"][ON]["pending_links"], json!([]));
@@ -1313,10 +1456,10 @@ fn a_pass_writes_one_record_of_daniels_terms_and_never_reads_a_session_never_swi
         json!([{"term": "graduate to level 4", "said": DEFINED, "message": "u-1"}])
     );
     assert!(!setup.fx.root().join("entries").exists(), "no entries");
-    // The record is written at format 9: a header and one open segment
+    // The record is written at format 10: a header and one open segment
     // holding this pass's segment text.
     let file = std::fs::read_to_string(setup.record_file()).unwrap();
-    assert!(file.starts_with("---\nformat: 9\n"), "{file}");
+    assert!(file.starts_with("---\nformat: 10\n"), "{file}");
     assert!(file.contains("\n## Log\n### 1. "), "{file}");
     assert!(!file.contains("## Outcome"), "{file}");
     assert_eq!(record["active"], true);
@@ -2292,7 +2435,7 @@ fn candidate_open_cap_is_enforced_even_when_the_model_ignores_it() {
         })
         .collect();
     let path = s.fx.root().join("proposals.json");
-    std::fs::write(&path, json!({"format":9, "proposals":full}).to_string()).unwrap();
+    std::fs::write(&path, json!({"format":10, "proposals":full}).to_string()).unwrap();
     make_private(&path);
     let quotes = [
         "I prefer faster incremental compilation.",

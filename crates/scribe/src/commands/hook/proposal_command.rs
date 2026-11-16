@@ -58,11 +58,21 @@ pub(super) fn run(settling: &Settling, turn: &Turn, ctx: &Context) -> Reply {
         }),
     };
     match settled {
-        Settled::Recorded { proposal, entry } => done(
+        Settled::Recorded {
+            proposal,
+            entry,
+            agent_authored,
+        } => done(
             proposal.to_string(),
-            format!(
-                "scribe: approved {proposal} — recorded {entry} as Daniel's words with the original turn's cite"
-            ),
+            if agent_authored {
+                format!(
+                    "scribe: approved {proposal} — recorded {entry} as the agent's entry with the assistant turn's cite (cancel: #scribe retire {entry})"
+                )
+            } else {
+                format!(
+                    "scribe: approved {proposal} — recorded {entry} as Daniel's words with the original turn's cite"
+                )
+            },
         ),
         Settled::Approved {
             proposal,

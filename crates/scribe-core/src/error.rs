@@ -265,6 +265,13 @@ pub enum WriteRefusal {
     /// `cancel_window`: a pickup of an agent entry still inside its cancel
     /// window.
     CancelWindow,
+    /// `evidence_required`: an entry under a `require_evidence` tag came
+    /// without an evidence pointer, or an evidence pointer was given for a
+    /// tag that does not take one.
+    EvidenceRequired,
+    /// `finding_cap`: the writing session already holds the documented
+    /// maximum of findings.
+    FindingCap,
 }
 impl WriteRefusal {
     /// Stable machine-readable code.
@@ -290,6 +297,8 @@ impl WriteRefusal {
             Self::QuoteNotFound => "quote_not_found",
             Self::NotActionTag => "not_action_tag",
             Self::CancelWindow => "cancel_window",
+            Self::EvidenceRequired => "evidence_required",
+            Self::FindingCap => "finding_cap",
         }
     }
 }

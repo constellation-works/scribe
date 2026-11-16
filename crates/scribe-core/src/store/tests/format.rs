@@ -307,6 +307,29 @@ fn format_six_proposals_keep_agent_metadata_and_format_seven_controls_require_id
 }
 
 #[test]
+fn a_format_nine_candidate_reads_as_daniels_words_without_evidence() {
+    // Format 9 -> 10: a candidate gains `role: user` and `evidence: null`;
+    // a candidate already carrying format-10 keys at format 9 is refused
+    // by the frozen shape.
+    let cite = format!(
+        r#"{{"session":"s-1","message":"m-1","at":"2026-11-01T10:00:00Z","prompt_sha256":"{}","line":1,"cwd":"/work"}}"#,
+        "0".repeat(64)
+    );
+    let old = format!(
+        r#"{{"format":9,"proposals":[{{"id":"p-1","kind":"candidate","older":"preferences-1","candidate":{{"tag":"preferences","quote":"I prefer short updates.","cite":{cite},"project":"scribe","provider":"claude-code","host":"host"}},"newer":null,"reason":"Unmarked preferences statement","quotes":[],"state":"open","opened_at":"2026-11-01T10:00:00Z","settled_at":null,"settled_by":null,"author":{{"kind":"scribe","name":"session-pass"}},"updated_by":null,"settled_author":null}}]}}"#
+    );
+    let proposals = decode_proposals(Path::new("proposals.json"), old.as_bytes()).unwrap();
+    let candidate = proposals[0].candidate.as_ref().unwrap();
+    assert_eq!(candidate.role, crate::Speaker::User);
+    assert_eq!(candidate.evidence, None);
+    let stray = old.replace(
+        r#""tag":"preferences""#,
+        r#""tag":"preferences","role":"user""#,
+    );
+    assert!(decode_proposals(Path::new("proposals.json"), stray.as_bytes()).is_err());
+}
+
+#[test]
 fn format_six_controls_reject_duplicate_and_unknown_nested_author_fields() {
     for author in [
         r#"{"kind":"agent","name":"sol","name":"opus"}"#,

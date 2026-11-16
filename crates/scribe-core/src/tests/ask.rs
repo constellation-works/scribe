@@ -783,6 +783,33 @@ fn agent_evidence_cannot_be_presented_as_daniels_words_even_by_the_model() {
 }
 
 #[test]
+fn a_finding_is_presented_as_that_agents_claim_as_of_its_date_with_evidence() {
+    let text = "the reviewer mix alone predicts a 7-point first-pass gap";
+    let mut finding = decision("finding-1", 0, text);
+    finding.author = crate::Author::agent("opus".parse().unwrap());
+    finding.cite = None;
+    finding.said.clear();
+    finding.content_from = ContentFrom::Agent;
+    finding.evidence = Some(String::from("exp-5342a4d6"));
+    finding.as_of = Some(time::macros::date!(2026 - 11 - 14));
+    let mut reply = answered(vec![claim("Daniel measured the gap", text, "finding-1")]);
+    reply.answer = String::from("Daniel measured a 7-point gap.");
+    let models = FakeModels::answering(reply);
+    let result = run(
+        &question("what does the reviewer mix predict for the first-pass gap?"),
+        &[finding],
+        &[],
+        &models,
+        &NoTasks,
+    );
+    let label = "agent claim (opus) as of 2026-11-14; evidence: exp-5342a4d6";
+    assert_eq!(models.calls.borrow()[0].evidence[0].whose, label);
+    assert_eq!(result.claims[0].text, label);
+    assert!(result.answer.starts_with(label), "{}", result.answer);
+    assert!(!result.answer.contains("Daniel measured"));
+}
+
+#[test]
 fn daniels_evidence_wins_top_k_over_a_newer_identical_agent_note() {
     let mut entries: Vec<Entry> = (1..=ask::TOP_K)
         .map(|n| {
