@@ -6,8 +6,8 @@
 //!   and reply with what was recorded or refused; a prompt whose first line
 //!   is `/scribe on|off|status|link|catalog` goes to `scribe_command.rs`
 //!   instead, which switches cataloging and blocks the prompt (§5.1, §5.8);
-//! - `stop.rs`: after a reply, fill in the message uuid of the entries the
-//!   prompt wrote, from the transcript, and mark a switched-on session's
+//! - `stop.rs`: after a reply, recover missed entry instructions through
+//!   `recovery.rs`, fill in message ids, and mark a switched-on session's
 //!   pass due by minutes or turns (§5.2);
 //! - `session_end.rs`: mark a switched-on session's last pass due and final;
 //! - `session_start.rs`: tell Daniel how many proposals are open (§7) and
@@ -22,12 +22,14 @@
 //! serve `session pass`). These are the only commands that write entries or
 //! `control.json`, and the only ones that settle proposals; every one that
 //! writes is audited (`session-start` reads only), and none calls a model
-//! except the form-3 referent in `user_prompt_submit.rs`.
+//! except the prompt hook's form-3 referent in `user_prompt_submit.rs`.
+//! Stop recovery uses its guessed fallback without a model call.
 
 mod codex;
 pub(super) mod payload;
 pub(super) mod project;
 mod proposal_command;
+mod recovery;
 mod scribe_command;
 mod session_end;
 mod session_start;
@@ -71,8 +73,11 @@ Examples:
   scribe hook user-prompt-submit < <payload.json>";
 
 const STOP_EXAMPLES: &str = "\
-Reads the Stop payload (session_id, transcript_path) on stdin. Prints
-nothing. Calls no model.
+Reads the Stop payload (session_id, transcript_path, optional cwd) on stdin.
+Recovers missed #scribe entry instructions from the transcript and prints
+hook JSON saying what was recorded or refused; otherwise prints nothing.
+Already captured lines are skipped. Calls no model; recovered referents use
+the guessed fallback. Session controls and settling commands are not replayed.
 
 Examples:
   scribe hook stop < <payload.json>";
@@ -101,7 +106,7 @@ pub(crate) enum HookCommand {
     /// Record each #scribe line of a typed prompt, or settle the proposal or entry it names, from the UserPromptSubmit hook's JSON on stdin
     #[command(after_help = PROMPT_EXAMPLES)]
     UserPromptSubmit(HookArgs),
-    /// Fill in the message ids of entries this session recorded and mark a session pass due, from the Stop hook's JSON on stdin
+    /// Recover missed #scribe entries, fill in message ids and mark a session pass due, from the Stop hook's JSON on stdin
     #[command(after_help = STOP_EXAMPLES)]
     Stop(HookArgs),
     /// Mark the final session pass due for a session that is on, from the SessionEnd hook's JSON on stdin

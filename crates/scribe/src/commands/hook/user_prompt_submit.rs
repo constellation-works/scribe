@@ -53,7 +53,7 @@ use scribe_core::capture::{self, Guess, Parsed, Refusal, Refused, Settling, Turn
 use scribe_core::models::ModelError;
 use scribe_core::transcript::{self, Message};
 use scribe_core::{Captured, Config, ContentFrom, Entry, Label, Models, SessionId};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 /// The hook event this replies to.
@@ -123,6 +123,33 @@ pub(super) fn run_with<M: Models>(
     models: impl FnOnce(&Config) -> M,
 ) -> Result<Output, CliError> {
     let payload: PromptPayload = payload::decode(input)?;
+    capture_prompt(&payload, ctx, models, None)
+}
+
+/// A transcript prompt's original position and already recorded lines.
+pub(super) struct Recovery<'a> {
+    pub(super) message: &'a Message,
+    pub(super) before: &'a [Message],
+    pub(super) recorded: BTreeSet<u32>,
+}
+
+/// Recover an entry-producing prompt without calling a model or replaying
+/// session controls or settling commands. Referents use the existing guessed
+/// fallback, with the same echo explaining why.
+pub(super) fn recover(
+    payload: &PromptPayload,
+    ctx: &Context,
+    recovery: Recovery<'_>,
+) -> Result<Output, CliError> {
+    capture_prompt(payload, ctx, |config| ctx.models(config), Some(recovery))
+}
+
+fn capture_prompt<M: Models>(
+    payload: &PromptPayload,
+    ctx: &Context,
+    models: impl FnOnce(&Config) -> M,
+    recovery: Option<Recovery<'_>>,
+) -> Result<Output, CliError> {
     let session = payload::session(&payload.session_id)?;
     if ctx
         .store()
@@ -134,13 +161,19 @@ pub(super) fn run_with<M: Models>(
             "session belongs to another transcript provider",
         )));
     }
-    if payload::agent_originated(&payload) {
+    if payload::agent_originated(payload) {
         return Ok(reply(Vec::new(), Vec::new()));
     }
     if let Some(switch) = scribe_core::control::parse(&payload.prompt) {
-        return Ok(super::scribe_command::run(&switch, &payload, &session, ctx));
+        if recovery.is_some() {
+            return Ok(reply(Vec::new(), Vec::new()));
+        }
+        return Ok(super::scribe_command::run(&switch, payload, &session, ctx));
     }
-    let lines = capture::lines(&payload.prompt);
+    let lines: Vec<_> = capture::lines(&payload.prompt)
+        .into_iter()
+        .filter(|(line, _)| !recovery.as_ref().is_some_and(|r| r.recorded.contains(line)))
+        .collect();
     if lines.is_empty() {
         return Ok(reply(Vec::new(), Vec::new()));
     }
@@ -180,7 +213,9 @@ pub(super) fn run_with<M: Models>(
         Err(err) => return failed_all(&err.to_string(), err.code()),
     };
 
-    let at = ctx.now();
+    let at = recovery
+        .as_ref()
+        .map_or_else(|| ctx.now(), |r| r.message.at);
     let turn = Turn {
         session: session.clone(),
         at,
@@ -194,14 +229,28 @@ pub(super) fn run_with<M: Models>(
     };
     let parsed = capture::scan(&payload.prompt, &config.tags);
     let mut referents = Referents::new(ctx, &turn, transcript, &payload.transcript_path);
+    if let Some(recovery) = &recovery {
+        referents.messages = Some(recovery.before.to_vec());
+    }
     let mut models = Some(models);
     let mut adapter: Option<M> = None;
     let mut drafts = Vec::new();
     let mut plans = Vec::new();
     for item in parsed {
+        if recovery
+            .as_ref()
+            .is_some_and(|r| r.recorded.contains(&item.line()))
+        {
+            continue;
+        }
         let plan = match item {
             Parsed::Refused(refused) => Plan::Refused(refused),
-            Parsed::Settle(settling) => Plan::Settle(settling),
+            Parsed::Settle(settling) => {
+                if recovery.is_some() {
+                    continue;
+                }
+                Plan::Settle(settling)
+            }
             Parsed::Instruction(instruction) => {
                 let mut draft = capture::draft(&instruction, &turn, &config.tags);
                 if config.tags.action(&draft.tag).is_some() {
@@ -233,14 +282,16 @@ pub(super) fn run_with<M: Models>(
                             marked,
                         })
                     } else {
-                        if adapter.is_none() {
+                        if recovery.is_none() && adapter.is_none() {
                             adapter = models.take().map(|build| build(&config));
                         }
                         let request =
                             capture::referent_request(&referent, &window, &config.models.referent);
                         let answer = match &adapter {
                             Some(adapter) => adapter.referent(&request),
-                            None => Err(ModelError::Unavailable(String::from("no model adapter"))),
+                            None => Err(ModelError::Unavailable(String::from(
+                                "Stop recovery does not call models",
+                            ))),
                         };
                         match capture::resolve(&referent, &window, answer, &turn, &config.tags) {
                             Some((mut draft, guess)) => {
@@ -274,6 +325,11 @@ pub(super) fn run_with<M: Models>(
             }
         };
         plans.push(plan);
+    }
+    if let Some(recovery) = &recovery {
+        for draft in &mut drafts {
+            draft.cite.message = Some(recovery.message.uuid.clone());
+        }
     }
     let stored = ctx.store().capture(drafts, &redactor);
 
