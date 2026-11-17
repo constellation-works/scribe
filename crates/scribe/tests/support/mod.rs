@@ -43,6 +43,23 @@ impl Fixture {
         self.dir.path().join(name)
     }
 
+    /// Create a directory tree inside the fixture with owner-only permissions.
+    pub fn create_private_dir_all(&self, path: &Path) {
+        assert!(
+            path.starts_with(self.dir.path()),
+            "directory must be inside fixture"
+        );
+        std::fs::create_dir_all(path).expect("create fixture directory tree");
+        let mut current = path;
+        loop {
+            make_private(current);
+            if current == self.dir.path() {
+                break;
+            }
+            current = current.parent().expect("fixture path has a parent");
+        }
+    }
+
     /// A command with a hermetic environment.
     pub fn cmd(&self, args: &[&str]) -> Command {
         let mut cmd = Command::new(BIN);

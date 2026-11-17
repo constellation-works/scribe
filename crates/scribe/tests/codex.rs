@@ -20,7 +20,7 @@ struct Codex {
 impl Codex {
     fn new(f: &Fixture) -> Self {
         let dir = f.home().join(".codex/sessions/2026/11/12");
-        std::fs::create_dir_all(&dir).unwrap();
+        f.create_private_dir_all(&dir);
         let path = dir.join(format!("rollout-2026-11-12T00-00-00-{ID}.jsonl"));
         Self {
             path,
@@ -41,6 +41,7 @@ impl Codex {
                 .collect::<String>(),
         )
         .unwrap();
+        support::make_private(&self.path);
     }
     fn payload(&self, event: &str, turn: &str, prompt: &str) -> Value {
         json!({"hook_event_name":event,"session_id":ID,"transcript_path":self.path,"turn_id":turn,"cwd":"/synthetic/project","prompt":prompt})
@@ -193,7 +194,7 @@ fn verified_skill_opt_in_capture_luna_pass_citations_off_and_provider_isolation(
     let claude = f
         .home()
         .join(".claude/projects/synthetic/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.jsonl");
-    std::fs::create_dir_all(claude.parent().unwrap()).unwrap();
+    f.create_private_dir_all(claude.parent().unwrap());
     let mut cmd = f
         .cmd(&["hook", "user-prompt-submit"])
         .stdin(Stdio::piped())
@@ -327,7 +328,7 @@ fn discovery_is_read_only_and_archive_final_pass_uses_optional_plugin_codex_root
     c.write();
     c.hook(&f, "Stop", "live", "");
     let archive = f.home().join(".codex/archived_sessions");
-    std::fs::create_dir(&archive).unwrap();
+    f.create_private_dir_all(&archive);
     let moved = archive.join(c.path.file_name().unwrap());
     std::fs::rename(&c.path, &moved).unwrap();
     c.path = moved;
