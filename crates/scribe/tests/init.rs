@@ -10,7 +10,7 @@ fn init_embeds_skill_preserves_unrelated_config_and_is_idempotent() {
     for provider in ["codex", "claude-code"] {
         let f = Fixture::new();
         let target = f.elsewhere("project");
-        std::fs::create_dir(&target).unwrap();
+        f.create_private_dir_all(&target);
         let program = if provider == "codex" {
             "codex"
         } else {
@@ -22,7 +22,7 @@ fn init_embeds_skill_preserves_unrelated_config_and_is_idempotent() {
         } else {
             ".claude"
         });
-        std::fs::create_dir(&config).unwrap();
+        f.create_private_dir_all(&config);
         let hooks = config.join(if provider == "codex" {
             "hooks.json"
         } else {
@@ -35,6 +35,7 @@ fn init_embeds_skill_preserves_unrelated_config_and_is_idempotent() {
                 .to_string(),
         )
         .unwrap();
+        support::make_private(&hooks);
         let run = || {
             f.cmd(&[
                 "init",
@@ -89,6 +90,7 @@ fn init_embeds_skill_preserves_unrelated_config_and_is_idempotent() {
             before
         );
         std::fs::write(&skill, "user edited skill\n").unwrap();
+        support::make_private(&skill);
         let before = support::snapshot(&target)
             .into_iter()
             .filter(|(p, _, _)| p.file_name().unwrap() != ".scribe-init.lock")
@@ -110,7 +112,7 @@ fn init_embeds_skill_preserves_unrelated_config_and_is_idempotent() {
 fn init_refuses_missing_runtime_unknown_provider_and_symlinked_artifacts() {
     let f = Fixture::new();
     let target = f.elsewhere("project");
-    std::fs::create_dir(&target).unwrap();
+    f.create_private_dir_all(&target);
     let missing = f.run(&[
         "init",
         "--provider",
@@ -131,7 +133,7 @@ fn init_refuses_missing_runtime_unknown_provider_and_symlinked_artifacts() {
     assert_eq!(invalid.status.code(), Some(2));
     let path = f.fake_program("codex", "#!/bin/sh\nexit 0\n");
     let outside = f.elsewhere("outside");
-    std::fs::create_dir(&outside).unwrap();
+    f.create_private_dir_all(&outside);
     std::os::unix::fs::symlink(&outside, target.join(".agents")).unwrap();
     let denied = f
         .cmd(&[
