@@ -96,7 +96,11 @@ As built in S6, `SessionStart` (10 s) joins them: `scribe hook session-start`
 prints `scribe: <n> proposals to review — scribe proposal list` as a
 `systemMessage` for Daniel when any proposal is open, adds one line
 counting action entries left unpicked for over an hour
-([§4.6](#46-action-tags)), and prints nothing otherwise. It reads only; it does not create `config.toml`
+([§4.6](#46-action-tags)), and, when this session is not opted in and a
+session in the same project was recorded within the last day, adds
+`scribe: this may continue <id> (recorded) — type /scribe on --from <id> to keep recording`
+([§5.4](#54-session-links), [§7](#7-consistency-routine)). It prints nothing
+otherwise. It reads only; it does not create `config.toml`
 ([§3](#3-storage)).
 
 Entry writes never go through Orbit's tool surface: the hooks call the
@@ -1314,7 +1318,15 @@ as data. The refusals and replies are in
 reasons in
 [4_decisions.md](./4_decisions.md#session-links-are-typed-stored-on-the-child-and-manual).
 Neither the hook payloads nor the transcripts carry a parent session id,
-so nothing is linked automatically.
+so nothing is linked automatically. The session-start brief can remind
+Daniel of the command, with the previous id filled in, when a new session
+is not itself opted in and an active session in the same project (the
+working directory's git remote name, else its directory name) was updated
+within the last day — the one updated most recently
+([§7](#7-consistency-routine)). The reminder writes nothing: the link
+still exists only when he types it. No line when this session is already
+opted in (its switch is on, or it already has a record), when no recorded
+session in the project is that recent, or when the store cannot be read.
 
 ### 5.5 The log: segments and sealing
 
@@ -1832,7 +1844,16 @@ repairs a crash between them
    Nothing changes on an entry yet.
 
 Daniel sees open proposals at session start (the `SessionStart` hook returns
-`scribe: 3 proposals to review — scribe proposal list`) and settles each in a
+`scribe: 3 proposals to review — scribe proposal list`). The same hook adds
+one further line when the session starting is not opted in and an active
+session in that working directory's project was recorded within the last
+day: `scribe: this may continue <id> (recorded) — type /scribe on --from <id> to keep recording`,
+naming the record updated most recently. It does not write the link
+([§5.4](#54-session-links)). There is no such line when this session is
+already opted in (its switch is on, or it already has a record), when no
+active record in the project was updated that recently, or when the
+sessions cannot be read; a read error is logged and the session still
+starts. The agent is not told. Daniel settles each open proposal in a
 typed turn: `#scribe approve p-4` sets the older entry `superseded` (or
 `retired` for a stale proposal) and records `superseded_by`; `#scribe reject
 p-4` closes it for good. `#scribe retire <entry-id>` hides an entry directly;
