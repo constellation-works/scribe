@@ -109,6 +109,11 @@ pub(super) fn agent_originated(payload: &PromptPayload) -> bool {
 #[derive(Debug, Deserialize)]
 pub(super) struct SessionStartPayload {
     pub(super) session_id: String,
+    /// Working directory, when the harness sends one. The continuation
+    /// reminder matches a recorded session in this directory's project.
+    /// Absent, the hook still starts the session and prints no reminder.
+    #[serde(default)]
+    pub(super) cwd: Option<String>,
 }
 
 /// The fields of the `SessionEnd` payload scribe uses.

@@ -10,8 +10,10 @@
 //!   `recovery.rs`, fill in message ids, and mark a switched-on session's
 //!   pass due by minutes or turns (§5.2);
 //! - `session_end.rs`: mark a switched-on session's last pass due and final;
-//! - `session_start.rs`: tell Daniel how many proposals are open (§7) and
-//!   how many action entries no consumer has picked up (§4.6).
+//! - `session_start.rs`: tell Daniel how many proposals are open (§7),
+//!   how many action entries no consumer has picked up (§4.6), and the
+//!   `/scribe on --from <id>` command when this session may continue a
+//!   recorded one (§5.4).
 //!
 //! A `#scribe approve|reject|retire|forget` line goes from
 //! `user_prompt_submit.rs` to `proposal_command.rs`, which settles a
@@ -83,9 +85,12 @@ Examples:
   scribe hook stop < <payload.json>";
 
 const SESSION_START_EXAMPLES: &str = "\
-Reads the SessionStart payload (session_id) on stdin. Prints a message for
-Daniel when proposals are open or action entries have waited over an hour
-with no pickup, and nothing otherwise. Reads only; calls no model.
+Reads the SessionStart payload (session_id, and cwd when the harness sends
+it) on stdin. Prints a message for Daniel when proposals are open, when
+action entries have waited over an hour with no pickup, or when this
+session is not opted in and a session in the same project was recorded
+within the last day. Nothing otherwise, and nothing for the agent. Reads
+only; calls no model.
 
 Examples:
   scribe hook session-start < <payload.json>";
@@ -100,7 +105,7 @@ Examples:
 /// Verbs on the `hook` noun: one per Claude Code hook event.
 #[derive(Debug, Subcommand)]
 pub(crate) enum HookCommand {
-    /// Tell Daniel how many proposals are open and action entries unpicked, from the SessionStart hook's JSON on stdin
+    /// Tell Daniel how many proposals are open, which action entries are unpicked, and when this session may continue a recorded one, from the SessionStart hook's JSON on stdin
     #[command(after_help = SESSION_START_EXAMPLES)]
     SessionStart(HookArgs),
     /// Record each #scribe line of a typed prompt, or settle the proposal or entry it names, from the UserPromptSubmit hook's JSON on stdin

@@ -297,14 +297,21 @@ for and the `list` command that shows the existing ids.
 `{"systemMessage": "...", "hookSpecificOutput": {"hookEventName":
 "UserPromptSubmit", "additionalContext": "..."}}`, or nothing at all when
 there is nothing to say (a prompt without `#scribe`, every `Stop` and
-`SessionEnd`, and a `SessionStart` with no open proposal and no stuck
-action entry). `SessionStart` with open proposals prints
+`SessionEnd`, and a `SessionStart` with no open proposal, no stuck
+action entry and no continuation to suggest). `SessionStart` with open proposals prints
 `{"systemMessage": "scribe: <n> proposals to review — scribe proposal
 list"}` (`1 proposal`), and nothing for the agent. (Format 8) When active
 action entries older than one hour have no pickup it prints, as its own
 line of the same `systemMessage` (after the proposals line when there is
 one), `scribe: <n> action entries not picked up after 1 hour (<tag> <n>,
-…) — scribe entry list --tag <tag> --status active` (`1 action entry`). It
+…) — scribe entry list --tag <tag> --status active` (`1 action entry`).
+When this session is not opted in and an active session in the same
+project was updated within the last day, it adds one more line of that
+`systemMessage` (after the stuck-entries line when there is one),
+`scribe: this may continue <id> (recorded) — type /scribe on --from <id> to keep recording`,
+naming the record updated most recently. No line when this session's
+switch is on or it already has a record, when no record in the project is
+that recent, or when the sessions cannot be read. It
 exits 0 whenever the payload parsed, including when every line was refused
 or the store could not be used, so the prompt is never blocked; a payload
 that is not valid JSON, lacks a field or has an invalid `session_id` exits 1

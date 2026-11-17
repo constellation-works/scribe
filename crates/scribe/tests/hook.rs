@@ -2,7 +2,8 @@
 //! `#scribe` capture from a fixture `UserPromptSubmit` payload, the reply
 //! shown to Daniel and the agent, idempotent replays, the transcript
 //! provenance check, the audit lines, and the `Stop` hook filling the cite's
-//! message uuid (docs/design/scribe/2_design.md §4, §10 S2).
+//! message uuid (docs/design/scribe/2_design.md §4, §10 S2), and the
+//! `SessionStart` reminder to keep recording a continuation (§5.4, §7).
 //!
 //! Every run is the built binary with a temp `HOME` whose
 //! `.claude/projects/` holds the fixture transcript; nothing touches the
@@ -1374,4 +1375,302 @@ fn a_malformed_marker_or_a_marker_on_a_refused_line_writes_no_entry() {
     assert!(reason.contains("#scribe/global"), "{message}");
     assert_eq!(entries(&fx)[0]["status"], "active");
     assert!(listed(&fx, "global").is_empty());
+}
+
+const CURRENT: &str = "3d6a8c12-4e5f-4061-c8d9-0e1f2a3b4c5d";
+const PREVIOUS: &str = "1b4e6a90-2c3d-4e5f-a6b7-8c9d0e1f2a3b";
+const NEWER: &str = "2c5f7b01-3d4e-4f60-b7c8-9d0e1f2a3b4c";
+
+/// A non-git directory whose project name is its basename, `scribe`.
+fn project_cwd(fx: &Fixture) -> PathBuf {
+    let cwd = fx.elsewhere("work/scribe");
+    let git = cwd.join(".git");
+    std::fs::create_dir_all(&git).unwrap();
+    std::fs::write(
+        git.join("config"),
+        "[remote \"origin\"]\n\turl = https://example.com/scribe.git\n",
+    )
+    .unwrap();
+    cwd
+}
+
+fn start_payload(cwd: Option<&Path>, session: &str) -> Value {
+    let mut payload = json!({
+        "session_id": session,
+        "hook_event_name": "SessionStart",
+        "source": "startup"
+    });
+    if let Some(cwd) = cwd {
+        payload["cwd"] = json!(cwd);
+    }
+    payload
+}
+
+fn continuation_line(id: &str) -> String {
+    format!(
+        "scribe: this may continue {id} (recorded) — type /scribe on --from {id} to keep recording"
+    )
+}
+
+/// One recorded session. `started` names the `sessions/<yyyy>/<mm>` directory.
+fn write_session(
+    fx: &Fixture,
+    id: &str,
+    project: &str,
+    started: &str,
+    updated: &str,
+    active: bool,
+) {
+    let year = &started[0..4];
+    let month = &started[5..7];
+    let dir = fx.root().join(format!("sessions/{year}/{month}"));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut cursor = fx.root();
+    make_private(&cursor);
+    for part in ["sessions", year, month] {
+        cursor = cursor.join(part);
+        make_private(&cursor);
+    }
+    let active = if active { "true" } else { "false" };
+    let body = format!(
+        "---
+format: 4
+kind: session
+id: {id}
+status: open
+active: {active}
+keep_active: false
+active_change: null
+cataloged_by: null
+project: {project}
+topics: []
+related: []
+links: []
+terms: []
+provider: claude-code
+host: host
+created: {started}
+updated: {updated}
+title: Continue the work
+cwd: /work/scribe
+started: {started}
+on_since: {started}
+scribed_through: 9a1b2c3d-0000-4000-8000-0000000000aa
+passes: 1
+next_open: 0
+log:
+  - {{n: 1, heading: Continue the work, first_message: 9a1b2c3d-0000-4000-8000-000000000001, last_message: 9a1b2c3d-0000-4000-8000-000000000002, from: {started}, to: {updated}, state: open, windows: 1, origin: pass, topics: [], related: []}}
+---
+## Summary
+Recorded work.
+
+## Goals
+Keep going.
+
+## Next
+- keep recording
+
+## Log
+### 1. Continue the work
+Recorded work.
+"
+    );
+    let path = dir.join(format!("{id}.md"));
+    std::fs::write(&path, body).unwrap();
+    make_private(&path);
+}
+
+fn write_switch_on(fx: &Fixture, session: &str) {
+    std::fs::create_dir_all(fx.root()).unwrap();
+    make_private(&fx.root());
+    let path = fx.root().join("control.json");
+    let body = format!(
+        r#"{{
+  "format": 1,
+  "sessions": {{
+    "{session}": {{"on": true, "since": "2026-11-16T12:00:00Z", "due": false, "final": false}}
+  }}
+}}
+"#
+    );
+    std::fs::write(&path, body).unwrap();
+    make_private(&path);
+}
+
+fn write_open_proposal(fx: &Fixture) {
+    std::fs::create_dir_all(fx.root()).unwrap();
+    make_private(&fx.root());
+    let path = fx.root().join("proposals.json");
+    std::fs::write(
+        &path,
+        r#"{
+  "format": 1,
+  "proposals": [
+    {
+      "id": "p-1",
+      "kind": "stale",
+      "older": "rituals-1",
+      "newer": null,
+      "reason": "Past its review date.",
+      "quotes": [{"entry": "rituals-1", "text": "run the full gate"}],
+      "state": "open",
+      "opened_at": "2026-11-16T12:00:00Z",
+      "settled_at": null,
+      "settled_by": null
+    }
+  ]
+}
+"#,
+    )
+    .unwrap();
+    make_private(&path);
+}
+
+fn start_message(fx: &Fixture, payload: &Value) -> String {
+    let out = hook_ok(fx, "session-start", payload);
+    let stdout = text(&out.stdout);
+    if stdout.is_empty() {
+        return String::new();
+    }
+    reply(&out)["systemMessage"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no systemMessage: {stdout}"))
+        .to_owned()
+}
+
+#[test]
+fn session_start_names_the_newest_recorded_session_and_the_command() {
+    let fx = Fixture::new();
+    let cwd = project_cwd(&fx);
+    let now_dt = time::OffsetDateTime::now_utc();
+    let earlier_dt = now_dt - time::Duration::hours(1);
+    let format = &time::format_description::well_known::Rfc3339;
+    let now = now_dt.format(format).unwrap();
+    let earlier = earlier_dt.format(format).unwrap();
+    write_session(&fx, PREVIOUS, "scribe", &earlier, &earlier, true);
+    write_session(&fx, NEWER, "scribe", &now, &now, true);
+    let alone = hook_ok(&fx, "session-start", &start_payload(Some(&cwd), CURRENT));
+    let alone_reply = reply(&alone);
+    assert_eq!(
+        alone_reply["systemMessage"].as_str(),
+        Some(continuation_line(NEWER).as_str())
+    );
+    assert!(
+        alone_reply.get("hookSpecificOutput").is_none(),
+        "the agent is not told: {alone_reply}"
+    );
+
+    write_open_proposal(&fx);
+    let before = snapshot(&fx.root());
+    let message = start_message(&fx, &start_payload(Some(&cwd), CURRENT));
+    assert_eq!(
+        message,
+        format!(
+            "scribe: 1 proposal to review — scribe proposal list\n{}",
+            continuation_line(NEWER)
+        )
+    );
+    let out = hook_ok(&fx, "session-start", &start_payload(Some(&cwd), CURRENT));
+    let parsed = reply(&out);
+    assert!(
+        parsed.get("hookSpecificOutput").is_none(),
+        "the agent is not told: {parsed}"
+    );
+    assert!(audit(&fx).is_empty(), "a reminder is not audited");
+    assert_eq!(
+        snapshot(&fx.root()),
+        before,
+        "session-start wrote the store"
+    );
+}
+
+#[test]
+fn session_start_skips_the_reminder_when_this_session_is_already_opted_in() {
+    let fx = Fixture::new();
+    let cwd = project_cwd(&fx);
+    let now = now_rfc3339();
+    write_session(&fx, PREVIOUS, "scribe", &now, &now, true);
+    write_switch_on(&fx, CURRENT);
+
+    assert_eq!(
+        start_message(&fx, &start_payload(Some(&cwd), CURRENT)),
+        "",
+        "a session that is already on is not reminded"
+    );
+
+    // A record of this session, even beside a newer one, means it is already cataloged.
+    let resumed = Fixture::new();
+    let cwd = project_cwd(&resumed);
+    write_session(&resumed, CURRENT, "scribe", &now, &now, true);
+    write_session(&resumed, NEWER, "scribe", &now, &now, true);
+    assert_eq!(
+        start_message(&resumed, &start_payload(Some(&cwd), CURRENT)),
+        ""
+    );
+}
+
+#[test]
+fn session_start_skips_the_reminder_when_no_recent_session_matches() {
+    let now = now_rfc3339();
+    let cases: &[(&str, &str, &str, bool, bool)] = &[
+        ("stale", PREVIOUS, "scribe", true, false),
+        ("other project", PREVIOUS, "other", true, true),
+        ("inactive", PREVIOUS, "scribe", false, true),
+    ];
+    for (name, id, project, active, recent) in cases {
+        let fx = Fixture::new();
+        let cwd = project_cwd(&fx);
+        let started = if *recent {
+            now.clone()
+        } else {
+            String::from("2020-01-02T00:00:00Z")
+        };
+        let updated = started.clone();
+        write_session(&fx, id, project, &started, &updated, *active);
+        assert_eq!(
+            start_message(&fx, &start_payload(Some(&cwd), CURRENT)),
+            "",
+            "{name}"
+        );
+    }
+
+    let fx = Fixture::new();
+    write_session(&fx, PREVIOUS, "scribe", &now, &now, true);
+    assert_eq!(
+        start_message(&fx, &start_payload(None, CURRENT)),
+        "",
+        "no cwd, no project to match"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn session_start_prints_no_reminder_when_the_sessions_cannot_be_read() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fx = Fixture::new();
+    let cwd = project_cwd(&fx);
+    let now = now_rfc3339();
+    write_session(&fx, PREVIOUS, "scribe", &now, &now, true);
+    write_open_proposal(&fx);
+    let sessions = fx.root().join("sessions");
+    std::fs::set_permissions(&sessions, std::fs::Permissions::from_mode(0o000)).unwrap();
+    struct Restore<'a>(&'a Path);
+    impl Drop for Restore<'_> {
+        fn drop(&mut self) {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(self.0, std::fs::Permissions::from_mode(0o700));
+            }
+        }
+    }
+    let _restore = Restore(&sessions);
+
+    let message = start_message(&fx, &start_payload(Some(&cwd), CURRENT));
+    assert_eq!(
+        message, "scribe: 1 proposal to review — scribe proposal list",
+        "an unreadable session store adds no continuation, and the hook still starts"
+    );
+    assert!(audit(&fx).is_empty(), "a failed read is not audited");
 }
