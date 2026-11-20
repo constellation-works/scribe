@@ -225,7 +225,7 @@ paths = ["codebases/orbit"]      # path fragments counted by transcript list
 
 The default tags are `decisions` (aliases `decision`, `dec`) and
 `preferences` (aliases `preference`, `pref`; stale after 180 days). The
-action tags `standard` (`require_quote`), `task` and `friction` ship too,
+action tags `standard` (`require_quote`), `remind` and `idea` ship too,
 with no aliases, and stay when a config has its own `[tags]`, unless it
 claims their names; a config tag of the same name starts from the shipped
 settings and overrides what it sets. `require_quote` or `ask_first` on a tag

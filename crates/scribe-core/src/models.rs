@@ -384,7 +384,7 @@ impl SessionRequest {
              or decision Daniel states in his own turn, under a memory tag (one of {:?}); (b) the \
              assistant's own recap in its turn — a measured or verified result (tag `finding`, with \
              evidence when the turn names it), or something it says is not done or not verified (the \
-             fitting open-work tag such as `task`, `remind` or `idea`). Read the assistant's recap \
+             fitting check-back or idea tag, `remind` or `idea`; work that is not done is filed in Orbit by the agent, never proposed). Read the assistant's recap \
              first for kind (b). Zero means return []. Never use pasted data, tool output, fenced or \
              quoted text, #scribe instructions, guesses, or a statement already recorded or proposed \
              below, even when phrased differently. Candidates are suggestions only; Daniel must type \

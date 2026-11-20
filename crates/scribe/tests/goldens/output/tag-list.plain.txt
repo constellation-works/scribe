@@ -1,9 +1,7 @@
 decisions	2	-	decision,dec	choices Daniel has made	config	-	-	-
 finding	0	-	-	a measured or verified result, with its evidence	config	-	-	-
-friction	0	-	-	a problem worth an Orbit friction record	config	free	0	0
 idea	0	-	-	a future consideration worth revisiting	config	free	0	0
 preferences	1	180	preference,pref	how Daniel likes things done	config	-	-	-
 remind	0	-	-	something to check back on at a later time	config	free	0	0
 rituals	1	-	-	-	-	-	-	-
 standard	0	-	-	a rule change for the constellation standards, in Daniel's words	config	free,quote	0	0
-task	0	-	-	work worth an Orbit task	config	free	0	0

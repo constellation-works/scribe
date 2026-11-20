@@ -42,9 +42,7 @@ env = ["GITHUB_TOKEN", "ANTHROPIC_API_KEY"]
     let names: Vec<&str> = config.tags.tags().iter().map(|t| t.name.as_str()).collect();
     assert_eq!(
         names,
-        [
-            "finding", "friction", "idea", "remind", "rituals", "standard", "task"
-        ],
+        ["finding", "idea", "remind", "rituals", "standard"],
         "a [tags] table replaces the defaults but keeps the shipped action tags"
     );
     assert_eq!(
@@ -186,7 +184,16 @@ fn action_tags_come_from_config_and_shipped_ones_can_be_retuned() {
             .as_deref(),
         Some("a rule change for the constellation standards, in Daniel's words")
     );
-    assert!(action("task").is_some() && action("friction").is_some());
+    assert!(action("remind").is_some() && action("idea").is_some());
+    assert!(
+        action("task").is_none() && action("friction").is_none(),
+        "task and friction no longer ship"
+    );
+    let declared = Config::parse("[tags.task]\naction = true\n").unwrap();
+    assert!(
+        declared.tags.action(&"task".parse().unwrap()).is_some(),
+        "a config can still declare task as an action tag"
+    );
     assert!(action("notes").is_none());
 
     let err = Config::parse("[tags.notes]\nrequire_quote = true\n").unwrap_err();

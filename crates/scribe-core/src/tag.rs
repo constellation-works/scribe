@@ -5,7 +5,7 @@
 //! `tags.json`; config claims take precedence. Without a config the defaults below apply: `decisions` and
 //! `preferences` (docs/design/scribe/4_decisions.md, "Only decisions and
 //! preferences ship by default"), plus the shipped action tags `standard`,
-//! `task`, `friction`, `remind` and `idea` and the shipped memory tag
+//! `remind` and `idea` and the shipped memory tag
 //! `finding`, which a config with its own tags keeps unless it claims their
 //! names ("Action tags are marked in config, and three ship"; "Findings are
 //! scribe entries with no worker").
@@ -79,12 +79,7 @@ impl ActionTag {
 }
 
 /// The action tags scribe ships: `(name, description, require_quote)`.
-pub const SHIPPED_ACTION_TAGS: [(&str, &str, bool); 5] = [
-    (
-        "friction",
-        "a problem worth an Orbit friction record",
-        false,
-    ),
+pub const SHIPPED_ACTION_TAGS: [(&str, &str, bool); 3] = [
     ("idea", "a future consideration worth revisiting", false),
     (
         "remind",
@@ -96,7 +91,6 @@ pub const SHIPPED_ACTION_TAGS: [(&str, &str, bool); 5] = [
         "a rule change for the constellation standards, in Daniel's words",
         true,
     ),
-    ("task", "work worth an Orbit task", false),
 ];
 
 /// The shipped `finding` memory tag's name.

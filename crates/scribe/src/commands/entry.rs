@@ -38,7 +38,7 @@ Examples:
 const ADD_EXAMPLES: &str = "\
 Examples:
   scribe entry add --tag decisions --author opus 'Use the stable API'
-  scribe entry add --tag task --author opus --related session:<id> 'Add a --dry-run flag to the sync'
+  scribe entry add --tag remind --author opus --related session:<id> 'Re-run the sync benchmark after the cache lands'
   scribe entry add --tag finding --author opus --related session:<id> --evidence 'exp-<id>' 'The mix alone predicts a 7-point gap'
   scribe entry add --tag standard --author opus --related session:<id> --quote '<quoted words>' 'Name the unit in every size'";
 

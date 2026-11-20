@@ -29,7 +29,7 @@ session activate <id> --author <name> [--pin|--unpin]` shows one again or
 exempts it from the scan.
 
 Action tags hold work items for consumers outside scribe instead of
-Daniel's memory: `standard`, `task` and `friction` ship, and config marks
+Daniel's memory: `standard`, `remind` and `idea` ship, and config marks
 any other tag `action = true`. A `#scribe` line under one also keeps the
 transcript turns since the previous `#scribe` line (at most 40 turns and
 12,000 characters, cut from the oldest). Agents write them with `entry add`
@@ -47,7 +47,7 @@ scribe entry list --since 2026-11-01 --author-kind daniel --related task:<id>
 scribe entry list --json | jq -r '.entries[].content'
 scribe entry show <id>                  # or a unique prefix of at least four characters
 scribe entry add --tag decisions --author opus 'Keep the API stable.'
-scribe entry add --tag task --author opus --related session:<id> 'Add a --dry-run flag'
+scribe entry add --tag remind --author opus --related session:<id> 'Re-run the sync benchmark after the cache lands'
 scribe entry list --tag standard --after 2026-11-15T09:00:00Z --window --json
 scribe entry pickup <id> --author standards-intake --result task:<id>
 scribe entry update <id> --author opus --add-topic api

@@ -34,13 +34,13 @@ fn pickup(entry: &Entry, rejected: bool, at_minutes: i64) -> Pickup {
 
 #[test]
 fn an_agent_entry_is_inside_its_cancel_window_until_it_ends() {
-    let e = agent("task-1");
+    let e = agent("remind-1");
     let fresh = action::state(&e, &[], T0 + CANCEL_WINDOW - Duration::seconds(1));
     assert!(!fresh.past_cancel_window);
     assert_eq!(fresh.cancel_window_ends, Some(T0 + CANCEL_WINDOW));
     assert!(action::state(&e, &[], T0 + CANCEL_WINDOW).past_cancel_window);
 
-    let daniels = entry("task-2", T0);
+    let daniels = entry("remind-2", T0);
     let state = action::state(&daniels, &[], T0);
     assert!(state.past_cancel_window, "Daniel's own entry has no window");
     assert_eq!(state.cancel_window_ends, None);
@@ -48,8 +48,8 @@ fn an_agent_entry_is_inside_its_cancel_window_until_it_ends() {
 
 #[test]
 fn state_reports_its_own_pickups_oldest_first_and_any_rejection() {
-    let e = agent("task-1");
-    let other = agent("task-2");
+    let e = agent("remind-1");
+    let other = agent("remind-2");
     let pickups = [
         pickup(&e, true, 30),
         pickup(&other, false, 10),
@@ -66,12 +66,12 @@ fn state_reports_its_own_pickups_oldest_first_and_any_rejection() {
 #[test]
 fn stuck_counts_active_unpicked_action_entries_past_the_age_per_tag() {
     let tags = TagTable::defaults();
-    let mut retired = entry("task-3", T0);
+    let mut retired = entry("remind-3", T0);
     retired.status = EntryStatus::Retired;
-    let picked = entry("friction-1", T0);
+    let picked = entry("idea-1", T0);
     let entries = [
-        entry("task-1", T0),
-        entry("task-2", T0 + Duration::minutes(30)),
+        entry("remind-1", T0),
+        entry("remind-2", T0 + Duration::minutes(30)),
         retired,
         picked.clone(),
         entry("standard-1", T0),
@@ -82,7 +82,7 @@ fn stuck_counts_active_unpicked_action_entries_past_the_age_per_tag() {
     let view: Vec<(&str, usize)> = counts.iter().map(|(t, n)| (t.as_str(), *n)).collect();
     assert_eq!(
         view,
-        [("standard", 1), ("task", 1)],
+        [("remind", 1), ("standard", 1)],
         "too young, retired, picked up and memory entries are not stuck"
     );
     assert!(action::stuck(&entries, &tags, &[], T0).is_empty());
@@ -91,19 +91,19 @@ fn stuck_counts_active_unpicked_action_entries_past_the_age_per_tag() {
 #[test]
 fn tag_counts_count_retired_and_rejected_agent_entries_per_action_tag() {
     let tags = TagTable::defaults();
-    let mut retired = agent("task-1");
+    let mut retired = agent("remind-1");
     retired.status = EntryStatus::Retired;
-    let mut forgotten = agent("task-2");
+    let mut forgotten = agent("remind-2");
     forgotten.status = EntryStatus::Forgotten;
-    let rejected = agent("friction-1");
-    let mut daniels = entry("task-3", T0);
+    let rejected = agent("idea-1");
+    let mut daniels = entry("remind-3", T0);
     daniels.status = EntryStatus::Retired;
     let mut memory = agent("decisions-1");
     memory.status = EntryStatus::Retired;
     let entries = [retired, forgotten, rejected.clone(), daniels, memory];
     let counts = action::tag_counts(&entries, &tags, &[pickup(&rejected, true, 10)]);
     let view: Vec<(&str, (usize, usize))> = counts.iter().map(|(t, n)| (t.as_str(), *n)).collect();
-    assert_eq!(view, [("friction", (0, 1)), ("task", (2, 0))]);
+    assert_eq!(view, [("idea", (0, 1)), ("remind", (2, 0))]);
 }
 
 #[test]
@@ -143,7 +143,7 @@ fn a_quote_is_found_only_in_daniels_own_typed_words() {
 #[test]
 fn ask_leaves_action_entries_out_unless_the_scope_names_their_tag() {
     let tags = TagTable::defaults();
-    let entries = [entry("decisions-1", T0), entry("task-1", T0)];
+    let entries = [entry("decisions-1", T0), entry("remind-1", T0)];
     let corpus = Corpus {
         entries: &entries,
         sessions: &[],
@@ -163,9 +163,9 @@ fn ask_leaves_action_entries_out_unless_the_scope_names_their_tag() {
         ids(ask::without_actions(&question, corpus)),
         ["decisions-1"]
     );
-    question.scope.tags = vec![name("task")];
+    question.scope.tags = vec![name("remind")];
     assert_eq!(
         ids(ask::without_actions(&question, corpus)),
-        ["decisions-1", "task-1"]
+        ["decisions-1", "remind-1"]
     );
 }

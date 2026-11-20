@@ -175,7 +175,7 @@ pub struct Proposal {
 #[serde(deny_unknown_fields)]
 pub struct EntryCandidate {
     /// Suggested canonical tag: a memory tag for Daniel's words, or the
-    /// fitting tag (`finding`, `task`, `remind`, `idea`, ...) for an
+    /// fitting tag (`finding`, `remind`, `idea`, ...) for an
     /// assistant turn.
     pub tag: TagName,
     /// Whose turn `quote` is verbatim from. Approval of a `user` candidate

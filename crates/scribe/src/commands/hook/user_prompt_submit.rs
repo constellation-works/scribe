@@ -21,7 +21,7 @@
 //! and the echo says it was guessed. A session with no earlier message has
 //! nothing to point at and the line is refused as `no_referent`.
 //!
-//! A line under an action tag (`#scribe standard: …`, `task`, `friction`
+//! A line under an action tag (`#scribe standard: …`, `remind`, `idea`
 //! or any tag config marks `action = true`) also stores a transcript
 //! window on its entry: the turns since the previous `#scribe` line of the
 //! session, then the prompt, capped and cut from the oldest turn
