@@ -6,7 +6,7 @@ use std::num::NonZeroUsize;
 fn criteria_are_the_flags_that_set_each_filter_and_never_the_limit() {
     assert!(criteria(&EntryFilter::default()).is_empty());
     let filter = EntryFilter {
-        tag: Some("decisions".parse().unwrap()),
+        tag: Some("preferences".parse().unwrap()),
         status: Some(EntryStatus::Retired),
         project: Some("orbit".parse().unwrap()),
         topics: vec!["ci".parse().unwrap(), "release".parse().unwrap()],
@@ -19,7 +19,7 @@ fn criteria_are_the_flags_that_set_each_filter_and_never_the_limit() {
     assert_eq!(
         criteria(&filter),
         [
-            "--tag decisions",
+            "--tag preferences",
             "--status retired",
             "--project orbit",
             "--topic ci",

@@ -26,19 +26,19 @@ use time::{Date, OffsetDateTime};
 pub enum EntryError {
     /// The tag had characters outside `a-z`, `0-9` and `-`, or a bad length.
     #[error(
-        "invalid tag '{0}': use 1-{max} lowercase letters or digits in words joined by '-', such as decisions",
+        "invalid tag '{0}': use 1-{max} lowercase letters or digits in words joined by '-', such as preferences",
         max = TagName::MAX_CHARS
     )]
     InvalidTag(String),
     /// The id was not `<tag>-<n>` with a positive `n`.
-    #[error("invalid entry id '{0}': expected <tag>-<n>, such as decisions-12")]
+    #[error("invalid entry id '{0}': expected <tag>-<n>, such as preferences-12")]
     InvalidId(String),
     /// The status was not one of [`EntryStatus::NAMES`].
     #[error("invalid entry status '{0}': expected one of active, superseded, retired, forgotten")]
     InvalidStatus(String),
 }
 
-/// A tag's name: where an entry goes (`decisions`, `preferences`).
+/// A tag's name: where an entry goes (`preferences`, `finding`).
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct TagName(String);
@@ -92,10 +92,10 @@ impl fmt::Display for TagName {
 /// ```
 /// use scribe_core::EntryId;
 ///
-/// let id: EntryId = "decisions-12".parse()?;
-/// assert_eq!(id.tag().as_str(), "decisions");
+/// let id: EntryId = "preferences-12".parse()?;
+/// assert_eq!(id.tag().as_str(), "preferences");
 /// assert_eq!(id.number(), 12);
-/// assert!("decisions-0".parse::<EntryId>().is_err(), "numbers start at 1");
+/// assert!("preferences-0".parse::<EntryId>().is_err(), "numbers start at 1");
 /// # Ok::<(), scribe_core::EntryError>(())
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

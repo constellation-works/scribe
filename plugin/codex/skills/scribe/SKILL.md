@@ -1,6 +1,6 @@
 ---
 name: scribe
-description: Read recorded decisions, preferences and opted-in session history with citations; write clearly attributed agent notes, and explain or initialize scribe capture for Codex or Claude Code. Use at the start of every session in a project to read the user's global and project preferences and brief them on that project's last cataloged session, and while working to suggest entries, tags and stale-session deactivations.
+description: Read recorded preferences and opted-in session history with citations; write clearly attributed agent notes, and explain or initialize scribe capture for Codex or Claude Code. Use at the start of every session in a project to read the user's global and project preferences and brief them on that project's last cataloged session, and while working to suggest entries, tags and stale-session deactivations.
 ---
 
 Use the installed `scribe` binary. The store is `$SCRIBE_ROOT`, otherwise
@@ -49,8 +49,10 @@ right after.
    and the same with `--project <project>`. `--tag` takes the tag's name as
    `scribe tag list` prints it, not an alias. Follow them for the whole
    session; where a project preference and a global one disagree, the
-   project's wins. Read `decisions` the same way when the task touches
-   something decided before. Don't recite the entries in the brief, and
+   project's wins. A decision is not in these entries: it is recorded on its
+   Orbit task with the human's words quoted, so find it with `orbit search`
+   or on the task, and in the feature's `4_decisions.md` when it is a
+   design decision. Don't recite the entries in the brief, and
    leave action-tag entries (below) out of it.
 3. Run `scribe session list --project <project> --json`. The list is oldest
    first and `--limit` keeps the oldest, so take the record with the newest
@@ -83,7 +85,7 @@ and grouped, never as a gate on the work:
 
 - **Entries.** When this session is on (the hook acknowledged `/scribe on`,
   or its `session show <id> --json` reports `on: true`), stop offering
-  ready-to-type lines for preferences and decisions. The session pass now
+  ready-to-type lines for preferences. The session pass now
   proposes unmarked statements from the human's own turns, with the exact
   quote, source turn and suggested memory tag. It also reads your own
   recaps: a measured result it proposes as a `finding`, something you said
@@ -97,13 +99,16 @@ and grouped, never as a gate on the work:
   the human's words. No entry exists before approval. Action tags and
   findings you write yourself follow their separate rules below.
   When the session is off or its state is unknown, and the human states a
-  decision, preference or rule worth keeping, offer a ready-to-type
+  standing preference or rule worth keeping, offer a ready-to-type
   `#scribe <tag>: <words>` line in their words. When it applies in every repository, offer
   `#scribe/global <tag>: <words>` instead (the same `/global` opener works
   on `#scribe add <words> to <tag>` and `#scribe add this to <tag>`). Only
   their typed line records their words, so never write it for them.
   Something you established yourself can become an agent entry under your
   own `--author`, once they agree.
+  Don't offer a line for a choice about a piece of work. Record a decision
+  on its Orbit task with the human's words quoted, or in the feature's
+  `4_decisions.md` when it is a design decision.
 - **Tags.** When `scribe tag list --json` has no fitting tag for a
   recurring theme in the entries or sessions, propose a name, a one-line
   description and any aliases. Run `scribe tag add` under your own
@@ -154,7 +159,7 @@ about them; `question ask` skips them unless its scope names their tag.
   the entry; file the problem in Orbit with `orbit.friction`.
 - **An `ask-first` tag**: ask the human before writing, and write only on
   their yes.
-- **Their preferences and decisions stay theirs.** In an on session, let
+- **Their preferences stay theirs.** In an on session, let
   the pass propose them for typed approval. In an off session or when its
   state is unknown, offer a `#scribe <tag>: <words>` line for them to type.
   Never write their entry yourself.

@@ -75,7 +75,7 @@ fn request(budget: Duration) -> ReferentRequest {
     ReferentRequest {
         model: String::from("claude-haiku-5-5"),
         budget,
-        instruction: String::from("#scribe add this to decisions"),
+        instruction: String::from("#scribe add this to preferences"),
         candidates: vec![Candidate {
             uuid: String::from("a-1"),
             role: Speaker::Assistant,

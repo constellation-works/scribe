@@ -78,7 +78,7 @@ struct Setup {
 }
 
 impl Setup {
-    /// A store of two contradicting decisions and a ritual past its review
+    /// A store of two contradicting preferences and a ritual past its review
     /// date, and a fake `claude` that labels pair 1 a contradiction.
     fn new() -> Self {
         let fx = Fixture::new();
@@ -93,8 +93,20 @@ impl Setup {
             path,
             cwd,
         };
-        setup.entry("decisions-1", "2026-01-02T03:04:05Z", OLDER, "active", None);
-        setup.entry("decisions-2", "2026-02-02T03:04:05Z", NEWER, "active", None);
+        setup.entry(
+            "preferences-1",
+            "2026-01-02T03:04:05Z",
+            OLDER,
+            "active",
+            None,
+        );
+        setup.entry(
+            "preferences-2",
+            "2026-02-02T03:04:05Z",
+            NEWER,
+            "active",
+            None,
+        );
         setup.entry(
             "rituals-1",
             "2026-01-05T03:04:05Z",
@@ -269,7 +281,7 @@ fn a_scan_proposes_a_contradiction_and_a_stale_entry_once() {
     assert_eq!(p1["kind"], "supersedes");
     assert_eq!(
         (&p1["older"], &p1["newer"]),
-        (&json!("decisions-1"), &json!("decisions-2"))
+        (&json!("preferences-1"), &json!("preferences-2"))
     );
     assert_eq!(p1["state"], "open");
     let quotes: Vec<&str> = p1["quotes"]
@@ -286,7 +298,7 @@ fn a_scan_proposes_a_contradiction_and_a_stale_entry_once() {
     );
 
     // The scan changes no entry.
-    assert_eq!(s.entry_json("decisions-1")["status"], "active");
+    assert_eq!(s.entry_json("preferences-1")["status"], "active");
     assert_eq!(s.entry_json("rituals-1")["status"], "active");
 
     // One audit line per proposal opened.
@@ -326,13 +338,13 @@ fn settling_from_a_prompt_approves_rejects_retires_and_forgets() {
 
     let echo = s.type_prompt("Settling.\n#scribe approve p-1\n#scribe reject p-2");
     assert!(
-        echo.contains("approved p-1 — decisions-1 is superseded by decisions-2"),
+        echo.contains("approved p-1 — preferences-1 is superseded by preferences-2"),
         "{echo}"
     );
     assert!(echo.contains("rejected p-2"), "{echo}");
-    let older = s.entry_json("decisions-1");
+    let older = s.entry_json("preferences-1");
     assert_eq!(older["status"], "superseded");
-    assert_eq!(older["superseded_by"], "decisions-2");
+    assert_eq!(older["superseded_by"], "preferences-2");
     let p1 = s.proposal("p-1");
     assert_eq!(p1["state"], "approved");
     assert_eq!(p1["settled_by"]["session"], SESSION);
@@ -365,9 +377,9 @@ fn settling_from_a_prompt_approves_rejects_retires_and_forgets() {
     let last = s.audit().pop().unwrap();
     assert_eq!(last["error_code"], "proposal_settled");
 
-    let echo = s.type_prompt("#scribe retire decisions-2");
-    assert!(echo.contains("retired decisions-2"), "{echo}");
-    let retired = s.entry_json("decisions-2");
+    let echo = s.type_prompt("#scribe retire preferences-2");
+    assert!(echo.contains("retired preferences-2"), "{echo}");
+    let retired = s.entry_json("preferences-2");
     assert_eq!(retired["status"], "retired");
     assert_eq!(retired["content"], NEWER, "retire keeps the text");
 
@@ -392,7 +404,7 @@ fn settling_from_a_prompt_approves_rejects_retires_and_forgets() {
     let echo = s.type_prompt("#scribe retire rituals-1");
     assert!(echo.contains("refused"), "{echo}");
     assert_eq!(s.audit().pop().unwrap()["error_code"], "entry_not_active");
-    let echo = s.type_prompt("#scribe approve decisions-1");
+    let echo = s.type_prompt("#scribe approve preferences-1");
     assert!(echo.contains("takes a proposal id"), "{echo}");
 }
 
@@ -400,7 +412,7 @@ fn settling_from_a_prompt_approves_rejects_retires_and_forgets() {
 fn a_scan_reapplies_an_approval_whose_entry_is_still_active() {
     let s = Setup::new();
     s.write_proposals(&json!([{
-        "id": "p-1", "kind": "supersedes", "older": "decisions-1", "newer": "decisions-2",
+        "id": "p-1", "kind": "supersedes", "older": "preferences-1", "newer": "preferences-2",
         "reason": "replaced", "quotes": [], "state": "approved",
         "opened_at": "2026-10-12T06:00:00Z", "settled_at": "2026-10-13T08:00:00Z",
         "settled_by": {"session": SESSION, "message": null, "at": "2026-10-13T08:00:00Z",
@@ -409,23 +421,23 @@ fn a_scan_reapplies_an_approval_whose_entry_is_still_active() {
     let report = s.scan();
     assert_eq!(
         report["reapplied"],
-        json!([{"proposal": "p-1", "entry": "decisions-1", "status": "superseded"}])
+        json!([{"proposal": "p-1", "entry": "preferences-1", "status": "superseded"}])
     );
     assert_eq!(
         ids(&report["opened"]),
         ["p-2"],
         "the pair is settled; the ritual is stale"
     );
-    let older = s.entry_json("decisions-1");
+    let older = s.entry_json("preferences-1");
     assert_eq!(older["status"], "superseded");
-    assert_eq!(older["superseded_by"], "decisions-2");
+    assert_eq!(older["superseded_by"], "preferences-2");
     assert_eq!(s.calls(), 0, "the only pair is settled: no model call");
     let targets: Vec<String> = s
         .audit()
         .iter()
         .map(|l| l["target"].as_str().unwrap().to_owned())
         .collect();
-    assert_eq!(targets, ["decisions-1", "p-2"]);
+    assert_eq!(targets, ["preferences-1", "p-2"]);
     assert!(s.scan()["reapplied"].as_array().unwrap().is_empty(), "once");
 }
 
@@ -726,7 +738,7 @@ fn session_files() -> [SessionFile<'static>; 5] {
 /// Its words name both digest sessions so each pairs by token overlap.
 fn removal_entry(s: &Setup) {
     s.entry(
-        "decisions-9",
+        "preferences-9",
         &rfc3339(days_ago(5)),
         "The digest feature was ripped out and replaced by the weekly \
          report; built the digest settings.",
@@ -767,7 +779,7 @@ fn a_scan_deactivates_old_sessions_and_removed_features_but_never_a_pinned_one()
     );
     assert_eq!(deactivated[1]["session"], "s-a-digest");
     assert_eq!(deactivated[1]["route"], "removed");
-    assert_eq!(deactivated[1]["cite"], "decisions-9");
+    assert_eq!(deactivated[1]["cite"], "preferences-9");
     assert_eq!(deactivated[1]["quote"], "ripped out and replaced");
     assert_eq!(report["removal_pairs_judged"], 2);
     assert_eq!(report["removal_pairs_left"], 0);
@@ -782,7 +794,7 @@ fn a_scan_deactivates_old_sessions_and_removed_features_but_never_a_pinned_one()
     let digest = s.session_json("s-a-digest");
     assert_eq!(digest["active"], false);
     assert_eq!(digest["active_change"]["route"], "removed");
-    assert_eq!(digest["active_change"]["cite"], "decisions-9");
+    assert_eq!(digest["active_change"]["cite"], "preferences-9");
     assert_eq!(
         digest["active_change"]["reason"],
         "The weekly report replaced the digest."
@@ -813,7 +825,7 @@ fn a_scan_deactivates_old_sessions_and_removed_features_but_never_a_pinned_one()
         .filter(|l| l.starts_with("deactivated"))
         .map(str::to_owned)
         .collect();
-    assert_eq!(rows, ["deactivated\ts-b-digest\tremoved\tdecisions-9\t-"]);
+    assert_eq!(rows, ["deactivated\ts-b-digest\tremoved\tpreferences-9\t-"]);
 }
 
 #[test]

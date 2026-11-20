@@ -70,13 +70,13 @@ impl WithState for Proposal {
 
 fn store() -> Vec<Entry> {
     vec![
-        with("decisions-1", 0, "squash-merge agent PRs into agent-main"),
+        with("preferences-1", 0, "squash-merge agent PRs into agent-main"),
         with(
-            "decisions-2",
+            "preferences-2",
             5,
             "rebase-merge agent PRs into agent-main, never squash",
         ),
-        with("decisions-3", 6, "the release train leaves on Thursdays"),
+        with("preferences-3", 6, "the release train leaves on Thursdays"),
         with("rituals-1", 1, "squash-merge agent PRs into agent-main"),
     ]
 }
@@ -89,11 +89,11 @@ fn candidates_pair_overlapping_entries_of_one_tag_only() {
         .iter()
         .map(|p| (p.older.id.to_string(), p.newer.id.to_string()))
         .collect();
-    // rituals-1 says the same words as decisions-1 but in another tag;
-    // decisions-3 shares no words with the others.
+    // rituals-1 says the same words as preferences-1 but in another tag;
+    // preferences-3 shares no words with the others.
     assert_eq!(
         pairs,
-        [(String::from("decisions-1"), String::from("decisions-2"))]
+        [(String::from("preferences-1"), String::from("preferences-2"))]
     );
     assert_eq!(found.over_cap, 0);
     assert!(found.stale.is_empty());
@@ -107,11 +107,11 @@ fn candidates_pair_entries_sharing_a_topic_and_cap_newest_first() {
     entries[2].topics = topic;
     let found = consistency::candidates(&entries, &[], date!(2026 - 11 - 02), 1);
     assert_eq!(found.pairs.len(), 1);
-    assert_eq!(found.pairs[0].older.id, id("decisions-2"));
-    assert_eq!(found.pairs[0].newer.id, id("decisions-3"));
+    assert_eq!(found.pairs[0].older.id, id("preferences-2"));
+    assert_eq!(found.pairs[0].newer.id, id("preferences-3"));
     assert_eq!(
         found.over_cap, 1,
-        "decisions-1/decisions-2 waits for the next scan"
+        "preferences-1/preferences-2 waits for the next scan"
     );
 }
 
@@ -129,11 +129,11 @@ fn a_pair_or_stale_entry_with_a_proposal_in_any_state_is_not_offered_again() {
             proposal(
                 "p-1",
                 ProposalKind::Supersedes,
-                "decisions-2",
-                Some("decisions-1"),
+                "preferences-2",
+                Some("preferences-1"),
                 state,
             ),
-            proposal("p-2", ProposalKind::Stale, "decisions-3", None, state),
+            proposal("p-2", ProposalKind::Stale, "preferences-3", None, state),
         ];
         let found = consistency::candidates(&entries, &proposals, date!(2026 - 11 - 02), 40);
         assert!(found.pairs.is_empty(), "{state:?}");
@@ -150,7 +150,7 @@ fn candidates_find_active_entries_due_for_review_and_skip_hidden_ones() {
     entries[0].status = EntryStatus::Retired;
     let found = consistency::candidates(&entries, &[], date!(2026 - 11 - 02), 40);
     let stale: Vec<String> = found.stale.iter().map(|e| e.id.to_string()).collect();
-    assert_eq!(stale, ["decisions-3"]);
+    assert_eq!(stale, ["preferences-3"]);
     assert!(found.pairs.is_empty(), "a retired entry pairs with nothing");
 }
 
@@ -169,7 +169,7 @@ fn judge_keeps_a_contradiction_only_with_both_quotes_verbatim() {
     let pairs = consistency::candidates(&store(), &[], date!(2026 - 11 - 02), 40).pairs;
     let request = consistency::request("a-model", &pairs);
     assert_eq!(request.pairs[0].pair, "1");
-    assert_eq!(request.pairs[0].older.id, "decisions-1");
+    assert_eq!(request.pairs[0].older.id, "preferences-1");
 
     let good = judgement(
         "1",
@@ -186,8 +186,8 @@ fn judge_keeps_a_contradiction_only_with_both_quotes_verbatim() {
     assert_eq!(judged.drafts.len(), 1);
     let draft = &judged.drafts[0];
     assert_eq!(draft.kind, ProposalKind::Supersedes);
-    assert_eq!(draft.older, id("decisions-1"));
-    assert_eq!(draft.newer, Some(id("decisions-2")));
+    assert_eq!(draft.older, id("preferences-1"));
+    assert_eq!(draft.newer, Some(id("preferences-2")));
     assert_eq!(draft.quotes.len(), 2);
 
     for bad in [
@@ -241,7 +241,7 @@ fn judge_keeps_a_contradiction_only_with_both_quotes_verbatim() {
 
 #[test]
 fn a_stale_draft_quotes_the_start_of_the_entry() {
-    let mut e = with("decisions-3", 6, "the release train leaves on Thursdays");
+    let mut e = with("preferences-3", 6, "the release train leaves on Thursdays");
     e.review_after = Some(date!(2026 - 11 - 01));
     let draft = consistency::stale(&e);
     assert_eq!(draft.kind, ProposalKind::Stale);
@@ -259,8 +259,8 @@ fn approve_supersedes_the_older_entry_and_is_idempotent() {
     let mut proposals = vec![proposal(
         "p-1",
         ProposalKind::Supersedes,
-        "decisions-1",
-        Some("decisions-2"),
+        "preferences-1",
+        Some("preferences-2"),
         ProposalState::Open,
     )];
     let done = consistency::settle(
@@ -274,16 +274,16 @@ fn approve_supersedes_the_older_entry_and_is_idempotent() {
         done,
         Settled::Approved {
             proposal: pid("p-1"),
-            entry: id("decisions-1"),
+            entry: id("preferences-1"),
             status: EntryStatus::Superseded,
-            by: Some(id("decisions-2")),
+            by: Some(id("preferences-2")),
         }
     );
     assert_eq!(proposals[0].state, ProposalState::Approved);
     assert_eq!(proposals[0].settled_at, Some(NOW));
     assert_eq!(proposals[0].settled_by, Some(cite()));
     assert_eq!(entries[0].status, EntryStatus::Superseded);
-    assert_eq!(entries[0].superseded_by, Some(id("decisions-2")));
+    assert_eq!(entries[0].superseded_by, Some(id("preferences-2")));
     assert_eq!(entries[0].updated, NOW);
     assert_eq!(entries[1].status, EntryStatus::Active);
 
@@ -311,7 +311,7 @@ fn approving_a_stale_proposal_retires_its_entry() {
     let mut proposals = vec![proposal(
         "p-3",
         ProposalKind::Stale,
-        "decisions-3",
+        "preferences-3",
         None,
         ProposalState::Open,
     )];
@@ -333,8 +333,8 @@ fn approve_refuses_when_the_older_entry_is_no_longer_active() {
     let mut proposals = vec![proposal(
         "p-1",
         ProposalKind::Supersedes,
-        "decisions-1",
-        Some("decisions-2"),
+        "preferences-1",
+        Some("preferences-2"),
         ProposalState::Open,
     )];
     let done = consistency::settle(
@@ -363,8 +363,8 @@ fn reject_closes_the_proposal_and_leaves_the_entries() {
     let mut proposals = vec![proposal(
         "p-1",
         ProposalKind::Supersedes,
-        "decisions-1",
-        Some("decisions-2"),
+        "preferences-1",
+        Some("preferences-2"),
         ProposalState::Open,
     )];
     let done = consistency::settle(
@@ -397,20 +397,20 @@ fn retire_hides_an_active_entry_only() {
     let mut entries = store();
     let mut proposals = Vec::new();
     let done = consistency::settle(
-        &Settle::Retire(id("decisions-3")),
+        &Settle::Retire(id("preferences-3")),
         &mut proposals,
         &mut entries,
         &cite(),
         NOW,
     );
-    assert_eq!(done, Settled::Retired(id("decisions-3")));
+    assert_eq!(done, Settled::Retired(id("preferences-3")));
     assert_eq!(entries[2].status, EntryStatus::Retired);
     assert_eq!(
         entries[2].content, "the release train leaves on Thursdays",
         "the text stays"
     );
     let again = consistency::settle(
-        &Settle::Retire(id("decisions-3")),
+        &Settle::Retire(id("preferences-3")),
         &mut proposals,
         &mut entries,
         &cite(),
@@ -419,7 +419,7 @@ fn retire_hides_an_active_entry_only() {
     assert!(matches!(again, Settled::Already(_)));
     entries[0].status = EntryStatus::Superseded;
     let superseded = consistency::settle(
-        &Settle::Retire(id("decisions-1")),
+        &Settle::Retire(id("preferences-1")),
         &mut proposals,
         &mut entries,
         &cite(),
@@ -427,7 +427,7 @@ fn retire_hides_an_active_entry_only() {
     );
     assert_eq!(superseded.refusal_code(), Some("entry_not_active"));
     let missing = consistency::settle(
-        &Settle::Retire(id("decisions-9")),
+        &Settle::Retire(id("preferences-9")),
         &mut proposals,
         &mut entries,
         &cite(),
@@ -443,26 +443,26 @@ fn forget_blanks_the_entry_and_every_proposal_text_about_it() {
         proposal(
             "p-1",
             ProposalKind::Supersedes,
-            "decisions-1",
-            Some("decisions-2"),
+            "preferences-1",
+            Some("preferences-2"),
             ProposalState::Open,
         ),
         proposal(
             "p-2",
             ProposalKind::Stale,
-            "decisions-3",
+            "preferences-3",
             None,
             ProposalState::Open,
         ),
     ];
     let done = consistency::settle(
-        &Settle::Forget(id("decisions-1")),
+        &Settle::Forget(id("preferences-1")),
         &mut proposals,
         &mut entries,
         &cite(),
         NOW,
     );
-    assert_eq!(done, Settled::Forgotten(id("decisions-1")));
+    assert_eq!(done, Settled::Forgotten(id("preferences-1")));
     assert_eq!(entries[0].status, EntryStatus::Forgotten);
     assert_eq!(
         (entries[0].said.as_str(), entries[0].content.as_str()),
@@ -476,7 +476,7 @@ fn forget_blanks_the_entry_and_every_proposal_text_about_it() {
         "a proposal about another entry keeps its text"
     );
     let again = consistency::settle(
-        &Settle::Forget(id("decisions-1")),
+        &Settle::Forget(id("preferences-1")),
         &mut proposals,
         &mut entries,
         &cite(),
@@ -492,14 +492,14 @@ fn reapply_finishes_an_approval_whose_entry_is_still_active() {
         proposal(
             "p-1",
             ProposalKind::Supersedes,
-            "decisions-1",
-            Some("decisions-2"),
+            "preferences-1",
+            Some("preferences-2"),
             ProposalState::Approved,
         ),
         proposal(
             "p-2",
             ProposalKind::Stale,
-            "decisions-3",
+            "preferences-3",
             None,
             ProposalState::Rejected,
         ),
@@ -508,7 +508,7 @@ fn reapply_finishes_an_approval_whose_entry_is_still_active() {
     assert_eq!(done.len(), 1);
     assert_eq!(done[0].proposal, pid("p-1"));
     assert_eq!(entries[0].status, EntryStatus::Superseded);
-    assert_eq!(entries[0].superseded_by, Some(id("decisions-2")));
+    assert_eq!(entries[0].superseded_by, Some(id("preferences-2")));
     assert_eq!(
         entries[2].status,
         EntryStatus::Active,
@@ -525,8 +525,8 @@ fn a_draft_is_dropped_once_its_entries_are_not_both_active() {
     let mut entries = store();
     let draft = Draft {
         kind: ProposalKind::Supersedes,
-        older: id("decisions-1"),
-        newer: Some(id("decisions-2")),
+        older: id("preferences-1"),
+        newer: Some(id("preferences-2")),
         reason: String::new(),
         quotes: Vec::new(),
     };
@@ -605,10 +605,10 @@ fn removal_candidates_pair_an_active_session_with_a_recent_later_record_that_has
     let mut later = about("s-later", 35, "weekly report");
     later.log[0].text = REMOVAL.to_owned();
     // A Daniel-authored entry saying the same, recent and related.
-    let mut said = with("decisions-7", 36, "The digest feature was removed.");
+    let mut said = with("preferences-7", 36, "The digest feature was removed.");
     said.updated = said.created;
     // Unrelated cue, an old record, a pinned and an inactive session.
-    let other = with("decisions-8", 37, "The flaky lint was removed.");
+    let other = with("preferences-8", 37, "The flaky lint was removed.");
     let mut old = about("s-old", 2, "old digest feature");
     old.log[0].text = REMOVAL.to_owned();
     let mut pinned = about("s-pinned", 1, "digest feature");
@@ -627,8 +627,8 @@ fn removal_candidates_pair_an_active_session_with_a_recent_later_record_that_has
     assert_eq!(
         pairs,
         [
-            (String::from("s-digest"), String::from("decisions-7")),
-            (String::from("s-old"), String::from("decisions-7")),
+            (String::from("s-digest"), String::from("preferences-7")),
+            (String::from("s-old"), String::from("preferences-7")),
         ],
         "only the Daniel-authored entry pairs; never a pinned or inactive \
          session, never a model-written segment, never a record about \
@@ -645,7 +645,7 @@ fn removal_candidates_pair_an_active_session_with_a_recent_later_record_that_has
 fn a_record_before_the_sessions_last_message_is_not_a_candidate() {
     let now = T0 + Duration::days(40);
     let digest = about("s-digest", 36, "digest feature");
-    let said = with("decisions-7", 35, "The digest feature was removed.");
+    let said = with("preferences-7", 35, "The digest feature was removed.");
     assert!(
         removal_candidates(&[digest], &[said], now, 20)
             .pairs
@@ -657,7 +657,7 @@ fn a_record_before_the_sessions_last_message_is_not_a_candidate() {
 fn a_removed_label_survives_only_with_a_verbatim_quote_of_the_later_record() {
     let now = T0 + Duration::days(40);
     let digest = about("s-digest", 1, "digest feature");
-    let mut said = with("decisions-7", 36, REMOVAL);
+    let mut said = with("preferences-7", 36, REMOVAL);
     said.updated = said.created;
     let pairs: Vec<RemovalPair> = removal_candidates(&[digest], &[said], now, 20).pairs;
     assert_eq!(pairs.len(), 1);
@@ -670,7 +670,7 @@ fn a_removed_label_survives_only_with_a_verbatim_quote_of_the_later_record() {
     assert_eq!(kept.removals.len(), 1);
     let removal = &kept.removals[0];
     assert_eq!(removal.session.as_str(), "s-digest");
-    assert_eq!(removal.cite, "decisions-7");
+    assert_eq!(removal.cite, "preferences-7");
     assert_eq!(removal.quote, "ripped out and replaced");
     assert_eq!(
         removal.reason,
@@ -700,7 +700,7 @@ fn agent_note_and_model_segment_claiming_removal_deactivate_nothing() {
     let mut later = about("s-later", 35, "weekly report");
     later.log[0].text = REMOVAL.to_owned();
     // An agent note claiming the same removal.
-    let mut note = with("decisions-9", 36, "The digest feature was removed.");
+    let mut note = with("preferences-9", 36, "The digest feature was removed.");
     note.updated = note.created;
     note.author = crate::record::Author::agent("opus".parse().unwrap());
     note.cite = None;
@@ -712,11 +712,11 @@ fn agent_note_and_model_segment_claiming_removal_deactivate_nothing() {
     );
 
     // Daniel's own entry with the same words still is.
-    let mut said = with("decisions-10", 36, "The digest feature was removed.");
+    let mut said = with("preferences-10", 36, "The digest feature was removed.");
     said.updated = said.created;
     let found = removal_candidates(&[digest], &[said], now, 20);
     assert_eq!(found.pairs.len(), 1);
-    assert_eq!(found.pairs[0].later.cite, "decisions-10");
+    assert_eq!(found.pairs[0].later.cite, "preferences-10");
 }
 
 #[test]

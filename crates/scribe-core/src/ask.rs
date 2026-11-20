@@ -907,7 +907,7 @@ fn is_next_steps(words: &[String]) -> bool {
         || (has("open") && (has("items") || has("todos")))
 }
 
-/// "decisions this week": entries of a named tag since the period began.
+/// "preferences this week": entries of a named tag since the period began.
 fn tag_period(
     words: &[String],
     tags: &TagTable,

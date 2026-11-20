@@ -4,5 +4,5 @@
   "cwd": "$CWD",
   "permission_mode": "default",
   "hook_event_name": "UserPromptSubmit",
-  "prompt": "Two things before we go on.\n#scribe decisions: squash-merge agent PRs; keep merge commits for releases #merge-policy\n#scribe add short commit subjects to my preferences\n\n```\n#scribe decisions: fenced, never recorded\n```\n> #scribe decisions: quoted, never recorded\n<pasted_content>\n#scribe decisions: pasted, never recorded\n</pasted_content>\n#decision a bare marker records nothing\nThen carry on with the review."
+  "prompt": "Two things before we go on.\n#scribe preferences: squash-merge agent PRs; keep merge commits for releases #merge-policy\n#scribe add short commit subjects to my preferences\n\n```\n#scribe preferences: fenced, never recorded\n```\n> #scribe preferences: quoted, never recorded\n<pasted_content>\n#scribe preferences: pasted, never recorded\n</pasted_content>\n#decision a bare marker records nothing\nThen carry on with the review."
 }

@@ -32,8 +32,8 @@ the record it cites; claims that fail are dropped and counted.
 
 Examples:
   scribe question ask \"how do we merge agent PRs?\"
-  scribe question ask \"decisions this week\" --json | jq '.records[].entry.content'
-  scribe question ask \"what did we decide about releases?\" --tag decisions --since 2026-01-01
+  scribe question ask \"preferences this week\" --json | jq '.records[].entry.content'
+  scribe question ask \"what do I prefer for releases?\" --tag preferences --since 2026-01-01
   scribe question ask \"merge policy\" --include-hidden --json | jq .claims";
 
 /// Verbs on the `question` noun.

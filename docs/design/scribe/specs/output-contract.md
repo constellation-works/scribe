@@ -504,8 +504,8 @@ return the same object (2_design.md §6.1, §6.6):
 {
   "status": "answered | no_record | conflict | record",
   "answer": "…",
-  "claims": [{"text": "…", "quote": "…", "cite": "decisions-2"}],
-  "conflicts": [{"cites": ["decisions-1", "decisions-2"], "note": "…"}],
+  "claims": [{"text": "…", "quote": "…", "cite": "preferences-2"}],
+  "conflicts": [{"cites": ["preferences-1", "preferences-2"], "note": "…"}],
   "evidence_considered": 3,
   "dropped_quotes": 0,
   "hidden_matches": 1,

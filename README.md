@@ -1,6 +1,6 @@
 # scribe
 
-A standalone Orbit plugin that keeps Daniel's explicitly marked preferences and decisions, catalogs the sessions he turns on, and answers agents' questions about him with verbatim citations. Design: [docs/design/scribe/1_overview.md](docs/design/scribe/1_overview.md).
+A standalone Orbit plugin that keeps Daniel's explicitly marked preferences, catalogs the sessions he turns on, and answers agents' questions about him with verbatim citations. Design: [docs/design/scribe/1_overview.md](docs/design/scribe/1_overview.md).
 
 A `#scribe` line Daniel types in Claude Code or a supported Codex desktop user thread is recorded as an entry by the
 `UserPromptSubmit` hook (forms `#scribe <tag>: <content>` and `#scribe add
@@ -9,7 +9,7 @@ resolves). The same line opening `#scribe/global` instead of `#scribe` stores
 `project: global`, for every repository; without it the entry keeps the
 working directory's project. `/scribe on` in a session catalogs it: `scribe session pass`
 writes one record per session whose pass is due and proposes unmarked preferences
-or decisions from Daniel's own turns (up to three per session pass, twenty open
+from Daniel's own turns (up to three per session pass, twenty open
 candidates store-wide). `scribe proposal list --state open --json` shows their
 quotes and source turns. `#scribe approve <id>` creates the entry as Daniel's,
 with the original turn's cite; `#scribe reject <id>` closes it for good. The CLI reads the store and accepts authored agent notes,
@@ -41,12 +41,12 @@ did with `entry pickup`. `ask` leaves them out unless asked for them
 
 ```sh
 scribe entry list                       # a table on a terminal, tab-separated lines in a pipe
-scribe entry list --tag decisions --status active
+scribe entry list --tag preferences --status active
 scribe entry list --project constellation-works/scribe --topic release
 scribe entry list --since 2026-11-01 --author-kind daniel --related task:<id>
 scribe entry list --json | jq -r '.entries[].content'
 scribe entry show <id>                  # or a unique prefix of at least four characters
-scribe entry add --tag decisions --author opus 'Keep the API stable.'
+scribe entry add --tag preferences --author opus 'Keep the API stable.'
 scribe entry add --tag remind --author opus --related session:<id> 'Re-run the sync benchmark after the cache lands'
 scribe entry list --tag standard --after 2026-11-15T09:00:00Z --window --json
 scribe entry pickup <id> --author standards-intake --result task:<id>

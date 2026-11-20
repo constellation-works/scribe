@@ -155,8 +155,8 @@ fn each_scribe_line_of_the_fixture_prompt_becomes_one_entry_with_its_cite_and_ec
     let message = reply["systemMessage"].as_str().unwrap();
     assert_eq!(
         message,
-        "scribe: added decisions-1 to decisions — \"squash-merge agent PRs; keep merge commits for releases\"\n\
-         scribe: added preferences-1 to preferences — \"short commit subjects\""
+        "scribe: added preferences-1 to preferences — \"squash-merge agent PRs; keep merge commits for releases\"\n\
+         scribe: added preferences-2 to preferences — \"short commit subjects\""
     );
     assert_eq!(
         reply["hookSpecificOutput"]["hookEventName"],
@@ -164,8 +164,8 @@ fn each_scribe_line_of_the_fixture_prompt_becomes_one_entry_with_its_cite_and_ec
     );
     assert_eq!(
         reply["hookSpecificOutput"]["additionalContext"],
-        "scribe: added decisions-1 to decisions — \"squash-merge agent PRs; keep merge commits for releases\" (recorded by scribe; no action needed)\n\
-         scribe: added preferences-1 to preferences — \"short commit subjects\" (recorded by scribe; no action needed)"
+        "scribe: added preferences-1 to preferences — \"squash-merge agent PRs; keep merge commits for releases\" (recorded by scribe; no action needed)\n\
+         scribe: added preferences-2 to preferences — \"short commit subjects\" (recorded by scribe; no action needed)"
     );
     assert!(
         reply.get("decision").is_none(),
@@ -180,10 +180,10 @@ fn each_scribe_line_of_the_fixture_prompt_becomes_one_entry_with_its_cite_and_ec
     );
     let prompt = payload["prompt"].as_str().unwrap();
     let first = &entries[0];
-    assert_eq!(first["id"], "decisions-1");
+    assert_eq!(first["id"], "preferences-1");
     assert_eq!(
         first["said"],
-        "#scribe decisions: squash-merge agent PRs; keep merge commits for releases #merge-policy"
+        "#scribe preferences: squash-merge agent PRs; keep merge commits for releases #merge-policy"
     );
     assert_eq!(
         first["content"],
@@ -194,11 +194,7 @@ fn each_scribe_line_of_the_fixture_prompt_becomes_one_entry_with_its_cite_and_ec
     assert_eq!(first["provider"], "claude-code");
     assert_eq!(first["project"], "scribe", "the cwd's basename outside git");
     assert_eq!(first["content_from"]["kind"], "instruction");
-    assert_eq!(
-        first["review_after"],
-        Value::Null,
-        "decisions never go stale"
-    );
+    assert!(first["review_after"].is_string(), "preferences go stale");
     let cite = &first["cite"];
     assert_eq!(cite["session"], SESSION);
     assert_eq!(cite["message"], Value::Null, "filled by the Stop hook");
@@ -206,7 +202,7 @@ fn each_scribe_line_of_the_fixture_prompt_becomes_one_entry_with_its_cite_and_ec
     assert_eq!(cite["cwd"], claude.cwd.to_str().unwrap());
     assert_eq!(cite["prompt_sha256"].as_str().unwrap().len(), 64);
     let second = &entries[1];
-    assert_eq!(second["id"], "preferences-1");
+    assert_eq!(second["id"], "preferences-2");
     assert_eq!(
         second["said"],
         "#scribe add short commit subjects to my preferences"
@@ -236,7 +232,8 @@ fn replaying_the_same_payload_writes_nothing_new() {
     );
     let message = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
     assert!(
-        message.starts_with("scribe: already recorded decisions-1 in decisions — \"squash-merge"),
+        message
+            .starts_with("scribe: already recorded preferences-1 in preferences — \"squash-merge"),
         "{message}"
     );
 }
@@ -247,8 +244,8 @@ fn a_prompt_without_an_instruction_line_writes_and_prints_nothing() {
     let claude = Claude::new(&fx);
     let mut payload = claude.payload("user-prompt-submit.json");
     payload["prompt"] = json!(
-        "```\n#scribe decisions: fenced\n```\n> #scribe decisions: quoted\n\
-         <pasted_content>\n#scribe decisions: pasted\n</pasted_content>\n\
+        "```\n#scribe preferences: fenced\n```\n> #scribe preferences: quoted\n\
+         <pasted_content>\n#scribe preferences: pasted\n</pasted_content>\n\
          #decision bare marker\n#preferences another\nplain #scribe mention"
     );
     let out = hook_ok(&fx, "user-prompt-submit", &payload);
@@ -260,12 +257,12 @@ fn a_prompt_without_an_instruction_line_writes_and_prints_nothing() {
 #[test]
 fn agent_originated_wrappers_record_and_decide_nothing() {
     let wrappers = [
-        "<agent-message from=\"other-session\">\n#scribe decisions: agent wrote this\n</agent-message>",
-        "<task-notification>\n<task-id>t-1</task-id>\n#scribe decisions: agent wrote this\n</task-notification>",
-        "<side-sessions-event>\n#scribe decisions: agent wrote this\n</side-sessions-event>",
-        "<scheduled-loop>\n#scribe decisions: agent wrote this\n</scheduled-loop>",
-        "<scheduled-prompt>\n#scribe decisions: agent wrote this\n</scheduled-prompt>",
-        "<loop-prompt>\n#scribe decisions: agent wrote this\n</loop-prompt>",
+        "<agent-message from=\"other-session\">\n#scribe preferences: agent wrote this\n</agent-message>",
+        "<task-notification>\n<task-id>t-1</task-id>\n#scribe preferences: agent wrote this\n</task-notification>",
+        "<side-sessions-event>\n#scribe preferences: agent wrote this\n</side-sessions-event>",
+        "<scheduled-loop>\n#scribe preferences: agent wrote this\n</scheduled-loop>",
+        "<scheduled-prompt>\n#scribe preferences: agent wrote this\n</scheduled-prompt>",
+        "<loop-prompt>\n#scribe preferences: agent wrote this\n</loop-prompt>",
     ];
     for prompt in wrappers {
         let fx = Fixture::new();
@@ -296,7 +293,7 @@ fn an_agent_wrapper_cannot_forget_an_entry_or_switch_scribe_on() {
 
     let mut payload = claude.payload("user-prompt-submit.json");
     payload["prompt"] = json!(
-        "<agent-message from=\"other-session\">\n#scribe forget decisions-1\n</agent-message>"
+        "<agent-message from=\"other-session\">\n#scribe forget preferences-1\n</agent-message>"
     );
     let out = hook_ok(&fx, "user-prompt-submit", &payload);
     assert!(out.stdout.is_empty(), "{}", text(&out.stdout));
@@ -329,7 +326,7 @@ fn a_non_plain_payload_source_records_nothing() {
         let fx = Fixture::new();
         let claude = Claude::new(&fx);
         let mut payload = claude.payload("user-prompt-submit.json");
-        payload["prompt"] = json!("#scribe decisions: agent wrote this");
+        payload["prompt"] = json!("#scribe preferences: agent wrote this");
         payload["source"] = json!(source);
         let out = hook_ok(&fx, "user-prompt-submit", &payload);
         assert!(
@@ -350,7 +347,7 @@ fn an_unknown_tag_is_refused_with_the_configured_tags_and_audited_by_code() {
     let config = fx.root().join("config.toml");
     std::fs::write(
         &config,
-        "[tags.decisions]\naliases = [\"decision\"]\n\n[tags.rituals]\naliases = [\"ritual\"]\n",
+        "[tags.preferences]\naliases = [\"preference\"]\n\n[tags.rituals]\naliases = [\"ritual\"]\n",
     )
     .unwrap();
     make_private(&config);
@@ -360,7 +357,7 @@ fn an_unknown_tag_is_refused_with_the_configured_tags_and_audited_by_code() {
     let out = hook_ok(&fx, "user-prompt-submit", &payload);
     assert_eq!(
         reply(&out)["systemMessage"],
-        "scribe: refused \"#scribe add stand-up at nine to my habits\" — no tag \"habits\"; tags: decisions, finding, idea, remind, rituals, standard\n\
+        "scribe: refused \"#scribe add stand-up at nine to my habits\" — no tag \"habits\"; tags: finding, idea, preferences, remind, rituals, standard\n\
          scribe: added rituals-1 to rituals — \"stand-up at nine\""
     );
     let lines = audit(&fx);
@@ -399,7 +396,7 @@ fn a_failed_line_tells_the_agent_to_relay_it_to_daniel_not_that_no_action_is_nee
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
     let mut payload = claude.payload("user-prompt-submit.json");
-    payload["prompt"] = json!("#scribe decisions: hello");
+    payload["prompt"] = json!("#scribe preferences: hello");
     let elsewhere = fx.elsewhere(&format!("{SESSION}.jsonl"));
     payload["transcript_path"] = json!(elsewhere.to_str().unwrap());
     let out = hook_ok(&fx, "user-prompt-submit", &payload);
@@ -445,7 +442,7 @@ fn a_mixed_prompt_notes_each_line_by_whether_it_was_recorded() {
     let config = fx.root().join("config.toml");
     std::fs::write(
         &config,
-        "[tags.decisions]\naliases = [\"decision\"]\n\n[tags.rituals]\naliases = [\"ritual\"]\n",
+        "[tags.preferences]\naliases = [\"preference\"]\n\n[tags.rituals]\naliases = [\"ritual\"]\n",
     )
     .unwrap();
     make_private(&config);
@@ -456,7 +453,7 @@ fn a_mixed_prompt_notes_each_line_by_whether_it_was_recorded() {
     let reply = reply(&out);
     assert_eq!(
         reply["hookSpecificOutput"]["additionalContext"],
-        "scribe: refused \"#scribe add stand-up at nine to my habits\" — no tag \"habits\"; tags: decisions, finding, idea, remind, rituals, standard (not recorded by scribe; relay this to Daniel)\n\
+        "scribe: refused \"#scribe add stand-up at nine to my habits\" — no tag \"habits\"; tags: finding, idea, preferences, remind, rituals, standard (not recorded by scribe; relay this to Daniel)\n\
          scribe: added rituals-1 to rituals — \"stand-up at nine\" (recorded by scribe; no action needed)"
     );
 }
@@ -466,8 +463,9 @@ fn the_audit_log_holds_ids_and_codes_never_what_was_said() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
     let mut payload = claude.payload("user-prompt-submit.json");
-    payload["prompt"] =
-        json!("#scribe decisions: the secret phrase is marmalade\n#scribe nonsense without a form");
+    payload["prompt"] = json!(
+        "#scribe preferences: the secret phrase is marmalade\n#scribe nonsense without a form"
+    );
     hook_ok(&fx, "user-prompt-submit", &payload);
     let log = std::fs::read_to_string(fx.root().join("audit.jsonl")).unwrap();
     for needle in [
@@ -514,7 +512,7 @@ fn a_transcript_outside_claudes_projects_fails_the_provenance_check() {
     let out = hook_ok(&fx, "user-prompt-submit", &payload);
     let message = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
     assert!(
-        message.starts_with("scribe: could not record \"#scribe decisions: squash-merge"),
+        message.starts_with("scribe: could not record \"#scribe preferences: squash-merge"),
         "{message}"
     );
     assert!(message.contains("transcript check"), "{message}");
@@ -567,7 +565,7 @@ fn a_bad_config_is_reported_in_the_reply_and_nothing_is_written() {
     std::fs::create_dir(fx.root()).unwrap();
     make_private(&fx.root());
     let config = fx.root().join("config.toml");
-    std::fs::write(&config, "[tags.decisions]\nalias = [\"typo\"]\n").unwrap();
+    std::fs::write(&config, "[tags.preferences]\nalias = [\"typo\"]\n").unwrap();
     make_private(&config);
     let out = hook_ok(
         &fx,
@@ -615,7 +613,7 @@ fn the_stop_hook_fills_the_cite_message_uuid_from_the_transcript() {
     }
     let lines = audit(&fx);
     let filled: Vec<&Value> = lines[audit_before..].iter().map(|l| &l["target"]).collect();
-    assert_eq!(filled, [&json!("decisions-1"), &json!("preferences-1")]);
+    assert_eq!(filled, [&json!("preferences-1"), &json!("preferences-2")]);
     assert!(
         lines[audit_before..]
             .iter()
@@ -799,7 +797,7 @@ fn stop_recovers_action_context_and_referents_from_before_the_missed_prompt_only
         json!({"type":"assistant", "uuid":"a-before", "timestamp":"2026-11-16T05:49:00Z",
             "message":{"content":"The earlier verified answer."}}),
         json!({"type":"user", "uuid":"u-missed", "timestamp":"2026-11-16T05:50:00Z",
-            "cwd":claude.cwd, "message":{"content":"#scribe standard: keep context\n#scribe add this to decisions"}}),
+            "cwd":claude.cwd, "message":{"content":"#scribe standard: keep context\n#scribe add this to preferences"}}),
         json!({"type":"assistant", "uuid":"a-after", "timestamp":"2026-11-16T05:51:00Z",
             "message":{"content":"This later answer must not enter the capture."}}),
     ];
@@ -814,7 +812,7 @@ fn stop_recovers_action_context_and_referents_from_before_the_missed_prompt_only
     let out = hook_ok(&fx, "stop", &claude.payload("stop.json"));
     let recorded = entries(&fx);
     assert_eq!(recorded.len(), 2);
-    let referent = recorded.iter().find(|e| e["tag"] == "decisions").unwrap();
+    let referent = recorded.iter().find(|e| e["tag"] == "preferences").unwrap();
     assert_eq!(referent["content"], "The earlier verified answer.");
     assert_eq!(referent["content_from"]["message"], "a-before");
     let action = recorded.iter().find(|e| e["tag"] == "standard").unwrap();
@@ -925,9 +923,9 @@ fn stop_never_replays_historical_settling_commands() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
     let mut prompt = claude.payload("user-prompt-submit.json");
-    prompt["prompt"] = json!("#scribe decisions: keep this entry");
+    prompt["prompt"] = json!("#scribe preferences: keep this entry");
     hook_ok(&fx, "user-prompt-submit", &prompt);
-    claude.write_transcript("#scribe forget decisions-1", "u-settle");
+    claude.write_transcript("#scribe forget preferences-1", "u-settle");
     let before = entries_snapshot(&fx);
     let audit_before = audit(&fx);
     let out = hook_ok(&fx, "stop", &claude.payload("stop.json"));
@@ -1068,17 +1066,20 @@ fn add_this_records_the_span_the_model_chose_through_a_safe_mode_claude() {
     );
     let payload = referent_payload(
         &claude,
-        "Good.\n#scribe add this to decisions #merge-policy",
+        "Good.\n#scribe add this to preferences #merge-policy",
     );
     let out = hook_with_path(&fx, &payload, &path);
     assert_eq!(
         reply(&out)["systemMessage"],
-        "scribe: added decisions-1 to decisions — \"squash-merge agent PRs and keep merge commits for releases.\""
+        "scribe: added preferences-1 to preferences — \"squash-merge agent PRs and keep merge commits for releases.\""
     );
     let stored = entries(&fx);
     assert_eq!(stored.len(), 1);
     let entry = &stored[0];
-    assert_eq!(entry["said"], "#scribe add this to decisions #merge-policy");
+    assert_eq!(
+        entry["said"],
+        "#scribe add this to preferences #merge-policy"
+    );
     assert_eq!(
         entry["content"],
         "squash-merge agent PRs and keep merge commits for releases."
@@ -1091,7 +1092,7 @@ fn add_this_records_the_span_the_model_chose_through_a_safe_mode_claude() {
     );
     assert_eq!(entry["cite"]["line"], 2);
     let targets: Vec<Value> = audit(&fx).iter().map(|l| l["target"].clone()).collect();
-    assert_eq!(targets, [json!("decisions-1")]);
+    assert_eq!(targets, [json!("preferences-1")]);
 
     // The call: safe mode, no tools, the configured referent model.
     let calls = claude_calls(&fx);
@@ -1113,7 +1114,7 @@ fn add_this_records_the_span_the_model_chose_through_a_safe_mode_claude() {
     let out = hook_with_path(&fx, &payload, &path);
     let message = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
     assert!(
-        message.starts_with("scribe: already recorded decisions-1 in decisions"),
+        message.starts_with("scribe: already recorded preferences-1 in preferences"),
         "{message}"
     );
     assert_eq!(claude_calls(&fx).len(), 1);
@@ -1131,11 +1132,11 @@ fn a_failing_or_unverifiable_model_still_writes_one_guessed_entry() {
         let claude = Claude::new(&fx);
         write_conversation(&claude);
         let path = fake_claude(&fx, body);
-        let payload = referent_payload(&claude, "#scribe record it in my decisions");
+        let payload = referent_payload(&claude, "#scribe record it in my preferences");
         let out = hook_with_path(&fx, &payload, &path);
         let message = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
         assert!(
-            message.starts_with("scribe: added decisions-1 to decisions (guessed: "),
+            message.starts_with("scribe: added preferences-1 to preferences (guessed: "),
             "{body}: {message}"
         );
         let entries = entries(&fx);
@@ -1152,12 +1153,12 @@ fn a_referent_with_nothing_before_it_is_refused_without_a_model_call() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
     let path = fake_claude(&fx, "exit 1");
-    let payload = referent_payload(&claude, "#scribe add this to decisions");
+    let payload = referent_payload(&claude, "#scribe add this to preferences");
     let out = hook_with_path(&fx, &payload, &path);
     let message = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
     assert!(
         message.starts_with(
-            "scribe: refused \"#scribe add this to decisions\" — there is no earlier message"
+            "scribe: refused \"#scribe add this to preferences\" — there is no earlier message"
         ),
         "{message}"
     );
@@ -1245,12 +1246,12 @@ fn each_capture_form_records_global_or_the_cwd_project() {
         r#"echo '{"type":"result","subtype":"success","is_error":false,"result":"","structured_output":{"message":"a-1","span":"squash-merge agent PRs and keep merge commits for releases."}}'"#,
     );
     let prompt = "\
-#scribe/global decisions: squash-merge agent PRs
-#scribe decisions: keep merge commits for releases
+#scribe/global preferences: squash-merge agent PRs
+#scribe preferences: keep merge commits for releases
 #scribe/global add short commit subjects to preferences
 #scribe add long commit subjects to preferences
-#scribe/global add this to decisions
-#scribe add this to decisions";
+#scribe/global add this to preferences
+#scribe add this to preferences";
     let out = hook_with_path(&fx, &referent_payload(&claude, prompt), &path);
     let message = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
     assert!(
@@ -1272,15 +1273,15 @@ fn each_capture_form_records_global_or_the_cwd_project() {
     let expect = [
         (
             &global,
-            "#scribe/global decisions: squash-merge agent PRs",
-            "decisions",
+            "#scribe/global preferences: squash-merge agent PRs",
+            "preferences",
             "squash-merge agent PRs",
             "global",
         ),
         (
             &local,
-            "#scribe decisions: keep merge commits for releases",
-            "decisions",
+            "#scribe preferences: keep merge commits for releases",
+            "preferences",
             "keep merge commits for releases",
             "scribe",
         ),
@@ -1300,15 +1301,15 @@ fn each_capture_form_records_global_or_the_cwd_project() {
         ),
         (
             &global,
-            "#scribe/global add this to decisions",
-            "decisions",
+            "#scribe/global add this to preferences",
+            "preferences",
             span,
             "global",
         ),
         (
             &local,
-            "#scribe add this to decisions",
-            "decisions",
+            "#scribe add this to preferences",
+            "preferences",
             span,
             "scribe",
         ),
@@ -1332,9 +1333,9 @@ fn a_malformed_marker_or_a_marker_on_a_refused_line_writes_no_entry() {
     let claude = Claude::new(&fx);
     let mut payload = claude.payload("user-prompt-submit.json");
     payload["prompt"] = json!(
-        "#scribe/all decisions: hello\n\
+        "#scribe/all preferences: hello\n\
          #scribe/global rituals: stand-up\n\
-         #scribe/global add this to decisions"
+         #scribe/global add this to preferences"
     );
     let out = hook_ok(&fx, "user-prompt-submit", &payload);
     let message = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
@@ -1354,7 +1355,7 @@ fn a_malformed_marker_or_a_marker_on_a_refused_line_writes_no_entry() {
         "a refused marker wrote an entry"
     );
 
-    payload["prompt"] = json!("#scribe decisions: keep settling unmarked");
+    payload["prompt"] = json!("#scribe preferences: keep settling unmarked");
     hook_ok(&fx, "user-prompt-submit", &payload);
     fx.ok(&[
         "proposal",
@@ -1362,7 +1363,7 @@ fn a_malformed_marker_or_a_marker_on_a_refused_line_writes_no_entry() {
         "--kind",
         "stale",
         "--older",
-        "decisions-1",
+        "preferences-1",
         "--reason",
         "Review this",
         "--author",
@@ -1673,4 +1674,141 @@ fn session_start_prints_no_reminder_when_the_sessions_cannot_be_read() {
         "an unreadable session store adds no continuation, and the hook still starts"
     );
     assert!(audit(&fx).is_empty(), "a failed read is not audited");
+}
+
+/// Write `body` as the fixture store's `config.toml`.
+fn write_config(fx: &Fixture, body: &str) {
+    std::fs::create_dir_all(fx.root()).unwrap();
+    make_private(&fx.root());
+    let config = fx.root().join("config.toml");
+    std::fs::write(&config, body).unwrap();
+    make_private(&config);
+}
+
+#[test]
+fn decisions_and_its_old_aliases_are_unknown_tags_without_config() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    for (n, word) in ["decisions", "decision", "dec"].into_iter().enumerate() {
+        let mut payload = claude.payload("user-prompt-submit.json");
+        let line = format!("#scribe {word}: squash-merge agent PRs");
+        payload["prompt"] = json!(line);
+        let out = hook(&fx, "user-prompt-submit", &payload);
+        assert_eq!(out.status.code(), Some(0), "{word}: {}", text(&out.stderr));
+        assert_eq!(
+            reply(&out)["systemMessage"],
+            format!(
+                "scribe: refused \"{line}\" — no tag \"{word}\"; tags: finding, idea, preferences, remind, standard"
+            ),
+            "{word}"
+        );
+        let lines = audit(&fx);
+        assert_eq!(lines.len(), n + 1, "{word}: one audit line per refusal");
+        assert_eq!(lines[n]["error_code"], "unknown_tag", "{word}");
+    }
+    assert!(
+        !fx.root().join("entries").exists(),
+        "a refused line writes no entry"
+    );
+}
+
+#[test]
+fn a_config_that_declares_decisions_makes_it_work_like_any_config_tag() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    write_config(
+        &fx,
+        "[tags.decisions]\naliases = [\"decision\", \"dec\"]\ndescription = \"choices Daniel has made\"\n",
+    );
+    let mut payload = claude.payload("user-prompt-submit.json");
+    payload["prompt"] = json!(
+        "#scribe decisions: squash-merge agent PRs\n#scribe dec: keep merge commits for releases"
+    );
+    let out = hook_ok(&fx, "user-prompt-submit", &payload);
+    assert_eq!(
+        reply(&out)["systemMessage"],
+        "scribe: added decisions-1 to decisions — \"squash-merge agent PRs\"\n\
+         scribe: added decisions-2 to decisions — \"keep merge commits for releases\""
+    );
+    fx.ok(&[
+        "entry",
+        "add",
+        "--tag",
+        "decisions",
+        "--author",
+        "opus",
+        "a note",
+    ]);
+    let list = fx.ok(&["entry", "list", "--tag", "decisions", "--json"]);
+    let list: Value = serde_json::from_slice(&list.stdout).unwrap();
+    assert_eq!(list["total"], 3, "{list}");
+    let tags = fx.ok(&["tag", "list", "--json"]);
+    let tags: Value = serde_json::from_slice(&tags.stdout).unwrap();
+    let names: Vec<&str> = tags["tags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"decisions"), "{names:?}");
+}
+
+#[test]
+fn entries_under_decisions_in_a_store_without_that_tag_stay_readable_and_settleable() {
+    // A store from before the tag stopped shipping: entries under
+    // `decisions`, no config naming it.
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    fx.seed();
+    write_config(&fx, "# no tag table: the defaults apply\n");
+    let tags = fx.ok(&["tag", "list", "--json"]);
+    let tags: Value = serde_json::from_slice(&tags.stdout).unwrap();
+    let row = tags["tags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "decisions")
+        .unwrap();
+    assert_eq!(row["entries"], 2, "{row}");
+    assert_eq!(row["configured"], false, "{row}");
+
+    let list = fx.ok(&["entry", "list", "--tag", "decisions", "--json"]);
+    let list: Value = serde_json::from_slice(&list.stdout).unwrap();
+    assert_eq!(list["total"], 2, "{list}");
+    let shown = fx.ok(&["entry", "show", "decisions-2", "--json"]);
+    let shown: Value = serde_json::from_slice(&shown.stdout).unwrap();
+    assert!(
+        shown["content"]
+            .as_str()
+            .unwrap()
+            .contains("squash-merge agent PRs"),
+        "{shown}"
+    );
+    let found = fx.ok(&["record", "search", "squash", "--json"]);
+    assert!(
+        text(&found.stdout).contains("decisions-2"),
+        "search finds it: {}",
+        text(&found.stdout)
+    );
+
+    // New writes under the old name are refused; settling the old entry works.
+    let mut payload = claude.payload("user-prompt-submit.json");
+    payload["prompt"] = json!("#scribe decisions: a new one");
+    let out = hook_ok(&fx, "user-prompt-submit", &payload);
+    assert!(
+        text(&out.stdout).contains("no tag"),
+        "{}",
+        text(&out.stdout)
+    );
+    let mut payload = claude.payload("user-prompt-submit.json");
+    payload["prompt"] = json!("#scribe retire decisions-2");
+    let out = hook_ok(&fx, "user-prompt-submit", &payload);
+    assert!(
+        text(&out.stdout).contains("retired decisions-2"),
+        "{}",
+        text(&out.stdout)
+    );
+    let shown = fx.ok(&["entry", "show", "decisions-2", "--json"]);
+    let shown: Value = serde_json::from_slice(&shown.stdout).unwrap();
+    assert_eq!(shown["status"], "retired");
 }

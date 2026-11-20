@@ -11,7 +11,7 @@ metadata:
   name: scribe
   version: 0.2.0
   description: >-
-    Daniel's explicitly recorded decisions and preferences and the records of
+    Daniel's explicitly recorded preferences and the records of
     the sessions he cataloged, answered with verbatim citations.
   homepage: https://github.com/constellation-works/scribe
 spec:

@@ -11,16 +11,16 @@ fn proposal() -> Proposal {
     Proposal {
         id: "p-1".parse().unwrap(),
         kind: ProposalKind::Supersedes,
-        older: "decisions-1".parse().unwrap(),
-        newer: Some("decisions-2".parse().unwrap()),
+        older: "preferences-1".parse().unwrap(),
+        newer: Some("preferences-2".parse().unwrap()),
         reason: String::new(),
         quotes: vec![
             Quote {
-                entry: "decisions-1".parse().unwrap(),
+                entry: "preferences-1".parse().unwrap(),
                 text: String::new(),
             },
             Quote {
-                entry: "decisions-2".parse().unwrap(),
+                entry: "preferences-2".parse().unwrap(),
                 text: String::new(),
             },
         ],
@@ -36,7 +36,7 @@ fn proposal() -> Proposal {
             role: crate::Speaker::User,
             quote: String::new(),
             evidence: Some(String::new()),
-            cite: entry("decisions-1", T0).cite.unwrap(),
+            cite: entry("preferences-1", T0).cite.unwrap(),
             project: crate::Project::sanitized("scribe"),
             provider: crate::Label::sanitized("claude-code", "claude-code"),
             host: crate::Label::sanitized("host", "host"),
@@ -66,7 +66,7 @@ fn session_with_term() -> SessionRecord {
 fn the_redacted_field_inventory_is_exactly_the_fields_masked() {
     // A new free-text field must join both REDACTED_FIELDS and its record's
     // field list, or this fails.
-    let mut e = entry("decisions-1", T0);
+    let mut e = entry("preferences-1", T0);
     e.retirement_reason = Some(String::new());
     e.quote = Some(String::new());
     e.evidence = Some(String::new());
@@ -101,7 +101,7 @@ fn a_configured_secret_is_masked_in_every_covered_field() {
     let leak = format!("the token is {SECRET}, keep it");
     let masked = "the token is [redacted:GITHUB_TOKEN], keep it";
 
-    let mut e = entry("decisions-1", T0);
+    let mut e = entry("preferences-1", T0);
     e.retirement_reason = Some(String::new());
     for (_, text) in entry_fields(&mut e) {
         *text = leak.clone();
@@ -133,7 +133,7 @@ fn a_configured_secret_is_masked_in_every_covered_field() {
 #[test]
 fn identifiers_and_paths_are_not_masked() {
     let redactor = Redactor::new([(String::from("TOKEN"), String::from("/work/abc"))]);
-    let mut e = entry("decisions-1", T0);
+    let mut e = entry("preferences-1", T0);
     e.retirement_reason = Some(String::new());
     e.cite.as_mut().unwrap().cwd = String::from("/work/abc");
     redactor.entry(&mut e);
@@ -262,7 +262,7 @@ fn a_pem_private_key_block_is_masked_whole() {
 #[test]
 fn a_credential_shape_is_masked_in_a_stored_entry_field() {
     let token = format!("ghp_{}", "0123456789abcdefghij0123456789abcdef");
-    let mut e = entry("decisions-1", T0);
+    let mut e = entry("preferences-1", T0);
     e.retirement_reason = Some(String::new());
     e.content = format!("echoed {token}");
     Redactor::default().entry(&mut e);

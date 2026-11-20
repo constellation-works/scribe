@@ -268,7 +268,7 @@ fn entry_list_filters_by_topics_related_dates_and_author() {
             "entry",
             "add",
             "--tag",
-            "decisions",
+            "preferences",
             "--author",
             "opus",
             "agent note on merges",
@@ -396,25 +396,22 @@ fn a_unique_prefix_names_a_session_and_an_exact_id_wins() {
 fn an_exact_entry_id_wins_over_a_longer_one_it_prefixes() {
     let fx = Fixture::new();
     fx.seed();
-    let path = fx.root().join("entries/decisions/decisions-10.md");
-    std::fs::write(&path, support::entry_text(10, "a tenth decision")).unwrap();
+    let path = fx.root().join("entries/preferences/preferences-10.md");
+    std::fs::write(&path, support::entry_text(10, "a tenth preference")).unwrap();
     make_private(&path);
     assert_eq!(
-        ok_json(&fx, &["entry", "show", "decisions-1"])["id"],
-        "decisions-1"
-    );
-    assert_eq!(
-        ok_json(&fx, &["entry", "show", "decisions-10"])["id"],
-        "decisions-10"
-    );
-    assert_eq!(
-        ok_json(&fx, &["entry", "show", "pref"])["id"],
+        ok_json(&fx, &["entry", "show", "preferences-1"])["id"],
         "preferences-1"
     );
-    let err = usage_error(&fx, &["entry", "show", "deci"]);
+    assert_eq!(
+        ok_json(&fx, &["entry", "show", "preferences-10"])["id"],
+        "preferences-10"
+    );
+    assert_eq!(ok_json(&fx, &["entry", "show", "ritu"])["id"], "rituals-1");
+    let err = usage_error(&fx, &["entry", "show", "pref"]);
     assert_eq!(err["code"], "id_ambiguous");
     let message = err["error"].as_str().unwrap();
-    for id in ["decisions-1", "decisions-10", "decisions-2"] {
+    for id in ["preferences-1", "preferences-10"] {
         assert!(message.contains(id), "{message}");
     }
 }

@@ -39,7 +39,7 @@ fn request() -> ReferentRequest {
     ReferentRequest {
         model: String::from("explicit-model"),
         budget: Duration::from_secs(5),
-        instruction: String::from("#scribe add this to decisions"),
+        instruction: String::from("#scribe add this to preferences"),
         candidates: Vec::new(),
     }
 }

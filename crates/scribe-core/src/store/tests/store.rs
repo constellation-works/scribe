@@ -71,10 +71,10 @@ fn a_missing_root_reads_as_an_empty_store() {
     let tags = store.list_tags().unwrap();
     assert_eq!(
         tags.tags.len(),
-        6,
-        "the default tags, the shipped action tags and finding, with no entries"
+        5,
+        "preferences, the shipped action tags and finding, with no entries"
     );
-    let err = store.entry(&"decisions-1".parse().unwrap()).unwrap_err();
+    let err = store.entry(&"preferences-1".parse().unwrap()).unwrap_err();
     assert_eq!(err.code(), "entry_not_found");
     assert!(
         !dir.path().join("absent").exists(),
@@ -87,29 +87,29 @@ fn a_corrupt_entry_is_skipped_in_a_list_and_refused_by_show() {
     let dir = private_tempdir();
     put(
         dir.path(),
-        "entries/decisions/decisions-1.md",
+        "entries/preferences/preferences-1.md",
         &entry_text(""),
     );
     put(
         dir.path(),
-        "entries/decisions/decisions-2.md",
-        &entry_text("colour: blue\n").replace("decisions-1", "decisions-2"),
+        "entries/preferences/preferences-2.md",
+        &entry_text("colour: blue\n").replace("preferences-1", "preferences-2"),
     );
     put(
         dir.path(),
-        "entries/decisions/.decisions-3.md.tmp",
+        "entries/preferences/.preferences-3.md.tmp",
         "partial",
     );
-    put(dir.path(), "entries/decisions/notes.txt", "not a record");
+    put(dir.path(), "entries/preferences/notes.txt", "not a record");
     let store = Store::open(dir.path());
     let list = store.list_entries(&EntryFilter::default()).unwrap();
     assert_eq!(list.listing.items.len(), 1);
     assert_eq!(list.skipped.len(), 1);
-    assert!(list.skipped[0].path.ends_with("decisions-2.md"));
+    assert!(list.skipped[0].path.ends_with("preferences-2.md"));
     assert_eq!(list.skipped[0].error.code(), "store_corrupt");
-    let err = store.entry(&"decisions-2".parse().unwrap()).unwrap_err();
+    let err = store.entry(&"preferences-2".parse().unwrap()).unwrap_err();
     assert_eq!(err.code(), "store_corrupt");
-    let shown = store.entry(&"decisions-1".parse().unwrap()).unwrap();
+    let shown = store.entry(&"preferences-1".parse().unwrap()).unwrap();
     assert_eq!(shown.status, EntryStatus::Active);
 }
 
@@ -149,11 +149,11 @@ fn a_corrupt_config_refuses_every_read_naming_the_file() {
 #[test]
 fn a_linked_tag_directory_is_refused_not_followed() {
     let dir = private_tempdir();
-    put(dir.path(), "elsewhere/decisions-1.md", &entry_text(""));
+    put(dir.path(), "elsewhere/preferences-1.md", &entry_text(""));
     put(dir.path(), "entries/.keep", "");
     std::os::unix::fs::symlink(
         dir.path().join("elsewhere"),
-        dir.path().join("entries/decisions"),
+        dir.path().join("entries/preferences"),
     )
     .unwrap();
     let err = Store::open(dir.path())
@@ -239,13 +239,13 @@ mod capture {
         let store = Store::open(&root);
         let added = store
             .capture(
-                vec![draft("decisions", 1, "one"), draft("preferences", 2, "two")],
+                vec![draft("preferences", 1, "one"), draft("rituals", 2, "two")],
                 &Redactor::default(),
             )
             .unwrap();
         assert!(matches!(added[0], Captured::Added(_)));
-        assert_eq!(ids(&added), ["decisions-1", "preferences-1"]);
-        let read = store.entry(&"decisions-1".parse().unwrap()).unwrap();
+        assert_eq!(ids(&added), ["preferences-1", "rituals-1"]);
+        let read = store.entry(&"preferences-1".parse().unwrap()).unwrap();
         assert_eq!(&read, added[0].entry());
         assert_eq!(read.content, "one");
         #[cfg(unix)]
@@ -253,7 +253,7 @@ mod capture {
             use std::os::unix::fs::PermissionsExt;
             let mode = |p: &std::path::Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode(&root), 0o700);
-            assert_eq!(mode(&root.join("entries/decisions")), 0o700);
+            assert_eq!(mode(&root.join("entries/preferences")), 0o700);
             assert_eq!(mode(&store.entry_path(&read.id)), 0o600);
         }
     }
@@ -263,17 +263,20 @@ mod capture {
         let dir = private_tempdir();
         let store = Store::open(dir.path());
         store
-            .capture(vec![draft("decisions", 1, "one")], &Redactor::default())
+            .capture(vec![draft("preferences", 1, "one")], &Redactor::default())
             .unwrap();
         let again = store
             .capture(
-                vec![draft("decisions", 1, "one"), draft("decisions", 2, "two")],
+                vec![
+                    draft("preferences", 1, "one"),
+                    draft("preferences", 2, "two"),
+                ],
                 &Redactor::default(),
             )
             .unwrap();
         assert!(matches!(again[0], Captured::Existing(_)));
         assert!(matches!(again[1], Captured::Added(_)));
-        assert_eq!(ids(&again), ["decisions-1", "decisions-2"]);
+        assert_eq!(ids(&again), ["preferences-1", "preferences-2"]);
         let listed = store.list_entries(&EntryFilter::default()).unwrap();
         assert_eq!(listed.listing.total, 2);
     }
@@ -282,15 +285,19 @@ mod capture {
     fn a_number_held_by_a_file_that_does_not_parse_is_not_reused() {
         let dir = private_tempdir();
         let root = dir.path();
-        put(root, "entries/decisions/decisions-1.md", &entry_text(""));
-        put(root, "entries/decisions/decisions-4.md", "not an entry");
+        put(
+            root,
+            "entries/preferences/preferences-1.md",
+            &entry_text(""),
+        );
+        put(root, "entries/preferences/preferences-4.md", "not an entry");
         let store = Store::open(root);
         let added = store
-            .capture(vec![draft("decisions", 7, "new")], &Redactor::default())
+            .capture(vec![draft("preferences", 7, "new")], &Redactor::default())
             .unwrap();
-        assert_eq!(ids(&added), ["decisions-5"]);
+        assert_eq!(ids(&added), ["preferences-5"]);
         assert_eq!(
-            fs::read_to_string(root.join("entries/decisions/decisions-4.md")).unwrap(),
+            fs::read_to_string(root.join("entries/preferences/preferences-4.md")).unwrap(),
             "not an entry"
         );
     }
@@ -303,11 +310,12 @@ mod capture {
         let redactor = Redactor::new([(String::from("ANTHROPIC_API_KEY"), secret.to_owned())]);
         store
             .capture(
-                vec![draft("decisions", 1, &format!("use {secret} here"))],
+                vec![draft("preferences", 1, &format!("use {secret} here"))],
                 &redactor,
             )
             .unwrap();
-        let text = fs::read_to_string(dir.path().join("entries/decisions/decisions-1.md")).unwrap();
+        let text =
+            fs::read_to_string(dir.path().join("entries/preferences/preferences-1.md")).unwrap();
         assert!(!text.contains(secret), "{text}");
         assert!(
             text.contains("use [redacted:ANTHROPIC_API_KEY] here"),
@@ -323,7 +331,7 @@ mod capture {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o777)).unwrap();
             let err = Store::open(dir.path())
-                .capture(vec![draft("decisions", 1, "one")], &Redactor::default())
+                .capture(vec![draft("preferences", 1, "one")], &Redactor::default())
                 .unwrap_err();
             assert!(matches!(err, Error::Permissions { .. }), "{err:?}");
             assert!(!dir.path().join("entries").exists());
@@ -362,13 +370,13 @@ mod capture {
     fn cites_of_the_session_are_filled_once_and_others_are_left_alone() {
         let dir = private_tempdir();
         let store = Store::open(dir.path());
-        let mut other = draft("decisions", 1, "other session");
+        let mut other = draft("preferences", 1, "other session");
         other.cite.session = "s-other".parse().unwrap();
         store
             .capture(
                 vec![
-                    draft("decisions", 1, "one"),
-                    draft("decisions", 2, "two"),
+                    draft("preferences", 1, "one"),
+                    draft("preferences", 2, "two"),
                     other,
                 ],
                 &Redactor::default(),
@@ -383,17 +391,17 @@ mod capture {
             })
             .unwrap();
         let filled: Vec<String> = filled.iter().map(ToString::to_string).collect();
-        assert_eq!(filled, ["decisions-1"]);
-        let one = store.entry(&"decisions-1".parse().unwrap()).unwrap();
+        assert_eq!(filled, ["preferences-1"]);
+        let one = store.entry(&"preferences-1".parse().unwrap()).unwrap();
         assert_eq!(one.cite.as_ref().unwrap().message.as_deref(), Some("m-1"));
         assert_eq!(one.updated, now);
-        let two = store.entry(&"decisions-2".parse().unwrap()).unwrap();
+        let two = store.entry(&"preferences-2".parse().unwrap()).unwrap();
         assert_eq!(
             two.cite.as_ref().unwrap().message,
             None,
             "no match leaves it waiting"
         );
-        let three = store.entry(&"decisions-3".parse().unwrap()).unwrap();
+        let three = store.entry(&"preferences-3".parse().unwrap()).unwrap();
         assert_eq!(
             three.cite.as_ref().unwrap().message,
             None,
@@ -404,7 +412,7 @@ mod capture {
             .fill_cite_messages(&session, now, |_| Some(String::from("m-2")))
             .unwrap();
         let again: Vec<String> = again.iter().map(ToString::to_string).collect();
-        assert_eq!(again, ["decisions-2"]);
+        assert_eq!(again, ["preferences-2"]);
         assert!(!store.has_unfilled_cites(&session).unwrap());
     }
 
@@ -423,16 +431,16 @@ mod capture {
             !dir.path().join("absent").exists(),
             "a read creates nothing"
         );
-        let mut other_prompt = draft("decisions", 1, "other prompt");
+        let mut other_prompt = draft("preferences", 1, "other prompt");
         other_prompt.cite.prompt_sha256 = "b".repeat(64);
-        let mut other_session = draft("decisions", 1, "other session");
+        let mut other_session = draft("preferences", 1, "other session");
         other_session.cite.session = "s-other".parse().unwrap();
         let store = Store::open(dir.path());
         store
             .capture(
                 vec![
-                    draft("decisions", 1, "one"),
-                    draft("preferences", 2, "two"),
+                    draft("preferences", 1, "one"),
+                    draft("rituals", 2, "two"),
                     other_prompt,
                     other_session,
                 ],
@@ -446,7 +454,7 @@ mod capture {
             .map(|e| e.id.to_string())
             .collect();
         found.sort();
-        assert_eq!(found, ["decisions-1", "preferences-1"]);
+        assert_eq!(found, ["preferences-1", "rituals-1"]);
     }
 
     #[test]

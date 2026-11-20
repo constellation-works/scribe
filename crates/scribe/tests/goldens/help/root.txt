@@ -1,4 +1,4 @@
-Read Daniel's recorded decisions and preferences, and the records of the sessions he cataloged
+Read Daniel's recorded preferences, and the records of the sessions he cataloged
 
 Usage: scribe [OPTIONS] <COMMAND>
 
@@ -28,7 +28,7 @@ Global options:
       --json                 Shorthand for --format json
 
 Examples:
-  scribe entry list --tag decisions --status active
+  scribe entry list --tag preferences --status active
   scribe entry show <id> --json
   scribe session list --project scribe
   scribe proposal list

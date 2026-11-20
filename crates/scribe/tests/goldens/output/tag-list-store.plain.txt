@@ -1,4 +1,3 @@
-decisions	0	-	decision,dec	choices Daniel has made	config	-	-	-
 finding	0	-	-	a measured or verified result, with its evidence	config	-	-	-
 idea	0	-	-	a future consideration worth revisiting	config	free	0	0
 notes	1	-	note	Agent notes	store	-	-	-

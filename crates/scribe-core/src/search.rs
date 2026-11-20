@@ -72,7 +72,7 @@ pub struct Hit {
     /// The BM25 score times the unit's weight, to three decimals.
     pub score: f64,
     /// The session's title, the segment's heading, or for an entry its id
-    /// and tag (`decisions-2 (decisions)`).
+    /// and tag (`preferences-2 (preferences)`).
     pub title: String,
     /// Up to [`SNIPPET_CHARS`] characters around the first matching word.
     pub snippet: String,

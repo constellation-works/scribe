@@ -159,17 +159,20 @@ fn an_action_line_keeps_the_turns_since_the_last_scribe_line_and_a_memory_line_n
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
     claude.write(&[
-        ("u-1", "user", "#scribe decisions: ship on fridays"),
+        ("u-1", "user", "#scribe preferences: ship on fridays"),
         ("a-1", "assistant", "Recorded."),
         ("u-2", "user", "the size field has no unit"),
         ("a-2", "assistant", "Bytes, then?"),
     ]);
-    let prompt = "Yes, bytes.\n#scribe standard: name the unit in every size\n#scribe decisions: bytes for sizes";
+    let prompt = "Yes, bytes.\n#scribe standard: name the unit in every size\n#scribe preferences: bytes for sizes";
     let echo = claude.prompt(&fx, prompt);
     assert!(echo.contains("added standard-1 to standard"), "{echo}");
-    assert!(echo.contains("added decisions-1 to decisions"), "{echo}");
+    assert!(
+        echo.contains("added preferences-1 to preferences"),
+        "{echo}"
+    );
 
-    let decision = entry(&fx, "decisions-1", &["--window"]);
+    let decision = entry(&fx, "preferences-1", &["--window"]);
     assert_eq!(
         decision["window"],
         Value::Null,
@@ -250,7 +253,7 @@ fn a_config_marked_action_tag_captures_with_a_window_and_is_read_and_picked_up()
     let config = fx.root().join("config.toml");
     std::fs::write(
         &config,
-        "[tags.decisions]\n[tags.task]\naction = true\n[tags.idea]\ndescription = \"ideas to try\"\naction = true\nask_first = true\n",
+        "[tags.preferences]\n[tags.task]\naction = true\n[tags.idea]\ndescription = \"ideas to try\"\naction = true\nask_first = true\n",
     )
     .unwrap();
     make_private(&config);
@@ -286,7 +289,7 @@ fn a_config_marked_action_tag_captures_with_a_window_and_is_read_and_picked_up()
         json!({"mode": "ask-first", "require_quote": false, "retired": 0, "rejected": 0})
     );
     assert_eq!(tag_row(&fx, "standard")["action"]["require_quote"], true);
-    assert_eq!(tag_row(&fx, "decisions")["action"], Value::Null);
+    assert_eq!(tag_row(&fx, "preferences")["action"], Value::Null);
 
     let added = json_of(&fx.ok(&[
         "entry",
@@ -342,7 +345,7 @@ fn task_and_friction_are_unknown_tags_without_config_and_not_in_the_tag_list() {
     for tag in ["task", "friction"] {
         let echo = claude.prompt(&fx, &format!("#scribe {tag}: profile the sync"));
         assert!(
-            echo.contains(&format!("refused \"#scribe {tag}: profile the sync\" — no tag \"{tag}\"; tags: decisions, finding, idea, preferences, remind, standard")),
+            echo.contains(&format!("refused \"#scribe {tag}: profile the sync\" — no tag \"{tag}\"; tags: finding, idea, preferences, remind, standard")),
             "{echo}"
         );
         assert!(!fx.root().join("entries").join(tag).exists());
@@ -429,7 +432,7 @@ fn pickups_are_recorded_once_refused_off_action_tags_and_count_rejections() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
     claude.write(&[]);
-    claude.prompt(&fx, "#scribe decisions: ship on fridays");
+    claude.prompt(&fx, "#scribe preferences: ship on fridays");
     fx.ok(&[
         "entry",
         "add",
@@ -443,7 +446,7 @@ fn pickups_are_recorded_once_refused_off_action_tags_and_count_rejections() {
     assert_eq!(
         refused(
             &fx,
-            &["entry", "pickup", "decisions-1", "--author", "intake"]
+            &["entry", "pickup", "preferences-1", "--author", "intake"]
         ),
         "not_action_tag"
     );
@@ -477,7 +480,7 @@ fn pickups_are_recorded_once_refused_off_action_tags_and_count_rejections() {
     assert_eq!(
         pickups,
         [
-            json!(["failure", "decisions-1", "not_action_tag", "intake"]),
+            json!(["failure", "preferences-1", "not_action_tag", "intake"]),
             json!(["success", "remind-1", null, "intake"]),
         ],
         "the refusal and the write are audited; the no-op writes no line"
@@ -505,7 +508,7 @@ fn the_intake_reads_by_tag_and_cursor_with_the_window_only_on_request() {
     let claude = Claude::new(&fx);
     claude.write(&[("u-1", "user", "every size needs its unit")]);
     claude.prompt(&fx, "#scribe standard: name the unit in every size");
-    claude.prompt(&fx, "#scribe decisions: bytes for sizes");
+    claude.prompt(&fx, "#scribe preferences: bytes for sizes");
 
     let list = json_of(&fx.ok(&["entry", "list", "--tag", "standard", "--json"]));
     assert_eq!(list["total"], 1);
@@ -603,7 +606,7 @@ fn a_quote_is_required_and_checked_against_daniels_typed_turns() {
                 "entry",
                 "add",
                 "--tag",
-                "decisions",
+                "preferences",
                 "--author",
                 "opus",
                 "--quote",
@@ -627,13 +630,13 @@ fn session_start_counts_action_entries_waiting_with_no_pickup() {
     );
     claude.prompt(
         &fx,
-        "#scribe remind: profile the sync\n#scribe standard: units\n#scribe decisions: fridays",
+        "#scribe remind: profile the sync\n#scribe standard: units\n#scribe preferences: fridays",
     );
     assert_eq!(claude.session_start(&fx), "", "nothing older than an hour");
     for (tag, id) in [
         ("remind", "remind-1"),
         ("standard", "standard-1"),
-        ("decisions", "decisions-1"),
+        ("preferences", "preferences-1"),
     ] {
         backdate(&fx, tag, id);
     }

@@ -122,11 +122,11 @@ fn span(message: &str, span: &str) -> Result<ReferentAnswer, ModelError> {
 #[test]
 fn agent_originated_prompts_record_nothing() {
     let wrappers = [
-        "<agent-message from=\"other\">\n#scribe decisions: agent wrote this\n</agent-message>",
-        "<task-notification>\n#scribe decisions: agent wrote this\n</task-notification>",
-        "<side-sessions-event>\n#scribe decisions: agent wrote this\n</side-sessions-event>",
-        "<scheduled-loop>\n#scribe decisions: agent wrote this\n</scheduled-loop>",
-        "<scheduled-prompt>\n#scribe forget decisions-1\n</scheduled-prompt>",
+        "<agent-message from=\"other\">\n#scribe preferences: agent wrote this\n</agent-message>",
+        "<task-notification>\n#scribe preferences: agent wrote this\n</task-notification>",
+        "<side-sessions-event>\n#scribe preferences: agent wrote this\n</side-sessions-event>",
+        "<scheduled-loop>\n#scribe preferences: agent wrote this\n</scheduled-loop>",
+        "<scheduled-prompt>\n#scribe forget preferences-1\n</scheduled-prompt>",
     ];
     for prompt in wrappers {
         let setup = Setup::new();
@@ -144,7 +144,7 @@ fn agent_originated_prompts_record_nothing() {
 fn add_this_records_the_chosen_span_citing_its_role() {
     let setup = Setup::new();
     let (echo, calls) = setup.run(
-        "#scribe add this to decisions",
+        "#scribe add this to preferences",
         span(
             "a-1",
             "squash-merge agent PRs and keep merge commits for releases",
@@ -153,11 +153,11 @@ fn add_this_records_the_chosen_span_citing_its_role() {
     assert_eq!(calls, 1);
     assert_eq!(
         echo,
-        "scribe: added decisions-1 to decisions — \"squash-merge agent PRs and keep merge commits for releases\""
+        "scribe: added preferences-1 to preferences — \"squash-merge agent PRs and keep merge commits for releases\""
     );
     let entries = setup.entries();
     assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].said, "#scribe add this to decisions");
+    assert_eq!(entries[0].said, "#scribe add this to preferences");
     assert_eq!(
         entries[0].content,
         "squash-merge agent PRs and keep merge commits for releases"
@@ -169,12 +169,12 @@ fn add_this_records_the_chosen_span_citing_its_role() {
 
     // A replay echoes the entry without asking the model again.
     let (echo, calls) = setup.run(
-        "#scribe add this to decisions",
+        "#scribe add this to preferences",
         Err(ModelError::Failed(String::from("must not be called"))),
     );
     assert_eq!(calls, 0);
     assert!(
-        echo.starts_with("scribe: already recorded decisions-1"),
+        echo.starts_with("scribe: already recorded preferences-1"),
         "{echo}"
     );
     assert_eq!(setup.entries().len(), 1);
@@ -202,7 +202,7 @@ fn a_timeout_a_model_error_and_a_failed_check_each_write_one_guessed_entry() {
     ];
     for (answer, reason) in cases {
         let setup = Setup::new();
-        let (echo, calls) = setup.run("#scribe add it to my decisions", answer);
+        let (echo, calls) = setup.run("#scribe add it to my preferences", answer);
         assert_eq!(calls, 1);
         let entries = setup.entries();
         assert_eq!(entries.len(), 1, "exactly one entry: {echo}");
@@ -212,7 +212,7 @@ fn a_timeout_a_model_error_and_a_failed_check_each_write_one_guessed_entry() {
             ContentFrom::Message { role: Speaker::Assistant, message, .. } if message == "a-1"
         ));
         assert!(
-            echo.starts_with("scribe: added decisions-1 to decisions (guessed: "),
+            echo.starts_with("scribe: added preferences-1 to preferences (guessed: "),
             "{echo}"
         );
         assert!(echo.contains(reason), "{reason}: {echo}");

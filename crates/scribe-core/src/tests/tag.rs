@@ -9,30 +9,22 @@ fn name(s: &str) -> TagName {
 }
 
 #[test]
-fn the_defaults_are_decisions_and_preferences() {
+fn the_defaults_are_preferences_and_the_shipped_finding_and_action_tags() {
     let table = TagTable::defaults();
     let names: Vec<&str> = table.tags().iter().map(|t| t.name.as_str()).collect();
     assert_eq!(
         names,
-        [
-            "decisions",
-            "finding",
-            "idea",
-            "preferences",
-            "remind",
-            "standard"
-        ]
+        ["finding", "idea", "preferences", "remind", "standard"]
     );
-    assert!(table.action(&name("decisions")).is_none());
+    assert!(table.action(&name("preferences")).is_none());
     let standard = table.action(&name("standard")).unwrap();
     assert!(standard.require_quote && !standard.ask_first);
     assert!(!table.action(&name("remind")).unwrap().require_quote);
     assert!(table.action(&name("task")).is_none());
     assert!(table.action(&name("friction")).is_none());
-    assert_eq!(
-        table.resolve("Decision").unwrap().name.as_str(),
-        "decisions"
-    );
+    for word in ["decisions", "decision", "dec"] {
+        assert!(table.resolve(word).is_none(), "{word} is no longer shipped");
+    }
     assert_eq!(table.resolve("pref").unwrap().name.as_str(), "preferences");
     assert_eq!(
         table.resolve(" PREFERENCES ").unwrap().name.as_str(),
@@ -88,8 +80,8 @@ fn review_after_counts_the_stale_days_from_creation() {
 #[test]
 fn a_summary_counts_entries_per_tag_and_keeps_unconfigured_ones() {
     let entries = [
-        entry("decisions-1", T0),
-        entry("decisions-2", T0),
+        entry("preferences-1", T0),
+        entry("preferences-2", T0),
         entry("rituals-1", T0),
     ];
     let rows = summarize(&TagTable::defaults(), &entries);
@@ -100,10 +92,9 @@ fn a_summary_counts_entries_per_tag_and_keeps_unconfigured_ones() {
     assert_eq!(
         view,
         [
-            ("decisions", 2, true),
             ("finding", 0, true),
             ("idea", 0, true),
-            ("preferences", 0, true),
+            ("preferences", 2, true),
             ("remind", 0, true),
             ("rituals", 1, false),
             ("standard", 0, true)

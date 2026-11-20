@@ -13,7 +13,7 @@
 //! store call, which finds an entry already written for the same line instead
 //! of writing it again.
 //!
-//! A form-3 line (`#scribe add this to decisions`) is resolved first, outside
+//! A form-3 line (`#scribe add this to preferences`) is resolved first, outside
 //! the store lock (§4.3): unless this prompt already recorded it, the
 //! transcript's last 12 messages go to the referent model through the
 //! `Models` port, and its span is checked verbatim; on a timeout, a failed

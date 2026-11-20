@@ -129,7 +129,7 @@ impl ReferentRequest {
              instruction typed in a coding session. Below are the most recent messages of the \
              conversation, oldest first, each with its id, followed by the instruction. Pick the \
              one message the instruction points at (usually the latest one that states what the \
-             user wants recorded) and the exact passage of it to record: a decision, preference \
+             user wants recorded) and the exact passage of it to record: a preference, rule \
              or fact stated in that message, copied character for character, without adding, \
              rewording or summarizing anything. Prefer a complete sentence or a few sentences \
              over the whole message. Answer with JSON: {\"message\": \"<id>\", \"span\": \
@@ -380,8 +380,10 @@ impl SessionRequest {
             "\nReturn candidates: at most {} in this window, each with quote (8-400 characters copied \
              exactly from one message's own text), message (that turn's id, at most 128 characters), \
              tag (one of {:?}) and, for a finding only, evidence (a path, task, run, experiment or \
-             commit the result can be checked against; omit it otherwise). Two kinds: (a) a preference \
-             or decision Daniel states in his own turn, under a memory tag (one of {:?}); (b) the \
+             commit the result can be checked against; omit it otherwise). Two kinds: (a) a standing \
+             preference Daniel states in his own turn, under a memory tag (one of {:?}); a choice \
+             about one piece of work is not a preference: never return it, it is recorded on that \
+             work's task; (b) the \
              assistant's own recap in its turn — a measured or verified result (tag `finding`, with \
              evidence when the turn names it), or something it says is not done or not verified (the \
              fitting check-back or idea tag, `remind` or `idea`; work that is not done is filed in Orbit by the agent, never proposed). Read the assistant's recap \
@@ -610,7 +612,7 @@ pub struct SessionAnswer {
     pub related: Vec<String>,
     /// Terms.
     pub terms: Vec<TermAnswer>,
-    /// Unmarked preferences or decisions; omitted by older adapters.
+    /// Unmarked preferences; omitted by older adapters.
     #[serde(default)]
     pub candidates: Vec<EntryCandidateAnswer>,
 }
@@ -806,8 +808,8 @@ impl ConsistencyRequest {
     #[must_use]
     pub fn prompt(&self) -> String {
         let mut out = String::from(
-            "You check Daniel's recorded decisions and preferences for entries a later one has \
-             replaced. Each numbered pair below holds two entries of the same tag: the older \
+            "You check Daniel's recorded memory entries (his preferences and any other memory tag \
+             the store has) for entries a later one has replaced. Each numbered pair below holds two entries of the same tag: the older \
              one and the newer one, by the date they were recorded. Label every pair:\n\
              - `contradicts`: the newer entry says the opposite of the older one;\n\
              - `refines`: the newer entry narrows, extends or restates the older one, so the \

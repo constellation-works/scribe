@@ -208,14 +208,14 @@ pub fn make_private(path: &Path) {
     let _ = path;
 }
 
-/// One valid entry file's text, `decisions-<n>`, with `content` as its body.
+/// One valid entry file's text, `preferences-<n>`, with `content` as its body.
 pub fn entry_text(n: usize, content: &str) -> String {
     format!(
         "---
 format: 1
 kind: entry
-id: decisions-{n}
-tag: decisions
+id: preferences-{n}
+tag: preferences
 status: active
 project: scribe
 topics: []
@@ -224,7 +224,7 @@ provider: claude-code
 host: host
 created: 2026-01-02T03:04:05Z
 updated: 2026-01-02T03:04:05Z
-said: \"#scribe decisions: {content}\"
+said: \"#scribe preferences: {content}\"
 content_from: {{kind: instruction}}
 cite: {{session: s-1, message: null, at: 2026-01-02T03:04:05Z, prompt_sha256: \"{sha}\", line: 1, cwd: /work}}
 superseded_by: null
@@ -239,13 +239,13 @@ review_after: null
 /// Write a store of `count` decision entries directly, for tests that need
 /// more data than the fixture holds.
 pub fn write_entries(root: &Path, count: usize) {
-    let dir = root.join("entries").join("decisions");
+    let dir = root.join("entries").join("preferences");
     std::fs::create_dir_all(&dir).expect("create entries");
     for d in [root.to_path_buf(), root.join("entries"), dir.clone()] {
         make_private(&d);
     }
     for n in 1..=count {
-        let path = dir.join(format!("decisions-{n}.md"));
+        let path = dir.join(format!("preferences-{n}.md"));
         let content =
             format!("decision number {n} with content long enough to fill the pipe quickly");
         std::fs::write(&path, entry_text(n, &content)).expect("write entry");

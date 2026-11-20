@@ -19,7 +19,7 @@ fn manual_off(reason: &str) -> SetActive {
         by: agent(),
         route: ActiveRoute::Manual,
         reason: reason.to_owned(),
-        cite: Some(String::from("decisions-3")),
+        cite: Some(String::from("preferences-3")),
     }
 }
 
@@ -42,7 +42,7 @@ fn a_manual_deactivation_records_the_change_and_a_repeat_changes_nothing() {
     assert_eq!(change.by, agent());
     assert_eq!(change.route, ActiveRoute::Manual);
     assert_eq!(change.reason, "the feature was removed");
-    assert_eq!(change.cite.as_deref(), Some("decisions-3"));
+    assert_eq!(change.cite.as_deref(), Some("preferences-3"));
     assert_eq!(record.updated, before.updated, "updated never moves");
     assert_eq!(record.log, before.log, "the text never changes");
 

@@ -3,20 +3,6 @@
     {
       "author": null,
       "source": "config",
-      "name": "decisions",
-      "aliases": [
-        "decision",
-        "dec"
-      ],
-      "description": "choices Daniel has made",
-      "stale_after_days": null,
-      "configured": true,
-      "entries": 0,
-      "action": null
-    },
-    {
-      "author": null,
-      "source": "config",
       "name": "finding",
       "aliases": [],
       "description": "a measured or verified result, with its evidence",
@@ -104,7 +90,7 @@
       }
     }
   ],
-  "total": 7,
+  "total": 6,
   "truncated": false,
   "warnings": []
 }

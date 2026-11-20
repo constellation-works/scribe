@@ -2,15 +2,12 @@
   "tags": [
     {
       "author": null,
-      "source": "config",
+      "source": null,
       "name": "decisions",
-      "aliases": [
-        "decision",
-        "dec"
-      ],
-      "description": "choices Daniel has made",
+      "aliases": [],
+      "description": null,
       "stale_after_days": null,
-      "configured": true,
+      "configured": false,
       "entries": 2,
       "action": null
     },

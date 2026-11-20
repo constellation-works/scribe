@@ -254,7 +254,7 @@ pub(crate) fn day_parser(text: &str) -> Result<Date, String> {
 pub(super) struct ListNotice<'a> {
     /// The plural noun, such as `entries`.
     pub(super) noun: &'static str,
-    /// The filters applied, as the flags that set them (`--tag decisions`).
+    /// The filters applied, as the flags that set them (`--tag preferences`).
     pub(super) criteria: Vec<String>,
     /// The line for an empty store with no filters.
     pub(super) empty: &'a str,

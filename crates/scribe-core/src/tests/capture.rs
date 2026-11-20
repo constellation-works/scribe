@@ -59,10 +59,10 @@ fn ok(line: u32, tag: &str, content: &str, topics: &[&str]) -> Outcome {
 #[test]
 fn form_one_takes_the_tag_before_the_colon_and_the_content_after() {
     assert_eq!(
-        parse("#scribe decisions: squash-merge agent PRs; keep merge commits for releases"),
+        parse("#scribe preferences: squash-merge agent PRs; keep merge commits for releases"),
         [ok(
             1,
-            "decisions",
+            "preferences",
             "squash-merge agent PRs; keep merge commits for releases",
             &[]
         )]
@@ -77,16 +77,16 @@ fn form_one_takes_the_tag_before_the_colon_and_the_content_after() {
 #[test]
 fn form_two_takes_the_tag_from_the_last_word_group() {
     assert_eq!(
-        parse("#scribe add squash-merge to agent PRs to my decisions"),
-        [ok(1, "decisions", "squash-merge to agent PRs", &[])]
+        parse("#scribe add squash-merge to agent PRs to my preferences"),
+        [ok(1, "preferences", "squash-merge to agent PRs", &[])]
     );
     assert_eq!(
         parse("#scribe record tabs over spaces under the preference"),
         [ok(1, "preferences", "tabs over spaces", &[])]
     );
     assert_eq!(
-        parse("#scribe ship on fridays in decision."),
-        [ok(1, "decisions", "ship on fridays", &[])],
+        parse("#scribe ship on fridays in preference."),
+        [ok(1, "preferences", "ship on fridays", &[])],
         "the verb is optional and a trailing full stop is not part of the tag"
     );
 }
@@ -94,15 +94,15 @@ fn form_two_takes_the_tag_from_the_last_word_group() {
 #[test]
 fn trailing_hashtags_are_topics_and_not_content() {
     assert_eq!(
-        parse("#scribe decisions: run the gate #ci #Release"),
-        [ok(1, "decisions", "run the gate", &["ci", "release"])]
+        parse("#scribe preferences: run the gate #ci #Release"),
+        [ok(1, "preferences", "run the gate", &["ci", "release"])]
     );
     assert_eq!(
-        parse("#scribe add run the gate to decisions #ci #ci"),
-        [ok(1, "decisions", "run the gate", &["ci"])]
+        parse("#scribe add run the gate to preferences #ci #ci"),
+        [ok(1, "preferences", "run the gate", &["ci"])]
     );
     assert_eq!(
-        parse("#scribe decisions: x y #a #b #c #d #e #f"),
+        parse("#scribe preferences: x y #a #b #c #d #e #f"),
         [Err((1, "unparsed_instruction"))]
     );
 }
@@ -110,11 +110,11 @@ fn trailing_hashtags_are_topics_and_not_content() {
 #[test]
 fn each_line_is_one_instruction_numbered_within_the_prompt() {
     let prompt =
-        "first a question\n#scribe decisions: one\n  #scribe add two to preferences\r\nthe end";
+        "first a question\n#scribe preferences: one\n  #scribe add two to preferences\r\nthe end";
     assert_eq!(
         parse(prompt),
         [
-            ok(2, "decisions", "one", &[]),
+            ok(2, "preferences", "one", &[]),
             ok(3, "preferences", "two", &[])
         ]
     );
@@ -124,30 +124,30 @@ fn each_line_is_one_instruction_numbered_within_the_prompt() {
 fn lines_in_fences_blockquotes_and_pasted_content_are_not_instructions() {
     let prompt = "\
 ```
-#scribe decisions: fenced
+#scribe preferences: fenced
 ```
 ~~~~
-#scribe decisions: tilde fenced
+#scribe preferences: tilde fenced
 ```
-#scribe decisions: still fenced, the closer is too short
+#scribe preferences: still fenced, the closer is too short
 ~~~~
-> #scribe decisions: quoted
+> #scribe preferences: quoted
 <pasted_content id=\"1\">
-#scribe decisions: pasted
+#scribe preferences: pasted
 </pasted_content>
-<pasted_content>#scribe decisions: one-line paste</pasted_content>
-#scribe decisions: real";
-    assert_eq!(parse(prompt), [ok(14, "decisions", "real", &[])]);
+<pasted_content>#scribe preferences: one-line paste</pasted_content>
+#scribe preferences: real";
+    assert_eq!(parse(prompt), [ok(14, "preferences", "real", &[])]);
 }
 
 #[test]
 fn bare_hashtags_and_lookalikes_are_not_instructions() {
     for prompt in [
-        "#decision squash-merge",
-        "#decisions: squash-merge",
+        "#preference squash-merge",
+        "#preferences: squash-merge",
         "#preferences tabs",
-        "#scribes decisions: no",
-        "text then #scribe decisions: mid-line",
+        "#scribes preferences: no",
+        "text then #scribe preferences: mid-line",
     ] {
         assert!(capture::lines(prompt).is_empty(), "{prompt}");
     }
@@ -164,21 +164,14 @@ fn an_unknown_tag_is_refused_with_every_configured_tag() {
         refused.reason,
         Refusal::UnknownTag {
             word: String::from("rituals"),
-            tags: [
-                "decisions",
-                "finding",
-                "idea",
-                "preferences",
-                "remind",
-                "standard"
-            ]
-            .map(|t| TagName::try_from(String::from(t)).unwrap())
-            .to_vec(),
+            tags: ["finding", "idea", "preferences", "remind", "standard"]
+                .map(|t| TagName::try_from(String::from(t)).unwrap())
+                .to_vec(),
         }
     );
     assert_eq!(
         refused.reason.to_string(),
-        "no tag \"rituals\"; tags: decisions, finding, idea, preferences, remind, standard"
+        "no tag \"rituals\"; tags: finding, idea, preferences, remind, standard"
     );
     assert_eq!(
         parse("#scribe rituals: stand-up at nine"),
@@ -190,9 +183,9 @@ fn an_unknown_tag_is_refused_with_every_configured_tag() {
 fn lines_matching_no_form_are_refused() {
     for prompt in [
         "#scribe",
-        "#scribe remember for decisions that tabs win",
-        "#scribe decisions:",
-        "#scribe add to decisions",
+        "#scribe remember for preferences that tabs win",
+        "#scribe preferences:",
+        "#scribe add to preferences",
         "#scribe #ci",
     ] {
         assert_eq!(
@@ -206,28 +199,28 @@ fn lines_matching_no_form_are_refused() {
 #[test]
 fn referent_lines_are_form_three_with_their_tag_and_topics() {
     for prompt in [
-        "#scribe add this to decisions",
+        "#scribe add this to preferences",
         "#scribe record it in my preferences",
-        "#scribe that to decisions",
-        "#scribe add these under the decision.",
+        "#scribe that to preferences",
+        "#scribe add these under the preference.",
     ] {
         assert_eq!(parse(prompt), [Err((1, "referent"))], "{prompt}");
     }
-    let parsed = capture::scan("#scribe add THIS to decisions #ci", &tags());
+    let parsed = capture::scan("#scribe add THIS to preferences #ci", &tags());
     assert_eq!(
         parsed,
         [Parsed::Referent(Referent {
             line: 1,
-            said: String::from("#scribe add THIS to decisions #ci"),
-            tag: "decisions".parse().unwrap(),
+            said: String::from("#scribe add THIS to preferences #ci"),
+            tag: "preferences".parse().unwrap(),
             topics: vec!["ci".parse().unwrap()].try_into().unwrap(),
             global: false,
         })]
     );
     // More than the referent word is content, as form 2.
     assert_eq!(
-        parse("#scribe add this rule to decisions"),
-        [ok(1, "decisions", "this rule", &[])]
+        parse("#scribe add this rule to preferences"),
+        [ok(1, "preferences", "this rule", &[])]
     );
 }
 
@@ -262,12 +255,12 @@ fn entry(id: &str) -> EntryId {
 fn form_four_takes_a_settling_verb_and_one_id() {
     assert_eq!(
         settles(
-            "#scribe approve p-4\n#scribe reject p-12.\n#scribe retire decisions-2\n#scribe forget rituals-7!"
+            "#scribe approve p-4\n#scribe reject p-12.\n#scribe retire preferences-2\n#scribe forget rituals-7!"
         ),
         [
             Settle::Approve(proposal("p-4")),
             Settle::Reject(proposal("p-12")),
-            Settle::Retire(entry("decisions-2")),
+            Settle::Retire(entry("preferences-2")),
             Settle::Forget(entry("rituals-7")),
         ]
     );
@@ -276,10 +269,10 @@ fn form_four_takes_a_settling_verb_and_one_id() {
 #[test]
 fn a_settling_verb_without_its_kind_of_id_is_refused() {
     for prompt in [
-        "#scribe approve decisions-2",
+        "#scribe approve preferences-2",
         "#scribe reject",
-        "#scribe forget decisions",
-        "#scribe retire decisions-2 decisions-3",
+        "#scribe forget preferences",
+        "#scribe retire preferences-2 preferences-3",
         "#scribe approve p-4 and p-5",
     ] {
         assert_eq!(
@@ -335,14 +328,14 @@ fn a_draft_carries_the_turn_and_the_tags_review_date() {
 #[test]
 fn the_global_opener_marks_each_capture_form_without_taking_its_content() {
     let form_one = capture::scan(
-        "#scribe/global decisions: squash-merge agent PRs #ci",
+        "#scribe/global preferences: squash-merge agent PRs #ci",
         &tags(),
     );
     let Parsed::Instruction(one) = &form_one[0] else {
         panic!("expected an instruction: {form_one:?}");
     };
     assert!(one.global);
-    assert_eq!(one.tag.as_str(), "decisions");
+    assert_eq!(one.tag.as_str(), "preferences");
     assert_eq!(one.content, "squash-merge agent PRs");
     assert!(one.said.contains(&one.content));
     assert_eq!(topic_names(&one.topics), ["ci"]);
@@ -359,21 +352,24 @@ fn the_global_opener_marks_each_capture_form_without_taking_its_content() {
     assert_eq!(two.tag.as_str(), "preferences");
 
     let form_three = capture::scan(
-        "#scribe/global add this to decisions #merge-policy",
+        "#scribe/global add this to preferences #merge-policy",
         &tags(),
     );
     let Parsed::Referent(three) = &form_three[0] else {
         panic!("expected a referent: {form_three:?}");
     };
     assert!(three.global);
-    assert_eq!(three.tag.as_str(), "decisions");
+    assert_eq!(three.tag.as_str(), "preferences");
     assert_eq!(topic_names(&three.topics), ["merge-policy"]);
 
     let turn = turn();
     let draft = capture::draft(one, &turn, &tags());
     assert_eq!(draft.project.as_str(), Project::GLOBAL);
     assert_eq!(
-        draft.into_entry("decisions-1".parse().unwrap()).author.kind,
+        draft
+            .into_entry("preferences-1".parse().unwrap())
+            .author
+            .kind,
         crate::AuthorKind::Daniel
     );
     let messages = conversation();
@@ -394,7 +390,7 @@ fn the_global_opener_marks_each_capture_form_without_taking_its_content() {
 
 #[test]
 fn a_topic_hashtag_or_a_tag_named_global_is_not_the_marker() {
-    let topical = capture::scan("#scribe decisions: run the gate #global #ci", &tags());
+    let topical = capture::scan("#scribe preferences: run the gate #global #ci", &tags());
     let Parsed::Instruction(topical) = &topical[0] else {
         panic!("#global is a topic, not the marker: {topical:?}");
     };
@@ -403,8 +399,8 @@ fn a_topic_hashtag_or_a_tag_named_global_is_not_the_marker() {
     assert_eq!(topical.content, "run the gate");
     let table = TagTable::new(vec![
         TagDef {
-            name: "decisions".parse().unwrap(),
-            aliases: vec!["decision".parse().unwrap()],
+            name: "preferences".parse().unwrap(),
+            aliases: vec!["preference".parse().unwrap()],
             description: None,
             stale_after_days: None,
             action: None,
@@ -450,8 +446,8 @@ fn topic_names(topics: &crate::Topics) -> Vec<&str> {
 #[test]
 fn a_malformed_marker_or_a_marker_on_a_refused_line_is_refused_and_teaches_the_opener() {
     for prompt in [
-        "#scribe/Global decisions: hello",
-        "#scribe/all decisions: hello",
+        "#scribe/Global preferences: hello",
+        "#scribe/all preferences: hello",
         "#scribe/",
     ] {
         let parsed = capture::scan(prompt, &tags());
@@ -495,7 +491,7 @@ fn message(uuid: &str, role: Speaker, text: &str) -> Message {
     }
 }
 
-const PROMPT: &str = "#scribe add this to decisions";
+const PROMPT: &str = "#scribe add this to preferences";
 
 fn turn() -> Turn {
     Turn {
@@ -599,7 +595,7 @@ fn a_verbatim_span_of_a_recent_message_is_recorded_citing_its_role() {
         }
     );
     assert_eq!(draft.said, PROMPT);
-    assert_eq!(draft.tag.as_str(), "decisions");
+    assert_eq!(draft.tag.as_str(), "preferences");
     assert_eq!(draft.cite.line, 1);
     assert_eq!(
         draft.cite.message, None,
@@ -787,7 +783,7 @@ fn an_action_window_holds_the_turns_since_the_last_scribe_line_then_the_prompt()
             "u-1",
             Speaker::User,
             1,
-            "#scribe decisions: ship on fridays",
+            "#scribe preferences: ship on fridays",
         ),
         turn_message("a-1", Speaker::Assistant, 2, "Recorded."),
         turn_message("u-2", Speaker::User, 3, "the size field has no unit"),

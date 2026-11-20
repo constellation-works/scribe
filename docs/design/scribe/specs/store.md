@@ -64,7 +64,7 @@ Frontmatter is read strictly:
   `scribed_through`) must still be present.
 - Values are typed: timestamps are RFC 3339; `review_after` is
   `YYYY-MM-DD`; ids, tags and topics are validated as in the domain types
-  (`decisions-12`; a lowercase kebab-case tag of at most 32 characters; at
+  (`preferences-12`; a lowercase kebab-case tag of at most 32 characters; at
   most five distinct kebab-case topics of at most 40 characters each;
   `related` items `task:`, `pr:`, `repo:` or `session:` plus a target).
 - An entry's `id` and `tag` must match `entries/<tag>/<id>.md`; a session's
@@ -188,9 +188,9 @@ unknown, missing or repeated key.
 without a table, it is the defaults. Every key is optional:
 
 ```toml
-[tags.decisions]                 # a [tags] table replaces the default tags
-aliases = ["decision", "dec"]
-description = "choices Daniel has made"
+[tags.rituals]                   # a [tags] table replaces the default tags
+aliases = ["ritual"]
+description = "how Daniel starts a day"
 stale_after_days = 180           # omit: entries never go stale
 
 [tags.idea]
@@ -223,8 +223,11 @@ inactive_after_days = 120        # days since a session's last message
 paths = ["codebases/orbit"]      # path fragments counted by transcript list
 ```
 
-The default tags are `decisions` (aliases `decision`, `dec`) and
-`preferences` (aliases `preference`, `pref`; stale after 180 days). The
+The default memory tags are `preferences` (aliases `preference`,
+`pref`; stale after 180 days) and `finding`. An entry under a tag no config
+or `tags.json` names (such as a `decisions` entry from before that tag
+stopped shipping) stays listed, shown, searched, cited by `ask` and
+settled. The
 action tags `standard` (`require_quote`), `remind` and `idea` ship too,
 with no aliases, and stay when a config has its own `[tags]`, unless it
 claims their names; a config tag of the same name starts from the shipped

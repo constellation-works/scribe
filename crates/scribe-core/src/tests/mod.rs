@@ -41,7 +41,7 @@ pub(crate) fn entry(id: &str, created: OffsetDateTime) -> Entry {
         updated_by: None,
         created,
         updated: created,
-        said: String::from("#scribe decisions: something"),
+        said: String::from("#scribe preferences: something"),
         content_from: ContentFrom::Instruction,
         retirement_reason: None,
         cite: Some(Cite {

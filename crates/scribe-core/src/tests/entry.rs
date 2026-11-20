@@ -14,15 +14,15 @@ fn an_entry_id_is_tag_dash_number_and_round_trips() {
 #[test]
 fn malformed_entry_ids_are_refused() {
     for bad in [
-        "decisions",
-        "decisions-",
+        "preferences",
+        "preferences-",
         "-3",
-        "decisions-0",
-        "decisions-012",
-        "decisions-+3",
+        "preferences-0",
+        "preferences-012",
+        "preferences-+3",
         "Decisions-3",
-        "decisions-x",
-        "decisions--3",
+        "preferences-x",
+        "preferences--3",
         "",
     ] {
         assert!(
@@ -34,7 +34,7 @@ fn malformed_entry_ids_are_refused() {
 
 #[test]
 fn tag_names_are_lowercase_kebab_case() {
-    assert!("decisions".parse::<TagName>().is_ok());
+    assert!("preferences".parse::<TagName>().is_ok());
     assert!("crew-routing".parse::<TagName>().is_ok());
     for bad in [
         "",
@@ -52,13 +52,13 @@ fn tag_names_are_lowercase_kebab_case() {
 
 #[test]
 fn the_next_id_is_one_past_the_highest_in_the_same_tag() {
-    let tag: TagName = "decisions".parse().unwrap();
-    let ids: Vec<EntryId> = ["decisions-3", "decisions-11", "preferences-40"]
+    let tag: TagName = "preferences".parse().unwrap();
+    let ids: Vec<EntryId> = ["preferences-3", "preferences-11", "finding-40"]
         .iter()
         .map(|s| s.parse().unwrap())
         .collect();
-    assert_eq!(EntryId::next_in(&tag, &ids).to_string(), "decisions-12");
-    assert_eq!(EntryId::next_in(&tag, &[]).to_string(), "decisions-1");
+    assert_eq!(EntryId::next_in(&tag, &ids).to_string(), "preferences-12");
+    assert_eq!(EntryId::next_in(&tag, &[]).to_string(), "preferences-1");
     let other: TagName = "rituals".parse().unwrap();
     assert_eq!(EntryId::next_in(&other, &ids).to_string(), "rituals-1");
 }
@@ -75,12 +75,12 @@ fn statuses_parse_from_their_names_and_only_active_is_visible() {
 
 #[test]
 fn a_filter_matches_every_field_it_sets() {
-    let mut e = entry("decisions-1", T0);
+    let mut e = entry("preferences-1", T0);
     e.topics = vec!["ci".parse().unwrap()].try_into().unwrap();
     let all = EntryFilter::default();
     assert!(all.matches(&e));
     let hit = EntryFilter {
-        tag: Some("decisions".parse().unwrap()),
+        tag: Some("preferences".parse().unwrap()),
         status: Some(EntryStatus::Active),
         project: Some("scribe".parse().unwrap()),
         topics: vec!["ci".parse().unwrap()],
@@ -89,7 +89,7 @@ fn a_filter_matches_every_field_it_sets() {
     assert!(hit.matches(&e));
     for miss in [
         EntryFilter {
-            tag: Some("preferences".parse().unwrap()),
+            tag: Some("rituals".parse().unwrap()),
             ..EntryFilter::default()
         },
         EntryFilter {
@@ -111,7 +111,7 @@ fn a_filter_matches_every_field_it_sets() {
 
 #[test]
 fn topics_must_all_match_related_any_and_dates_bound_created() {
-    let mut e = entry("decisions-1", T0);
+    let mut e = entry("preferences-1", T0);
     e.topics = vec!["ci".parse().unwrap(), "api".parse().unwrap()]
         .try_into()
         .unwrap();
@@ -143,8 +143,8 @@ fn topics_must_all_match_related_any_and_dates_bound_created() {
 
 #[test]
 fn author_and_author_kind_select_the_writer() {
-    let daniel = entry("decisions-1", T0);
-    let mut agent = entry("decisions-2", T0);
+    let daniel = entry("preferences-1", T0);
+    let mut agent = entry("preferences-2", T0);
     agent.author = crate::record::Author::agent("opus".parse().unwrap());
     let by_kind = EntryFilter {
         author_kind: Some(crate::record::AuthorKind::Agent),
@@ -162,24 +162,24 @@ fn author_and_author_kind_select_the_writer() {
 fn selection_is_oldest_first_and_the_limit_applies_after_the_filter() {
     // STD-01 R33, R34.
     let entries = vec![
-        entry("decisions-2", T0 + Duration::hours(2)),
-        entry("preferences-1", T0 + Duration::hours(1)),
-        entry("decisions-1", T0),
+        entry("preferences-2", T0 + Duration::hours(2)),
+        entry("rituals-1", T0 + Duration::hours(1)),
+        entry("preferences-1", T0),
     ];
     let filter = EntryFilter {
-        tag: Some("decisions".parse().unwrap()),
+        tag: Some("preferences".parse().unwrap()),
         limit: NonZeroUsize::new(1),
         ..EntryFilter::default()
     };
     let listing = filter.select(entries.clone());
     assert_eq!(listing.total, 2);
     assert!(listing.truncated());
-    assert_eq!(listing.items[0].id.to_string(), "decisions-1");
+    assert_eq!(listing.items[0].id.to_string(), "preferences-1");
     let ids: Vec<String> = EntryFilter::default()
         .select(entries)
         .items
         .iter()
         .map(|e| e.id.to_string())
         .collect();
-    assert_eq!(ids, ["decisions-1", "preferences-1", "decisions-2"]);
+    assert_eq!(ids, ["preferences-1", "rituals-1", "preferences-2"]);
 }
