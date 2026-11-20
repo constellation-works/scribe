@@ -169,7 +169,7 @@ fn rows(args: &RowsArgs, ctx: &Context) -> Result<Output, CliError> {
 
 fn preview(args: &PreviewArgs, ctx: &Context) -> Result<Output, CliError> {
     let record = match args.kind {
-        Kind::Session => show(ctx, &["session", "show", &args.id])?,
+        Kind::Session => show(ctx, &["session", "show", &args.id, "--log"])?,
         Kind::Entry => show(ctx, &["entry", "show", &args.id])?,
         // There is no `proposal show`; the list carries every field.
         Kind::Proposal => {

@@ -122,7 +122,7 @@ fn enter_opens_the_picked_session_with_its_log_in_the_pager() {
     );
     // The list fzf received is the sessions list, kind-prefixed.
     assert!(read(&cap, "fzf-input.txt").contains("session\t7c2b9d14"));
-    // The preview is the session's header and summary, not only its list line.
+    // The preview includes the session's header, summary and log text.
     let preview = read(&cap, "preview.txt");
     assert!(
         preview.contains("7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02"),
@@ -134,6 +134,14 @@ fn enter_opens_the_picked_session_with_its_log_in_the_pager() {
     );
     assert!(
         preview.contains("Discussed how agent PRs are merged"),
+        "{preview}"
+    );
+    assert!(
+        preview.contains("Squash-merge agent PRs; releases keep merge commits."),
+        "{preview}"
+    );
+    assert!(
+        preview.contains("Drafted the note to the release crew about the new merge policy."),
         "{preview}"
     );
     // Enter opened the record with --log in the pager: the log text itself.
@@ -149,10 +157,8 @@ fn enter_opens_the_picked_session_with_its_log_in_the_pager() {
     assert!(pager.contains("### 2. Telling the release crew"), "{pager}");
 }
 
-/// Regression: `show` prints only its list line when stdout is not a
-/// terminal, and the popup previews through a pipe. The popup must ask for
-/// the detailed format, so an entry shows its full detail and a plain,
-/// non-tty `show` stays a single line (the output contract).
+/// The popup shows the full entry in both piped views. Plain non-tty
+/// `entry show` still follows the single-line output contract.
 #[test]
 fn the_entry_preview_and_open_show_full_detail_from_a_pipe() {
     let fx = Fixture::new();
@@ -178,9 +184,10 @@ fn the_entry_preview_and_open_show_full_detail_from_a_pipe() {
         "{preview}"
     );
     assert!(
-        preview.contains("said       #scribe add this to"),
+        preview.contains("said        #scribe add this to"),
         "{preview}"
     );
+    assert!(preview.contains("cite        session"), "{preview}");
     // Enter keeps the full record.
     let pager = read(&cap, "pager.txt");
     assert!(pager.contains("said        #scribe add this to"), "{pager}");

@@ -539,6 +539,11 @@ pub(crate) fn plugin(out: &mut dyn Write, reply: &PluginReply) -> io::Result<()>
 }
 
 fn entry_detail(out: &mut dyn Write, sink: &Sink, e: &EntryPayload) -> io::Result<()> {
+    entry_metadata(out, e, sink.color)?;
+    field(out, "content", or_dash(&e.content))
+}
+
+pub(super) fn entry_metadata(out: &mut dyn Write, e: &EntryPayload, color: bool) -> io::Result<()> {
     let from = match (
         e.content_from.role,
         &e.content_from.message,
@@ -563,7 +568,7 @@ fn entry_detail(out: &mut dyn Write, sink: &Sink, e: &EntryPayload) -> io::Resul
             )
         })
         .unwrap_or_else(|| format!("agent note ({})", e.author.name));
-    let status = color::paint(e.status, color::role_for_status(e.status), sink.color);
+    let status = color::paint(e.status, color::role_for_status(e.status), color);
     field(out, "id", &e.id)?;
     field(out, "tag", &e.tag)?;
     field(out, "status", &status)?;
@@ -639,7 +644,7 @@ fn entry_detail(out: &mut dyn Write, sink: &Sink, e: &EntryPayload) -> io::Resul
         }
         (None, None) => {}
     }
-    field(out, "content", or_dash(&e.content))
+    Ok(())
 }
 
 fn session_detail(out: &mut dyn Write, sink: &Sink, s: &SessionPayload) -> io::Result<()> {
@@ -716,6 +721,10 @@ fn session_detail(out: &mut dyn Write, sink: &Sink, s: &SessionPayload) -> io::R
         writeln!(out, "## {name}")?;
         writeln!(out, "{}", or_dash(text))?;
     }
+    session_log(out, s)
+}
+
+pub(super) fn session_log(out: &mut dyn Write, s: &SessionPayload) -> io::Result<()> {
     let log = s.log.as_deref().unwrap_or_default();
     writeln!(out)?;
     writeln!(out, "## Log")?;
