@@ -1,4 +1,4 @@
-//! `scribe`: Daniel's recorded decisions and preferences, and the records of
+//! `scribe`: Daniel's recorded preferences, and the records of
 //! the sessions he cataloged.
 //!
 //! `main` is wiring only: parse, resolve the output sink once, resolve the

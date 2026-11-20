@@ -6,15 +6,15 @@ use crate::store::format::{
 };
 use std::path::Path;
 
-const ENTRY: &str = "entries/decisions/decisions-1.md";
+const ENTRY: &str = "entries/preferences/preferences-1.md";
 const SESSION: &str = "sessions/2026/11/s-1.md";
 
 fn entry(text: &str) -> Result<crate::entry::Entry, Error> {
     decode_entry(
         Path::new(ENTRY),
         text.as_bytes(),
-        "decisions-1",
-        "decisions",
+        "preferences-1",
+        "preferences",
     )
 }
 
@@ -45,7 +45,7 @@ fn the_format_is_one_more_than_the_number_of_upgrade_steps() {
 #[test]
 fn an_entry_file_reads_whole_with_its_body_as_the_content() {
     let e = entry(&entry_text("")).unwrap();
-    assert_eq!(e.id.to_string(), "decisions-1");
+    assert_eq!(e.id.to_string(), "preferences-1");
     assert_eq!(e.content, "run the gate before every push");
     assert_eq!(e.topics.as_slice()[0].as_str(), "ci");
     assert!(e.cite.as_ref().unwrap().message.is_none());
@@ -114,17 +114,27 @@ fn an_entry_whose_id_does_not_match_its_file_is_refused() {
     let err = decode_entry(
         Path::new(ENTRY),
         text.as_bytes(),
-        "decisions-2",
-        "decisions",
+        "preferences-2",
+        "preferences",
     )
     .unwrap_err();
     assert!(corrupt_message(&err).contains("do not match"), "{err:?}");
-    let err =
-        decode_entry(Path::new(ENTRY), text.as_bytes(), "decisions-1", "rituals").unwrap_err();
+    let err = decode_entry(
+        Path::new(ENTRY),
+        text.as_bytes(),
+        "preferences-1",
+        "rituals",
+    )
+    .unwrap_err();
     corrupt_message(&err);
-    let moved = text.replace("tag: decisions", "tag: rituals");
-    let err =
-        decode_entry(Path::new(ENTRY), moved.as_bytes(), "decisions-1", "rituals").unwrap_err();
+    let moved = text.replace("tag: preferences", "tag: rituals");
+    let err = decode_entry(
+        Path::new(ENTRY),
+        moved.as_bytes(),
+        "preferences-1",
+        "rituals",
+    )
+    .unwrap_err();
     corrupt_message(&err);
 }
 
@@ -218,7 +228,7 @@ fn control_and_proposals_are_strict_json() {
 #[test]
 fn an_encoded_entry_reads_back_as_the_same_entry() {
     let mut original = entry(&entry_text("")).unwrap();
-    original.said = String::from("#scribe decisions: it's \"quoted\" #ci: and --- dashes");
+    original.said = String::from("#scribe preferences: it's \"quoted\" #ci: and --- dashes");
     original.content = String::from("it's \"quoted\" #ci: and --- dashes");
     original.cite.as_mut().unwrap().message = Some(String::from("m-1"));
     original.review_after = Some(time::macros::date!(2027 - 01 - 02));
@@ -287,7 +297,7 @@ fn a_format_five_control_and_proposals_document_reads_at_its_own_shape() {
 
 #[test]
 fn format_six_proposals_keep_agent_metadata_and_format_seven_controls_require_identity() {
-    let old = br#"{"format":3,"proposals":[{"id":"p-1","kind":"stale","older":"decisions-1","newer":null,"reason":"review","quotes":[],"state":"open","opened_at":"2026-11-01T10:00:00Z","settled_at":null,"settled_by":null}]}"#;
+    let old = br#"{"format":3,"proposals":[{"id":"p-1","kind":"stale","older":"preferences-1","newer":null,"reason":"review","quotes":[],"state":"open","opened_at":"2026-11-01T10:00:00Z","settled_at":null,"settled_by":null}]}"#;
     let path = Path::new("proposals.json");
     let mut proposals = decode_proposals(path, old).unwrap();
     proposals[0].updated_by = Some(crate::Author::agent("sol".parse().unwrap()));
@@ -586,11 +596,11 @@ fn legacy_entries_proposals_and_control_gain_their_authors() {
     assert!(corrupt_message(&entry(&current).unwrap_err()).contains("author"));
 
     let proposals = br#"{"format":3,"proposals":[
-        {"id":"p-1","kind":"stale","older":"decisions-1","newer":null,"reason":"r",
-         "quotes":[{"entry":"decisions-1","text":"t"}],"state":"open",
+        {"id":"p-1","kind":"stale","older":"preferences-1","newer":null,"reason":"r",
+         "quotes":[{"entry":"preferences-1","text":"t"}],"state":"open",
          "opened_at":"2026-11-01T10:00:00Z","settled_at":null,"settled_by":null},
-        {"id":"p-2","kind":"stale","older":"decisions-1","newer":null,"reason":"r",
-         "quotes":[{"entry":"decisions-1","text":"t"}],"state":"rejected",
+        {"id":"p-2","kind":"stale","older":"preferences-1","newer":null,"reason":"r",
+         "quotes":[{"entry":"preferences-1","text":"t"}],"state":"rejected",
          "opened_at":"2026-11-01T10:00:00Z","settled_at":"2026-11-01T11:00:00Z","settled_by":null}]}"#;
     let list = decode_proposals(Path::new("proposals.json"), proposals).unwrap();
     for p in &list {

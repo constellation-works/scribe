@@ -2,7 +2,7 @@ use crate::entry::Speaker;
 use crate::transcript;
 
 const TRANSCRIPT: &str = r#"{"type":"session-owner","sessionId":"s-1"}
-{"type":"user","uuid":"u-1","timestamp":"2026-11-01T10:00:00.250Z","message":{"role":"user","content":"hello\n#scribe decisions: one"}}
+{"type":"user","uuid":"u-1","timestamp":"2026-11-01T10:00:00.250Z","message":{"role":"user","content":"hello\n#scribe preferences: one"}}
 {"type":"assistant","uuid":"a-1","timestamp":"2026-11-01T10:00:05Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hm"},{"type":"text","text":"Noted."},{"type":"tool_use","id":"t","name":"Bash","input":{}}]}}
 {"type":"user","uuid":"u-2","timestamp":"2026-11-01T10:00:06Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":"output"}]}}
 {"type":"user","uuid":"u-3","timestamp":"2026-11-01T10:00:07Z","isMeta":true,"message":{"role":"user","content":"<command-name>/clear</command-name>"}}
@@ -25,7 +25,7 @@ fn only_conversation_text_is_kept() {
             (
                 "u-1",
                 Speaker::User,
-                String::from("hello\n#scribe decisions: one")
+                String::from("hello\n#scribe preferences: one")
             ),
             ("a-1", Speaker::Assistant, String::from("Noted.")),
             ("u-4", Speaker::User, String::from("part one\n\npart two")),

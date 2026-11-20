@@ -129,6 +129,27 @@ fn include_hidden_gives_the_model_superseded_entries_too() {
 }
 
 #[test]
+fn ask_scopes_to_decisions_entries_with_or_without_a_config_that_names_the_tag() {
+    // The fixture store predates the removal of the shipped `decisions` tag:
+    // its config does not name it, yet the entries are still found and cited.
+    let s = Setup::new();
+    let v = s.json(&["how do we merge agent PRs?", "--tag", "decisions"], &[]);
+    assert_eq!(v["status"], "answered", "{v}");
+    assert_eq!(v["claims"][0]["cite"], "decisions-2");
+    let prompt = std::fs::read_to_string(s.fx.home().join("claude-stdin")).unwrap();
+    assert!(prompt.contains("cite=\"decisions-2\""), "{prompt}");
+
+    // A config that declares the tag makes it work as before.
+    let config = s.fx.root().join("config.toml");
+    let mut body = std::fs::read_to_string(&config).unwrap();
+    body.push_str("\n[tags.decisions]\naliases = [\"decision\"]\n");
+    std::fs::write(&config, body).unwrap();
+    let v = s.json(&["how do we merge agent PRs?", "--tag", "decisions"], &[]);
+    assert_eq!(v["status"], "answered", "{v}");
+    assert_eq!(v["claims"][0]["cite"], "decisions-2");
+}
+
+#[test]
 fn nothing_matching_is_no_record_without_a_model_call() {
     let s = Setup::new();
     let v = s.json(&["zebra quantum chromodynamics"], &[]);

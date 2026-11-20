@@ -1,7 +1,7 @@
 ---
 title: scribe — Design
 owner: claude
-last_updated: 2026-11-10
+last_updated: 2026-11-20
 last_validated: 2026-11-02
 status: Draft
 feature: scribe
@@ -428,7 +428,7 @@ by fields before any ranking. Every record carries:
 | Field | Meaning |
 |---|---|
 | `format`, `kind` | `3` (`4` from S8); `entry` or `session` |
-| `id` | `decisions-12`, or the session id |
+| `id` | `preferences-12`, or the session id |
 | `status` | entry: `active`, `superseded`, `retired`, `forgotten`; session: `open`, `final` |
 | `project` | the repository slug from the cwd's git remote, else the cwd's basename; `global` when the line opens with `#scribe/global` instead of `#scribe` ([§4.2](#42-parsing-an-instruction)) |
 | `topics` | 0–5 lowercase kebab-case labels (`ci`, `crew-routing`, `release`) |
@@ -441,8 +441,8 @@ by fields before any ranking. Every record carries:
 | `created`, `updated` | RFC 3339 UTC |
 
 `topics` are filter labels and are distinct from a tag, which names where an
-entry goes (`decisions`, `preferences`). An entry's topics are the extra
-hashtags on its `#scribe` line (`#scribe add this to decision #ci`) and
+entry goes (`preferences`). An entry's topics are the extra
+hashtags on its `#scribe` line (`#scribe add this to preferences #ci`) and
 nothing else, since capture calls no model. A session's topics come from
 the `session` model at each pass, which is given the existing topic list and
 told to reuse it before coining one. The consistency routine proposes
@@ -455,8 +455,8 @@ superseding entries; nothing is renamed without Daniel's approval.
 ---
 format: 4
 kind: entry
-id: decisions-12
-tag: decisions
+id: preferences-12
+tag: preferences
 status: active
 project: orbit
 topics: [merge-policy]
@@ -467,7 +467,7 @@ author: {kind: daniel, name: daniel}
 updated_by: null
 created: 2026-11-02T19:05:41Z
 updated: 2026-11-02T19:05:41Z
-said: "#scribe add this to decision #merge-policy"
+said: "#scribe add this to preferences #merge-policy"
 content_from: {kind: message, role: assistant, message: <uuid>, at: 2026-11-02T19:04:11Z}
 cite: {session: <session-id>, message: <uuid>, at: 2026-11-02T19:05:40Z, prompt_sha256: "…", line: 3, cwd: "…"}
 superseded_by: null
@@ -487,8 +487,8 @@ The body is `content`, verbatim.
 - `status` is `active`, `superseded`, `retired` or `forgotten`; `forgotten`
   keeps the id and `cite` but blanks `said` and `content`
   ([4_decisions.md](./4_decisions.md#superseded-and-stale-entries-are-hidden-not-removed)).
-- `review_after` comes from the tag's `stale_after_days` (none by default
-  for `decisions`, 180 days for `preferences`).
+- `review_after` comes from the tag's `stale_after_days` (180 days for
+  `preferences`; none for a tag that sets no `stale_after_days`).
 - Ids are `<tag>-<n>`, `n` being the tag's max + 1 under the lock: short,
   self-describing in an echo, and never reused.
 - `author` (from S8) says who wrote the entry. A `#scribe` line writes
@@ -701,7 +701,7 @@ whitespace). A `#scribe` line must end there or continue with whitespace;
 `#scribe/` is the global-marker attempt, including a malformed one.
 Lines inside code fences, blockquotes and `<pasted_content>` blocks are
 skipped (the orbit-office `markers.rs` rule). Each such line is one
-instruction; a turn with two lines writes two entries. A bare `#decision`,
+instruction; a turn with two lines writes two entries. A bare `#preference`,
 `#preferences` or any
 other hashtag is not an instruction and captures nothing, with no reply.
 
@@ -780,8 +780,7 @@ Model-free grammar, tried in order:
    proposal or hide/blank an entry ([§7](#7-consistency-routine)).
 
 Tag names and aliases are compared case-insensitively, singular and plural
-both declared in config (`decision`, `decisions`; `preference`,
-`preferences`, `pref`). An instruction whose tag matches nothing is refused:
+both declared in config (`preference`, `preferences`, `pref`). An instruction whose tag matches nothing is refused:
 no entry, and the reply lists the configured tags. An instruction that
 matches no form is refused with the forms. A refusal is still audited
 (`status: failure`, `error_code: unknown_tag` or `unparsed_instruction`).
@@ -804,8 +803,8 @@ p-4`). Form 3 is resolved since
 S3 ([§4.3](#43-resolving-this-and-it)); a form-3 line whose tag is unknown
 is refused as `unknown_tag` before any model call, as in the reply example
 below. Form 3 is a line whose content is exactly one of the four referent
-words, with or without a verb (`#scribe that to decisions`); `#scribe add
-this rule to decisions` is form 2 with the content `this rule`.
+words, with or without a verb (`#scribe that to preferences`); `#scribe add
+this rule to preferences` is form 2 with the content `this rule`.
 The tag word of form 2 may end in `.`, `!`, `,` or `;`.
 
 A line records `project: global` when its first word is `#scribe/global`
@@ -851,7 +850,7 @@ whole message. The model's span is trimmed and becomes `content`;
 named, `user` or `assistant`. The fallback is the previous assistant
 message, or the latest message when no assistant has spoken yet, cut to 600
 characters; it is cited the same way. Its echo reads `scribe: added
-decisions-3 to decisions (guessed: <why>; recorded the assistant message
+preferences-3 to preferences (guessed: <why>; recorded the assistant message
 before your prompt instead) — "…"`, where `<why>` is the timeout, the model
 error, a message not in the window, or a span that is not word for word in
 its message. A wrong guess is visible with `scribe entry show <id>`, and
@@ -873,8 +872,8 @@ same echo lines (the agent's copies carry the per-line notes below), and
 never blocks the turn, so the rest of the prompt still reaches the agent:
 
 ```
-scribe: added decisions-12 to decisions — "squash-merge agent PRs; keep merge commits for releases"
-scribe: refused "#scribe add it to rituals" — no tag "rituals"; tags: decisions, preferences
+scribe: added preferences-12 to preferences — "squash-merge agent PRs; keep merge commits for releases"
+scribe: refused "#scribe add it to rituals" — no tag "rituals"; tags: preferences, finding, idea, remind, standard
 ```
 
 The agent-facing text adds a note to each echo line: a recorded (or
@@ -925,8 +924,10 @@ The echo names the file path, the points added and any dropped quotes.
 
 ### 4.6 Action tags
 
-[ORB-25112]. Most tags hold the human's memory: decisions and preferences
-`ask` answers from. An **action tag** holds work items instead, entries a
+[ORB-25112]. Most tags hold the human's memory: preferences
+`ask` answers from. A decision is not a shipped tag: it is recorded on its
+Orbit task with the human's words quoted, or in a feature's `4_decisions.md`
+("Decisions are recorded on their Orbit task, not in a shipped tag"). An **action tag** holds work items instead, entries a
 consumer outside scribe picks up: an intake that turns a `standard` entry
 into a change to the constellation standards. Work and friction are not
 action tags: agents file them in Orbit (`orbit.task.add`, `orbit.friction`)
@@ -1187,7 +1188,7 @@ only as a table of contents; the answer rewrites the header and the open
 segment and may open new segments; the write appends, never rewrites, a
 sealed segment.
 
-A pass writes no tag entries, even if the transcript contains `#decision`
+A pass writes no tag entries, even if the transcript contains `#preference`
 or an unprocessed `#scribe` line. It may open candidate proposals as described
 below; only Daniel's later typed approval creates an entry. Up to S13 there
 is no backfill: sessions that were never switched on are never read. From S14 one more route reads
@@ -1238,7 +1239,7 @@ As built (S4), in `scribe-core::pass` and `commands/session/pass.rs`:
   again; a session that is not on is refused (`session_not_on`) and never
   read, and the switch's `final` flag counts as for a due pass.
 
-#### Unmarked preferences and decisions
+#### Unmarked preferences
 
 An on session's ordinary pass (including an explicitly requested catalog's
 windows) offers candidates beside the record in the same model call.
@@ -1262,8 +1263,9 @@ a pass; an explicit catalog is still required for past sessions.
   model adapters may omit the field, which means none. Relevant recorded or
   proposed statements add at most 6,000 value characters of input (15 spans
   of at most 400), selected by word overlap with the window.
-- **Evidence.** From Daniel's turns the model suggests preferences and
-  decisions only, with a canonical configured memory tag (never an action
+- **Evidence.** From Daniel's turns the model suggests standing preferences
+  only (a choice about one piece of work belongs on its Orbit task and is
+  not proposed), with a canonical configured memory tag (never an action
   tag or `finding`). From an assistant turn — read its own recap first —
   it suggests a measured or verified result under `finding`, or something
   it says needs a check-back or is a future consideration under a free
@@ -1309,7 +1311,7 @@ a pass; an explicit catalog is still required for past sessions.
   the resulting entry blanks the candidate's copy too and recovery preserves
   the forgotten entry.
 
-The in-session skill offers ready-to-type preference and decision lines only
+The in-session skill offers ready-to-type preference lines only
 when the session is off or unknown. When on, it leaves proposals to this pass;
 action entries continue through their separate agent-write route.
 
@@ -1630,7 +1632,7 @@ Input: `{"question": string, "scope"?: {"tags"?: [..], "topics"?: [..],
 {
   "status": "answered | no_record | conflict",
   "answer": "…",
-  "claims": [{"text": "…", "quote": "…", "cite": "decisions-12"}],
+  "claims": [{"text": "…", "quote": "…", "cite": "preferences-12"}],
   "conflicts": [{"cites": ["preferences-3", "preferences-9"], "note": "…"}],
   "evidence_considered": 14,
   "dropped_quotes": 0
@@ -1648,7 +1650,7 @@ prints this payload).
 
 0. Filter by frontmatter first. `scope` fields (`project`, `topics`,
    `tags`, `since`, `kind`) and any project name, topic or date the
-   question names ("decisions on ci this month") restrict the candidate
+   question names ("preferences on ci this month") restrict the candidate
    records before ranking.
 1. Load every `active` entry (plus `superseded`/`retired` when
    `include_hidden`), every session record, every discussion (the store's
@@ -1708,7 +1710,7 @@ nothing), so before §6.2 a model-free classifier recognises lookups:
 | the latest/last/previous session (optionally for a project or topic) | the newest session record matching that frontmatter, by `updated` |
 | a named session (`session:<id>`, or a title match) | that session record |
 | open next steps / what is pending | the `next` items of the newest records in scope, newest first |
-| the entries of a tag in a period ("decisions this week") | those entries, newest first |
+| the entries of a tag in a period ("preferences this week") | those entries, newest first |
 | what was concluded about a subject ("what did we conclude about level 4?") | the discussions whose title, topics or terms match, newest `updated` first, with thesis and takeaway verbatim; the store's before the read-only sources' |
 | a term Daniel uses ("graduate to level 4", "what did I mean by resident orchestrator") | the session records whose `terms` contain it (case and whitespace normalised), newest first, each with the defining `said` span, plus entries whose body contains it |
 | the last orchestrator or on-call session for a workspace | the newest `orchestration`-tagged assignment task in `ws_constellation` whose title names that workspace, with its execution summary verbatim, cited `task:<id>` |
@@ -1762,7 +1764,7 @@ or `last_session`, `named_session`, `next_steps`, `tag_period`, `term`,
   (a task without one is dropped). A project or topic the question names
   narrows the store's records only when one of them still matches a query
   word; dates the question names narrow nothing yet (the tag-period lookup
-  covers "decisions this week"). Stemming strips `-ing`, `-ed`, `-es`, `-s`
+  covers "preferences this week"). Stemming strips `-ing`, `-ed`, `-es`, `-s`
   (not after `s`) and then a final `-e`, so `merge` and `merging` meet.
   Superseded and retired entries are scored either way: without
   `include_hidden` they are left out and counted in `hidden_matches`, and
@@ -2201,7 +2203,7 @@ Claude Code package.
 - `scribe hook user-prompt-submit` with a fixture hook payload writes exactly
   one entry per `#scribe` line for forms 1 and 2, with `said`, `content`,
   `cite` and an echo carrying tag, text and id.
-- Lines in fences, blockquotes and `<pasted_content>`, and bare `#decision`
+- Lines in fences, blockquotes and `<pasted_content>`, and bare `#preference`
   markers, write nothing; an unknown tag is refused with the configured
   list; replaying the same payload writes nothing new.
 - Every write and refusal is audited with ids and error codes only.
@@ -2212,7 +2214,7 @@ Claude Code package.
 
 **S3 — Referents and the models port.** Form 3 and `ClaudeCliModels`.
 
-- With a fake `Models`, `#scribe add this to decisions` records the chosen
+- With a fake `Models`, `#scribe add this to preferences` records the chosen
   span with `content_from.role`; a span failing the verbatim check, a
   timeout and a model error each still write exactly one entry, the
   fallback, with an echo that says it was guessed.

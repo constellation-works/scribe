@@ -92,7 +92,7 @@ fn the_fixture_reads_whole_and_reading_writes_nothing() {
     assert_eq!(
         rows,
         [
-            (String::from("decisions"), 2, true),
+            (String::from("decisions"), 2, false),
             (String::from("finding"), 0, true),
             (String::from("idea"), 0, true),
             (String::from("preferences"), 1, true),

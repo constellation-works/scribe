@@ -49,11 +49,11 @@ fn cites(found: &search::Found) -> Vec<String> {
 
 #[test]
 fn daniel_entries_weigh_half_again_as_much_as_agent_notes() {
-    let daniel = noted("decisions-1", "squash merge agent pull requests");
-    let mut agent = noted("decisions-2", "squash merge agent pull requests");
+    let daniel = noted("preferences-1", "squash merge agent pull requests");
+    let mut agent = noted("preferences-2", "squash merge agent pull requests");
     agent.author = Author::agent("opus".parse().unwrap());
     let found = run(&query("squash merge"), &[daniel, agent], &[]);
-    assert_eq!(cites(&found), ["decisions-1", "decisions-2"]);
+    assert_eq!(cites(&found), ["preferences-1", "preferences-2"]);
     let ratio = found.hits[0].score / found.hits[1].score;
     assert!((ratio - 1.5).abs() < 0.01, "{ratio}");
     assert_eq!(found.hits[1].author.as_ref().unwrap().name.as_str(), "opus");
@@ -82,9 +82,9 @@ fn sessions_rank_as_a_header_and_one_unit_per_segment() {
 
 #[test]
 fn hidden_records_are_counted_and_kept_only_on_request_and_forgotten_never() {
-    let mut superseded = noted("decisions-1", "deploy on tuesdays");
+    let mut superseded = noted("preferences-1", "deploy on tuesdays");
     superseded.status = EntryStatus::Superseded;
-    let mut forgotten = noted("decisions-2", "deploy on fridays");
+    let mut forgotten = noted("preferences-2", "deploy on fridays");
     forgotten.status = EntryStatus::Forgotten;
     let mut inactive = session("s-1", T0);
     inactive.active = false;
@@ -97,7 +97,7 @@ fn hidden_records_are_counted_and_kept_only_on_request_and_forgotten_never() {
     let mut all = query("deploy");
     all.include_hidden = true;
     let found = run(&all, &entries, &sessions);
-    assert_eq!(cites(&found), ["decisions-1", "session:s-1"]);
+    assert_eq!(cites(&found), ["preferences-1", "session:s-1"]);
     assert_eq!(found.hits[0].status, "superseded");
     assert_eq!(found.hits[0].active, None);
     assert_eq!(found.hits[1].active, Some(false));
@@ -106,7 +106,7 @@ fn hidden_records_are_counted_and_kept_only_on_request_and_forgotten_never() {
 
 #[test]
 fn filters_narrow_by_kind_project_topics_and_dates() {
-    let mut e = noted("decisions-1", "pin the toolchain");
+    let mut e = noted("preferences-1", "pin the toolchain");
     e.topics = vec!["ci".parse().unwrap()].try_into().unwrap();
     let mut r = session("s-1", T0 + Duration::days(10));
     r.summary = String::from("toolchain upgrade");
@@ -120,24 +120,27 @@ fn filters_narrow_by_kind_project_topics_and_dates() {
         cites(&run(&q, &entries, &sessions))
     };
     assert_eq!(with(&|_| {}).len(), 3);
-    assert_eq!(with(&|q| q.kind = Some(RecordKind::Entry)), ["decisions-1"]);
+    assert_eq!(
+        with(&|q| q.kind = Some(RecordKind::Entry)),
+        ["preferences-1"]
+    );
     assert_eq!(with(&|q| q.kind = Some(RecordKind::Session)).len(), 2);
     assert!(with(&|q| q.project = Some("orbit".parse().unwrap())).is_empty());
     // A segment carries its own topics as well as its session's.
     let mut ci = with(&|q| q.topics = vec!["ci".parse().unwrap()]);
     ci.sort();
-    assert_eq!(ci, ["decisions-1", "session:s-1#1"]);
+    assert_eq!(ci, ["preferences-1", "session:s-1#1"]);
     let later = with(&|q| q.dates.since = Some((T0 + Duration::days(5)).date()));
     assert_eq!(later.len(), 2);
-    assert!(!later.contains(&String::from("decisions-1")));
+    assert!(!later.contains(&String::from("preferences-1")));
     let earlier = with(&|q| q.dates.until = Some((T0 + Duration::days(5)).date()));
-    assert_eq!(earlier, ["decisions-1"]);
+    assert_eq!(earlier, ["preferences-1"]);
 }
 
 #[test]
 fn the_limit_cuts_after_counting_every_hit() {
     let entries: Vec<Entry> = (1..=5)
-        .map(|n| noted(&format!("decisions-{n}"), "rotate the keys"))
+        .map(|n| noted(&format!("preferences-{n}"), "rotate the keys"))
         .collect();
     let mut q = query("rotate keys");
     q.limit = NonZeroUsize::new(2).unwrap();

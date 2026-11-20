@@ -10,7 +10,7 @@ fn entry(id: &str, content: &str) -> EntryPayload {
     let at = datetime!(2026-01-02 03:04:05 UTC);
     EntryPayload {
         id: id.to_owned(),
-        tag: String::from("decisions"),
+        tag: String::from("preferences"),
         status: "active",
         project: String::from("scribe"),
         topics: vec![String::from("ci"), String::from("release")],
@@ -24,7 +24,7 @@ fn entry(id: &str, content: &str) -> EntryPayload {
         updated_by: None,
         created: at,
         updated: at,
-        said: String::from("#scribe decisions: x"),
+        said: String::from("#scribe preferences: x"),
         content: content.to_owned(),
         content_from: ContentFromPayload {
             kind: "instruction",
@@ -79,16 +79,16 @@ fn entries(items: Vec<EntryPayload>) -> Records {
 fn the_plain_form_is_one_tab_separated_line_per_record_with_text_flattened() {
     // STD-01 R9: a line break in the content must not split the record.
     let records = entries(vec![
-        entry("decisions-1", "one\ntwo\tthree"),
-        entry("decisions-2", ""),
+        entry("preferences-1", "one\ntwo\tthree"),
+        entry("preferences-2", ""),
     ]);
     let text = render_list(OutputMode::Plain, &records, 2, &[]);
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(
         lines,
         [
-            "decisions-1\tactive\tscribe\tci,release\t2026-01-02T03:04:05Z\tone two three\tdaniel\t-",
-            "decisions-2\tactive\tscribe\tci,release\t2026-01-02T03:04:05Z\t-\tdaniel\t-",
+            "preferences-1\tactive\tscribe\tci,release\t2026-01-02T03:04:05Z\tone two three\tdaniel\t-",
+            "preferences-2\tactive\tscribe\tci,release\t2026-01-02T03:04:05Z\t-\tdaniel\t-",
         ]
     );
 }
@@ -124,11 +124,11 @@ fn an_empty_list_is_empty_stdout_in_human_modes_and_an_empty_envelope_in_json() 
 fn a_cut_list_and_its_skipped_files_show_in_the_json_envelope() {
     // STD-01 R34.
     let warning = WarningPayload {
-        path: String::from("/s/entries/decisions/decisions-9.md"),
+        path: String::from("/s/entries/preferences/preferences-9.md"),
         code: "store_corrupt",
         error: String::from("bad"),
     };
-    let records = entries(vec![entry("decisions-1", "x")]);
+    let records = entries(vec![entry("preferences-1", "x")]);
     let json: serde_json::Value =
         serde_json::from_str(&render_list(OutputMode::Json, &records, 4, &[warning])).unwrap();
     assert_eq!(json["total"], 4);
@@ -141,7 +141,7 @@ fn a_cut_list_and_its_skipped_files_show_in_the_json_envelope() {
 fn json_carries_null_for_absent_values_rather_than_omitting_them() {
     // STD-01 R11.
     let mut out = Vec::new();
-    let record = Record::Entry(Box::new(entry("decisions-1", "x")));
+    let record = Record::Entry(Box::new(entry("preferences-1", "x")));
     show(&mut out, &sink(OutputMode::Json), &record).unwrap();
     let value: serde_json::Value = serde_json::from_slice(&out).unwrap();
     for key in ["superseded_by", "review_after"] {
@@ -162,7 +162,7 @@ fn the_detail_view_keeps_the_content_whole() {
     let long = "word ".repeat(60);
     let mut out = Vec::new();
     let record = Record::Entry(Box::new(entry(
-        "decisions-1",
+        "preferences-1",
         &format!("{long}\nsecond line"),
     )));
     let narrow = Sink {
@@ -181,7 +181,7 @@ fn a_single_record_list_is_still_a_table_and_counts_align_right() {
     let tag = TagPayload {
         author: None,
         source: Some("config"),
-        name: String::from("decisions"),
+        name: String::from("preferences"),
         aliases: vec![String::from("dec")],
         description: None,
         stale_after_days: None,

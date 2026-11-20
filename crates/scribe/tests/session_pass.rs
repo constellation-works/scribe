@@ -163,6 +163,45 @@ fn pass_proposes_a_check_back_from_an_assistant_recap_and_reject_closes_it() {
 }
 
 #[test]
+fn pass_asks_for_standing_preferences_only_and_never_proposes_a_decision() {
+    let s = Setup::new();
+    let choice = "For this migration we will go with the blue-green rollout.";
+    let standing = "I always want short progress updates while an agent is working.";
+    s.write(
+        ON,
+        &[
+            line("user", "u-choice", choice),
+            line("user", "u-standing", standing),
+        ],
+    );
+    let mut body = answer();
+    // The model offers both; the one-time choice under the retired tag is
+    // dropped locally, the standing preference stays.
+    body["candidates"] = json!([
+        {"quote": choice, "message": "u-choice", "tag": "decisions"},
+        {"quote": standing, "message": "u-standing", "tag": "preferences"}
+    ]);
+    s.answer(&body);
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let listed = proposals(&s);
+    assert_eq!(listed["total"], 1, "{listed}");
+    assert_eq!(listed["proposals"][0]["candidate"]["tag"], "preferences");
+    assert_eq!(listed["proposals"][0]["candidate"]["quote"], standing);
+
+    let prompts = s.prompts();
+    assert!(!prompts.is_empty());
+    for prompt in &prompts {
+        assert!(
+            !prompt.to_lowercase().contains("decision"),
+            "the pass prompt never asks for decisions: {prompt}"
+        );
+        assert!(prompt.contains("standing preference"), "{prompt}");
+        assert!(prompt.contains("recorded on that work's task"), "{prompt}");
+    }
+}
+
+#[test]
 fn pass_proposes_no_candidate_under_task_without_a_config_declaring_it() {
     let s = Setup::new();
     let quote = "The migration still has to be filed as work.";
@@ -2391,12 +2430,12 @@ fn candidate_sources_and_existing_statements_are_checked_at_the_binary_boundary(
         s.write(ON, &[line(role, "u-1", &text)]);
         if existing {
             let root = s.fx.root();
-            let dir = root.join("entries/decisions");
+            let dir = root.join("entries/preferences");
             std::fs::create_dir_all(&dir).unwrap();
             for path in [&root, &root.join("entries"), &dir] {
                 make_private(path);
             }
-            let path = dir.join("decisions-1.md");
+            let path = dir.join("preferences-1.md");
             std::fs::write(&path, support::entry_text(1, quote)).unwrap();
             make_private(&path);
         }
@@ -2451,7 +2490,7 @@ fn candidates_share_a_three_slot_budget_across_windows_and_keep_cataloging() {
             Some(candidate_answer(
                 &format!("I choose option {n}."),
                 &format!("u-{n}"),
-                "decisions",
+                "preferences",
             ))
         })
         .collect();
@@ -2473,7 +2512,7 @@ fn candidate_open_cap_is_enforced_even_when_the_model_ignores_it() {
     s.answer(&candidate_answer(
         "I choose option zero.",
         "u-1",
-        "decisions",
+        "preferences",
     ));
     s.scribe("/scribe on");
     s.run(&["session", "pass", "--session", ON], b"");
@@ -2482,7 +2521,7 @@ fn candidate_open_cap_is_enforced_even_when_the_model_ignores_it() {
         .map(|n| {
             let mut p = template.clone();
             p["id"] = json!(format!("p-{n}"));
-            p["older"] = json!(format!("decisions-{n}"));
+            p["older"] = json!(format!("preferences-{n}"));
             p["candidate"]["quote"] = json!(format!("Stored preference {n}."));
             p
         })
@@ -2525,7 +2564,7 @@ fn candidate_ids_are_reserved_for_approval_and_agent_settlement_is_refused() {
     let s = Setup::new();
     let quote = "I choose smaller pull requests for easier review.";
     s.write(ON, &[line("user", "u-1", quote)]);
-    s.answer(&candidate_answer(quote, "u-1", "decisions"));
+    s.answer(&candidate_answer(quote, "u-1", "preferences"));
     s.scribe("/scribe on");
     s.run(&["session", "pass", "--session", ON], b"");
     let denied = s.fx.run(&[
@@ -2548,7 +2587,7 @@ fn candidate_ids_are_reserved_for_approval_and_agent_settlement_is_refused() {
                 "entry",
                 "add",
                 "--tag",
-                "decisions",
+                "preferences",
                 "--author",
                 "agent",
                 "Agent analysis with a different content.",
@@ -2557,27 +2596,33 @@ fn candidate_ids_are_reserved_for_approval_and_agent_settlement_is_refused() {
             .stdout,
     )
     .unwrap();
-    assert_eq!(direct["id"], "decisions-2");
+    assert_eq!(direct["id"], "preferences-2");
     type_settlement(
         &s,
-        "#scribe decisions: A separate decision Daniel explicitly marks.",
+        "#scribe preferences: A separate decision Daniel explicitly marks.",
     );
     assert!(
         s.fx.root()
-            .join("entries/decisions/decisions-3.md")
+            .join("entries/preferences/preferences-3.md")
             .exists()
     );
     type_settlement(&s, "#scribe approve p-1");
-    let entry: Value =
-        serde_json::from_slice(&s.fx.ok(&["entry", "show", "decisions-1", "--json"]).stdout)
-            .unwrap();
+    let entry: Value = serde_json::from_slice(
+        &s.fx
+            .ok(&["entry", "show", "preferences-1", "--json"])
+            .stdout,
+    )
+    .unwrap();
     assert_eq!(entry["content"], quote);
-    type_settlement(&s, "#scribe forget decisions-1");
+    type_settlement(&s, "#scribe forget preferences-1");
     assert_eq!(proposals(&s)["proposals"][0]["candidate"]["quote"], "");
     type_settlement(&s, "#scribe approve p-1");
-    let forgotten: Value =
-        serde_json::from_slice(&s.fx.ok(&["entry", "show", "decisions-1", "--json"]).stdout)
-            .unwrap();
+    let forgotten: Value = serde_json::from_slice(
+        &s.fx
+            .ok(&["entry", "show", "preferences-1", "--json"])
+            .stdout,
+    )
+    .unwrap();
     assert_eq!(forgotten["status"], "forgotten");
     assert_eq!(forgotten["content"], "");
 }

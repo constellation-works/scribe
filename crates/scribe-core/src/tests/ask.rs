@@ -94,7 +94,7 @@ impl Tasks for FakeTasks {
 fn decision(id: &str, days: i64, content: &str) -> Entry {
     let mut e = entry(id, T0 + Duration::days(days));
     e.content = content.to_owned();
-    e.said = format!("#scribe decisions: {content}");
+    e.said = format!("#scribe preferences: {content}");
     e
 }
 
@@ -170,7 +170,7 @@ const SQUASH: &str = "squash-merge agent PRs; keep merge commits for releases";
 #[test]
 fn nothing_matching_is_no_record_without_a_model_call() {
     let models = FakeModels::silent();
-    let entries = [decision("decisions-1", 0, SQUASH)];
+    let entries = [decision("preferences-1", 0, SQUASH)];
     let a = run(&question("zebra quantum"), &entries, &[], &models, &NoTasks);
     assert_eq!(a.status, Status::NoRecord);
     assert_eq!(a.answer, ask::NO_RECORD);
@@ -181,7 +181,7 @@ fn nothing_matching_is_no_record_without_a_model_call() {
 #[test]
 fn a_question_of_only_stopwords_is_no_record_without_a_model_call() {
     let models = FakeModels::silent();
-    let entries = [decision("decisions-1", 0, SQUASH)];
+    let entries = [decision("preferences-1", 0, SQUASH)];
     let a = run(&question("what is it?"), &entries, &[], &models, &NoTasks);
     assert_eq!(a.status, Status::NoRecord);
     assert_eq!(models.calls(), 0);
@@ -190,11 +190,11 @@ fn a_question_of_only_stopwords_is_no_record_without_a_model_call() {
 #[test]
 fn claims_whose_quote_or_cite_fails_are_dropped_and_counted() {
     let models = FakeModels::answering(answered(vec![
-        claim("squash", "squash-merge agent PRs", "decisions-1"),
-        claim("invented", "always rebase agent PRs", "decisions-1"),
-        claim("uncited", "squash-merge agent PRs", "decisions-9"),
+        claim("squash", "squash-merge agent PRs", "preferences-1"),
+        claim("invented", "always rebase agent PRs", "preferences-1"),
+        claim("uncited", "squash-merge agent PRs", "preferences-9"),
     ]));
-    let entries = [decision("decisions-1", 0, SQUASH)];
+    let entries = [decision("preferences-1", 0, SQUASH)];
     let a = run(
         &question("how do we merge agent PRs?"),
         &entries,
@@ -206,7 +206,7 @@ fn claims_whose_quote_or_cite_fails_are_dropped_and_counted() {
     assert_eq!(a.status, Status::Answered);
     assert_eq!(a.dropped_quotes, 2);
     assert_eq!(a.claims.len(), 1);
-    assert_eq!(a.claims[0].cite, "decisions-1");
+    assert_eq!(a.claims[0].cite, "preferences-1");
     assert_eq!(a.evidence_considered, 1);
 }
 
@@ -215,9 +215,9 @@ fn a_quote_matches_across_whitespace_and_unicode_forms() {
     let models = FakeModels::answering(answered(vec![claim(
         "squash",
         "squash-merge   agent\nPRs;",
-        "decisions-1",
+        "preferences-1",
     )]));
-    let entries = [decision("decisions-1", 0, SQUASH)];
+    let entries = [decision("preferences-1", 0, SQUASH)];
     let a = run(
         &question("merge agent PRs"),
         &entries,
@@ -234,9 +234,9 @@ fn every_claim_dropped_is_no_record() {
     let models = FakeModels::answering(answered(vec![claim(
         "invented",
         "always rebase agent PRs",
-        "decisions-1",
+        "preferences-1",
     )]));
-    let entries = [decision("decisions-1", 0, SQUASH)];
+    let entries = [decision("preferences-1", 0, SQUASH)];
     let a = run(
         &question("merge agent PRs"),
         &entries,
@@ -256,27 +256,27 @@ fn two_disagreeing_entries_are_a_conflict_with_both_cites() {
         status: String::from("conflict"),
         answer: String::from("The records disagree."),
         claims: vec![
-            claim("squash", "squash-merge agent PRs", "decisions-1"),
+            claim("squash", "squash-merge agent PRs", "preferences-1"),
             claim(
                 "merge commit",
                 "merge agent PRs with a merge commit",
-                "decisions-2",
+                "preferences-2",
             ),
         ],
         conflicts: vec![
             ConflictAnswer {
-                cites: vec![String::from("decisions-1"), String::from("decisions-2")],
+                cites: vec![String::from("preferences-1"), String::from("preferences-2")],
                 note: String::from("squash or merge commit"),
             },
             ConflictAnswer {
-                cites: vec![String::from("decisions-1"), String::from("decisions-7")],
+                cites: vec![String::from("preferences-1"), String::from("preferences-7")],
                 note: String::from("one cite is not evidence"),
             },
         ],
     });
     let entries = [
-        decision("decisions-1", 0, SQUASH),
-        decision("decisions-2", 1, "merge agent PRs with a merge commit"),
+        decision("preferences-1", 0, SQUASH),
+        decision("preferences-2", 1, "merge agent PRs with a merge commit"),
     ];
     let a = run(
         &question("how do we merge agent PRs?"),
@@ -289,23 +289,23 @@ fn two_disagreeing_entries_are_a_conflict_with_both_cites() {
     assert_eq!(a.conflicts.len(), 1);
     assert_eq!(
         a.conflicts[0].cites,
-        vec![String::from("decisions-1"), String::from("decisions-2")]
+        vec![String::from("preferences-1"), String::from("preferences-2")]
     );
     assert_eq!(a.claims.len(), 2);
 }
 
 #[test]
 fn hidden_entries_are_left_out_and_counted_unless_include_hidden() {
-    let mut old = decision("decisions-1", 0, "merge agent PRs with a merge commit");
+    let mut old = decision("preferences-1", 0, "merge agent PRs with a merge commit");
     old.status = EntryStatus::Superseded;
-    let mut forgotten = decision("decisions-3", 0, "merge agent PRs by hand");
+    let mut forgotten = decision("preferences-3", 0, "merge agent PRs by hand");
     forgotten.status = EntryStatus::Forgotten;
-    let entries = [old, decision("decisions-2", 1, SQUASH), forgotten];
+    let entries = [old, decision("preferences-2", 1, SQUASH), forgotten];
 
     let models = FakeModels::answering(answered(vec![claim(
         "squash",
         "squash-merge agent PRs",
-        "decisions-2",
+        "preferences-2",
     )]));
     let a = run(
         &question("merge agent PRs"),
@@ -314,22 +314,22 @@ fn hidden_entries_are_left_out_and_counted_unless_include_hidden() {
         &models,
         &NoTasks,
     );
-    assert_eq!(models.cites(), vec![String::from("decisions-2")]);
+    assert_eq!(models.cites(), vec![String::from("preferences-2")]);
     assert_eq!(a.hidden_matches, 1);
     assert!(a.answer.ends_with(ask::HIDDEN_NOTE), "{}", a.answer);
 
     let models = FakeModels::answering(answered(vec![claim(
         "squash",
         "squash-merge agent PRs",
-        "decisions-2",
+        "preferences-2",
     )]));
     let mut q = question("merge agent PRs");
     q.include_hidden = true;
     let a = run(&q, &entries, &[], &models, &NoTasks);
     let cites = models.cites();
-    assert!(cites.contains(&String::from("decisions-1")), "{cites:?}");
+    assert!(cites.contains(&String::from("preferences-1")), "{cites:?}");
     assert!(
-        !cites.contains(&String::from("decisions-3")),
+        !cites.contains(&String::from("preferences-3")),
         "forgotten: {cites:?}"
     );
     assert_eq!(a.hidden_matches, 0);
@@ -339,13 +339,17 @@ fn hidden_entries_are_left_out_and_counted_unless_include_hidden() {
 
 #[test]
 fn evidence_is_newest_first_and_labels_whose_words_they_are() {
-    let mut said = decision("decisions-2", 2, "agent PRs are squash-merged by the crew");
+    let mut said = decision(
+        "preferences-2",
+        2,
+        "agent PRs are squash-merged by the crew",
+    );
     said.content_from = ContentFrom::Message {
         role: Speaker::Assistant,
         message: String::from("m-1"),
         at: T0,
     };
-    let entries = [decision("decisions-1", 0, SQUASH), said];
+    let entries = [decision("preferences-1", 0, SQUASH), said];
     let mut r = record("s-1", 1, "merge talk");
     r.summary = String::from("We discussed how agent PRs merge.");
     let models = FakeModels::silent();
@@ -359,7 +363,7 @@ fn evidence_is_newest_first_and_labels_whose_words_they_are() {
     let calls = models.calls.borrow();
     let evidence = &calls[0].evidence;
     let cites: Vec<&str> = evidence.iter().map(|e| e.cite.as_str()).collect();
-    assert_eq!(cites, vec!["decisions-2", "session:s-1", "decisions-1"]);
+    assert_eq!(cites, vec!["preferences-2", "session:s-1", "preferences-1"]);
     assert_eq!(evidence[0].whose, "assistant (recorded by Daniel)");
     assert_eq!(evidence[1].whose, "session summary");
     assert_eq!(evidence[2].whose, "Daniel");
@@ -372,7 +376,7 @@ fn evidence_is_newest_first_and_labels_whose_words_they_are() {
 
 #[test]
 fn tasks_are_evidence_and_a_failing_task_source_costs_only_them() {
-    let entries = [decision("decisions-1", 0, SQUASH)];
+    let entries = [decision("preferences-1", 0, SQUASH)];
     let tasks = FakeTasks::new(vec![task("T-1", 3, "merge agent PRs faster", "")]);
     let models = FakeModels::silent();
     run(&question("merge agent PRs"), &entries, &[], &models, &tasks);
@@ -382,7 +386,7 @@ fn tasks_are_evidence_and_a_failing_task_source_costs_only_them() {
     let models = FakeModels::answering(answered(vec![claim(
         "squash",
         "squash-merge agent PRs",
-        "decisions-1",
+        "preferences-1",
     )]));
     let a = run(
         &question("merge agent PRs"),
@@ -392,28 +396,28 @@ fn tasks_are_evidence_and_a_failing_task_source_costs_only_them() {
         &FakeTasks::failing(),
     );
     assert_eq!(a.status, Status::Answered);
-    assert_eq!(models.cites(), vec![String::from("decisions-1")]);
+    assert_eq!(models.cites(), vec![String::from("preferences-1")]);
 }
 
 #[test]
 fn a_tag_scope_keeps_only_that_tags_entries() {
-    let mut pref = entry("preferences-1", T0);
+    let mut pref = entry("rituals-1", T0);
     pref.content = String::from("agent PRs get short titles");
-    let entries = [decision("decisions-1", 0, SQUASH), pref];
+    let entries = [decision("preferences-1", 0, SQUASH), pref];
     let mut r = record("s-1", 1, "merge talk");
     r.summary = String::from("agent PRs");
     let tasks = FakeTasks::new(vec![task("T-1", 3, "agent PRs", "")]);
     let models = FakeModels::silent();
     let mut q = question("agent PRs");
-    q.scope.tags = vec!["decisions".parse().unwrap()];
+    q.scope.tags = vec!["preferences".parse().unwrap()];
     run(&q, &entries, &[r], &models, &tasks);
-    assert_eq!(models.cites(), vec![String::from("decisions-1")]);
+    assert_eq!(models.cites(), vec![String::from("preferences-1")]);
     assert!(tasks.queries.borrow().is_empty(), "tasks were searched");
 }
 
 #[test]
 fn a_kind_scope_keeps_only_that_kind() {
-    let entries = [decision("decisions-1", 0, SQUASH)];
+    let entries = [decision("preferences-1", 0, SQUASH)];
     let mut r = record("s-1", 1, "merge talk");
     r.summary = String::from("agent PRs");
     let models = FakeModels::silent();
@@ -520,13 +524,13 @@ fn open_next_steps_are_the_newest_records_with_open_items() {
 fn a_tags_entries_this_week_are_returned_newest_first() {
     // now is T0 + 30 days, a Tuesday; the week began on the Monday.
     let entries = [
-        decision("decisions-1", 0, "old"),
-        decision("decisions-2", 29, "monday's"),
-        decision("decisions-3", 30, "today's"),
+        decision("preferences-1", 0, "old"),
+        decision("preferences-2", 29, "monday's"),
+        decision("preferences-3", 30, "today's"),
     ];
     let models = FakeModels::silent();
     let a = run(
-        &question("decisions this week"),
+        &question("preferences this week"),
         &entries,
         &[],
         &models,
@@ -534,7 +538,7 @@ fn a_tags_entries_this_week_are_returned_newest_first() {
     );
     assert_eq!(a.lookup, Some(Lookup::TagPeriod));
     let cites: Vec<String> = a.records.iter().map(Found::cite).collect();
-    assert_eq!(cites, vec!["decisions-3", "decisions-2"]);
+    assert_eq!(cites, vec!["preferences-3", "preferences-2"]);
     assert_eq!(models.calls(), 0);
 }
 
@@ -555,7 +559,7 @@ fn a_term_returns_the_sessions_that_define_it_with_their_spans() {
     ];
     let other = record("s-2", 9, "other");
     let entries = [decision(
-        "decisions-1",
+        "preferences-1",
         0,
         "we graduate to level 4 when CI is green for a month",
     )];
@@ -577,7 +581,7 @@ fn a_term_returns_the_sessions_that_define_it_with_their_spans() {
             terms: vec![defining.terms[0].clone()],
         }
     );
-    assert_eq!(a.records[1].cite(), "decisions-1");
+    assert_eq!(a.records[1].cite(), "preferences-1");
     let a = run(
         &question("What did I mean by resident orchestrator?"),
         &[],
@@ -620,7 +624,7 @@ fn the_last_on_call_session_is_the_newest_orchestration_task_for_that_workspace(
 #[test]
 fn a_lookup_that_finds_nothing_falls_through_to_retrieval() {
     let entries = [decision(
-        "decisions-1",
+        "preferences-1",
         0,
         "the last session of a sprint is a demo",
     )];
@@ -758,12 +762,16 @@ fn an_inactive_session_is_hidden_from_lookups_and_evidence_unless_include_hidden
 
 #[test]
 fn agent_evidence_cannot_be_presented_as_daniels_words_even_by_the_model() {
-    let mut agent = decision("decisions-1", 0, SQUASH);
+    let mut agent = decision("preferences-1", 0, SQUASH);
     agent.author = crate::Author::agent("daniel".parse().unwrap());
     agent.cite = None;
     agent.said.clear();
     agent.content_from = ContentFrom::Agent;
-    let mut reply = answered(vec![claim("Daniel said to squash", SQUASH, "decisions-1")]);
+    let mut reply = answered(vec![claim(
+        "Daniel said to squash",
+        SQUASH,
+        "preferences-1",
+    )]);
     reply.answer = String::from("Daniel says to squash.");
     let models = FakeModels::answering(reply);
     let result = run(
@@ -813,12 +821,12 @@ fn a_finding_is_presented_as_that_agents_claim_as_of_its_date_with_evidence() {
 fn daniels_evidence_wins_top_k_over_a_newer_identical_agent_note() {
     let mut entries: Vec<Entry> = (1..=ask::TOP_K)
         .map(|n| {
-            let mut e = decision(&format!("decisions-{n}"), 0, SQUASH);
+            let mut e = decision(&format!("preferences-{n}"), 0, SQUASH);
             e.said.clear();
             e
         })
         .collect();
-    let mut agent = decision("decisions-21", 1, SQUASH);
+    let mut agent = decision("preferences-21", 1, SQUASH);
     agent.author = crate::Author::agent("opus".parse().unwrap());
     agent.cite = None;
     agent.content_from = ContentFrom::Agent;
@@ -834,15 +842,15 @@ fn daniels_evidence_wins_top_k_over_a_newer_identical_agent_note() {
     );
     assert_eq!(models.cites().len(), ask::TOP_K);
     assert!(
-        !models.cites().iter().any(|id| id == "decisions-21"),
+        !models.cites().iter().any(|id| id == "preferences-21"),
         "the agent note must lose the last retrieval slot despite its recency"
     );
 }
 
 #[test]
 fn mixed_author_conflicts_keep_both_labels_and_a_nonempty_safe_answer() {
-    let daniel = decision("decisions-1", 0, "squash merge all changes");
-    let mut agent = decision("decisions-2", 1, "rebase merge all changes");
+    let daniel = decision("preferences-1", 0, "squash merge all changes");
+    let mut agent = decision("preferences-2", 1, "rebase merge all changes");
     agent.author = crate::Author::agent("opus".parse().unwrap());
     agent.cite = None;
     agent.said.clear();
@@ -852,7 +860,7 @@ fn mixed_author_conflicts_keep_both_labels_and_a_nonempty_safe_answer() {
         answer: String::from("Daniel says both."),
         claims: Vec::new(),
         conflicts: vec![ConflictAnswer {
-            cites: vec!["decisions-1".to_owned(), "decisions-2".to_owned()],
+            cites: vec!["preferences-1".to_owned(), "preferences-2".to_owned()],
             note: String::from("Daniel contradicts himself."),
         }],
     });
@@ -864,11 +872,11 @@ fn mixed_author_conflicts_keep_both_labels_and_a_nonempty_safe_answer() {
         &NoTasks,
     );
     assert_eq!(result.status, Status::Conflict);
-    assert!(result.conflicts[0].note.contains("Daniel [decisions-1]"));
+    assert!(result.conflicts[0].note.contains("Daniel [preferences-1]"));
     assert!(
         result.conflicts[0]
             .note
-            .contains("agent note (opus) [decisions-2]")
+            .contains("agent note (opus) [preferences-2]")
     );
     assert!(
         !result.answer.is_empty(),

@@ -2,9 +2,9 @@
 //! each stays fresh.
 //!
 //! Tags come from `config.toml` (`[tags.<name>]`) and agent-created
-//! `tags.json`; config claims take precedence. Without a config the defaults below apply: `decisions` and
-//! `preferences` (docs/design/scribe/4_decisions.md, "Only decisions and
-//! preferences ship by default"), plus the shipped action tags `standard`,
+//! `tags.json`; config claims take precedence. Without a config the defaults below apply: `preferences`
+//! (docs/design/scribe/4_decisions.md, "Decisions are recorded on their Orbit
+//! task, not in a shipped tag"), plus the shipped action tags `standard`,
 //! `remind` and `idea` and the shipped memory tag
 //! `finding`, which a config with its own tags keeps unless it claims their
 //! names ("Action tags are marked in config, and three ship"; "Findings are
@@ -43,7 +43,7 @@ pub enum TagError {
 pub struct TagDef {
     /// The tag's name, which is also its directory under `entries/`.
     pub name: TagName,
-    /// Other words that name it in a `#scribe` line (`decision`, `pref`).
+    /// Other words that name it in a `#scribe` line (`preference`, `pref`).
     pub aliases: Vec<TagName>,
     /// What belongs in it, for the refusal list and `tag list`.
     pub description: Option<String>,
@@ -163,31 +163,20 @@ impl TagTable {
         Ok((Self::new(tags)?, warnings))
     }
 
-    /// The tags scribe ships with: `decisions` (aliases `decision`, `dec`;
-    /// never stale) and `preferences` (aliases `preference`, `pref`; stale
-    /// after 180 days).
+    /// The memory tag scribe ships with: `preferences` (aliases `preference`,
+    /// `pref`; stale after 180 days).
     #[must_use]
     pub fn defaults() -> Self {
         let name = |s: &str| TagName::try_from(s.to_owned());
         let tags = (|| {
-            Ok::<_, crate::entry::EntryError>(vec![
-                TagDef {
-                    name: name("decisions")?,
-                    aliases: vec![name("decision")?, name("dec")?],
-                    description: Some(String::from("choices Daniel has made")),
-                    stale_after_days: None,
-                    action: None,
-                    require_evidence: false,
-                },
-                TagDef {
-                    name: name("preferences")?,
-                    aliases: vec![name("preference")?, name("pref")?],
-                    description: Some(String::from("how Daniel likes things done")),
-                    stale_after_days: NonZeroU32::new(180),
-                    action: None,
-                    require_evidence: false,
-                },
-            ])
+            Ok::<_, crate::entry::EntryError>(vec![TagDef {
+                name: name("preferences")?,
+                aliases: vec![name("preference")?, name("pref")?],
+                description: Some(String::from("how Daniel likes things done")),
+                stale_after_days: NonZeroU32::new(180),
+                action: None,
+                require_evidence: false,
+            }])
         })()
         .unwrap_or_default();
         Self { tags }.with_shipped_actions()

@@ -8,13 +8,12 @@
 //! store reads the file (STD-02 R5).
 //!
 //! ```toml
-//! [tags.decisions]
-//! aliases = ["decision", "dec"]
-//! description = "choices Daniel has made"
-//!
 //! [tags.preferences]
 //! aliases = ["preference", "pref"]
 //! stale_after_days = 180
+//!
+//! [tags.rituals]
+//! description = "how Daniel starts and ends a day"
 //!
 //! [tags.direction]
 //! action = true

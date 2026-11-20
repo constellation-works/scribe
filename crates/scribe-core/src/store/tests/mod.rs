@@ -21,15 +21,15 @@ fn private_tempdir() -> tempfile::TempDir {
     dir
 }
 
-/// A valid entry file for `decisions-1`, with `extra` frontmatter lines
+/// A valid entry file for `preferences-1`, with `extra` frontmatter lines
 /// inserted before the closing `---`.
 fn entry_text(extra: &str) -> String {
     format!(
         "---
 format: 1
 kind: entry
-id: decisions-1
-tag: decisions
+id: preferences-1
+tag: preferences
 status: active
 project: scribe
 topics: [ci]
@@ -38,7 +38,7 @@ provider: claude-code
 host: host
 created: 2026-11-01T10:00:00Z
 updated: 2026-11-01T10:00:00Z
-said: \"#scribe decisions: run the gate\"
+said: \"#scribe preferences: run the gate\"
 content_from: {{kind: instruction}}
 cite: {{session: s-1, message: null, at: 2026-11-01T10:00:00Z, prompt_sha256: \"{sha}\", line: 1, cwd: /work}}
 superseded_by: null

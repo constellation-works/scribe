@@ -16,7 +16,7 @@ const GLOBAL: &str = "Global options";
 
 const ROOT_EXAMPLES: &str = "\
 Examples:
-  scribe entry list --tag decisions --status active
+  scribe entry list --tag preferences --status active
   scribe entry show <id> --json
   scribe session list --project scribe
   scribe proposal list
@@ -28,7 +28,7 @@ Examples:
 
 Exit status: 0 on success, 1 when a command fails, 2 on a usage error.";
 
-/// Read Daniel's recorded decisions and preferences, and the records of the sessions he cataloged.
+/// Read Daniel's recorded preferences, and the records of the sessions he cataloged.
 #[derive(Debug, Parser)]
 #[command(
     name = "scribe",

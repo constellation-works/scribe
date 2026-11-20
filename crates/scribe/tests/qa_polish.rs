@@ -67,7 +67,7 @@ fn seeded() -> Fixture {
 #[test]
 fn a_json_usage_error_keeps_the_missing_argument_name() {
     let fx = seeded();
-    let err = failure(&fx, &["entry", "add", "--tag", "decisions"], 2);
+    let err = failure(&fx, &["entry", "add", "--tag", "preferences"], 2);
     assert_eq!(err["code"], "usage_error");
     let message = err["error"].as_str().unwrap();
     assert!(message.contains("--author"), "{message}");
@@ -250,7 +250,7 @@ fn the_table_detail_view_separates_a_long_label_from_its_value() {
             "entry",
             "add",
             "--tag",
-            "decisions",
+            "preferences",
             "--author",
             "opus",
             "squash merges",
@@ -261,14 +261,17 @@ fn the_table_detail_view_separates_a_long_label_from_its_value() {
         &[
             "entry",
             "retire",
-            "decisions-3",
+            "preferences-2",
             "--author",
             "opus",
             "--reason",
             "obsolete",
         ],
     );
-    let out = ok(&fx, &["entry", "show", "decisions-3", "--format", "table"]);
+    let out = ok(
+        &fx,
+        &["entry", "show", "preferences-2", "--format", "table"],
+    );
     let shown = text(&out.stdout);
     let line = shown
         .lines()
@@ -305,7 +308,7 @@ fn adding_an_existing_tag_says_it_exists() {
         &[
             "tag",
             "add",
-            "decisions",
+            "preferences",
             "--author",
             "opus",
             "--description",
@@ -325,7 +328,7 @@ fn adding_an_existing_tag_says_it_exists() {
         &[
             "tag",
             "add",
-            "dec",
+            "pref",
             "--author",
             "opus",
             "--description",
@@ -377,7 +380,7 @@ fn an_unknown_tag_update_target_is_reported_before_an_unset_redact_name() {
             "--author",
             "opus",
             "--add-alias",
-            "dec",
+            "pref",
         ],
     );
     assert_eq!(err["code"], "tag_conflict");
@@ -431,7 +434,7 @@ fn a_bad_argument_is_reported_before_an_unset_redact_name() {
                 "entry",
                 "add",
                 "--tag",
-                "decisions",
+                "preferences",
                 "--author",
                 "opus",
                 "  ",
@@ -443,7 +446,7 @@ fn a_bad_argument_is_reported_before_an_unset_redact_name() {
                 "entry",
                 "add",
                 "--tag",
-                "decisions",
+                "preferences",
                 "--author",
                 "daniel",
                 "x",
@@ -478,7 +481,7 @@ fn a_bad_argument_is_reported_before_an_unset_redact_name() {
             vec![
                 "tag",
                 "add",
-                "decisions",
+                "preferences",
                 "--author",
                 "opus",
                 "--description",
@@ -531,13 +534,13 @@ fn a_bad_argument_is_reported_before_an_unset_redact_name() {
             "entry",
             "add",
             "--tag",
-            "decisions",
+            "preferences",
             "--author",
             "opus",
             "fine",
         ],
     );
     assert_eq!(err["code"], "redact_env_unset");
-    let list = json(&ok(&fx, &["entry", "list", "--tag", "decisions", "--json"]).stdout);
-    assert_eq!(list["total"], 2, "no entry was written");
+    let list = json(&ok(&fx, &["entry", "list", "--tag", "preferences", "--json"]).stdout);
+    assert_eq!(list["total"], 1, "no entry was written");
 }

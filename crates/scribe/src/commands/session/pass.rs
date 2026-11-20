@@ -69,7 +69,7 @@ window_chars). Each window rewrites the header and open segment, appends
 new segments and checkpoints the record. Sealed segments stay unchanged;
 [catalog] segment_windows (default 3) bounds how long a segment stays open.
 --json reports windows, segments, seals and how many due sessions remain.
-Also proposes up to 3 unmarked preferences or decisions per session per run,
+Also proposes up to 3 unmarked preferences per session per run,
 until 20 candidate proposals are open. Review with scribe proposal list;
 only a typed #scribe approve <id> writes an entry; #scribe reject <id> drops it.
 A failed pass stays due with automatic retry delays of 5, 10, 20, 40,

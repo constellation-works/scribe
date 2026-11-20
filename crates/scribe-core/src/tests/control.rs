@@ -24,7 +24,7 @@ fn only_a_first_line_slash_scribe_is_a_command() {
         "please /scribe on",
         "hello\n/scribe on",
         "/scribes on",
-        "#scribe decisions: on",
+        "#scribe preferences: on",
     ] {
         assert_eq!(control::parse(not), None, "{not:?}");
     }

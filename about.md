@@ -1,7 +1,7 @@
 ---
 codebase: scribe
 owner: daniel
-summary: A standalone Orbit plugin that keeps Daniel's explicitly marked preferences and decisions, catalogs the sessions he turns on, and answers agents' questions about him with verbatim citations.
+summary: A standalone Orbit plugin that keeps Daniel's explicitly marked preferences, catalogs the sessions he turns on, and answers agents' questions about him with verbatim citations.
 status: active
 stack: Rust
 gate: direct

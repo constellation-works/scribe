@@ -28,9 +28,9 @@ fn lines(store: &Store) -> Vec<serde_json::Value> {
         .collect()
 }
 
-/// Write `decisions-1`, whose content is `secret content`, and show it.
+/// Write `preferences-1`, whose content is `secret content`, and show it.
 fn shown_entry(store: &Store) -> Output {
-    let dir = store.root().join("entries/decisions");
+    let dir = store.root().join("entries/preferences");
     std::fs::create_dir_all(&dir).unwrap();
     #[cfg(unix)]
     {
@@ -39,13 +39,13 @@ fn shown_entry(store: &Store) -> Output {
             std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o700)).unwrap();
         }
     }
-    let path = dir.join("decisions-1.md");
+    let path = dir.join("preferences-1.md");
     let text = format!(
         "---
 format: 1
 kind: entry
-id: decisions-1
-tag: decisions
+id: preferences-1
+tag: preferences
 status: active
 project: scribe
 topics: []
@@ -54,7 +54,7 @@ provider: claude-code
 host: host
 created: 2026-09-26T12:00:00Z
 updated: 2026-09-26T12:00:00Z
-said: \"#scribe decisions: secret content\"
+said: \"#scribe preferences: secret content\"
 content_from: {{kind: instruction}}
 cite: {{session: s-1, message: null, at: 2026-09-26T12:00:00Z, prompt_sha256: \"{}\", line: 1, cwd: /work}}
 superseded_by: null
@@ -70,7 +70,7 @@ secret content
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
     }
-    let entry = store.entry(&"decisions-1".parse().unwrap()).unwrap();
+    let entry = store.entry(&"preferences-1".parse().unwrap()).unwrap();
     Output::Show {
         record: Record::Entry(Box::new(EntryPayload::from(&entry))),
     }
@@ -101,7 +101,7 @@ fn a_success_records_the_record_it_acted_on_and_nothing_it_contained() {
     drop(guard);
     let lines = lines(&store);
     assert_eq!(lines[0]["status"], "success");
-    assert_eq!(lines[0]["target"], "decisions-1");
+    assert_eq!(lines[0]["target"], "preferences-1");
     assert_eq!(lines[0]["at"], "2026-09-26T12:00:00Z");
     // STD-05 R13: no argument values in the log.
     let text = std::fs::read_to_string(store.audit_path()).unwrap();
@@ -112,7 +112,7 @@ fn a_success_records_the_record_it_acted_on_and_nothing_it_contained() {
 fn a_failure_records_the_stable_code_never_the_message() {
     let dir = private_tempdir();
     let store = Store::open(dir.path());
-    let err = CliError::Core(store.entry(&"decisions-9".parse().unwrap()).unwrap_err());
+    let err = CliError::Core(store.entry(&"preferences-9".parse().unwrap()).unwrap_err());
     let message = err.to_string();
     let mut guard = AuditGuard::start(&store, ADD, datetime!(2026-09-26 12:00:00 UTC));
     guard.mark_result(&Err(err));
@@ -143,7 +143,7 @@ fn hook_reply(outcomes: Vec<HookOutcome>) -> Output {
     Output::Hook(HookReply {
         event: "UserPromptSubmit",
         message: Some(String::from(
-            "scribe: added decisions-1 to decisions — \"secret content\"",
+            "scribe: added preferences-1 to preferences — \"secret content\"",
         )),
         context: None,
         block: None,
@@ -158,7 +158,7 @@ fn a_hook_writes_one_line_per_write_or_refusal_with_ids_and_codes_only() {
     let mut guard = AuditGuard::start(&store, ADD, datetime!(2026-09-26 12:00:00 UTC));
     guard.mark_result(&Ok(hook_reply(vec![
         HookOutcome {
-            target: Some(String::from("decisions-1")),
+            target: Some(String::from("preferences-1")),
             error_code: None,
         },
         HookOutcome {
@@ -170,7 +170,7 @@ fn a_hook_writes_one_line_per_write_or_refusal_with_ids_and_codes_only() {
     let lines = lines(&store);
     assert_eq!(lines.len(), 2);
     assert_eq!(lines[0]["status"], "success");
-    assert_eq!(lines[0]["target"], "decisions-1");
+    assert_eq!(lines[0]["target"], "preferences-1");
     assert_eq!(lines[0]["error_code"], serde_json::Value::Null);
     assert_eq!(lines[1]["status"], "failure");
     assert_eq!(lines[1]["target"], "session:s-1");

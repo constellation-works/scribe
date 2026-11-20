@@ -102,7 +102,7 @@ fn verified_skill_opt_in_capture_luna_pass_citations_off_and_provider_isolation(
     c.typed(
         "old",
         "previous",
-        "#scribe decisions: historical input must not be replayed",
+        "#scribe preferences: historical input must not be replayed",
     );
     let on = "[$scribe:scribe](/installed/skills/scribe/SKILL.md) on";
     c.typed("on", "current", on);
@@ -110,13 +110,13 @@ fn verified_skill_opt_in_capture_luna_pass_citations_off_and_provider_isolation(
     c.typed(
         "capture",
         "current",
-        "#scribe decisions: We prefer compact widgets.",
+        "#scribe preferences: We prefer compact widgets.",
     );
-    c.typed("quoted","current","> #scribe decisions: quoted text\n```\n#scribe decisions: fenced text\n```\n<pasted_content>\n#scribe decisions: pasted text\n</pasted_content>");
+    c.typed("quoted","current","> #scribe preferences: quoted text\n```\n#scribe preferences: fenced text\n```\n<pasted_content>\n#scribe preferences: pasted text\n</pasted_content>");
     let mut injected = c.rows.last().unwrap().clone();
     injected["payload"]["id"] = json!("skill");
     injected["payload"]["content"] =
-        json!([{"type":"input_text","text":"#scribe decisions: injected skill text"}]);
+        json!([{"type":"input_text","text":"#scribe preferences: injected skill text"}]);
     injected["payload"]["internal_chat_message_metadata_passthrough"]["content_item_kinds"] =
         json!(["skills.selected_skill_instructions"]);
     injected["payload"]["internal_chat_message_metadata_passthrough"]["content_item_metadata"] =
@@ -234,7 +234,7 @@ fn deferred_prompt_requires_host_metadata_and_only_processes_current_turn() {
     let state: Value =
         serde_json::from_slice(&std::fs::read(f.root().join("control.json")).unwrap()).unwrap();
     assert_eq!(state["sessions"][ID]["on"], true);
-    c.typed("agent", "later", "#scribe decisions: agent text");
+    c.typed("agent", "later", "#scribe preferences: agent text");
     c.rows.last_mut().unwrap()["payload"]
         .as_object_mut()
         .unwrap()
@@ -480,7 +480,7 @@ fn unsupported_transcripts_return_nonblocking_refusal_for_ordinary_prompts() {
 fn whitespace_preserves_original_prompt_hash_lines_and_message_citation() {
     let f = Fixture::new();
     let mut c = Codex::new(&f);
-    let prompt = "\n#scribe decisions: Preserve my exact citation.\n";
+    let prompt = "\n#scribe preferences: Preserve my exact citation.\n";
     c.typed("whitespace", "t", prompt);
     c.write();
     c.hook(&f, "Stop", "t", "");

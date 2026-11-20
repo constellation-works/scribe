@@ -19,7 +19,7 @@
 //! A line whose opener is [`GLOBAL_OPENER`] instead of `#scribe` is the same
 //! form and records `project: global`. Anything else after `#scribe/` is
 //! refused. Hashtags at the end of the line are the entry's topics
-//! (`#scribe decisions: squash-merge agent PRs #merge-policy`). Form 3 parses
+//! (`#scribe preferences: squash-merge agent PRs #merge-policy`). Form 3 parses
 //! to a [`Referent`]: the content is an earlier message's passage, which a
 //! model picks from the [`window`] before the prompt and [`resolve`] checks
 //! verbatim, falling back to the previous assistant message when the model
@@ -58,7 +58,7 @@ pub const MARKER: &str = "#scribe";
 
 /// The opener that records the entry with `project: global` instead of the
 /// cwd's project. It replaces [`MARKER`] as the line's first word
-/// (`#scribe/global decisions: …`). It is not a topic hashtag and not a tag.
+/// (`#scribe/global preferences: …`). It is not a topic hashtag and not a tag.
 pub const GLOBAL_OPENER: &str = "#scribe/global";
 
 /// Words that point at an earlier message instead of giving the content
@@ -482,7 +482,7 @@ fn parse(line: u32, said: &str, tags: &TagTable) -> Parsed {
                 let expected = if matches!(verb.as_str(), "approve" | "reject") {
                     "a proposal id, such as p-4"
                 } else {
-                    "an entry id, such as decisions-12"
+                    "an entry id, such as preferences-12"
                 };
                 refuse(Refusal::BadId { verb, expected })
             }

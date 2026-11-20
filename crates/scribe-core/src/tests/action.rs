@@ -75,7 +75,7 @@ fn stuck_counts_active_unpicked_action_entries_past_the_age_per_tag() {
         retired,
         picked.clone(),
         entry("standard-1", T0),
-        entry("decisions-1", T0),
+        entry("preferences-1", T0),
     ];
     let now = T0 + STUCK_AFTER;
     let counts = action::stuck(&entries, &tags, &[pickup(&picked, false, 1)], now);
@@ -98,7 +98,7 @@ fn tag_counts_count_retired_and_rejected_agent_entries_per_action_tag() {
     let rejected = agent("idea-1");
     let mut daniels = entry("remind-3", T0);
     daniels.status = EntryStatus::Retired;
-    let mut memory = agent("decisions-1");
+    let mut memory = agent("preferences-1");
     memory.status = EntryStatus::Retired;
     let entries = [retired, forgotten, rejected.clone(), daniels, memory];
     let counts = action::tag_counts(&entries, &tags, &[pickup(&rejected, true, 10)]);
@@ -143,7 +143,7 @@ fn a_quote_is_found_only_in_daniels_own_typed_words() {
 #[test]
 fn ask_leaves_action_entries_out_unless_the_scope_names_their_tag() {
     let tags = TagTable::defaults();
-    let entries = [entry("decisions-1", T0), entry("remind-1", T0)];
+    let entries = [entry("preferences-1", T0), entry("remind-1", T0)];
     let corpus = Corpus {
         entries: &entries,
         sessions: &[],
@@ -161,11 +161,11 @@ fn ask_leaves_action_entries_out_unless_the_scope_names_their_tag() {
     };
     assert_eq!(
         ids(ask::without_actions(&question, corpus)),
-        ["decisions-1"]
+        ["preferences-1"]
     );
     question.scope.tags = vec![name("remind")];
     assert_eq!(
         ids(ask::without_actions(&question, corpus)),
-        ["decisions-1", "remind-1"]
+        ["preferences-1", "remind-1"]
     );
 }

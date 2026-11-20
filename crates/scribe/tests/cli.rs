@@ -45,14 +45,7 @@ fn an_empty_store_lists_nothing_on_stdout_and_says_why_on_stderr() {
         .collect();
     assert_eq!(
         names,
-        [
-            "decisions",
-            "finding",
-            "idea",
-            "preferences",
-            "remind",
-            "standard"
-        ],
+        ["finding", "idea", "preferences", "remind", "standard"],
         "the defaults plus the shipped action tags and finding"
     );
     assert!(!fx.root().exists(), "a read never creates the store");
@@ -398,7 +391,7 @@ fn a_closed_stdout_ends_the_process_quietly_with_exit_zero() {
     BufReader::new(child.child().stdout.take().unwrap())
         .read_line(&mut first)
         .unwrap();
-    assert!(first.starts_with("decisions-"), "{first}");
+    assert!(first.starts_with("preferences-"), "{first}");
     // The reader was dropped above, closing the pipe.
     let out = child.finish();
     assert_eq!(out.status.code(), Some(0));

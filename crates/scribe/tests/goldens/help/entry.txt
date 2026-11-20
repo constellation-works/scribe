@@ -22,6 +22,6 @@ Global options:
       --json                 Shorthand for --format json
 
 Examples:
-  scribe entry list --tag decisions
+  scribe entry list --tag preferences
   scribe entry list --status active --project scribe
   scribe entry show <id>

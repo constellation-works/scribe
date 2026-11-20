@@ -9,7 +9,7 @@ next: S9 segment-writing passes and session rebuild, then S10–S14 (S8 store fo
 feature: scribe
 doc_role: overview
 type: design
-summary: A standalone Orbit plugin that keeps Daniel's explicitly marked preferences and decisions, catalogs the sessions he turns on or names (each a header over an append-only log), answers agents' questions about him with verbatim citations, and lets agents search and write through its CLI under one skill.
+summary: A standalone Orbit plugin that keeps Daniel's explicitly marked preferences, catalogs the sessions he turns on or names (each a header over an append-only log), answers agents' questions about him with verbatim citations, and lets agents search and write through its CLI under one skill.
 tags: [scribe]
 paths: ["crates/**", "plugin/**"]
 related_features: [scribe]
@@ -76,6 +76,11 @@ Quoted verbatim; these are the requirements this design starts from.
 - "I like this kind of setup: knowledgebase/almanac/15-discussions. I used
   to keep selective discussions where we discussed something meaningful.
   and I can reference it later in chats. I want scribe to fill that gap."
+
+Amended 2026-11-20 ([ORB-25980]): `decisions` no longer ships as a tag; a
+decision is recorded on its Orbit task or in a feature's `4_decisions.md`
+([4_decisions.md](./4_decisions.md#decisions-are-recorded-on-their-orbit-task-not-in-a-shipped-tag)).
+Daniel's 2026-11-02 words above are kept as he wrote them.
 
 ### Directions of 2026-11-10 ([ORB-23892])
 
@@ -149,7 +154,7 @@ Two things the principle asks for that no task covers yet:
 
 | Part | Does | Model |
 |---|---|---|
-| `#scribe <instruction>` | In a user-typed turn, in any session whether on or off, adds exactly one entry to the named tag. It quotes Daniel verbatim, cites the message, and echoes the tag, text and id. An unknown tag is refused with the configured list. A bare `#decision` captures nothing. | None, unless the instruction says "this"/"it": then Haiku picks the referenced message |
+| `#scribe <instruction>` | In a user-typed turn, in any session whether on or off, adds exactly one entry to the named tag. It quotes Daniel verbatim, cites the message, and echoes the tag, text and id. An unknown tag is refused with the configured list. A bare `#preference` captures nothing. | None, unless the instruction says "this"/"it": then Haiku picks the referenced message |
 | `/scribe on` | Catalogs that session into one session record (summary, goals, outcome, next), refreshed on cadence and at session end. Writes no tag entries. No backfill of other sessions. `/scribe on --from <id>` or `/scribe link <id>` links it to the session it was spawned from or continues ([§5.4](./2_design.md#54-session-links)); its pass reads that session's summary as context. | Haiku |
 | `ask` | The one MCP tool exposed to main agents. Retrieval is model-free (lexical ranking over entries, session records and Orbit tasks); a decision model answers only from the retrieved evidence, every quote is verbatim-checked, it says "no record" rather than infer, and reports conflicts instead of picking a side. | Decision model (Sonnet by default) |
 | Consistency routine | Flags contradictions and stale entries and proposes "B supersedes A" or "retire A". Daniel approves with `#scribe approve <id>`. A superseded entry stays on disk, is marked, and is hidden from answers by default. From S10 it also deactivates sessions whose feature a later entry Daniel wrote says was removed (only Daniel-authored entries count as removal evidence), and sessions past a generous age limit unless pinned. | Haiku, on model-free candidate pairs |
@@ -165,8 +170,7 @@ session can be inactive: hidden, not removed (S8, S10).
 
 ## 3. Core concepts
 
-- **Tag** — a named list Daniel writes to, such as `decisions` or
-  `preferences`, declared in the config with its aliases.
+- **Tag** — a named list Daniel writes to, such as `preferences`, declared in the config with its aliases.
 - **Entry** — one record in a tag: Daniel's instruction verbatim, the
   content it records (verbatim from his instruction or from the message it
   points at), and a citation of the message.

@@ -1,7 +1,7 @@
 ---
 title: scribe — Decisions
 owner: claude
-last_updated: 2026-11-15
+last_updated: 2026-11-20
 last_validated: 2026-11-02
 status: Draft
 feature: scribe
@@ -11,7 +11,7 @@ summary: Why superseded entries are hidden not removed, why one JSON file per ta
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980]
 ---
 
 # scribe — Decisions
@@ -202,7 +202,9 @@ none makes the first `#scribe` fail.
 
 `config.toml` is created with two tags: `decisions` (aliases `decision`,
 `dec`; never stale) and `preferences` (aliases `preference`, `pref`;
-`stale_after_days = 180`). Further tags are added by Daniel editing the
+`stale_after_days = 180`) (amended 2026-11-20 by "Decisions are recorded on
+their Orbit task, not in a shipped tag": `decisions` no longer ships).
+Further tags are added by Daniel editing the
 config; scribe never creates a tag on its own, and an instruction naming an
 unknown tag is refused with the list.
 
@@ -2678,3 +2680,53 @@ is still listed, shown and settled by id.
 - Cost: a store that holds `task` or `friction` entries keeps them readable
   and settleable, but they no longer show in `tag list` or count in the
   session-start stuck line unless config declares the tag again.
+
+## Decisions are recorded on their Orbit task, not in a shipped tag
+
+**Recorded:** 2026-11-20 · [ORB-25980] · **Overridable by Daniel**
+
+### Context
+
+scribe shipped two memory tags, `decisions` and `preferences` ("Only
+decisions and preferences ship by default"). Daniel (chief's chat,
+2026-11-20): "I think decisions are also weak. we log decisions on the orbit
+task itself mostly, quoting me verbatim. what do you think". The chief agreed
+and proposed this change; Daniel: "Yes, file it". Measured on the Mac store
+at 2026-11-20T06:15Z: 0 entries under `decisions`; the whole store held 4
+entries (1 `preferences`, 1 `remind`, 2 `standard`) against 26 cataloged
+sessions and 20 open proposals. A choice about a piece of work is written on
+its Orbit task with Daniel's words quoted, and a design choice in the
+repository's `4_decisions.md`. `ask` already reads Orbit task records as
+evidence, so those are found and cited. A standing choice with no task to
+sit on is a preference.
+
+### Decision
+
+This supersedes the shipped set of "Only decisions and preferences ship by
+default", and only that. `preferences` and `finding` ship as the memory
+tags; `decisions` and its aliases `decision` and `dec` do not. A config that
+declares `[tags.decisions]` (with or without those aliases) makes it work
+like any config tag. The session pass proposes unmarked preferences only: a
+one-time choice about a piece of work is not proposed, because it belongs on
+its task, and a standing choice is proposed as a preference. The consistency
+scan works over whatever memory tags the store has. The skill no longer reads
+`decisions` or offers a decision line; it says a decision is recorded on its
+Orbit task with the human's words quoted, or in the feature's
+`4_decisions.md` when it is a design decision. No store-format change: an
+entry already stored under `decisions` is an entry under a tag the config no
+longer defines, so it is still listed, shown, searched, cited by `ask` and
+settled by id.
+
+### Consequences
+
+- `tag list` and the unknown-tag refusal on a store with no `[tags]` config
+  name `finding`, `idea`, `preferences`, `remind` and `standard`;
+  `#scribe decisions:`, `#scribe decision:` and `#scribe dec:` are refused as
+  an unknown tag unless config declares them. `decision` is free as a name,
+  for example for the action tag the standards plugin's work-intake reads,
+  which is config-declared in the constellation repository and unchanged.
+- A store that registered `decisions` in `tags.json` keeps the registration;
+  one that declared it in `config.toml` keeps it working.
+- Cost: a standing decision with no task to sit on is recorded as a
+  preference, and a `decisions` entry stops showing in `tag list` unless
+  config declares the tag again.

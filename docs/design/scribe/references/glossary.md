@@ -12,7 +12,7 @@ exists today and is reshaped by slice S1.
 
 | Term | Meaning |
 |------|---------|
-| **Tag** | A named list Daniel writes to (`decisions`, `preferences`), declared with its aliases in `config.toml`. See [2_design.md §3](../2_design.md#3-storage). |
+| **Tag** | A named list Daniel writes to (`preferences`), declared with its aliases in `config.toml`. See [2_design.md §3](../2_design.md#3-storage). |
 | **Entry** | One record in a tag: `said` (Daniel's `#scribe` line verbatim), `content` (what it records, verbatim from that line or from the message it points at), `cite` and `status`. See [2_design.md §3](../2_design.md#3-storage). |
 | **Instruction** | One line of a user-typed turn starting with `#scribe`. Each yields exactly one entry or one refusal. See [2_design.md §4](../2_design.md#4-scribe). |
 | **Referent** | The earlier message "this"/"it" in an instruction points at, chosen by the referent model and verbatim-checked. See [2_design.md §4.3](../2_design.md#43-resolving-this-and-it). |

@@ -14,7 +14,7 @@ fn agent_entry_verbs_record_authors_redact_and_audit_only_changes() {
             "entry",
             "add",
             "--tag",
-            "dec",
+            "pref",
             "--author",
             "opus",
             "agent note ghp_abcdefghijklmnop",
@@ -33,7 +33,7 @@ fn agent_entry_verbs_record_authors_redact_and_audit_only_changes() {
     let update = [
         "entry",
         "update",
-        "decisions-1",
+        "preferences-1",
         "--author",
         "opus",
         "--content",
@@ -56,7 +56,7 @@ fn agent_entry_verbs_record_authors_redact_and_audit_only_changes() {
         &fx.ok(&[
             "entry",
             "retire",
-            "decisions-1",
+            "preferences-1",
             "--author",
             "opus",
             "--reason",
@@ -172,7 +172,7 @@ fn proposals_update_settle_and_replay_with_agent_authorship() {
             "entry",
             "add",
             "--tag",
-            "decisions",
+            "preferences",
             "--author",
             "opus",
             content,
@@ -185,9 +185,9 @@ fn proposals_update_settle_and_replay_with_agent_authorship() {
             "--kind",
             "supersedes",
             "--older",
-            "decisions-1",
+            "preferences-1",
             "--newer",
-            "decisions-2",
+            "preferences-2",
             "--reason",
             "replacement",
             "--author",
@@ -231,9 +231,9 @@ fn proposals_update_settle_and_replay_with_agent_authorship() {
     );
     assert_eq!(settled["settled_by"], serde_json::Value::Null);
     assert_eq!(settled["updated_by"]["name"], "sonnet");
-    let entry = json(&fx.ok(&["entry", "show", "decisions-1", "--json"]).stdout);
+    let entry = json(&fx.ok(&["entry", "show", "preferences-1", "--json"]).stdout);
     assert_eq!(entry["status"], "superseded");
-    assert_eq!(entry["superseded_by"], "decisions-2");
+    assert_eq!(entry["superseded_by"], "preferences-2");
     let before = support::snapshot(&fx.root())
         .into_iter()
         .filter(|(p, _, _)| !p.ends_with(".lock"))
@@ -296,7 +296,7 @@ fn store_tags_merge_and_config_wins_without_writing_on_reads() {
         .stdout,
     );
     assert_eq!(added["tag"], "notes");
-    for name in ["decisions", "pref", "note"] {
+    for name in ["preferences", "pref", "note"] {
         let out = fx.run(&[
             "tag",
             "add",
@@ -345,9 +345,9 @@ fn store_tags_merge_and_config_wins_without_writing_on_reads() {
 fn all_agent_verbs_require_author_and_ambiguous_prefixes_exit_two() {
     let fx = Fixture::new();
     for args in [
-        vec!["entry", "add", "--tag", "decisions", "content"],
-        vec!["entry", "update", "decisions-1", "--content", "new"],
-        vec!["entry", "retire", "decisions-1", "--reason", "old"],
+        vec!["entry", "add", "--tag", "preferences", "content"],
+        vec!["entry", "update", "preferences-1", "--content", "new"],
+        vec!["entry", "retire", "preferences-1", "--reason", "old"],
         vec!["tag", "add", "notes", "--description", "notes"],
         vec!["tag", "update", "notes", "--description", "new"],
         vec![
@@ -356,7 +356,7 @@ fn all_agent_verbs_require_author_and_ambiguous_prefixes_exit_two() {
             "--kind",
             "stale",
             "--older",
-            "decisions-1",
+            "preferences-1",
             "--reason",
             "old",
         ],
@@ -375,7 +375,7 @@ fn all_agent_verbs_require_author_and_ambiguous_prefixes_exit_two() {
             "entry",
             "add",
             "--tag",
-            "decisions",
+            "preferences",
             "--author",
             "opus",
             content,
@@ -384,7 +384,7 @@ fn all_agent_verbs_require_author_and_ambiguous_prefixes_exit_two() {
     let out = fx.run(&[
         "entry",
         "update",
-        "deci",
+        "prefe",
         "--author",
         "opus",
         "--content",
@@ -402,12 +402,12 @@ fn interrupted_agent_approval_reapplies_with_its_author() {
         "entry",
         "add",
         "--tag",
-        "decisions",
+        "preferences",
         "--author",
         "opus",
         "old note",
     ]);
-    let path = fx.root().join("entries/decisions/decisions-1.md");
+    let path = fx.root().join("entries/preferences/preferences-1.md");
     let before = std::fs::read(&path).unwrap();
     fx.ok(&[
         "proposal",
@@ -415,7 +415,7 @@ fn interrupted_agent_approval_reapplies_with_its_author() {
         "--kind",
         "stale",
         "--older",
-        "decisions-1",
+        "preferences-1",
         "--author",
         "opus",
         "--reason",
@@ -436,7 +436,7 @@ fn interrupted_agent_approval_reapplies_with_its_author() {
         .reapply_approved(time::OffsetDateTime::now_utc())
         .unwrap();
     assert_eq!(reapplied.len(), 1);
-    let entry = json(&fx.ok(&["entry", "show", "decisions-1", "--json"]).stdout);
+    let entry = json(&fx.ok(&["entry", "show", "preferences-1", "--json"]).stdout);
     assert_eq!(entry["status"], "retired");
     assert_eq!(entry["updated_by"]["name"], "astra");
     assert!(
@@ -454,17 +454,17 @@ fn mismatched_provenance_and_newer_tag_documents_fail_closed_without_writes() {
         "entry",
         "add",
         "--tag",
-        "decisions",
+        "preferences",
         "--author",
         "opus",
         "agent note",
     ]);
-    let path = fx.root().join("entries/decisions/decisions-1.md");
+    let path = fx.root().join("entries/preferences/preferences-1.md");
     let original = std::fs::read_to_string(&path).unwrap();
     // A null cite cannot masquerade as Daniel's typed words.
     std::fs::write(&path, original.replace("kind: agent", "kind: daniel")).unwrap();
     let before = support::snapshot(&fx.root());
-    let out = fx.run(&["entry", "show", "decisions-1", "--json"]);
+    let out = fx.run(&["entry", "show", "preferences-1", "--json"]);
     assert_eq!(json(&out.stderr)["code"], "store_corrupt");
     assert_eq!(support::snapshot(&fx.root()), before);
     std::fs::write(&path, original).unwrap();
@@ -507,7 +507,7 @@ fn invalid_or_settled_proposals_never_silently_drop_changed_inputs() {
         "entry",
         "add",
         "--tag",
-        "decisions",
+        "preferences",
         "--author",
         "opus",
         "note",
@@ -518,7 +518,7 @@ fn invalid_or_settled_proposals_never_silently_drop_changed_inputs() {
         "--kind",
         "supersedes",
         "--older",
-        "decisions-1",
+        "preferences-1",
         "--author",
         "opus",
         "--reason",
@@ -533,7 +533,7 @@ fn invalid_or_settled_proposals_never_silently_drop_changed_inputs() {
         "--kind",
         "stale",
         "--older",
-        "decisions-1",
+        "preferences-1",
         "--author",
         "opus",
         "--reason",
@@ -557,7 +557,7 @@ fn invalid_or_settled_proposals_never_silently_drop_changed_inputs() {
             before
         );
     }
-    let entry = json(&fx.ok(&["entry", "show", "decisions-1", "--json"]).stdout);
+    let entry = json(&fx.ok(&["entry", "show", "preferences-1", "--json"]).stdout);
     assert_eq!(entry["status"], "active");
     let log = std::fs::read_to_string(fx.root().join("audit.jsonl")).unwrap();
     assert_eq!(
@@ -575,18 +575,18 @@ fn corrupt_entries_still_count_when_resolving_prefixes() {
             "entry",
             "add",
             "--tag",
-            "decisions",
+            "preferences",
             "--author",
             "opus",
             content,
         ]);
     }
-    let path = fx.root().join("entries/decisions/decisions-2.md");
+    let path = fx.root().join("entries/preferences/preferences-2.md");
     std::fs::write(&path, "not a record").unwrap();
     let out = fx.run(&[
         "entry",
         "update",
-        "deci",
+        "prefe",
         "--author",
         "opus",
         "--content",
@@ -594,9 +594,9 @@ fn corrupt_entries_still_count_when_resolving_prefixes() {
         "--json",
     ]);
     assert_eq!(json(&out.stderr)["code"], "id_ambiguous");
-    let out = fx.run(&["entry", "show", "decisions-2", "--json"]);
+    let out = fx.run(&["entry", "show", "preferences-2", "--json"]);
     assert_eq!(json(&out.stderr)["code"], "store_corrupt");
-    let unchanged = json(&fx.ok(&["entry", "show", "decisions-1", "--json"]).stdout);
+    let unchanged = json(&fx.ok(&["entry", "show", "preferences-1", "--json"]).stdout);
     assert_eq!(unchanged["content"], "one");
 }
 
@@ -728,7 +728,7 @@ fn reserved_author_names_are_refused_on_every_agent_write() {
                 "entry",
                 "add",
                 "--tag",
-                "decisions",
+                "preferences",
                 "--author",
                 name,
                 "note",
@@ -737,7 +737,7 @@ fn reserved_author_names_are_refused_on_every_agent_write() {
             vec![
                 "entry",
                 "update",
-                "decisions-1",
+                "preferences-1",
                 "--author",
                 name,
                 "--content",
@@ -747,7 +747,7 @@ fn reserved_author_names_are_refused_on_every_agent_write() {
             vec![
                 "entry",
                 "retire",
-                "decisions-1",
+                "preferences-1",
                 "--author",
                 name,
                 "--reason",
@@ -780,7 +780,7 @@ fn reserved_author_names_are_refused_on_every_agent_write() {
                 "--kind",
                 "stale",
                 "--older",
-                "decisions-1",
+                "preferences-1",
                 "--reason",
                 "old",
                 "--author",
@@ -857,7 +857,7 @@ fn agent_names_are_attribution_so_any_agent_may_tidy_another_agents_work() {
         "entry",
         "add",
         "--tag",
-        "decisions",
+        "preferences",
         "--author",
         "opus",
         "opus note",
@@ -868,7 +868,7 @@ fn agent_names_are_attribution_so_any_agent_may_tidy_another_agents_work() {
         &fx.ok(&[
             "entry",
             "update",
-            "decisions-1",
+            "preferences-1",
             "--author",
             "sonnet",
             "--content",
@@ -886,7 +886,7 @@ fn agent_names_are_attribution_so_any_agent_may_tidy_another_agents_work() {
         &fx.ok(&[
             "entry",
             "retire",
-            "decisions-1",
+            "preferences-1",
             "--author",
             "sonnet",
             "--reason",
@@ -901,7 +901,7 @@ fn agent_names_are_attribution_so_any_agent_may_tidy_another_agents_work() {
     let out = fx.run(&[
         "entry",
         "update",
-        "decisions-1",
+        "preferences-1",
         "--author",
         "opus",
         "--content",
@@ -914,7 +914,7 @@ fn agent_names_are_attribution_so_any_agent_may_tidy_another_agents_work() {
         "entry",
         "add",
         "--tag",
-        "decisions",
+        "preferences",
         "--author",
         "opus",
         "second note",
@@ -925,7 +925,7 @@ fn agent_names_are_attribution_so_any_agent_may_tidy_another_agents_work() {
         "--kind",
         "stale",
         "--older",
-        "decisions-2",
+        "preferences-2",
         "--reason",
         "review",
         "--author",
@@ -1005,7 +1005,7 @@ fn settling_a_scribe_proposal_cannot_replace_its_reason() {
         "entry",
         "add",
         "--tag",
-        "decisions",
+        "preferences",
         "--author",
         "opus",
         "opus note",
@@ -1016,7 +1016,7 @@ fn settling_a_scribe_proposal_cannot_replace_its_reason() {
         "--kind",
         "stale",
         "--older",
-        "decisions-1",
+        "preferences-1",
         "--reason",
         "routine reason",
         "--author",
@@ -1089,7 +1089,7 @@ fn a_finding_without_evidence_is_refused_and_writes_nothing() {
         "entry",
         "add",
         "--tag",
-        "decisions",
+        "preferences",
         "--author",
         "opus",
         "--evidence",

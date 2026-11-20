@@ -27,10 +27,10 @@ fn an_empty_store_says_where_records_come_from() {
 fn an_empty_filtered_list_names_the_filters() {
     // STD-01 R16.
     assert_eq!(
-        notice(&["--tag decisions", "--topic ci"])
+        notice(&["--tag preferences", "--topic ci"])
             .line(0, 0)
             .as_deref(),
-        Some("no entries match --tag decisions --topic ci")
+        Some("no entries match --tag preferences --topic ci")
     );
 }
 
@@ -41,7 +41,7 @@ fn a_cut_list_says_how_many_matched_and_a_whole_one_says_nothing() {
         notice(&[]).line(2, 5).as_deref(),
         Some("showing 2 of 5 matching entries; raise or drop --limit to see the rest")
     );
-    assert_eq!(notice(&["--tag decisions"]).line(3, 3), None);
+    assert_eq!(notice(&["--tag preferences"]).line(3, 3), None);
 }
 
 #[test]
@@ -49,7 +49,7 @@ fn only_the_hook_commands_are_audited_because_every_other_command_reads() {
     // STD-01 R31: a read writes nothing, not even an audit line.
     for args in [
         &["scribe", "entry", "list"][..],
-        &["scribe", "entry", "show", "decisions-1"],
+        &["scribe", "entry", "show", "preferences-1"],
         &["scribe", "session", "list"],
         &["scribe", "session", "show", "s-1"],
         &["scribe", "proposal", "list"],
