@@ -446,3 +446,57 @@ fn an_empty_transcript_stays_due_and_calls_no_model() {
     assert!(switch.on && switch.due);
     assert!(switch.cataloged_by.is_some());
 }
+
+#[test]
+fn a_slash_scribe_on_that_lands_while_the_catalog_waits_for_the_lock_is_not_overwritten() {
+    let setup = Setup::new();
+    let recent = setup.stamp(time::Duration::hours(1));
+    setup.write_at(&[("u-1", &recent, "A live session.")]);
+    let store = setup.ctx.store();
+    let setup = &setup;
+    let (held_tx, held_rx) = std::sync::mpsc::channel();
+    let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+
+    let (switched, begun) = std::thread::scope(|scope| {
+        // Daniel's `/scribe on` holds the store lock; the catalog starts
+        // while it is held and can only gate once it is released.
+        let on = scope.spawn(move || {
+            store
+                .update_control(|state| {
+                    control::switch(state, &setup.id(), &Switch::On, setup.ctx.now());
+                    state
+                        .sessions
+                        .get_mut(&setup.id())
+                        .unwrap()
+                        .pending_links
+                        .push(scribe_core::SessionLink {
+                            kind: scribe_core::LinkType::Continues,
+                            session: "0a1b2c3d-0000-4000-8000-0000000000c9".parse().unwrap(),
+                        });
+                    held_tx.send(()).unwrap();
+                    go_rx.recv().unwrap();
+                })
+                .unwrap();
+        });
+        held_rx.recv().unwrap();
+        let catalog = scope.spawn(move || {
+            catalog::begin(
+                &setup.ctx,
+                &setup.id(),
+                scribe_core::Author::agent("opus".parse().unwrap()),
+            )
+        });
+        go_tx.send(()).unwrap();
+        on.join().unwrap();
+        let begun = catalog.join().unwrap();
+        (store.control().unwrap().get(&setup.id()).cloned(), begun)
+    });
+
+    assert_eq!(begun.err().map(|e| e.code()), Some("session_cataloged"));
+    let switch = switched.unwrap();
+    assert!(
+        switch.cataloged_by.is_none(),
+        "the catalog overwrote /scribe on"
+    );
+    assert_eq!(switch.pending_links.len(), 1);
+}
