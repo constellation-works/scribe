@@ -41,7 +41,7 @@ use time::OffsetDateTime;
 
 /// The newest store format: this build reads formats 1 to `FORMAT` of every
 /// document and would write `FORMAT`.
-pub(super) const FORMAT: u32 = 10;
+pub(super) const FORMAT: u32 = 11;
 
 /// Which document an upgrade step is applied to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,7 +78,21 @@ pub(super) const UPGRADES: &[Upgrade] = &[
     action_entries,
     entry_candidates,
     finding_entries,
+    pass_findings,
 ];
+
+/// Format 10 -> 11 changes no document's keys. It admits one more entry
+/// shape: a finding the session pass wrote itself, or an open finding
+/// candidate the pass settled, with the assistant turn as its cite and
+/// `said` empty. A format 10 build would refuse such an entry as corrupt,
+/// so it refuses the whole format 11 store instead.
+#[allow(clippy::unnecessary_wraps)]
+fn pass_findings(
+    _document: Document,
+    value: serde_json::Value,
+) -> serde_json::Result<serde_json::Value> {
+    Ok(value)
+}
 
 /// Format 9 -> 10 adds `evidence` and `as_of` to each entry, both `null`
 /// for an entry written before findings, and `role` (`user`) and
@@ -828,13 +842,16 @@ pub(super) fn decode_entry(
         crate::AuthorKind::Agent => {
             // A direct CLI note, or (format 10) an assistant turn kept by
             // a typed candidate approval: the cite is that turn, `said`
-            // the approval command, and the words are the assistant's.
+            // the approval command, and the words are the assistant's; or
+            // (format 11) a finding the session pass wrote itself, `said`
+            // empty and an evidence pointer set.
             let direct = entry.cite.is_none()
                 && entry.said.is_empty()
                 && entry.content_from == crate::ContentFrom::Agent
                 && entry.window.is_none();
             let approved_assistant = entry.cite.is_some()
-                && entry.said.starts_with("#scribe approve p-")
+                && (entry.said.starts_with("#scribe approve p-")
+                    || (entry.said.is_empty() && entry.evidence.is_some()))
                 && matches!(
                     entry.content_from,
                     crate::ContentFrom::Message {
@@ -1204,6 +1221,12 @@ fn decode_json<T: DeserializeOwned>(path: &Path, bytes: &[u8], document: Documen
         }
         Document::Proposals if from == 4 => {
             serde_json::from_slice::<ProposalsV4>(bytes).map_err(|e| Error::corrupt(path, e))?;
+        }
+        // Format 10 -> 11 changed no document's keys: format 10 proposals
+        // are the current shape.
+        Document::Proposals if from == 10 => {
+            serde_json::from_slice::<ProposalsDocument>(bytes)
+                .map_err(|e| Error::corrupt(path, e))?;
         }
         Document::Proposals if from == 9 => {
             serde_json::from_slice::<ProposalsV9>(bytes).map_err(|e| Error::corrupt(path, e))?;

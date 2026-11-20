@@ -99,6 +99,8 @@ pub(in crate::commands) fn run_with<M: Models>(
         error: None,
         segments_sealed: 0,
         segments: previous.as_ref().map(|r| r.log.len()),
+        findings: Vec::new(),
+        superseded: Vec::new(),
         author: Some(scribe_core::Author {
             kind: scribe_core::AuthorKind::Agent,
             name: args.author.clone(),
@@ -196,6 +198,7 @@ pub(in crate::commands) fn run_with<M: Models>(
                     return Ok(Output::Pass(PassReport {
                         passes: vec![report],
                         remaining: 0,
+                        settled: Vec::new(),
                         notices: vec![String::from(
                             "rebuild checkpoint kept; repeat session rebuild with --confirm to resume",
                         )],
@@ -268,6 +271,7 @@ pub(in crate::commands) fn run_with<M: Models>(
                 return Ok(Output::Pass(PassReport {
                     passes: vec![report],
                     remaining: 0,
+                    settled: Vec::new(),
                     notices: Vec::new(),
                     catalog: false,
                     switch_written: false,

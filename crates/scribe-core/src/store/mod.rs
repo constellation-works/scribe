@@ -37,6 +37,8 @@
 mod agent;
 mod audit;
 mod candidates;
+mod findings;
+pub use findings::{PassFindings, SettledCandidates};
 mod format;
 mod fsio;
 mod ids;
@@ -805,19 +807,29 @@ impl Store {
         self.write_pass(session, record, PassWrite::CatalogFinal, expected, redactor)
     }
 
-    /// Write a checked pass window and its candidates under the same lock.
-    /// Candidates are persisted before advancing the record cursor, so an
-    /// interruption retries safely. Caps and duplicates are checked here.
+    /// Write a checked pass window, its candidates and its findings under
+    /// the same lock. Candidates and findings are persisted before advancing
+    /// the record cursor, so an interruption retries safely. Caps and
+    /// duplicates are checked here. Returns the record written and the
+    /// findings written and superseded.
     pub fn write_pass_window(
         &self,
         record: SessionRecord,
         expected: Option<time::OffsetDateTime>,
         kind: PassWrite,
         candidates: &[crate::EntryCandidate],
+        findings: &[crate::pass::FindingDraft],
         redactor: &Redactor,
-    ) -> Result<Option<SessionRecord>> {
+    ) -> Result<(Option<SessionRecord>, PassFindings)> {
         let session = record.id.clone();
-        self.write_pass_candidates(&session, Some(record), kind, expected, candidates, redactor)
+        self.write_pass_candidates(
+            &session,
+            Some(record),
+            kind,
+            expected,
+            (candidates, findings),
+            redactor,
+        )
     }
 
     fn write_pass(
@@ -828,7 +840,8 @@ impl Store {
         expected: Option<time::OffsetDateTime>,
         redactor: &Redactor,
     ) -> Result<Option<SessionRecord>> {
-        self.write_pass_candidates(session, record, kind, expected, &[], redactor)
+        self.write_pass_candidates(session, record, kind, expected, (&[], &[]), redactor)
+            .map(|(record, _)| record)
     }
 
     fn write_pass_candidates(
@@ -837,10 +850,11 @@ impl Store {
         record: Option<SessionRecord>,
         kind: PassWrite,
         expected: Option<time::OffsetDateTime>,
-        candidates: &[crate::EntryCandidate],
+        (candidates, findings): (&[crate::EntryCandidate], &[crate::pass::FindingDraft]),
         redactor: &Redactor,
-    ) -> Result<Option<SessionRecord>> {
+    ) -> Result<(Option<SessionRecord>, PassFindings)> {
         self.prepare_dir(&self.root)?;
+        let mut found = PassFindings::default();
         let _lock = self.lock("session pass")?;
         // Compare the revision the pass loaded with the one on disk before
         // any write (record or control), so a rebuild that finished while
@@ -921,6 +935,7 @@ impl Store {
                     self.prepare_subdir(&dir)?;
                 }
                 self.open_pass_candidates(&record, candidates, redactor)?;
+                found = self.write_pass_findings(&record, findings, redactor)?;
                 fsio::write_atomic(&path, &format::encode_session(&path, &record)?)?;
                 // Only once the record holds them: the links are stored once.
                 if !pending.is_empty() {
@@ -952,7 +967,7 @@ impl Store {
             }
             PassWrite::Checkpoint | PassWrite::CatalogLive => {}
         }
-        Ok(written)
+        Ok((written, found))
     }
 
     /// Re-apply, under the store lock, every approved proposal whose older

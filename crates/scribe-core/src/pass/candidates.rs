@@ -57,7 +57,7 @@ pub(super) fn check(
 
 /// Exclude fenced, indented and blockquoted material and marked instructions.
 /// Barriers prevent a quote from being spliced across an excluded line.
-fn own_span(text: &str, quote: &str) -> bool {
+pub(super) fn own_span(text: &str, quote: &str) -> bool {
     if !verbatim::contains(text, quote) || !text.contains(quote) {
         return false;
     }
@@ -195,20 +195,31 @@ pub fn candidate_exclusions(
             .collect::<Vec<_>>()
             .join(" "),
     );
-    let statements = entries.iter().map(|e| e.content.as_str()).chain(
-        proposals
-            .iter()
-            .filter_map(|p| p.candidate.as_ref())
-            .map(|c| c.quote.as_str()),
-    );
+    // A recorded statement carries its id, so a revised finding can name
+    // the one it supersedes; a proposed one has no entry yet.
+    let statements = entries
+        .iter()
+        .map(|e| (Some(e.id.to_string()), e.content.as_str()))
+        .chain(
+            proposals
+                .iter()
+                .filter_map(|p| p.candidate.as_ref())
+                .map(|c| (None, c.quote.as_str())),
+        );
     let mut ranked: Vec<_> = statements
-        .map(|text| (words(text).intersection(&query).count(), text))
-        .filter(|(score, _)| *score > 0)
+        .map(|(id, text)| (words(text).intersection(&query).count(), id, text))
+        .filter(|(score, _, _)| *score > 0)
         .collect();
-    ranked.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(b.1)));
+    ranked.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.2.cmp(b.2)));
     ranked
         .into_iter()
         .take(15)
-        .map(|(_, text)| text.chars().take(400).collect())
+        .map(|(_, id, text)| {
+            let text: String = text.chars().take(400).collect();
+            match id {
+                Some(id) => format!("[{id}] {text}"),
+                None => text,
+            }
+        })
         .collect()
 }

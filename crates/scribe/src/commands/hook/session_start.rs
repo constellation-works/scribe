@@ -13,8 +13,14 @@
 //! <tag> --status active`. When this session is not opted in and an active
 //! session in the same project was recorded within the last day, it adds
 //! `scribe: this may continue <id> (recorded) — type /scribe on --from <id>
-//! to keep recording`, naming the one updated most recently. The agent is
-//! not told: settling is Daniel's, in a typed turn, and so is the link.
+//! to keep recording`, naming the one updated most recently. Last, when
+//! `finding` entries of this project were recorded since the previous
+//! session of the project started (the newest `started` of its other
+//! session records), it adds one count, `scribe: 3 findings recorded since
+//! 2026-11-19 — scribe entry list --tag finding --since 2026-11-19`; it never
+//! lists them, and says nothing when there are none (2_design.md §4.7). The
+//! agent is not told: settling is Daniel's, in a typed turn, and so is the
+//! link.
 //! Nothing to report, no store yet, or a store that cannot be read
 //! (logged) prints nothing, so a session always starts. It writes nothing
 //! and is not audited.
@@ -24,7 +30,7 @@ use super::project;
 use crate::app::Context;
 use crate::error::CliError;
 use crate::output::{HookReply, Output};
-use scribe_core::{ProposalState, SessionFilter, SessionId, TagName};
+use scribe_core::{EntryFilter, EntryStatus, ProposalState, SessionFilter, SessionId, TagName};
 use std::collections::BTreeMap;
 use std::path::Path;
 use time::OffsetDateTime;
@@ -68,10 +74,12 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
         }
     };
     let continuation = continuation_line(ctx, &session, payload.cwd.as_deref());
+    let findings = findings_line(ctx, &session, payload.cwd.as_deref());
     let lines: Vec<String> = proposals
         .into_iter()
         .chain(stuck)
         .chain(continuation)
+        .chain(findings)
         .collect();
     let message = (!lines.is_empty()).then(|| lines.join("\n"));
     Ok(Output::Hook(HookReply {
@@ -130,6 +138,65 @@ fn continuation_line(ctx: &Context, session: &SessionId, cwd: Option<&str>) -> O
     Some(format!(
         "scribe: this may continue {id} (recorded) — type /scribe on --from {id} to keep recording"
     ))
+}
+
+/// The findings count, or `None` when there is nothing to count.
+///
+/// Counts the active `finding` entries of `cwd`'s project created after
+/// the previous session of the project started: the newest `started` among
+/// the project's session records other than this session. No `cwd`, no
+/// earlier session record, none recorded since, or a store that cannot be
+/// read: nothing.
+fn findings_line(ctx: &Context, session: &SessionId, cwd: Option<&str>) -> Option<String> {
+    let cwd = cwd.map(str::trim).filter(|cwd| !cwd.is_empty())?;
+    let project = project::of(Path::new(cwd));
+    let listed = match ctx.store().list_sessions(&SessionFilter {
+        include_inactive: true,
+        ..SessionFilter::default()
+    }) {
+        Ok(listed) => listed,
+        Err(err) => {
+            tracing::warn!(%err, "cannot read the sessions; not counting findings");
+            return None;
+        }
+    };
+    let since = listed
+        .listing
+        .items
+        .iter()
+        .filter(|record| record.project == project && &record.id != session)
+        .map(|record| record.started)
+        .max()?;
+    let tag: TagName = scribe_core::FINDING_TAG.parse().ok()?;
+    let found = match ctx.store().list_entries(&EntryFilter {
+        tag: Some(tag),
+        status: Some(EntryStatus::Active),
+        project: Some(project),
+        after: Some(since),
+        ..EntryFilter::default()
+    }) {
+        Ok(found) => found,
+        Err(err) => {
+            tracing::warn!(%err, "cannot read the entries; not counting findings");
+            return None;
+        }
+    };
+    let n = found
+        .listing
+        .items
+        .iter()
+        .filter(|entry| entry.is_finding())
+        .count();
+    let date = since.date();
+    match n {
+        0 => None,
+        1 => Some(format!(
+            "scribe: 1 finding recorded since {date} — scribe entry list --tag finding --since {date}"
+        )),
+        n => Some(format!(
+            "scribe: {n} findings recorded since {date} — scribe entry list --tag finding --since {date}"
+        )),
+    }
 }
 
 /// Whether `updated` is within [`RECENT_SECS`] of `now`. A record stamped

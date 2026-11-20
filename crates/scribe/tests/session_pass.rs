@@ -76,55 +76,596 @@ fn pass_candidate_waits_for_typed_approval_and_keeps_original_user_cite() {
     assert_eq!(entry["content_from"]["role"], "user");
 }
 
-#[test]
-fn pass_proposes_an_assistant_finding_and_approval_writes_one_agent_entry() {
-    let s = Setup::new();
-    let quote = "Measured: the reviewer mix alone predicts a 7-point first-pass gap.";
-    s.write(
-        ON,
-        &[
-            line("user", "u-1", "Please measure the reviewer mix effect."),
-            line("assistant", "a-find", quote),
-        ],
-    );
-    let mut body = answer();
-    body["candidates"] = json!([{
-        "quote": quote, "message": "a-find", "tag": "finding", "evidence": "exp-5342a4d6"
-    }]);
-    s.answer(&body);
-    s.scribe("/scribe on");
-    s.run(&["session", "pass", "--session", ON, "--json"], b"");
-    let ps = proposals(&s);
-    assert_eq!(ps["total"], 1, "{ps}");
-    let p = &ps["proposals"][0];
-    assert_eq!(p["candidate"]["tag"], "finding");
-    assert_eq!(p["candidate"]["role"], "assistant");
-    assert_eq!(p["candidate"]["quote"], quote, "quoted verbatim");
-    assert_eq!(p["candidate"]["cite"]["message"], "a-find");
-    assert_eq!(p["candidate"]["evidence"], "exp-5342a4d6");
+/// A per-crew acceptance table with its claim, as an assistant reports it.
+const TABLE: &str = "First-pass acceptance by crew, 2026-11-01 to 2026-11-14 (exp-5342a4d6):\n\n| crew | arm A | arm B |\n|---|---|---|\n| opus | 0.82 (n=140) | 0.74 (n=133) |\n| sonnet | 0.71 (n=98) | 0.69 (n=101) |\n\nAdjusted difference: +5.1 points, 95% CI [1.2, 9.0].";
 
-    let approved = type_settlement(&s, "#scribe approve p-1");
-    assert!(
-        text(&approved.stdout).contains("recorded finding-1 as the agent's entry"),
-        "{}",
-        text(&approved.stdout)
-    );
-    type_settlement(&s, "#scribe approve p-1");
-    let entries: Value = serde_json::from_slice(
+fn finding_answer(findings: Value) -> Value {
+    let mut body = answer();
+    body["findings"] = findings;
+    body
+}
+
+fn findings(s: &Setup) -> Vec<Value> {
+    let out: Value = serde_json::from_slice(
         &s.fx
             .ok(&["entry", "list", "--tag", "finding", "--json"])
             .stdout,
     )
     .unwrap();
-    assert_eq!(entries["entries"].as_array().unwrap().len(), 1);
-    let entry = &entries["entries"][0];
-    assert_eq!(entry["content"], quote);
-    assert_eq!(entry["author"]["kind"], "agent", "never Daniel's");
-    assert_eq!(entry["author"]["name"], "assistant");
-    assert_eq!(entry["content_from"]["role"], "assistant");
-    assert_eq!(entry["cite"]["message"], "a-find");
-    assert_eq!(entry["evidence"], "exp-5342a4d6");
-    assert_eq!(entry["as_of"], "2026-11-03");
+    out["entries"].as_array().unwrap().clone()
+}
+
+fn entry(s: &Setup, id: &str) -> Value {
+    serde_json::from_slice(&s.fx.ok(&["entry", "show", id, "--json"]).stdout).unwrap()
+}
+
+#[test]
+fn pass_writes_a_finding_with_its_table_verbatim_and_opens_no_proposal() {
+    let s = Setup::new();
+    let turn = format!("I ran the comparison.\n\n{TABLE}\n\nI would rerun it next week.");
+    s.write(
+        ON,
+        &[
+            line("user", "u-1", "Please compare the two arms."),
+            line("assistant", "a-find", &turn),
+        ],
+    );
+    s.answer(&finding_answer(json!([{
+        "message": "a-find", "start": "First-pass acceptance by crew",
+        "end": "95% CI [1.2, 9.0].", "evidence": "exp-5342a4d6"
+    }])));
+    s.scribe("/scribe on");
+    let out = s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        report["passes"][0]["findings"],
+        json!(["finding-1"]),
+        "{report}"
+    );
+    assert_eq!(report["passes"][0]["superseded"], json!([]));
+    assert_eq!(proposals(&s)["total"], 0, "no proposal, no approval");
+    let found = findings(&s);
+    assert_eq!(found.len(), 1);
+    let e = entry(&s, "finding-1");
+    assert_eq!(e["content"], TABLE, "byte for byte, table included");
+    assert_eq!(e["status"], "active");
+    assert_eq!(e["author"], json!({"kind": "agent", "name": "assistant"}));
+    assert_eq!(e["content_from"]["kind"], "message");
+    assert_eq!(e["content_from"]["role"], "assistant");
+    assert_eq!(e["cite"]["message"], "a-find");
+    assert_eq!(e["evidence"], "exp-5342a4d6");
+    assert_eq!(e["as_of"], "2026-11-03", "the turn's date");
+    let prompt = s.prompts().pop().unwrap();
+    assert!(prompt.contains("Return findings: at most 5"), "{prompt}");
+
+    // The table output names it too.
+    s.append(ON, &[line("assistant", "a-2", "Nothing more to report.")]);
+    s.answer(&answer());
+    let table = s.run(
+        &["session", "pass", "--session", ON, "--format", "table"],
+        b"",
+    );
+    assert!(
+        text(&table.stdout).contains("FINDINGS"),
+        "{}",
+        text(&table.stdout)
+    );
+}
+
+#[test]
+fn a_finding_without_an_evidence_pointer_cites_its_session_segment() {
+    let s = Setup::new();
+    let said = "Median build time over 50 runs on dk-server-1 was 312 s.";
+    s.write(
+        ON,
+        &[
+            line("user", "u-1", "How long do builds take?"),
+            line("assistant", "a-find", said),
+        ],
+    );
+    s.answer(&finding_answer(json!([{
+        "message": "a-find", "start": "Median build time", "end": "was 312 s."
+    }])));
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let e = entry(&s, "finding-1");
+    assert_eq!(e["content"], said);
+    assert_eq!(e["evidence"], format!("session:{ON}#1"));
+}
+
+#[test]
+fn a_finding_span_that_is_not_the_turns_own_text_writes_nothing() {
+    let measured = "p95 was 140 ms over 1200 runs";
+    let cases: Vec<(&str, Vec<Value>, Value)> = vec![
+        (
+            "not in the named message",
+            vec![line("assistant", "a-1", &format!("Result: {measured}."))],
+            json!({"message": "a-1", "start": "Throughput was", "end": "1200 runs"}),
+        ),
+        (
+            "crosses two messages",
+            vec![
+                line("assistant", "a-1", "Result: p95 was 140 ms"),
+                line("assistant", "a-2", "over 1200 runs on 2026-11-02."),
+            ],
+            json!({"message": "a-1", "start": "p95 was", "end": "1200 runs"}),
+        ),
+        (
+            "fenced code",
+            vec![line(
+                "assistant",
+                "a-1",
+                &format!("Result:\n```\n{measured}\n```\nDone."),
+            )],
+            json!({"message": "a-1", "start": "p95 was", "end": "1200 runs"}),
+        ),
+        (
+            "blockquote",
+            vec![line(
+                "assistant",
+                "a-1",
+                &format!("Result:\n> {measured}\nDone."),
+            )],
+            json!({"message": "a-1", "start": "p95 was", "end": "1200 runs"}),
+        ),
+        (
+            "pasted block in Daniel's turn",
+            vec![line(
+                "user",
+                "u-2",
+                &format!("See: <pasted_content>{measured}</pasted_content>"),
+            )],
+            json!({"message": "u-2", "start": "p95 was", "end": "1200 runs"}),
+        ),
+        (
+            "needs redaction",
+            vec![line(
+                "assistant",
+                "a-1",
+                &format!("With key sk-abcdefghijklmnopqrstuvwxyz0123456789 the {measured}."),
+            )],
+            json!({"message": "a-1", "start": "With key", "end": "1200 runs"}),
+        ),
+    ];
+    for (case, turns, finding) in cases {
+        let s = Setup::new();
+        let mut lines = vec![line("user", "u-1", "Please measure it.")];
+        lines.extend(turns);
+        let last = lines.last().unwrap()["uuid"].as_str().unwrap().to_owned();
+        s.write(ON, &lines);
+        s.answer(&finding_answer(json!([finding])));
+        s.scribe("/scribe on");
+        let out = s.run(&["session", "pass", "--session", ON, "--json"], b"");
+        let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(report["passes"][0]["result"], "written", "{case}: {report}");
+        assert!(findings(&s).is_empty(), "{case}: nothing written");
+        assert_eq!(
+            s.record(ON).unwrap()["scribed_through"],
+            last,
+            "{case}: the record still advances"
+        );
+    }
+}
+
+#[test]
+fn a_finding_span_over_four_thousand_characters_is_cut_at_a_paragraph_and_says_so() {
+    let s = Setup::new();
+    let paragraphs: Vec<String> = (0..10)
+        .map(|n| {
+            format!(
+                "Run group {n} measured p95 {} ms over 1200 runs.{} Group {n} done.",
+                100 + n,
+                " filler".repeat(64)
+            )
+        })
+        .collect();
+    let turn = paragraphs.join("\n\n");
+    assert!(turn.chars().count() > 4_000);
+    s.write(
+        ON,
+        &[
+            line("user", "u-1", "Measure every run group."),
+            line("assistant", "a-long", &turn),
+        ],
+    );
+    s.answer(&finding_answer(json!([{
+        "message": "a-long", "start": "Run group 0 measured", "end": "Group 9 done.",
+        "evidence": "run-77"
+    }])));
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let content = entry(&s, "finding-1")["content"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let mut kept = 0;
+    while kept < paragraphs.len() && paragraphs[..=kept].join("\n\n").chars().count() + 2 <= 4_000 {
+        kept += 1;
+    }
+    let expected = format!(
+        "{}\n\n[… cut at 4,000 characters]",
+        paragraphs[..kept].join("\n\n")
+    );
+    assert!(kept > 0 && kept < paragraphs.len());
+    assert_eq!(
+        content, expected,
+        "cut at the last paragraph inside the bound"
+    );
+}
+
+#[test]
+fn a_revised_finding_supersedes_the_earlier_agent_finding_of_the_project() {
+    let s = Setup::new();
+    s.write(
+        ON,
+        &[
+            line("user", "u-1", "How long do builds take?"),
+            line(
+                "assistant",
+                "a-1",
+                "Median build time over 50 runs was 312 s on 2026-11-02.",
+            ),
+        ],
+    );
+    s.answer(&finding_answer(json!([{
+        "message": "a-1", "start": "Median build time", "end": "on 2026-11-02."
+    }])));
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    assert_eq!(entry(&s, "finding-1")["status"], "active");
+    s.append(
+        ON,
+        &[line(
+            "assistant",
+            "a-2",
+            "Correction: median build time over 50 runs was 298 s on 2026-11-02.",
+        )],
+    );
+    s.answer(&finding_answer(json!([{
+        "message": "a-2", "start": "Correction:", "end": "on 2026-11-02.",
+        "supersedes": "finding-1"
+    }])));
+    let out = s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        report["passes"][0]["findings"],
+        json!(["finding-2"]),
+        "{report}"
+    );
+    assert_eq!(report["passes"][0]["superseded"], json!(["finding-1"]));
+    let older = entry(&s, "finding-1");
+    assert_eq!(older["status"], "superseded");
+    assert_eq!(older["superseded_by"], "finding-2");
+    assert_eq!(entry(&s, "finding-2")["status"], "active");
+}
+
+#[test]
+fn a_supersede_naming_daniels_entry_another_project_or_an_unknown_id_changes_nothing() {
+    let s = Setup::new();
+    s.fx.ok(&[
+        "entry",
+        "add",
+        "--tag",
+        "finding",
+        "--author",
+        "opus",
+        "--project",
+        "other",
+        "--evidence",
+        "exp-1",
+        "Cache hit rate in the other repo was 91 percent.",
+        "--json",
+    ]);
+    let root = s.fx.root();
+    let dir = root.join("entries/preferences");
+    std::fs::create_dir_all(&dir).unwrap();
+    make_private(&dir);
+    let daniel = dir.join("preferences-1.md");
+    std::fs::write(&daniel, support::entry_text(1, "I prefer short updates.")).unwrap();
+    make_private(&daniel);
+    let turns = [
+        "Cache hit rate over 400 builds was 87 percent.",
+        "Queue wait over 120 jobs averaged 41 s.",
+        "Disk use over 30 days grew by 12 GB.",
+    ];
+    let mut lines = vec![line("user", "u-1", "Measure the cache, queue and disk.")];
+    lines.extend(
+        turns
+            .iter()
+            .enumerate()
+            .map(|(n, t)| line("assistant", &format!("a-{n}"), t)),
+    );
+    s.write(ON, &lines);
+    let named = ["finding-1", "preferences-1", "finding-99"];
+    let answers: Vec<Value> = turns
+        .iter()
+        .zip(named)
+        .enumerate()
+        .map(|(n, (t, older))| {
+            let words: Vec<&str> = t.split(' ').collect();
+            json!({"message": format!("a-{n}"), "start": words[..2].join(" "),
+                   "end": words[words.len() - 2..].join(" "), "supersedes": older})
+        })
+        .collect();
+    s.answer(&finding_answer(json!(answers)));
+    s.scribe("/scribe on");
+    let out = s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        report["passes"][0]["findings"],
+        json!(["finding-2", "finding-3", "finding-4"]),
+        "{report}"
+    );
+    assert_eq!(report["passes"][0]["superseded"], json!([]));
+    assert_eq!(
+        entry(&s, "finding-1")["status"],
+        "active",
+        "another project"
+    );
+    assert_eq!(
+        entry(&s, "preferences-1")["status"],
+        "active",
+        "Daniel's entry"
+    );
+}
+
+/// `n` open preference candidates, as `proposals.json` holds them.
+fn open_preference_candidates(n: usize) -> Vec<Value> {
+    (1..=n)
+        .map(|i| {
+            candidate_proposal(
+                i,
+                "preferences",
+                "user",
+                &format!("I prefer stored option {i} for releases."),
+                Value::Null,
+            )
+        })
+        .collect()
+}
+
+fn candidate_proposal(n: usize, tag: &str, role: &str, quote: &str, evidence: Value) -> Value {
+    json!({
+        "id": format!("p-{n}"), "kind": "candidate", "older": format!("{tag}-{n}"),
+        "newer": null,
+        "candidate": {
+            "tag": tag, "role": role, "quote": quote, "evidence": evidence,
+            "cite": {"session": ON, "message": format!("m-{n}"), "at": "2026-11-03T06:00:00Z",
+                     "prompt_sha256": "0".repeat(64), "line": 1, "cwd": "/nonexistent/work/scribe"},
+            "project": "scribe", "provider": "claude-code", "host": "host"
+        },
+        "reason": format!("Unmarked {tag} statement"), "quotes": [], "state": "open",
+        "opened_at": "2026-11-17T06:00:00Z", "settled_at": null, "settled_by": null,
+        "author": {"kind": "scribe", "name": "session-pass"}, "updated_by": null,
+        "settled_author": null
+    })
+}
+
+fn write_proposals(s: &Setup, proposals: &[Value]) {
+    let path = s.fx.root().join("proposals.json");
+    std::fs::write(
+        &path,
+        json!({"format": 11, "proposals": proposals}).to_string(),
+    )
+    .unwrap();
+    make_private(&path);
+}
+
+#[test]
+fn findings_ignore_the_open_candidate_cap_and_stop_at_five_per_session_per_run() {
+    let s = Setup::new();
+    s.scribe("/scribe on");
+    write_proposals(&s, &open_preference_candidates(20));
+    let turns: Vec<String> = (0..6)
+        .map(|n| {
+            format!(
+                "Shard {n} median latency over {} requests was {} ms.",
+                100 * (n + 1),
+                10 + n
+            )
+        })
+        .collect();
+    let mut lines = vec![line("user", "u-1", "Measure every shard.")];
+    lines.extend(
+        turns
+            .iter()
+            .enumerate()
+            .map(|(n, t)| line("assistant", &format!("a-{n}"), t)),
+    );
+    s.write(ON, &lines);
+    let config = s.fx.root().join("config.toml");
+    std::fs::write(&config, "[catalog]\nwindow_messages = 1\n").unwrap();
+    make_private(&config);
+    let mut answers = vec![Some(answer())];
+    answers.extend((0..6).map(|n| {
+        Some(finding_answer(json!([{
+            "message": format!("a-{n}"), "start": format!("Shard {n} median"), "end": "ms."
+        }])))
+    }));
+    s.answers(&answers);
+    let out = s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["passes"][0]["windows"], 7, "{report}");
+    assert_eq!(
+        report["passes"][0]["findings"],
+        json!([
+            "finding-1",
+            "finding-2",
+            "finding-3",
+            "finding-4",
+            "finding-5"
+        ])
+    );
+    assert_eq!(findings(&s).len(), 5, "the sixth is not written");
+    let ps = proposals(&s);
+    assert_eq!(ps["total"], 20);
+    assert!(
+        ps["proposals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|p| p["state"] == "open")
+    );
+    assert!(
+        s.prompts()
+            .last()
+            .unwrap()
+            .contains("Return findings: at most 0"),
+        "the run's budget is spent"
+    );
+}
+
+#[test]
+fn a_finding_an_agent_already_added_by_hand_is_not_written_again() {
+    let s = Setup::new();
+    let said = "Median build time over 50 runs was 312 s on 2026-11-02.";
+    s.fx.ok(&[
+        "entry",
+        "add",
+        "--tag",
+        "finding",
+        "--author",
+        "opus",
+        "--project",
+        "scribe",
+        "--related",
+        &format!("session:{ON}"),
+        "--evidence",
+        "run-5",
+        said,
+        "--json",
+    ]);
+    s.write(
+        ON,
+        &[
+            line("user", "u-1", "How long do builds take?"),
+            line("assistant", "a-1", said),
+        ],
+    );
+    s.answer(&finding_answer(json!([{
+        "message": "a-1", "start": "Median build time", "end": "on 2026-11-02."
+    }])));
+    s.scribe("/scribe on");
+    let out = s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["passes"][0]["findings"], json!([]), "{report}");
+    assert_eq!(findings(&s).len(), 1);
+}
+
+#[test]
+fn a_pass_settles_open_candidates_that_can_no_longer_be_approved_once() {
+    let s = Setup::new();
+    let finding = "Measured: the reviewer mix alone predicts a 7-point first-pass gap.";
+    let root = s.fx.root();
+    std::fs::create_dir_all(&root).unwrap();
+    make_private(&root);
+    write_proposals(
+        &s,
+        &[
+            candidate_proposal(1, "finding", "assistant", finding, json!("exp-5342a4d6")),
+            candidate_proposal(
+                2,
+                "task",
+                "assistant",
+                "The migration still has to be filed.",
+                Value::Null,
+            ),
+            candidate_proposal(
+                3,
+                "preferences",
+                "user",
+                "I prefer short progress updates.",
+                Value::Null,
+            ),
+        ],
+    );
+    let out = s.run(&["session", "pass", "--json"], b"");
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        report["settled"],
+        json!([
+            {"proposal": "p-1", "result": "finding", "entry": "finding-1", "tag": "finding"},
+            {"proposal": "p-2", "result": "closed", "entry": null, "tag": "task"}
+        ]),
+        "{report}"
+    );
+    let e = entry(&s, "finding-1");
+    assert_eq!(e["content"], finding);
+    assert_eq!(e["author"], json!({"kind": "agent", "name": "assistant"}));
+    assert_eq!(e["evidence"], "exp-5342a4d6");
+    assert_eq!(e["as_of"], "2026-11-03");
+    let ps = proposals(&s);
+    let by_id = |id: &str| {
+        ps["proposals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["id"] == id)
+            .unwrap()
+            .clone()
+    };
+    let scribe = json!({"kind": "scribe", "name": "session-pass"});
+    assert_eq!(by_id("p-1")["state"], "approved");
+    assert_eq!(by_id("p-1")["settled_author"], scribe);
+    assert_eq!(by_id("p-1")["settled_by"], Value::Null);
+    assert_eq!(by_id("p-2")["state"], "rejected");
+    assert_eq!(by_id("p-2")["settled_author"], scribe);
+    assert!(
+        by_id("p-2")["reason"]
+            .as_str()
+            .unwrap()
+            .contains("tag task")
+    );
+    assert_eq!(by_id("p-3")["state"], "open", "preferences are untouched");
+
+    let proposals_before = std::fs::read(s.fx.root().join("proposals.json")).unwrap();
+    let entry_before = std::fs::read(s.fx.root().join("entries/finding/finding-1.md")).unwrap();
+    let again: Value =
+        serde_json::from_slice(&s.run(&["session", "pass", "--json"], b"").stdout).unwrap();
+    assert_eq!(again["settled"], json!([]));
+    assert_eq!(
+        std::fs::read(s.fx.root().join("proposals.json")).unwrap(),
+        proposals_before
+    );
+    assert_eq!(
+        std::fs::read(s.fx.root().join("entries/finding/finding-1.md")).unwrap(),
+        entry_before
+    );
+}
+
+#[test]
+fn session_start_counts_findings_since_the_projects_previous_session_start() {
+    const NEXT: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e61";
+    let s = Setup::new();
+    let mut next = s.payload("SessionStart");
+    next["session_id"] = json!(NEXT);
+    s.scribe("/scribe on");
+    s.answer(&answer());
+    s.run(&["session", "pass", "--session", ON], b"");
+    let quiet = text(&s.hook("session-start", &next).stdout);
+    assert!(
+        !quiet.contains("recorded since"),
+        "none yet: no line: {quiet}"
+    );
+
+    s.append(
+        ON,
+        &[line(
+            "assistant",
+            "a-9",
+            "Median build time over 50 runs was 312 s.",
+        )],
+    );
+    s.answer(&finding_answer(json!([{
+        "message": "a-9", "start": "Median build time", "end": "was 312 s."
+    }])));
+    s.run(&["session", "pass", "--session", ON], b"");
+    let counted = text(&s.hook("session-start", &next).stdout);
+    assert!(
+        counted.contains("scribe: 1 finding recorded since 2026-11-03"),
+        "{counted}"
+    );
+    assert!(!counted.contains("Median build time"), "never listed");
 }
 
 #[test]
@@ -1292,7 +1833,7 @@ fn legacy_control_is_read_without_writes_and_new_retry_state_is_strict() {
     );
     setup.pass();
     let current: Value = serde_json::from_slice(&setup.control_bytes()).unwrap();
-    assert_eq!(current["format"], 10);
+    assert_eq!(current["format"], 11);
     assert_eq!(current["sessions"][ON]["consecutive_failures"], 0);
     assert_eq!(current["sessions"][ON]["retry_after"], Value::Null);
     assert_eq!(current["sessions"][ON]["pending_links"], json!([]));
@@ -1551,7 +2092,7 @@ fn a_pass_writes_one_record_of_daniels_terms_and_never_reads_a_session_never_swi
     // The record is written at format 10: a header and one open segment
     // holding this pass's segment text.
     let file = std::fs::read_to_string(setup.record_file()).unwrap();
-    assert!(file.starts_with("---\nformat: 10\n"), "{file}");
+    assert!(file.starts_with("---\nformat: 11\n"), "{file}");
     assert!(file.contains("\n## Log\n### 1. "), "{file}");
     assert!(!file.contains("## Outcome"), "{file}");
     assert_eq!(record["active"], true);

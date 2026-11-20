@@ -88,8 +88,9 @@ and grouped, never as a gate on the work:
   ready-to-type lines for preferences. The session pass now
   proposes unmarked statements from the human's own turns, with the exact
   quote, source turn and suggested memory tag. It also reads your own
-  recaps: a measured result it proposes as a `finding`, something you said
-  is not verified or needs a check-back under `remind` or `idea`. It offers
+  recaps: something you said is not verified or needs a check-back it
+  proposes under `remind` or `idea`, and a measured or verified result it
+  records as a `finding` itself, with no proposal (see Findings below). It offers
   at most three per session pass, with at most twenty open candidates in
   the store. Mention open candidates in the brief; the human keeps one
   with `#scribe approve <proposal-id>` or drops it for good with
@@ -168,9 +169,23 @@ about them; `question ask` skips them unless its scope names their tag.
 
 A `finding` entry records a result you measured or verified, so a later
 session finds it instead of re-deriving it. It is a memory tag with no
-consumer: nothing picks it up, and it never appears in the session brief
-or the session-start line — it is pulled through `ask` and search only,
-where it reads as your claim as of its date, with its evidence pointer.
+consumer: nothing picks it up, and it is never listed in the session brief
+or the session-start line (which only counts the findings recorded since
+the project's previous session) — it is pulled through `ask` and search
+only, where it reads as your claim as of its date, with its evidence
+pointer.
+
+- **In a session that is on, the pass records findings, so you need not.**
+  The session pass copies a turn of yours that reports a measured or
+  verified result (numbers with their population and period, or a fact
+  with what it was checked against) into a `finding` entry itself, word
+  for word, tables included, at most five per session per pass, with no
+  proposal or approval. It cites your turn, takes the evidence pointer
+  your turn names (else the session segment) and your turn's date. So
+  state a result in one place, with its population, period and evidence
+  pointer, outside code blocks and quotes. A later correction you state
+  the same way supersedes the earlier finding. The human removes one with
+  `#scribe retire <id>`.
 
 - **Search before re-measuring.** Before measuring or verifying something
   costly, search first: `scribe record search "<words>" --json` and
@@ -181,20 +196,20 @@ where it reads as your claim as of its date, with its evidence pointer.
   to re-derive. An opinion, a plan or an intermediate step is not a
   finding (pending work is filed in Orbit with `orbit.task.add`, a check-back is
   a `remind`, a future consideration an `idea`).
-- **Write it at the time**, only in an interactive session the human is
-  in, unasked, like a free action entry:
+- **Write it yourself** when you want it recorded at once, or when the
+  session is off — only in an interactive session the human is in,
+  unasked, like a free action entry:
   `scribe entry add --tag finding --author <name> --related session:<id> --evidence '<pointer>' '<result>'`
   (add `--as-of YYYY-MM-DD` when the result was true on another day).
   Then one visible line naming the id and the cancel, for example
   `scribe: wrote <id> (cancel: #scribe retire <id>)`. When the human says
   to drop it, retire it yourself as with an action entry. Every other
   session writes none, as with action tags.
-- **Keep it rare.** At most **3 findings per session**; scribe refuses
-  the fourth and says so. A finding with no evidence pointer is refused
-  and writes nothing. If you did not record one, the session pass may
-  propose it from your recap for the human's typed approval — still
-  write the important ones yourself, while the numbers are in front of
-  you.
+- **Keep it rare.** At most **3 findings per session** through
+  `entry add` (the pass's own findings do not count); scribe refuses the
+  fourth and says so. A finding with no evidence pointer is refused and
+  writes nothing. A finding the pass already recorded is not written
+  twice, by either route.
 
 To initialize a requested project integration, use the explicit target:
 

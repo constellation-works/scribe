@@ -972,6 +972,24 @@ pub(crate) struct PassPayload {
     pub(crate) error: Option<String>,
     /// Deterministic repairs in successfully persisted windows, in order.
     pub(crate) warnings: Vec<String>,
+    /// The `finding` entries this pass wrote from assistant turns, in order.
+    pub(crate) findings: Vec<String>,
+    /// Earlier findings those superseded, in order.
+    pub(crate) superseded: Vec<String>,
+}
+
+/// One open candidate a pass settled at its start: written as a finding
+/// (`entry` set) or closed (`tag` names the tag it was under).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct SettledPayload {
+    /// The proposal, `p-<n>`.
+    pub(crate) proposal: String,
+    /// `finding` (written as one) or `closed`.
+    pub(crate) result: &'static str,
+    /// The finding written, under the proposal's reserved id; `null` when closed.
+    pub(crate) entry: Option<String>,
+    /// The candidate's tag.
+    pub(crate) tag: String,
 }
 
 /// What `session pass` did; `--json` and the `scribe.session-pass` tool
@@ -982,6 +1000,9 @@ pub(crate) struct PassReport {
     pub(crate) passes: Vec<PassPayload>,
     /// Due sessions left for the next run.
     pub(crate) remaining: usize,
+    /// Open candidates settled by scribe at the start of the run, which
+    /// can no longer be approved.
+    pub(crate) settled: Vec<SettledPayload>,
     /// Lines for stderr, printed in every mode.
     #[serde(skip)]
     pub(crate) notices: Vec<String>,

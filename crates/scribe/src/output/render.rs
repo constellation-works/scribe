@@ -64,12 +64,14 @@ const PROPOSAL_COLUMNS: [Column; 7] = [
     col("REASON", Align::Left, true),
 ];
 
-const PASS_COLUMNS: [Column; 5] = [
+const PASS_COLUMNS: [Column; 7] = [
     col("SESSION", Align::Left, false),
     col("RESULT", Align::Left, false),
     col("CODE", Align::Left, false),
     col("PASSES", Align::Right, false),
     col("TERMS DROPPED", Align::Right, false),
+    col("FINDINGS", Align::Left, false),
+    col("SUPERSEDED", Align::Left, false),
 ];
 
 const SCAN_COLUMNS: [Column; 5] = [
@@ -938,7 +940,18 @@ fn pass_row(p: &PassPayload) -> Vec<Cell> {
                 .map_or_else(|| String::from("-"), |n| n.to_string()),
         ),
         Cell::plain(p.dropped_terms.to_string()),
+        Cell::plain(ids_or_dash(&p.findings)),
+        Cell::plain(ids_or_dash(&p.superseded)),
     ]
+}
+
+/// Ids joined by `, `, or `-` when there are none.
+fn ids_or_dash(ids: &[String]) -> String {
+    if ids.is_empty() {
+        String::from("-")
+    } else {
+        ids.join(", ")
+    }
 }
 
 /// A `session list --tree` row: the session's row with its parent after

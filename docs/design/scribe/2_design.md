@@ -642,7 +642,11 @@ fields, values and attribution are preserved, with `candidate: null` added.
 Format 10 adds `role` (`user` for an upgraded candidate) and `evidence`
 (`null`) to a candidate, so a pass can also quote an assistant turn
 ([§4.7](#47-findings)); entry files gain `evidence` and `as_of`, both
-`null` on upgrade. Writes use format 10.
+`null` on upgrade. Format 11 changes no key: it admits a finding the
+session pass wrote (or an open finding candidate it settled) — an
+assistant-authored entry with the turn as its cite and `said` empty — and
+a candidate settled by scribe (`settled_by: null`, `settled_author:
+{kind: scribe, name: session-pass}`). Writes use format 11.
 
 **Tags store** (`tags.json`, from S12): `{"format": 4, "tags": [{"name",
 "aliases", "description", "stale_after_days", "author", "created",
@@ -1023,9 +1027,11 @@ marked `require_evidence` (config `require_evidence = true` on a memory
 tag; an action tag refuses the flag). No consumer, no transcript window,
 nothing for an intake to read: `entry pickup` refuses it
 (`not_action_tag`), the `SessionStart` stuck-entries line never counts
-it, and neither the session-start line nor the skill's session brief
-lists findings, so neither grows with history. Findings are pulled
-through search only.
+it, and neither the session-start lines nor the skill's session brief
+list findings, so neither grows with history: `SessionStart` adds only a
+count of those recorded since the project's previous session start (see
+"The pass writes findings" below). Findings are pulled through search
+only.
 
 **Writing one.** The agent that measured or verified the result writes it
 at the time, under the free-use guards of §4.6 (an interactive session
@@ -1053,8 +1059,9 @@ them:
   names no session is counted under its author and the write's day,
   against that author's other unnamed-session findings of that day. The
   fourth is refused (`finding_cap`) and the refusal names the cap.
-  Daniel-approved pass candidates do not take this route; the candidate
-  caps below bound them instead.
+  Findings the session pass wrote (or a finding candidate approved
+  earlier) do not take this route and do not count against this cap; the
+  pass's own bounds below bound them instead.
 
 **Reading one.** `ask` evidence labels a finding `agent claim (<author>)
 as of <date>; evidence: <pointer>`, and the deterministic attribution
@@ -1065,16 +1072,95 @@ fields; `entry show`/`list` carry both fields too. The skill says what
 qualifies — a number or a verified fact, an evidence pointer, and costly
 to re-derive — and to search findings before re-measuring something.
 
-**The pass as safety net.** What agents did not record, the session pass
-catches: beside Daniel's unmarked statements (§5.3) it may propose an
-assistant turn's own recap — a measured result under `finding`, or
-something the assistant says needs a check-back or is a future
-consideration under the fitting free action tag (`remind`, `idea`); open
-work is filed in Orbit by the agent, never proposed. Approval writes one
-agent-authored entry (`{kind: agent, name: assistant}`) quoting that
-turn and citing it, never an entry attributed to Daniel; a finding so
-kept carries the candidate's evidence pointer, or `session:<id>` when
-the turn named none, with the turn's date as its as-of.
+**The pass writes findings.** [ORB-25983]. In a session that is on, the
+session pass records findings itself, so nobody has to remember
+([4_decisions.md](./4_decisions.md#the-session-pass-writes-findings-without-an-approval)).
+For an assistant turn that reports a measured or verified result, the
+pass writes one `finding` entry in the same step that opens candidates
+(§5.3): authored `{kind: agent, name: assistant}`, `content_from:
+message` (assistant), the turn as its cite, `said` empty. No proposal is
+opened and no approval is needed; Daniel removes one with `#scribe
+retire <id>`. Reading is unchanged: `ask` and `record search` label it as
+that agent's claim, with its evidence and as-of date. The pass may still
+propose an assistant turn's check-back or future consideration under
+`remind` or `idea` for Daniel's approval (§5.3); open work is filed in
+Orbit by the agent, never proposed.
+
+- **What qualifies.** A turn that reports numbers with their population
+  and period (counts, rates, intervals, timings), or a fact together with
+  what it was checked against. Not a plan, an opinion, a status report or
+  a recommendation, and never Daniel's words: preference candidates from
+  his turns keep the proposal-and-approval route of §5.3. One finding per
+  analysis: a claim and the table that supports it are one entry, not one
+  per row; a turn with two separate analyses gives two.
+- **Verbatim, copied by the pass.** The model never returns the content,
+  since a model re-typing numbers can change them. It names the message
+  and the first and last words of the span (`start`, `end`); the pass
+  copies the span from the original transcript turn: from the first
+  occurrence of `start` to the first `end` that closes after it. A span
+  is one contiguous run inside one assistant message, at most **4,000
+  characters**; a longer one is cut at the last paragraph boundary (a
+  blank line) or table-row boundary (the end of a `|` line) inside the
+  bound and ends with a blank line and `[… cut at 4,000 characters]`; one
+  with no such boundary is skipped. A markdown table may be inside a span;
+  fenced or indented code, blockquotes, `#scribe` lines and pasted blocks
+  stay excluded as for candidates, and tool payloads never reach a turn's
+  text. Words that do not occur in the named message, a message that is
+  not an assistant turn of the window, or a span that would need
+  redaction writes nothing, so every entry is an exact copy; the record
+  still advances.
+- **Evidence and date.** The evidence pointer is what the turn names (an
+  experiment, task, run, commit or path), else the session segment
+  holding the turn, `session:<id>#<n>`. The as-of date is the turn's date.
+- **A correction supersedes.** When a later turn revises an earlier
+  finding (same subject, a different number or conclusion), the model
+  names the earlier finding's id from the relevant recorded statements it
+  is shown (each recorded one is listed as `[<id>] <text>`), and the pass
+  marks that entry `superseded` by the new one. It only ever supersedes an
+  active agent-authored finding of the same project, never an entry of
+  Daniel's; an id that fails either check is ignored and the new finding
+  is still written. Against the finding it supersedes, only the same text
+  counts as a duplicate.
+- **Bounds (STD-08 §R1, §R3).** At most **5 findings per session per
+  pass invocation**, across its windows, apart from the 3 checked
+  candidates, and no extra model call or timeout budget: the added output
+  per window is `findings`, at most 5 `{message, start, end, evidence?,
+  supersedes?}` objects, `message` and `supersedes` at most 128 characters
+  each, `start` and `end` at most **80** each and `evidence` at most 512 —
+  at most **4,640 value characters plus JSON syntax**. Pass-written
+  findings do not count against the 20-open-candidate cap or
+  `MAX_FINDINGS_PER_SESSION` (that cap stays on the `entry add` route). The
+  candidates' duplicate guard applies under the lock, so a finding an
+  entry already records — one an agent added with `entry add --tag
+  finding` included — or a candidate already holds is not written twice;
+  unreadable entries suppress findings for that window. Findings are
+  written before the record cursor advances, so an interrupted window is
+  retried and the guard keeps the retry from writing one twice.
+  `session rebuild` writes none.
+- **Open candidates that can no longer be approved.** At the start of a
+  `session pass`, under the lock, an open candidate under `finding` is
+  written as a finding at its reserved id (closed instead when an entry
+  already records it) and its proposal approved; an open candidate whose
+  tag the store no longer defines (`task`, `decisions` after
+  [ORB-25977] and [ORB-25980]) is rejected with a reason naming the tag,
+  and stays in the suppression set. Both are settled by scribe
+  (`settled_author: {kind: scribe, name: session-pass}`, `settled_by:
+  null`), not by Daniel; other open candidates are untouched, and a second
+  run changes nothing more.
+- **Visibility.** `session pass` names the finding ids each session wrote
+  and superseded in its table (`FINDINGS`, `SUPERSEDED`) and `--json`
+  (`findings`, `superseded`), and the settled candidates in `--json`
+  (`settled`); each is one more audit line. The `SessionStart` line adds
+  one count, `scribe: N findings recorded since <date>`, where the date is
+  the newest `started` among the project's other session records, and
+  nothing when N is 0 or the project has no earlier record. It never lists
+  them.
+
+Sessions that are off are still not read. The explicit `entry add --tag
+finding` stays for a result an agent wants recorded at once or in a
+session that is off. Store format 11 admits the pass-written entry shape
+(no key changes), so a format 10 build refuses the store instead of
+reporting these entries as corrupt.
 
 ## 5. `/scribe on`
 
@@ -1254,11 +1340,13 @@ a pass; an explicit catalog is still required for past sessions.
   requesting zero candidates. Rejecting or approving frees an open slot.
 - **Added output per window.** `candidates` is an array of at most 3
   `{quote, message, tag, evidence?}` objects. Each quote is 8–400
-  characters, each message id at most 128, each tag at most 32, and a
-  finding candidate's evidence pointer at most 512 (omitted otherwise):
-  at most **3,216 value characters plus JSON syntax**, and no extra model
-  call or timeout budget. Assistant-turn candidates draw on the same
-  3-per-pass and 20-open caps above — no added budget.
+  characters, each message id at most 128, each tag at most 32; `evidence`
+  stays in the schema for older answers, and a candidate carrying one is
+  refused: at most **3,216 value characters plus JSON syntax**, and no
+  extra model call or timeout budget. Assistant-turn candidates draw on
+  the same 3-per-pass and 20-open caps above — no added budget. Findings
+  are a separate `findings` array with their own bounds
+  ([§4.7](#47-findings)); they never open a candidate.
   A header compression retry keeps the original candidates locally. Older
   model adapters may omit the field, which means none. Relevant recorded or
   proposed statements add at most 6,000 value characters of input (15 spans
@@ -1267,10 +1355,12 @@ a pass; an explicit catalog is still required for past sessions.
   only (a choice about one piece of work belongs on its Orbit task and is
   not proposed), with a canonical configured memory tag (never an action
   tag or `finding`). From an assistant turn — read its own recap first —
-  it suggests a measured or verified result under `finding`, or something
-  it says needs a check-back or is a future consideration under a free
-  action tag such as `remind` or `idea`, with an evidence pointer when the turn names
-  one ([§4.7](#47-findings)). Each candidate must name a message in the
+  it suggests something it says needs a check-back or is a future
+  consideration under a free action tag such as `remind` or `idea`. A
+  measured or verified result is never a candidate: the pass writes it as
+  a finding itself ([§4.7](#47-findings)), and under the lock an
+  assistant-turn candidate under a `require_evidence` tag is refused.
+  Each candidate must name a message in the
   current window and quote its own text exactly. The pass checks again
   against the original transcript and derives the cite, timestamp, prompt
   hash, line, cwd, project, provider and host itself. Pasted blocks,
@@ -1300,10 +1390,11 @@ a pass; an explicit catalog is still required for past sessions.
   the canonical approving command; the proposal also keeps the approving
   turn's cite. Approval of an assistant-turn candidate instead writes
   exactly one agent-authored entry (`{kind: agent, name: assistant}`),
-  with `content_from: message` (assistant), the candidate's evidence
-  pointer (or `session:<id>` for a finding that named none) and the
-  turn's date as its as-of — never an entry attributed to Daniel; its
-  approval echo names the cancel. Replaying approval creates no second
+  with `content_from: message` (assistant) — never an entry attributed to
+  Daniel; its approval echo names the cancel. A finding candidate opened
+  before [ORB-25983] carried an evidence pointer (or takes `session:<id>`
+  when it named none) and the turn's date as its as-of; a pass settles any
+  still open as a finding ([§4.7](#47-findings)). Replaying approval creates no second
   entry. Approved proposals
   journal the entry creation, recoverable by a repeated approval or the
   consistency scan. Rejection writes no entry and keeps the statement in the

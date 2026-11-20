@@ -35,7 +35,14 @@
 //! session); no transcript or messages yet leaves it waiting. Failed runs
 //! exit 1 with each failed session, code and short reason; the plugin answers
 //! `session_pass_failed`. A never-on session is never read. A pass writes
-//! candidate proposals, no entries, and one audit line per session handled (none for waiting).
+//! candidate proposals for Daniel's unmarked words, and writes `finding`
+//! entries itself: an assistant turn's measured or verified result, copied
+//! verbatim from the transcript (at most five per session per run, no
+//! approval; 2_design.md §4.7). Before any session it settles the open
+//! candidates that can no longer be approved: a `finding` candidate is
+//! written as a finding, one under a tag the store no longer defines is
+//! closed. One audit line per session handled (none for waiting), per
+//! finding written or superseded and per candidate settled.
 
 use crate::app::Context;
 use crate::commands::RunLimits;
@@ -71,7 +78,13 @@ new segments and checkpoints the record. Sealed segments stay unchanged;
 --json reports windows, segments, seals and how many due sessions remain.
 Also proposes up to 3 unmarked preferences per session per run,
 until 20 candidate proposals are open. Review with scribe proposal list;
-only a typed #scribe approve <id> writes an entry; #scribe reject <id> drops it.
+only a typed #scribe approve <id> writes Daniel's entry; #scribe reject <id>
+drops it. Writes up to 5 findings per session per run itself: an assistant
+turn's measured or verified result, copied verbatim (at most 4000
+characters), authored by the assistant; remove one with #scribe retire <id>.
+The FINDINGS and SUPERSEDED columns (findings and superseded in --json)
+name them. First settles open finding candidates as findings and closes
+candidates under a tag the store no longer defines (settled in --json).
 A failed pass stays due with automatic retry delays of 5, 10, 20, 40,
 then at most 60 minutes. --session retries immediately. Exits 1 when any
 pass failed, naming each failed session, its error code and short reason.
@@ -127,6 +140,7 @@ pub(in crate::commands) fn run_with<M: Models>(
     only: &[SessionId],
 ) -> Result<Output, CliError> {
     let store = ctx.store();
+    let settled = settle_stale(ctx)?;
     let state = store.control()?;
     let due = if only.is_empty() {
         control::due(&state)
@@ -148,6 +162,7 @@ pub(in crate::commands) fn run_with<M: Models>(
         return Ok(Output::Pass(PassReport {
             passes: Vec::new(),
             remaining,
+            settled,
             notices: vec![if remaining == 0 {
                 String::from("no session pass is due")
             } else {
@@ -200,6 +215,9 @@ pub(in crate::commands) fn run_with<M: Models>(
             id: &id,
             switch: &switch,
             candidate_slots: pass::MAX_CANDIDATES,
+            finding_slots: pass::MAX_PASS_FINDINGS,
+            findings: Vec::new(),
+            superseded: Vec::new(),
             windows: 0,
             segments_sealed: 0,
             segments: None,
@@ -226,6 +244,7 @@ pub(in crate::commands) fn run_with<M: Models>(
     Ok(Output::Pass(PassReport {
         passes,
         remaining,
+        settled,
         notices: Vec::new(),
         catalog: false,
         switch_written: false,
@@ -279,6 +298,9 @@ pub(in crate::commands) fn run_catalog<M: Models>(
         id,
         switch,
         candidate_slots: pass::MAX_CANDIDATES,
+        finding_slots: pass::MAX_PASS_FINDINGS,
+        findings: Vec::new(),
+        superseded: Vec::new(),
         windows: 0,
         segments_sealed: 0,
         segments: None,
@@ -301,6 +323,7 @@ pub(in crate::commands) fn run_catalog<M: Models>(
     Ok(PassReport {
         passes,
         remaining: 0,
+        settled: Vec::new(),
         notices: Vec::new(),
         catalog: true,
         switch_written: false,
@@ -323,6 +346,11 @@ struct Job<'a> {
     id: &'a SessionId,
     switch: &'a SessionControl,
     candidate_slots: usize,
+    /// Findings this session may still write in this run.
+    finding_slots: usize,
+    /// Findings written and superseded so far, in order.
+    findings: Vec<String>,
+    superseded: Vec<String>,
     windows: usize,
     segments_sealed: usize,
     segments: Option<usize>,
@@ -489,12 +517,14 @@ impl Job<'_> {
                 final_pass && last,
             );
             request.candidate_limit = self.candidate_slots;
+            request.finding_limit = self.finding_slots;
+            // A finding is never a candidate: the pass writes it itself.
             request.candidate_tags = self
                 .config
                 .tags
                 .tags()
                 .iter()
-                .filter(|tag| tag.require_evidence || tag.action.is_some_and(|a| !a.require_quote))
+                .filter(|tag| !tag.require_evidence && tag.action.is_some_and(|a| !a.require_quote))
                 .map(|tag| tag.name.to_string())
                 .collect();
             request.candidate_memory_tags = self
@@ -533,6 +563,7 @@ impl Job<'_> {
                 .candidate_slots
                 .saturating_sub(distilled.candidates.len());
             let candidate_answers = distilled.candidates.clone();
+            let finding_answers = distilled.findings.clone();
             let dropped = distilled.dropped_terms;
             let warnings = window_warnings(self.windows + 1, &distilled);
             let cwd = transcript::cwd(&bytes).unwrap_or_default();
@@ -594,6 +625,8 @@ impl Job<'_> {
                 .filter(|s| s.state == scribe_core::SegmentState::Sealed)
                 .count();
             let candidates = pass::candidate_drafts(&candidate_answers, &messages, &record);
+            let mut findings = pass::finding_drafts(&finding_answers, &messages, &record);
+            findings.truncate(self.finding_slots);
             let mode = if !last {
                 scribe_core::PassWrite::Checkpoint
             } else if self.catalog.as_ref().is_some_and(|c| c.ended) {
@@ -603,11 +636,24 @@ impl Job<'_> {
             } else {
                 scribe_core::PassWrite::Settle(self.switch.final_pass)
             };
-            previous = self
+            let (written, found) = self
                 .ctx
                 .store()
-                .write_pass_window(record, expected, mode, &candidates, self.redactor)
+                .write_pass_window(
+                    record,
+                    expected,
+                    mode,
+                    &candidates,
+                    &findings,
+                    self.redactor,
+                )
                 .map_err(|err| PassError::new(err.code(), err.to_string()))?;
+            previous = written;
+            self.finding_slots = self.finding_slots.saturating_sub(found.written.len());
+            self.findings
+                .extend(found.written.iter().map(ToString::to_string));
+            self.superseded
+                .extend(found.superseded.iter().map(ToString::to_string));
             expected = previous.as_ref().map(|p| p.updated);
             self.segments_sealed += sealed_after.saturating_sub(sealed_before);
             self.segments = previous.as_ref().map(|r| r.log.len());
@@ -743,6 +789,8 @@ impl Job<'_> {
             gave_up: false,
             error: Some(short_reason(self.redactor, &failure.message)),
             warnings: self.warnings.clone(),
+            findings: self.findings.clone(),
+            superseded: self.superseded.clone(),
         })
     }
 
@@ -760,8 +808,38 @@ impl Job<'_> {
             gave_up: false,
             error: None,
             warnings: self.warnings.clone(),
+            findings: self.findings.clone(),
+            superseded: self.superseded.clone(),
         }
     }
+}
+
+/// Settle the open candidates that can no longer be approved, before any
+/// session is passed (2_design.md §4.7): an open `finding` candidate is
+/// written as a finding, one under a tag the store no longer defines is
+/// closed. Both are settled by scribe, never by Daniel.
+fn settle_stale(ctx: &Context) -> Result<Vec<crate::output::SettledPayload>, CliError> {
+    let settled = ctx.store().settle_stale_candidates(ctx.now())?;
+    let findings =
+        settled
+            .findings
+            .into_iter()
+            .map(|(proposal, entry)| crate::output::SettledPayload {
+                proposal: proposal.to_string(),
+                result: "finding",
+                tag: entry.tag().to_string(),
+                entry: Some(entry.to_string()),
+            });
+    let closed = settled
+        .closed
+        .into_iter()
+        .map(|(proposal, tag)| crate::output::SettledPayload {
+            proposal: proposal.to_string(),
+            result: "closed",
+            entry: None,
+            tag: tag.to_string(),
+        });
+    Ok(findings.chain(closed).collect())
 }
 
 /// The session's transcript: `<dir>/<project-dir>/<id>.jsonl`, the first

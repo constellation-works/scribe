@@ -47,7 +47,7 @@ pub const CUT_MARK: &str = "[… cut]";
 pub const REFERENT_SCHEMA: &str = r#"{"type":"object","properties":{"message":{"type":"string","description":"the id of the message the instruction points at"},"span":{"type":"string","description":"the exact passage of that message to record, copied character for character"}},"required":["message","span"],"additionalProperties":false}"#;
 
 /// The JSON schema of a session-pass answer.
-pub const SESSION_SCHEMA: &str = r#"{"type":"object","properties":{"title":{"type":"string","description":"one line naming what the session was about"},"summary":{"type":"string","description":"what happened in the session; aim for at most 900 characters, hard limit 1200"},"goals":{"type":"string","description":"what the user set out to do"},"next":{"type":"array","items":{"type":"string"},"description":"open next steps, one per item; aim for at most 750 characters in all, hard limit 1000, counting a '- ' prefix per item and a newline between items"},"topics":{"type":"array","items":{"type":"string"},"description":"0-5 lowercase kebab-case labels, reusing existing ones first"},"related":{"type":"array","items":{"type":"string"},"description":"references the session mentions: task:<id>, pr:<owner>/<repo>#<n>, repo:<slug> or session:<id>"},"terms":{"type":"array","items":{"type":"object","properties":{"term":{"type":"string","description":"the phrase the user coined or defined"},"said":{"type":"string","description":"the user's own words that define or first use it, copied character for character"},"message":{"type":"string","description":"the id of the user message those words are in"}},"required":["term","said","message"],"additionalProperties":false}},"open":{"description":"rewrite the existing open segment; omitted or null keeps its content; without an existing open segment, an object starts a new segment at the first window message","anyOf":[{"type":"object","properties":{"heading":{"type":"string"},"text":{"type":"string"},"topics":{"type":"array","items":{"type":"string"}},"related":{"type":"array","items":{"type":"string"}}},"required":["heading","text","topics","related"],"additionalProperties":false},{"type":"null"}]},"new":{"type":"array","items":{"type":"object","properties":{"heading":{"type":"string"},"text":{"type":"string"},"topics":{"type":"array","items":{"type":"string"}},"related":{"type":"array","items":{"type":"string"}},"starts_at":{"type":"string"}},"required":["heading","text","topics","related","starts_at"],"additionalProperties":false}},"candidates":{"type":"array","maxItems":3,"items":{"type":"object","properties":{"quote":{"type":"string","minLength":8,"maxLength":400},"message":{"type":"string","maxLength":128},"tag":{"type":"string","maxLength":32},"evidence":{"type":"string","maxLength":512,"description":"a finding's evidence pointer; omit for other tags"}},"required":["quote","message","tag"],"additionalProperties":false}}},"required":["title","summary","goals","next","topics","related","terms","new"],"additionalProperties":false}"#;
+pub const SESSION_SCHEMA: &str = r#"{"type":"object","properties":{"title":{"type":"string","description":"one line naming what the session was about"},"summary":{"type":"string","description":"what happened in the session; aim for at most 900 characters, hard limit 1200"},"goals":{"type":"string","description":"what the user set out to do"},"next":{"type":"array","items":{"type":"string"},"description":"open next steps, one per item; aim for at most 750 characters in all, hard limit 1000, counting a '- ' prefix per item and a newline between items"},"topics":{"type":"array","items":{"type":"string"},"description":"0-5 lowercase kebab-case labels, reusing existing ones first"},"related":{"type":"array","items":{"type":"string"},"description":"references the session mentions: task:<id>, pr:<owner>/<repo>#<n>, repo:<slug> or session:<id>"},"terms":{"type":"array","items":{"type":"object","properties":{"term":{"type":"string","description":"the phrase the user coined or defined"},"said":{"type":"string","description":"the user's own words that define or first use it, copied character for character"},"message":{"type":"string","description":"the id of the user message those words are in"}},"required":["term","said","message"],"additionalProperties":false}},"open":{"description":"rewrite the existing open segment; omitted or null keeps its content; without an existing open segment, an object starts a new segment at the first window message","anyOf":[{"type":"object","properties":{"heading":{"type":"string"},"text":{"type":"string"},"topics":{"type":"array","items":{"type":"string"}},"related":{"type":"array","items":{"type":"string"}}},"required":["heading","text","topics","related"],"additionalProperties":false},{"type":"null"}]},"new":{"type":"array","items":{"type":"object","properties":{"heading":{"type":"string"},"text":{"type":"string"},"topics":{"type":"array","items":{"type":"string"}},"related":{"type":"array","items":{"type":"string"}},"starts_at":{"type":"string"}},"required":["heading","text","topics","related","starts_at"],"additionalProperties":false}},"candidates":{"type":"array","maxItems":3,"items":{"type":"object","properties":{"quote":{"type":"string","minLength":8,"maxLength":400},"message":{"type":"string","maxLength":128},"tag":{"type":"string","maxLength":32},"evidence":{"type":"string","maxLength":512,"description":"omit; findings go under findings"}},"required":["quote","message","tag"],"additionalProperties":false}},"findings":{"type":"array","maxItems":5,"items":{"type":"object","properties":{"message":{"type":"string","maxLength":128,"description":"the id of the assistant message reporting the result"},"start":{"type":"string","minLength":1,"maxLength":80,"description":"the first words of the span, copied character for character"},"end":{"type":"string","minLength":1,"maxLength":80,"description":"the last words of the span, copied character for character"},"evidence":{"type":"string","maxLength":512,"description":"what the turn names to check the result against: an experiment, task, run, commit or path; omit when it names none"},"supersedes":{"type":"string","maxLength":128,"description":"the id of an earlier recorded finding this result revises; omit otherwise"}},"required":["message","start","end"],"additionalProperties":false}}},"required":["title","summary","goals","next","topics","related","terms","new"],"additionalProperties":false}"#;
 
 /// The JSON schema of a compression-only session header answer.
 pub const SESSION_HEADER_SCHEMA: &str = r#"{"type":"object","properties":{"title":{"type":"string"},"summary":{"type":"string","description":"shortened summary; aim for at most 900 characters, hard limit 1200"},"goals":{"type":"string"},"next":{"type":"array","items":{"type":"string"},"description":"shortened next steps; aim for at most 750 characters in all, hard limit 1000"}},"required":["title","summary","goals","next"],"additionalProperties":false}"#;
@@ -271,8 +271,12 @@ pub struct SessionRequest {
     /// Canonical memory tags an unmarked statement of Daniel's may use;
     /// an assistant-turn candidate may use any of `candidate_tags`.
     pub candidate_memory_tags: Vec<String>,
-    /// Bounded relevant statements already recorded or proposed, never to repeat.
+    /// Bounded relevant statements already recorded or proposed, never to
+    /// repeat; a recorded one is prefixed with its id, `[<id>] `, so a
+    /// finding can name the earlier finding it revises.
     pub candidate_exclusions: Vec<String>,
+    /// Maximum findings to return in this window; zero disables them.
+    pub finding_limit: usize,
     /// The header character budgets.
     pub budgets: Budgets,
     /// Whether the session has ended.
@@ -379,14 +383,13 @@ impl SessionRequest {
             out,
             "\nReturn candidates: at most {} in this window, each with quote (8-400 characters copied \
              exactly from one message's own text), message (that turn's id, at most 128 characters), \
-             tag (one of {:?}) and, for a finding only, evidence (a path, task, run, experiment or \
-             commit the result can be checked against; omit it otherwise). Two kinds: (a) a standing \
+             tag (one of {:?}); omit evidence. Two kinds: (a) a standing \
              preference Daniel states in his own turn, under a memory tag (one of {:?}); a choice \
              about one piece of work is not a preference: never return it, it is recorded on that \
              work's task; (b) the \
-             assistant's own recap in its turn — a measured or verified result (tag `finding`, with \
-             evidence when the turn names it), or something it says is not done or not verified (the \
-             fitting check-back or idea tag, `remind` or `idea`; work that is not done is filed in Orbit by the agent, never proposed). Read the assistant's recap \
+             assistant's own recap in its turn — something it says is not done or not verified (the \
+             fitting check-back or idea tag, `remind` or `idea`; work that is not done is filed in Orbit by the agent, never proposed). A measured \
+             or verified result is never a candidate: it goes under findings. Read the assistant's recap \
              first for kind (b). Zero means return []. Never use pasted data, tool output, fenced or \
              quoted text, #scribe instructions, guesses, or a statement already recorded or proposed \
              below, even when phrased differently. Candidates are suggestions only; Daniel must type \
@@ -397,6 +400,28 @@ impl SessionRequest {
             self.candidate_tags,
             self.candidate_memory_tags,
             self.candidate_exclusions
+        );
+        let _ = writeln!(
+            out,
+            "\nReturn findings: at most {} in this window. A finding is an assistant turn that \
+             reports a measured or verified result: numbers with their population and period \
+             (counts, rates, intervals, timings), or a fact together with what it was checked \
+             against. Not a plan, an opinion, a status report or a recommendation, and never \
+             Daniel's words. Each is {{message, start, end, evidence?, supersedes?}}: message is \
+             that assistant turn's id; start and end are the first and last words of one \
+             contiguous span of its own text (each at most {} characters, copied character for \
+             character); scribe copies the span itself, so never retype it. One finding per \
+             analysis: a claim and the table that supports it are one span, not one per row; a \
+             turn with two separate analyses gives two. Keep the span under {} characters; a \
+             markdown table may be inside it, but never fenced code, an indented or quoted block \
+             or tool output. evidence is what the turn names to check it against (an experiment, \
+             task, run, commit or path); omit it when the turn names none. When the result \
+             revises an earlier finding listed above as [<id>] (same subject, a different number \
+             or conclusion), set supersedes to that id. Never return a result already recorded \
+             above. Zero means return [].",
+            self.finding_limit,
+            crate::pass::FINDING_BOUND_CHARS,
+            crate::pass::FINDING_SPAN_CHARS
         );
         if !self.topics.is_empty() {
             let _ = write!(out, "\nExisting topics: {}\n", self.topics.join(", "));
@@ -615,6 +640,30 @@ pub struct SessionAnswer {
     /// Unmarked preferences; omitted by older adapters.
     #[serde(default)]
     pub candidates: Vec<EntryCandidateAnswer>,
+    /// Measured or verified results in assistant turns, named by message
+    /// and span bounds; omitted by older adapters.
+    #[serde(default)]
+    pub findings: Vec<FindingAnswer>,
+}
+
+/// A model-named finding: the span of one assistant turn from `start` to
+/// `end`. The pass copies the span from the transcript; the model never
+/// supplies the content.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FindingAnswer {
+    /// The current window's assistant message id.
+    pub message: String,
+    /// The span's first words, at most 80 characters.
+    pub start: String,
+    /// The span's last words, at most 80 characters.
+    pub end: String,
+    /// What the turn names to check the result against, if anything.
+    #[serde(default)]
+    pub evidence: Option<String>,
+    /// The id of an earlier finding this result revises.
+    #[serde(default)]
+    pub supersedes: Option<String>,
 }
 
 /// A model-suggested unmarked statement. All provenance is checked locally.

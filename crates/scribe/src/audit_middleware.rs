@@ -131,7 +131,7 @@ impl<'a> AuditGuard<'a> {
                 })
                 .collect(),
             Ok(Output::Pass(report)) => {
-                let mut lines: Vec<Line> = report
+                let lines: Vec<Line> = report
                     .passes
                     .iter()
                     .filter(|p| p.result != "waiting")
@@ -145,6 +145,23 @@ impl<'a> AuditGuard<'a> {
                         error_code: p.error_code,
                     })
                     .collect();
+                // Each finding written or superseded, and each candidate
+                // settled at the run's start, is one more success line.
+                let settled = report.settled.iter().map(|s| Line {
+                    status: AuditStatus::Success,
+                    target: Some(s.proposal.clone()),
+                    error_code: None,
+                });
+                let findings = report
+                    .passes
+                    .iter()
+                    .flat_map(|p| p.findings.iter().chain(&p.superseded))
+                    .map(|id| Line {
+                        status: AuditStatus::Success,
+                        target: Some(id.clone()),
+                        error_code: None,
+                    });
+                let mut lines: Vec<Line> = settled.chain(lines).chain(findings).collect();
                 // A catalog that wrote its switch logs the switch as one more
                 // success line, but only when no window failed: a failed
                 // catalog is one failure outcome, whose line names the

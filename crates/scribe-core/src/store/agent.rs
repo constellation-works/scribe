@@ -135,7 +135,12 @@ fn counts_toward_cap(
     author: &AuthorName,
     now: OffsetDateTime,
 ) -> bool {
-    if &entry.tag != tag || !entry.is_finding() {
+    // Only findings written through this route count: one the session
+    // pass wrote from an assistant turn (or an approved candidate) does not.
+    if &entry.tag != tag
+        || !entry.is_finding()
+        || matches!(entry.content_from, ContentFrom::Message { .. })
+    {
         return false;
     }
     match (session, entry.session_key()) {

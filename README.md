@@ -12,7 +12,10 @@ writes one record per session whose pass is due and proposes unmarked preference
 from Daniel's own turns (up to three per session pass, twenty open
 candidates store-wide). `scribe proposal list --state open --json` shows their
 quotes and source turns. `#scribe approve <id>` creates the entry as Daniel's,
-with the original turn's cite; `#scribe reject <id>` closes it for good. The CLI reads the store and accepts authored agent notes,
+with the original turn's cite; `#scribe reject <id>` closes it for good. The pass
+also records an assistant turn's measured or verified result as a `finding`
+entry itself, copied word for word with no approval (up to five per session per
+pass; `#scribe retire <id>` removes one). The CLI reads the store and accepts authored agent notes,
 and `scribe question ask` answers from it, quoting each record it cites
 verbatim; the Orbit plugin in `plugin/.orbit-plugin/` serves the same
 answer to agents as `scribe.ask` (install steps in its

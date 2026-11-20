@@ -12,8 +12,11 @@
       "author": null,
       "gave_up": false,
       "error": "the model failed: golden model refusal",
-      "warnings": []
+      "warnings": [],
+      "findings": [],
+      "superseded": []
     }
   ],
-  "remaining": 0
+  "remaining": 0,
+  "settled": []
 }

@@ -231,7 +231,17 @@ impl Proposal {
             provider: candidate.provider.clone(),
             host: candidate.host.clone(),
             created: at,
-            said: format!("#scribe approve {}", self.id),
+            // Settled by scribe (an open finding candidate a pass wrote as
+            // a finding): no typed approval to name.
+            said: if self
+                .settled_author
+                .as_ref()
+                .is_some_and(|a| a.kind == AuthorKind::Scribe)
+            {
+                String::new()
+            } else {
+                format!("#scribe approve {}", self.id)
+            },
             content: candidate.quote.clone(),
             content_from: ContentFrom::Message {
                 role: candidate.role,

@@ -82,10 +82,11 @@ pub use session::{
 };
 pub use store::{
     AUDIT_FILE, AuditEvent, AuditStatus, CONFIG_FILE, CONTROL_FILE, Captured, DEFAULT_LOCK_WAIT,
-    ENTRIES_DIR, EntryList, InitFile, InitReport, MIN_SECRET_CHARS, PROPOSALS_FILE, PassWrite,
-    REDACTED_FIELDS, RebuildGuard, Redactor, SESSIONS_DIR, SessionList, SessionView, Skipped,
-    Store, TagList, check_agent_author, check_content, check_description, check_reason,
-    init_project, integration_hooks, resolve_prefix, unresolved_redact_env,
+    ENTRIES_DIR, EntryList, InitFile, InitReport, MIN_SECRET_CHARS, PROPOSALS_FILE, PassFindings,
+    PassWrite, REDACTED_FIELDS, RebuildGuard, Redactor, SESSIONS_DIR, SessionList, SessionView,
+    SettledCandidates, Skipped, Store, TagList, check_agent_author, check_content,
+    check_description, check_reason, init_project, integration_hooks, resolve_prefix,
+    unresolved_redact_env,
 };
 pub use tag::{
     ActionTag, FINDING_TAG, MAX_FINDINGS_PER_SESSION, StoreTag, TagDef, TagError, TagPatch,

@@ -509,7 +509,7 @@ fn the_routine_tools_run_the_commands_against_the_configured_store() {
     let reply = plugin(&s, "scribe.session-pass", &config);
     assert_eq!(
         reply,
-        json!({"ok": true, "output": {"passes": [], "remaining": 0}})
+        json!({"ok": true, "output": {"passes": [], "remaining": 0, "settled": []}})
     );
     assert_eq!(s.audit().len(), 2, "nothing due: no audit line");
 

@@ -24,8 +24,11 @@
 //! A window rewrites the header and open segment, then appends up to three
 //! new segments. Sealed text is never sent to the model or rewritten.
 //!
-//! A pass writes no tag entries, whatever the transcript holds. No I/O
-//! (STD-02 R5).
+//! A pass writes no entry of Daniel's: his unmarked words become candidate
+//! proposals he approves. The one entry it writes itself is a `finding`
+//! ([`finding_drafts`]): an assistant turn's measured or verified result,
+//! copied verbatim from the transcript and authored by the assistant. No
+//! I/O (STD-02 R5).
 
 use crate::entry::Speaker;
 use crate::models::{
@@ -46,6 +49,11 @@ use time::OffsetDateTime;
 mod candidates;
 pub(crate) use candidates::same_statement;
 pub use candidates::{MAX_CANDIDATES, MAX_OPEN_CANDIDATES, candidate_drafts, candidate_exclusions};
+mod findings;
+pub use findings::{
+    FINDING_BOUND_CHARS, FINDING_CUT_MARK, FINDING_SPAN_CHARS, FindingDraft, MAX_PASS_FINDINGS,
+    finding_drafts,
+};
 mod repair;
 pub use repair::repair;
 
@@ -294,6 +302,7 @@ pub fn request(
         candidate_tags: Vec::new(),
         candidate_memory_tags: Vec::new(),
         candidate_exclusions: Vec::new(),
+        finding_limit: 0,
         budgets: BUDGETS,
         final_pass,
         correction: None,
@@ -337,6 +346,9 @@ pub enum Invalid {
 pub struct Distilled {
     /// Locally checked candidate statements from this window.
     pub candidates: Vec<crate::models::EntryCandidateAnswer>,
+    /// Findings naming an assistant turn of this window, within bounds;
+    /// [`finding_drafts`] copies their spans.
+    pub findings: Vec<crate::models::FindingAnswer>,
     /// The title.
     pub title: String,
     /// `## Summary`.
@@ -588,8 +600,10 @@ fn check_with_rules(
     }
 
     let candidates = candidates::check(answer.candidates, request);
+    let findings = findings::check(answer.findings, request);
     Ok(Distilled {
         candidates,
+        findings,
         title,
         summary,
         goals,

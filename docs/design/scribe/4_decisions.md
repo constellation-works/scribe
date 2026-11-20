@@ -2730,3 +2730,66 @@ settled by id.
 - Cost: a standing decision with no task to sit on is recorded as a
   preference, and a `decisions` entry stops showing in `tag list` unless
   config declares the tag again.
+
+## The session pass writes findings without an approval
+
+**Recorded:** 2026-11-20 · [ORB-25983] · **Overridable by Daniel**
+**Code anchors:** `crates/scribe-core/src/pass/findings.rs`, `crates/scribe-core/src/store/findings.rs`, `crates/scribe-core/src/models.rs` (`FindingAnswer`, session prompt), `crates/scribe/src/commands/session/pass.rs`, `crates/scribe/src/commands/hook/session_start.rs`
+
+### Context
+
+"Findings are scribe entries with no worker" gave a finding two routes,
+both waiting on someone remembering: the agent's own `entry add --tag
+finding`, and a session-pass candidate Daniel approves. Daniel (chief's
+chat, 2026-11-20), pasting five analysis results from recent sessions:
+"below are some of the things that should be automatically logged into
+\"findings\". we keep forgetting. So I suggest we make these implicit, i.e.
+have scribes add these into findings automatically, instead of explicitly
+specificying them". The chief proposed this design; Daniel: "Yes, file it".
+Measured on the Mac store at 2026-11-20T06:21Z: 0 `finding` entries; the
+pass opened 2 finding candidates on 11-16 and 11-17 and neither was
+approved; the store had held 20 open candidates (the store-wide cap) since
+11-17, so every pass since asked the model for zero candidates.
+
+### Decision
+
+This supersedes the finding part of the pass's candidate route in
+"Findings are scribe entries with no worker", and only that. In a session
+that is on, the session pass writes a finding itself for an assistant turn
+that reports a measured or verified result: one agent-authored entry
+(`{kind: agent, name: assistant}`, `content_from: message`), no proposal,
+no approval; Daniel removes one with `#scribe retire <id>`. The model names
+only the message and the first and last words of the span, and the pass
+copies the span (at most 4,000 characters, tables included, cut at a
+paragraph or table-row boundary) from the original transcript, so a
+re-typed number cannot change. A later turn's correction supersedes an
+earlier agent-authored finding of the same project. Bounds: 5 findings per
+session per pass invocation and no extra model call; they count against
+neither the 20-open-candidate cap nor `MAX_FINDINGS_PER_SESSION`. At the
+start of a pass, an open `finding` candidate is written as a finding and an
+open candidate under a tag the store no longer defines (`task`,
+`decisions`) is closed, both settled by scribe. Preference candidates from
+Daniel's turns keep the proposal-and-approval route. Store format 11 admits
+the new entry shape with no key change, so an older build refuses the store
+rather than report these entries as corrupt. Design §4.7 holds the details.
+
+### Alternative not taken
+
+Keep the approval and raise the caps (more open candidates, more per pass).
+Its cost: every finding still waits on Daniel typing `#scribe approve`,
+which the measured store shows does not happen (2 of 2 finding candidates
+unapproved), and a larger open cap only grows the review queue that
+already sat full for three days, during which no candidate of any kind
+could be opened. A finding is the assistant's claim, labelled as such
+wherever it is read, so it needs no consent of Daniel's to be recorded;
+his words still do.
+
+### Consequences
+
+- `ask` and `record search` find results nobody remembered to record,
+  labelled as the assistant's claim with its evidence and as-of date.
+- Cost: a wrong or trivial finding is recorded until Daniel retires it; the
+  qualification rule, the 5-per-run bound and the duplicate guard limit
+  how many. Sessions that are off are still not read.
+- The `SessionStart` line counts the findings recorded since the project's
+  previous session start, so they are visible without being listed.

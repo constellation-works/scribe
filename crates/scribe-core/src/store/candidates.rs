@@ -63,22 +63,19 @@ impl Store {
             }
             // Whose turn it is decides the tag rule, repeated under the
             // lock: Daniel's words take a plain memory tag; an assistant
-            // turn takes a finding (evidence named, or the cited session
-            // at approval) or a free action tag — never a tag requiring
-            // Daniel's quote, which an assistant turn cannot supply.
-            let tag_refused = config
-                .tags
-                .get(&draft.tag)
-                .is_none_or(|tag| match draft.role {
-                    crate::Speaker::User => {
-                        tag.action.is_some() || tag.require_evidence || draft.evidence.is_some()
-                    }
-                    crate::Speaker::Assistant => {
-                        (!tag.require_evidence && tag.action.is_none())
-                            || tag.action.is_some_and(|a| a.require_quote)
-                            || (!tag.require_evidence && draft.evidence.is_some())
-                    }
-                });
+            // turn takes a free action tag — never a tag requiring Daniel's
+            // quote, which an assistant turn cannot supply, and never a
+            // finding, which the pass writes itself (store/findings.rs).
+            let tag_refused = draft.evidence.is_some()
+                || config
+                    .tags
+                    .get(&draft.tag)
+                    .is_none_or(|tag| match draft.role {
+                        crate::Speaker::User => tag.action.is_some() || tag.require_evidence,
+                        crate::Speaker::Assistant => {
+                            tag.require_evidence || tag.action.is_none_or(|a| a.require_quote)
+                        }
+                    });
             if !draft.has_valid_provenance()
                 || !(8..=400).contains(&draft.quote.chars().count())
                 || draft.cite.session != record.id

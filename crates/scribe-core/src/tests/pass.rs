@@ -120,6 +120,7 @@ fn the_window_starts_after_scribed_through_and_keeps_the_oldest_first() {
 fn answer() -> SessionAnswer {
     SessionAnswer {
         candidates: Vec::new(),
+        findings: Vec::new(),
         title: String::from("Planning the orchestrator"),
         summary: String::from("Daniel planned the resident orchestrator."),
         goals: String::from("Define the orchestrator."),
@@ -516,4 +517,89 @@ fn repair_never_places_a_relocated_segment_after_a_start_the_model_kept() {
     assert_eq!(repaired.new[0].0, 2);
     assert_eq!(repaired.new[0].1.text, "Kept as the model wrote it.");
     assert!(repaired.open.unwrap().text.chars().count() <= pass::SEGMENT_CHARS);
+}
+
+fn finding(message: &str, start: &str, end: &str) -> crate::models::FindingAnswer {
+    crate::models::FindingAnswer {
+        message: message.to_owned(),
+        start: start.to_owned(),
+        end: end.to_owned(),
+        evidence: None,
+        supersedes: None,
+    }
+}
+
+#[test]
+fn findings_keep_assistant_turns_within_bounds_and_the_limit() {
+    let messages = vec![
+        message("u-1", Speaker::User, "Please measure the builds."),
+        message("a-1", Speaker::Assistant, "Builds over 50 runs took 312 s."),
+    ];
+    let conversation = pass::conversation(&messages);
+    let mut request = pass::request(
+        "fake",
+        None,
+        Vec::new(),
+        pass::window(&conversation, None, WINDOW_CHARS),
+        Vec::new(),
+        Vec::new(),
+        false,
+    );
+    let mut a = answer();
+    a.findings = vec![
+        finding("u-1", "Please", "builds."),
+        finding("a-1", &"x".repeat(81), "312 s."),
+        finding("a-9", "Builds", "312 s."),
+        finding("a-1", "Builds", "312 s."),
+        finding("a-1", "Builds", "312 s."),
+    ];
+    assert!(
+        pass::check(a.clone(), &conversation, &request)
+            .unwrap()
+            .findings
+            .is_empty(),
+        "no slots: no findings"
+    );
+    request.finding_limit = 9;
+    let kept = pass::check(a, &conversation, &request).unwrap().findings;
+    assert_eq!(kept, vec![finding("a-1", "Builds", "312 s.")]);
+}
+
+#[test]
+fn a_long_finding_is_cut_after_a_table_row_and_one_without_a_boundary_is_skipped() {
+    let rows: Vec<String> = (0..120)
+        .map(|n| format!("| shard {n:03} | p95 {n:03} ms | 1200 runs |"))
+        .collect();
+    let table = format!("| shard | p95 | runs |\n|---|---|---|\n{}", rows.join("\n"));
+    assert!(table.chars().count() > pass::FINDING_SPAN_CHARS);
+    let record = session("s-1", T0);
+    let messages = vec![
+        message("a-1", Speaker::Assistant, &table),
+        message("a-2", Speaker::Assistant, &"7".repeat(5_000)),
+    ];
+    let drafts = pass::finding_drafts(
+        &[
+            finding(
+                "a-1",
+                "| shard | p95",
+                "| shard 119 | p95 119 ms | 1200 runs |",
+            ),
+            finding("a-2", "777", "777"),
+        ],
+        &messages,
+        &record,
+    );
+    assert_eq!(drafts.len(), 1, "no boundary to cut at: skipped");
+    let draft = &drafts[0];
+    assert!(draft.cut);
+    let kept = draft
+        .content
+        .strip_suffix(&format!("\n\n{}", pass::FINDING_CUT_MARK))
+        .unwrap();
+    assert!(kept.chars().count() <= pass::FINDING_SPAN_CHARS);
+    assert!(table.starts_with(kept), "a prefix of the turn's own text");
+    assert!(kept.ends_with("| 1200 runs |"), "cut after a whole row");
+    assert!(table[kept.len()..].starts_with('\n'));
+    assert_eq!(draft.evidence, "session:s-1");
+    assert_eq!(draft.cite.message.as_deref(), Some("a-1"));
 }
