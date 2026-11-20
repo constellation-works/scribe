@@ -292,8 +292,8 @@ bind-key S display-popup -E -w 90% -h 85% scribe tmux
   fzf still searches them. Rows are built in Rust, from the same list
   commands' records, by a hidden `scribe tmux rows <view>` mode.
 - The preview pane is a hidden `scribe tmux preview <kind> <id>`: for a
-  session its title and summary, then goals and next steps, then the id,
-  host, cwd and other metadata; for an entry its text then its metadata;
+  session its title and summary, then goals, next steps, metadata and log;
+  for an entry its text followed by the same metadata as `entry show`;
   for a proposal what it proposes, its reason, then its fields; a
   candidate is `transcript show --format table`. Enter opens the whole
   record with `--format table` (`--log` for a session), because `show`

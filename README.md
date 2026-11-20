@@ -270,10 +270,10 @@ where the store lives.
 ## The tmux popup
 
 `scribe tmux` browses sessions, entries, proposals and
-backfill candidates in an `fzf` popup for Daniel, previewing each record
-with `scribe … show`, opening it in the pager on Enter and copying its
-id on `ctrl-y`; it only reads. It is part of the binary, so nothing else
-is installed; it needs `fzf` on `PATH`. Bind a key in `~/.tmux.conf`
+backfill candidates in an `fzf` popup. The preview includes the session
+summary and log or the entry text and metadata. Enter opens the record
+in the pager, and `ctrl-y` copies its ID. The popup is read-only and
+requires `fzf` on `PATH`. Bind a key in `~/.tmux.conf`
 (`scribe tmux --help` lists the keys):
 
 ```tmux

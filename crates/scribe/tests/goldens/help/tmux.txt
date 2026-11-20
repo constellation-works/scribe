@@ -27,9 +27,9 @@ Rows read as a start date (MM-DD, or YYYY-MM-DD for another year), then:
   backfill     project, the first prompt
 The id is not shown; it stays attached to the row for the preview, enter and
 ctrl-y, and topics stay searchable. The preview leads with the title and
-summary (or the entry's text), then goals and next steps, then the id, host,
-cwd and other metadata; enter opens the whole record. Color follows NO_COLOR
-and TERM, and inactive sessions are dimmed.
+summary for a session, followed by its goals, next steps, metadata and log.
+Entries show their text and metadata. Enter opens the record in the pager.
+Color follows NO_COLOR and TERM, and inactive sessions are dimmed.
 
 Keys:
   enter       open the record in $PAGER (else less): a session with its log,

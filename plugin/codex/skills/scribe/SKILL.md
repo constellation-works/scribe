@@ -57,9 +57,10 @@ right after.
    `updated`, skipping this session's own record. If nothing matches, say so
    in one line and continue.
 4. Run `scribe session show <id> --json` and read `title`, `updated`,
-   `summary`, `goals`, `outcome` and `next`. In a pipe, `show` without
-   `--json` prints only one line. Read a segment
-   (`--segment <n> --json`) only when an item needs its context.
+   `summary`, `goals`, `outcome` and `next`. In a pipe, the default text
+   output contains a list row and segment rows. Run
+   `scribe session show <id> --segment <n> --json` when an item needs the
+   segment's context.
 5. Run `scribe proposal list --state open --json`.
 
 The brief is a short message of its own:

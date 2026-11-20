@@ -15,6 +15,7 @@ use super::color::{self, Role};
 use super::payload::{
     EntryPayload, PopupRows, ProposalPayload, Record, Records, SessionPayload, TranscriptPayload,
 };
+use super::render::{entry_metadata, session_log};
 use std::io::{self, Write};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
@@ -283,8 +284,7 @@ fn section(out: &mut dyn Write, heading: &str, text: &str) -> io::Result<()> {
     writeln!(out, "\n## {heading}\n{}", text.trim_end())
 }
 
-/// One record's preview: what it says first, then the metadata. The pager
-/// view (`show --log`) keeps the whole record.
+/// One record's preview: what it says first, then the metadata.
 pub(crate) fn preview(out: &mut dyn Write, record: &Record) -> io::Result<()> {
     match record {
         Record::Session(s) => session_preview(out, s),
@@ -333,23 +333,15 @@ fn session_preview(out: &mut dyn Write, s: &SessionPayload) -> io::Result<()> {
     detail(out, "provider", &s.provider)?;
     detail(out, "started", &long_time(s.started))?;
     detail(out, "updated", &long_time(s.updated))?;
-    detail(out, "passes", &s.passes.to_string())
+    detail(out, "passes", &s.passes.to_string())?;
+    session_log(out, s)
 }
 
 fn entry_preview(out: &mut dyn Write, e: &EntryPayload) -> io::Result<()> {
     writeln!(out, "{} · {}", e.tag, e.status)?;
     writeln!(out, "\n{}", e.content.trim_end())?;
     writeln!(out, "\n## Details")?;
-    detail(out, "id", &e.id)?;
-    detail(out, "project", &e.project)?;
-    detail(out, "topics", &e.topics.join(", "))?;
-    detail(out, "related", &e.related.join(", "))?;
-    detail(out, "said", &e.said)?;
-    detail(out, "host", &e.host)?;
-    detail(out, "provider", &e.provider)?;
-    detail(out, "created", &long_time(e.created))?;
-    detail(out, "updated", &long_time(e.updated))?;
-    detail(out, "superseded", e.superseded_by.as_deref().unwrap_or(""))
+    entry_metadata(out, e, false)
 }
 
 fn proposal_preview(out: &mut dyn Write, p: &ProposalPayload) -> io::Result<()> {
