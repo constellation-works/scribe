@@ -1,7 +1,7 @@
 ---
 title: scribe — Overview
 owner: claude
-last_updated: 2026-11-10
+last_updated: 2026-11-20
 last_validated: 2026-11-02
 status: Draft
 stage: building
@@ -13,7 +13,7 @@ summary: A standalone Orbit plugin that keeps Daniel's explicitly marked prefere
 tags: [scribe]
 paths: ["crates/**", "plugin/**"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21744, ORB-21404, ORB-23849, ORB-23892]
+related_artifacts: [ORB-21747, ORB-21744, ORB-21404, ORB-23849, ORB-23892, ORB-25977, ORB-25980, ORB-25983, ORB-25987]
 ---
 
 # scribe — Overview
@@ -29,6 +29,17 @@ Library, to-dos or calendar around it.
 > [4_decisions.md](./4_decisions.md)) describes the plugin. Delivery state
 > lives only in the [slice plan](./2_design.md#10-slice-plan); this overview
 > does not restate it.
+
+**Principle (Daniel, 2026-11-20).** "I think scribe's best value is from
+providing insights implicitly, rather than explicitly - seamlessly
+cataloging things that would've been lost otherwise without any additional
+effort. I just turn on scribe, and scribe extracts insights and turn them
+into value". Turning a session on is the one act scribe asks of him. A step
+that needs him to type, approve or remember has to earn its place. This
+reverses "records only what Daniel explicitly asks it to record" for
+everything except preferences; the paragraph above still describes what is
+built. What changes and which tasks carry it:
+[Directions of 2026-11-20](#directions-of-2026-11-20).
 
 ## 1. Directions (Daniel, 2026-11-02)
 
@@ -88,6 +99,51 @@ Quoted verbatim; these are the requirements this design starts from.
   go all the way back to aug. those will just add noise. the primary goal
   is to understand the context of existing features, to provide continuity
   ... month of oct will be a good starting point."
+
+### Directions of 2026-11-20
+
+Said in the chief's chat of a formation session ([ORB-25797]), except where
+noted. They supersede the 2026-11-02 direction that tags "are only
+explicitly added on the instruction of the user" for every tag but
+`preferences`.
+
+- The principle quoted at the top of this page.
+- To the aide: "we don't really need friction and tasks - they can be
+  created via orbit."
+- "I think decisions are also weak. we log decisions on the orbit task
+  itself mostly, quoting me verbatim."
+- Pasting five analysis results from recent sessions: "below are some of
+  the things that should be automatically logged into \"findings\". we
+  keep forgetting. So I suggest we make these implicit, i.e. have scribes
+  add these into findings automatically, instead of explicitly specificying
+  them".
+- "same for idea - there are probably so many forgotten ideas that never
+  got resurfaced. probably mostly bad ideas to begin with but I think it
+  would be good to keep them captured automatically."
+- On whether preferences should still need his approval: "I agree with the
+  explicit for preference."
+
+What he was looking at, measured on his store that day: 4 entries in all
+(1 `preferences`, 1 `remind`, 2 `standard`) against 31 cataloged sessions;
+none under `task`, `friction`, `decisions`, `finding` or `idea`; and 20 open
+proposals, the store-wide cap, so the session pass had asked for no
+candidates since 2026-11-17.
+
+| Change | Task | State on 2026-11-20 |
+|---|---|---|
+| `task` and `friction` stop shipping; work and friction are filed in Orbit | [ORB-25977] | filed, not landed |
+| `decisions` stops shipping; a decision lives on its Orbit task or in a `4_decisions.md` | [ORB-25980] | filed, not landed |
+| The session pass writes findings itself, verbatim, with no proposal or approval | [ORB-25983] | filed, not landed |
+| The session pass captures his ideas and what became of them, and links near ones | [ORB-25987] | filed, not landed |
+| `preferences` keep his typed approval: agents act on them, so a wrong one costs more | none | unchanged |
+
+Two things the principle asks for that no task covers yet:
+
+- **Approving a preference should cost less** than typing
+  `#scribe approve <id>`. Four candidates had waited since 2026-11-16.
+- **The read side is not measured.** scribe does not record whether an
+  entry was ever cited by `ask` or shown again, so it cannot tell a useful
+  catalog from a pile.
 
 ## 2. Shape
 
@@ -167,5 +223,11 @@ can override.
 - [ORB-23849] — session links between session records.
 - [ORB-23892] — designed S8–S14: session header and log, the `active`
   flag, the CLI agent surface and skill, the tmux popup, backfill by name.
+- [ORB-25797] — the formation session in which Daniel gave the 2026-11-20
+  directions.
+- [ORB-25977] — stop shipping the `task` and `friction` action tags.
+- [ORB-25980] — stop shipping the `decisions` memory tag.
+- [ORB-25983] — the session pass writes findings itself.
+- [ORB-25987] — the session pass captures ideas and their outcome.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
