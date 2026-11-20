@@ -173,13 +173,9 @@ pub(in crate::commands) enum Transcript {
     Missing,
 }
 
-/// Check `path` is this user's Claude Code transcript for `session`, under
-/// `root` (the transcripts directory). The error is why not, for the reply.
-pub(in crate::commands) fn check_transcript(
-    path: &Path,
-    session: &SessionId,
-    root: Option<&Path>,
-) -> Result<Transcript, String> {
+/// The path-shape half of the provenance check: `path` is absolute, free of
+/// `.` and `..`, under `root`, and named for `session`. Reads nothing.
+fn check_shape(path: &Path, session: &SessionId, root: Option<&Path>) -> Result<(), String> {
     let root = root.ok_or("no transcripts directory: HOME is not set")?;
     let inside = path.is_absolute()
         && !path
@@ -206,6 +202,23 @@ pub(in crate::commands) fn check_transcript(
             "the transcript is not named for the payload's session_id",
         ));
     }
+    Ok(())
+}
+
+/// Check `path` is this user's Claude Code transcript for `session`, under
+/// `root` (the transcripts directory). The error is why not, for the reply.
+///
+/// This inspects the path and reads nothing: a caller that goes on to read
+/// the transcript uses [`read_checked`], which checks the file it opened
+/// rather than the name it was told, so a swap in between cannot redirect
+/// the read.
+pub(in crate::commands) fn check_transcript(
+    path: &Path,
+    session: &SessionId,
+    root: Option<&Path>,
+) -> Result<Transcript, String> {
+    check_shape(path, session, root)?;
+    let root = root.ok_or("no transcripts directory: HOME is not set")?;
     let meta = match std::fs::symlink_metadata(path) {
         Ok(meta) => meta,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Transcript::Missing),
@@ -275,41 +288,144 @@ pub(in crate::commands) fn check(
     Ok(found)
 }
 
-/// Read Codex through a root-anchored descriptor walk. Every relative
-/// component is opened without following links; identity and ownership are
-/// validated on the opened file, and those exact bytes supply provenance.
+/// Check `path` is this user's transcript for `session` and read it, through
+/// one handle: the file is opened once, every component below the
+/// transcripts root without following links (and without blocking on a
+/// pipe), and its type, owner and bytes come from that open file. A path
+/// swapped for a link or another file after discovery is refused or read as
+/// what it now is under the root, never followed out of it.
+///
+/// `Ok(None)` is a transcript that does not exist yet, like
+/// [`Transcript::Missing`]; the error is why not, for the reply.
+pub(in crate::commands) fn read_checked(
+    ctx: &crate::app::Context,
+    path: &Path,
+    session: &SessionId,
+) -> Result<Option<Vec<u8>>, Unreadable> {
+    let refused = |why: &str| Unreadable::Refused(String::from(why));
+    let root = ctx
+        .transcript_roots()
+        .into_iter()
+        .find(|root| path.starts_with(root));
+    check_shape(path, session, root).map_err(Unreadable::Refused)?;
+    let codex_name = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .is_some_and(|s| s.starts_with("rollout-"));
+    if codex_name != (ctx.provider() == scribe_core::Provider::Codex) {
+        return Err(refused("transcript provider does not match --provider"));
+    }
+    let file = match open_transcript(ctx, path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) if is_link_refusal(&e) => {
+            return Err(refused("the transcript is not a regular file"));
+        }
+        Err(e) => return Err(Unreadable::Io(e)),
+    };
+    let meta = file.metadata().map_err(Unreadable::Io)?;
+    if !meta.is_file() {
+        return Err(refused("the transcript is not a regular file"));
+    }
+    owned_by_this_user(&meta).map_err(Unreadable::Refused)?;
+    let bytes = read_opened(ctx, path, file).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::InvalidInput {
+            Unreadable::Refused(e.to_string())
+        } else {
+            Unreadable::Io(e)
+        }
+    })?;
+    if ctx.provider() == scribe_core::Provider::Codex {
+        let rollout = scribe_core::codex::parse(&bytes).map_err(Unreadable::Refused)?;
+        if rollout.session != *session {
+            return Err(refused("Codex session_meta does not match session_id"));
+        }
+    }
+    Ok(Some(bytes))
+}
+
+/// Why [`read_checked`] gave no bytes for a transcript that exists.
+#[derive(Debug)]
+pub(in crate::commands) enum Unreadable {
+    /// The provenance check refused it; the text is why, for the reply.
+    Refused(String),
+    /// The file could not be opened or read.
+    Io(std::io::Error),
+}
+
+/// Read a transcript [`check`] passed, through the same handle discipline as
+/// [`read_checked`] (opened without following links, validated on the open
+/// file). Prefer [`read_checked`] when the caller has no other use for the
+/// separate check.
 pub(in crate::commands) fn read_for(
     ctx: &crate::app::Context,
     path: &Path,
 ) -> std::io::Result<Vec<u8>> {
-    if ctx.provider() != scribe_core::Provider::Codex {
-        return std::fs::read(path);
-    }
-    let invalid = |why: String| std::io::Error::new(std::io::ErrorKind::InvalidInput, why);
+    let file = open_transcript(ctx, path)?;
+    read_opened(ctx, path, file)
+}
+
+fn invalid(why: String) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidInput, why)
+}
+
+/// Open `path` beneath the transcripts root it lies in, never following a
+/// link.
+fn open_transcript(ctx: &crate::app::Context, path: &Path) -> std::io::Result<std::fs::File> {
     let root = ctx
         .transcript_roots()
         .into_iter()
         .find(|root| path.starts_with(root))
         .ok_or_else(|| {
             invalid(String::from(
-                "Codex transcript is outside configured active/archive roots",
+                "the transcript is outside the configured transcript roots",
             ))
         })?;
     let relative = path
         .strip_prefix(root)
-        .map_err(|_| invalid(String::from("Codex transcript escapes configured root")))?;
+        .map_err(|_| invalid(String::from("the transcript escapes its configured root")))?;
     let parts: Vec<_> = relative.components().collect();
     if parts.is_empty() || parts.iter().any(|p| !matches!(p, Component::Normal(_))) {
-        return Err(invalid(String::from("invalid Codex transcript path")));
+        return Err(invalid(String::from("invalid transcript path")));
     }
-    let mut file = open_beneath(root, &parts)?;
+    open_beneath(root, &parts)
+}
+
+/// Whether `e` is the refusal to open a link where a file or directory was
+/// expected (`O_NOFOLLOW` on a link, or a directory component that is one).
+fn is_link_refusal(e: &std::io::Error) -> bool {
+    #[cfg(unix)]
+    {
+        use rustix::io::Errno;
+        matches!(Errno::from_io_error(e), Some(Errno::LOOP | Errno::NOTDIR))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = e;
+        false
+    }
+}
+
+/// Validate the open `file` and read its bytes. A Codex rollout is also
+/// bounded, writable by no one else, and must name the session its own
+/// metadata does.
+fn read_opened(
+    ctx: &crate::app::Context,
+    path: &Path,
+    mut file: std::fs::File,
+) -> std::io::Result<Vec<u8>> {
     let meta = file.metadata()?;
     if !meta.is_file() {
         return Err(invalid(String::from(
-            "Codex transcript is not a regular file",
+            "the transcript is not a regular file",
         )));
     }
     owned_by_this_user(&meta).map_err(invalid)?;
+    if ctx.provider() != scribe_core::Provider::Codex {
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
+        return Ok(bytes);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -350,6 +466,10 @@ fn open_beneath(root: &Path, parts: &[Component<'_>]) -> std::io::Result<std::fs
         let mut flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
         if n + 1 != parts.len() {
             flags |= OFlags::DIRECTORY;
+        } else {
+            // A pipe swapped in for the file must not block the open; the
+            // type check on the handle refuses it.
+            flags |= OFlags::NONBLOCK;
         }
         dir = openat(&dir, part.as_os_str(), flags, Mode::empty())?;
     }
@@ -357,11 +477,10 @@ fn open_beneath(root: &Path, parts: &[Component<'_>]) -> std::io::Result<std::fs
 }
 
 #[cfg(not(unix))]
-fn open_beneath(_root: &Path, _parts: &[Component<'_>]) -> std::io::Result<std::fs::File> {
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Unsupported,
-        "Codex transcript descriptor containment requires Unix",
-    ))
+fn open_beneath(root: &Path, parts: &[Component<'_>]) -> std::io::Result<std::fs::File> {
+    let mut path = root.to_path_buf();
+    path.extend(parts.iter().map(|part| part.as_os_str()));
+    std::fs::File::open(path)
 }
 
 /// Discover only the provider's expected layout; never follow directory links.

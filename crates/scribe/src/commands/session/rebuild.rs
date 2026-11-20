@@ -67,6 +67,8 @@ pub(in crate::commands) fn run_with<M: Models>(
         return Err(scribe_core::Error::SessionBusy(id.clone()).into());
     }
     let path = payload::locate(ctx, &id)?.ok_or_else(|| CliError::TranscriptMissing(id.clone()))?;
+    // An early refusal before the lock and the model are set up; it reads
+    // nothing. The loop below checks and reads each pass through one handle.
     match payload::check(ctx, &path, &id) {
         Ok(Transcript::Present) => {}
         Ok(Transcript::Missing) => return Err(CliError::TranscriptMissing(id.clone())),
@@ -119,21 +121,24 @@ pub(in crate::commands) fn run_with<M: Models>(
         .flat_map(|r| r.terms.iter().map(|t| t.term.clone()))
         .collect();
     loop {
-        // Re-check provenance when re-reading a growing transcript.
-        match payload::check(ctx, &path, &id) {
-            Ok(Transcript::Present) => {}
-            Ok(Transcript::Missing) => return Err(CliError::TranscriptMissing(id.clone())),
-            Err(reason) => {
+        // Re-check provenance when re-reading a growing transcript, on the
+        // handle the bytes come from.
+        let bytes = match payload::read_checked(ctx, &path, &id) {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => return Err(CliError::TranscriptMissing(id.clone())),
+            Err(payload::Unreadable::Refused(reason)) => {
                 return Err(CliError::TranscriptRefused {
                     id: id.clone(),
                     reason,
                 });
             }
-        }
-        let bytes = payload::read_for(ctx, &path).map_err(|source| CliError::Read {
-            what: path.display().to_string(),
-            source,
-        })?;
+            Err(payload::Unreadable::Io(source)) => {
+                return Err(CliError::Read {
+                    what: path.display().to_string(),
+                    source,
+                });
+            }
+        };
         let messages = transcript::parse(&bytes);
         let conversation = pass::conversation(&messages);
         if conversation.is_empty() {

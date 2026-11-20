@@ -6,7 +6,7 @@
 //! line, and they work on a read-only root. `list` is how Daniel picks a
 //! past session to catalog; `show` is the preview.
 
-use super::hook::payload::{self, Transcript};
+use super::hook::payload;
 use super::hook::project;
 use super::{DateArgs, ListNotice, day_parser};
 use crate::app::Context;
@@ -172,12 +172,10 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
         {
             continue;
         }
-        if payload::check(ctx, &path, &id).is_err() {
-            continue;
-        }
-        let bytes = match payload::read_for(ctx, &path) {
-            Ok(bytes) => bytes,
-            Err(err) => {
+        let bytes = match payload::read_checked(ctx, &path, &id) {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) | Err(payload::Unreadable::Refused(_)) => continue,
+            Err(payload::Unreadable::Io(err)) => {
                 warnings.push(WarningPayload {
                     path: path.display().to_string(),
                     code: "io_error",
@@ -236,19 +234,19 @@ fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
         id: id.clone(),
         dir: dir.clone(),
     })?;
-    match payload::check(ctx, &path, &id) {
-        Ok(Transcript::Present) => {}
-        Ok(Transcript::Missing) => {
-            return Err(CliError::TranscriptNotFound { id, dir });
-        }
-        Err(reason) => {
+    let bytes = match payload::read_checked(ctx, &path, &id) {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => return Err(CliError::TranscriptNotFound { id, dir }),
+        Err(payload::Unreadable::Refused(reason)) => {
             return Err(CliError::TranscriptRefused { id, reason });
         }
-    }
-    let bytes = payload::read_for(ctx, &path).map_err(|source| CliError::Read {
-        what: path.display().to_string(),
-        source,
-    })?;
+        Err(payload::Unreadable::Io(source)) => {
+            return Err(CliError::Read {
+                what: path.display().to_string(),
+                source,
+            });
+        }
+    };
     let config = ctx.config()?;
     Ok(Output::Show {
         record: Record::Transcript(Box::new(payload_from(&id, &bytes, &config, true))),

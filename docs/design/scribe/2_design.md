@@ -730,7 +730,13 @@ else `$HOME/.claude/projects`. The path must be absolute, without `.` or `..`
 components, inside that directory and named `<session_id>.jsonl`; when the
 file exists it must be a regular file (not a link) owned by this uid. A
 missing file passes, because a session's first prompt can reach the hook
-before Claude Code has written the transcript. A failed check records
+before Claude Code has written the transcript. Where a command goes on to
+read the transcript (`session catalog`, `transcript show` and `list`,
+`session rebuild`), the check and the read share one handle: the file is
+opened once, every component below the transcripts root without following
+links and without blocking on a pipe, and its type, owner and bytes come
+from that open file, so a path swapped for a link after discovery is refused
+rather than read (STD-03, STD-05 R7). A failed check records
 nothing; each `#scribe` line gets a `could not record` reply and an audit
 line with `error_code: provenance_failed`. The `Stop` hook checks the transcript's provenance and scans its user
 messages for entry instructions the prompt hook missed, including when the

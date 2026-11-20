@@ -19,7 +19,7 @@
 
 use super::pass;
 use crate::app::Context;
-use crate::commands::hook::payload::{self, Transcript as Checked};
+use crate::commands::hook::payload;
 use crate::error::CliError;
 use crate::output::{Output, PassReport};
 use clap::Args;
@@ -130,21 +130,29 @@ pub(in crate::commands) fn begin(
         id: id.clone(),
         dir: dir.clone(),
     })?;
-    match payload::check(ctx, &path, &id) {
-        Ok(Checked::Present) => {}
-        Ok(Checked::Missing) => return Err(CliError::TranscriptNotFound { id, dir }),
-        Err(reason) => return Err(CliError::TranscriptRefused { id, reason }),
-    }
-    let bytes = payload::read_for(ctx, &path).map_err(|source| CliError::Read {
-        what: path.display().to_string(),
-        source,
-    })?;
+    // Checked and read through one handle, opened without following links.
+    let bytes = match payload::read_checked(ctx, &path, &id) {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => return Err(CliError::TranscriptNotFound { id, dir }),
+        Err(payload::Unreadable::Refused(reason)) => {
+            return Err(CliError::TranscriptRefused { id, reason });
+        }
+        Err(payload::Unreadable::Io(source)) => {
+            return Err(CliError::Read {
+                what: path.display().to_string(),
+                source,
+            });
+        }
+    };
     let store = ctx.store();
     // Refuse a missing redaction value before the switch is written.
     let config = ctx.config()?;
     let _redactor = ctx.redactor(&config)?;
-    let has_record = recorded(ctx, &id)?;
+    // The gate, including the record lookup, runs inside the store lock, so
+    // a `/scribe on` or a second catalog that lands first is seen and
+    // refused, never overwritten.
     let (switch, wrote_switch) = store.update_control(|state| -> Result<_, CliError> {
+        let has_record = recorded(ctx, &id)?;
         match control::catalog_gate(state, &id, has_record) {
             CatalogGate::Refused => Err(CliError::SessionCataloged(id.clone())),
             CatalogGate::Resume(switch) => {
