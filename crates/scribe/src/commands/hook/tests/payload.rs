@@ -115,14 +115,13 @@ fn a_linked_directory_above_the_transcript_is_not_followed() {
 #[test]
 fn a_pipe_in_place_of_the_transcript_is_refused_without_blocking() {
     let setup = Setup::new();
-    rustix::fs::mknodat(
-        rustix::fs::CWD,
-        setup.transcript(),
-        rustix::fs::FileType::Fifo,
-        rustix::fs::Mode::from_raw_mode(0o600),
-        0,
-    )
-    .unwrap();
+    let made = std::process::Command::new("mkfifo")
+        .arg("-m")
+        .arg("600")
+        .arg(setup.transcript())
+        .status()
+        .unwrap();
+    assert!(made.success());
     assert!(matches!(
         payload::read_checked(&setup.ctx, &setup.transcript(), &setup.id()),
         Err(Unreadable::Refused(_))
