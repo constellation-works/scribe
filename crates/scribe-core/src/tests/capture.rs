@@ -167,12 +167,10 @@ fn an_unknown_tag_is_refused_with_every_configured_tag() {
             tags: [
                 "decisions",
                 "finding",
-                "friction",
                 "idea",
                 "preferences",
                 "remind",
-                "standard",
-                "task"
+                "standard"
             ]
             .map(|t| TagName::try_from(String::from(t)).unwrap())
             .to_vec(),
@@ -180,7 +178,7 @@ fn an_unknown_tag_is_refused_with_every_configured_tag() {
     );
     assert_eq!(
         refused.reason.to_string(),
-        "no tag \"rituals\"; tags: decisions, finding, friction, idea, preferences, remind, standard, task"
+        "no tag \"rituals\"; tags: decisions, finding, idea, preferences, remind, standard"
     );
     assert_eq!(
         parse("#scribe rituals: stand-up at nine"),
@@ -828,7 +826,7 @@ fn an_action_window_holds_the_turns_since_the_last_scribe_line_then_the_prompt()
 
 #[test]
 fn an_action_window_over_the_cap_drops_its_oldest_turns_and_says_so() {
-    let prompt = "#scribe task: tidy the sizes";
+    let prompt = "#scribe remind: tidy the sizes";
     let messages: Vec<Message> = (0..60)
         .map(|n| {
             turn_message(

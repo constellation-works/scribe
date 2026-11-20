@@ -17,18 +17,18 @@ fn the_defaults_are_decisions_and_preferences() {
         [
             "decisions",
             "finding",
-            "friction",
             "idea",
             "preferences",
             "remind",
-            "standard",
-            "task"
+            "standard"
         ]
     );
     assert!(table.action(&name("decisions")).is_none());
     let standard = table.action(&name("standard")).unwrap();
     assert!(standard.require_quote && !standard.ask_first);
-    assert!(!table.action(&name("task")).unwrap().require_quote);
+    assert!(!table.action(&name("remind")).unwrap().require_quote);
+    assert!(table.action(&name("task")).is_none());
+    assert!(table.action(&name("friction")).is_none());
     assert_eq!(
         table.resolve("Decision").unwrap().name.as_str(),
         "decisions"
@@ -102,13 +102,11 @@ fn a_summary_counts_entries_per_tag_and_keeps_unconfigured_ones() {
         [
             ("decisions", 2, true),
             ("finding", 0, true),
-            ("friction", 0, true),
             ("idea", 0, true),
             ("preferences", 0, true),
             ("remind", 0, true),
             ("rituals", 1, false),
-            ("standard", 0, true),
-            ("task", 0, true)
+            ("standard", 0, true)
         ]
     );
 }

@@ -71,7 +71,7 @@ fn a_missing_root_reads_as_an_empty_store() {
     let tags = store.list_tags().unwrap();
     assert_eq!(
         tags.tags.len(),
-        8,
+        6,
         "the default tags, the shipped action tags and finding, with no entries"
     );
     let err = store.entry(&"decisions-1".parse().unwrap()).unwrap_err();

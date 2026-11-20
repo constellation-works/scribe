@@ -20,7 +20,7 @@
 //! action = true
 //! require_quote = true
 //!
-//! [tags.task]
+//! [tags.remind]
 //! ask_first = true
 //!
 //! [models]
@@ -346,7 +346,7 @@ impl RawTag {
         };
         let key = format!("tags.{name}");
         // A config tag named like a shipped action tag starts from the
-        // shipped settings, so `[tags.task] ask_first = true` keeps it an
+        // shipped settings, so `[tags.standard] ask_first = true` keeps it an
         // action tag; `action = false` makes it a memory tag.
         let shipped = TagTable::shipped_action(&name);
         let shipped_action = shipped.as_ref().and_then(|def| def.action);

@@ -1,5 +1,5 @@
 //! End-to-end tests of action tags (docs/design/scribe/2_design.md §4.6):
-//! `#scribe standard|task|friction:` capture with its transcript window, a
+//! `#scribe standard|remind:` capture with its transcript window, a
 //! config-marked action tag, agent entries with their cancel window and
 //! quote check, `#scribe retire` on an agent's entry, pickups, the
 //! intake's read surface (`entry list --tag --after --window`), `tag list`'s
@@ -232,25 +232,25 @@ fn a_window_over_the_cap_is_cut_from_the_oldest_turn_and_says_so() {
         .map(|(u, t)| (u.as_str(), "assistant", t.as_str()))
         .collect();
     claude.write(&turns);
-    claude.prompt(&fx, "#scribe task: tidy the sizes");
-    let window = &entry(&fx, "task-1", &["--window"])["window"];
+    claude.prompt(&fx, "#scribe remind: tidy the sizes");
+    let window = &entry(&fx, "remind-1", &["--window"])["window"];
     let kept = window["turns"].as_array().unwrap();
     assert_eq!(kept.len(), 40);
     assert_eq!(window["truncated"], true);
     assert_eq!(window["omitted"], 11);
     assert_eq!(kept[0]["message"], "a-11", "the oldest turns went first");
-    assert_eq!(kept[39]["text"], "#scribe task: tidy the sizes");
+    assert_eq!(kept[39]["text"], "#scribe remind: tidy the sizes");
 }
 
 #[test]
-fn task_friction_and_a_config_marked_tag_are_action_tags_left_out_of_nothing_but_ask() {
+fn a_config_marked_action_tag_captures_with_a_window_and_is_read_and_picked_up() {
     let fx = Fixture::new();
     std::fs::create_dir(fx.root()).unwrap();
     make_private(&fx.root());
     let config = fx.root().join("config.toml");
     std::fs::write(
         &config,
-        "[tags.decisions]\n[tags.idea]\ndescription = \"ideas to try\"\naction = true\nask_first = true\n",
+        "[tags.decisions]\n[tags.task]\naction = true\n[tags.idea]\ndescription = \"ideas to try\"\naction = true\nask_first = true\n",
     )
     .unwrap();
     make_private(&config);
@@ -260,8 +260,13 @@ fn task_friction_and_a_config_marked_tag_are_action_tags_left_out_of_nothing_but
         &fx,
         "#scribe task: profile the sync\n#scribe friction: the sync has no progress bar\n#scribe idea: cache the manifest",
     );
-    for id in ["task-1", "friction-1", "idea-1"] {
-        assert!(echo.contains(&format!("added {id}")), "{echo}");
+    assert!(echo.contains("added task-1 to task"), "{echo}");
+    assert!(echo.contains("added idea-1 to idea"), "{echo}");
+    assert!(
+        echo.contains("no tag \"friction\""),
+        "friction is not declared, so it is unknown: {echo}"
+    );
+    for id in ["task-1", "idea-1"] {
         let e = entry(&fx, id, &[]);
         assert_eq!(
             e["window_turns"], 2,
@@ -270,6 +275,11 @@ fn task_friction_and_a_config_marked_tag_are_action_tags_left_out_of_nothing_but
         assert!(e["action"].is_object(), "{id}");
     }
 
+    let task = tag_row(&fx, "task");
+    assert_eq!(
+        task["action"],
+        json!({"mode": "free", "require_quote": false, "retired": 0, "rejected": 0})
+    );
     let idea = tag_row(&fx, "idea");
     assert_eq!(
         idea["action"],
@@ -297,6 +307,81 @@ fn task_friction_and_a_config_marked_tag_are_action_tags_left_out_of_nothing_but
         Value::Null,
         "an agent entry keeps no window"
     );
+
+    let listed = json_of(&fx.ok(&[
+        "entry",
+        "list",
+        "--tag",
+        "task",
+        "--after",
+        "2026-01-01T00:00:00Z",
+        "--window",
+        "--json",
+    ]));
+    assert_eq!(listed["total"], 2);
+    let first = listed["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"] == "task-1")
+        .unwrap();
+    assert_eq!(first["window"]["turns"][0]["text"], "the sync is slow");
+
+    backdate(&fx, "task", "task-1");
+    fx.ok(&[
+        "entry", "pickup", "task-1", "--author", "intake", "--result", "task:T-9",
+    ]);
+    assert_eq!(entry(&fx, "task-1", &[])["action"]["picked_up"], true);
+}
+
+#[test]
+fn task_and_friction_are_unknown_tags_without_config_and_not_in_the_tag_list() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    claude.write(&[("u-1", "user", "the sync is slow")]);
+    for tag in ["task", "friction"] {
+        let echo = claude.prompt(&fx, &format!("#scribe {tag}: profile the sync"));
+        assert!(
+            echo.contains(&format!("refused \"#scribe {tag}: profile the sync\" — no tag \"{tag}\"; tags: decisions, finding, idea, preferences, remind, standard")),
+            "{echo}"
+        );
+        assert!(!fx.root().join("entries").join(tag).exists());
+    }
+    let tags = json_of(&fx.ok(&["tag", "list", "--json"]));
+    let action: Vec<&str> = tags["tags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|t| t["action"].is_object())
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(action, ["idea", "remind", "standard"]);
+}
+
+#[test]
+fn entries_under_a_tag_config_no_longer_defines_are_still_listed_shown_and_retired() {
+    let fx = Fixture::new();
+    std::fs::create_dir(fx.root()).unwrap();
+    make_private(&fx.root());
+    let config = fx.root().join("config.toml");
+    std::fs::write(&config, "[tags.task]\naction = true\n").unwrap();
+    make_private(&config);
+    let claude = Claude::new(&fx);
+    claude.write(&[("u-1", "user", "the sync is slow")]);
+    claude.prompt(&fx, "#scribe task: profile the sync");
+    // The config that declared `task` goes away; the entry stays.
+    std::fs::remove_file(&config).unwrap();
+
+    let list = json_of(&fx.ok(&["entry", "list", "--tag", "task", "--json"]));
+    assert_eq!(list["total"], 1, "{list}");
+    assert_eq!(list["entries"][0]["id"], "task-1");
+    let shown = entry(&fx, "task-1", &[]);
+    assert_eq!(shown["content"], "profile the sync");
+    assert_eq!(shown["status"], "active");
+
+    let echo = claude.prompt(&fx, "#scribe retire task-1");
+    assert!(echo.contains("retired task-1"), "{echo}");
+    assert_eq!(entry(&fx, "task-1", &[])["status"], "retired");
 }
 
 #[test]
@@ -308,32 +393,32 @@ fn an_agent_entry_waits_out_its_cancel_window_and_retiring_it_cancels_it() {
         "entry",
         "add",
         "--tag",
-        "task",
+        "remind",
         "--author",
         "opus",
         "profile the sync",
     ]);
-    let fresh = entry(&fx, "task-1", &[]);
+    let fresh = entry(&fx, "remind-1", &[]);
     assert_eq!(fresh["action"]["past_cancel_window"], false);
     assert!(fresh["action"]["cancel_window_ends"].is_string());
     assert_eq!(
-        refused(&fx, &["entry", "pickup", "task-1", "--author", "intake"]),
+        refused(&fx, &["entry", "pickup", "remind-1", "--author", "intake"]),
         "cancel_window"
     );
 
-    let echo = claude.prompt(&fx, "#scribe retire task-1");
-    assert!(echo.contains("retired task-1"), "{echo}");
-    let retired = json_of(&fx.ok(&["entry", "list", "--tag", "task", "--json"]));
+    let echo = claude.prompt(&fx, "#scribe retire remind-1");
+    assert!(echo.contains("retired remind-1"), "{echo}");
+    let retired = json_of(&fx.ok(&["entry", "list", "--tag", "remind", "--json"]));
     assert_eq!(retired["entries"][0]["status"], "retired");
-    assert_eq!(tag_row(&fx, "task")["action"]["retired"], 1);
+    assert_eq!(tag_row(&fx, "remind")["action"]["retired"], 1);
 
-    backdate(&fx, "task", "task-1");
+    backdate(&fx, "remind", "remind-1");
     assert_eq!(
-        entry(&fx, "task-1", &[])["action"]["past_cancel_window"],
+        entry(&fx, "remind-1", &[])["action"]["past_cancel_window"],
         true
     );
     assert_eq!(
-        refused(&fx, &["entry", "pickup", "task-1", "--author", "intake"]),
+        refused(&fx, &["entry", "pickup", "remind-1", "--author", "intake"]),
         "entry_not_active",
         "a cancelled entry is not picked up"
     );
@@ -349,12 +434,12 @@ fn pickups_are_recorded_once_refused_off_action_tags_and_count_rejections() {
         "entry",
         "add",
         "--tag",
-        "task",
+        "remind",
         "--author",
         "opus",
         "profile the sync",
     ]);
-    backdate(&fx, "task", "task-1");
+    backdate(&fx, "remind", "remind-1");
     assert_eq!(
         refused(
             &fx,
@@ -366,7 +451,7 @@ fn pickups_are_recorded_once_refused_off_action_tags_and_count_rejections() {
     let args = [
         "entry",
         "pickup",
-        "task-1",
+        "remind-1",
         "--author",
         "intake",
         "--result",
@@ -393,11 +478,11 @@ fn pickups_are_recorded_once_refused_off_action_tags_and_count_rejections() {
         pickups,
         [
             json!(["failure", "decisions-1", "not_action_tag", "intake"]),
-            json!(["success", "task-1", null, "intake"]),
+            json!(["success", "remind-1", null, "intake"]),
         ],
         "the refusal and the write are audited; the no-op writes no line"
     );
-    let state = &entry(&fx, "task-1", &[])["action"];
+    let state = &entry(&fx, "remind-1", &[])["action"];
     assert_eq!(state["picked_up"], true);
     assert_eq!(state["pickups"][0]["author"]["name"], "intake");
     assert_eq!(state["pickups"][0]["result"], "task:T-9");
@@ -405,13 +490,13 @@ fn pickups_are_recorded_once_refused_off_action_tags_and_count_rejections() {
     fx.ok(&[
         "entry",
         "pickup",
-        "task-1",
+        "remind-1",
         "--author",
         "intake",
         "--rejected",
     ]);
-    assert_eq!(entry(&fx, "task-1", &[])["action"]["rejected"], true);
-    assert_eq!(tag_row(&fx, "task")["action"]["rejected"], 1);
+    assert_eq!(entry(&fx, "remind-1", &[])["action"]["rejected"], true);
+    assert_eq!(tag_row(&fx, "remind")["action"]["rejected"], 1);
 }
 
 #[test]
@@ -542,11 +627,11 @@ fn session_start_counts_action_entries_waiting_with_no_pickup() {
     );
     claude.prompt(
         &fx,
-        "#scribe task: profile the sync\n#scribe standard: units\n#scribe decisions: fridays",
+        "#scribe remind: profile the sync\n#scribe standard: units\n#scribe decisions: fridays",
     );
     assert_eq!(claude.session_start(&fx), "", "nothing older than an hour");
     for (tag, id) in [
-        ("task", "task-1"),
+        ("remind", "remind-1"),
         ("standard", "standard-1"),
         ("decisions", "decisions-1"),
     ] {
@@ -555,9 +640,9 @@ fn session_start_counts_action_entries_waiting_with_no_pickup() {
     let reply: Value = serde_json::from_str(&claude.session_start(&fx)).unwrap();
     assert_eq!(
         reply["systemMessage"],
-        "scribe: 2 action entries not picked up after 1 hour (standard 1, task 1) — scribe entry list --tag <tag> --status active"
+        "scribe: 2 action entries not picked up after 1 hour (remind 1, standard 1) — scribe entry list --tag <tag> --status active"
     );
-    fx.ok(&["entry", "pickup", "task-1", "--author", "intake"]);
+    fx.ok(&["entry", "pickup", "remind-1", "--author", "intake"]);
     fx.ok(&["entry", "pickup", "standard-1", "--author", "intake"]);
     assert_eq!(claude.session_start(&fx), "");
 }

@@ -11,7 +11,7 @@ summary: Why superseded entries are hidden not removed, why one JSON file per ta
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977]
 ---
 
 # scribe — Decisions
@@ -2408,6 +2408,13 @@ is settled. The refusal's forms text includes `#scribe/global`.
 **Recorded:** 2026-11-15 · [ORB-25112] · **Overridable by Daniel**
 **Code anchors:** `crates/scribe-core/src/tag.rs` (`SHIPPED_ACTION_TAGS`, `ActionTag`), `crates/scribe-core/src/config.rs` (`RawTag`)
 
+> **Superseded in part, 2026-11-20 ([ORB-25977]):** the shipped set. `task`
+> and `friction` no longer ship; `standard`, `remind` and `idea` do
+> ([see below](#task-and-friction-no-longer-ship-as-action-tags)). The
+> mechanism (config marks `action = true`, the switches, the window, the
+> consequences for entries) stands as written; the sentences below that name
+> `task` and `friction` as shipped describe the original choice.
+
 ### Context
 
 Daniel wants `#scribe standard:`, `#scribe task:` and `#scribe friction:`
@@ -2624,3 +2631,50 @@ never one attributed to him — and `#scribe reject` closes it for good.
 The added output per window stays bounded (design §5.3: at most 3,216
 value characters including an optional 512-character evidence pointer,
 STD-08 §R1, §R3), and no candidate is ever opened from a tool payload.
+
+## `task` and `friction` no longer ship as action tags
+
+**Recorded:** 2026-11-20 · [ORB-25977] · **Overridable by Daniel**
+**Code anchors:** `crates/scribe-core/src/tag.rs` (`SHIPPED_ACTION_TAGS`), `crates/scribe-core/src/models.rs` (session-pass candidate prompt)
+
+### Context
+
+The decision "Action tags are marked in config, and three ship"
+([ORB-25112]) shipped five action tags, among them `task` and `friction`,
+so that an intake outside scribe could turn an entry into an Orbit task or
+friction record. Daniel (to 0-aide, 2026-11-20T06:12Z): "we don't really
+need friction and tasks - they can be created via orbit. what do you
+think". The chief agreed and proposed this change; Daniel (chief's chat,
+2026-11-20): "Yes, file it". Measured on the Mac store at 2026-11-20T06:13Z:
+no `task` entry and no `friction` entry since they shipped; `standard` 2,
+`remind` 1. Every session that can write a scribe entry can call Orbit
+directly, and a direct filing carries complexity, context files and
+acceptance criteria that a relayed entry cannot.
+
+### Decision
+
+This supersedes the shipped set of [ORB-25112], and only that. `standard`,
+`remind` and `idea` ship; `task` and `friction` do not. Everything else of
+the older decision stands: a config that marks `[tags.task] action = true`
+(or `friction`) still makes it an action tag with the window, cancel window,
+pickups and stuck line, and starts from no shipped settings, because none
+exist for the name. The session pass no longer proposes open work under
+`task`: work that is not done is filed in Orbit by the agent
+(`orbit.task.add`, `orbit.friction`, in every session), and a check-back
+stays `remind`. No store-format change: an entry already stored under `task`
+or `friction` is an entry under a tag the config no longer defines, so it
+is still listed, shown and settled by id.
+
+### Consequences
+
+- `tag list` and the unknown-tag refusal on a store with no `[tags]` config
+  name `decisions`, `finding`, `idea`, `preferences`, `remind` and
+  `standard`; `#scribe task:` and `#scribe friction:` are refused as unknown
+  tags unless config declares them.
+- The consumers in the constellation repository (the scribe relay's tag
+  list, the standards plugin's work-intake) change separately; either order
+  works, since `scribe entry list --tag <unknown> --json` answers an empty
+  list with exit 0.
+- Cost: a store that holds `task` or `friction` entries keeps them readable
+  and settleable, but they no longer show in `tag list` or count in the
+  session-start stuck line unless config declares the tag again.

@@ -94,13 +94,11 @@ fn the_fixture_reads_whole_and_reading_writes_nothing() {
         [
             (String::from("decisions"), 2, true),
             (String::from("finding"), 0, true),
-            (String::from("friction"), 0, true),
             (String::from("idea"), 0, true),
             (String::from("preferences"), 1, true),
             (String::from("remind"), 0, true),
             (String::from("rituals"), 1, false),
             (String::from("standard"), 0, true),
-            (String::from("task"), 0, true),
         ]
     );
     store.entry(&"decisions-2".parse().unwrap()).unwrap();

@@ -28,22 +28,6 @@
     {
       "author": null,
       "source": "config",
-      "name": "friction",
-      "aliases": [],
-      "description": "a problem worth an Orbit friction record",
-      "stale_after_days": null,
-      "configured": true,
-      "entries": 0,
-      "action": {
-        "mode": "free",
-        "require_quote": false,
-        "retired": 0,
-        "rejected": 0
-      }
-    },
-    {
-      "author": null,
-      "source": "config",
       "name": "idea",
       "aliases": [],
       "description": "a future consideration worth revisiting",
@@ -113,25 +97,9 @@
         "retired": 0,
         "rejected": 0
       }
-    },
-    {
-      "author": null,
-      "source": "config",
-      "name": "task",
-      "aliases": [],
-      "description": "work worth an Orbit task",
-      "stale_after_days": null,
-      "configured": true,
-      "entries": 0,
-      "action": {
-        "mode": "free",
-        "require_quote": false,
-        "retired": 0,
-        "rejected": 0
-      }
     }
   ],
-  "total": 9,
+  "total": 7,
   "truncated": false,
   "warnings": []
 }

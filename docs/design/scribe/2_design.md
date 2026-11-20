@@ -927,15 +927,16 @@ The echo names the file path, the points added and any dropped quotes.
 
 [ORB-25112]. Most tags hold the human's memory: decisions and preferences
 `ask` answers from. An **action tag** holds work items instead, entries a
-consumer outside scribe picks up: an intake that turns a `task` entry into
-an Orbit task, a `friction` entry into a friction record, a `standard`
-entry into a change to the constellation standards. scribe never calls
-Orbit or any consumer; it keeps the entries and exposes them to read.
+consumer outside scribe picks up: an intake that turns a `standard` entry
+into a change to the constellation standards. Work and friction are not
+action tags: agents file them in Orbit (`orbit.task.add`, `orbit.friction`)
+([4_decisions.md](./4_decisions.md#task-and-friction-no-longer-ship-as-action-tags)).
+scribe never calls Orbit or any consumer; it keeps the entries and exposes them to read.
 
 **Which tags.** Config marks a tag `action = true` (`[tags.<name>]`), with
 two optional switches: `require_quote` (an agent's entry must quote the
 human) and `ask_first` (agents ask before writing). `standard`
-(`require_quote`), `task`, `friction`, `remind` and `idea` ship, with no
+(`require_quote`), `remind` and `idea` ship, with no
 aliases; a config
 with its own `[tags]` keeps them unless it claims their names, and a config
 tag of the same name starts from the shipped settings
@@ -1009,14 +1010,14 @@ recorded once so a later session finds it through `ask` or `record search`
 instead of re-deriving it: "In exp-5342a4d6, after the 11-14 memory
 rewrite, the reviewer mix alone predicts a first-pass gap of about 7
 points (51% against 58%); observed 44% against 67% on 32 and 27 tasks."
-Pending work is a `task` entry, a check-back a `remind` entry and a future
-consideration an `idea` entry — all action tags with consumers. A finding
+Pending work is filed in Orbit, a check-back is a `remind` entry and a future
+consideration an `idea` entry — action tags with consumers. A finding
 has no worker
 ([4_decisions.md](./4_decisions.md#findings-are-scribe-entries-with-no-worker)).
 
 **Which tag.** `finding` ships as a memory tag, kept by a config with its
 own `[tags]` unless it claims the name, like the shipped action tags
-(`remind` and `idea` ship beside `standard`, `task` and `friction`). It is
+(`remind` and `idea` ship beside `standard`). It is
 marked `require_evidence` (config `require_evidence = true` on a memory
 tag; an action tag refuses the flag). No consumer, no transcript window,
 nothing for an intake to read: `entry pickup` refuses it
@@ -1066,8 +1067,9 @@ to re-derive — and to search findings before re-measuring something.
 **The pass as safety net.** What agents did not record, the session pass
 catches: beside Daniel's unmarked statements (§5.3) it may propose an
 assistant turn's own recap — a measured result under `finding`, or
-something the assistant says is not done or not verified under the
-fitting free action tag (`task`, `remind`, `idea`). Approval writes one
+something the assistant says needs a check-back or is a future
+consideration under the fitting free action tag (`remind`, `idea`); open
+work is filed in Orbit by the agent, never proposed. Approval writes one
 agent-authored entry (`{kind: agent, name: assistant}`) quoting that
 turn and citing it, never an entry attributed to Daniel; a finding so
 kept carries the candidate's evidence pointer, or `session:<id>` when
@@ -1264,8 +1266,8 @@ a pass; an explicit catalog is still required for past sessions.
   decisions only, with a canonical configured memory tag (never an action
   tag or `finding`). From an assistant turn — read its own recap first —
   it suggests a measured or verified result under `finding`, or something
-  it says is not done or not verified under a free action tag such as
-  `task`, `remind` or `idea`, with an evidence pointer when the turn names
+  it says needs a check-back or is a future consideration under a free
+  action tag such as `remind` or `idea`, with an evidence pointer when the turn names
   one ([§4.7](#47-findings)). Each candidate must name a message in the
   current window and quote its own text exactly. The pass checks again
   against the original transcript and derives the cite, timestamp, prompt

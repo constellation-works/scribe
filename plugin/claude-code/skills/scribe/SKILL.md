@@ -87,7 +87,7 @@ and grouped, never as a gate on the work:
   proposes unmarked statements from the human's own turns, with the exact
   quote, source turn and suggested memory tag. It also reads your own
   recaps: a measured result it proposes as a `finding`, something you said
-  is not done or not verified under `task`, `remind` or `idea`. It offers
+  is not verified or needs a check-back under `remind` or `idea`. It offers
   at most three per session pass, with at most twenty open candidates in
   the store. Mention open candidates in the brief; the human keeps one
   with `#scribe approve <proposal-id>` or drops it for good with
@@ -121,17 +121,17 @@ and grouped, never as a gate on the work:
 ## Action tags: work items you write yourself
 
 An action tag's entries are work for a consumer outside scribe (an intake
-that turns a `task` entry into an Orbit task, a `friction` entry into a
-friction record, a `standard` entry into a standards change). `scribe tag
+that turns a `standard` entry into a standards change, or a check-back
+under `remind`). `scribe tag
 list` shows them in its ACTION column: `free` or `ask-first`, plus `quote`
-when an entry needs the human's own words. `standard`, `task` and `friction`
+when an entry needs the human's own words. `standard`, `remind` and `idea`
 ship; config can mark any other tag. Leave action entries out of the
 session brief and of preference reads, and out of answers unless asked
 about them; `question ask` skips them unless its scope names their tag.
 
 - **Only in an interactive session the human is in.** There, when the work
-  surfaces a task, a friction or a correction to a standard, write the entry
-  yourself, unasked, under a `free` tag:
+  surfaces a check-back, an idea or a correction to a standard, write the
+  entry yourself, unasked, under a `free` tag:
   `scribe entry add --tag <tag> --author <name> --related session:<id> '<words>'`.
   Then tell the human in one visible line, for example
   `scribe: wrote <id> (cancel: #scribe retire <id>)`, naming the entry id
@@ -141,13 +141,17 @@ about them; `question ask` skips them unless its scope names their tag.
   `scribe entry retire <id> --author <name> --reason '<their words>'`.
 - **Every other session writes none**: routines, scheduled or background
   jobs, Orbit task runs, subagents and any session the human is not typing
-  in. Use `orbit.friction` and the Orbit task tools there, as before.
+  in.
+- **Work and friction go to Orbit, in every session**, typed by the human
+  or not: file work that is not done with `orbit.task.add` and a problem
+  worth recording with `orbit.friction`. scribe has no `task` or `friction`
+  entry for them.
 - **A tag that needs a quote** (`quote` in the ACTION column, such as
   `standard`): pass the human's correction word for word from one of their
   typed turns of this session, `--quote '<their words>'` with
   `--related session:<id>`. scribe refuses the entry when the quote is
-  missing or not in their typed turns. Without their words, write a `friction`
-  entry instead.
+  missing or not in their typed turns. Without their words, do not write
+  the entry; file the problem in Orbit with `orbit.friction`.
 - **An `ask-first` tag**: ask the human before writing, and write only on
   their yes.
 - **Their preferences and decisions stay theirs.** In an on session, let
@@ -170,8 +174,8 @@ where it reads as your claim as of its date, with its evidence pointer.
 - **What qualifies.** All three: a number or a verified fact, a pointer
   to its evidence (a path, task, run, experiment or commit), and costly
   to re-derive. An opinion, a plan or an intermediate step is not a
-  finding (pending work is a `task`, a check-back a `remind`, a future
-  consideration an `idea`).
+  finding (pending work is filed in Orbit with `orbit.task.add`, a check-back is
+  a `remind`, a future consideration an `idea`).
 - **Write it at the time**, only in an interactive session the human is
   in, unasked, like a free action entry:
   `scribe entry add --tag finding --author <name> --related session:<id> --evidence '<pointer>' '<result>'`

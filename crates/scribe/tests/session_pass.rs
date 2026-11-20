@@ -128,7 +128,7 @@ fn pass_proposes_an_assistant_finding_and_approval_writes_one_agent_entry() {
 }
 
 #[test]
-fn pass_proposes_open_work_from_an_assistant_recap_and_reject_closes_it() {
+fn pass_proposes_a_check_back_from_an_assistant_recap_and_reject_closes_it() {
     let s = Setup::new();
     let quote = "The flaky cache test is not verified yet on this host.";
     s.write(
@@ -139,13 +139,13 @@ fn pass_proposes_open_work_from_an_assistant_recap_and_reject_closes_it() {
         ],
     );
     let mut body = answer();
-    body["candidates"] = json!([{"quote": quote, "message": "a-open", "tag": "task"}]);
+    body["candidates"] = json!([{"quote": quote, "message": "a-open", "tag": "remind"}]);
     s.answer(&body);
     s.scribe("/scribe on");
     s.run(&["session", "pass", "--session", ON, "--json"], b"");
     let ps = proposals(&s);
     assert_eq!(ps["total"], 1, "{ps}");
-    assert_eq!(ps["proposals"][0]["candidate"]["tag"], "task");
+    assert_eq!(ps["proposals"][0]["candidate"]["tag"], "remind");
     assert_eq!(ps["proposals"][0]["candidate"]["role"], "assistant");
 
     type_settlement(&s, "#scribe reject p-1");
@@ -156,10 +156,29 @@ fn pass_proposes_open_work_from_an_assistant_recap_and_reject_closes_it() {
     // The same statement in a later turn is not proposed again.
     s.append(ON, &[line("assistant", "a-open-2", quote)]);
     let mut again = answer();
-    again["candidates"] = json!([{"quote": quote, "message": "a-open-2", "tag": "task"}]);
+    again["candidates"] = json!([{"quote": quote, "message": "a-open-2", "tag": "remind"}]);
     s.answer(&again);
     s.run(&["session", "pass", "--session", ON, "--json"], b"");
     assert_eq!(proposals(&s)["total"], 1);
+}
+
+#[test]
+fn pass_proposes_no_candidate_under_task_without_a_config_declaring_it() {
+    let s = Setup::new();
+    let quote = "The migration still has to be filed as work.";
+    s.write(
+        ON,
+        &[
+            line("user", "u-1", "Please plan the migration."),
+            line("assistant", "a-work", quote),
+        ],
+    );
+    let mut body = answer();
+    body["candidates"] = json!([{"quote": quote, "message": "a-work", "tag": "task"}]);
+    s.answer(&body);
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    assert_eq!(proposals(&s)["total"], 0, "task is not a shipped tag");
 }
 
 #[test]
