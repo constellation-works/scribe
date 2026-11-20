@@ -1597,7 +1597,11 @@ kept, final and off when the transcript has ended), or `session catalog
   left on and due, and the hooks carry on as for `/scribe on`.
 - A failure keeps the checkpoint and the switch due, as a pass failure
   does, and running `catalog` again resumes it.
-- Audited like a pass, plus one line for the switch.
+- Audited like a pass, plus one line for the switch when the catalog
+  wrote it and no window failed. A failed catalog is one failure line
+  (`target` `session:<id>`, `error_code` such as `model_failed`), not a
+  success line for the switch and then a failure: the switch it left due
+  is that session's, named by the failure line.
 
 The result is a model-written session record, labelled as a summary
 wherever it is evidence. Cataloging creates no entries. A session only

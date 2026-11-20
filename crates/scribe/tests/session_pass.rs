@@ -1293,6 +1293,40 @@ fn scribe_on_off_and_status_switch_the_session_and_block_the_prompt() {
     assert!(setup.prompts().is_empty());
 }
 
+/// The audit log's lines, oldest first.
+fn audit_log(setup: &Setup) -> Vec<Value> {
+    std::fs::read_to_string(setup.fx.root().join("audit.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect()
+}
+
+#[test]
+fn a_failed_session_catalog_writes_one_failure_audit_line() {
+    let setup = Setup::new();
+    setup.fx.fake_program("claude", BROKEN);
+    let out = setup.run_any(&["session", "catalog", NEVER, "--author", "opus"], b"");
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    // The switch was written and stays due, yet the command is one outcome.
+    assert!(setup.fx.root().join("control.json").exists());
+    let audit = audit_log(&setup);
+    assert_eq!(audit.len(), 1, "{audit:?}");
+    assert_eq!(audit[0]["command"], "session catalog");
+    assert_eq!(audit[0]["status"], "failure");
+    assert_eq!(audit[0]["error_code"], "model_failed");
+    assert_eq!(audit[0]["target"], format!("session:{NEVER}"));
+    assert_eq!(audit[0]["author"], "opus");
+
+    // A catalog that succeeds still logs its switch, then its window.
+    setup.answer(&answer());
+    let out = setup.run_any(&["session", "catalog", NEVER, "--author", "opus"], b"");
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let audit = audit_log(&setup);
+    assert_eq!(audit.len(), 2, "a resume wrote no switch: {audit:?}");
+    assert_eq!(audit[1]["status"], "success");
+}
+
 #[test]
 fn scribe_catalog_in_a_typed_prompt_catalogs_a_past_session_as_daniel() {
     let setup = Setup::new();

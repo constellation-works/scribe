@@ -16,7 +16,9 @@
 //!
 //! A hook run writes one line per record it wrote or refused (two `#scribe`
 //! lines in one prompt are two lines in the log), and none when it changed
-//! nothing; a session pass one per session passed; a consistency scan one
+//! nothing; a session pass one per session passed (a `session catalog` also one
+//! for the switch it wrote, unless a window failed: a failed catalog is one
+//! failure line); a consistency scan one
 //! per entry re-applied, per proposal opened, per session deactivated or
 //! deactivation failed, per batch the model failed, and none when it changed
 //! nothing; a direct write verb (`entry`, `tag` and `proposal` writes,
@@ -143,7 +145,12 @@ impl<'a> AuditGuard<'a> {
                         error_code: p.error_code,
                     })
                     .collect();
-                if report.switch_written {
+                // A catalog that wrote its switch logs the switch as one more
+                // success line, but only when no window failed: a failed
+                // catalog is one failure outcome, whose line names the
+                // session whose switch it left due.
+                let failed = lines.iter().any(|line| line.status == AuditStatus::Failure);
+                if report.switch_written && !failed {
                     let target = report
                         .passes
                         .first()
