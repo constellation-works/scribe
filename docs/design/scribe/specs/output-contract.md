@@ -44,7 +44,7 @@ is `-`, lists are comma-joined, and timestamps are RFC 3339.
 | `session list` | `id status due project topics updated title` (`due` is `yes` or `no`) |
 | `session list --tree` | `id parent status due project topics updated title` (`parent` is the session the row nests under, its `spawned_from` link else its first `continues` link, or `-`) |
 | `session list --include-inactive` | `id status active due project topics updated title` (`active` is `yes` or `no`); without the flag the columns are unchanged, inactive sessions are left out, and when any matched the notice `<n> inactive session(s) also match and are hidden; --include-inactive lists them` goes to stderr. With `--tree` too, `active` follows `status` |
-| `proposal list` | `id kind state older newer opened_at reason admitted closed_reason` (format 11: `admitted` is `trigger "<phrase>" matched "<words>"; criteria: <criteria or ->` for a candidate a capture rule admitted, else `-`; `closed_reason` is `tag_retired` when scribe closed it without Daniel, else `-`) |
+| `proposal list` | `id kind state older newer opened_at reason admitted closed_reason` (format 11: `admitted` is `trigger "<phrase>" matched "<words>"; criteria: <criteria or ->` for a candidate a capture rule admitted, else `-`; `closed_reason` is `tag_retired` when scribe closed it without Daniel, `instructed` when an agent rejected it on Daniel's checked instruction (format 13), else `-`) |
 | `tag list` | `name entries stale_after_days aliases description`, (S12) `source` (`config` or `store`), then `action` (`free` or `ask-first`, with `,quote` when the tag requires a quote), `retired` and `rejected` (counts of agent entries); the last three are `-` for a tag that is not an action tag; (format 11) then `route` (the tag's capture route, `propose`, `write` or `agent`, or `-` when it has no capture rules) |
 | `tag show <tag>` (format 11) | one `<field>\t<value>\t<origin>` line each for `tag`, `source`, `aliases`, `description`, `stale_after_days`, `action` (`free`/`ask-first`, with `,quote`, or `-`), then the capture rules `from`, `route`, `triggers` (quoted, comma separated), `criteria` and `not`; `origin` is `shipped`, `config <file>:<line>` or `none` (an unset rule's value is `-`), and `-` for the first six. The table prints `<field> <value>  (<origin>)` |
 | `record search` (S11) | `cite kind score updated title snippet` (`score` to three decimals; the table cuts `title` to 40 characters and fits `snippet` to the width) |
@@ -128,7 +128,9 @@ picked_up, rejected, pickups: [{author, at, result, rejected}]}`;
 window). The table detail view adds `author`, and for such an entry
 `quote`, `age`, `cancel` (when the window ends, and whether it has),
 `pickups` and `window` (its turns with `--window`, else `<n> turns (show
-with --window)`).
+with --window)`). Store format 13 adds `approved_by` (`{kind, name}` of kind
+`agent`, or `null`) and `instruction` (`{session, message, at, quote}` or
+`null`, where `quote` is `null` once forgotten).
 
 **Session** (`sessions[]`, `session show`): `id`, `status` (`open`,
 `final`), `project`, `topics`, `related` (unchanged: model-extracted
@@ -178,11 +180,14 @@ text}]`), `state` (`open`, `approved`, `rejected`), `opened_at`,
 `settled_at` (or `null`), `settled_by` (a cite or `null`), `author` and
 `settled_author` (`{kind, name}` or `null`), and `updated_by` (the last
 agent who revised the reason, or `null`). Store format 11 adds
-`closed_reason` (`tag_retired` when scribe closed it without Daniel, else
-`null`) and, on a `candidate` object, `admitted` (`{trigger, matched,
+`closed_reason` (`tag_retired` when scribe closed it without Daniel,
+`instructed` when an agent rejected it on Daniel's checked instruction in format
+13, else `null`) and, on a `candidate` object, `admitted` (`{trigger, matched,
 criteria}`: the capture-rule trigger as configured, the turn's words it
 matched, verbatim and at most 120 characters, and the tag's `criteria`
-then in force or `null`; `null` on a candidate opened before format 11).
+then in force or `null`; `null` on a candidate opened before format 11). Store
+format 13 adds `instruction` (`{session, message, at, quote}` or `null`, where
+`quote` is `null` once forgotten).
 
 **Tag rules** (`tag show <tag> --json`, format 11): `tag`, `source`
 (`config` or `store`), `aliases`, `description` (or `null`),

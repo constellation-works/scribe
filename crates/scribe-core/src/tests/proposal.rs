@@ -65,6 +65,7 @@ fn close_retired_tag_candidates_closes_only_open_candidates_outside_the_tag_tabl
         updated_by: None,
         settled_author: (state != ProposalState::Open).then(Author::daniel),
         closed_reason: None,
+        instruction: None,
     };
     let stale = Proposal {
         id: "p-5".parse().unwrap(),
@@ -82,6 +83,7 @@ fn close_retired_tag_candidates_closes_only_open_candidates_outside_the_tag_tabl
         updated_by: None,
         settled_author: None,
         closed_reason: None,
+        instruction: None,
     };
     let mut proposals = vec![
         candidate(1, "decisions", ProposalState::Open),
@@ -111,4 +113,14 @@ fn close_retired_tag_candidates_closes_only_open_candidates_outside_the_tag_tabl
     assert_eq!(proposals[3].closed_reason, None);
     assert_eq!(proposals[4].state, ProposalState::Open);
     assert!(close_retired_tag_candidates(&mut proposals, &tags, t1).is_empty());
+}
+
+#[test]
+fn closed_reason_instructed_round_trips() {
+    assert_eq!(ClosedReason::TagRetired.as_str(), "tag_retired");
+    assert_eq!(ClosedReason::Instructed.as_str(), "instructed");
+    let json = serde_json::to_string(&ClosedReason::Instructed).unwrap();
+    assert_eq!(json, "\"instructed\"");
+    let back: ClosedReason = serde_json::from_str(&json).unwrap();
+    assert_eq!(back, ClosedReason::Instructed);
 }

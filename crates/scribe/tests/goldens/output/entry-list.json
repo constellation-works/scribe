@@ -43,7 +43,9 @@
       "window_turns": null,
       "window": null,
       "action": null,
-      "admitted": null
+      "admitted": null,
+      "approved_by": null,
+      "instruction": null
     },
     {
       "id": "preferences-1",
@@ -86,7 +88,9 @@
       "window_turns": null,
       "window": null,
       "action": null,
-      "admitted": null
+      "admitted": null,
+      "approved_by": null,
+      "instruction": null
     },
     {
       "id": "decisions-1",
@@ -133,7 +137,9 @@
       "window_turns": null,
       "window": null,
       "action": null,
-      "admitted": null
+      "admitted": null,
+      "approved_by": null,
+      "instruction": null
     },
     {
       "id": "decisions-2",
@@ -181,7 +187,9 @@
       "window_turns": null,
       "window": null,
       "action": null,
-      "admitted": null
+      "admitted": null,
+      "approved_by": null,
+      "instruction": null
     }
   ],
   "total": 4,

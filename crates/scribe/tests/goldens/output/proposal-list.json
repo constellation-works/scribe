@@ -27,7 +27,8 @@
       },
       "settled_author": null,
       "updated_by": null,
-      "closed_reason": null
+      "closed_reason": null,
+      "instruction": null
     },
     {
       "candidate": null,
@@ -62,7 +63,8 @@
         "name": "daniel"
       },
       "updated_by": null,
-      "closed_reason": null
+      "closed_reason": null,
+      "instruction": null
     }
   ],
   "total": 2,
