@@ -156,3 +156,67 @@ fn codex_package_keeps_the_tool_boundary_and_only_adds_narrow_runtime_writes() {
             .is_none()
     );
 }
+
+/// Each `{{config.<key>}}` a manifest's `permissions.fs` lists names, in order.
+fn fs_config_keys(manifest: &Value) -> Vec<String> {
+    let fs = &manifest["spec"]["permissions"]["fs"];
+    let mut keys = Vec::new();
+    for list in ["read", "write", "write_files"] {
+        for entry in fs[list].as_sequence().into_iter().flatten() {
+            let mut rest = entry.as_str().expect("an fs entry is a string");
+            while let Some(start) = rest.find("{{config.") {
+                let after = &rest[start + "{{config.".len()..];
+                let end = after.find("}}").expect("a template reference is closed");
+                keys.push(after[..end].to_string());
+                rest = &after[end + 2..];
+            }
+        }
+    }
+    keys
+}
+
+fn declared_defaults(manifest: &Value) -> Vec<&str> {
+    manifest["spec"]["config"]["defaults"]
+        .as_mapping()
+        .expect("spec.config.defaults is a mapping")
+        .keys()
+        .map(|key| key.as_str().expect("a default key is a string"))
+        .collect()
+}
+
+// Orbit renders every `{{config.<key>}}` in `permissions.fs` when it loads
+// the plugin, and refuses it when the key has neither a configured value nor
+// a manifest default. The default package must load on a host that sets
+// nothing (`orbit plugin upgrade scribe plugin/.orbit-plugin` on a fresh or
+// Claude-only host): every key it renders carries a default (ORB-26579).
+#[test]
+fn the_default_package_declares_a_default_for_every_config_key_its_grants_render() {
+    let base = manifest();
+    let defaults = declared_defaults(&base);
+    let keys = fs_config_keys(&base);
+    assert_eq!(keys, ["root", "transcripts", "codex_home", "root"]);
+    for key in &keys {
+        assert!(defaults.contains(&key.as_str()), "no default for {key}");
+    }
+}
+
+// The Codex package's three provider paths are explicit consent: a default
+// would grant reads or writes the operator never named, and an exact-file
+// write cannot name a harmless placeholder. So they carry no default, and
+// Orbit refuses the package until all three are configured (its README says
+// how to recover). Every other key it renders keeps the default package's.
+#[test]
+fn the_codex_package_leaves_only_its_three_provider_paths_without_a_default() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../plugin/orbit-codex/.orbit-plugin/plugin.yaml");
+    let codex: Value = yaml_serde::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let defaults = declared_defaults(&codex);
+    let undefaulted: Vec<String> = fs_config_keys(&codex)
+        .into_iter()
+        .filter(|key| !defaults.contains(&key.as_str()))
+        .collect();
+    assert_eq!(
+        undefaulted,
+        ["codex_home", "codex_runtime_tmp", "codex_installation_id"]
+    );
+}

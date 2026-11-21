@@ -37,6 +37,19 @@ Codex's state root is read-only except for its `tmp` subtree and the exact
 grant. No unsandboxed permission is requested. `codex` and `claude` must both be
 reachable from the scheduler's execution environment.
 
+The three Codex paths have no default, by design: each is a grant the operator
+names, and an exact-file write has no harmless placeholder. Until all three are
+configured, Orbit lists the package `enabled` but `inactive`, refused with
+`'{{config.codex_home}}' references {{config.codex_home}}, but the plugin
+declares no default for config key 'codex_home'` (or the same for the other
+two keys). To recover, either set the three paths as above, or go back to the
+Claude-only package, which loads with nothing configured and keeps routines and
+settings:
+
+```sh
+orbit plugin upgrade scribe plugin/.orbit-plugin --grant fs,network,env_pass,orbit_tools
+```
+
 Existing routine enablement, pause state and schedules are preserved during an
 upgrade. This package does not enable a scheduler or turn recording on. The
 human's `/scribe on` and trusted native hooks still control recording; opted-in
