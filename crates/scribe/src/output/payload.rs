@@ -264,6 +264,10 @@ pub(crate) struct EntryPayload {
     /// name: session-pass}` when it is scribe's statement of Daniel's turn
     /// (his words are then in `quote`); `null` otherwise.
     pub(crate) stated_by: Option<AuthorPayload>,
+    /// Where an idea the session pass captured itself stands: `{state:
+    /// open|parked|task, reason, task}`, `reason` Daniel's own words
+    /// parking it; `null` for every other entry.
+    pub(crate) outcome: Option<scribe_core::Outcome>,
 }
 
 /// An action entry's transcript window (docs/design/scribe/2_design.md §4.6).
@@ -433,6 +437,7 @@ impl From<&Entry> for EntryPayload {
             approved_by: entry.approved_by.as_ref().map(AuthorPayload::from),
             instruction: entry.instruction.as_ref().map(InstructionPayload::from),
             stated_by: entry.stated_by.as_ref().map(AuthorPayload::from),
+            outcome: entry.outcome.clone(),
         }
     }
 }
@@ -1163,9 +1168,9 @@ pub(crate) struct PassReport {
     #[serde(skip)]
     pub(crate) switch_written: bool,
     /// Open candidate proposals closed during this pass because their tag is
-    /// retired: one success audit line each.
+    /// retired, and ideas the pass wrote itself: one success audit line each.
     #[serde(skip)]
-    pub(crate) closed_candidates: Vec<String>,
+    pub(crate) persisted_targets: Vec<String>,
 }
 
 impl PassReport {
@@ -1376,7 +1381,7 @@ impl FoundPayload {
             Found::Entry(entry) => Self {
                 kind: "entry",
                 cite,
-                entry: Some(EntryPayload::from(entry)),
+                entry: Some(EntryPayload::from(&**entry)),
                 session: None,
                 task: None,
                 terms: Vec::new(),

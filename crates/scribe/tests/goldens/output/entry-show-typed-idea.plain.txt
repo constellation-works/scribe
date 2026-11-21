@@ -1,0 +1,1 @@
+idea-2	active	constellation-works/scribe	-	2026-11-15T00:05:00Z	a dry-run flag for the session pass	daniel	<age>

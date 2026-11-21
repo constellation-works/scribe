@@ -152,6 +152,18 @@ about them; `question ask` skips them unless its scope names their tag.
   so their `#scribe retire <id>` cancels it in time.
   When they say in plain words to drop it, retire it yourself:
   `scribe entry retire <id> --author <name> --reason '<their words>'`.
+- **When the human floats an idea**, first run one search over earlier
+  ideas: `scribe record search '<the idea's words>' --json`, keeping only
+  hits whose title ends in `(idea)`. Show at most 3 of them. When one
+  matches, name it in one line with its date (the hit's `updated`) and
+  outcome (in the snippet of a pass-captured idea; a typed one has none,
+  so say `open`), for example
+  `scribe: an earlier idea, <id> (2026-11-02, parked): <statement>`, and do
+  not write a second entry for it. In an on session the session pass also
+  writes the human's ideas itself, under author `scribe:session-pass`, with
+  their outcome (`open`, `parked` in their words); those are their words
+  captured by the pass, not entries they typed. List them with `scribe
+  entry list --tag idea --author-kind scribe`.
 - **Their entry, on their instruction in this session.** List first and name
   the id in your reply. When they say to delete one of their entries, run
   `scribe entry retire <id> --author <name> --reason '<why>' --session <this

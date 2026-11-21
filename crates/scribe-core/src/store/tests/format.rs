@@ -1009,7 +1009,8 @@ run the gate before every push
         .replace("inactive_since: null\n", "")
         .replace("approved_by: null\n", "")
         .replace("instruction: null\n", "")
-        .replace("stated_by: null\n", "");
+        .replace("stated_by: null\n", "")
+        .replace("outcome: null\n", "");
     assert_eq!(entry(&stripped_entry).unwrap(), decoded_entry);
 
     // Format-11 entries must reject later keys.
@@ -1625,7 +1626,8 @@ fn a_format_thirteen_store_upgrades_with_null_statement_subject_and_stated_by_on
     assert!(encoded.contains("\nstated_by: null\n"), "{encoded}");
     let back = encoded
         .replacen(&format!("format: {FORMAT}\n"), "format: 13\n", 1)
-        .replace("stated_by: null\n", "");
+        .replace("stated_by: null\n", "")
+        .replace("outcome: null\n", "");
     assert_eq!(entry(&back).unwrap(), decoded);
     // Local YAML tags on a format-13 string survive the upgrade.
     let tagged = format_thirteen_entry("", "!local scribe");
@@ -1714,6 +1716,7 @@ as_of: null
 approved_by: null
 instruction: null
 stated_by: {stated_by}
+outcome: null
 ---
 {body}
 ",
@@ -1822,4 +1825,114 @@ fn a_candidate_statement_needs_its_subject_and_a_user_turn() {
     ] {
         corrupt_message(&decode_proposals(path, bad.as_bytes()).unwrap_err());
     }
+}
+
+/// An entry the session pass wrote itself (format 15), built from a stated
+/// entry: the pass is its author, `said` is empty and it has `outcome`. The
+/// store checks the shape, not the tag, so the helper's path is kept.
+fn captured_entry(status: &str, quote: &str, outcome: &str, body: &str) -> String {
+    let pass = "{kind: scribe, name: session-pass}";
+    stated_entry(status, quote, "", pass, body)
+        .replace(
+            "author: {kind: daniel, name: daniel}",
+            &format!("author: {pass}"),
+        )
+        .replace("outcome: null", &format!("outcome: {outcome}"))
+}
+
+#[test]
+fn a_captured_idea_round_trips_with_its_outcome_and_contradictions_are_refused() {
+    let statement = "Daniel suggests caching the routing table per host.";
+    let parked = "{state: parked, reason: \"not now\", task: null}";
+    let open = "{state: open, reason: null, task: null}";
+    let ok = captured_entry(
+        "active",
+        "\"cache it per host? not now\"",
+        parked,
+        statement,
+    );
+    let e = entry(&ok).unwrap();
+    assert_eq!(e.author, crate::Author::session_pass());
+    let outcome = e.outcome.clone().unwrap();
+    assert_eq!(outcome.state, crate::OutcomeState::Parked);
+    assert_eq!(outcome.reason.as_deref(), Some("not now"));
+    let encoded = crate::store::format::encode_entry(Path::new(ENTRY), &e).unwrap();
+    assert_eq!(entry(std::str::from_utf8(&encoded).unwrap()).unwrap(), e);
+    // Forgotten: blank, the quote and the parked words cleared, the state kept.
+    let forgotten = captured_entry(
+        "forgotten",
+        "null",
+        "{state: parked, reason: null, task: null}",
+        "",
+    );
+    let f = entry(&forgotten).unwrap();
+    assert_eq!(f.outcome.unwrap().state, crate::OutcomeState::Parked);
+
+    for (label, bad) in [
+        (
+            "no outcome",
+            captured_entry("active", "\"x\"", "null", statement),
+        ),
+        (
+            "open with a reason",
+            captured_entry(
+                "active",
+                "\"x\"",
+                "{state: open, reason: \"y\", task: null}",
+                statement,
+            ),
+        ),
+        (
+            "parked without words",
+            captured_entry(
+                "active",
+                "\"x\"",
+                "{state: parked, reason: null, task: null}",
+                statement,
+            ),
+        ),
+        (
+            "task without an id",
+            captured_entry(
+                "active",
+                "\"x\"",
+                "{state: task, reason: null, task: null}",
+                statement,
+            ),
+        ),
+        (
+            "no quote",
+            captured_entry("active", "null", open, statement),
+        ),
+        (
+            "a said line",
+            captured_entry("active", "\"x\"", open, statement)
+                .replace("said: \"\"", "said: \"#scribe idea: x\""),
+        ),
+        (
+            "outcome on Daniel's entry",
+            stated_entry(
+                "active",
+                "\"x\"",
+                "#scribe approve p-1",
+                "{kind: scribe, name: session-pass}",
+                statement,
+            )
+            .replace("outcome: null", &format!("outcome: {open}")),
+        ),
+    ] {
+        corrupt_message(&entry(&bad).map(|_| ()).expect_err(label));
+    }
+}
+
+#[test]
+fn a_format_fourteen_entry_reads_with_no_outcome_and_a_stray_outcome_is_refused() {
+    let pass = "{kind: scribe, name: session-pass}";
+    let current = stated_entry("active", "\"ok\"", "#scribe approve p-1", pass, "stmt");
+    let fourteen = current.replace(&format!("format: {FORMAT}"), "format: 14");
+    let old = fourteen.replace("outcome: null\n", "");
+    let e = entry(&old).unwrap();
+    assert_eq!(e.outcome, None);
+    assert_eq!(e.stated_by, Some(crate::Author::session_pass()));
+    corrupt_message(&entry(&fourteen).map(|_| ()).unwrap_err());
 }

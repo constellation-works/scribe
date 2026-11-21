@@ -376,6 +376,7 @@ impl Store {
             approved_by: None,
             instruction: None,
             stated_by: None,
+            outcome: None,
             content: draft.content,
         };
         redactor.entry(&mut entry);

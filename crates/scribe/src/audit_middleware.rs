@@ -164,7 +164,7 @@ impl<'a> AuditGuard<'a> {
                         },
                     );
                 }
-                for id in &report.closed_candidates {
+                for id in &report.persisted_targets {
                     lines.push(Line {
                         status: AuditStatus::Success,
                         target: Some(id.clone()),

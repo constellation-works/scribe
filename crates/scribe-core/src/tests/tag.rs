@@ -100,11 +100,15 @@ fn a_summary_counts_entries_per_tag_and_keeps_unconfigured_ones() {
 }
 
 #[test]
-fn preferences_and_idea_ship_propose_rules_and_standard_ships_none() {
+fn preferences_ships_propose_idea_ships_write_and_standard_ships_none() {
     use crate::tag::{CaptureRoute, CaptureRules};
-    for tag in ["preferences", "idea"] {
+    for (tag, route) in [
+        ("preferences", CaptureRoute::Propose),
+        ("idea", CaptureRoute::Write),
+    ] {
         let rules = CaptureRules::shipped(tag);
-        assert_eq!(rules.route(), Some(CaptureRoute::Propose), "{tag}");
+        assert_eq!(rules.route(), Some(route), "{tag}");
+        assert_eq!(rules.writes(), route == CaptureRoute::Write, "{tag}");
         assert!(
             rules.pass_triggers().is_some_and(|t| !t.is_empty()),
             "{tag}"
@@ -119,14 +123,19 @@ fn preferences_and_idea_ship_propose_rules_and_standard_ships_none() {
 }
 
 #[test]
-fn only_the_propose_route_gives_the_pass_triggers() {
+fn the_propose_and_write_routes_give_the_pass_triggers_and_agent_does_not() {
     use crate::tag::{CaptureRoute, CaptureRules, Rule, RuleOrigin};
     let mut rules = CaptureRules::shipped("preferences");
-    for route in [CaptureRoute::Write, CaptureRoute::Agent] {
+    for (route, read, writes) in [
+        (CaptureRoute::Propose, true, false),
+        (CaptureRoute::Write, true, true),
+        (CaptureRoute::Agent, false, false),
+    ] {
         rules.route = Some(Rule {
             value: route,
             origin: RuleOrigin::Config { line: None },
         });
-        assert!(rules.pass_triggers().is_none(), "{route:?}");
+        assert_eq!(rules.pass_triggers().is_some(), read, "{route:?}");
+        assert_eq!(rules.writes(), writes, "{route:?}");
     }
 }

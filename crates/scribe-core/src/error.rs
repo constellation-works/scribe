@@ -186,7 +186,8 @@ pub enum Error {
 /// chain never repeat the inner error's message.
 #[derive(Debug)]
 pub struct AfterPersistError {
-    /// Proposal ids already written.
+    /// Ids already written: proposals closed and entries the session pass
+    /// wrote itself.
     pub closed: Vec<String>,
     /// The step that failed afterwards.
     pub source: Error,

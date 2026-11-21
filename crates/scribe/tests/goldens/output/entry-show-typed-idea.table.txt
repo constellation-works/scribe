@@ -1,0 +1,21 @@
+id          idea-2
+tag         idea
+status      active
+project     constellation-works/scribe
+topics      -
+related     -
+provider    claude-code
+host        dk-server-1
+created     2026-11-15T00:05:00Z
+updated     2026-11-15T00:05:00Z
+review      -
+superseded  -
+from        the #scribe line
+cite        session 7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02, line 1, message user-idea, at 2026-11-15T00:00:00Z
+cwd         /home/daniel/workspace/scribe
+said        #scribe idea: a dry-run flag for the session pass
+author      daniel
+age         <age>
+cancel      none (Daniel's own line)
+pickups     -
+content     a dry-run flag for the session pass

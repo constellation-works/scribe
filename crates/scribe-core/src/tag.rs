@@ -93,8 +93,8 @@ impl CaptureFrom {
 pub enum CaptureRoute {
     /// A candidate proposal Daniel settles (§5.3).
     Propose,
-    /// The pass writes the entry itself (not built in this step: the pass
-    /// captures nothing under a `write` tag yet).
+    /// The pass writes the entry itself, with no proposal, and records the
+    /// idea's outcome (§11.6).
     Write,
     /// The prompt hook tells the agent; the pass captures nothing.
     Agent,
@@ -185,12 +185,12 @@ pub struct CaptureRules {
 pub const CAPTURE_TEXT_CHARS: usize = 300;
 
 /// The shipped capture rules: `(tag, route, triggers, criteria, not)`
-/// (2_design.md §11.2). `idea` keeps the candidate route until its write
-/// route is built; `standard` ships none.
+/// (2_design.md §11.2). The pass writes `idea` entries itself (§11.6);
+/// `standard` ships none.
 const SHIPPED_CAPTURE: [(&str, CaptureRoute, &[&str], &str, &str); 2] = [
     (
         "idea",
-        CaptureRoute::Propose,
+        CaptureRoute::Write,
         &[
             "have * an idea",
             "had an idea",
@@ -198,8 +198,8 @@ const SHIPPED_CAPTURE: [(&str, CaptureRoute, &[&str], &str, &str); 2] = [
             "what do you think about * idea",
             "what if we",
         ],
-        "Daniel puts forward something to consider, not an instruction to do it now.",
-        "A direction to act now; a preference; a question of fact.",
+        "Daniel proposes something that could be built, changed or tried, and the session does not carry it out.",
+        "A direction to act now; a preference; a question of fact; an idea the session goes on to carry out.",
     ),
     (
         "preferences",
@@ -237,18 +237,26 @@ impl CaptureRules {
     }
 
     /// The triggers the session pass matches for the tag: only for Daniel's
-    /// turns under the `propose` route; `None` otherwise (no rules, or a
-    /// route the pass does not take).
+    /// turns under the `propose` or `write` route; `None` otherwise (no
+    /// rules, or the `agent` route, which the pass does not take).
     #[must_use]
     pub fn pass_triggers(&self) -> Option<&[String]> {
         let from = self.from.as_ref()?.value;
         let route = self.route.as_ref()?.value;
         match (from, route) {
-            (CaptureFrom::Daniel, CaptureRoute::Propose) => {
+            (CaptureFrom::Daniel, CaptureRoute::Propose | CaptureRoute::Write) => {
                 self.triggers.as_ref().map(|t| t.value.as_slice())
             }
-            (CaptureFrom::Daniel, CaptureRoute::Write | CaptureRoute::Agent) => None,
+            (CaptureFrom::Daniel, CaptureRoute::Agent) => None,
         }
+    }
+
+    /// Whether the pass writes a checked claim under the tag as an entry
+    /// itself (`route = "write"`, 2_design.md §11.6) rather than opening a
+    /// candidate proposal.
+    #[must_use]
+    pub fn writes(&self) -> bool {
+        self.pass_triggers().is_some() && self.route() == Some(CaptureRoute::Write)
     }
 
     /// The route in force, if any.

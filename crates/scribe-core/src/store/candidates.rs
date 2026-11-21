@@ -3,13 +3,22 @@
 use super::{Redactor, Store};
 use crate::consistency::{CoveredCandidate, Reapplied, ReapplyReport};
 use crate::pass::{
-    MAX_CANDIDATES, MAX_OPEN_CANDIDATES, admission, candidate_says, claim_covers, covering_claim,
-    entry_says, own_span,
+    MAX_CANDIDATES, MAX_IDEAS, MAX_OPEN_CANDIDATES, admission, candidate_says, claim_covers,
+    covering_claim, entry_says, own_span,
 };
 use crate::{
-    Author, EntryId, EntryStatus, Error, Proposal, ProposalId, ProposalKind, ProposalState, Result,
-    SessionRecord,
+    Author, ContentFrom, Entry, EntryCandidate, EntryId, EntryStatus, Error, Outcome, OutcomeState,
+    Proposal, ProposalId, ProposalKind, ProposalState, Result, SessionRecord, Speaker, Topics,
 };
+
+/// What the candidate write path changed under the store lock.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct ClaimsWritten {
+    /// Open candidates closed because their tag is retired, in id order.
+    pub(super) closed: Vec<Proposal>,
+    /// Entries the pass wrote itself under `write` tags, in write order.
+    pub(super) written: Vec<EntryId>,
+}
 
 impl Store {
     /// Candidate ids are reserved without creating an entry file. Every entry
@@ -27,14 +36,21 @@ impl Store {
     /// Closes any open candidates whose tag is no longer in the tag table
     /// before counting the open-candidate cap, and returns the closed
     /// proposals in id order.
+    ///
+    /// A claim under a `write` tag (2_design.md §11.6) is written here as an
+    /// active entry the pass authors, with no proposal, at most
+    /// [`MAX_IDEAS`] per call and outside the open-candidate cap, once the
+    /// same checks as a candidate pass and no active entry of its tag and
+    /// project, no prior candidate and no entry the pass wrote from the same
+    /// turn already says it.
     pub(super) fn open_pass_candidates(
         &self,
         record: &SessionRecord,
         drafts: &[crate::pass::PassClaim],
         redactor: &Redactor,
-    ) -> Result<Vec<Proposal>> {
+    ) -> Result<ClaimsWritten> {
         if !self.control()?.get(&record.id).is_some_and(|c| c.on) {
-            return Ok(Vec::new());
+            return Ok(ClaimsWritten::default());
         }
         let config = self.config()?;
         let mut proposals = self.proposals()?;
@@ -47,9 +63,12 @@ impl Store {
             if !closed.is_empty() {
                 self.write_proposals(&proposals)?;
             }
-            return Ok(closed);
+            return Ok(ClaimsWritten {
+                closed,
+                written: Vec::new(),
+            });
         }
-        let (entries, skipped) = self.load_entries()?;
+        let (mut entries, skipped) = self.load_entries()?;
         if !skipped.is_empty() {
             if !closed.is_empty() {
                 self.write_proposals(&proposals)?;
@@ -59,7 +78,10 @@ impl Store {
                 skipped = skipped.len(),
                 "not opening candidates: some entries are unreadable"
             );
-            return Ok(closed);
+            return Ok(ClaimsWritten {
+                closed,
+                written: Vec::new(),
+            });
         }
         let mut open = proposals
             .iter()
@@ -77,9 +99,18 @@ impl Store {
             .collect();
         let mut next = proposals.iter().map(|p| p.id.number()).max().unwrap_or(0);
         let mut changed = false;
-        for claim in drafts.iter().take(MAX_CANDIDATES) {
-            if open >= MAX_OPEN_CANDIDATES {
-                break;
+        let (mut proposed, mut written) = (0_usize, Vec::new());
+        for claim in drafts {
+            let writes = config
+                .tags
+                .get(&claim.candidate.tag)
+                .is_some_and(|tag| tag.capture.writes());
+            if writes {
+                if written.len() >= MAX_IDEAS {
+                    continue;
+                }
+            } else if proposed >= MAX_CANDIDATES || open >= MAX_OPEN_CANDIDATES {
+                continue;
             }
             // The capture gate, repeated under the lock against the config
             // read now (2_design.md §11.2): a claim is Daniel's own words,
@@ -111,13 +142,43 @@ impl Store {
                 || draft.project != record.project
                 || draft.quote != redactor.mask(&draft.quote)
                 || draft.evidence.is_some()
-                || entries
-                    .iter()
-                    .any(|entry| claim_covers(&entry_says(entry), &says))
                 || proposals
                     .iter()
                     .filter_map(|p| p.candidate.as_ref())
                     .any(|prior| claim_covers(&candidate_says(prior), &says))
+            {
+                continue;
+            }
+            if writes {
+                // The shared duplicate check (`covering_claim`: active
+                // entries of the tag and project), and any entry the pass
+                // already wrote from this turn that is forgotten or holds
+                // the same words, so a retried window cannot write it twice.
+                if covering_claim(&entries, draft).is_some()
+                    || entries.iter().any(|entry| written_from(entry, draft))
+                {
+                    continue;
+                }
+                let Some(outcome) = checked_outcome(claim, redactor) else {
+                    continue;
+                };
+                let id = EntryId::next_in(&draft.tag, &ids);
+                ids.push(id.clone());
+                let review_after = config
+                    .tags
+                    .get(&draft.tag)
+                    .and_then(|tag| tag.review_after(record.updated.date()));
+                let mut entry = pass_entry(id, draft, outcome, record.updated, review_after);
+                redactor.entry(&mut entry);
+                self.write_entry(&entry, true)
+                    .map_err(|err| after_entries(&written, err))?;
+                written.push(entry.id.clone());
+                entries.push(entry);
+                continue;
+            }
+            if entries
+                .iter()
+                .any(|entry| claim_covers(&entry_says(entry), &says))
             {
                 continue;
             }
@@ -152,12 +213,14 @@ impl Store {
             redactor.proposal(&mut proposal);
             proposals.push(proposal);
             open += 1;
+            proposed += 1;
             changed = true;
         }
         if !closed.is_empty() || changed {
-            self.write_proposals(&proposals)?;
+            self.write_proposals(&proposals)
+                .map_err(|err| after_entries(&written, err))?;
         }
-        Ok(closed)
+        Ok(ClaimsWritten { closed, written })
     }
 
     /// Close every open candidate proposal whose tag is absent from the
@@ -304,4 +367,95 @@ fn has_statement_and_subject(candidate: &crate::EntryCandidate) -> bool {
     };
     within(candidate.statement.as_deref(), crate::STATEMENT_CHARS)
         && within(candidate.subject.as_deref(), crate::SUBJECT_CHARS)
+}
+
+/// Attach the ids of entries already written to `err`, so the command
+/// still audits them; an empty list leaves `err` as it is.
+fn after_entries(written: &[EntryId], err: Error) -> Error {
+    if written.is_empty() {
+        err
+    } else {
+        Error::AfterPersist(Box::new(crate::AfterPersistError {
+            closed: written.iter().map(ToString::to_string).collect(),
+            source: err,
+        }))
+    }
+}
+
+/// Whether the pass already wrote `draft`'s claim as `entry`: the same tag
+/// and turn, and either the same words or an entry since forgotten (whose
+/// words are gone, and which must not come back).
+fn written_from(entry: &Entry, draft: &EntryCandidate) -> bool {
+    entry.author == Author::session_pass()
+        && entry.tag == draft.tag
+        && entry.cite.as_ref().is_some_and(|cite| {
+            cite.session == draft.cite.session && cite.message == draft.cite.message
+        })
+        && (entry.status == EntryStatus::Forgotten
+            || entry.quote.as_deref() == Some(draft.quote.as_str()))
+}
+
+/// A written claim's outcome, checked again under the lock: `None` when
+/// the claim carries none (it was drafted for a `propose` tag). A `parked`
+/// reason must still be a verbatim span of Daniel's own words of its turn
+/// and need no redaction; otherwise the idea is written `open`.
+fn checked_outcome(claim: &crate::pass::PassClaim, redactor: &Redactor) -> Option<Outcome> {
+    let outcome = claim.outcome.clone()?;
+    match (outcome.state, &outcome.reason, &claim.outcome_turn) {
+        (OutcomeState::Parked, Some(reason), Some(turn))
+            if own_span(turn, reason) && *reason == redactor.mask(reason) =>
+        {
+            Some(outcome)
+        }
+        (OutcomeState::Open, None, _) => Some(outcome),
+        (OutcomeState::Parked | OutcomeState::Open | OutcomeState::Task, ..) => {
+            Some(Outcome::open())
+        }
+    }
+}
+
+/// The active entry the pass writes for a checked claim under a `write`
+/// tag: scribe's statement as content, Daniel's span as `quote`, authored
+/// and stated by the session pass, nothing typed (`said` empty).
+fn pass_entry(
+    id: EntryId,
+    draft: &EntryCandidate,
+    outcome: Outcome,
+    at: time::OffsetDateTime,
+    review_after: Option<time::Date>,
+) -> Entry {
+    Entry {
+        id,
+        tag: draft.tag.clone(),
+        status: EntryStatus::Active,
+        project: draft.project.clone(),
+        topics: Topics::default(),
+        related: Vec::new(),
+        provider: draft.provider.clone(),
+        host: draft.host.clone(),
+        author: Author::session_pass(),
+        updated_by: None,
+        created: at,
+        updated: at,
+        inactive_since: None,
+        said: String::new(),
+        content_from: ContentFrom::Message {
+            role: Speaker::User,
+            message: draft.cite.message.clone().unwrap_or_default(),
+            at: draft.cite.at,
+        },
+        cite: Some(draft.cite.clone()),
+        retirement_reason: None,
+        superseded_by: None,
+        review_after,
+        quote: Some(draft.quote.clone()),
+        window: None,
+        evidence: None,
+        as_of: None,
+        approved_by: None,
+        instruction: None,
+        stated_by: Some(Author::session_pass()),
+        outcome: Some(outcome),
+        content: draft.statement.clone().unwrap_or_default(),
+    }
 }

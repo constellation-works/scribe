@@ -324,6 +324,14 @@ pub(super) fn entry_fields(entry: &mut Entry) -> Vec<(&'static str, &mut String)
             fields.push(("entry.window.text", &mut turn.text));
         }
     }
+    if let Some(outcome) = &mut entry.outcome {
+        if let Some(reason) = &mut outcome.reason {
+            fields.push(("entry.outcome.reason", reason));
+        }
+        if let Some(task) = &mut outcome.task {
+            fields.push(("entry.outcome.task", task));
+        }
+    }
     fields
 }
 

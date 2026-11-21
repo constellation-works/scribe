@@ -207,6 +207,9 @@ pub struct PassWritten {
     /// Open candidate proposals closed because their tag is absent from the
     /// tag table, in id order.
     pub closed_candidates: Vec<Proposal>,
+    /// Entries the pass wrote itself under `write` tags (2_design.md
+    /// §11.6), in write order.
+    pub written_entries: Vec<EntryId>,
 }
 
 impl Store {
@@ -960,7 +963,7 @@ impl Store {
                 }
             })?;
         }
-        let (written, closed_candidates) = match record {
+        let (written, closed_candidates, written_entries) = match record {
             Some(mut record) => {
                 // A link written while the model ran, or one waiting on the
                 // switch for the first record, is kept: never lost to a pass.
@@ -1008,15 +1011,22 @@ impl Store {
                     dir = dir.join(part);
                     self.prepare_subdir(&dir)?;
                 }
-                let closed = if run_candidates {
+                let claims = if run_candidates {
                     self.open_pass_candidates(&record, candidates, redactor)?
                 } else {
-                    Vec::new()
+                    candidates::ClaimsWritten::default()
                 };
-                // Closures are already in proposals.json. A later failure
-                // carries their ids so the command can still audit them;
-                // the code and message stay the later failure's.
-                let carry = |err| after_persist(&closed, err);
+                // Closures are already in proposals.json and written ideas
+                // in their files. A later failure carries their ids so the
+                // command can still audit them; the code and message stay
+                // the later failure's.
+                let persisted: Vec<String> = claims
+                    .closed
+                    .iter()
+                    .map(|p| p.id.to_string())
+                    .chain(claims.written.iter().map(ToString::to_string))
+                    .collect();
+                let carry = |err| after_persist_ids(&persisted, err);
                 let bytes = format::encode_session(&path, &record).map_err(&carry)?;
                 fsio::write_atomic(&path, &bytes).map_err(&carry)?;
                 // Only once the record holds them: the links are stored once.
@@ -1028,14 +1038,19 @@ impl Store {
                     })
                     .map_err(&carry)?;
                 }
-                (Some(record), closed)
+                (Some(record), claims.closed, claims.written)
             }
-            None => (None, Vec::new()),
+            None => (None, Vec::new(), Vec::new()),
         };
+        let persisted: Vec<String> = closed_candidates
+            .iter()
+            .map(|p| p.id.to_string())
+            .chain(written_entries.iter().map(ToString::to_string))
+            .collect();
         match kind {
             PassWrite::Settle(ran_final) => {
                 self.change_control(|state| control::settle(state, session, ran_final))
-                    .map_err(|err| after_persist(&closed_candidates, err))?;
+                    .map_err(|err| after_persist_ids(&persisted, err))?;
             }
             PassWrite::CatalogFinal => {
                 // Settle and switch off together. Off does not record a time.
@@ -1048,13 +1063,14 @@ impl Store {
                         time::OffsetDateTime::UNIX_EPOCH,
                     );
                 })
-                .map_err(|err| after_persist(&closed_candidates, err))?;
+                .map_err(|err| after_persist_ids(&persisted, err))?;
             }
             PassWrite::Checkpoint | PassWrite::CatalogLive => {}
         }
         Ok(PassWritten {
             record: written,
             closed_candidates,
+            written_entries,
         })
     }
 
@@ -1338,14 +1354,15 @@ fn check_active_author(request: &SetActive) -> Result<()> {
     Ok(())
 }
 
-/// Attach `closed` proposal ids to `err` when a later step failed after
-/// those proposals were written. An empty list leaves `err` as it is.
-fn after_persist(closed: &[Proposal], err: Error) -> Error {
-    if closed.is_empty() {
+/// Attach the ids of proposals closed and entries written (`persisted`)
+/// to `err` when a later step failed after they were written. An empty
+/// list leaves `err` as it is; an error already carrying ids keeps them.
+fn after_persist_ids(persisted: &[String], err: Error) -> Error {
+    if persisted.is_empty() || matches!(err, Error::AfterPersist(_)) {
         err
     } else {
         Error::AfterPersist(Box::new(crate::AfterPersistError {
-            closed: closed.iter().map(|p| p.id.to_string()).collect(),
+            closed: persisted.to_vec(),
             source: err,
         }))
     }

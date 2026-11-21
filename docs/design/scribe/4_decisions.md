@@ -7,11 +7,11 @@ status: Draft
 feature: scribe
 doc_role: decisions
 type: design
-summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, why action tags are config-marked with a capped window, a cancel window, pickups, a stuck line, a CLI quote check and SSH reads from the owner host, why scribe keeps a descriptive memory the session pass writes without approval, why that memory has a personal base fed by every typed session (with people, recurring dates and light catalog entries) and a work layer fed only by /scribe on sessions, why scribe reads Claude Code and Codex sessions only (no hosted server, app connector or ChatGPT import), why the personal base, people, recurring dates and light catalog entries are parked, plus the engineering decisions carried over from the Rust CLI template.
+summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, why action tags are config-marked with a capped window, a cancel window, pickups, a stuck line, a CLI quote check and SSH reads from the owner host, why scribe keeps a descriptive memory the session pass writes without approval, why that memory has a personal base fed by every typed session (with people, recurring dates and light catalog entries) and a work layer fed only by /scribe on sessions, why scribe reads Claude Code and Codex sessions only (no hosted server, app connector or ChatGPT import), why the personal base, people, recurring dates and light catalog entries are parked, why the session pass writes Daniel's ideas itself with their outcome, plus the engineering decisions carried over from the Rust CLI template.
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265]
 ---
 
 # scribe — Decisions
@@ -3569,3 +3569,56 @@ a file Daniel already uses into a store nothing can read.
   can think the shipped tag was never there. Two config entries that both
   want the word are still refused, so the loss is only against a default he
   did not write.
+
+## The session pass writes Daniel's ideas itself, with their outcome
+
+**Recorded:** 2026-11-21 · [ORB-26265] · **Overridable by Daniel**
+**Code anchors:** `crates/scribe-core/src/store/candidates.rs` (`open_pass_candidates`, `pass_entry`, `written_from`), `crates/scribe-core/src/pass/candidates.rs` (`check`, `checked_outcome`, `write_exclusions`), `crates/scribe-core/src/entry.rs` (`Outcome`), `crates/scribe-core/src/tag.rs` (the shipped `idea` capture rules)
+
+### Context
+
+Daniel, chief's chat 2026-11-20: "same for idea - there are probably so
+many forgotten ideas that never got resurfaced. probably mostly bad ideas
+to begin with but I think it would be good to keep them captured
+automatically." Ideas were captured only when he typed `#scribe idea:`, or
+through a candidate he had to approve. On 2026-11-21 he approved step (b)
+of [2_design.md §11.7](./2_design.md#117-order-and-sequencing), b1 and b2:
+"approve both". On duplicates, the same day: "I hope scribe isn't adding
+duplicate entries. I had aide record the idea explicitly and it also exists
+in raw format that may later be added."
+
+### Decision
+
+Under a tag whose capture route is `write` (the shipped `idea`), the
+session pass writes a checked claim from Daniel's own turn as an active
+entry, with no proposal, in the locked step that would otherwise open a
+candidate ([2_design.md §11.6](./2_design.md#116-idea-capture-after-finding-is-gone)).
+The content is scribe's statement and the byte-for-byte span is its
+`quote`; the pass is the author and `stated_by`, so the entry is never
+Daniel's own and every reader labels it as captured. Each records an
+outcome (`open`, or `parked` in his words); an idea that became a task in
+the session is not written. At most 3 per session per run, apart from the
+candidate slots and with no extra model call. Before each write the store
+runs the shared lexical duplicate check against active entries of the tag
+and project and against prior candidates, and the model is sent the
+existing ideas as exclusions, since the lexical check cannot match a short
+typed idea against the raw paragraph it summarizes.
+
+The alternative not taken was to send every captured idea to nebula, the
+curated corpus, so ideas resurface where the constellation's knowledge is
+searched. nebula stays curated: nothing here writes to it.
+
+### Consequences
+
+- Ideas from an on session are recorded without Daniel settling anything;
+  he cancels one with `#scribe retire|forget <id>`. They do not count on
+  the `SessionStart` stuck line.
+- Outcome `task` is reserved for a later settling route; the pass never
+  writes it.
+- Cost: with no approval, the pass's guards are the only check, and a
+  paraphrase the model still returns is written as a second idea. A model
+  that misreads an acted-on proposal as an idea writes an entry Daniel did
+  not mean to keep. Sending ideas to nebula instead would have made every
+  one of them curated knowledge, filling a corpus kept for vetted material
+  with ideas Daniel himself expects to be mostly bad, and would have needed
+  nebula's review for each.

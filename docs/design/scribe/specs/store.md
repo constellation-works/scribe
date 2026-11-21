@@ -1,6 +1,6 @@
 ---
 type: design
-summary: "Spec: store — layout, record files with YAML frontmatter (format 14: candidate statement and subject, entry stated_by; format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
+summary: "Spec: store — layout, record files with YAML frontmatter (format 15: entry outcome on a pass-written idea; format 14: candidate statement and subject, entry stated_by; format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
 last_validated: 2026-11-21
 ---
 
@@ -10,7 +10,10 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-The code writes format 14 and reads formats 1–14. Format 14 adds
+The code writes format 15 and reads formats 1–15. Format 15 adds an
+entry's `outcome`, set only on an idea the session pass wrote itself
+([2_design.md §11.6](../2_design.md#116-idea-capture-after-finding-is-gone)).
+Format 14 adds
 `statement` and `subject` to each proposal candidate and `stated_by` to each
 entry ([2_design.md §11.1](../2_design.md#111-a-claim-carries-a-statement)).
 Format 13 adds
@@ -129,6 +132,21 @@ and clears the quote; `stated_by` stays. A Daniel entry with a quote but no
 `store_corrupt`. An entry approved from an older candidate (no statement)
 keeps the quote as its content with `stated_by: null`.
 
+Format 15 adds `outcome` (`{state: open|parked|task, reason, task}` or
+`null`), upgraded to `null`. It is set exactly on an entry the session pass
+wrote itself under a `write`-route tag (2_design.md §11.6), and `null` on
+every other entry. Such an entry has `author` and `stated_by` both `{kind:
+scribe, name: session-pass}`, `said: ""`, `content_from` Daniel's user turn
+(`{kind: message, role: user, message, at}`), a cite, scribe's statement as
+content and his verbatim span in `quote`, and `window`, `evidence` and
+`approved_by` `null`. `open` has `reason` and `task` `null`; `parked` has
+Daniel's parking words verbatim in `reason` (redacted text) and `task`
+`null`; `task` has a task id (at most 64 characters) in `task` and `reason`
+`null` (reserved: the pass never writes it). Forgetting such an entry blanks
+the content, clears the quote and the parked `reason`; `outcome.state`
+stays. An `outcome` on any other entry, a pass-written entry without one, or
+any other author or source on it is `store_corrupt`.
+
 **Session keys:** `format`, `kind`, `id`, `status` (`open`, `final`),
 `project`, `topics`, `related` (model-extracted references, unchanged by
 links), `links` (a list, possibly empty, of `{type, session}`: `type` is
@@ -174,7 +192,7 @@ the current header and log (see **Format 4** below); later steps then apply.
 
 ## JSON documents
 
-- `control.json` (written at format 14; an older file upgrades on read): `{"sessions": {"<session-id>": {"on",
+- `control.json` (written at format 15; an older file upgrades on read): `{"sessions": {"<session-id>": {"on",
   "since", "due", "final", "consecutive_failures", "retry_after",
   "pending_links", "cataloged_by"}}}`. `pending_links` holds `{type, session}` links
   Daniel asserted before the session had a record; the pass that writes
@@ -184,7 +202,7 @@ the current header and log (see **Format 4** below); later steps then apply.
   automatic attempt waits 5, 10, 20, 40, then at most 60 minutes. Success
   or switching off resets both retry fields. Explicit `--session` bypasses
   the delay.
-- `proposals.json` (written at format 14; an older file upgrades on read): `{"proposals": [{"id": "p-<n>", "kind":
+- `proposals.json` (written at format 15; an older file upgrades on read): `{"proposals": [{"id": "p-<n>", "kind":
   "supersedes"|"stale", "older", "newer", "reason", "quotes": [{"entry",
   "text"}], "state": "open"|"approved"|"rejected", "opened_at",
   "settled_at", "settled_by"}]}`. `newer`, `settled_at` and `settled_by`
@@ -223,13 +241,13 @@ the current header and log (see **Format 4** below); later steps then apply.
 - `cataloged_by` on a `control.json` switch is `null` or `{at, by}`;
   `/scribe on` keeps it. *(S14)* `session catalog` sets it and the pass
   copies it onto the record.
-- (S12) `tags.json` (written at format 14; introduced at format 5): `{"tags": [{"name",
+- (S12) `tags.json` (written at format 15; introduced at format 5): `{"tags": [{"name",
   "aliases", "description", "stale_after_days", "author", "updated_by", "created",
   "updated"}]}`, sorted by name; `name` and aliases as for config tags,
   `description` accepts 1–300 characters before redaction, `stale_after_days` a positive
   integer or `null`, `author` of kind `agent`; `updated_by` is the last updating agent or
   `null`. Absent is no store tags.
-- `pickups.json` (written at format 14; introduced at format 8, no older form): `{"pickups": [{"entry", "author",
+- `pickups.json` (written at format 15; introduced at format 8, no older form): `{"pickups": [{"entry", "author",
   "at", "result", "rejected"}]}`, oldest first: a consumer's note that it
   picked up the action entry `entry` (`author` of kind `agent`, `result` a
   reference or `null`), or with `rejected: true`, that the human rejected
@@ -543,6 +561,11 @@ exits 0.
   changes. A format-13 entry decodes through its frozen shape (`EntryV13`)
   and a format-13 `proposals.json` through `ProposalsV13`, so a stray
   format-14 key in an older file is refused.
+- **Format 15** (idea outcome, 2_design.md §11.6). Append-only step 14→15
+  (`idea_outcome`) adds null `outcome` to every entry; nothing else
+  changes. A format-14 entry decodes through its frozen shape (`EntryV14`)
+  and a format-14 `proposals.json` through `ProposalsDocument`, so a stray
+  `outcome` key in an older entry is refused.
 - **Agent writes** (S12). Each write verb takes the lock, checks the
   author guards (a reserved `--author` name — `daniel`, `scribe`,
   `consistency`, `session-pass`, `tag-retired` — is refused `reserved_author`; a Daniel entry's content,
@@ -603,7 +626,8 @@ exits 0.
   `proposal.candidate.admitted.matched` and
   `proposal.candidate.admitted.criteria`; (format 13) also
   `entry.instruction.quote` and `proposal.instruction.quote`; (format 14) also
-  `proposal.candidate.statement` and `proposal.candidate.subject`. A masked segment
+  `proposal.candidate.statement` and `proposal.candidate.subject`; (format
+  15) also `entry.outcome.reason` and `entry.outcome.task`. A masked segment
   heading is cut back to 80 characters. Values shorter than 8 characters are not masked;
   identifiers, timestamps and paths are not free text. A `[redact] env`
   name with no value in the writer's environment refuses the write
