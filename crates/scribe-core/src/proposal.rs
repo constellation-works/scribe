@@ -172,7 +172,7 @@ pub struct Proposal {
     #[serde(deserialize_with = "nullable")]
     pub closed_reason: Option<ClosedReason>,
     /// Daniel's checked instruction that settled this candidate proposal
-    /// (format 12); `null` when Daniel or scribe settled it, or while open.
+    /// (format 13); `null` when Daniel or scribe settled it, or while open.
     #[serde(deserialize_with = "nullable")]
     pub instruction: Option<Instruction>,
 }

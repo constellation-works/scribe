@@ -183,8 +183,11 @@ the current header and log (see **Format 4** below); later steps then apply.
   proposal reason without replacing its original `author`. Format 11 adds
   `closed_reason` (`null`, `"tag_retired"` on a `rejected` proposal
   scribe closed itself, or `"instructed"` on a `rejected` candidate proposal
-  an agent closed on Daniel's checked instruction; any other state or
-  proposal kind with a reason is refused as corrupt) and, on each `candidate`,
+  an agent closed on Daniel's checked instruction; a reason on any other
+  state is refused as corrupt, and `"instructed"` on a proposal that is not a
+  candidate is refused too. `"tag_retired"` stays readable on a rejected
+  proposal of any kind, as format 11 accepted it; scribe itself closes only
+  open candidates) and, on each `candidate`,
   `admitted` (`null`, or `{trigger, matched, criteria}`: the trigger that
   fired, the turn's words it matched, at most 120 characters, and the tag's
   `criteria` or `null`). Format 13 adds `instruction` (`null`, or

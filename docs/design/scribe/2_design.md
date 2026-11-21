@@ -3435,7 +3435,7 @@ forget, erase or for good.
 
 ### 12.7 Store format
 
-**Built (task 2 of 6, ORB-26243, store format 13).** Step 12→13
+**Built (task 2 of 6, ORB-26365, store format 13).** Step 12→13
 (`instructed_settlement`): a proposal gains `instruction` (`null` on upgrade);
 an entry gains `approved_by` and `instruction` (`null` on upgrade).
 `closed_reason` comes from §11.2's format 11, gaining the value `instructed`.
