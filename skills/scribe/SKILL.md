@@ -87,17 +87,13 @@ and grouped, never as a gate on the work:
   or its `session show <id> --json` reports `on: true`), stop offering
   ready-to-type lines for preferences. The session pass now
   proposes unmarked statements from the human's own turns, with the exact
-  quote, source turn and suggested memory tag. It also reads your own
-  recaps: a measured result it proposes as a `finding`, something you said
-  is not verified or needs a check-back under `remind` or `idea`. It offers
+  quote, source turn and suggested memory tag. It offers
   at most three per session pass, with at most twenty open candidates in
   the store. Mention open candidates in the brief; the human keeps one
   with `#scribe approve <proposal-id>` or drops it for good with
-  `#scribe reject <proposal-id>`. Approval of one from the human's turn
-  writes the entry as theirs, citing the original turn; approval of one
-  from your turn writes an agent entry under the assistant, never as
-  the human's words. No entry exists before approval. Action tags and
-  findings you write yourself follow their separate rules below.
+  `#scribe reject <proposal-id>`. Approval writes the entry as theirs,
+  citing the original turn. No entry exists before approval. Action tags
+  you write yourself follow their separate rules below.
   When the session is off or its state is unknown, and the human states a
   standing preference or rule worth keeping, offer a ready-to-type
   `#scribe <tag>: <words>` line in their words. When it applies in every repository, offer
@@ -131,17 +127,16 @@ and grouped, never as a gate on the work:
 
 ## Action tags: work items you write yourself
 
-An action tag's entries are work for a consumer outside scribe (an intake
-that turns a `standard` entry into a standards change, or a check-back
-under `remind`). `scribe tag
+An action tag's entries are work for a consumer outside scribe (for example,
+an intake that turns a `standard` entry into a standards change). `scribe tag
 list` shows them in its ACTION column: `free` or `ask-first`, plus `quote`
-when an entry needs the human's own words. `standard`, `remind` and `idea`
+when an entry needs the human's own words. `standard` and `idea`
 ship; config can mark any other tag. Leave action entries out of the
 session brief and of preference reads, and out of answers unless asked
 about them; `question ask` skips them unless its scope names their tag.
 
 - **Only in an interactive session the human is in.** There, when the work
-  surfaces a check-back, an idea or a correction to a standard, write the
+  surfaces an idea or a correction to a standard, write the
   entry yourself, unasked, under a `free` tag:
   `scribe entry add --tag <tag> --author <name> --related session:<id> '<words>'`.
   Then tell the human in one visible line, for example
@@ -154,9 +149,9 @@ about them; `question ask` skips them unless its scope names their tag.
   jobs, Orbit task runs, subagents and any session the human is not typing
   in.
 - **Work and friction go to Orbit, in every session**, typed by the human
-  or not: file work that is not done with `orbit.task.add` and a problem
-  worth recording with `orbit.friction`. scribe has no `task` or `friction`
-  entry for them.
+  or not: file work that is not done (including check-backs, with
+  `not_before`) with `orbit.task.add` and a problem worth recording with
+  `orbit.friction`. scribe has no `task` or `friction` entry for them.
 - **A tag that needs a quote** (`quote` in the ACTION column, such as
   `standard`): pass the human's correction word for word from one of their
   typed turns of this session, `--quote '<their words>'` with
@@ -169,38 +164,6 @@ about them; `question ask` skips them unless its scope names their tag.
   the pass propose them for typed approval. In an off session or when its
   state is unknown, offer a `#scribe <tag>: <words>` line for them to type.
   Never write their entry yourself.
-
-## Findings: verified results you record yourself
-
-A `finding` entry records a result you measured or verified, so a later
-session finds it instead of re-deriving it. It is a memory tag with no
-consumer: nothing picks it up, and it never appears in the session brief
-or the session-start line — it is pulled through `ask` and search only,
-where it reads as your claim as of its date, with its evidence pointer.
-
-- **Search before re-measuring.** Before measuring or verifying something
-  costly, search first: `scribe record search "<words>" --json` and
-  `scribe entry list --tag finding --json`. Reuse a finding that still
-  holds; write a new one when you have measured something new.
-- **What qualifies.** All three: a number or a verified fact, a pointer
-  to its evidence (a path, task, run, experiment or commit), and costly
-  to re-derive. An opinion, a plan or an intermediate step is not a
-  finding (pending work is filed in Orbit with `orbit.task.add`, a check-back is
-  a `remind`, a future consideration an `idea`).
-- **Write it at the time**, only in an interactive session the human is
-  in, unasked, like a free action entry:
-  `scribe entry add --tag finding --author <name> --related session:<id> --evidence '<pointer>' '<result>'`
-  (add `--as-of YYYY-MM-DD` when the result was true on another day).
-  Then one visible line naming the id and the cancel, for example
-  `scribe: wrote <id> (cancel: #scribe retire <id>)`. When the human says
-  to drop it, retire it yourself as with an action entry. Every other
-  session writes none, as with action tags.
-- **Keep it rare.** At most **3 findings per session**; scribe refuses
-  the fourth and says so. A finding with no evidence pointer is refused
-  and writes nothing. If you did not record one, the session pass may
-  propose it from your recap for the human's typed approval — still
-  write the important ones yourself, while the numbers are in front of
-  you.
 
 To initialize a requested project integration, use the explicit target:
 

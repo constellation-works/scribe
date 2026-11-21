@@ -235,14 +235,14 @@ fn a_window_over_the_cap_is_cut_from_the_oldest_turn_and_says_so() {
         .map(|(u, t)| (u.as_str(), "assistant", t.as_str()))
         .collect();
     claude.write(&turns);
-    claude.prompt(&fx, "#scribe remind: tidy the sizes");
-    let window = &entry(&fx, "remind-1", &["--window"])["window"];
+    claude.prompt(&fx, "#scribe idea: tidy the sizes");
+    let window = &entry(&fx, "idea-1", &["--window"])["window"];
     let kept = window["turns"].as_array().unwrap();
     assert_eq!(kept.len(), 40);
     assert_eq!(window["truncated"], true);
     assert_eq!(window["omitted"], 11);
     assert_eq!(kept[0]["message"], "a-11", "the oldest turns went first");
-    assert_eq!(kept[39]["text"], "#scribe remind: tidy the sizes");
+    assert_eq!(kept[39]["text"], "#scribe idea: tidy the sizes");
 }
 
 #[test]
@@ -338,14 +338,14 @@ fn a_config_marked_action_tag_captures_with_a_window_and_is_read_and_picked_up()
 }
 
 #[test]
-fn task_and_friction_are_unknown_tags_without_config_and_not_in_the_tag_list() {
+fn task_friction_remind_and_finding_are_unknown_tags_without_config_and_not_in_the_tag_list() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
     claude.write(&[("u-1", "user", "the sync is slow")]);
-    for tag in ["task", "friction"] {
+    for tag in ["task", "friction", "remind", "finding"] {
         let echo = claude.prompt(&fx, &format!("#scribe {tag}: profile the sync"));
         assert!(
-            echo.contains(&format!("refused \"#scribe {tag}: profile the sync\" — no tag \"{tag}\"; tags: finding, idea, preferences, remind, standard")),
+            echo.contains(&format!("refused \"#scribe {tag}: profile the sync\" — no tag \"{tag}\"; tags: idea, preferences, standard")),
             "{echo}"
         );
         assert!(!fx.root().join("entries").join(tag).exists());
@@ -358,7 +358,7 @@ fn task_and_friction_are_unknown_tags_without_config_and_not_in_the_tag_list() {
         .filter(|t| t["action"].is_object())
         .map(|t| t["name"].as_str().unwrap())
         .collect();
-    assert_eq!(action, ["idea", "remind", "standard"]);
+    assert_eq!(action, ["idea", "standard"]);
 }
 
 #[test]
@@ -396,32 +396,32 @@ fn an_agent_entry_waits_out_its_cancel_window_and_retiring_it_cancels_it() {
         "entry",
         "add",
         "--tag",
-        "remind",
+        "idea",
         "--author",
         "opus",
         "profile the sync",
     ]);
-    let fresh = entry(&fx, "remind-1", &[]);
+    let fresh = entry(&fx, "idea-1", &[]);
     assert_eq!(fresh["action"]["past_cancel_window"], false);
     assert!(fresh["action"]["cancel_window_ends"].is_string());
     assert_eq!(
-        refused(&fx, &["entry", "pickup", "remind-1", "--author", "intake"]),
+        refused(&fx, &["entry", "pickup", "idea-1", "--author", "intake"]),
         "cancel_window"
     );
 
-    let echo = claude.prompt(&fx, "#scribe retire remind-1");
-    assert!(echo.contains("retired remind-1"), "{echo}");
-    let retired = json_of(&fx.ok(&["entry", "list", "--tag", "remind", "--json"]));
+    let echo = claude.prompt(&fx, "#scribe retire idea-1");
+    assert!(echo.contains("retired idea-1"), "{echo}");
+    let retired = json_of(&fx.ok(&["entry", "list", "--tag", "idea", "--json"]));
     assert_eq!(retired["entries"][0]["status"], "retired");
-    assert_eq!(tag_row(&fx, "remind")["action"]["retired"], 1);
+    assert_eq!(tag_row(&fx, "idea")["action"]["retired"], 1);
 
-    backdate(&fx, "remind", "remind-1");
+    backdate(&fx, "idea", "idea-1");
     assert_eq!(
-        entry(&fx, "remind-1", &[])["action"]["past_cancel_window"],
+        entry(&fx, "idea-1", &[])["action"]["past_cancel_window"],
         true
     );
     assert_eq!(
-        refused(&fx, &["entry", "pickup", "remind-1", "--author", "intake"]),
+        refused(&fx, &["entry", "pickup", "idea-1", "--author", "intake"]),
         "entry_not_active",
         "a cancelled entry is not picked up"
     );
@@ -437,12 +437,12 @@ fn pickups_are_recorded_once_refused_off_action_tags_and_count_rejections() {
         "entry",
         "add",
         "--tag",
-        "remind",
+        "idea",
         "--author",
         "opus",
         "profile the sync",
     ]);
-    backdate(&fx, "remind", "remind-1");
+    backdate(&fx, "idea", "idea-1");
     assert_eq!(
         refused(
             &fx,
@@ -454,7 +454,7 @@ fn pickups_are_recorded_once_refused_off_action_tags_and_count_rejections() {
     let args = [
         "entry",
         "pickup",
-        "remind-1",
+        "idea-1",
         "--author",
         "intake",
         "--result",
@@ -481,11 +481,11 @@ fn pickups_are_recorded_once_refused_off_action_tags_and_count_rejections() {
         pickups,
         [
             json!(["failure", "preferences-1", "not_action_tag", "intake"]),
-            json!(["success", "remind-1", null, "intake"]),
+            json!(["success", "idea-1", null, "intake"]),
         ],
         "the refusal and the write are audited; the no-op writes no line"
     );
-    let state = &entry(&fx, "remind-1", &[])["action"];
+    let state = &entry(&fx, "idea-1", &[])["action"];
     assert_eq!(state["picked_up"], true);
     assert_eq!(state["pickups"][0]["author"]["name"], "intake");
     assert_eq!(state["pickups"][0]["result"], "task:T-9");
@@ -493,13 +493,13 @@ fn pickups_are_recorded_once_refused_off_action_tags_and_count_rejections() {
     fx.ok(&[
         "entry",
         "pickup",
-        "remind-1",
+        "idea-1",
         "--author",
         "intake",
         "--rejected",
     ]);
-    assert_eq!(entry(&fx, "remind-1", &[])["action"]["rejected"], true);
-    assert_eq!(tag_row(&fx, "remind")["action"]["rejected"], 1);
+    assert_eq!(entry(&fx, "idea-1", &[])["action"]["rejected"], true);
+    assert_eq!(tag_row(&fx, "idea")["action"]["rejected"], 1);
 }
 
 #[test]
@@ -630,11 +630,11 @@ fn session_start_counts_action_entries_waiting_with_no_pickup() {
     );
     claude.prompt(
         &fx,
-        "#scribe remind: profile the sync\n#scribe standard: units\n#scribe preferences: fridays",
+        "#scribe idea: profile the sync\n#scribe standard: units\n#scribe preferences: fridays",
     );
     assert_eq!(claude.session_start(&fx), "", "nothing older than an hour");
     for (tag, id) in [
-        ("remind", "remind-1"),
+        ("idea", "idea-1"),
         ("standard", "standard-1"),
         ("preferences", "preferences-1"),
     ] {
@@ -643,9 +643,9 @@ fn session_start_counts_action_entries_waiting_with_no_pickup() {
     let reply: Value = serde_json::from_str(&claude.session_start(&fx)).unwrap();
     assert_eq!(
         reply["systemMessage"],
-        "scribe: 2 action entries not picked up after 1 hour (remind 1, standard 1) — scribe entry list --tag <tag> --status active"
+        "scribe: 2 action entries not picked up after 1 hour (idea 1, standard 1) — scribe entry list --tag <tag> --status active"
     );
-    fx.ok(&["entry", "pickup", "remind-1", "--author", "intake"]);
+    fx.ok(&["entry", "pickup", "idea-1", "--author", "intake"]);
     fx.ok(&["entry", "pickup", "standard-1", "--author", "intake"]);
     assert_eq!(claude.session_start(&fx), "");
 }

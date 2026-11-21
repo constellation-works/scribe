@@ -9,7 +9,7 @@
 //! scribe proposal list`. It then counts the active entries under action
 //! tags older than `action::STUCK_AFTER` with no pickup in `pickups.json`
 //! and, when there are any, adds one line, `scribe: 2 action entries not
-//! picked up after 1 hour (standard 1, remind 1) — scribe entry list --tag
+//! picked up after 1 hour (standard 1, idea 1) — scribe entry list --tag
 //! <tag> --status active`. When this session is not opted in and an active
 //! session in the same project was recorded within the last day, it adds
 //! `scribe: this may continue <id> (recorded) — type /scribe on --from <id>

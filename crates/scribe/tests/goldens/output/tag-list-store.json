@@ -3,18 +3,6 @@
     {
       "author": null,
       "source": "config",
-      "name": "finding",
-      "aliases": [],
-      "description": "a measured or verified result, with its evidence",
-      "stale_after_days": null,
-      "configured": true,
-      "entries": 0,
-      "action": null,
-      "route": null
-    },
-    {
-      "author": null,
-      "source": "config",
       "name": "idea",
       "aliases": [],
       "description": "a future consideration worth revisiting",
@@ -64,23 +52,6 @@
     {
       "author": null,
       "source": "config",
-      "name": "remind",
-      "aliases": [],
-      "description": "something to check back on at a later time",
-      "stale_after_days": null,
-      "configured": true,
-      "entries": 0,
-      "action": {
-        "mode": "free",
-        "require_quote": false,
-        "retired": 0,
-        "rejected": 0
-      },
-      "route": null
-    },
-    {
-      "author": null,
-      "source": "config",
       "name": "standard",
       "aliases": [],
       "description": "a rule change for the constellation standards, in Daniel's words",
@@ -96,7 +67,7 @@
       "route": null
     }
   ],
-  "total": 6,
+  "total": 4,
   "truncated": false,
   "warnings": []
 }

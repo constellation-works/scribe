@@ -357,7 +357,7 @@ fn an_unknown_tag_is_refused_with_the_configured_tags_and_audited_by_code() {
     let out = hook_ok(&fx, "user-prompt-submit", &payload);
     assert_eq!(
         reply(&out)["systemMessage"],
-        "scribe: refused \"#scribe add stand-up at nine to my habits\" — no tag \"habits\"; tags: finding, idea, preferences, remind, rituals, standard\n\
+        "scribe: refused \"#scribe add stand-up at nine to my habits\" — no tag \"habits\"; tags: idea, preferences, rituals, standard\n\
          scribe: added rituals-1 to rituals — \"stand-up at nine\""
     );
     let lines = audit(&fx);
@@ -453,7 +453,7 @@ fn a_mixed_prompt_notes_each_line_by_whether_it_was_recorded() {
     let reply = reply(&out);
     assert_eq!(
         reply["hookSpecificOutput"]["additionalContext"],
-        "scribe: refused \"#scribe add stand-up at nine to my habits\" — no tag \"habits\"; tags: finding, idea, preferences, remind, rituals, standard (not recorded by scribe; relay this to Daniel)\n\
+        "scribe: refused \"#scribe add stand-up at nine to my habits\" — no tag \"habits\"; tags: idea, preferences, rituals, standard (not recorded by scribe; relay this to Daniel)\n\
          scribe: added rituals-1 to rituals — \"stand-up at nine\" (recorded by scribe; no action needed)"
     );
 }
@@ -1698,7 +1698,7 @@ fn decisions_and_its_old_aliases_are_unknown_tags_without_config() {
         assert_eq!(
             reply(&out)["systemMessage"],
             format!(
-                "scribe: refused \"{line}\" — no tag \"{word}\"; tags: finding, idea, preferences, remind, standard"
+                "scribe: refused \"{line}\" — no tag \"{word}\"; tags: idea, preferences, standard"
             ),
             "{word}"
         );

@@ -94,7 +94,6 @@ pub(super) fn check(
             });
         if answer.quote.chars().count() > 400
             || answer.message.chars().count() > 128
-            || answer.evidence.is_some()
             || !fits
             || checked
                 .iter()

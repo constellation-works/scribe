@@ -228,12 +228,12 @@ inactive_after_days = 120        # days since a session's last message
 paths = ["codebases/orbit"]      # path fragments counted by transcript list
 ```
 
-The default memory tags are `preferences` (aliases `preference`,
-`pref`; stale after 180 days) and `finding`. An entry under a tag no config
-or `tags.json` names (such as a `decisions` entry from before that tag
-stopped shipping) stays listed, shown, searched, cited by `ask` and
-settled. The
-action tags `standard` (`require_quote`), `remind` and `idea` ship too,
+The default memory tag is `preferences` (aliases `preference`,
+`pref`; stale after 180 days). An entry under a tag no config
+or `tags.json` names (such as a `decisions`, `remind` or `finding` entry
+from before that tag stopped shipping) stays listed, shown, searched,
+cited by `ask` and settled. The
+action tags `standard` (`require_quote`) and `idea` ship too,
 with no aliases, and stay when a config has its own `[tags]`, unless it
 claims their names; a config tag of the same name starts from the shipped
 settings and overrides what it sets. `require_quote` or `ask_first` on a tag

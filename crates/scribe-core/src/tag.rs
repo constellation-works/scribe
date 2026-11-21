@@ -4,15 +4,14 @@
 //! Tags come from `config.toml` (`[tags.<name>]`) and agent-created
 //! `tags.json`; config claims take precedence. Without a config the defaults below apply: `preferences`
 //! (docs/design/scribe/4_decisions.md, "Decisions are recorded on their Orbit
-//! task, not in a shipped tag"), plus the shipped action tags `standard`,
-//! `remind` and `idea` and the shipped memory tag
-//! `finding`, which a config with its own tags keeps unless it claims their
-//! names ("Action tags are marked in config, and three ship"; "Findings are
-//! scribe entries with no worker").
+//! task, not in a shipped tag"), plus the shipped action tags `standard`
+//! and `idea`, which a config with its own tags keeps unless it claims their
+//! names ("Action tags are marked in config").
 //! An action tag's entries are work items a consumer outside scribe picks
-//! up; `ask` leaves them out unless asked. A `finding` entry is an agent's
-//! measured or verified result with an evidence pointer: no consumer, no
-//! transcript window, found again only through `ask` or search.
+//! up; `ask` leaves them out unless asked. A memory tag configured with
+//! `require_evidence = true` (such as `finding` when configured) records an
+//! agent's measured or verified result with an evidence pointer: no consumer,
+//! no transcript window, found again only through `ask` or search.
 //! A tag's capture rules (2_design.md §11.2: `from`, `route`, `triggers`,
 //! `criteria`, `not`) decide which of Daniel's turns the session pass may
 //! claim under it; `preferences` and `idea` ship rules, the shipped values
@@ -57,7 +56,7 @@ pub struct TagDef {
     /// work items for a consumer, captured with a transcript window.
     pub action: Option<ActionTag>,
     /// An agent entry must carry an evidence pointer and an as-of date
-    /// (config `require_evidence = true`): the shipped `finding` tag.
+    /// (config `require_evidence = true`).
     /// Memory tags only; action tags refuse the flag in config.
     pub require_evidence: bool,
     /// Which turns the session pass may turn into a claim under it
@@ -276,13 +275,8 @@ impl ActionTag {
 }
 
 /// The action tags scribe ships: `(name, description, require_quote)`.
-pub const SHIPPED_ACTION_TAGS: [(&str, &str, bool); 3] = [
+pub const SHIPPED_ACTION_TAGS: [(&str, &str, bool); 2] = [
     ("idea", "a future consideration worth revisiting", false),
-    (
-        "remind",
-        "something to check back on at a later time",
-        false,
-    ),
     (
         "standard",
         "a rule change for the constellation standards, in Daniel's words",
@@ -290,7 +284,8 @@ pub const SHIPPED_ACTION_TAGS: [(&str, &str, bool); 3] = [
     ),
 ];
 
-/// The shipped `finding` memory tag's name.
+/// Historical name of the `finding` tag (no longer shipped by default; kept
+/// for approving stored format-10 assistant candidates).
 pub const FINDING_TAG: &str = "finding";
 
 /// The most findings one writing session may record (docs/design/scribe/
@@ -402,26 +397,9 @@ impl TagTable {
             })
     }
 
-    /// The shipped `finding` memory tag, as scribe defines it.
-    #[must_use]
-    pub fn shipped_finding() -> Option<TagDef> {
-        Some(TagDef {
-            name: TagName::try_from(FINDING_TAG.to_owned()).ok()?,
-            aliases: Vec::new(),
-            description: Some(String::from(
-                "a measured or verified result, with its evidence",
-            )),
-            stale_after_days: None,
-            action: None,
-            require_evidence: true,
-            capture: CaptureRules::shipped(FINDING_TAG),
-        })
-    }
-
-    /// This table plus every shipped action tag and the shipped `finding`
-    /// tag whose name it does not already claim (as a name or an alias), so
-    /// a config that declares its own tags still has them; a config tag of
-    /// the same name replaces one.
+    /// This table plus every shipped action tag whose name it does not already
+    /// claim (as a name or an alias), so a config that declares its own tags
+    /// still has them; a config tag of the same name replaces one.
     #[must_use]
     pub fn with_shipped_actions(mut self) -> Self {
         for (name, _, _) in SHIPPED_ACTION_TAGS {
@@ -430,11 +408,6 @@ impl TagTable {
             {
                 self.tags.push(def);
             }
-        }
-        if self.resolve(FINDING_TAG).is_none()
-            && let Some(def) = Self::shipped_finding()
-        {
-            self.tags.push(def);
         }
         self.tags.sort_by(|a, b| a.name.cmp(&b.name));
         self
@@ -448,8 +421,7 @@ impl TagTable {
     }
 
     /// Whether the tag named `name` requires an evidence pointer on an
-    /// agent entry (the shipped `finding` tag, or a config
-    /// `require_evidence = true` memory tag).
+    /// agent entry (a config `require_evidence = true` memory tag).
     #[must_use]
     pub fn require_evidence(&self, name: &TagName) -> bool {
         self.get(name).is_some_and(|def| def.require_evidence)
