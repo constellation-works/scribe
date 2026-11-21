@@ -796,18 +796,22 @@ fn covers_turn_keeps_a_retired_entry_for_the_turn_it_was_active() {
     let mut retired_after = super::entry("preferences-1", T0);
     retired_after.content = statement.to_owned();
     retired_after.status = EntryStatus::Retired;
+    retired_after.inactive_since = Some(T0 + Duration::hours(2));
     retired_after.updated = T0 + Duration::hours(2);
     let mut retired_before = super::entry("preferences-2", T0 - Duration::hours(3));
     retired_before.content = statement.to_owned();
     retired_before.status = EntryStatus::Retired;
+    retired_before.inactive_since = Some(T0 - Duration::hours(1));
     retired_before.updated = T0 - Duration::hours(1);
     let mut superseded_after = super::entry("preferences-3", T0 - Duration::hours(1));
     superseded_after.content = statement.to_owned();
     superseded_after.status = EntryStatus::Superseded;
+    superseded_after.inactive_since = Some(T0 + Duration::minutes(1));
     superseded_after.updated = T0 + Duration::minutes(1);
     let mut forgotten = super::entry("preferences-4", T0 - Duration::hours(1));
     forgotten.content = statement.to_owned();
     forgotten.status = EntryStatus::Forgotten;
+    forgotten.inactive_since = Some(T0 + Duration::hours(1));
     forgotten.updated = T0 + Duration::hours(1);
     forgotten.content.clear();
     let tag: crate::entry::TagName = "preferences".parse().unwrap();
@@ -817,6 +821,7 @@ fn covers_turn_keeps_a_retired_entry_for_the_turn_it_was_active() {
     let mut same_second = super::entry("preferences-5", T0);
     same_second.content = statement.to_owned();
     same_second.status = EntryStatus::Retired;
+    same_second.inactive_since = Some(T0);
     same_second.updated = T0;
     assert!(
         covers(&retired_after),
@@ -839,4 +844,66 @@ fn covers_turn_keeps_a_retired_entry_for_the_turn_it_was_active() {
         pass::covering_entry(&[retired_after], statement, &tag, &project).is_none(),
         "a new line after retirement is not covered by the live check"
     );
+}
+
+#[test]
+fn covers_turn_compares_a_sub_second_turn_with_its_retirement_in_whole_seconds() {
+    use crate::entry::EntryStatus;
+    let statement = "use cargo test in CI";
+    let tag: crate::entry::TagName = "preferences".parse().unwrap();
+    let project: crate::record::Project = "scribe".parse().unwrap();
+    // Typed at .250 and retired at .800 of the same second; the store
+    // keeps the retirement as whole seconds.
+    let mut entry = super::entry("preferences-1", T0 - Duration::hours(1));
+    entry.content = statement.to_owned();
+    entry.status = EntryStatus::Retired;
+    entry.inactive_since = Some(T0);
+    entry.updated = T0;
+    let typed = T0 + Duration::milliseconds(250);
+    assert!(
+        pass::covers_turn(&entry, statement, &tag, &project, typed),
+        "a turn inside the retirement's second is covered"
+    );
+    assert!(
+        !pass::covers_turn(
+            &entry,
+            statement,
+            &tag,
+            &project,
+            T0 + Duration::seconds(1) + Duration::milliseconds(250)
+        ),
+        "a turn in the next second is not"
+    );
+    // An entry recovered with a sub-second creation covers a later turn of
+    // its own second.
+    let mut recovered = super::entry("preferences-2", T0 + Duration::milliseconds(900));
+    recovered.content = statement.to_owned();
+    assert!(pass::covers_turn(
+        &recovered, statement, &tag, &project, typed
+    ));
+}
+
+#[test]
+fn covers_turn_ends_at_the_time_an_entry_left_active_not_its_last_update() {
+    use crate::entry::EntryStatus;
+    let statement = "use cargo test in CI";
+    let tag: crate::entry::TagName = "preferences".parse().unwrap();
+    let project: crate::record::Project = "scribe".parse().unwrap();
+    let mut entry = super::entry("preferences-1", T0 - Duration::hours(3));
+    entry.content = statement.to_owned();
+    entry.status = EntryStatus::Retired;
+    entry.inactive_since = Some(T0 - Duration::hours(1));
+    // A topic edit or a filled cite after retirement.
+    entry.updated = T0 + Duration::hours(1);
+    assert!(
+        !pass::covers_turn(&entry, statement, &tag, &project, T0),
+        "a turn after the retirement is not covered by a later metadata write"
+    );
+    assert!(pass::covers_turn(
+        &entry,
+        statement,
+        &tag,
+        &project,
+        T0 - Duration::hours(2)
+    ));
 }

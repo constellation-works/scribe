@@ -343,6 +343,81 @@ mod capture {
     }
 
     #[test]
+    fn a_metadata_edit_after_retirement_does_not_extend_the_turns_it_covered() {
+        use crate::capture::Turn;
+        use crate::consistency::{Settle, Settled};
+        let dir = private_tempdir();
+        let store = Store::open(dir.path());
+        // Recorded at 19:05:40, retired at 20:00, its topics edited at 22:00.
+        store
+            .capture(
+                vec![draft("preferences", 1, "use rg")],
+                &Redactor::default(),
+            )
+            .unwrap();
+        let cite = draft("preferences", 9, "use rg").cite;
+        let settled = store
+            .settle(
+                &Settle::Retire("preferences-1".parse().unwrap()),
+                &cite,
+                datetime!(2026-11-02 20:00:00 UTC),
+            )
+            .unwrap();
+        assert!(matches!(settled, Settled::Retired(_)));
+        let (edited, changed) = store
+            .update_agent_entry(
+                "preferences-1",
+                crate::entry::EntryPatch {
+                    content: None,
+                    add_topics: vec!["search".parse().unwrap()],
+                    remove_topics: Vec::new(),
+                    add_related: Vec::new(),
+                    remove_related: Vec::new(),
+                },
+                "sol".parse().unwrap(),
+                datetime!(2026-11-02 22:00:00 UTC),
+                &Redactor::default(),
+            )
+            .unwrap();
+        assert!(changed);
+        assert_eq!(edited.updated, datetime!(2026-11-02 22:00:00 UTC));
+        assert_eq!(
+            edited.inactive_since,
+            Some(datetime!(2026-11-02 20:00:00 UTC)),
+            "a metadata write keeps the time the entry left active"
+        );
+        let turn = |at| Turn {
+            session: "s-9".parse().unwrap(),
+            at,
+            prompt_sha256: "b".repeat(64),
+            cwd: String::from("/work"),
+            project: "scribe".parse().unwrap(),
+            provider: String::from("claude-code").try_into().unwrap(),
+            host: String::from("host").try_into().unwrap(),
+        };
+        let prompt = "#scribe preferences: use rg";
+        let between = store
+            .covered_instruction_lines(
+                prompt,
+                &turn(datetime!(2026-11-02 21:00:00 UTC)),
+                &Redactor::default(),
+            )
+            .unwrap();
+        assert!(
+            between.is_empty(),
+            "a line typed after the retirement is not covered: {between:?}"
+        );
+        let before = store
+            .covered_instruction_lines(
+                prompt,
+                &turn(datetime!(2026-11-02 19:30:00 UTC)),
+                &Redactor::default(),
+            )
+            .unwrap();
+        assert_eq!(before.into_iter().collect::<Vec<_>>(), [1]);
+    }
+
+    #[test]
     fn a_number_held_by_a_file_that_does_not_parse_is_not_reused() {
         let dir = private_tempdir();
         let root = dir.path();

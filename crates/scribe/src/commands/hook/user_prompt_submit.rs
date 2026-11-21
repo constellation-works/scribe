@@ -296,6 +296,21 @@ fn capture_prompt<M: Models>(
                             ))),
                         };
                         match capture::resolve(&referent, &window, answer, &turn, &config.tags) {
+                            // Stop recovery skips a resolved referent that an
+                            // entry covered when it was typed, as it skips a
+                            // covered form-2 line before this runs: capture
+                            // consults only entries active now, so a later
+                            // retirement would otherwise write it. A read
+                            // failure leaves the decision to capture.
+                            Some((draft, _))
+                                if recovery.is_some()
+                                    && ctx
+                                        .store()
+                                        .covered_draft(&draft, turn.at, &redactor)
+                                        .unwrap_or(false) =>
+                            {
+                                continue;
+                            }
                             Some((mut draft, guess)) => {
                                 if config.tags.action(&draft.tag).is_some() {
                                     draft.window = Some(capture::action_window(

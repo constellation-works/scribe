@@ -41,7 +41,7 @@ use time::OffsetDateTime;
 
 /// The newest store format: this build reads formats 1 to `FORMAT` of every
 /// document and would write `FORMAT`.
-pub(super) const FORMAT: u32 = 11;
+pub(super) const FORMAT: u32 = 12;
 
 /// Which document an upgrade step is applied to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,7 +79,35 @@ pub(super) const UPGRADES: &[Upgrade] = &[
     entry_candidates,
     finding_entries,
     capture_admission,
+    entry_inactive_since,
 ];
+
+/// Format 11 -> 12 adds `inactive_since` to each entry: `null` for an
+/// active one, and `updated` for one already retired, superseded or
+/// forgotten. That is the best time an older record holds; a metadata
+/// write after it left `active` may have moved `updated` later, which
+/// only makes Stop recovery count a few more turns as covered. Other
+/// documents are unchanged.
+fn entry_inactive_since(
+    document: Document,
+    mut value: serde_json::Value,
+) -> serde_json::Result<serde_json::Value> {
+    if document == Document::Entry
+        && let Some(entry) = value.as_object_mut()
+    {
+        let active = entry.get("status").and_then(serde_json::Value::as_str) == Some("active");
+        let since = if active {
+            serde_json::Value::Null
+        } else {
+            entry
+                .get("updated")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null)
+        };
+        entry.entry("inactive_since").or_insert(since);
+    }
+    Ok(value)
+}
 
 /// Format 10 -> 11 adds `admitted` (what trigger and criteria admitted it)
 /// to each proposal candidate and `closed_reason` (why scribe closed it) to
@@ -938,6 +966,13 @@ pub(super) fn decode_entry(
         }
         crate::AuthorKind::Scribe => false,
     };
+    let active = entry.status == crate::EntryStatus::Active;
+    if active != entry.inactive_since.is_none() {
+        return Err(shape(
+            path,
+            "inactive_since must be null exactly while the entry is active",
+        ));
+    }
     if !valid {
         return Err(shape(
             path,
@@ -1294,6 +1329,12 @@ fn decode_json<T: DeserializeOwned>(path: &Path, bytes: &[u8], document: Documen
         }
         Document::Proposals if from == 4 => {
             serde_json::from_slice::<ProposalsV4>(bytes).map_err(|e| Error::corrupt(path, e))?;
+        }
+        // Format 11 -> 12 changed only entries, so a format-11
+        // proposals.json checks against the current struct.
+        Document::Proposals if from == 11 => {
+            serde_json::from_slice::<ProposalsDocument>(bytes)
+                .map_err(|e| Error::corrupt(path, e))?;
         }
         Document::Proposals if from == 10 => {
             serde_json::from_slice::<ProposalsV10>(bytes).map_err(|e| Error::corrupt(path, e))?;

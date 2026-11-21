@@ -644,6 +644,7 @@ pub fn settle(
                 EntryStatus::Active => {
                     entry.status = EntryStatus::Retired;
                     entry.updated = now;
+                    entry.inactive_since = Some(now);
                     Settled::Retired(id.clone())
                 }
             }
@@ -664,6 +665,9 @@ pub fn settle(
             entry.window = None;
             entry.retirement_reason = None;
             entry.updated = now;
+            // Forgetting keeps the time a retired or superseded entry left
+            // `active`; an active one leaves it now.
+            entry.inactive_since.get_or_insert(now);
             for proposal in proposals.iter_mut() {
                 let about = proposal.older == *id || proposal.newer.as_ref() == Some(id);
                 if about {
@@ -1088,6 +1092,7 @@ pub(crate) fn apply_approval(proposal: &Proposal, entry: &mut Entry, now: Offset
     entry.status = status;
     entry.superseded_by = by;
     entry.updated = now;
+    entry.inactive_since = Some(now);
     if proposal
         .settled_author
         .as_ref()

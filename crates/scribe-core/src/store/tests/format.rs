@@ -363,11 +363,12 @@ fn a_format_ten_store_upgrades_with_null_admission_and_closed_reason_only() {
     assert_eq!(proposals[0].candidate.as_ref().unwrap().admitted, None);
     assert!(proposals.iter().all(|p| p.closed_reason.is_none()));
 
-    // Re-encoded at format 11, the old keys and values are untouched: the
-    // document differs only by the two new nulls and the format number.
+    // Re-encoded at the current format, the old keys and values are
+    // untouched: the document differs only by the two new nulls and the
+    // format number (format 12 leaves proposals unchanged).
     let encoded = crate::store::format::encode_proposals(path, &proposals).unwrap();
     let mut value: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
-    assert_eq!(value["format"], 11);
+    assert_eq!(value["format"], FORMAT);
     for p in value["proposals"].as_array_mut().unwrap() {
         let p = p.as_object_mut().unwrap();
         assert_eq!(p.remove("closed_reason"), Some(serde_json::Value::Null));
@@ -386,6 +387,58 @@ fn a_format_ten_store_upgrades_with_null_admission_and_closed_reason_only() {
     assert!(decode_proposals(path, stray.as_bytes()).is_err());
     let stray = old.replace(r#""host":"host"}"#, r#""host":"host","admitted":null}"#);
     assert!(decode_proposals(path, stray.as_bytes()).is_err());
+}
+
+#[test]
+fn a_format_eleven_entry_gains_inactive_since_from_its_status() {
+    // Format 11 -> 12: an active entry reads `inactive_since: null`; one
+    // already retired, superseded or forgotten reads its `updated`, the
+    // best time an older record holds.
+    let active = entry(&entry_text("")).unwrap();
+    assert_eq!(active.inactive_since, None);
+    let retired = entry(
+        &entry_text("")
+            .replace("status: active", "status: retired")
+            .replace(
+                "updated: 2026-11-01T10:00:00Z",
+                "updated: 2026-11-03T08:30:00Z",
+            ),
+    )
+    .unwrap();
+    assert_eq!(
+        retired.inactive_since,
+        Some(time::macros::datetime!(2026-11-03 08:30:00 UTC))
+    );
+
+    // Written back at format 12, it reads back the same.
+    let path = Path::new(ENTRY);
+    let encoded = crate::store::format::encode_entry(path, &retired).unwrap();
+    let text = String::from_utf8(encoded).unwrap();
+    assert!(text.starts_with(&format!("---\nformat: {FORMAT}\n")));
+    assert_eq!(entry(&text).unwrap(), retired);
+
+    // At format 12 the key is required and must agree with the status.
+    let current = crate::store::format::encode_entry(path, &active).unwrap();
+    let current = String::from_utf8(current).unwrap();
+    assert!(entry(&current.replace("inactive_since: null\n", "")).is_err());
+    assert!(
+        entry(&current.replace(
+            "inactive_since: null",
+            "inactive_since: 2026-11-02T10:00:00Z"
+        ))
+        .is_err(),
+        "an active entry has no inactive_since"
+    );
+    let still_retired =
+        String::from_utf8(crate::store::format::encode_entry(path, &retired).unwrap()).unwrap();
+    assert!(
+        entry(&still_retired.replace(
+            "inactive_since: 2026-11-03T08:30:00Z",
+            "inactive_since: null"
+        ))
+        .is_err(),
+        "a retired entry names when it left active"
+    );
 }
 
 #[test]

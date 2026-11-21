@@ -665,7 +665,8 @@ impl Store {
     /// a line that was not covered when typed, and it only consults
     /// entries that are active now, so Stop must skip the lines returned
     /// here or a later retirement is written as a new entry. Referents
-    /// are not included: their content is not known until they are resolved.
+    /// are not included: their content is not known until they are
+    /// resolved, and [`Store::covered_draft`] answers for them then.
     pub fn covered_instruction_lines(
         &self,
         prompt: &str,
@@ -680,17 +681,26 @@ impl Store {
                 continue;
             };
             let draft = crate::capture::draft(&instruction, turn, &config.tags);
-            let content = redactor.mask(&draft.content);
-            let covered_now =
-                covering_entry(&entries, &content, &draft.tag, &draft.project).is_some();
-            let covered_then = entries
-                .iter()
-                .any(|entry| covers_turn(entry, &content, &draft.tag, &draft.project, turn.at));
-            if covered_now || covered_then {
+            if covered(&entries, &draft, turn.at, redactor) {
                 lines.insert(instruction.line);
             }
         }
         Ok(lines)
+    }
+
+    /// Whether capture would refuse `draft` as covered, or an entry that is
+    /// retired or superseded now covered it at `at`: the same question as
+    /// [`Store::covered_instruction_lines`], for a draft already built,
+    /// such as a resolved form-3 referent. Reads only; Stop skips a draft
+    /// this answers for.
+    pub fn covered_draft(
+        &self,
+        draft: &NewEntry,
+        at: time::OffsetDateTime,
+        redactor: &Redactor,
+    ) -> Result<bool> {
+        let (entries, _) = self.load_entries()?;
+        Ok(covered(&entries, draft, at, redactor))
     }
 
     /// The entries already recorded from one prompt: `session` and
@@ -1347,6 +1357,21 @@ fn merge_links(links: &mut Vec<SessionLink>, more: &[SessionLink]) {
 }
 
 /// Whether `entry` is from `session` and still waits for its message uuid.
+/// Whether `draft`, masked as capture masks it, is covered now or was
+/// covered at `at` by one of `entries`.
+fn covered(
+    entries: &[Entry],
+    draft: &NewEntry,
+    at: time::OffsetDateTime,
+    redactor: &Redactor,
+) -> bool {
+    let content = redactor.mask(&draft.content);
+    covering_entry(entries, &content, &draft.tag, &draft.project).is_some()
+        || entries
+            .iter()
+            .any(|entry| covers_turn(entry, &content, &draft.tag, &draft.project, at))
+}
+
 fn unfilled(entry: &Entry, session: &SessionId) -> bool {
     entry
         .cite

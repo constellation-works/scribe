@@ -354,12 +354,13 @@ pub(crate) fn covers_statement(existing: &str, new: &str) -> bool {
 ///
 /// An entry that is still active covers `at` when it already existed
 /// (`created <= at`). A retired or superseded entry covers `at` when it
-/// existed and its last change is at or after `at`: retirement and
-/// supersession set `updated`, and the content is still the statement.
-/// `updated` is whole seconds, so a tie inside that second counts as still
-/// active; the order inside the second is not recorded, and recapturing a
-/// line that may have been covered is the worse miss. A forgotten entry's
-/// content is blank, so it cannot answer.
+/// existed and left `active` at or after `at` (`inactive_since`, which a
+/// later metadata write does not move), and its content is still the
+/// statement. Stored times are whole seconds while transcript times are
+/// not, so both sides are compared in whole seconds: a tie inside that
+/// second counts as still active, since the order inside the second is not
+/// recorded and recapturing a line that may have been covered is the worse
+/// miss. A forgotten entry's content is blank, so it cannot answer.
 #[must_use]
 pub(crate) fn covers_turn(
     entry: &Entry,
@@ -368,15 +369,23 @@ pub(crate) fn covers_turn(
     project: &Project,
     at: OffsetDateTime,
 ) -> bool {
-    if &entry.tag != tag || &entry.project != project || entry.created > at {
+    let at = whole_second(at);
+    if &entry.tag != tag || &entry.project != project || whole_second(entry.created) > at {
         return false;
     }
     let active_then = match entry.status {
         EntryStatus::Active => true,
-        EntryStatus::Retired | EntryStatus::Superseded => entry.updated >= at,
+        EntryStatus::Retired | EntryStatus::Superseded => entry
+            .inactive_since
+            .is_some_and(|since| whole_second(since) >= at),
         EntryStatus::Forgotten => false,
     };
     active_then && covers_statement(&entry.content, statement)
+}
+
+/// `at` without its fraction of a second.
+fn whole_second(at: OffsetDateTime) -> OffsetDateTime {
+    at.replace_nanosecond(0).unwrap_or(at)
 }
 
 /// The oldest active entry of `tag` and `project` whose content already
