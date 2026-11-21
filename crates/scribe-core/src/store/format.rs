@@ -41,7 +41,7 @@ use time::OffsetDateTime;
 
 /// The newest store format: this build reads formats 1 to `FORMAT` of every
 /// document and would write `FORMAT`.
-pub(super) const FORMAT: u32 = 20;
+pub(super) const FORMAT: u32 = 21;
 
 /// Which document an upgrade step is applied to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,6 +88,7 @@ pub(super) const UPGRADES: &[Upgrade] = &[
     removal_instruction,
     memory_items,
     memory_consolidation,
+    memory_preference_proposal,
 ];
 
 /// The first format a memory item exists at: `memory/<id>.md` has no older
@@ -128,6 +129,23 @@ const CONSOLIDATION_KEYS: &[&str] = &[
 /// rewrites `control.json` at this format, so a format-19 build refuses a
 /// store whose items it would misread.
 fn memory_consolidation(
+    _document: Document,
+    value: serde_json::Value,
+) -> serde_json::Result<serde_json::Value> {
+    Ok(value)
+}
+
+/// The first format a memory item carries `preference_proposal` at
+/// (2_design.md §13.7).
+pub(super) const PREFERENCE_PROPOSAL_SINCE: u32 = 21;
+
+/// Format 20 -> 21 changes no stored value of an entry, session,
+/// `control.json` or `proposals.json`. It adds `preference_proposal` to
+/// each memory item: the `preferences` candidate a recurring `working` item
+/// opened (2_design.md §13.7); a format-20 item reads with it `null`. A
+/// memory write rewrites `control.json` at this format, so a format-20
+/// build refuses a store whose items would open their candidate twice.
+fn memory_preference_proposal(
     _document: Document,
     value: serde_json::Value,
 ) -> serde_json::Result<serde_json::Value> {
@@ -2179,11 +2197,11 @@ fn decode_json<T: DeserializeOwned>(path: &Path, bytes: &[u8], document: Documen
                 return Err(shape(path, "unknown variant `covered`"));
             }
         }
-        // Formats 16 to 20 changed no proposal (16 and 18 changed only
-        // entries, 17 and 19 added record kinds, 20 changed only memory
-        // items), so a format-15 to format-19 proposals.json has the
+        // Formats 16 to 21 changed no proposal (16 and 18 changed only
+        // entries, 17 and 19 added record kinds, 20 and 21 changed only
+        // memory items), so a format-15 to format-20 proposals.json has the
         // current shape.
-        Document::Proposals if (15..=19).contains(&from) => {
+        Document::Proposals if (15..=20).contains(&from) => {
             serde_json::from_slice::<ProposalsDocument>(bytes)
                 .map_err(|e| Error::corrupt(path, e))?;
         }
@@ -2469,6 +2487,13 @@ pub(super) fn decode_memory(
         if from >= CONSOLIDATION_SINCE && !has {
             return Err(shape(path, format!("missing field `{key}`")));
         }
+    }
+    let has = keys.is_some_and(|map| map.contains_key("preference_proposal"));
+    if from < PREFERENCE_PROPOSAL_SINCE && has {
+        return Err(shape(path, "unknown field `preference_proposal`"));
+    }
+    if from >= PREFERENCE_PROPOSAL_SINCE && !has {
+        return Err(shape(path, "missing field `preference_proposal`"));
     }
     let item: crate::memory::MemoryItem =
         yaml_serde::from_value(value).map_err(|e| Error::corrupt(path, e))?;

@@ -3706,7 +3706,7 @@ Not built until seen:
 
 ## 13. Memory: profile, projects, working, now and milestones (proposed)
 
-[ORB-26219], designed 2026-11-21. Steps (a) and (b) of
+[ORB-26219], designed 2026-11-21. Steps (a), (b) and (c) of
 [§13.10](#1310-order-and-sequencing) are built: (a) (ORB-26258, store
 format 19) the `memory` kind, pass extraction with its checks and sensitive
 gate, `scribe memory show|ack|retire|forget`, and the session-start page;
@@ -3716,10 +3716,13 @@ rules`. As built, a merge and a promotion **move** the occurrences (the
 merged or promoted item keeps none, and `forget` follows the link), a pair
 judged `unrelated` is kept on the older item (`unrelated_to`) so it is
 never offered again, and the pass's `milestones` element that no rule (a)
-or (c) holds for is written as a `now` item. Step (c) is **not built**
-until its implementation task lands,
-after
-[§11.7](#117-order-and-sequencing) step (b). Where it changes a rule stated
+or (c) holds for is written as a `now` item; (c) (ORB-26260, store format
+21) a recurring `working` item proposed once as a `preferences` candidate
+([§13.7](#137-from-working-to-preferences)). As built, the candidate's
+quote and cite are those of the occurrence that crossed the count (or, at
+the cap, of the later one that opens it), its subject is fixed (`how he
+works with agents`), and `promote_working_sessions = 0` switches it off.
+Where it changes a rule stated
 earlier (§5.3's "A pass writes no tag entries" and its bounds, §7's
 steps, the `SessionStart` hook of §1, which today tells only Daniel and
 never the agent), the earlier text describes what is built today and

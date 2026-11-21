@@ -37,6 +37,16 @@
       "meaning": "one of these phrases in the user's turn makes the event a milestone"
     },
     {
+      "rule": "promote_working_sessions",
+      "value": 3,
+      "origin": {
+        "source": "shipped",
+        "file": null,
+        "line": null
+      },
+      "meaning": "a working item raised in this many distinct sessions is proposed once as a preferences candidate; 0 switches it off"
+    },
+    {
       "rule": "decay_days",
       "value": 90,
       "origin": {

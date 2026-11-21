@@ -2,6 +2,7 @@ RULE                        VALUE                                               
 promote.profile_change      true                                                                      shipped  a now or milestones event that changes a profile fact becomes a milestone and replaces that profile item
 promote.recurs_in_sessions  3                                                                         shipped  a now item raised in this many distinct sessions becomes a milestone; 0 switches it off
 promote.user_says           "milestone", "big day", "remember this", "never forget", "life changing"  shipped  one of these phrases in the user's turn makes the event a milestone
+promote_working_sessions    3                                                                         shipped  a working item raised in this many distinct sessions is proposed once as a preferences candidate; 0 switches it off
 decay_days                  90                                                                        shipped  a projects or working item leaves the page this many days after its latest occurrence
 now_undated_days            7                                                                         shipped  an undated now item leaves the page this many days after its latest occurrence
 now_after_days              14                                                                        shipped  a dated now item leaves the page this many days after its date

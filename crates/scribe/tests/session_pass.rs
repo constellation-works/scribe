@@ -1645,7 +1645,7 @@ fn legacy_control_is_read_without_writes_and_new_retry_state_is_strict() {
     );
     setup.pass();
     let current: Value = serde_json::from_slice(&setup.control_bytes()).unwrap();
-    assert_eq!(current["format"], 20);
+    assert_eq!(current["format"], 21);
     assert_eq!(current["sessions"][ON]["consecutive_failures"], 0);
     assert_eq!(current["sessions"][ON]["retry_after"], Value::Null);
     assert_eq!(current["sessions"][ON]["pending_links"], json!([]));
@@ -1901,10 +1901,10 @@ fn a_pass_writes_one_record_of_daniels_terms_and_never_reads_a_session_never_swi
         json!([{"term": "graduate to level 4", "said": DEFINED, "message": "u-1"}])
     );
     assert!(!setup.fx.root().join("entries").exists(), "no entries");
-    // The record is written at format 20: a header and one open segment
+    // The record is written at format 21: a header and one open segment
     // holding this pass's segment text.
     let file = std::fs::read_to_string(setup.record_file()).unwrap();
-    assert!(file.starts_with("---\nformat: 20\n"), "{file}");
+    assert!(file.starts_with("---\nformat: 21\n"), "{file}");
     assert!(file.contains("\n## Log\n### 1. "), "{file}");
     assert!(!file.contains("## Outcome"), "{file}");
     assert_eq!(record["active"], true);
@@ -4727,7 +4727,7 @@ fn a_pass_over_a_switched_on_session_writes_memory_items_with_verbatim_occurrenc
     assert!(audit.contains("\"memory:m-1\""), "{audit}");
     let control: Value =
         serde_json::from_slice(&std::fs::read(s.fx.root().join("control.json")).unwrap()).unwrap();
-    assert_eq!(control["format"], 20);
+    assert_eq!(control["format"], 21);
 
     // The same window again appends nothing: the turns are already on the items.
     s.append(
@@ -4941,11 +4941,11 @@ fn an_older_build_cannot_read_a_memory_item_and_a_newer_one_is_refused() {
     let file = s.fx.root().join("memory/m-1.md");
     let original = std::fs::read_to_string(&file).unwrap();
     assert!(
-        original.starts_with("---\nformat: 20\nkind: memory\n"),
+        original.starts_with("---\nformat: 21\nkind: memory\n"),
         "{original}"
     );
 
-    std::fs::write(&file, original.replacen("format: 20", "format: 21", 1)).unwrap();
+    std::fs::write(&file, original.replacen("format: 21", "format: 22", 1)).unwrap();
     let newer = s.run_any(&["memory", "show", "--json"], b"");
     assert_ne!(newer.status.code(), Some(0));
     assert!(
@@ -4954,23 +4954,18 @@ fn an_older_build_cannot_read_a_memory_item_and_a_newer_one_is_refused() {
         text(&newer.stderr)
     );
 
-    // Format 19 has no consolidation keys: a format-19 file carrying them
-    // is refused, and skipped like any bad file.
-    std::fs::write(&file, original.replacen("format: 20", "format: 19", 1)).unwrap();
-    let shown = memory_items(&s, &[]);
-    assert_eq!(
-        shown["items"].as_array().unwrap().len(),
-        1,
-        "the format-19 file with format-20 keys is skipped"
-    );
-
-    std::fs::write(&file, original.replacen("format: 20", "format: 18", 1)).unwrap();
-    let shown = memory_items(&s, &[]);
-    assert_eq!(
-        shown["items"].as_array().unwrap().len(),
-        1,
-        "the bad file is skipped"
-    );
+    // Format 20 has no `preference_proposal`, and format 19 no
+    // consolidation keys: an older file carrying newer keys is refused,
+    // and skipped like any bad file.
+    for older in ["format: 20", "format: 19", "format: 18"] {
+        std::fs::write(&file, original.replacen("format: 21", older, 1)).unwrap();
+        let shown = memory_items(&s, &[]);
+        assert_eq!(
+            shown["items"].as_array().unwrap().len(),
+            1,
+            "{older}: the file with newer keys is skipped"
+        );
+    }
 }
 
 #[test]
@@ -5221,10 +5216,140 @@ fn memory_rules_prints_each_rule_with_its_origin() {
     assert_eq!(rule("decay_days")["value"], 60);
     assert_eq!(rule("decay_days")["origin"]["line"], 2);
     assert_eq!(rule("now_after_days")["value"], 14);
-    assert_eq!(out["rules"].as_array().unwrap().len(), 6);
+    assert_eq!(rule("promote_working_sessions")["value"], 3);
+    assert_eq!(
+        rule("promote_working_sessions")["origin"]["source"],
+        "shipped"
+    );
+    assert_eq!(out["rules"].as_array().unwrap().len(), 7);
 
     // A bad phrase or count is refused with its line.
     s.config("[memory.promote]\nrecurs_in_sessions = 1000\n");
     let bad = s.run_any(&["memory", "rules"], b"");
     assert_ne!(bad.status.code(), Some(0));
+}
+
+// --- memory (c): a recurring `working` item (2_design.md §13.7) -----------
+
+/// A third session id for the recurrence tests.
+const THIRD: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e63";
+const AGENT_MAIN: &str = "Open every pull request against agent-main, please.";
+const AGENT_MAIN_QUOTE: &str = "Open every pull request against agent-main";
+const AGENT_MAIN_SAYS: &str = "Wants every pull request opened against agent-main.";
+
+impl Setup {
+    /// One pass over `session`, switched on, whose turn `w-<session>` says
+    /// [`AGENT_MAIN`] and whose answer names it as a `working` element
+    /// (joining `m-1` after the first): the pass report.
+    fn working_pass(&self, session: &str, first: bool) -> Value {
+        // Turn ids are unique across sessions, as Claude Code's are.
+        let turn = format!("w-{session}");
+        self.write(
+            session,
+            &[
+                line("user", "u-1", &format!("Crews. {DEFINED}.")),
+                line(
+                    "assistant",
+                    "a-1",
+                    "Level 4 crews merge their own pull requests after green CI.",
+                ),
+                line("user", &turn, AGENT_MAIN),
+            ],
+        );
+        let mut element = memory_element("working", AGENT_MAIN_SAYS, AGENT_MAIN_QUOTE, &turn);
+        if !first {
+            element["same_as"] = json!("m-1");
+        }
+        let mut body = answer();
+        body["memory"] = json!([element]);
+        self.answer(&body);
+        self.scribe_in(session, "/scribe on");
+        let report: Value = serde_json::from_slice(
+            &self
+                .run(&["session", "pass", "--session", session, "--json"], b"")
+                .stdout,
+        )
+        .unwrap();
+        assert_eq!(report["passes"][0]["result"], "written", "{report}");
+        report
+    }
+}
+
+/// The open `preferences` candidates admitted for a recurring memory item.
+fn recurs_candidates(s: &Setup) -> Vec<Value> {
+    proposals(s)["proposals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|p| p["candidate"]["admitted"]["trigger"] == "memory:recurs")
+        .cloned()
+        .collect()
+}
+
+#[test]
+fn a_working_item_raised_in_three_sessions_opens_one_preferences_candidate_and_two_open_none() {
+    let s = Setup::new();
+    s.working_pass(ON, true);
+    let second = s.working_pass(CHILD, false);
+    assert_eq!(second["passes"][0]["memory_proposed"], 0, "{second}");
+    assert!(recurs_candidates(&s).is_empty(), "two sessions: none");
+    assert!(memory_items(&s, &[])["items"][0]["preference_proposal"].is_null());
+
+    let third = s.working_pass(THIRD, false);
+    assert_eq!(third["passes"][0]["memory_proposed"], 1, "{third}");
+    let opened = recurs_candidates(&s);
+    assert_eq!(opened.len(), 1, "{opened:?}");
+    let p = &opened[0];
+    assert_eq!(p["kind"], "candidate");
+    assert_eq!(p["state"], "open");
+    let candidate = &p["candidate"];
+    assert_eq!(candidate["tag"], "preferences");
+    assert_eq!(candidate["role"], "user");
+    assert_eq!(candidate["statement"], AGENT_MAIN_SAYS);
+    assert_eq!(candidate["quote"], AGENT_MAIN_QUOTE);
+    assert_eq!(candidate["cite"]["session"], THIRD);
+    assert_eq!(candidate["cite"]["message"], format!("w-{THIRD}"));
+    assert_eq!(candidate["admitted"]["matched"], "m-1");
+
+    // The item records it; no entry is written before Daniel approves.
+    let item = &memory_items(&s, &[])["items"][0];
+    assert_eq!(item["preference_proposal"], p["id"], "{item}");
+    assert_eq!(item["sessions"], 3);
+    assert!(
+        !s.fx
+            .root()
+            .join("entries/preferences/preferences-1.md")
+            .exists()
+    );
+    let audit = std::fs::read_to_string(s.fx.root().join("audit.jsonl")).unwrap();
+    let id = p["id"].as_str().unwrap();
+    assert!(audit.contains(&format!("\"{id}\"")), "{audit}");
+
+    // A fourth session's occurrence opens no second candidate.
+    const FOURTH: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e64";
+    let fourth = s.working_pass(FOURTH, false);
+    assert_eq!(fourth["passes"][0]["memory_proposed"], 0, "{fourth}");
+    assert_eq!(recurs_candidates(&s).len(), 1);
+}
+
+#[test]
+fn a_recurring_working_item_an_active_preference_already_says_opens_no_candidate() {
+    let s = Setup::new();
+    s.fx.ok(&[
+        "entry",
+        "add",
+        "--tag",
+        "preferences",
+        "--author",
+        "opus",
+        AGENT_MAIN_SAYS,
+    ]);
+    s.working_pass(ON, true);
+    s.working_pass(CHILD, false);
+    let third = s.working_pass(THIRD, false);
+    assert_eq!(third["passes"][0]["memory_proposed"], 0, "{third}");
+    assert!(recurs_candidates(&s).is_empty());
+    let item = &memory_items(&s, &[])["items"][0];
+    assert_eq!(item["sessions"], 3);
+    assert!(item["preference_proposal"].is_null(), "{item}");
 }

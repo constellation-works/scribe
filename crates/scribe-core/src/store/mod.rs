@@ -1044,7 +1044,7 @@ impl Store {
                 // interrupted window is replayed and appends nothing twice.
                 if let Some(memory) = memory {
                     memory_written = self
-                        .write_pass_memory(memory, redactor, record.updated)
+                        .write_pass_memory(memory, redactor, &record)
                         .map_err(&carry)?;
                 }
                 let bytes = format::encode_session(&path, &record).map_err(&carry)?;

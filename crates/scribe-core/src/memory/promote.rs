@@ -181,6 +181,7 @@ pub fn promote(
         merged_into: None,
         superseded_by: None,
         unrelated_to: Vec::new(),
+        preference_proposal: None,
         author: by.clone(),
         updated_by: by.clone(),
         created: now,

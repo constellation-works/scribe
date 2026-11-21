@@ -368,6 +368,8 @@ struct RawMemory {
     sections: RawMemorySections,
     #[serde(default)]
     promote: RawPromote,
+    #[serde(default)]
+    promote_working_sessions: Option<toml::Spanned<u32>>,
 }
 
 /// `[memory.promote]` (2_design.md §13.4): each key overrides its shipped
@@ -400,9 +402,9 @@ struct RawMemorySections {
 
 impl RawMemory {
     /// The configured values over the defaults, each with its origin.
-    /// `page_chars` takes 600 to 10,000, `recent_sessions` at most 20 and
-    /// `recurs_in_sessions` at most 100; each `user_says` phrase is checked
-    /// as a capture trigger.
+    /// `page_chars` takes 600 to 10,000, `recent_sessions` at most 20, and
+    /// `recurs_in_sessions` and `promote_working_sessions` at most 100;
+    /// each `user_says` phrase is checked as a capture trigger.
     fn resolve(self, text: &str) -> Result<crate::memory::MemoryConfig, ConfigError> {
         use crate::tag::{Rule, RuleOrigin};
         let at = |span: std::ops::Range<usize>| Some(line_of(text, span.start));
@@ -486,6 +488,23 @@ impl RawMemory {
                 origin: origin(span),
             };
         }
+        let mut promote_working_sessions = base.promote_working_sessions;
+        if let Some(v) = self.promote_working_sessions {
+            let span = v.span();
+            let value = v.into_inner();
+            if value > 100 {
+                return Err(ConfigError {
+                    line: at(span),
+                    message: format!(
+                        "memory.promote_working_sessions = {value} is out of range; give 0 to 100"
+                    ),
+                });
+            }
+            promote_working_sessions = Rule {
+                value,
+                origin: origin(span),
+            };
+        }
         let s = self.sections;
         let d = base.sections;
         Ok(crate::memory::MemoryConfig {
@@ -505,6 +524,7 @@ impl RawMemory {
             },
             promote,
             windows,
+            promote_working_sessions,
         })
     }
 }

@@ -1769,9 +1769,9 @@ fn an_older_entry_keeps_an_approval_instruction_and_moves_a_removal_one() {
             crate::store::format::encode_entry(Path::new(ENTRY), &approved).unwrap(),
         )
         .unwrap();
-        // Formats 19 and 20 changed no entry: a format-18 or -19 entry has
+        // Formats 19 to 21 changed no entry: a format-18 to -20 entry has
         // the current shape.
-        for from in [18, 19] {
+        for from in [18, 19, 20] {
             let older = text.replacen(
                 &format!("format: {FORMAT}\n"),
                 &format!("format: {from}\n"),
@@ -2268,9 +2268,9 @@ fn a_format_fifteen_store_upgrades_with_a_null_outcome_only() {
 
 #[test]
 fn a_format_sixteen_proposals_document_reads_at_the_current_shape() {
-    // Formats 16 to 20 changed no proposal (16 and 18 changed only entries,
-    // 17 and 19 added record kinds, 20 changed memory items), so a format-16
-    // to format-19 proposals.json
+    // Formats 16 to 21 changed no proposal (16 and 18 changed only entries,
+    // 17 and 19 added record kinds, 20 and 21 changed memory items), so a
+    // format-16 to format-20 proposals.json
     // has the current shape: the current document with only its `format`
     // lowered reads back equal, and a stray key is still refused.
     let path = Path::new("proposals.json");
@@ -2279,7 +2279,7 @@ fn a_format_sixteen_proposals_document_reads_at_the_current_shape() {
     let encoded = crate::store::format::encode_proposals(path, &proposals).unwrap();
     let mut value: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
     assert_eq!(value["format"], FORMAT);
-    for older in [16, 17, 18, 19] {
+    for older in [16, 17, 18, 19, 20] {
         value["format"] = serde_json::json!(older);
         assert_eq!(
             decode_proposals(path, &serde_json::to_vec(&value).unwrap()).unwrap(),
@@ -2310,7 +2310,11 @@ fn memory_text(format: u32, status: &str, extra: &str, occurrences: &str) -> Str
 
 const ONE_OCCURRENCE: &str = "[{n: 1, date: 2026-11-21T05:40:00Z, session: 0b8ef4a6-0c6a-4d77-9c41-6a4f7b2c1d10, message: u-1, host: mac, project: scribe, quote: \"the release ships on december 1\", author: {kind: scribe, name: session-pass}}]";
 
-const NO_LINKS: &str = "promoted_from: null\npromotion: null\nmerged_into: null\nsuperseded_by: null\nunrelated_to: []\n";
+/// The keys format 20 added, empty.
+const V20_LINKS: &str = "promoted_from: null\npromotion: null\nmerged_into: null\nsuperseded_by: null\nunrelated_to: []\n";
+
+/// Every key of the current format, empty.
+const NO_LINKS: &str = "promoted_from: null\npromotion: null\nmerged_into: null\nsuperseded_by: null\nunrelated_to: []\npreference_proposal: null\n";
 
 fn memory(text: &str) -> crate::Result<crate::memory::MemoryItem> {
     crate::store::format::decode_memory(Path::new(MEMORY_FILE), text.as_bytes(), "m-1")
@@ -2326,8 +2330,24 @@ fn a_format_nineteen_memory_item_reads_without_the_consolidation_keys_and_refuse
     // Format 19 has neither the keys nor the statuses.
     corrupt_message(&memory(&memory_text(19, "active", NO_LINKS, ONE_OCCURRENCE)).unwrap_err());
     corrupt_message(&memory(&memory_text(19, "superseded", "", ONE_OCCURRENCE)).unwrap_err());
-    // Format 20 requires every key.
+    // The current format requires every key.
     corrupt_message(&memory(&memory_text(FORMAT, "active", "", ONE_OCCURRENCE)).unwrap_err());
+}
+
+#[test]
+fn a_format_twenty_memory_item_reads_without_preference_proposal_and_refuses_it() {
+    let item = memory(&memory_text(20, "active", V20_LINKS, ONE_OCCURRENCE)).unwrap();
+    assert_eq!(item.preference_proposal, None);
+    let current = memory(&memory_text(FORMAT, "active", NO_LINKS, ONE_OCCURRENCE)).unwrap();
+    assert_eq!(current, item);
+    let linked = NO_LINKS.replacen("preference_proposal: null", "preference_proposal: p-4", 1);
+    let item = memory(&memory_text(FORMAT, "active", &linked, ONE_OCCURRENCE)).unwrap();
+    assert_eq!(item.preference_proposal.unwrap().to_string(), "p-4");
+    // Format 20 has no `preference_proposal`; the current format needs it.
+    corrupt_message(&memory(&memory_text(20, "active", NO_LINKS, ONE_OCCURRENCE)).unwrap_err());
+    corrupt_message(
+        &memory(&memory_text(FORMAT, "active", V20_LINKS, ONE_OCCURRENCE)).unwrap_err(),
+    );
 }
 
 #[test]

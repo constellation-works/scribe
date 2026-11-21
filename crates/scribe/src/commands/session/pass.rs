@@ -396,6 +396,7 @@ struct MemoryTally {
     slots: usize,
     written: usize,
     promoted: usize,
+    proposed: usize,
     refused: std::collections::BTreeMap<&'static str, usize>,
     targets: Vec<String>,
 }
@@ -406,6 +407,7 @@ impl Default for MemoryTally {
             slots: memory::MAX_PER_PASS,
             written: 0,
             promoted: 0,
+            proposed: 0,
             refused: std::collections::BTreeMap::new(),
             targets: Vec::new(),
         }
@@ -795,6 +797,14 @@ impl Job<'_> {
                     }
                 }
             }
+            for (proposal, item) in written.memory.proposed {
+                self.memory.proposed += 1;
+                let item = format!("memory:{item}");
+                if !self.memory.targets.contains(&item) {
+                    self.memory.targets.push(item);
+                }
+                self.memory.targets.push(proposal.to_string());
+            }
             self.persisted_targets.extend(
                 written
                     .closed_candidates
@@ -939,6 +949,7 @@ impl Job<'_> {
             warnings: self.warnings.clone(),
             memory_written: self.memory.written,
             memory_promoted: self.memory.promoted,
+            memory_proposed: self.memory.proposed,
             memory_refused: self.memory.refused.clone(),
         })
     }
@@ -959,6 +970,7 @@ impl Job<'_> {
             warnings: self.warnings.clone(),
             memory_written: self.memory.written,
             memory_promoted: self.memory.promoted,
+            memory_proposed: self.memory.proposed,
             memory_refused: self.memory.refused.clone(),
         }
     }

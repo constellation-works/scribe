@@ -28,6 +28,7 @@
       "promotion": null,
       "merged_into": null,
       "superseded_by": null,
+      "preference_proposal": null,
       "author": {
         "kind": "scribe",
         "name": "session-pass"
@@ -75,6 +76,7 @@
       "promotion": null,
       "merged_into": null,
       "superseded_by": null,
+      "preference_proposal": null,
       "author": {
         "kind": "scribe",
         "name": "session-pass"
@@ -122,6 +124,7 @@
       "promotion": null,
       "merged_into": null,
       "superseded_by": null,
+      "preference_proposal": null,
       "author": {
         "kind": "scribe",
         "name": "session-pass"
