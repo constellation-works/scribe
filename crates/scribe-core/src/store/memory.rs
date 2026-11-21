@@ -214,7 +214,7 @@ impl Store {
         let linked = self.open_memory_candidates(&candidates, redactor, now)?;
         for (proposal, id, opened) in linked {
             if let Some(item) = items.iter_mut().find(|i| i.id == id) {
-                item.preference_proposal = Some(proposal.clone());
+                item.preference_proposal = Some(proposal);
                 item.updated = now;
                 self.write_memory(item)?;
             }

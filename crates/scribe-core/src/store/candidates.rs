@@ -274,7 +274,7 @@ impl Store {
                     })
             });
             if let Some(earlier) = earlier {
-                out.push((earlier.id.clone(), item.clone(), false));
+                out.push((earlier.id, item.clone(), false));
                 continue;
             }
             let says = candidate_says(candidate);
@@ -305,7 +305,7 @@ impl Store {
             let mut draft = candidate.clone();
             draft.statement = draft.statement.as_deref().map(|text| redactor.mask(text));
             let mut proposal = Proposal {
-                id: id.clone(),
+                id,
                 kind: ProposalKind::Candidate,
                 older,
                 newer: None,
