@@ -6,7 +6,7 @@
 //! The serde shapes are persisted in `proposals.json` (STD-02 R16): every key
 //! is required and an unknown one is refused.
 
-use crate::entry::{Cite, ContentFrom, Entry, EntryId, NewEntry, Speaker, TagName};
+use crate::entry::{Cite, ContentFrom, Entry, EntryId, Instruction, NewEntry, Speaker, TagName};
 use crate::record::{Author, AuthorKind, DateRange, Label, Project, Topics, nullable};
 use crate::tag::TagTable;
 use serde::{Deserialize, Serialize};
@@ -167,18 +167,27 @@ pub struct Proposal {
     /// Who settled it, set exactly when `state` is not `open`.
     #[serde(deserialize_with = "nullable")]
     pub settled_author: Option<Author>,
-    /// Why scribe itself closed it, such as `tag_retired`; `null` when
-    /// Daniel or an agent settled it, or it is open (format 11).
+    /// Why it was closed without Daniel's `#scribe` turn, such as `tag_retired`
+    /// or `instructed`; `null` when Daniel settled it through `#scribe`, an agent
+    /// settled an agent proposal directly, or it is open (format 11;
+    /// `instructed` format 12).
     #[serde(deserialize_with = "nullable")]
     pub closed_reason: Option<ClosedReason>,
+    /// Daniel's checked instruction that settled this proposal (format 12);
+    /// `null` otherwise.
+    #[serde(deserialize_with = "nullable")]
+    pub instruction: Option<Instruction>,
 }
 
-/// Why scribe closed a proposal without Daniel (2_design.md §11.3).
+/// Why a proposal was closed without Daniel's `#scribe` turn
+/// (2_design.md §11.3, §12.4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClosedReason {
     /// Its candidate's tag is no longer in the tag table.
     TagRetired,
+    /// An agent rejected it on Daniel's checked instruction.
+    Instructed,
 }
 
 impl ClosedReason {
@@ -187,6 +196,7 @@ impl ClosedReason {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::TagRetired => "tag_retired",
+            Self::Instructed => "instructed",
         }
     }
 }

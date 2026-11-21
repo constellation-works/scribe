@@ -30,6 +30,7 @@ pub const REDACTED_FIELDS: &[&str] = &[
     "entry.quote",
     "entry.evidence",
     "entry.window.text",
+    "entry.instruction.quote",
     "session.title",
     "session.summary",
     "session.goals",
@@ -45,6 +46,7 @@ pub const REDACTED_FIELDS: &[&str] = &[
     "proposal.candidate.evidence",
     "proposal.candidate.admitted.matched",
     "proposal.candidate.admitted.criteria",
+    "proposal.instruction.quote",
     "tag.description",
 ];
 
@@ -315,6 +317,11 @@ pub(super) fn entry_fields(entry: &mut Entry) -> Vec<(&'static str, &mut String)
             fields.push(("entry.window.text", &mut turn.text));
         }
     }
+    if let Some(instruction) = &mut entry.instruction
+        && let Some(quote) = &mut instruction.quote
+    {
+        fields.push(("entry.instruction.quote", quote));
+    }
     fields
 }
 
@@ -361,6 +368,11 @@ pub(super) fn proposal_fields(proposal: &mut Proposal) -> Vec<(&'static str, &mu
                 fields.push(("proposal.candidate.admitted.criteria", criteria));
             }
         }
+    }
+    if let Some(instruction) = &mut proposal.instruction
+        && let Some(quote) = &mut instruction.quote
+    {
+        fields.push(("proposal.instruction.quote", quote));
     }
     fields
 }

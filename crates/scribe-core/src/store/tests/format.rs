@@ -312,6 +312,10 @@ fn format_six_proposals_keep_agent_metadata_and_format_seven_controls_require_id
         .as_object_mut()
         .unwrap()
         .remove("closed_reason");
+    value["proposals"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("instruction");
     let back = decode_proposals(path, &serde_json::to_vec(&value).unwrap()).unwrap();
     assert_eq!(back, proposals);
     let missing = br#"{"format":7,"sessions":{}}"#;
@@ -363,14 +367,15 @@ fn a_format_ten_store_upgrades_with_null_admission_and_closed_reason_only() {
     assert_eq!(proposals[0].candidate.as_ref().unwrap().admitted, None);
     assert!(proposals.iter().all(|p| p.closed_reason.is_none()));
 
-    // Re-encoded at format 11, the old keys and values are untouched: the
-    // document differs only by the two new nulls and the format number.
+    // Re-encoded at the current format, the old keys and values are untouched:
+    // the document differs only by the added nulls and the format number.
     let encoded = crate::store::format::encode_proposals(path, &proposals).unwrap();
     let mut value: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
-    assert_eq!(value["format"], 11);
+    assert_eq!(value["format"], FORMAT);
     for p in value["proposals"].as_array_mut().unwrap() {
         let p = p.as_object_mut().unwrap();
         assert_eq!(p.remove("closed_reason"), Some(serde_json::Value::Null));
+        assert_eq!(p.remove("instruction"), Some(serde_json::Value::Null));
         if let Some(c) = p.get_mut("candidate").and_then(|c| c.as_object_mut()) {
             assert_eq!(c.remove("admitted"), Some(serde_json::Value::Null));
         }
@@ -742,4 +747,244 @@ fn pickups_round_trip_oldest_first_and_only_agents_pick_up() {
     corrupt_message(&decode_pickups(path, doc.to_string().as_bytes()).unwrap_err());
     doc["pickups"][0]["colour"] = serde_json::json!("blue");
     corrupt_message(&decode_pickups(path, doc.to_string().as_bytes()).unwrap_err());
+}
+
+#[test]
+fn a_format_eleven_store_upgrades_with_null_instruction_and_approved_by_only() {
+    // Frozen format-11 entry (has format-10 `evidence` and `as_of`, no
+    // `approved_by` or `instruction`) and format-11 proposals (has
+    // `admitted` and `closed_reason`, no `instruction`).
+    let sha = "0".repeat(64);
+    let entry_v11 = format!(
+        "---\n\
+format: 11\n\
+kind: entry\n\
+id: preferences-1\n\
+tag: preferences\n\
+status: active\n\
+project: scribe\n\
+topics: [ci]\n\
+related: [\"repo:scribe\"]\n\
+provider: claude-code\n\
+host: host\n\
+author: {{kind: daniel, name: daniel}}\n\
+updated_by: null\n\
+created: 2026-11-01T10:00:00Z\n\
+updated: 2026-11-01T10:00:00Z\n\
+said: \"#scribe preferences: run the gate\"\n\
+content_from: {{kind: instruction}}\n\
+cite: {{session: s-1, message: m-1, at: 2026-11-01T10:00:00Z, prompt_sha256: \"{sha}\", line: 1, cwd: /work}}\n\
+retirement_reason: null\n\
+superseded_by: null\n\
+review_after: null\n\
+quote: null\n\
+window: null\n\
+evidence: null\n\
+as_of: null\n\
+---\n\
+run the gate before every push\n"
+    );
+    let upgraded_entry = entry(&entry_v11).unwrap();
+    assert_eq!(upgraded_entry.approved_by, None);
+    assert_eq!(upgraded_entry.instruction, None);
+    assert_eq!(upgraded_entry.content, "run the gate before every push");
+
+    // Re-encoded at format 12, the entry differs only by `format: 12` and
+    // the two new null fields.
+    let reencoded = String::from_utf8(
+        crate::store::format::encode_entry(Path::new(ENTRY), &upgraded_entry).unwrap(),
+    )
+    .unwrap();
+    assert!(reencoded.starts_with("---\nformat: 12\n"), "{reencoded}");
+    let (reencoded_front, reencoded_body) =
+        split_frontmatter(Path::new(ENTRY), reencoded.as_bytes()).unwrap();
+    let (v11_front, v11_body) = split_frontmatter(Path::new(ENTRY), entry_v11.as_bytes()).unwrap();
+    assert_eq!(reencoded_body, v11_body);
+    let mut reencoded_map: yaml_serde::Mapping = yaml_serde::from_str(reencoded_front).unwrap();
+    let mut v11_map: yaml_serde::Mapping = yaml_serde::from_str(v11_front).unwrap();
+    assert_eq!(
+        reencoded_map.remove("format"),
+        Some(yaml_serde::Value::from(12))
+    );
+    assert_eq!(
+        reencoded_map.remove("approved_by"),
+        Some(yaml_serde::Value::Null)
+    );
+    assert_eq!(
+        reencoded_map.remove("instruction"),
+        Some(yaml_serde::Value::Null)
+    );
+    assert_eq!(v11_map.remove("format"), Some(yaml_serde::Value::from(11)));
+    assert_eq!(reencoded_map, v11_map);
+
+    // Format-11 entries already carrying format-12 keys are refused.
+    for extra in ["approved_by: null\n", "instruction: null\n"] {
+        let stray = entry_v11.replacen("as_of: null\n", &format!("as_of: null\n{extra}"), 1);
+        assert!(entry(&stray).is_err(), "{extra}");
+    }
+
+    // Frozen format-11 proposals.json: one open candidate with `admitted`,
+    // one candidate closed with `tag_retired`.
+    let cite = format!(
+        r#"{{"session":"s-1","message":"m-1","at":"2026-11-01T10:00:00Z","prompt_sha256":"{sha}","line":1,"cwd":"/work"}}"#
+    );
+    let open = format!(
+        r#"{{"id":"p-1","kind":"candidate","older":"preferences-1","candidate":{{"tag":"preferences","role":"user","quote":"I prefer short updates.","evidence":null,"cite":{cite},"project":"scribe","provider":"claude-code","host":"host","admitted":{{"trigger":"I prefer","matched":"I prefer","criteria":null}}}},"newer":null,"reason":"Unmarked preferences statement","quotes":[],"state":"open","opened_at":"2026-11-01T10:00:00Z","settled_at":null,"settled_by":null,"author":{{"kind":"scribe","name":"session-pass"}},"updated_by":null,"settled_author":null,"closed_reason":null}}"#
+    );
+    let closed = format!(
+        r#"{{"id":"p-2","kind":"candidate","older":"decisions-1","candidate":{{"tag":"decisions","role":"user","quote":"We decided on X.","evidence":null,"cite":{cite},"project":"scribe","provider":"claude-code","host":"host","admitted":null}},"newer":null,"reason":"Unmarked decisions statement","quotes":[],"state":"rejected","opened_at":"2026-11-01T10:00:00Z","settled_at":"2026-11-02T10:00:00Z","settled_by":null,"author":{{"kind":"scribe","name":"session-pass"}},"updated_by":null,"settled_author":{{"kind":"scribe","name":"tag-retired"}},"closed_reason":"tag_retired"}}"#
+    );
+    let old = format!(r#"{{"format":11,"proposals":[{open},{closed}]}}"#);
+    let path = Path::new("proposals.json");
+    let proposals = decode_proposals(path, old.as_bytes()).unwrap();
+    assert_eq!(proposals.len(), 2);
+    assert!(proposals.iter().all(|p| p.instruction.is_none()));
+    assert_eq!(proposals[0].closed_reason, None);
+    assert_eq!(
+        proposals[1].closed_reason,
+        Some(crate::ClosedReason::TagRetired)
+    );
+
+    let encoded = crate::store::format::encode_proposals(path, &proposals).unwrap();
+    let mut value: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+    assert_eq!(value["format"], 12);
+    for p in value["proposals"].as_array_mut().unwrap() {
+        let p = p.as_object_mut().unwrap();
+        assert_eq!(p.remove("instruction"), Some(serde_json::Value::Null));
+    }
+    value["format"] = serde_json::json!(11);
+    let original: serde_json::Value = serde_json::from_str(&old).unwrap();
+    assert_eq!(value, original);
+
+    // Format-11 proposals carrying format-12 fields or `instructed` are refused.
+    let stray = old.replace(
+        r#""closed_reason":null}"#,
+        r#""closed_reason":null,"instruction":null}"#,
+    );
+    assert!(decode_proposals(path, stray.as_bytes()).is_err());
+    let stray_reason = old.replace(
+        r#""closed_reason":"tag_retired""#,
+        r#""closed_reason":"instructed""#,
+    );
+    assert!(decode_proposals(path, stray_reason.as_bytes()).is_err());
+}
+
+#[test]
+fn closed_reason_accepts_instructed_and_older_values_read_unchanged() {
+    let path = Path::new("proposals.json");
+    let doc = serde_json::json!({
+        "format": FORMAT,
+        "proposals": [
+            {
+                "id": "p-1",
+                "kind": "stale",
+                "older": "preferences-1",
+                "candidate": null,
+                "newer": null,
+                "reason": "review",
+                "quotes": [],
+                "state": "rejected",
+                "opened_at": "2026-11-01T10:00:00Z",
+                "settled_at": "2026-11-02T10:00:00Z",
+                "settled_by": {
+                    "session": "s-1",
+                    "message": "m-9",
+                    "at": "2026-11-02T10:00:00Z",
+                    "prompt_sha256": "0".repeat(64),
+                    "line": 1,
+                    "cwd": "/work"
+                },
+                "author": {"kind": "scribe", "name": "consistency"},
+                "updated_by": null,
+                "settled_author": {"kind": "agent", "name": "aide"},
+                "closed_reason": "instructed",
+                "instruction": {
+                    "session": "s-1",
+                    "message": "m-9",
+                    "at": "2026-11-02T10:00:00Z",
+                    "quote": "reject p-1"
+                }
+            },
+            {
+                "id": "p-2",
+                "kind": "stale",
+                "older": "preferences-2",
+                "candidate": null,
+                "newer": null,
+                "reason": "review",
+                "quotes": [],
+                "state": "rejected",
+                "opened_at": "2026-11-01T10:00:00Z",
+                "settled_at": "2026-11-02T10:00:00Z",
+                "settled_by": null,
+                "author": {"kind": "scribe", "name": "consistency"},
+                "updated_by": null,
+                "settled_author": {"kind": "scribe", "name": "tag-retired"},
+                "closed_reason": "tag_retired",
+                "instruction": null
+            }
+        ]
+    });
+    let proposals = decode_proposals(path, doc.to_string().as_bytes()).unwrap();
+    assert_eq!(
+        proposals[0].closed_reason,
+        Some(crate::ClosedReason::Instructed)
+    );
+    assert_eq!(
+        proposals[0]
+            .instruction
+            .as_ref()
+            .and_then(|i| i.quote.as_deref()),
+        Some("reject p-1")
+    );
+    assert_eq!(
+        proposals[1].closed_reason,
+        Some(crate::ClosedReason::TagRetired)
+    );
+    assert_eq!(proposals[1].instruction, None);
+
+    let encoded = crate::store::format::encode_proposals(path, &proposals).unwrap();
+    assert_eq!(decode_proposals(path, &encoded).unwrap(), proposals);
+
+    // `closed_reason: instructed` on a non-rejected proposal is refused.
+    let mut bad = doc;
+    bad["proposals"][0]["state"] = serde_json::json!("open");
+    assert!(
+        corrupt_message(&decode_proposals(path, bad.to_string().as_bytes()).unwrap_err())
+            .contains("closed_reason")
+    );
+}
+
+#[test]
+fn instructed_entry_fields_round_trip_and_validate_approved_by() {
+    let mut original = entry(&entry_text("")).unwrap();
+    original.approved_by = Some(crate::Author::agent("aide".parse().unwrap()));
+    original.instruction = Some(crate::Instruction {
+        session: "s-2".parse().unwrap(),
+        message: String::from("u-7"),
+        at: time::macros::datetime!(2026-11-02 12:00:00 UTC),
+        quote: Some(String::from("approve p-1")),
+    });
+    let bytes = crate::store::format::encode_entry(Path::new(ENTRY), &original).unwrap();
+    let back = entry(&String::from_utf8(bytes).unwrap()).unwrap();
+    assert_eq!(back, original);
+
+    // Forgotten entry drops the instruction's quote to `null`.
+    let mut forgotten = original.clone();
+    forgotten.status = crate::EntryStatus::Forgotten;
+    forgotten.said.clear();
+    forgotten.content.clear();
+    forgotten.instruction.as_mut().unwrap().quote = None;
+    let bytes = crate::store::format::encode_entry(Path::new(ENTRY), &forgotten).unwrap();
+    let back = entry(&String::from_utf8(bytes).unwrap()).unwrap();
+    assert_eq!(back, forgotten);
+    assert_eq!(back.instruction.unwrap().quote, None);
+
+    // `approved_by` must be an agent author, never Daniel or scribe.
+    for non_agent in [crate::Author::daniel(), crate::Author::consistency()] {
+        let mut bad = original.clone();
+        bad.approved_by = Some(non_agent);
+        let bytes = crate::store::format::encode_entry(Path::new(ENTRY), &bad).unwrap();
+        corrupt_message(&entry(&String::from_utf8(bytes).unwrap()).unwrap_err());
+    }
 }

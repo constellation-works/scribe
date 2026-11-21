@@ -122,6 +122,7 @@ impl Draft {
             updated_by: None,
             settled_author: None,
             closed_reason: None,
+            instruction: None,
             candidate: None,
         }
     }

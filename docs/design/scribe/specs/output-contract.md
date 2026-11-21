@@ -111,7 +111,10 @@ instruction), `cite` (`{session, message, at, prompt_sha256, line, cwd}`;
 `admitted` (the `{trigger, matched, criteria}` of the approved candidate
 proposal that created the entry, or `null`); plain prints it as an
 `admitted\t<trigger>\t<matched>\t<criteria>` line, and the table detail
-as an `admitted` field. (S12) An
+as an `admitted` field. (Format 12) Adds `approved_by` (`{kind, name}`
+with `kind` `agent` when an agent approved a candidate proposal on
+Daniel's instruction, else `null`) and `instruction` (`{session, message,
+at, quote}` or `null`, where `quote` is `null` once forgotten). (S12) An
 agent entry has `said` `""`, `content_from` `{kind: "agent",
 role: null, message: null, at: null}` and `cite` `null`; a Daniel entry's
 `cite` is never `null`, so a reader of Daniel's entries sees no change.
@@ -178,11 +181,15 @@ text}]`), `state` (`open`, `approved`, `rejected`), `opened_at`,
 `settled_at` (or `null`), `settled_by` (a cite or `null`), `author` and
 `settled_author` (`{kind, name}` or `null`), and `updated_by` (the last
 agent who revised the reason, or `null`). Store format 11 adds
-`closed_reason` (`tag_retired` when scribe closed it without Daniel, else
-`null`) and, on a `candidate` object, `admitted` (`{trigger, matched,
-criteria}`: the capture-rule trigger as configured, the turn's words it
-matched, verbatim and at most 120 characters, and the tag's `criteria`
-then in force or `null`; `null` on a candidate opened before format 11).
+`closed_reason` (`tag_retired` when scribe closed it without Daniel, or
+from format 12 `instructed` when rejected on Daniel's checked
+instruction, else `null`) and, on a `candidate` object, `admitted`
+(`{trigger, matched, criteria}`: the capture-rule trigger as configured,
+the turn's words it matched, verbatim and at most 120 characters, and the
+tag's `criteria` then in force or `null`; `null` on a candidate opened
+before format 11). Store format 12 adds `instruction` (`{session,
+message, at, quote}` or `null`, where `quote` is `null` once the entry
+is forgotten).
 
 **Tag rules** (`tag show <tag> --json`, format 11): `tag`, `source`
 (`config` or `store`), `aliases`, `description` (or `null`),

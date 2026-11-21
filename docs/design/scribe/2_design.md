@@ -3267,6 +3267,15 @@ comes from §11.2's format 11, gaining the value `instructed`.
 `specs/store.md` and `specs/output-contract.md` describe the fields when
 the step lands.
 
+**Built (§12.7, store format 12).** `FORMAT` is `12` with append-only
+step `instructed_settlement` (11→12) adding null `approved_by` and
+`instruction` to entries and null `instruction` to proposals (checked
+against frozen format-11 shapes `EntryV11` and `ProposalsV11` before
+upgrade), `ClosedReason::Instructed` (`"instructed"`), `Instruction`
+(`{session, message, at, quote}` with nullable `quote`), redaction of
+`entry.instruction.quote` and `proposal.instruction.quote`, and JSON
+payload fields on `EntryPayload` and `ProposalPayload`.
+
 ### 12.8 Limits and what is not built until seen
 
 - **Word lists, not meaning.** Negation and sarcasm pass; a turn naming

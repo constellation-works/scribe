@@ -300,6 +300,24 @@ pub struct Cite {
     pub cwd: String,
 }
 
+/// Daniel's checked instruction that settled a proposal or changed an entry
+/// (docs/design/scribe/2_design.md §12.3, §12.4, store format 12).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Instruction {
+    /// The interactive session where Daniel typed it.
+    pub session: SessionId,
+    /// The user message's uuid.
+    pub message: String,
+    /// When that turn was sent.
+    #[serde(with = "time::serde::rfc3339")]
+    pub at: OffsetDateTime,
+    /// The checked verbatim span of Daniel's turn (redacted); `null` once
+    /// forgotten so his words leave the store.
+    #[serde(deserialize_with = "nullable")]
+    pub quote: Option<String>,
+}
+
 /// A stored entry.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -366,6 +384,15 @@ pub struct Entry {
     /// `null` evidence pointer.
     #[serde(with = "nullable_date")]
     pub as_of: Option<Date>,
+    /// Agent that approved a candidate proposal on Daniel's instruction
+    /// (format 12); `null` when Daniel typed the approval or wrote the entry
+    /// directly.
+    #[serde(deserialize_with = "nullable")]
+    pub approved_by: Option<Author>,
+    /// Daniel's checked instruction that approved, retired or forgot this
+    /// entry (format 12); `null` otherwise.
+    #[serde(deserialize_with = "nullable")]
+    pub instruction: Option<Instruction>,
     /// What the entry records, verbatim: the file's body, not a frontmatter
     /// key. Empty once forgotten.
     #[serde(skip)]
@@ -519,6 +546,8 @@ impl NewEntry {
             window: self.window,
             evidence: None,
             as_of: None,
+            approved_by: None,
+            instruction: None,
             content: self.content,
         }
     }

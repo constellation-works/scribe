@@ -372,6 +372,8 @@ impl Store {
                 .as_ref()
                 .map(|_| draft.as_of.unwrap_or_else(|| now.date())),
             evidence: draft.evidence,
+            approved_by: None,
+            instruction: None,
             content: draft.content,
         };
         redactor.entry(&mut entry);
@@ -563,6 +565,7 @@ impl Store {
             updated_by: None,
             settled_author: None,
             closed_reason: None,
+            instruction: None,
             candidate: None,
         };
         proposals.push(proposal.clone());

@@ -32,6 +32,12 @@ fn proposal() -> Proposal {
         updated_by: None,
         settled_author: None,
         closed_reason: None,
+        instruction: Some(crate::Instruction {
+            session: "s-1".parse().unwrap(),
+            message: String::from("m-1"),
+            at: T0,
+            quote: Some(String::new()),
+        }),
         candidate: Some(crate::EntryCandidate {
             tag: "preferences".parse().unwrap(),
             role: crate::Speaker::User,
@@ -86,6 +92,12 @@ fn the_redacted_field_inventory_is_exactly_the_fields_masked() {
         }],
         truncated: false,
         omitted: 0,
+    });
+    e.instruction = Some(crate::Instruction {
+        session: "s-1".parse().unwrap(),
+        message: String::from("m-1"),
+        at: T0,
+        quote: Some(String::new()),
     });
     let mut s = session_with_term();
     let mut p = proposal();

@@ -964,6 +964,7 @@ fn close_retired_candidates_respects_config_shipped_and_store_tags() {
         updated_by: None,
         settled_author: None,
         closed_reason: None,
+        instruction: None,
     };
     let proposals = vec![
         mk(1, "decisions"),

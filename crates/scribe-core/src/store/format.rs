@@ -41,7 +41,7 @@ use time::OffsetDateTime;
 
 /// The newest store format: this build reads formats 1 to `FORMAT` of every
 /// document and would write `FORMAT`.
-pub(super) const FORMAT: u32 = 11;
+pub(super) const FORMAT: u32 = 12;
 
 /// Which document an upgrade step is applied to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,7 +79,41 @@ pub(super) const UPGRADES: &[Upgrade] = &[
     entry_candidates,
     finding_entries,
     capture_admission,
+    instructed_settlement,
 ];
+
+/// Format 11 -> 12 adds `approved_by` and `instruction` to each entry and
+/// `instruction` to each proposal, all `null` on upgrade (2_design.md §12.7).
+/// Other documents are unchanged.
+fn instructed_settlement(
+    document: Document,
+    mut value: serde_json::Value,
+) -> serde_json::Result<serde_json::Value> {
+    if document == Document::Entry
+        && let Some(entry) = value.as_object_mut()
+    {
+        entry
+            .entry("approved_by")
+            .or_insert(serde_json::Value::Null);
+        entry
+            .entry("instruction")
+            .or_insert(serde_json::Value::Null);
+    }
+    if document == Document::Proposals {
+        for proposal in value
+            .get_mut("proposals")
+            .and_then(serde_json::Value::as_array_mut)
+            .into_iter()
+            .flatten()
+            .filter_map(serde_json::Value::as_object_mut)
+        {
+            proposal
+                .entry("instruction")
+                .or_insert(serde_json::Value::Null);
+        }
+    }
+    Ok(value)
+}
 
 /// Format 10 -> 11 adds `admitted` (what trigger and criteria admitted it)
 /// to each proposal candidate and `closed_reason` (why scribe closed it) to
@@ -707,6 +741,91 @@ struct CandidateV10 {
     host: crate::Label,
 }
 
+/// Frozen format-11 proposal shape (no `instruction`, and `closed_reason`
+/// accepts only `tag_retired`), checked before the 11 -> 12 upgrade.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "frozen shape checked before upgrade")]
+struct ProposalsV11 {
+    format: u32,
+    proposals: Vec<ProposalV11>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "frozen shape checked before upgrade")]
+struct ProposalV11 {
+    id: ProposalId,
+    kind: ProposalKind,
+    older: EntryId,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    candidate: Option<crate::proposal::EntryCandidate>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    newer: Option<EntryId>,
+    reason: String,
+    quotes: Vec<Quote>,
+    state: ProposalState,
+    #[serde(with = "time::serde::rfc3339")]
+    opened_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339::option")]
+    settled_at: Option<OffsetDateTime>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    settled_by: Option<Cite>,
+    author: Author,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    updated_by: Option<Author>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    settled_author: Option<Author>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    closed_reason: Option<ClosedReasonV11>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[allow(dead_code, reason = "frozen shape checked before upgrade")]
+enum ClosedReasonV11 {
+    TagRetired,
+}
+
+/// Frozen format-10 and format-11 entry frontmatter shape (no `approved_by`
+/// or `instruction`), checked before upgrading to format 12.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "frozen shape checked before upgrade")]
+struct EntryV11 {
+    id: EntryId,
+    tag: crate::TagName,
+    status: crate::EntryStatus,
+    project: crate::Project,
+    topics: crate::Topics,
+    related: Vec<crate::Related>,
+    provider: crate::Label,
+    host: crate::Label,
+    author: Author,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    updated_by: Option<Author>,
+    #[serde(with = "time::serde::rfc3339")]
+    created: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    updated: OffsetDateTime,
+    said: String,
+    content_from: crate::ContentFrom,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    cite: Option<Cite>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    retirement_reason: Option<String>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    superseded_by: Option<EntryId>,
+    #[serde(with = "crate::record::nullable_date")]
+    review_after: Option<time::Date>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    quote: Option<String>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    window: Option<crate::entry::Window>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    evidence: Option<String>,
+    #[serde(with = "crate::record::nullable_date")]
+    as_of: Option<time::Date>,
+}
+
 /// Frozen format-2 `control.json` shape, validated before upgrading.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -874,6 +993,9 @@ fn decode_frontmatter<T: DeserializeOwned>(
         let record = yaml_serde::from_value(value).map_err(|e| Error::corrupt(path, e))?;
         return Ok((record, from));
     }
+    if document == Document::Entry && (from == 10 || from == 11) {
+        yaml_serde::from_value::<EntryV11>(value.clone()).map_err(|e| Error::corrupt(path, e))?;
+    }
     let json = serde_json::to_value(&value).map_err(|e| Error::corrupt(path, e))?;
     Ok((upgrade(path, document, from, json)?, from))
 }
@@ -931,10 +1053,15 @@ pub(super) fn decode_entry(
         }
         crate::AuthorKind::Scribe => false,
     };
-    if !valid {
+    if !valid
+        || entry
+            .approved_by
+            .as_ref()
+            .is_some_and(|a| a.kind != crate::AuthorKind::Agent)
+    {
         return Err(shape(
             path,
-            "entry author, said, content_from, cite, quote and window disagree",
+            "entry author, approved_by, said, content_from, cite, quote and window disagree",
         ));
     }
     body.clone_into(&mut entry.content);
@@ -1287,6 +1414,9 @@ fn decode_json<T: DeserializeOwned>(path: &Path, bytes: &[u8], document: Documen
         }
         Document::Proposals if from == 4 => {
             serde_json::from_slice::<ProposalsV4>(bytes).map_err(|e| Error::corrupt(path, e))?;
+        }
+        Document::Proposals if from == 11 => {
+            serde_json::from_slice::<ProposalsV11>(bytes).map_err(|e| Error::corrupt(path, e))?;
         }
         Document::Proposals if from == 10 => {
             serde_json::from_slice::<ProposalsV10>(bytes).map_err(|e| Error::corrupt(path, e))?;

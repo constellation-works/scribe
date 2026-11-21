@@ -10,7 +10,12 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-The code writes format 8 and reads formats 1–8. Format 8 adds an entry's
+The code writes format 12 and reads formats 1–12. Format 12 adds
+`approved_by` and `instruction` on entries, `instruction` on proposals,
+and the `instructed` value of `closed_reason`
+([2_design.md §12.7](../2_design.md#127-store-format)). Format 11 adds
+capture-rule `admitted` on candidates and `closed_reason` on proposals.
+Format 8 adds an entry's
 `quote` and `window` and the `pickups.json` document (action tags,
 [2_design.md §4.6](../2_design.md#46-action-tags)). Format 7 adds `provider` to each
 session control and `codex_cursors` to `control.json`; missing older values
@@ -94,8 +99,12 @@ keeps: `{turns: [{role: user|assistant, message, at, text, cut}],
 truncated, omitted}`, where `message` is the turn's uuid or `null` for the
 prompt itself, `text` is redacted, `cut` says the turn was shortened to its
 cap, and `truncated`/`omitted` say whether and how many of the oldest turns
-were dropped. An agent entry's `window` is always `null`. Any other
-combination is `store_corrupt`.
+were dropped. Format 12 adds `approved_by` (`null`, or `{kind: agent, name}` when an
+agent approved a candidate proposal on Daniel's instruction; any other
+`kind` is `store_corrupt`) and `instruction` (`null`, or `{session,
+message, at, quote}` recording Daniel's checked instruction that approved,
+retired or forgot the entry, where `quote` is redacted text or `null` once
+forgotten), both upgraded to `null`.
 
 **Session keys:** `format`, `kind`, `id`, `status` (`open`, `final`),
 `project`, `topics`, `related` (model-extracted references, unchanged by
@@ -167,6 +176,10 @@ heading is `store_corrupt`. It reads as format 4 (see **Format 4** below).
   corrupt) and, on each `candidate`, `admitted` (`null`, or `{trigger,
   matched, criteria}`: the trigger that fired, the turn's words it
   matched, at most 120 characters, and the tag's `criteria` or `null`).
+  Format 12 adds `instruction` (`null`, or `{session, message, at, quote}`
+  where `quote` is redacted text or `null` once forgotten) and adds
+  `"instructed"` to `closed_reason` (on a `rejected` proposal closed on
+  Daniel's checked instruction).
 - `cataloged_by` on a `control.json` switch is `null` or `{at, by}`;
   `/scribe on` keeps it. *(S14)* `session catalog` sets it and the pass
   copies it onto the record.
@@ -347,7 +360,7 @@ config tag claims is dropped with a warning naming both.
   other refusal (a link, loose modes, a newer format, an I/O error) fails
   the whole command rather than skipping the file
   ([4_decisions.md](../4_decisions.md#one-malformed-record-makes-its-file-corrupt)).
-- **Format.** One `FORMAT` (5) covers every document. A shape change bumps
+- **Format.** One `FORMAT` (12) covers every document. A shape change bumps
   it and appends one step to `UPGRADES` in `store/format.rs`, which is
   given the document type it upgrades; shipped steps never change. Reads
   upgrade an older document in memory; a newer one is refused and left
@@ -436,6 +449,13 @@ config tag claims is dropped with a warning naming both.
   written only under the lock, after its turn is checked again to fire a
   trigger of its tag under the config then on disk; the recomputed
   `admitted` is what is stored.
+- **Format 12** (settle on instruction, 2_design.md §12.7). Append-only
+  step 11→12 (`instructed_settlement`) adds null `approved_by` and
+  `instruction` to every entry and null `instruction` to every proposal;
+  `closed_reason` gains `"instructed"` (rejected proposals only). Nothing
+  else changes, and a format-11 entry or `proposals.json` file is checked
+  against its frozen shape first. An older build refuses format 12
+  (`store_too_new`).
 - **Agent writes** (S12). Each write verb takes the lock, checks the
   author guards (a reserved `--author` name — `daniel`, `scribe`,
   `consistency` — is refused `reserved_author`; a Daniel entry's content,
@@ -485,7 +505,8 @@ config tag claims is dropped with a warning naming both.
   `entry.retirement_reason`; (format 8) also `entry.quote` and
   `entry.window.text`; (format 11) also
   `proposal.candidate.admitted.matched` and
-  `proposal.candidate.admitted.criteria`. A masked segment
+  `proposal.candidate.admitted.criteria`; (format 12) also
+  `entry.instruction.quote` and `proposal.instruction.quote`. A masked segment
   heading is cut back to 80 characters. Values shorter than 8 characters are not masked;
   identifiers, timestamps and paths are not free text. A `[redact] env`
   name with no value in the writer's environment refuses the write

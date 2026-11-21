@@ -232,6 +232,32 @@ pub(crate) struct EntryPayload {
     /// (`entry show` only); `null` for any other entry and in other
     /// commands' output.
     pub(crate) admitted: Option<scribe_core::Admitted>,
+    /// Who approved this entry on Daniel's instruction; `null` otherwise.
+    pub(crate) approved_by: Option<AuthorPayload>,
+    /// Daniel's checked instruction that approved, retired or forgot it;
+    /// `null` otherwise.
+    pub(crate) instruction: Option<InstructionPayload>,
+}
+
+/// Daniel's checked instruction that settled a proposal or changed an entry.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct InstructionPayload {
+    pub(crate) session: String,
+    pub(crate) message: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub(crate) at: Timestamp,
+    pub(crate) quote: Option<String>,
+}
+
+impl From<&scribe_core::Instruction> for InstructionPayload {
+    fn from(inst: &scribe_core::Instruction) -> Self {
+        Self {
+            session: inst.session.to_string(),
+            message: inst.message.clone(),
+            at: inst.at,
+            quote: inst.quote.clone(),
+        }
+    }
 }
 
 /// An action entry's transcript window (docs/design/scribe/2_design.md §4.6).
@@ -398,6 +424,8 @@ impl From<&Entry> for EntryPayload {
             window: None,
             action: None,
             admitted: None,
+            approved_by: entry.approved_by.as_ref().map(AuthorPayload::from),
+            instruction: entry.instruction.as_ref().map(InstructionPayload::from),
         }
     }
 }
@@ -636,8 +664,11 @@ pub(crate) struct ProposalPayload {
     /// Who settled it; `null` while open.
     pub(crate) settled_author: Option<AuthorPayload>,
     pub(crate) updated_by: Option<AuthorPayload>,
-    /// Why scribe closed it without Daniel (`tag_retired`); `null` otherwise.
+    /// Why it was closed without Daniel's `#scribe` turn (`tag_retired` or
+    /// `instructed`); `null` otherwise.
     pub(crate) closed_reason: Option<&'static str>,
+    /// Daniel's checked instruction that settled it; `null` otherwise.
+    pub(crate) instruction: Option<InstructionPayload>,
 }
 
 impl From<&Proposal> for ProposalPayload {
@@ -658,6 +689,7 @@ impl From<&Proposal> for ProposalPayload {
             settled_author: p.settled_author.as_ref().map(AuthorPayload::from),
             updated_by: p.updated_by.as_ref().map(AuthorPayload::from),
             closed_reason: p.closed_reason.map(scribe_core::ClosedReason::as_str),
+            instruction: p.instruction.as_ref().map(InstructionPayload::from),
         }
     }
 }
