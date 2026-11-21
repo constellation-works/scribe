@@ -39,10 +39,11 @@
 //! Each reapplied approval, closed retired-tag candidate, covered-candidate
 //! close, opened proposal, deactivated session and failed batch is one
 //! audit line; a scan that changes nothing and fails nothing writes none.
-//! When a later step fails after retired-tag closures are already on disk,
-//! the scan still writes one success line per closure, then its failure line.
+//! When a later step fails after earlier mutations are already on disk, the
+//! scan still writes one success line per persisted write, then its failure
+//! line.
 
-use super::RunLimits;
+use super::{PersistedAudit, RunLimits};
 use crate::app::Context;
 use crate::audit_middleware::AuditMeta;
 use crate::error::CliError;
@@ -53,8 +54,7 @@ use crate::output::{
 use clap::{Args, Subcommand};
 use scribe_core::activity::{self, ActiveRoute, SetActive};
 use scribe_core::{
-    AuditEvent, AuditStatus, Config, EntryFilter, Models, Redactor, SessionFilter, SessionId,
-    Store, consistency,
+    Config, EntryFilter, Models, Redactor, SessionFilter, SessionId, Store, consistency,
 };
 
 /// The command path in the audit log.
@@ -140,21 +140,17 @@ pub(in crate::commands) fn scan<M: Models>(
     // a configured [redact] env name has no value in this environment.
     let redactor = ctx.redactor(&config)?;
     let adapter = models(&config);
+    // Armed until the success return. Every durable write in the scan records
+    // its audit target here right after persisting, so a later `?` drops this
+    // and audits what is already on disk before the middleware writes the
+    // scan's failure line. Success disarms it so the middleware writes those
+    // lines once with the command's real duration.
+    let mut persisted = PersistedAudit::new(store, COMMAND, now);
     let repaired = store.reapply_approved(now)?;
+    persisted.extend(repaired.applied.iter().map(|r| r.entry.to_string()));
+    persisted.extend(repaired.covered.iter().map(|c| c.proposal.to_string()));
     let closed = store.close_retired_candidates(now)?;
-    // Armed until the success return. A later `?` drops this and audits the
-    // closures already on disk (the lock from the close is already released);
-    // the middleware then writes the scan's failure line. Success leaves the
-    // lines to the middleware, which records the command's real duration.
-    let mut persisted_closures = PersistedClosures {
-        store,
-        at: now,
-        ids: closed
-            .iter()
-            .map(|proposal| proposal.id.to_string())
-            .collect(),
-        armed: true,
-    };
+    persisted.extend(closed.iter().map(|proposal| proposal.id.to_string()));
     let entries = store.list_entries(&EntryFilter::default())?.listing.items;
     let proposals = store.proposals()?;
     let found = consistency::candidates(&entries, &proposals, now.date(), consistency::MAX_PAIRS);
@@ -225,6 +221,7 @@ pub(in crate::commands) fn scan<M: Models>(
             .iter()
             .map(ProposalPayload::from)
             .collect();
+        persisted.extend(report.opened.iter().map(|proposal| proposal.id.clone()));
     }
     let session_scan = SessionScan {
         store,
@@ -234,7 +231,7 @@ pub(in crate::commands) fn scan<M: Models>(
         adapter: &adapter,
         limits: &limits,
     };
-    deactivate_sessions(&session_scan, calls, &mut report)?;
+    deactivate_sessions(&session_scan, calls, &mut report, &mut persisted)?;
     let changed = !(report.reapplied.is_empty()
         && report.opened.is_empty()
         && report.closed.is_empty()
@@ -264,41 +261,8 @@ pub(in crate::commands) fn scan<M: Models>(
             report.removal_pairs_left
         ));
     }
-    persisted_closures.armed = false;
+    persisted.disarm();
     Ok(Output::Scan(Box::new(report)))
-}
-
-/// Closures already written when `scan` fails later. Drop writes one success
-/// line each, with `duration_ms` 0 because the command has not finished, and
-/// fails open (STD-02 R31). Disarm on the success path so those lines are
-/// not written twice.
-struct PersistedClosures<'a> {
-    store: &'a Store,
-    at: time::OffsetDateTime,
-    ids: Vec<String>,
-    armed: bool,
-}
-
-impl Drop for PersistedClosures<'_> {
-    fn drop(&mut self) {
-        if !self.armed {
-            return;
-        }
-        for id in &self.ids {
-            let event = AuditEvent {
-                at: self.at,
-                command: COMMAND.to_owned(),
-                status: AuditStatus::Success,
-                target: Some(id.clone()),
-                error_code: None,
-                author: None,
-                duration_ms: 0,
-            };
-            if let Err(err) = self.store.record_audit(&event) {
-                tracing::warn!(%err, target = %id, "cannot audit a closure already persisted");
-            }
-        }
-    }
 }
 
 /// What the scan's session steps share with the rest of the scan.
@@ -322,6 +286,7 @@ fn deactivate_sessions<M: Models>(
     scan: &SessionScan<'_, M>,
     mut calls: usize,
     report: &mut ScanReport,
+    persisted: &mut PersistedAudit<'_>,
 ) -> Result<(), CliError> {
     let SessionScan {
         store,
@@ -359,6 +324,7 @@ fn deactivate_sessions<M: Models>(
         if !outcome.changed() {
             continue;
         }
+        persisted.record(format!("session:{id}"));
         if let Some(s) = sessions.iter_mut().find(|s| &s.id == id) {
             s.active = false;
         }
@@ -436,6 +402,7 @@ fn deactivate_sessions<M: Models>(
             }
         };
         if outcome.changed() {
+            persisted.record(format!("session:{}", removal.session));
             report.deactivated.push(DeactivatedPayload {
                 session: removal.session.to_string(),
                 route: ActiveRoute::Removed.as_str(),

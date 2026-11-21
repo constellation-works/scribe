@@ -135,6 +135,23 @@ fn shape_names_every_refused_character_and_punctuation_separates_words() {
         find("from now on", "from now, on we go").as_deref(),
         Some("from now, on")
     );
+    // Punctuation inside the configured trigger phrase itself is also a word separator.
+    for phrase in ["by-default", "always_on", "from now, on", "(always)"] {
+        assert!(trigger::check(phrase).is_ok(), "{phrase:?}");
+    }
+    assert_eq!(
+        find("by-default", "use this by default").as_deref(),
+        Some("by default")
+    );
+    assert_eq!(
+        find("always_on", "keep it always on").as_deref(),
+        Some("always on")
+    );
+    assert_eq!(
+        find("from now, on", "from now on we go").as_deref(),
+        Some("from now on")
+    );
+    assert_eq!(find("(always)", "always check").as_deref(), Some("always"));
 }
 
 #[test]

@@ -2032,9 +2032,10 @@ entry is still `active` (refused `entry_not_active` otherwise), and writes `prop
 the entry, so a crash between them is what the next scan re-applies;
 `reject` of an approved proposal or `approve` of a rejected one is refused
 `proposal_settled`; `retire` takes an `active` entry; `forget` takes any
-entry not yet forgotten, clears its text and evidence, and clears every
-proposal quote of it and the reason, candidate quote and evidence of every
-proposal about it. Session records are not erased. A repeated
+entry not yet forgotten, clears `said`, `content`, `evidence`, `as_of`,
+`quote`, `window` and `retirement_reason`, and clears every
+proposal quote of it and the `reason`, candidate `quote`, `evidence` and
+`admitted.matched` of every proposal about it. Session records are not erased. A repeated
 instruction echoes `… — nothing changed` and is not audited; a change is
 one audit line whose target is the proposal or entry, a refusal one line
 with its code (`proposal_not_found`, `entry_not_found`,

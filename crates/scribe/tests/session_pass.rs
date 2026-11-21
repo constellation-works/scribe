@@ -3481,3 +3481,383 @@ fn pass_with_custom_tag_config_keeps_open_preferences_candidates() {
     assert_eq!(list[1]["state"], "open");
     assert_eq!(list[1]["candidate"]["tag"], "preferences");
 }
+
+#[test]
+fn forget_clears_quote_window_retirement_reason_and_admitted_matched_through_cli() {
+    let s = Setup::new();
+    // Configure a wildcard trigger so `admitted.matched` carries words from
+    // Daniel's turn that must be erased on `#scribe forget`.
+    s.config("[tags.preferences.capture]\ntriggers = [\"always * checked\"]\n");
+    let candidate_quote = "I always keep secret-matched-word checked before merging.";
+    s.write(
+        ON,
+        &[
+            line("user", "u-1", candidate_quote),
+            line("user", "u-2", "secret-window-context from earlier turn"),
+            line(
+                "user",
+                "u-3",
+                "secret-quoted-correction from Daniel's typed turn",
+            ),
+        ],
+    );
+    s.answer(&candidate_answer(candidate_quote, "u-1", "preferences"));
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    type_settlement(&s, "#scribe approve p-1");
+
+    // 1) Candidate-backed entry with `admitted.matched`.
+    let before_prop = proposals(&s)["proposals"][0].clone();
+    assert_eq!(
+        before_prop["candidate"]["admitted"]["trigger"],
+        "always * checked"
+    );
+    assert_eq!(
+        before_prop["candidate"]["admitted"]["matched"],
+        "always keep secret-matched-word checked"
+    );
+
+    type_settlement(&s, "#scribe forget preferences-1");
+
+    let forgot_pref: Value = serde_json::from_slice(
+        &s.fx
+            .ok(&["entry", "show", "preferences-1", "--json"])
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(forgot_pref["status"], "forgotten");
+    assert_eq!(forgot_pref["said"], "");
+    assert_eq!(forgot_pref["content"], "");
+    let after_prop = proposals(&s)["proposals"][0].clone();
+    assert_eq!(after_prop["candidate"]["quote"], "");
+    assert_eq!(after_prop["candidate"]["admitted"]["matched"], "");
+    assert_eq!(
+        after_prop["candidate"]["admitted"]["trigger"],
+        "always * checked"
+    );
+    let prop_list_plain = text(&s.fx.ok(&["proposal", "list"]).stdout);
+    let prop_list_table = text(&s.fx.ok(&["proposal", "list", "--format", "table"]).stdout);
+    for rendered in [&prop_list_plain, &prop_list_table] {
+        assert!(!rendered.contains("secret-matched-word"), "{rendered}");
+    }
+
+    // 2) Action entry with a transcript `window` from `#scribe standard:`.
+    let mut win_payload = s.payload("UserPromptSubmit");
+    win_payload["prompt"] = json!("#scribe standard: secret-window-rule for CI");
+    s.hook("user-prompt-submit", &win_payload);
+    let before_win: Value = serde_json::from_slice(
+        &s.fx
+            .ok(&["entry", "show", "standard-1", "--window", "--json"])
+            .stdout,
+    )
+    .unwrap();
+    assert!(
+        before_win["window"].is_object(),
+        "action capture keeps its window: {before_win}"
+    );
+    assert!(before_win["window_turns"].as_u64().unwrap_or(0) > 0);
+    type_settlement(&s, "#scribe forget standard-1");
+    let after_win: Value = serde_json::from_slice(
+        &s.fx
+            .ok(&["entry", "show", "standard-1", "--window", "--json"])
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(after_win["status"], "forgotten");
+    assert_eq!(after_win["said"], "");
+    assert_eq!(after_win["content"], "");
+    assert!(after_win["window"].is_null(), "{after_win}");
+    assert!(after_win["window_turns"].is_null(), "{after_win}");
+
+    // 3) Agent action entry with `quote` and `retirement_reason`.
+    let session_rel = format!("session:{ON}");
+    let added: Value = serde_json::from_slice(
+        &s.fx
+            .ok(&[
+                "entry",
+                "add",
+                "--tag",
+                "standard",
+                "--author",
+                "opus",
+                "--related",
+                &session_rel,
+                "--quote",
+                "secret-quoted-correction from Daniel's typed turn",
+                "secret-agent-rule for builds",
+                "--json",
+            ])
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(added["id"], "standard-2");
+    s.fx.ok(&[
+        "entry",
+        "retire",
+        "standard-2",
+        "--author",
+        "opus",
+        "--reason",
+        "secret-retire-reason explaining why",
+        "--json",
+    ]);
+    let before_retired: Value =
+        serde_json::from_slice(&s.fx.ok(&["entry", "show", "standard-2", "--json"]).stdout)
+            .unwrap();
+    assert_eq!(
+        before_retired["quote"],
+        "secret-quoted-correction from Daniel's typed turn"
+    );
+    assert_eq!(
+        before_retired["retirement_reason"],
+        "secret-retire-reason explaining why"
+    );
+    type_settlement(&s, "#scribe forget standard-2");
+    let after_retired: Value =
+        serde_json::from_slice(&s.fx.ok(&["entry", "show", "standard-2", "--json"]).stdout)
+            .unwrap();
+    assert_eq!(after_retired["status"], "forgotten");
+    assert_eq!(after_retired["said"], "");
+    assert_eq!(after_retired["content"], "");
+    assert!(after_retired["quote"].is_null(), "{after_retired}");
+    assert!(
+        after_retired["retirement_reason"].is_null(),
+        "{after_retired}"
+    );
+
+    // Every entry reads back cleanly with zero warnings, renders in plain/table
+    // without error, and none of the forgotten words remain on disk.
+    let listed: Value =
+        serde_json::from_slice(&s.fx.ok(&["entry", "list", "--json"]).stdout).unwrap();
+    assert_eq!(listed["warnings"], json!([]));
+    assert_eq!(listed["total"], 3);
+    for id in ["preferences-1", "standard-1", "standard-2"] {
+        let plain = text(&s.fx.ok(&["entry", "show", id]).stdout);
+        let table = text(&s.fx.ok(&["entry", "show", id, "--format", "table"]).stdout);
+        for rendered in [&plain, &table] {
+            for secret in [
+                "secret-matched-word",
+                "secret-window-context",
+                "secret-window-rule",
+                "secret-quoted-correction",
+                "secret-agent-rule",
+                "secret-retire-reason",
+            ] {
+                assert!(!rendered.contains(secret), "{id}: {rendered}");
+            }
+        }
+    }
+    let disk = std::fs::read_to_string(s.fx.root().join("proposals.json")).unwrap()
+        + &std::fs::read_to_string(s.fx.root().join("entries/preferences/preferences-1.md"))
+            .unwrap()
+        + &std::fs::read_to_string(s.fx.root().join("entries/standard/standard-1.md")).unwrap()
+        + &std::fs::read_to_string(s.fx.root().join("entries/standard/standard-2.md")).unwrap();
+    for secret in [
+        "secret-matched-word",
+        "secret-window-context",
+        "secret-window-rule",
+        "secret-quoted-correction",
+        "secret-agent-rule",
+        "secret-retire-reason",
+    ] {
+        assert!(
+            !disk.contains(secret),
+            "forgotten text {secret:?} must leave disk"
+        );
+    }
+}
+
+#[test]
+fn pass_and_catalog_audit_persisted_closures_when_marking_failure_aborts() {
+    let seed_retired_candidate = |s: &Setup, session: &str| {
+        let proposals_path = s.fx.root().join("proposals.json");
+        let proposal = json!({
+            "id": "p-1",
+            "kind": "candidate",
+            "older": "decisions-1",
+            "newer": null,
+            "candidate": {
+                "tag": "decisions",
+                "role": "user",
+                "quote": "I always keep decisions item 1 documented.",
+                "evidence": null,
+                "cite": {
+                    "session": session,
+                    "message": "seed-1",
+                    "at": "2026-11-15T00:00:00Z",
+                    "prompt_sha256": "0".repeat(64),
+                    "line": 1,
+                    "cwd": "/nonexistent/work/scribe"
+                },
+                "project": "scribe",
+                "provider": "claude-code",
+                "host": "host",
+                "admitted": null
+            },
+            "reason": "Unmarked decisions statement.",
+            "quotes": [],
+            "state": "open",
+            "opened_at": "2026-11-15T00:01:00Z",
+            "settled_at": null,
+            "settled_by": null,
+            "author": {"kind": "scribe", "name": "session-pass"},
+            "updated_by": null,
+            "settled_author": null,
+            "closed_reason": null
+        });
+        std::fs::write(
+            &proposals_path,
+            json!({"format": 11, "proposals": [proposal]}).to_string(),
+        )
+        .unwrap();
+        make_private(&proposals_path);
+    };
+
+    // (a) `session pass`: window 1 persists the retired-tag closure of `p-1`;
+    // window 2 replaces `control.json` with a symlink and fails so
+    // `job.failed(failure)?` returns `Err(store_symlink)` and bypasses
+    // `Output::Pass`.
+    {
+        let s = Setup::new();
+        s.config("[catalog]\nwindow_messages = 1\n");
+        s.write(
+            ON,
+            &[
+                line("user", "u-1", "First window message."),
+                line("user", "u-2", "Second window message."),
+            ],
+        );
+        s.scribe("/scribe on");
+        seed_retired_candidate(&s, ON);
+        let control_path = s.fx.root().join("control.json");
+        let mut script = String::from(
+            "#!/bin/sh\nn=$(ls \"$HOME\" | grep -c '^claude-stdin')\ncat > \"$HOME/claude-stdin-$n\"\ncase $n in\n",
+        );
+        script.push_str(&format!("0) {} ;;\n", response(&answer())));
+        script.push_str(&format!(
+            "1) ln -sf /dev/null '{}' ; echo 'model boom' >&2 ; exit 3 ;;\n",
+            control_path.display()
+        ));
+        script.push_str("*) exit 4 ;;\nesac\n");
+        s.fx.fake_program("claude", &script);
+
+        let audit_before = s.audit_lines();
+        let out = s.run_any(&["session", "pass", "--session", ON, "--json"], b"");
+        let stderr = text(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{stderr}");
+        let err: Value = serde_json::from_str(stderr.lines().last().unwrap()).expect(&stderr);
+        assert_eq!(err["code"], "store_symlink", "{err}");
+
+        let stored: Value = serde_json::from_str(
+            &std::fs::read_to_string(s.fx.root().join("proposals.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(stored["proposals"][0]["state"], "rejected");
+        assert_eq!(stored["proposals"][0]["closed_reason"], "tag_retired");
+
+        let new_audit: Vec<Value> = std::fs::read_to_string(s.fx.root().join("audit.jsonl"))
+            .unwrap()
+            .lines()
+            .skip(audit_before)
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(
+            new_audit
+                .iter()
+                .filter(|e| {
+                    e["command"] == "session pass"
+                        && e["status"] == "success"
+                        && e["target"] == "p-1"
+                })
+                .count(),
+            1,
+            "persisted closure p-1 must be audited on early ? abort: {new_audit:?}"
+        );
+        assert_eq!(
+            new_audit
+                .iter()
+                .filter(|e| {
+                    e["command"] == "session pass"
+                        && e["status"] == "failure"
+                        && e["error_code"] == "store_symlink"
+                })
+                .count(),
+            1,
+            "{new_audit:?}"
+        );
+    }
+
+    // (b) `session catalog`: same two-window failure where `job.failed` aborts.
+    {
+        let s = Setup::new();
+        s.config("[catalog]\nwindow_messages = 1\n");
+        s.write(
+            NEVER,
+            &[
+                line("user", "u-1", "First catalog window."),
+                line("user", "u-2", "Second catalog window."),
+            ],
+        );
+        seed_retired_candidate(&s, NEVER);
+        let control_path = s.fx.root().join("control.json");
+        let mut script = String::from(
+            "#!/bin/sh\nn=$(ls \"$HOME\" | grep -c '^claude-stdin')\ncat > \"$HOME/claude-stdin-$n\"\ncase $n in\n",
+        );
+        script.push_str(&format!("0) {} ;;\n", response(&answer())));
+        script.push_str(&format!(
+            "1) ln -sf /dev/null '{}' ; echo 'model boom' >&2 ; exit 3 ;;\n",
+            control_path.display()
+        ));
+        script.push_str("*) exit 4 ;;\nesac\n");
+        s.fx.fake_program("claude", &script);
+
+        let audit_before = s.audit_lines();
+        let out = s.run_any(
+            &["session", "catalog", NEVER, "--author", "opus", "--json"],
+            b"",
+        );
+        let stderr = text(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{stderr}");
+        let err: Value = serde_json::from_str(stderr.lines().last().unwrap()).expect(&stderr);
+        assert_eq!(err["code"], "store_symlink", "{err}");
+
+        let stored: Value = serde_json::from_str(
+            &std::fs::read_to_string(s.fx.root().join("proposals.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(stored["proposals"][0]["state"], "rejected");
+        assert_eq!(stored["proposals"][0]["closed_reason"], "tag_retired");
+
+        let new_audit: Vec<Value> = std::fs::read_to_string(s.fx.root().join("audit.jsonl"))
+            .unwrap()
+            .lines()
+            .skip(audit_before)
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(
+            new_audit
+                .iter()
+                .filter(|e| {
+                    e["command"] == "session catalog"
+                        && e["status"] == "success"
+                        && e["target"] == "p-1"
+                        && e["author"] == "opus"
+                })
+                .count(),
+            1,
+            "persisted closure p-1 must be audited on catalog early ? abort: {new_audit:?}"
+        );
+        assert_eq!(
+            new_audit
+                .iter()
+                .filter(|e| {
+                    e["command"] == "session catalog"
+                        && e["status"] == "failure"
+                        && e["error_code"] == "store_symlink"
+                })
+                .count(),
+            1,
+            "{new_audit:?}"
+        );
+    }
+}

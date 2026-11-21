@@ -1344,10 +1344,10 @@ fn after_persist(closed: &[Proposal], err: Error) -> Error {
     if closed.is_empty() {
         err
     } else {
-        Error::AfterPersist {
+        Error::AfterPersist(Box::new(crate::AfterPersistError {
             closed: closed.iter().map(|p| p.id.to_string()).collect(),
-            source: Box::new(err),
-        }
+            source: err,
+        }))
     }
 }
 

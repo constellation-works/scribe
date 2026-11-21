@@ -2953,7 +2953,7 @@ Alternatives considered:
 - Cost: a claim he approved through the aide counts as his words; the
   checks are word lists, so a misdirected instruction can pass and only the
   aide's echo and his later retire catch it (a negated or excepted one is
-  refused, [§12.2](./2_design.md#12-settling-and-deleting-on-daniels-instruction-proposed)); an agent that
+  refused, [§12.2](./2_design.md#122-question-1--how-his-instruction-is-evidenced-and-what-the-store-verifies)); an agent that
   can write a transcript file as him can forge an instruction (an
   accident guard, STD-05@1 §R5, not a boundary); the aide must run on the
   Mac, where the store and its transcript are.

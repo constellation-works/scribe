@@ -68,7 +68,7 @@ pub use entry::{
     AgentEntry, Cite, ContentFrom, Entry, EntryError, EntryFilter, EntryId, EntryPatch,
     EntryStatus, NewEntry, Speaker, TagName, Window, WindowTurn,
 };
-pub use error::{Error, Result, WriteRefusal};
+pub use error::{AfterPersistError, Error, Result, WriteRefusal};
 pub use models::Models;
 pub use proposal::{
     Admitted, ClosedReason, EntryCandidate, Proposal, ProposalChange, ProposalError,
