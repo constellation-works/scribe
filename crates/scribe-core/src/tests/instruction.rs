@@ -326,3 +326,165 @@ fn a_codex_rollout_is_interactive_only_from_its_cli_or_vscode_source() {
         Err("instruction_not_found")
     );
 }
+
+#[test]
+fn conservative_instruction_regressions() {
+    for (text, act, id) in [
+        ("don't retire preferences-2", Act::Retire, "preferences-2"),
+        ("do not approve p-4", Act::Approve, "p-4"),
+        ("never forget preferences-2", Act::Forget, "preferences-2"),
+        (
+            "Retire preferences-3, not preferences-2",
+            Act::Retire,
+            "preferences-2",
+        ),
+        (
+            "Do not, under any circumstances, retire preferences-2",
+            Act::Retire,
+            "preferences-2",
+        ),
+        (
+            "Please don't\nretire preferences-2",
+            Act::Retire,
+            "preferences-2",
+        ),
+        (
+            "Don't retire preferences-2, preferences-3, or preferences-4.",
+            Act::Retire,
+            "preferences-3",
+        ),
+        (
+            "retire preferences-2 but keep another",
+            Act::Retire,
+            "preferences-2",
+        ),
+        (
+            "retire preferences-2 except that one",
+            Act::Retire,
+            "preferences-2",
+        ),
+        ("Don't forget to approve p-4", Act::Approve, "p-4"),
+    ] {
+        assert_eq!(
+            run(&[user("u", text, 0)], text, act, id),
+            "instruction_mismatch",
+            "{text}"
+        );
+    }
+    for (reply, answer) in [
+        ("Approve p-4?", "Yes, but not p-4"),
+        ("Don't approve p-4, but approve p-9?", "yes"),
+    ] {
+        assert_eq!(
+            run(
+                &[assistant("a", reply, 0), user("u", answer, 0)],
+                answer,
+                Act::Approve,
+                "p-4"
+            ),
+            "instruction_mismatch"
+        );
+    }
+    for answer in ["yes, approve it", "approve p-4"] {
+        assert_eq!(
+            run(
+                &[assistant("a", "Approve p-4?", 0), user("u", answer, 0)],
+                answer,
+                Act::Approve,
+                "p-4"
+            ),
+            "ok"
+        );
+    }
+    assert_eq!(
+        run(
+            &[user("u", "retire preferences-2", 0)],
+            "retire preferences-2",
+            Act::Retire,
+            "preferences-2"
+        ),
+        "ok"
+    );
+    for reply in ["approved p-4?", "accepted p-4?"] {
+        assert_eq!(
+            run(
+                &[assistant("a", reply, 0), user("u", "yes", 0)],
+                "yes",
+                Act::Approve,
+                "p-4"
+            ),
+            "instruction_mismatch"
+        );
+    }
+    assert!(!names_target("approve anything", &Target::new("", "")));
+}
+
+#[test]
+fn precise_freshness_boundaries() {
+    let mut future = user("u", "approve p-4", 0);
+    future.message.at = T0 + time::Duration::nanoseconds(1);
+    assert_eq!(
+        run(&[future], "approve p-4", Act::Approve, "p-4"),
+        "instruction_stale"
+    );
+    assert_eq!(
+        run(
+            &[user("u", "approve p-4", 30)],
+            "approve p-4",
+            Act::Approve,
+            "p-4"
+        ),
+        "ok"
+    );
+}
+
+#[test]
+fn origin_claims_fail_closed_and_ignore_nonconversation_lines() {
+    for field in [
+        "source",
+        "promptSource",
+        "prompt_source",
+        "origin",
+        "promptOrigin",
+        "prompt_origin",
+    ] {
+        for value in [json!(null), json!(42), json!({})] {
+            let mut extra = json!({"entrypoint":"cli"});
+            extra[field] = value;
+            let line = claude_line("u", "user", "approve p-4", extra);
+            assert_eq!(
+                run(
+                    &claude_conversation(line.as_bytes()),
+                    "approve p-4",
+                    Act::Approve,
+                    "p-4"
+                ),
+                "instruction_not_found",
+                "{field}"
+            );
+        }
+    }
+    let non_message =
+        json!({"type":"progress", "uuid":"u", "entrypoint":"sdk-cli", "origin":"agent"});
+    let line = claude_line("u", "user", "approve p-4", json!({"entrypoint":"cli"}));
+    assert_eq!(
+        run(
+            &claude_conversation(format!("{non_message}\n{line}").as_bytes()),
+            "approve p-4",
+            Act::Approve,
+            "p-4"
+        ),
+        "ok"
+    );
+}
+
+#[test]
+fn codex_control_lines_do_not_age_out_the_instruction() {
+    let mut rollout = codex_rollout(json!("cli"));
+    for i in 0..3 {
+        let row = json!({"type":"response_item", "timestamp":"2026-11-01T09:59:00Z", "payload":{"type":"message", "id":format!("control-{i}"), "role":"user", "content":[{"type":"input_text", "text":"/scribe status"}], "internal_chat_message_metadata_passthrough":{"turn_id":format!("t-{i}"), "content_item_kinds":["user.text"], "content_item_metadata":[{"provenance":{"type":"user"}}]}}});
+        rollout.push_str(&format!("{row}\n"));
+    }
+    let spoken = codex_conversation(rollout.as_bytes(), &session()).unwrap();
+    assert_eq!(run(&spoken, "approve p-4", Act::Approve, "p-4"), "ok");
+}

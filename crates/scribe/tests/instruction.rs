@@ -442,3 +442,16 @@ fn codex_cli_and_vscode_sessions_are_interactive_and_exec_is_not() {
         }
     }
 }
+
+#[test]
+fn negated_instruction_refuses_without_mutating_the_entry() {
+    let fx = store_with_agent_entry();
+    let text = "please don't retire preferences-2";
+    claude(&fx, Some("cli"), &[("u-1", "user", text, 0)]);
+    let before = state(&fx);
+    assert_eq!(
+        run(&fx, &retire("preferences-2", text)),
+        (Some(1), Some(String::from("instruction_mismatch")))
+    );
+    assert_eq!(state(&fx), before);
+}

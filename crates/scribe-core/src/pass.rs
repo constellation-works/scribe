@@ -53,7 +53,7 @@ pub use candidates::{
     MAX_CANDIDATES, MAX_OPEN_CANDIDATES, PassClaim, candidate_drafts, candidate_exclusions,
     capture_request,
 };
-pub(crate) use candidates::{admission, own_span};
+pub(crate) use candidates::{admission, is_marker, own_span, statement_tokens};
 pub(crate) use candidates::{covering_entry, covers_statement, covers_turn};
 mod repair;
 pub use repair::repair;
