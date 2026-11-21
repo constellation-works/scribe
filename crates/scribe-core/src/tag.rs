@@ -12,8 +12,12 @@
 //! An action tag's entries are work items a consumer outside scribe picks
 //! up; `ask` leaves them out unless asked. A `finding` entry is an agent's
 //! measured or verified result with an evidence pointer: no consumer, no
-//! transcript window, found again only through `ask` or search. Pure values
-//! and no I/O (STD-02 R5).
+//! transcript window, found again only through `ask` or search.
+//! A tag's capture rules (2_design.md §11.2: `from`, `route`, `triggers`,
+//! `criteria`, `not`) decide which of Daniel's turns the session pass may
+//! claim under it; `preferences` and `idea` ship rules, the shipped values
+//! below, and config overrides them field by field. Pure values and no I/O
+//! (STD-02 R5).
 
 use crate::entry::{Entry, TagName};
 use std::collections::BTreeMap;
@@ -56,6 +60,199 @@ pub struct TagDef {
     /// (config `require_evidence = true`): the shipped `finding` tag.
     /// Memory tags only; action tags refuse the flag in config.
     pub require_evidence: bool,
+    /// Which turns the session pass may turn into a claim under it
+    /// (docs/design/scribe/2_design.md §11.2): the shipped defaults for its
+    /// name, field by field overridden by `[tags.<name>.capture]`. Empty
+    /// for a tag with neither, which the pass never captures.
+    pub capture: CaptureRules,
+}
+
+/// Whose turns a tag's capture rules read (`from`). Only Daniel's typed
+/// turns are accepted for now; `assistant` is refused in config.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CaptureFrom {
+    /// Daniel's typed turns, with the pass's exclusions.
+    Daniel,
+}
+
+impl CaptureFrom {
+    /// The config token.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Daniel => "daniel",
+        }
+    }
+}
+
+/// What a claim under the tag becomes (`route`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CaptureRoute {
+    /// A candidate proposal Daniel settles (§5.3).
+    Propose,
+    /// The pass writes the entry itself (not built in this step: the pass
+    /// captures nothing under a `write` tag yet).
+    Write,
+    /// The prompt hook tells the agent; the pass captures nothing.
+    Agent,
+}
+
+impl CaptureRoute {
+    /// The config token.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Propose => "propose",
+            Self::Write => "write",
+            Self::Agent => "agent",
+        }
+    }
+
+    /// Parse the config token.
+    #[must_use]
+    pub fn parse(token: &str) -> Option<Self> {
+        match token {
+            "propose" => Some(Self::Propose),
+            "write" => Some(Self::Write),
+            "agent" => Some(Self::Agent),
+            _ => None,
+        }
+    }
+}
+
+/// Where a capture-rule field's value came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RuleOrigin {
+    /// scribe's shipped default for the tag.
+    Shipped,
+    /// `config.toml`, at this 1-based line when known.
+    Config {
+        /// The line of the key.
+        line: Option<usize>,
+    },
+}
+
+impl RuleOrigin {
+    /// `shipped` or `config`.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Shipped => "shipped",
+            Self::Config { .. } => "config",
+        }
+    }
+}
+
+/// One capture-rule field's effective value and its origin.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Rule<T> {
+    /// The value in force.
+    pub value: T,
+    /// Where it came from.
+    pub origin: RuleOrigin,
+}
+
+impl<T> Rule<T> {
+    fn shipped(value: T) -> Self {
+        Self {
+            value,
+            origin: RuleOrigin::Shipped,
+        }
+    }
+}
+
+/// A tag's effective capture rules: each field `None` when neither the
+/// shipped defaults nor config give it (origin `none`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CaptureRules {
+    /// Whose turns are read.
+    pub from: Option<Rule<CaptureFrom>>,
+    /// What a claim becomes.
+    pub route: Option<Rule<CaptureRoute>>,
+    /// The trigger phrases ([`crate::trigger`]); a configured list replaces
+    /// the shipped one whole, and an empty one captures nothing.
+    pub triggers: Option<Rule<Vec<String>>>,
+    /// What qualifies, given to the `session` model.
+    pub criteria: Option<Rule<String>>,
+    /// What does not, given beside `criteria`.
+    pub not: Option<Rule<String>>,
+}
+
+/// The longest `criteria` or `not` text, in characters.
+pub const CAPTURE_TEXT_CHARS: usize = 300;
+
+/// The shipped capture rules: `(tag, route, triggers, criteria, not)`
+/// (2_design.md §11.2). `idea` keeps the candidate route until its write
+/// route is built; `standard` ships none.
+const SHIPPED_CAPTURE: [(&str, CaptureRoute, &[&str], &str, &str); 2] = [
+    (
+        "idea",
+        CaptureRoute::Propose,
+        &[
+            "have * an idea",
+            "had an idea",
+            "here's an idea",
+            "what do you think about * idea",
+            "what if we",
+        ],
+        "Daniel puts forward something to consider, not an instruction to do it now.",
+        "A direction to act now; a preference; a question of fact.",
+    ),
+    (
+        "preferences",
+        CaptureRoute::Propose,
+        &[
+            "always",
+            "never",
+            "should not",
+            "from now on",
+            "I prefer",
+            "by default",
+        ],
+        "A standing rule from Daniel that applies beyond the work at hand.",
+        "A choice about one page or task (it goes on its Orbit task or the feature's 4_decisions.md); an acknowledgement.",
+    ),
+];
+
+impl CaptureRules {
+    /// The rules scribe ships for the tag named `name`; empty for any other.
+    #[must_use]
+    pub fn shipped(name: &str) -> Self {
+        SHIPPED_CAPTURE
+            .iter()
+            .find(|(tag, ..)| *tag == name)
+            .map(|(_, route, triggers, criteria, not)| Self {
+                from: Some(Rule::shipped(CaptureFrom::Daniel)),
+                route: Some(Rule::shipped(*route)),
+                triggers: Some(Rule::shipped(
+                    triggers.iter().map(|t| (*t).to_owned()).collect(),
+                )),
+                criteria: Some(Rule::shipped((*criteria).to_owned())),
+                not: Some(Rule::shipped((*not).to_owned())),
+            })
+            .unwrap_or_default()
+    }
+
+    /// The triggers the session pass matches for the tag: only for Daniel's
+    /// turns under the `propose` route; `None` otherwise (no rules, or a
+    /// route the pass does not take).
+    #[must_use]
+    pub fn pass_triggers(&self) -> Option<&[String]> {
+        let from = self.from.as_ref()?.value;
+        let route = self.route.as_ref()?.value;
+        match (from, route) {
+            (CaptureFrom::Daniel, CaptureRoute::Propose) => {
+                self.triggers.as_ref().map(|t| t.value.as_slice())
+            }
+            (CaptureFrom::Daniel, CaptureRoute::Write | CaptureRoute::Agent) => None,
+        }
+    }
+
+    /// The route in force, if any.
+    #[must_use]
+    pub fn route(&self) -> Option<CaptureRoute> {
+        self.route.as_ref().map(|r| r.value)
+    }
 }
 
 /// How an action tag treats agent-written entries
@@ -176,6 +373,7 @@ impl TagTable {
                 stale_after_days: NonZeroU32::new(180),
                 action: None,
                 require_evidence: false,
+                capture: CaptureRules::shipped("preferences"),
             }])
         })()
         .unwrap_or_default();
@@ -199,6 +397,7 @@ impl TagTable {
                         ask_first: false,
                     }),
                     require_evidence: false,
+                    capture: CaptureRules::shipped(n),
                 })
             })
     }
@@ -215,6 +414,7 @@ impl TagTable {
             stale_after_days: None,
             action: None,
             require_evidence: true,
+            capture: CaptureRules::shipped(FINDING_TAG),
         })
     }
 
@@ -361,6 +561,7 @@ impl StoreTag {
             stale_after_days: self.stale_after_days,
             action: None,
             require_evidence: false,
+            capture: CaptureRules::default(),
         }
     }
 }

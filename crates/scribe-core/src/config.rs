@@ -22,6 +22,10 @@
 //! [tags.remind]
 //! ask_first = true
 //!
+//! [tags.preferences.capture]
+//! triggers = ["always", "never", "from now on", "I prefer"]
+//! not = "a choice about one task; an acknowledgement"
+//!
 //! [models]
 //! ask = "claude-sonnet-5-5"
 //! credentials = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"]
@@ -46,7 +50,10 @@
 use crate::entry::TagName;
 use crate::record::{Label, Project, is_kebab};
 use crate::session::Cadence;
-use crate::tag::{ActionTag, TagDef, TagTable};
+use crate::tag::{
+    ActionTag, CAPTURE_TEXT_CHARS, CaptureFrom, CaptureRoute, CaptureRules, Rule, RuleOrigin,
+    TagDef, TagTable,
+};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::num::{NonZeroU32, NonZeroUsize};
@@ -202,7 +209,7 @@ impl Config {
             Some(tags) => {
                 let defs = tags
                     .into_iter()
-                    .map(|(name, tag)| tag.into_def(name))
+                    .map(|(name, tag)| tag.into_def(name, text))
                     .collect::<Result<Vec<_>, _>>()?;
                 TagTable::new(defs)
                     .map_err(|e| unlocated(e.to_string()))?
@@ -331,10 +338,153 @@ struct RawTag {
     ask_first: Option<bool>,
     #[serde(default)]
     require_evidence: Option<bool>,
+    #[serde(default)]
+    capture: Option<RawCapture>,
+}
+
+/// `[tags.<name>.capture]`: each field overrides the shipped default for
+/// that field alone (docs/design/scribe/2_design.md §11.2).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawCapture {
+    #[serde(default)]
+    from: Option<toml::Spanned<String>>,
+    #[serde(default)]
+    route: Option<toml::Spanned<String>>,
+    #[serde(default)]
+    triggers: Option<toml::Spanned<Vec<String>>>,
+    #[serde(default)]
+    criteria: Option<toml::Spanned<String>>,
+    #[serde(default)]
+    not: Option<toml::Spanned<String>>,
+}
+
+impl RawCapture {
+    /// `shipped` with each configured field in its place, checked.
+    fn resolve(
+        self,
+        key: &str,
+        text: &str,
+        shipped: CaptureRules,
+    ) -> Result<CaptureRules, ConfigError> {
+        let at = |span: std::ops::Range<usize>| Some(line_of(text, span.start));
+        let origin = |span: std::ops::Range<usize>| RuleOrigin::Config { line: at(span) };
+        let refuse = |span: std::ops::Range<usize>, message: String| ConfigError {
+            line: at(span),
+            message,
+        };
+        let mut rules = shipped;
+        if let Some(from) = self.from {
+            let span = from.span();
+            let value = match from.get_ref().as_str() {
+                "daniel" => CaptureFrom::Daniel,
+                "assistant" => {
+                    return Err(refuse(
+                        span,
+                        format!(
+                            "{key}.from = \"assistant\" is not accepted: the pass reads only Daniel's turns; use \"daniel\""
+                        ),
+                    ));
+                }
+                other => {
+                    return Err(refuse(
+                        span,
+                        format!("{key}.from: '{other}' is not one of: daniel"),
+                    ));
+                }
+            };
+            rules.from = Some(Rule {
+                value,
+                origin: origin(span),
+            });
+        }
+        if let Some(route) = self.route {
+            let span = route.span();
+            let value = CaptureRoute::parse(route.get_ref()).ok_or_else(|| {
+                refuse(
+                    span.clone(),
+                    format!(
+                        "{key}.route: '{}' is not one of: propose, write, agent",
+                        route.get_ref()
+                    ),
+                )
+            })?;
+            rules.route = Some(Rule {
+                value,
+                origin: origin(span),
+            });
+        }
+        if let Some(triggers) = self.triggers {
+            let span = triggers.span();
+            let list = triggers.into_inner();
+            if list.len() > crate::trigger::MAX_TRIGGERS {
+                return Err(refuse(
+                    span,
+                    format!(
+                        "{key}.triggers: at most {} triggers",
+                        crate::trigger::MAX_TRIGGERS
+                    ),
+                ));
+            }
+            let mut seen: Vec<String> = Vec::new();
+            for trigger in list {
+                crate::trigger::check(&trigger)
+                    .map_err(|e| refuse(span.clone(), format!("{key}.triggers: {e}")))?;
+                if !seen.contains(&trigger) {
+                    seen.push(trigger);
+                }
+            }
+            rules.triggers = Some(Rule {
+                value: seen,
+                origin: origin(span),
+            });
+        }
+        for (field, value, slot) in [
+            ("criteria", self.criteria, &mut rules.criteria),
+            ("not", self.not, &mut rules.not),
+        ] {
+            if let Some(value) = value {
+                let span = value.span();
+                let text = value.into_inner().trim().to_owned();
+                if text.chars().count() > CAPTURE_TEXT_CHARS || text.chars().any(char::is_control) {
+                    return Err(refuse(
+                        span,
+                        format!(
+                            "{key}.{field}: at most {CAPTURE_TEXT_CHARS} characters on one line"
+                        ),
+                    ));
+                }
+                *slot = Some(Rule {
+                    value: text,
+                    origin: origin(span),
+                });
+            }
+        }
+        // A tag scribe ships no rules for must say whose turns, where they go
+        // and what fires, rather than take an invisible default.
+        let missing: Vec<&str> = [
+            ("from", rules.from.is_none()),
+            ("route", rules.route.is_none()),
+            ("triggers", rules.triggers.is_none()),
+        ]
+        .into_iter()
+        .filter_map(|(field, absent)| absent.then_some(field))
+        .collect();
+        if !missing.is_empty() {
+            return Err(ConfigError {
+                line: None,
+                message: format!(
+                    "{key} needs {} (scribe ships no capture rules for this tag)",
+                    missing.join(", ")
+                ),
+            });
+        }
+        Ok(rules)
+    }
 }
 
 impl RawTag {
-    fn into_def(self, name: String) -> Result<TagDef, ConfigError> {
+    fn into_def(self, name: String, text: &str) -> Result<TagDef, ConfigError> {
         // An alias is a word Daniel types, so its case folds; a name is also
         // the entries directory, so it must already be lowercase.
         let word = |key: String, value: String| {
@@ -393,6 +543,14 @@ impl RawTag {
             .description
             .or_else(|| shipped.and_then(|def| def.description))
             .or_else(|| shipped_finding.and_then(|def| def.description));
+        let capture = match self.capture {
+            None => CaptureRules::shipped(&name),
+            Some(raw) => raw.resolve(
+                &format!("{key}.capture"),
+                text,
+                CaptureRules::shipped(&name),
+            )?,
+        };
         Ok(TagDef {
             aliases: self
                 .aliases
@@ -404,6 +562,7 @@ impl RawTag {
             stale_after_days: self.stale_after_days,
             action,
             require_evidence,
+            capture,
         })
     }
 }

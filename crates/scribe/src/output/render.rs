@@ -4,8 +4,9 @@
 use super::color::{self, Role};
 use super::payload::{
     AskPayload, EntryPayload, FoundPayload, HitPayload, HookJson, HookReply, HookSpecificJson,
-    PassPayload, PassReport, PluginReply, ProposalPayload, Record, Records, ScanReport,
-    SessionPayload, TagPayload, TaskPayload, TranscriptPayload, TreeRow, WarningPayload,
+    OriginPayload, PassPayload, PassReport, PluginReply, ProposalPayload, Record, Records,
+    ScanReport, SessionPayload, TagPayload, TagShowPayload, TaskPayload, TranscriptPayload,
+    TreeRow, WarningPayload,
 };
 use super::sink::{OutputMode, Sink};
 use super::table::{self, Align, Cell, Column};
@@ -54,7 +55,7 @@ const SESSION_COLUMNS: [Column; 7] = [
     col("TITLE", Align::Left, true),
 ];
 
-const PROPOSAL_COLUMNS: [Column; 7] = [
+const PROPOSAL_COLUMNS: [Column; 8] = [
     col("ID", Align::Left, false),
     col("KIND", Align::Left, false),
     col("STATE", Align::Left, false),
@@ -62,6 +63,7 @@ const PROPOSAL_COLUMNS: [Column; 7] = [
     col("NEWER", Align::Left, false),
     col("OPENED", Align::Left, false),
     col("REASON", Align::Left, true),
+    col("ADMITTED", Align::Left, true),
 ];
 
 const PASS_COLUMNS: [Column; 5] = [
@@ -80,7 +82,7 @@ const SCAN_COLUMNS: [Column; 5] = [
     col("NEWER", Align::Left, false),
 ];
 
-const TAG_COLUMNS: [Column; 9] = [
+const TAG_COLUMNS: [Column; 10] = [
     col("NAME", Align::Left, false),
     col("ENTRIES", Align::Right, false),
     col("STALE DAYS", Align::Right, false),
@@ -90,6 +92,7 @@ const TAG_COLUMNS: [Column; 9] = [
     col("ACTION", Align::Left, false),
     col("RETIRED", Align::Right, false),
     col("REJECTED", Align::Right, false),
+    col("ROUTE", Align::Left, false),
 ];
 
 const TRANSCRIPT_COLUMNS: [Column; 7] = [
@@ -244,6 +247,9 @@ fn envelope<'a, T>(
 pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Result<()> {
     match (sink.mode, record) {
         (OutputMode::Json, Record::Tag(tag)) => write_json(out, tag),
+        (OutputMode::Json, Record::TagRules(tag)) => write_json(out, tag),
+        (OutputMode::Plain, Record::TagRules(tag)) => tag_rules(out, tag, false),
+        (OutputMode::Table, Record::TagRules(tag)) => tag_rules(out, tag, true),
         (OutputMode::Json, Record::Proposal(proposal)) => write_json(out, proposal),
         (OutputMode::Plain, Record::Tag(tag)) => writeln!(
             out,
@@ -335,7 +341,17 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
         (OutputMode::Json, Record::Entry(entry)) => write_json(out, entry),
         (OutputMode::Json, Record::Session(session)) => write_json(out, session),
         (OutputMode::Plain, Record::Entry(entry)) => {
-            writeln!(out, "{}", plain_line(&entry_row(entry)))
+            writeln!(out, "{}", plain_line(&entry_row(entry)))?;
+            if let Some(a) = &entry.admitted {
+                writeln!(
+                    out,
+                    "admitted\t{}\t{}\t{}",
+                    one_line(&a.trigger),
+                    one_line(&a.matched),
+                    one_line(a.criteria.as_deref().unwrap_or("-"))
+                )?;
+            }
+            Ok(())
         }
         (OutputMode::Plain, Record::Session(session)) => {
             writeln!(out, "{}", plain_line(&session_row(session, false)))?;
@@ -592,6 +608,9 @@ pub(super) fn entry_metadata(out: &mut dyn Write, e: &EntryPayload, color: bool)
     if let Some(quote) = &e.quote {
         field(out, "quote", quote)?;
     }
+    if let Some(a) = &e.admitted {
+        field(out, "admitted", &admitted(a))?;
+    }
     if let Some(action) = &e.action {
         let cancel = match (action.cancel_window_ends, action.past_cancel_window) {
             (None, _) => String::from("none (Daniel's own line)"),
@@ -643,6 +662,99 @@ pub(super) fn entry_metadata(out: &mut dyn Write, e: &EntryPayload, color: bool)
             )?;
         }
         (None, None) => {}
+    }
+    Ok(())
+}
+
+/// `tag show`: the tag's settings, then each capture field with its value
+/// and origin. Plain is `<field>\t<value>\t<origin>` lines (origin `-` for
+/// a setting); the table aligns the same lines, labels first.
+fn tag_rules(out: &mut dyn Write, t: &TagShowPayload, table: bool) -> io::Result<()> {
+    let origin = |o: &OriginPayload| match (&o.file, o.line) {
+        (Some(file), Some(line)) => format!("{} {file}:{line}", o.source),
+        (Some(file), None) => format!("{} {file}", o.source),
+        (None, _) => o.source.to_owned(),
+    };
+    let c = &t.capture;
+    let action = t.action.as_ref().map_or_else(
+        || String::from("-"),
+        |a| {
+            if a.require_quote {
+                format!("{},quote", a.mode)
+            } else {
+                a.mode.to_owned()
+            }
+        },
+    );
+    let rows: Vec<(&str, String, String)> = vec![
+        ("tag", t.tag.clone(), String::from("-")),
+        ("source", t.source.to_owned(), String::from("-")),
+        ("aliases", joined(&t.aliases), String::from("-")),
+        (
+            "description",
+            one_line(t.description.as_deref().unwrap_or("-")),
+            String::from("-"),
+        ),
+        (
+            "stale_after_days",
+            t.stale_after_days
+                .map_or_else(|| String::from("-"), |d| d.to_string()),
+            String::from("-"),
+        ),
+        ("action", action, String::from("-")),
+        (
+            "from",
+            c.from.unwrap_or("-").to_owned(),
+            origin(&c.origin.from),
+        ),
+        (
+            "route",
+            c.route.unwrap_or("-").to_owned(),
+            origin(&c.origin.route),
+        ),
+        (
+            "triggers",
+            c.triggers.as_ref().map_or_else(
+                || String::from("-"),
+                |t| {
+                    if t.is_empty() {
+                        String::from("(none: the pass captures nothing)")
+                    } else {
+                        t.iter()
+                            .map(|x| format!("{x:?}"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    }
+                },
+            ),
+            origin(&c.origin.triggers),
+        ),
+        (
+            "criteria",
+            one_line(c.criteria.as_deref().unwrap_or("-")),
+            origin(&c.origin.criteria),
+        ),
+        (
+            "not",
+            one_line(c.not.as_deref().unwrap_or("-")),
+            origin(&c.origin.not),
+        ),
+    ];
+    for (label, value, from) in rows {
+        if table {
+            let label = if label == "stale_after_days" {
+                "stale days"
+            } else {
+                label
+            };
+            if from == "-" {
+                field(out, label, &value)?;
+            } else {
+                field(out, label, &format!("{value}  ({from})"))?;
+            }
+        } else {
+            writeln!(out, "{label}\t{value}\t{from}")?;
+        }
     }
     Ok(())
 }
@@ -998,7 +1110,24 @@ fn proposal_row(p: &ProposalPayload) -> Vec<Cell> {
         Cell::plain(p.newer.clone().unwrap_or_else(|| String::from("-"))),
         Cell::plain(timestamp(p.opened_at)),
         Cell::plain(one_line(&p.reason)),
+        Cell::plain(
+            p.candidate
+                .as_ref()
+                .and_then(|c| c.admitted.as_ref())
+                .map_or_else(|| String::from("-"), |a| one_line(&admitted(a))),
+        ),
     ]
+}
+
+/// What admitted a pass claim, on one line: the trigger as configured, the
+/// turn's words it matched and the criteria in force.
+fn admitted(a: &scribe_core::Admitted) -> String {
+    format!(
+        "trigger {:?} matched {:?}; criteria: {}",
+        a.trigger,
+        a.matched,
+        a.criteria.as_deref().unwrap_or("-")
+    )
 }
 
 /// A hit's row, the same in the table and the plain line, except that the
@@ -1118,6 +1247,7 @@ fn tag_row(t: &TagPayload) -> Vec<Cell> {
                 .as_ref()
                 .map_or_else(|| String::from("-"), |a| a.rejected.to_string()),
         ),
+        Cell::plain(t.route.unwrap_or("-").to_owned()),
     ]
 }
 

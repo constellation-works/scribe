@@ -50,6 +50,7 @@ const HELP: &[(&str, &[&str])] = &[
     ("tag-add", &["tag", "add", "--help"]),
     ("tag-update", &["tag", "update", "--help"]),
     ("tag-list", &["tag", "list", "--help"]),
+    ("tag-show", &["tag", "show", "--help"]),
     ("question", &["question", "--help"]),
     ("question-ask", &["question", "ask", "--help"]),
     ("hook", &["hook", "--help"]),
@@ -113,6 +114,8 @@ const OUTPUT: &[(&str, &[&str])] = &[
     // Ranked with no model call: entries, session headers and segments.
     ("record-search", &["record", "search", "merge agent PRs"]),
     ("tag-list", &["tag", "list"]),
+    // Capture rules, each field with its origin: all shipped here.
+    ("tag-show", &["tag", "show", "preferences"]),
     // A lookup: answered from the store, with no model call.
     (
         "question-ask",
@@ -485,17 +488,20 @@ fn candidate_proposal_list_matches_goldens() {
             "tag":"preferences", "quote":"I prefer concise progress updates.",
             "cite": {"session":"s-1", "message":"user-choice", "at":"2026-11-15T00:00:00Z",
                 "prompt_sha256":"0".repeat(64), "line":1, "cwd":"/work/scribe"},
-            "project":"scribe", "provider":"claude-code", "host":"host"
+            "project":"scribe", "provider":"claude-code", "host":"host",
+            "role":"user", "evidence":null,
+            "admitted": {"trigger":"I prefer", "matched":"I prefer",
+                "criteria":"A standing rule from Daniel that applies beyond the work at hand."}
         },
         "reason":"Unmarked preference: I prefer concise progress updates.", "quotes":[],
         "state":"open", "opened_at":"2026-11-15T00:01:00Z", "settled_at":null,
         "settled_by":null, "author":{"kind":"scribe", "name":"session-pass"},
-        "settled_author":null, "updated_by":null
+        "settled_author":null, "updated_by":null, "closed_reason":null
     });
     let path = fx.root().join("proposals.json");
     std::fs::write(
         &path,
-        json!({"format":9, "proposals":[proposal]}).to_string(),
+        json!({"format":11, "proposals":[proposal]}).to_string(),
     )
     .unwrap();
     support::make_private(&path);

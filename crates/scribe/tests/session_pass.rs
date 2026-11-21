@@ -74,10 +74,65 @@ fn pass_candidate_waits_for_typed_approval_and_keeps_original_user_cite() {
     assert_eq!(entry["author"]["kind"], "daniel");
     assert_eq!(entry["cite"]["message"], "preference-turn");
     assert_eq!(entry["content_from"]["role"], "user");
+
+    // What admitted the claim is printed by `proposal list` and `entry show`
+    // in every form.
+    let criteria = "A standing rule from Daniel that applies beyond the work at hand.";
+    let admitted = json!({"trigger": "I prefer", "matched": "I prefer", "criteria": criteria});
+    assert_eq!(entry["admitted"], admitted);
+    assert_eq!(p["candidate"]["admitted"], admitted);
+    let plain = text(&s.fx.ok(&["entry", "show", "preferences-1"]).stdout);
+    assert!(
+        plain
+            .lines()
+            .any(|l| l == format!("admitted\tI prefer\tI prefer\t{criteria}")),
+        "{plain}"
+    );
+    let table = text(
+        &s.fx
+            .ok(&["entry", "show", "preferences-1", "--format", "table"])
+            .stdout,
+    );
+    assert!(
+        table.contains(&format!(
+            "admitted    trigger \"I prefer\" matched \"I prefer\"; criteria: {criteria}"
+        )),
+        "{table}"
+    );
+    let listed = text(&s.fx.ok(&["proposal", "list"]).stdout);
+    assert!(
+        listed.ends_with(&format!(
+            "\ttrigger \"I prefer\" matched \"I prefer\"; criteria: {criteria}\n"
+        )),
+        "{listed}"
+    );
+    // An entry not approved from a claim has no admission.
+    let typed: Value = serde_json::from_slice(
+        &s.fx
+            .ok(&[
+                "entry",
+                "add",
+                "--tag",
+                "preferences",
+                "--author",
+                "opus",
+                "Keep it short.",
+                "--json",
+            ])
+            .stdout,
+    )
+    .unwrap();
+    let id = typed["id"].as_str().unwrap();
+    let shown: Value =
+        serde_json::from_slice(&s.fx.ok(&["entry", "show", id, "--json"]).stdout).unwrap();
+    assert_eq!(shown["admitted"], Value::Null);
 }
 
 #[test]
-fn pass_proposes_an_assistant_finding_and_approval_writes_one_agent_entry() {
+fn a_stored_assistant_finding_candidate_still_approves_into_one_agent_entry() {
+    // The pass no longer opens assistant-turn candidates (capture rules read
+    // Daniel's turns only), but one opened before, in a format-10 store,
+    // still settles: approval writes the agent's entry, never Daniel's.
     let s = Setup::new();
     let quote = "Measured: the reviewer mix alone predicts a 7-point first-pass gap.";
     s.write(
@@ -87,21 +142,31 @@ fn pass_proposes_an_assistant_finding_and_approval_writes_one_agent_entry() {
             line("assistant", "a-find", quote),
         ],
     );
-    let mut body = answer();
-    body["candidates"] = json!([{
-        "quote": quote, "message": "a-find", "tag": "finding", "evidence": "exp-5342a4d6"
-    }]);
-    s.answer(&body);
+    s.answer(&answer());
     s.scribe("/scribe on");
     s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let cite = json!({"session": ON, "message": "a-find", "at": "2026-11-03T06:00:00Z",
+        "prompt_sha256": "0".repeat(64), "line": 1, "cwd": "/nonexistent/work/scribe"});
+    let proposal = json!({
+        "id": "p-1", "kind": "candidate", "older": "finding-1", "newer": null,
+        "candidate": {"tag": "finding", "role": "assistant", "quote": quote,
+            "evidence": "exp-5342a4d6", "cite": cite, "project": "scribe",
+            "provider": "claude-code", "host": "host"},
+        "reason": "Assistant finding statement", "quotes": [], "state": "open",
+        "opened_at": "2026-11-03T06:01:00Z", "settled_at": null, "settled_by": null,
+        "author": {"kind": "scribe", "name": "session-pass"}, "updated_by": null,
+        "settled_author": null
+    });
+    let path = s.fx.root().join("proposals.json");
+    std::fs::write(
+        &path,
+        json!({"format": 10, "proposals": [proposal]}).to_string(),
+    )
+    .unwrap();
+    make_private(&path);
     let ps = proposals(&s);
-    assert_eq!(ps["total"], 1, "{ps}");
-    let p = &ps["proposals"][0];
-    assert_eq!(p["candidate"]["tag"], "finding");
-    assert_eq!(p["candidate"]["role"], "assistant");
-    assert_eq!(p["candidate"]["quote"], quote, "quoted verbatim");
-    assert_eq!(p["candidate"]["cite"]["message"], "a-find");
-    assert_eq!(p["candidate"]["evidence"], "exp-5342a4d6");
+    assert_eq!(ps["proposals"][0]["candidate"]["admitted"], Value::Null);
+    assert_eq!(ps["proposals"][0]["closed_reason"], Value::Null);
 
     let approved = type_settlement(&s, "#scribe approve p-1");
     assert!(
@@ -122,44 +187,42 @@ fn pass_proposes_an_assistant_finding_and_approval_writes_one_agent_entry() {
     assert_eq!(entry["author"]["kind"], "agent", "never Daniel's");
     assert_eq!(entry["author"]["name"], "assistant");
     assert_eq!(entry["content_from"]["role"], "assistant");
-    assert_eq!(entry["cite"]["message"], "a-find");
     assert_eq!(entry["evidence"], "exp-5342a4d6");
     assert_eq!(entry["as_of"], "2026-11-03");
 }
 
 #[test]
-fn pass_proposes_a_check_back_from_an_assistant_recap_and_reject_closes_it() {
-    let s = Setup::new();
-    let quote = "The flaky cache test is not verified yet on this host.";
-    s.write(
-        ON,
-        &[
-            line("user", "u-1", "Please check the cache test."),
-            line("assistant", "a-open", quote),
-        ],
-    );
-    let mut body = answer();
-    body["candidates"] = json!([{"quote": quote, "message": "a-open", "tag": "remind"}]);
-    s.answer(&body);
-    s.scribe("/scribe on");
-    s.run(&["session", "pass", "--session", ON, "--json"], b"");
-    let ps = proposals(&s);
-    assert_eq!(ps["total"], 1, "{ps}");
-    assert_eq!(ps["proposals"][0]["candidate"]["tag"], "remind");
-    assert_eq!(ps["proposals"][0]["candidate"]["role"], "assistant");
-
-    type_settlement(&s, "#scribe reject p-1");
-    let entries: Value =
-        serde_json::from_slice(&s.fx.ok(&["entry", "list", "--json"]).stdout).unwrap();
-    assert_eq!(entries["total"], 0, "rejection writes no entry");
-
-    // The same statement in a later turn is not proposed again.
-    s.append(ON, &[line("assistant", "a-open-2", quote)]);
-    let mut again = answer();
-    again["candidates"] = json!([{"quote": quote, "message": "a-open-2", "tag": "remind"}]);
-    s.answer(&again);
-    s.run(&["session", "pass", "--session", ON, "--json"], b"");
-    assert_eq!(proposals(&s)["total"], 1);
+fn pass_opens_no_candidate_from_an_assistant_turn() {
+    // Daniel's turn fires a trigger, so claims are requested, but a claim
+    // on an assistant turn (a finding or a check-back) is refused: no tag's
+    // capture rules read assistant turns.
+    for (tag, quote) in [
+        (
+            "finding",
+            "Measured: the reviewer mix alone predicts a 7-point gap.",
+        ),
+        (
+            "remind",
+            "The flaky cache test is not verified yet on this host.",
+        ),
+        (
+            "idea",
+            "What if we cache the reviewer mix per crew instead?",
+        ),
+    ] {
+        let s = Setup::new();
+        s.write(
+            ON,
+            &[
+                line("user", "u-1", "Always measure before you change the mix."),
+                line("assistant", "a-1", quote),
+            ],
+        );
+        s.answer(&candidate_answer(quote, "a-1", tag));
+        s.scribe("/scribe on");
+        s.run(&["session", "pass", "--session", ON, "--json"], b"");
+        assert_eq!(proposals(&s)["total"], 0, "{tag}");
+    }
 }
 
 #[test]
@@ -193,12 +256,121 @@ fn pass_asks_for_standing_preferences_only_and_never_proposes_a_decision() {
     assert!(!prompts.is_empty());
     for prompt in &prompts {
         assert!(
-            !prompt.to_lowercase().contains("decision"),
-            "the pass prompt never asks for decisions: {prompt}"
+            !prompt.contains("tag decisions"),
+            "the pass prompt never offers decisions: {prompt}"
         );
-        assert!(prompt.contains("standing preference"), "{prompt}");
-        assert!(prompt.contains("recorded on that work's task"), "{prompt}");
+        assert!(!prompt.contains("message u-choice"), "{prompt}");
+        assert!(
+            prompt.contains("A standing rule from Daniel that applies beyond the work at hand."),
+            "{prompt}"
+        );
     }
+    // The admission is recorded with the candidate.
+    let admitted = &listed["proposals"][0]["candidate"]["admitted"];
+    assert_eq!(admitted["trigger"], "always", "{admitted}");
+    assert_eq!(admitted["matched"], "always");
+    assert_eq!(
+        admitted["criteria"],
+        "A standing rule from Daniel that applies beyond the work at hand."
+    );
+}
+
+#[test]
+fn a_window_where_no_daniel_turn_fires_a_trigger_requests_no_claims() {
+    let s = Setup::new();
+    let quote = "Let us use the blue-green rollout for this migration.";
+    s.write(
+        ON,
+        &[
+            line("user", "u-1", quote),
+            // An assistant turn's trigger words never count.
+            line("assistant", "a-1", "I always prefer to check first."),
+        ],
+    );
+    // A model that ignores the request still opens nothing.
+    s.answer(&candidate_answer(quote, "u-1", "preferences"));
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    assert_eq!(proposals(&s)["total"], 0);
+    let prompts = s.prompts();
+    assert_eq!(prompts.len(), 1);
+    assert!(
+        prompts[0].contains("Return candidates: [] (none are requested in this window)."),
+        "{}",
+        prompts[0]
+    );
+    assert!(!prompts[0].contains("Already recorded or proposed"));
+}
+
+#[test]
+fn a_firing_turn_is_named_with_its_tag_and_trigger_and_idea_still_proposes() {
+    let s = Setup::new();
+    let idea = "What if we cached the routing table per host?";
+    s.write(
+        ON,
+        &[
+            line("user", "u-plain", "Please look at the routing table."),
+            line("user", "u-idea", idea),
+        ],
+    );
+    s.answer(&candidate_answer(idea, "u-idea", "idea"));
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let prompt = &s.prompts()[0];
+    assert!(
+        prompt.contains(
+            "- message u-idea: tag idea (trigger \"what if we\", matched \"What if we\")"
+        ),
+        "{prompt}"
+    );
+    assert!(!prompt.contains("message u-plain"), "{prompt}");
+    assert!(
+        prompt.contains("- idea: qualifies: Daniel puts forward something to consider"),
+        "{prompt}"
+    );
+    let listed = proposals(&s);
+    assert_eq!(listed["total"], 1, "{listed}");
+    let p = &listed["proposals"][0];
+    assert_eq!(p["kind"], "candidate", "the propose route");
+    assert_eq!(p["state"], "open");
+    assert_eq!(p["candidate"]["tag"], "idea");
+    assert_eq!(p["candidate"]["admitted"]["trigger"], "what if we");
+    assert_eq!(p["candidate"]["admitted"]["matched"], "What if we");
+}
+
+#[test]
+fn a_claim_whose_turn_fires_no_trigger_of_its_tag_is_refused() {
+    // The model names a firing turn under another tag than the one fired.
+    let s = Setup::new();
+    let quote = "I always keep the release notes short.";
+    s.write(ON, &[line("user", "u-1", quote)]);
+    s.answer(&candidate_answer(quote, "u-1", "idea"));
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    assert_eq!(proposals(&s)["total"], 0);
+}
+
+#[test]
+fn the_trigger_is_checked_again_under_the_lock_against_the_config_then() {
+    // The config changes while the model runs: the turn fired `always` when
+    // the request was built, but under the lock `preferences` no longer has
+    // that trigger, so the claim is refused and nothing is opened.
+    let s = Setup::new();
+    let quote = "I always keep the release notes short.";
+    s.write(ON, &[line("user", "u-1", quote)]);
+    s.scribe("/scribe on");
+    let config = s.fx.root().join("config.toml");
+    let mut script = format!(
+        "#!/bin/sh\nn=$(ls \"$HOME\" | grep -c '^claude-stdin')\ncat > \"$HOME/claude-stdin-$n\"\numask 077\nprintf '%s\\n' '[tags.preferences.capture]' 'triggers = [\"from now on\"]' > '{}'\n",
+        config.display()
+    );
+    script.push_str(&response(&candidate_answer(quote, "u-1", "preferences")));
+    s.fx.fake_program("claude", &script);
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    assert!(s.prompts()[0].contains("message u-1: tag preferences"));
+    assert!(config.exists(), "the fake model rewrote the config");
+    assert_eq!(proposals(&s)["total"], 0);
+    assert_eq!(s.record(ON).unwrap()["scribed_through"], "u-1");
 }
 
 #[test]
@@ -1292,7 +1464,7 @@ fn legacy_control_is_read_without_writes_and_new_retry_state_is_strict() {
     );
     setup.pass();
     let current: Value = serde_json::from_slice(&setup.control_bytes()).unwrap();
-    assert_eq!(current["format"], 10);
+    assert_eq!(current["format"], 11);
     assert_eq!(current["sessions"][ON]["consecutive_failures"], 0);
     assert_eq!(current["sessions"][ON]["retry_after"], Value::Null);
     assert_eq!(current["sessions"][ON]["pending_links"], json!([]));
@@ -1548,10 +1720,10 @@ fn a_pass_writes_one_record_of_daniels_terms_and_never_reads_a_session_never_swi
         json!([{"term": "graduate to level 4", "said": DEFINED, "message": "u-1"}])
     );
     assert!(!setup.fx.root().join("entries").exists(), "no entries");
-    // The record is written at format 10: a header and one open segment
+    // The record is written at format 11: a header and one open segment
     // holding this pass's segment text.
     let file = std::fs::read_to_string(setup.record_file()).unwrap();
-    assert!(file.starts_with("---\nformat: 10\n"), "{file}");
+    assert!(file.starts_with("---\nformat: 11\n"), "{file}");
     assert!(file.contains("\n## Log\n### 1. "), "{file}");
     assert!(!file.contains("## Outcome"), "{file}");
     assert_eq!(record["active"], true);
@@ -2482,13 +2654,19 @@ fn rejected_candidates_are_never_repeated_and_are_counted_at_session_start() {
 fn candidates_share_a_three_slot_budget_across_windows_and_keep_cataloging() {
     let s = Setup::new();
     let lines: Vec<_> = (0..5)
-        .map(|n| line("user", &format!("u-{n}"), &format!("I choose option {n}.")))
+        .map(|n| {
+            line(
+                "user",
+                &format!("u-{n}"),
+                &format!("I always choose option {n}."),
+            )
+        })
         .collect();
     s.write(ON, &lines);
     let answers: Vec<_> = (0..5)
         .map(|n| {
             Some(candidate_answer(
-                &format!("I choose option {n}."),
+                &format!("I always choose option {n}."),
                 &format!("u-{n}"),
                 "preferences",
             ))
@@ -2508,9 +2686,9 @@ fn candidates_share_a_three_slot_budget_across_windows_and_keep_cataloging() {
 #[test]
 fn candidate_open_cap_is_enforced_even_when_the_model_ignores_it() {
     let s = Setup::new();
-    s.write(ON, &[line("user", "u-1", "I choose option zero.")]);
+    s.write(ON, &[line("user", "u-1", "I always choose option zero.")]);
     s.answer(&candidate_answer(
-        "I choose option zero.",
+        "I always choose option zero.",
         "u-1",
         "preferences",
     ));
@@ -2527,11 +2705,11 @@ fn candidate_open_cap_is_enforced_even_when_the_model_ignores_it() {
         })
         .collect();
     let path = s.fx.root().join("proposals.json");
-    std::fs::write(&path, json!({"format":10, "proposals":full}).to_string()).unwrap();
+    std::fs::write(&path, json!({"format":11, "proposals":full}).to_string()).unwrap();
     make_private(&path);
     let quotes = [
         "I prefer faster incremental compilation.",
-        "I choose a blue interface.",
+        "I always choose a blue interface.",
         "Always retain descriptive error messages.",
     ];
     let turns: Vec<_> = quotes
@@ -2562,7 +2740,7 @@ fn candidate_open_cap_is_enforced_even_when_the_model_ignores_it() {
 #[test]
 fn candidate_ids_are_reserved_for_approval_and_agent_settlement_is_refused() {
     let s = Setup::new();
-    let quote = "I choose smaller pull requests for easier review.";
+    let quote = "I always choose smaller pull requests for easier review.";
     s.write(ON, &[line("user", "u-1", quote)]);
     s.answer(&candidate_answer(quote, "u-1", "preferences"));
     s.scribe("/scribe on");

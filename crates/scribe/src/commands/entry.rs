@@ -381,8 +381,22 @@ pub(super) fn criteria(filter: &EntryFilter) -> Vec<String> {
 fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
     let entry = ctx.store().resolve_entry(&args.id)?;
     let actions = Actions::load(ctx)?;
+    // An entry approved from a pass claim shows what admitted the claim:
+    // the approved candidate proposal that reserved its id.
+    let admitted = ctx
+        .store()
+        .proposals()?
+        .into_iter()
+        .find(|p| {
+            p.kind == scribe_core::ProposalKind::Candidate
+                && p.state == scribe_core::ProposalState::Approved
+                && p.older == entry.id
+        })
+        .and_then(|p| p.candidate.and_then(|c| c.admitted));
     Ok(Output::Show {
-        record: Record::Entry(Box::new(actions.payload(&entry, args.window))),
+        record: Record::Entry(Box::new(
+            actions.payload(&entry, args.window).with_admitted(admitted),
+        )),
     })
 }
 

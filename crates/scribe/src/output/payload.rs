@@ -228,6 +228,10 @@ pub(crate) struct EntryPayload {
     /// (`entry list`, `entry show`, `entry add`, `entry pickup`); `null`
     /// for any other entry and in other commands' output.
     pub(crate) action: Option<ActionPayload>,
+    /// For an entry approved from a pass claim, what admitted the claim
+    /// (`entry show` only); `null` for any other entry and in other
+    /// commands' output.
+    pub(crate) admitted: Option<scribe_core::Admitted>,
 }
 
 /// An action entry's transcript window (docs/design/scribe/2_design.md §4.6).
@@ -338,6 +342,12 @@ impl EntryPayload {
         self
     }
 
+    /// With the admission of the claim it was approved from, for `entry show`.
+    pub(crate) fn with_admitted(mut self, admitted: Option<scribe_core::Admitted>) -> Self {
+        self.admitted = admitted;
+        self
+    }
+
     /// With the window included, for `--window`.
     pub(crate) fn with_window(mut self, entry: &Entry) -> Self {
         self.window = entry.window.as_ref().map(WindowPayload::from);
@@ -387,6 +397,7 @@ impl From<&Entry> for EntryPayload {
             window_turns: entry.window.as_ref().map(|w| w.turns.len()),
             window: None,
             action: None,
+            admitted: None,
         }
     }
 }
@@ -625,6 +636,8 @@ pub(crate) struct ProposalPayload {
     /// Who settled it; `null` while open.
     pub(crate) settled_author: Option<AuthorPayload>,
     pub(crate) updated_by: Option<AuthorPayload>,
+    /// Why scribe closed it without Daniel (`tag_retired`); `null` otherwise.
+    pub(crate) closed_reason: Option<&'static str>,
 }
 
 impl From<&Proposal> for ProposalPayload {
@@ -644,6 +657,7 @@ impl From<&Proposal> for ProposalPayload {
             author: AuthorPayload::from(&p.author),
             settled_author: p.settled_author.as_ref().map(AuthorPayload::from),
             updated_by: p.updated_by.as_ref().map(AuthorPayload::from),
+            closed_reason: p.closed_reason.map(scribe_core::ClosedReason::as_str),
         }
     }
 }
@@ -666,6 +680,9 @@ pub(crate) struct TagPayload {
     /// For an action tag, how agents use it and how often Daniel undid
     /// their entries; `null` for a memory tag.
     pub(crate) action: Option<TagActionPayload>,
+    /// The capture route (`propose`, `write` or `agent`); `null` for a tag
+    /// with no capture rules, which the pass never captures.
+    pub(crate) route: Option<&'static str>,
 }
 
 /// An action tag's switch and counts, where Daniel decides to flip it.
@@ -710,6 +727,121 @@ impl From<&TagSummary> for TagPayload {
                     retired: tag.retired,
                     rejected: tag.rejected,
                 }),
+            route: tag
+                .def
+                .as_ref()
+                .and_then(|d| d.capture.route())
+                .map(scribe_core::CaptureRoute::as_str),
+        }
+    }
+}
+
+/// `tag show`: a tag's settings and its effective capture rules, each
+/// field with its origin (docs/design/scribe/2_design.md §11.2).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct TagShowPayload {
+    pub(crate) tag: String,
+    /// `config` (config.toml or the shipped defaults) or `store`.
+    pub(crate) source: &'static str,
+    pub(crate) aliases: Vec<String>,
+    pub(crate) description: Option<String>,
+    pub(crate) stale_after_days: Option<u32>,
+    /// An action tag's settings; `null` for a memory tag.
+    pub(crate) action: Option<TagShowActionPayload>,
+    pub(crate) capture: CapturePayload,
+}
+
+/// An action tag's settings, as `tag show` prints them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct TagShowActionPayload {
+    /// `free` or `ask-first`.
+    pub(crate) mode: &'static str,
+    pub(crate) require_quote: bool,
+}
+
+/// A tag's effective capture rules; a field with origin `none` is `null`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct CapturePayload {
+    pub(crate) from: Option<&'static str>,
+    pub(crate) route: Option<&'static str>,
+    pub(crate) triggers: Option<Vec<String>>,
+    pub(crate) criteria: Option<String>,
+    pub(crate) not: Option<String>,
+    pub(crate) origin: CaptureOriginPayload,
+}
+
+/// Where each capture field came from.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct CaptureOriginPayload {
+    pub(crate) from: OriginPayload,
+    pub(crate) route: OriginPayload,
+    pub(crate) triggers: OriginPayload,
+    pub(crate) criteria: OriginPayload,
+    pub(crate) not: OriginPayload,
+}
+
+/// One field's origin: `shipped`, `config` (with the file and line) or
+/// `none`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct OriginPayload {
+    pub(crate) source: &'static str,
+    /// The config file, for `config`; `null` otherwise.
+    pub(crate) file: Option<String>,
+    /// The 1-based line of the key, for `config`; `null` otherwise.
+    pub(crate) line: Option<usize>,
+}
+
+impl OriginPayload {
+    fn of<T>(rule: Option<&scribe_core::Rule<T>>, file: &str) -> Self {
+        match rule.map(|r| r.origin) {
+            None => Self {
+                source: "none",
+                file: None,
+                line: None,
+            },
+            Some(scribe_core::RuleOrigin::Shipped) => Self {
+                source: "shipped",
+                file: None,
+                line: None,
+            },
+            Some(scribe_core::RuleOrigin::Config { line }) => Self {
+                source: "config",
+                file: Some(file.to_owned()),
+                line,
+            },
+        }
+    }
+}
+
+impl TagShowPayload {
+    /// The payload for `def`, read from `source`, whose config file is
+    /// `config_file`.
+    pub(crate) fn new(def: &scribe_core::TagDef, source: &'static str, config_file: &str) -> Self {
+        let c = &def.capture;
+        Self {
+            tag: def.name.to_string(),
+            source,
+            aliases: strings(&def.aliases),
+            description: def.description.clone(),
+            stale_after_days: def.stale_after_days.map(std::num::NonZeroU32::get),
+            action: def.action.map(|a| TagShowActionPayload {
+                mode: a.mode(),
+                require_quote: a.require_quote,
+            }),
+            capture: CapturePayload {
+                from: c.from.as_ref().map(|r| r.value.as_str()),
+                route: c.route.as_ref().map(|r| r.value.as_str()),
+                triggers: c.triggers.as_ref().map(|r| r.value.clone()),
+                criteria: c.criteria.as_ref().map(|r| r.value.clone()),
+                not: c.not.as_ref().map(|r| r.value.clone()),
+                origin: CaptureOriginPayload {
+                    from: OriginPayload::of(c.from.as_ref(), config_file),
+                    route: OriginPayload::of(c.route.as_ref(), config_file),
+                    triggers: OriginPayload::of(c.triggers.as_ref(), config_file),
+                    criteria: OriginPayload::of(c.criteria.as_ref(), config_file),
+                    not: OriginPayload::of(c.not.as_ref(), config_file),
+                },
+            },
         }
     }
 }
@@ -853,6 +985,7 @@ pub(crate) struct TreeRow {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Record {
     Tag(Box<scribe_core::StoreTag>),
+    TagRules(Box<TagShowPayload>),
     Proposal(Box<ProposalPayload>),
     Entry(Box<EntryPayload>),
     Session(Box<SessionPayload>),

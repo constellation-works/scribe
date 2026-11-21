@@ -57,6 +57,7 @@ mod session;
 mod store;
 mod tag;
 pub mod transcript;
+pub mod trigger;
 pub mod verbatim;
 
 pub use config::{Config, ConfigError, ModelIds, SessionsConfig};
@@ -67,8 +68,8 @@ pub use entry::{
 pub use error::{Error, Result, WriteRefusal};
 pub use models::Models;
 pub use proposal::{
-    EntryCandidate, Proposal, ProposalChange, ProposalError, ProposalFilter, ProposalId,
-    ProposalKind, ProposalState, Quote,
+    Admitted, ClosedReason, EntryCandidate, Proposal, ProposalChange, ProposalError,
+    ProposalFilter, ProposalId, ProposalKind, ProposalState, Quote,
 };
 pub use record::{
     Author, AuthorKind, AuthorName, DateRange, Label, Listing, Project, RecordError, Related,
@@ -88,8 +89,9 @@ pub use store::{
     init_project, integration_hooks, resolve_prefix, unresolved_redact_env,
 };
 pub use tag::{
-    ActionTag, FINDING_TAG, MAX_FINDINGS_PER_SESSION, StoreTag, TagDef, TagError, TagPatch,
-    TagSummary, TagTable,
+    ActionTag, CAPTURE_TEXT_CHARS, CaptureFrom, CaptureRoute, CaptureRules, FINDING_TAG,
+    MAX_FINDINGS_PER_SESSION, Rule, RuleOrigin, StoreTag, TagDef, TagError, TagPatch, TagSummary,
+    TagTable,
 };
 
 #[cfg(test)]

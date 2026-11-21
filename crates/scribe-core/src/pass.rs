@@ -24,6 +24,11 @@
 //! A window rewrites the header and open segment, then appends up to three
 //! new segments. Sealed text is never sent to the model or rewritten.
 //!
+//! Claims (candidate proposals) pass two gates (§11.2): a model-free
+//! trigger match on Daniel's turns before the call ([`capture_request`]:
+//! no trigger fires, no claim is requested) and the tag's criteria, judged
+//! by the model; the store repeats the trigger match under its lock.
+//!
 //! A pass writes no tag entries, whatever the transcript holds. No I/O
 //! (STD-02 R5).
 
@@ -45,7 +50,11 @@ use time::OffsetDateTime;
 
 mod candidates;
 pub(crate) use candidates::same_statement;
-pub use candidates::{MAX_CANDIDATES, MAX_OPEN_CANDIDATES, candidate_drafts, candidate_exclusions};
+pub use candidates::{
+    MAX_CANDIDATES, MAX_OPEN_CANDIDATES, PassClaim, candidate_drafts, candidate_exclusions,
+    capture_request,
+};
+pub(crate) use candidates::{admission, own_span};
 mod repair;
 pub use repair::repair;
 
@@ -291,8 +300,8 @@ pub fn request(
         topics,
         terms,
         candidate_limit: 0,
-        candidate_tags: Vec::new(),
-        candidate_memory_tags: Vec::new(),
+        candidate_turns: Vec::new(),
+        candidate_rules: Vec::new(),
         candidate_exclusions: Vec::new(),
         budgets: BUDGETS,
         final_pass,

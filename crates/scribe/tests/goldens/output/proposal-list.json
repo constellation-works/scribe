@@ -26,7 +26,8 @@
         "name": "consistency"
       },
       "settled_author": null,
-      "updated_by": null
+      "updated_by": null,
+      "closed_reason": null
     },
     {
       "candidate": null,
@@ -60,7 +61,8 @@
         "kind": "daniel",
         "name": "daniel"
       },
-      "updated_by": null
+      "updated_by": null,
+      "closed_reason": null
     }
   ],
   "total": 2,

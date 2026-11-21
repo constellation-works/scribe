@@ -1,0 +1,52 @@
+{
+  "tag": "preferences",
+  "source": "config",
+  "aliases": [
+    "preference",
+    "pref"
+  ],
+  "description": "how Daniel likes things done",
+  "stale_after_days": 180,
+  "action": null,
+  "capture": {
+    "from": "daniel",
+    "route": "propose",
+    "triggers": [
+      "always",
+      "never",
+      "should not",
+      "from now on",
+      "I prefer",
+      "by default"
+    ],
+    "criteria": "A standing rule from Daniel that applies beyond the work at hand.",
+    "not": "A choice about one page or task (it goes on its Orbit task or the feature's 4_decisions.md); an acknowledgement.",
+    "origin": {
+      "from": {
+        "source": "shipped",
+        "file": null,
+        "line": null
+      },
+      "route": {
+        "source": "shipped",
+        "file": null,
+        "line": null
+      },
+      "triggers": {
+        "source": "shipped",
+        "file": null,
+        "line": null
+      },
+      "criteria": {
+        "source": "shipped",
+        "file": null,
+        "line": null
+      },
+      "not": {
+        "source": "shipped",
+        "file": null,
+        "line": null
+      }
+    }
+  }
+}

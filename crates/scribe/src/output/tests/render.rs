@@ -48,6 +48,7 @@ fn entry(id: &str, content: &str) -> EntryPayload {
         as_of: None,
         window_turns: None,
         window: None,
+        admitted: None,
         action: None,
     }
 }
@@ -188,6 +189,7 @@ fn a_single_record_list_is_still_a_table_and_counts_align_right() {
         configured: true,
         entries: 7,
         action: None,
+        route: None,
     };
     let text = render_list(OutputMode::Table, &Records::Tags(vec![tag]), 1, &[]);
     let lines: Vec<&str> = text.lines().collect();

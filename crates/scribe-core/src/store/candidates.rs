@@ -2,10 +2,10 @@
 
 use super::{Redactor, Store};
 use crate::consistency::Reapplied;
-use crate::pass::{MAX_CANDIDATES, MAX_OPEN_CANDIDATES, same_statement};
+use crate::pass::{MAX_CANDIDATES, MAX_OPEN_CANDIDATES, admission, own_span, same_statement};
 use crate::{
-    Author, EntryCandidate, EntryId, EntryStatus, Error, Proposal, ProposalId, ProposalKind,
-    ProposalState, Result, SessionRecord,
+    Author, EntryId, EntryStatus, Error, Proposal, ProposalId, ProposalKind, ProposalState, Result,
+    SessionRecord,
 };
 
 impl Store {
@@ -24,7 +24,7 @@ impl Store {
     pub(super) fn open_pass_candidates(
         &self,
         record: &SessionRecord,
-        drafts: &[EntryCandidate],
+        drafts: &[crate::pass::PassClaim],
         redactor: &Redactor,
     ) -> Result<()> {
         if drafts.is_empty() || !self.control()?.get(&record.id).is_some_and(|c| c.on) {
@@ -57,38 +57,29 @@ impl Store {
             .collect();
         let mut next = proposals.iter().map(|p| p.id.number()).max().unwrap_or(0);
         let mut changed = false;
-        for draft in drafts.iter().take(MAX_CANDIDATES) {
+        for claim in drafts.iter().take(MAX_CANDIDATES) {
             if open >= MAX_OPEN_CANDIDATES {
                 break;
             }
-            // Whose turn it is decides the tag rule, repeated under the
-            // lock: Daniel's words take a plain memory tag; an assistant
-            // turn takes a finding (evidence named, or the cited session
-            // at approval) or a free action tag — never a tag requiring
-            // Daniel's quote, which an assistant turn cannot supply.
-            let tag_refused = config
-                .tags
-                .get(&draft.tag)
-                .is_none_or(|tag| match draft.role {
-                    crate::Speaker::User => {
-                        tag.action.is_some() || tag.require_evidence || draft.evidence.is_some()
-                    }
-                    crate::Speaker::Assistant => {
-                        (!tag.require_evidence && tag.action.is_none())
-                            || tag.action.is_some_and(|a| a.require_quote)
-                            || (!tag.require_evidence && draft.evidence.is_some())
-                    }
-                });
+            // The capture gate, repeated under the lock against the config
+            // read now (2_design.md §11.2): a claim is Daniel's own words,
+            // and a trigger of its tag fires in the turn it cites. The
+            // admission persisted is the one computed here.
+            let Some(admitted) = (claim.candidate.role == crate::Speaker::User
+                && own_span(&claim.turn, &claim.candidate.quote))
+            .then(|| admission(&config.tags, &claim.candidate.tag, &claim.turn))
+            .flatten() else {
+                continue;
+            };
+            let mut draft = claim.candidate.clone();
+            draft.admitted = Some(admitted);
+            let draft = &draft;
             if !draft.has_valid_provenance()
                 || !(8..=400).contains(&draft.quote.chars().count())
                 || draft.cite.session != record.id
                 || draft.project != record.project
                 || draft.quote != redactor.mask(&draft.quote)
-                || draft
-                    .evidence
-                    .as_deref()
-                    .is_some_and(|e| e.trim().is_empty() || e != redactor.mask(e))
-                || tag_refused
+                || draft.evidence.is_some()
                 || entries
                     .iter()
                     .any(|entry| same_statement(&entry.content, &draft.quote))
@@ -114,15 +105,7 @@ impl Store {
                 older,
                 newer: None,
                 candidate: Some(draft.clone()),
-                reason: format!(
-                    "{} {} statement: {}",
-                    match draft.role {
-                        crate::Speaker::User => "Unmarked",
-                        crate::Speaker::Assistant => "Assistant",
-                    },
-                    draft.tag,
-                    draft.quote
-                ),
+                reason: format!("Unmarked {} statement: {}", draft.tag, draft.quote),
                 quotes: Vec::new(),
                 state: ProposalState::Open,
                 opened_at: record.updated,
@@ -131,6 +114,7 @@ impl Store {
                 author: Author::session_pass(),
                 updated_by: None,
                 settled_author: None,
+                closed_reason: None,
             };
             proposal.reason = proposal.reason.chars().take(300).collect();
             redactor.proposal(&mut proposal);

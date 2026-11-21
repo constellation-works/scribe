@@ -2817,6 +2817,19 @@ column.
 ([§11.3](#113-the-shipped-tag-set-and-retired-tag-cleanup); `null` on
 upgrade).
 
+**Built (step a1).** The trigger matcher is `scribe-core/src/trigger.rs`;
+the rules are `tag::CaptureRules`, read from config by `config.rs` with each
+field's line. The pass sends the model only the Daniel turns that fire a
+trigger (with tag, trigger and matched words) and those tags' `criteria`
+and `not`; when none fires it requests no claims. The store checks each
+claim's turn again under its lock against the config then on disk and
+stores the recomputed `admitted`. Routes `write` and `agent` are accepted
+in config but capture nothing yet. Because a tag without rules is never
+captured and `from` takes only `daniel`, the pass no longer opens
+assistant-turn candidates; stored ones still approve. Removing the
+`finding` and `remind` tags, the leftover assistant-candidate code and the
+§4.7 and §5.3 wording is step (a2).
+
 ### 11.3 The shipped tag set and retired-tag cleanup
 
 After the change scribe ships `preferences` (memory), `idea` and `standard`

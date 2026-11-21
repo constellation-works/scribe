@@ -161,7 +161,12 @@ heading is `store_corrupt`. It reads as format 4 (see **Format 4** below).
   `settled_author` (an author or `null`; `#scribe approve|reject|retire|forget`
   sets Daniel's). (S12) An agent's settle leaves `settled_by` `null`. Format 5 adds
   `updated_by` (agent author or `null`) to preserve who last changed a
-  proposal reason without replacing its original `author`.
+  proposal reason without replacing its original `author`. Format 11 adds
+  `closed_reason` (`null`, or `"tag_retired"` on a `rejected` proposal
+  scribe closed itself; any other state with a reason is refused as
+  corrupt) and, on each `candidate`, `admitted` (`null`, or `{trigger,
+  matched, criteria}`: the trigger that fired, the turn's words it
+  matched, at most 120 characters, and the tag's `criteria` or `null`).
 - `cataloged_by` on a `control.json` switch is `null` or `{at, by}`;
   `/scribe on` keeps it. *(S14)* `session catalog` sets it and the pass
   copies it onto the record.
@@ -405,6 +410,19 @@ config tag claims is dropped with a warning naming both.
   authors are preserved. New agent notes have a null cite and
   `content_from: {kind: agent}`. Agent tags are a new optional document.
   A format-4 reader refuses format-5 records rather than misreading them.
+- **Format 11** (capture rules, 2_design.md §11.2). Append-only step
+  10→11 (`capture_admission`) adds null `closed_reason` to every proposal
+  and null `admitted` to every candidate object; nothing else changes, and
+  a format-10 file is checked against its frozen shape first. Config
+  gains `[tags.<tag>.capture]` (`from`, `route`, `triggers`, `criteria`,
+  `not`), each overriding the shipped rule of the same name alone;
+  `triggers` replaces the shipped list whole (at most 32, each at most 120
+  characters), `criteria` and `not` take at most 300 characters, and
+  `from = "assistant"` is refused `config_invalid`. A tag scribe ships no
+  rules for must give `from`, `route` and `triggers`. A pass claim is
+  written only under the lock, after its turn is checked again to fire a
+  trigger of its tag under the config then on disk; the recomputed
+  `admitted` is what is stored.
 - **Agent writes** (S12). Each write verb takes the lock, checks the
   author guards (a reserved `--author` name — `daniel`, `scribe`,
   `consistency` — is refused `reserved_author`; a Daniel entry's content,
@@ -452,7 +470,9 @@ config tag claims is dropped with a warning naming both.
   `session.active_change.reason`, `proposal.reason` and
   `proposal.quotes.text`; (S12) also `tag.description` and
   `entry.retirement_reason`; (format 8) also `entry.quote` and
-  `entry.window.text`. A masked segment
+  `entry.window.text`; (format 11) also
+  `proposal.candidate.admitted.matched` and
+  `proposal.candidate.admitted.criteria`. A masked segment
   heading is cut back to 80 characters. Values shorter than 8 characters are not masked;
   identifiers, timestamps and paths are not free text. A `[redact] env`
   name with no value in the writer's environment refuses the write

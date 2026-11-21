@@ -199,3 +199,66 @@ fn action_tags_come_from_config_and_shipped_ones_can_be_retuned() {
     let err = Config::parse("[tags.notes]\nrequire_quote = true\n").unwrap_err();
     assert!(err.to_string().contains("add action = true"), "{err}");
 }
+
+#[test]
+fn capture_rules_override_field_by_field_with_their_line() {
+    use crate::tag::{CaptureFrom, CaptureRoute, RuleOrigin};
+    let shipped = Config::parse("").unwrap();
+    let shipped = &shipped.tags.resolve("preferences").unwrap().capture;
+    assert_eq!(shipped.route(), Some(CaptureRoute::Propose));
+    assert_eq!(shipped.from.as_ref().unwrap().value, CaptureFrom::Daniel);
+    assert_eq!(
+        shipped.criteria.as_ref().unwrap().origin,
+        RuleOrigin::Shipped
+    );
+
+    let config = Config::parse(
+        "[tags.preferences.capture]\n\ntriggers = [\"from now on\", \"from now on\"]\n",
+    )
+    .unwrap();
+    let capture = &config.tags.resolve("preferences").unwrap().capture;
+    let triggers = capture.triggers.as_ref().unwrap();
+    assert_eq!(
+        triggers.value,
+        ["from now on"],
+        "replaced whole, deduplicated"
+    );
+    assert_eq!(triggers.origin, RuleOrigin::Config { line: Some(3) });
+    assert_eq!(capture.criteria, shipped.criteria);
+    assert_eq!(capture.not, shipped.not);
+    assert_eq!(capture.from, shipped.from);
+}
+
+#[test]
+fn bad_capture_rules_are_refused_naming_the_field() {
+    for (toml, needle) in [
+        (
+            "[tags.preferences.capture]\nfrom = \"assistant\"\n",
+            "from = \"assistant\" is not accepted",
+        ),
+        ("[tags.preferences.capture]\nfrom = \"robot\"\n", "from"),
+        ("[tags.preferences.capture]\nroute = \"file\"\n", "route"),
+        (
+            "[tags.preferences.capture]\ntriggers = [\"a * * b\"]\n",
+            "'*'",
+        ),
+        (
+            "[tags.notes.capture]\ncriteria = \"x\"\n",
+            "scribe ships no capture rules",
+        ),
+    ] {
+        let err = Config::parse(toml).unwrap_err();
+        assert!(err.to_string().contains(needle), "{toml}: {err}");
+    }
+    let long = format!(
+        "[tags.preferences.capture]\ncriteria = \"{}\"\n",
+        "x".repeat(301)
+    );
+    assert!(Config::parse(&long).is_err());
+    let many: Vec<String> = (0..33).map(|n| format!("\"w{n}\"")).collect();
+    let many = format!(
+        "[tags.preferences.capture]\ntriggers = [{}]\n",
+        many.join(", ")
+    );
+    assert!(Config::parse(&many).is_err());
+}

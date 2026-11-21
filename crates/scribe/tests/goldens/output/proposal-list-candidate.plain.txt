@@ -1,1 +1,1 @@
-p-3	candidate	open	preferences-1	-	2026-11-15T00:01:00Z	Unmarked preference: I prefer concise progress updates.
+p-3	candidate	open	preferences-1	-	2026-11-15T00:01:00Z	Unmarked preference: I prefer concise progress updates.	trigger "I prefer" matched "I prefer"; criteria: A standing rule from Daniel that applies beyond the work at hand.

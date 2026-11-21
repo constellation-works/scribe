@@ -562,6 +562,7 @@ impl Store {
             author: Author::agent(author),
             updated_by: None,
             settled_author: None,
+            closed_reason: None,
             candidate: None,
         };
         proposals.push(proposal.clone());

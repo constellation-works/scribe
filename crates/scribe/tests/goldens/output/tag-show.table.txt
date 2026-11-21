@@ -1,0 +1,11 @@
+tag         preferences
+source      config
+aliases     preference,pref
+description how Daniel likes things done
+stale days  180
+action      -
+from        daniel  (shipped)
+route       propose  (shipped)
+triggers    "always", "never", "should not", "from now on", "I prefer", "by default"  (shipped)
+criteria    A standing rule from Daniel that applies beyond the work at hand.  (shipped)
+not         A choice about one page or task (it goes on its Orbit task or the feature's 4_decisions.md); an acknowledgement.  (shipped)

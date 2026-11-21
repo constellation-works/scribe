@@ -9,7 +9,8 @@
       "stale_after_days": null,
       "configured": false,
       "entries": 2,
-      "action": null
+      "action": null,
+      "route": null
     },
     {
       "author": null,
@@ -20,7 +21,8 @@
       "stale_after_days": null,
       "configured": true,
       "entries": 0,
-      "action": null
+      "action": null,
+      "route": null
     },
     {
       "author": null,
@@ -36,7 +38,8 @@
         "require_quote": false,
         "retired": 0,
         "rejected": 0
-      }
+      },
+      "route": "propose"
     },
     {
       "author": null,
@@ -50,7 +53,8 @@
       "stale_after_days": 180,
       "configured": true,
       "entries": 1,
-      "action": null
+      "action": null,
+      "route": "propose"
     },
     {
       "author": null,
@@ -66,7 +70,8 @@
         "require_quote": false,
         "retired": 0,
         "rejected": 0
-      }
+      },
+      "route": null
     },
     {
       "author": null,
@@ -77,7 +82,8 @@
       "stale_after_days": null,
       "configured": false,
       "entries": 1,
-      "action": null
+      "action": null,
+      "route": null
     },
     {
       "author": null,
@@ -93,7 +99,8 @@
         "require_quote": true,
         "retired": 0,
         "rejected": 0
-      }
+      },
+      "route": null
     }
   ],
   "total": 7,

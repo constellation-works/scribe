@@ -241,7 +241,7 @@ impl Store {
         Ok(config)
     }
 
-    fn config_only(&self) -> Result<Config> {
+    pub(super) fn config_only(&self) -> Result<Config> {
         let path = self.root.join(CONFIG_FILE);
         if !self.root_exists()? || !fsio::inspect_file(&path)? {
             return Ok(Config::default());
@@ -807,13 +807,15 @@ impl Store {
 
     /// Write a checked pass window and its candidates under the same lock.
     /// Candidates are persisted before advancing the record cursor, so an
-    /// interruption retries safely. Caps and duplicates are checked here.
+    /// interruption retries safely. Caps, duplicates and each claim's
+    /// trigger (a trigger of its tag fires in its turn, under the config
+    /// read under the lock) are checked here.
     pub fn write_pass_window(
         &self,
         record: SessionRecord,
         expected: Option<time::OffsetDateTime>,
         kind: PassWrite,
-        candidates: &[crate::EntryCandidate],
+        candidates: &[crate::pass::PassClaim],
         redactor: &Redactor,
     ) -> Result<Option<SessionRecord>> {
         let session = record.id.clone();
@@ -837,7 +839,7 @@ impl Store {
         record: Option<SessionRecord>,
         kind: PassWrite,
         expected: Option<time::OffsetDateTime>,
-        candidates: &[crate::EntryCandidate],
+        candidates: &[crate::pass::PassClaim],
         redactor: &Redactor,
     ) -> Result<Option<SessionRecord>> {
         self.prepare_dir(&self.root)?;

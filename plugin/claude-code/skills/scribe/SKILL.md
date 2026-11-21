@@ -113,6 +113,12 @@ and grouped, never as a gate on the work:
   recurring theme in the entries or sessions, propose a name, a one-line
   description and any aliases. Run `scribe tag add` under your own
   `--author` once they agree.
+- **Capture rules.** `scribe tag show <tag>` prints a tag's capture rules
+  with where each comes from (`shipped`, or `config` with its file and
+  line). The session pass proposes a claim only from Daniel's own turn
+  that fires one of the tag's triggers; a candidate's `admitted` names the
+  trigger, the matched words and the criteria. To change what is caught,
+  suggest a `[tags.<tag>.capture]` edit in config; never edit the store.
 - **Stale sessions.** A session is stale when its content no longer
   describes something current: its feature was removed, replaced or renamed,
   or a later session superseded its plan. Age alone is not staleness: a
