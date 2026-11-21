@@ -553,9 +553,10 @@ fn instructed_retire_hides_daniels_entry_and_keeps_its_text() {
     assert_eq!(shown["content"], PREFERENCE, "retiring keeps the text");
     assert_eq!(shown["author"]["kind"], "daniel", "it stays his entry");
     assert_eq!(shown["updated_by"]["name"], "opus");
-    assert_eq!(shown["instruction"]["session"], SESSION);
-    assert_eq!(shown["instruction"]["message"], "u-1");
-    assert_eq!(shown["instruction"]["quote"], words);
+    assert_eq!(shown["removal_instruction"]["session"], SESSION);
+    assert_eq!(shown["removal_instruction"]["message"], "u-1");
+    assert_eq!(shown["removal_instruction"]["quote"], words);
+    assert_eq!(shown["instruction"], Value::Null, "no agent approved it");
 
     let active: Value =
         serde_json::from_slice(&ok(&fx, &["entry", "list", "--status", "active", "--json"]).stdout)
@@ -701,9 +702,10 @@ fn forget_leaves_no_store_file_holding_the_entry_its_quotes_or_the_instruction()
         assert_eq!(shown["content"], "");
         assert_eq!(shown["author"]["kind"], "daniel");
         assert_eq!(shown["updated_by"]["name"], "opus");
-        assert_eq!(shown["instruction"]["session"], SESSION);
-        assert_eq!(shown["instruction"]["message"], message);
-        assert_eq!(shown["instruction"]["quote"], Value::Null);
+        assert_eq!(shown["removal_instruction"]["session"], SESSION);
+        assert_eq!(shown["removal_instruction"]["message"], message);
+        assert_eq!(shown["removal_instruction"]["quote"], Value::Null);
+        assert_eq!(shown["instruction"], Value::Null, "no agent approved it");
     }
 
     for gone in [
@@ -795,6 +797,11 @@ fn settle<'a>(id: &'a str, act: &'a str, instruction: &'a str) -> Vec<&'a str> {
 /// A store holding only two open session-pass candidates: `p-1` from
 /// Daniel's turn and `p-2` from an assistant's, in another session.
 fn store_with_candidates() -> Fixture {
+    store_with_candidates_opened_at("2026-11-15T00:01:00Z")
+}
+
+/// [`store_with_candidates`], both claims opened at `opened_at`.
+fn store_with_candidates_opened_at(opened_at: &str) -> Fixture {
     let fx = Fixture::new();
     let root = fx.root();
     std::fs::create_dir_all(&root).unwrap();
@@ -815,7 +822,7 @@ fn store_with_candidates() -> Fixture {
                 "admitted": null
             },
             "reason": format!("Unmarked preferences statement: {quote}"), "quotes": [],
-            "state": "open", "opened_at": "2026-11-15T00:01:00Z", "settled_at": null,
+            "state": "open", "opened_at": opened_at, "settled_at": null,
             "settled_by": null, "author": {"kind": "scribe", "name": "session-pass"},
             "settled_author": null, "updated_by": null, "closed_reason": null,
             "instruction": null
@@ -1106,4 +1113,196 @@ fn a_scan_closes_an_instructed_approval_covered_since_as_covered_not_rejected() 
         "{}",
         text(&again.stderr)
     );
+}
+
+/// The error code and message of a `--json` refusal.
+fn refusal(fx: &Fixture, args: &[&str]) -> (Option<i32>, Value) {
+    let mut args = args.to_vec();
+    args.push("--json");
+    let out = exec(fx, &args);
+    (
+        out.status.code(),
+        serde_json::from_slice(&out.stderr).unwrap(),
+    )
+}
+
+#[test]
+fn without_an_instruction_a_claim_is_refused_with_the_wording_it_always_had() {
+    let fx = store_with_candidates();
+    for act in ["--approve", "--reject"] {
+        let (code, err) = refusal(&fx, &["proposal", "settle", "p-1", act, "--author", "opus"]);
+        assert_eq!(code, Some(1), "{act}");
+        assert_eq!(err["code"], "daniel_only", "{act}");
+        assert_eq!(
+            err["error"], "Daniel settles candidate proposals through #scribe approve or reject",
+            "{act}"
+        );
+    }
+}
+
+#[test]
+fn an_instruction_turn_without_a_message_id_is_refused_before_any_write() {
+    for uuid in ["", "  "] {
+        let fx = store_with_candidates();
+        let words = "approve p-1, that is how I want reviews";
+        claude(
+            &fx,
+            Some("claude-desktop"),
+            &[
+                ("a-1", "assistant", "p-1 is open: approve it?", 2),
+                (uuid, "user", words, 1),
+            ],
+        );
+        let before = state(&fx);
+        assert_eq!(
+            run(&fx, &settle("p-1", "--approve", words)),
+            (Some(1), Some(String::from("instruction_not_found"))),
+            "{uuid:?}"
+        );
+        assert_eq!(state(&fx), before, "nothing is written");
+        // The store still reads.
+        assert_eq!(show(&fx, "proposal", "p-1")["state"], "open");
+        let lines = audit_lines(&fx, "proposal settle");
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert_eq!(lines[0]["instruction_message"], Value::Null);
+    }
+}
+
+#[test]
+fn an_instruction_typed_before_a_claim_opened_cannot_settle_it() {
+    // The claims opened a minute ago; his instruction is three minutes old.
+    let opened = (OffsetDateTime::now_utc() - time::Duration::minutes(1))
+        .format(&Rfc3339)
+        .unwrap();
+    let fx = store_with_candidates_opened_at(&opened);
+    let approve = "approve p-1, that is how I want reviews";
+    let reject = "reject p-2, it is noise";
+    claude(
+        &fx,
+        Some("cli"),
+        &[("u-1", "user", approve, 3), ("u-2", "user", reject, 3)],
+    );
+    let before = state(&fx);
+    assert_eq!(
+        run(&fx, &settle("p-1", "--approve", approve)),
+        (Some(1), Some(String::from("instruction_stale")))
+    );
+    assert_eq!(
+        run(&fx, &settle("p-2", "--reject", reject)),
+        (Some(1), Some(String::from("instruction_stale")))
+    );
+    assert_eq!(state(&fx), before, "neither claim changed");
+    assert_eq!(show(&fx, "proposal", "p-1")["state"], "open");
+    assert_eq!(show(&fx, "proposal", "p-2")["state"], "open");
+    // Typed after it opened, the same words settle it.
+    claude(&fx, Some("cli"), &[("u-3", "user", approve, 0)]);
+    ok(&fx, &settle("p-1", "--approve", approve));
+    assert_eq!(show(&fx, "proposal", "p-1")["state"], "approved");
+}
+
+#[test]
+fn a_refusal_after_the_instruction_turn_is_found_audits_its_message_id() {
+    let fx = store_with_candidates();
+    claude(
+        &fx,
+        Some("cli"),
+        &[
+            ("u-1", "user", "approve p-1, that is how I want reviews", 50),
+            ("u-2", "user", "approve p-9, a different claim", 2),
+            ("u-3", "user", "anything else for now", 1),
+        ],
+    );
+    // Found but stale, found but naming another claim, and never found.
+    let cases = [
+        (
+            "approve p-1, that is how",
+            "instruction_stale",
+            json!("u-1"),
+        ),
+        (
+            "approve p-9, a different",
+            "instruction_mismatch",
+            json!("u-2"),
+        ),
+        (
+            "never typed by anyone",
+            "instruction_not_found",
+            Value::Null,
+        ),
+    ];
+    for (words, code, _) in &cases {
+        assert_eq!(
+            run(&fx, &settle("p-1", "--approve", words)),
+            (Some(1), Some(String::from(*code))),
+            "{words}"
+        );
+    }
+    let lines = audit_lines(&fx, "proposal settle");
+    assert_eq!(lines.len(), cases.len(), "{lines:?}");
+    for (line, (_, code, message)) in lines.iter().zip(&cases) {
+        assert_eq!(line["error_code"], *code);
+        assert_eq!(line["instruction_session"], SESSION);
+        assert_eq!(line["instruction_message"], *message, "{code}");
+    }
+}
+
+#[test]
+fn retiring_an_instructed_approval_keeps_the_approval_apart_from_the_retirement() {
+    let fx = store_with_candidates();
+    let approve = "approve p-1, that is how I want reviews";
+    claude(&fx, Some("cli"), &[("u-1", "user", approve, 2)]);
+    ok(&fx, &settle("p-1", "--approve", approve));
+    let approved = show(&fx, "entry", "preferences-1");
+    let retire_words = "please retire preferences-1 now";
+    claude(
+        &fx,
+        Some("cli"),
+        &[
+            ("u-1", "user", approve, 2),
+            ("u-2", "user", retire_words, 1),
+        ],
+    );
+    ok(&fx, &retire("preferences-1", retire_words));
+    let e = show(&fx, "entry", "preferences-1");
+    assert_eq!(e["status"], "retired");
+    // The approval: who, the command and the instruction it was run on.
+    assert_eq!(e["approved_by"], approved["approved_by"]);
+    assert_eq!(e["said"], approved["said"]);
+    assert_eq!(e["instruction"], approved["instruction"]);
+    assert_eq!(e["instruction"]["message"], "u-1");
+    assert_eq!(e["instruction"]["quote"], approve);
+    // The retirement, on its own.
+    assert_eq!(e["removal_instruction"]["message"], "u-2");
+    assert_eq!(e["removal_instruction"]["quote"], retire_words);
+    // Forgetting it later blanks both quotes and keeps both ids apart.
+    let forget_words = "forget preferences-1 for good";
+    claude(
+        &fx,
+        Some("cli"),
+        &[
+            ("u-2", "user", retire_words, 2),
+            ("u-3", "user", forget_words, 1),
+        ],
+    );
+    ok(&fx, &forget("preferences-1", forget_words));
+    let e = show(&fx, "entry", "preferences-1");
+    assert_eq!(e["status"], "forgotten");
+    assert_eq!(e["instruction"]["message"], "u-1");
+    assert_eq!(e["instruction"]["quote"], Value::Null);
+    assert_eq!(e["removal_instruction"]["message"], "u-3");
+    assert_eq!(e["removal_instruction"]["quote"], Value::Null);
+}
+
+#[test]
+fn a_multiline_instruction_cites_the_line_its_quote_starts_on() {
+    let fx = store_with_candidates();
+    // The quote's first line also appears on line 1, but the quote as a
+    // whole starts on line 3.
+    let turn =
+        "approve p-1, that is\nwhat I said earlier\napprove p-1, that is\nhow I want reviews";
+    let words = "approve p-1, that is\nhow I want reviews";
+    claude(&fx, Some("cli"), &[("u-1", "user", turn, 1)]);
+    ok(&fx, &settle("p-1", "--approve", words));
+    let p = show(&fx, "proposal", "p-1");
+    assert_eq!(p["settled_by"]["line"], 3, "{p}");
 }

@@ -53,6 +53,7 @@ fn entry(id: &str, content: &str) -> EntryPayload {
         instruction: None,
         stated_by: None,
         outcome: None,
+        removal_instruction: None,
         action: None,
     }
 }

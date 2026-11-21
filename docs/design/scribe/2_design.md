@@ -3308,16 +3308,17 @@ the earlier text describes what is built today and carries a pointer here.
 refusal codes: `scribe-core/src/instruction.rs` (word lists, freshness,
 entry points; no I/O) and `scribe/src/commands/instruction.rs` (finding and
 reading the transcript). `proposal settle` and `entry retire` take
-`--session` and `--instruction` and run the check before the lock, but a
-passing check does not yet widen what they accept: a candidate is still
-refused `daniel_only` and Daniel's entry is still not retired until tasks
-3 and 4 land. `entry forget` and the instruction record of §12.3 are not
-built.
+`--session` and `--instruction` and run the check before the lock. In this
+task a passing check did not yet widen what they accept; tasks 4 and 3
+below did (retiring and forgetting his entries, and settling a candidate),
+and they built `entry forget` and the instruction record of §12.3.
 
 **Built (task 4 of 6, ORB-26245).** The entry rows of §12.1 and §12.4: with
 a passing check, `entry retire` accepts an entry Daniel wrote, hides it from
 `entry list --status active` and `ask` with `retirement_reason` set, keeps
-its text and records `instruction` with the redacted quote. `entry forget
+its text and records the instruction with the redacted quote (since format
+16 in `removal_instruction`, apart from an approval's `instruction`; below).
+`entry forget
 <id> --author <name> --session <id> --instruction '<words>' --confirm`
 refuses `usage_error` (exit 2) without an instruction and `confirm_required`
 without `--confirm`, both before the transcript is read; it then applies the
@@ -3354,8 +3355,22 @@ approval, in the scan's recovery, or on a repeated typed approval) is closed
 instruction, for typed approvals too: it never reads as a rejection nobody
 made. Every `proposal settle`, `entry retire` and `entry forget` audit line
 now carries `instruction_session` (from `--session`) and
-`instruction_message` (the turn the check found; `null` when the check
-refused before finding it), audit format 3.
+`instruction_message` (the turn the check found, also when the check then
+refuses it as stale, mismatched or not interactive; `null` only when no
+typed turn held the instruction or that turn has no message id), audit
+format 3.
+
+**Fixed (ORB-26503, store format 18).** Review ORB-26500 of task 3 found
+five defects, now fixed: a format-14 entry decodes again through typed
+YAML, so a local YAML tag reads as before (format 16's `EntryV14`; a
+fixture test pins it); an instruction whose turn has no
+message id is refused `instruction_not_found` before anything is written;
+an approval or rejection is refused `instruction_stale`, under the lock,
+when the instruction was typed before the claim's `opened_at` (check 3's
+"claims opened since"); a refusal after the turn was found audits its
+message id; and retiring or forgetting an approved entry records its
+instruction in `removal_instruction`, leaving the approval's `instruction`
+in place (§12.7).
 
 The reasons and alternatives are in
 [4_decisions.md](./4_decisions.md#an-agent-settles-claims-and-deletes-records-on-daniels-checked-instruction).
@@ -3508,8 +3523,8 @@ instruction. `--json` adds the fields; none is renamed or retyped.
 | Kind | "Delete" does | Reversible | What stays |
 |---|---|---|---|
 | Proposal (any open claim) | `reject`: closed, no entry, `closed_reason: instructed` ([§11.3](#113-the-shipped-tag-set-and-retired-tag-cleanup)'s field) | no; the suppression set keeps it from being proposed again | the proposal with its quote, reason and instruction |
-| Entry | `retire`: hidden from lists and `ask`, `retirement_reason` set | no un-retire verb exists, but the text is intact and can be added again as a new entry | the whole entry, `updated_by`, the instruction |
-| Entry, "forget" or "for good" | `forget`: entry text and evidence cleared, with every proposal quote of it and related candidate quotes, evidence and reasons (§7) | no | id, tag, dates, author, `updated_by` and the instruction's session and message ids; **not** its quote, which may repeat the words he wants gone |
+| Entry | `retire`: hidden from lists and `ask`, `retirement_reason` set | no un-retire verb exists, but the text is intact and can be added again as a new entry | the whole entry, `updated_by`, the instruction (`removal_instruction`, apart from an approval's `instruction`) |
+| Entry, "forget" or "for good" | `forget`: entry text and evidence cleared, with every proposal quote of it and related candidate quotes, evidence and reasons (§7) | no | id, tag, dates, author, `updated_by` and the instruction's session and message ids (`removal_instruction`; an approval's `instruction` keeps its ids too); **not** their quotes, which may repeat the words he wants gone |
 | Session | `deactivate`: hidden from `ask` and lists unless `--include-inactive` | `session activate` | the record and its log |
 
 "Delete" never removes a file. A removed proposal would leave the
@@ -3597,6 +3612,14 @@ an entry gains `approved_by` and `instruction` (`null` on upgrade).
 only beside its `approved_by`, and `closed_reason: covered` on a settled
 candidate, so a format-14 build refuses a store holding either as too new
 rather than corrupt.
+
+**Built (ORB-26503, store format 18).** Step 17→18 (`removal_instruction`)
+adds an entry's `removal_instruction`, the checked instruction that retired
+or forgot it, so `instruction` is only ever the instruction `approved_by`
+approved on and a removal never reads as evidence for an approval. An entry
+without `approved_by` moves its `instruction` there; an approved one keeps
+it. [4_decisions.md](./4_decisions.md#an-entry-keeps-its-approval-instruction-apart-from-its-removal)
+gives the reasons.
 
 ### 12.8 Limits and what is not built until seen
 

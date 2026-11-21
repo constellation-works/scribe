@@ -79,6 +79,11 @@ pub(super) fn check(
         scribe_core::Provider::ClaudeCode => instruction::claude_conversation(&bytes),
         scribe_core::Provider::Codex => instruction::codex_conversation(&bytes, session)?,
     };
+    // The turn is identified once found, whether or not it then passes:
+    // a refusal's audit line names it too.
+    if let Some(message) = instruction::located_message(&spoken, quote) {
+        ctx.note_instruction_message(message);
+    }
     let request = Request {
         session,
         quote,
@@ -87,7 +92,6 @@ pub(super) fn check(
         now: time::OffsetDateTime::now_utc(),
     };
     let instructed = instruction::check(&spoken, &request)?;
-    ctx.note_instruction_message(&instructed.message);
     Ok(Some(instructed))
 }
 

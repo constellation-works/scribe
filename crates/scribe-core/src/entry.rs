@@ -395,10 +395,18 @@ pub struct Entry {
     /// (format 13); `null` when Daniel typed `#scribe approve` or for direct entries.
     #[serde(deserialize_with = "nullable")]
     pub approved_by: Option<Author>,
-    /// The checked instruction that approved, retired or forgot this entry
-    /// (format 13); `null` otherwise.
+    /// The checked instruction on which `approved_by` approved this
+    /// candidate (format 13): set exactly when `approved_by` is, and never
+    /// replaced by a later retirement or forgetting (format 16); `null`
+    /// otherwise.
     #[serde(deserialize_with = "nullable")]
     pub instruction: Option<Instruction>,
+    /// The checked instruction that retired or forgot this entry (format
+    /// 16), kept apart from the approval's `instruction` so a removal never
+    /// reads as evidence for an approval; `null` for an active entry and for
+    /// one retired or forgotten without his instruction.
+    #[serde(deserialize_with = "nullable")]
+    pub removal_instruction: Option<Instruction>,
     /// Whose words `content` is when they are not the author's own
     /// (format 14): `{kind: scribe, name: session-pass}` for an approved
     /// pass claim whose content is scribe's statement of Daniel's turn,
@@ -645,6 +653,7 @@ impl NewEntry {
             as_of: None,
             approved_by: None,
             instruction: None,
+            removal_instruction: None,
             stated_by: None,
             outcome: None,
             content: self.content,

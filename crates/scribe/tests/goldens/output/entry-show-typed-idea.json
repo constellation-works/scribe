@@ -50,5 +50,6 @@
   "approved_by": null,
   "instruction": null,
   "stated_by": null,
-  "outcome": null
+  "outcome": null,
+  "removal_instruction": null
 }

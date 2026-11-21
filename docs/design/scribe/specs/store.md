@@ -1,6 +1,6 @@
 ---
 type: design
-summary: "Spec: store — layout, record files with YAML frontmatter (format 17: issue records; format 16: entry outcome on a pass-written idea; format 15: instructed approval said and closed_reason covered; format 14: candidate statement and subject, entry stated_by; format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
+summary: "Spec: store — layout, record files with YAML frontmatter (format 18: entry removal_instruction apart from the approval instruction; format 17: issue records; format 16: entry outcome on a pass-written idea; format 15: instructed approval said and closed_reason covered; format 14: candidate statement and subject, entry stated_by; format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
 last_validated: 2026-11-21
 ---
 
@@ -10,7 +10,11 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-The code writes format 17 and reads formats 1–17. Format 17 changes no
+The code writes format 18 and reads formats 1–18. Format 18 adds
+`removal_instruction` to each entry: the checked instruction that retired or
+forgot it, kept apart from `instruction`, which is now only the instruction
+an agent approved the entry on
+([2_design.md §12.7](../2_design.md#127-store-format)). Format 17 changes no
 stored value: it adds the issue record kind, `issues/<id>.md`, which has no
 older form ([2_design.md §11.4](../2_design.md#114-issues); **Issue files**
 below). Format 16 adds an entry's `outcome`, set only on an idea the session
@@ -136,6 +140,17 @@ once the instruction's quote is forgotten) instead of `#scribe approve
 p-<n>`; the command without `approved_by`, or in a file older than format
 15, is `store_corrupt`.
 
+Format 17 adds `removal_instruction` (`{session, message, at, quote}` or
+`null`): the checked instruction that retired or forgot the entry, its quote
+redacted, `null` once forgotten. `instruction` is from format 18 only the
+instruction `approved_by` approved on: an `instruction` without `approved_by`,
+a `removal_instruction` on an entry that is not `retired` or `forgotten`, and
+a blank `message` or quote in either are `store_corrupt`. The step 17→18
+moves a format-13 to format-17 entry's `instruction` to `removal_instruction`
+when it has no `approved_by`; through format 17 a retirement on instruction
+replaced an approval's `instruction`, and that one cannot be told apart, so
+an entry with `approved_by` keeps it.
+
 Format 14 adds `stated_by` (`{kind: scribe, name: session-pass}` or `null`),
 upgraded to `null`. An entry approved from a candidate that carried a
 statement holds scribe's statement as its content, Daniel's verbatim turn in
@@ -249,7 +264,7 @@ lines never held any.
 
 ## JSON documents
 
-- `control.json` (written at format 17; an older file upgrades on read): `{"sessions": {"<session-id>": {"on",
+- `control.json` (written at format 18; an older file upgrades on read): `{"sessions": {"<session-id>": {"on",
   "since", "due", "final", "consecutive_failures", "retry_after",
   "pending_links", "cataloged_by"}}}`. `pending_links` holds `{type, session}` links
   Daniel asserted before the session had a record; the pass that writes
@@ -259,7 +274,7 @@ lines never held any.
   automatic attempt waits 5, 10, 20, 40, then at most 60 minutes. Success
   or switching off resets both retry fields. Explicit `--session` bypasses
   the delay.
-- `proposals.json` (written at format 17; an older file upgrades on read): `{"proposals": [{"id": "p-<n>", "kind":
+- `proposals.json` (written at format 18; an older file upgrades on read): `{"proposals": [{"id": "p-<n>", "kind":
   "supersedes"|"stale", "older", "newer", "reason", "quotes": [{"entry",
   "text"}], "state": "open"|"approved"|"rejected", "opened_at",
   "settled_at", "settled_by"}]}`. `newer`, `settled_at` and `settled_by`
@@ -305,13 +320,13 @@ lines never held any.
 - `cataloged_by` on a `control.json` switch is `null` or `{at, by}`;
   `/scribe on` keeps it. *(S14)* `session catalog` sets it and the pass
   copies it onto the record.
-- (S12) `tags.json` (written at format 17; introduced at format 5): `{"tags": [{"name",
+- (S12) `tags.json` (written at format 18; introduced at format 5): `{"tags": [{"name",
   "aliases", "description", "stale_after_days", "author", "updated_by", "created",
   "updated"}]}`, sorted by name; `name` and aliases as for config tags,
   `description` accepts 1–300 characters before redaction, `stale_after_days` a positive
   integer or `null`, `author` of kind `agent`; `updated_by` is the last updating agent or
   `null`. Absent is no store tags.
-- `pickups.json` (written at format 17; introduced at format 8, no older form): `{"pickups": [{"entry", "author",
+- `pickups.json` (written at format 18; introduced at format 8, no older form): `{"pickups": [{"entry", "author",
   "at", "result", "rejected"}]}`, oldest first: a consumer's note that it
   picked up the action entry `entry` (`author` of kind `agent`, `result` a
   reference or `null`), or with `rejected: true`, that the human rejected
@@ -470,10 +485,10 @@ exits 0.
   still `active`; `Store::reapply_approved` (the scan's first step)
   finishes it. A forget blanks the entry's `said` and body and, in
   `proposals.json`, the `text` of its quotes and the `reason` of every
-  proposal about it, and clears `instruction.quote` to `null` on the entry
-  and every proposal about it while keeping `instruction.session`,
-  `instruction.message` and `instruction.at`. Nothing is written when nothing
-  changed.
+  proposal about it, and clears `instruction.quote` and
+  `removal_instruction.quote` to `null` on the entry and `instruction.quote`
+  on every proposal about it while keeping each instruction's `session`,
+  `message` and `at`. Nothing is written when nothing changed.
 - **Retired-tag cleanup** (format 11, 2_design.md §11.3). Under `.lock`
   in the candidate write path (`open_pass_candidates` in `write_pass_window`,
   before counting the 20-open cap) and in `consistency scan`
@@ -642,6 +657,14 @@ exits 0.
   format-16 `proposals.json` decodes through `ProposalsDocument`, since no
   proposal changed. Issue writes take the lock, redact and write through
   `write_atomic`; a repeated write that changes nothing writes nothing.
+- **Format 18** (removal instruction, 2_design.md §12.7). Append-only step
+  17→18 (`removal_instruction`) adds `removal_instruction` to every entry,
+  moving `instruction` there when the entry has no `approved_by`; other
+  documents are unchanged. A format-16 or format-17 entry decodes through its
+  frozen shape (`EntryV16`) in typed YAML, so local YAML tags stay intact and a
+  stray format-18 key is refused; formats 13 to 15 split the same way in
+  `EntryV13` and `EntryV14`, and a format-16 or format-17 `proposals.json` has the
+  current shape.
 - **Agent writes** (S12). Each write verb takes the lock, checks the
   author guards (a reserved `--author` name — `daniel`, `scribe`,
   `consistency`, `session-pass`, `tag-retired` — is refused `reserved_author`; a Daniel entry's content,
@@ -659,15 +682,18 @@ exits 0.
   `updated_by`; metadata-only updates of Daniel entries do likewise.
   Direct retirement stores its redacted reason; retirement on his checked
   instruction (`entry retire --session --instruction`, 2_design.md §12.1)
-  also accepts his entry and stores `instruction` with its redacted quote,
-  keeping the text. `Store::forget_entry` (`entry forget`, only with a
+  also accepts his entry and stores `removal_instruction` with its redacted
+  quote, keeping the text and any approval's `instruction`. `Store::forget_entry` (`entry forget`, only with a
   checked instruction and `--confirm`, §12.4) applies the same forget as
   `#scribe forget` (`consistency::forget`) under the lock, writing
   `proposals.json` first and then the entry, sets `updated_by` to the agent
-  and `instruction` to the instruction's `session`, `message` and `at` with
-  `quote: null`; no file is removed, and an entry already forgotten writes
+  and `removal_instruction` to the instruction's `session`, `message` and
+  `at` with `quote: null`; no file is removed, and an entry already forgotten writes
   nothing. `proposal settle --session --instruction` (2_design.md §12.3) settles
-  an open candidate under the lock: it records the agent in
+  an open candidate under the lock (every instructed write first refuses
+  `instruction_not_found`, before writing anything, an instruction whose
+  turn has no message id), refusing `instruction_stale` when the
+  instruction was typed before the candidate's `opened_at`: it records the agent in
   `settled_author`, the instruction turn's cite in `settled_by` and
   `instruction` with its redacted quote; a rejection sets `closed_reason:
   "instructed"` and writes no entry, and an approval writes

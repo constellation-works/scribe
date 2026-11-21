@@ -104,6 +104,7 @@ fn the_redacted_field_inventory_is_exactly_the_fields_masked() {
         quote: Some(String::new()),
     });
     e.outcome = Some(outcome());
+    e.removal_instruction = e.instruction.clone();
     e.window = Some(crate::Window {
         turns: vec![crate::WindowTurn {
             role: crate::Speaker::User,

@@ -50,5 +50,6 @@
     "kind": "scribe",
     "name": "session-pass"
   },
-  "outcome": null
+  "outcome": null,
+  "removal_instruction": null
 }

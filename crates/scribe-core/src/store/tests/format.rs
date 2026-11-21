@@ -1008,6 +1008,7 @@ run the gate before every push
         .replacen(&format!("format: {FORMAT}\n"), "format: 11\n", 1)
         .replace("inactive_since: null\n", "")
         .replace("approved_by: null\n", "")
+        .replace("removal_instruction: null\n", "")
         .replace("instruction: null\n", "")
         .replace("stated_by: null\n", "")
         .replace("outcome: null\n", "");
@@ -1627,7 +1628,8 @@ fn a_format_thirteen_store_upgrades_with_null_statement_subject_and_stated_by_on
     let back = encoded
         .replacen(&format!("format: {FORMAT}\n"), "format: 13\n", 1)
         .replace("stated_by: null\n", "")
-        .replace("outcome: null\n", "");
+        .replace("outcome: null\n", "")
+        .replace("removal_instruction: null\n", "");
     assert_eq!(entry(&back).unwrap(), decoded);
     // Local YAML tags on a format-13 string survive the upgrade.
     let tagged = format_thirteen_entry("", "!local scribe");
@@ -1679,6 +1681,129 @@ fn a_format_thirteen_store_upgrades_with_null_statement_subject_and_stated_by_on
     }
 }
 
+/// A format-14 entry as a format-14 build wrote it, `project` spelled
+/// `project` (`!local scribe` is how a hand edit or another YAML writer may
+/// tag it, which a format-14 build reads as `scribe`).
+fn format_fourteen_entry(project: &str) -> String {
+    format_thirteen_entry("", project)
+        .replacen("format: 13\n", "format: 14\n", 1)
+        .replacen(
+            "instruction: null\n",
+            "instruction: null\nstated_by: null\n",
+            1,
+        )
+}
+
+#[test]
+fn a_format_fourteen_entry_with_local_yaml_tags_reads_as_under_a_format_fourteen_build() {
+    // The 14 -> 15 step changes no stored value, so a format-14 entry
+    // decodes in typed YAML as before: a local tag stays a string.
+    let plain = entry(&format_fourteen_entry("scribe")).unwrap();
+    let tagged = entry(&format_fourteen_entry("!local scribe")).unwrap();
+    assert_eq!(tagged, plain);
+    assert_eq!(tagged.project.as_str(), "scribe");
+    assert_eq!(tagged.content, "I prefer short updates.");
+    // Strict at format 14: a later key is refused.
+    let stray = format_fourteen_entry("scribe").replacen(
+        "stated_by: null\n",
+        "stated_by: null\nremoval_instruction: null\n",
+        1,
+    );
+    corrupt_message(&entry(&stray).unwrap_err());
+}
+
+#[test]
+fn an_older_entry_keeps_an_approval_instruction_and_moves_a_removal_one() {
+    let inst =
+        "{session: s-9, message: m-9, at: 2026-11-03T10:00:00Z, quote: retire preferences-1}";
+    // Daniel's entry retired on his instruction: through format 17 the one
+    // `instruction` key held the retirement's, which now has its own key.
+    let retired = format_fourteen_entry("!local scribe")
+        .replacen("format: 14\n", "format: 15\n", 1)
+        .replacen("status: active\n", "status: retired\n", 1)
+        .replacen(
+            "inactive_since: null\n",
+            "inactive_since: 2026-11-03T10:05:00Z\n",
+            1,
+        )
+        .replacen("instruction: null\n", &format!("instruction: {inst}\n"), 1);
+    let decoded = entry(&retired).unwrap();
+    assert_eq!(decoded.project.as_str(), "scribe");
+    assert_eq!(decoded.instruction, None);
+    let removal = decoded.removal_instruction.clone().unwrap();
+    assert_eq!(
+        (removal.message.as_str(), removal.quote.as_deref()),
+        ("m-9", Some("retire preferences-1"))
+    );
+    let encoded =
+        String::from_utf8(crate::store::format::encode_entry(Path::new(ENTRY), &decoded).unwrap())
+            .unwrap();
+    assert!(encoded.contains("\ninstruction: null\n"), "{encoded}");
+    assert_eq!(entry(&encoded).unwrap(), decoded);
+    // The JSON route of older formats splits the same way.
+    let step = UPGRADES[UPGRADES.len() - 1];
+    let moved = step(
+        crate::store::format::Document::Entry,
+        serde_json::json!({"approved_by": null, "instruction": {"message": "m-9"}}),
+    )
+    .unwrap();
+    assert_eq!(
+        moved,
+        serde_json::json!({"approved_by": null, "instruction": null,
+            "removal_instruction": {"message": "m-9"}})
+    );
+    let kept = step(
+        crate::store::format::Document::Entry,
+        serde_json::json!({"approved_by": {"kind": "agent"}, "instruction": {"message": "m-9"}}),
+    )
+    .unwrap();
+    assert_eq!(kept["instruction"]["message"], "m-9");
+    assert_eq!(kept["removal_instruction"], serde_json::Value::Null);
+
+    // An instructed approval keeps its `instruction` as the approval's, at
+    // format 15 (no `outcome`) and at formats 16 and 17 (the same entry shape).
+    for role in ["user", "assistant"] {
+        let approved = instructed_approval(role).candidate_entry(None).unwrap();
+        let text = String::from_utf8(
+            crate::store::format::encode_entry(Path::new(ENTRY), &approved).unwrap(),
+        )
+        .unwrap();
+        let v17 = text
+            .replacen(&format!("format: {FORMAT}\n"), "format: 17\n", 1)
+            .replacen("removal_instruction: null\n", "", 1);
+        assert_eq!(entry(&v17).unwrap(), approved, "{role}");
+        let v16 = v17.replacen("format: 17\n", "format: 16\n", 1);
+        assert_eq!(entry(&v16).unwrap(), approved, "{role}");
+        let v15 =
+            v16.replacen("format: 16\n", "format: 15\n", 1)
+                .replacen("outcome: null\n", "", 1);
+        assert_eq!(entry(&v15).unwrap(), approved, "{role}");
+        // Strict at formats 16 and 17: the format-18 key is refused.
+        for from in [16, 17] {
+            let stray = text.replacen(
+                &format!("format: {FORMAT}\n"),
+                &format!("format: {from}\n"),
+                1,
+            );
+            corrupt_message(&entry(&stray).unwrap_err());
+        }
+    }
+
+    // Strict at format 18: an `instruction` without `approved_by`, or a
+    // removal on an active entry, is refused.
+    let mut stray = decoded.clone();
+    stray.instruction = stray.removal_instruction.clone();
+    let bytes = crate::store::format::encode_entry(Path::new(ENTRY), &stray).unwrap();
+    let message = corrupt_message(&entry(&String::from_utf8(bytes).unwrap()).unwrap_err());
+    assert!(message.contains("approved_by"), "{message}");
+    let mut active = decoded;
+    active.status = crate::EntryStatus::Active;
+    active.inactive_since = None;
+    let bytes = crate::store::format::encode_entry(Path::new(ENTRY), &active).unwrap();
+    let message = corrupt_message(&entry(&String::from_utf8(bytes).unwrap()).unwrap_err());
+    assert!(message.contains("removal_instruction"), "{message}");
+}
+
 /// A current-format entry holding scribe's statement of Daniel's turn.
 fn stated_entry(status: &str, quote: &str, said: &str, stated_by: &str, body: &str) -> String {
     let inactive = if status == "active" {
@@ -1715,6 +1840,7 @@ evidence: null
 as_of: null
 approved_by: null
 instruction: null
+removal_instruction: null
 stated_by: {stated_by}
 outcome: null
 ---
@@ -1890,7 +2016,8 @@ fn an_instructed_approval_entry_rereads_at_format_15_and_is_refused_at_14() {
         // format-14 reader never did.
         let fifteen = text
             .replacen(&format!("format: {FORMAT}\n"), "format: 15\n", 1)
-            .replace("outcome: null\n", "");
+            .replace("outcome: null\n", "")
+            .replace("removal_instruction: null\n", "");
         assert_eq!(entry(&fifteen).unwrap(), e, "{role}");
         let old = fifteen.replacen("format: 15\n", "format: 14\n", 1);
         corrupt_message(&entry(&old).unwrap_err());
@@ -2040,7 +2167,9 @@ fn a_format_fourteen_or_fifteen_entry_reads_with_no_outcome_and_a_stray_outcome_
     let pass = "{kind: scribe, name: session-pass}";
     let current = stated_entry("active", "\"ok\"", "#scribe approve p-1", pass, "stmt");
     for from in [14, 15] {
-        let older = current.replace(&format!("format: {FORMAT}"), &format!("format: {from}"));
+        let older = current
+            .replace(&format!("format: {FORMAT}"), &format!("format: {from}"))
+            .replace("removal_instruction: null\n", "");
         let old = older.replace("outcome: null\n", "");
         let e = entry(&old).unwrap();
         assert_eq!(e.outcome, None, "{from}");
@@ -2117,7 +2246,8 @@ fn a_format_fifteen_store_upgrades_with_a_null_outcome_only() {
         assert_eq!(entry(&encoded).unwrap(), decoded);
         let back = encoded
             .replacen(&format!("format: {FORMAT}\n"), "format: 15\n", 1)
-            .replace("outcome: null\n", "");
+            .replace("outcome: null\n", "")
+            .replace("removal_instruction: null\n", "");
         assert_eq!(entry(&back).unwrap(), decoded);
     }
     // Strict at format 15: `outcome` is a format-16 key.

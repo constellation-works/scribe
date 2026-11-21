@@ -201,14 +201,45 @@ impl Instructed {
     }
 }
 
-/// The line of `text`, from 1, that the first line of `quote` starts on;
-/// 1 when it cannot be placed exactly (a quote that differs in spacing).
+/// The line of `text`, from 1, that the whole of `quote` starts on: the
+/// last line from which the rest of `text` still holds it as a verbatim
+/// span (§6.4), so a quote whose first line also appears earlier is placed
+/// where it matched. 1 when no line does (a short answer that is his whole
+/// turn).
 fn quote_line(text: &str, quote: &str) -> u32 {
-    let head = quote.trim().lines().next().unwrap_or_default();
-    let before = text.find(head).map_or("", |at| &text[..at]);
-    u32::try_from(before.matches('\n').count())
+    let starts = std::iter::once(0).chain(text.match_indices('\n').map(|(at, _)| at + 1));
+    let line = starts
+        .enumerate()
+        .filter(|&(_, at)| verbatim::contains(&text[at..], quote))
+        .last()
+        .map_or(0, |(line, _)| line);
+    u32::try_from(line)
         .unwrap_or(u32::MAX - 1)
         .saturating_add(1)
+}
+
+/// The latest turn Daniel plainly typed that holds `quote` (§12.2 check 2),
+/// as its rank among his typed turns of `spoken`.
+fn locate(spoken: &[Spoken], quote: &str) -> Option<usize> {
+    spoken
+        .iter()
+        .filter_map(|s| s.typed.as_deref())
+        .collect::<Vec<_>>()
+        .iter()
+        .rposition(|text| quoted_in(text, quote))
+}
+
+/// The message id of the turn [`check`] would take as the instruction for
+/// `quote`, when it finds one with a nonblank id, whether or not the turn
+/// then passes the other checks. A refusal's audit line records it, so a
+/// stale or mismatched instruction is still traceable to the turn; `None`
+/// only when no typed turn holds the quote.
+#[must_use]
+pub fn located_message<'a>(spoken: &'a [Spoken], quote: &str) -> Option<&'a str> {
+    let typed: Vec<&Spoken> = spoken.iter().filter(|s| s.typed.is_some()).collect();
+    let rank = locate(spoken, quote)?;
+    let uuid = typed.get(rank)?.message.uuid.as_str();
+    (!uuid.trim().is_empty()).then_some(uuid)
 }
 
 /// Run §12.2 checks 2 to 5 and §12.5's interactive check over `spoken`, the
@@ -232,10 +263,7 @@ pub fn check(spoken: &[Spoken], request: &Request<'_>) -> Result<Instructed, Err
         .enumerate()
         .filter_map(|(i, s)| s.typed.as_deref().map(|t| (i, t)))
         .collect();
-    let Some(rank) = typed
-        .iter()
-        .rposition(|(_, text)| quoted_in(text, request.quote))
-    else {
+    let Some(rank) = locate(spoken, request.quote) else {
         return Err(refuse(
             WriteRefusal::InstructionNotFound,
             format!(
@@ -247,6 +275,17 @@ pub fn check(spoken: &[Spoken], request: &Request<'_>) -> Result<Instructed, Err
     };
     let (index, words) = typed[rank];
     let turn = &spoken[index];
+    if turn.message.uuid.trim().is_empty() {
+        // Every record of the instruction names its turn; one without an
+        // id cannot be cited, and a store holding it would not read.
+        return Err(refuse(
+            WriteRefusal::InstructionNotFound,
+            format!(
+                "the turn holding --instruction in session {} has no message id; ask Daniel again",
+                request.session
+            ),
+        ));
+    }
     if !turn.interactive {
         return Err(refuse(
             WriteRefusal::NotInteractive,
