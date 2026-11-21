@@ -258,9 +258,12 @@ readable (`tag list`, `entry list` and `record search` still run). Omitting
 entries claim is `config_invalid`. An entry under a tag no config or
 `tags.json` names (such as a `decisions`, `remind` or `finding` entry from
 before that tag stopped shipping) stays listed, shown, searched, cited by
-`ask` and settled. `require_quote` or `ask_first` on a tag without
-`action = true` is `config_invalid`, as is `require_evidence = true` on an
-action tag. A tag name must already be lowercase kebab-case, since it is a
+`ask` and settled. `require_quote` or `ask_first` on a tag whose effective
+action status is false is `config_invalid`; that status comes from configured
+`action`, or from the shipped tag when `action` is unset (so `[tags.standard]`
+inherits `action = true`). `require_evidence = true` on a tag whose effective
+action status is true is also `config_invalid`. A tag name must already be
+lowercase kebab-case, since it is a
 directory; aliases are matched case-insensitively. An unknown key, a zero
 cadence or window bound, or an invalid variable name is `config_invalid`,
 naming the file and, where the parser knows it, the line. So is a zero
