@@ -1290,9 +1290,12 @@ fn an_update_whose_redacted_cause_overruns_its_bound_is_refused_naming_the_field
     assert!(err["error"].as_str().unwrap().contains("--cause"), "{err}");
     let shown = ok_json(&fx, &["issue", "show", "issue-1"]);
     assert_eq!(shown["cause"], "cause not found");
-    assert_eq!(
-        audit(&fx.root()).len(),
-        before,
-        "nothing written, nothing audited"
+    // Only the refusal is audited; no update line.
+    let after = audit(&fx.root());
+    assert!(
+        after[before..]
+            .iter()
+            .all(|l| l["error_code"] == "invalid_text"),
+        "{after:?}"
     );
 }
