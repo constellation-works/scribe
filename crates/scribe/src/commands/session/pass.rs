@@ -395,6 +395,7 @@ struct Job<'a> {
 struct MemoryTally {
     slots: usize,
     written: usize,
+    promoted: usize,
     refused: std::collections::BTreeMap<&'static str, usize>,
     targets: Vec<String>,
 }
@@ -404,6 +405,7 @@ impl Default for MemoryTally {
         Self {
             slots: memory::MAX_PER_PASS,
             written: 0,
+            promoted: 0,
             refused: std::collections::BTreeMap::new(),
             targets: Vec::new(),
         }
@@ -778,6 +780,21 @@ impl Job<'_> {
                     memory::Applied::Replayed(_) => {}
                 }
             }
+            for promoted in written.memory.promoted {
+                self.memory.promoted += 1;
+                let ids = promoted
+                    .item
+                    .into_iter()
+                    .chain([promoted.to])
+                    .chain(promoted.profile_to)
+                    .chain(promoted.profile_from);
+                for id in ids {
+                    let target = format!("memory:{id}");
+                    if !self.memory.targets.contains(&target) {
+                        self.memory.targets.push(target);
+                    }
+                }
+            }
             self.persisted_targets.extend(
                 written
                     .closed_candidates
@@ -921,6 +938,7 @@ impl Job<'_> {
             error: Some(short_reason(self.redactor, &failure.message)),
             warnings: self.warnings.clone(),
             memory_written: self.memory.written,
+            memory_promoted: self.memory.promoted,
             memory_refused: self.memory.refused.clone(),
         })
     }
@@ -940,6 +958,7 @@ impl Job<'_> {
             error: None,
             warnings: self.warnings.clone(),
             memory_written: self.memory.written,
+            memory_promoted: self.memory.promoted,
             memory_refused: self.memory.refused.clone(),
         }
     }

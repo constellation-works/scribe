@@ -30,10 +30,10 @@ mod codex;
 
 use scribe_core::models::{
     ASK_SCHEMA, AskAnswer, AskRequest, CONSISTENCY_SCHEMA, ClaimAnswer, ConflictAnswer,
-    ConsistencyAnswer, ConsistencyRequest, JudgementAnswer, ModelError, REFERENT_SCHEMA,
-    REMOVAL_SCHEMA, ReferentAnswer, ReferentRequest, RemovalAnswer, RemovalJudgementAnswer,
-    RemovalRequest, SESSION_HEADER_SCHEMA, SessionAnswer, SessionHeader, SessionHeaderRequest,
-    SessionRequest,
+    ConsistencyAnswer, ConsistencyRequest, JudgementAnswer, MEMORY_PAIRS_SCHEMA,
+    MemoryPairsRequest, ModelError, REFERENT_SCHEMA, REMOVAL_SCHEMA, ReferentAnswer,
+    ReferentRequest, RemovalAnswer, RemovalJudgementAnswer, RemovalRequest, SESSION_HEADER_SCHEMA,
+    SessionAnswer, SessionHeader, SessionHeaderRequest, SessionRequest,
 };
 use scribe_core::{Models, Provider};
 use serde::Deserialize;
@@ -268,39 +268,23 @@ impl Models for ClaudeCliModels {
     }
 
     fn consistency(&self, request: &ConsistencyRequest) -> Result<ConsistencyAnswer, ModelError> {
-        #[derive(Deserialize)]
-        struct Judgement {
-            pair: String,
-            label: String,
-            reason: String,
-            older_quote: String,
-            newer_quote: String,
-        }
-        #[derive(Deserialize)]
-        struct Answer {
-            judgements: Vec<Judgement>,
-        }
         let value = self.call(
             &request.model,
             CONSISTENCY_SCHEMA,
             request.prompt(),
             request.budget,
         )?;
-        let a: Answer = serde_json::from_value(value)
-            .map_err(|e| ModelError::Malformed(format!("not a consistency answer: {e}")))?;
-        Ok(ConsistencyAnswer {
-            judgements: a
-                .judgements
-                .into_iter()
-                .map(|j| JudgementAnswer {
-                    pair: j.pair,
-                    label: j.label,
-                    reason: j.reason,
-                    older_quote: j.older_quote,
-                    newer_quote: j.newer_quote,
-                })
-                .collect(),
-        })
+        judgements(value, "consistency")
+    }
+
+    fn memory_pairs(&self, request: &MemoryPairsRequest) -> Result<ConsistencyAnswer, ModelError> {
+        let value = self.call(
+            &request.model,
+            MEMORY_PAIRS_SCHEMA,
+            request.prompt(),
+            request.budget,
+        )?;
+        judgements(value, "memory consistency")
     }
 
     fn removal(&self, request: &RemovalRequest) -> Result<RemovalAnswer, ModelError> {
@@ -588,4 +572,35 @@ impl Drop for Group {
             let _ = self.finish();
         }
     }
+}
+
+/// A pair-labelling answer (`consistency`, `memory_pairs`), unchecked.
+fn judgements(value: serde_json::Value, what: &str) -> Result<ConsistencyAnswer, ModelError> {
+    #[derive(Deserialize)]
+    struct Judgement {
+        pair: String,
+        label: String,
+        reason: String,
+        older_quote: String,
+        newer_quote: String,
+    }
+    #[derive(Deserialize)]
+    struct Answer {
+        judgements: Vec<Judgement>,
+    }
+    let a: Answer = serde_json::from_value(value)
+        .map_err(|e| ModelError::Malformed(format!("not a {what} answer: {e}")))?;
+    Ok(ConsistencyAnswer {
+        judgements: a
+            .judgements
+            .into_iter()
+            .map(|j| JudgementAnswer {
+                pair: j.pair,
+                label: j.label,
+                reason: j.reason,
+                older_quote: j.older_quote,
+                newer_quote: j.newer_quote,
+            })
+            .collect(),
+    })
 }

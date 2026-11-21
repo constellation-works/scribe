@@ -16,9 +16,10 @@ mod table;
 pub(crate) use payload::{
     AskPayload, BatchFailure, CoveredPayload, DeactivatedPayload, DeactivationFailure,
     EntryPayload, HitPayload, HookOutcome, HookReply, IssuePayload, IssueStatsPayload, Kin,
-    MemoryPagePayload, MemoryPayload, Output, PassPayload, PassReport, PluginError, PluginReply,
-    PopupRows, ProposalPayload, ReappliedPayload, Record, Records, ScanReport, SessionPayload,
-    SessionsContext, TagPayload, TagShowPayload, TranscriptPayload, TreeRow, WarningPayload,
+    MemoryPagePayload, MemoryPayload, MemoryRulesPayload, MemoryScanPayload, MergedPayload, Output,
+    PassPayload, PassReport, PluginError, PluginReply, PopupRows, PromotedPayload, ProposalPayload,
+    ReappliedPayload, Record, Records, ScanReport, SessionPayload, SessionsContext,
+    SupersededPayload, TagPayload, TagShowPayload, TranscriptPayload, TreeRow, WarningPayload,
 };
 pub(crate) use sink::{FORMAT_ENV, FormatArg, Sink};
 

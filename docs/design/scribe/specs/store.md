@@ -1,6 +1,6 @@
 ---
 type: design
-summary: "Spec: store — layout, record files with YAML frontmatter (format 19: memory items; format 18: entry removal_instruction apart from the approval instruction; format 17: issue records; format 16: entry outcome on a pass-written idea; format 15: instructed approval said and closed_reason covered; format 14: candidate statement and subject, entry stated_by; format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
+summary: "Spec: store — layout, record files with YAML frontmatter (format 20: memory consolidation and promotion; format 19: memory items; format 18: entry removal_instruction apart from the approval instruction; format 17: issue records; format 16: entry outcome on a pass-written idea; format 15: instructed approval said and closed_reason covered; format 14: candidate statement and subject, entry stated_by; format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
 last_validated: 2026-11-21
 ---
 
@@ -10,7 +10,13 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-The code writes format 19 and reads formats 1–19. Format 19 adds the
+The code writes format 20 and reads formats 1–20. Format 20 adds to each
+memory item the consolidation and promotion keys (`promoted_from`,
+`promotion`, `merged_into`, `superseded_by`, `unrelated_to`) and the
+statuses `merged`, `superseded` and `promoted`
+([2_design.md §13.4, §13.5](../2_design.md#135-consolidation-the-weekly-consistency-routine));
+a memory write rewrites `control.json` at format 20, so a format-19 build
+refuses the store instead of misreading it. Format 19 adds the
 `memory/` directory of memory items, the things the session pass notices
 about Daniel in switched-on sessions
 ([2_design.md §13](../2_design.md#13-memory-profile-projects-working-now-and-milestones-proposed)); a memory write rewrites
@@ -270,17 +276,18 @@ lines never held any.
 
 ## Memory items
 
-`memory/m-<n>.md` is frontmatter only, written by the session pass and
-changed by the agent's `scribe memory ack|retire|forget`
+`memory/m-<n>.md` is frontmatter only, written by the session pass,
+changed by the agent's `scribe memory ack|retire|forget` and by the
+consistency scan's memory steps
 ([2_design.md §13.2](../2_design.md#132-the-item-and-its-occurrences)):
 
 ```yaml
 ---
-format: 19
+format: 20
 kind: memory
 id: m-1                     # matches the file stem; numbered past the highest
 section: now                # profile | projects | working | now | milestones
-status: active              # active | retired | forgotten
+status: active              # active | merged | superseded | promoted | retired | forgotten
 statement: Said his sister's wedding is on 2026-12-12.   # '' once forgotten
 project: null               # the session's project, for a projects item
 event_date: 2026-12-12      # now and milestones only, or null
@@ -288,11 +295,16 @@ sensitive: false            # forced by the sensitive word list
 sensitive_kind: null        # loss | health | relationship | family
 acknowledged: null          # now only: {at, session, author} of the agent's ack
 retirement_reason: null     # redacted; blanked when forgotten
+promoted_from: null         # milestones: the now item it was promoted from
+promotion: null             # {rule, to, profile_from, profile_to}: on the milestone and the promoted now item
+merged_into: null           # merged: the item holding its occurrences
+superseded_by: null         # superseded: the item that replaced it
+unrelated_to: []            # newer items the scan judged unrelated to this one
 author: {kind: scribe, name: session-pass}
 updated_by: {kind: scribe, name: session-pass}
 created: 2026-11-21T18:00:00Z
 updated: 2026-11-21T18:00:00Z
-occurrences:                # newest first; one per turn that said it
+occurrences:                # newest first; one per turn that said it; [] once merged or promoted
 - {n: 1, date: …, session: …, message: …, host: …, project: …, quote: …, author: …}
 ---
 ```
@@ -300,19 +312,60 @@ occurrences:                # newest first; one per turn that said it
 There is no `layer`, `person` or `recurs` field: those belong to the
 parked slices (§13.12–13.14). A memory file below format 19, or whose `id`
 is not its stem, is `store_corrupt` and skipped; above it, `store_too_new`.
+A format-19 file has none of the format-20 keys or statuses (one that
+does is `store_corrupt`) and reads with them empty; a format-20 file has
+every key. Only an item merged or promoted (`merged_into`, or a `now` item
+with `promotion`) may have no occurrence, and a `merged`, `superseded` or
+`promoted` item names the item it went to.
 A pass writes memory under the same lock as its record, after its
 candidates and before the record: each draft is checked again under the
 lock (its quote a verbatim span of the user's own turn, its section on in
 the config on disk, its text unchanged by the redactor), then folded in —
 a repeat of an item (`same_as`, or a near-duplicate statement in the same
 section) becomes a new occurrence; a turn already on the item appends
-nothing, so a replayed window writes nothing. Forget blanks the statement,
-every quote and any reason and keeps the file, its id, section, dates and
-authors; `memory forget m-<n>#<k>` blanks one occurrence's quote.
+nothing, so a replayed window writes nothing. A `now` element may also
+join a milestone it was promoted to.
+
+**Promotion** (§13.4, `memory/promote.rs`) runs on each draft under the
+same lock. Rule (a) holds when the element carries `promote` (a new profile
+statement of at most 160 characters that passed the redactor, finance and
+sensitive checks), `profile_change` is on and the `profile` section is on;
+else rule (c) when one of `user_says` occurs in the turn, matched as a
+capture trigger. A `milestones` element no rule holds for is written as a
+`now` item (refused `memory_section_off` when `now` is off). A `now` item a
+rule holds for is promoted: a milestone numbered past the highest takes its
+statement, sensitivity, date (or its latest occurrence's) and occurrences,
+with `promoted_from` and the `promotion` journal; the `now` item becomes
+`promoted` with the same journal and no occurrences. Rule (a) then writes
+the new profile item from the same turn and supersedes the active profile
+item `same_as` names. Rule (b) is recounted after every draft: an active
+`now` item with occurrences from `recurs_in_sessions` distinct sessions is
+promoted. A replayed turn promotes nothing. Changed files are written
+gainers first (a new item, a milestone with its journal, a merge's
+target), so a crash leaves words on both items rather than on neither.
+
+**Consolidation** (§13.5, `memory/consolidate.rs`,
+`Store::consolidate_memory`) runs in the consistency scan under the lock,
+as `{kind: scribe, name: consistency}`: every promotion a milestone
+journals but the store does not hold is completed (the `now` item marked
+`promoted` without the occurrences the milestone holds, the named profile
+item superseded); each surviving `same` label merges the newer item into
+the older (its occurrences renumbered past the older's highest, keeping
+their authors, a turn the older already holds not added twice); each
+`contradicts` label supersedes the older by the newer; each `unrelated`
+label adds the newer id to the older's `unrelated_to`, so the pair is not
+offered again; then rule (b) is recounted. A label whose items are no
+longer both active changes nothing.
+
+Forget blanks the statement, every quote and any reason and keeps the file,
+its id, section, dates and authors, and does the same to the items holding
+the same words: those merged into it, and the other side of a promotion
+(the milestone of a promoted `now` item, or the `now` item a milestone came
+from). `memory forget m-<n>#<k>` blanks one occurrence's quote.
 
 ## JSON documents
 
-- `control.json` (written at format 18; an older file upgrades on read): `{"sessions": {"<session-id>": {"on",
+- `control.json` (written at format 20; an older file upgrades on read): `{"sessions": {"<session-id>": {"on",
   "since", "due", "final", "consecutive_failures", "retry_after",
   "pending_links", "cataloged_by"}}}`. `pending_links` holds `{type, session}` links
   Daniel asserted before the session had a record; the pass that writes
@@ -322,7 +375,7 @@ authors; `memory forget m-<n>#<k>` blanks one occurrence's quote.
   automatic attempt waits 5, 10, 20, 40, then at most 60 minutes. Success
   or switching off resets both retry fields. Explicit `--session` bypasses
   the delay.
-- `proposals.json` (written at format 18; an older file upgrades on read): `{"proposals": [{"id": "p-<n>", "kind":
+- `proposals.json` (written at format 20; an older file upgrades on read): `{"proposals": [{"id": "p-<n>", "kind":
   "supersedes"|"stale", "older", "newer", "reason", "quotes": [{"entry",
   "text"}], "state": "open"|"approved"|"rejected", "opened_at",
   "settled_at", "settled_by"}]}`. `newer`, `settled_at` and `settled_by`
@@ -368,13 +421,13 @@ authors; `memory forget m-<n>#<k>` blanks one occurrence's quote.
 - `cataloged_by` on a `control.json` switch is `null` or `{at, by}`;
   `/scribe on` keeps it. *(S14)* `session catalog` sets it and the pass
   copies it onto the record.
-- (S12) `tags.json` (written at format 18; introduced at format 5): `{"tags": [{"name",
+- (S12) `tags.json` (written at format 20; introduced at format 5): `{"tags": [{"name",
   "aliases", "description", "stale_after_days", "author", "updated_by", "created",
   "updated"}]}`, sorted by name; `name` and aliases as for config tags,
   `description` accepts 1–300 characters before redaction, `stale_after_days` a positive
   integer or `null`, `author` of kind `agent`; `updated_by` is the last updating agent or
   `null`. Absent is no store tags.
-- `pickups.json` (written at format 18; introduced at format 8, no older form): `{"pickups": [{"entry", "author",
+- `pickups.json` (written at format 20; introduced at format 8, no older form): `{"pickups": [{"entry", "author",
   "at", "result", "rejected"}]}`, oldest first: a consumer's note that it
   picked up the action entry `entry` (`author` of kind `agent`, `result` a
   reference or `null`), or with `rejected: true`, that the human rejected
@@ -436,6 +489,11 @@ projects = true
 working = true
 now = true
 milestones = true
+
+[memory.promote]                 # 2_design.md §13.4; `scribe memory rules` prints them
+profile_change = true            # (a) a profile fact changes
+recurs_in_sessions = 3           # (b) distinct sessions, 0-100; 0 switches it off
+user_says = ["milestone", "big day", "remember this", "never forget", "life changing"]   # (c), replaces the list; each checked as a trigger
 
 # Accepted by the parser (S14). None by default.
 [projects.orbit]
@@ -583,7 +641,7 @@ exits 0.
   other refusal (a link, loose modes, a newer format, an I/O error) fails
   the whole command rather than skipping the file
   ([4_decisions.md](../4_decisions.md#one-malformed-record-makes-its-file-corrupt)).
-- **Format.** One `FORMAT` (19) covers every document. A shape change bumps
+- **Format.** One `FORMAT` (20) covers every document. A shape change bumps
   it and appends one step to `UPGRADES` in `store/format.rs`, which is
   given the document type it upgrades; shipped steps never change. Reads
   upgrade an older document in memory; a newer one is refused and left
@@ -732,6 +790,14 @@ exits 0.
 - **Format 19** (memory, 2_design.md §13). Append-only step 18→19
   (`memory_items`) changes no existing document; it admits `memory/`,
   whose files carry their own `format` and are read only at 19 or later.
+- **Format 20** (memory consolidation, 2_design.md §13.4–13.5).
+  Append-only step 19→20 (`memory_consolidation`) changes no entry,
+  session, `control.json` or `proposals.json`: a format-18 or -19 entry
+  and a format-15 to -19 `proposals.json` decode at the current shape. It
+  adds the memory item keys `promoted_from`, `promotion`, `merged_into`,
+  `superseded_by` and `unrelated_to` and the statuses `merged`,
+  `superseded` and `promoted`; a format-19 item reads with them empty and
+  is refused if it carries them.
 - **Agent writes** (S12). Each write verb takes the lock, checks the
   author guards (a reserved `--author` name — `daniel`, `scribe`,
   `consistency`, `session-pass`, `tag-retired` — is refused `reserved_author`; a Daniel entry's content,

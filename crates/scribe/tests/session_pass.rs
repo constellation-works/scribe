@@ -1645,7 +1645,7 @@ fn legacy_control_is_read_without_writes_and_new_retry_state_is_strict() {
     );
     setup.pass();
     let current: Value = serde_json::from_slice(&setup.control_bytes()).unwrap();
-    assert_eq!(current["format"], 19);
+    assert_eq!(current["format"], 20);
     assert_eq!(current["sessions"][ON]["consecutive_failures"], 0);
     assert_eq!(current["sessions"][ON]["retry_after"], Value::Null);
     assert_eq!(current["sessions"][ON]["pending_links"], json!([]));
@@ -1901,10 +1901,10 @@ fn a_pass_writes_one_record_of_daniels_terms_and_never_reads_a_session_never_swi
         json!([{"term": "graduate to level 4", "said": DEFINED, "message": "u-1"}])
     );
     assert!(!setup.fx.root().join("entries").exists(), "no entries");
-    // The record is written at format 19: a header and one open segment
+    // The record is written at format 20: a header and one open segment
     // holding this pass's segment text.
     let file = std::fs::read_to_string(setup.record_file()).unwrap();
-    assert!(file.starts_with("---\nformat: 19\n"), "{file}");
+    assert!(file.starts_with("---\nformat: 20\n"), "{file}");
     assert!(file.contains("\n## Log\n### 1. "), "{file}");
     assert!(!file.contains("## Outcome"), "{file}");
     assert_eq!(record["active"], true);
@@ -4727,7 +4727,7 @@ fn a_pass_over_a_switched_on_session_writes_memory_items_with_verbatim_occurrenc
     assert!(audit.contains("\"memory:m-1\""), "{audit}");
     let control: Value =
         serde_json::from_slice(&std::fs::read(s.fx.root().join("control.json")).unwrap()).unwrap();
-    assert_eq!(control["format"], 19);
+    assert_eq!(control["format"], 20);
 
     // The same window again appends nothing: the turns are already on the items.
     s.append(
@@ -4941,11 +4941,11 @@ fn an_older_build_cannot_read_a_memory_item_and_a_newer_one_is_refused() {
     let file = s.fx.root().join("memory/m-1.md");
     let original = std::fs::read_to_string(&file).unwrap();
     assert!(
-        original.starts_with("---\nformat: 19\nkind: memory\n"),
+        original.starts_with("---\nformat: 20\nkind: memory\n"),
         "{original}"
     );
 
-    std::fs::write(&file, original.replacen("format: 19", "format: 20", 1)).unwrap();
+    std::fs::write(&file, original.replacen("format: 20", "format: 21", 1)).unwrap();
     let newer = s.run_any(&["memory", "show", "--json"], b"");
     assert_ne!(newer.status.code(), Some(0));
     assert!(
@@ -4954,7 +4954,17 @@ fn an_older_build_cannot_read_a_memory_item_and_a_newer_one_is_refused() {
         text(&newer.stderr)
     );
 
-    std::fs::write(&file, original.replacen("format: 19", "format: 18", 1)).unwrap();
+    // Format 19 has no consolidation keys: a format-19 file carrying them
+    // is refused, and skipped like any bad file.
+    std::fs::write(&file, original.replacen("format: 20", "format: 19", 1)).unwrap();
+    let shown = memory_items(&s, &[]);
+    assert_eq!(
+        shown["items"].as_array().unwrap().len(),
+        1,
+        "the format-19 file with format-20 keys is skipped"
+    );
+
+    std::fs::write(&file, original.replacen("format: 20", "format: 18", 1)).unwrap();
     let shown = memory_items(&s, &[]);
     assert_eq!(
         shown["items"].as_array().unwrap().len(),
@@ -4981,4 +4991,240 @@ fn parked_memory_settings_are_refused() {
             text(&out.stderr)
         );
     }
+}
+
+// Memory slice (b): the scan's memory steps, promotion in the pass and
+// `memory rules` (2_design.md §13.4, §13.5).
+
+const HOME_OFFICE: &str = "I work from a home office in Boston most weeks.";
+const COWORKING: &str = "I work from a coworking space in Boston now, mostly.";
+
+/// An `ON` session whose pass writes two overlapping profile items, m-1 and
+/// m-2, then answers the scan's memory call with `scan`.
+fn office_setup(scan: &Value) -> Setup {
+    let s = Setup::new();
+    s.append(
+        ON,
+        &[
+            line("user", "u-h", HOME_OFFICE),
+            line("user", "u-c", COWORKING),
+        ],
+    );
+    let mut body = answer();
+    body["memory"] = json!([
+        memory_element(
+            "profile",
+            "Works from a home office in Boston.",
+            HOME_OFFICE,
+            "u-h"
+        ),
+        memory_element(
+            "profile",
+            "Works from a coworking space in Boston.",
+            COWORKING,
+            "u-c"
+        ),
+    ]);
+    s.answers(&[Some(body), Some(scan.clone())]);
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    s
+}
+
+/// The memory directory's files, by name.
+fn memory_files(s: &Setup) -> Vec<(String, String)> {
+    let mut files: Vec<(String, String)> = std::fs::read_dir(s.fx.root().join("memory"))
+        .unwrap()
+        .map(|e| {
+            let path = e.unwrap().path();
+            (
+                path.file_name().unwrap().to_string_lossy().into_owned(),
+                std::fs::read_to_string(&path).unwrap(),
+            )
+        })
+        .collect();
+    files.sort();
+    files
+}
+
+#[test]
+fn the_scan_merges_a_same_memory_pair_keeping_every_quote_and_a_second_scan_changes_nothing() {
+    let same = json!({"judgements": [{"pair": "1", "label": "same",
+        "reason": "both say where he works", "older_quote": "home office in Boston",
+        "newer_quote": "coworking space in Boston"}]});
+    let s = office_setup(&same);
+    let first: Value =
+        serde_json::from_slice(&s.run(&["consistency", "scan", "--json"], b"").stdout).unwrap();
+    let memory = &first["memory"];
+    assert_eq!(memory["pairs_judged"], 1);
+    assert_eq!(
+        memory["merged"],
+        json!([{"item": "m-2", "into": "m-1"}]),
+        "{first}"
+    );
+    assert_eq!(memory["superseded"], json!([]));
+    assert!(
+        s.prompts()[1].contains("<quote>I work from a coworking space"),
+        "the memory call reads each side's quotes"
+    );
+
+    let kept = memory_items(&s, &["m-1"]);
+    let quotes: Vec<&str> = kept["occurrences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|o| o["quote"].as_str().unwrap())
+        .collect();
+    assert_eq!(quotes.len(), 2);
+    assert!(quotes.contains(&HOME_OFFICE) && quotes.contains(&COWORKING));
+    let merged = memory_items(&s, &["m-2"]);
+    assert_eq!(merged["status"], "merged");
+    assert_eq!(merged["merged_into"], "m-1");
+    assert_eq!(merged["off_page"], "merged");
+    assert_eq!(merged["occurrence_count"], 0);
+
+    let audit = std::fs::read_to_string(s.fx.root().join("audit.jsonl")).unwrap();
+    let scan_lines: Vec<Value> = audit
+        .lines()
+        .map(|l| serde_json::from_str::<Value>(l).unwrap())
+        .filter(|l| l["command"] == "consistency scan")
+        .collect();
+    let mut targets: Vec<&str> = scan_lines
+        .iter()
+        .filter_map(|l| l["target"].as_str())
+        .collect();
+    targets.sort_unstable();
+    assert_eq!(targets, vec!["memory:m-1", "memory:m-2"]);
+
+    // Again: no pair is offered, no model is called, no file changes and
+    // no line is audited.
+    let files = memory_files(&s);
+    let second: Value =
+        serde_json::from_slice(&s.run(&["consistency", "scan", "--json"], b"").stdout).unwrap();
+    assert_eq!(second["memory"]["pairs_judged"], 0);
+    assert_eq!(second["memory"]["merged"], json!([]));
+    assert_eq!(s.prompts().len(), 2, "no second memory call");
+    assert_eq!(memory_files(&s), files);
+    let after = std::fs::read_to_string(s.fx.root().join("audit.jsonl")).unwrap();
+    assert_eq!(after, audit);
+}
+
+#[test]
+fn the_scan_supersedes_the_older_of_a_contradicting_pair_and_drops_a_label_without_verbatim_quotes()
+{
+    let contradicts = json!({"judgements": [{"pair": "1", "label": "contradicts",
+        "reason": "he moved desks", "older_quote": "home office in Boston",
+        "newer_quote": "coworking space in Boston"}]});
+    let s = office_setup(&contradicts);
+    let report: Value =
+        serde_json::from_slice(&s.run(&["consistency", "scan", "--json"], b"").stdout).unwrap();
+    assert_eq!(
+        report["memory"]["superseded"],
+        json!([{"item": "m-1", "by": "m-2"}])
+    );
+    let old = memory_items(&s, &["m-1"]);
+    assert_eq!(old["status"], "superseded");
+    assert_eq!(old["superseded_by"], "m-2");
+    assert_eq!(old["occurrences"][0]["quote"], HOME_OFFICE);
+
+    let invented = json!({"judgements": [{"pair": "1", "label": "same",
+        "reason": "x", "older_quote": "an office in Seattle",
+        "newer_quote": "coworking space in Boston"}]});
+    let s = office_setup(&invented);
+    let report: Value =
+        serde_json::from_slice(&s.run(&["consistency", "scan", "--json"], b"").stdout).unwrap();
+    assert_eq!(report["memory"]["dropped_labels"], 1);
+    assert_eq!(report["memory"]["merged"], json!([]));
+    assert_eq!(memory_items(&s, &["m-2"])["status"], "active");
+}
+
+#[test]
+fn a_pass_promotes_a_now_item_the_user_calls_a_big_day_and_leaves_an_ordinary_one() {
+    const LAUNCH: &str = "The orbit 2.0 launch went out tonight, big day for us.";
+    const TRIP: &str = "The team offsite in Lisbon starts tomorrow morning.";
+    let s = Setup::new();
+    s.append(
+        ON,
+        &[line("user", "u-l", LAUNCH), line("user", "u-t", TRIP)],
+    );
+    let mut body = answer();
+    body["memory"] = json!([
+        memory_element(
+            "now",
+            "Said the orbit 2.0 launch went out.",
+            "The orbit 2.0 launch went out tonight",
+            "u-l"
+        ),
+        memory_element(
+            "milestones",
+            "Said the team offsite in Lisbon starts tomorrow.",
+            "The team offsite in Lisbon starts tomorrow",
+            "u-t"
+        ),
+    ]);
+    s.answer(&body);
+    s.scribe("/scribe on");
+    let report: Value = serde_json::from_slice(
+        &s.run(&["session", "pass", "--session", ON, "--json"], b"")
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(report["passes"][0]["memory_written"], 2);
+    assert_eq!(report["passes"][0]["memory_promoted"], 1);
+    let items = memory_items(&s, &["--include-off-page"]);
+    let by_id = |id: &str| -> Value {
+        items["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["id"] == id)
+            .cloned()
+            .unwrap_or_else(|| panic!("{id} in {items}"))
+    };
+    assert_eq!(by_id("m-1")["status"], "promoted");
+    assert_eq!(by_id("m-1")["promotion"]["rule"], "user_says");
+    assert_eq!(by_id("m-1")["promotion"]["to"], "m-2");
+    assert_eq!(by_id("m-2")["section"], "milestones");
+    assert_eq!(by_id("m-2")["promoted_from"], "m-1");
+    assert_eq!(by_id("m-3")["section"], "now", "no rule held: a now item");
+    assert_eq!(by_id("m-3")["status"], "active");
+    let audit = std::fs::read_to_string(s.fx.root().join("audit.jsonl")).unwrap();
+    for target in ["\"memory:m-1\"", "\"memory:m-2\"", "\"memory:m-3\""] {
+        assert!(audit.contains(target), "{target}: {audit}");
+    }
+}
+
+#[test]
+fn memory_rules_prints_each_rule_with_its_origin() {
+    let s = Setup::new();
+    s.config("[memory]\ndecay_days = 60\n\n[memory.promote]\nuser_says = [\"huge news\"]\n");
+    let out: Value =
+        serde_json::from_slice(&s.run(&["memory", "rules", "--json"], b"").stdout).unwrap();
+    let rule = |name: &str| -> Value {
+        out["rules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["rule"] == name)
+            .cloned()
+            .unwrap_or_else(|| panic!("{name} in {out}"))
+    };
+    assert_eq!(rule("promote.profile_change")["value"], true);
+    assert_eq!(
+        rule("promote.profile_change")["origin"]["source"],
+        "shipped"
+    );
+    assert_eq!(rule("promote.recurs_in_sessions")["value"], 3);
+    assert_eq!(rule("promote.user_says")["value"], json!(["huge news"]));
+    assert_eq!(rule("promote.user_says")["origin"]["source"], "config");
+    assert_eq!(rule("promote.user_says")["origin"]["line"], 5);
+    assert_eq!(rule("decay_days")["value"], 60);
+    assert_eq!(rule("decay_days")["origin"]["line"], 2);
+    assert_eq!(rule("now_after_days")["value"], 14);
+    assert_eq!(out["rules"].as_array().unwrap().len(), 6);
+
+    // A bad phrase or count is refused with its line.
+    s.config("[memory.promote]\nrecurs_in_sessions = 1000\n");
+    let bad = s.run_any(&["memory", "rules"], b"");
+    assert_ne!(bad.status.code(), Some(0));
 }

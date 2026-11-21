@@ -3700,11 +3700,18 @@ Not built until seen:
 
 ## 13. Memory: profile, projects, working, now and milestones (proposed)
 
-[ORB-26219], designed 2026-11-21. Step (a) of
-[§13.10](#1310-order-and-sequencing) is built (ORB-26258, store format 19):
-the `memory` kind, pass extraction with its checks and sensitive gate,
-`scribe memory show|ack|retire|forget`, and the session-start page; the
-rest is **not built** until its implementation tasks land, in that order,
+[ORB-26219], designed 2026-11-21. Steps (a) and (b) of
+[§13.10](#1310-order-and-sequencing) are built: (a) (ORB-26258, store
+format 19) the `memory` kind, pass extraction with its checks and sensitive
+gate, `scribe memory show|ack|retire|forget`, and the session-start page;
+(b) (ORB-26259, store format 20) the consistency scan's merge and
+supersede, the `now` to `milestones` promotion rules and `scribe memory
+rules`. As built, a merge and a promotion **move** the occurrences (the
+merged or promoted item keeps none, and `forget` follows the link), a pair
+judged `unrelated` is kept on the older item (`unrelated_to`) so it is
+never offered again, and the pass's `milestones` element that no rule (a)
+or (c) holds for is written as a `now` item. Step (c) is **not built**
+until its implementation task lands,
 after
 [§11.7](#117-order-and-sequencing) step (b). Where it changes a rule stated
 earlier (§5.3's "A pass writes no tag entries" and its bounds, §7's

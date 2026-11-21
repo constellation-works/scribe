@@ -104,6 +104,7 @@ pub(in crate::commands) fn run_with<M: Models>(
             name: args.author.clone(),
         }),
         memory_written: 0,
+        memory_promoted: 0,
         memory_refused: std::collections::BTreeMap::new(),
     };
     let records = store

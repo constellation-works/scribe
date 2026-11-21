@@ -1185,6 +1185,8 @@ pub(crate) enum Record {
     Memory(Box<MemoryPayload>),
     /// `memory show --page`.
     MemoryPage(Box<MemoryPagePayload>),
+    /// `memory rules`.
+    MemoryRules(Box<MemoryRulesPayload>),
 }
 
 /// One memory item (`memory show`, and its writes;
@@ -1199,7 +1201,8 @@ pub(crate) struct MemoryPayload {
     pub(crate) number: u64,
     /// `profile`, `projects`, `working`, `now` or `milestones`.
     pub(crate) section: &'static str,
-    /// `active`, `retired` or `forgotten`.
+    /// `active`, `merged`, `superseded`, `promoted`, `retired` or
+    /// `forgotten`.
     pub(crate) status: &'static str,
     /// scribe's statement; empty once forgotten.
     pub(crate) statement: String,
@@ -1213,8 +1216,9 @@ pub(crate) struct MemoryPayload {
     pub(crate) sensitive_kind: Option<&'static str>,
     /// Whether the session-start page shows it today.
     pub(crate) on_page: bool,
-    /// Why not: `retired`, `forgotten`, `section off`, `decayed` or
-    /// `past window`; `null` when on the page.
+    /// Why not: `merged`, `superseded`, `promoted`, `retired`,
+    /// `forgotten`, `section_off`, `decayed` or `past_window`; `null` when
+    /// on the page.
     pub(crate) off_page: Option<&'static str>,
     /// `now` only: whether the page labels it not yet raised.
     pub(crate) not_yet_raised: bool,
@@ -1229,6 +1233,15 @@ pub(crate) struct MemoryPayload {
     pub(crate) latest: Timestamp,
     /// Why an agent retired it; `null` otherwise.
     pub(crate) retirement_reason: Option<String>,
+    /// `milestones`: the `now` item it was promoted from; `null` otherwise.
+    pub(crate) promoted_from: Option<String>,
+    /// A promotion: `{rule, to, profile_from, profile_to}` on the milestone
+    /// and on the `now` item it came from; `null` otherwise.
+    pub(crate) promotion: Option<scribe_core::memory::Promotion>,
+    /// `merged`: the item that holds its occurrences; `null` otherwise.
+    pub(crate) merged_into: Option<String>,
+    /// `superseded`: the item that replaced it; `null` otherwise.
+    pub(crate) superseded_by: Option<String>,
     /// scribe's session pass.
     pub(crate) author: scribe_core::Author,
     /// Who changed it last.
@@ -1273,11 +1286,95 @@ impl MemoryPayload {
             sessions: item.sessions(),
             latest: item.latest(),
             retirement_reason: item.retirement_reason.clone(),
+            promoted_from: item.promoted_from.as_ref().map(ToString::to_string),
+            promotion: item.promotion.clone(),
+            merged_into: item.merged_into.as_ref().map(ToString::to_string),
+            superseded_by: item.superseded_by.as_ref().map(ToString::to_string),
             author: item.author.clone(),
             updated_by: item.updated_by.clone(),
             created: item.created,
             updated: item.updated,
             occurrences: item.occurrences.clone(),
+        }
+    }
+}
+
+/// `memory rules`: the effective promotion rules and page windows, each
+/// with its origin (2_design.md §13.4). Field names are a contract.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct MemoryRulesPayload {
+    /// In a fixed order: the three promotion rules, then the windows.
+    pub(crate) rules: Vec<MemoryRulePayload>,
+}
+
+/// One rule.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct MemoryRulePayload {
+    /// Its config key under `[memory]`: `promote.profile_change`,
+    /// `promote.recurs_in_sessions`, `promote.user_says`, `decay_days`,
+    /// `now_undated_days` or `now_after_days`.
+    pub(crate) rule: &'static str,
+    /// Its effective value: a boolean, a number of sessions or days, or the
+    /// list of phrases.
+    pub(crate) value: serde_json::Value,
+    /// Where it came from.
+    pub(crate) origin: OriginPayload,
+    /// What it does, in one line.
+    pub(crate) meaning: &'static str,
+}
+
+impl MemoryRulesPayload {
+    /// The rules of `config`, whose config file is `file`.
+    pub(crate) fn new(config: &scribe_core::memory::MemoryConfig, file: &str) -> Self {
+        use scribe_core::{Rule, RuleOrigin};
+        let p = &config.promote;
+        let w = &config.windows;
+        let at = |origin: RuleOrigin| OriginPayload::of(Some(&Rule { value: (), origin }), file);
+        let rule = |rule, value, origin, meaning| MemoryRulePayload {
+            rule,
+            value,
+            origin,
+            meaning,
+        };
+        Self {
+            rules: vec![
+                rule(
+                    "promote.profile_change",
+                    serde_json::Value::Bool(p.profile_change.value),
+                    OriginPayload::of(Some(&p.profile_change), file),
+                    "a now or milestones event that changes a profile fact becomes a milestone and replaces that profile item",
+                ),
+                rule(
+                    "promote.recurs_in_sessions",
+                    serde_json::Value::from(p.recurs_in_sessions.value),
+                    OriginPayload::of(Some(&p.recurs_in_sessions), file),
+                    "a now item raised in this many distinct sessions becomes a milestone; 0 switches it off",
+                ),
+                rule(
+                    "promote.user_says",
+                    serde_json::Value::from(p.user_says.value.clone()),
+                    OriginPayload::of(Some(&p.user_says), file),
+                    "one of these phrases in the user's turn makes the event a milestone",
+                ),
+                rule(
+                    "decay_days",
+                    serde_json::Value::from(config.decay_days),
+                    at(w.decay_days),
+                    "a projects or working item leaves the page this many days after its latest occurrence",
+                ),
+                rule(
+                    "now_undated_days",
+                    serde_json::Value::from(config.now_undated_days),
+                    at(w.now_undated_days),
+                    "an undated now item leaves the page this many days after its latest occurrence",
+                ),
+                rule(
+                    "now_after_days",
+                    serde_json::Value::from(config.now_after_days),
+                    at(w.now_after_days),
+                    "a dated now item leaves the page this many days after its date",
+                ),
+            ],
         }
     }
 }
@@ -1412,6 +1509,10 @@ pub(crate) struct PassPayload {
     /// Memory items created or occurrences added in persisted windows
     /// (2_design.md §13.3).
     pub(crate) memory_written: usize,
+    /// `now` items promoted to `milestones`, and milestones written
+    /// directly on rule (a) or (c), in persisted windows (2_design.md
+    /// §13.4).
+    pub(crate) memory_promoted: usize,
     /// Memory elements refused, by code (`memory_sensitive`, ...).
     pub(crate) memory_refused: std::collections::BTreeMap<&'static str, usize>,
 }
@@ -1561,9 +1662,68 @@ pub(crate) struct ScanReport {
     /// Removed-feature batches the model failed; their pairs are offered
     /// again while their later record is recent.
     pub(crate) failed_removal_batches: Vec<BatchFailure>,
+    /// The memory steps (2_design.md §13.5).
+    pub(crate) memory: MemoryScanPayload,
     /// Lines for stderr, printed in every mode.
     #[serde(skip)]
     pub(crate) notices: Vec<String>,
+}
+
+/// What a scan's memory steps did.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub(crate) struct MemoryScanPayload {
+    /// Memory pairs the model labelled.
+    pub(crate) pairs_judged: usize,
+    /// Memory pairs past the cap of 40 or not reached in this call's time.
+    pub(crate) pairs_left: usize,
+    /// Pairs labelled `unrelated`, never offered again.
+    pub(crate) unrelated: usize,
+    /// Labels refused: a quote not verbatim in its item's quotes, an
+    /// unknown or repeated pair, an unknown label.
+    pub(crate) dropped_labels: usize,
+    /// Batches the model failed; their pairs are offered again next scan.
+    pub(crate) failed_batches: Vec<BatchFailure>,
+    /// Items merged into an older one (`same`).
+    pub(crate) merged: Vec<MergedPayload>,
+    /// Items a newer one superseded (`contradicts`).
+    pub(crate) superseded: Vec<SupersededPayload>,
+    /// `now` items promoted to `milestones` (rule (b) after the merges).
+    pub(crate) promoted: Vec<PromotedPayload>,
+    /// Items changed to complete a promotion a crash cut short.
+    pub(crate) completed: Vec<String>,
+    /// Every item whose file the scan changed, `memory:<id>`: one audit
+    /// line each.
+    #[serde(skip)]
+    pub(crate) targets: Vec<String>,
+}
+
+/// An item a scan merged.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct MergedPayload {
+    /// The newer item, now `merged`.
+    pub(crate) item: String,
+    /// The older item that holds its occurrences.
+    pub(crate) into: String,
+}
+
+/// An item a scan superseded.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct SupersededPayload {
+    /// The older item, now `superseded`.
+    pub(crate) item: String,
+    /// The newer item.
+    pub(crate) by: String,
+}
+
+/// A promotion.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct PromotedPayload {
+    /// The `now` item, now `promoted`.
+    pub(crate) item: String,
+    /// The milestone.
+    pub(crate) to: String,
+    /// `profile_change`, `recurs_in_sessions` or `user_says`.
+    pub(crate) rule: &'static str,
 }
 
 /// A session a scan deactivated.

@@ -100,6 +100,13 @@ const ISSUE_STATS_COLUMNS: [Column; 3] = [
     col("MEANS", Align::Left, false),
 ];
 
+const MEMORY_RULE_COLUMNS: [Column; 4] = [
+    col("RULE", Align::Left, false),
+    col("VALUE", Align::Left, false),
+    col("ORIGIN", Align::Left, false),
+    col("MEANING", Align::Left, true),
+];
+
 const TAG_COLUMNS: [Column; 10] = [
     col("NAME", Align::Left, false),
     col("ENTRIES", Align::Right, false),
@@ -479,6 +486,10 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
             Ok(())
         }
         (OutputMode::Table, Record::Memory(item)) => memory_detail(out, item),
+        (OutputMode::Json, Record::MemoryRules(rules)) => write_json(out, rules),
+        (OutputMode::Plain | OutputMode::Table, Record::MemoryRules(rules)) => {
+            memory_rules(out, sink, rules)
+        }
         (OutputMode::Json, Record::MemoryPage(page)) => write_json(out, page),
         (OutputMode::Plain | OutputMode::Table, Record::MemoryPage(page)) => match &page.page {
             Some(text) => writeln!(out, "{text}"),
@@ -861,11 +872,7 @@ pub(super) fn entry_metadata(out: &mut dyn Write, e: &EntryPayload, color: bool)
 /// and origin. Plain is `<field>\t<value>\t<origin>` lines (origin `-` for
 /// a setting); the table aligns the same lines, labels first.
 fn tag_rules(out: &mut dyn Write, t: &TagShowPayload, table: bool) -> io::Result<()> {
-    let origin = |o: &OriginPayload| match (&o.file, o.line) {
-        (Some(file), Some(line)) => format!("{} {file}:{line}", o.source),
-        (Some(file), None) => format!("{} {file}", o.source),
-        (None, _) => o.source.to_owned(),
-    };
+    let origin = origin_text;
     let c = &t.capture;
     let action = t.action.as_ref().map_or_else(
         || String::from("-"),
@@ -948,6 +955,52 @@ fn tag_rules(out: &mut dyn Write, t: &TagShowPayload, table: bool) -> io::Result
         }
     }
     Ok(())
+}
+
+/// `memory rules`: plain is `<rule>\t<value>\t<origin>` lines, like `tag
+/// show`; the table adds each rule's meaning, cut to fit (`--json` keeps
+/// it whole).
+fn memory_rules(
+    out: &mut dyn Write,
+    sink: &Sink,
+    rules: &super::payload::MemoryRulesPayload,
+) -> io::Result<()> {
+    let rows: Vec<Vec<Cell>> = rules
+        .rules
+        .iter()
+        .map(|r| {
+            let value = r.value.as_array().map_or_else(
+                || r.value.to_string(),
+                |list| {
+                    list.iter()
+                        .map(|v| format!("{:?}", v.as_str().unwrap_or_default()))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                },
+            );
+            vec![
+                Cell::plain(r.rule),
+                Cell::plain(value),
+                Cell::plain(origin_text(&r.origin)),
+                Cell::plain(r.meaning),
+            ]
+        })
+        .collect();
+    if sink.mode == OutputMode::Table {
+        return out.write_all(
+            table::render(&MEMORY_RULE_COLUMNS, &rows, sink.width, sink.color).as_bytes(),
+        );
+    }
+    rows.iter()
+        .try_for_each(|row| writeln!(out, "{}", plain_line(&row[..3])))
+}
+
+fn origin_text(o: &OriginPayload) -> String {
+    match (&o.file, o.line) {
+        (Some(file), Some(line)) => format!("{} {file}:{line}", o.source),
+        (Some(file), None) => format!("{} {file}", o.source),
+        (None, _) => o.source.to_owned(),
+    }
 }
 
 fn session_detail(out: &mut dyn Write, sink: &Sink, s: &SessionPayload) -> io::Result<()> {
@@ -1216,6 +1269,55 @@ pub(crate) fn scan(out: &mut dyn Write, sink: &Sink, report: &ScanReport) -> io:
             Cell::plain(f.session.clone()),
             Cell::plain(f.route),
             Cell::plain(f.error_code),
+            Cell::plain("-"),
+        ]);
+    }
+    let memory = &report.memory;
+    for m in &memory.merged {
+        rows.push(vec![
+            Cell::plain("merged"),
+            Cell::plain(m.item.clone()),
+            Cell::plain("memory"),
+            Cell::plain(m.into.clone()),
+            Cell::plain(m.item.clone()),
+        ]);
+    }
+    for m in &memory.superseded {
+        rows.push(vec![
+            Cell::plain("superseded"),
+            Cell::plain(m.item.clone()),
+            Cell::plain("memory"),
+            Cell::plain(m.item.clone()),
+            Cell::plain(m.by.clone()),
+        ]);
+    }
+    for m in &memory.promoted {
+        rows.push(vec![
+            Cell::plain("promoted"),
+            Cell::plain(m.item.clone()),
+            Cell::plain(m.rule),
+            Cell::plain(m.item.clone()),
+            Cell::plain(m.to.clone()),
+        ]);
+    }
+    for id in &memory.completed {
+        rows.push(vec![
+            Cell::plain("completed"),
+            Cell::plain(id.clone()),
+            Cell::plain("memory"),
+            Cell::plain("-"),
+            Cell::plain("-"),
+        ]);
+    }
+    for f in &memory.failed_batches {
+        rows.push(vec![
+            Cell {
+                text: String::from("failed"),
+                role: Role::Warn,
+            },
+            Cell::plain(format!("memory-batch-{}", f.batch)),
+            Cell::plain(f.error_code),
+            Cell::plain("-"),
             Cell::plain("-"),
         ]);
     }

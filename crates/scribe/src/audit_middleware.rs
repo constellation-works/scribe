@@ -241,6 +241,18 @@ impl<'a> AuditGuard<'a> {
                     error_code: Some(f.error_code),
                     issue: None,
                 }))
+                .chain(report.memory.targets.iter().map(|target| Line {
+                    status: AuditStatus::Success,
+                    target: Some(target.clone()),
+                    error_code: None,
+                    issue: None,
+                }))
+                .chain(report.memory.failed_batches.iter().map(|f| Line {
+                    status: AuditStatus::Failure,
+                    target: Some(format!("memory-batch:{}", f.batch)),
+                    error_code: Some(f.error_code),
+                    issue: None,
+                }))
                 .collect(),
             Ok(output) => vec![Line {
                 status: AuditStatus::Success,
@@ -351,7 +363,7 @@ fn target_of(output: &Output) -> Option<String> {
             record: Record::Memory(item),
         } => Some(format!("memory:{}", item.id)),
         Output::Show {
-            record: Record::MemoryPage(_),
+            record: Record::MemoryPage(_) | Record::MemoryRules(_),
         }
         | Output::List { .. } => None,
         // Hook replies, passes and scans are audited per outcome in
@@ -370,7 +382,7 @@ fn target_of(output: &Output) -> Option<String> {
 fn record_target(record: &Record) -> Option<String> {
     Some(match record {
         Record::Memory(m) => format!("memory:{}", m.id),
-        Record::MemoryPage(_) => return None,
+        Record::MemoryPage(_) | Record::MemoryRules(_) => return None,
         Record::Entry(e) => e.id.clone(),
         Record::Session(s) => format!("session:{}", s.id),
         Record::Tag(t) => t.name.to_string(),

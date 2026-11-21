@@ -11,13 +11,19 @@
 //! ([`off_page`]), never stored, so no routine has to run for an item to
 //! leave the page.
 //!
-//! Slice (a) carries no `layer`, `person` or `recurs` field: only the parked
-//! parts of §13.12-13.14 read them. Merges, supersedes and promotion are
-//! slice (b), and the `working` to `preferences` proposal slice (c); each
-//! adds its fields with its own store format step.
+//! Items carry no `layer`, `person` or `recurs` field: only the parked
+//! parts of §13.12-13.14 read them. Slice (b) adds the routine's merges and
+//! supersedes ([`consolidate`]) and the promotion of `now` items to
+//! `milestones` ([`promote`]); the `working` to `preferences` proposal is
+//! slice (c).
 //!
 //! No I/O (STD-02 R5): the store reads and writes the files, the CLI reads
 //! the transcript and the clock.
+
+pub mod consolidate;
+pub mod promote;
+
+pub use promote::{PromoteRules, Promotion, PromotionRule};
 
 use crate::entry::Speaker;
 use crate::models::{MemoryAnswer, PassMessage};
@@ -129,13 +135,20 @@ impl FromStr for Section {
     }
 }
 
-/// Where an item stands. Slice (a) writes these three; merges, supersedes
-/// and promotion (slice (b)) add their own with a format step.
+/// Where an item stands (§13.2). Only an active item is on the page.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MemoryStatus {
     /// On record; on the page while its window lasts.
     Active,
+    /// The routine judged it the same as an older item and moved its
+    /// occurrences there (`merged_into`).
+    Merged,
+    /// A newer item contradicts it (`superseded_by`); text kept.
+    Superseded,
+    /// A `now` item that became a milestone (`promotion`); its occurrences
+    /// moved to the milestone.
+    Promoted,
     /// Hidden from the page, lists and `ask`; text kept.
     Retired,
     /// Statement and every quote blanked for good.
@@ -148,6 +161,9 @@ impl MemoryStatus {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Active => "active",
+            Self::Merged => "merged",
+            Self::Superseded => "superseded",
+            Self::Promoted => "promoted",
             Self::Retired => "retired",
             Self::Forgotten => "forgotten",
         }
@@ -338,6 +354,25 @@ pub struct MemoryItem {
     /// Why an agent retired it; `null` otherwise.
     #[serde(deserialize_with = "nullable")]
     pub retirement_reason: Option<String>,
+    /// `milestones`: the `now` item it was promoted from, when there was
+    /// one (format 20).
+    #[serde(default, deserialize_with = "nullable")]
+    pub promoted_from: Option<MemoryId>,
+    /// A promotion's journal (format 20): on the milestone from its first
+    /// write, so a crash between the files is completed by the next scan;
+    /// on the `now` item once it is `promoted`.
+    #[serde(default, deserialize_with = "nullable")]
+    pub promotion: Option<Promotion>,
+    /// `merged`: the item its occurrences moved to (format 20).
+    #[serde(default, deserialize_with = "nullable")]
+    pub merged_into: Option<MemoryId>,
+    /// `superseded`: the item that contradicts it (format 20).
+    #[serde(default, deserialize_with = "nullable")]
+    pub superseded_by: Option<MemoryId>,
+    /// Items the routine judged unrelated to this one, newer than it, so
+    /// the pair is never offered again (format 20).
+    #[serde(default)]
+    pub unrelated_to: Vec<MemoryId>,
     /// Who wrote it: scribe's session pass.
     pub author: Author,
     /// Who changed it last.
@@ -410,6 +445,32 @@ pub struct MemoryConfig {
     pub recent_sessions: usize,
     /// `[memory.sections]`: each section switched on or off alone.
     pub sections: SectionSwitches,
+    /// `[memory.promote]`: when a `now` item becomes a milestone (§13.4).
+    pub promote: PromoteRules,
+    /// Where `decay_days`, `now_undated_days` and `now_after_days` came
+    /// from, for `memory rules`.
+    pub windows: WindowOrigins,
+}
+
+/// Where each page window's value came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WindowOrigins {
+    /// `decay_days`.
+    pub decay_days: crate::tag::RuleOrigin,
+    /// `now_undated_days`.
+    pub now_undated_days: crate::tag::RuleOrigin,
+    /// `now_after_days`.
+    pub now_after_days: crate::tag::RuleOrigin,
+}
+
+impl Default for WindowOrigins {
+    fn default() -> Self {
+        Self {
+            decay_days: crate::tag::RuleOrigin::Shipped,
+            now_undated_days: crate::tag::RuleOrigin::Shipped,
+            now_after_days: crate::tag::RuleOrigin::Shipped,
+        }
+    }
 }
 
 impl Default for MemoryConfig {
@@ -423,6 +484,8 @@ impl Default for MemoryConfig {
             page_chars: PAGE_CHARS,
             recent_sessions: 5,
             sections: SectionSwitches::default(),
+            promote: PromoteRules::default(),
+            windows: WindowOrigins::default(),
         }
     }
 }
@@ -657,6 +720,9 @@ pub struct Checked {
     pub sensitive: bool,
     /// Its kind.
     pub sensitive_kind: Option<SensitiveKind>,
+    /// `now` and `milestones`: the new profile statement promotion rule
+    /// (a) writes, when it passed the profile checks.
+    pub promote: Option<String>,
 }
 
 /// What [`check`] made of a window's elements.
@@ -769,7 +835,27 @@ fn check_one(
             .and_then(|id| id.trim().parse().ok()),
         sensitive,
         sensitive_kind: listed.or(named),
+        promote: answer
+            .promote
+            .as_deref()
+            .and_then(|text| profile_statement(text, section, masks)),
     })
+}
+
+/// Rule (a)'s new profile statement, when it may be kept (§13.4, §13.8):
+/// on a `now` or `milestones` element only, at most
+/// [`promote::PROMOTE_CHARS`] characters, unchanged by the redactor, with
+/// no finance or sensitive word (a profile item holds nothing sensitive).
+/// One that fails drops the promotion, not the element.
+fn profile_statement(text: &str, section: Section, masks: &dyn Fn(&str) -> bool) -> Option<String> {
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    (matches!(section, Section::Now | Section::Milestones)
+        && !text.is_empty()
+        && text.chars().count() <= promote::PROMOTE_CHARS
+        && !masks(&text)
+        && !finance_word(&text)
+        && sensitive_word(&text).is_none())
+    .then_some(text)
 }
 
 /// A checked element tied to its turn in the original transcript, ready for
@@ -856,7 +942,8 @@ pub enum Applied {
 }
 
 /// Write one draft into `items` (§13.3): an occurrence of the item the
-/// model named (`same_as`) when it is active, in the same section and its
+/// model named (`same_as`) when it is active, in the same section (or, for
+/// a `now` element, a milestone a `now` item was promoted to) and its
 /// statement shares at least one content token in four with the new one;
 /// else of an active item of the same section (and project, for
 /// `projects`) whose statement's tokens equal, contain or overlap the new
@@ -876,7 +963,7 @@ pub fn apply(
         items.iter().position(|item| {
             &item.id == id
                 && item.status == MemoryStatus::Active
-                && item.section == element.section
+                && joins(element.section, item.section)
                 && overlaps_quarter(&token_set(&item.statement), &new_tokens)
         })
     });
@@ -929,7 +1016,7 @@ pub fn apply(
     // A replayed window may name no repeat and the statement may differ:
     // a turn already recorded in this section is not recorded twice.
     if let Some(item) = items.iter().find(|item| {
-        item.section == element.section
+        joins(element.section, item.section)
             && item
                 .occurrences
                 .iter()
@@ -950,6 +1037,11 @@ pub fn apply(
         sensitive_kind: element.sensitive_kind,
         acknowledged: None,
         retirement_reason: None,
+        promoted_from: None,
+        promotion: None,
+        merged_into: None,
+        superseded_by: None,
+        unrelated_to: Vec::new(),
         author: author.clone(),
         updated_by: author,
         created: now,
@@ -957,6 +1049,13 @@ pub fn apply(
         occurrences: vec![occurrence(1, draft, provenance)],
     });
     Applied::Created(id)
+}
+
+/// Whether an element of `section` may join an item of `item`: its own
+/// section, or, for a `now` element, a milestone, which holds the
+/// occurrences of the `now` item promoted to it (§13.4).
+fn joins(section: Section, item: Section) -> bool {
+    section == item || (section == Section::Now && item == Section::Milestones)
 }
 
 fn occurrence(n: u32, draft: &Draft, provenance: &Provenance) -> Occurrence {
@@ -1029,6 +1128,12 @@ pub fn context(
 /// stored).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OffPage {
+    /// Merged into an older item.
+    Merged,
+    /// Superseded by a newer item.
+    Superseded,
+    /// Promoted to a milestone.
+    Promoted,
     /// Retired.
     Retired,
     /// Forgotten.
@@ -1046,11 +1151,14 @@ impl OffPage {
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Merged => "merged",
+            Self::Superseded => "superseded",
+            Self::Promoted => "promoted",
             Self::Retired => "retired",
             Self::Forgotten => "forgotten",
-            Self::SectionOff => "section off",
+            Self::SectionOff => "section_off",
             Self::Decayed => "decayed",
-            Self::PastWindow => "past window",
+            Self::PastWindow => "past_window",
         }
     }
 }
@@ -1063,6 +1171,9 @@ impl OffPage {
 #[must_use]
 pub fn off_page(item: &MemoryItem, config: &MemoryConfig, today: Date) -> Option<OffPage> {
     match item.status {
+        MemoryStatus::Merged => return Some(OffPage::Merged),
+        MemoryStatus::Superseded => return Some(OffPage::Superseded),
+        MemoryStatus::Promoted => return Some(OffPage::Promoted),
         MemoryStatus::Retired => return Some(OffPage::Retired),
         MemoryStatus::Forgotten => return Some(OffPage::Forgotten),
         MemoryStatus::Active => {}
@@ -1394,6 +1505,32 @@ pub fn forget(item: &mut MemoryItem, by: Author, now: OffsetDateTime) -> bool {
     item.updated = now;
     item.updated_by = by;
     true
+}
+
+/// The items whose words `forget` of `id` must also blank (§13.9): those
+/// merged into it, whose statements still stand; and, across a promotion,
+/// the milestone and the `now` item it came from, which hold the same
+/// event and the same occurrences. By index into `items`, without `id`
+/// itself.
+#[must_use]
+pub fn linked(items: &[MemoryItem], id: &MemoryId) -> Vec<usize> {
+    let Some(target) = items.iter().find(|i| &i.id == id) else {
+        return Vec::new();
+    };
+    let promoted_to = (target.status == MemoryStatus::Promoted)
+        .then(|| target.promotion.as_ref().map(|p| p.to.clone()))
+        .flatten();
+    items
+        .iter()
+        .enumerate()
+        .filter(|(_, i)| &i.id != id)
+        .filter(|(_, i)| {
+            i.merged_into.as_ref() == Some(id)
+                || target.promoted_from.as_ref() == Some(&i.id)
+                || promoted_to.as_ref() == Some(&i.id)
+        })
+        .map(|(n, _)| n)
+        .collect()
 }
 
 /// Forget occurrence `n` of `item` for good: its quote blanked. Returns

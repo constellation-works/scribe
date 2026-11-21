@@ -92,14 +92,19 @@ preferences. Their exact words are on each item's occurrences
 - **Now.** Raise a `now` item marked "not yet raised" once, when the
   conversation goes near it, then mark it raised for this session:
   `scribe memory ack <m-id> --session <this session id> --author <name>`.
-- **Milestones.** Raise one only when the conversation goes there.
+- **Milestones.** Raise one only when the conversation goes there. A `now`
+  item becomes a milestone on its own when it changes a profile fact, recurs
+  in three sessions, or the human calls it a milestone or a big day; when
+  they ask why, `scribe memory rules` prints the rules and where each came
+  from.
 - **Wrong or outdated.** When the human says an item is wrong or no longer
   true, run `scribe memory retire <m-id> --author <name> --reason "<their
   words>"`. When they ask scribe to forget it, run `scribe memory forget
   <m-id> --author <name> --confirm` (`<m-id>#<n>` forgets one occurrence's
   quote); it cannot be undone.
 - Never write a memory item yourself: only the session pass writes them,
-  and only from sessions switched on with `/scribe on`.
+  and only from sessions switched on with `/scribe on`; the consistency
+  scan merges repeats and supersedes outdated ones.
 
 ## Keep the store useful: suggest, the human decides
 
