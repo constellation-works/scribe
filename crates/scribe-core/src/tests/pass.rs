@@ -642,6 +642,95 @@ fn covers_statement_is_directional_on_token_boundaries_and_polarity() {
         "always use rg in scripts"
     ));
     assert!(
+        !covers("we shouldn't use cargo test in CI", "use cargo test in CI"),
+        "shouldn't is a negation"
+    );
+    assert!(
+        !covers("we shouldnt use cargo test in CI", "use cargo test in CI"),
+        "shouldnt is the apostrophe-less spelling"
+    );
+    assert!(
+        !covers(
+            "we can't run integration tests in CI",
+            "run integration tests in CI"
+        ),
+        "can't is a negation"
+    );
+    assert!(
+        !covers(
+            "we cant run integration tests in CI",
+            "run integration tests in CI"
+        ),
+        "cant is the apostrophe-less spelling"
+    );
+    assert!(
+        !covers("we cannot force push to main", "force push to main"),
+        "cannot is a negation"
+    );
+    assert!(
+        !covers(
+            "we won't cache build artifacts in CI",
+            "cache build artifacts in CI"
+        ),
+        "won't is a negation"
+    );
+    assert!(
+        !covers(
+            "we wont cache build artifacts in CI",
+            "cache build artifacts in CI"
+        ),
+        "wont is the apostrophe-less spelling"
+    );
+    assert!(
+        !covers(
+            "the job doesn't upload symbols in CI",
+            "upload symbols in CI"
+        ),
+        "doesn't is a negation"
+    );
+    assert!(
+        !covers(
+            "the job doesnt upload symbols in CI",
+            "upload symbols in CI"
+        ),
+        "doesnt is the apostrophe-less spelling"
+    );
+    assert!(
+        !covers(
+            "the job didn't upload symbols from CI",
+            "upload symbols from CI"
+        ),
+        "didn't is a negation"
+    );
+    assert!(
+        !covers(
+            "the job didnt upload symbols from CI",
+            "upload symbols from CI"
+        ),
+        "didnt is the apostrophe-less spelling"
+    );
+    assert!(
+        !covers(
+            "the agent isn't allowed to force push",
+            "allowed to force push"
+        ),
+        "isn't is a negation"
+    );
+    assert!(
+        !covers(
+            "the agent isnt allowed to force push",
+            "allowed to force push"
+        ),
+        "isnt is the apostrophe-less spelling"
+    );
+    assert!(
+        !covers(
+            "review the diff without running the full suite",
+            "running the full suite"
+        ),
+        "without is an exception"
+    );
+    assert!(
         covers("use rg in scripts today please", "use rg in scripts"),
         "an existing statement covers a contiguous window that adds nothing"
     );
@@ -697,5 +786,57 @@ fn covering_entry_keeps_the_oldest_active_entry_of_the_same_tag_and_project() {
     assert!(
         blocked.is_none(),
         "retired, superseded, forgotten, other tag and other project do not cover"
+    );
+}
+
+#[test]
+fn covers_turn_keeps_a_retired_entry_for_the_turn_it_was_active() {
+    use crate::entry::EntryStatus;
+    let statement = "use cargo test in CI";
+    let mut retired_after = super::entry("preferences-1", T0);
+    retired_after.content = statement.to_owned();
+    retired_after.status = EntryStatus::Retired;
+    retired_after.updated = T0 + Duration::hours(2);
+    let mut retired_before = super::entry("preferences-2", T0 - Duration::hours(3));
+    retired_before.content = statement.to_owned();
+    retired_before.status = EntryStatus::Retired;
+    retired_before.updated = T0 - Duration::hours(1);
+    let mut superseded_after = super::entry("preferences-3", T0 - Duration::hours(1));
+    superseded_after.content = statement.to_owned();
+    superseded_after.status = EntryStatus::Superseded;
+    superseded_after.updated = T0 + Duration::minutes(1);
+    let mut forgotten = super::entry("preferences-4", T0 - Duration::hours(1));
+    forgotten.content = statement.to_owned();
+    forgotten.status = EntryStatus::Forgotten;
+    forgotten.updated = T0 + Duration::hours(1);
+    forgotten.content.clear();
+    let tag: crate::entry::TagName = "preferences".parse().unwrap();
+    let project: crate::record::Project = "scribe".parse().unwrap();
+    let covers =
+        |entry: &crate::entry::Entry| pass::covers_turn(entry, statement, &tag, &project, T0);
+    let mut same_second = super::entry("preferences-5", T0);
+    same_second.content = statement.to_owned();
+    same_second.status = EntryStatus::Retired;
+    same_second.updated = T0;
+    assert!(
+        covers(&retired_after),
+        "retired after the turn still covers it"
+    );
+    assert!(
+        covers(&same_second),
+        "a retirement in the turn's second still covers it"
+    );
+    assert!(
+        covers(&superseded_after),
+        "superseded after the turn still covers it"
+    );
+    assert!(
+        !covers(&retired_before),
+        "retired before the turn does not cover it"
+    );
+    assert!(!covers(&forgotten), "a forgotten entry has no content left");
+    assert!(
+        pass::covering_entry(&[retired_after], statement, &tag, &project).is_none(),
+        "a new line after retirement is not covered by the live check"
     );
 }

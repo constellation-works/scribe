@@ -345,7 +345,9 @@ added <id> to <tag> — "<content>"`, `scribe: already recorded <id> in <tag>
 `scribe: refused "<line>" — <reason>` or `scribe: could not
 record "<line>" — <error>`. A covered line writes no entry and no audit
 line. Stop recovery does not repeat that echo; a prompt the prompt hook
-missed stays quiet when every `#scribe` line is already covered. A form-3 line whose referent the model did not
+missed stays quiet when every `#scribe` line is already covered, including
+a line whose covering entry was retired or superseded after the turn. A
+line typed after that retirement is still captured. A form-3 line whose referent the model did not
 resolve is still added, and its echo puts `(guessed: <why>; recorded the
 <role> message before your prompt instead)` after the tag. A settling line
 echoes `scribe: approved p-<n> — <older> is superseded by <newer>; ask

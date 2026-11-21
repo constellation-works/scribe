@@ -9,6 +9,7 @@ use crate::{
     TagName, transcript, trigger, verbatim,
 };
 use std::collections::BTreeSet;
+use time::OffsetDateTime;
 
 /// Maximum candidates per session in one pass invocation, across all windows.
 pub const MAX_CANDIDATES: usize = 3;
@@ -219,9 +220,35 @@ const MIN_COVER_TOKENS: usize = 4;
 /// Negation and exception words. A difference in how often any of these
 /// appears means the new statement is not the same claim. `dont` is the
 /// apostrophe-less spelling of `don't`; the tokenizer keeps an interior
-/// apostrophe, so both forms occur.
-const MARKERS: [&str; 9] = [
-    "not", "never", "no", "don't", "dont", "avoid", "except", "unless", "only",
+/// apostrophe, so both forms occur. The same pairing covers `can't`,
+/// `won't`, `shouldn't`, `doesn't`, `didn't` and `isn't`.
+///
+/// The instruction check (`instruction.rs`) has no negation list. It does
+/// not understand negation, so this list is not shared with it.
+const MARKERS: [&str; 23] = [
+    "not",
+    "never",
+    "no",
+    "don't",
+    "dont",
+    "can't",
+    "cant",
+    "cannot",
+    "won't",
+    "wont",
+    "shouldn't",
+    "shouldnt",
+    "doesn't",
+    "doesnt",
+    "didn't",
+    "didnt",
+    "isn't",
+    "isnt",
+    "avoid",
+    "except",
+    "unless",
+    "only",
+    "without",
 ];
 
 /// Ordered tokens of a statement. One normalizer for the duplicate check
@@ -316,9 +343,44 @@ pub(crate) fn covers_statement(existing: &str, new: &str) -> bool {
         .any(|window| window == new.as_slice())
 }
 
+/// Whether `entry` covered `statement` at `at`.
+///
+/// Live capture uses [`covering_entry`] and ignores anything that is not
+/// active now, so a line typed after an entry is retired is still written.
+/// Stop recovery also asks this, so a line covered when it was typed is
+/// not captured after that entry is retired or superseded.
+///
+/// An entry that is still active covers `at` when it already existed
+/// (`created <= at`). A retired or superseded entry covers `at` when it
+/// existed and its last change is at or after `at`: retirement and
+/// supersession set `updated`, and the content is still the statement.
+/// `updated` is whole seconds, so a tie inside that second counts as still
+/// active; the order inside the second is not recorded, and recapturing a
+/// line that may have been covered is the worse miss. A forgotten entry's
+/// content is blank, so it cannot answer.
+#[must_use]
+pub(crate) fn covers_turn(
+    entry: &Entry,
+    statement: &str,
+    tag: &TagName,
+    project: &Project,
+    at: OffsetDateTime,
+) -> bool {
+    if &entry.tag != tag || &entry.project != project || entry.created > at {
+        return false;
+    }
+    let active_then = match entry.status {
+        EntryStatus::Active => true,
+        EntryStatus::Retired | EntryStatus::Superseded => entry.updated >= at,
+        EntryStatus::Forgotten => false,
+    };
+    active_then && covers_statement(&entry.content, statement)
+}
+
 /// The oldest active entry of `tag` and `project` whose content already
 /// says `statement`, if any. Retired, superseded and forgotten entries do
-/// not cover. Comparison is [`covers_statement`].
+/// not cover a new line. Comparison is [`covers_statement`]. A turn those
+/// entries were still active for is [`covers_turn`].
 #[must_use]
 pub(crate) fn covering_entry<'a>(
     entries: &'a [Entry],

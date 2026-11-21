@@ -154,10 +154,13 @@ pub(super) fn run(
         }
         // A covered line writes no entry, so it is never in `recorded`.
         // Asking the store, after cwd is known, keeps Stop from repeating
-        // the prompt hook's "already covered" echo on every later turn. A
-        // missed prompt hook stays quiet too. Config or redactor failure
-        // skips this pre-check; capture still decides, and a covered echo
-        // is dropped while recovering.
+        // the prompt hook's "already covered" echo on every later turn,
+        // and from capturing a line that was covered when it was typed
+        // once that entry is retired or superseded. A missed prompt hook
+        // stays quiet too. Config or redactor failure skips this
+        // pre-check; capture still decides, and a covered echo is dropped
+        // while recovering. Capture only sees entries active now, so this
+        // pre-check is what keeps the earlier line unwritten.
         if let Ok(config) = ctx.config()
             && let Ok(redactor) = ctx.redactor(&config)
         {

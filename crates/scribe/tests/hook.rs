@@ -379,6 +379,125 @@ fn stop_does_not_repeat_a_covered_line_on_later_turns() {
 }
 
 #[test]
+fn a_negated_entry_does_not_cover_its_typed_opposite() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let mut payload = claude.payload("user-prompt-submit.json");
+    let pairs = [
+        ("we shouldn't use cargo test in CI", "use cargo test in CI"),
+        (
+            "we can't run integration tests in CI",
+            "run integration tests in CI",
+        ),
+        (
+            "we won't cache build artifacts in CI",
+            "cache build artifacts in CI",
+        ),
+        (
+            "review the diff without running the full suite",
+            "running the full suite",
+        ),
+    ];
+    for (negated, opposite) in pairs {
+        payload["prompt"] = json!(format!("#scribe preferences: {negated}"));
+        hook_ok(&fx, "user-prompt-submit", &payload);
+        payload["prompt"] = json!(format!("#scribe preferences: {opposite}"));
+        let out = hook_ok(&fx, "user-prompt-submit", &payload);
+        let body = reply(&out);
+        let message = body["systemMessage"].as_str().unwrap();
+        assert!(
+            message.starts_with("scribe: added ") && !message.contains("already covered"),
+            "{negated:?} covered its opposite {opposite:?}: {message}"
+        );
+    }
+    let contents: Vec<_> = entries(&fx)
+        .iter()
+        .map(|entry| entry["content"].as_str().unwrap().to_owned())
+        .collect();
+    for (_, opposite) in pairs {
+        assert!(
+            contents.iter().any(|content| content == opposite),
+            "missing {opposite} in {contents:?}"
+        );
+    }
+}
+
+#[test]
+fn stop_does_not_capture_a_line_covered_when_typed_after_retirement() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let mut payload = claude.payload("user-prompt-submit.json");
+    payload["prompt"] = json!("#scribe preferences: use cargo test in CI");
+    hook_ok(&fx, "user-prompt-submit", &payload);
+    let shown = fx.ok(&["entry", "show", "preferences-1", "--json"]);
+    let shown: Value = serde_json::from_slice(&shown.stdout).unwrap();
+    let created = shown["created"].as_str().unwrap();
+    let at = time::OffsetDateTime::parse(created, &time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let after = (at + time::Duration::hours(2))
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+
+    // The early line is a different prompt from the one that wrote the
+    // entry, so recovery cannot skip it as an existing cite. Its timestamp
+    // is the entry's created time, while the entry was still active.
+    let early = "while it was active\n#scribe preferences: use cargo test in CI";
+    let late = "after it was retired\n#scribe preferences: use cargo test in CI";
+    let lines = [
+        json!({"type": "session-owner", "sessionId": SESSION}),
+        json!({"type": "user", "uuid": "u-early", "sessionId": SESSION,
+               "timestamp": created, "cwd": claude.cwd,
+               "message": {"role": "user", "content": early}}),
+        json!({"type": "user", "uuid": "u-late", "sessionId": SESSION,
+               "timestamp": after, "cwd": claude.cwd,
+               "message": {"role": "user", "content": late}}),
+    ];
+    std::fs::write(
+        &claude.transcript,
+        lines
+            .iter()
+            .map(|line| format!("{line}\n"))
+            .collect::<String>(),
+    )
+    .unwrap();
+
+    payload["prompt"] = json!("#scribe retire preferences-1");
+    let retired = hook_ok(&fx, "user-prompt-submit", &payload);
+    assert!(
+        text(&retired.stdout).contains("retired preferences-1"),
+        "{}",
+        text(&retired.stdout)
+    );
+
+    let stopped = hook_ok(&fx, "stop", &claude.payload("stop.json"));
+    let echo = text(&stopped.stdout);
+    assert!(
+        echo.contains("added preferences-2"),
+        "the line typed after retirement is still captured: {echo}"
+    );
+    assert!(
+        !echo.contains("u-early"),
+        "the line covered when typed is not named: {echo}"
+    );
+    let found = entries(&fx);
+    assert_eq!(
+        found.len(),
+        2,
+        "no third entry from the earlier line: {found:?}"
+    );
+    let original = found.iter().find(|e| e["id"] == "preferences-1").unwrap();
+    assert_eq!(original["status"], "retired");
+    assert_eq!(original["content"], "use cargo test in CI");
+    let captured = found.iter().find(|e| e["id"] == "preferences-2").unwrap();
+    assert_eq!(captured["status"], "active");
+    assert_eq!(captured["content"], "use cargo test in CI");
+    assert_eq!(
+        captured["cite"]["message"], "u-late",
+        "Stop captured the line typed after retirement, not the earlier one: {captured}"
+    );
+}
+
+#[test]
 fn a_prompt_without_an_instruction_line_writes_and_prints_nothing() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
