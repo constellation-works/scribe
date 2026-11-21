@@ -1334,8 +1334,11 @@ a pass; an explicit catalog is still required for past sessions.
   transcript and under the store lock against the config then on disk, and
   derives `admitted`, the cite, timestamp, prompt hash, line, cwd, project,
   provider and host itself. Pasted blocks, fenced or indented code,
-  blockquotes, marked `#scribe` lines, unknown or future message ids, and
-  truncation markers cannot supply a candidate; tool calls and tool results
+  blockquotes, a whole marked turn (one with a `#scribe` marker inside a
+  sentence or a line that opens with `#scribe`, [§14.7](#147-the-session-pass);
+  its annotation is cataloged at Stop instead), unknown or future message
+  ids, and truncation markers cannot supply a candidate or a pass-written
+  idea; tool calls and tool results
   never reach a message's text (§3, transcript parsing), so no candidate is
   ever opened from a tool payload.
   Plain pasted prose without provider or textual paste markers cannot be
@@ -5007,6 +5010,12 @@ A marked turn cannot supply a candidate or a pass-written idea: §5.3
 already excludes "marked `#scribe` lines", and that exclusion widens from
 the line to the whole marked turn. An unmarked turn is captured as today.
 The pass never reads `marks.json`.
+
+**As built (step 3)** (ORB-26531). `pass::candidates::is_marked` reads
+the turn with step 1's marker detection (`annotation::marks`) plus a line
+that opens with `#scribe`. A marked turn fires no capture trigger, so the
+request names it for no tag and the store's admission, repeated under its
+lock, refuses it too.
 
 ### 14.8 Store format
 

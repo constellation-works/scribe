@@ -64,10 +64,30 @@ pub fn capture_request(
 }
 
 /// The first trigger of `tag` that fires in Daniel's own words `own`
-/// (fenced, indented, quoted and `#scribe` lines left out).
+/// (fenced, indented, quoted and `#scribe` lines left out). A marked turn
+/// fires nothing ([`is_marked`]), so it supplies no candidate and no
+/// written idea, here and under the store lock.
 fn fire(tag: &TagDef, own: &str) -> Option<trigger::Fired> {
     let triggers = tag.capture.pass_triggers()?;
+    if is_marked(own) {
+        return None;
+    }
     trigger::first_fired(triggers, &own_lines(own))
+}
+
+/// Whether Daniel marked the turn whose own words are `own` (2_design.md
+/// §5.3, §14.7): a `#scribe` marker inside a sentence, as
+/// [`crate::annotation::marks`] finds it (refused markers included), or a
+/// line that opens with the marker, a form 1–4 instruction. Fenced, quoted
+/// and pasted lines hold neither, as `capture::plain_lines` leaves them out.
+/// The pass skips the whole turn; it never reads `marks.json`.
+pub(crate) fn is_marked(own: &str) -> bool {
+    !crate::annotation::marks(own).is_empty()
+        || crate::capture::plain_lines(own).iter().any(|(_, line)| {
+            !line.starts_with("    ")
+                && !line.starts_with('\t')
+                && line.trim_start().starts_with(crate::capture::MARKER)
+        })
 }
 
 /// What admits a claim under `tag` from Daniel's own words `own`: the
