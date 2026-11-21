@@ -447,11 +447,19 @@ impl Store {
         Ok((entry, changed))
     }
 
-    /// Retire an agent note, preserving the reason and author.
+    /// Retire an entry, preserving the reason and author. An agent's note
+    /// retires on the agent's word; Daniel's entry only on his checked
+    /// `instruction` (docs/design/scribe/2_design.md §12.1), which the entry
+    /// then records with its quote redacted. Retiring keeps the text.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "explicit retirement inputs at the store boundary"
+    )]
     pub fn retire_agent_entry(
         &self,
         id: &str,
         reason: &str,
+        instruction: Option<&crate::instruction::Instructed>,
         author: AuthorName,
         now: OffsetDateTime,
         redactor: &Redactor,
@@ -461,10 +469,10 @@ impl Store {
         self.prepare_dir(&self.root)?;
         let _lock = self.lock("entry retire")?;
         let mut entry = self.resolve_entry(id)?;
-        if entry.author.kind != AuthorKind::Agent {
+        if entry.author.kind != AuthorKind::Agent && instruction.is_none() {
             return Err(refusal(
                 WriteRefusal::DanielOnly,
-                "Daniel retires his entries through #scribe retire",
+                "Daniel retires his entries through #scribe retire, or on his instruction with --session and --instruction",
             ));
         }
         if entry.status == EntryStatus::Retired
@@ -483,6 +491,64 @@ impl Store {
         entry.updated = now;
         entry.inactive_since = Some(now);
         entry.updated_by = Some(Author::agent(author));
+        if let Some(instructed) = instruction {
+            entry.instruction = Some(crate::Instruction {
+                session: instructed.session.clone(),
+                message: instructed.message.clone(),
+                at: instructed.at,
+                quote: Some(redactor.mask(&instructed.quote)),
+            });
+        }
+        self.write_entry(&entry, false)?;
+        Ok((entry, true))
+    }
+
+    /// Forget an entry for good on Daniel's checked `instruction`
+    /// (docs/design/scribe/2_design.md §12.4): its text and evidence are
+    /// blanked with every proposal quote, candidate quote and reason about it
+    /// ([`crate::consistency::forget`]). The entry keeps its id, tag, dates
+    /// and author, records the agent in `updated_by` and the instruction's
+    /// session and message ids, but not its quote, which may repeat the words
+    /// he wants gone. No file is removed. `proposals.json` is written first,
+    /// then the entry. Forgetting a forgotten entry changes nothing.
+    pub fn forget_entry(
+        &self,
+        id: &str,
+        instruction: &crate::instruction::Instructed,
+        author: AuthorName,
+        now: OffsetDateTime,
+    ) -> Result<(Entry, bool)> {
+        check_agent_author(&author)?;
+        self.prepare_dir(&self.root)?;
+        let _lock = self.lock("entry forget")?;
+        let target = self.resolve_entry(id)?;
+        if target.status == EntryStatus::Forgotten {
+            return Ok((target, false));
+        }
+        let mut proposals = self.proposals()?;
+        let (mut entries, _) = self.load_entries()?;
+        let before = proposals.clone();
+        let forgotten = crate::consistency::forget(&target.id, &mut proposals, &mut entries, now);
+        let entry = entries.into_iter().find(|e| e.id == target.id);
+        let (crate::consistency::Settled::Forgotten(_), Some(mut entry)) = (forgotten, entry)
+        else {
+            // Resolved above and not forgotten, but not in the listing: a
+            // file that does not parse is never rewritten.
+            return Err(refusal(
+                WriteRefusal::EntryNotFound,
+                format!("cannot forget {}: its file does not parse", target.id),
+            ));
+        };
+        entry.updated_by = Some(Author::agent(author));
+        entry.instruction = Some(crate::Instruction {
+            session: instruction.session.clone(),
+            message: instruction.message.clone(),
+            at: instruction.at,
+            quote: None,
+        });
+        if proposals != before {
+            self.write_proposals(&proposals)?;
+        }
         self.write_entry(&entry, false)?;
         Ok((entry, true))
     }

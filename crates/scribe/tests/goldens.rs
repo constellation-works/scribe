@@ -23,6 +23,7 @@ const HELP: &[(&str, &[&str])] = &[
     ("entry-add", &["entry", "add", "--help"]),
     ("entry-update", &["entry", "update", "--help"]),
     ("entry-retire", &["entry", "retire", "--help"]),
+    ("entry-forget", &["entry", "forget", "--help"]),
     ("entry-list", &["entry", "list", "--help"]),
     ("entry-show", &["entry", "show", "--help"]),
     ("entry-pickup", &["entry", "pickup", "--help"]),

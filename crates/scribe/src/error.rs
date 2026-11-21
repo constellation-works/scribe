@@ -65,6 +65,11 @@ pub(crate) enum CliError {
         segments: usize,
         passes: u32,
     },
+    /// `entry forget` cannot be undone and requires explicit confirmation.
+    #[error(
+        "forgetting {0} blanks its text for good and cannot be undone; pass --confirm to forget it"
+    )]
+    ForgetConfirmRequired(String),
     /// No transcript is available for rebuilding this record.
     #[error("no transcript for session {0}; its record is unchanged")]
     TranscriptMissing(scribe_core::SessionId),
@@ -122,7 +127,7 @@ impl CliError {
             Self::Read { .. } => "io_error",
             Self::SessionNotOn(_) => "session_not_on",
             Self::SegmentNotFound { .. } => "segment_not_found",
-            Self::ConfirmRequired { .. } => "confirm_required",
+            Self::ConfirmRequired { .. } | Self::ForgetConfirmRequired(_) => "confirm_required",
             Self::TranscriptMissing(_) => "transcript_missing",
             Self::TranscriptRefused { .. } => "provenance_failed",
             Self::PassFailed(_) => "session_pass_failed",
@@ -171,6 +176,7 @@ impl CliError {
             | Self::Read { .. }
             | Self::SessionNotOn(_)
             | Self::ConfirmRequired { .. }
+            | Self::ForgetConfirmRequired(_)
             | Self::TranscriptMissing(_)
             | Self::TranscriptRefused { .. }
             | Self::PassFailed(_)

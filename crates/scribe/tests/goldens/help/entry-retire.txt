@@ -1,4 +1,4 @@
-Retire an agent note with a reason
+Retire an entry with a reason: an agent note, or Daniel's on his instruction
 
 Usage: scribe entry retire [OPTIONS] --author <AUTHOR> --reason <REASON> <ID>
 
@@ -19,5 +19,8 @@ Global options:
       --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
       --json                 Shorthand for --format json
 
+Daniel's entry retires only on his instruction: --session and --instruction.
+
 Examples:
   scribe entry retire <id> --author opus --reason 'No longer applies'
+  scribe entry retire <id> --author opus --reason 'Daniel asked' --session <id> --instruction '<his words>'

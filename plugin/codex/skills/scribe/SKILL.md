@@ -149,6 +149,15 @@ about them; `question ask` skips them unless its scope names their tag.
   so their `#scribe retire <id>` cancels it in time.
   When they say in plain words to drop it, retire it yourself:
   `scribe entry retire <id> --author <name> --reason '<their words>'`.
+- **Their entry, on their instruction in this session.** List first and name
+  the id in your reply. When they say to delete one of their entries, run
+  `scribe entry retire <id> --author <name> --reason '<why>' --session <this
+  session's id> --instruction '<their words, verbatim>'`; it hides the entry
+  and keeps its text. Only when their own words say forget, erase, purge,
+  permanently or for good, run `scribe entry forget <id> --author <name>
+  --session <this session's id> --instruction '<their words>' --confirm`:
+  it blanks the entry's text and proposal quotes of it for good and cannot
+  be undone. Never change their entry's content.
 - **Every other session writes none**: routines, scheduled or background
   jobs, Orbit task runs, subagents and any session the human is not typing
   in.

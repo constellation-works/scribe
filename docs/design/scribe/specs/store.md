@@ -514,8 +514,8 @@ exits 0.
 - **Agent writes** (S12). Each write verb takes the lock, checks the
   author guards (a reserved `--author` name — `daniel`, `scribe`,
   `consistency`, `session-pass`, `tag-retired` — is refused `reserved_author`; a Daniel entry's content,
-  retirement and the settling of a proposal whose `older` is a Daniel
-  entry are refused `daniel_only`; author names between agents are
+  retirement without his checked instruction and the settling of a proposal
+  whose `older` is a Daniel entry are refused `daniel_only`; author names between agents are
   attribution only, so any agent may update or retire an active agent
   entry, update an open agent proposal or settle one; a changed `--reason` when settling a
   proposal Daniel or scribe opened is refused `proposal_not_agent`),
@@ -525,7 +525,16 @@ exits 0.
   same entry-effect function. Recovery preserves an agent settler in
   `updated_by`. Entry content updates retain the original author and set
   `updated_by`; metadata-only updates of Daniel entries do likewise.
-  Direct retirement stores its redacted reason. Proposal reasons accept
+  Direct retirement stores its redacted reason; retirement on his checked
+  instruction (`entry retire --session --instruction`, 2_design.md §12.1)
+  also accepts his entry and stores `instruction` with its redacted quote,
+  keeping the text. `Store::forget_entry` (`entry forget`, only with a
+  checked instruction and `--confirm`, §12.4) applies the same forget as
+  `#scribe forget` (`consistency::forget`) under the lock, writing
+  `proposals.json` first and then the entry, sets `updated_by` to the agent
+  and `instruction` to the instruction's `session`, `message` and `at` with
+  `quote: null`; no file is removed, and an entry already forgotten writes
+  nothing. Proposal reasons accept
   1–300 characters before redaction; direct retirement uses the same bound.
   Repeating an unchanged update or settlement prints the unchanged record
   and `nothing changed` on stderr, without an audit event (the lock holder

@@ -1,0 +1,29 @@
+Forget an entry for good on Daniel's instruction: blank its text, keep its id
+
+Usage: scribe entry forget [OPTIONS] --author <AUTHOR> <ID>
+
+Arguments:
+  <ID>  Entry id or unique prefix (at least four characters)
+
+Options:
+      --author <AUTHOR>      Agent name
+      --confirm              Confirm blanking the entry's text for good; it cannot be undone
+      --session <ID>         The session you run in, whose transcript holds Daniel's instruction; requires --instruction
+      --instruction <WORDS>  Daniel's instruction, word for word from one of his last three typed turns of --session within 30 minutes, naming the id (or answering your reply that names it) and the act; requires --session
+  -h, --help                 Print help
+  -V, --version              Print version
+
+Global options:
+      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json                 Shorthand for --format json
+
+Blanks the entry's text, evidence and reason for good, with every proposal
+quote of it and every reason about it; the id, tag, dates and author stay,
+and no file is removed. It cannot be undone, so it runs only on Daniel's
+instruction (his own turn says forget, erase, purge, permanently or for good)
+and with --confirm.
+
+Examples:
+  scribe entry forget <id> --author opus --session <id> --instruction '<his words>' --confirm

@@ -41,6 +41,23 @@ Examples:
   scribe entry add --tag idea --author opus --related session:<id> 'Cache the manifest between runs'
   scribe entry add --tag standard --author opus --related session:<id> --quote '<quoted words>' 'Name the unit in every size'";
 
+const RETIRE_EXAMPLES: &str = "\
+Daniel's entry retires only on his instruction: --session and --instruction.
+
+Examples:
+  scribe entry retire <id> --author opus --reason 'No longer applies'
+  scribe entry retire <id> --author opus --reason 'Daniel asked' --session <id> --instruction '<his words>'";
+
+const FORGET_EXAMPLES: &str = "\
+Blanks the entry's text, evidence and reason for good, with every proposal
+quote of it and every reason about it; the id, tag, dates and author stay,
+and no file is removed. It cannot be undone, so it runs only on Daniel's
+instruction (his own turn says forget, erase, purge, permanently or for good)
+and with --confirm.
+
+Examples:
+  scribe entry forget <id> --author opus --session <id> --instruction '<his words>' --confirm";
+
 const PICKUP_EXAMPLES: &str = "\
 Examples:
   scribe entry pickup <id> --author standards-intake --result task:<id>
@@ -55,11 +72,12 @@ pub(crate) enum EntryCommand {
     /// Update content or metadata; Daniel's entries allow metadata only
     #[command(after_help = "Examples:\n  scribe entry update <id> --author opus --add-topic api")]
     Update(UpdateArgs),
-    /// Retire an agent note with a reason
-    #[command(
-        after_help = "Examples:\n  scribe entry retire <id> --author opus --reason 'No longer applies'"
-    )]
+    /// Retire an entry with a reason: an agent note, or Daniel's on his instruction
+    #[command(after_help = RETIRE_EXAMPLES)]
     Retire(RetireArgs),
+    /// Forget an entry for good on Daniel's instruction: blank its text, keep its id
+    #[command(after_help = FORGET_EXAMPLES)]
+    Forget(ForgetArgs),
     /// List entries, oldest first
     #[command(after_help = LIST_EXAMPLES)]
     List(ListArgs),
@@ -178,6 +196,10 @@ impl EntryCommand {
                 target: resolved_entry(ctx, &args.id),
                 author: Some(args.author.as_str().to_owned()),
             },
+            Self::Forget(args) => AuditSubject {
+                target: resolved_entry(ctx, &args.id),
+                author: Some(args.author.as_str().to_owned()),
+            },
             Self::Pickup(args) => AuditSubject {
                 target: resolved_entry(ctx, &args.id),
                 author: Some(args.author.as_str().to_owned()),
@@ -198,6 +220,9 @@ impl EntryCommand {
             }),
             Self::Retire(_) => Some(AuditMeta {
                 command: "entry retire",
+            }),
+            Self::Forget(_) => Some(AuditMeta {
+                command: "entry forget",
             }),
             Self::Pickup(_) => Some(AuditMeta {
                 command: "entry pickup",
@@ -290,8 +315,8 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
             scribe_core::check_reason(&args.reason)?;
             let target = ctx.store().resolve_entry(&args.id)?;
             // Before the store lock; a refusal changes nothing. A passing
-            // check does not yet widen what retire accepts (§12.1).
-            super::instruction::check(
+            // check lets retire accept Daniel's entry (§12.1).
+            let instructed = super::instruction::check(
                 ctx,
                 &args.instruction,
                 scribe_core::instruction::Act::Retire,
@@ -301,13 +326,47 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
             let (entry, changed) = ctx.store().retire_agent_entry(
                 &args.id,
                 &args.reason,
+                instructed.as_ref(),
                 args.author,
                 ctx.now(),
                 &redactor,
             )?;
             written_with_action(ctx, entry, changed)
         }
+        EntryCommand::Forget(args) => forget(&args, ctx),
     }
+}
+
+/// `entry forget`: exists only with an instruction and `--confirm`; both
+/// refusals, and every check of the instruction, come before the store lock
+/// and change nothing (§12.4).
+fn forget(args: &ForgetArgs, ctx: &Context) -> Result<Output, CliError> {
+    scribe_core::check_agent_author(&args.author)?;
+    let target = ctx.store().resolve_entry(&args.id)?;
+    let uninstructed = || {
+        CliError::Usage(String::from(
+            "entry forget runs only on Daniel's instruction: pass --session <id> and --instruction '<his words>'",
+        ))
+    };
+    if args.instruction.session.is_none() || args.instruction.instruction.is_none() {
+        return Err(uninstructed());
+    }
+    if !args.confirm {
+        return Err(CliError::ForgetConfirmRequired(target.id.to_string()));
+    }
+    let Some(instructed) = super::instruction::check(
+        ctx,
+        &args.instruction,
+        scribe_core::instruction::Act::Forget,
+        &scribe_core::instruction::Target::new(target.id.to_string(), &args.id),
+    )?
+    else {
+        return Err(uninstructed());
+    };
+    let (entry, changed) =
+        ctx.store()
+            .forget_entry(&args.id, &instructed, args.author.clone(), ctx.now())?;
+    written_with_action(ctx, entry, changed)
 }
 
 fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
@@ -570,6 +629,20 @@ pub(crate) struct RetireArgs {
     /// Why the note no longer applies
     #[arg(long)]
     reason: String,
+    #[command(flatten)]
+    instruction: super::instruction::InstructionArgs,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ForgetArgs {
+    /// Entry id or unique prefix (at least four characters)
+    id: String,
+    /// Agent name
+    #[arg(long)]
+    author: scribe_core::AuthorName,
+    /// Confirm blanking the entry's text for good; it cannot be undone
+    #[arg(long)]
+    confirm: bool,
     #[command(flatten)]
     instruction: super::instruction::InstructionArgs,
 }
