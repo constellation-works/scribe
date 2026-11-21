@@ -489,6 +489,82 @@ fn a_firing_turn_is_named_with_its_tag_and_trigger_and_idea_configured_to_propos
 }
 
 #[test]
+fn a_marked_turn_supplies_no_written_idea_and_an_unmarked_one_is_written() {
+    // §14.7: a turn Daniel marked with `#scribe` (inside a sentence, or a
+    // line that opens with it) is cataloged at Stop, so the pass skips the
+    // whole turn, even its unmarked lines. His unmarked turn is captured.
+    let s = Setup::new();
+    let inline = "What if we sharded the audit log by month? #scribe";
+    let opened = "What if we dropped the popup preview?";
+    let opened_turn = format!("{opened}\n#scribe idea: drop the popup preview");
+    let plain = "What if we cached the routing table per host?";
+    s.write(
+        ON,
+        &[
+            line("user", "u-inline", inline),
+            line("user", "u-opened", &opened_turn),
+            line("user", "u-plain", plain),
+        ],
+    );
+    let mut body = answer();
+    body["candidates"] = json!([
+        idea_claim(
+            inline,
+            "u-inline",
+            "Daniel suggests sharding the audit log by month."
+        ),
+        idea_claim(
+            opened,
+            "u-opened",
+            "Daniel suggests dropping the popup preview."
+        ),
+        idea_claim(
+            plain,
+            "u-plain",
+            "Daniel suggests caching the routing table per host."
+        ),
+    ]);
+    s.answer(&body);
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let prompt = &s.prompts()[0];
+    assert!(prompt.contains("- message u-plain: tag idea"), "{prompt}");
+    assert!(!prompt.contains("- message u-inline:"), "{prompt}");
+    assert!(!prompt.contains("- message u-opened:"), "{prompt}");
+    let listed = entries_json(&s, &["--tag", "idea"]);
+    assert_eq!(listed["total"], 1, "{listed}");
+    assert_eq!(listed["entries"][0]["quote"], plain);
+}
+
+#[test]
+fn a_marked_turn_supplies_no_candidate_and_an_unmarked_one_proposes() {
+    let s = Setup::new();
+    s.config("[tags.idea.capture]\nroute = \"propose\"\n");
+    let marked = "What if we sharded the audit log by month? #scribe/global";
+    let plain = "What if we cached the routing table per host?";
+    s.write(
+        ON,
+        &[
+            line("user", "u-marked", marked),
+            line("user", "u-plain", plain),
+        ],
+    );
+    let mut body = answer();
+    body["candidates"] = json!([
+        {"quote": marked, "message": "u-marked", "tag": "idea", "subject": "the audit log",
+         "statement": "Daniel suggests sharding the audit log by month."},
+        {"quote": plain, "message": "u-plain", "tag": "idea", "subject": "the routing table",
+         "statement": "Daniel suggests caching the routing table per host."}
+    ]);
+    s.answer(&body);
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let listed = proposals(&s);
+    assert_eq!(listed["total"], 1, "{listed}");
+    assert_eq!(listed["proposals"][0]["candidate"]["quote"], plain);
+}
+
+#[test]
 fn a_claim_whose_turn_fires_no_trigger_of_its_tag_is_refused() {
     // The model names a firing turn under another tag than the one fired.
     let s = Setup::new();
