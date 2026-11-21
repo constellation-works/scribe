@@ -41,7 +41,7 @@ use time::OffsetDateTime;
 
 /// The newest store format: this build reads formats 1 to `FORMAT` of every
 /// document and would write `FORMAT`.
-pub(super) const FORMAT: u32 = 12;
+pub(super) const FORMAT: u32 = 13;
 
 /// Which document an upgrade step is applied to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,6 +80,7 @@ pub(super) const UPGRADES: &[Upgrade] = &[
     finding_entries,
     capture_admission,
     entry_inactive_since,
+    instructed_settlement,
 ];
 
 /// Format 11 -> 12 adds `inactive_since` to each entry: `null` for an
@@ -105,6 +106,42 @@ fn entry_inactive_since(
                 .unwrap_or(serde_json::Value::Null)
         };
         entry.entry("inactive_since").or_insert(since);
+    }
+    Ok(value)
+}
+
+/// Format 12 -> 13 adds `approved_by` and `instruction` to each entry and
+/// `instruction` to each proposal, all `null`, and lets `closed_reason`
+/// carry `instructed`. Other documents are unchanged.
+fn instructed_settlement(
+    document: Document,
+    mut value: serde_json::Value,
+) -> serde_json::Result<serde_json::Value> {
+    match document {
+        Document::Entry => {
+            if let Some(entry) = value.as_object_mut() {
+                entry
+                    .entry("approved_by")
+                    .or_insert(serde_json::Value::Null);
+                entry
+                    .entry("instruction")
+                    .or_insert(serde_json::Value::Null);
+            }
+        }
+        Document::Proposals => {
+            for proposal in value
+                .get_mut("proposals")
+                .and_then(serde_json::Value::as_array_mut)
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_object_mut)
+            {
+                proposal
+                    .entry("instruction")
+                    .or_insert(serde_json::Value::Null);
+            }
+        }
+        Document::Session | Document::Control => {}
     }
     Ok(value)
 }
@@ -735,6 +772,164 @@ struct CandidateV10 {
     host: crate::Label,
 }
 
+/// Frozen format-10 to 12 entry shape (no `approved_by` or `instruction`),
+/// migrated in typed YAML so local YAML tags stay intact. `inactive_since`
+/// exists from format 12 on; `decode_entry` refuses it in an older file and
+/// `into_entry` derives it for one, as the 11 -> 12 step does.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EntryV12 {
+    id: EntryId,
+    tag: crate::TagName,
+    status: crate::EntryStatus,
+    project: crate::Project,
+    topics: crate::Topics,
+    related: Vec<crate::Related>,
+    provider: crate::Label,
+    host: crate::Label,
+    author: Author,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    updated_by: Option<Author>,
+    #[serde(with = "time::serde::rfc3339")]
+    created: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    updated: OffsetDateTime,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    inactive_since: Option<OffsetDateTime>,
+    said: String,
+    content_from: crate::ContentFrom,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    cite: Option<Cite>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    retirement_reason: Option<String>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    superseded_by: Option<EntryId>,
+    #[serde(with = "crate::record::nullable_date")]
+    review_after: Option<time::Date>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    quote: Option<String>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    window: Option<crate::Window>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    evidence: Option<String>,
+    #[serde(with = "crate::record::nullable_date")]
+    as_of: Option<time::Date>,
+}
+
+impl EntryV12 {
+    fn into_entry(self, from: u32) -> Entry {
+        let inactive_since = if from >= 12 {
+            self.inactive_since
+        } else if self.status == crate::EntryStatus::Active {
+            None
+        } else {
+            Some(self.updated)
+        };
+        Entry {
+            id: self.id,
+            tag: self.tag,
+            status: self.status,
+            project: self.project,
+            topics: self.topics,
+            related: self.related,
+            provider: self.provider,
+            host: self.host,
+            author: self.author,
+            updated_by: self.updated_by,
+            created: self.created,
+            updated: self.updated,
+            inactive_since,
+            said: self.said,
+            content_from: self.content_from,
+            cite: self.cite,
+            retirement_reason: self.retirement_reason,
+            superseded_by: self.superseded_by,
+            review_after: self.review_after,
+            quote: self.quote,
+            window: self.window,
+            evidence: self.evidence,
+            as_of: self.as_of,
+            approved_by: None,
+            instruction: None,
+            content: String::new(),
+        }
+    }
+}
+
+/// Frozen format-11 proposal shape (no `instruction`, and `closed_reason` only
+/// accepts `tag_retired`; candidate frozen independently of `EntryCandidate`),
+/// checked before the 11 -> 12 upgrade.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "frozen shape checked before upgrade")]
+struct ProposalsV11 {
+    format: u32,
+    proposals: Vec<ProposalV11>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[allow(dead_code, reason = "frozen shape checked before upgrade")]
+enum ClosedReasonV11 {
+    TagRetired,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "frozen shape checked before upgrade")]
+struct AdmittedV11 {
+    trigger: String,
+    matched: String,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    criteria: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "frozen shape checked before upgrade")]
+struct CandidateV11 {
+    tag: crate::TagName,
+    role: crate::Speaker,
+    quote: String,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    evidence: Option<String>,
+    cite: Cite,
+    project: crate::Project,
+    provider: crate::Label,
+    host: crate::Label,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    admitted: Option<AdmittedV11>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "frozen shape checked before upgrade")]
+struct ProposalV11 {
+    id: ProposalId,
+    kind: ProposalKind,
+    older: EntryId,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    candidate: Option<CandidateV11>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    newer: Option<EntryId>,
+    reason: String,
+    quotes: Vec<Quote>,
+    state: ProposalState,
+    #[serde(with = "time::serde::rfc3339")]
+    opened_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339::option")]
+    settled_at: Option<OffsetDateTime>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    settled_by: Option<Cite>,
+    author: Author,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    updated_by: Option<Author>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    settled_author: Option<Author>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    closed_reason: Option<ClosedReasonV11>,
+}
+
 /// Frozen format-2 `control.json` shape, validated before upgrading.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -872,14 +1067,9 @@ pub(super) fn split_frontmatter<'a>(path: &Path, bytes: &'a [u8]) -> Result<(&'a
     Ok((front, body.strip_suffix('\n').unwrap_or(body)))
 }
 
-/// Parse frontmatter: check `format` and `kind`, then the record's own keys
-/// strictly. Returns the record (upgraded) and the format the file has.
-fn decode_frontmatter<T: DeserializeOwned>(
-    path: &Path,
-    front: &str,
-    document: Document,
-    kind: &str,
-) -> Result<(T, u32)> {
+/// Parse frontmatter: check `format` and `kind`, returning the file's format
+/// and the remaining mapping as a YAML value.
+fn parse_frontmatter(path: &Path, front: &str, kind: &str) -> Result<(u32, yaml_serde::Value)> {
     let mut map: yaml_serde::Mapping =
         yaml_serde::from_str(front).map_err(|e| Error::corrupt(path, e))?;
     let probe = yaml_serde::from_value::<FormatProbe>(yaml_serde::Value::Mapping(map.clone()))
@@ -897,13 +1087,7 @@ fn decode_frontmatter<T: DeserializeOwned>(
         }
         None => return Err(shape(path, "missing field `kind`")),
     }
-    let value = yaml_serde::Value::Mapping(map);
-    if from == FORMAT {
-        let record = yaml_serde::from_value(value).map_err(|e| Error::corrupt(path, e))?;
-        return Ok((record, from));
-    }
-    let json = serde_json::to_value(&value).map_err(|e| Error::corrupt(path, e))?;
-    Ok((upgrade(path, document, from, json)?, from))
+    Ok((from, yaml_serde::Value::Mapping(map)))
 }
 
 /// Parse an entry file. `expected` is the file's stem and `tag_dir` its
@@ -916,8 +1100,25 @@ pub(super) fn decode_entry(
     tag_dir: &str,
 ) -> Result<Entry> {
     let (front, body) = split_frontmatter(path, bytes)?;
-    let (mut entry, _): (Entry, u32) =
-        decode_frontmatter(path, front, Document::Entry, ENTRY_KIND)?;
+    let (from, value) = parse_frontmatter(path, front, ENTRY_KIND)?;
+    let mut entry: Entry = if from == FORMAT {
+        yaml_serde::from_value(value).map_err(|e| Error::corrupt(path, e))?
+    } else if (10..=12).contains(&from) {
+        let has_inactive_since = value
+            .as_mapping()
+            .is_some_and(|map| map.contains_key("inactive_since"));
+        if from < 12 && has_inactive_since {
+            return Err(shape(path, "unknown field `inactive_since`"));
+        }
+        if from == 12 && !has_inactive_since {
+            return Err(shape(path, "missing field `inactive_since`"));
+        }
+        let old: EntryV12 = yaml_serde::from_value(value).map_err(|e| Error::corrupt(path, e))?;
+        old.into_entry(from)
+    } else {
+        let json = serde_json::to_value(&value).map_err(|e| Error::corrupt(path, e))?;
+        upgrade(path, Document::Entry, from, json)?
+    };
     if entry.id.to_string() != expected
         || entry.tag.as_str() != tag_dir
         || entry.id.tag() != &entry.tag
@@ -944,7 +1145,8 @@ pub(super) fn decode_entry(
             let direct = entry.cite.is_none()
                 && entry.said.is_empty()
                 && entry.content_from == crate::ContentFrom::Agent
-                && entry.window.is_none();
+                && entry.window.is_none()
+                && entry.approved_by.is_none();
             let approved_said = match entry.status {
                 crate::EntryStatus::Forgotten => entry.said.is_empty() && body.is_empty(),
                 crate::EntryStatus::Active
@@ -978,6 +1180,22 @@ pub(super) fn decode_entry(
             path,
             "entry author, said, content_from, cite, quote and window disagree",
         ));
+    }
+    if let Some(approved_by) = &entry.approved_by {
+        if approved_by.kind != crate::AuthorKind::Agent {
+            return Err(shape(path, "entry approved_by must have kind agent"));
+        }
+        if entry.instruction.is_none() {
+            return Err(shape(path, "entry approved_by requires an instruction"));
+        }
+    }
+    if let Some(inst) = &entry.instruction {
+        if inst.message.trim().is_empty() {
+            return Err(shape(path, "entry instruction message must not be empty"));
+        }
+        if inst.quote.as_deref().is_some_and(|q| q.trim().is_empty()) {
+            return Err(shape(path, "entry instruction quote must not be empty"));
+        }
     }
     body.clone_into(&mut entry.content);
     Ok(entry)
@@ -1027,8 +1245,13 @@ pub(super) fn decode_session(
     year_month: (&str, &str),
 ) -> Result<SessionRecord> {
     let (front, body) = split_frontmatter(path, bytes)?;
-    let (mut record, from): (SessionRecord, u32) =
-        decode_frontmatter(path, front, Document::Session, SESSION_KIND)?;
+    let (from, value) = parse_frontmatter(path, front, SESSION_KIND)?;
+    let mut record: SessionRecord = if from >= 6 {
+        yaml_serde::from_value(value).map_err(|e| Error::corrupt(path, e))?
+    } else {
+        let json = serde_json::to_value(&value).map_err(|e| Error::corrupt(path, e))?;
+        upgrade(path, Document::Session, from, json)?
+    };
     let started = (
         format!("{:04}", record.started.year()),
         format!("{:02}", u8::from(record.started.month())),
@@ -1330,11 +1553,10 @@ fn decode_json<T: DeserializeOwned>(path: &Path, bytes: &[u8], document: Documen
         Document::Proposals if from == 4 => {
             serde_json::from_slice::<ProposalsV4>(bytes).map_err(|e| Error::corrupt(path, e))?;
         }
-        // Format 11 -> 12 changed only entries, so a format-11
-        // proposals.json checks against the current struct.
-        Document::Proposals if from == 11 => {
-            serde_json::from_slice::<ProposalsDocument>(bytes)
-                .map_err(|e| Error::corrupt(path, e))?;
+        // Format 12 changed only entries, so a format-11 or format-12
+        // proposals.json has the format-11 shape.
+        Document::Proposals if from == 11 || from == 12 => {
+            serde_json::from_slice::<ProposalsV11>(bytes).map_err(|e| Error::corrupt(path, e))?;
         }
         Document::Proposals if from == 10 => {
             serde_json::from_slice::<ProposalsV10>(bytes).map_err(|e| Error::corrupt(path, e))?;
@@ -1394,6 +1616,47 @@ pub(super) fn decode_proposals(path: &Path, bytes: &[u8]) -> Result<Vec<Proposal
                 "closed_reason on a proposal that is not rejected",
             ));
         }
+        // Instruction metadata belongs to a settled candidate (§12.1), and
+        // `closed_reason: instructed` is exactly an agent's instructed
+        // rejection. Other reasons (`tag_retired`) stay readable on any
+        // rejected proposal, as the format-11 reader accepted them.
+        match &proposal.instruction {
+            Some(inst) => {
+                if proposal.state == ProposalState::Open {
+                    return Err(shape(path, "instruction on an open proposal"));
+                }
+                if proposal.kind != ProposalKind::Candidate {
+                    return Err(shape(
+                        path,
+                        "instruction on a proposal that is not a candidate",
+                    ));
+                }
+                if proposal.settled_at.is_none() {
+                    return Err(shape(path, "instruction on a proposal without settled_at"));
+                }
+                if !has_matching_instruction(proposal, inst) {
+                    return Err(shape(
+                        path,
+                        "proposal instruction requires an agent settlement and matching settled_by cite",
+                    ));
+                }
+                if proposal.state == ProposalState::Rejected
+                    && proposal.closed_reason != Some(crate::ClosedReason::Instructed)
+                {
+                    return Err(shape(
+                        path,
+                        "rejected proposal with instruction requires closed_reason instructed",
+                    ));
+                }
+            }
+            None if proposal.closed_reason == Some(crate::ClosedReason::Instructed) => {
+                return Err(shape(
+                    path,
+                    "closed_reason instructed requires an agent settlement and matching instruction cite",
+                ));
+            }
+            None => {}
+        }
         match (&proposal.kind, &proposal.candidate) {
             (ProposalKind::Candidate, Some(candidate))
                 if proposal.newer.is_none()
@@ -1410,6 +1673,20 @@ pub(super) fn decode_proposals(path: &Path, bytes: &[u8]) -> Result<Vec<Proposal
         }
     }
     Ok(doc.proposals)
+}
+
+fn has_matching_instruction(proposal: &Proposal, inst: &crate::Instruction) -> bool {
+    !inst.message.trim().is_empty()
+        && inst.quote.as_deref().is_none_or(|q| !q.trim().is_empty())
+        && proposal
+            .settled_author
+            .as_ref()
+            .is_some_and(|a| a.kind == crate::AuthorKind::Agent)
+        && proposal.settled_by.as_ref().is_some_and(|cite| {
+            cite.session == inst.session
+                && cite.message.as_deref() == Some(inst.message.as_str())
+                && cite.at == inst.at
+        })
 }
 
 /// `proposals.json` as written.

@@ -16,5 +16,6 @@
   },
   "settled_author": null,
   "updated_by": null,
-  "closed_reason": null
+  "closed_reason": null,
+  "instruction": null
 }

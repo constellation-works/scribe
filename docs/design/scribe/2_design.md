@@ -3421,12 +3421,12 @@ forget, erase or for good.
 
 ### 12.7 Store format
 
-One step, numbered when it lands (after §11's format 11 at the earliest):
-a proposal gains `instruction` (`null` on upgrade); an entry gains
-`approved_by` and `instruction` (`null` on upgrade). `closed_reason`
-comes from §11.2's format 11, gaining the value `instructed`.
-`specs/store.md` and `specs/output-contract.md` describe the fields when
-the step lands.
+**Built (task 2 of 6, ORB-26243, store format 13).** Step 12→13
+(`instructed_settlement`): a proposal gains `instruction` (`null` on upgrade);
+an entry gains `approved_by` and `instruction` (`null` on upgrade).
+`closed_reason` comes from §11.2's format 11, gaining the value `instructed`.
+`specs/store.md` and `specs/output-contract.md` describe the fields and format
+13.
 
 ### 12.8 Limits and what is not built until seen
 

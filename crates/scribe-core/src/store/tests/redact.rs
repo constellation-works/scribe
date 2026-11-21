@@ -32,6 +32,12 @@ fn proposal() -> Proposal {
         updated_by: None,
         settled_author: None,
         closed_reason: None,
+        instruction: Some(crate::Instruction {
+            session: "s-1".parse().unwrap(),
+            message: String::from("m-1"),
+            at: T0,
+            quote: Some(String::new()),
+        }),
         candidate: Some(crate::EntryCandidate {
             tag: "preferences".parse().unwrap(),
             role: crate::Speaker::User,
@@ -76,6 +82,12 @@ fn the_redacted_field_inventory_is_exactly_the_fields_masked() {
     e.retirement_reason = Some(String::new());
     e.quote = Some(String::new());
     e.evidence = Some(String::new());
+    e.instruction = Some(crate::Instruction {
+        session: "s-1".parse().unwrap(),
+        message: String::from("m-1"),
+        at: T0,
+        quote: Some(String::new()),
+    });
     e.window = Some(crate::Window {
         turns: vec![crate::WindowTurn {
             role: crate::Speaker::User,
@@ -109,6 +121,14 @@ fn a_configured_secret_is_masked_in_every_covered_field() {
 
     let mut e = entry("preferences-1", T0);
     e.retirement_reason = Some(String::new());
+    e.quote = Some(String::new());
+    e.evidence = Some(String::new());
+    e.instruction = Some(crate::Instruction {
+        session: "s-1".parse().unwrap(),
+        message: String::from("m-1"),
+        at: T0,
+        quote: Some(String::new()),
+    });
     for (_, text) in entry_fields(&mut e) {
         *text = leak.clone();
     }

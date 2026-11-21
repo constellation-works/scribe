@@ -44,5 +44,7 @@
   "window_turns": null,
   "window": null,
   "action": null,
-  "admitted": null
+  "admitted": null,
+  "approved_by": null,
+  "instruction": null
 }

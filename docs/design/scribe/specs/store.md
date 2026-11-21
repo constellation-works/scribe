@@ -1,6 +1,6 @@
 ---
 type: design
-summary: "Spec: store — layout, record files with YAML frontmatter (format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
+summary: "Spec: store — layout, record files with YAML frontmatter (format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
 last_validated: 2026-11-10
 ---
 
@@ -10,7 +10,10 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-The code writes format 12 and reads formats 1–12. Format 12 adds an
+The code writes format 13 and reads formats 1–13. Format 13 adds
+`approved_by` and `instruction` to each entry, adds `instruction` to each
+proposal, and adds `"instructed"` to `closed_reason`
+([2_design.md §12.7](../2_design.md#127-store-format)). Format 12 adds an
 entry's `inactive_since`. Format 11 adds `admitted`
 on a proposal candidate and `closed_reason` on a proposal. Format 10 adds an
 entry's `evidence` and `as_of` and a candidate's `role`. Format 9 adds a
@@ -105,6 +108,13 @@ cap, and `truncated`/`omitted` say whether and how many of the oldest turns
 were dropped. An agent entry's `window` is always `null`. Any other
 combination is `store_corrupt`.
 
+Format 13 adds `approved_by` (`{kind: agent, name}` or `null`) and
+`instruction` (`{session, message, at, quote}` or `null`, where `quote` is
+redacted text or `null` once forgotten), both upgraded to `null`. An entry
+with `approved_by` requires `instruction` to be non-null and `approved_by` to
+have kind `agent`; a direct agent entry (`content_from: {kind: agent}`) may not
+carry `approved_by`. Any contradictory combination is `store_corrupt`.
+
 **Session keys:** `format`, `kind`, `id`, `status` (`open`, `final`),
 `project`, `topics`, `related` (model-extracted references, unchanged by
 links), `links` (a list, possibly empty, of `{type, session}`: `type` is
@@ -150,7 +160,7 @@ the current header and log (see **Format 4** below); later steps then apply.
 
 ## JSON documents
 
-- `control.json` (written at format 12; an older file upgrades on read): `{"sessions": {"<session-id>": {"on",
+- `control.json` (written at format 13; an older file upgrades on read): `{"sessions": {"<session-id>": {"on",
   "since", "due", "final", "consecutive_failures", "retry_after",
   "pending_links", "cataloged_by"}}}`. `pending_links` holds `{type, session}` links
   Daniel asserted before the session had a record; the pass that writes
@@ -160,7 +170,7 @@ the current header and log (see **Format 4** below); later steps then apply.
   automatic attempt waits 5, 10, 20, 40, then at most 60 minutes. Success
   or switching off resets both retry fields. Explicit `--session` bypasses
   the delay.
-- `proposals.json` (written at format 12; an older file upgrades on read): `{"proposals": [{"id": "p-<n>", "kind":
+- `proposals.json` (written at format 13; an older file upgrades on read): `{"proposals": [{"id": "p-<n>", "kind":
   "supersedes"|"stale", "older", "newer", "reason", "quotes": [{"entry",
   "text"}], "state": "open"|"approved"|"rejected", "opened_at",
   "settled_at", "settled_by"}]}`. `newer`, `settled_at` and `settled_by`
@@ -171,21 +181,29 @@ the current header and log (see **Format 4** below); later steps then apply.
   sets Daniel's). (S12) An agent's settle leaves `settled_by` `null`. Format 5 adds
   `updated_by` (agent author or `null`) to preserve who last changed a
   proposal reason without replacing its original `author`. Format 11 adds
-  `closed_reason` (`null`, or `"tag_retired"` on a `rejected` proposal
-  scribe closed itself; any other state with a reason is refused as
-  corrupt) and, on each `candidate`, `admitted` (`null`, or `{trigger,
-  matched, criteria}`: the trigger that fired, the turn's words it
-  matched, at most 120 characters, and the tag's `criteria` or `null`).
+  `closed_reason` (`null`, `"tag_retired"` on a `rejected` proposal
+  scribe closed itself, or `"instructed"` on a `rejected` candidate proposal
+  an agent closed on Daniel's checked instruction; any other state or
+  proposal kind with a reason is refused as corrupt) and, on each `candidate`,
+  `admitted` (`null`, or `{trigger, matched, criteria}`: the trigger that
+  fired, the turn's words it matched, at most 120 characters, and the tag's
+  `criteria` or `null`). Format 13 adds `instruction` (`null`, or
+  `{session, message, at, quote}` where `quote` is redacted text or `null`
+  once forgotten) on a settled `candidate` proposal with an agent
+  `settled_author` and matching `settled_by` cite; an `instruction` on an
+  open or non-candidate proposal, or `closed_reason: "instructed"` without
+  an agent `settled_author`, `instruction` and matching `settled_by`, is
+  `store_corrupt`.
 - `cataloged_by` on a `control.json` switch is `null` or `{at, by}`;
   `/scribe on` keeps it. *(S14)* `session catalog` sets it and the pass
   copies it onto the record.
-- (S12) `tags.json` (written at format 12; introduced at format 5): `{"tags": [{"name",
+- (S12) `tags.json` (written at format 13; introduced at format 5): `{"tags": [{"name",
   "aliases", "description", "stale_after_days", "author", "updated_by", "created",
   "updated"}]}`, sorted by name; `name` and aliases as for config tags,
   `description` accepts 1–300 characters before redaction, `stale_after_days` a positive
   integer or `null`, `author` of kind `agent`; `updated_by` is the last updating agent or
   `null`. Absent is no store tags.
-- `pickups.json` (written at format 12; introduced at format 8, no older form): `{"pickups": [{"entry", "author",
+- `pickups.json` (written at format 13; introduced at format 8, no older form): `{"pickups": [{"entry", "author",
   "at", "result", "rejected"}]}`, oldest first: a consumer's note that it
   picked up the action entry `entry` (`author` of kind `agent`, `result` a
   reference or `null`), or with `rejected: true`, that the human rejected
@@ -341,7 +359,10 @@ exits 0.
   still `active`; `Store::reapply_approved` (the scan's first step)
   finishes it. A forget blanks the entry's `said` and body and, in
   `proposals.json`, the `text` of its quotes and the `reason` of every
-  proposal about it. Nothing is written when nothing changed.
+  proposal about it, and clears `instruction.quote` to `null` on the entry
+  and every proposal about it while keeping `instruction.session`,
+  `instruction.message` and `instruction.at`. Nothing is written when nothing
+  changed.
 - **Retired-tag cleanup** (format 11, 2_design.md §11.3). Under `.lock`
   in the candidate write path (`open_pass_candidates` in `write_pass_window`,
   before counting the 20-open cap) and in `consistency scan`
@@ -372,7 +393,7 @@ exits 0.
   other refusal (a link, loose modes, a newer format, an I/O error) fails
   the whole command rather than skipping the file
   ([4_decisions.md](../4_decisions.md#one-malformed-record-makes-its-file-corrupt)).
-- **Format.** One `FORMAT` (12) covers every document. A shape change bumps
+- **Format.** One `FORMAT` (13) covers every document. A shape change bumps
   it and appends one step to `UPGRADES` in `store/format.rs`, which is
   given the document type it upgrades; shipped steps never change. Reads
   upgrade an older document in memory; a newer one is refused and left
@@ -470,13 +491,23 @@ exits 0.
   (`entry_inactive_since`) adds `inactive_since` to every entry: `null`
   for an active one, its `updated` for one already retired, superseded or
   forgotten (the best time an older record holds). Other documents are
-  unchanged; a format-11 `proposals.json` is checked against the current
-  shape. At format 12 the key is required, `null` exactly while the entry
+  unchanged; a format-11 or format-12 `proposals.json` is checked against its
+  frozen format-11 shape (`ProposalsV11`). At format 12 the key is required, `null` exactly while the entry
   is `active`, and set when retirement (`#scribe retire`, `entry retire`,
   an approved stale proposal), supersession or forgetting takes the entry
   out of `active`; forgetting a retired or superseded entry keeps its
   time. Metadata writes (`entry update`, cite filling) move `updated`,
   never `inactive_since`.
+- **Format 13** (instructed settlement, 2_design.md §12.7). Append-only step
+  12→13 (`instructed_settlement`) adds null `approved_by` and `instruction` to
+  every entry and null `instruction` to every proposal, and lets
+  `closed_reason` take `"instructed"`; nothing else changes. Format 10–12
+  entries and unchanged sessions (format 6+) decode through typed YAML so
+  local YAML tags stay intact (`EntryV12`; `inactive_since` is derived for a
+  format-10 or 11 entry as the 11→12 step does, and refused in a file older than 12), and a
+  format-11 or format-12 `proposals.json` is checked against its frozen shape
+  (`ProposalsV11`, `CandidateV11`, `ClosedReasonV11`) first, independent of
+  `EntryCandidate`.
 - **Agent writes** (S12). Each write verb takes the lock, checks the
   author guards (a reserved `--author` name — `daniel`, `scribe`,
   `consistency`, `session-pass`, `tag-retired` — is refused `reserved_author`; a Daniel entry's content,
@@ -526,7 +557,8 @@ exits 0.
   `entry.retirement_reason`; (format 8) also `entry.quote` and
   `entry.window.text`; (format 11) also
   `proposal.candidate.admitted.matched` and
-  `proposal.candidate.admitted.criteria`. A masked segment
+  `proposal.candidate.admitted.criteria`; (format 13) also
+  `entry.instruction.quote` and `proposal.instruction.quote`. A masked segment
   heading is cut back to 80 characters. Values shorter than 8 characters are not masked;
   identifiers, timestamps and paths are not free text. A `[redact] env`
   name with no value in the writer's environment refuses the write

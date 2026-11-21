@@ -122,6 +122,7 @@ impl Draft {
             updated_by: None,
             settled_author: None,
             closed_reason: None,
+            instruction: None,
             candidate: None,
         }
     }
@@ -666,6 +667,9 @@ pub fn settle(
             entry.quote = None;
             entry.window = None;
             entry.retirement_reason = None;
+            if let Some(instruction) = &mut entry.instruction {
+                instruction.quote = None;
+            }
             entry.updated = now;
             // Forgetting keeps the time a retired or superseded entry left
             // `active`; an active one leaves it now.
@@ -680,6 +684,9 @@ pub fn settle(
                         if let Some(admitted) = &mut candidate.admitted {
                             admitted.matched.clear();
                         }
+                    }
+                    if let Some(instruction) = &mut proposal.instruction {
+                        instruction.quote = None;
                     }
                 }
                 for quote in proposal.quotes.iter_mut().filter(|q| q.entry == *id) {

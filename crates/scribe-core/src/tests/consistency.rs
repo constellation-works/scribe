@@ -564,6 +564,68 @@ fn forget_clears_every_free_text_field_of_the_entry_and_its_candidates() {
 }
 
 #[test]
+fn forget_clears_instruction_quotes_while_keeping_metadata() {
+    let mut entries = store();
+    let inst = crate::Instruction {
+        session: "s-9".parse().unwrap(),
+        message: String::from("m-9"),
+        at: NOW,
+        quote: Some(String::from("approve p-1, secret preference words")),
+    };
+    entries[0].approved_by = Some(crate::Author::agent("aide".parse().unwrap()));
+    entries[0].instruction = Some(inst.clone());
+
+    let mut p_about = proposal(
+        "p-1",
+        ProposalKind::Candidate,
+        "preferences-1",
+        None,
+        ProposalState::Approved,
+    );
+    p_about.instruction = Some(inst.clone());
+
+    let mut p_other = proposal(
+        "p-2",
+        ProposalKind::Candidate,
+        "preferences-3",
+        None,
+        ProposalState::Approved,
+    );
+    p_other.instruction = Some(crate::Instruction {
+        quote: Some(String::from("approve p-2")),
+        ..inst.clone()
+    });
+
+    let mut proposals = vec![p_about, p_other];
+    let done = consistency::settle(
+        &Settle::Forget(id("preferences-1")),
+        &mut proposals,
+        &mut entries,
+        &cite(),
+        NOW,
+    );
+    assert_eq!(done, Settled::Forgotten(id("preferences-1")));
+
+    let e_inst = entries[0].instruction.as_ref().unwrap();
+    assert_eq!(e_inst.session, inst.session);
+    assert_eq!(e_inst.message, inst.message);
+    assert_eq!(e_inst.at, inst.at);
+    assert_eq!(e_inst.quote, None);
+
+    let p_inst = proposals[0].instruction.as_ref().unwrap();
+    assert_eq!(p_inst.session, inst.session);
+    assert_eq!(p_inst.message, inst.message);
+    assert_eq!(p_inst.at, inst.at);
+    assert_eq!(p_inst.quote, None);
+
+    assert_eq!(
+        proposals[1].instruction.as_ref().unwrap().quote.as_deref(),
+        Some("approve p-2"),
+        "unrelated proposal keeps its instruction quote"
+    );
+}
+
+#[test]
 fn reapply_finishes_an_approval_whose_entry_is_still_active() {
     let mut entries = store();
     let proposals = vec![
