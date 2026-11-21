@@ -813,10 +813,10 @@ fn an_issue_record_from_a_newer_format_is_refused_and_left_alone() {
     let path = fx.root().join("issues/issue-1.md");
     let original = std::fs::read_to_string(&path).unwrap();
     assert!(
-        original.starts_with("---\nformat: 21\nkind: issue\n"),
+        original.starts_with("---\nformat: 22\nkind: issue\n"),
         "{original}"
     );
-    let newer = original.replacen("format: 21", "format: 999", 1);
+    let newer = original.replacen("format: 22", "format: 999", 1);
     std::fs::write(&path, &newer).unwrap();
     for args in [
         &["issue", "list"][..],

@@ -317,6 +317,8 @@ impl Proposal {
             cite: candidate.cite.clone(),
             review_after,
             window: None,
+            quote: None,
+            stated_by: None,
         }
         .into_entry(self.older.clone());
         if candidate.role == Speaker::User

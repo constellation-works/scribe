@@ -283,7 +283,11 @@ at the next `scribe session pass`. The human's typed
 `#scribe <tag>: <words>` explicitly records an entry in the working
 directory's project. `#scribe/global` in place of `#scribe` on that line,
 on `#scribe add <words> to <tag>`, or on `#scribe add this to <tag>`, records
-it with `project: global` for every repository. `#scribe approve|reject
+it with `project: global` for every repository. In Claude Code, a `#scribe`
+inside a sentence of the human's typed turn marks it: after your reply
+scribe catalogs it as their entry, its content scribe's statement
+(`stated_by` is `scribe:annotation`) and its `quote` their words. Do not
+record it yourself, and quote only the `quote` as theirs. `#scribe approve|reject
 <proposal-id>` and `#scribe retire|forget <entry-id>` control existing records
 and do not take the global opener. Forget clears the entry's text and evidence, proposal quotes of it, and
 related candidate quotes, evidence and reasons; session records are not erased.

@@ -95,6 +95,8 @@ pub struct ModelIds {
     pub consistency: String,
     /// Resolves "this" and "it".
     pub referent: String,
+    /// Catalogs `#scribe` annotations at `Stop` (2_design.md §14.3).
+    pub annotation: String,
     /// The environment variables that carry the model credential; passed to
     /// the model process and masked in everything persisted.
     pub credentials: Vec<String>,
@@ -109,6 +111,7 @@ impl ModelIds {
             session: String::from("gpt-6-luna"),
             consistency: String::from("gpt-6-luna"),
             referent: String::from("gpt-6-luna"),
+            annotation: String::from("gpt-6-luna"),
             credentials: vec![String::from("OPENAI_API_KEY")],
         }
     }
@@ -122,6 +125,7 @@ impl Default for ModelIds {
             session: String::from("claude-haiku-5-5"),
             consistency: String::from("claude-haiku-5-5"),
             referent: String::from("claude-haiku-5-5"),
+            annotation: String::from("claude-haiku-5-5"),
             credentials: vec![
                 String::from("CLAUDE_CODE_OAUTH_TOKEN"),
                 String::from("ANTHROPIC_API_KEY"),
@@ -250,7 +254,13 @@ impl Config {
             }
         }
         for ids in [&models, &codex_models] {
-            for model in [&ids.ask, &ids.session, &ids.consistency, &ids.referent] {
+            for model in [
+                &ids.ask,
+                &ids.session,
+                &ids.consistency,
+                &ids.referent,
+                &ids.annotation,
+            ] {
                 if model.trim().is_empty() || model.chars().any(char::is_control) {
                     return Err(unlocated(String::from(
                         "model ids must be nonempty and contain no control characters",
@@ -918,6 +928,7 @@ struct RawModels {
     session: Option<String>,
     consistency: Option<String>,
     referent: Option<String>,
+    annotation: Option<String>,
     credentials: Option<Vec<String>>,
 }
 
@@ -938,6 +949,7 @@ impl RawModels {
             session: self.session.unwrap_or(defaults.session),
             consistency: self.consistency.unwrap_or(defaults.consistency),
             referent: self.referent.unwrap_or(defaults.referent),
+            annotation: self.annotation.unwrap_or(defaults.annotation),
             credentials: self.credentials.unwrap_or(defaults.credentials),
         }
     }

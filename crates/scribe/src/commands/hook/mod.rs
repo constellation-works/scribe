@@ -7,8 +7,9 @@
 //!   is `/scribe on|off|status|link|catalog` goes to `scribe_command.rs`
 //!   instead, which switches cataloging and blocks the prompt (§5.1, §5.8);
 //! - `stop.rs`: after a reply, recover missed entry instructions through
-//!   `recovery.rs`, fill in message ids, and mark a switched-on session's
-//!   pass due by minutes or turns (§5.2);
+//!   `recovery.rs`, catalog the `#scribe` markers typed inside sentences
+//!   through `annotation.rs` (§14), fill in message ids, and mark a
+//!   switched-on session's pass due by minutes or turns (§5.2);
 //! - `session_end.rs`: mark a switched-on session's last pass due and final;
 //! - `session_start.rs`: tell Daniel how many proposals are open (§7),
 //!   how many action entries no consumer has picked up (§4.6), and the
@@ -25,9 +26,11 @@
 //! serve `session pass`). These are the only commands that write entries or
 //! `control.json`, and the only ones that settle proposals; every one that
 //! writes is audited (`session-start` reads only), and none calls a model
-//! except the prompt hook's form-3 referent in `user_prompt_submit.rs`.
-//! Stop recovery uses its guessed fallback without a model call.
+//! except the prompt hook's form-3 referent in `user_prompt_submit.rs` and
+//! Stop's annotation call in `annotation.rs`. Stop recovery uses its
+//! guessed fallback without a model call.
 
+mod annotation;
 mod codex;
 mod issue_command;
 pub(super) mod payload;
@@ -72,7 +75,9 @@ oldest; no model is called. #scribe approve <p-id>,
 line is /scribe on, /scribe off or /scribe status switches this session's
 cataloging and is blocked, its status given as the reason; /scribe catalog
 <id> starts Daniel's catalog of a past session, whose windows the next
-session pass runs.
+session pass runs. A #scribe marker inside a sentence (not at the start
+of a line, not quoted or in code) is echoed as marked and cataloged at
+Stop; nothing is written here.
 
 Examples:
   scribe hook user-prompt-submit < <payload.json>";
@@ -81,8 +86,13 @@ const STOP_EXAMPLES: &str = "\
 Reads the Stop payload (session_id, transcript_path, optional cwd) on stdin.
 Recovers missed #scribe entry instructions from the transcript and prints
 hook JSON saying what was recorded or refused; otherwise prints nothing.
-Already captured lines are skipped. Calls no model; recovered referents use
-the guessed fallback. Session controls and settling commands are not replayed.
+Already captured lines are skipped. Recovery calls no model; recovered
+referents use the guessed fallback. Session controls and settling commands
+are not replayed. Then each typed turn with a #scribe marker inside a
+sentence that marks.json has not settled gets one models.annotation call
+(30 s; at most 2 turns per Stop and 3 markers per turn; a failed call is
+retried at the next reply, 3 attempts in all), and its checked answer is
+recorded as Daniel's entry with scribe's statement and his quoted words.
 
 Examples:
   scribe hook stop < <payload.json>";
@@ -114,7 +124,7 @@ pub(crate) enum HookCommand {
     /// Record each #scribe line of a typed prompt, or settle the proposal or entry it names, from the UserPromptSubmit hook's JSON on stdin
     #[command(after_help = PROMPT_EXAMPLES)]
     UserPromptSubmit(HookArgs),
-    /// Recover missed #scribe entries, fill in message ids and mark a session pass due, from the Stop hook's JSON on stdin
+    /// Recover missed #scribe entries, catalog #scribe markers, fill in message ids and mark a session pass due, from the Stop hook's JSON on stdin
     #[command(after_help = STOP_EXAMPLES)]
     Stop(HookArgs),
     /// Mark the final session pass due for a session that is on, from the SessionEnd hook's JSON on stdin

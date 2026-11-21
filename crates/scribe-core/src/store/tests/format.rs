@@ -1,8 +1,8 @@
 use super::{SESSION_BODY, entry_text, session_text};
 use crate::error::Error;
 use crate::store::format::{
-    FORMAT, UPGRADES, decode_control, decode_entry, decode_pickups, decode_proposals,
-    decode_session, encode_pickups, split_frontmatter, split_sections_v3,
+    FORMAT, UPGRADES, decode_control, decode_entry, decode_marks, decode_pickups, decode_proposals,
+    decode_session, encode_marks, encode_pickups, split_frontmatter, split_sections_v3,
 };
 use std::path::Path;
 
@@ -2269,8 +2269,9 @@ fn a_format_fifteen_store_upgrades_with_a_null_outcome_only() {
 #[test]
 fn a_format_sixteen_proposals_document_reads_at_the_current_shape() {
     // Formats 16 to 21 changed no proposal (16 and 18 changed only entries,
-    // 17 and 19 added record kinds, 20 and 21 changed memory items), so a
-    // format-16 to format-20 proposals.json
+    // 17 and 19 added record kinds, 20 and 21 changed memory items, 22
+    // added marks.json and the annotation entry), so a format-16 to
+    // format-21 proposals.json
     // has the current shape: the current document with only its `format`
     // lowered reads back equal, and a stray key is still refused.
     let path = Path::new("proposals.json");
@@ -2279,7 +2280,7 @@ fn a_format_sixteen_proposals_document_reads_at_the_current_shape() {
     let encoded = crate::store::format::encode_proposals(path, &proposals).unwrap();
     let mut value: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
     assert_eq!(value["format"], FORMAT);
-    for older in [16, 17, 18, 19, 20] {
+    for older in [16, 17, 18, 19, 20, 21] {
         value["format"] = serde_json::json!(older);
         assert_eq!(
             decode_proposals(path, &serde_json::to_vec(&value).unwrap()).unwrap(),
@@ -2364,4 +2365,125 @@ fn only_a_merged_or_promoted_memory_item_may_hold_no_occurrence_and_it_names_its
     // An active item needs an occurrence; a merged one names its target.
     corrupt_message(&memory(&memory_text(FORMAT, "active", NO_LINKS, "[]")).unwrap_err());
     corrupt_message(&memory(&memory_text(FORMAT, "merged", NO_LINKS, "[]")).unwrap_err());
+}
+
+/// A frozen format-21 entry Daniel typed, with every key format 21 has.
+fn format_twenty_one_entry(stated_by: &str, quote: &str) -> String {
+    format!(
+        "---
+format: 21
+kind: entry
+id: preferences-1
+tag: preferences
+status: active
+project: scribe
+topics: [ci]
+related: []
+provider: claude-code
+host: host
+author: {{kind: daniel, name: daniel}}
+updated_by: null
+created: 2026-11-01T10:00:00Z
+updated: 2026-11-01T10:00:00Z
+inactive_since: null
+said: \"I want short updates #scribe\"
+content_from: {{kind: message, role: user, message: m-1, at: 2026-11-01T09:59:00Z}}
+cite: {{session: s-1, message: m-1, at: 2026-11-01T09:59:00Z, prompt_sha256: \"{sha}\", line: 1, cwd: /work}}
+retirement_reason: null
+superseded_by: null
+review_after: null
+quote: {quote}
+window: null
+evidence: null
+as_of: null
+approved_by: null
+instruction: null
+removal_instruction: null
+stated_by: {stated_by}
+outcome: null
+---
+Daniel wants short updates.
+",
+        sha = "0".repeat(64)
+    )
+}
+
+const ANNOTATION: &str = "{kind: scribe, name: annotation}";
+
+#[test]
+fn a_format_twenty_one_store_upgrades_unchanged_and_only_format_twenty_two_admits_an_annotation() {
+    // A frozen format-21 entry reads, and re-encodes at the current format
+    // with nothing else changed.
+    let plain = format_twenty_one_entry("null", "null").replace(
+        "content_from: {kind: message, role: user, message: m-1, at: 2026-11-01T09:59:00Z}",
+        "content_from: {kind: instruction}",
+    );
+    let decoded = entry(&plain).unwrap();
+    let encoded =
+        String::from_utf8(crate::store::format::encode_entry(Path::new(ENTRY), &decoded).unwrap())
+            .unwrap();
+    assert!(encoded.starts_with(&format!("---\nformat: {FORMAT}\n")));
+    assert_eq!(entry(&encoded).unwrap(), decoded);
+    assert_eq!(
+        entry(&encoded.replacen(&format!("format: {FORMAT}\n"), "format: 21\n", 1)).unwrap(),
+        decoded
+    );
+
+    // An annotation: scribe's statement of Daniel's quoted words.
+    let at_twenty_one = format_twenty_one_entry(ANNOTATION, "\"I want short updates\"");
+    corrupt_message(&entry(&at_twenty_one).unwrap_err());
+    let current = at_twenty_one.replacen("format: 21\n", &format!("format: {FORMAT}\n"), 1);
+    let annotation = entry(&current).unwrap();
+    assert_eq!(annotation.stated_by, Some(crate::Author::annotation()));
+    assert_eq!(annotation.author, crate::Author::daniel());
+    assert_eq!(annotation.quote.as_deref(), Some("I want short updates"));
+    // It needs his quote, his message, and no approval.
+    corrupt_message(
+        &entry(&current.replace("quote: \"I want short updates\"", "quote: null")).unwrap_err(),
+    );
+    corrupt_message(&entry(&current.replace("role: user", "role: assistant")).unwrap_err());
+    corrupt_message(
+        &entry(&current.replace(
+            "approved_by: null",
+            "approved_by: {kind: agent, name: aide}",
+        ))
+        .unwrap_err(),
+    );
+    // Forgotten, it keeps no words and still reads.
+    let mut entries = vec![annotation.clone()];
+    let forgotten = crate::consistency::forget(
+        &annotation.id,
+        &mut [],
+        &mut entries,
+        time::macros::datetime!(2026-11-22 10:00 UTC),
+    );
+    assert!(
+        matches!(forgotten, crate::consistency::Settled::Forgotten(_)),
+        "{forgotten:?}"
+    );
+    let encoded = crate::store::format::encode_entry(Path::new(ENTRY), &entries[0]).unwrap();
+    let back = entry(std::str::from_utf8(&encoded).unwrap()).unwrap();
+    assert_eq!(back.status, crate::EntryStatus::Forgotten);
+    assert!(back.quote.is_none() && back.said.is_empty() && back.content.is_empty());
+}
+
+#[test]
+fn marks_json_is_new_at_format_twenty_two_and_holds_consistent_outcomes() {
+    let path = Path::new("marks.json");
+    let doc = |format: u32, mark: &str| {
+        format!("{{\"format\":{format},\"marks\":[{mark}]}}").into_bytes()
+    };
+    let entry_mark = r#"{"session":"s-1","message":"u-1","prompt_sha256":"aaaa","marker":1,"outcome":"entry","entry":"preferences-1","code":null,"attempts":1,"at":"2026-11-21T10:00:00Z"}"#;
+    let marks = decode_marks(path, &doc(FORMAT, entry_mark)).unwrap();
+    assert_eq!(marks.len(), 1);
+    let encoded = encode_marks(path, &marks).unwrap();
+    assert_eq!(decode_marks(path, &encoded).unwrap(), marks);
+    // Format 21 has no marks.json, and a newer one is refused.
+    assert!(decode_marks(path, &doc(21, entry_mark)).is_err());
+    assert!(decode_marks(path, &doc(FORMAT + 1, entry_mark)).is_err());
+    // An outcome whose fields disagree, or a stray key, is refused.
+    let inconsistent = entry_mark.replace(r#""entry":"preferences-1""#, r#""entry":null"#);
+    assert!(decode_marks(path, &doc(FORMAT, &inconsistent)).is_err());
+    let stray = entry_mark.replace(r#""attempts":1"#, r#""attempts":1,"quote":"words""#);
+    assert!(decode_marks(path, &doc(FORMAT, &stray)).is_err());
 }

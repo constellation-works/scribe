@@ -788,6 +788,8 @@ fn new_entry(
             .get(line.tag)
             .and_then(|def| def.review_after(turn.at.date())),
         window: None,
+        quote: None,
+        stated_by: None,
     }
 }
 

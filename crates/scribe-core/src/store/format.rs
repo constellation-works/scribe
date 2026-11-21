@@ -41,7 +41,7 @@ use time::OffsetDateTime;
 
 /// The newest store format: this build reads formats 1 to `FORMAT` of every
 /// document and would write `FORMAT`.
-pub(super) const FORMAT: u32 = 21;
+pub(super) const FORMAT: u32 = 22;
 
 /// Which document an upgrade step is applied to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,6 +89,7 @@ pub(super) const UPGRADES: &[Upgrade] = &[
     memory_items,
     memory_consolidation,
     memory_preference_proposal,
+    annotations,
 ];
 
 /// The first format a memory item exists at: `memory/<id>.md` has no older
@@ -101,6 +102,22 @@ pub(super) const MEMORY_SINCE: u32 = 19;
 /// this format, so a format-18 build refuses a store that holds a memory
 /// item rather than reading the store without it.
 fn memory_items(
+    _document: Document,
+    value: serde_json::Value,
+) -> serde_json::Result<serde_json::Value> {
+    Ok(value)
+}
+
+/// The first format `marks.json` and an annotation entry exist at
+/// (2_design.md §14.8).
+pub(super) const ANNOTATIONS_SINCE: u32 = 22;
+
+/// Format 21 -> 22 changes no stored value. It adds `marks.json`, each
+/// `#scribe` annotation marker's outcome, which has no older form, and
+/// admits an entry Daniel marked whose content is scribe's statement
+/// (`stated_by: {kind: scribe, name: annotation}`, 2_design.md §14.4),
+/// which only a format-22 entry may carry.
+fn annotations(
     _document: Document,
     value: serde_json::Value,
 ) -> serde_json::Result<serde_json::Value> {
@@ -1676,6 +1693,30 @@ pub(super) fn decode_entry(
                     // Scribe's statement of Daniel's turn (format 14): an
                     // approved pass claim from his message, his words in
                     // `quote` until the entry is forgotten.
+                    // Scribe's statement of a turn he marked with
+                    // `#scribe` (format 22): his words in `quote` and the
+                    // marked line in `said` until the entry is forgotten.
+                    Some(by) if *by == Author::annotation() => {
+                        from >= ANNOTATIONS_SINCE
+                            && matches!(
+                                entry.content_from,
+                                crate::ContentFrom::Message {
+                                    role: crate::Speaker::User,
+                                    ..
+                                }
+                            )
+                            && entry.approved_by.is_none()
+                            && match entry.status {
+                                crate::EntryStatus::Forgotten => {
+                                    entry.quote.is_none() && entry.said.is_empty()
+                                }
+                                crate::EntryStatus::Active
+                                | crate::EntryStatus::Superseded
+                                | crate::EntryStatus::Retired => {
+                                    entry.quote.is_some() && !entry.said.is_empty()
+                                }
+                            }
+                    }
                     Some(by) => {
                         *by == Author::session_pass()
                             && matches!(
@@ -2197,11 +2238,11 @@ fn decode_json<T: DeserializeOwned>(path: &Path, bytes: &[u8], document: Documen
                 return Err(shape(path, "unknown variant `covered`"));
             }
         }
-        // Formats 16 to 21 changed no proposal (16 and 18 changed only
+        // Formats 16 to 22 changed no proposal (16 and 18 changed only
         // entries, 17 and 19 added record kinds, 20 and 21 changed only
-        // memory items), so a format-15 to format-20 proposals.json has the
-        // current shape.
-        Document::Proposals if (15..=20).contains(&from) => {
+        // memory items, 22 added marks.json and the annotation entry), so
+        // a format-15 to format-21 proposals.json has the current shape.
+        Document::Proposals if (15..=21).contains(&from) => {
             serde_json::from_slice::<ProposalsDocument>(bytes)
                 .map_err(|e| Error::corrupt(path, e))?;
         }
@@ -2454,6 +2495,58 @@ pub(super) fn encode_pickups(path: &Path, pickups: &[crate::action::Pickup]) -> 
     let mut bytes = serde_json::to_vec_pretty(&PickupsDocument {
         format: FORMAT,
         pickups,
+    })
+    .map_err(|e| Error::corrupt(path, e))?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MarksDocument {
+    format: u32,
+    marks: Vec<crate::annotation::MarkRecord>,
+}
+
+/// Parse `marks.json` (format [`ANNOTATIONS_SINCE`] and later; there is no
+/// older form).
+pub(super) fn decode_marks(
+    path: &Path,
+    bytes: &[u8],
+) -> Result<Vec<crate::annotation::MarkRecord>> {
+    let from = check_format(
+        path,
+        serde_json::from_slice(bytes).map_err(|e| Error::corrupt(path, e)),
+    )?;
+    if from < ANNOTATIONS_SINCE {
+        return Err(shape(
+            path,
+            format!("marks.json is new at format {ANNOTATIONS_SINCE}"),
+        ));
+    }
+    let doc: MarksDocument = serde_json::from_slice(bytes).map_err(|e| Error::corrupt(path, e))?;
+    if let Some(bad) = doc.marks.iter().find(|m| !m.is_consistent()) {
+        return Err(shape(
+            path,
+            format!(
+                "mark {}#{} has fields that disagree with its outcome {}",
+                bad.message,
+                bad.marker,
+                bad.outcome.as_str()
+            ),
+        ));
+    }
+    Ok(doc.marks)
+}
+
+/// `marks.json`'s bytes at the current format, oldest first.
+pub(super) fn encode_marks(
+    path: &Path,
+    marks: &[crate::annotation::MarkRecord],
+) -> Result<Vec<u8>> {
+    let mut bytes = serde_json::to_vec_pretty(&MarksDocument {
+        format: FORMAT,
+        marks: marks.to_vec(),
     })
     .map_err(|e| Error::corrupt(path, e))?;
     bytes.push(b'\n');
