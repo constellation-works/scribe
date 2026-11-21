@@ -1157,3 +1157,84 @@ fn a_scan_that_fails_after_persisting_closures_still_audits_each_one() {
         .count();
     assert_eq!(failures, 1, "{scan_lines:?}");
 }
+
+#[test]
+fn consistency_scan_with_custom_tag_config_keeps_open_preferences_candidates() {
+    let fx = Fixture::new();
+    let path = fx.fake_program(
+        "claude",
+        "#!/bin/sh\necho call >> \"$HOME/claude-calls\"\nexit 1\n",
+    );
+    let s = Setup {
+        transcript: fx
+            .home()
+            .join(".claude/projects/-work-scribe")
+            .join(format!("{SESSION}.jsonl")),
+        cwd: fx.elsewhere("work/scribe"),
+        fx,
+        path,
+    };
+    std::fs::create_dir_all(s.fx.root()).unwrap();
+    make_private(&s.fx.root());
+    let config = s.fx.root().join("config.toml");
+    std::fs::write(&config, "[tags.remind]\naction = true\n").unwrap();
+    make_private(&config);
+
+    let candidate = |n: usize, tag: &str| {
+        let quote = format!("I always keep {tag} item {n} documented.");
+        json!({
+            "id": format!("p-{n}"),
+            "kind": "candidate",
+            "older": format!("{tag}-{n}"),
+            "newer": null,
+            "candidate": {
+                "tag": tag,
+                "role": "user",
+                "quote": quote,
+                "evidence": null,
+                "cite": {
+                    "session": SESSION,
+                    "message": format!("seed-{n}"),
+                    "at": "2026-11-15T00:00:00Z",
+                    "prompt_sha256": "0".repeat(64),
+                    "line": 1,
+                    "cwd": "/work/scribe"
+                },
+                "project": "scribe",
+                "provider": "claude-code",
+                "host": "host",
+                "admitted": null
+            },
+            "reason": format!("Unmarked {tag} statement: {quote}"),
+            "quotes": [],
+            "state": "open",
+            "opened_at": "2026-11-15T00:01:00Z",
+            "settled_at": null,
+            "settled_by": null,
+            "author": {"kind": "scribe", "name": "session-pass"},
+            "updated_by": null,
+            "settled_author": null,
+            "closed_reason": null
+        })
+    };
+    let proposals_file = s.fx.root().join("proposals.json");
+    std::fs::write(
+        &proposals_file,
+        json!({"format": 11, "proposals": [candidate(1, "preferences"), candidate(2, "decisions")]})
+            .to_string(),
+    )
+    .unwrap();
+    make_private(&proposals_file);
+
+    let report = s.scan();
+    assert_eq!(s.calls(), 0);
+    let closed = report["closed"].as_array().unwrap();
+    assert_eq!(closed.len(), 1, "{report}");
+    assert_eq!(closed[0]["id"], "p-2");
+    assert_eq!(closed[0]["closed_reason"], "tag_retired");
+
+    let open = s.json(&["proposal", "list", "--state", "open", "--json"]);
+    assert_eq!(open["total"], 1, "{open}");
+    assert_eq!(open["proposals"][0]["id"], "p-1");
+    assert_eq!(open["proposals"][0]["candidate"]["tag"], "preferences");
+}

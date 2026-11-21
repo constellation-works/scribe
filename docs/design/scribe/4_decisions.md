@@ -11,7 +11,7 @@ summary: Why superseded entries are hidden not removed, why one JSON file per ta
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405]
 ---
 
 # scribe — Decisions
@@ -2424,6 +2424,13 @@ is settled. The refusal's forms text includes `#scribe/global`.
 > mechanism (config marks `action = true`, the switches, the window, the
 > consequences for entries) stands as written; the sentences below that name
 > `task` and `friction` as shipped describe the original choice.
+>
+> **Superseded in part, 2026-11-21 ([ORB-26405]):** "unless it claims their
+> names". A config tag of the same name still overrides only the fields it
+> sets. A different config entry that claims a shipped name or alias does not
+> make the file `config_invalid`: Daniel's config wins, the shipped tag loses
+> only that word, and `tag list` warns
+> ([see below](#config-tags-merge-with-the-shipped-set)).
 
 ### Context
 
@@ -3498,3 +3505,67 @@ entries already inactive, since no better time exists in an older record.
   covered; the order inside the second is not recorded.
 - Cost: a format bump, so a build older than format 12 refuses the store
   (`store_too_new`).
+
+## Config tags merge with the shipped set
+
+**Recorded:** 2026-11-21 · [ORB-26405] · **Overridable by Daniel**
+**Code anchors:** `crates/scribe-core/src/config.rs` (`Config::parse`, `merge_with_shipped`), `crates/scribe-core/src/tag.rs` (`TagTable::shipped`, `TagTable::defaults`)
+
+### Context
+
+A `[tags]` table used to replace the shipped set, keeping only the action
+tags whose names the file had not claimed. Declaring `[tags.remind] action =
+true` dropped `preferences`, and the retired-tag cleanup then closed every
+open preferences candidate. Daniel, 2026-11-21: a user should be able to
+define and add new tags with their own criteria and trigger words. Adding a
+tag must not remove a shipped one.
+
+Review of the first merge (scribe#91) refused the file when a config alias
+collided with a shipped name or alias (`pref`, `standard`). Those files were
+valid before: the alias resolved to the config tag and the store stayed
+readable. A config file must never make a store unreadable.
+
+### Decision
+
+This supersedes the "unless it claims their names" sentence of [Action tags
+are marked in config, and three
+ship](#action-tags-are-marked-in-config-and-three-ship), and only that
+sentence. `[tags]` merges with the shipped set (`preferences`, `idea`,
+`standard`). A declared tag that is not shipped is added. A declared shipped
+tag overrides only the fields it sets and inherits the rest: aliases,
+description, stale interval, action (including `require_quote` and
+`ask_first`) and each capture field. `aliases = []` clears aliases. There is
+no syntax that deletes a shipped tag.
+
+A word the file sets — a tag's name, or an alias in an `aliases` list it
+writes — belongs to that config entry. When the word is a shipped tag's
+name, that shipped tag is left out. When it is only a shipped alias, the
+shipped tag loses that alias and keeps everything else. `tag list` prints a
+line naming both tags; `tag list`, `entry list` and `record search` still
+succeed. Omitting `aliases` does not claim the inherited aliases, so another
+config tag may take one. Two config entries that claim one word are still
+`config_invalid`.
+
+The alternative was to keep refusing every collision, including one with a
+shipped default. That protects a reader from a quiet loss, and it also turns
+a file Daniel already uses into a store nothing can read.
+
+### Consequences
+
+- `[tags.remind] action = true` alone still lists `idea`, `preferences`
+  (180 days, aliases `preference` and `pref`, shipped capture) and
+  `standard`, plus `remind` as an action tag. A pass and `consistency scan`
+  do not close an open preferences candidate for `tag_retired`.
+- `[tags.rituals] aliases = ["pref"]` keeps `preferences` without the alias
+  `pref`, and `tag list` warns. `aliases = ["standard"]` leaves `standard`
+  out and warns. `[tags.preferences]` with aliases `preference` and `pref`,
+  plus `[tags.remind] action = true`, reads as that explicit preferences tag
+  plus the shipped action tags and `remind`, with no warning.
+- The Mac `~/.scribe/config.toml` repeats `[tags.preferences]` only to keep
+  the tag under the old replacement rule. Once this ships, that block can
+  be dropped; this change does not edit the file.
+- Cost: a shipped alias or name can disappear because another tag claimed
+  the word, visible only as a `tag list` line. A reader who misses the line
+  can think the shipped tag was never there. Two config entries that both
+  want the word are still refused, so the loss is only against a default he
+  did not write.

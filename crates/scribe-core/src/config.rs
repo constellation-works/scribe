@@ -26,10 +26,18 @@
 //! triggers = ["always", "never", "from now on", "I prefer"]
 //! not = "a choice about one task; an acknowledgement"
 //!
-//! A `[tags.preferences]` table that omits `aliases`, `description` or
-//! `stale_after_days` — including one that sets only `[tags.preferences.capture]`
-//! — keeps the shipped values. `aliases = []` clears them. Omitting
-//! `stale_after_days` on any other tag still means entries never go stale.
+//! `[tags]` merges with the shipped tags (`preferences`, `idea`, `standard`):
+//! declaring another tag adds it, and a partial table for a shipped tag —
+//! including one that sets only `[tags.preferences.capture]` — overrides only
+//! the fields it sets and inherits the rest (`aliases`, `description`,
+//! `stale_after_days`, `action`, `require_quote`, `ask_first`,
+//! `require_evidence`, and capture fields). `aliases = []` clears shipped
+//! aliases. Omitting `stale_after_days` on a tag with no shipped interval
+//! means entries never go stale. A word the config sets that a shipped tag
+//! also uses is Daniel's: the shipped tag loses that alias, or is left out
+//! when the word is its name, and `tag list` warns. Two config entries that
+//! claim one word are refused. Nothing in config deletes a shipped tag
+//! except claiming its name.
 //!
 //! [models]
 //! ask = "claude-sonnet-5-5"
@@ -57,7 +65,7 @@ use crate::record::{Label, Project, is_kebab};
 use crate::session::Cadence;
 use crate::tag::{
     ActionTag, CAPTURE_TEXT_CHARS, CaptureFrom, CaptureRoute, CaptureRules, Rule, RuleOrigin,
-    TagDef, TagTable,
+    TagDef, TagError, TagTable,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -152,6 +160,10 @@ impl Default for SessionsConfig {
 pub struct Config {
     /// The tags.
     pub tags: TagTable,
+    /// Shipped names and aliases this file claimed. `tag list` prints them;
+    /// they are not errors, and an empty list means the merge changed nothing
+    /// a shipped tag already held.
+    pub tag_warnings: Vec<String>,
     /// The model ids and credential names.
     pub models: ModelIds,
     /// Models for Codex-origin work, defaulting to Luna.
@@ -175,6 +187,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             tags: TagTable::defaults(),
+            tag_warnings: Vec::new(),
             models: ModelIds::default(),
             codex_models: ModelIds::codex(),
             catalog: Cadence::default(),
@@ -209,16 +222,14 @@ impl Config {
             line: None,
             message,
         };
-        let tags = match raw.tags {
-            None => TagTable::defaults(),
+        let (tags, tag_warnings) = match raw.tags {
+            None => (TagTable::defaults(), Vec::new()),
             Some(tags) => {
-                let defs = tags
+                let declared = tags
                     .into_iter()
                     .map(|(name, tag)| tag.into_def(name, text))
                     .collect::<Result<Vec<_>, _>>()?;
-                TagTable::new(defs)
-                    .map_err(|e| unlocated(e.to_string()))?
-                    .with_shipped_actions()
+                merge_with_shipped(declared).map_err(|e| unlocated(e.message))?
             }
         };
         let models = raw.models.resolve(ModelIds::default());
@@ -248,6 +259,7 @@ impl Config {
         let window = crate::pass::WindowLimits::default();
         Ok(Self {
             tags,
+            tag_warnings,
             models,
             codex_models,
             catalog: Cadence {
@@ -490,8 +502,16 @@ impl RawCapture {
     }
 }
 
+/// One `[tags.<name>]` table. `aliases_set` is true when the file wrote
+/// `aliases`, including `aliases = []`. Omitted aliases are inherited and
+/// are not claims of this entry.
+struct DeclaredTag {
+    def: TagDef,
+    aliases_set: bool,
+}
+
 impl RawTag {
-    fn into_def(self, name: String, text: &str) -> Result<TagDef, ConfigError> {
+    fn into_def(self, name: String, text: &str) -> Result<DeclaredTag, ConfigError> {
         // An alias is a word Daniel types, so its case folds; a name is also
         // the entries directory, so it must already be lowercase.
         let word = |key: String, value: String| {
@@ -501,22 +521,19 @@ impl RawTag {
             })
         };
         let key = format!("tags.{name}");
-        // A config tag named like a shipped action tag starts from the
-        // shipped settings, so `[tags.standard] ask_first = true` keeps it an
-        // action tag; `action = false` makes it a memory tag. A present
-        // `preferences` tag likewise keeps the shipped aliases, description
-        // and stale window when those keys are omitted.
-        let shipped = TagTable::shipped_action(&name);
-        let preferences = (name == "preferences")
-            .then(TagTable::shipped_preferences)
-            .flatten();
+        // A config tag named like a shipped tag overrides only the fields it
+        // sets and inherits the rest. `action = false` makes a shipped action
+        // tag a memory tag.
+        let shipped = TagTable::shipped(&name);
         let shipped_action = shipped.as_ref().and_then(|def| def.action);
         let action = if self.action.unwrap_or(shipped_action.is_some()) {
             Some(ActionTag {
                 require_quote: self
                     .require_quote
                     .unwrap_or_else(|| shipped_action.is_some_and(|a| a.require_quote)),
-                ask_first: self.ask_first.unwrap_or(false),
+                ask_first: self
+                    .ask_first
+                    .unwrap_or_else(|| shipped_action.is_some_and(|a| a.ask_first)),
             })
         } else {
             for (flag, set) in [
@@ -536,7 +553,9 @@ impl RawTag {
         };
         // `require_evidence` marks a finding-like memory tag; an action tag
         // refuses it (its evidence is its window).
-        let require_evidence = self.require_evidence.unwrap_or(false);
+        let require_evidence = self
+            .require_evidence
+            .unwrap_or_else(|| shipped.as_ref().is_some_and(|def| def.require_evidence));
         if require_evidence && action.is_some() {
             return Err(ConfigError {
                 line: None,
@@ -545,42 +564,158 @@ impl RawTag {
                 ),
             });
         }
-        let description = self.description.or_else(|| {
-            shipped
-                .as_ref()
-                .and_then(|def| def.description.clone())
-                .or_else(|| preferences.as_ref().and_then(|def| def.description.clone()))
-        });
+        let description = self
+            .description
+            .or_else(|| shipped.as_ref().and_then(|def| def.description.clone()));
+        let shipped_capture = shipped
+            .as_ref()
+            .map(|def| def.capture.clone())
+            .unwrap_or_default();
         let capture = match self.capture {
-            None => CaptureRules::shipped(&name),
-            Some(raw) => raw.resolve(
-                &format!("{key}.capture"),
-                text,
-                CaptureRules::shipped(&name),
-            )?,
+            None => shipped_capture,
+            Some(raw) => raw.resolve(&format!("{key}.capture"), text, shipped_capture)?,
         };
+        let aliases_set = self.aliases.is_some();
         let aliases = match self.aliases {
             Some(aliases) => aliases
                 .into_iter()
                 .map(|alias| word(format!("{key}.aliases"), alias.to_lowercase()))
                 .collect::<Result<_, _>>()?,
-            None => preferences
+            None => shipped
                 .as_ref()
                 .map(|def| def.aliases.clone())
                 .unwrap_or_default(),
         };
-        Ok(TagDef {
-            aliases,
-            name: word(key, name)?,
-            description,
-            stale_after_days: self
-                .stale_after_days
-                .or_else(|| preferences.as_ref().and_then(|def| def.stale_after_days)),
-            action,
-            require_evidence,
-            capture,
+        Ok(DeclaredTag {
+            def: TagDef {
+                aliases,
+                name: word(key, name)?,
+                description,
+                stale_after_days: self
+                    .stale_after_days
+                    .or_else(|| shipped.as_ref().and_then(|def| def.stale_after_days)),
+                action,
+                require_evidence,
+                capture,
+            },
+            aliases_set,
         })
     }
+}
+
+/// Words this config entry claims: its name, and its aliases only when the
+/// file set `aliases`. Inherited aliases stay shipped until another entry
+/// takes them.
+fn explicit_words(tag: &DeclaredTag) -> impl Iterator<Item = &str> {
+    let set = tag.aliases_set;
+    std::iter::once(tag.def.name.as_str()).chain(
+        tag.def
+            .aliases
+            .iter()
+            .filter(move |_| set)
+            .map(crate::entry::TagName::as_str),
+    )
+}
+
+fn claimer<'a>(word: &str, declared: &'a [DeclaredTag]) -> Option<&'a str> {
+    declared.iter().find_map(|tag| {
+        explicit_words(tag)
+            .any(|claimed| claimed == word)
+            .then_some(tag.def.name.as_str())
+    })
+}
+
+/// Two of Daniel's own entries claiming one word is `config_invalid`. The
+/// message matches [`TagError::Ambiguous`], and the earlier tag is the one
+/// earlier by name, as [`TagTable::new`] orders them.
+fn refuse_config_collisions(declared: &[DeclaredTag]) -> Result<(), ConfigError> {
+    let mut ordered: Vec<&DeclaredTag> = declared.iter().collect();
+    ordered.sort_by(|left, right| left.def.name.cmp(&right.def.name));
+    let mut claimed: BTreeMap<&str, &str> = BTreeMap::new();
+    for tag in ordered {
+        for word in explicit_words(tag) {
+            if let Some(first) = claimed.insert(word, tag.def.name.as_str()) {
+                return Err(ConfigError {
+                    line: None,
+                    message: TagError::Ambiguous {
+                        word: word.to_owned(),
+                        first: first.to_owned(),
+                        second: tag.def.name.to_string(),
+                    }
+                    .to_string(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn strip_claimed_aliases(
+    def: &mut TagDef,
+    shipped_name: &str,
+    declared: &[DeclaredTag],
+    warnings: &mut Vec<String>,
+) {
+    def.aliases
+        .retain(|alias| match claimer(alias.as_str(), declared) {
+            Some(who) if who != shipped_name => {
+                warnings.push(format!(
+                    "shipped tag {shipped_name} alias {alias} is claimed by config tag {who}"
+                ));
+                false
+            }
+            _ => true,
+        });
+}
+
+/// Shipped tags, then Daniel's. A config claim of a shipped name drops that
+/// tag; a claim of a shipped alias drops only the alias. Either way the
+/// warning names both tags. A shipped tag he declared keeps the fields he
+/// did not set, minus aliases another of his entries claimed.
+fn merge_with_shipped(declared: Vec<DeclaredTag>) -> Result<(TagTable, Vec<String>), ConfigError> {
+    refuse_config_collisions(&declared)?;
+    let mut warnings = Vec::new();
+    let mut tags = Vec::new();
+    let by_name: BTreeMap<&str, &DeclaredTag> = declared
+        .iter()
+        .map(|tag| (tag.def.name.as_str(), tag))
+        .collect();
+    for shipped in TagTable::defaults().tags() {
+        let name = shipped.name.as_str();
+        match claimer(name, &declared) {
+            Some(who) if who != name => {
+                warnings.push(format!("shipped tag {name} is claimed by config tag {who}"));
+            }
+            Some(_) => {
+                let Some(declared_tag) = by_name.get(name) else {
+                    return Err(ConfigError {
+                        line: None,
+                        message: format!("config tag {name} was claimed but not parsed"),
+                    });
+                };
+                let mut def = declared_tag.def.clone();
+                if !declared_tag.aliases_set {
+                    strip_claimed_aliases(&mut def, name, &declared, &mut warnings);
+                }
+                tags.push(def);
+            }
+            None => {
+                let mut def = shipped.clone();
+                strip_claimed_aliases(&mut def, name, &declared, &mut warnings);
+                tags.push(def);
+            }
+        }
+    }
+    for tag in &declared {
+        if TagTable::shipped(tag.def.name.as_str()).is_none() {
+            tags.push(tag.def.clone());
+        }
+    }
+    let table = TagTable::new(tags).map_err(|error| ConfigError {
+        line: None,
+        message: error.to_string(),
+    })?;
+    Ok((table, warnings))
 }
 
 #[derive(Default, Deserialize)]

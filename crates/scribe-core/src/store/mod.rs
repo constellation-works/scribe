@@ -569,11 +569,14 @@ impl Store {
 
     /// Every configured tag and every tag that has entries, with counts.
     pub fn list_tags(&self) -> Result<TagList> {
-        let configured = self.config_only()?.tags;
+        let config = self.config_only()?;
         let stored = self.store_tags()?;
-        let (table, warnings) = configured
+        let (table, mut warnings) = config
+            .tags
             .merge_store(&stored)
             .map_err(|e| agent::refusal(crate::WriteRefusal::TagConflict, e.to_string()))?;
+        warnings.extend(config.tag_warnings);
+        let configured = &config.tags;
         let (entries, skipped) = self.load_entries()?;
         let pickups = self.pickups()?;
         let counts = crate::action::tag_counts(&entries, &table, &pickups);
