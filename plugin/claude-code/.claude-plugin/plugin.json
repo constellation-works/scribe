@@ -1,6 +1,6 @@
 {
   "name": "scribe",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Records the #scribe lines Daniel types as preferences, and catalogs the sessions he switches on with /scribe on, through the scribe binary on PATH.",
   "author": {
     "name": "Daniel"
