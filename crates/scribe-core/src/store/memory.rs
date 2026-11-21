@@ -415,7 +415,7 @@ impl Store {
         let changed = match occurrence {
             None => {
                 // The items holding the same words go with it: those merged
-                // into it, and the other side of a promotion.
+                // into it, however deep, and the rest of a promotion.
                 let (mut items, _) = self.memory_items()?;
                 for index in memory::linked(&items, &item.id) {
                     let linked = &mut items[index];

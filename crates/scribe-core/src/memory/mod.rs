@@ -1594,27 +1594,47 @@ pub fn forget(item: &mut MemoryItem, by: Author, now: OffsetDateTime) -> bool {
 }
 
 /// The items whose words `forget` of `id` must also blank (§13.9): those
-/// merged into it, whose statements still stand; and, across a promotion,
-/// the milestone and the `now` item it came from, which hold the same
-/// event and the same occurrences. By index into `items`, without `id`
-/// itself.
+/// merged into it, whose statements still stand, and those merged into
+/// them in turn; and, across a promotion, the milestone, the `now` item it
+/// came from and rule (a)'s new profile item (`profile_to`), each reached
+/// from either of the others, as they hold the same event and Daniel's same
+/// words. Followed to a fixed point, so a link
+/// reached through another link goes too. By index into `items`, in store
+/// order, without `id` itself.
 #[must_use]
 pub fn linked(items: &[MemoryItem], id: &MemoryId) -> Vec<usize> {
-    let Some(target) = items.iter().find(|i| &i.id == id) else {
+    if !items.iter().any(|i| &i.id == id) {
         return Vec::new();
-    };
-    let promoted_to = (target.status == MemoryStatus::Promoted)
-        .then(|| target.promotion.as_ref().map(|p| p.to.clone()))
-        .flatten();
+    }
+    let mut reached: Vec<&MemoryId> = vec![id];
+    let mut next = 0;
+    while let Some(&current) = reached.get(next) {
+        next += 1;
+        let Some(item) = items.iter().find(|i| &i.id == current) else {
+            continue;
+        };
+        let promotion = item.promotion.as_ref();
+        let neighbours = items
+            .iter()
+            .filter(|i| {
+                i.merged_into.as_ref() == Some(current)
+                    || item.promoted_from.as_ref() == Some(&i.id)
+                    || i.promoted_from.as_ref() == Some(current)
+                    || i.promotion.as_ref().and_then(|p| p.profile_to.as_ref()) == Some(current)
+                    || promotion
+                        .is_some_and(|p| p.to == i.id || p.profile_to.as_ref() == Some(&i.id))
+            })
+            .map(|i| &i.id);
+        for found in neighbours {
+            if !reached.contains(&found) {
+                reached.push(found);
+            }
+        }
+    }
     items
         .iter()
         .enumerate()
-        .filter(|(_, i)| &i.id != id)
-        .filter(|(_, i)| {
-            i.merged_into.as_ref() == Some(id)
-                || target.promoted_from.as_ref() == Some(&i.id)
-                || promoted_to.as_ref() == Some(&i.id)
-        })
+        .filter(|(_, i)| &i.id != id && reached.contains(&&i.id))
         .map(|(n, _)| n)
         .collect()
 }

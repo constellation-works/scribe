@@ -4303,7 +4303,12 @@ What exists, extended to memory ids (and, if the parked
 - `#scribe retire <m-id>` hides an item from the page, `ask` and lists
   (`retired`); `#scribe forget <m-id>` blanks its statement and every
   occurrence's quote for good (`forgotten`; id, section, dates and authors
-  stay), and `#scribe forget <m-id>#<n>` one occurrence. The settling
+  stay), and `#scribe forget <m-id>#<n>` one occurrence. Forgetting a whole
+  item also forgets every item holding the same words: those merged into
+  it, directly or through another merged item; and, across a promotion,
+  the `now` item, the milestone and rule (a)'s new profile item, whichever
+  of them is named (ORB-26567). The profile item a change superseded holds
+  other words and stays. The settling
   verbs of §7 accept `m-` ids; a repeated instruction echoes "nothing
   changed".
 - Items are scribe-authored, so an agent may retire or forget one without

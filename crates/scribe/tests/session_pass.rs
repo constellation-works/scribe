@@ -5073,6 +5073,64 @@ fn ack_retire_and_forget_change_items_and_forget_leaves_no_trace_of_their_text()
 }
 
 #[test]
+fn forgetting_a_profile_change_milestone_also_forgets_the_profile_item_it_wrote() {
+    const MOVED: &str = "We finally moved to Seattle last week, the boxes are everywhere.";
+    let s = Setup::new();
+    s.append(ON, &[line("user", "u-m", MOVED)]);
+    let mut body = answer();
+    let mut moved = memory_element(
+        "now",
+        "Said he moved to Seattle.",
+        "We finally moved to Seattle",
+        "u-m",
+    );
+    moved["promote"] = json!("Lives in Seattle.");
+    body["memory"] = json!([moved]);
+    s.answer(&body);
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let items = memory_items(&s, &["--include-off-page"]);
+    let by_id = |id: &str| -> Value {
+        items["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["id"] == id)
+            .cloned()
+            .unwrap_or_else(|| panic!("{id} in {items}"))
+    };
+    assert_eq!(by_id("m-2")["section"], "milestones", "{items}");
+    assert_eq!(by_id("m-2")["promotion"]["profile_to"], "m-3", "{items}");
+    assert_eq!(by_id("m-3")["statement"], "Lives in Seattle.");
+
+    s.run(
+        &[
+            "memory",
+            "forget",
+            "m-2",
+            "--author",
+            "opus",
+            "--confirm",
+            "--json",
+        ],
+        b"",
+    );
+    let after = memory_items(&s, &["--include-off-page"]);
+    for item in after["items"].as_array().unwrap() {
+        assert_eq!(item["status"], "forgotten", "{after}");
+        assert_eq!(item["statement"], "", "{after}");
+    }
+    let stored = store_text(&s);
+    for gone in [
+        "We finally moved to Seattle",
+        "Lives in Seattle",
+        "moved to Seattle",
+    ] {
+        assert!(!stored.contains(gone), "{gone:?} is still in the store");
+    }
+}
+
+#[test]
 fn the_session_start_page_lists_memory_and_recent_sessions_in_interactive_sessions_only() {
     let s = memory_setup();
     s.scribe("/scribe on");
