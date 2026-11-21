@@ -389,33 +389,175 @@ fn a_format_ten_store_upgrades_with_null_admission_and_closed_reason_only() {
     assert!(decode_proposals(path, stray.as_bytes()).is_err());
 }
 
+/// What Daniel typed, and the body it recorded, in the format-11 fixture.
+const SAID: &str = "#scribe preferences: run the gate";
+const BODY: &str = "run the gate before every push";
+
+/// An entry file at format 11: every key format 11 wrote and none of format
+/// 12's `inactive_since`, so reading it runs only the 11 -> 12 step. Its
+/// `updated` is 2026-11-03T08:30:00Z.
+fn format_eleven_entry(status: &str, superseded_by: &str, said: &str, body: &str) -> String {
+    format!(
+        "---
+format: 11
+kind: entry
+id: preferences-1
+tag: preferences
+status: {status}
+project: scribe
+topics: [ci]
+related: [\"repo:scribe\"]
+provider: claude-code
+host: host
+author: {{kind: daniel, name: daniel}}
+updated_by: null
+created: 2026-11-01T10:00:00Z
+updated: 2026-11-03T08:30:00Z
+said: \"{said}\"
+content_from: {{kind: instruction}}
+cite: {{session: s-1, message: null, at: 2026-11-01T10:00:00Z, prompt_sha256: \"{sha}\", line: 1, cwd: /work}}
+retirement_reason: null
+superseded_by: {superseded_by}
+review_after: null
+quote: null
+window: null
+evidence: null
+as_of: null
+---
+{body}",
+        sha = "0".repeat(64)
+    )
+}
+
+#[test]
+fn a_format_eleven_proposals_document_reads_at_its_own_shape() {
+    // Format 11 -> 12 changed only entries, so a format-11 proposals.json
+    // reads against the current shape: each candidate's `admitted` and each
+    // proposal's `closed_reason` survive, and the document encodes back to
+    // the same keys and values with only its format number moved.
+    let cite = serde_json::json!({
+        "session": "s-1",
+        "message": "m-1",
+        "at": "2026-11-01T10:00:00Z",
+        "prompt_sha256": "0".repeat(64),
+        "line": 1,
+        "cwd": "/work",
+    });
+    let open = serde_json::json!({
+        "id": "p-1",
+        "kind": "candidate",
+        "older": "preferences-1",
+        "candidate": {
+            "tag": "preferences",
+            "role": "user",
+            "quote": "I prefer short updates.",
+            "evidence": null,
+            "cite": cite,
+            "project": "scribe",
+            "provider": "claude-code",
+            "host": "host",
+            "admitted": {
+                "trigger": "remember",
+                "matched": "remember that I prefer short updates",
+                "criteria": "a stated preference",
+            },
+        },
+        "newer": null,
+        "reason": "Unmarked preferences statement",
+        "quotes": [],
+        "state": "open",
+        "opened_at": "2026-11-01T10:00:00Z",
+        "settled_at": null,
+        "settled_by": null,
+        "author": {"kind": "scribe", "name": "session-pass"},
+        "updated_by": null,
+        "settled_author": null,
+        "closed_reason": null,
+    });
+    // Closed when its tag was retired: its trigger matched with no criteria.
+    let mut closed = open.clone();
+    closed["id"] = serde_json::json!("p-2");
+    closed["older"] = serde_json::json!("idea-1");
+    closed["candidate"]["tag"] = serde_json::json!("idea");
+    closed["candidate"]["admitted"] =
+        serde_json::json!({"trigger": "remember", "matched": "remember", "criteria": null});
+    closed["state"] = serde_json::json!("rejected");
+    closed["settled_at"] = serde_json::json!("2026-11-02T10:00:00Z");
+    closed["settled_author"] = serde_json::json!({"kind": "scribe", "name": "tag-retired"});
+    closed["closed_reason"] = serde_json::json!("tag_retired");
+
+    let old = serde_json::json!({"format": 11, "proposals": [open, closed]});
+    let path = Path::new("proposals.json");
+    let proposals = decode_proposals(path, &serde_json::to_vec(&old).unwrap()).unwrap();
+    assert_eq!(proposals.len(), 2);
+    assert_eq!(
+        proposals[0].candidate.as_ref().unwrap().admitted,
+        Some(crate::Admitted {
+            trigger: "remember".into(),
+            matched: "remember that I prefer short updates".into(),
+            criteria: Some("a stated preference".into()),
+        })
+    );
+    assert_eq!(proposals[0].closed_reason, None);
+    let closed_admitted = proposals[1]
+        .candidate
+        .as_ref()
+        .unwrap()
+        .admitted
+        .as_ref()
+        .unwrap();
+    assert_eq!(closed_admitted.criteria, None);
+    assert_eq!(
+        proposals[1].closed_reason,
+        Some(crate::ClosedReason::TagRetired)
+    );
+
+    // Re-encoded, the document is unchanged but for its format number.
+    let encoded = crate::store::format::encode_proposals(path, &proposals).unwrap();
+    let mut value: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+    assert_eq!(value["format"], FORMAT);
+    value["format"] = serde_json::json!(11);
+    assert_eq!(value, old);
+
+    // Strict at format 11: a candidate without `admitted` (the format-10
+    // shape) and a proposal carrying a format-12 key are both refused.
+    let mut format_ten = old.clone();
+    format_ten["proposals"][0]["candidate"]
+        .as_object_mut()
+        .unwrap()
+        .remove("admitted");
+    assert!(decode_proposals(path, &serde_json::to_vec(&format_ten).unwrap()).is_err());
+    let mut stray = old.clone();
+    stray["proposals"][1]["inactive_since"] = serde_json::json!(null);
+    assert!(decode_proposals(path, &serde_json::to_vec(&stray).unwrap()).is_err());
+}
+
 #[test]
 fn a_format_eleven_entry_gains_inactive_since_from_its_status() {
     // Format 11 -> 12: an active entry reads `inactive_since: null`; one
     // already retired, superseded or forgotten reads its `updated`, the
     // best time an older record holds.
-    let active = entry(&entry_text("")).unwrap();
-    assert_eq!(active.inactive_since, None);
-    let retired = entry(
-        &entry_text("")
-            .replace("status: active", "status: retired")
-            .replace(
-                "updated: 2026-11-01T10:00:00Z",
-                "updated: 2026-11-03T08:30:00Z",
-            ),
-    )
-    .unwrap();
-    assert_eq!(
-        retired.inactive_since,
-        Some(time::macros::datetime!(2026-11-03 08:30:00 UTC))
-    );
-
-    // Written back at format 12, it reads back the same.
     let path = Path::new(ENTRY);
-    let encoded = crate::store::format::encode_entry(path, &retired).unwrap();
-    let text = String::from_utf8(encoded).unwrap();
-    assert!(text.starts_with(&format!("---\nformat: {FORMAT}\n")));
-    assert_eq!(entry(&text).unwrap(), retired);
+    let active = entry(&format_eleven_entry("active", "null", SAID, BODY)).unwrap();
+    assert_eq!(active.inactive_since, None);
+
+    let retired_at = time::macros::datetime!(2026-11-03 08:30:00 UTC);
+    for (status, superseded_by, said, body) in [
+        ("retired", "null", SAID, BODY),
+        ("superseded", "preferences-2", SAID, BODY),
+        ("forgotten", "null", "", ""),
+    ] {
+        let upgraded = entry(&format_eleven_entry(status, superseded_by, said, body)).unwrap();
+        assert_eq!(upgraded.status.as_str(), status);
+        assert_eq!(upgraded.inactive_since, Some(retired_at), "{status}");
+
+        // Written back at format 12, it reads back the same.
+        let encoded = crate::store::format::encode_entry(path, &upgraded).unwrap();
+        let text = String::from_utf8(encoded).unwrap();
+        assert!(text.starts_with(&format!("---\nformat: {FORMAT}\n")));
+        assert_eq!(entry(&text).unwrap(), upgraded, "{status}");
+    }
+    let retired = entry(&format_eleven_entry("retired", "null", SAID, BODY)).unwrap();
 
     // At format 12 the key is required and must agree with the status.
     let current = crate::store::format::encode_entry(path, &active).unwrap();
