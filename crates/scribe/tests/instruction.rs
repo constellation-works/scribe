@@ -767,3 +767,343 @@ fn an_instruction_does_not_let_entry_update_change_daniels_content() {
     assert_eq!(lines.len(), 1, "{lines:?}");
     assert_eq!(lines[0]["error_code"], "daniel_only");
 }
+
+/// Daniel's claim the session pass opened as `p-1` (reserving
+/// `preferences-1`): scribe's statement of his turn, his words in `quote`.
+const CLAIM_QUOTE: &str = "I prefer reviews that name the file and line.";
+const CLAIM_STATEMENT: &str = "Daniel prefers reviews that name the file and line.";
+
+/// An assistant turn's claim, `p-2` (reserving `preferences-2`).
+const ASSISTANT_QUOTE: &str = "Run the goldens after every help change.";
+
+/// `proposal settle <id>` with `act` on `instruction` in [`SESSION`].
+fn settle<'a>(id: &'a str, act: &'a str, instruction: &'a str) -> Vec<&'a str> {
+    vec![
+        "proposal",
+        "settle",
+        id,
+        act,
+        "--author",
+        "opus",
+        "--session",
+        SESSION,
+        "--instruction",
+        instruction,
+    ]
+}
+
+/// A store holding only two open session-pass candidates: `p-1` from
+/// Daniel's turn and `p-2` from an assistant's, in another session.
+fn store_with_candidates() -> Fixture {
+    let fx = Fixture::new();
+    let root = fx.root();
+    std::fs::create_dir_all(&root).unwrap();
+    make_private(&root);
+    let cite = |message: &str| {
+        json!({"session": "s-1", "message": message, "at": "2026-11-15T00:00:00Z",
+            "prompt_sha256": "0".repeat(64), "line": 1, "cwd": "/work/scribe"})
+    };
+    let candidate = |id: &str, older: &str, role: &str, quote: &str, statement: Option<&str>| {
+        json!({
+            "id": id, "kind": "candidate", "older": older, "newer": null,
+            "candidate": {
+                "tag": "preferences", "role": role, "quote": quote,
+                "statement": statement,
+                "subject": statement.map(|_| "code reviews"),
+                "evidence": null, "cite": cite(&format!("turn-{id}")),
+                "project": "scribe", "provider": "claude-code", "host": "host",
+                "admitted": null
+            },
+            "reason": format!("Unmarked preferences statement: {quote}"), "quotes": [],
+            "state": "open", "opened_at": "2026-11-15T00:01:00Z", "settled_at": null,
+            "settled_by": null, "author": {"kind": "scribe", "name": "session-pass"},
+            "settled_author": null, "updated_by": null, "closed_reason": null,
+            "instruction": null
+        })
+    };
+    let path = root.join("proposals.json");
+    std::fs::write(
+        &path,
+        json!({"format": 14, "proposals": [
+            candidate("p-1", "preferences-1", "user", CLAIM_QUOTE, Some(CLAIM_STATEMENT)),
+            candidate("p-2", "preferences-2", "assistant", ASSISTANT_QUOTE, None),
+        ]})
+        .to_string(),
+    )
+    .unwrap();
+    make_private(&path);
+    fx
+}
+
+/// `<noun> show <id> --json`.
+fn show(fx: &Fixture, noun: &str, id: &str) -> Value {
+    if noun == "proposal" {
+        let listed: Value =
+            serde_json::from_slice(&ok(fx, &["proposal", "list", "--json"]).stdout).unwrap();
+        return listed["proposals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["id"] == id)
+            .cloned()
+            .unwrap();
+    }
+    serde_json::from_slice(&ok(fx, &[noun, "show", id, "--json"]).stdout).unwrap()
+}
+
+#[test]
+fn an_instructed_approval_writes_daniels_reserved_entry_with_the_agent_as_approver() {
+    let fx = store_with_candidates();
+    let words = "approve p-1, that is how I want reviews";
+    claude(
+        &fx,
+        Some("claude-desktop"),
+        &[
+            ("a-1", "assistant", "p-1 is open: approve it?", 2),
+            ("u-1", "user", words, 1),
+        ],
+    );
+    // Without an instruction a claim stays his to settle.
+    let before = state(&fx);
+    assert_eq!(
+        run(
+            &fx,
+            &["proposal", "settle", "p-1", "--approve", "--author", "opus"]
+        ),
+        (Some(1), Some(String::from("daniel_only")))
+    );
+    assert_eq!(state(&fx), before);
+
+    let out = ok(&fx, &settle("p-1", "--approve", words));
+    assert_eq!(text(&out.stderr).trim(), "", "it settled the claim");
+    let p = show(&fx, "proposal", "p-1");
+    assert_eq!(p["state"], "approved");
+    assert_eq!(
+        p["settled_author"],
+        json!({"kind": "agent", "name": "opus"})
+    );
+    assert_eq!(p["settled_by"]["session"], SESSION);
+    assert_eq!(p["settled_by"]["message"], "u-1");
+    assert_eq!(p["instruction"]["session"], SESSION);
+    assert_eq!(p["instruction"]["message"], "u-1");
+    assert_eq!(p["instruction"]["quote"], words);
+    assert_eq!(p["closed_reason"], Value::Null);
+
+    // His entry, under the id the claim reserved: his cite and words.
+    let e = show(&fx, "entry", "preferences-1");
+    assert_eq!(e["author"], json!({"kind": "daniel", "name": "daniel"}));
+    assert_eq!(e["content"], CLAIM_STATEMENT);
+    assert_eq!(e["quote"], CLAIM_QUOTE);
+    assert_eq!(e["cite"]["session"], "s-1");
+    assert_eq!(e["cite"]["message"], "turn-p-1");
+    assert_eq!(e["content_from"]["kind"], "message");
+    assert_eq!(e["content_from"]["role"], "user");
+    assert_eq!(e["approved_by"], json!({"kind": "agent", "name": "opus"}));
+    assert_eq!(e["instruction"], p["instruction"]);
+    let said = format!(
+        "scribe proposal settle p-1 --approve --author opus --session {SESSION} --instruction '{words}'"
+    );
+    assert_eq!(e["said"], said.as_str());
+
+    // The same command again changes nothing; another settlement is refused.
+    let again = ok(&fx, &settle("p-1", "--approve", words));
+    assert!(
+        text(&again.stderr).contains("nothing changed"),
+        "{}",
+        text(&again.stderr)
+    );
+    assert_eq!(
+        run(&fx, &settle("p-1", "--reject", "reject p-1 after all")),
+        (Some(1), Some(String::from("instruction_not_found")))
+    );
+
+    // One audit line per change or refusal: agent, target and the
+    // instruction's ids, never its words.
+    let lines = audit_lines(&fx, "proposal settle");
+    assert_eq!(lines.len(), 3, "{lines:?}");
+    assert_eq!(lines[0]["error_code"], "daniel_only");
+    assert_eq!(lines[0]["instruction_session"], Value::Null);
+    assert_eq!(lines[1]["status"], "success");
+    assert_eq!(lines[2]["error_code"], "instruction_not_found");
+    assert_eq!(lines[2]["instruction_message"], Value::Null);
+    for line in &lines {
+        assert_eq!(line["author"], "opus");
+        assert_eq!(line["target"], "p-1");
+    }
+    assert_eq!(lines[1]["instruction_session"], SESSION);
+    assert_eq!(lines[1]["instruction_message"], "u-1");
+    assert_eq!(lines[2]["instruction_session"], SESSION);
+    let audit = std::fs::read_to_string(fx.root().join("audit.jsonl")).unwrap();
+    assert!(!audit.contains("how I want reviews"), "{audit}");
+}
+
+#[test]
+fn an_instructed_approval_of_an_assistant_claim_writes_one_agent_entry() {
+    let fx = store_with_candidates();
+    let words = "accept p-2, keep that one";
+    claude(&fx, Some("cli"), &[("u-1", "user", words, 1)]);
+    ok(&fx, &settle("p-2", "--approve", words));
+    let e = show(&fx, "entry", "preferences-2");
+    assert_eq!(e["author"], json!({"kind": "agent", "name": "assistant"}));
+    assert_eq!(e["content"], ASSISTANT_QUOTE);
+    assert_eq!(e["content_from"]["role"], "assistant");
+    assert_eq!(e["approved_by"], json!({"kind": "agent", "name": "opus"}));
+    assert!(
+        e["said"]
+            .as_str()
+            .unwrap()
+            .starts_with("scribe proposal settle p-2 --approve --author opus"),
+        "{e}"
+    );
+    // It rereads from disk in every listing.
+    let listed: Value =
+        serde_json::from_slice(&ok(&fx, &["entry", "list", "--json"]).stdout).unwrap();
+    assert_eq!(listed["total"], 1, "{listed}");
+    assert_eq!(listed["warnings"], json!([]), "{listed}");
+}
+
+#[test]
+fn an_instructed_rejection_writes_no_entry_and_closes_the_claim_instructed() {
+    let fx = store_with_candidates();
+    let words = "reject p-1 and p-2, neither is a rule";
+    claude(&fx, Some("cli"), &[("u-1", "user", words, 1)]);
+    for id in ["p-1", "p-2"] {
+        ok(&fx, &settle(id, "--reject", words));
+        let p = show(&fx, "proposal", id);
+        assert_eq!(p["state"], "rejected");
+        assert_eq!(p["closed_reason"], "instructed");
+        assert_eq!(p["settled_author"]["name"], "opus");
+        assert_eq!(p["instruction"]["message"], "u-1");
+        assert_eq!(p["instruction"]["quote"], words);
+    }
+    assert!(!fx.root().join("entries").exists(), "no entry is written");
+    // An approval after it is refused: the rejection stands.
+    let approve = "approve p-1 after all";
+    claude(
+        &fx,
+        Some("cli"),
+        &[("u-1", "user", words, 2), ("u-2", "user", approve, 1)],
+    );
+    assert_eq!(
+        run(&fx, &settle("p-1", "--approve", approve)),
+        (Some(1), Some(String::from("proposal_settled")))
+    );
+    let lines = audit_lines(&fx, "proposal settle");
+    assert_eq!(lines.len(), 3, "{lines:?}");
+    assert_eq!(lines[2]["error_code"], "proposal_settled");
+    assert_eq!(lines[2]["instruction_message"], "u-2");
+}
+
+#[test]
+fn an_instruction_does_not_settle_a_proposal_about_daniels_entry() {
+    let fx = Fixture::new();
+    fx.seed();
+    // The seeded `p-1` proposes that Daniel's `decisions-2` supersede his
+    // `decisions-1`.
+    let words = "approve p-1 please";
+    claude(&fx, Some("cli"), &[("u-1", "user", words, 1)]);
+    let before = state(&fx);
+    for act in ["--approve", "--reject"] {
+        let words = if act == "--approve" {
+            words
+        } else {
+            "reject p-1 please"
+        };
+        claude(&fx, Some("cli"), &[("u-1", "user", words, 1)]);
+        assert_eq!(
+            run(&fx, &settle("p-1", act, words)),
+            (Some(1), Some(String::from("daniel_only"))),
+            "{act}"
+        );
+    }
+    assert_eq!(state(&fx), before);
+    let lines = audit_lines(&fx, "proposal settle");
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    for line in &lines {
+        assert_eq!(line["error_code"], "daniel_only");
+        assert_eq!(line["target"], "p-1");
+        assert_eq!(line["instruction_session"], SESSION);
+        assert_eq!(line["instruction_message"], "u-1");
+    }
+}
+
+#[test]
+fn a_scan_replays_an_interrupted_instructed_approval_with_its_attribution() {
+    let fx = store_with_candidates();
+    let words = "approve p-1";
+    claude(&fx, Some("cli"), &[("u-1", "user", words, 1)]);
+    ok(&fx, &settle("p-1", "--approve", words));
+    let entry = fx.root().join("entries/preferences/preferences-1.md");
+    let written = std::fs::read(&entry).unwrap();
+    // A crash between proposals.json and the entry leaves the approval.
+    std::fs::remove_file(&entry).unwrap();
+    let out = ok(&fx, &["consistency", "scan", "--json"]);
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["reapplied"][0]["entry"], "preferences-1", "{report}");
+    let e = show(&fx, "entry", "preferences-1");
+    assert_eq!(e["approved_by"]["name"], "opus");
+    assert_eq!(e["instruction"]["message"], "u-1");
+    assert!(
+        e["said"]
+            .as_str()
+            .unwrap()
+            .starts_with("scribe proposal settle p-1 --approve"),
+        "never a typed #scribe approve: {e}"
+    );
+    assert_eq!(std::fs::read(&entry).unwrap(), written, "the same entry");
+    // A typed repeat changes nothing either.
+    let p = show(&fx, "proposal", "p-1");
+    assert_eq!(p["state"], "approved");
+}
+
+#[test]
+fn a_scan_closes_an_instructed_approval_covered_since_as_covered_not_rejected() {
+    let fx = store_with_candidates();
+    let words = "approve p-1";
+    claude(&fx, Some("cli"), &[("u-1", "user", words, 1)]);
+    ok(&fx, &settle("p-1", "--approve", words));
+    std::fs::remove_file(fx.root().join("entries/preferences/preferences-1.md")).unwrap();
+    // An active entry now says the same.
+    let added: Value = serde_json::from_slice(
+        &ok(
+            &fx,
+            &[
+                "entry",
+                "add",
+                "--tag",
+                "preferences",
+                "--project",
+                "scribe",
+                "--author",
+                "opus",
+                CLAIM_STATEMENT,
+                "--json",
+            ],
+        )
+        .stdout,
+    )
+    .unwrap();
+    let out = ok(&fx, &["consistency", "scan", "--json"]);
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["covered"][0]["proposal"], "p-1", "{report}");
+    assert_eq!(report["covered"][0]["by"], added["id"], "{report}");
+    // The store still reads, and the approval and instruction are kept.
+    let p = show(&fx, "proposal", "p-1");
+    assert_eq!(p["state"], "rejected");
+    assert_eq!(p["closed_reason"], "covered");
+    assert_eq!(p["settled_author"]["name"], "opus");
+    assert_eq!(p["instruction"]["message"], "u-1");
+    assert_eq!(p["instruction"]["quote"], words);
+    assert!(
+        !fx.root()
+            .join("entries/preferences/preferences-1.md")
+            .exists()
+    );
+    // The same instruction again is done; nothing changes.
+    let again = ok(&fx, &settle("p-1", "--approve", words));
+    assert!(
+        text(&again.stderr).contains("nothing changed"),
+        "{}",
+        text(&again.stderr)
+    );
+}

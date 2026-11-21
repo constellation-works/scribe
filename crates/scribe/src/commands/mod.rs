@@ -155,6 +155,7 @@ pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
     if let Some(audit) = audit.as_mut() {
         audit.mark_result(&result);
         subject.apply(audit);
+        audit.set_instruction(ctx.instruction_note());
     }
     result
 }
@@ -361,6 +362,8 @@ impl Drop for PersistedAudit<'_> {
                 target: Some(target.clone()),
                 error_code: None,
                 author: self.author.clone(),
+                instruction_session: None,
+                instruction_message: None,
                 duration_ms: 0,
             };
             if let Err(err) = self.store.record_audit(&event) {

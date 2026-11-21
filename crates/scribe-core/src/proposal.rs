@@ -185,6 +185,11 @@ pub enum ClosedReason {
     TagRetired,
     /// An agent rejected it on Daniel's checked instruction (§12.4).
     Instructed,
+    /// An approved candidate whose reserved entry was never written, closed
+    /// because an active entry now covers its statement (format 15). The
+    /// approval's settlement, and its instruction when an agent approved it
+    /// on Daniel's word, are kept as they were: nobody rejected it.
+    Covered,
 }
 
 impl ClosedReason {
@@ -194,6 +199,7 @@ impl ClosedReason {
         match self {
             Self::TagRetired => "tag_retired",
             Self::Instructed => "instructed",
+            Self::Covered => "covered",
         }
     }
 }
@@ -337,8 +343,44 @@ impl Proposal {
                 entry.as_of = Some(candidate.cite.at.date());
             }
         }
+        if let Some(instruction) = &self.instruction {
+            // Approved by an agent on Daniel's checked instruction
+            // (2_design.md §12.3): the entry stays whoever's words it holds,
+            // and records who approved it, on which instruction, and the
+            // command run. Rebuilt from the proposal, so a recovery writes
+            // the same attribution as the approval.
+            let agent = self
+                .settled_author
+                .clone()
+                .filter(|a| a.kind == AuthorKind::Agent)?;
+            entry.said = instructed_said(self.id, &agent, instruction);
+            entry.approved_by = Some(agent);
+            entry.instruction = Some(instruction.clone());
+        }
         Some(entry)
     }
+}
+
+/// How the `said` of an entry approved on Daniel's instruction begins: the
+/// canonical `proposal settle` command, where a typed approval's begins
+/// `#scribe approve p-` (2_design.md §12.3).
+pub(crate) const INSTRUCTED_SAID_PREFIX: &str = "scribe proposal settle p-";
+
+/// The canonical command an agent ran to approve `id` on `instruction`:
+/// `scribe proposal settle <id> --approve --author <name> --session <id>
+/// --instruction '<his words>'`, the words shell-quoted as stored (redacted),
+/// and left out once forgotten.
+fn instructed_said(id: ProposalId, agent: &Author, instruction: &Instruction) -> String {
+    let mut said = format!(
+        "scribe proposal settle {id} --approve --author {} --session {} --instruction",
+        agent.name, instruction.session
+    );
+    if let Some(quote) = &instruction.quote {
+        said.push_str(" '");
+        said.push_str(&quote.replace('\'', "'\\''"));
+        said.push('\'');
+    }
+    said
 }
 
 /// Direct proposal change requested by an agent.

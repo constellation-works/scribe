@@ -218,9 +218,10 @@ Rules every verb keeps:
   Daniel's. Agents may open a proposal against a Daniel entry; Daniel
   settles it with `#scribe approve|reject`. `#scribe forget` stays
   Daniel's alone ([4_decisions.md](./4_decisions.md#entries-daniel-wrote-are-settled-only-by-daniel)).
-  Proposed, not built: with a checked instruction of his, an agent may
-  settle a candidate and retire or forget his entry
-  ([§12](#12-settling-and-deleting-on-daniels-instruction-proposed)).
+  Built since: with a checked instruction of his, an agent may settle a
+  candidate and retire or forget his entry
+  ([§12](#12-settling-and-deleting-on-daniels-instruction-proposed)); a
+  proposal about his entry stays his to settle.
   Between agents, author names are attribution only: any agent may update
   or retire another agent's entry, update an open agent proposal or settle
   one, including its own, and the record keeps who changed it
@@ -1378,15 +1379,18 @@ a pass; an explicit catalog is still required for past sessions.
   `newer` value. The reply names the covering id (`scribe: approved <id> —
   already covered by <entry>; no new entry`); replaying that close is the
   ordinary already-rejected refusal and does not name the id again. The
-  covering id is not stored on the proposal, and there is no new closed
-  reason and no format bump. An interrupted approval whose entry file is
-  missing is closed the same way by a repeated approval or by `consistency
+  covering id is not stored on the proposal, and that typed close has no
+  closed reason. An interrupted approval whose entry file is
+  missing is closed by a repeated approval or by `consistency
   scan`, which reports it in `covered` and writes one audit line whose
-  target is the proposal id. Approved proposals
+  target is the proposal id; since format 15 it keeps its settlement (and
+  an agent's instruction) and records `closed_reason: covered`, as does an
+  approval on Daniel's instruction that finds its claim covered
+  ([§12](#12-settling-and-deleting-on-daniels-instruction-proposed)). Approved proposals
   journal the entry creation, recoverable by a repeated approval or the
   consistency scan. Rejection writes no entry and keeps the statement in the
-  suppression set. Agents cannot settle or edit candidate proposals (proposed,
-  not built: on his checked instruction, [§12](#12-settling-and-deleting-on-daniels-instruction-proposed)). Forgetting
+  suppression set. Agents cannot edit candidate proposals, and settle them
+  only on his checked instruction ([§12](#12-settling-and-deleting-on-daniels-instruction-proposed)). Forgetting
   the resulting entry blanks the candidate's copy too (its `quote`, `evidence`
   and `admitted.matched`) and recovery preserves
   the forgotten entry.
@@ -3243,8 +3247,37 @@ same forget as `#scribe forget` (`consistency::forget`), keeping the
 instruction's session, message and time but not its quote. Content changes
 to his entries stay refused (`entry update` takes no instruction). Each
 change or refusal writes one audit line with the command, target and
-`--author`, never the instruction's words; the line does not yet carry the
-instruction's session and message ids, which the entry records.
+`--author`, never the instruction's words; since task 3 it also carries the
+instruction's session and message ids (below).
+
+**Built (task 3 of 6, ORB-26244, store format 15).** The proposal rows of
+§12.1 and §12.3: with a passing check, `proposal settle <p-id>
+--approve|--reject` accepts an open `candidate` (`Store::change_agent_proposal`,
+`settle_candidate_on_instruction` in `store/agent.rs`), re-checking its state
+under the lock. An approval writes the reserved entry as a typed `#scribe
+approve` would (his for a claim from his turn, `{kind: agent, name:
+assistant}` for one from an assistant's), adding `approved_by: {kind: agent,
+name}`, the `instruction` (quote redacted) and, as `said`, the canonical
+command `scribe proposal settle p-<n> --approve --author <name> --session
+<id> --instruction '<his words, redacted>'`. A rejection writes no entry and
+sets `closed_reason: instructed`; the claim stays in the pass's suppression
+set. Both record `settled_author` (the agent), `settled_by` (the instruction
+turn's cite: session, message, time, the turn's SHA-256 and the quote's line;
+`cwd` is empty, as the transcript's is not read) and `instruction`. The same
+command again changes nothing; any other settlement of a settled claim is
+`proposal_settled`. A consistency proposal about his entry is still refused
+`daniel_only`, instruction or not, and `--reason` cannot replace a claim's
+reason (`proposal_not_agent`). The entry is rebuilt from the proposal, so the
+scan's recovery of an interrupted instructed approval writes the same
+attribution, never a typed `#scribe approve` line. An approved claim whose
+reserved entry is missing when an active entry already covers it (at
+approval, in the scan's recovery, or on a repeated typed approval) is closed
+`rejected` with the new `closed_reason: covered`, keeping its settlement and
+instruction, for typed approvals too: it never reads as a rejection nobody
+made. Every `proposal settle`, `entry retire` and `entry forget` audit line
+now carries `instruction_session` (from `--session`) and
+`instruction_message` (the turn the check found; `null` when the check
+refused before finding it), audit format 3.
 
 The reasons and alternatives are in
 [4_decisions.md](./4_decisions.md#an-agent-settles-claims-and-deletes-records-on-daniels-checked-instruction).
@@ -3370,7 +3403,9 @@ his turn (or, once §11.1 lands, a statement with his checked words in
   message, at, quote}` (the quote redacted);
 - the entry records a new `approved_by: {kind: agent, name}` (`null` when
   he typed the approval) and `said` is the canonical command with
-  `--instruction`, not a `#scribe` line.
+  `--instruction`, not a `#scribe` line: `scribe proposal settle p-<n>
+  --approve --author <name> --session <id> --instruction '<his words>'`,
+  the words as stored (redacted) and shell-quoted.
 
 This refines the rule of
 [4_decisions.md](./4_decisions.md#daniel-writes-only-through-his-typed-prompt-agent-names-are-attribution)
@@ -3462,6 +3497,13 @@ an entry gains `approved_by` and `instruction` (`null` on upgrade).
 `closed_reason` comes from §11.2's format 11, gaining the value `instructed`.
 `specs/store.md` and `specs/output-contract.md` describe the fields and format
 13.
+
+**Built (task 3 of 6, ORB-26244, store format 15).** Step 14→15
+(`instructed_approval`) changes no stored value: it admits an entry whose
+`said` is the canonical `scribe proposal settle p-<n> --approve …` command,
+only beside its `approved_by`, and `closed_reason: covered` on a settled
+candidate, so a format-14 build refuses a store holding either as too new
+rather than corrupt.
 
 ### 12.8 Limits and what is not built until seen
 

@@ -3569,3 +3569,52 @@ a file Daniel already uses into a store nothing can read.
   can think the shipped tag was never there. Two config entries that both
   want the word are still refused, so the loss is only against a default he
   did not write.
+
+## An approved claim closed because its entry is covered records `covered`
+
+**Recorded:** 2026-11-21 · [ORB-26244] · **Overridable by Daniel** · built
+**Refines:** §5.3's covered approval ("there is no new closed reason and no format bump") and "An agent settles claims and deletes records on Daniel's checked instruction"
+**Paths:** `crates/scribe-core/src/store/candidates.rs` (`reapply_candidates`), `crates/scribe-core/src/store/mod.rs` (`Store::settle`), `crates/scribe-core/src/store/agent.rs` (`settle_candidate_on_instruction`), `crates/scribe-core/src/store/format.rs` (`instructed_approval`, step 14→15) — design §12.3, §12.7
+
+### Context
+
+An approved claim whose reserved entry file is missing (an interrupted
+approval) is closed `rejected` by the scan's recovery or a repeated typed
+approval when an active entry now says the same. Before agents could approve
+on Daniel's instruction, that close kept the typed approver and no reason.
+An instructed approval carries an `instruction`, and format 13 reads a
+rejected proposal with an instruction as exactly an instructed rejection
+(`closed_reason: instructed`). Review ORB-26354 (scribe#84) found that the
+close therefore either left a store that no longer reads or, with
+`instructed`, claimed a rejection Daniel never asked for. The same review
+found that the recovery wrote a typed `#scribe approve` line with no
+`approved_by`, claiming an approval he did not type.
+
+### Decision
+
+1. **A new closed reason, `covered`.** The close keeps the approval's
+   `settled_at`, `settled_by`, `settled_author` and `instruction` and sets
+   `closed_reason: covered`, for typed and instructed approvals alike. A
+   first typed approval that finds its claim covered still closes with no
+   reason, as before; an instructed one sets `covered`, since its
+   instruction must be explained.
+2. **The entry is rebuilt from the proposal.** `Proposal::candidate_entry`
+   sets `approved_by`, `instruction` and the canonical `scribe proposal
+   settle` command as `said` whenever the proposal carries an instruction,
+   so recovery writes the same entry as the approval.
+3. **Store format 15.** Neither the new `said` nor `covered` reads at
+   format 14, so the step 14→15 (`instructed_approval`) changes no value but
+   makes an older build call the store too new instead of corrupt.
+
+The alternative was to leave a covered instructed approval `approved` with
+no entry. Every scan would then find it again and report it, and the
+reserved id would point at nothing.
+
+### Consequences
+
+- `proposal list` shows `covered` in the `closed_reason` column; `--json`
+  gains the value, with no field renamed.
+- A format-14 build refuses a store this build wrote once an agent has
+  approved a claim on instruction (`store_too_new`).
+- Cost: one more closed reason for readers to learn, and a format step that
+  changes no data.

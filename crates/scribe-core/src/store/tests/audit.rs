@@ -10,6 +10,8 @@ fn failed_add() -> AuditEvent {
         target: None,
         error_code: Some(String::from("store_locked")),
         author: None,
+        instruction_session: None,
+        instruction_message: None,
         duration_ms: 42,
     }
 }
@@ -55,6 +57,8 @@ fn an_event_has_no_field_for_arguments_or_error_text() {
             "duration_ms",
             "error_code",
             "format",
+            "instruction_message",
+            "instruction_session",
             "status",
             "target"
         ]
@@ -69,4 +73,15 @@ fn a_format_one_line_reads_with_no_author() {
     assert_eq!(line.format, 1);
     assert_eq!(line.event.author, None);
     assert_eq!(line.event.command, "hook stop");
+}
+
+#[test]
+fn a_format_two_line_reads_with_no_instruction() {
+    // STD-02 R16: the log written before the instruction ids existed reads.
+    let old = br#"{"format":2,"at":"2026-09-26T12:00:00Z","command":"proposal settle","status":"success","target":"p-1","error_code":null,"author":"opus","duration_ms":3}"#;
+    let line: AuditLine = serde_json::from_slice(old).unwrap();
+    assert_eq!(line.format, 2);
+    assert_eq!(line.event.author.as_deref(), Some("opus"));
+    assert_eq!(line.event.instruction_session, None);
+    assert_eq!(line.event.instruction_message, None);
 }

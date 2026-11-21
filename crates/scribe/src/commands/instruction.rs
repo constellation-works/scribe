@@ -45,6 +45,7 @@ pub(super) fn check(
     let (Some(session), Some(quote)) = (&args.session, &args.instruction) else {
         return Ok(None);
     };
+    args.note(ctx);
     let not_found = |why: String| -> CliError {
         scribe_core::Error::AgentWrite {
             kind: WriteRefusal::InstructionNotFound,
@@ -85,5 +86,17 @@ pub(super) fn check(
         target,
         now: time::OffsetDateTime::now_utc(),
     };
-    Ok(Some(instruction::check(&spoken, &request)?))
+    let instructed = instruction::check(&spoken, &request)?;
+    ctx.note_instruction_message(&instructed.message);
+    Ok(Some(instructed))
+}
+
+impl InstructionArgs {
+    /// Note `--session` for the command's audit line; call it first, so a
+    /// refusal before the check is attributed too.
+    pub(crate) fn note(&self, ctx: &Context) {
+        if let Some(session) = &self.session {
+            ctx.note_instruction_session(session.as_str());
+        }
+    }
 }

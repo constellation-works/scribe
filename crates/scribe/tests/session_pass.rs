@@ -1642,7 +1642,7 @@ fn legacy_control_is_read_without_writes_and_new_retry_state_is_strict() {
     );
     setup.pass();
     let current: Value = serde_json::from_slice(&setup.control_bytes()).unwrap();
-    assert_eq!(current["format"], 14);
+    assert_eq!(current["format"], 15);
     assert_eq!(current["sessions"][ON]["consecutive_failures"], 0);
     assert_eq!(current["sessions"][ON]["retry_after"], Value::Null);
     assert_eq!(current["sessions"][ON]["pending_links"], json!([]));
@@ -1898,10 +1898,10 @@ fn a_pass_writes_one_record_of_daniels_terms_and_never_reads_a_session_never_swi
         json!([{"term": "graduate to level 4", "said": DEFINED, "message": "u-1"}])
     );
     assert!(!setup.fx.root().join("entries").exists(), "no entries");
-    // The record is written at format 14: a header and one open segment
+    // The record is written at format 15: a header and one open segment
     // holding this pass's segment text.
     let file = std::fs::read_to_string(setup.record_file()).unwrap();
-    assert!(file.starts_with("---\nformat: 14\n"), "{file}");
+    assert!(file.starts_with("---\nformat: 15\n"), "{file}");
     assert!(file.contains("\n## Log\n### 1. "), "{file}");
     assert!(!file.contains("## Outcome"), "{file}");
     assert_eq!(record["active"], true);
@@ -3011,6 +3011,57 @@ fn candidate_open_cap_is_enforced_even_when_the_model_ignores_it() {
     s.run(&["session", "pass", "--session", ON], b"");
     assert_eq!(proposals(&s)["total"], 20);
     assert_eq!(s.record(ON).unwrap()["scribed_through"], "u-2");
+}
+
+#[test]
+fn an_instructed_rejection_keeps_the_claim_from_being_proposed_again() {
+    let s = Setup::new();
+    let quote = "I always choose smaller pull requests for easier review.";
+    s.write(ON, &[line("user", "u-1", quote)]);
+    s.answer(&candidate_answer(quote, "u-1", "preferences"));
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON], b"");
+    assert_eq!(proposals(&s)["total"], 1);
+    // Daniel's instruction, typed a minute ago in the aide's interactive
+    // session (2_design.md §12.2).
+    let aide = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e61";
+    let words = "reject p-1, it was a one-off";
+    let at = (time::OffsetDateTime::now_utc() - time::Duration::minutes(1))
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let mut turn = line("user", "aide-1", words);
+    turn["timestamp"] = json!(at);
+    turn["entrypoint"] = json!("claude-desktop");
+    s.write(aide, &[turn]);
+    let rejected: Value = serde_json::from_slice(
+        &s.fx
+            .ok(&[
+                "proposal",
+                "settle",
+                "p-1",
+                "--reject",
+                "--author",
+                "opus",
+                "--session",
+                aide,
+                "--instruction",
+                words,
+                "--json",
+            ])
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(rejected["state"], "rejected");
+    assert_eq!(rejected["closed_reason"], "instructed");
+    assert!(!s.fx.root().join("entries").exists(), "no entry is written");
+    // He says it again; the next pass finds the claim and proposes nothing.
+    s.append(ON, &[line("user", "u-2", quote)]);
+    s.answer(&candidate_answer(quote, "u-2", "preferences"));
+    s.run(&["session", "pass", "--session", ON], b"");
+    assert_eq!(s.record(ON).unwrap()["scribed_through"], "u-2");
+    let listed = proposals(&s);
+    assert_eq!(listed["total"], 1, "{listed}");
+    assert_eq!(listed["proposals"][0]["closed_reason"], "instructed");
 }
 
 #[test]

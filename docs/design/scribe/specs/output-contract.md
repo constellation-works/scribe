@@ -44,7 +44,7 @@ is `-`, lists are comma-joined, and timestamps are RFC 3339.
 | `session list` | `id status due project topics updated title` (`due` is `yes` or `no`) |
 | `session list --tree` | `id parent status due project topics updated title` (`parent` is the session the row nests under, its `spawned_from` link else its first `continues` link, or `-`) |
 | `session list --include-inactive` | `id status active due project topics updated title` (`active` is `yes` or `no`); without the flag the columns are unchanged, inactive sessions are left out, and when any matched the notice `<n> inactive session(s) also match and are hidden; --include-inactive lists them` goes to stderr. With `--tree` too, `active` follows `status` |
-| `proposal list` | `id kind state older newer opened_at reason admitted closed_reason` (format 11: `admitted` is `trigger "<phrase>" matched "<words>"; criteria: <criteria or ->` for a candidate a capture rule admitted, else `-`; `closed_reason` is `tag_retired` when scribe closed it without Daniel, `instructed` when an agent rejected it on Daniel's checked instruction (format 13), else `-`; format 14: for a candidate with a statement, `reason` is the statement, and the table prints `Daniel's words: "<quote>"` on a row under it in the same column, while plain joins them as `<statement> \| Daniel's words: "<quote>"`; the single-proposal detail a proposal write prints (`proposal add`, `update`, `settle`; there is no `proposal show`) adds `statement` and `subject` fields before `quote` in the table, and its JSON carries both on `candidate`) |
+| `proposal list` | `id kind state older newer opened_at reason admitted closed_reason` (format 11: `admitted` is `trigger "<phrase>" matched "<words>"; criteria: <criteria or ->` for a candidate a capture rule admitted, else `-`; `closed_reason` is `tag_retired` when scribe closed it without Daniel, `instructed` when an agent rejected it on Daniel's checked instruction (format 13), `covered` when an approved candidate's entry was missing and an active entry covers it (format 15), else `-`; format 14: for a candidate with a statement, `reason` is the statement, and the table prints `Daniel's words: "<quote>"` on a row under it in the same column, while plain joins them as `<statement> \| Daniel's words: "<quote>"`; the single-proposal detail a proposal write prints (`proposal add`, `update`, `settle`; there is no `proposal show`) adds `statement` and `subject` fields before `quote` in the table, and its JSON carries both on `candidate`) |
 | `tag list` | `name entries stale_after_days aliases description`, (S12) `source` (`config` or `store`), then `action` (`free` or `ask-first`, with `,quote` when the tag requires a quote), `retired` and `rejected` (counts of agent entries); the last three are `-` for a tag that is not an action tag; (format 11) then `route` (the tag's capture route, `propose`, `write` or `agent`, or `-` when it has no capture rules) |
 | `tag show <tag>` (format 11) | one `<field>\t<value>\t<origin>` line each for `tag`, `source`, `aliases`, `description`, `stale_after_days`, `action` (`free`/`ask-first`, with `,quote`, or `-`), then the capture rules `from`, `route`, `triggers` (quoted, comma separated), `criteria` and `not`; `origin` is `shipped`, `config <file>:<line>` or `none` (an unset rule's value is `-`), and `-` for the first six. The table prints `<field> <value>  (<origin>)` |
 | `record search` (S11) | `cite kind score updated title snippet` (`score` to three decimals; the table cuts `title` to 40 characters and fits `snippet` to the width) |
@@ -130,7 +130,10 @@ window). The table detail view adds `author`, and for such an entry
 `pickups` and `window` (its turns with `--window`, else `<n> turns (show
 with --window)`). Store format 13 adds `approved_by` (`{kind, name}` of kind
 `agent`, or `null`) and `instruction` (`{session, message, at, quote}` or
-`null`, where `quote` is `null` once forgotten). Store format 14 adds
+`null`, where `quote` is `null` once forgotten). An entry an agent approved
+on Daniel's instruction (format 15) has `approved_by` and `instruction` set
+and `said` the command it ran, `scribe proposal settle p-<n> --approve
+--author <name> --session <id> --instruction '<his words>'`. Store format 14 adds
 `stated_by` (`{kind, name}`, `{kind: "scribe", name: "session-pass"}` when
 `content` is scribe's statement of Daniel's turn and `quote` his verbatim
 words, else `null`). The table detail prints `stated_by
@@ -188,7 +191,9 @@ text}]`), `state` (`open`, `approved`, `rejected`), `opened_at`,
 agent who revised the reason, or `null`). Store format 11 adds
 `closed_reason` (`tag_retired` when scribe closed it without Daniel,
 `instructed` when an agent rejected it on Daniel's checked instruction in format
-13, else `null`) and, on a `candidate` object, `admitted` (`{trigger, matched,
+13, `covered` in format 15 when an approved candidate's reserved entry was
+missing and an active entry already covers it, keeping its settlement,
+else `null`) and, on a `candidate` object, `admitted` (`{trigger, matched,
 criteria}`: the capture-rule trigger as configured, the turn's words it
 matched, verbatim and at most 120 characters, and the tag's `criteria`
 then in force or `null`; `null` on a candidate opened before format 11). Store
@@ -298,7 +303,10 @@ whose message names the id and the store path searched. A session's prefix is
 matched against its record and its switch in `control.json`, and the
 audit line of a write names the full id; a write that takes `--author` also
 names that author in `author`, and a refused write names both its resolved
-target and its author.
+target and its author. A write given `--session` and `--instruction`
+(`proposal settle`, `entry retire`, `entry forget`) also names
+`instruction_session` and, once the check found his turn,
+`instruction_message` (audit format 3), never the instruction's words.
 
 Stable codes: `entry_not_found`, `session_not_found`, `io_error`,
 `store_corrupt`, `config_invalid`, `store_too_new`, `store_locked`,
@@ -371,7 +379,9 @@ leaves it out of answers` (`<older> is retired` for a stale proposal),
 `scribe: approved p-<n> — already covered by <entry>; no new entry` when an
 active entry of the same tag and project already covers the candidate (the
 proposal becomes `rejected`, `newer` stays empty, and the covering id is
-named only in the reply),
+named only in the reply; when the approval was already recorded and its
+entry is missing, format 15 also keeps its settlement and sets
+`closed_reason: covered`),
 `scribe: rejected p-<n> — its entries stay as they are, and it is not
 proposed again`, `scribe: retired <id> — ask leaves it out of answers;
 scribe entry show <id> still has it`, `scribe: forgot <id> — entry text and
@@ -519,8 +529,9 @@ lists approved proposals whose older entry was still `active` and is now
 proposal closed automatically (`tag_retired`), in the same shape; `covered`
 holds each approved candidate this scan closed because an active entry
 already covers its statement (`proposal` the candidate, `by` the entry) —
-the proposal is `rejected`, `newer` stays empty, and the covering id is
-not stored on it; `judged_pairs` counts pairs the model labelled, `pairs_left` those past
+the proposal is `rejected` with `closed_reason: covered` (format 15),
+keeping who approved it and any instruction, `newer` stays empty, and the
+covering id is not stored on it; `judged_pairs` counts pairs the model labelled, `pairs_left` those past
 the cap of 40 or not reached in this call's time, `unrelated_pairs` those
 labelled `unrelated`, `dropped_labels` labels refused (a quote not verbatim,
 an unknown or repeated pair, an unknown label); `stale_entries` counts

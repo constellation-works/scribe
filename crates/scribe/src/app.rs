@@ -12,6 +12,7 @@ use crate::tasks::{self, OrbitTasks};
 use scribe_core::{Config, Label, Provider, Redactor, Store, unresolved_redact_env};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use time::OffsetDateTime;
 
 /// Environment variable naming the data directory.
@@ -60,6 +61,20 @@ pub(crate) struct Context {
     codex_transcripts: Option<PathBuf>,
     codex_archived: Option<PathBuf>,
     provider: Provider,
+    /// The instruction the running command acts on, for its audit line;
+    /// shared by the provider-scoped views of one context.
+    instruction: Arc<Mutex<InstructionNote>>,
+}
+
+/// The ids of Daniel's instruction a write ran on (2_design.md §12.4): the
+/// session from `--session`, and the turn's message once the check found it.
+/// Ids only; the instruction's words never reach the audit log.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct InstructionNote {
+    /// The `--session` the instruction was looked for in.
+    pub(crate) session: Option<String>,
+    /// The uuid of the turn that backs it, once the check passed.
+    pub(crate) message: Option<String>,
 }
 
 impl Context {
@@ -84,6 +99,7 @@ impl Context {
                 .or_else(|| env.home.clone().map(|h| PathBuf::from(h).join(".codex")))
                 .map(|d| d.join("archived_sessions")),
             provider: Provider::ClaudeCode,
+            instruction: Arc::default(),
         })
     }
 
@@ -97,6 +113,7 @@ impl Context {
             codex_transcripts: None,
             codex_archived: None,
             provider: Provider::ClaudeCode,
+            instruction: Arc::default(),
         }
     }
 
@@ -124,6 +141,29 @@ impl Context {
                 .map(PathBuf::as_path)
                 .collect(),
         }
+    }
+
+    /// Note the session a command's instruction is looked for in, before
+    /// anything can refuse it, so its audit line names it.
+    pub(crate) fn note_instruction_session(&self, session: &str) {
+        if let Ok(mut note) = self.instruction.lock() {
+            note.session = Some(session.to_owned());
+        }
+    }
+
+    /// Note the turn a passing instruction check found.
+    pub(crate) fn note_instruction_message(&self, message: &str) {
+        if let Ok(mut note) = self.instruction.lock() {
+            note.message = Some(message.to_owned());
+        }
+    }
+
+    /// What the running command noted of its instruction.
+    pub(crate) fn instruction_note(&self) -> InstructionNote {
+        self.instruction
+            .lock()
+            .map(|note| note.clone())
+            .unwrap_or_default()
     }
 
     /// The active transcript provider.

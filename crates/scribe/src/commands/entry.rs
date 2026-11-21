@@ -311,6 +311,7 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
             written_with_action(ctx, entry, changed)
         }
         EntryCommand::Retire(args) => {
+            args.instruction.note(ctx);
             scribe_core::check_agent_author(&args.author)?;
             scribe_core::check_reason(&args.reason)?;
             let target = ctx.store().resolve_entry(&args.id)?;
@@ -341,6 +342,7 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
 /// refusals, and every check of the instruction, come before the store lock
 /// and change nothing (§12.4).
 fn forget(args: &ForgetArgs, ctx: &Context) -> Result<Output, CliError> {
+    args.instruction.note(ctx);
     scribe_core::check_agent_author(&args.author)?;
     let target = ctx.store().resolve_entry(&args.id)?;
     let uninstructed = || {
