@@ -496,8 +496,11 @@ is not echoed again. Audit lines (`hook stop`): an entry's id as `target`;
 refusal code (`unparsed_instruction`, `too_many_marks`,
 `quote_not_verbatim`, `unknown_tag`, `annotation_out_of_bounds`,
 `covered`, `needs_redaction`, `model_failed`) for a refusal; none for a
-pending retry or a marker already settled. Codex does not echo or catalog
-markers yet.
+pending retry or a marker already settled. Under `--provider codex` the
+same echoes and audit lines hold: the prompt hook echoes a marker once the
+typed turn is in the rollout (before that it refuses with `provenance_failed`,
+`typed input not yet verified …; Stop will retry`), and Stop catalogs from
+the rollout.
 
 A prompt whose first line is `/scribe on`, `/scribe off`, `/scribe status`,
 `/scribe on --from <id> [--type <type>]`, `/scribe link <id> [--type

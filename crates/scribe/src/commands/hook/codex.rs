@@ -1,6 +1,10 @@
 //! Codex lifecycle adapter. Only host-attributed user.text messages can drive
 //! writes. A before-persistence prompt is deferred to Stop, never upgraded from
 //! an unverified hook payload. Cursors contain ids only, not private prompts.
+//!
+//! A `#scribe` marker inside a sentence (2_design.md §14) is echoed at submit
+//! once the typed turn is verified in the rollout, and cataloged by Stop from
+//! the rollout (`annotation.rs`), as under Claude Code.
 
 use super::{payload, session_end, session_start, stop, user_prompt_submit};
 use crate::{
@@ -8,7 +12,7 @@ use crate::{
     error::CliError,
     output::{HookOutcome, HookReply, Output},
 };
-use scribe_core::{Provider, capture, codex::TypedTurn, control};
+use scribe_core::{Provider, annotation, capture, codex::TypedTurn, control};
 use serde_json::{Value, json};
 use std::path::Path;
 
@@ -47,12 +51,59 @@ fn command_text(original: &str) -> String {
     original.to_owned()
 }
 
+/// Whether a typed Codex input is a session control, `/scribe …` or its
+/// `$scribe …` skill form.
+pub(super) fn is_control(text: &str) -> bool {
+    control::parse(&command_text(text)).is_some()
+}
+
+/// Whether `prompt` holds a `#scribe` annotation marker, cataloged at Stop.
+fn has_marks(prompt: &str) -> bool {
+    !is_control(prompt) && !annotation::marks(prompt).is_empty()
+}
+
 fn relevant(turn: &TypedTurn) -> bool {
     let text = command_text(&turn.message.text());
     control::parse(&text).is_some() || !capture::lines(&text).is_empty()
 }
 
 pub(super) fn run(event: &'static str, input: &[u8], ctx: &Context) -> Result<Output, CliError> {
+    let output = ingest(event, input, ctx)?;
+    if event != "UserPromptSubmit" {
+        return Ok(output);
+    }
+    // A verified typed turn's markers are echoed here, once: Stop replays
+    // turns through the prompt hook, which therefore does not echo them
+    // under Codex. A refusal (unverified or wrong session) says Stop retries.
+    let Output::Hook(mut reply) = output else {
+        return Ok(output);
+    };
+    let prompt = payload::decode::<Value>(input)?["prompt"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    if reply
+        .outcomes
+        .iter()
+        .any(|o| o.error_code == Some("provenance_failed"))
+        || !has_marks(&prompt)
+    {
+        return Ok(Output::Hook(reply));
+    }
+    let (texts, contexts): (Vec<String>, Vec<String>) =
+        user_prompt_submit::mark_echoes(&prompt).into_iter().unzip();
+    if texts.is_empty() {
+        return Ok(Output::Hook(reply));
+    }
+    let join = |first: Option<String>, more: Vec<String>| {
+        Some(first.into_iter().chain(more).collect::<Vec<_>>().join("\n"))
+    };
+    reply.message = join(reply.message.take(), texts);
+    reply.context = join(reply.context.take(), contexts);
+    Ok(Output::Hook(reply))
+}
+
+fn ingest(event: &'static str, input: &[u8], ctx: &Context) -> Result<Output, CliError> {
     let value: Value = payload::decode(input)?;
     if value["hook_event_name"] != event {
         return Ok(refused(
@@ -132,7 +183,9 @@ pub(super) fn run(event: &'static str, input: &[u8], ctx: &Context) -> Result<Ou
             .iter()
             .any(|t| t.turn_id == turn_id && t.message.text() == prompt)
         {
-            if control::parse(&command_text(prompt)).is_none() && capture::lines(prompt).is_empty()
+            if control::parse(&command_text(prompt)).is_none()
+                && capture::lines(prompt).is_empty()
+                && !has_marks(prompt)
             {
                 return Ok(silent(event));
             }

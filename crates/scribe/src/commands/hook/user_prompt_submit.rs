@@ -207,7 +207,9 @@ fn capture_prompt<M: Models>(
     };
     // Annotation markers inside his sentences (§14.1): echoed here, written
     // nothing; the Stop of this turn catalogs them. Stop recovery replays
-    // no echo, and Codex's Stop does not catalog them yet.
+    // no echo; under Codex the adapter echoes them once the typed turn is
+    // verified (`codex.rs`, [`mark_echoes`]), since its Stop replays turns
+    // through here.
     let mark_echoes = if recovery.is_none() && ctx.provider() != Provider::Codex {
         marked(&payload.prompt)
     } else {
@@ -536,6 +538,18 @@ fn with_hint(output: Output, fired: &Fired, session: &SessionId, prompt: &str) -
         }),
     });
     Output::Hook(reply)
+}
+
+/// The echoes of `prompt`'s annotation markers, as Daniel's text and the
+/// agent's context with its note, for the Codex adapter.
+pub(super) fn mark_echoes(prompt: &str) -> Vec<(String, String)> {
+    marked(prompt)
+        .into_iter()
+        .map(|echo| {
+            let context = format!("{} {}", echo.text, echo.note);
+            (echo.text, context)
+        })
+        .collect()
 }
 
 /// The echoes of a prompt's annotation markers: one for those Stop will

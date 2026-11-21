@@ -203,7 +203,8 @@ fn structured(bytes: &[u8]) -> Result<Value, ModelError> {
         .map_err(|_| bad("answer is not JSON"))
 }
 
-/// Validate the object/array/string/enum subset used by the Models port.
+/// Validate the object/array/string/integer/enum subset used by the Models
+/// port (`integer` for the annotation answer's marker number).
 /// Unknown schema constructs are not silently accepted.
 fn validate(value: &Value, schema: &Value) -> Result<(), ModelError> {
     let bad = || {
@@ -226,6 +227,7 @@ fn validate(value: &Value, schema: &Value) -> Result<(), ModelError> {
     match schema["type"].as_str() {
         Some("null") if value.is_null() => Ok(()),
         Some("string") if value.is_string() => Ok(()),
+        Some("integer") if value.is_i64() || value.is_u64() => Ok(()),
         Some("array") => {
             for item in value.as_array().ok_or_else(bad)? {
                 validate(item, &schema["items"])?;
