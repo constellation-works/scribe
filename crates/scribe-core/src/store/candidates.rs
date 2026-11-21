@@ -134,6 +134,7 @@ impl Store {
                 updated_by: None,
                 settled_author: None,
                 closed_reason: None,
+                instruction: None,
             };
             proposal.reason = proposal.reason.chars().take(300).collect();
             redactor.proposal(&mut proposal);

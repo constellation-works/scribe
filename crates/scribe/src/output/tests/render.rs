@@ -49,6 +49,8 @@ fn entry(id: &str, content: &str) -> EntryPayload {
         window_turns: None,
         window: None,
         admitted: None,
+        approved_by: None,
+        instruction: None,
         action: None,
     }
 }

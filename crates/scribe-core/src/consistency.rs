@@ -122,6 +122,7 @@ impl Draft {
             updated_by: None,
             settled_author: None,
             closed_reason: None,
+            instruction: None,
             candidate: None,
         }
     }
@@ -658,6 +659,9 @@ pub fn settle(
             entry.status = EntryStatus::Forgotten;
             entry.said.clear();
             entry.content.clear();
+            if let Some(instruction) = &mut entry.instruction {
+                instruction.quote = None;
+            }
             entry.updated = now;
             for proposal in proposals.iter_mut() {
                 let about = proposal.older == *id || proposal.newer.as_ref() == Some(id);
@@ -665,6 +669,9 @@ pub fn settle(
                     proposal.reason.clear();
                     if let Some(candidate) = &mut proposal.candidate {
                         candidate.quote.clear();
+                    }
+                    if let Some(instruction) = &mut proposal.instruction {
+                        instruction.quote = None;
                     }
                 }
                 for quote in proposal.quotes.iter_mut().filter(|q| q.entry == *id) {

@@ -29,6 +29,7 @@ pub const REDACTED_FIELDS: &[&str] = &[
     "entry.retirement_reason",
     "entry.quote",
     "entry.evidence",
+    "entry.instruction.quote",
     "entry.window.text",
     "session.title",
     "session.summary",
@@ -40,6 +41,7 @@ pub const REDACTED_FIELDS: &[&str] = &[
     "session.log.text",
     "session.active_change.reason",
     "proposal.reason",
+    "proposal.instruction.quote",
     "proposal.quotes.text",
     "proposal.candidate.quote",
     "proposal.candidate.evidence",
@@ -310,6 +312,11 @@ pub(super) fn entry_fields(entry: &mut Entry) -> Vec<(&'static str, &mut String)
     if let Some(evidence) = &mut entry.evidence {
         fields.push(("entry.evidence", evidence));
     }
+    if let Some(instruction) = &mut entry.instruction
+        && let Some(quote) = &mut instruction.quote
+    {
+        fields.push(("entry.instruction.quote", quote));
+    }
     if let Some(window) = &mut entry.window {
         for turn in &mut window.turns {
             fields.push(("entry.window.text", &mut turn.text));
@@ -344,6 +351,11 @@ pub(super) fn session_fields(record: &mut SessionRecord) -> Vec<(&'static str, &
 /// The free-text fields of a proposal; each quote is one field.
 pub(super) fn proposal_fields(proposal: &mut Proposal) -> Vec<(&'static str, &mut String)> {
     let mut fields = vec![("proposal.reason", &mut proposal.reason)];
+    if let Some(instruction) = &mut proposal.instruction
+        && let Some(quote) = &mut instruction.quote
+    {
+        fields.push(("proposal.instruction.quote", quote));
+    }
     fields.extend(
         proposal
             .quotes

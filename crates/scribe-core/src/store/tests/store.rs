@@ -1025,6 +1025,7 @@ fn close_retired_candidates_respects_config_shipped_and_store_tags() {
         updated_by: None,
         settled_author: None,
         closed_reason: None,
+        instruction: None,
     };
     let proposals = vec![
         mk(1, "decisions"),
@@ -1052,4 +1053,139 @@ fn close_retired_candidates_respects_config_shipped_and_store_tags() {
         assert_eq!(open.closed_reason, None);
     }
     assert!(store.close_retired_candidates(t1).unwrap().is_empty());
+}
+
+#[test]
+fn typed_forget_clears_instruction_quotes_on_disk_and_keeps_metadata() {
+    use crate::consistency::{Settle, Settled};
+    use crate::entry::{Cite, Instruction};
+    use crate::proposal::{Proposal, ProposalKind, ProposalState};
+    use crate::record::Author;
+    use time::macros::datetime;
+
+    let dir = private_tempdir();
+    let store = Store::open(dir.path());
+    let t0 = datetime!(2026-11-01 10:00 UTC);
+    let t1 = datetime!(2026-11-02 10:00 UTC);
+    let sha = "0".repeat(64);
+    let secret_quote = "approve p-1 with secret phrase XYZ123";
+
+    let entry_doc = format!(
+        "---
+format: 12
+kind: entry
+id: preferences-1
+tag: preferences
+status: active
+project: scribe
+topics: []
+related: []
+provider: claude-code
+host: host
+author: {{kind: daniel, name: daniel}}
+updated_by: null
+created: 2026-11-01T10:00:00Z
+updated: 2026-11-01T10:00:00Z
+said: \"#scribe approve p-1\"
+content_from: {{kind: message, role: user, message: m-1, at: 2026-11-01T10:00:00Z}}
+cite: {{session: s-1, message: m-1, at: 2026-11-01T10:00:00Z, prompt_sha256: \"{sha}\", line: 1, cwd: /work}}
+retirement_reason: null
+superseded_by: null
+review_after: null
+quote: null
+window: null
+evidence: null
+as_of: null
+approved_by: {{kind: agent, name: aide}}
+instruction: {{session: s-9, message: m-9, at: 2026-11-02T09:00:00Z, quote: \"{secret_quote}\"}}
+---
+I prefer secret phrase XYZ123
+"
+    );
+    put(
+        dir.path(),
+        "entries/preferences/preferences-1.md",
+        &entry_doc,
+    );
+
+    let inst = Instruction {
+        session: "s-9".parse().unwrap(),
+        message: String::from("m-9"),
+        at: datetime!(2026-11-02 09:00 UTC),
+        quote: Some(String::from(secret_quote)),
+    };
+    let inst_cite = Cite {
+        session: "s-9".parse().unwrap(),
+        message: Some(String::from("m-9")),
+        at: datetime!(2026-11-02 09:00 UTC),
+        prompt_sha256: sha.clone(),
+        line: 1,
+        cwd: String::from("/work"),
+    };
+    let proposal = Proposal {
+        id: "p-1".parse().unwrap(),
+        kind: ProposalKind::Candidate,
+        older: "preferences-1".parse().unwrap(),
+        newer: None,
+        candidate: Some(crate::EntryCandidate {
+            tag: "preferences".parse().unwrap(),
+            role: crate::Speaker::User,
+            quote: String::from("I prefer secret phrase XYZ123"),
+            evidence: None,
+            cite: Cite {
+                session: "s-1".parse().unwrap(),
+                message: Some(String::from("m-1")),
+                at: t0,
+                prompt_sha256: sha,
+                line: 1,
+                cwd: String::from("/work"),
+            },
+            project: "scribe".parse().unwrap(),
+            provider: crate::Label::sanitized("claude-code", "claude-code"),
+            host: crate::Label::sanitized("host", "host"),
+            admitted: None,
+        }),
+        reason: String::from("Unmarked preferences statement: secret phrase XYZ123"),
+        quotes: Vec::new(),
+        state: ProposalState::Approved,
+        opened_at: t0,
+        settled_at: Some(datetime!(2026-11-02 09:00 UTC)),
+        settled_by: Some(inst_cite.clone()),
+        author: Author::session_pass(),
+        updated_by: None,
+        settled_author: Some(Author::agent("aide".parse().unwrap())),
+        closed_reason: None,
+        instruction: Some(inst),
+    };
+    store.write_proposals(&[proposal]).unwrap();
+
+    let settled = store
+        .settle(
+            &Settle::Forget("preferences-1".parse().unwrap()),
+            &inst_cite,
+            t1,
+        )
+        .unwrap();
+    assert_eq!(
+        settled,
+        Settled::Forgotten("preferences-1".parse().unwrap())
+    );
+
+    let entry = store.entry(&"preferences-1".parse().unwrap()).unwrap();
+    assert_eq!(entry.status, EntryStatus::Forgotten);
+    let e_inst = entry.instruction.as_ref().unwrap();
+    assert_eq!(e_inst.session.as_str(), "s-9");
+    assert_eq!(e_inst.message, "m-9");
+    assert_eq!(e_inst.quote, None);
+
+    let proposals = store.proposals().unwrap();
+    let p_inst = proposals[0].instruction.as_ref().unwrap();
+    assert_eq!(p_inst.session.as_str(), "s-9");
+    assert_eq!(p_inst.message, "m-9");
+    assert_eq!(p_inst.quote, None);
+
+    let raw_entry = fs::read_to_string(store.entry_path(&entry.id)).unwrap();
+    assert!(!raw_entry.contains("XYZ123"), "{raw_entry}");
+    let raw_proposals = fs::read_to_string(dir.path().join("proposals.json")).unwrap();
+    assert!(!raw_proposals.contains("XYZ123"), "{raw_proposals}");
 }
