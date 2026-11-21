@@ -49,12 +49,16 @@ use std::num::NonZeroU32;
 use time::OffsetDateTime;
 
 mod candidates;
+#[cfg(test)]
+pub(crate) use candidates::covers_statement;
 pub use candidates::{
     MAX_CANDIDATES, MAX_OPEN_CANDIDATES, PassClaim, candidate_drafts, candidate_exclusions,
     capture_request,
 };
 pub(crate) use candidates::{admission, is_marker, own_span, statement_tokens};
-pub(crate) use candidates::{covering_entry, covers_statement, covers_turn};
+pub(crate) use candidates::{
+    candidate_says, claim_covers, covering_claim, covering_entry, covers_turn, entry_says,
+};
 mod repair;
 pub use repair::repair;
 

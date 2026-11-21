@@ -490,19 +490,19 @@ pub fn check(reply: AskAnswer, evidence: &[EvidenceItem], hidden: usize) -> Answ
     if status == Status::NoRecord {
         return no_record(evidence.len(), dropped, hidden);
     }
-    let has_agent = evidence
-        .iter()
-        .any(|e| e.whose.starts_with("agent note (") || e.whose.starts_with("agent claim ("));
+    // Agent notes and scribe's statements are never Daniel's words, so
+    // with either in the evidence every claim is labelled by whose words
+    // its quote is, deterministically, and the answer is built from those
+    // labels rather than the model's prose.
+    let has_agent = evidence.iter().any(|e| {
+        e.whose.starts_with("agent note (")
+            || e.whose.starts_with("agent claim (")
+            || e.quote.is_some()
+    });
     let answer = if has_agent {
         claims
             .iter()
-            .map(|c| {
-                let whose = evidence
-                    .iter()
-                    .find(|e| e.cite == c.cite)
-                    .map_or("record", |e| e.whose.as_str());
-                format!("{whose}: \"{}\" [{}]", c.quote, c.cite)
-            })
+            .map(|c| format!("{}: \"{}\" [{}]", attribution(c, evidence), c.quote, c.cite))
             .collect::<Vec<_>>()
             .join("\n")
     } else {
@@ -512,9 +512,7 @@ pub fn check(reply: AskAnswer, evidence: &[EvidenceItem], hidden: usize) -> Answ
         claims
             .into_iter()
             .map(|mut c| {
-                if let Some(e) = evidence.iter().find(|e| e.cite == c.cite) {
-                    c.text.clone_from(&e.whose);
-                }
+                c.text = attribution(&c, evidence).to_owned();
                 c
             })
             .collect()
@@ -559,6 +557,21 @@ pub fn check(reply: AskAnswer, evidence: &[EvidenceItem], hidden: usize) -> Answ
         hidden_matches: hidden,
         lookup: None,
         records: Vec::new(),
+    }
+}
+
+/// Whose words a checked claim's quote is (§6.4, §11.1): the cited item's
+/// `whose`, except that a quote from an entry holding scribe's statement of
+/// Daniel's turn is Daniel's only when it lies within his quoted words;
+/// anywhere else in that item it is scribe's statement.
+fn attribution<'a>(claim: &Claim, evidence: &'a [EvidenceItem]) -> &'a str {
+    match evidence.iter().find(|e| e.cite == claim.cite) {
+        None => "record",
+        Some(EvidenceItem {
+            quote: Some(daniel),
+            ..
+        }) if verbatim::contains(daniel, &claim.quote) => "Daniel",
+        Some(item) => item.whose.as_str(),
     }
 }
 
@@ -1100,7 +1113,13 @@ pub(crate) fn store_docs(
         };
         docs.push(Doc {
             record: entry.id.to_string(),
-            tokens: tokens(&format!("{} {} {}", entry.content, entry.said, entry.tag)),
+            tokens: tokens(&format!(
+                "{} {} {} {}",
+                entry.content,
+                stated_quote(entry).unwrap_or_default(),
+                entry.said,
+                entry.tag
+            )),
             weight: if entry.author.kind == crate::AuthorKind::Daniel {
                 ENTRY_WEIGHT * boost
             } else {
@@ -1383,6 +1402,22 @@ fn day(at: OffsetDateTime) -> String {
     crate::record::nullable_date::format(at.date())
 }
 
+/// Whose words an approved pass statement is, in `ask` evidence and in
+/// `record search` snippets (2_design.md §11.1).
+pub const STATED_WHOSE: &str = "scribe's statement of Daniel's turn";
+/// The label before Daniel's own words beside such a statement.
+pub const STATED_QUOTE_LABEL: &str = "Daniel's words:";
+
+/// Daniel's verbatim words beside an entry whose content is scribe's
+/// statement of his turn; `None` for every other entry.
+pub(crate) fn stated_quote(entry: &Entry) -> Option<&str> {
+    entry
+        .stated_by
+        .as_ref()
+        .and(entry.quote.as_deref())
+        .filter(|_| entry.author.kind == crate::AuthorKind::Daniel)
+}
+
 fn entry_item(entry: &Entry) -> EvidenceItem {
     let whose = match &entry.content_from {
         ContentFrom::Agent => "agent",
@@ -1418,6 +1453,13 @@ fn entry_item(entry: &Entry) -> EvidenceItem {
             format!("agent note ({})", entry.author.name),
             entry.content.clone(),
         )
+    } else if let Some(quote) = stated_quote(entry) {
+        // Scribe's statement of Daniel's turn, then his own words,
+        // labelled as his (2_design.md §11.1).
+        (
+            STATED_WHOSE.to_owned(),
+            format!("{}\n{STATED_QUOTE_LABEL} \"{quote}\"", entry.content),
+        )
     } else {
         (whose.to_owned(), entry.content.clone())
     };
@@ -1428,6 +1470,7 @@ fn entry_item(entry: &Entry) -> EvidenceItem {
         status: entry.status.as_str().to_owned(),
         date: day(entry.created),
         text,
+        quote: stated_quote(entry).map(str::to_owned),
     }
 }
 
@@ -1450,6 +1493,7 @@ fn session_item(record: &SessionRecord) -> EvidenceItem {
         status: record.status.as_str().to_owned(),
         date: day(record.updated),
         text,
+        quote: None,
     }
 }
 
@@ -1463,6 +1507,7 @@ fn segment_item(record: &SessionRecord, segment: &Segment) -> EvidenceItem {
         status: record.status.as_str().to_owned(),
         date: day(segment.to),
         text: format!("{}\n{}", segment.heading, segment.text),
+        quote: None,
     }
 }
 
@@ -1474,5 +1519,6 @@ fn task_item(task: &Task, description: &str) -> EvidenceItem {
         status: task.status.clone(),
         date: task.updated.map(day).unwrap_or_default(),
         text: format!("{}\n{description}", task.title),
+        quote: None,
     }
 }

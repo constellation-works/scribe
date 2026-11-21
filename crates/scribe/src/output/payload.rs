@@ -234,7 +234,9 @@ pub(crate) struct EntryPayload {
     /// Who last updated or retired it through a CLI verb.
     pub(crate) updated_by: Option<AuthorPayload>,
     pub(crate) retirement_reason: Option<String>,
-    /// An agent entry's quote of Daniel's correction; `null` otherwise.
+    /// An agent entry's quote of Daniel's correction, or Daniel's verbatim
+    /// words beside scribe's statement of them (`stated_by` set); `null`
+    /// otherwise.
     pub(crate) quote: Option<String>,
     /// A finding's evidence pointer; `null` for other entries.
     pub(crate) evidence: Option<String>,
@@ -258,6 +260,10 @@ pub(crate) struct EntryPayload {
     /// Daniel's checked instruction that approved, retired or forgot this entry;
     /// `null` otherwise.
     pub(crate) instruction: Option<InstructionPayload>,
+    /// Whose words `content` is when not the author's: `{kind: scribe,
+    /// name: session-pass}` when it is scribe's statement of Daniel's turn
+    /// (his words are then in `quote`); `null` otherwise.
+    pub(crate) stated_by: Option<AuthorPayload>,
 }
 
 /// An action entry's transcript window (docs/design/scribe/2_design.md §4.6).
@@ -426,6 +432,7 @@ impl From<&Entry> for EntryPayload {
             admitted: None,
             approved_by: entry.approved_by.as_ref().map(AuthorPayload::from),
             instruction: entry.instruction.as_ref().map(InstructionPayload::from),
+            stated_by: entry.stated_by.as_ref().map(AuthorPayload::from),
         }
     }
 }

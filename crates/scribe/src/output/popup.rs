@@ -215,12 +215,22 @@ fn proposed(p: &ProposalPayload) -> String {
         ("supersedes", None) => format!("supersede {}", p.older),
         _ => format!("retire {} as stale", p.older),
     };
-    let reason = first_line(&p.reason);
+    let reason = first_line(said(p));
     if reason.is_empty() {
         what
     } else {
         format!("{what}: {reason}")
     }
+}
+
+/// A proposal's words: scribe's statement for a candidate carrying one
+/// (2_design.md §11.1), else its reason, which for a pass candidate is
+/// Daniel's raw quote.
+fn said(p: &ProposalPayload) -> &str {
+    p.candidate
+        .as_ref()
+        .and_then(|c| c.statement.as_deref())
+        .unwrap_or(&p.reason)
 }
 
 fn proposals(items: &[ProposalPayload], year: i32) -> Vec<Row> {
@@ -346,7 +356,8 @@ fn entry_preview(out: &mut dyn Write, e: &EntryPayload) -> io::Result<()> {
 
 fn proposal_preview(out: &mut dyn Write, p: &ProposalPayload) -> io::Result<()> {
     writeln!(out, "{}", proposed(p))?;
-    section(out, "Reason", &p.reason)?;
+    let stated = p.candidate.as_ref().is_some_and(|c| c.statement.is_some());
+    section(out, if stated { "Statement" } else { "Reason" }, said(p))?;
     writeln!(out, "\n## Details")?;
     detail(out, "id", &p.id)?;
     detail(out, "kind", p.kind)?;
@@ -354,6 +365,10 @@ fn proposal_preview(out: &mut dyn Write, p: &ProposalPayload) -> io::Result<()> 
     detail(out, "older", &p.older)?;
     if let Some(candidate) = &p.candidate {
         detail(out, "tag", candidate.tag.as_str())?;
+        if let Some(statement) = &candidate.statement {
+            detail(out, "statement", statement)?;
+            detail(out, "subject", candidate.subject.as_deref().unwrap_or(""))?;
+        }
         detail(out, "quote", &candidate.quote)?;
         detail(out, "session", candidate.cite.session.as_str())?;
         detail(

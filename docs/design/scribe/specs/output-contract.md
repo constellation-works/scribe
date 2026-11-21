@@ -1,7 +1,7 @@
 ---
 type: design
 summary: "Spec: output contract — streams, modes, plain columns, the JSON list envelope and record fields (segments, activity, agent authors and direct writes, search hits; future transcripts), warnings, errors and exit codes"
-last_validated: 2026-11-10
+last_validated: 2026-11-21
 ---
 
 # Spec: Output contract
@@ -44,7 +44,7 @@ is `-`, lists are comma-joined, and timestamps are RFC 3339.
 | `session list` | `id status due project topics updated title` (`due` is `yes` or `no`) |
 | `session list --tree` | `id parent status due project topics updated title` (`parent` is the session the row nests under, its `spawned_from` link else its first `continues` link, or `-`) |
 | `session list --include-inactive` | `id status active due project topics updated title` (`active` is `yes` or `no`); without the flag the columns are unchanged, inactive sessions are left out, and when any matched the notice `<n> inactive session(s) also match and are hidden; --include-inactive lists them` goes to stderr. With `--tree` too, `active` follows `status` |
-| `proposal list` | `id kind state older newer opened_at reason admitted closed_reason` (format 11: `admitted` is `trigger "<phrase>" matched "<words>"; criteria: <criteria or ->` for a candidate a capture rule admitted, else `-`; `closed_reason` is `tag_retired` when scribe closed it without Daniel, `instructed` when an agent rejected it on Daniel's checked instruction (format 13), else `-`) |
+| `proposal list` | `id kind state older newer opened_at reason admitted closed_reason` (format 11: `admitted` is `trigger "<phrase>" matched "<words>"; criteria: <criteria or ->` for a candidate a capture rule admitted, else `-`; `closed_reason` is `tag_retired` when scribe closed it without Daniel, `instructed` when an agent rejected it on Daniel's checked instruction (format 13), else `-`; format 14: for a candidate with a statement, `reason` is the statement, and the table prints `Daniel's words: "<quote>"` on a row under it in the same column, while plain joins them as `<statement> \| Daniel's words: "<quote>"`; the single-proposal detail a proposal write prints (`proposal add`, `update`, `settle`; there is no `proposal show`) adds `statement` and `subject` fields before `quote` in the table, and its JSON carries both on `candidate`) |
 | `tag list` | `name entries stale_after_days aliases description`, (S12) `source` (`config` or `store`), then `action` (`free` or `ask-first`, with `,quote` when the tag requires a quote), `retired` and `rejected` (counts of agent entries); the last three are `-` for a tag that is not an action tag; (format 11) then `route` (the tag's capture route, `propose`, `write` or `agent`, or `-` when it has no capture rules) |
 | `tag show <tag>` (format 11) | one `<field>\t<value>\t<origin>` line each for `tag`, `source`, `aliases`, `description`, `stale_after_days`, `action` (`free`/`ask-first`, with `,quote`, or `-`), then the capture rules `from`, `route`, `triggers` (quoted, comma separated), `criteria` and `not`; `origin` is `shipped`, `config <file>:<line>` or `none` (an unset rule's value is `-`), and `-` for the first six. The table prints `<field> <value>  (<origin>)` |
 | `record search` (S11) | `cite kind score updated title snippet` (`score` to three decimals; the table cuts `title` to 40 characters and fits `snippet` to the width) |
@@ -130,7 +130,13 @@ window). The table detail view adds `author`, and for such an entry
 `pickups` and `window` (its turns with `--window`, else `<n> turns (show
 with --window)`). Store format 13 adds `approved_by` (`{kind, name}` of kind
 `agent`, or `null`) and `instruction` (`{session, message, at, quote}` or
-`null`, where `quote` is `null` once forgotten).
+`null`, where `quote` is `null` once forgotten). Store format 14 adds
+`stated_by` (`{kind, name}`, `{kind: "scribe", name: "session-pass"}` when
+`content` is scribe's statement of Daniel's turn and `quote` his verbatim
+words, else `null`). The table detail prints `stated_by
+scribe:session-pass (content is scribe's statement of Daniel's turn)` before
+`quote`; plain prints a `stated_by\t<kind>:<name>\t<quote>` line after the
+entry row.
 
 **Session** (`sessions[]`, `session show`): `id`, `status` (`open`,
 `final`), `project`, `topics`, `related` (unchanged: model-extracted
@@ -187,7 +193,10 @@ criteria}`: the capture-rule trigger as configured, the turn's words it
 matched, verbatim and at most 120 characters, and the tag's `criteria`
 then in force or `null`; `null` on a candidate opened before format 11). Store
 format 13 adds `instruction` (`{session, message, at, quote}` or `null`, where
-`quote` is `null` once forgotten).
+`quote` is `null` once forgotten). Store format 14 adds, on a `candidate`
+object, `statement` (scribe's statement of the claim, at most 300
+characters) and `subject` (at most 80 characters), both `null` on a
+candidate opened before format 14 or forgotten.
 
 **Tag rules** (`tag show <tag> --json`, format 11): `tag`, `source`
 (`config` or `store`), `aliases`, `description` (or `null`),
@@ -219,7 +228,9 @@ entry's or session's id), `segment` (integer or `null`), `score` (a
 number, three decimals), `title` (a session's title, a segment's heading,
 or for an entry `<id> (<tag>)`), `snippet` (up to 240 characters on one
 line, starting a little before the first matching word, with `…` where it
-was cut), `project`, `topics` (a segment's are its session's plus its
+was cut; format 14: for an entry with `stated_by`, `scribe's statement of
+Daniel's turn: <statement> | Daniel's words: "<quote>"`, each part cut to
+240 characters), `project`, `topics` (a segment's are its session's plus its
 own), `author` (an entry's `{kind, name}`, `null` for a session), `active`
 (a session's flag; `null` for an entry), `updated` (an entry's or
 session's `updated`, a segment's `to`), and `status` (added beside the
@@ -571,7 +582,11 @@ retrieval matched and left out. A `session` record carries `log` with
 every segment and its text; the table view prints the header and the
 log's table of contents. `evidence_considered` is the number of
 items the model read, or of records a lookup returned; `dropped_quotes`
-counts claims dropped by the check; `hidden_matches` counts superseded or
+counts claims dropped by the check (format 14: an entry with `stated_by` is
+read as scribe's statement of Daniel's turn followed by his labelled words; a
+claim whose `quote` lies in his words has `text` `Daniel`, one whose quote
+lies only in the statement has `text` `scribe's statement of Daniel's turn`,
+and the answer is built from those labels as it is with agent evidence); `hidden_matches` counts superseded or
 retired entries that matched and were left out (0 with `include_hidden`).
 `lookup` is `null` when retrieval ran, else `last_session`,
 `named_session`, `next_steps`, `tag_period`, `term` or

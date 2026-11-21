@@ -369,7 +369,7 @@ fn a_format_ten_store_upgrades_with_null_admission_and_closed_reason_only() {
 
     // Re-encoded at the current format, the old keys and values are
     // untouched: the document differs only by the new nulls and the
-    // format number (formats 12 and 13 leave proposals' old keys alone).
+    // format number (formats 12 to 14 leave proposals' old keys alone).
     let encoded = crate::store::format::encode_proposals(path, &proposals).unwrap();
     let mut value: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
     assert_eq!(value["format"], FORMAT);
@@ -379,6 +379,8 @@ fn a_format_ten_store_upgrades_with_null_admission_and_closed_reason_only() {
         assert_eq!(p.remove("instruction"), Some(serde_json::Value::Null));
         if let Some(c) = p.get_mut("candidate").and_then(|c| c.as_object_mut()) {
             assert_eq!(c.remove("admitted"), Some(serde_json::Value::Null));
+            assert_eq!(c.remove("statement"), Some(serde_json::Value::Null));
+            assert_eq!(c.remove("subject"), Some(serde_json::Value::Null));
         }
     }
     value["format"] = serde_json::json!(10);
@@ -517,17 +519,20 @@ fn a_format_eleven_proposals_document_reads_at_its_own_shape() {
         Some(crate::ClosedReason::TagRetired)
     );
 
-    // Re-encoded, the document is unchanged but for its format number and
-    // the new null `instruction` of format 13.
+    // Re-encoded, the document is unchanged but for its format number, the
+    // new null `instruction` of format 13 and the candidates' null
+    // `statement` and `subject` of format 14.
     let encoded = crate::store::format::encode_proposals(path, &proposals).unwrap();
     let mut value: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
     assert_eq!(value["format"], FORMAT);
     value["format"] = serde_json::json!(11);
     for p in value["proposals"].as_array_mut().unwrap() {
-        assert_eq!(
-            p.as_object_mut().unwrap().remove("instruction"),
-            Some(serde_json::Value::Null)
-        );
+        let p = p.as_object_mut().unwrap();
+        assert_eq!(p.remove("instruction"), Some(serde_json::Value::Null));
+        if let Some(c) = p.get_mut("candidate").and_then(|c| c.as_object_mut()) {
+            assert_eq!(c.remove("statement"), Some(serde_json::Value::Null));
+            assert_eq!(c.remove("subject"), Some(serde_json::Value::Null));
+        }
     }
     assert_eq!(value, old);
 
@@ -989,9 +994,9 @@ run the gate before every push
     assert_eq!(decoded_entry.instruction, None);
     assert_eq!(decoded_entry.content, "run the gate before every push");
 
-    // Re-encoded at format 13, the entry differs only by `format`,
-    // `inactive_since: null` (format 12), `approved_by: null`, and
-    // `instruction: null`.
+    // Re-encoded at the current format, the entry differs only by
+    // `format`, `inactive_since: null` (format 12), `approved_by: null`,
+    // `instruction: null` (format 13) and `stated_by: null` (format 14).
     let encoded_entry = String::from_utf8(
         crate::store::format::encode_entry(Path::new(ENTRY), &decoded_entry).unwrap(),
     )
@@ -1003,7 +1008,8 @@ run the gate before every push
         .replacen(&format!("format: {FORMAT}\n"), "format: 11\n", 1)
         .replace("inactive_since: null\n", "")
         .replace("approved_by: null\n", "")
-        .replace("instruction: null\n", "");
+        .replace("instruction: null\n", "")
+        .replace("stated_by: null\n", "");
     assert_eq!(entry(&stripped_entry).unwrap(), decoded_entry);
 
     // Format-11 entries must reject later keys.
@@ -1040,10 +1046,12 @@ run the gate before every push
     let mut value: serde_json::Value = serde_json::from_slice(&encoded_proposals).unwrap();
     assert_eq!(value["format"], FORMAT);
     for p in value["proposals"].as_array_mut().unwrap() {
-        assert_eq!(
-            p.as_object_mut().unwrap().remove("instruction"),
-            Some(serde_json::Value::Null)
-        );
+        let p = p.as_object_mut().unwrap();
+        assert_eq!(p.remove("instruction"), Some(serde_json::Value::Null));
+        if let Some(c) = p.get_mut("candidate").and_then(|c| c.as_object_mut()) {
+            assert_eq!(c.remove("statement"), Some(serde_json::Value::Null));
+            assert_eq!(c.remove("subject"), Some(serde_json::Value::Null));
+        }
     }
     value["format"] = serde_json::json!(11);
     let original: serde_json::Value = serde_json::from_str(&old_proposals).unwrap();
@@ -1210,7 +1218,7 @@ fn closed_reason_accepts_instructed_and_older_values_read_unchanged() {
                     "id": "p-1",
                     "kind": "candidate",
                     "older": "preferences-1",
-                    "candidate": {{"tag":"preferences","role":"user","quote":"I prefer tabs.","evidence":null,"cite":{cand_cite},"project":"scribe","provider":"claude-code","host":"host","admitted":null}},
+                    "candidate": {{"tag":"preferences","role":"user","quote":"I prefer tabs.","evidence":null,"cite":{cand_cite},"project":"scribe","provider":"claude-code","host":"host","admitted":null,"statement":null,"subject":null}},
                     "newer": null,
                     "reason": "Unmarked preferences statement",
                     "quotes": [],
@@ -1228,7 +1236,7 @@ fn closed_reason_accepts_instructed_and_older_values_read_unchanged() {
                     "id": "p-2",
                     "kind": "candidate",
                     "older": "preferences-2",
-                    "candidate": {{"tag":"preferences","role":"user","quote":"I prefer short lines.","evidence":null,"cite":{cand_cite},"project":"scribe","provider":"claude-code","host":"host","admitted":null}},
+                    "candidate": {{"tag":"preferences","role":"user","quote":"I prefer short lines.","evidence":null,"cite":{cand_cite},"project":"scribe","provider":"claude-code","host":"host","admitted":null,"statement":null,"subject":null}},
                     "newer": null,
                     "reason": "Unmarked preferences statement",
                     "quotes": [],
@@ -1246,7 +1254,7 @@ fn closed_reason_accepts_instructed_and_older_values_read_unchanged() {
                     "id": "p-3",
                     "kind": "candidate",
                     "older": "decisions-1",
-                    "candidate": {{"tag":"decisions","role":"user","quote":"I prefer squash.","evidence":null,"cite":{cand_cite},"project":"scribe","provider":"claude-code","host":"host","admitted":null}},
+                    "candidate": {{"tag":"decisions","role":"user","quote":"I prefer squash.","evidence":null,"cite":{cand_cite},"project":"scribe","provider":"claude-code","host":"host","admitted":null,"statement":null,"subject":null}},
                     "newer": null,
                     "reason": "Unmarked decisions statement",
                     "quotes": [],
@@ -1340,7 +1348,9 @@ fn contradictory_proposal_instruction_metadata_is_refused() {
                 "project": "scribe",
                 "provider": "claude-code",
                 "host": "host",
-                "admitted": null
+                "admitted": null,
+                "statement": null,
+                "subject": null
             },
             "newer": null,
             "reason": "Unmarked preferences statement",
@@ -1541,7 +1551,7 @@ fn instruction_metadata_requires_settled_at() {
             "candidate": {"tag": "preferences", "role": "user", "quote": "I prefer tabs.",
                 "evidence": null, "cite": cite("s-1", "m-1", "2026-11-01T10:00:00Z"),
                 "project": "scribe", "provider": "claude-code", "host": "host",
-                "admitted": null},
+                "admitted": null, "statement": null, "subject": null},
             "newer": null, "reason": "Unmarked preferences statement", "quotes": [],
             "state": "rejected", "opened_at": "2026-11-01T10:00:00Z",
             "settled_at": settled_at,
@@ -1561,4 +1571,255 @@ fn instruction_metadata_requires_settled_at() {
     read(proposal(serde_json::json!("2026-11-03T10:00:00Z"))).unwrap();
     let message = corrupt_message(&read(proposal(serde_json::Value::Null)).unwrap_err());
     assert!(message.contains("settled_at"), "{message}");
+}
+
+fn format_thirteen_entry(extra: &str, project: &str) -> String {
+    format!(
+        "---
+format: 13
+kind: entry
+id: preferences-1
+tag: preferences
+status: active
+project: {project}
+topics: [ci]
+related: []
+provider: claude-code
+host: host
+author: {{kind: daniel, name: daniel}}
+updated_by: null
+created: 2026-11-01T10:00:00Z
+updated: 2026-11-01T10:00:00Z
+inactive_since: null
+said: \"#scribe approve p-1\"
+content_from: {{kind: message, role: user, message: m-1, at: 2026-11-01T09:59:00Z}}
+cite: {{session: s-1, message: m-1, at: 2026-11-01T09:59:00Z, prompt_sha256: \"{sha}\", line: 1, cwd: /work}}
+retirement_reason: null
+superseded_by: null
+review_after: null
+quote: null
+window: null
+evidence: null
+as_of: null
+approved_by: null
+{extra}instruction: null
+---
+I prefer short updates.
+",
+        sha = "0".repeat(64)
+    )
+}
+
+#[test]
+fn a_format_thirteen_store_upgrades_with_null_statement_subject_and_stated_by_only() {
+    // Entry: checked against the frozen format-13 shape, then `stated_by`
+    // is null and nothing else changes.
+    let old_entry = format_thirteen_entry("", "scribe");
+    let decoded = entry(&old_entry).unwrap();
+    assert_eq!(decoded.stated_by, None);
+    assert_eq!(decoded.content, "I prefer short updates.");
+    let encoded =
+        String::from_utf8(crate::store::format::encode_entry(Path::new(ENTRY), &decoded).unwrap())
+            .unwrap();
+    assert!(encoded.starts_with(&format!("---\nformat: {FORMAT}\n")));
+    assert!(encoded.contains("\nstated_by: null\n"), "{encoded}");
+    let back = encoded
+        .replacen(&format!("format: {FORMAT}\n"), "format: 13\n", 1)
+        .replace("stated_by: null\n", "");
+    assert_eq!(entry(&back).unwrap(), decoded);
+    // Local YAML tags on a format-13 string survive the upgrade.
+    let tagged = format_thirteen_entry("", "!local scribe");
+    assert_eq!(entry(&tagged).unwrap().project.as_str(), "scribe");
+    // Strict at format 13: `stated_by` is a format-14 key.
+    let stray = format_thirteen_entry("stated_by: null\n", "scribe");
+    corrupt_message(&entry(&stray).unwrap_err());
+
+    // Proposals: each candidate gains null `statement` and `subject`.
+    let cite = format!(
+        r#"{{"session":"s-1","message":"m-1","at":"2026-11-01T10:00:00Z","prompt_sha256":"{}","line":1,"cwd":"/work"}}"#,
+        "0".repeat(64)
+    );
+    let inst_cite = r#"{"session":"s-9","message":"m-9","at":"2026-11-03T10:00:00Z","prompt_sha256":"1111111111111111111111111111111111111111111111111111111111111111","line":1,"cwd":"/work"}"#;
+    let open = format!(
+        r#"{{"id":"p-1","kind":"candidate","older":"preferences-1","candidate":{{"tag":"preferences","role":"user","quote":"I prefer short updates.","evidence":null,"cite":{cite},"project":"scribe","provider":"claude-code","host":"host","admitted":{{"trigger":"I prefer","matched":"I prefer","criteria":null}}}},"newer":null,"reason":"Unmarked preferences statement","quotes":[],"state":"open","opened_at":"2026-11-01T10:00:00Z","settled_at":null,"settled_by":null,"author":{{"kind":"scribe","name":"session-pass"}},"updated_by":null,"settled_author":null,"closed_reason":null,"instruction":null}}"#
+    );
+    let instructed = format!(
+        r#"{{"id":"p-2","kind":"candidate","older":"preferences-2","candidate":{{"tag":"preferences","role":"user","quote":"I prefer tabs.","evidence":null,"cite":{cite},"project":"scribe","provider":"claude-code","host":"host","admitted":null}},"newer":null,"reason":"Unmarked preferences statement","quotes":[],"state":"rejected","opened_at":"2026-11-01T10:00:00Z","settled_at":"2026-11-03T10:00:00Z","settled_by":{inst_cite},"author":{{"kind":"scribe","name":"session-pass"}},"updated_by":null,"settled_author":{{"kind":"agent","name":"aide"}},"closed_reason":"instructed","instruction":{{"session":"s-9","message":"m-9","at":"2026-11-03T10:00:00Z","quote":"reject p-2"}}}}"#
+    );
+    let stale = r#"{"id":"p-3","kind":"stale","older":"preferences-3","candidate":null,"newer":null,"reason":"review","quotes":[],"state":"open","opened_at":"2026-11-01T10:00:00Z","settled_at":null,"settled_by":null,"author":{"kind":"scribe","name":"consistency"},"updated_by":null,"settled_author":null,"closed_reason":null,"instruction":null}"#;
+    let old = format!(r#"{{"format":13,"proposals":[{open},{instructed},{stale}]}}"#);
+    let path = Path::new("proposals.json");
+    let proposals = decode_proposals(path, old.as_bytes()).unwrap();
+    assert_eq!(proposals.len(), 3);
+    for candidate in proposals.iter().filter_map(|p| p.candidate.as_ref()) {
+        assert_eq!((&candidate.statement, &candidate.subject), (&None, &None));
+    }
+    let encoded = crate::store::format::encode_proposals(path, &proposals).unwrap();
+    let mut value: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+    assert_eq!(value["format"], FORMAT);
+    value["format"] = serde_json::json!(13);
+    for p in value["proposals"].as_array_mut().unwrap() {
+        if let Some(c) = p.get_mut("candidate").and_then(|c| c.as_object_mut()) {
+            assert_eq!(c.remove("statement"), Some(serde_json::Value::Null));
+            assert_eq!(c.remove("subject"), Some(serde_json::Value::Null));
+        }
+    }
+    let original: serde_json::Value = serde_json::from_str(&old).unwrap();
+    assert_eq!(value, original, "no other change");
+    // Strict at format 13: a candidate carrying a format-14 key is refused.
+    for key in ["statement", "subject"] {
+        let stray = old.replacen(
+            r#""admitted":null}"#,
+            &format!(r#""admitted":null,"{key}":null}}"#),
+            1,
+        );
+        corrupt_message(&decode_proposals(path, stray.as_bytes()).unwrap_err());
+    }
+}
+
+/// A current-format entry holding scribe's statement of Daniel's turn.
+fn stated_entry(status: &str, quote: &str, said: &str, stated_by: &str, body: &str) -> String {
+    let inactive = if status == "active" {
+        "null"
+    } else {
+        "2026-11-02T10:00:00Z"
+    };
+    format!(
+        "---
+format: {FORMAT}
+kind: entry
+id: preferences-1
+tag: preferences
+status: {status}
+project: scribe
+topics: []
+related: []
+provider: claude-code
+host: host
+author: {{kind: daniel, name: daniel}}
+updated_by: null
+created: 2026-11-01T10:00:00Z
+updated: 2026-11-02T10:00:00Z
+inactive_since: {inactive}
+said: \"{said}\"
+content_from: {{kind: message, role: user, message: m-1, at: 2026-11-01T09:59:00Z}}
+cite: {{session: s-1, message: m-1, at: 2026-11-01T09:59:00Z, prompt_sha256: \"{sha}\", line: 1, cwd: /work}}
+retirement_reason: null
+superseded_by: null
+review_after: null
+quote: {quote}
+window: null
+evidence: null
+as_of: null
+approved_by: null
+instruction: null
+stated_by: {stated_by}
+---
+{body}
+",
+        sha = "0".repeat(64)
+    )
+}
+
+#[test]
+fn a_stated_entry_is_daniels_with_his_quote_and_contradictions_are_refused() {
+    let pass = "{kind: scribe, name: session-pass}";
+    let statement = "Daniel prefers short progress updates while an agent works.";
+    let ok = stated_entry(
+        "active",
+        "\"ok, short updates please\"",
+        "#scribe approve p-1",
+        pass,
+        statement,
+    );
+    let e = entry(&ok).unwrap();
+    assert_eq!(e.content, statement);
+    assert_eq!(e.quote.as_deref(), Some("ok, short updates please"));
+    assert_eq!(e.stated_by, Some(crate::Author::session_pass()));
+    assert_eq!(e.author, crate::Author::daniel());
+    let encoded = crate::store::format::encode_entry(Path::new(ENTRY), &e).unwrap();
+    assert_eq!(entry(std::str::from_utf8(&encoded).unwrap()).unwrap(), e);
+    // Forgotten: blank, its quote cleared, `stated_by` kept.
+    let forgotten = stated_entry("forgotten", "null", "", pass, "");
+    assert_eq!(entry(&forgotten).unwrap().quote, None);
+
+    for (label, bad) in [
+        (
+            "no quote",
+            stated_entry("active", "null", "#scribe approve p-1", pass, statement),
+        ),
+        (
+            "not session-pass",
+            stated_entry(
+                "active",
+                "\"ok\"",
+                "#scribe approve p-1",
+                "{kind: scribe, name: consistency}",
+                statement,
+            ),
+        ),
+        (
+            "not an approval",
+            stated_entry(
+                "active",
+                "\"ok\"",
+                "#scribe preferences: x",
+                pass,
+                statement,
+            ),
+        ),
+        (
+            "quote without stated_by",
+            stated_entry("active", "\"ok\"", "#scribe approve p-1", "null", statement),
+        ),
+        (
+            "forgotten with a quote",
+            stated_entry("forgotten", "\"ok\"", "", pass, ""),
+        ),
+    ] {
+        corrupt_message(&entry(&bad).map(|_| ()).expect_err(label));
+    }
+    // An instruction line's content is his own words, never a statement.
+    let typed = stated_entry("active", "null", "#scribe approve p-1", pass, statement).replace(
+        "{kind: message, role: user, message: m-1, at: 2026-11-01T09:59:00Z}",
+        "{kind: instruction}",
+    );
+    corrupt_message(&entry(&typed).unwrap_err());
+}
+
+#[test]
+fn a_candidate_statement_needs_its_subject_and_a_user_turn() {
+    let cite = format!(
+        r#"{{"session":"s-1","message":"m-1","at":"2026-11-01T10:00:00Z","prompt_sha256":"{}","line":1,"cwd":"/work"}}"#,
+        "0".repeat(64)
+    );
+    let doc = |role: &str, statement: &str, subject: &str| {
+        format!(
+            r#"{{"format":{FORMAT},"proposals":[{{"id":"p-1","kind":"candidate","older":"preferences-1","candidate":{{"tag":"preferences","role":"{role}","quote":"I prefer short updates.","statement":{statement},"subject":{subject},"evidence":null,"cite":{cite},"project":"scribe","provider":"claude-code","host":"host","admitted":null}},"newer":null,"reason":"r","quotes":[],"state":"open","opened_at":"2026-11-01T10:00:00Z","settled_at":null,"settled_by":null,"author":{{"kind":"scribe","name":"session-pass"}},"updated_by":null,"settled_author":null,"closed_reason":null,"instruction":null}}]}}"#
+        )
+    };
+    let path = Path::new("proposals.json");
+    let read = decode_proposals(
+        path,
+        doc("user", r#""Daniel prefers short updates.""#, r#""updates""#).as_bytes(),
+    )
+    .unwrap();
+    let candidate = read[0].candidate.as_ref().unwrap();
+    assert_eq!(
+        candidate.statement.as_deref(),
+        Some("Daniel prefers short updates.")
+    );
+    assert_eq!(candidate.subject.as_deref(), Some("updates"));
+    decode_proposals(path, doc("user", "null", "null").as_bytes()).unwrap();
+    for bad in [
+        doc("user", r#""Daniel prefers short updates.""#, "null"),
+        doc("user", "null", r#""updates""#),
+        doc(
+            "assistant",
+            r#""The assistant measured it.""#,
+            r#""updates""#,
+        ),
+    ] {
+        corrupt_message(&decode_proposals(path, bad.as_bytes()).unwrap_err());
+    }
 }

@@ -2800,6 +2800,27 @@ format 11: a candidate payload gains
 (`null` on upgrade). One append-only step in `store/format.rs::UPGRADES`;
 `specs/store.md` describes the fields when the step lands.
 
+**Built (step b1, ORB-26264, store format 14).** Formats 12 and 13 were
+taken by §5.3's `inactive_since` and §12.7, so the step is 13→14
+(`claim_statement`). The pass's schema asks for `statement` and `subject` on
+every claim; the pass opens nothing for an empty or over-long statement or
+subject (an empty statement is refused as an empty subject is), and its
+duplicate check compares the statement as well as the quote against what
+active entries and earlier candidates say. `#scribe forget` on a candidate
+clears its statement and subject with its quote. `proposal list` in table
+mode puts the quote on a row under the statement; plain mode joins them with
+` | `. The stored `reason` is unchanged. In `ask`, a claim whose quote lies in
+a stated entry's quote is labelled `Daniel`, one whose quote lies only in the
+statement is labelled scribe's statement, and the answer is built from those
+labels as it is for agent evidence. A stated entry's `record search` snippet
+is the statement and the quote, each cut to the snippet bound. The
+statement and subject bounds count the model's words before redaction, so a
+mask that lengthens a value keeps it. A `#scribe` line that matches a stated
+entry's quote is covered by that entry, live and in Stop recovery, as it
+would be by its content. The tmux popup's proposal row and preview show a
+candidate's statement in place of the raw quote (ORB-26489).
+`specs/store.md` and `specs/output-contract.md` describe the fields.
+
 ### 11.2 Capture rules per tag
 
 A tag's **capture rules** decide which turns the pass may turn into a

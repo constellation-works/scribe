@@ -41,6 +41,8 @@ fn close_retired_tag_candidates_closes_only_open_candidates_outside_the_tag_tabl
             tag: tag.parse().unwrap(),
             role: Speaker::User,
             quote: format!("quote {n}"),
+            statement: None,
+            subject: None,
             evidence: None,
             cite: Cite {
                 session: "s-1".parse().unwrap(),

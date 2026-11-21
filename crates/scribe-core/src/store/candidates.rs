@@ -3,7 +3,8 @@
 use super::{Redactor, Store};
 use crate::consistency::{CoveredCandidate, Reapplied, ReapplyReport};
 use crate::pass::{
-    MAX_CANDIDATES, MAX_OPEN_CANDIDATES, admission, covering_entry, covers_statement, own_span,
+    MAX_CANDIDATES, MAX_OPEN_CANDIDATES, admission, candidate_says, claim_covers, covering_claim,
+    entry_says, own_span,
 };
 use crate::{
     Author, EntryId, EntryStatus, Error, Proposal, ProposalId, ProposalKind, ProposalState, Result,
@@ -90,9 +91,20 @@ impl Store {
             .flatten() else {
                 continue;
             };
+            // The bounds hold the model's words as given; masking a secret
+            // may lengthen them, and the masked value is kept.
+            if !has_statement_and_subject(&claim.candidate) {
+                continue;
+            }
             let mut draft = claim.candidate.clone();
             draft.admitted = Some(admitted);
+            // The statement and subject are the model's words: kept
+            // redacted when redaction changes them. Only the quote must be
+            // Daniel's words unchanged (2_design.md §11.1, §5.3).
+            draft.statement = draft.statement.as_deref().map(|text| redactor.mask(text));
+            draft.subject = draft.subject.as_deref().map(|text| redactor.mask(text));
             let draft = &draft;
+            let says = candidate_says(draft);
             if !draft.has_valid_provenance()
                 || !(8..=400).contains(&draft.quote.chars().count())
                 || draft.cite.session != record.id
@@ -101,11 +113,11 @@ impl Store {
                 || draft.evidence.is_some()
                 || entries
                     .iter()
-                    .any(|entry| covers_statement(&entry.content, &draft.quote))
+                    .any(|entry| claim_covers(&entry_says(entry), &says))
                 || proposals
                     .iter()
                     .filter_map(|p| p.candidate.as_ref())
-                    .any(|prior| covers_statement(&prior.quote, &draft.quote))
+                    .any(|prior| claim_covers(&candidate_says(prior), &says))
             {
                 continue;
             }
@@ -207,7 +219,13 @@ impl Store {
             ));
         }
         let (entries, _) = self.load_entries()?;
-        if let Some(cover) = covering_entry(&entries, &entry.content, &entry.tag, &entry.project) {
+        let candidate = proposal.candidate.as_ref().ok_or_else(|| {
+            Error::corrupt(
+                self.root.join(super::PROPOSALS_FILE),
+                "approved candidate lacks provenance",
+            )
+        })?;
+        if let Some(cover) = covering_claim(&entries, candidate) {
             return Ok(CandidateWrite::Covered {
                 by: cover.id.clone(),
             });
@@ -275,4 +293,15 @@ pub(super) enum CandidateWrite {
         /// That entry.
         by: EntryId,
     },
+}
+
+/// Whether a new pass claim carries what 2_design.md §11.1 requires: a
+/// non-empty statement and subject within their bounds, checked on the
+/// unmasked text. An empty subject opens no claim.
+fn has_statement_and_subject(candidate: &crate::EntryCandidate) -> bool {
+    let within = |text: Option<&str>, max: usize| {
+        text.is_some_and(|text| !text.trim().is_empty() && text.chars().count() <= max)
+    };
+    within(candidate.statement.as_deref(), crate::STATEMENT_CHARS)
+        && within(candidate.subject.as_deref(), crate::SUBJECT_CHARS)
 }

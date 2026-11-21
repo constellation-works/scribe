@@ -1,0 +1,2 @@
+CITE           KIND   SCORE  UPDATED               TITLE                        SNIPPET
+preferences-2  entry  9.671  2026-11-15T00:05:00Z  preferences-2 (preferences)  scribe's statement of Daniel's turn: Daniel prefers that session records keep the whole session's history in an append-only log rather than one rewritten outcome. | Daniel's words: "ok that makes sense. then let's keep the whole history in an append-only log, not one rewritten outcome."

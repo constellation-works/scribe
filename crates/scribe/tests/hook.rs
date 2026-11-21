@@ -2190,3 +2190,69 @@ fn entries_under_decisions_in_a_store_without_that_tag_stay_readable_and_settlea
     let shown: Value = serde_json::from_slice(&shown.stdout).unwrap();
     assert_eq!(shown["status"], "retired");
 }
+
+#[test]
+fn a_typed_line_matching_a_stated_entrys_quote_is_covered() {
+    // An approved pass statement keeps scribe's statement as content and
+    // Daniel's words in `quote` (2_design.md §11.1); typing those words
+    // again is covered by it, live and in Stop recovery.
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let quote = "always run the whole gate before a push";
+    let mut payload = claude.payload("user-prompt-submit.json");
+    payload["prompt"] = json!(format!("#scribe preferences: {quote}"));
+    hook_ok(&fx, "user-prompt-submit", &payload);
+    let path = fx.root().join("entries/preferences/preferences-1.md");
+    let stored = std::fs::read_to_string(&path).unwrap();
+    let statement = "Daniel requires the complete check suite to pass ahead of every upload.";
+    let (front, _) = stored.rsplit_once("---\n").unwrap();
+    let front = front
+        .replace(
+            &format!("said: '#scribe preferences: {quote}'"),
+            "said: '#scribe approve p-1'",
+        )
+        .replace(
+            "content_from:\n  kind: instruction",
+            "content_from: {kind: message, role: user, message: u-said, at: 2026-01-01T00:00:00Z}",
+        )
+        .replace("quote: null", &format!("quote: \"{quote}\""))
+        .replace(
+            "stated_by: null",
+            "stated_by: {kind: scribe, name: session-pass}",
+        );
+    assert!(
+        front.contains("stated_by: {kind: scribe") && front.contains("said: '#scribe approve"),
+        "{front}"
+    );
+    std::fs::write(&path, format!("{front}---\n{statement}\n")).unwrap();
+    make_private(&path);
+    let shown = fx.ok(&["entry", "show", "preferences-1", "--json"]);
+    let shown: Value = serde_json::from_slice(&shown.stdout).unwrap();
+    assert_eq!(shown["content"], statement);
+    assert_eq!(shown["quote"], quote);
+
+    let prompt = format!("a later turn\n#scribe preferences: {quote}");
+    payload["prompt"] = json!(prompt);
+    let out = hook_ok(&fx, "user-prompt-submit", &payload);
+    assert_eq!(
+        entries(&fx).len(),
+        1,
+        "the quote is covered: {}",
+        text(&out.stdout)
+    );
+    let message = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
+    assert!(
+        message.starts_with("scribe: already covered by preferences-1 in preferences"),
+        "{message}"
+    );
+
+    // Stop recovery of the same turn does not capture it either.
+    claude.write_transcript(&prompt, "u-stated");
+    let stopped = hook_ok(&fx, "stop", &claude.payload("stop.json"));
+    assert_eq!(
+        entries(&fx).len(),
+        1,
+        "Stop recovery treats the quote as covered: {}",
+        text(&stopped.stdout)
+    );
+}
