@@ -92,7 +92,9 @@ and grouped, never as a gate on the work:
   the store. Mention open candidates in the brief; the human keeps one
   with `#scribe approve <proposal-id>` or drops it for good with
   `#scribe reject <proposal-id>`. Approval writes the entry as theirs,
-  citing the original turn. No entry exists before approval. Action tags
+  citing the original turn. If an active entry of the same tag and project
+  already covers that statement, approval writes nothing and names the
+  existing entry. No entry exists before approval. Action tags
   you write yourself follow their separate rules below.
   When the session is off or its state is unknown, and the human states a
   standing preference or rule worth keeping, offer a ready-to-type
@@ -139,6 +141,8 @@ about them; `question ask` skips them unless its scope names their tag.
   surfaces an idea or a correction to a standard, write the
   entry yourself, unasked, under a `free` tag:
   `scribe entry add --tag <tag> --author <name> --related session:<id> '<words>'`.
+  A statement an active entry of the same tag and project already covers is
+  refused with code `already_covered` and names that entry; nothing is written.
   Then tell the human in one visible line, for example
   `scribe: wrote <id> (cancel: #scribe retire <id>)`, naming the entry id
   and how to cancel it. Nothing picks an agent's entry up for five minutes,

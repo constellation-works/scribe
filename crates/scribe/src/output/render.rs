@@ -985,6 +985,15 @@ pub(crate) fn scan(out: &mut dyn Write, sink: &Sink, report: &ScanReport) -> io:
             Cell::plain(p.newer.clone().unwrap_or_else(|| String::from("-"))),
         ]);
     }
+    for item in &report.covered {
+        rows.push(vec![
+            Cell::plain("covered"),
+            Cell::plain(item.proposal.clone()),
+            Cell::plain(item.by.clone()),
+            Cell::plain("-"),
+            Cell::plain("-"),
+        ]);
+    }
     for f in &report.failed_batches {
         rows.push(vec![
             Cell {

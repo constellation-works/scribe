@@ -794,7 +794,17 @@ matches no form is refused with the forms. A refusal is still audited
 
 Exactly one entry per instruction, also under retries: the idempotency key
 is `(session, prompt_sha256, line)`. A repeat finds the existing entry and
-echoes it instead of writing again.
+echoes it instead of writing again. That same-line replay wins over the
+duplicate check below.
+
+The same locked `Store::capture` refuses a statement an active entry of
+the same tag and project already covers, using the one lexical predicate
+`covers_statement` ([§5.3](#53-a-pass)). Nothing is written and no id is
+consumed. The hook echoes `scribe: already covered by <id> in <tag> —
+"…"`, exits 0, and writes no audit line. Retired, superseded and forgotten
+entries do not cover. A different tag or project still writes. The check
+does not match a short typed line against the long paragraph it
+summarizes, and it does not catch a paraphrase.
 
 As built (S2): hashtags at the end of the line, after the tag, are the
 entry's topics, lowercased and deduplicated (more than five is refused as
@@ -895,7 +905,12 @@ As built (S2): the reply is one line of hook JSON,
 `{"systemMessage": …, "hookSpecificOutput": {"hookEventName":
 "UserPromptSubmit", "additionalContext": …}}`, with one echo line per
 `#scribe` line in prompt order; a prompt without one prints nothing. A
-replayed line echoes `scribe: already recorded <id> in <tag> — "…"`. When
+replayed line echoes `scribe: already recorded <id> in <tag> — "…"`. A line
+an active entry of the same tag and project already covers echoes `scribe:
+already covered by <id> in <tag> — "…"` and writes no audit line; the
+agent note is the recorded note. The `Stop` hook does not repeat that
+covered echo on a later turn, and a prompt the prompt hook missed stays
+quiet when every `#scribe` line is already covered. When
 the store or `config.toml` cannot be used, each line echoes `scribe: could
 not record "…" — <error>` and the hook still exits 0, so the prompt goes
 through. Quotes in an echo are flattened to one line and cut at 200
@@ -1287,11 +1302,28 @@ a pass; an explicit catalog is still required for past sessions.
   distinguished from typed prose; this remains an accident guard.
 - **Duplicates.** The model is instructed to exclude statements an entry or
   proposal already records, including paraphrases, using the bounded relevant
-  context. Under the lock, every readable entry and every candidate in any
-  state is checked again, across tags and projects: normalized containment,
-  equal word sets or at least 80% Jaccard overlap suppress the suggestion.
-  This conservative lexical guard can omit a new closely related statement;
-  meaning-level comparison remains model judgement. Unreadable entries
+  context (`candidate_exclusions`). Under the lock, every readable entry and
+  every candidate in any state is checked again, across tags and projects,
+  with the one lexical predicate `covers_statement`. Entry creation uses
+  the same predicate through `covering_entry`, narrowed to the oldest
+  active entry of the same tag and project. Shared normalization and
+  tokenization (one definition, STD-02 §R24): NFC and whitespace folding,
+  trim, lowercase, curly apostrophes folded to `'`, then ordered tokens. A
+  token is a run of alphanumeric characters; an interior apostrophe stays,
+  so `don't` is one token (`dont` is the apostrophe-less spelling). Equal
+  token sequences match at any length, so case and punctuation collapse.
+  Otherwise an existing statement covers a new one only when the new one
+  adds nothing: it is a contiguous window of the existing tokens, it has at
+  least four tokens, and the two sides use the same counts of `not`,
+  `never`, `no`, `don't`, `dont`, `avoid`, `except`, `unless` and `only`.
+  A longer refinement, a reordering, a match inside a word, or a polarity
+  or exception change is kept. Candidate opening uses this predicate, not
+  symmetric containment or Jaccard, so the same definition cannot suppress
+  a refinement or an opposite as a candidate; only the set of records it
+  consults is broader than entry creation. Meaning-level comparison of a
+  paraphrase stays the model's same-call exclusions. The lexical check does
+  not match a short statement against the long raw paragraph it summarizes.
+  Unreadable entries
   suppress candidate creation for that window. Quotes needing redaction are
   omitted so approved content can remain an exact quote.
 - **Persistence and consent.** Candidates are written before the record cursor
@@ -1308,7 +1340,18 @@ a pass; an explicit catalog is still required for past sessions.
   pointer (or `session:<id>` for a finding that named none) and the
   turn's date as its as-of — never an entry attributed to Daniel; its
   approval echo names the cancel. Replaying approval creates no second
-  entry. Approved proposals
+  entry. Approving a candidate whose statement an active entry of the same
+  tag and project already covers — an entry added after the candidate
+  opened — writes no second entry. The proposal becomes `rejected` and
+  `newer` stays empty, because a candidate's stored shape rejects a
+  `newer` value. The reply names the covering id (`scribe: approved <id> —
+  already covered by <entry>; no new entry`); replaying that close is the
+  ordinary already-rejected refusal and does not name the id again. The
+  covering id is not stored on the proposal, and there is no new closed
+  reason and no format bump. An interrupted approval whose entry file is
+  missing is closed the same way by a repeated approval or by `consistency
+  scan`, which reports it in `covered` and writes one audit line whose
+  target is the proposal id. Approved proposals
   journal the entry creation, recoverable by a repeated approval or the
   consistency scan. Rejection writes no entry and keeps the statement in the
   suppression set. Agents cannot settle or edit candidate proposals (proposed,
@@ -2525,6 +2568,12 @@ The store writes **format 5**, superseding this design's format-4 sketch:
 the workspace guide requires a version bump for nullable agent citations,
 the new provenance variant and additional metadata. Entry retirement
 reasons and proposal updaters are retained; tag updaters are retained too.
+`entry add` of a statement an active entry of the same tag and project
+already covers writes nothing and exits 1. Plain text and `--json` name
+the existing id, and `--json` carries the stable code `already_covered`
+(the message is `already covered by <id>; nothing written`). The audit
+line carries that code, not the statement. Retired, superseded and
+forgotten entries do not block the new entry.
 See the S12 decision and the current store/output specs. `ask` gives agent
 entries a 1.0× base weight (the existing named-tag boost still applies).
 When agent evidence is packed, answers use checked quotes with source
@@ -3004,7 +3053,16 @@ a message id, and the pass checks the quote verbatim against the original
 transcript, as §5.3 does for preferences. The only difference is the
 route: under `route = "write"` the checked claim is written as an active
 `idea` entry in the same locked step that would otherwise open a
-candidate, with no proposal. The duplicate guard, the per-pass bound
+candidate, with no proposal. Before that write, the pass calls the shared
+`covering_entry` check under the store lock ([§5.3](#53-a-pass),
+[§11.7](#117-order-and-sequencing) step (b2)). On this direct-write path
+the only meaning-level match is the model's exclusion of existing
+statements in the same session-model call (the bounded
+`candidate_exclusions` the pass already sends); the store applies only the
+lexical check and does not call a model again. A paraphrase the model
+still returns is written unless that lexical check catches it. The lexical
+check does not match a short statement against the long raw paragraph it
+summarizes. The per-pass bound
 (ORB-25987's 3 ideas per session per invocation, separate from the
 candidate slots) and the stuck-line exemption are as ORB-25987 states.
 
@@ -3031,9 +3089,18 @@ writes the statement as content like a typed approval.
 
 1. **(a)** Capture rules, the retired-tag cleanup, and dropping `remind`
    and `finding` (format 11).
-2. **(b)** The statement on every claim (format 12). ORB-25987, revised as
-   in §11.6, follows (b).
-3. **(c)** Issues (format 13).
+2. **(b)** The statement on every claim (format 12).
+3. **(b2)** The pass writing entries itself (`route = "write"`, not an
+   approved or filed proposal), revised as in §11.6. Before it writes, it
+   calls the shared `covering_entry` check under the store lock. On that
+   direct-write path the only meaning-level match is the model's exclusion
+   of existing statements in the same session-model call (the bounded
+   `candidate_exclusions` the pass already sends); the store applies only
+   the lexical check and does not call a model again. A paraphrase the
+   model still returns is written unless the lexical check catches it. The
+   lexical check does not match a short statement against the long raw
+   paragraph it summarizes.
+4. **(c)** Issues (format 13).
 
 Each step is its own task, lands with its `specs/store.md`,
 `specs/output-contract.md`, skill and golden updates, and leaves the
@@ -3567,8 +3634,9 @@ updates the record returns a `memory` array beside `candidates`.
   a new turn) but counts once toward recurrence.
 - **Duplicates without `same_as`.** Under the lock, a new statement whose
   normalized tokens equal, contain or overlap (Jaccard ≥ 0.8) an active
-  item's in the same section becomes an occurrence of that item instead,
-  as §5.3's duplicate guard does for candidates.
+  item's in the same section becomes an occurrence of that item instead.
+  That equal, contain or Jaccard rule is memory's own; it is separate from
+  §5.3's candidate duplicate guard.
 - **The sensitive-content gate** of [§13.8](#138-sensitive-content) runs
   last; a refused element writes nothing and is counted in the pass
   report (`memory_refused`, by code).

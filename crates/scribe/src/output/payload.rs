@@ -1163,6 +1163,16 @@ impl PassReport {
     }
 }
 
+/// An approved candidate a scan closed because an active entry already
+/// covers its statement. The proposal is `rejected`; no entry was written.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct CoveredPayload {
+    /// The candidate proposal id.
+    pub(crate) proposal: String,
+    /// The active entry that covers the statement.
+    pub(crate) by: String,
+}
+
 /// An approved proposal a scan applied again, because its older entry was
 /// still `active`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -1205,6 +1215,9 @@ pub(crate) struct ScanReport {
     pub(crate) opened: Vec<ProposalPayload>,
     /// Open candidate proposals this scan closed automatically (`tag_retired`).
     pub(crate) closed: Vec<ProposalPayload>,
+    /// Approved candidates this scan closed because an active entry already
+    /// covers the statement. Not stored on the proposal.
+    pub(crate) covered: Vec<CoveredPayload>,
     /// Candidate pairs the model labelled.
     pub(crate) judged_pairs: usize,
     /// Candidate pairs left for a later scan: past the per-scan cap, or not

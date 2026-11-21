@@ -5,8 +5,8 @@
 use crate::models::{EntryCandidateAnswer, FiringTurn, PassMessage, SessionRequest, TagCriteria};
 use crate::tag::{TagDef, TagTable};
 use crate::{
-    Admitted, Cite, Entry, EntryCandidate, Proposal, SessionRecord, Speaker, TagName, transcript,
-    trigger, verbatim,
+    Admitted, Cite, Entry, EntryCandidate, EntryStatus, Project, Proposal, SessionRecord, Speaker,
+    TagName, transcript, trigger, verbatim,
 };
 use std::collections::BTreeSet;
 
@@ -97,7 +97,7 @@ pub(super) fn check(
             || !fits
             || checked
                 .iter()
-                .any(|prior| same_statement(&prior.quote, &answer.quote))
+                .any(|prior| covers_statement(&prior.quote, &answer.quote))
         {
             continue;
         }
@@ -211,30 +211,132 @@ pub fn candidate_drafts(
         .collect()
 }
 
-fn words(text: &str) -> BTreeSet<String> {
-    text.split(|c: char| !c.is_alphanumeric())
-        .filter(|word| !word.is_empty())
-        .map(str::to_lowercase)
-        .collect()
+/// How many tokens a new statement needs before an existing statement can
+/// cover it by containing those tokens. Shorter statements match only when
+/// the token sequences are equal.
+const MIN_COVER_TOKENS: usize = 4;
+
+/// Negation and exception words. A difference in how often any of these
+/// appears means the new statement is not the same claim. `dont` is the
+/// apostrophe-less spelling of `don't`; the tokenizer keeps an interior
+/// apostrophe, so both forms occur.
+const MARKERS: [&str; 9] = [
+    "not", "never", "no", "don't", "dont", "avoid", "except", "unless", "only",
+];
+
+/// Ordered tokens of a statement. One normalizer for the duplicate check
+/// and for [`words`]: Unicode normalization, trimmed, lowercased, with curly
+/// apostrophes folded to `'`. A token is a run of alphanumeric characters;
+/// an apostrophe between alphanumerics stays, so `don't` is one token.
+pub(crate) fn statement_tokens(text: &str) -> Vec<String> {
+    let normalized = verbatim::normalize(text);
+    let folded = normalized.replace(['\u{2018}', '\u{2019}'], "'");
+    let lower = folded.trim().to_lowercase();
+    let chars: Vec<char> = lower.chars().collect();
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut index = 0;
+    while index < chars.len() {
+        let ch = chars[index];
+        if ch.is_alphanumeric() {
+            current.push(ch);
+            index += 1;
+            continue;
+        }
+        if ch == '\''
+            && !current.is_empty()
+            && chars.get(index + 1).is_some_and(|ch| ch.is_alphanumeric())
+        {
+            current.push('\'');
+            index += 1;
+            continue;
+        }
+        if !current.is_empty() {
+            tokens.push(std::mem::take(&mut current));
+        }
+        index += 1;
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
 }
 
-/// Conservative lexical duplicate check: normalized containment, equal word
-/// sets, or at least 80% Jaccard overlap. Meaning-level deduplication is also
-/// requested from the model using the relevant existing statements.
+/// The token set [`candidate_exclusions`] ranks with. Derived from
+/// [`statement_tokens`], not a second splitter.
+fn words(text: &str) -> BTreeSet<String> {
+    statement_tokens(text).into_iter().collect()
+}
+
+fn marker_counts(tokens: &[String]) -> [usize; MARKERS.len()] {
+    let mut counts = [0; MARKERS.len()];
+    for token in tokens {
+        if let Some(slot) = MARKERS.iter().position(|marker| *marker == token) {
+            counts[slot] += 1;
+        }
+    }
+    counts
+}
+
+/// Whether `existing` already says `new`.
+///
+/// Token sequences are compared in order, on token boundaries. Equal
+/// sequences match at any length, so case and punctuation differences
+/// collapse. Otherwise `existing` covers `new` only when `new` adds
+/// nothing: it is a contiguous window of `existing`, it has at least
+/// [`MIN_COVER_TOKENS`] tokens, and the two sides use the same negation
+/// and exception words. A longer refinement is never covered by a shorter
+/// statement, a reordered claim does not match, and a polarity or
+/// exception change does not match. Empty text matches nothing.
+///
+/// This is the one lexical duplicate predicate. Entry creation applies it
+/// through [`covering_entry`] (active, same tag, same project). Candidate
+/// opening applies it directly to every readable entry and every prior
+/// candidate, in any state and across tags and projects, because a
+/// suggestion of an already-recorded claim is still a duplicate there.
+/// Meaning-level paraphrases are not this check.
 #[must_use]
-pub(crate) fn same_statement(a: &str, b: &str) -> bool {
-    let a = verbatim::normalize(a).trim().to_lowercase();
-    let b = verbatim::normalize(b).trim().to_lowercase();
-    if a.is_empty() || b.is_empty() {
+pub(crate) fn covers_statement(existing: &str, new: &str) -> bool {
+    let existing = statement_tokens(existing);
+    let new = statement_tokens(new);
+    if existing.is_empty() || new.is_empty() {
         return false;
     }
-    if a.contains(&b) || b.contains(&a) {
+    if existing == new {
         return true;
     }
-    let a = words(&a);
-    let b = words(&b);
-    a == b
-        || (a.len().min(b.len()) >= 4 && a.intersection(&b).count() * 5 >= a.union(&b).count() * 4)
+    if marker_counts(&existing) != marker_counts(&new) {
+        return false;
+    }
+    if new.len() < MIN_COVER_TOKENS {
+        return false;
+    }
+    existing
+        .windows(new.len())
+        .any(|window| window == new.as_slice())
+}
+
+/// The oldest active entry of `tag` and `project` whose content already
+/// says `statement`, if any. Retired, superseded and forgotten entries do
+/// not cover. Comparison is [`covers_statement`].
+#[must_use]
+pub(crate) fn covering_entry<'a>(
+    entries: &'a [Entry],
+    statement: &str,
+    tag: &TagName,
+    project: &Project,
+) -> Option<&'a Entry> {
+    entries
+        .iter()
+        .filter(|entry| {
+            entry.status == EntryStatus::Active && &entry.tag == tag && &entry.project == project
+        })
+        .filter(|entry| covers_statement(&entry.content, statement))
+        .min_by(|left, right| {
+            left.created
+                .cmp(&right.created)
+                .then_with(|| left.id.cmp(&right.id))
+        })
 }
 
 /// Relevant existing statements, at most 6,000 value characters (400 each).

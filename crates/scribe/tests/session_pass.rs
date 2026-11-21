@@ -2870,6 +2870,157 @@ fn interrupted_candidate_approval_is_replayed_once_from_the_durable_proposal() {
 }
 
 #[test]
+fn approving_a_candidate_covered_by_a_later_entry_writes_no_second_entry() {
+    let s = Setup::new();
+    let quote = "I prefer concise commit subjects on every change.";
+    s.write(ON, &[line("user", "u-1", quote)]);
+    s.answer(&candidate_answer(quote, "u-1", "preferences"));
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON], b"");
+    assert_eq!(proposals(&s)["proposals"][0]["older"], "preferences-1");
+    let added: Value = serde_json::from_slice(
+        &s.fx
+            .ok(&[
+                "entry",
+                "add",
+                "--tag",
+                "preferences",
+                "--project",
+                "scribe",
+                "--author",
+                "opus",
+                quote,
+                "--json",
+            ])
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(added["id"], "preferences-2");
+    let out = type_settlement(&s, "#scribe approve p-1");
+    let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        reply["systemMessage"],
+        "scribe: approved p-1 — already covered by preferences-2; no new entry"
+    );
+    assert!(
+        !s.fx
+            .root()
+            .join("entries/preferences/preferences-1.md")
+            .exists()
+    );
+    let listed: Value =
+        serde_json::from_slice(&s.fx.ok(&["entry", "list", "--json"]).stdout).unwrap();
+    assert_eq!(listed["total"], 1);
+    let proposal = &proposals(&s)["proposals"][0];
+    assert_eq!(proposal["state"], "rejected");
+    assert!(proposal["newer"].is_null());
+    let replay = type_settlement(&s, "#scribe approve p-1");
+    let again: Value = serde_json::from_slice(&replay.stdout).unwrap();
+    let message = again["systemMessage"].as_str().unwrap();
+    assert!(message.contains("refused"), "{message}");
+    assert!(message.contains("already rejected"), "{message}");
+    assert!(!message.contains("preferences-2"), "{message}");
+}
+
+#[test]
+fn a_longer_refinement_of_a_rejected_candidate_still_opens() {
+    let s = Setup::new();
+    let quote = "I prefer concise messages during lengthy builds";
+    s.write(ON, &[line("user", "u-1", quote)]);
+    s.answer(&candidate_answer(quote, "u-1", "preferences"));
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON], b"");
+    type_settlement(&s, "#scribe reject p-1");
+    let refined = "I prefer concise messages during lengthy builds in every repository";
+    s.append(ON, &[line("user", "u-2", refined)]);
+    s.answer(&candidate_answer(refined, "u-2", "preferences"));
+    s.run(&["session", "pass", "--session", ON], b"");
+    let ps = proposals(&s);
+    assert_eq!(ps["total"], 2, "{ps}");
+    assert_eq!(ps["proposals"][0]["state"], "rejected");
+    assert_eq!(ps["proposals"][1]["state"], "open");
+    assert_eq!(ps["proposals"][1]["candidate"]["quote"], refined);
+}
+
+#[test]
+fn consistency_scan_reports_an_approved_candidate_closed_as_covered() {
+    let s = Setup::new();
+    let quote = "I prefer short explanations beside each changed behavior.";
+    s.write(ON, &[line("user", "u-1", quote)]);
+    s.answer(&candidate_answer(quote, "u-1", "preferences"));
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON], b"");
+    let added: Value = serde_json::from_slice(
+        &s.fx
+            .ok(&[
+                "entry",
+                "add",
+                "--tag",
+                "preferences",
+                "--project",
+                "scribe",
+                "--author",
+                "opus",
+                quote,
+                "--json",
+            ])
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(added["id"], "preferences-2");
+    let path = s.fx.root().join("proposals.json");
+    let mut doc: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let proposal = &mut doc["proposals"][0];
+    proposal["state"] = json!("approved");
+    proposal["settled_at"] = json!("2026-11-15T23:00:00Z");
+    proposal["settled_author"] = json!({"kind": "daniel", "name": "daniel"});
+    proposal["settled_by"] = proposal["candidate"]["cite"].clone();
+    std::fs::write(&path, doc.to_string()).unwrap();
+    let first = s.run(&["consistency", "scan", "--json"], b"");
+    let report: Value = serde_json::from_slice(&first.stdout).unwrap();
+    assert_eq!(report["covered"][0]["proposal"], "p-1");
+    assert_eq!(report["covered"][0]["by"], "preferences-2");
+    assert!(report["reapplied"].as_array().unwrap().is_empty());
+    assert!(
+        !s.fx
+            .root()
+            .join("entries/preferences/preferences-1.md")
+            .exists()
+    );
+    let settled = &proposals(&s)["proposals"][0];
+    assert_eq!(settled["state"], "rejected");
+    assert!(settled["newer"].is_null());
+    let listed: Value =
+        serde_json::from_slice(&s.fx.ok(&["entry", "list", "--json"]).stdout).unwrap();
+    assert_eq!(listed["total"], 1);
+    let audit = std::fs::read_to_string(s.fx.root().join("audit.jsonl")).unwrap();
+    let covered_lines = audit
+        .lines()
+        .filter(|line| {
+            line.contains("\"command\":\"consistency scan\"")
+                && line.contains("\"target\":\"p-1\"")
+                && line.contains("\"status\":\"success\"")
+        })
+        .count();
+    assert_eq!(covered_lines, 1, "{audit}");
+    s.run(&["consistency", "scan", "--json"], b"");
+    let again = std::fs::read_to_string(s.fx.root().join("audit.jsonl")).unwrap();
+    let covered_again = again
+        .lines()
+        .filter(|line| {
+            line.contains("\"command\":\"consistency scan\"")
+                && line.contains("\"target\":\"p-1\"")
+                && line.contains("\"status\":\"success\"")
+        })
+        .count();
+    assert_eq!(covered_again, 1, "{again}");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&s.fx.ok(&["entry", "list", "--json"]).stdout).unwrap()["total"],
+        1
+    );
+}
+
+#[test]
 fn pass_closes_retired_tag_candidates_before_cap_and_suppresses_their_quotes() {
     let s = Setup::new();
     s.scribe("/scribe on");

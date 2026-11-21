@@ -56,10 +56,11 @@ pub use tags::check_description;
 
 use crate::activity::{self, ActiveOutcome, SetActive};
 use crate::config::Config;
-use crate::consistency::{self, Draft, Reapplied, Settle, Settled};
+use crate::consistency::{self, Draft, ReapplyReport, Settle, Settled};
 use crate::control;
 use crate::entry::{Cite, Entry, EntryFilter, EntryId, NewEntry};
 use crate::error::{Error, Result};
+use crate::pass::covering_entry;
 use crate::proposal::{Proposal, ProposalId};
 use crate::record::Listing;
 use crate::session::{
@@ -67,7 +68,7 @@ use crate::session::{
 };
 use crate::tag::{self, TagSummary};
 use fsio::LockGuard;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -162,6 +163,10 @@ pub enum Captured {
     /// An entry for the same `#scribe` line already existed (a retried or
     /// replayed hook); nothing was written.
     Existing(Entry),
+    /// An active entry of the same tag and project already covers the
+    /// statement. Nothing was written and no id was consumed. The entry is
+    /// the one that covers it.
+    Covered(Entry),
 }
 
 impl Captured {
@@ -169,7 +174,7 @@ impl Captured {
     #[must_use]
     pub fn entry(&self) -> &Entry {
         match self {
-            Self::Added(entry) | Self::Existing(entry) => entry,
+            Self::Added(entry) | Self::Existing(entry) | Self::Covered(entry) => entry,
         }
     }
 }
@@ -604,11 +609,15 @@ impl Store {
     /// Under the store lock, each draft is checked against the existing
     /// entries by its cite's `(session, prompt_sha256, line)`: a match is
     /// returned as [`Captured::Existing`] and nothing is written, so a
-    /// retried or replayed hook never writes twice. Otherwise the draft gets
-    /// the next id in its tag (one past the highest, counting files that do
-    /// not parse, so a number is never reused), its free text passes
-    /// `redactor`, and it is written with [`fsio::write_atomic`]. Missing
-    /// directories are created owner-only.
+    /// retried or replayed hook never writes twice. Otherwise, when an
+    /// active entry of the same tag and project already covers the redacted
+    /// statement ([`covering_entry`]), the draft is [`Captured::Covered`]:
+    /// nothing is written and no id is consumed. A same-line replay wins
+    /// over that check. Otherwise the draft gets the next id in its tag
+    /// (one past the highest, counting files that do not parse, so a number
+    /// is never reused), its free text passes `redactor`, and it is written
+    /// with [`fsio::write_atomic`]. Missing directories are created
+    /// owner-only.
     pub fn capture(&self, drafts: Vec<NewEntry>, redactor: &Redactor) -> Result<Vec<Captured>> {
         if drafts.is_empty() {
             return Ok(Vec::new());
@@ -632,6 +641,11 @@ impl Store {
                 out.push(Captured::Existing(found.clone()));
                 continue;
             }
+            let content = redactor.mask(&draft.content);
+            if let Some(cover) = covering_entry(&entries, &content, &draft.tag, &draft.project) {
+                out.push(Captured::Covered(cover.clone()));
+                continue;
+            }
             let id = EntryId::next_in(&draft.tag, &ids);
             let mut entry = draft.into_entry(id.clone());
             redactor.entry(&mut entry);
@@ -641,6 +655,33 @@ impl Store {
             out.push(Captured::Added(entry));
         }
         Ok(out)
+    }
+
+    /// Line numbers of typed `#scribe <tag>: <words>` instructions in
+    /// `prompt` that [`covering_entry`] would refuse. The caller builds
+    /// `turn` the same way capture does. This read does not lock; the
+    /// capture under the lock remains the check that writes. Referents are
+    /// not included: their content is not known until they are resolved.
+    pub fn covered_instruction_lines(
+        &self,
+        prompt: &str,
+        turn: &crate::capture::Turn,
+        redactor: &Redactor,
+    ) -> Result<BTreeSet<u32>> {
+        let config = self.config()?;
+        let (entries, _) = self.load_entries()?;
+        let mut lines = BTreeSet::new();
+        for item in crate::capture::scan(prompt, &config.tags) {
+            let crate::capture::Parsed::Instruction(instruction) = item else {
+                continue;
+            };
+            let draft = crate::capture::draft(&instruction, turn, &config.tags);
+            let content = redactor.mask(&draft.content);
+            if covering_entry(&entries, &content, &draft.tag, &draft.project).is_some() {
+                lines.insert(instruction.line);
+            }
+        }
+        Ok(lines)
     }
 
     /// The entries already recorded from one prompt: `session` and
@@ -991,17 +1032,21 @@ impl Store {
     /// entry is still `active` ([`consistency::reapply`]), and create any
     /// missing entry from an approved candidate. An approval
     /// writes `proposals.json` and then the entry, and this repairs a crash
-    /// between the two. Writes only the entries it changes.
-    pub fn reapply_approved(&self, now: time::OffsetDateTime) -> Result<Vec<Reapplied>> {
+    /// between the two. Writes only the entries it changes. An approved
+    /// candidate an active entry of the same tag and project already covers
+    /// is closed as `rejected` instead, with no new entry; that close is
+    /// [`ReapplyReport::covered`] and the covering id is not stored on the
+    /// proposal.
+    pub fn reapply_approved(&self, now: time::OffsetDateTime) -> Result<ReapplyReport> {
         if !self.root_exists()? {
-            return Ok(Vec::new());
+            return Ok(ReapplyReport::default());
         }
-        let mut candidate_done = self.reapply_candidates()?;
+        let mut report = self.reapply_candidates()?;
         let proposals = self.proposals()?;
         let (entries, _) = self.load_entries()?;
         let mut probe = entries;
         if consistency::reapply(&proposals, &mut probe, now).is_empty() {
-            return Ok(candidate_done);
+            return Ok(report);
         }
         let _lock = self.lock("consistency scan")?;
         let proposals = self.proposals()?;
@@ -1012,8 +1057,8 @@ impl Store {
                 self.write_entry(entry, false)?;
             }
         }
-        candidate_done.extend(done);
-        Ok(candidate_done)
+        report.applied.extend(done);
+        Ok(report)
     }
 
     /// Open one proposal per draft, under the store lock: a draft whose
@@ -1079,21 +1124,31 @@ impl Store {
             self.write_proposals(&proposals)?;
         }
         if let Settle::Approve(id) = action
-            && let Some(proposal) = proposals.iter().find(|p| {
+            && let Some(index) = proposals.iter().position(|p| {
                 p.id == *id
                     && p.kind == crate::ProposalKind::Candidate
                     && p.state == crate::ProposalState::Approved
             })
-            && self.write_candidate_entry(proposal)?
         {
-            settled = Settled::Recorded {
-                proposal: *id,
-                entry: proposal.older.clone(),
-                agent_authored: proposal
-                    .candidate
-                    .as_ref()
-                    .is_some_and(|c| c.role == crate::Speaker::Assistant),
-            };
+            let proposal = proposals[index].clone();
+            match self.write_candidate_entry(&proposal)? {
+                candidates::CandidateWrite::Created => {
+                    settled = Settled::Recorded {
+                        proposal: *id,
+                        entry: proposal.older.clone(),
+                        agent_authored: proposal
+                            .candidate
+                            .as_ref()
+                            .is_some_and(|c| c.role == crate::Speaker::Assistant),
+                    };
+                }
+                candidates::CandidateWrite::Present => {}
+                candidates::CandidateWrite::Covered { by } => {
+                    proposals[index].state = crate::ProposalState::Rejected;
+                    self.write_proposals(&proposals)?;
+                    settled = Settled::Covered { proposal: *id, by };
+                }
+            }
         }
         for (entry, before) in entries.iter().zip(&before_entries) {
             if entry != before {

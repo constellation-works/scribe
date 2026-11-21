@@ -239,6 +239,146 @@ fn replaying_the_same_payload_writes_nothing_new() {
 }
 
 #[test]
+fn a_typed_line_already_covered_by_an_active_entry_writes_nothing_and_names_it() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let mut payload = claude.payload("user-prompt-submit.json");
+    payload["prompt"] = json!("#scribe preferences: use rg");
+    hook_ok(&fx, "user-prompt-submit", &payload);
+    let audit_after_add = audit(&fx).len();
+
+    payload["prompt"] = json!("a later turn\n#scribe preferences: use rg");
+    let out = hook_ok(&fx, "user-prompt-submit", &payload);
+    assert_eq!(entries(&fx).len(), 1, "a covered statement writes nothing");
+    assert_eq!(
+        audit(&fx).len(),
+        audit_after_add,
+        "nothing written, nothing audited"
+    );
+    let body = reply(&out);
+    let message = body["systemMessage"].as_str().unwrap();
+    assert!(
+        message.starts_with("scribe: already covered by preferences-1 in preferences — \"use rg\""),
+        "{message}"
+    );
+    let context = body["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(
+        context.contains("recorded by scribe; no action needed"),
+        "{context}"
+    );
+
+    // Refinements, opposites and a different tag or project are written.
+    // The reordered pair is recorded before any longer statement that could
+    // contain one of them as a window.
+    for prompt in [
+        "#scribe preferences: use grep, not rg",
+        "#scribe preferences: use rg, not grep",
+        "#scribe preferences: use rg, not grep, in scripts",
+        "#scribe preferences: squash-merge agent PRs",
+        "#scribe preferences: squash-merge agent PRs except on release branches",
+        "#scribe idea: use rg",
+        "#scribe/global preferences: use rg",
+        "#scribe preferences: use grep in scripts",
+        "#scribe preferences: never use grep in scripts",
+        "#scribe preferences: test",
+        "#scribe preferences: latest",
+    ] {
+        payload["prompt"] = json!(prompt);
+        hook_ok(&fx, "user-prompt-submit", &payload);
+    }
+    let contents: Vec<_> = entries(&fx)
+        .iter()
+        .map(|entry| entry["content"].as_str().unwrap().to_owned())
+        .collect();
+    for expected in [
+        "use grep, not rg",
+        "use rg, not grep",
+        "use rg, not grep, in scripts",
+        "squash-merge agent PRs",
+        "squash-merge agent PRs except on release branches",
+        "use grep in scripts",
+        "never use grep in scripts",
+        "test",
+        "latest",
+    ] {
+        assert!(
+            contents.iter().any(|content| content == expected),
+            "missing {expected} in {contents:?}"
+        );
+    }
+    assert_eq!(
+        contents
+            .iter()
+            .filter(|content| content.as_str() == "use rg")
+            .count(),
+        3,
+        "the original, the other tag and the global project: {contents:?}"
+    );
+}
+
+#[test]
+fn stop_does_not_repeat_a_covered_line_on_later_turns() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let mut payload = claude.payload("user-prompt-submit.json");
+    payload["prompt"] = json!("#scribe preferences: use rg");
+    hook_ok(&fx, "user-prompt-submit", &payload);
+
+    let covered_prompt = "later\n#scribe preferences: use rg";
+    payload["prompt"] = json!(covered_prompt);
+    let echoed = hook_ok(&fx, "user-prompt-submit", &payload);
+    assert!(
+        reply(&echoed)["systemMessage"]
+            .as_str()
+            .unwrap()
+            .contains("already covered by preferences-1")
+    );
+    assert_eq!(entries(&fx).len(), 1);
+
+    claude.write_transcript(covered_prompt, "u-covered");
+    let stopped = hook_ok(&fx, "stop", &claude.payload("stop.json"));
+    assert!(
+        !text(&stopped.stdout).contains("already covered"),
+        "Stop must not re-echo a covered line: {}",
+        text(&stopped.stdout)
+    );
+    assert!(stopped.stdout.is_empty(), "{}", text(&stopped.stdout));
+    let again = hook_ok(&fx, "stop", &claude.payload("stop.json"));
+    assert!(again.stdout.is_empty(), "{}", text(&again.stdout));
+    assert_eq!(entries(&fx).len(), 1);
+
+    // A missed prompt hook stays quiet as well, and a new line beside a
+    // covered one is still recovered without repeating the covered echo.
+    let missed =
+        "#scribe preferences: use rg\n#scribe preferences: keep merge commits for releases";
+    let lines = [
+        json!({"type":"user", "uuid":"u-missed", "timestamp":"2026-11-16T05:50:00Z",
+               "cwd": claude.cwd, "message":{"content": missed}}),
+    ];
+    std::fs::write(
+        &claude.transcript,
+        lines
+            .iter()
+            .map(|line| format!("{line}\n"))
+            .collect::<String>(),
+    )
+    .unwrap();
+    let recovered = hook_ok(&fx, "stop", &claude.payload("stop.json"));
+    let echo = text(&recovered.stdout);
+    assert!(
+        !echo.contains("already covered"),
+        "recovery must not echo the covered line: {echo}"
+    );
+    assert!(
+        echo.contains("keep merge commits for releases"),
+        "the new line is still recovered: {echo}"
+    );
+    assert_eq!(entries(&fx).len(), 2);
+}
+
+#[test]
 fn a_prompt_without_an_instruction_line_writes_and_prints_nothing() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);

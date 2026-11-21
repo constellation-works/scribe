@@ -74,6 +74,104 @@ fn agent_entry_verbs_record_authors_redact_and_audit_only_changes() {
 }
 
 #[test]
+fn entry_add_refuses_a_statement_an_active_entry_already_covers() {
+    let fx = Fixture::new();
+    let statement = "use rg in scripts today";
+    let add = |tag: &str, project: Option<&str>, words: &str, as_json: bool| {
+        let mut args = vec!["entry", "add", "--tag", tag, "--author", "opus"];
+        if let Some(project) = project {
+            args.extend(["--project", project]);
+        }
+        if as_json {
+            args.push("--json");
+        }
+        args.push(words);
+        fx.run(&args)
+    };
+    let added = json(&add("pref", None, statement, true).stdout);
+    assert_eq!(added["id"], "preferences-1");
+
+    let plain = add("preferences", None, statement, false);
+    assert_eq!(plain.status.code(), Some(1));
+    assert_eq!(
+        text(&plain.stderr).trim(),
+        "error: already covered by preferences-1; nothing written"
+    );
+    let json_out = fx.run(&[
+        "entry",
+        "add",
+        "--tag",
+        "preferences",
+        "--author",
+        "opus",
+        statement,
+        "--json",
+    ]);
+    assert_eq!(json_out.status.code(), Some(1));
+    let err = json(&json_out.stderr);
+    assert_eq!(err["code"], "already_covered");
+    assert_eq!(
+        err["error"],
+        "already covered by preferences-1; nothing written"
+    );
+    let audit = std::fs::read_to_string(fx.root().join("audit.jsonl")).unwrap();
+    let refusal = audit.lines().last().unwrap();
+    assert!(refusal.contains("already_covered"), "{refusal}");
+    assert!(
+        !refusal.contains(statement),
+        "the audit line carries the code, not the statement: {refusal}"
+    );
+    assert_eq!(
+        json(&fx.ok(&["entry", "list", "--json"]).stdout)["total"],
+        1
+    );
+
+    assert_eq!(add("idea", None, statement, false).status.code(), Some(0));
+    assert_eq!(
+        add("preferences", Some("scribe"), statement, false)
+            .status
+            .code(),
+        Some(0),
+        "a different project is not the same entry"
+    );
+
+    fx.ok(&[
+        "entry",
+        "retire",
+        "preferences-1",
+        "--author",
+        "opus",
+        "--reason",
+        "replaced",
+    ]);
+    let rewritten = json(&add("preferences", None, statement, true).stdout);
+    assert_eq!(rewritten["id"], "preferences-3");
+    let newer = json(&add("preferences", None, "keep merge commits for releases", true).stdout);
+    assert_eq!(newer["id"], "preferences-4");
+    fx.ok(&[
+        "proposal",
+        "add",
+        "--kind",
+        "supersedes",
+        "--older",
+        "preferences-3",
+        "--newer",
+        "preferences-4",
+        "--reason",
+        "replacement",
+        "--author",
+        "opus",
+    ]);
+    fx.ok(&["proposal", "settle", "p-1", "--approve", "--author", "opus"]);
+    let after = json(&add("preferences", None, statement, true).stdout);
+    assert_eq!(after["id"], "preferences-5");
+    assert_eq!(
+        json(&fx.ok(&["entry", "show", "preferences-3", "--json"]).stdout)["status"],
+        "superseded"
+    );
+}
+
+#[test]
 fn daniel_guards_preserve_records_but_allow_metadata_and_open_proposals() {
     let fx = Fixture::new();
     fx.seed();
@@ -435,7 +533,8 @@ fn interrupted_agent_approval_reapplies_with_its_author() {
     let reapplied = store
         .reapply_approved(time::OffsetDateTime::now_utc())
         .unwrap();
-    assert_eq!(reapplied.len(), 1);
+    assert_eq!(reapplied.applied.len(), 1);
+    assert!(reapplied.covered.is_empty());
     let entry = json(&fx.ok(&["entry", "show", "preferences-1", "--json"]).stdout);
     assert_eq!(entry["status"], "retired");
     assert_eq!(entry["updated_by"]["name"], "astra");
@@ -443,6 +542,7 @@ fn interrupted_agent_approval_reapplies_with_its_author() {
         store
             .reapply_approved(time::OffsetDateTime::now_utc())
             .unwrap()
+            .applied
             .is_empty()
     );
 }
@@ -1191,6 +1291,14 @@ fn the_fourth_finding_of_a_session_is_refused_and_names_the_cap() {
     let fx = Fixture::new();
     write_finding_config(&fx);
     let add = |session: &str, n: usize| {
+        // The other session must not repeat a statement: coverage is the
+        // tag and project, not the session, so an exact repeat would be
+        // `already_covered` rather than a fresh cap.
+        let statement = if session == "s-other" {
+            format!("Measured result number {n} for the other session cache")
+        } else {
+            format!("Measured result number {n} for the widget cache")
+        };
         fx.run(&[
             "entry",
             "add",
@@ -1202,7 +1310,7 @@ fn the_fourth_finding_of_a_session_is_refused_and_names_the_cap() {
             &format!("session:{session}"),
             "--evidence",
             "exp-1",
-            &format!("Measured result number {n} for the widget cache"),
+            &statement,
             "--json",
         ])
     };
