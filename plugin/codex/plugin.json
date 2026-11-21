@@ -1,5 +1,5 @@
 {
   "name": "scribe",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Capture explicitly marked user preferences and catalog opted-in Codex sessions through the installed scribe binary."
 }
