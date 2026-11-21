@@ -197,7 +197,7 @@ unknown, missing or repeated key.
 without a table, it is the defaults. Every key is optional:
 
 ```toml
-[tags.rituals]                   # a [tags] table replaces the default tags
+[tags.rituals]                   # [tags] merges with the shipped tags
 aliases = ["ritual"]
 description = "how Daniel starts a day"
 stale_after_days = 180           # omit: entries never go stale
@@ -232,29 +232,31 @@ inactive_after_days = 120        # days since a session's last message
 paths = ["codebases/orbit"]      # path fragments counted by transcript list
 ```
 
-The default memory tag is `preferences` (aliases `preference`,
-`pref`; stale after 180 days). A `[tags]` table replaces that default set,
-except the shipped action tags. A `[tags.preferences]` table that is present
-— including one that sets only `[tags.preferences.capture]` — keeps the
-shipped aliases, description and `stale_after_days` when those keys are
-omitted. `aliases = []` clears the aliases; an explicit `stale_after_days`
-replaces 180. Omitting `stale_after_days` on any other tag still means the
-entry never goes stale. A config that does not mention `preferences` drops
-it. An entry under a tag no config
-or `tags.json` names (such as a `decisions`, `remind` or `finding` entry
-from before that tag stopped shipping) stays listed, shown, searched,
-cited by `ask` and settled. The
-action tags `standard` (`require_quote`) and `idea` ship too,
-with no aliases, and stay when a config has its own `[tags]`, unless it
-claims their names; a config tag of the same name starts from the shipped
-settings and overrides what it sets. `require_quote` or `ask_first` on a tag
-without `action = true` is `config_invalid`. A tag
-name must already be lowercase kebab-case, since it is a directory; aliases
-are matched case-insensitively. A word that two tags claim, an unknown key,
-a zero cadence/window bound or an invalid variable name is `config_invalid`, naming the
-file and, where the parser knows it, the line. So is a zero
-`segment_windows` or `inactive_after_days`, a project slug that is not
-lowercase kebab-case, or an empty `paths`.
+The shipped tags are `preferences` (aliases `preference`, `pref`; stale after
+180 days) and the action tags `idea` and `standard` (`require_quote`). A
+`[tags]` table merges with the shipped set: declaring a tag that is not
+shipped adds it without dropping any shipped tag, and declaring a shipped tag
+overrides only the fields it sets (`aliases`, `description`, `stale_after_days`,
+`action`, `require_quote`, `ask_first`, `require_evidence`, and the
+`[tags.<name>.capture]` fields) and inherits the rest. A `[tags.preferences]`
+table that is present — including one that sets only
+`[tags.preferences.capture]` — or omitted keeps the shipped aliases,
+description, `stale_after_days` and capture rules for every unset field.
+`aliases = []` clears the aliases; an explicit `stale_after_days` replaces
+180. Omitting `stale_after_days` on any other tag still means the entry never
+goes stale. There is no way to remove a shipped tag from config (`action =
+false` turns a shipped action tag into a memory tag). An entry under a tag no
+config or `tags.json` names (such as a `decisions`, `remind` or `finding`
+entry from before that tag stopped shipping) stays listed, shown, searched,
+cited by `ask` and settled. `require_quote` or `ask_first` on a tag without
+`action = true` is `config_invalid`, as is `require_evidence = true` on an
+action tag. A tag name must already be lowercase kebab-case, since it is a
+directory; aliases are matched case-insensitively. A word that two tags claim
+(including a collision with an un-overridden shipped tag's name or alias), an
+unknown key, a zero cadence/window bound or an invalid variable name is
+`config_invalid`, naming the file and, where the parser knows it, the line. So
+is a zero `segment_windows` or `inactive_after_days`, a project slug that is
+not lowercase kebab-case, or an empty `paths`.
 
 `tag list` reports every configured tag and every directory under
 `entries/` with its entry count; a directory no configured tag names is

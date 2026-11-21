@@ -42,8 +42,8 @@ env = ["GITHUB_TOKEN", "ANTHROPIC_API_KEY"]
     let names: Vec<&str> = config.tags.tags().iter().map(|t| t.name.as_str()).collect();
     assert_eq!(
         names,
-        ["idea", "rituals", "standard"],
-        "a [tags] table replaces the defaults but keeps the shipped action tags"
+        ["idea", "preferences", "rituals", "standard"],
+        "a [tags] table merges with the shipped tags"
     );
     assert_eq!(
         config.tags.resolve("ritual").unwrap().name.as_str(),
@@ -278,14 +278,44 @@ fn a_partial_preferences_table_keeps_shipped_aliases_description_and_stale_days(
     assert_eq!(cleared.description, shipped.description);
 
     let rituals = Config::parse("[tags.rituals]\n").unwrap();
-    assert!(
-        rituals.tags.resolve("preferences").is_none(),
-        "a config that never mentions preferences still drops it"
+    assert_eq!(
+        rituals.tags.resolve("preferences"),
+        Some(&shipped),
+        "a config that never mentions preferences keeps the shipped preferences tag"
     );
     let rituals = rituals.tags.resolve("rituals").unwrap();
     assert!(rituals.aliases.is_empty());
     assert_eq!(rituals.stale_after_days, None);
     assert_eq!(rituals.description, None);
+
+    let stale_only = Config::parse("[tags.preferences]\nstale_after_days = 90\n").unwrap();
+    let stale_prefs = stale_only.tags.resolve("preferences").unwrap();
+    assert_eq!(stale_prefs.stale_after_days, std::num::NonZeroU32::new(90));
+    assert_eq!(stale_prefs.aliases, shipped.aliases);
+    assert_eq!(stale_prefs.description, shipped.description);
+    assert_eq!(stale_prefs.capture, shipped.capture);
+
+    let remind = Config::parse("[tags.remind]\naction = true\n").unwrap();
+    let names: Vec<&str> = remind.tags.tags().iter().map(|t| t.name.as_str()).collect();
+    assert_eq!(names, ["idea", "preferences", "remind", "standard"]);
+    assert_eq!(remind.tags.resolve("preferences"), Some(&shipped));
+    assert!(
+        remind
+            .tags
+            .action(&"remind".parse().unwrap())
+            .is_some_and(|a| !a.require_quote && !a.ask_first)
+    );
+
+    let err = Config::parse("[tags.other]\naliases = [\"pref\"]\n").unwrap_err();
+    assert!(err.message.contains("'pref'"), "{err}");
+    let reassigned = Config::parse(
+        "[tags.preferences]\naliases = [\"preference\"]\n[tags.other]\naliases = [\"pref\"]\n",
+    )
+    .unwrap();
+    assert_eq!(
+        reassigned.tags.resolve("pref").unwrap().name.as_str(),
+        "other"
+    );
 }
 
 #[test]

@@ -26,10 +26,14 @@
 //! triggers = ["always", "never", "from now on", "I prefer"]
 //! not = "a choice about one task; an acknowledgement"
 //!
-//! A `[tags.preferences]` table that omits `aliases`, `description` or
-//! `stale_after_days` — including one that sets only `[tags.preferences.capture]`
-//! — keeps the shipped values. `aliases = []` clears them. Omitting
-//! `stale_after_days` on any other tag still means entries never go stale.
+//! `[tags]` merges with the shipped tags (`preferences`, `idea`, `standard`):
+//! declaring another tag adds it, and a partial table for a shipped tag —
+//! including one that sets only `[tags.preferences.capture]` — overrides only
+//! the fields it sets and inherits the rest (`aliases`, `description`,
+//! `stale_after_days`, `action`, `require_quote`, `ask_first`,
+//! `require_evidence`, and capture fields). `aliases = []` clears shipped
+//! aliases. Omitting `stale_after_days` on any tag without a shipped interval
+//! means entries never go stale.
 //!
 //! [models]
 //! ask = "claude-sonnet-5-5"
@@ -212,13 +216,18 @@ impl Config {
         let tags = match raw.tags {
             None => TagTable::defaults(),
             Some(tags) => {
-                let defs = tags
-                    .into_iter()
-                    .map(|(name, tag)| tag.into_def(name, text))
-                    .collect::<Result<Vec<_>, _>>()?;
-                TagTable::new(defs)
+                let mut merged: BTreeMap<String, TagDef> = TagTable::defaults()
+                    .tags()
+                    .iter()
+                    .cloned()
+                    .map(|def| (def.name.as_str().to_owned(), def))
+                    .collect();
+                for (name, tag) in tags {
+                    let def = tag.into_def(name, text)?;
+                    merged.insert(def.name.as_str().to_owned(), def);
+                }
+                TagTable::new(merged.into_values().collect())
                     .map_err(|e| unlocated(e.to_string()))?
-                    .with_shipped_actions()
             }
         };
         let models = raw.models.resolve(ModelIds::default());
@@ -501,22 +510,19 @@ impl RawTag {
             })
         };
         let key = format!("tags.{name}");
-        // A config tag named like a shipped action tag starts from the
-        // shipped settings, so `[tags.standard] ask_first = true` keeps it an
-        // action tag; `action = false` makes it a memory tag. A present
-        // `preferences` tag likewise keeps the shipped aliases, description
-        // and stale window when those keys are omitted.
-        let shipped = TagTable::shipped_action(&name);
-        let preferences = (name == "preferences")
-            .then(TagTable::shipped_preferences)
-            .flatten();
+        // A config tag named like a shipped tag overrides only the fields it
+        // sets and inherits the rest (`aliases`, `description`, `stale_after_days`,
+        // `action`, `require_evidence`, and capture fields).
+        let shipped = TagTable::shipped(&name);
         let shipped_action = shipped.as_ref().and_then(|def| def.action);
         let action = if self.action.unwrap_or(shipped_action.is_some()) {
             Some(ActionTag {
                 require_quote: self
                     .require_quote
                     .unwrap_or_else(|| shipped_action.is_some_and(|a| a.require_quote)),
-                ask_first: self.ask_first.unwrap_or(false),
+                ask_first: self
+                    .ask_first
+                    .unwrap_or_else(|| shipped_action.is_some_and(|a| a.ask_first)),
             })
         } else {
             for (flag, set) in [
@@ -536,7 +542,9 @@ impl RawTag {
         };
         // `require_evidence` marks a finding-like memory tag; an action tag
         // refuses it (its evidence is its window).
-        let require_evidence = self.require_evidence.unwrap_or(false);
+        let require_evidence = self
+            .require_evidence
+            .unwrap_or_else(|| shipped.as_ref().is_some_and(|def| def.require_evidence));
         if require_evidence && action.is_some() {
             return Err(ConfigError {
                 line: None,
@@ -545,26 +553,23 @@ impl RawTag {
                 ),
             });
         }
-        let description = self.description.or_else(|| {
-            shipped
-                .as_ref()
-                .and_then(|def| def.description.clone())
-                .or_else(|| preferences.as_ref().and_then(|def| def.description.clone()))
-        });
+        let description = self
+            .description
+            .or_else(|| shipped.as_ref().and_then(|def| def.description.clone()));
+        let shipped_capture = shipped
+            .as_ref()
+            .map(|def| def.capture.clone())
+            .unwrap_or_default();
         let capture = match self.capture {
-            None => CaptureRules::shipped(&name),
-            Some(raw) => raw.resolve(
-                &format!("{key}.capture"),
-                text,
-                CaptureRules::shipped(&name),
-            )?,
+            None => shipped_capture,
+            Some(raw) => raw.resolve(&format!("{key}.capture"), text, shipped_capture)?,
         };
         let aliases = match self.aliases {
             Some(aliases) => aliases
                 .into_iter()
                 .map(|alias| word(format!("{key}.aliases"), alias.to_lowercase()))
                 .collect::<Result<_, _>>()?,
-            None => preferences
+            None => shipped
                 .as_ref()
                 .map(|def| def.aliases.clone())
                 .unwrap_or_default(),
@@ -575,7 +580,7 @@ impl RawTag {
             description,
             stale_after_days: self
                 .stale_after_days
-                .or_else(|| preferences.as_ref().and_then(|def| def.stale_after_days)),
+                .or_else(|| shipped.as_ref().and_then(|def| def.stale_after_days)),
             action,
             require_evidence,
             capture,
