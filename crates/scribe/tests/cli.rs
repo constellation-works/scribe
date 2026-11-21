@@ -169,7 +169,7 @@ fn piped_output_is_one_undecorated_line_per_record() {
     // STD-01 R9, R12: no escapes, no header, N records → N lines; stderr silent.
     let fx = Fixture::new();
     fx.seed();
-    for ((args, _), (rows, fields)) in LISTS.iter().zip([(4, 8), (2, 7), (2, 8), (5, 10)]) {
+    for ((args, _), (rows, fields)) in LISTS.iter().zip([(4, 8), (2, 7), (2, 9), (5, 10)]) {
         let mut cmd = fx.cmd(args);
         cmd.env("CLICOLOR_FORCE", "1").env("TERM", "xterm-256color");
         let out = cmd.output().unwrap();

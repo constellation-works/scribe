@@ -894,3 +894,101 @@ fn a_pass_write_refuses_when_the_record_changed_since_it_was_loaded() {
         .unwrap();
     assert_eq!(written.summary, "Next pass");
 }
+
+#[test]
+fn close_retired_candidates_respects_config_shipped_and_store_tags() {
+    use crate::Redactor;
+    use crate::entry::{Cite, Speaker};
+    use crate::proposal::{ClosedReason, EntryCandidate, Proposal, ProposalKind, ProposalState};
+    use crate::record::{Author, Label, Project};
+    use crate::tag::StoreTag;
+    let dir = private_tempdir();
+    let store = Store::open(dir.path());
+    let t0 = time::macros::datetime!(2026-11-15 10:00 UTC);
+    let t1 = time::macros::datetime!(2026-11-21 06:00 UTC);
+    let redactor = Redactor::new([]);
+
+    // `custom` is configured in config.toml; `notes` is in tags.json;
+    // `preferences` and `idea` are shipped; `decisions` is retired.
+    put(
+        dir.path(),
+        "config.toml",
+        "[tags.preferences]\naliases = [\"pref\"]\n[tags.custom]\ndescription = \"custom tag\"\n",
+    );
+    store
+        .add_agent_tag(
+            StoreTag {
+                name: "notes".parse().unwrap(),
+                aliases: Vec::new(),
+                description: String::from("agent notes"),
+                stale_after_days: None,
+                author: Author::agent("opus".parse().unwrap()),
+                updated_by: None,
+                created: t0,
+                updated: t0,
+            },
+            &redactor,
+        )
+        .unwrap();
+
+    let mk = |n: u64, tag: &str| Proposal {
+        id: format!("p-{n}").parse().unwrap(),
+        kind: ProposalKind::Candidate,
+        older: format!("{tag}-{n}").parse().unwrap(),
+        newer: None,
+        candidate: Some(EntryCandidate {
+            tag: tag.parse().unwrap(),
+            role: Speaker::User,
+            quote: format!("I always want item {n}."),
+            evidence: None,
+            cite: Cite {
+                session: "s-1".parse().unwrap(),
+                message: Some(format!("m-{n}")),
+                at: t0,
+                prompt_sha256: "0".repeat(64),
+                line: 1,
+                cwd: String::from("/work"),
+            },
+            project: Project::sanitized("scribe"),
+            provider: Label::sanitized("claude-code", "claude-code"),
+            host: Label::sanitized("host", "host"),
+            admitted: None,
+        }),
+        reason: format!("candidate {n}"),
+        quotes: Vec::new(),
+        state: ProposalState::Open,
+        opened_at: t0,
+        settled_at: None,
+        settled_by: None,
+        author: Author::session_pass(),
+        updated_by: None,
+        settled_author: None,
+        closed_reason: None,
+    };
+    let proposals = vec![
+        mk(1, "decisions"),
+        mk(2, "preferences"),
+        mk(3, "idea"),
+        mk(4, "custom"),
+        mk(5, "notes"),
+    ];
+    store.write_proposals(&proposals).unwrap();
+
+    let closed = store.close_retired_candidates(t1).unwrap();
+    assert_eq!(closed.len(), 1);
+    assert_eq!(closed[0].id.to_string(), "p-1");
+    assert_eq!(closed[0].state, ProposalState::Rejected);
+    assert_eq!(closed[0].closed_reason, Some(ClosedReason::TagRetired));
+    assert_eq!(
+        closed[0].settled_author.as_ref().map(|a| a.to_string()),
+        Some(String::from("scribe:tag-retired"))
+    );
+
+    let after = store.proposals().unwrap();
+    assert_eq!(after[0].state, ProposalState::Rejected);
+    for open in &after[1..] {
+        assert_eq!(open.state, ProposalState::Open, "{}", open.id);
+        assert_eq!(open.closed_reason, None);
+    }
+    assert!(store.close_retired_candidates(t1).unwrap().is_empty());
+}

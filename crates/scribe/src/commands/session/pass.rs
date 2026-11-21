@@ -156,6 +156,7 @@ pub(in crate::commands) fn run_with<M: Models>(
             }],
             catalog: false,
             switch_written: false,
+            closed_candidates: Vec::new(),
         }));
     }
     let config = store.config()?;
@@ -186,6 +187,7 @@ pub(in crate::commands) fn run_with<M: Models>(
         })
         .collect();
     let mut passes = Vec::new();
+    let mut closed_candidates = Vec::new();
     for (n, (id, switch)) in due.into_iter().enumerate() {
         if !limits.may_start(n) {
             remaining = remaining.saturating_add(1);
@@ -208,6 +210,7 @@ pub(in crate::commands) fn run_with<M: Models>(
             warnings: Vec::new(),
             incomplete: false,
             catalog: None,
+            closed_candidates: Vec::new(),
         };
         let result = if let Some((_, reason)) = corrupt.iter().find(|(stem, _)| stem == id.as_str())
         {
@@ -220,6 +223,7 @@ pub(in crate::commands) fn run_with<M: Models>(
             Ok(done) => done,
             Err(failure) => job.failed(failure)?,
         });
+        closed_candidates.extend(job.closed_candidates);
         if job.incomplete {
             remaining = remaining.saturating_add(1);
         }
@@ -230,6 +234,7 @@ pub(in crate::commands) fn run_with<M: Models>(
         notices: Vec::new(),
         catalog: false,
         switch_written: false,
+        closed_candidates,
     }))
 }
 
@@ -287,6 +292,7 @@ pub(in crate::commands) fn run_catalog<M: Models>(
         warnings: Vec::new(),
         incomplete: false,
         catalog: Some(CatalogRun { project, ended }),
+        closed_candidates: Vec::new(),
     };
     let limits = RunLimits::new(1);
     let result = if let Some((_, reason)) = corrupt.iter().find(|(stem, _)| stem == id.as_str()) {
@@ -305,6 +311,7 @@ pub(in crate::commands) fn run_catalog<M: Models>(
         notices: Vec::new(),
         catalog: true,
         switch_written: false,
+        closed_candidates: job.closed_candidates,
     })
 }
 
@@ -333,6 +340,9 @@ struct Job<'a> {
     /// Set for `session catalog`: the project of the first record, and
     /// whether the transcript's last message is at least a day old.
     catalog: Option<CatalogRun>,
+    /// Open candidate proposals closed because their tag is no longer in the
+    /// tag table, for audit logging.
+    closed_candidates: Vec<String>,
 }
 
 /// One cataloged session's extra facts. Absent for an ordinary pass.
@@ -509,11 +519,17 @@ impl Job<'_> {
                 .store()
                 .proposals()
                 .map_err(|err| PassError::new(err.code(), err.to_string()))?;
+            // Retired-tag open candidates will be closed under the lock before
+            // the cap is counted, so count only open candidates whose tag is
+            // still in the tag table here.
             if proposals
                 .iter()
                 .filter(|p| {
                     p.kind == scribe_core::ProposalKind::Candidate
                         && p.state == scribe_core::ProposalState::Open
+                        && p.candidate
+                            .as_ref()
+                            .is_some_and(|c| self.config.tags.get(&c.tag).is_some())
                 })
                 .count()
                 >= pass::MAX_OPEN_CANDIDATES
@@ -598,11 +614,18 @@ impl Job<'_> {
             } else {
                 scribe_core::PassWrite::Settle(self.switch.final_pass)
             };
-            previous = self
+            let written = self
                 .ctx
                 .store()
                 .write_pass_window(record, expected, mode, &candidates, self.redactor)
                 .map_err(|err| PassError::new(err.code(), err.to_string()))?;
+            previous = written.record;
+            self.closed_candidates.extend(
+                written
+                    .closed_candidates
+                    .into_iter()
+                    .map(|p| p.id.to_string()),
+            );
             expected = previous.as_ref().map(|p| p.updated);
             self.segments_sealed += sealed_after.saturating_sub(sealed_before);
             self.segments = previous.as_ref().map(|r| r.log.len());

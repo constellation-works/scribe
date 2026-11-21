@@ -21,26 +21,43 @@ impl Store {
     }
 
     /// Caller holds the pass lock and has checked the record revision and seals.
+    /// Closes any open candidates whose tag is no longer in the tag table
+    /// before counting the open-candidate cap, and returns the closed
+    /// proposals in id order.
     pub(super) fn open_pass_candidates(
         &self,
         record: &SessionRecord,
         drafts: &[crate::pass::PassClaim],
         redactor: &Redactor,
-    ) -> Result<()> {
-        if drafts.is_empty() || !self.control()?.get(&record.id).is_some_and(|c| c.on) {
-            return Ok(());
+    ) -> Result<Vec<Proposal>> {
+        if !self.control()?.get(&record.id).is_some_and(|c| c.on) {
+            return Ok(Vec::new());
         }
         let config = self.config()?;
+        let mut proposals = self.proposals()?;
+        let closed = crate::proposal::close_retired_tag_candidates(
+            &mut proposals,
+            &config.tags,
+            record.updated,
+        );
+        if drafts.is_empty() {
+            if !closed.is_empty() {
+                self.write_proposals(&proposals)?;
+            }
+            return Ok(closed);
+        }
         let (entries, skipped) = self.load_entries()?;
         if !skipped.is_empty() {
+            if !closed.is_empty() {
+                self.write_proposals(&proposals)?;
+            }
             // Without every entry, absence of an existing statement is unknown.
             tracing::warn!(
                 skipped = skipped.len(),
                 "not opening candidates: some entries are unreadable"
             );
-            return Ok(());
+            return Ok(closed);
         }
-        let mut proposals = self.proposals()?;
         let mut open = proposals
             .iter()
             .filter(|p| p.kind == ProposalKind::Candidate && p.state == ProposalState::Open)
@@ -122,10 +139,34 @@ impl Store {
             open += 1;
             changed = true;
         }
-        if changed {
+        if !closed.is_empty() || changed {
             self.write_proposals(&proposals)?;
         }
-        Ok(())
+        Ok(closed)
+    }
+
+    /// Close every open candidate proposal whose tag is absent from the
+    /// effective tag table (`config.toml`, shipped tags, and `tags.json`),
+    /// under the store lock (2_design.md §11.3). Returns the closed proposals
+    /// in id order; writes nothing when none qualify.
+    pub fn close_retired_candidates(&self, now: time::OffsetDateTime) -> Result<Vec<Proposal>> {
+        if !self.root_exists()? {
+            return Ok(Vec::new());
+        }
+        let config = self.config()?;
+        let mut probe = self.proposals()?;
+        if crate::proposal::close_retired_tag_candidates(&mut probe, &config.tags, now).is_empty() {
+            return Ok(Vec::new());
+        }
+        let _lock = self.lock("consistency scan")?;
+        let config = self.config()?;
+        let mut proposals = self.proposals()?;
+        let closed =
+            crate::proposal::close_retired_tag_candidates(&mut proposals, &config.tags, now);
+        if !closed.is_empty() {
+            self.write_proposals(&proposals)?;
+        }
+        Ok(closed)
     }
 
     /// Caller holds the lock. True only when the reserved entry was created.
