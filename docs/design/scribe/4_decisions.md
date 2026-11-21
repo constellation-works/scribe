@@ -2942,8 +2942,9 @@ Alternatives considered:
   forgetting a rejected claim's words, multi-id or description-based
   settling, and instructions from non-interactive or remote sessions.
 - Cost: a claim he approved through the aide counts as his words; the
-  checks are word lists, so a negated or misdirected instruction passes
-  and only the aide's echo and his later retire catch it; an agent that
+  checks are word lists, so a misdirected instruction can pass and only the
+  aide's echo and his later retire catch it (a negated or excepted one is
+  refused, [§12.2](./2_design.md#12-settling-and-deleting-on-daniels-instruction-proposed)); an agent that
   can write a transcript file as him can forge an instruction (an
   accident guard, STD-05@1 §R5, not a boundary); the aide must run on the
   Mac, where the store and its transcript are.

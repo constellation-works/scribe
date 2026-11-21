@@ -358,8 +358,9 @@ proposal becomes `rejected`, `newer` stays empty, and the covering id is
 named only in the reply),
 `scribe: rejected p-<n> — its entries stay as they are, and it is not
 proposed again`, `scribe: retired <id> — ask leaves it out of answers;
-scribe entry show <id> still has it`, `scribe: forgot <id> — its text is
-blanked for good; the id and cite stay`, `scribe: <id> is already <state>
+scribe entry show <id> still has it`, `scribe: forgot <id> — entry text and
+evidence, proposal quotes of it, and related candidate quotes, evidence and
+reasons are cleared; session records stay`, `scribe: <id> is already <state>
 — nothing changed`, `scribe: refused "<line>" — <reason>` (codes
 `proposal_not_found`, `entry_not_found`, `proposal_settled`,
 `entry_not_active`) or `scribe: could not apply "<line>" — <error>`. A

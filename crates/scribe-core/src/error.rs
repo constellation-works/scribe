@@ -280,7 +280,9 @@ pub enum WriteRefusal {
     /// three typed turns, or is more than 30 minutes old.
     InstructionStale,
     /// `instruction_mismatch`: the instruction does not name the target,
-    /// or does not name the act.
+    /// or does not name the act, or its turn or the reply it answers holds
+    /// a negation or exception marker ("don't", "not", "never", "but",
+    /// "only", ...).
     InstructionMismatch,
     /// `not_interactive`: the instruction's session is not one Daniel
     /// types into (§12.5).

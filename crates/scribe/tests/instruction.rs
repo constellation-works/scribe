@@ -455,3 +455,19 @@ fn negated_instruction_refuses_without_mutating_the_entry() {
     );
     assert_eq!(state(&fx), before);
 }
+
+#[test]
+fn an_instruction_typed_this_instant_is_not_stale() {
+    // The check runs on the sub-second clock: a whole-second `now` would put
+    // a turn typed in the current second in the future and refuse it stale.
+    for _ in 0..3 {
+        let fx = store_with_agent_entry();
+        let text = "retire preferences-2";
+        claude(&fx, Some("cli"), &[("u-1", "user", text, 0)]);
+        assert_eq!(
+            run(&fx, &retire("preferences-2", text)),
+            (Some(0), None),
+            "a turn typed just now passes"
+        );
+    }
+}

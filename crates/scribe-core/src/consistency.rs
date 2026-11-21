@@ -659,6 +659,10 @@ pub fn settle(
             entry.said.clear();
             entry.content.clear();
             entry.evidence = None;
+            entry.as_of = None;
+            entry.quote = None;
+            entry.window = None;
+            entry.retirement_reason = None;
             entry.updated = now;
             for proposal in proposals.iter_mut() {
                 let about = proposal.older == *id || proposal.newer.as_ref() == Some(id);
@@ -667,6 +671,9 @@ pub fn settle(
                     if let Some(candidate) = &mut proposal.candidate {
                         candidate.quote.clear();
                         candidate.evidence = None;
+                        if let Some(admitted) = &mut candidate.admitted {
+                            admitted.matched.clear();
+                        }
                     }
                 }
                 for quote in proposal.quotes.iter_mut().filter(|q| q.entry == *id) {

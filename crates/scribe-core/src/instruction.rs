@@ -176,7 +176,9 @@ pub struct Instructed {
 /// - `instruction_stale`: the turn is not one of his last [`RECENT_TURNS`]
 ///   typed turns, or was typed more than [`FRESH_FOR`] before `now`;
 /// - `instruction_mismatch`: neither the turn nor the assistant message just
-///   before it names the target, or his turn does not name the act.
+///   before it names the target, either holds a negation or exception
+///   marker anywhere (`has_exception`, conservative by design), or his turn
+///   does not name the act.
 ///
 /// # Errors
 ///
