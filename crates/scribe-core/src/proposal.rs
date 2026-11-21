@@ -8,6 +8,7 @@
 
 use crate::entry::{Cite, ContentFrom, Entry, EntryId, NewEntry, Speaker, TagName};
 use crate::record::{Author, AuthorKind, DateRange, Label, Project, Topics, nullable};
+use crate::tag::TagTable;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::num::NonZeroU64;
@@ -313,6 +314,39 @@ pub enum ProposalChange {
     Approve,
     /// Reject a proposal about an agent entry.
     Reject,
+}
+
+/// Close every open candidate proposal whose tag is absent from `tags`
+/// (2_design.md §11.3): `state` becomes `rejected`, `settled_at` becomes
+/// `now`, `settled_by` stays `None`, `settled_author` becomes
+/// `{kind: scribe, name: tag-retired}`, and `closed_reason` becomes
+/// `Some(ClosedReason::TagRetired)`. Returns copies of the proposals closed,
+/// in order; open candidates under tags in `tags` and settled or
+/// non-candidate proposals are untouched.
+pub fn close_retired_tag_candidates(
+    proposals: &mut [Proposal],
+    tags: &TagTable,
+    now: OffsetDateTime,
+) -> Vec<Proposal> {
+    let mut closed = Vec::new();
+    for proposal in proposals.iter_mut() {
+        let Some(candidate) = &proposal.candidate else {
+            continue;
+        };
+        if proposal.kind != ProposalKind::Candidate
+            || proposal.state != ProposalState::Open
+            || tags.get(&candidate.tag).is_some()
+        {
+            continue;
+        }
+        proposal.state = ProposalState::Rejected;
+        proposal.settled_at = Some(now);
+        proposal.settled_by = None;
+        proposal.settled_author = Some(Author::tag_retired());
+        proposal.closed_reason = Some(ClosedReason::TagRetired);
+        closed.push(proposal.clone());
+    }
+    closed
 }
 
 /// Which proposals `proposal list` returns. Every field set must match.

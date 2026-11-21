@@ -92,14 +92,14 @@ impl AuthorName {
     }
 
     /// Whether this name belongs to a non-agent channel (`daniel`, or
-    /// scribe's routine: `scribe` and its `consistency` and `session-pass` names), so a CLI
-    /// write verb recording `kind: agent` may never use it. Reads still
-    /// accept it as a filter.
+    /// scribe's routine: `scribe` and its `consistency`, `session-pass` and
+    /// `tag-retired` names), so a CLI write verb recording `kind: agent` may
+    /// never use it. Reads still accept it as a filter.
     #[must_use]
     pub fn is_reserved(&self) -> bool {
         matches!(
             self.0.as_str(),
-            "daniel" | "scribe" | "consistency" | "session-pass"
+            "daniel" | "scribe" | "consistency" | "session-pass" | "tag-retired"
         )
     }
 }
@@ -197,6 +197,16 @@ impl Author {
         Self {
             kind: AuthorKind::Scribe,
             name: AuthorName(String::from("consistency")),
+        }
+    }
+
+    /// scribe's retired-tag cleanup, closing open candidates whose tag is no
+    /// longer in the tag table (2_design.md §11.3).
+    #[must_use]
+    pub(crate) fn tag_retired() -> Self {
+        Self {
+            kind: AuthorKind::Scribe,
+            name: AuthorName(String::from("tag-retired")),
         }
     }
 }

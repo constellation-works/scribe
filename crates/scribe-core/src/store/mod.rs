@@ -194,6 +194,16 @@ pub enum PassWrite {
     CatalogFinal,
 }
 
+/// What [`Store::write_pass_window`] wrote under the store lock.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PassWritten {
+    /// The updated session record, when one was written.
+    pub record: Option<SessionRecord>,
+    /// Open candidate proposals closed because their tag is absent from the
+    /// tag table, in id order.
+    pub closed_candidates: Vec<Proposal>,
+}
+
 impl Store {
     /// A store at `root`. Performs no I/O. The caller resolves `root`
     /// (STD-02 R3): this crate never reads the environment or the home
@@ -807,9 +817,10 @@ impl Store {
 
     /// Write a checked pass window and its candidates under the same lock.
     /// Candidates are persisted before advancing the record cursor, so an
-    /// interruption retries safely. Caps, duplicates and each claim's
-    /// trigger (a trigger of its tag fires in its turn, under the config
-    /// read under the lock) are checked here.
+    /// interruption retries safely. Retired-tag open candidates are closed
+    /// before caps are counted, duplicates and each claim's trigger (a
+    /// trigger of its tag fires in its turn, under the config read under the
+    /// lock) are checked here.
     pub fn write_pass_window(
         &self,
         record: SessionRecord,
@@ -817,9 +828,17 @@ impl Store {
         kind: PassWrite,
         candidates: &[crate::pass::PassClaim],
         redactor: &Redactor,
-    ) -> Result<Option<SessionRecord>> {
+    ) -> Result<PassWritten> {
         let session = record.id.clone();
-        self.write_pass_candidates(&session, Some(record), kind, expected, candidates, redactor)
+        self.write_pass_candidates(
+            &session,
+            Some(record),
+            kind,
+            expected,
+            candidates,
+            true,
+            redactor,
+        )
     }
 
     fn write_pass(
@@ -830,9 +849,12 @@ impl Store {
         expected: Option<time::OffsetDateTime>,
         redactor: &Redactor,
     ) -> Result<Option<SessionRecord>> {
-        self.write_pass_candidates(session, record, kind, expected, &[], redactor)
+        Ok(self
+            .write_pass_candidates(session, record, kind, expected, &[], false, redactor)?
+            .record)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn write_pass_candidates(
         &self,
         session: &SessionId,
@@ -840,8 +862,9 @@ impl Store {
         kind: PassWrite,
         expected: Option<time::OffsetDateTime>,
         candidates: &[crate::pass::PassClaim],
+        run_candidates: bool,
         redactor: &Redactor,
-    ) -> Result<Option<SessionRecord>> {
+    ) -> Result<PassWritten> {
         self.prepare_dir(&self.root)?;
         let _lock = self.lock("session pass")?;
         // Compare the revision the pass loaded with the one on disk before
@@ -874,7 +897,7 @@ impl Store {
                 }
             })?;
         }
-        let written = match record {
+        let (written, closed_candidates) = match record {
             Some(mut record) => {
                 // A link written while the model ran, or one waiting on the
                 // switch for the first record, is kept: never lost to a pass.
@@ -922,7 +945,11 @@ impl Store {
                     dir = dir.join(part);
                     self.prepare_subdir(&dir)?;
                 }
-                self.open_pass_candidates(&record, candidates, redactor)?;
+                let closed = if run_candidates {
+                    self.open_pass_candidates(&record, candidates, redactor)?
+                } else {
+                    Vec::new()
+                };
                 fsio::write_atomic(&path, &format::encode_session(&path, &record)?)?;
                 // Only once the record holds them: the links are stored once.
                 if !pending.is_empty() {
@@ -932,9 +959,9 @@ impl Store {
                         }
                     })?;
                 }
-                Some(record)
+                (Some(record), closed)
             }
-            None => None,
+            None => (None, Vec::new()),
         };
         match kind {
             PassWrite::Settle(ran_final) => {
@@ -954,7 +981,10 @@ impl Store {
             }
             PassWrite::Checkpoint | PassWrite::CatalogLive => {}
         }
-        Ok(written)
+        Ok(PassWritten {
+            record: written,
+            closed_candidates,
+        })
     }
 
     /// Re-apply, under the store lock, every approved proposal whose older

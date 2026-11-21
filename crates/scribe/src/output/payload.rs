@@ -1124,6 +1124,10 @@ pub(crate) struct PassReport {
     /// The catalog switch was written this run: one extra success audit line.
     #[serde(skip)]
     pub(crate) switch_written: bool,
+    /// Open candidate proposals closed during this pass because their tag is
+    /// retired: one success audit line each.
+    #[serde(skip)]
+    pub(crate) closed_candidates: Vec<String>,
 }
 
 impl PassReport {
@@ -1199,6 +1203,8 @@ pub(crate) struct ScanReport {
     pub(crate) reapplied: Vec<ReappliedPayload>,
     /// Proposals this scan opened, by id.
     pub(crate) opened: Vec<ProposalPayload>,
+    /// Open candidate proposals this scan closed automatically (`tag_retired`).
+    pub(crate) closed: Vec<ProposalPayload>,
     /// Candidate pairs the model labelled.
     pub(crate) judged_pairs: usize,
     /// Candidate pairs left for a later scan: past the per-scan cap, or not

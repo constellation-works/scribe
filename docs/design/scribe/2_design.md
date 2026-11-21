@@ -2855,7 +2855,18 @@ and `SESSION_SCHEMA` dropped the assistant-candidate `evidence` field, the
 three skill copies stopped telling agents to write findings or reminders,
 and §4.7 and §5.3 match the new behaviour. `evidence`, `as_of`,
 `require_evidence` and stored `finding`/`remind` records and format-10
-assistant candidates remain intact. Retired-tag cleanup is step (a3).
+assistant candidates remain intact.
+
+**Built (step a3).** `close_retired_tag_candidates` runs under the store lock
+in the candidate write path (`open_pass_candidates`, before counting the
+20-open cap; `session pass` also filters out retired-tag candidates when
+computing `candidate_limit`) and in `consistency scan`
+(`close_retired_candidates`), closing open candidates whose tag is absent from
+the effective tag table as `rejected` with `settled_author: {kind: scribe,
+name: tag-retired}`, `settled_by: null`, and `closed_reason: tag_retired`. Each
+close writes one audit line (`target` `p-<n>`), `proposal list` displays
+`CLOSED_REASON` in table and plain output, and closed candidates stay in the
+suppression set.
 
 ### 11.4 Issues
 

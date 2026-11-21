@@ -102,7 +102,7 @@ fn pass_candidate_waits_for_typed_approval_and_keeps_original_user_cite() {
     let listed = text(&s.fx.ok(&["proposal", "list"]).stdout);
     assert!(
         listed.ends_with(&format!(
-            "\ttrigger \"I prefer\" matched \"I prefer\"; criteria: {criteria}\n"
+            "\ttrigger \"I prefer\" matched \"I prefer\"; criteria: {criteria}\t-\n"
         )),
         "{listed}"
     );
@@ -2867,4 +2867,185 @@ fn interrupted_candidate_approval_is_replayed_once_from_the_durable_proposal() {
     .unwrap();
     assert_eq!(entry["content"], quote);
     assert_eq!(entry["author"]["kind"], "daniel");
+}
+
+#[test]
+fn pass_closes_retired_tag_candidates_before_cap_and_suppresses_their_quotes() {
+    let s = Setup::new();
+    s.scribe("/scribe on");
+    let cite = |msg: &str| {
+        json!({
+            "session": ON,
+            "message": msg,
+            "at": "2026-11-15T00:00:00Z",
+            "prompt_sha256": "0".repeat(64),
+            "line": 1,
+            "cwd": "/nonexistent/work/scribe"
+        })
+    };
+    let mut initial = Vec::new();
+    let tags = [
+        ("decisions", 7),
+        ("task", 7),
+        ("finding", 2),
+        ("preferences", 2),
+        ("idea", 2),
+    ];
+    let mut n = 0usize;
+    let mut retired_counts: std::collections::BTreeMap<&str, usize> =
+        std::collections::BTreeMap::new();
+    for (tag, count) in tags {
+        for i in 1..=count {
+            n += 1;
+            let quote = if n == 1 {
+                String::from("I always prefer retired rule one for builds.")
+            } else {
+                format!("I always keep {tag} item {i} in the store.")
+            };
+            let is_active = matches!(tag, "preferences" | "idea");
+            if !is_active {
+                *retired_counts.entry(tag).or_default() += 1;
+            }
+            initial.push(json!({
+                "id": format!("p-{n}"),
+                "kind": "candidate",
+                "older": format!("{tag}-{i}"),
+                "newer": null,
+                "candidate": {
+                    "tag": tag,
+                    "role": "user",
+                    "quote": quote,
+                    "evidence": null,
+                    "cite": cite(&format!("seed-{n}")),
+                    "project": "scribe",
+                    "provider": "claude-code",
+                    "host": "host",
+                    "admitted": null
+                },
+                "reason": format!("Unmarked {tag} statement: {quote}"),
+                "quotes": [],
+                "state": "open",
+                "opened_at": "2026-11-15T00:01:00Z",
+                "settled_at": null,
+                "settled_by": null,
+                "author": {"kind": "scribe", "name": "session-pass"},
+                "updated_by": null,
+                "settled_author": null,
+                "closed_reason": null
+            }));
+        }
+    }
+    assert_eq!(initial.len(), 20);
+    assert_eq!(retired_counts.values().sum::<usize>(), 16);
+    let proposals_path = s.fx.root().join("proposals.json");
+    std::fs::write(
+        &proposals_path,
+        json!({"format": 11, "proposals": initial}).to_string(),
+    )
+    .unwrap();
+    make_private(&proposals_path);
+
+    let new_quote = "I prefer concise summaries in every session pass.";
+    s.write(ON, &[line("user", "u-new", new_quote)]);
+    s.answer(&candidate_answer(new_quote, "u-new", "preferences"));
+    let audit_before = s.audit_lines();
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+
+    let listed = proposals(&s);
+    assert_eq!(listed["total"], 21, "{listed}");
+    let list = listed["proposals"].as_array().unwrap();
+    for p in &list[..16] {
+        assert_eq!(p["state"], "rejected", "{p}");
+        assert_eq!(p["closed_reason"], "tag_retired", "{p}");
+        assert_eq!(
+            p["settled_author"],
+            json!({"kind": "scribe", "name": "tag-retired"}),
+            "{p}"
+        );
+        assert!(p["settled_by"].is_null(), "{p}");
+        assert!(!p["settled_at"].is_null(), "{p}");
+    }
+    for p in &list[16..20] {
+        assert_eq!(p["state"], "open", "{p}");
+        assert!(p["closed_reason"].is_null(), "{p}");
+        assert!(p["settled_author"].is_null(), "{p}");
+    }
+    assert_eq!(list[20]["id"], "p-21");
+    assert_eq!(list[20]["older"], "preferences-3");
+    assert_eq!(list[20]["state"], "open");
+    assert_eq!(list[20]["candidate"]["quote"], new_quote);
+    assert!(
+        !s.fx.root().join("entries").exists(),
+        "pass writes no entries"
+    );
+
+    let audit_text = std::fs::read_to_string(s.fx.root().join("audit.jsonl")).unwrap();
+    let new_audit: Vec<Value> = audit_text
+        .lines()
+        .skip(audit_before)
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let closed_audit_targets: Vec<&str> = new_audit
+        .iter()
+        .filter(|e| {
+            e["command"] == "session pass"
+                && e["status"] == "success"
+                && e["target"].as_str().is_some_and(|t| t.starts_with("p-"))
+        })
+        .map(|e| e["target"].as_str().unwrap())
+        .collect();
+    assert_eq!(closed_audit_targets.len(), 16, "{new_audit:?}");
+    for i in 1..=16 {
+        assert!(closed_audit_targets.contains(&format!("p-{i}").as_str()));
+    }
+
+    // A closed candidate's quote stays in the suppression set, and a second
+    // pass writes no more closes.
+    let dup_quote = "I always prefer retired rule one for builds.";
+    s.append(ON, &[line("user", "u-dup", dup_quote)]);
+    s.answer(&candidate_answer(dup_quote, "u-dup", "preferences"));
+    let audit_before_second = s.audit_lines();
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    assert_eq!(
+        proposals(&s)["total"],
+        21,
+        "closed candidate quote is still suppressed"
+    );
+    let second_audit: Vec<Value> = std::fs::read_to_string(s.fx.root().join("audit.jsonl"))
+        .unwrap()
+        .lines()
+        .skip(audit_before_second)
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(second_audit.len(), 1, "only the session pass line");
+    assert_eq!(second_audit[0]["target"], format!("session:{ON}"));
+
+    // `proposal list --state rejected` shows `tag_retired` in table and JSON.
+    let rejected_json: Value = serde_json::from_slice(
+        &s.fx
+            .ok(&["proposal", "list", "--state", "rejected", "--json"])
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(rejected_json["total"], 16);
+    assert!(
+        rejected_json["proposals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|p| p["closed_reason"] == "tag_retired")
+    );
+    let rejected_table = text(
+        &s.fx
+            .ok(&[
+                "proposal", "list", "--state", "rejected", "--format", "table",
+            ])
+            .stdout,
+    );
+    assert!(rejected_table.contains("CLOSED_REASON"), "{rejected_table}");
+    assert_eq!(
+        rejected_table.matches("tag_retired").count(),
+        16,
+        "{rejected_table}"
+    );
 }

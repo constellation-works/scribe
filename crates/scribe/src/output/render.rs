@@ -55,7 +55,7 @@ const SESSION_COLUMNS: [Column; 7] = [
     col("TITLE", Align::Left, true),
 ];
 
-const PROPOSAL_COLUMNS: [Column; 8] = [
+const PROPOSAL_COLUMNS: [Column; 9] = [
     col("ID", Align::Left, false),
     col("KIND", Align::Left, false),
     col("STATE", Align::Left, false),
@@ -64,6 +64,7 @@ const PROPOSAL_COLUMNS: [Column; 8] = [
     col("OPENED", Align::Left, false),
     col("REASON", Align::Left, true),
     col("ADMITTED", Align::Left, true),
+    col("CLOSED_REASON", Align::Left, false),
 ];
 
 const PASS_COLUMNS: [Column; 5] = [
@@ -331,6 +332,9 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
                     .as_ref()
                     .map_or_else(|| "-".to_owned(), |a| format!("{}:{}", a.kind, a.name)),
             )?;
+            if let Some(reason) = p.closed_reason {
+                field(out, "closed_reason", reason)?;
+            }
             field(out, "opened", &timestamp(p.opened_at))?;
             field(
                 out,
@@ -972,6 +976,15 @@ pub(crate) fn scan(out: &mut dyn Write, sink: &Sink, report: &ScanReport) -> io:
             Cell::plain(p.newer.clone().unwrap_or_else(|| String::from("-"))),
         ]);
     }
+    for p in &report.closed {
+        rows.push(vec![
+            Cell::plain("closed"),
+            Cell::plain(p.id.clone()),
+            Cell::plain(p.closed_reason.unwrap_or(p.kind)),
+            Cell::plain(p.older.clone()),
+            Cell::plain(p.newer.clone().unwrap_or_else(|| String::from("-"))),
+        ]);
+    }
     for f in &report.failed_batches {
         rows.push(vec![
             Cell {
@@ -1116,6 +1129,7 @@ fn proposal_row(p: &ProposalPayload) -> Vec<Cell> {
                 .and_then(|c| c.admitted.as_ref())
                 .map_or_else(|| String::from("-"), |a| one_line(&admitted(a))),
         ),
+        Cell::plain(p.closed_reason.unwrap_or("-")),
     ]
 }
 

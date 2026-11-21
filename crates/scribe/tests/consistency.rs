@@ -923,3 +923,136 @@ fn a_shorter_configured_limit_deactivates_sooner() {
     let err: Value = serde_json::from_slice(&out.stderr).unwrap();
     assert_eq!(err["code"], "config_invalid");
 }
+
+#[test]
+fn consistency_scan_closes_retired_tag_candidates_without_a_model_call() {
+    let fx = Fixture::new();
+    let path = fx.fake_program(
+        "claude",
+        "#!/bin/sh\necho call >> \"$HOME/claude-calls\"\nexit 1\n",
+    );
+    let s = Setup {
+        transcript: fx
+            .home()
+            .join(".claude/projects/-work-scribe")
+            .join(format!("{SESSION}.jsonl")),
+        cwd: fx.elsewhere("work/scribe"),
+        fx,
+        path,
+    };
+    let cite = |msg: &str| {
+        json!({
+            "session": SESSION,
+            "message": msg,
+            "at": "2026-11-15T00:00:00Z",
+            "prompt_sha256": "0".repeat(64),
+            "line": 1,
+            "cwd": "/work/scribe"
+        })
+    };
+    let mut initial = Vec::new();
+    let mut n = 0usize;
+    for (tag, count) in [
+        ("decisions", 7),
+        ("task", 7),
+        ("finding", 2),
+        ("preferences", 2),
+        ("idea", 2),
+    ] {
+        for i in 1..=count {
+            n += 1;
+            let quote = format!("I always keep {tag} item {i} documented.");
+            initial.push(json!({
+                "id": format!("p-{n}"),
+                "kind": "candidate",
+                "older": format!("{tag}-{i}"),
+                "newer": null,
+                "candidate": {
+                    "tag": tag,
+                    "role": "user",
+                    "quote": quote,
+                    "evidence": null,
+                    "cite": cite(&format!("seed-{n}")),
+                    "project": "scribe",
+                    "provider": "claude-code",
+                    "host": "host",
+                    "admitted": null
+                },
+                "reason": format!("Unmarked {tag} statement: {quote}"),
+                "quotes": [],
+                "state": "open",
+                "opened_at": "2026-11-15T00:01:00Z",
+                "settled_at": null,
+                "settled_by": null,
+                "author": {"kind": "scribe", "name": "session-pass"},
+                "updated_by": null,
+                "settled_author": null,
+                "closed_reason": null
+            }));
+        }
+    }
+    std::fs::create_dir_all(s.fx.root()).unwrap();
+    make_private(&s.fx.root());
+    s.write_proposals(&json!(initial));
+    // Write format 11 directly for the candidate fixtures.
+    let proposals_file = s.fx.root().join("proposals.json");
+    std::fs::write(
+        &proposals_file,
+        json!({"format": 11, "proposals": initial}).to_string(),
+    )
+    .unwrap();
+    make_private(&proposals_file);
+
+    let report = s.scan();
+    assert_eq!(s.calls(), 0, "retired-tag cleanup needs no model call");
+    assert!(!s.fx.root().join("entries").exists(), "no entry is written");
+    assert_eq!(report["closed"].as_array().unwrap().len(), 16, "{report}");
+    for p in report["closed"].as_array().unwrap() {
+        assert_eq!(p["state"], "rejected");
+        assert_eq!(p["closed_reason"], "tag_retired");
+        assert_eq!(
+            p["settled_author"],
+            json!({"kind": "scribe", "name": "tag-retired"})
+        );
+        assert!(p["settled_by"].is_null());
+    }
+
+    let audit = s.audit();
+    assert_eq!(audit.len(), 16, "{audit:?}");
+    assert!(
+        audit
+            .iter()
+            .all(|l| l["command"] == "consistency scan" && l["status"] == "success")
+    );
+    let audit_targets: Vec<&str> = audit
+        .iter()
+        .map(|l| l["target"].as_str().unwrap())
+        .collect();
+    for i in 1..=16 {
+        assert!(audit_targets.contains(&format!("p-{i}").as_str()));
+    }
+
+    // Running consistency scan again changes nothing more.
+    let second = s.scan();
+    assert_eq!(second["closed"], json!([]));
+    assert_eq!(second["opened"], json!([]));
+    assert_eq!(s.calls(), 0);
+    assert_eq!(s.audit().len(), 16);
+
+    // Open preferences and idea candidates remain untouched.
+    let open = s.json(&["proposal", "list", "--state", "open", "--json"]);
+    assert_eq!(open["total"], 4);
+    let rejected_table = text(
+        &s.fx
+            .ok(&[
+                "proposal", "list", "--state", "rejected", "--format", "table",
+            ])
+            .stdout,
+    );
+    assert!(rejected_table.contains("CLOSED_REASON"), "{rejected_table}");
+    assert_eq!(
+        rejected_table.matches("tag_retired").count(),
+        16,
+        "{rejected_table}"
+    );
+}

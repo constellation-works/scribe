@@ -135,6 +135,7 @@ pub(in crate::commands) fn scan<M: Models>(
     let redactor = ctx.redactor(&config)?;
     let adapter = models(&config);
     let reapplied = store.reapply_approved(now)?;
+    let closed = store.close_retired_candidates(now)?;
     let entries = store.list_entries(&EntryFilter::default())?.listing.items;
     let proposals = store.proposals()?;
     let found = consistency::candidates(&entries, &proposals, now.date(), consistency::MAX_PAIRS);
@@ -148,6 +149,7 @@ pub(in crate::commands) fn scan<M: Models>(
             })
             .collect(),
         opened: Vec::new(),
+        closed: closed.iter().map(ProposalPayload::from).collect(),
         judged_pairs: 0,
         pairs_left: found.over_cap,
         unrelated_pairs: 0,
@@ -207,6 +209,7 @@ pub(in crate::commands) fn scan<M: Models>(
     deactivate_sessions(&session_scan, calls, &mut report)?;
     let changed = !(report.reapplied.is_empty()
         && report.opened.is_empty()
+        && report.closed.is_empty()
         && report.failed_batches.is_empty()
         && report.deactivated.is_empty()
         && report.failed_deactivations.is_empty()

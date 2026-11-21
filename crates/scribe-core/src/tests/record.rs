@@ -59,3 +59,19 @@ fn a_listing_counts_every_match_before_the_limit() {
     let whole = Listing::select(vec![1, 2], |_| true, None);
     assert!(!whole.truncated());
 }
+
+#[test]
+fn reserved_author_names_cover_every_internal_channel() {
+    for reserved in [
+        "daniel",
+        "scribe",
+        "consistency",
+        "session-pass",
+        "tag-retired",
+    ] {
+        let name: crate::record::AuthorName = reserved.parse().unwrap();
+        assert!(name.is_reserved(), "{reserved}");
+    }
+    let agent: crate::record::AuthorName = "opus".parse().unwrap();
+    assert!(!agent.is_reserved());
+}

@@ -317,6 +317,19 @@ config tag claims is dropped with a warning naming both.
   finishes it. A forget blanks the entry's `said` and body and, in
   `proposals.json`, the `text` of its quotes and the `reason` of every
   proposal about it. Nothing is written when nothing changed.
+- **Retired-tag cleanup** (format 11, 2_design.md §11.3). Under `.lock`
+  in the candidate write path (`open_pass_candidates` in `write_pass_window`,
+  before counting the 20-open cap) and in `consistency scan`
+  (`close_retired_candidates`), any open `candidate` proposal whose tag is
+  absent from the effective tag table (`config.toml`, shipped tags, and
+  `tags.json`) is closed automatically without calling a model or writing
+  an entry: `state` becomes `rejected`, `settled_at` the current time,
+  `settled_by` `null`, `settled_author` `{kind: scribe, name: tag-retired}`,
+  and `closed_reason` `tag_retired`. Each close writes one audit line naming
+  its proposal id; open candidates under tags in the table (including
+  `preferences` and `idea`) and non-candidate proposals are untouched. The
+  closed candidate keeps its reserved `older` entry id and stays in the
+  suppression set like any rejection.
 - **Modes and owners.** Every load refuses the root, a subdirectory, a
   record file or a document owned by another user (`store_foreign_owner`) or
   open to group or others, any group or other mode bit read included

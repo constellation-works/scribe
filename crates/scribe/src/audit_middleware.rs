@@ -18,8 +18,8 @@
 //! lines in one prompt are two lines in the log), and none when it changed
 //! nothing; a session pass one per session passed (a `session catalog` also one
 //! for the switch it wrote, unless a window failed: a failed catalog is one
-//! failure line); a consistency scan one
-//! per entry re-applied, per proposal opened, per session deactivated or
+//! failure line) and one per retired-tag candidate closed; a consistency scan one
+//! per entry re-applied, per proposal opened or closed, per session deactivated or
 //! deactivation failed, per batch the model failed, and none when it changed
 //! nothing; a direct write verb (`entry`, `tag` and `proposal` writes,
 //! `session activate|deactivate`) one when it changed the record and none
@@ -164,6 +164,13 @@ impl<'a> AuditGuard<'a> {
                         },
                     );
                 }
+                for id in &report.closed_candidates {
+                    lines.push(Line {
+                        status: AuditStatus::Success,
+                        target: Some(id.clone()),
+                        error_code: None,
+                    });
+                }
                 lines
             }
             Ok(Output::Scan(report)) => report
@@ -175,6 +182,11 @@ impl<'a> AuditGuard<'a> {
                     error_code: None,
                 })
                 .chain(report.opened.iter().map(|p| Line {
+                    status: AuditStatus::Success,
+                    target: Some(p.id.clone()),
+                    error_code: None,
+                }))
+                .chain(report.closed.iter().map(|p| Line {
                     status: AuditStatus::Success,
                     target: Some(p.id.clone()),
                     error_code: None,

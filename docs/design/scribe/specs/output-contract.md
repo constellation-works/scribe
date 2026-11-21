@@ -44,7 +44,7 @@ is `-`, lists are comma-joined, and timestamps are RFC 3339.
 | `session list` | `id status due project topics updated title` (`due` is `yes` or `no`) |
 | `session list --tree` | `id parent status due project topics updated title` (`parent` is the session the row nests under, its `spawned_from` link else its first `continues` link, or `-`) |
 | `session list --include-inactive` | `id status active due project topics updated title` (`active` is `yes` or `no`); without the flag the columns are unchanged, inactive sessions are left out, and when any matched the notice `<n> inactive session(s) also match and are hidden; --include-inactive lists them` goes to stderr. With `--tree` too, `active` follows `status` |
-| `proposal list` | `id kind state older newer opened_at reason admitted` (format 11: `admitted` is `trigger "<phrase>" matched "<words>"; criteria: <criteria or ->` for a candidate a capture rule admitted, else `-`) |
+| `proposal list` | `id kind state older newer opened_at reason admitted closed_reason` (format 11: `admitted` is `trigger "<phrase>" matched "<words>"; criteria: <criteria or ->` for a candidate a capture rule admitted, else `-`; `closed_reason` is `tag_retired` when scribe closed it without Daniel, else `-`) |
 | `tag list` | `name entries stale_after_days aliases description`, (S12) `source` (`config` or `store`), then `action` (`free` or `ask-first`, with `,quote` when the tag requires a quote), `retired` and `rejected` (counts of agent entries); the last three are `-` for a tag that is not an action tag; (format 11) then `route` (the tag's capture route, `propose`, `write` or `agent`, or `-` when it has no capture rules) |
 | `tag show <tag>` (format 11) | one `<field>\t<value>\t<origin>` line each for `tag`, `source`, `aliases`, `description`, `stale_after_days`, `action` (`free`/`ask-first`, with `,quote`, or `-`), then the capture rules `from`, `route`, `triggers` (quoted, comma separated), `criteria` and `not`; `origin` is `shipped`, `config <file>:<line>` or `none` (an unset rule's value is `-`), and `-` for the first six. The table prints `<field> <value>  (<origin>)` |
 | `record search` (S11) | `cite kind score updated title snippet` (`score` to three decimals; the table cuts `title` to 40 characters and fits `snippet` to the width) |
@@ -479,12 +479,13 @@ reason is never added to the audit line).
 
 `scribe consistency scan --json` and the Orbit tool
 `scribe.consistency-scan` print `{"reapplied": [{"proposal", "entry",
-"status"}], "opened": [<proposal>, ...], "judged_pairs", "pairs_left",
-"unrelated_pairs", "dropped_labels", "stale_entries", "failed_batches":
-[{"batch", "error_code"}]}`. `reapplied` lists approved proposals whose
-older entry was still `active` and is now `superseded` or `retired`;
-`opened` holds each proposal opened, in `proposal list --json`'s shape, by
-id; `judged_pairs` counts pairs the model labelled, `pairs_left` those past
+"status"}], "opened": [<proposal>, ...], "closed": [<proposal>, ...],
+"judged_pairs", "pairs_left", "unrelated_pairs", "dropped_labels",
+"stale_entries", "failed_batches": [{"batch", "error_code"}]}`. `reapplied`
+lists approved proposals whose older entry was still `active` and is now
+`superseded` or `retired`; `opened` holds each proposal opened, in
+`proposal list --json`'s shape, by id; `closed` holds each open candidate
+proposal closed automatically (`tag_retired`), in the same shape; `judged_pairs` counts pairs the model labelled, `pairs_left` those past
 the cap of 40 or not reached in this call's time, `unrelated_pairs` those
 labelled `unrelated`, `dropped_labels` labels refused (a quote not verbatim,
 an unknown or repeated pair, an unknown label); `stale_entries` counts
@@ -507,14 +508,15 @@ deactivation is also a plain row `deactivated <session> <route> <cite or
 `removal-batch:<n>`, with its code); when removed-feature pairs are
 left, stderr says how many. Plain and
 table print one row per change: `reapplied p-<n> <status> <entry> -`,
-`opened p-<n> <kind> <older> <newer or ->` and `failed batch-<n> <code> -
--` (columns `action id what older newer`). When nothing was reapplied,
-opened or failed, stdout is empty and stderr says `nothing to propose: …`;
-when pairs are left, stderr says how many. The exit is 0 whenever the store
-could be read, including failed batches. Each reapplied approval (target the
-entry id), opened proposal (target the proposal id) and failed batch
-(target `batch:<n>`, with its code) writes one audit line under
-`consistency scan`.
+`opened p-<n> <kind> <older> <newer or ->`, `closed p-<n> <closed_reason>
+<older> <newer or ->` and `failed batch-<n> <code> - -` (columns `action
+id what older newer`). When nothing was reapplied, opened, closed or
+failed, stdout is empty and stderr says `nothing to propose: …`; when pairs
+are left, stderr says how many. The exit is 0 whenever the store could be
+read, including failed batches. Each reapplied approval (target the entry
+id), opened proposal (target the proposal id), closed proposal (target the
+proposal id) and failed batch (target `batch:<n>`, with its code) writes
+one audit line under `consistency scan`.
 
 ## Ask
 
