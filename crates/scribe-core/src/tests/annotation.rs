@@ -46,9 +46,7 @@ fn a_marker_at_the_end_or_before_a_colon_or_bracketed_is_a_marker() {
         "keep updates short (#scribe preferences), always",
         "#scribe/global keep updates short",
     ] {
-        // The last is a line-start instruction (form 1-4), not a marker.
-        let expected = usize::from(!text.starts_with("#scribe"));
-        assert_eq!(annotation::marks(text).len(), expected, "{text}");
+        assert_eq!(annotation::marks(text).len(), 1, "{text}");
     }
     let global = annotation::marks("keep updates short #scribe/global");
     assert!(global[0].global, "{global:?}");
@@ -64,11 +62,58 @@ fn a_mention_writes_nothing() {
         "> quoted #scribe here",
         "<pasted_content>\npasted #scribe here\n</pasted_content>",
         "    indented #scribe code",
-        "#scribe preferences: a form-2 line",
+        "#scribe approve p-4",
+        "#scribe forget preferences-2",
         "foo#scribe and #scribes",
     ] {
         assert!(annotation::marks(text).is_empty(), "{text}");
     }
+}
+
+#[test]
+fn a_line_start_capture_form_is_a_marker_with_its_tag_as_the_hint() {
+    // Forms 1-3 folded into the marker (2_design.md §14.6).
+    let tags = TagTable::defaults();
+    let hint = |text: &str| {
+        let marks = annotation::marks(text);
+        assert_eq!(marks.len(), 1, "{text}: {marks:?}");
+        assert!(marks[0].problem.is_none(), "{text}: {marks:?}");
+        marks[0].hint(&tags).map(ToString::to_string)
+    };
+    assert_eq!(
+        hint("#scribe idea: a dry-run flag for prune").as_deref(),
+        Some("idea")
+    );
+    assert_eq!(
+        hint("#scribe add this to preferences").as_deref(),
+        Some("preferences")
+    );
+    assert_eq!(
+        hint("#scribe remember short subjects under my preferences. #git").as_deref(),
+        Some("preferences")
+    );
+    assert_eq!(
+        hint("#scribe pref: tabs #style").as_deref(),
+        Some("preferences"),
+        "an alias resolves"
+    );
+    assert_eq!(hint("#scribe keep updates short"), None);
+    assert_eq!(
+        hint("#scribe issue: the drain hits 429s"),
+        None,
+        "the issue tag is never a hint"
+    );
+    assert_eq!(hint("#scribe add the 429s to issue"), None);
+    let global = annotation::marks("#scribe/global preferences: squash-merge agent PRs #ci");
+    assert!(global[0].global, "{global:?}");
+    assert_eq!(global[0].topics.as_slice()[0].as_str(), "ci");
+    assert_eq!(
+        global[0].hint(&tags).map(ToString::to_string).as_deref(),
+        Some("preferences")
+    );
+    // A tail is read only on a line the marker opens.
+    let inline = annotation::marks("ok, #scribe add this to preferences");
+    assert_eq!(inline[0].tail, None);
 }
 
 #[test]
@@ -167,6 +212,35 @@ fn a_verbatim_quote_of_his_own_words_checks_into_an_entry() {
     assert_eq!(entry.quote, "I always want short status updates");
     assert_eq!(entry.message, "u-1");
     assert_eq!(entry.tag.as_str(), "preferences");
+}
+
+#[test]
+fn a_quote_may_come_from_a_line_start_marker_but_not_a_settling_line() {
+    // A folded form's words are Daniel's own (2_design.md §14.6).
+    let tags = TagTable::defaults();
+    let typed = "#scribe idea: tidy the sizes\n#scribe retire idea-12";
+    let turn = message("u-1", Speaker::User, typed);
+    let mark = &annotation::marks(typed)[0];
+    let checked = annotation::check(
+        mark,
+        &entry_answer("tidy the sizes", "idea"),
+        &[&turn],
+        &tags,
+    )
+    .unwrap();
+    let Checked::Entry(entry) = checked else {
+        panic!("{checked:?}")
+    };
+    assert_eq!(entry.quote, "tidy the sizes");
+    assert_eq!(
+        annotation::check(
+            mark,
+            &entry_answer("retire idea-12", "idea"),
+            &[&turn],
+            &tags
+        ),
+        Err(CheckRefusal::NotVerbatim)
+    );
 }
 
 #[test]

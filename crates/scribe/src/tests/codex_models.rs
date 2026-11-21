@@ -3,7 +3,7 @@
 use crate::models::{ClaudeCliModels, allowed_env};
 use scribe_core::{
     Models, Provider,
-    models::{ModelError, ReferentRequest},
+    models::{AnnotationRequest, ModelError},
     pass,
 };
 use std::{
@@ -35,12 +35,13 @@ impl Fake {
         .with_provider(Provider::Codex)
     }
 }
-fn request() -> ReferentRequest {
-    ReferentRequest {
+fn request() -> AnnotationRequest {
+    AnnotationRequest {
         model: String::from("explicit-model"),
         budget: Duration::from_secs(5),
-        instruction: String::from("#scribe add this to preferences"),
-        candidates: Vec::new(),
+        marks: Vec::new(),
+        messages: Vec::new(),
+        tags: Vec::new(),
     }
 }
 fn answer(value: serde_json::Value) -> String {
@@ -84,8 +85,8 @@ fn codex_validates_port_schemas_with_null_populated_and_omitted_open() {
 fn malformed_tool_failure_and_oversized_results_are_refused_without_fallback() {
     let cases = [
         String::from("printf '%s\\n' not-json"),
-        answer(serde_json::json!({"message":"a","span":"valid quote","extra":"must fail"})),
-        answer(serde_json::json!({"message":"a"})),
+        answer(serde_json::json!({"marks":[],"extra":"must fail"})),
+        answer(serde_json::json!({})),
         String::from(
             "printf '%s\\n' '{\"type\":\"item.started\",\"item\":{\"type\":\"command_execution\",\"command\":\"touch forbidden\"}}' '{\"type\":\"turn.completed\"}'",
         ),
@@ -94,12 +95,10 @@ fn malformed_tool_failure_and_oversized_results_are_refused_without_fallback() {
     ];
     for script in cases {
         let fake = Fake::new(&script);
-        assert!(fake.model().referent(&request()).is_err(), "{script}");
+        assert!(fake.model().annotation(&request()).is_err(), "{script}");
     }
-    let fake = Fake::new(&answer(
-        serde_json::json!({"message":"a","span":"valid quote"}),
-    ));
-    assert!(fake.model().referent(&request()).is_ok());
+    let fake = Fake::new(&answer(serde_json::json!({"marks":[]})));
+    assert!(fake.model().annotation(&request()).is_ok());
 }
 
 #[test]
@@ -109,7 +108,7 @@ fn codex_timeout_uses_the_shared_group_supervisor_and_missing_runtime_is_actiona
     req.budget = Duration::from_millis(60);
     let start = Instant::now();
     assert!(matches!(
-        fake.model().referent(&req),
+        fake.model().annotation(&req),
         Err(ModelError::Timeout { .. })
     ));
     assert!(start.elapsed() < Duration::from_secs(4));
@@ -128,7 +127,7 @@ fn codex_timeout_uses_the_shared_group_supervisor_and_missing_runtime_is_actiona
         OsString::from("/no/runtime"),
     )])
     .with_provider(Provider::Codex);
-    let err = model.referent(&request()).unwrap_err();
+    let err = model.annotation(&request()).unwrap_err();
     assert!(matches!(err, ModelError::Unavailable(_)));
     assert!(err.to_string().contains("codex"));
 }
@@ -146,7 +145,7 @@ fn codex_failure_diagnostics_mask_configured_credentials() {
         ),
     ];
     let adapter = ClaudeCliModels::new(env).with_provider(Provider::Codex);
-    let error = adapter.referent(&request()).unwrap_err().to_string();
+    let error = adapter.annotation(&request()).unwrap_err().to_string();
     assert!(!error.contains("synthetic-secret-for-redaction"));
     assert!(error.contains("[redacted:OPENAI_API_KEY]"));
 }
@@ -159,9 +158,9 @@ fn codex_transport_notifications_require_a_successful_validated_completion() {
         serde_json::json!({"type":"error","message":"Reconnecting... 2/5 (stream disconnected before completion: invalid peer certificate: UnknownIssuer)"}),
         serde_json::json!({"type":"item.completed","item":{"type":"error","message":"Falling back from WebSockets to HTTPS transport. stream disconnected before completion: invalid peer certificate: UnknownIssuer"}}),
     ].into_iter().map(|row| format!("printf '%s\\n' '{row}'\n")).collect::<String>();
-    let valid = answer(serde_json::json!({"message":"a","span":"valid quote"}));
+    let valid = answer(serde_json::json!({"marks":[]}));
     let fake = Fake::new(&format!("{diagnostics}{valid}"));
-    assert!(fake.model().referent(&request()).is_ok());
+    assert!(fake.model().annotation(&request()).is_ok());
 
     for invalid in [
         diagnostics.clone(),
@@ -176,6 +175,6 @@ fn codex_transport_notifications_require_a_successful_validated_completion() {
         format!("{valid}{diagnostics}"),
     ] {
         let fake = Fake::new(&invalid);
-        assert!(fake.model().referent(&request()).is_err(), "{invalid}");
+        assert!(fake.model().annotation(&request()).is_err(), "{invalid}");
     }
 }

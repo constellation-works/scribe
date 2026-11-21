@@ -8,7 +8,8 @@ use crate::models::{BASELINE_ENV, ClaudeCliModels, allowed_env, argv};
 use scribe_core::Models;
 use scribe_core::Speaker;
 use scribe_core::models::{
-    Candidate, ModelError, REFERENT_SCHEMA, ReferentAnswer, ReferentRequest,
+    ANNOTATION_SCHEMA, AnnotationAnswer, AnnotationMessage, AnnotationRequest, MarkAnswer,
+    ModelError,
 };
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -71,35 +72,43 @@ impl FakeClaude {
     }
 }
 
-fn request(budget: Duration) -> ReferentRequest {
-    ReferentRequest {
+fn request(budget: Duration) -> AnnotationRequest {
+    AnnotationRequest {
         model: String::from("claude-haiku-5-5"),
         budget,
-        instruction: String::from("#scribe add this to preferences"),
-        candidates: vec![Candidate {
+        marks: Vec::new(),
+        messages: vec![AnnotationMessage {
             uuid: String::from("a-1"),
             role: Speaker::Assistant,
             text: String::from("We squash-merge agent PRs."),
+            marked: false,
         }],
+        tags: Vec::new(),
     }
 }
 
-const STRUCTURED: &str = r#"echo '{"type":"result","subtype":"success","is_error":false,"result":"","structured_output":{"message":"a-1","span":"squash-merge agent PRs"}}'"#;
+const STRUCTURED: &str = r#"echo '{"type":"result","subtype":"success","is_error":false,"result":"","structured_output":{"marks":[{"marker":1,"kind":"none","reason":"squash-merge agent PRs"}]}}'"#;
+
+/// The answer [`STRUCTURED`] holds.
+fn structured() -> AnnotationAnswer {
+    AnnotationAnswer {
+        marks: vec![MarkAnswer {
+            marker: 1,
+            kind: String::from("none"),
+            reason: String::from("squash-merge agent PRs"),
+            ..MarkAnswer::default()
+        }],
+    }
+}
 
 #[test]
 fn the_argv_carries_safe_mode_and_no_tools_and_the_prompt_goes_on_stdin() {
     let fake = FakeClaude::new(STRUCTURED);
     let answer = fake
         .models(&[], &[])
-        .referent(&request(Duration::from_secs(10)))
+        .annotation(&request(Duration::from_secs(10)))
         .unwrap();
-    assert_eq!(
-        answer,
-        ReferentAnswer {
-            message: String::from("a-1"),
-            span: String::from("squash-merge agent PRs"),
-        }
-    );
+    assert_eq!(answer, structured());
     let recorded: Vec<String> = fake.read("argv").lines().map(str::to_owned).collect();
     let expected: Vec<String> = [
         "-p",
@@ -111,13 +120,13 @@ fn the_argv_carries_safe_mode_and_no_tools_and_the_prompt_goes_on_stdin() {
         "--output-format",
         "json",
         "--json-schema",
-        REFERENT_SCHEMA,
+        ANNOTATION_SCHEMA,
     ]
     .iter()
     .map(|a| format!("<{a}>"))
     .collect();
     assert_eq!(recorded, expected, "`--tools \"\"` is one empty argument");
-    assert_eq!(argv("claude-haiku-5-5", REFERENT_SCHEMA).len(), 10);
+    assert_eq!(argv("claude-haiku-5-5", ANNOTATION_SCHEMA).len(), 10);
     assert_eq!(fake.read("stdin"), request(Duration::ZERO).prompt());
 }
 
@@ -136,7 +145,7 @@ fn the_child_gets_only_the_allowlisted_environment() {
             ("GITHUB_TOKEN", "not-configured"),
         ],
     )
-    .referent(&request(Duration::from_secs(10)))
+    .annotation(&request(Duration::from_secs(10)))
     .unwrap();
     let env: BTreeMap<String, String> = fake
         .read("env")
@@ -166,7 +175,7 @@ fn the_child_gets_only_the_allowlisted_environment() {
 fn the_child_leads_its_own_process_group() {
     let fake = FakeClaude::new(STRUCTURED);
     fake.models(&[], &[])
-        .referent(&request(Duration::from_secs(10)))
+        .annotation(&request(Duration::from_secs(10)))
         .unwrap();
     let pid = fake.read("pid").trim().to_owned();
     assert!(!pid.is_empty());
@@ -215,7 +224,7 @@ fn at_its_budget_the_whole_group_is_killed_and_the_child_reaped() {
     let started = Instant::now();
     let err = fake
         .models(&[], &[])
-        .referent(&request(budget))
+        .annotation(&request(budget))
         .unwrap_err();
     let took = started.elapsed();
     assert_eq!(err, ModelError::Timeout { budget });
@@ -244,7 +253,7 @@ fn a_clean_exit_still_sweeps_what_the_child_left_running() {
     ));
     let started = Instant::now();
     fake.models(&[], &[])
-        .referent(&request(Duration::from_secs(10)))
+        .annotation(&request(Duration::from_secs(10)))
         .unwrap();
     assert!(started.elapsed() < Duration::from_secs(8));
     let grandchild = fake.read("grandchild").trim().to_owned();
@@ -259,7 +268,7 @@ fn a_failing_claude_is_a_model_error_naming_its_last_words() {
     let fake = FakeClaude::new("echo 'Not logged in. Run /login' >&2\nexit 3");
     let err = fake
         .models(&[], &[])
-        .referent(&request(Duration::from_secs(10)))
+        .annotation(&request(Duration::from_secs(10)))
         .unwrap_err();
     let ModelError::Failed(message) = &err else {
         panic!("expected a failure: {err:?}");
@@ -275,7 +284,7 @@ fn an_error_result_is_a_failure_and_a_bad_answer_is_malformed() {
     );
     let err = fake
         .models(&[], &[])
-        .referent(&request(Duration::from_secs(10)))
+        .annotation(&request(Duration::from_secs(10)))
         .unwrap_err();
     assert_eq!(
         err,
@@ -289,7 +298,7 @@ fn an_error_result_is_a_failure_and_a_bad_answer_is_malformed() {
     ] {
         let err = FakeClaude::new(body)
             .models(&[], &[])
-            .referent(&request(Duration::from_secs(10)))
+            .annotation(&request(Duration::from_secs(10)))
             .unwrap_err();
         assert!(matches!(err, ModelError::Malformed(_)), "{body}: {err:?}");
     }
@@ -298,13 +307,13 @@ fn an_error_result_is_a_failure_and_a_bad_answer_is_malformed() {
 #[test]
 fn an_answer_in_the_result_text_is_read_when_there_is_no_structured_output() {
     let fake = FakeClaude::new(
-        r#"printf '%s\n' '{"type":"result","is_error":false,"result":"```json\n{\"message\":\"a-1\",\"span\":\"squash-merge agent PRs\"}\n```"}'"#,
+        r#"printf '%s\n' '{"type":"result","is_error":false,"result":"```json\n{\"marks\":[{\"marker\":1,\"kind\":\"none\",\"reason\":\"squash-merge agent PRs\"}]}\n```"}'"#,
     );
     let answer = fake
         .models(&[], &[])
-        .referent(&request(Duration::from_secs(10)))
+        .annotation(&request(Duration::from_secs(10)))
         .unwrap();
-    assert_eq!(answer.span, "squash-merge agent PRs");
+    assert_eq!(answer, structured());
 }
 
 #[test]
@@ -314,7 +323,7 @@ fn no_claude_on_path_is_unavailable() {
     std::fs::create_dir(&empty).unwrap();
     let models = ClaudeCliModels::new(vec![(OsString::from("PATH"), empty.into_os_string())]);
     let err = models
-        .referent(&request(Duration::from_secs(10)))
+        .annotation(&request(Duration::from_secs(10)))
         .unwrap_err();
     assert!(matches!(err, ModelError::Unavailable(_)), "{err:?}");
 }

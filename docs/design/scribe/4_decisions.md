@@ -3871,7 +3871,7 @@ rewritten.
   `quote`, and only spans inside it are credited to him.
 - `models.referent` and the form 1 to 3 grammar are removed in step 2 of
   §14.9; a config that sets `models.referent` loads with a warning for the
-  30-day compatibility window.
+  30-day compatibility window. Built 2026-11-21 ([ORB-26530]).
 - One store format step adds `marks.json` and the `annotation` statement
   author.
 - Cost: an unquoted mention spends a call and may still write an entry he

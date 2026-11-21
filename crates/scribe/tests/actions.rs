@@ -11,9 +11,10 @@
 mod support;
 
 use serde_json::{Value, json};
+use std::ffi::OsString;
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Output, Stdio};
+use std::process::{Command, Output, Stdio};
 use support::{Fixture, make_private, text};
 
 const SESSION: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f";
@@ -36,20 +37,28 @@ impl Claude {
         }
     }
 
-    /// Write the transcript: `(uuid, role, text)` turns, a minute apart.
+    /// Write the transcript: `(uuid, role, text)` turns, a minute apart,
+    /// the last a minute ago (an annotated entry is created at its turn).
     fn write(&self, turns: &[(&str, &str, &str)]) {
         let mut out = format!(
             "{}\n",
             json!({"type": "session-owner", "sessionId": SESSION})
         );
+        let now = time::OffsetDateTime::now_utc()
+            .replace_nanosecond(0)
+            .unwrap();
         for (n, (uuid, role, body)) in turns.iter().enumerate() {
             let content = if *role == "user" {
                 json!(body)
             } else {
                 json!([{"type": "text", "text": body}])
             };
+            let ago = i64::try_from(turns.len() - n).unwrap();
+            let at = (now - time::Duration::minutes(ago))
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap();
             let line = json!({"type": role, "uuid": uuid, "sessionId": SESSION,
-                "timestamp": format!("2026-11-15T09:{n:02}:00Z"),
+                "timestamp": at,
                 "message": {"role": role, "content": content}});
             out.push_str(&format!("{line}\n"));
         }
@@ -70,6 +79,28 @@ impl Claude {
         reply["systemMessage"].as_str().unwrap().to_owned()
     }
 
+    /// Run the `Stop` hook with `path` (a fake `claude` first) on `PATH`;
+    /// the reply's `systemMessage`, empty when it printed nothing.
+    fn stop(&self, fx: &Fixture, path: &OsString) -> String {
+        let payload = json!({"session_id": SESSION,
+            "transcript_path": self.transcript, "cwd": self.cwd,
+            "permission_mode": "default", "hook_event_name": "Stop",
+            "stop_hook_active": false});
+        let mut cmd = fx.cmd(&["hook", "stop"]);
+        cmd.env("PATH", path)
+            .env("CLAUDE_CODE_OAUTH_TOKEN", "oauth-test-value");
+        let out = piped(cmd, &payload);
+        assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+        if out.stdout.is_empty() {
+            return String::new();
+        }
+        let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+        reply["systemMessage"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned()
+    }
+
     /// The session-start hook's stdout.
     fn session_start(&self, fx: &Fixture) -> String {
         let payload = json!({"session_id": SESSION, "transcript_path": self.transcript,
@@ -81,8 +112,11 @@ impl Claude {
 }
 
 fn stdin_run(fx: &Fixture, args: &[&str], payload: &Value) -> Output {
-    let child = fx
-        .cmd(args)
+    piped(fx.cmd(args), payload)
+}
+
+fn piped(mut cmd: Command, payload: &Value) -> Output {
+    let child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -143,6 +177,38 @@ fn backdate(fx: &Fixture, tag: &str, id: &str) {
     std::fs::write(&path, body).unwrap();
 }
 
+/// A fake `claude` on `PATH` answering every `models.annotation` call
+/// with `marks` (2_design.md §14.3).
+fn annotating(fx: &Fixture, marks: &Value) -> OsString {
+    let answer = json!({"type": "result", "subtype": "success", "is_error": false,
+                        "result": "", "structured_output": {"marks": marks}});
+    fx.fake_program(
+        "claude",
+        &format!("#!/bin/sh\ncat > /dev/null\necho '{answer}'\n"),
+    )
+}
+
+/// The model's `entry` answer for `marker`: `quote` from `message`.
+fn answer(marker: u32, tag: &str, statement: &str, quote: &str, message: &str) -> Value {
+    json!({"marker": marker, "kind": "entry", "tag": tag, "statement": statement,
+           "subject": tag, "quote": quote, "message": message, "reason": ""})
+}
+
+/// The model's `none` answer for `marker`.
+fn nothing(marker: u32) -> Value {
+    json!({"marker": marker, "kind": "none", "tag": "", "statement": "", "subject": "",
+           "quote": "", "message": "", "reason": "only a passing remark"})
+}
+
+/// `marks.json`'s records.
+fn marks_json(fx: &Fixture) -> Vec<Value> {
+    let bytes = std::fs::read(fx.root().join("marks.json")).unwrap();
+    serde_json::from_slice::<Value>(&bytes).unwrap()["marks"]
+        .as_array()
+        .unwrap()
+        .clone()
+}
+
 fn tag_row(fx: &Fixture, name: &str) -> Value {
     let tags = json_of(&fx.ok(&["tag", "list", "--json"]));
     tags["tags"]
@@ -158,18 +224,52 @@ fn tag_row(fx: &Fixture, name: &str) -> Value {
 fn an_action_line_keeps_the_turns_since_the_last_scribe_line_and_a_memory_line_none() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
-    claude.write(&[
+    let earlier = [
         ("u-1", "user", "#scribe preferences: ship on fridays"),
         ("a-1", "assistant", "Recorded."),
+    ];
+    claude.write(&earlier);
+    claude.stop(&fx, &annotating(&fx, &json!([nothing(1)])));
+    let prompt = "Yes, bytes.\n#scribe standard: name the unit in every size\n#scribe preferences: bytes for sizes";
+    assert_eq!(
+        claude.prompt(&fx, prompt),
+        "scribe: marked 2 times — cataloged after the reply"
+    );
+    assert!(!fx.root().join("entries").exists(), "nothing at submit");
+    let mut turns = earlier.to_vec();
+    turns.extend([
         ("u-2", "user", "the size field has no unit"),
         ("a-2", "assistant", "Bytes, then?"),
+        ("u-3", "user", prompt),
+        ("a-3", "assistant", "Done."),
     ]);
-    let prompt = "Yes, bytes.\n#scribe standard: name the unit in every size\n#scribe preferences: bytes for sizes";
-    let echo = claude.prompt(&fx, prompt);
-    assert!(echo.contains("added standard-1 to standard"), "{echo}");
-    assert!(
-        echo.contains("added preferences-1 to preferences"),
-        "{echo}"
+    claude.write(&turns);
+    let echo = claude.stop(
+        &fx,
+        &annotating(
+            &fx,
+            &json!([
+                answer(
+                    1,
+                    "standard",
+                    "Every size names its unit.",
+                    "name the unit in every size",
+                    "u-3"
+                ),
+                answer(
+                    2,
+                    "preferences",
+                    "Daniel wants sizes in bytes.",
+                    "bytes for sizes",
+                    "u-3"
+                ),
+            ]),
+        ),
+    );
+    assert_eq!(
+        echo,
+        "scribe: added standard-1 to standard — \"Every size names its unit.\" · your words: \"name the unit in every size\"\n\
+         scribe: added preferences-1 to preferences — \"Daniel wants sizes in bytes.\" · your words: \"bytes for sizes\""
     );
 
     let decision = entry(&fx, "preferences-1", &["--window"]);
@@ -185,6 +285,10 @@ fn an_action_line_keeps_the_turns_since_the_last_scribe_line_and_a_memory_line_n
     assert_eq!(standard["window"], Value::Null, "left out unless asked");
     assert_eq!(standard["window_turns"], 4);
     assert_eq!(standard["author"]["kind"], "daniel");
+    assert_eq!(
+        standard["said"],
+        "#scribe standard: name the unit in every size"
+    );
     assert_eq!(
         standard["action"]["past_cancel_window"], true,
         "Daniel's own"
@@ -234,8 +338,26 @@ fn a_window_over_the_cap_is_cut_from_the_oldest_turn_and_says_so() {
         .iter()
         .map(|(u, t)| (u.as_str(), "assistant", t.as_str()))
         .collect();
+    let mut turns = turns;
+    turns.extend([
+        ("u-1", "user", "#scribe idea: tidy the sizes"),
+        ("a-r", "assistant", "Noted."),
+    ]);
     claude.write(&turns);
-    claude.prompt(&fx, "#scribe idea: tidy the sizes");
+    let echo = claude.stop(
+        &fx,
+        &annotating(
+            &fx,
+            &json!([answer(
+                1,
+                "idea",
+                "Tidy the sizes.",
+                "tidy the sizes",
+                "u-1"
+            )]),
+        ),
+    );
+    assert!(echo.starts_with("scribe: added idea-1 to idea"), "{echo}");
     let window = &entry(&fx, "idea-1", &["--window"])["window"];
     let kept = window["turns"].as_array().unwrap();
     assert_eq!(kept.len(), 40);
@@ -258,17 +380,62 @@ fn a_config_marked_action_tag_captures_with_a_window_and_is_read_and_picked_up()
     .unwrap();
     make_private(&config);
     let claude = Claude::new(&fx);
-    claude.write(&[("u-1", "user", "the sync is slow")]);
-    let echo = claude.prompt(
+    let prompt = "#scribe task: profile the sync\n#scribe friction: the sync has no progress bar\n#scribe idea: cache the manifest";
+    assert_eq!(
+        claude.prompt(&fx, prompt),
+        "scribe: marked 3 times — cataloged after the reply",
+        "an unknown tag word is no longer refused at submit"
+    );
+    claude.write(&[
+        ("u-1", "user", "the sync is slow"),
+        ("u-2", "user", prompt),
+        ("a-2", "assistant", "On it."),
+    ]);
+    let echo = claude.stop(
         &fx,
-        "#scribe task: profile the sync\n#scribe friction: the sync has no progress bar\n#scribe idea: cache the manifest",
+        &annotating(
+            &fx,
+            &json!([
+                answer(1, "task", "Profile the sync.", "profile the sync", "u-2"),
+                answer(
+                    2,
+                    "friction",
+                    "The sync shows no progress.",
+                    "the sync has no progress bar",
+                    "u-2"
+                ),
+                answer(
+                    3,
+                    "idea",
+                    "Cache the manifest.",
+                    "cache the manifest",
+                    "u-2"
+                ),
+            ]),
+        ),
     );
-    assert!(echo.contains("added task-1 to task"), "{echo}");
-    assert!(echo.contains("added idea-1 to idea"), "{echo}");
+    let lines: Vec<&str> = echo.lines().collect();
+    assert_eq!(lines.len(), 3, "{echo}");
     assert!(
-        echo.contains("no tag \"friction\""),
-        "friction is not declared, so it is unknown: {echo}"
+        lines[0].starts_with("scribe: added task-1 to task — "),
+        "{echo}"
     );
+    assert_eq!(
+        lines[1],
+        "scribe: nothing recorded for #scribe in your message — the model chose a tag that is not configured or not the one you named",
+        "friction is not declared, so it is unknown"
+    );
+    assert!(
+        lines[2].starts_with("scribe: added idea-1 to idea — "),
+        "{echo}"
+    );
+    let friction = marks_json(&fx)
+        .into_iter()
+        .find(|m| m["marker"] == 2)
+        .unwrap();
+    assert_eq!(friction["outcome"], "refused");
+    assert_eq!(friction["code"], "unknown_tag");
+    assert!(!fx.root().join("entries/friction").exists());
     for id in ["task-1", "idea-1"] {
         let e = entry(&fx, id, &[]);
         assert_eq!(
@@ -341,13 +508,54 @@ fn a_config_marked_action_tag_captures_with_a_window_and_is_read_and_picked_up()
 fn task_friction_remind_and_finding_are_unknown_tags_without_config_and_not_in_the_tag_list() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
-    claude.write(&[("u-1", "user", "the sync is slow")]);
-    for tag in ["task", "friction", "remind", "finding"] {
-        let echo = claude.prompt(&fx, &format!("#scribe {tag}: profile the sync"));
-        assert!(
-            echo.contains(&format!("refused \"#scribe {tag}: profile the sync\" — no tag \"{tag}\"; tags: idea, preferences, standard")),
-            "{echo}"
+    let tags = ["task", "friction", "remind", "finding"];
+    let prompts: Vec<(String, String)> = tags
+        .iter()
+        .map(|tag| {
+            (
+                format!("u-{tag}"),
+                format!("#scribe {tag}: profile the sync"),
+            )
+        })
+        .collect();
+    let replies: Vec<String> = tags.iter().map(|tag| format!("a-{tag}")).collect();
+    let mut turns = vec![("u-1", "user", "the sync is slow")];
+    for (n, tag) in tags.iter().enumerate() {
+        let (uuid, prompt) = (&prompts[n].0, &prompts[n].1);
+        assert_eq!(
+            claude.prompt(&fx, prompt),
+            "scribe: marked — cataloged after the reply",
+            "no refusal at submit"
         );
+        turns.extend([
+            (uuid.as_str(), "user", prompt.as_str()),
+            (replies[n].as_str(), "assistant", "Noted."),
+        ]);
+        claude.write(&turns);
+        let echo = claude.stop(
+            &fx,
+            &annotating(
+                &fx,
+                &json!([answer(
+                    1,
+                    tag,
+                    "Profile the sync.",
+                    "profile the sync",
+                    uuid
+                )]),
+            ),
+        );
+        assert_eq!(
+            echo,
+            "scribe: nothing recorded for #scribe in your message — the model chose a tag that is not configured or not the one you named",
+            "{tag}"
+        );
+        let mark = marks_json(&fx)
+            .into_iter()
+            .find(|m| m["message"] == uuid.as_str())
+            .unwrap();
+        assert_eq!(mark["outcome"], "refused", "{tag}");
+        assert_eq!(mark["code"], "unknown_tag", "{tag}");
         assert!(!fx.root().join("entries").join(tag).exists());
     }
     let tags = json_of(&fx.ok(&["tag", "list", "--json"]));
@@ -370,8 +578,20 @@ fn entries_under_a_tag_config_no_longer_defines_are_still_listed_shown_and_retir
     std::fs::write(&config, "[tags.task]\naction = true\n").unwrap();
     make_private(&config);
     let claude = Claude::new(&fx);
-    claude.write(&[("u-1", "user", "the sync is slow")]);
-    claude.prompt(&fx, "#scribe task: profile the sync");
+    claude.write(&[
+        ("u-1", "user", "the sync is slow"),
+        ("u-2", "user", "#scribe task: profile the sync"),
+        ("a-2", "assistant", "On it."),
+    ]);
+    let statement = "Profile the sync to find where it is slow.";
+    let echo = claude.stop(
+        &fx,
+        &annotating(
+            &fx,
+            &json!([answer(1, "task", statement, "profile the sync", "u-2")]),
+        ),
+    );
+    assert!(echo.starts_with("scribe: added task-1 to task"), "{echo}");
     // The config that declared `task` goes away; the entry stays.
     std::fs::remove_file(&config).unwrap();
 
@@ -379,7 +599,8 @@ fn entries_under_a_tag_config_no_longer_defines_are_still_listed_shown_and_retir
     assert_eq!(list["total"], 1, "{list}");
     assert_eq!(list["entries"][0]["id"], "task-1");
     let shown = entry(&fx, "task-1", &[]);
-    assert_eq!(shown["content"], "profile the sync");
+    assert_eq!(shown["content"], statement);
+    assert_eq!(shown["quote"], "profile the sync");
     assert_eq!(shown["status"], "active");
 
     let echo = claude.prompt(&fx, "#scribe retire task-1");
@@ -431,8 +652,27 @@ fn an_agent_entry_waits_out_its_cancel_window_and_retiring_it_cancels_it() {
 fn pickups_are_recorded_once_refused_off_action_tags_and_count_rejections() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
-    claude.write(&[]);
-    claude.prompt(&fx, "#scribe preferences: ship on fridays");
+    claude.write(&[
+        ("u-1", "user", "#scribe preferences: ship on fridays"),
+        ("a-1", "assistant", "Noted."),
+    ]);
+    let echo = claude.stop(
+        &fx,
+        &annotating(
+            &fx,
+            &json!([answer(
+                1,
+                "preferences",
+                "Daniel ships on Fridays.",
+                "ship on fridays",
+                "u-1"
+            )]),
+        ),
+    );
+    assert!(
+        echo.starts_with("scribe: added preferences-1 to preferences"),
+        "{echo}"
+    );
     fx.ok(&[
         "entry",
         "add",
@@ -506,9 +746,48 @@ fn pickups_are_recorded_once_refused_off_action_tags_and_count_rejections() {
 fn the_intake_reads_by_tag_and_cursor_with_the_window_only_on_request() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
-    claude.write(&[("u-1", "user", "every size needs its unit")]);
-    claude.prompt(&fx, "#scribe standard: name the unit in every size");
-    claude.prompt(&fx, "#scribe preferences: bytes for sizes");
+    let mut turns = vec![
+        ("u-1", "user", "every size needs its unit"),
+        (
+            "u-2",
+            "user",
+            "#scribe standard: name the unit in every size",
+        ),
+        ("a-2", "assistant", "Noted."),
+    ];
+    claude.write(&turns);
+    claude.stop(
+        &fx,
+        &annotating(
+            &fx,
+            &json!([answer(
+                1,
+                "standard",
+                "Every size names its unit.",
+                "name the unit in every size",
+                "u-2"
+            )]),
+        ),
+    );
+    turns.extend([
+        ("u-3", "user", "#scribe preferences: bytes for sizes"),
+        ("a-3", "assistant", "Noted."),
+    ]);
+    claude.write(&turns);
+    claude.stop(
+        &fx,
+        &annotating(
+            &fx,
+            &json!([answer(
+                1,
+                "preferences",
+                "Daniel wants sizes in bytes.",
+                "bytes for sizes",
+                "u-3"
+            )]),
+        ),
+    );
+    assert!(entry(&fx, "preferences-1", &[])["action"].is_null());
 
     let list = json_of(&fx.ok(&["entry", "list", "--tag", "standard", "--json"]));
     assert_eq!(list["total"], 1);
@@ -628,10 +907,32 @@ fn session_start_counts_action_entries_waiting_with_no_pickup() {
         "",
         "an empty store prints nothing"
     );
-    claude.prompt(
+    let prompt = "#scribe idea: profile the sync\n#scribe standard: name the units\n#scribe preferences: ship on fridays";
+    claude.write(&[("u-1", "user", prompt), ("a-1", "assistant", "Noted.")]);
+    let echo = claude.stop(
         &fx,
-        "#scribe idea: profile the sync\n#scribe standard: units\n#scribe preferences: fridays",
+        &annotating(
+            &fx,
+            &json!([
+                answer(1, "idea", "Profile the sync.", "profile the sync", "u-1"),
+                answer(
+                    2,
+                    "standard",
+                    "Sizes name their units.",
+                    "name the units",
+                    "u-1"
+                ),
+                answer(
+                    3,
+                    "preferences",
+                    "Daniel ships on Fridays.",
+                    "ship on fridays",
+                    "u-1"
+                ),
+            ]),
+        ),
     );
+    assert_eq!(echo.matches("scribe: added ").count(), 3, "{echo}");
     assert_eq!(claude.session_start(&fx), "", "nothing older than an hour");
     for (tag, id) in [
         ("idea", "idea-1"),

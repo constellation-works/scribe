@@ -1,10 +1,11 @@
-//! `scribe hook stop`: recover missed entry instructions, fill in cite
-//! message ids (§4.1), and mark a switched-on session's pass due (§5.2).
-//! Recovery echoes additions and refusals; it never calls a model.
+//! `scribe hook stop`: check the transcript, fill in cite message ids
+//! (§4.1), catalog the turn's `#scribe` markers, and mark a switched-on
+//! session's pass due (§5.2).
 //!
-//! Then the `#scribe` markers Daniel typed inside his sentences are
-//! cataloged (`annotation.rs`, §14): the only model call this hook makes,
-//! one per marked turn, bounded.
+//! The `#scribe` markers Daniel typed are cataloged (`annotation.rs`, §14):
+//! the only model call this hook makes, one per marked turn, bounded. A
+//! transcript that fails the provenance check is echoed once and stops the
+//! hook: nothing is filled, cataloged or marked due.
 //!
 //! `UserPromptSubmit` runs before Claude Code writes the prompt to the
 //! transcript, so an entry's cite starts with `message: null` and the hash
@@ -12,25 +13,23 @@
 //! and records its uuid. When several messages match (the same prompt sent
 //! twice), the one written closest to the cite's time is chosen.
 //!
-//! Recovery reads the transcript after every reply. Existing cites suppress
-//! already captured lines, including prompt-hook captures and Stop replays.
-//! With no missed instructions or waiting cites, it never locks or writes.
+//! With no unsettled marker or waiting cite, it never locks or writes.
 //!
 //! Then the cadence: for a session that is on and not already due, the pass
 //! is due once `[catalog] every_minutes` have passed since the last pass
 //! (the record's `updated`, else when the session was switched on) or
 //! `every_turns` of Daniel's turns have arrived since the record's
 //! `scribed_through`. Minutes are checked first, so the transcript is read
-//! only to count turns for cadence. Capture recovery also runs for a session
+//! only to count turns for cadence. Markers are cataloged also for a session
 //! that is off or was never switched on.
 
 use super::payload::{self, StopPayload, Transcript};
 use crate::app::Context;
 use crate::error::CliError;
-use crate::output::{HookOutcome, Output};
+use crate::output::{HookOutcome, HookReply, Output};
 use scribe_core::control::{self, Since};
 use scribe_core::transcript::{self, Message};
-use scribe_core::{Cite, SessionId, Speaker, pass};
+use scribe_core::{Cite, Provider, SessionId, Speaker, pass};
 
 /// The code of a payload whose transcript failed the provenance check.
 const PROVENANCE_FAILED: &str = "provenance_failed";
@@ -39,14 +38,29 @@ const PROVENANCE_FAILED: &str = "provenance_failed";
 pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
     let payload: StopPayload = payload::decode(input)?;
     let session = payload::session(&payload.session_id)?;
-    let mut reply = super::recovery::run(&payload, &session, ctx)?;
-    let mut outcomes = std::mem::take(&mut reply.outcomes);
-    if !outcomes
-        .iter()
-        .any(|o| o.error_code == Some(PROVENANCE_FAILED))
+    let mut reply = HookReply {
+        event: "Stop",
+        message: None,
+        context: None,
+        block: None,
+        outcomes: Vec::new(),
+    };
+    // Codex has its own host-attributed ingestion; its transcript is not
+    // checked here.
+    if ctx.provider() != Provider::Codex
+        && let Err(reason) = payload::check(ctx, &payload.transcript_path, &session)
     {
-        outcomes.extend(fill_cites(&payload, &session, ctx)?);
+        reply.message = Some(format!(
+            "scribe: could not check for #scribe markers — {reason}"
+        ));
+        reply.outcomes.push(HookOutcome {
+            target: Some(format!("session:{session}")),
+            error_code: Some(PROVENANCE_FAILED),
+            issue: None,
+        });
+        return Ok(Output::Hook(reply));
     }
+    let mut outcomes = fill_cites(&payload, &session, ctx)?;
     if !outcomes
         .iter()
         .any(|o| o.error_code == Some(PROVENANCE_FAILED))
@@ -54,8 +68,7 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
         let cataloged =
             super::annotation::run(&payload, &session, ctx, |config| ctx.models(config))?;
         if !cataloged.echoes.is_empty() {
-            let echoes = reply.message.take().into_iter().chain(cataloged.echoes);
-            reply.message = Some(echoes.collect::<Vec<_>>().join("\n"));
+            reply.message = Some(cataloged.echoes.join("\n"));
         }
         outcomes.extend(cataloged.outcomes);
     }

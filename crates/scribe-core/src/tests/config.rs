@@ -5,7 +5,8 @@ fn an_empty_config_is_the_defaults() {
     let config = Config::parse("").unwrap();
     assert_eq!(config, Config::default());
     assert_eq!(config.models.ask, "claude-sonnet-5-5");
-    assert_eq!(config.models.referent, "claude-haiku-5-5");
+    assert_eq!(config.models.annotation, "claude-haiku-5-5");
+    assert!(config.warnings.is_empty());
     assert_eq!(config.catalog.every_minutes.get(), 20);
     assert_eq!(
         config.secret_names(),
@@ -58,6 +59,21 @@ env = ["GITHUB_TOKEN", "ANTHROPIC_API_KEY"]
     assert_eq!(
         config.secret_names(),
         ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GITHUB_TOKEN"]
+    );
+}
+
+#[test]
+fn a_referent_model_still_loads_with_a_warning_that_it_is_unused() {
+    let config =
+        Config::parse("[models]\nreferent = \"x\"\n\n[codex.models]\nreferent = \"y\"\n").unwrap();
+    assert_eq!(config.warnings.len(), 2, "{:?}", config.warnings);
+    assert!(config.warnings[0].contains("models.referent is unused"));
+    assert!(config.warnings[1].contains("codex.models.referent is unused"));
+    assert!(
+        config
+            .warnings
+            .iter()
+            .all(|w| w.contains("models.annotation"))
     );
 }
 

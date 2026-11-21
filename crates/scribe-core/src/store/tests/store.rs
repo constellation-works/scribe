@@ -196,12 +196,11 @@ fn record_audit_waits_for_the_store_lock() {
     assert!(!store.audit_path().exists());
 }
 
-mod capture {
-    use super::put;
-    use crate::entry::{Cite, ContentFrom, EntryFilter, NewEntry};
+mod cites {
+    use crate::entry::{Cite, ContentFrom, EntryId, NewEntry};
     use crate::error::Error;
-    use crate::store::tests::{entry_text, private_tempdir};
-    use crate::store::{Captured, Redactor, Store};
+    use crate::store::tests::private_tempdir;
+    use crate::store::{Redactor, Store};
     use std::fs;
     use time::macros::datetime;
 
@@ -233,235 +232,17 @@ mod capture {
         }
     }
 
-    fn ids(results: &[Captured]) -> Vec<String> {
-        results.iter().map(|c| c.entry().id.to_string()).collect()
-    }
-
-    #[test]
-    fn a_draft_becomes_the_next_entry_of_its_tag_and_reads_back() {
-        let dir = private_tempdir();
-        let root = dir.path().join("root");
-        let store = Store::open(&root);
-        let added = store
-            .capture(
-                vec![draft("preferences", 1, "one"), draft("rituals", 2, "two")],
-                &Redactor::default(),
-            )
-            .unwrap();
-        assert!(matches!(added[0], Captured::Added(_)));
-        assert_eq!(ids(&added), ["preferences-1", "rituals-1"]);
-        let read = store.entry(&"preferences-1".parse().unwrap()).unwrap();
-        assert_eq!(&read, added[0].entry());
-        assert_eq!(read.content, "one");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = |p: &std::path::Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
-            assert_eq!(mode(&root), 0o700);
-            assert_eq!(mode(&root.join("entries/preferences")), 0o700);
-            assert_eq!(mode(&store.entry_path(&read.id)), 0o600);
+    /// Write `drafts` as entries, numbered in their tags.
+    fn write(store: &Store, drafts: Vec<NewEntry>) {
+        store.prepare_dir(&store.root).unwrap();
+        let mut ids: Vec<EntryId> = Vec::new();
+        for draft in drafts {
+            let id = EntryId::next_in(&draft.tag, &ids);
+            store
+                .write_entry(&draft.into_entry(id.clone()), true)
+                .unwrap();
+            ids.push(id);
         }
-    }
-
-    #[test]
-    fn the_same_line_of_the_same_prompt_is_never_written_twice() {
-        let dir = private_tempdir();
-        let store = Store::open(dir.path());
-        store
-            .capture(vec![draft("preferences", 1, "one")], &Redactor::default())
-            .unwrap();
-        let again = store
-            .capture(
-                vec![
-                    draft("preferences", 1, "one"),
-                    draft("preferences", 2, "two"),
-                ],
-                &Redactor::default(),
-            )
-            .unwrap();
-        assert!(matches!(again[0], Captured::Existing(_)));
-        assert!(matches!(again[1], Captured::Added(_)));
-        assert_eq!(ids(&again), ["preferences-1", "preferences-2"]);
-        let listed = store.list_entries(&EntryFilter::default()).unwrap();
-        assert_eq!(listed.listing.total, 2);
-    }
-
-    #[test]
-    fn a_statement_an_active_entry_covers_writes_nothing_and_consumes_no_id() {
-        use crate::consistency::{Settle, Settled};
-        let dir = private_tempdir();
-        let store = Store::open(dir.path());
-        let first = store
-            .capture(
-                vec![draft("preferences", 1, "use rg")],
-                &Redactor::default(),
-            )
-            .unwrap();
-        assert!(matches!(first[0], Captured::Added(_)));
-        let covered = store
-            .capture(
-                vec![draft("preferences", 2, "use rg")],
-                &Redactor::default(),
-            )
-            .unwrap();
-        assert!(matches!(covered[0], Captured::Covered(_)));
-        assert_eq!(covered[0].entry().id.to_string(), "preferences-1");
-        let refinement = store
-            .capture(
-                vec![draft("preferences", 3, "use rg, not grep, in scripts")],
-                &Redactor::default(),
-            )
-            .unwrap();
-        assert!(matches!(refinement[0], Captured::Added(_)));
-        assert_eq!(refinement[0].entry().id.to_string(), "preferences-2");
-        let next = store
-            .capture(vec![draft("preferences", 4, "two")], &Redactor::default())
-            .unwrap();
-        assert_eq!(next[0].entry().id.to_string(), "preferences-3");
-        let replay = store
-            .capture(
-                vec![draft("preferences", 1, "use rg")],
-                &Redactor::default(),
-            )
-            .unwrap();
-        assert!(
-            matches!(replay[0], Captured::Existing(_)),
-            "a same-line replay wins over the cover check"
-        );
-        let cite = draft("preferences", 9, "use rg").cite;
-        let settled = store
-            .settle(
-                &Settle::Retire("preferences-1".parse().unwrap()),
-                &cite,
-                datetime!(2026-11-02 20:00:00 UTC),
-            )
-            .unwrap();
-        assert!(matches!(settled, Settled::Retired(_)));
-        let after = store
-            .capture(
-                vec![draft("preferences", 5, "use rg")],
-                &Redactor::default(),
-            )
-            .unwrap();
-        assert!(matches!(after[0], Captured::Added(_)));
-        assert_eq!(after[0].entry().id.to_string(), "preferences-4");
-    }
-
-    #[test]
-    fn a_metadata_edit_after_retirement_does_not_extend_the_turns_it_covered() {
-        use crate::capture::Turn;
-        use crate::consistency::{Settle, Settled};
-        let dir = private_tempdir();
-        let store = Store::open(dir.path());
-        // Recorded at 19:05:40, retired at 20:00, its topics edited at 22:00.
-        store
-            .capture(
-                vec![draft("preferences", 1, "use rg")],
-                &Redactor::default(),
-            )
-            .unwrap();
-        let cite = draft("preferences", 9, "use rg").cite;
-        let settled = store
-            .settle(
-                &Settle::Retire("preferences-1".parse().unwrap()),
-                &cite,
-                datetime!(2026-11-02 20:00:00 UTC),
-            )
-            .unwrap();
-        assert!(matches!(settled, Settled::Retired(_)));
-        let (edited, changed) = store
-            .update_agent_entry(
-                "preferences-1",
-                crate::entry::EntryPatch {
-                    content: None,
-                    add_topics: vec!["search".parse().unwrap()],
-                    remove_topics: Vec::new(),
-                    add_related: Vec::new(),
-                    remove_related: Vec::new(),
-                },
-                "sol".parse().unwrap(),
-                datetime!(2026-11-02 22:00:00 UTC),
-                &Redactor::default(),
-            )
-            .unwrap();
-        assert!(changed);
-        assert_eq!(edited.updated, datetime!(2026-11-02 22:00:00 UTC));
-        assert_eq!(
-            edited.inactive_since,
-            Some(datetime!(2026-11-02 20:00:00 UTC)),
-            "a metadata write keeps the time the entry left active"
-        );
-        let turn = |at| Turn {
-            session: "s-9".parse().unwrap(),
-            at,
-            prompt_sha256: "b".repeat(64),
-            cwd: String::from("/work"),
-            project: "scribe".parse().unwrap(),
-            provider: String::from("claude-code").try_into().unwrap(),
-            host: String::from("host").try_into().unwrap(),
-        };
-        let prompt = "#scribe preferences: use rg";
-        let between = store
-            .covered_instruction_lines(
-                prompt,
-                &turn(datetime!(2026-11-02 21:00:00 UTC)),
-                &Redactor::default(),
-            )
-            .unwrap();
-        assert!(
-            between.is_empty(),
-            "a line typed after the retirement is not covered: {between:?}"
-        );
-        let before = store
-            .covered_instruction_lines(
-                prompt,
-                &turn(datetime!(2026-11-02 19:30:00 UTC)),
-                &Redactor::default(),
-            )
-            .unwrap();
-        assert_eq!(before.into_iter().collect::<Vec<_>>(), [1]);
-    }
-
-    #[test]
-    fn a_number_held_by_a_file_that_does_not_parse_is_not_reused() {
-        let dir = private_tempdir();
-        let root = dir.path();
-        put(
-            root,
-            "entries/preferences/preferences-1.md",
-            &entry_text(""),
-        );
-        put(root, "entries/preferences/preferences-4.md", "not an entry");
-        let store = Store::open(root);
-        let added = store
-            .capture(vec![draft("preferences", 7, "new")], &Redactor::default())
-            .unwrap();
-        assert_eq!(ids(&added), ["preferences-5"]);
-        assert_eq!(
-            fs::read_to_string(root.join("entries/preferences/preferences-4.md")).unwrap(),
-            "not an entry"
-        );
-    }
-
-    #[test]
-    fn free_text_is_redacted_before_it_is_written() {
-        let dir = private_tempdir();
-        let store = Store::open(dir.path());
-        let secret = "sk-test-0123456789";
-        let redactor = Redactor::new([(String::from("ANTHROPIC_API_KEY"), secret.to_owned())]);
-        store
-            .capture(
-                vec![draft("preferences", 1, &format!("use {secret} here"))],
-                &redactor,
-            )
-            .unwrap();
-        let text =
-            fs::read_to_string(dir.path().join("entries/preferences/preferences-1.md")).unwrap();
-        assert!(!text.contains(secret), "{text}");
-        assert!(
-            text.contains("use [redacted:ANTHROPIC_API_KEY] here"),
-            "{text}"
-        );
     }
 
     #[test]
@@ -472,7 +253,19 @@ mod capture {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o777)).unwrap();
             let err = Store::open(dir.path())
-                .capture(vec![draft("preferences", 1, "one")], &Redactor::default())
+                .record_marks(
+                    vec![(
+                        crate::store::MarkKey {
+                            session: "s-9".parse().unwrap(),
+                            message: String::from("u-1"),
+                            prompt_sha256: "a".repeat(64),
+                            marker: 1,
+                        },
+                        crate::store::MarkChange::Nothing,
+                    )],
+                    &Redactor::default(),
+                    datetime!(2026-11-02 19:06:00 UTC),
+                )
                 .unwrap_err();
             assert!(matches!(err, Error::Permissions { .. }), "{err:?}");
             assert!(!dir.path().join("entries").exists());
@@ -513,16 +306,14 @@ mod capture {
         let store = Store::open(dir.path());
         let mut other = draft("preferences", 1, "other session");
         other.cite.session = "s-other".parse().unwrap();
-        store
-            .capture(
-                vec![
-                    draft("preferences", 1, "one"),
-                    draft("preferences", 2, "two"),
-                    other,
-                ],
-                &Redactor::default(),
-            )
-            .unwrap();
+        write(
+            &store,
+            vec![
+                draft("preferences", 1, "one"),
+                draft("preferences", 2, "two"),
+                other,
+            ],
+        );
         let session = "s-9".parse().unwrap();
         assert!(store.has_unfilled_cites(&session).unwrap());
         let now = datetime!(2026-11-02 19:06:00 UTC);
@@ -577,17 +368,15 @@ mod capture {
         let mut other_session = draft("preferences", 1, "other session");
         other_session.cite.session = "s-other".parse().unwrap();
         let store = Store::open(dir.path());
-        store
-            .capture(
-                vec![
-                    draft("preferences", 1, "one"),
-                    draft("rituals", 2, "two"),
-                    other_prompt,
-                    other_session,
-                ],
-                &Redactor::default(),
-            )
-            .unwrap();
+        write(
+            &store,
+            vec![
+                draft("preferences", 1, "one"),
+                draft("rituals", 2, "two"),
+                other_prompt,
+                other_session,
+            ],
+        );
         let mut found: Vec<String> = store
             .entries_from_prompt(&session, &"a".repeat(64))
             .unwrap()

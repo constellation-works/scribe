@@ -8,8 +8,8 @@ use crate::commands::session::pass::{run_with, short_reason};
 use crate::output::{Output, PassPayload};
 use scribe_core::control::{self, Switch};
 use scribe_core::models::{
-    ModelError, NewSegmentAnswer, ReferentAnswer, ReferentRequest, SegmentAnswer, SessionAnswer,
-    SessionHeader, SessionHeaderRequest, SessionRequest, TermAnswer,
+    ModelError, NewSegmentAnswer, SegmentAnswer, SessionAnswer, SessionHeader,
+    SessionHeaderRequest, SessionRequest, TermAnswer,
 };
 use scribe_core::{Models, Redactor, SessionId};
 use serde_json::json;
@@ -32,10 +32,6 @@ struct FakeModels {
 }
 
 impl Models for &FakeModels {
-    fn referent(&self, _request: &ReferentRequest) -> Result<ReferentAnswer, ModelError> {
-        Err(ModelError::Unavailable(String::from("session tests only")))
-    }
-
     fn session(&self, request: &SessionRequest) -> Result<SessionAnswer, ModelError> {
         self.asked.borrow_mut().push(request.clone());
         self.first

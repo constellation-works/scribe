@@ -478,23 +478,108 @@ fn the_issue_tag_is_reserved_for_entries_and_scribe_lines_and_names_the_issue_co
         err["error"].as_str().unwrap().contains("scribe issue add"),
         "{err}"
     );
-    for line in [
+    // A `#scribe` line naming `issue` is an annotation marker like any
+    // other (2_design.md §14.6): submit only echoes it, and the reservation
+    // holds at Stop, where `issue` is never the marker's hint and an answer
+    // naming it is refused.
+    let lines = [
         "#scribe issue: the drain hits 429s",
         "#scribe add the drain hits 429s to issue",
-    ] {
+    ];
+    for line in lines {
         let reply = claude.prompt(&fx, line);
+        assert_eq!(
+            reply, "scribe: marked — cataloged after the reply",
+            "{line}"
+        );
+    }
+    assert!(
+        !fx.root().join("entries").exists(),
+        "nothing written at submit"
+    );
+    claude.write(&[
+        ("u-1", "user", lines[0]),
+        ("a-1", "assistant", "Noted."),
+        ("u-2", "user", lines[1]),
+        ("a-2", "assistant", "Noted."),
+    ]);
+    // The fake `claude` saves each request and answers for the marked turn
+    // it reads: an entry under `issue`.
+    let answer = |message: &str| {
+        json!({"type": "result", "subtype": "success", "is_error": false, "result": "",
+               "structured_output": {"marks": [{"marker": 1, "kind": "entry", "tag": "issue",
+                   "statement": "The drain hits HTTP 429s.", "subject": "the drain",
+                   "quote": "the drain hits 429s", "message": message, "reason": ""}]}})
+    };
+    let path = fx.fake_program(
+        "claude",
+        &format!(
+            "#!/bin/sh\nn=$(ls \"$HOME\" | grep -c '^claude-stdin')\n\
+             cat > \"$HOME/claude-stdin-$n\"\n\
+             if grep -q '<message id=\"u-2\" role=\"user\" marked=\"true\">' \"$HOME/claude-stdin-$n\"; \
+             then echo '{}'; else echo '{}'; fi\n",
+            answer("u-2"),
+            answer("u-1")
+        ),
+    );
+    let payload = json!({"session_id": SESSION, "transcript_path": claude.transcript,
+        "cwd": claude.cwd, "permission_mode": "default", "hook_event_name": "Stop",
+        "stop_hook_active": false});
+    let child = fx
+        .cmd(&["hook", "stop"])
+        .env("PATH", &path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut guard = support::ChildGuard::new(child);
+    guard
+        .child()
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(payload.to_string().as_bytes())
+        .unwrap();
+    let out = guard.finish();
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let stopped: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let echo = stopped["systemMessage"].as_str().unwrap();
+    assert_eq!(
+        echo.matches("scribe: nothing recorded for #scribe in your message — the model chose a tag that is not configured or not the one you named").count(),
+        2,
+        "{echo}"
+    );
+    let requests: Vec<String> = (0..)
+        .map(|n| fx.home().join(format!("claude-stdin-{n}")))
+        .take_while(|p| p.exists())
+        .map(|p| std::fs::read_to_string(p).unwrap())
+        .collect();
+    assert_eq!(requests.len(), 2);
+    for request in &requests {
+        assert!(!request.contains("(hint:"), "never a hint: {request}");
         assert!(
-            reply.contains("reserved for issue records") && reply.contains("scribe issue add"),
-            "{line}: {reply}"
+            !request.contains("\n- issue:"),
+            "not a tag offered: {request}"
         );
     }
     assert!(!fx.root().join("entries").join("issue").exists());
+    let marks: Value =
+        serde_json::from_slice(&std::fs::read(fx.root().join("marks.json")).unwrap()).unwrap();
+    let marks = marks["marks"].as_array().unwrap();
+    assert_eq!(marks.len(), 2, "{marks:?}");
+    for mark in marks {
+        assert_eq!(mark["outcome"], "refused", "{mark}");
+        assert_eq!(mark["code"], "unknown_tag", "{mark}");
+    }
     let lines = audit(&fx.root());
+    let stops: Vec<&Value> = lines
+        .iter()
+        .filter(|l| l["command"] == "hook stop")
+        .collect();
+    assert_eq!(stops.len(), 2, "{lines:?}");
     assert!(
-        lines
-            .iter()
-            .filter(|l| l["command"] == "hook user-prompt-submit")
-            .all(|l| l["error_code"] == "reserved_tag"),
+        stops.iter().all(|l| l["error_code"] == "unknown_tag"),
         "{lines:?}"
     );
 }
@@ -952,7 +1037,8 @@ fn a_typed_investigation_turn_gets_one_hint_for_the_agent_and_one_audit_line_of_
         assert!(!log.contains(word), "{word} in the audit log");
     }
 
-    // A `#scribe` line in the same prompt keeps its echo; the hint follows.
+    // A `#scribe` line in the same prompt keeps its echo, now the marker's
+    // (2_design.md §14.6); the hint follows it, for the agent only.
     let both = claude.reply(
         &fx,
         "#scribe preferences: short updates\nalso, root cause of the 429s please",
@@ -962,15 +1048,13 @@ fn a_typed_investigation_turn_gets_one_hint_for_the_agent_and_one_audit_line_of_
     let lines: Vec<&str> = context.lines().collect();
     assert_eq!(lines.len(), 2, "{context}");
     assert!(
-        lines[0].starts_with("scribe: added preferences-1"),
+        lines[0].starts_with("scribe: marked — cataloged after the reply")
+            && lines[0].contains("do not record it yourself"),
         "{context}"
     );
     assert!(lines[1].contains("\"root cause\" fired"), "{context}");
-    assert!(
-        !both["systemMessage"]
-            .as_str()
-            .unwrap()
-            .contains("root cause"),
+    assert_eq!(
+        both["systemMessage"], "scribe: marked — cataloged after the reply",
         "{both}"
     );
     assert_eq!(fires(&fx.root()).len(), 2);

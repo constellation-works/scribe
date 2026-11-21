@@ -1,9 +1,10 @@
 //! End-to-end tests of `scribe hook`, the Claude Code hook entry points:
-//! `#scribe` capture from a fixture `UserPromptSubmit` payload, the reply
-//! shown to Daniel and the agent, idempotent replays, the transcript
-//! provenance check, the audit lines, and the `Stop` hook filling the cite's
-//! message uuid (docs/design/scribe/2_design.md §4, §10 S2), and the
-//! `SessionStart` reminder to keep recording a continuation (§5.4, §7).
+//! `#scribe` markers echoed from a fixture `UserPromptSubmit` payload and
+//! cataloged at `Stop` with a fake `claude` (docs/design/scribe/2_design.md
+//! §14), settling lines (§4.4), the reply shown to Daniel and the agent, the
+//! transcript provenance check, the audit lines, the `Stop` hook filling an
+//! older entry's cite message uuid (§4.1, §10 S2), and the `SessionStart`
+//! reminder to keep recording a continuation (§5.4, §7).
 //!
 //! Every run is the built binary with a temp `HOME` whose
 //! `.claude/projects/` holds the fixture transcript; nothing touches the
@@ -145,40 +146,68 @@ fn entries_snapshot(fx: &Fixture) -> Vec<(PathBuf, Vec<u8>, u32)> {
 }
 
 #[test]
-fn each_scribe_line_of_the_fixture_prompt_becomes_one_entry_with_its_cite_and_echo() {
+fn each_scribe_line_of_the_fixture_prompt_is_a_marker_cataloged_at_stop() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
     let payload = claude.payload("user-prompt-submit.json");
-    let out = hook_ok(&fx, "user-prompt-submit", &payload);
+    let path = annotating_claude(&fx, &none_for(1..=2));
+    let out = hook_path(&fx, "user-prompt-submit", &payload, &path);
 
-    let reply = reply(&out);
-    let message = reply["systemMessage"].as_str().unwrap();
+    let reply_json = reply(&out);
     assert_eq!(
-        message,
-        "scribe: added preferences-1 to preferences — \"squash-merge agent PRs; keep merge commits for releases\"\n\
-         scribe: added preferences-2 to preferences — \"short commit subjects\""
+        reply_json["systemMessage"],
+        "scribe: marked 2 times — cataloged after the reply"
     );
     assert_eq!(
-        reply["hookSpecificOutput"]["hookEventName"],
+        reply_json["hookSpecificOutput"]["hookEventName"],
         "UserPromptSubmit"
     );
     assert_eq!(
-        reply["hookSpecificOutput"]["additionalContext"],
-        "scribe: added preferences-1 to preferences — \"squash-merge agent PRs; keep merge commits for releases\" (recorded by scribe; no action needed)\n\
-         scribe: added preferences-2 to preferences — \"short commit subjects\" (recorded by scribe; no action needed)"
+        reply_json["hookSpecificOutput"]["additionalContext"],
+        "scribe: marked 2 times — cataloged after the reply (scribe catalogs this #scribe marker after your reply; do not record it yourself)"
     );
     assert!(
-        reply.get("decision").is_none(),
+        reply_json.get("decision").is_none(),
         "the prompt is never blocked"
     );
+    assert!(claude_calls(&fx).is_empty(), "no model call at submit");
+    assert!(!fx.root().exists(), "nothing written at submit");
+
+    // Stop: one call for the turn's two line-start markers, each with its
+    // tag as the hint. Fenced, quoted, pasted and bare lines are not
+    // markers.
+    let prompt = payload["prompt"].as_str().unwrap();
+    marked_turns(&claude, &[("u-1", prompt)]);
+    let path = annotating_claude(
+        &fx,
+        &json!([
+            {"marker": 1, "kind": "entry", "tag": "preferences",
+             "statement": "Daniel squash-merges agent PRs and keeps merge commits for releases.",
+             "subject": "merging agent PRs",
+             "quote": "squash-merge agent PRs; keep merge commits for releases",
+             "message": "u-1", "reason": ""},
+            {"marker": 2, "kind": "entry", "tag": "preferences",
+             "statement": "Daniel wants short commit subjects.", "subject": "commit subjects",
+             "quote": "short commit subjects", "message": "u-1", "reason": ""}
+        ]),
+    );
+    let out = hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
+    assert_eq!(
+        reply(&out)["systemMessage"],
+        "scribe: added preferences-1 to preferences — \"Daniel squash-merges agent PRs and keeps merge commits for releases.\" · your words: \"squash-merge agent PRs; keep merge commits for releases\"\n\
+         scribe: added preferences-2 to preferences — \"Daniel wants short commit subjects.\" · your words: \"short commit subjects\""
+    );
+    assert_eq!(claude_calls(&fx).len(), 1, "one call for the turn");
+    let asked = claude_stdin(&fx, 0);
+    assert_eq!(
+        asked.matches("(hint: tag preferences)").count(),
+        2,
+        "{asked}"
+    );
+    assert!(!asked.contains("- marker 3"), "{asked}");
 
     let entries = entries(&fx);
-    assert_eq!(
-        entries.len(),
-        2,
-        "fenced, quoted, pasted and bare lines write nothing"
-    );
-    let prompt = payload["prompt"].as_str().unwrap();
+    assert_eq!(entries.len(), 2, "{entries:?}");
     let first = &entries[0];
     assert_eq!(first["id"], "preferences-1");
     assert_eq!(
@@ -186,331 +215,28 @@ fn each_scribe_line_of_the_fixture_prompt_becomes_one_entry_with_its_cite_and_ec
         "#scribe preferences: squash-merge agent PRs; keep merge commits for releases #merge-policy"
     );
     assert_eq!(
-        first["content"],
+        first["quote"],
         "squash-merge agent PRs; keep merge commits for releases"
     );
     assert_eq!(first["topics"], json!(["merge-policy"]));
     assert_eq!(first["status"], "active");
     assert_eq!(first["provider"], "claude-code");
     assert_eq!(first["project"], "scribe", "the cwd's basename outside git");
-    assert_eq!(first["content_from"]["kind"], "instruction");
+    assert_eq!(first["author"]["kind"], "daniel");
     assert!(first["review_after"].is_string(), "preferences go stale");
     let cite = &first["cite"];
     assert_eq!(cite["session"], SESSION);
-    assert_eq!(cite["message"], Value::Null, "filled by the Stop hook");
+    assert_eq!(cite["message"], "u-1");
     assert_eq!(cite["line"], 2);
-    assert_eq!(cite["cwd"], claude.cwd.to_str().unwrap());
     assert_eq!(cite["prompt_sha256"].as_str().unwrap().len(), 64);
     let second = &entries[1];
-    assert_eq!(second["id"], "preferences-2");
     assert_eq!(
         second["said"],
         "#scribe add short commit subjects to my preferences"
     );
-    assert_eq!(second["content"], "short commit subjects");
     assert_eq!(second["cite"]["line"], 3);
     assert_eq!(second["cite"]["prompt_sha256"], cite["prompt_sha256"]);
-    assert!(second["review_after"].is_string(), "preferences go stale");
     assert!(prompt.contains(first["said"].as_str().unwrap()));
-}
-
-#[test]
-fn replaying_the_same_payload_writes_nothing_new() {
-    let fx = Fixture::new();
-    let claude = Claude::new(&fx);
-    let payload = claude.payload("user-prompt-submit.json");
-    hook_ok(&fx, "user-prompt-submit", &payload);
-    let before = entries_snapshot(&fx);
-    let audit_before = audit(&fx).len();
-
-    let out = hook_ok(&fx, "user-prompt-submit", &payload);
-    assert_eq!(entries_snapshot(&fx), before, "no entry file changed");
-    assert_eq!(
-        audit(&fx).len(),
-        audit_before,
-        "nothing written, nothing audited"
-    );
-    let message = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
-    assert!(
-        message
-            .starts_with("scribe: already recorded preferences-1 in preferences — \"squash-merge"),
-        "{message}"
-    );
-}
-
-#[test]
-fn a_typed_line_already_covered_by_an_active_entry_writes_nothing_and_names_it() {
-    let fx = Fixture::new();
-    let claude = Claude::new(&fx);
-    let mut payload = claude.payload("user-prompt-submit.json");
-    payload["prompt"] = json!("#scribe preferences: use rg");
-    hook_ok(&fx, "user-prompt-submit", &payload);
-    let audit_after_add = audit(&fx).len();
-
-    payload["prompt"] = json!("a later turn\n#scribe preferences: use rg");
-    let out = hook_ok(&fx, "user-prompt-submit", &payload);
-    assert_eq!(entries(&fx).len(), 1, "a covered statement writes nothing");
-    assert_eq!(
-        audit(&fx).len(),
-        audit_after_add,
-        "nothing written, nothing audited"
-    );
-    let body = reply(&out);
-    let message = body["systemMessage"].as_str().unwrap();
-    assert!(
-        message.starts_with("scribe: already covered by preferences-1 in preferences — \"use rg\""),
-        "{message}"
-    );
-    let context = body["hookSpecificOutput"]["additionalContext"]
-        .as_str()
-        .unwrap();
-    assert!(
-        context.contains("recorded by scribe; no action needed"),
-        "{context}"
-    );
-
-    // Refinements, opposites and a different tag or project are written.
-    // The reordered pair is recorded before any longer statement that could
-    // contain one of them as a window.
-    for prompt in [
-        "#scribe preferences: use grep, not rg",
-        "#scribe preferences: use rg, not grep",
-        "#scribe preferences: use rg, not grep, in scripts",
-        "#scribe preferences: squash-merge agent PRs",
-        "#scribe preferences: squash-merge agent PRs except on release branches",
-        "#scribe idea: use rg",
-        "#scribe/global preferences: use rg",
-        "#scribe preferences: use grep in scripts",
-        "#scribe preferences: never use grep in scripts",
-        "#scribe preferences: test",
-        "#scribe preferences: latest",
-    ] {
-        payload["prompt"] = json!(prompt);
-        hook_ok(&fx, "user-prompt-submit", &payload);
-    }
-    let contents: Vec<_> = entries(&fx)
-        .iter()
-        .map(|entry| entry["content"].as_str().unwrap().to_owned())
-        .collect();
-    for expected in [
-        "use grep, not rg",
-        "use rg, not grep",
-        "use rg, not grep, in scripts",
-        "squash-merge agent PRs",
-        "squash-merge agent PRs except on release branches",
-        "use grep in scripts",
-        "never use grep in scripts",
-        "test",
-        "latest",
-    ] {
-        assert!(
-            contents.iter().any(|content| content == expected),
-            "missing {expected} in {contents:?}"
-        );
-    }
-    assert_eq!(
-        contents
-            .iter()
-            .filter(|content| content.as_str() == "use rg")
-            .count(),
-        3,
-        "the original, the other tag and the global project: {contents:?}"
-    );
-}
-
-#[test]
-fn stop_does_not_repeat_a_covered_line_on_later_turns() {
-    let fx = Fixture::new();
-    let claude = Claude::new(&fx);
-    let mut payload = claude.payload("user-prompt-submit.json");
-    payload["prompt"] = json!("#scribe preferences: use rg");
-    hook_ok(&fx, "user-prompt-submit", &payload);
-
-    let covered_prompt = "later\n#scribe preferences: use rg";
-    payload["prompt"] = json!(covered_prompt);
-    let echoed = hook_ok(&fx, "user-prompt-submit", &payload);
-    assert!(
-        reply(&echoed)["systemMessage"]
-            .as_str()
-            .unwrap()
-            .contains("already covered by preferences-1")
-    );
-    assert_eq!(entries(&fx).len(), 1);
-
-    claude.write_transcript(covered_prompt, "u-covered");
-    let stopped = hook_ok(&fx, "stop", &claude.payload("stop.json"));
-    assert!(
-        !text(&stopped.stdout).contains("already covered"),
-        "Stop must not re-echo a covered line: {}",
-        text(&stopped.stdout)
-    );
-    assert!(stopped.stdout.is_empty(), "{}", text(&stopped.stdout));
-    let again = hook_ok(&fx, "stop", &claude.payload("stop.json"));
-    assert!(again.stdout.is_empty(), "{}", text(&again.stdout));
-    assert_eq!(entries(&fx).len(), 1);
-
-    // A missed prompt hook stays quiet as well, and a new line beside a
-    // covered one is still recovered without repeating the covered echo.
-    let missed =
-        "#scribe preferences: use rg\n#scribe preferences: keep merge commits for releases";
-    let lines = [
-        json!({"type":"user", "uuid":"u-missed", "timestamp":"2026-11-16T05:50:00Z",
-               "cwd": claude.cwd, "message":{"content": missed}}),
-    ];
-    std::fs::write(
-        &claude.transcript,
-        lines
-            .iter()
-            .map(|line| format!("{line}\n"))
-            .collect::<String>(),
-    )
-    .unwrap();
-    let recovered = hook_ok(&fx, "stop", &claude.payload("stop.json"));
-    let echo = text(&recovered.stdout);
-    assert!(
-        !echo.contains("already covered"),
-        "recovery must not echo the covered line: {echo}"
-    );
-    assert!(
-        echo.contains("keep merge commits for releases"),
-        "the new line is still recovered: {echo}"
-    );
-    assert_eq!(entries(&fx).len(), 2);
-}
-
-#[test]
-fn a_negated_entry_does_not_cover_its_typed_opposite() {
-    let fx = Fixture::new();
-    let claude = Claude::new(&fx);
-    let mut payload = claude.payload("user-prompt-submit.json");
-    let pairs = [
-        ("we shouldn't use cargo test in CI", "use cargo test in CI"),
-        (
-            "we can't run integration tests in CI",
-            "run integration tests in CI",
-        ),
-        (
-            "we won't cache build artifacts in CI",
-            "cache build artifacts in CI",
-        ),
-        (
-            "review the diff without running the full suite",
-            "running the full suite",
-        ),
-    ];
-    for (negated, opposite) in pairs {
-        payload["prompt"] = json!(format!("#scribe preferences: {negated}"));
-        hook_ok(&fx, "user-prompt-submit", &payload);
-        payload["prompt"] = json!(format!("#scribe preferences: {opposite}"));
-        let out = hook_ok(&fx, "user-prompt-submit", &payload);
-        let body = reply(&out);
-        let message = body["systemMessage"].as_str().unwrap();
-        assert!(
-            message.starts_with("scribe: added ") && !message.contains("already covered"),
-            "{negated:?} covered its opposite {opposite:?}: {message}"
-        );
-    }
-    let contents: Vec<_> = entries(&fx)
-        .iter()
-        .map(|entry| entry["content"].as_str().unwrap().to_owned())
-        .collect();
-    for (_, opposite) in pairs {
-        assert!(
-            contents.iter().any(|content| content == opposite),
-            "missing {opposite} in {contents:?}"
-        );
-    }
-}
-
-#[test]
-fn stop_does_not_capture_a_line_covered_when_typed_after_retirement() {
-    let fx = Fixture::new();
-    let claude = Claude::new(&fx);
-    let mut payload = claude.payload("user-prompt-submit.json");
-    payload["prompt"] = json!("#scribe preferences: use cargo test in CI");
-    hook_ok(&fx, "user-prompt-submit", &payload);
-    let shown = fx.ok(&["entry", "show", "preferences-1", "--json"]);
-    let shown: Value = serde_json::from_slice(&shown.stdout).unwrap();
-    let created = shown["created"].as_str().unwrap();
-    let at = time::OffsetDateTime::parse(created, &time::format_description::well_known::Rfc3339)
-        .unwrap();
-    let after = (at + time::Duration::hours(2))
-        .format(&time::format_description::well_known::Rfc3339)
-        .unwrap();
-
-    // The early line is a different prompt from the one that wrote the
-    // entry, so recovery cannot skip it as an existing cite. Its timestamp
-    // is the entry's created time, while the entry was still active.
-    let early = "while it was active\n#scribe preferences: use cargo test in CI";
-    let late = "after it was retired\n#scribe preferences: use cargo test in CI";
-    let lines = [
-        json!({"type": "session-owner", "sessionId": SESSION}),
-        json!({"type": "user", "uuid": "u-early", "sessionId": SESSION,
-               "timestamp": created, "cwd": claude.cwd,
-               "message": {"role": "user", "content": early}}),
-        json!({"type": "user", "uuid": "u-late", "sessionId": SESSION,
-               "timestamp": after, "cwd": claude.cwd,
-               "message": {"role": "user", "content": late}}),
-    ];
-    std::fs::write(
-        &claude.transcript,
-        lines
-            .iter()
-            .map(|line| format!("{line}\n"))
-            .collect::<String>(),
-    )
-    .unwrap();
-
-    payload["prompt"] = json!("#scribe retire preferences-1");
-    let retired = hook_ok(&fx, "user-prompt-submit", &payload);
-    assert!(
-        text(&retired.stdout).contains("retired preferences-1"),
-        "{}",
-        text(&retired.stdout)
-    );
-
-    let stopped = hook_ok(&fx, "stop", &claude.payload("stop.json"));
-    let echo = text(&stopped.stdout);
-    assert!(
-        echo.contains("added preferences-2"),
-        "the line typed after retirement is still captured: {echo}"
-    );
-    assert!(
-        !echo.contains("u-early"),
-        "the line covered when typed is not named: {echo}"
-    );
-    let found = entries(&fx);
-    assert_eq!(
-        found.len(),
-        2,
-        "no third entry from the earlier line: {found:?}"
-    );
-    let original = found.iter().find(|e| e["id"] == "preferences-1").unwrap();
-    assert_eq!(original["status"], "retired");
-    assert_eq!(original["content"], "use cargo test in CI");
-    let captured = found.iter().find(|e| e["id"] == "preferences-2").unwrap();
-    assert_eq!(captured["status"], "active");
-    assert_eq!(captured["content"], "use cargo test in CI");
-    assert_eq!(
-        captured["cite"]["message"], "u-late",
-        "Stop captured the line typed after retirement, not the earlier one: {captured}"
-    );
-}
-
-/// The entry's `updated` time from `entry show`, parsed.
-fn updated_of(fx: &Fixture, id: &str) -> time::OffsetDateTime {
-    let shown = fx.ok(&["entry", "show", id, "--json"]);
-    let shown: Value = serde_json::from_slice(&shown.stdout).unwrap();
-    time::OffsetDateTime::parse(
-        shown["updated"].as_str().unwrap(),
-        &time::format_description::well_known::Rfc3339,
-    )
-    .unwrap()
-}
-
-fn rfc3339(at: time::OffsetDateTime) -> String {
-    at.format(&time::format_description::well_known::Rfc3339)
-        .unwrap()
 }
 
 /// Replace the transcript with `lines`, one JSON object per line.
@@ -523,97 +249,6 @@ fn write_lines(claude: &Claude, lines: &[Value]) {
             .collect::<String>(),
     )
     .unwrap();
-}
-
-#[test]
-fn stop_does_not_capture_a_line_typed_sub_second_before_a_retirement_in_the_same_second() {
-    let fx = Fixture::new();
-    let claude = Claude::new(&fx);
-    let mut payload = claude.payload("user-prompt-submit.json");
-    payload["prompt"] = json!("#scribe preferences: use cargo test in CI");
-    hook_ok(&fx, "user-prompt-submit", &payload);
-    payload["prompt"] = json!("#scribe retire preferences-1");
-    let retired = hook_ok(&fx, "user-prompt-submit", &payload);
-    assert!(
-        text(&retired.stdout).contains("retired preferences-1"),
-        "{}",
-        text(&retired.stdout)
-    );
-    // The store keeps the retirement in whole seconds; the transcript keeps
-    // the turn's fraction. A line typed at .250 of the retirement's second
-    // was typed while the entry was active (or in a tie, which counts as
-    // active).
-    let retirement = updated_of(&fx, "preferences-1");
-    let typed = retirement + time::Duration::milliseconds(250);
-    write_lines(
-        &claude,
-        &[
-            json!({"type": "session-owner", "sessionId": SESSION}),
-            json!({"type": "user", "uuid": "u-early", "sessionId": SESSION,
-                   "timestamp": rfc3339(typed), "cwd": claude.cwd,
-                   "message": {"role": "user",
-                               "content": "just before\n#scribe preferences: use cargo test in CI"}}),
-        ],
-    );
-
-    let stopped = hook_ok(&fx, "stop", &claude.payload("stop.json"));
-    let found = entries(&fx);
-    assert_eq!(
-        found.len(),
-        1,
-        "Stop captured a line covered when typed: {} {found:?}",
-        text(&stopped.stdout)
-    );
-    assert_eq!(found[0]["status"], "retired");
-}
-
-#[test]
-fn stop_does_not_capture_a_referent_covered_when_typed_after_retirement() {
-    let fx = Fixture::new();
-    let claude = Claude::new(&fx);
-    let mut payload = claude.payload("user-prompt-submit.json");
-    payload["prompt"] = json!("#scribe preferences: use cargo test in CI");
-    hook_ok(&fx, "user-prompt-submit", &payload);
-    let created = updated_of(&fx, "preferences-1");
-    // A form-3 line whose referent (the assistant message before it) says
-    // what the active entry already said; then a later one after the
-    // entry is retired, which is still captured.
-    write_lines(
-        &claude,
-        &[
-            json!({"type": "session-owner", "sessionId": SESSION}),
-            json!({"type": "assistant", "uuid": "a-early", "sessionId": SESSION,
-                   "timestamp": rfc3339(created), "message": {"content": "use cargo test in CI"}}),
-            json!({"type": "user", "uuid": "u-early", "sessionId": SESSION,
-                   "timestamp": rfc3339(created), "cwd": claude.cwd,
-                   "message": {"role": "user", "content": "#scribe add this to preferences"}}),
-            json!({"type": "assistant", "uuid": "a-late", "sessionId": SESSION,
-                   "timestamp": rfc3339(created + time::Duration::hours(2)),
-                   "message": {"content": "use cargo test in CI"}}),
-            json!({"type": "user", "uuid": "u-late", "sessionId": SESSION,
-                   "timestamp": rfc3339(created + time::Duration::hours(2)), "cwd": claude.cwd,
-                   "message": {"role": "user", "content": "again\n#scribe add this to preferences"}}),
-        ],
-    );
-    payload["prompt"] = json!("#scribe retire preferences-1");
-    let retired = hook_ok(&fx, "user-prompt-submit", &payload);
-    assert!(
-        text(&retired.stdout).contains("retired preferences-1"),
-        "{}",
-        text(&retired.stdout)
-    );
-
-    let stopped = hook_ok(&fx, "stop", &claude.payload("stop.json"));
-    let echo = text(&stopped.stdout);
-    let found = entries(&fx);
-    assert_eq!(
-        found.len(),
-        2,
-        "only the referent typed after retirement is captured: {echo} {found:?}"
-    );
-    let captured = found.iter().find(|e| e["id"] == "preferences-2").unwrap();
-    assert_eq!(captured["cite"]["message"], "u-late", "{captured}");
-    assert_eq!(captured["content_from"]["message"], "a-late", "{captured}");
 }
 
 #[test]
@@ -662,12 +297,15 @@ fn agent_originated_wrappers_record_and_decide_nothing() {
 fn an_agent_wrapper_cannot_forget_an_entry_or_switch_scribe_on() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
-    hook_ok(
+    write_verbatim(
         &fx,
-        "user-prompt-submit",
-        &claude.payload("user-prompt-submit.json"),
+        1,
+        "#scribe preferences: squash-merge agent PRs; keep merge commits for releases",
+        "an older prompt",
+        1,
+        Some("u-0"),
     );
-    assert_eq!(entries(&fx).len(), 2);
+    assert_eq!(entries(&fx).len(), 1);
     let audit_before = audit(&fx).len();
 
     let mut payload = claude.payload("user-prompt-submit.json");
@@ -718,30 +356,48 @@ fn a_non_plain_payload_source_records_nothing() {
 }
 
 #[test]
-fn an_unknown_tag_is_refused_with_the_configured_tags_and_audited_by_code() {
+fn an_unknown_tag_the_model_chooses_is_refused_at_stop_and_audited_by_code() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
-    std::fs::create_dir(fx.root()).unwrap();
-    make_private(&fx.root());
-    let config = fx.root().join("config.toml");
-    std::fs::write(
-        &config,
+    write_config(
+        &fx,
         "[tags.preferences]\naliases = [\"preference\"]\n\n[tags.rituals]\naliases = [\"ritual\"]\n",
-    )
-    .unwrap();
-    make_private(&config);
-    let mut payload = claude.payload("user-prompt-submit.json");
-    payload["prompt"] =
-        json!("#scribe add stand-up at nine to my habits\n#scribe ritual: stand-up at nine");
-    let out = hook_ok(&fx, "user-prompt-submit", &payload);
+    );
+    let typed = "#scribe add stand-up at nine to my habits\n#scribe ritual: stand-up at nine";
+    let path = annotating_claude(
+        &fx,
+        &json!([
+            {"marker": 1, "kind": "entry", "tag": "habits", "statement": "Daniel stands up at nine.",
+             "subject": "stand-up", "quote": "stand-up at nine", "message": "u-1", "reason": ""},
+            {"marker": 2, "kind": "entry", "tag": "rituals", "statement": "Daniel holds stand-up at nine.",
+             "subject": "stand-up", "quote": "stand-up at nine", "message": "u-1", "reason": ""}
+        ]),
+    );
+    let out = hook_path(
+        &fx,
+        "user-prompt-submit",
+        &prompt_payload(&claude, typed),
+        &path,
+    );
     assert_eq!(
         reply(&out)["systemMessage"],
-        "scribe: refused \"#scribe add stand-up at nine to my habits\" — no tag \"habits\"; tags: idea, preferences, rituals, standard\n\
-         scribe: added rituals-1 to rituals — \"stand-up at nine\""
+        "scribe: marked 2 times — cataloged after the reply",
+        "no tag is refused at submit: markers are cataloged after the reply"
     );
+    marked_turns(&claude, &[("u-1", typed)]);
+    let out = hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
+    assert_eq!(
+        reply(&out)["systemMessage"],
+        "scribe: nothing recorded for #scribe in your message — the model chose a tag that is not configured or not the one you named\n\
+         scribe: added rituals-1 to rituals — \"Daniel holds stand-up at nine.\" · your words: \"stand-up at nine\""
+    );
+    let asked = claude_stdin(&fx, 0);
+    assert!(asked.contains("- rituals:"), "the configured tags: {asked}");
+    assert!(asked.contains("- marker 2 (hint: tag rituals)"), "{asked}");
+    assert!(!asked.contains("hint: tag habits"), "{asked}");
     let lines = audit(&fx);
-    assert_eq!(lines.len(), 2);
-    assert_eq!(lines[0]["command"], "hook user-prompt-submit");
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert_eq!(lines[0]["command"], "hook stop");
     assert_eq!(lines[0]["status"], "failure");
     assert_eq!(lines[0]["error_code"], "unknown_tag");
     assert_eq!(lines[0]["target"], format!("session:{SESSION}"));
@@ -755,7 +411,7 @@ fn a_refused_line_tells_the_agent_to_relay_it_to_daniel_not_that_no_action_is_ne
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
     let mut payload = claude.payload("user-prompt-submit.json");
-    payload["prompt"] = json!("#scribe nosuchtag: hello");
+    payload["prompt"] = json!("#scribe/all preferences: hello");
     let out = hook_ok(&fx, "user-prompt-submit", &payload);
     let reply = reply(&out);
     let message = reply["systemMessage"].as_str().unwrap();
@@ -775,7 +431,7 @@ fn a_failed_line_tells_the_agent_to_relay_it_to_daniel_not_that_no_action_is_nee
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
     let mut payload = claude.payload("user-prompt-submit.json");
-    payload["prompt"] = json!("#scribe preferences: hello");
+    payload["prompt"] = json!("#scribe forget preferences-1");
     let elsewhere = fx.elsewhere(&format!("{SESSION}.jsonl"));
     payload["transcript_path"] = json!(elsewhere.to_str().unwrap());
     let out = hook_ok(&fx, "user-prompt-submit", &payload);
@@ -816,24 +472,38 @@ fn a_refused_approve_tells_the_agent_to_relay_it_to_daniel() {
 fn a_mixed_prompt_notes_each_line_by_whether_it_was_recorded() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
-    std::fs::create_dir(fx.root()).unwrap();
-    make_private(&fx.root());
-    let config = fx.root().join("config.toml");
-    std::fs::write(
-        &config,
-        "[tags.preferences]\naliases = [\"preference\"]\n\n[tags.rituals]\naliases = [\"ritual\"]\n",
-    )
-    .unwrap();
-    make_private(&config);
+    write_verbatim(
+        &fx,
+        1,
+        "#scribe preferences: stand-up at nine",
+        "an older prompt",
+        1,
+        Some("u-0"),
+    );
+    propose_stale(&fx);
     let mut payload = claude.payload("user-prompt-submit.json");
-    payload["prompt"] =
-        json!("#scribe add stand-up at nine to my habits\n#scribe ritual: stand-up at nine");
+    payload["prompt"] = json!(
+        "#scribe approve p-1\n#scribe approve p-99\nstand-up moves to ten #scribe preferences"
+    );
     let out = hook_ok(&fx, "user-prompt-submit", &payload);
     let reply = reply(&out);
+    let context = reply["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    let lines: Vec<&str> = context.lines().collect();
+    assert_eq!(lines.len(), 3, "{context}");
+    assert!(
+        lines[0].ends_with("(recorded by scribe; no action needed)"),
+        "{context}"
+    );
+    assert!(
+        lines[1].starts_with("scribe: refused")
+            && lines[1].ends_with("(not recorded by scribe; relay this to Daniel)"),
+        "{context}"
+    );
     assert_eq!(
-        reply["hookSpecificOutput"]["additionalContext"],
-        "scribe: refused \"#scribe add stand-up at nine to my habits\" — no tag \"habits\"; tags: idea, preferences, rituals, standard (not recorded by scribe; relay this to Daniel)\n\
-         scribe: added rituals-1 to rituals — \"stand-up at nine\" (recorded by scribe; no action needed)"
+        lines[2],
+        "scribe: marked — cataloged after the reply (scribe catalogs this #scribe marker after your reply; do not record it yourself)"
     );
 }
 
@@ -842,21 +512,28 @@ fn the_audit_log_holds_ids_and_codes_never_what_was_said() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
     let mut payload = claude.payload("user-prompt-submit.json");
-    payload["prompt"] = json!(
-        "#scribe preferences: the secret phrase is marmalade\n#scribe nonsense without a form"
-    );
+    payload["prompt"] = json!("#scribe approve marmalade");
     hook_ok(&fx, "user-prompt-submit", &payload);
+    let typed = "the secret phrase is marmalade #scribe preferences";
+    marked_turns(&claude, &[("u-1", typed)]);
+    let path = annotating_claude(
+        &fx,
+        &json!([{"marker": 1, "kind": "entry", "tag": "preferences",
+                 "statement": "Daniel set a secret phrase.", "subject": "the phrase",
+                 "quote": "the secret phrase is marmalade", "message": "u-1", "reason": ""}]),
+    );
+    hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
     let log = std::fs::read_to_string(fx.root().join("audit.jsonl")).unwrap();
     for needle in [
         "marmalade",
-        "nonsense",
+        "secret phrase",
         "#scribe",
         claude.cwd.to_str().unwrap(),
     ] {
         assert!(!log.contains(needle), "{needle} leaked into {log}");
     }
     let codes: Vec<Value> = audit(&fx).iter().map(|l| l["error_code"].clone()).collect();
-    assert_eq!(codes, [Value::Null, json!("unparsed_instruction")]);
+    assert_eq!(codes, [json!("unparsed_instruction"), Value::Null]);
     for line in audit(&fx) {
         let mut keys: Vec<&str> = line
             .as_object()
@@ -889,12 +566,13 @@ fn a_transcript_outside_claudes_projects_fails_the_provenance_check() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
     let mut payload = claude.payload("user-prompt-submit.json");
+    payload["prompt"] = json!("#scribe forget preferences-1\n#scribe approve p-1");
     let elsewhere = fx.elsewhere(&format!("{SESSION}.jsonl"));
     payload["transcript_path"] = json!(elsewhere.to_str().unwrap());
     let out = hook_ok(&fx, "user-prompt-submit", &payload);
     let message = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
     assert!(
-        message.starts_with("scribe: could not record \"#scribe preferences: squash-merge"),
+        message.starts_with("scribe: could not record \"#scribe forget preferences-1\""),
         "{message}"
     );
     assert!(message.contains("transcript check"), "{message}");
@@ -906,14 +584,32 @@ fn a_transcript_outside_claudes_projects_fails_the_provenance_check() {
     );
 
     // A transcript named for another session fails too.
-    let mut payload = claude.payload("user-prompt-submit.json");
-    payload["session_id"] = json!("another-session");
-    let out = hook_ok(&fx, "user-prompt-submit", &payload);
+    let mut other = payload.clone();
+    other["transcript_path"] = json!(claude.transcript.to_str().unwrap());
+    other["session_id"] = json!("another-session");
+    let out = hook_ok(&fx, "user-prompt-submit", &other);
     assert!(
         reply(&out)["systemMessage"]
             .as_str()
             .unwrap()
             .contains("not named for the payload's session_id")
+    );
+
+    // Stop checks the transcript before it catalogs anything.
+    marked_turns(&claude, &[("u-1", MARKED)]);
+    let path = annotating_claude(&fx, &none_for(1..=1));
+    let mut stop = claude.payload("stop.json");
+    stop["transcript_path"] = json!(elsewhere.to_str().unwrap());
+    let out = hook_path(&fx, "stop", &stop, &path);
+    let message = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
+    assert!(
+        message.starts_with("scribe: could not check for #scribe markers — "),
+        "{message}"
+    );
+    assert!(claude_calls(&fx).is_empty());
+    assert_eq!(
+        audit(&fx).last().unwrap()["error_code"],
+        "provenance_failed"
     );
     assert!(!fx.root().join("entries").exists());
 }
@@ -929,8 +625,15 @@ fn a_linked_transcript_fails_the_provenance_check() {
     let out = hook_ok(
         &fx,
         "user-prompt-submit",
-        &claude.payload("user-prompt-submit.json"),
+        &prompt_payload(&claude, "#scribe forget preferences-1"),
     );
+    assert!(
+        reply(&out)["systemMessage"]
+            .as_str()
+            .unwrap()
+            .contains("not a regular file")
+    );
+    let out = hook_ok(&fx, "stop", &claude.payload("stop.json"));
     assert!(
         reply(&out)["systemMessage"]
             .as_str()
@@ -944,24 +647,21 @@ fn a_linked_transcript_fails_the_provenance_check() {
 fn a_bad_config_is_reported_in_the_reply_and_nothing_is_written() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
-    std::fs::create_dir(fx.root()).unwrap();
-    make_private(&fx.root());
-    let config = fx.root().join("config.toml");
-    std::fs::write(&config, "[tags.preferences]\nalias = [\"typo\"]\n").unwrap();
-    make_private(&config);
-    let out = hook_ok(
-        &fx,
-        "user-prompt-submit",
-        &claude.payload("user-prompt-submit.json"),
-    );
+    write_config(&fx, "[tags.preferences]\nalias = [\"typo\"]\n");
+    marked_turns(&claude, &[("u-1", MARKED)]);
+    let path = annotating_claude(&fx, &none_for(1..=1));
+    let out = hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
     let message = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
     assert!(
-        message.contains("is not a valid scribe config"),
+        message.contains("is not a valid scribe config")
+            && message.ends_with("; will retry at the next reply"),
         "{message}"
     );
+    assert!(claude_calls(&fx).is_empty());
     assert!(!fx.root().join("entries").exists());
+    assert!(marks_json(&fx).is_empty(), "the marker stays unsettled");
     let codes: Vec<Value> = audit(&fx).iter().map(|l| l["error_code"].clone()).collect();
-    assert_eq!(codes, [json!("config_invalid"), json!("config_invalid")]);
+    assert_eq!(codes, [json!("config_invalid")]);
 }
 
 #[test]
@@ -978,340 +678,123 @@ fn a_payload_that_is_not_hook_json_fails_with_a_stable_code() {
     assert_eq!(err["code"], "hook_payload_invalid");
 }
 
+/// The fixture prompt's two `#scribe` lines as a store from before
+/// markers recorded them (2_design.md §14.6), their message ids waiting.
+fn write_fixture_entries(fx: &Fixture, prompt: &str) {
+    write_verbatim(
+        fx,
+        1,
+        "#scribe preferences: squash-merge agent PRs; keep merge commits for releases #merge-policy",
+        prompt,
+        2,
+        None,
+    );
+    write_verbatim(
+        fx,
+        2,
+        "#scribe add short commit subjects to my preferences",
+        prompt,
+        3,
+        None,
+    );
+}
+
 #[test]
 fn the_stop_hook_fills_the_cite_message_uuid_from_the_transcript() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
     let payload = claude.payload("user-prompt-submit.json");
-    hook_ok(&fx, "user-prompt-submit", &payload);
-    let audit_before = audit(&fx).len();
-    claude.write_transcript(payload["prompt"].as_str().unwrap(), "u-prompt");
+    let prompt = payload["prompt"].as_str().unwrap();
+    write_fixture_entries(&fx, prompt);
+    claude.write_transcript(prompt, "u-prompt");
 
-    let out = hook_ok(&fx, "stop", &claude.payload("stop.json"));
-    assert!(out.stdout.is_empty(), "the Stop hook prints nothing");
+    // The lines already hold entries, so they are not cataloged again.
+    let path = fake_claude(&fx, "exit 1");
+    let out = hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
+    assert!(out.stdout.is_empty(), "{}", text(&out.stdout));
+    assert!(claude_calls(&fx).is_empty(), "no line cataloged twice");
     let entries = entries(&fx);
+    assert_eq!(entries.len(), 2);
     for entry in &entries {
         assert_eq!(entry["cite"]["message"], "u-prompt", "{}", entry["id"]);
     }
     let lines = audit(&fx);
-    let filled: Vec<&Value> = lines[audit_before..].iter().map(|l| &l["target"]).collect();
+    let filled: Vec<&Value> = lines.iter().map(|l| &l["target"]).collect();
     assert_eq!(filled, [&json!("preferences-1"), &json!("preferences-2")]);
-    assert!(
-        lines[audit_before..]
-            .iter()
-            .all(|l| l["command"] == "hook stop")
-    );
+    assert!(lines.iter().all(|l| l["command"] == "hook stop"));
 
     // Nothing waits any more: the next Stop changes nothing at all.
     let before = snapshot(&fx.root());
-    hook_ok(&fx, "stop", &claude.payload("stop.json"));
+    hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
     assert_eq!(snapshot(&fx.root()), before);
 }
 
 #[test]
-fn stop_recovers_a_missed_prompt_once_beside_a_prompt_hook_capture() {
+fn a_line_recorded_verbatim_in_one_block_of_a_message_is_not_cataloged_again() {
+    // The prompt hook may have had one text block, not the joined message:
+    // its cite lines count from that block.
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
-    let mut payload = claude.payload("user-prompt-submit.json");
-    payload["prompt"] = json!("#scribe preference: short subjects");
-    hook_ok(&fx, "user-prompt-submit", &payload);
-    let original = entries(&fx).remove(0);
-    let missed = "An opening turn\n#scribe preference: keep the words #capture";
-    let lines = [
-        json!({"type":"user", "uuid":"u-recorded", "timestamp":now_rfc3339(),
-               "cwd":claude.cwd, "message":{"content":payload["prompt"]}}),
-        json!({"type":"user", "uuid":"u-missed", "timestamp":"2026-11-16T05:50:00Z",
-               "cwd":claude.cwd, "message":{"content":missed}}),
-    ];
-    std::fs::write(
-        &claude.transcript,
-        lines
-            .iter()
-            .map(|line| format!("{line}\n"))
-            .collect::<String>(),
-    )
-    .unwrap();
-    let out = hook_ok(&fx, "stop", &claude.payload("stop.json"));
-    let recorded = entries(&fx);
-    assert_eq!(
-        recorded.len(),
-        2,
-        "Stop must recover the missed prompt exactly once"
+    let block = "#scribe preferences: use rg\nuse fd for finding files #scribe preferences";
+    write_verbatim(&fx, 1, "#scribe preferences: use rg", block, 1, Some("u-1"));
+    write_lines(
+        &claude,
+        &[
+            json!({"type": "session-owner", "sessionId": SESSION}),
+            json!({"type": "user", "uuid": "u-1", "sessionId": SESSION, "timestamp": now_rfc3339(),
+                   "message": {"role": "user", "content": [
+                       {"type": "text", "text": "Two tools."},
+                       {"type": "text", "text": block}]}}),
+            json!({"type": "assistant", "uuid": "a-1", "sessionId": SESSION, "timestamp": now_rfc3339(),
+                   "message": {"role": "assistant", "content": [{"type": "text", "text": "Noted."}]}}),
+        ],
     );
-    let old = recorded.iter().find(|e| e["id"] == original["id"]).unwrap();
-    assert_eq!(
-        old["cite"]["prompt_sha256"],
-        original["cite"]["prompt_sha256"]
-    );
-    assert_eq!(old["cite"]["message"], "u-recorded");
-    let recovered = recorded
-        .iter()
-        .find(|e| e["content"] == "keep the words")
-        .unwrap();
-    assert_eq!(
-        recovered["said"],
-        "#scribe preference: keep the words #capture"
-    );
-    assert_eq!(recovered["topics"], json!(["capture"]));
-    assert_eq!(recovered["cite"]["session"], SESSION);
-    assert_eq!(recovered["cite"]["message"], "u-missed");
-    assert_eq!(recovered["cite"]["at"], "2026-11-16T05:50:00Z");
-    assert_eq!(recovered["cite"]["cwd"], claude.cwd.to_str().unwrap());
-    assert_eq!(recovered["cite"]["line"], 2);
-    assert_eq!(
-        recovered["cite"]["prompt_sha256"],
-        scribe_core::capture::prompt_sha256(missed)
-    );
-    let echo = reply(&out);
-    assert_eq!(
-        echo["systemMessage"],
-        format!(
-            "scribe: added {} to preferences — \"keep the words\"",
-            recovered["id"].as_str().unwrap()
-        )
-    );
-    assert!(echo.get("decision").is_none());
-    let before = snapshot(&fx.root());
-    assert!(
-        hook_ok(&fx, "stop", &claude.payload("stop.json"))
-            .stdout
-            .is_empty()
-    );
-    assert_eq!(
-        snapshot(&fx.root()),
-        before,
-        "a second Stop neither writes nor audits"
-    );
-    hook_ok(
+    let path = annotating_claude(
         &fx,
-        "user-prompt-submit",
-        &json!({
-        "session_id":SESSION, "transcript_path":claude.transcript,
-        "cwd":claude.cwd, "prompt":missed}),
+        &json!([{"marker": 2, "kind": "entry", "tag": "preferences",
+                 "statement": "Daniel finds files with fd.", "subject": "finding files",
+                 "quote": "use fd for finding files", "message": "u-1", "reason": ""}]),
     );
-    assert_eq!(
-        entries(&fx).len(),
-        2,
-        "a late prompt-hook replay is idempotent too"
-    );
-}
-
-#[test]
-fn stop_recovery_obeys_the_same_origin_and_quoted_text_guards_as_prompt_capture() {
-    let fx = Fixture::new();
-    let claude = Claude::new(&fx);
-    let cases = [
-        json!({"content":"<agent-message>\n#scribe preference: agent\n</agent-message>"}),
-        json!({"content":"#scribe preference: source", "source":"scheduled"}),
-        json!({"content":"#scribe preference: origin", "prompt_origin":"agent"}),
-        json!({"content":"#scribe preference: sidechain", "isSidechain":true}),
-        json!({"content":"#scribe preference: meta", "isMeta":true}),
-        json!({"content":"```\n#scribe preference: fenced\n```\n> #scribe preference: quoted\n<pasted_content>\n#scribe preference: pasted\n</pasted_content>"}),
-        json!({"content":"#scribe preference: assistant", "type":"assistant"}),
-        json!({"content":"/scribe on\n#scribe preference: command"}),
-    ];
-    let mut lines = Vec::new();
-    for (i, case) in cases.iter().enumerate() {
-        let mut line = case.clone();
-        line["type"] = case.get("type").cloned().unwrap_or(json!("user"));
-        line["uuid"] = json!(format!("u-{i}"));
-        line["timestamp"] = json!("2026-11-16T05:50:00Z");
-        line["cwd"] = json!(claude.cwd);
-        line["message"] = json!({"content":case["content"]});
-        lines.push(line);
-    }
-    std::fs::write(
-        &claude.transcript,
-        lines
-            .iter()
-            .map(|line| format!("{line}\n"))
-            .collect::<String>(),
-    )
-    .unwrap();
-    assert!(
-        hook_ok(&fx, "stop", &claude.payload("stop.json"))
-            .stdout
-            .is_empty()
-    );
-    assert!(
-        !fx.root().exists(),
-        "excluded turns must create no state or audit"
-    );
-}
-
-#[test]
-fn stop_recovers_only_the_missing_lines_of_a_partly_captured_block_message() {
-    let fx = Fixture::new();
-    let claude = Claude::new(&fx);
-    let first = "#scribe preference: already captured";
-    let second = "#scribe preference: missed block";
-    let mut payload = claude.payload("user-prompt-submit.json");
-    payload["prompt"] = json!(first);
-    hook_ok(&fx, "user-prompt-submit", &payload);
-    let line = json!({"type":"user", "uuid":"u-blocks", "timestamp":now_rfc3339(),
-        "cwd":claude.cwd, "message":{"content":[
-            {"type":"text", "text":first}, {"type":"text", "text":second}]}});
-    std::fs::write(&claude.transcript, format!("{line}\n{line}\n")).unwrap();
-    let out = hook_ok(&fx, "stop", &claude.payload("stop.json"));
-    assert_eq!(
-        entries(&fx).len(),
-        2,
-        "existing block hash and replayed uuid cannot duplicate entries"
-    );
-    assert_eq!(
-        reply(&out)["systemMessage"],
-        "scribe: added preferences-2 to preferences — \"missed block\""
-    );
-    let before = snapshot(&fx.root());
-    assert!(
-        hook_ok(&fx, "stop", &claude.payload("stop.json"))
-            .stdout
-            .is_empty()
-    );
-    assert_eq!(snapshot(&fx.root()), before);
-}
-
-#[test]
-fn stop_recovers_action_context_and_referents_from_before_the_missed_prompt_only() {
-    let fx = Fixture::new();
-    let claude = Claude::new(&fx);
-    let lines = [
-        json!({"type":"assistant", "uuid":"a-before", "timestamp":"2026-11-16T05:49:00Z",
-            "message":{"content":"The earlier verified answer."}}),
-        json!({"type":"user", "uuid":"u-missed", "timestamp":"2026-11-16T05:50:00Z",
-            "cwd":claude.cwd, "message":{"content":"#scribe standard: keep context\n#scribe add this to preferences"}}),
-        json!({"type":"assistant", "uuid":"a-after", "timestamp":"2026-11-16T05:51:00Z",
-            "message":{"content":"This later answer must not enter the capture."}}),
-    ];
-    std::fs::write(
-        &claude.transcript,
-        lines
-            .iter()
-            .map(|line| format!("{line}\n"))
-            .collect::<String>(),
-    )
-    .unwrap();
-    let out = hook_ok(&fx, "stop", &claude.payload("stop.json"));
-    let recorded = entries(&fx);
-    assert_eq!(recorded.len(), 2);
-    let referent = recorded.iter().find(|e| e["tag"] == "preferences").unwrap();
-    assert_eq!(referent["content"], "The earlier verified answer.");
-    assert_eq!(referent["content_from"]["message"], "a-before");
-    let action = recorded.iter().find(|e| e["tag"] == "standard").unwrap();
-    let detail = fx.ok(&[
-        "entry",
-        "show",
-        action["id"].as_str().unwrap(),
-        "--window",
-        "--json",
-    ]);
-    let detail: Value = serde_json::from_slice(&detail.stdout).unwrap();
-    let turns = detail["window"]["turns"].as_array().unwrap();
-    assert_eq!(turns.len(), 2);
-    assert_eq!(turns[0]["message"], "a-before");
-    assert_eq!(turns[1]["role"], "user");
-    assert!(
-        reply(&out)["systemMessage"]
-            .as_str()
-            .unwrap()
-            .contains("guessed:")
-    );
-    assert!(
-        reply(&out)["systemMessage"]
-            .as_str()
-            .unwrap()
-            .contains("Stop recovery does not call models")
-    );
-    let before = snapshot(&fx.root());
-    assert!(
-        hook_ok(&fx, "stop", &claude.payload("stop.json"))
-            .stdout
-            .is_empty()
-    );
-    assert_eq!(snapshot(&fx.root()), before);
-}
-
-#[test]
-fn stop_reports_refused_missed_lines_and_continues_recovering_other_prompts() {
-    let fx = Fixture::new();
-    let claude = Claude::new(&fx);
-    let lines = [
-        json!({"type":"user", "uuid":"u-bad", "timestamp":now_rfc3339(),
-            "cwd":claude.cwd, "message":{"content":"#scribe rituals: unsupported tag"}}),
-        json!({"type":"user", "uuid":"u-good", "timestamp":now_rfc3339(),
-            "cwd":claude.cwd, "message":{"content":"#scribe preference: keep going"}}),
-    ];
-    std::fs::write(
-        &claude.transcript,
-        lines
-            .iter()
-            .map(|line| format!("{line}\n"))
-            .collect::<String>(),
-    )
-    .unwrap();
-    let out = hook_ok(&fx, "stop", &claude.payload("stop.json"));
-    assert_eq!(entries(&fx).len(), 1);
+    let out = hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
     let echo = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
-    assert!(echo.contains("scribe: refused"));
-    assert!(echo.contains("scribe: added preferences-1"));
-    assert_eq!(
-        audit(&fx)
-            .iter()
-            .filter(|line| line["error_code"] == "unknown_tag")
-            .count(),
-        1
-    );
-    assert_eq!(
-        audit(&fx)
-            .iter()
-            .filter(|line| line["target"] == "preferences-1")
-            .count(),
-        1
-    );
-}
-
-#[test]
-fn stop_reports_missing_citation_metadata_and_retries_when_it_becomes_available() {
-    let fx = Fixture::new();
-    let claude = Claude::new(&fx);
-    claude.write_transcript("#scribe preference: recover with a cwd", "u-missed");
-    let mut payload = claude.payload("stop.json");
-    payload.as_object_mut().unwrap().remove("cwd");
-    let out = hook_ok(&fx, "stop", &payload);
     assert!(
-        reply(&out)["systemMessage"]
-            .as_str()
-            .unwrap()
-            .contains("could not recover")
+        echo.starts_with("scribe: added preferences-2 to preferences"),
+        "{echo}"
     );
-    assert!(entries(&fx).is_empty());
-    assert_eq!(audit(&fx)[0]["error_code"], "hook_payload_invalid");
-    let out = hook_ok(&fx, "stop", &claude.payload("stop.json"));
+    let asked = claude_stdin(&fx, 0);
+    assert!(!asked.contains("- marker 1"), "{asked}");
     assert!(
-        reply(&out)["systemMessage"]
-            .as_str()
-            .unwrap()
-            .contains("scribe: added")
+        asked.contains("- marker 2 (hint: tag preferences)"),
+        "{asked}"
     );
-    assert_eq!(entries(&fx)[0]["cite"]["cwd"], claude.cwd.to_str().unwrap());
-    // The stored cite is sufficient even when later payloads lack cwd.
-    let before = snapshot(&fx.root());
-    assert!(hook_ok(&fx, "stop", &payload).stdout.is_empty());
-    assert_eq!(snapshot(&fx.root()), before);
+    let marks = marks_json(&fx);
+    assert_eq!(marks.len(), 1, "{marks:?}");
+    assert_eq!(marks[0]["marker"], 2);
+    assert_eq!(entries(&fx).len(), 2);
 }
 
 #[test]
 fn stop_never_replays_historical_settling_commands() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
-    let mut prompt = claude.payload("user-prompt-submit.json");
-    prompt["prompt"] = json!("#scribe preferences: keep this entry");
-    hook_ok(&fx, "user-prompt-submit", &prompt);
+    write_verbatim(
+        &fx,
+        1,
+        "#scribe preferences: keep this entry",
+        "an older prompt",
+        1,
+        Some("u-0"),
+    );
     claude.write_transcript("#scribe forget preferences-1", "u-settle");
     let before = entries_snapshot(&fx);
     let audit_before = audit(&fx);
-    let out = hook_ok(&fx, "stop", &claude.payload("stop.json"));
+    let path = fake_claude(&fx, "exit 1");
+    let out = hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
     assert!(out.stdout.is_empty(), "{}", text(&out.stdout));
+    assert!(
+        claude_calls(&fx).is_empty(),
+        "a settling line is not a marker"
+    );
     assert_eq!(
         entries_snapshot(&fx),
         before,
@@ -1334,19 +817,18 @@ fn the_stop_hook_with_nothing_waiting_touches_nothing() {
 fn the_stop_hook_leaves_a_cite_waiting_until_its_prompt_is_in_the_transcript() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
-    hook_ok(
-        &fx,
-        "user-prompt-submit",
-        &claude.payload("user-prompt-submit.json"),
-    );
+    let payload = claude.payload("user-prompt-submit.json");
+    write_fixture_entries(&fx, payload["prompt"].as_str().unwrap());
     claude.write_transcript("a different prompt", "u-other");
     hook_ok(&fx, "stop", &claude.payload("stop.json"));
-    for entry in entries(&fx) {
+    let entries = entries(&fx);
+    assert_eq!(entries.len(), 2);
+    for entry in entries {
         assert_eq!(entry["cite"]["message"], Value::Null);
     }
 }
 
-// --- form 3: referents, with a fake `claude` on PATH ---------------------
+// --- a fake `claude` on PATH ----------------------------------------------
 
 /// A fake `claude` in the fixture: records each call's argv and environment
 /// under the `HOME` scribe gives it, then runs `body`.
@@ -1358,7 +840,7 @@ fn fake_claude(fx: &Fixture, body: &str) -> std::ffi::OsString {
          n=$(ls \"$HOME\" | grep -c '^claude-argv')\n\
          for a in \"$@\"; do printf '%s\\n' \"<$a>\"; done > \"$HOME/claude-argv-$n\"\n\
          env > \"$HOME/claude-env-$n\"\n\
-         cat > /dev/null\n\
+         cat > \"$HOME/claude-stdin-$n\"\n\
          {body}\n"
     );
     let path = bin.join("claude");
@@ -1388,95 +870,119 @@ fn claude_calls(fx: &Fixture) -> Vec<Vec<String>> {
         .collect()
 }
 
-const SPOKEN: &str = "Options: squash or merge.\n\nI recommend we squash-merge agent PRs and keep merge commits for releases.";
-
-/// The conversation so far, before the `#scribe add this` prompt.
-fn write_conversation(claude: &Claude) {
-    let lines = [
-        json!({"type": "user", "uuid": "u-1", "sessionId": SESSION,
-               "timestamp": "2026-11-03T06:00:00Z",
-               "message": {"role": "user", "content": "How should agent PRs merge?"}}),
-        json!({"type": "assistant", "uuid": "a-1", "sessionId": SESSION,
-               "timestamp": "2026-11-03T06:00:05Z",
-               "message": {"role": "assistant", "content": [
-                   {"type": "thinking", "thinking": "hmm"},
-                   {"type": "text", "text": SPOKEN}]}}),
-    ];
-    let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
-    std::fs::write(&claude.transcript, text).unwrap();
-}
-
-fn referent_payload(claude: &Claude, prompt: &str) -> Value {
+fn prompt_payload(claude: &Claude, prompt: &str) -> Value {
     let mut payload = claude.payload("user-prompt-submit.json");
     payload["prompt"] = json!(prompt);
     payload
 }
 
-fn hook_with_path(fx: &Fixture, payload: &Value, path: &std::ffi::OsString) -> Output {
-    let child = fx
-        .cmd(&["hook", "user-prompt-submit"])
-        .env("PATH", path)
-        .env("LANG", "C.UTF-8")
-        .env("CLAUDE_CODE_OAUTH_TOKEN", "oauth-test-value")
-        .env("GITHUB_TOKEN", "not-for-the-model")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let mut guard = support::ChildGuard::new(child);
-    guard
-        .child()
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(payload.to_string().as_bytes())
-        .unwrap();
-    let out = guard.finish();
-    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
-    out
+/// What the fake `claude`'s call `n` read on stdin: the prompt.
+fn claude_stdin(fx: &Fixture, n: usize) -> String {
+    std::fs::read_to_string(fx.home().join(format!("claude-stdin-{n}"))).unwrap()
+}
+
+/// An entry recorded verbatim before markers took the line over
+/// (2_design.md §14.6): `preferences-<n>`, saying `said`, citing `line` of
+/// `prompt` in this session, its message id still waiting when `message`
+/// is `None`.
+fn write_verbatim(
+    fx: &Fixture,
+    n: usize,
+    said: &str,
+    prompt: &str,
+    line: u32,
+    message: Option<&str>,
+) {
+    let dir = fx.root().join("entries/preferences");
+    std::fs::create_dir_all(&dir).unwrap();
+    for d in [fx.root(), fx.root().join("entries"), dir.clone()] {
+        make_private(&d);
+    }
+    let content = said.split_once(": ").map_or(said, |(_, c)| c);
+    let sha = scribe_core::capture::prompt_sha256(prompt);
+    let message = message.map_or_else(|| String::from("null"), |m| format!("\"{m}\""));
+    let text = format!(
+        "---\nformat: 1\nkind: entry\nid: preferences-{n}\ntag: preferences\nstatus: active\n\
+         project: scribe\ntopics: []\nrelated: []\nprovider: claude-code\nhost: host\n\
+         created: 2026-01-02T03:04:05Z\nupdated: 2026-01-02T03:04:05Z\nsaid: \"{said}\"\n\
+         content_from: {{kind: instruction}}\n\
+         cite: {{session: {SESSION}, message: {message}, at: 2026-01-02T03:04:05Z, prompt_sha256: \"{sha}\", line: {line}, cwd: /work}}\n\
+         superseded_by: null\nreview_after: null\n---\n{content}\n"
+    );
+    let path = dir.join(format!("preferences-{n}.md"));
+    std::fs::write(&path, text).unwrap();
+    make_private(&path);
+}
+
+/// An open stale proposal `p-1` on `preferences-1`.
+fn propose_stale(fx: &Fixture) {
+    fx.ok(&[
+        "proposal",
+        "add",
+        "--kind",
+        "stale",
+        "--older",
+        "preferences-1",
+        "--reason",
+        "Review this",
+        "--author",
+        "opus",
+    ]);
 }
 
 #[test]
-fn add_this_records_the_span_the_model_chose_through_a_safe_mode_claude() {
+fn a_line_start_form_gives_the_model_its_tag_as_the_hint_through_a_safe_mode_claude() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
-    write_conversation(&claude);
-    let path = fake_claude(
-        &fx,
-        r#"echo '{"type":"result","subtype":"success","is_error":false,"result":"","structured_output":{"message":"a-1","span":"squash-merge agent PRs and keep merge commits for releases."}}'"#,
-    );
-    let payload = referent_payload(
+    let typed =
+        "#scribe idea: a dry-run flag for prune\n#scribe add this to preferences #merge-policy";
+    marked_turns(
         &claude,
-        "Good.\n#scribe add this to preferences #merge-policy",
+        &[("u-0", "We should squash-merge agent PRs."), ("u-1", typed)],
     );
-    let out = hook_with_path(&fx, &payload, &path);
+    let path = annotating_claude(
+        &fx,
+        &json!([
+            {"marker": 1, "kind": "entry", "tag": "idea", "statement": "Prune could take a dry-run flag.",
+             "subject": "prune", "quote": "a dry-run flag for prune", "message": "u-1", "reason": ""},
+            {"marker": 2, "kind": "entry", "tag": "preferences",
+             "statement": "Daniel squash-merges agent PRs.", "subject": "merging agent PRs",
+             "quote": "We should squash-merge agent PRs", "message": "u-0", "reason": ""}
+        ]),
+    );
+    let stop = claude.payload("stop.json");
+    let out = hook_path_env(
+        &fx,
+        "stop",
+        &stop,
+        &path,
+        &[("GITHUB_TOKEN", "not-for-the-model")],
+    );
     assert_eq!(
         reply(&out)["systemMessage"],
-        "scribe: added preferences-1 to preferences — \"squash-merge agent PRs and keep merge commits for releases.\""
+        "scribe: added idea-1 to idea — \"Prune could take a dry-run flag.\" · your words: \"a dry-run flag for prune\"\n\
+         scribe: added preferences-1 to preferences — \"Daniel squash-merges agent PRs.\" · your words: \"We should squash-merge agent PRs\""
+    );
+    let asked = claude_stdin(&fx, 0);
+    assert!(
+        asked.contains("- marker 1 (hint: tag idea): #scribe idea:"),
+        "{asked}"
+    );
+    assert!(
+        asked.contains("- marker 2 (hint: tag preferences): #scribe add this to preferences"),
+        "{asked}"
     );
     let stored = entries(&fx);
-    assert_eq!(stored.len(), 1);
-    let entry = &stored[0];
-    assert_eq!(
-        entry["said"],
-        "#scribe add this to preferences #merge-policy"
-    );
-    assert_eq!(
-        entry["content"],
-        "squash-merge agent PRs and keep merge commits for releases."
-    );
+    let entry = by_said(&stored, "#scribe add this to preferences #merge-policy");
+    assert_eq!(entry["tag"], "preferences");
+    assert_eq!(entry["quote"], "We should squash-merge agent PRs");
     assert_eq!(entry["topics"], json!(["merge-policy"]));
-    assert_eq!(
-        entry["content_from"],
-        json!({"kind": "message", "role": "assistant", "message": "a-1",
-               "at": "2026-11-03T06:00:05Z"})
-    );
     assert_eq!(entry["cite"]["line"], 2);
+    assert_eq!(entry["cite"]["message"], "u-1");
     let targets: Vec<Value> = audit(&fx).iter().map(|l| l["target"].clone()).collect();
-    assert_eq!(targets, [json!("preferences-1")]);
+    assert_eq!(targets, [json!("idea-1"), json!("preferences-1")]);
 
-    // The call: safe mode, no tools, the configured referent model.
+    // The call: safe mode, no tools, the configured annotation model.
     let calls = claude_calls(&fx);
     assert_eq!(calls.len(), 1);
     let argv = &calls[0];
@@ -1492,62 +998,11 @@ fn add_this_records_the_span_the_model_chose_through_a_safe_mode_claude() {
     assert!(!env.contains("GITHUB_TOKEN"), "{env}");
     assert!(!argv.iter().any(|a| a.contains("oauth-test-value")));
 
-    // A replay echoes it and does not call the model again.
-    let out = hook_with_path(&fx, &payload, &path);
-    let message = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
-    assert!(
-        message.starts_with("scribe: already recorded preferences-1 in preferences"),
-        "{message}"
-    );
+    // The next Stop neither calls nor echoes.
+    let out = hook_path(&fx, "stop", &stop, &path);
+    assert!(out.stdout.is_empty(), "{}", text(&out.stdout));
     assert_eq!(claude_calls(&fx).len(), 1);
-    assert_eq!(entries(&fx).len(), 1);
-}
-
-#[test]
-fn a_failing_or_unverifiable_model_still_writes_one_guessed_entry() {
-    for body in [
-        "echo 'Not logged in' >&2; exit 1",
-        r#"echo '{"type":"result","is_error":false,"structured_output":{"message":"a-1","span":"we always rebase agent PRs"}}'"#,
-        r#"echo '{"type":"result","is_error":false,"structured_output":{"message":"a-9","span":"squash-merge agent PRs"}}'"#,
-    ] {
-        let fx = Fixture::new();
-        let claude = Claude::new(&fx);
-        write_conversation(&claude);
-        let path = fake_claude(&fx, body);
-        let payload = referent_payload(&claude, "#scribe record it in my preferences");
-        let out = hook_with_path(&fx, &payload, &path);
-        let message = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
-        assert!(
-            message.starts_with("scribe: added preferences-1 to preferences (guessed: "),
-            "{body}: {message}"
-        );
-        let entries = entries(&fx);
-        assert_eq!(entries.len(), 1, "{body}");
-        assert_eq!(entries[0]["content"], SPOKEN);
-        assert_eq!(entries[0]["content_from"]["role"], "assistant");
-        assert_eq!(entries[0]["content_from"]["message"], "a-1");
-        assert_eq!(claude_calls(&fx).len(), 1);
-    }
-}
-
-#[test]
-fn a_referent_with_nothing_before_it_is_refused_without_a_model_call() {
-    let fx = Fixture::new();
-    let claude = Claude::new(&fx);
-    let path = fake_claude(&fx, "exit 1");
-    let payload = referent_payload(&claude, "#scribe add this to preferences");
-    let out = hook_with_path(&fx, &payload, &path);
-    let message = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
-    assert!(
-        message.starts_with(
-            "scribe: refused \"#scribe add this to preferences\" — there is no earlier message"
-        ),
-        "{message}"
-    );
-    assert!(claude_calls(&fx).is_empty());
-    assert!(!fx.root().join("entries").exists());
-    let codes: Vec<Value> = audit(&fx).iter().map(|l| l["error_code"].clone()).collect();
-    assert_eq!(codes, [json!("no_referent")]);
+    assert_eq!(entries(&fx).len(), 2);
 }
 
 #[test]
@@ -1565,10 +1020,19 @@ fn store_tag_capture_and_daniel_approval_of_agent_proposal() {
         "note",
     ]);
     let claude = Claude::new(&fx);
-    let mut payload = claude.payload("user-prompt-submit.json");
-    payload["prompt"] = json!("#scribe keep this note to note");
-    claude.write_transcript(payload["prompt"].as_str().unwrap(), "u-note");
-    hook_ok(&fx, "user-prompt-submit", &payload);
+    let typed = "#scribe keep this note to note";
+    marked_turns(&claude, &[("u-note", typed)]);
+    let path = annotating_claude(
+        &fx,
+        &json!([{"marker": 1, "kind": "entry", "tag": "notes",
+                 "statement": "Daniel wants this note kept.", "subject": "the note",
+                 "quote": "keep this note", "message": "u-note", "reason": ""}]),
+    );
+    hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
+    assert!(
+        claude_stdin(&fx, 0).contains("(hint: tag notes)"),
+        "an alias at the line's end is the hint"
+    );
     let recorded = entries(&fx);
     assert_eq!(recorded.len(), 1);
     assert_eq!(recorded[0]["tag"], "notes");
@@ -1585,6 +1049,7 @@ fn store_tag_capture_and_daniel_approval_of_agent_proposal() {
         "--author",
         "opus",
     ]);
+    let mut payload = claude.payload("user-prompt-submit.json");
     payload["prompt"] = json!("#scribe approve p-1");
     claude.write_transcript("#scribe approve p-1", "u-approve");
     hook_ok(&fx, "user-prompt-submit", &payload);
@@ -1619,87 +1084,68 @@ fn by_said<'a>(entries: &'a [Value], said: &str) -> &'a Value {
 }
 
 #[test]
-fn each_capture_form_records_global_or_the_cwd_project() {
+fn each_marker_records_global_or_the_cwd_project() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
-    write_conversation(&claude);
-    let path = fake_claude(
-        &fx,
-        r#"echo '{"type":"result","subtype":"success","is_error":false,"result":"","structured_output":{"message":"a-1","span":"squash-merge agent PRs and keep merge commits for releases."}}'"#,
-    );
-    let prompt = "\
+    let typed = "\
 #scribe/global preferences: squash-merge agent PRs
 #scribe preferences: keep merge commits for releases
-#scribe/global add short commit subjects to preferences
-#scribe add long commit subjects to preferences
-#scribe/global add this to preferences
-#scribe add this to preferences";
-    let out = hook_with_path(&fx, &referent_payload(&claude, prompt), &path);
-    let message = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
-    assert!(
-        !message.contains("refused") && !message.contains("could not record"),
-        "{message}"
+#scribe/global add this to preferences";
+    marked_turns(
+        &claude,
+        &[("u-0", "I want short commit subjects."), ("u-1", typed)],
     );
+    let answer = |marker: u32, quote: &str, message: &str, statement: &str| {
+        json!({"marker": marker, "kind": "entry", "tag": "preferences", "statement": statement,
+               "subject": "agent PRs", "quote": quote, "message": message, "reason": ""})
+    };
+    let path = annotating_claude(
+        &fx,
+        &json!([
+            answer(
+                1,
+                "squash-merge agent PRs",
+                "u-1",
+                "Daniel squash-merges agent PRs."
+            ),
+            answer(
+                2,
+                "keep merge commits for releases",
+                "u-1",
+                "Releases keep merge commits."
+            ),
+            answer(
+                3,
+                "short commit subjects",
+                "u-0",
+                "Daniel wants short commit subjects."
+            ),
+        ]),
+    );
+    let out = hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
+    let message = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
+    assert_eq!(message.matches("scribe: added").count(), 3, "{message}");
 
     let global = listed(&fx, "global");
     let local = listed(&fx, "scribe");
-    assert_eq!(global.len(), 3, "{global:?}");
-    assert_eq!(local.len(), 3, "{local:?}");
-    assert_eq!(
-        claude_calls(&fx).len(),
-        2,
-        "one model call per referent line"
-    );
-
-    let span = "squash-merge agent PRs and keep merge commits for releases.";
+    assert_eq!(global.len(), 2, "{global:?}");
+    assert_eq!(local.len(), 1, "{local:?}");
     let expect = [
         (
             &global,
             "#scribe/global preferences: squash-merge agent PRs",
-            "preferences",
-            "squash-merge agent PRs",
             "global",
         ),
         (
             &local,
             "#scribe preferences: keep merge commits for releases",
-            "preferences",
-            "keep merge commits for releases",
             "scribe",
         ),
-        (
-            &global,
-            "#scribe/global add short commit subjects to preferences",
-            "preferences",
-            "short commit subjects",
-            "global",
-        ),
-        (
-            &local,
-            "#scribe add long commit subjects to preferences",
-            "preferences",
-            "long commit subjects",
-            "scribe",
-        ),
-        (
-            &global,
-            "#scribe/global add this to preferences",
-            "preferences",
-            span,
-            "global",
-        ),
-        (
-            &local,
-            "#scribe add this to preferences",
-            "preferences",
-            span,
-            "scribe",
-        ),
+        (&global, "#scribe/global add this to preferences", "global"),
     ];
-    for (entries, said, tag, content, project) in expect {
+    for (entries, said, project) in expect {
         let entry = by_said(entries, said);
-        assert_eq!(entry["tag"], tag);
-        assert_eq!(entry["content"], content);
+        assert_eq!(entry["tag"], "preferences");
         assert_eq!(entry["project"], project);
         assert_eq!(entry["author"]["kind"], "daniel");
         let front = frontmatter(&fx, entry);
@@ -1710,47 +1156,33 @@ fn each_capture_form_records_global_or_the_cwd_project() {
 }
 
 #[test]
-fn a_malformed_marker_or_a_marker_on_a_refused_line_writes_no_entry() {
+fn a_malformed_opener_or_a_global_settling_line_is_refused_and_teaches_the_opener() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
     let mut payload = claude.payload("user-prompt-submit.json");
-    payload["prompt"] = json!(
-        "#scribe/all preferences: hello\n\
-         #scribe/global rituals: stand-up\n\
-         #scribe/global add this to preferences"
-    );
+    payload["prompt"] = json!("#scribe/all preferences: hello");
     let out = hook_ok(&fx, "user-prompt-submit", &payload);
     let message = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
-    assert_eq!(message.lines().count(), 3, "{message}");
-    for line in message.lines() {
-        let reason = line
-            .split(" — ")
-            .nth(1)
-            .unwrap_or_else(|| panic!("no reason: {line}"));
-        assert!(
-            reason.contains("#scribe/global"),
-            "forms text omits the marker: {reason}"
-        );
-    }
+    assert_eq!(message.lines().count(), 1, "{message}");
+    let reason = message
+        .split(" — ")
+        .nth(1)
+        .unwrap_or_else(|| panic!("no reason: {message}"));
+    assert!(reason.contains("#scribe/global"), "{reason}");
     assert!(
-        !fx.root().join("entries").exists(),
-        "a refused marker wrote an entry"
+        !fx.root().exists(),
+        "a refused marker writes nothing at submit"
     );
 
-    payload["prompt"] = json!("#scribe preferences: keep settling unmarked");
-    hook_ok(&fx, "user-prompt-submit", &payload);
-    fx.ok(&[
-        "proposal",
-        "add",
-        "--kind",
-        "stale",
-        "--older",
-        "preferences-1",
-        "--reason",
-        "Review this",
-        "--author",
-        "opus",
-    ]);
+    write_verbatim(
+        &fx,
+        1,
+        "#scribe preferences: keep settling unmarked",
+        "an older prompt",
+        1,
+        Some("u-0"),
+    );
+    propose_stale(&fx);
     payload["prompt"] = json!("#scribe/global approve p-1");
     let out = hook_ok(&fx, "user-prompt-submit", &payload);
     let message = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
@@ -2071,26 +1503,35 @@ fn write_config(fx: &Fixture, body: &str) {
 fn decisions_and_its_old_aliases_are_unknown_tags_without_config() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
-    for (n, word) in ["decisions", "decision", "dec"].into_iter().enumerate() {
-        let mut payload = claude.payload("user-prompt-submit.json");
-        let line = format!("#scribe {word}: squash-merge agent PRs");
-        payload["prompt"] = json!(line);
-        let out = hook(&fx, "user-prompt-submit", &payload);
-        assert_eq!(out.status.code(), Some(0), "{word}: {}", text(&out.stderr));
-        assert_eq!(
-            reply(&out)["systemMessage"],
-            format!(
-                "scribe: refused \"{line}\" — no tag \"{word}\"; tags: idea, preferences, standard"
-            ),
-            "{word}"
-        );
-        let lines = audit(&fx);
-        assert_eq!(lines.len(), n + 1, "{word}: one audit line per refusal");
-        assert_eq!(lines[n]["error_code"], "unknown_tag", "{word}");
-    }
+    let typed = "#scribe decisions: squash-merge agent PRs\n#scribe decision: rebase never\n#scribe dec: keep merge commits";
+    marked_turns(&claude, &[("u-1", typed)]);
+    let answer = |marker: u32, quote: &str| {
+        json!({"marker": marker, "kind": "entry", "tag": "decisions", "statement": "A choice.",
+               "subject": "merging", "quote": quote, "message": "u-1", "reason": ""})
+    };
+    let path = annotating_claude(
+        &fx,
+        &json!([
+            answer(1, "squash-merge agent PRs"),
+            answer(2, "rebase never"),
+            answer(3, "keep merge commits"),
+        ]),
+    );
+    let out = hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
+    let message = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
+    assert_eq!(
+        message
+            .matches("nothing recorded for #scribe in your message — the model chose a tag that is not configured")
+            .count(),
+        3,
+        "{message}"
+    );
+    assert!(!claude_stdin(&fx, 0).contains("hint:"), "no hint names it");
+    let codes: Vec<Value> = audit(&fx).iter().map(|l| l["error_code"].clone()).collect();
+    assert_eq!(codes, vec![json!("unknown_tag"); 3]);
     assert!(
         !fx.root().join("entries").exists(),
-        "a refused line writes no entry"
+        "a refused marker writes no entry"
     );
 }
 
@@ -2102,15 +1543,39 @@ fn a_config_that_declares_decisions_makes_it_work_like_any_config_tag() {
         &fx,
         "[tags.decisions]\naliases = [\"decision\", \"dec\"]\ndescription = \"choices Daniel has made\"\n",
     );
-    let mut payload = claude.payload("user-prompt-submit.json");
-    payload["prompt"] = json!(
-        "#scribe decisions: squash-merge agent PRs\n#scribe dec: keep merge commits for releases"
+    let typed =
+        "#scribe decisions: squash-merge agent PRs\n#scribe dec: keep merge commits for releases";
+    marked_turns(&claude, &[("u-1", typed)]);
+    let answer = |marker: u32, quote: &str, statement: &str| {
+        json!({"marker": marker, "kind": "entry", "tag": "decisions", "statement": statement,
+               "subject": "merging", "quote": quote, "message": "u-1", "reason": ""})
+    };
+    let path = annotating_claude(
+        &fx,
+        &json!([
+            answer(
+                1,
+                "squash-merge agent PRs",
+                "Daniel squash-merges agent PRs."
+            ),
+            answer(
+                2,
+                "keep merge commits for releases",
+                "Releases keep merge commits."
+            ),
+        ]),
     );
-    let out = hook_ok(&fx, "user-prompt-submit", &payload);
+    let out = hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
     assert_eq!(
         reply(&out)["systemMessage"],
-        "scribe: added decisions-1 to decisions — \"squash-merge agent PRs\"\n\
-         scribe: added decisions-2 to decisions — \"keep merge commits for releases\""
+        "scribe: added decisions-1 to decisions — \"Daniel squash-merges agent PRs.\" · your words: \"squash-merge agent PRs\"\n\
+         scribe: added decisions-2 to decisions — \"Releases keep merge commits.\" · your words: \"keep merge commits for releases\""
+    );
+    assert_eq!(
+        claude_stdin(&fx, 0)
+            .matches("(hint: tag decisions)")
+            .count(),
+        2
     );
     fx.ok(&[
         "entry",
@@ -2133,6 +1598,23 @@ fn a_config_that_declares_decisions_makes_it_work_like_any_config_tag() {
         .map(|t| t["name"].as_str().unwrap())
         .collect();
     assert!(names.contains(&"decisions"), "{names:?}");
+}
+
+#[test]
+fn a_config_naming_the_retired_referent_model_loads_with_a_warning() {
+    let fx = Fixture::new();
+    write_config(&fx, "[models]\nreferent = \"claude-haiku-5-5\"\n");
+    let out = fx.ok(&["tag", "list", "--json"]);
+    let err = text(&out.stderr);
+    assert!(
+        err.contains("config key models.referent is unused"),
+        "{err}"
+    );
+    assert_eq!(
+        err.matches("models.referent").count(),
+        1,
+        "warned once: {err}"
+    );
 }
 
 #[test]
@@ -2174,13 +1656,20 @@ fn entries_under_decisions_in_a_store_without_that_tag_stay_readable_and_settlea
     );
 
     // New writes under the old name are refused; settling the old entry works.
-    let mut payload = claude.payload("user-prompt-submit.json");
-    payload["prompt"] = json!("#scribe decisions: a new one");
-    let out = hook_ok(&fx, "user-prompt-submit", &payload);
+    let refused = fx.run(&[
+        "entry",
+        "add",
+        "--tag",
+        "decisions",
+        "--author",
+        "opus",
+        "a new one",
+    ]);
+    assert_ne!(refused.status.code(), Some(0));
     assert!(
-        text(&out.stdout).contains("no tag"),
+        text(&refused.stderr).contains("unknown tag"),
         "{}",
-        text(&out.stdout)
+        text(&refused.stderr)
     );
     let mut payload = claude.payload("user-prompt-submit.json");
     payload["prompt"] = json!("#scribe retire decisions-2");
@@ -2196,86 +1685,65 @@ fn entries_under_decisions_in_a_store_without_that_tag_stay_readable_and_settlea
 }
 
 #[test]
-fn a_typed_line_matching_a_stated_entrys_quote_is_covered() {
-    // An approved pass statement keeps scribe's statement as content and
-    // Daniel's words in `quote` (2_design.md §11.1); typing those words
-    // again is covered by it, live and in Stop recovery.
+fn a_marker_quoting_a_stated_entrys_words_again_is_covered() {
+    // A stated entry keeps scribe's statement as content and Daniel's
+    // words in `quote` (2_design.md §11.1, §14.3); marking those words
+    // again is covered by it.
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
     let quote = "always run the whole gate before a push";
-    let mut payload = claude.payload("user-prompt-submit.json");
-    payload["prompt"] = json!(format!("#scribe preferences: {quote}"));
-    hook_ok(&fx, "user-prompt-submit", &payload);
-    let path = fx.root().join("entries/preferences/preferences-1.md");
-    let stored = std::fs::read_to_string(&path).unwrap();
-    let statement = "Daniel requires the complete check suite to pass ahead of every upload.";
-    let (front, _) = stored.rsplit_once("---\n").unwrap();
-    let front = front
-        .replace(
-            &format!("said: '#scribe preferences: {quote}'"),
-            "said: '#scribe approve p-1'",
-        )
-        .replace(
-            "content_from:\n  kind: instruction",
-            "content_from: {kind: message, role: user, message: u-said, at: 2026-01-01T00:00:00Z}",
-        )
-        .replace("quote: null", &format!("quote: \"{quote}\""))
-        .replace(
-            "stated_by: null",
-            "stated_by: {kind: scribe, name: session-pass}",
-        );
-    assert!(
-        front.contains("stated_by: {kind: scribe") && front.contains("said: '#scribe approve"),
-        "{front}"
-    );
-    std::fs::write(&path, format!("{front}---\n{statement}\n")).unwrap();
-    make_private(&path);
+    let entry_for = |message: &str| {
+        json!([{"marker": 1, "kind": "entry", "tag": "preferences",
+                "statement": "Daniel requires the complete check suite to pass ahead of every upload.",
+                "subject": "the gate", "quote": quote, "message": message, "reason": ""}])
+    };
+    let first = format!("{quote} #scribe preferences");
+    marked_turns(&claude, &[("u-1", &first)]);
+    let path = annotating_claude(&fx, &entry_for("u-1"));
+    hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
     let shown = fx.ok(&["entry", "show", "preferences-1", "--json"]);
     let shown: Value = serde_json::from_slice(&shown.stdout).unwrap();
-    assert_eq!(shown["content"], statement);
     assert_eq!(shown["quote"], quote);
+    assert_eq!(shown["stated_by"]["name"], "annotation");
 
-    let prompt = format!("a later turn\n#scribe preferences: {quote}");
-    payload["prompt"] = json!(prompt);
-    let out = hook_ok(&fx, "user-prompt-submit", &payload);
+    let again = format!("a later turn: {quote} #scribe preferences");
+    marked_turns(&claude, &[("u-1", &first), ("u-2", &again)]);
+    let path = annotating_claude(&fx, &entry_for("u-2"));
+    let out = hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
     assert_eq!(
-        entries(&fx).len(),
-        1,
-        "the quote is covered: {}",
-        text(&out.stdout)
+        reply(&out)["systemMessage"],
+        "scribe: nothing recorded for #scribe in your message — already covered by preferences-1 in preferences"
     );
-    let message = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
-    assert!(
-        message.starts_with("scribe: already covered by preferences-1 in preferences"),
-        "{message}"
-    );
-
-    // Stop recovery of the same turn does not capture it either.
-    claude.write_transcript(&prompt, "u-stated");
-    let stopped = hook_ok(&fx, "stop", &claude.payload("stop.json"));
-    assert_eq!(
-        entries(&fx).len(),
-        1,
-        "Stop recovery treats the quote as covered: {}",
-        text(&stopped.stdout)
-    );
+    assert_eq!(entries(&fx).len(), 1);
+    assert_eq!(audit(&fx).last().unwrap()["error_code"], "covered");
 }
 
 // --- annotations: `#scribe` inside a sentence, cataloged at Stop (§14) ---
 
 const MARKED: &str = "I always want short status updates #scribe preferences";
 
-/// Run `scribe hook <event>` with the fake `claude` on PATH.
 fn hook_path(fx: &Fixture, event: &str, payload: &Value, path: &std::ffi::OsString) -> Output {
-    let child = fx
-        .cmd(&["hook", event])
-        .env("PATH", path)
+    hook_path_env(fx, event, payload, path, &[])
+}
+
+/// [`hook_path`] with `extra` in the hook's environment.
+fn hook_path_env(
+    fx: &Fixture,
+    event: &str,
+    payload: &Value,
+    path: &std::ffi::OsString,
+    extra: &[(&str, &str)],
+) -> Output {
+    let mut cmd = fx.cmd(&["hook", event]);
+    cmd.env("PATH", path)
         .env("CLAUDE_CODE_OAUTH_TOKEN", "oauth-test-value")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+        .stderr(Stdio::piped());
+    for (key, value) in extra {
+        cmd.env(key, value);
+    }
+    let child = cmd.spawn().unwrap();
     let mut guard = support::ChildGuard::new(child);
     guard
         .child()
@@ -2340,7 +1808,7 @@ fn a_marker_inside_a_sentence_is_echoed_at_submit_and_writes_nothing() {
     let out = hook_path(
         &fx,
         "user-prompt-submit",
-        &referent_payload(&claude, MARKED),
+        &prompt_payload(&claude, MARKED),
         &path,
     );
     let reply = reply(&out);
@@ -2469,7 +1937,7 @@ fn a_fourth_marker_is_refused_too_many_marks_before_any_call() {
     let submitted = hook_path(
         &fx,
         "user-prompt-submit",
-        &referent_payload(&claude, four),
+        &prompt_payload(&claude, four),
         &path,
     );
     let echo = reply(&submitted)["systemMessage"]

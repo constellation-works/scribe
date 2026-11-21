@@ -9,9 +9,10 @@
 //! deterministic checks of an answer before anything is written. The
 //! prompt hook and the `Stop` hook do the I/O.
 //!
-//! In this step a line that starts with `#scribe` is still a form 1–3
-//! instruction captured at submit (§4.2), so it holds no marker; a marker
-//! is a `#scribe` token anywhere else in a typed line.
+//! A line that starts with `#scribe` is a marker too (§14.6): forms 1 to 3
+//! fold into it, so `#scribe idea: …` hints `idea` and `#scribe add this to
+//! preferences` hints `preferences`. Only a whole-line settling command
+//! (form 4, `crate::capture::scan`) is not a marker.
 //!
 //! No I/O (STD-02 R5).
 
@@ -106,6 +107,10 @@ pub struct Mark {
     /// The word right after it, lowercased and without a trailing `:`,
     /// when there is one; a hint only when it names a tag ([`Mark::hint`]).
     pub word: Option<String>,
+    /// For a marker that opens its line, the last word after `to`, `in` or
+    /// `under` (and an optional `my` or `the`) at the end of the line: the
+    /// tag of a folded form 2 or 3 (`#scribe add this to preferences`).
+    pub tail: Option<String>,
     /// Hashtags after it on its line: the entry's topics.
     pub topics: Topics,
     /// Why it is refused before any call; `None` for a marker the model
@@ -114,29 +119,55 @@ pub struct Mark {
 }
 
 impl Mark {
-    /// The tag its next word names (a tag or an alias), which the model
-    /// may not change; `None` when the word names none.
+    /// The tag its next word names (a tag or an alias), else the tag its
+    /// line ends with ([`Mark::tail`]), which the model may not change;
+    /// `None` when neither names one. `issue` names issue records, never a
+    /// hint.
     #[must_use]
     pub fn hint<'a>(&self, tags: &'a TagTable) -> Option<&'a TagName> {
-        self.word
-            .as_deref()
-            .and_then(|word| tags.resolve(word))
+        [self.word.as_deref(), self.tail.as_deref()]
+            .into_iter()
+            .flatten()
+            .filter_map(|word| tags.resolve(word))
             .map(|def| &def.name)
+            .find(|name| !crate::issue::is_reserved_tag(name.as_str()))
     }
+}
+
+/// The tag word a folded form 2 or 3 line ends with: `… (to|in|under)
+/// [my|the] <tag>`, before any trailing hashtags.
+fn tail(rest: &str) -> Option<String> {
+    let mut words: Vec<&str> = rest.split_whitespace().collect();
+    while words.last().is_some_and(|w| w.starts_with('#')) {
+        words.pop();
+    }
+    let tag = words.pop()?.trim_end_matches(PUNCTUATION).to_lowercase();
+    if words
+        .last()
+        .is_some_and(|w| DETERMINERS.contains(&w.to_lowercase().as_str()))
+    {
+        words.pop();
+    }
+    words
+        .last()
+        .is_some_and(|w| PREPOSITIONS.contains(&w.to_lowercase().as_str()))
+        .then_some(tag)
+        .filter(|tag| !tag.is_empty())
 }
 
 /// What a word after a marker sheds at its end.
 const PUNCTUATION: [char; 9] = [':', ',', '.', ';', '!', '?', ')', ']', '}'];
 
-/// Settling verbs (§4.2 form 4).
-const SETTLING: [&str; 4] = ["approve", "reject", "retire", "forget"];
+/// The prepositions before the tag that ends a folded form 2 or 3 line.
+const PREPOSITIONS: [&str; 3] = ["to", "in", "under"];
+/// The optional determiners before that tag.
+const DETERMINERS: [&str; 2] = ["my", "the"];
 
 /// The markers of a typed turn, in text order, numbered from 1 (§14.1).
 ///
 /// Lines inside code fences, blockquotes and `<pasted_content>` blocks hold
 /// none (as `capture::plain_lines` leaves them out), nor does an indented
-/// code line or a line that starts with `#scribe`, which is a form 1–4
-/// instruction. Within a line,
+/// code line or a whole-line settling command (form 4). Within a line,
 /// a token in an inline code span or a double-quoted span (`"…"`, `“…”`) is
 /// a mention, not a marker. A marker is [`MARKER`] or `#scribe/<word>`
 /// that starts the line or follows whitespace or an opening bracket, and
@@ -146,12 +177,8 @@ const SETTLING: [&str; 4] = ["approve", "reject", "retire", "forget"];
 pub fn marks(text: &str) -> Vec<Mark> {
     let mut found = Vec::new();
     for (line, said) in crate::capture::plain_lines(text) {
-        // A line opening with the marker is a form 1–4 instruction; an
-        // indented line is code.
-        if said.trim_start().starts_with(MARKER)
-            || said.starts_with("    ")
-            || said.starts_with('\t')
-        {
+        // A settling line is a command (form 4); an indented line is code.
+        if crate::capture::settles(said) || said.starts_with("    ") || said.starts_with('\t') {
             continue;
         }
         for start in tokens(said) {
@@ -230,17 +257,22 @@ fn parse(number: u32, line: u32, said: &str, start: usize) -> Mark {
     }
     let problem = if bad {
         Some(MarkProblem::BadOpener)
-    } else if word.as_deref().is_some_and(|w| SETTLING.contains(&w)) {
+    } else if word
+        .as_deref()
+        .is_some_and(|w| crate::capture::SETTLING.contains(&w))
+    {
         Some(MarkProblem::Settling)
     } else {
         None
     };
+    let opens_line = said[..start].trim().is_empty();
     Mark {
         number,
         line,
         said: said.to_owned(),
         global,
         word,
+        tail: if opens_line { tail(rest) } else { None },
         topics: Topics::try_from(topics).unwrap_or_default(),
         problem,
     }
@@ -327,6 +359,7 @@ pub fn request(
         tags: tags
             .tags()
             .iter()
+            .filter(|def| !crate::issue::is_reserved_tag(def.name.as_str()))
             .map(|def| AnnotationTag {
                 name: def.name.to_string(),
                 description: def.description.clone(),
@@ -448,6 +481,7 @@ pub fn check(
             let tag = tags
                 .resolve(answer.tag.trim())
                 .map(|def| def.name.clone())
+                .filter(|name| !crate::issue::is_reserved_tag(name.as_str()))
                 .ok_or(CheckRefusal::WrongTag)?;
             if mark.hint(tags).is_some_and(|hint| *hint != tag) {
                 return Err(CheckRefusal::WrongTag);
@@ -459,7 +493,9 @@ pub fn check(
             let own = crate::transcript::daniel_turn(message)
                 .map(|turn| turn.own)
                 .ok_or(CheckRefusal::NotVerbatim)?;
-            if !crate::pass::own_span(&own, quote) || !verbatim::contains(&message.text(), quote) {
+            if !crate::pass::own_marked_span(&own, quote)
+                || !verbatim::contains(&message.text(), quote)
+            {
                 return Err(CheckRefusal::NotVerbatim);
             }
             Ok(Checked::Entry(Annotated {

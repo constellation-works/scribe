@@ -713,7 +713,7 @@ environment refuses the write instead of storing text unmasked
 ## 4. `#scribe`
 
 ### 4.1 Detection
-> Approved change: [§14](#14-scribe-as-an-annotation) ([ORB-26510]) replaces this rule at its step 2 ([ORB-26530], not built); the text here is what is built for a line-start `#scribe`.
+> Replaced by [§14](#14-scribe-as-an-annotation) ([ORB-26510]) at its step 2 ([ORB-26530], built): a line-start `#scribe` is now a marker cataloged at Stop ([§14.6](#146-what-happens-to-forms-1-2-and-3)), and only form 4 below is still parsed at submit. The rest of this section is the history of forms 1–3.
 
 
 `scribe hook user-prompt-submit` receives `session_id`, `transcript_path`,
@@ -798,7 +798,7 @@ the uuid of the matching message written closest to the cite's `at`; a cite
 whose prompt is not in the transcript yet stays `null` for the next Stop.
 
 ### 4.2 Parsing an instruction
-> Approved change: [§14](#14-scribe-as-an-annotation) ([ORB-26510]) replaces this rule at its step 2 ([ORB-26530], not built); the text here is what is built for a line-start `#scribe`.
+> Replaced by [§14](#14-scribe-as-an-annotation) ([ORB-26510]) at its step 2 ([ORB-26530], built): a line-start `#scribe` is now a marker cataloged at Stop ([§14.6](#146-what-happens-to-forms-1-2-and-3)), and only form 4 below is still parsed at submit. The rest of this section is the history of forms 1–3.
 
 
 Model-free grammar, tried in order:
@@ -872,7 +872,7 @@ written. A refused line, marked or not, writes no entry. The forms text in
 that refusal (`FORMS`) includes `#scribe/global`.
 
 ### 4.3 Resolving "this" and "it"
-> Approved change: [§14](#14-scribe-as-an-annotation) ([ORB-26510]) replaces this rule at its step 2 ([ORB-26530], not built); the text here is what is built for a line-start `#scribe`.
+> Replaced by [§14](#14-scribe-as-an-annotation) ([ORB-26510]) at its step 2 ([ORB-26530], built): a line-start `#scribe` is now a marker cataloged at Stop ([§14.6](#146-what-happens-to-forms-1-2-and-3)), and only form 4 below is still parsed at submit. The rest of this section is the history of forms 1–3.
 
 
 Only form 3 uses a model. The hook parses the transcript, takes the last 12
@@ -2807,7 +2807,7 @@ Daniel settles a claim he can read alone.
 quote as content with `stated_by: null`, as today. No old claim is
 rewritten by a model.
 
-`#scribe` lines are unchanged here; [§14](#14-scribe-as-an-annotation) catalogs them with a statement too (a marker inside a sentence since its step 1; line-start forms at its step 2): what Daniel types or points at is the
+`#scribe` lines are unchanged here; [§14](#14-scribe-as-an-annotation) catalogs them with a statement too (a marker inside a sentence since its step 1, a line-start form since its step 2): what Daniel types or points at is the
 content, verbatim. The statement is for what the pass captures, because
 only there did context go missing.
 
@@ -4787,13 +4787,13 @@ Not built until seen:
 [ORB-26510], designed 2026-11-21 and **approved** 2026-11-21: Daniel, in
 the chief's chat at 19:18Z, "Approve as proposed", which answers all five
 [§14.11](#1411-questions-for-daniel) questions as proposed. It is built in
-the order of [§14.9](#149-order-and-sequencing): step 1 is built
-([ORB-26529], store format 22; see *As built (step 1)* in §14.9), steps 2
-and 3 are not ([ORB-26530], [ORB-26531]). Where it changes a rule stated earlier
-([§4.1](#41-detection), [§4.2](#42-parsing-an-instruction),
-[§4.3](#43-resolving-this-and-it), [§4.4](#44-the-reply),
-[§11.1](#111-a-claim-carries-a-statement)), the earlier text describes what
-is built today and carries a pointer here. The reasons, the alternatives and
+the order of [§14.9](#149-order-and-sequencing): steps 1 to 3 are
+built ([ORB-26529], store format 22; [ORB-26530]; [ORB-26531]; see *As
+built* in §14.9), and Codex is wired too ([ORB-26535]). Where it
+changes a rule stated earlier ([§4.1](#41-detection),
+[§4.2](#42-parsing-an-instruction), [§4.3](#43-resolving-this-and-it),
+[§4.4](#44-the-reply), [§11.1](#111-a-claim-carries-a-statement)), the
+earlier text carries a pointer here. The reasons, the alternatives and
 each difference from his sketch are in
 [4_decisions.md](./4_decisions.md#scribe-is-an-annotation-cataloged-at-the-end-of-the-turn).
 
@@ -5013,7 +5013,9 @@ The pass never reads `marks.json`.
 
 **As built (step 3)** (ORB-26531). `pass::candidates::is_marked` reads
 the turn with step 1's marker detection (`annotation::marks`) plus a line
-that opens with `#scribe`. A marked turn fires no capture trigger, so the
+that opens with `#scribe`. Since step 2 the marker detection takes every
+line-start form but a settling command, so that second rule adds only form
+4 lines: a turn that settles is skipped too, as before. A marked turn fires no capture trigger, so the
 request names it for no tag and the store's admission, repeated under its
 lock, refuses it too.
 
@@ -5068,6 +5070,37 @@ differs from the text above:
   cite's, and a `$scribe` skill control is skipped as `/scribe` is. The
   bounds, `marks.json` outcomes, echoes and audit are the same. The Codex
   model adapter's schema check now admits the answer's integer `marker`.
+
+**As built (step 2)** ([ORB-26530], 2026-11-21). `capture.rs` parses form 4
+only; `annotation::marks` takes every `#scribe` line but a settling
+command; the referent call, `Store::capture` and Stop recovery
+(`hook/recovery.rs`) are gone. No store format change. Where it differs
+from the text above or adds to it:
+
+- **The hint of a line-start form** is the word after the marker (a tag or
+  alias, `#scribe idea: …`), else the last word after `to`, `in` or `under`
+  (and an optional `my` or `the`) at the end of a line the marker opens
+  (`#scribe add this to preferences`). The `issue` tag is never a hint, and
+  an answer naming it is refused `unknown_tag`.
+- **A quote may come from the marker's own line.** The annotation check
+  reads a line-start marker line as Daniel's own words (a settling line
+  stays out); memory and the issue triggers still leave `#scribe` lines
+  out, and the pass skips the whole marked turn (step 3).
+- **Older verbatim entries suppress their lines.** A marker on a line an
+  entry already cites (the prompt and line, or the block and line when the
+  prompt hook had one text block) is not cataloged, so an older transcript
+  is not cataloged twice.
+- **A settling line is still checked** against the transcript at submit; a
+  prompt with only markers is not, because Stop checks before it catalogs.
+  A Stop whose transcript fails the check echoes `scribe: could not check
+  for #scribe markers — <reason>` and does nothing else.
+- **`models.referent`** (and `codex.models.referent`) still load and log,
+  once per process at warn level, `config key <key> is unused: #scribe
+  lines are cataloged by models.annotation; remove it`.
+- **Codex** ([ORB-26535]) takes the fold as it is: `annotation::marks` now
+  finds line-start forms, so the Codex adapter echoes them once the typed
+  turn is verified and Stop catalogs them from the rollout; form 4 is still
+  replayed through the prompt hook.
 
 ### 14.10 Limits and what is not built until seen
 
@@ -5154,6 +5187,8 @@ Answered 2026-11-21 ("Approve as proposed"): all five as proposed.
   forms 1–3 fold into it.
 - [ORB-26529] — built §14 step 1: markers inside a sentence cataloged at
   Stop, `marks.json` and store format 22.
+- [ORB-26530] — built §14 step 2: forms 1–3 folded into the marker, the
+  referent call and Stop recovery removed, `models.referent` deprecated.
 - [ORB-26349] — extended the duplicate check's negation markers, and made
   Stop recovery decide coverage as of the turn.
 

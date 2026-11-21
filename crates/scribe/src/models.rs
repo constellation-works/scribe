@@ -31,10 +31,9 @@ mod codex;
 use scribe_core::models::{
     ANNOTATION_SCHEMA, ASK_SCHEMA, AnnotationAnswer, AnnotationRequest, AskAnswer, AskRequest,
     CONSISTENCY_SCHEMA, ClaimAnswer, ConflictAnswer, ConsistencyAnswer, ConsistencyRequest,
-    JudgementAnswer, MEMORY_PAIRS_SCHEMA, MemoryPairsRequest, ModelError, REFERENT_SCHEMA,
-    REMOVAL_SCHEMA, ReferentAnswer, ReferentRequest, RemovalAnswer, RemovalJudgementAnswer,
-    RemovalRequest, SESSION_HEADER_SCHEMA, SessionAnswer, SessionHeader, SessionHeaderRequest,
-    SessionRequest,
+    JudgementAnswer, MEMORY_PAIRS_SCHEMA, MemoryPairsRequest, ModelError, REMOVAL_SCHEMA,
+    RemovalAnswer, RemovalJudgementAnswer, RemovalRequest, SESSION_HEADER_SCHEMA, SessionAnswer,
+    SessionHeader, SessionHeaderRequest, SessionRequest,
 };
 use scribe_core::{Models, Provider};
 use serde::Deserialize;
@@ -190,26 +189,6 @@ impl Models for ClaudeCliModels {
         )?;
         serde_json::from_value(value)
             .map_err(|e| ModelError::Malformed(format!("not an annotation answer: {e}")))
-    }
-
-    fn referent(&self, request: &ReferentRequest) -> Result<ReferentAnswer, ModelError> {
-        #[derive(Deserialize)]
-        struct Answer {
-            message: String,
-            span: String,
-        }
-        let value = self.call(
-            &request.model,
-            REFERENT_SCHEMA,
-            request.prompt(),
-            request.budget,
-        )?;
-        let answer: Answer = serde_json::from_value(value)
-            .map_err(|e| ModelError::Malformed(format!("not a referent: {e}")))?;
-        Ok(ReferentAnswer {
-            message: answer.message,
-            span: answer.span,
-        })
     }
 
     fn session(&self, request: &SessionRequest) -> Result<SessionAnswer, ModelError> {

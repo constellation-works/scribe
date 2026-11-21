@@ -2,12 +2,11 @@
 //! the hook's JSON on stdin (docs/design/scribe/2_design.md §1, §4). One
 //! file per event:
 //!
-//! - `user_prompt_submit.rs`: record each `#scribe` line of a typed prompt
-//!   and reply with what was recorded or refused; a prompt whose first line
+//! - `user_prompt_submit.rs`: echo the `#scribe` markers of a typed prompt
+//!   and apply its settling commands; a prompt whose first line
 //!   is `/scribe on|off|status|link|catalog` goes to `scribe_command.rs`
 //!   instead, which switches cataloging and blocks the prompt (§5.1, §5.8);
-//! - `stop.rs`: after a reply, recover missed entry instructions through
-//!   `recovery.rs`, catalog the `#scribe` markers typed inside sentences
+//! - `stop.rs`: after a reply, catalog the `#scribe` markers Daniel typed
 //!   through `annotation.rs` (§14), fill in message ids, and mark a
 //!   switched-on session's pass due by minutes or turns (§5.2);
 //! - `session_end.rs`: mark a switched-on session's last pass due and final;
@@ -26,9 +25,7 @@
 //! serve `session pass`). These are the only commands that write entries or
 //! `control.json`, and the only ones that settle proposals; every one that
 //! writes is audited (`session-start` reads only), and none calls a model
-//! except the prompt hook's form-3 referent in `user_prompt_submit.rs` and
-//! Stop's annotation call in `annotation.rs`. Stop recovery uses its
-//! guessed fallback without a model call.
+//! except Stop's annotation call in `annotation.rs`.
 
 mod annotation;
 mod codex;
@@ -36,7 +33,6 @@ mod issue_command;
 pub(super) mod payload;
 pub(super) mod project;
 mod proposal_command;
-mod recovery;
 mod scribe_command;
 mod session_end;
 mod session_start;
@@ -62,37 +58,37 @@ Examples:
 const PROMPT_EXAMPLES: &str = "\
 Reads the UserPromptSubmit payload (session_id, transcript_path, cwd, prompt)
 on stdin. Prints Claude Code hook JSON when the prompt has a #scribe line,
-and nothing otherwise; never blocks such a prompt. #scribe/global in
-place of #scribe on a line that records an entry stores it with project
-global, for every repository; the working directory's project stays the
-default. A line under an action tag (standard, idea, or any tag
-config marks action = true) also stores the turns since the previous
-#scribe line, capped at 40 turns and 12000 characters and cut from the
-oldest; no model is called. #scribe approve <p-id>,
-#scribe reject <p-id>, #scribe retire <entry-id> and #scribe forget
-<entry-id> settle a proposal or hide or blank an entry; #scribe forget
-<issue-id> or <issue-id>#<n> blanks an issue or removes an occurrence. A prompt whose first
+and nothing otherwise; never blocks such a prompt. Every #scribe Daniel
+typed, inside a sentence or opening a line (#scribe idea: ..., #scribe add
+this to preferences), not quoted or in code, is a marker: it is echoed as
+marked and cataloged at Stop, and nothing is written here; no model is
+called. #scribe approve <p-id>, #scribe reject <p-id>, #scribe retire
+<entry-id> and #scribe forget <entry-id>, each on its own line, settle a
+proposal or hide or blank an entry; #scribe forget <issue-id> or
+<issue-id>#<n> blanks an issue or removes an occurrence. A prompt whose first
 line is /scribe on, /scribe off or /scribe status switches this session's
 cataloging and is blocked, its status given as the reason; /scribe catalog
 <id> starts Daniel's catalog of a past session, whose windows the next
-session pass runs. A #scribe marker inside a sentence (not at the start
-of a line, not quoted or in code) is echoed as marked and cataloged at
-Stop; nothing is written here.
+session pass runs.
 
 Examples:
   scribe hook user-prompt-submit < <payload.json>";
 
 const STOP_EXAMPLES: &str = "\
 Reads the Stop payload (session_id, transcript_path, optional cwd) on stdin.
-Recovers missed #scribe entry instructions from the transcript and prints
-hook JSON saying what was recorded or refused; otherwise prints nothing.
-Already captured lines are skipped. Recovery calls no model; recovered
-referents use the guessed fallback. Session controls and settling commands
-are not replayed. Then each typed turn with a #scribe marker inside a
-sentence that marks.json has not settled gets one models.annotation call
-(30 s; at most 2 turns per Stop and 3 markers per turn; a failed call is
-retried at the next reply, 3 attempts in all), and its checked answer is
-recorded as Daniel's entry with scribe's statement and his quoted words.
+Each typed turn with a #scribe marker that marks.json has not settled gets
+one models.annotation call (30 s; at most 2 turns per Stop and 3 markers
+per turn; a failed call is retried at the next reply, 3 attempts in all),
+and its checked answer is recorded as Daniel's entry with scribe's statement
+and his quoted words. A tag named after the marker, or at the end of a line
+it opens, is a hint the model must follow. #scribe/global in place of
+#scribe records the entry with project global, for every repository; the
+working directory's project stays the default. Under an action tag
+(standard, idea, or any tag config marks action = true) the entry also keeps
+the turns since the previous #scribe turn, capped at 40 turns and 12000
+characters and cut from the oldest. A line an older entry already records is
+not cataloged again, and settling commands are never replayed. Prints hook
+JSON saying what was recorded or why not; otherwise nothing.
 
 Examples:
   scribe hook stop < <payload.json>";
@@ -121,10 +117,10 @@ pub(crate) enum HookCommand {
     /// Tell Daniel how many proposals are open, which action entries are unpicked, and when this session may continue a recorded one, from the SessionStart hook's JSON on stdin
     #[command(after_help = SESSION_START_EXAMPLES)]
     SessionStart(HookArgs),
-    /// Record each #scribe line of a typed prompt, or settle the proposal or entry it names, from the UserPromptSubmit hook's JSON on stdin
+    /// Echo each #scribe marker of a typed prompt, or settle the proposal or entry a settling line names, from the UserPromptSubmit hook's JSON on stdin
     #[command(after_help = PROMPT_EXAMPLES)]
     UserPromptSubmit(HookArgs),
-    /// Recover missed #scribe entries, catalog #scribe markers, fill in message ids and mark a session pass due, from the Stop hook's JSON on stdin
+    /// Catalog #scribe markers, fill in message ids and mark a session pass due, from the Stop hook's JSON on stdin
     #[command(after_help = STOP_EXAMPLES)]
     Stop(HookArgs),
     /// Mark the final session pass due for a session that is on, from the SessionEnd hook's JSON on stdin

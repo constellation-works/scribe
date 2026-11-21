@@ -4,8 +4,8 @@ Usage: scribe hook [OPTIONS] <COMMAND>
 
 Commands:
   session-start       Tell Daniel how many proposals are open, which action entries are unpicked, and when this session may continue a recorded one, from the SessionStart hook's JSON on stdin
-  user-prompt-submit  Record each #scribe line of a typed prompt, or settle the proposal or entry it names, from the UserPromptSubmit hook's JSON on stdin
-  stop                Recover missed #scribe entries, catalog #scribe markers, fill in message ids and mark a session pass due, from the Stop hook's JSON on stdin
+  user-prompt-submit  Echo each #scribe marker of a typed prompt, or settle the proposal or entry a settling line names, from the UserPromptSubmit hook's JSON on stdin
+  stop                Catalog #scribe markers, fill in message ids and mark a session pass due, from the Stop hook's JSON on stdin
   session-end         Mark the final session pass due for a session that is on, from the SessionEnd hook's JSON on stdin
   help                Print this message or the help of the given subcommand(s)
 

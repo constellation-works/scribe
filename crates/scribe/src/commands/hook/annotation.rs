@@ -22,13 +22,18 @@
 //! with no marker, or whose markers are all settled, reads only the
 //! transcript and `marks.json`: no lock, no write, no call.
 //!
+//! A marker opening a line is a folded form 1–3 (§14.6): before store
+//! format 22 such a line was recorded verbatim by the prompt hook, or by
+//! Stop recovery, and its entry cites that prompt and line. A marker on a
+//! line that already has an entry is left alone, so an older transcript
+//! is not cataloged twice.
+//!
 //! Under Codex the Stop reads Codex's own rollout (`scribe_core::codex`):
 //! its user messages are the host-attributed typed inputs, its cwd the
 //! session's, and a `$scribe` skill control is skipped as a `/scribe` one is.
 
-use super::payload::{self, StopPayload, Transcript};
+use super::payload::{self, PromptPayload, StopPayload, Transcript};
 use super::project;
-use super::recovery;
 use super::user_prompt_submit::{chain, quote};
 use crate::app::Context;
 use crate::error::CliError;
@@ -40,7 +45,7 @@ use scribe_core::{
     COVERED, Config, Label, MODEL_FAILED, MarkChange, MarkKey, MarkResult, Models, NEEDS_REDACTION,
     Provider, SessionId, Speaker,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// What the hook tells Daniel and audits.
 #[derive(Default)]
@@ -91,7 +96,7 @@ pub(super) fn run<M: Models>(
     models: impl FnOnce(&Config) -> M,
 ) -> Result<Cataloged, CliError> {
     let mut out = Cataloged::default();
-    // Recovery checked the transcript first and reported a failure.
+    // Stop checked the transcript first and reported a failure.
     if !matches!(
         payload::check(ctx, &payload.transcript_path, session),
         Ok(Transcript::Present)
@@ -139,9 +144,9 @@ pub(super) fn run<M: Models>(
         return Ok(out);
     }
     let raw = if codex_cwd.is_some() {
-        std::collections::BTreeMap::new()
+        BTreeMap::new()
     } else {
-        recovery::raw_lines(&bytes, &candidates)
+        raw_lines(&bytes, &candidates)
     };
     let mut work = Vec::new();
     for (index, marks) in marked {
@@ -162,7 +167,7 @@ pub(super) fn run<M: Models>(
             None => {
                 let Some(prompt) = raw
                     .get(&message.uuid)
-                    .and_then(|value| recovery::prompt_of(value, message, session, payload).ok())
+                    .and_then(|value| prompt_of(value, message, session, payload).ok())
                 else {
                     continue;
                 };
@@ -186,9 +191,10 @@ pub(super) fn run<M: Models>(
             provider: Label::sanitized(ctx.provider().as_str(), ctx.provider().as_str()),
             host: ctx.host(),
         };
+        let written = written_lines(ctx, session, message)?;
         let (refused, open): (Vec<Mark>, Vec<Mark>) = marks
             .into_iter()
-            .filter(|m| unsettled(message, m))
+            .filter(|m| unsettled(message, m) && !written.contains(&m.line))
             .partition(|m| m.problem.is_some());
         let refused = refused
             .into_iter()
@@ -413,4 +419,78 @@ fn refusal(session: &SessionId, code: &'static str) -> HookOutcome {
         error_code: Some(code),
         issue: None,
     }
+}
+
+/// The lines of `message` that already hold an entry: lines recorded
+/// verbatim before markers took them over (§14.6). A prompt hook may have
+/// received one text block rather than the joined message, so each block's
+/// cites are translated into the joined text's line numbers too.
+fn written_lines(
+    ctx: &Context,
+    session: &SessionId,
+    message: &Message,
+) -> Result<BTreeSet<u32>, CliError> {
+    let store = ctx.store();
+    let mut written: BTreeSet<u32> = store
+        .entries_from_prompt(session, &capture::prompt_sha256(&message.text()))?
+        .iter()
+        .filter_map(|entry| entry.cite.as_ref().map(|cite| cite.line))
+        .collect();
+    if message.blocks.len() > 1 {
+        let mut offset = 0u32;
+        for block in &message.blocks {
+            for entry in store.entries_from_prompt(session, &capture::prompt_sha256(block))? {
+                if let Some(cite) = entry.cite {
+                    written.insert(offset.saturating_add(cite.line));
+                }
+            }
+            offset = offset
+                .saturating_add(u32::try_from(block.split('\n').count()).unwrap_or(u32::MAX))
+                .saturating_add(1);
+        }
+    }
+    Ok(written)
+}
+
+/// The raw transcript line of each `candidates` message, by uuid, kept for
+/// its original origin fields and cwd, which parsing the conversation
+/// deliberately strips.
+fn raw_lines(bytes: &[u8], candidates: &BTreeSet<&str>) -> BTreeMap<String, serde_json::Value> {
+    #[derive(serde::Deserialize)]
+    struct Identity {
+        uuid: Option<String>,
+    }
+    let mut raw = BTreeMap::new();
+    for line in bytes.split(|&b| b == b'\n') {
+        // Most lines are tool payloads. Keep a DOM only for candidate user
+        // messages, so an old instruction does not retain the whole file.
+        if let Ok(Identity { uuid: Some(uuid) }) = serde_json::from_slice(line)
+            && candidates.contains(uuid.as_str())
+            && let Ok(value) = serde_json::from_slice::<serde_json::Value>(line)
+        {
+            raw.entry(uuid).or_insert(value);
+        }
+    }
+    raw
+}
+
+/// The prompt payload a transcript user message would have had: its raw
+/// line with the session, transcript path and joined text, and the Stop
+/// payload's cwd when the line has none (the empty placeholder lets the
+/// origin guard skip synthetic turns even without cwd; it must never reach
+/// capture as a citation).
+fn prompt_of(
+    raw: &serde_json::Value,
+    message: &transcript::Message,
+    session: &SessionId,
+    payload: &StopPayload,
+) -> serde_json::Result<PromptPayload> {
+    let mut value = raw.clone();
+    value["session_id"] = serde_json::json!(session);
+    value["transcript_path"] = serde_json::json!(payload.transcript_path);
+    value["prompt"] = serde_json::json!(message.text());
+    if value["cwd"].is_null() {
+        value["cwd"] = serde_json::json!(payload.cwd.as_deref().unwrap_or_default());
+    }
+    serde_json::from_value(value)
 }

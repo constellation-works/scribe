@@ -59,9 +59,9 @@ pub use candidates::{
     MAX_CANDIDATES, MAX_IDEAS, MAX_OPEN_CANDIDATES, PassClaim, candidate_drafts,
     candidate_exclusions, capture_request, write_exclusions,
 };
-pub(crate) use candidates::{admission, is_marker, own_span, statement_tokens};
+pub(crate) use candidates::{admission, is_marker, own_marked_span, own_span, statement_tokens};
 pub(crate) use candidates::{
-    candidate_says, claim_covers, covering_claim, covering_entry, covers_turn, entry_says,
+    candidate_says, claim_covers, covering_claim, covering_entry, entry_says,
 };
 mod repair;
 pub use repair::repair;
