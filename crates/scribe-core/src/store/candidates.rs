@@ -2,7 +2,9 @@
 
 use super::{Redactor, Store};
 use crate::consistency::Reapplied;
-use crate::pass::{MAX_CANDIDATES, MAX_OPEN_CANDIDATES, admission, own_span, same_statement};
+use crate::pass::{
+    MAX_CANDIDATES, MAX_OPEN_CANDIDATES, admission, covering_entry, own_span, same_statement,
+};
 use crate::{
     Author, EntryId, EntryStatus, Error, Proposal, ProposalId, ProposalKind, ProposalState, Result,
     SessionRecord,
@@ -169,8 +171,8 @@ impl Store {
         Ok(closed)
     }
 
-    /// Caller holds the lock. True only when the reserved entry was created.
-    pub(super) fn write_candidate_entry(&self, proposal: &Proposal) -> Result<bool> {
+    /// Caller holds the lock. `Created` only when the reserved entry was written.
+    pub(super) fn write_candidate_entry(&self, proposal: &Proposal) -> Result<CandidateWrite> {
         let config = self.config()?;
         let review_after = config.tags.get(proposal.older.tag()).and_then(|tag| {
             proposal
@@ -192,7 +194,7 @@ impl Store {
                         "reserved candidate id belongs to another entry",
                     ));
                 }
-                return Ok(false);
+                return Ok(CandidateWrite::Present);
             }
             Err(Error::EntryNotFound { .. }) => {}
             Err(err) => return Err(err),
@@ -203,8 +205,12 @@ impl Store {
                 "forgotten candidate cannot recreate a missing entry",
             ));
         }
+        let (entries, _) = self.load_entries()?;
+        if let Some(cover) = covering_entry(&entries, &entry.tag, &entry.project, &entry.content) {
+            return Ok(CandidateWrite::Covered(cover.id.clone()));
+        }
         self.write_entry(&entry, true)?;
-        Ok(true)
+        Ok(CandidateWrite::Created)
     }
 
     /// Approved proposals are the recovery journal, as for consistency approvals.
@@ -217,20 +223,40 @@ impl Store {
             return Ok(Vec::new());
         }
         let _lock = self.lock("consistency scan")?;
+        let mut proposals = self.proposals()?;
         let mut done = Vec::new();
-        for proposal in self
-            .proposals()?
-            .iter()
+        let mut changed = false;
+        for proposal in proposals
+            .iter_mut()
             .filter(|p| p.kind == ProposalKind::Candidate && p.state == ProposalState::Approved)
         {
-            if self.write_candidate_entry(proposal)? {
-                done.push(Reapplied {
+            match self.write_candidate_entry(proposal)? {
+                CandidateWrite::Created => done.push(Reapplied {
                     proposal: proposal.id,
                     entry: proposal.older.clone(),
                     status: EntryStatus::Active,
-                });
+                }),
+                CandidateWrite::Present => {}
+                CandidateWrite::Covered(_) => {
+                    proposal.state = ProposalState::Rejected;
+                    changed = true;
+                }
             }
+        }
+        if changed {
+            self.write_proposals(&proposals)?;
         }
         Ok(done)
     }
+}
+
+/// What writing an approved candidate's reserved entry did.
+pub(super) enum CandidateWrite {
+    /// The reserved entry file was created.
+    Created,
+    /// The reserved entry was already on disk.
+    Present,
+    /// An active entry of the same tag and project already covers the
+    /// statement, so nothing was written. The id is that entry.
+    Covered(crate::EntryId),
 }

@@ -294,7 +294,7 @@ the message lists up to ten candidates, sorted, and how many more), `daniel_only
 `proposal_not_found`, `proposal_settled`, `entry_not_active`,
 (S12) `invalid_text`, `invalid_topics`, (format 8) `quote_required`,
 `quote_not_found`, `not_action_tag`, `cancel_window`,
-`proposal_invalid`, `proposal_not_agent`,
+`proposal_invalid`, `proposal_not_agent`, `already_covered`,
 `session_cataloged`, `transcript_not_found`, for `tmux` `fzf_missing` and
 `tmux_failed` (exit 1; `tmux` renders no payload, its popup owns the
 terminal), for `session pass`
@@ -339,12 +339,17 @@ that is not valid JSON, lacks a field or has an invalid `session_id` exits 1
 with `hook_payload_invalid`.
 The `UserPromptSubmit` reply has one echo line per `#scribe` line: `scribe:
 added <id> to <tag> — "<content>"`, `scribe: already recorded <id> in <tag>
-— "<content>"`, `scribe: refused "<line>" — <reason>` or `scribe: could not
+— "<content>"`, `scribe: already covered by <id> in <tag> — "<content>"`
+(an active entry of the same tag and project already covers the statement;
+nothing is written and no audit line is written), `scribe: refused "<line>" — <reason>` or `scribe: could not
 record "<line>" — <error>`. A form-3 line whose referent the model did not
 resolve is still added, and its echo puts `(guessed: <why>; recorded the
 <role> message before your prompt instead)` after the tag. A settling line
 echoes `scribe: approved p-<n> — <older> is superseded by <newer>; ask
 leaves it out of answers` (`<older> is retired` for a stale proposal),
+`scribe: approved p-<n> — already covered by <id>; no new entry` when an
+active entry of the same tag and project already covers a candidate (the
+proposal becomes `rejected`, its `newer` stays empty, and no entry is written),
 `scribe: rejected p-<n> — its entries stay as they are, and it is not
 proposed again`, `scribe: retired <id> — ask leaves it out of answers;
 scribe entry show <id> still has it`, `scribe: forgot <id> — its text is
@@ -358,7 +363,7 @@ The text is for Daniel and the agent to read; the audit line, not the
 echo, is the record. Daniel's `systemMessage` carries the plain echoes;
 the agent's `additionalContext` carries each echo with a per-line note:
 ` (recorded by scribe; no action needed)` after a recorded, already
-recorded or settled line, and ` (not recorded by scribe; relay this to
+recorded, already covered or settled line, and ` (not recorded by scribe; relay this to
 Daniel)` after a refused line (`scribe: refused …`), a line that could
 not be recorded (`scribe: could not record …`) or a settling line that
 was refused or could not be applied. A refused or failed line therefore

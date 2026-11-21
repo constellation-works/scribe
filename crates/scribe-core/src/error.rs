@@ -272,6 +272,9 @@ pub enum WriteRefusal {
     /// `finding_cap`: the writing session already holds the documented
     /// maximum of findings.
     FindingCap,
+    /// `already_covered`: an active entry of the same tag and project
+    /// already covers this statement, so nothing was written.
+    AlreadyCovered,
 }
 impl WriteRefusal {
     /// Stable machine-readable code.
@@ -299,6 +302,7 @@ impl WriteRefusal {
             Self::CancelWindow => "cancel_window",
             Self::EvidenceRequired => "evidence_required",
             Self::FindingCap => "finding_cap",
+            Self::AlreadyCovered => "already_covered",
         }
     }
 }

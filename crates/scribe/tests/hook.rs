@@ -239,6 +239,76 @@ fn replaying_the_same_payload_writes_nothing_new() {
 }
 
 #[test]
+fn a_typed_line_already_covered_by_an_active_entry_writes_nothing_and_names_it() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let statement = "I prefer short progress updates while an agent is working.";
+    let mut first = claude.payload("user-prompt-submit.json");
+    first["prompt"] = json!(format!("#scribe preferences: {statement}"));
+    let out = hook_ok(&fx, "user-prompt-submit", &first);
+    assert!(
+        reply(&out)["systemMessage"]
+            .as_str()
+            .unwrap()
+            .contains("added preferences-1"),
+        "{}",
+        text(&out.stdout)
+    );
+    let before = entries_snapshot(&fx);
+    let audit_before = audit(&fx).len();
+
+    let mut second = first.clone();
+    second["prompt"] = json!(format!(
+        "Please keep this.\n#scribe preferences: {statement}"
+    ));
+    let out = hook_ok(&fx, "user-prompt-submit", &second);
+    assert_eq!(
+        entries_snapshot(&fx),
+        before,
+        "a covered statement writes nothing"
+    );
+    assert_eq!(
+        audit(&fx).len(),
+        audit_before,
+        "nothing written, nothing audited"
+    );
+    let body = reply(&out);
+    let message = body["systemMessage"].as_str().unwrap();
+    assert!(
+        message.starts_with(&format!(
+            "scribe: already covered by preferences-1 in preferences — \"{statement}\""
+        )),
+        "{message}"
+    );
+    let agent = body["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(
+        agent.contains("recorded by scribe; no action needed"),
+        "{agent}"
+    );
+
+    let mut third = first.clone();
+    third["prompt"] = json!(format!(
+        "#scribe idea: {statement}\n#scribe/global preferences: {statement}"
+    ));
+    hook_ok(&fx, "user-prompt-submit", &third);
+    let ids: Vec<_> = entries(&fx)
+        .iter()
+        .map(|entry| entry["id"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(ids.contains(&"idea-1".to_owned()), "{ids:?}");
+    assert!(ids.contains(&"preferences-2".to_owned()), "{ids:?}");
+    assert_eq!(
+        ids.iter()
+            .filter(|id| id.starts_with("preferences-"))
+            .count(),
+        2,
+        "{ids:?}"
+    );
+}
+
+#[test]
 fn a_prompt_without_an_instruction_line_writes_and_prints_nothing() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
@@ -1245,9 +1315,11 @@ fn each_capture_form_records_global_or_the_cwd_project() {
         &fx,
         r#"echo '{"type":"result","subtype":"success","is_error":false,"result":"","structured_output":{"message":"a-1","span":"squash-merge agent PRs and keep merge commits for releases."}}'"#,
     );
+    // None of these statements contains another: a typed line an active
+    // entry of the same tag and project already covers writes nothing.
     let prompt = "\
-#scribe/global preferences: squash-merge agent PRs
-#scribe preferences: keep merge commits for releases
+#scribe/global preferences: require reviews before merge
+#scribe preferences: write the subject in the imperative
 #scribe/global add short commit subjects to preferences
 #scribe add long commit subjects to preferences
 #scribe/global add this to preferences
@@ -1273,16 +1345,16 @@ fn each_capture_form_records_global_or_the_cwd_project() {
     let expect = [
         (
             &global,
-            "#scribe/global preferences: squash-merge agent PRs",
+            "#scribe/global preferences: require reviews before merge",
             "preferences",
-            "squash-merge agent PRs",
+            "require reviews before merge",
             "global",
         ),
         (
             &local,
-            "#scribe preferences: keep merge commits for releases",
+            "#scribe preferences: write the subject in the imperative",
             "preferences",
-            "keep merge commits for releases",
+            "write the subject in the imperative",
             "scribe",
         ),
         (

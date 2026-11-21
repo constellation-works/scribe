@@ -282,6 +282,84 @@ mod capture {
     }
 
     #[test]
+    fn an_active_entry_covers_the_same_statement_without_consuming_an_id() {
+        let dir = private_tempdir();
+        let store = Store::open(dir.path());
+        let statement = "I prefer short progress updates while an agent is working.";
+        let added = store
+            .capture(
+                vec![draft("preferences", 1, statement)],
+                &Redactor::default(),
+            )
+            .unwrap();
+        assert!(matches!(added[0], Captured::Added(_)));
+
+        // The same line still replays, even though the statement is covered.
+        let replay = store
+            .capture(
+                vec![draft("preferences", 1, statement)],
+                &Redactor::default(),
+            )
+            .unwrap();
+        assert!(matches!(replay[0], Captured::Existing(_)));
+
+        let covered = store
+            .capture(
+                vec![
+                    draft("preferences", 2, statement),
+                    draft("preferences", 3, "a different preference about commits"),
+                ],
+                &Redactor::default(),
+            )
+            .unwrap();
+        assert!(matches!(
+            &covered[0],
+            Captured::Covered(entry) if entry.id.to_string() == "preferences-1"
+        ));
+        assert!(matches!(
+            &covered[1],
+            Captured::Added(entry) if entry.id.to_string() == "preferences-2"
+        ));
+
+        let mut other_project = draft("preferences", 5, statement);
+        other_project.project = "global".parse().unwrap();
+        let more = store
+            .capture(
+                vec![draft("idea", 4, statement), other_project],
+                &Redactor::default(),
+            )
+            .unwrap();
+        assert!(matches!(
+            &more[0],
+            Captured::Added(entry) if entry.id.to_string() == "idea-1"
+        ));
+        assert!(matches!(
+            &more[1],
+            Captured::Added(entry) if entry.id.to_string() == "preferences-3"
+        ));
+
+        let cite = draft("preferences", 1, statement).cite;
+        let settled = store
+            .settle(
+                &crate::consistency::Settle::Retire("preferences-1".parse().unwrap()),
+                &cite,
+                datetime!(2026-11-02 20:00:00 UTC),
+            )
+            .unwrap();
+        assert!(matches!(settled, crate::consistency::Settled::Retired(_)));
+        let after = store
+            .capture(
+                vec![draft("preferences", 6, statement)],
+                &Redactor::default(),
+            )
+            .unwrap();
+        assert!(matches!(
+            &after[0],
+            Captured::Added(entry) if entry.id.to_string() == "preferences-4"
+        ));
+    }
+
+    #[test]
     fn a_number_held_by_a_file_that_does_not_parse_is_not_reused() {
         let dir = private_tempdir();
         let root = dir.path();

@@ -591,3 +591,50 @@ fn admission_recomputes_the_trigger_for_the_claimed_tag() {
     assert!(pass::admission(&tags, &idea, "I prefer short names.").is_none());
     assert!(pass::admission(&tags, &"standard".parse().unwrap(), "always").is_none());
 }
+
+#[test]
+fn covering_entry_keeps_the_oldest_active_entry_of_the_same_tag_and_project() {
+    use crate::entry::EntryStatus;
+    use crate::pass::covering_entry;
+
+    let statement = "I prefer short progress updates while an agent is working.";
+    let mut oldest = super::entry("preferences-1", T0);
+    oldest.content = statement.to_owned();
+    let mut later = super::entry("preferences-2", T0 + Duration::hours(1));
+    later.content = format!("{statement} today");
+    let mut retired = oldest.clone();
+    retired.id = "preferences-9".parse().unwrap();
+    retired.status = EntryStatus::Retired;
+    retired.created = T0 - Duration::hours(1);
+    let mut superseded = oldest.clone();
+    superseded.id = "preferences-7".parse().unwrap();
+    superseded.status = EntryStatus::Superseded;
+    superseded.created = T0 - Duration::hours(2);
+    let mut forgotten = oldest.clone();
+    forgotten.id = "preferences-6".parse().unwrap();
+    forgotten.status = EntryStatus::Forgotten;
+    forgotten.content.clear();
+    let mut other_tag = oldest.clone();
+    other_tag.id = "idea-1".parse().unwrap();
+    other_tag.tag = "idea".parse().unwrap();
+    let mut other_project = oldest.clone();
+    other_project.id = "preferences-8".parse().unwrap();
+    other_project.project = "global".parse().unwrap();
+
+    let entries = [
+        later,
+        retired,
+        superseded,
+        forgotten,
+        other_tag,
+        other_project,
+        oldest.clone(),
+    ];
+    let cover = covering_entry(&entries, &oldest.tag, &oldest.project, statement).unwrap();
+    assert_eq!(cover.id, oldest.id);
+
+    // Three shared words are not enough: both sides need four before Jaccard applies.
+    let mut short = oldest.clone();
+    short.content = String::from("prefer short updates");
+    assert!(covering_entry(&[short], &oldest.tag, &oldest.project, "prefer brief notes").is_none());
+}

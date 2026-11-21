@@ -2587,6 +2587,77 @@ fn type_settlement(s: &Setup, prompt: &str) -> Output {
 }
 
 #[test]
+fn approving_a_candidate_covered_by_a_later_entry_writes_no_second_entry() {
+    let s = Setup::new();
+    let quote = "I prefer short progress updates while an agent is working.";
+    s.write(ON, &[line("user", "preference-turn", quote)]);
+    s.answer(&candidate_answer(quote, "preference-turn", "preferences"));
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    assert!(
+        !s.fx
+            .root()
+            .join("entries/preferences/preferences-1.md")
+            .exists()
+    );
+
+    let added: Value = serde_json::from_slice(
+        &s.fx
+            .ok(&[
+                "entry",
+                "add",
+                "--tag",
+                "preferences",
+                "--project",
+                "scribe",
+                "--author",
+                "opus",
+                quote,
+                "--json",
+            ])
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(added["id"], "preferences-2");
+
+    let out = type_settlement(&s, "#scribe approve p-1");
+    let message = text(&out.stdout);
+    assert!(
+        message.contains("scribe: approved p-1 — already covered by preferences-2; no new entry"),
+        "{message}"
+    );
+    assert!(
+        !s.fx
+            .root()
+            .join("entries/preferences/preferences-1.md")
+            .exists()
+    );
+    let listed: Value =
+        serde_json::from_slice(&s.fx.ok(&["entry", "list", "--json"]).stdout).unwrap();
+    assert_eq!(listed["total"], 1);
+    let ps = proposals(&s);
+    assert_eq!(ps["proposals"][0]["state"], "rejected");
+    assert_eq!(ps["proposals"][0]["newer"], Value::Null);
+
+    let again = type_settlement(&s, "#scribe approve p-1");
+    let again_message = text(&again.stdout);
+    assert!(again_message.contains("refused"), "{again_message}");
+    assert!(
+        again_message.contains("already rejected"),
+        "{again_message}"
+    );
+    assert!(
+        !s.fx
+            .root()
+            .join("entries/preferences/preferences-1.md")
+            .exists()
+    );
+    let listed: Value =
+        serde_json::from_slice(&s.fx.ok(&["entry", "list", "--json"]).stdout).unwrap();
+    assert_eq!(listed["total"], 1);
+}
+
+#[test]
 fn candidate_sources_and_existing_statements_are_checked_at_the_binary_boundary() {
     let quote = "I prefer concise messages during lengthy builds.";
     let cases = [

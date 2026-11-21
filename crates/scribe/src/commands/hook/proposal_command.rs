@@ -105,6 +105,10 @@ pub(super) fn run(settling: &Settling, turn: &Turn, ctx: &Context) -> Reply {
             entry.to_string(),
             format!("scribe: forgot {entry} — its text is blanked for good; the id and cite stay"),
         ),
+        Settled::Covered { proposal, by } => done(
+            proposal.to_string(),
+            format!("scribe: approved {proposal} — already covered by {by}; no new entry"),
+        ),
         Settled::Already(what) => Reply {
             echo: format!("scribe: {what} — nothing changed"),
             outcome: None,

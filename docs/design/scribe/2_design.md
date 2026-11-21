@@ -796,6 +796,41 @@ Exactly one entry per instruction, also under retries: the idempotency key
 is `(session, prompt_sha256, line)`. A repeat finds the existing entry and
 echoes it instead of writing again.
 
+A statement an active entry of the same tag and project already covers is
+not written either. The check is `covering_entry` in scribe-core. It calls
+the one lexical definition, `same_statement`: normalized containment, equal
+word sets, or at least 80% Jaccard overlap when both sides have at least
+four words. It runs under the store lock on every path that creates an
+entry (a typed `#scribe` line, `scribe entry add`, and approving a
+candidate), after redaction, and names the oldest covering entry by
+`created`, then id. Retired, superseded and forgotten entries do not cover.
+A same-line replay still wins and echoes `already recorded`.
+
+The typed line exits 0 and echoes `scribe: already covered by <id> in <tag>
+— "<content>"`, with no audit line. `scribe entry add` writes nothing,
+exits 1, and reports the stable code `already_covered` with the message
+`already covered by <id>; nothing written`, in plain text and in `--json`
+(`{"error","code"}` only). Approving a candidate that an active entry of
+the same tag and project now covers closes the proposal as `rejected` and
+echoes `scribe: approved <proposal> — already covered by <id>; no new
+entry`. A candidate proposal's stored shape keeps `newer` empty, so the
+covering id is named in that reply and not in a new field, and there is
+no format bump. Replaying that approval is the ordinary already-rejected
+refusal. An interrupted approval whose journal is already `approved` and
+whose entry file is missing is closed the same way when the statement is
+now covered, so recovery does not write a second entry.
+
+The lexical check does not match a short typed or written statement against
+the long raw paragraph it summarizes, unless that short text is contained
+in the paragraph, the word sets are equal, or the Jaccard bar is met. A
+paraphrase that shares too few words is written. The model's meaning-level
+exclusion (`candidate_exclusions`) catches paraphrases, and only when the
+pass is opening a candidate. Candidate opening stays broader than entry
+creation: under the lock it still suppresses a suggestion that matches any
+readable entry or any candidate, in any state, across tags and projects
+([§5.3](#53-session-pass)). Entry creation uses only `covering_entry`
+(active, same tag, same project).
+
 As built (S2): hashtags at the end of the line, after the tag, are the
 entry's topics, lowercased and deduplicated (more than five is refused as
 `unparsed_instruction`); they are not part of `content`.
@@ -895,7 +930,10 @@ As built (S2): the reply is one line of hook JSON,
 `{"systemMessage": …, "hookSpecificOutput": {"hookEventName":
 "UserPromptSubmit", "additionalContext": …}}`, with one echo line per
 `#scribe` line in prompt order; a prompt without one prints nothing. A
-replayed line echoes `scribe: already recorded <id> in <tag> — "…"`. When
+replayed line echoes `scribe: already recorded <id> in <tag> — "…"`. A
+line whose statement an active entry of the same tag and project already
+covers echoes `scribe: already covered by <id> in <tag> — "…"`, names that
+entry, and writes nothing. When
 the store or `config.toml` cannot be used, each line echoes `scribe: could
 not record "…" — <error>` and the hook still exits 0, so the prompt goes
 through. Quotes in an echo are flattened to one line and cut at 200
@@ -1300,7 +1338,12 @@ a pass; an explicit catalog is still required for past sessions.
   Session-start's open proposal count includes candidates, and `proposal list`
   shows them with their source quote and turn. Only a typed `#scribe approve
   <id>` creates the reserved entry as Daniel's, with the quote as content and
-  the original turn's cite and `content_from: message` (user). `said` records
+  the original turn's cite and `content_from: message` (user). If an active
+  entry of the same tag and project already covers that statement — one
+  added after the candidate opened, for example — approval writes no entry.
+  The proposal closes as `rejected`. Its `newer` stays empty, because a
+  candidate's stored shape requires that, and the reply names the covering
+  id. `said` records
   the canonical approving command; the proposal also keeps the approving
   turn's cite. Previously stored format-10 assistant-turn candidates still
   approve into one agent-authored entry (`{kind: agent, name: assistant}`),
@@ -2518,7 +2561,10 @@ at a shell, and Daniel's ids there come from scribe's own replies.
 
 **As built (S12).** All eight CLI write verbs are implemented, with
 unique entry/proposal prefixes, agent authors, no-op output and audit
-suppression, redaction and locked atomic writes. Daniel entries accept
+suppression, redaction and locked atomic writes. `entry add` of a
+statement an active entry of the same tag and project already covers
+writes nothing and exits 1 with `already_covered`, naming that id, in
+plain text and `--json`. Daniel entries accept
 only metadata patches through the CLI; human hook settlement is unchanged.
 Config and store tags share routing, with source and author in `tag list`.
 The store writes **format 5**, superseding this design's format-4 sketch:
@@ -3004,9 +3050,18 @@ a message id, and the pass checks the quote verbatim against the original
 transcript, as §5.3 does for preferences. The only difference is the
 route: under `route = "write"` the checked claim is written as an active
 `idea` entry in the same locked step that would otherwise open a
-candidate, with no proposal. The duplicate guard, the per-pass bound
-(ORB-25987's 3 ideas per session per invocation, separate from the
-candidate slots) and the stuck-line exemption are as ORB-25987 states.
+candidate, with no proposal. **(b2)** That direct-write path calls the
+shared `covering_entry` check under the store lock before it writes, the
+same check a typed line, `entry add` and candidate approval use. On this
+path the only meaning-level match is the model's exclusion of existing
+statements in the same session-model call (the pass already sends the
+bounded `candidate_exclusions`); the store applies only the lexical check
+and does not call a model again. A paraphrase the model still returns is
+written unless the lexical check catches it. The lexical check does not
+match a short statement against the long raw paragraph it summarizes. The
+per-pass bound (ORB-25987's 3 ideas per session per invocation, separate
+from the candidate slots) and the stuck-line exemption are as ORB-25987
+states.
 
 Two of ORB-25987's points change with this design and need Daniel's
 approval on that task before it is built:
@@ -3033,6 +3088,16 @@ writes the statement as content like a typed approval.
    and `finding` (format 11).
 2. **(b)** The statement on every claim (format 12). ORB-25987, revised as
    in §11.6, follows (b).
+   **(b2)** The pass writing entries itself (`route = "write"`, not an
+   approved or filed proposal) calls the shared `covering_entry` check
+   under the store lock before it writes. On that direct-write path the
+   only meaning-level match is the model's exclusion of existing
+   statements in the same session-model call (the pass already sends the
+   bounded `candidate_exclusions`); the store applies only the lexical
+   check and does not call a model again. A paraphrase the model still
+   returns is written unless the lexical check catches it. The lexical
+   check does not match a short statement against the long raw paragraph
+   it summarizes.
 3. **(c)** Issues (format 13).
 
 Each step is its own task, lands with its `specs/store.md`,

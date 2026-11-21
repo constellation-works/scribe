@@ -162,14 +162,17 @@ pub enum Captured {
     /// An entry for the same `#scribe` line already existed (a retried or
     /// replayed hook); nothing was written.
     Existing(Entry),
+    /// An active entry of the same tag and project already covers the
+    /// statement; nothing was written. The entry is the one that covers it.
+    Covered(Entry),
 }
 
 impl Captured {
-    /// The entry written or found.
+    /// The entry written, replayed or covering.
     #[must_use]
     pub fn entry(&self) -> &Entry {
         match self {
-            Self::Added(entry) | Self::Existing(entry) => entry,
+            Self::Added(entry) | Self::Existing(entry) | Self::Covered(entry) => entry,
         }
     }
 }
@@ -604,11 +607,15 @@ impl Store {
     /// Under the store lock, each draft is checked against the existing
     /// entries by its cite's `(session, prompt_sha256, line)`: a match is
     /// returned as [`Captured::Existing`] and nothing is written, so a
-    /// retried or replayed hook never writes twice. Otherwise the draft gets
-    /// the next id in its tag (one past the highest, counting files that do
-    /// not parse, so a number is never reused), its free text passes
-    /// `redactor`, and it is written with [`fsio::write_atomic`]. Missing
-    /// directories are created owner-only.
+    /// retried or replayed hook never writes twice. Otherwise, after
+    /// redaction, [`crate::pass::covering_entry`] names an active entry of
+    /// the same tag and project whose statement already covers the draft:
+    /// that is [`Captured::Covered`] and nothing is written, and the id is
+    /// not consumed. Otherwise the draft gets the next id in its tag (one
+    /// past the highest, counting files that do not parse, so a number is
+    /// never reused), its free text passes `redactor`, and it is written
+    /// with [`fsio::write_atomic`]. Missing directories are created
+    /// owner-only.
     pub fn capture(&self, drafts: Vec<NewEntry>, redactor: &Redactor) -> Result<Vec<Captured>> {
         if drafts.is_empty() {
             return Ok(Vec::new());
@@ -630,6 +637,13 @@ impl Store {
                 .find(|e| e.cite.as_ref().is_some_and(|c| c.same_line(&draft.cite)))
             {
                 out.push(Captured::Existing(found.clone()));
+                continue;
+            }
+            let content = redactor.mask(&draft.content);
+            if let Some(cover) =
+                crate::pass::covering_entry(&entries, &draft.tag, &draft.project, &content)
+            {
+                out.push(Captured::Covered(cover.clone()));
                 continue;
             }
             let id = EntryId::next_in(&draft.tag, &ids);
@@ -1079,21 +1093,31 @@ impl Store {
             self.write_proposals(&proposals)?;
         }
         if let Settle::Approve(id) = action
-            && let Some(proposal) = proposals.iter().find(|p| {
+            && let Some(index) = proposals.iter().position(|p| {
                 p.id == *id
                     && p.kind == crate::ProposalKind::Candidate
                     && p.state == crate::ProposalState::Approved
             })
-            && self.write_candidate_entry(proposal)?
         {
-            settled = Settled::Recorded {
-                proposal: *id,
-                entry: proposal.older.clone(),
-                agent_authored: proposal
-                    .candidate
-                    .as_ref()
-                    .is_some_and(|c| c.role == crate::Speaker::Assistant),
-            };
+            match self.write_candidate_entry(&proposals[index])? {
+                candidates::CandidateWrite::Created => {
+                    let proposal = &proposals[index];
+                    settled = Settled::Recorded {
+                        proposal: *id,
+                        entry: proposal.older.clone(),
+                        agent_authored: proposal
+                            .candidate
+                            .as_ref()
+                            .is_some_and(|c| c.role == crate::Speaker::Assistant),
+                    };
+                }
+                candidates::CandidateWrite::Present => {}
+                candidates::CandidateWrite::Covered(by) => {
+                    proposals[index].state = crate::ProposalState::Rejected;
+                    self.write_proposals(&proposals)?;
+                    settled = Settled::Covered { proposal: *id, by };
+                }
+            }
         }
         for (entry, before) in entries.iter().zip(&before_entries) {
             if entry != before {

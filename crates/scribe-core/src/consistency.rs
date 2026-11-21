@@ -550,6 +550,16 @@ pub enum Settled {
     Retired(EntryId),
     /// The entry's text was blanked.
     Forgotten(EntryId),
+    /// An open candidate's statement is already covered by an active entry
+    /// of the same tag and project. The proposal is `rejected` and no entry
+    /// was written. `newer` stays empty; `by` is the covering id, named in
+    /// the reply.
+    Covered {
+        /// The candidate proposal.
+        proposal: ProposalId,
+        /// The entry that already covers the statement.
+        by: EntryId,
+    },
     /// It was already so (a replayed instruction): nothing changed.
     Already(String),
     /// It was refused: nothing changed.
@@ -562,7 +572,11 @@ pub enum Settled {
 ///
 /// - approve: an open proposal becomes `approved`, `settled_at` and
 ///   `settled_by` set, and its older entry, which must be `active`, becomes
-///   `superseded` with `superseded_by` (or `retired` for a stale one);
+///   `superseded` with `superseded_by` (or `retired` for a stale one). An
+///   open candidate whose statement an active entry of the same tag and
+///   project already covers becomes `rejected` instead, and no entry is
+///   written. A candidate's `newer` stays empty: the stored shape requires
+///   it, and the reply names the covering id;
 /// - reject: an open proposal becomes `rejected`; its entries stay as they
 ///   are;
 /// - retire: an `active` entry becomes `retired`;
@@ -667,6 +681,21 @@ fn approve(
         ProposalState::Open => {}
     }
     if proposal.kind == ProposalKind::Candidate {
+        if let Some(by) = proposal.candidate.as_ref().and_then(|candidate| {
+            crate::pass::covering_entry(
+                entries,
+                &candidate.tag,
+                &candidate.project,
+                &candidate.quote,
+            )
+            .map(|entry| entry.id.clone())
+        }) {
+            proposal.state = ProposalState::Rejected;
+            proposal.settled_at = Some(now);
+            proposal.settled_by = Some(cite.clone());
+            proposal.settled_author = Some(Author::daniel());
+            return Settled::Covered { proposal: id, by };
+        }
         proposal.state = ProposalState::Approved;
         proposal.settled_at = Some(now);
         proposal.settled_by = Some(cite.clone());

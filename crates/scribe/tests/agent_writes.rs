@@ -74,6 +74,147 @@ fn agent_entry_verbs_record_authors_redact_and_audit_only_changes() {
 }
 
 #[test]
+fn entry_add_refuses_a_statement_an_active_entry_already_covers() {
+    let fx = Fixture::new();
+    let statement = "I prefer short progress updates while an agent is working.";
+    let added = json(
+        &fx.ok(&[
+            "entry",
+            "add",
+            "--tag",
+            "preferences",
+            "--author",
+            "opus",
+            statement,
+            "--json",
+        ])
+        .stdout,
+    );
+    assert_eq!(added["id"], "preferences-1");
+
+    let plain = fx.run(&[
+        "entry", "add", "--tag", "pref", "--author", "opus", statement,
+    ]);
+    assert_eq!(plain.status.code(), Some(1));
+    assert!(
+        text(&plain.stderr).contains("error: already covered by preferences-1; nothing written"),
+        "{}",
+        text(&plain.stderr)
+    );
+
+    let out = fx.run(&[
+        "entry",
+        "add",
+        "--tag",
+        "preferences",
+        "--author",
+        "opus",
+        statement,
+        "--json",
+    ]);
+    assert_eq!(out.status.code(), Some(1));
+    let err = json(&out.stderr);
+    assert_eq!(err["code"], "already_covered", "{err}");
+    assert_eq!(
+        err["error"], "already covered by preferences-1; nothing written",
+        "{err}"
+    );
+    assert_eq!(
+        json(&fx.ok(&["entry", "list", "--json"]).stdout)["total"],
+        1
+    );
+    let audit = std::fs::read_to_string(fx.root().join("audit.jsonl")).unwrap();
+    assert!(audit.contains("already_covered"), "{audit}");
+    assert!(!audit.contains(statement), "{audit}");
+
+    fx.ok(&[
+        "entry", "add", "--tag", "idea", "--author", "opus", statement,
+    ]);
+    fx.ok(&[
+        "entry",
+        "add",
+        "--tag",
+        "preferences",
+        "--project",
+        "scribe",
+        "--author",
+        "opus",
+        statement,
+    ]);
+    assert_eq!(
+        json(&fx.ok(&["entry", "list", "--json"]).stdout)["total"],
+        3
+    );
+
+    fx.ok(&[
+        "entry",
+        "retire",
+        "preferences-1",
+        "--author",
+        "opus",
+        "--reason",
+        "obsolete",
+    ]);
+    let retired = json(
+        &fx.ok(&[
+            "entry",
+            "add",
+            "--tag",
+            "preferences",
+            "--author",
+            "opus",
+            statement,
+            "--json",
+        ])
+        .stdout,
+    );
+    assert_eq!(retired["id"], "preferences-3");
+
+    fx.ok(&[
+        "entry",
+        "add",
+        "--tag",
+        "preferences",
+        "--author",
+        "opus",
+        "Use spaces in every new file.",
+    ]);
+    fx.ok(&[
+        "proposal",
+        "add",
+        "--kind",
+        "supersedes",
+        "--older",
+        "preferences-3",
+        "--newer",
+        "preferences-4",
+        "--reason",
+        "replacement",
+        "--author",
+        "opus",
+    ]);
+    fx.ok(&["proposal", "settle", "p-1", "--approve", "--author", "opus"]);
+    let superseded = json(
+        &fx.ok(&[
+            "entry",
+            "add",
+            "--tag",
+            "preferences",
+            "--author",
+            "opus",
+            statement,
+            "--json",
+        ])
+        .stdout,
+    );
+    assert_eq!(superseded["id"], "preferences-5");
+    assert_eq!(
+        json(&fx.ok(&["entry", "show", "preferences-3", "--json"]).stdout)["status"],
+        "superseded"
+    );
+}
+
+#[test]
 fn daniel_guards_preserve_records_but_allow_metadata_and_open_proposals() {
     let fx = Fixture::new();
     fx.seed();
@@ -1219,8 +1360,23 @@ fn the_fourth_finding_of_a_session_is_refused_and_names_the_cap() {
         "{}",
         text(&out.stderr)
     );
-    // Another session still has its own budget.
-    let out = add("s-other", 1);
+    // Another session still has its own budget. The words are not a repeat
+    // of an active finding: the same statement is already_covered by tag
+    // and project, which is a different refusal from this cap.
+    let out = fx.run(&[
+        "entry",
+        "add",
+        "--tag",
+        "finding",
+        "--author",
+        "opus",
+        "--related",
+        "session:s-other",
+        "--evidence",
+        "exp-1",
+        "A later session measured a different widget-cache miss rate",
+        "--json",
+    ]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     let list = json(
         &fx.ok(&["entry", "list", "--tag", "finding", "--json"])

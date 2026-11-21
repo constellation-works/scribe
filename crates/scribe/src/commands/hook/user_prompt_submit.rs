@@ -331,16 +331,18 @@ fn capture_prompt<M: Models>(
             draft.cite.message = Some(recovery.message.uuid.clone());
         }
     }
+    // Key each result by the draft's line. A covered statement names the
+    // existing entry, whose cite is a different line, so the entry's own
+    // cite cannot find the line that was just typed.
+    let lines: Vec<u32> = drafts.iter().map(|draft| draft.cite.line).collect();
     let stored = ctx.store().capture(drafts, &redactor);
 
     let mut captured: BTreeMap<u32, Captured> = BTreeMap::new();
     let mut store_error: Option<scribe_core::Error> = None;
     match stored {
         Ok(results) => {
-            for result in results {
-                if let Some(cite) = &result.entry().cite {
-                    captured.insert(cite.line, result);
-                }
+            for (line, result) in lines.into_iter().zip(results) {
+                captured.insert(line, result);
             }
         }
         Err(err) => store_error = Some(err),
@@ -396,6 +398,7 @@ fn capture_prompt<M: Models>(
                     });
                 }
                 (Some(Captured::Existing(entry)), _) => echoes.push(Echo::recorded(already(entry))),
+                (Some(Captured::Covered(entry)), _) => echoes.push(Echo::recorded(covered(entry))),
                 (None, Some(err)) => {
                     echoes.push(Echo::not_recorded(format!(
                         "scribe: could not record \"{}\" — {}",
@@ -423,6 +426,15 @@ fn previous(entry: &Entry) -> &'static str {
 fn already(entry: &Entry) -> String {
     format!(
         "scribe: already recorded {} in {} — \"{}\"",
+        entry.id,
+        entry.tag,
+        quote(&entry.content)
+    )
+}
+
+fn covered(entry: &Entry) -> String {
+    format!(
+        "scribe: already covered by {} in {} — \"{}\"",
         entry.id,
         entry.tag,
         quote(&entry.content)

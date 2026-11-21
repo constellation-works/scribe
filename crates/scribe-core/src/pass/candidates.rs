@@ -5,8 +5,8 @@
 use crate::models::{EntryCandidateAnswer, FiringTurn, PassMessage, SessionRequest, TagCriteria};
 use crate::tag::{TagDef, TagTable};
 use crate::{
-    Admitted, Cite, Entry, EntryCandidate, Proposal, SessionRecord, Speaker, TagName, transcript,
-    trigger, verbatim,
+    Admitted, Cite, Entry, EntryCandidate, EntryStatus, Project, Proposal, SessionRecord, Speaker,
+    TagName, transcript, trigger, verbatim,
 };
 use std::collections::BTreeSet;
 
@@ -218,9 +218,16 @@ fn words(text: &str) -> BTreeSet<String> {
         .collect()
 }
 
-/// Conservative lexical duplicate check: normalized containment, equal word
-/// sets, or at least 80% Jaccard overlap. Meaning-level deduplication is also
-/// requested from the model using the relevant existing statements.
+/// The one lexical duplicate definition: normalized containment, equal word
+/// sets, or at least 80% Jaccard overlap when both sides have at least four
+/// words. Empty text matches nothing.
+///
+/// Entry creation calls [`covering_entry`], which keeps an active entry of
+/// the same tag and project. Opening a candidate calls this directly and
+/// stays broader: any readable entry and any prior candidate, in any state,
+/// across tags and projects. Meaning-level deduplication is also requested
+/// from the model, using the relevant existing statements, and only on that
+/// candidate path.
 #[must_use]
 pub(crate) fn same_statement(a: &str, b: &str) -> bool {
     let a = verbatim::normalize(a).trim().to_lowercase();
@@ -235,6 +242,29 @@ pub(crate) fn same_statement(a: &str, b: &str) -> bool {
     let b = words(&b);
     a == b
         || (a.len().min(b.len()) >= 4 && a.intersection(&b).count() * 5 >= a.union(&b).count() * 4)
+}
+
+/// The active entry of `tag` and `project` whose content already covers
+/// `statement`, if any. Oldest `created`, then id. Retired, superseded and
+/// forgotten entries do not cover. This is the check every path that creates
+/// an entry runs under the store lock; it calls [`same_statement`] and
+/// nothing else.
+#[must_use]
+pub(crate) fn covering_entry<'a>(
+    entries: &'a [Entry],
+    tag: &TagName,
+    project: &Project,
+    statement: &str,
+) -> Option<&'a Entry> {
+    entries
+        .iter()
+        .filter(|entry| {
+            entry.status == EntryStatus::Active
+                && &entry.tag == tag
+                && &entry.project == project
+                && same_statement(&entry.content, statement)
+        })
+        .min_by(|a, b| a.created.cmp(&b.created).then_with(|| a.id.cmp(&b.id)))
 }
 
 /// Relevant existing statements, at most 6,000 value characters (400 each).
