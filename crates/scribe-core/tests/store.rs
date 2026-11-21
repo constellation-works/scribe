@@ -147,11 +147,11 @@ fn a_record_from_a_newer_build_is_refused_not_rewritten() {
     let path = store.entry_path(&"decisions-2".parse().unwrap());
     let text = fs::read_to_string(&path)
         .unwrap()
-        .replace("format: 1", "format: 16");
+        .replace("format: 1", "format: 17");
     fs::write(&path, &text).unwrap();
     let err = store.list_entries(&EntryFilter::default()).unwrap_err();
     assert!(
-        matches!(err, Error::NewerFormat { found: 16, .. }),
+        matches!(err, Error::NewerFormat { found: 17, .. }),
         "got {err:?}"
     );
     assert_eq!(err.code(), "store_too_new");

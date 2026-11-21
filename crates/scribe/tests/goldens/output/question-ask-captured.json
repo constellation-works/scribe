@@ -1,0 +1,28 @@
+{
+  "status": "answered",
+  "answer": "Daniel (captured by the session pass): \"what if we cached the routing table per host?\" [idea-1]\nscribe's statement of Daniel's turn, captured by the session pass (not typed by Daniel): \"caching the routing table per host\" [idea-1]\nDaniel: \"a dry-run flag for the session pass\" [idea-2]",
+  "claims": [
+    {
+      "text": "Daniel (captured by the session pass)",
+      "quote": "what if we cached the routing table per host?",
+      "cite": "idea-1"
+    },
+    {
+      "text": "scribe's statement of Daniel's turn, captured by the session pass (not typed by Daniel)",
+      "quote": "caching the routing table per host",
+      "cite": "idea-1"
+    },
+    {
+      "text": "Daniel",
+      "quote": "a dry-run flag for the session pass",
+      "cite": "idea-2"
+    }
+  ],
+  "conflicts": [],
+  "evidence_considered": 2,
+  "dropped_quotes": 0,
+  "hidden_matches": 0,
+  "lookup": null,
+  "records": [],
+  "warnings": []
+}

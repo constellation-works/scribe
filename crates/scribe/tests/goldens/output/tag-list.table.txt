@@ -1,6 +1,6 @@
 NAME         ENTRIES  STALE DAYS  ALIASES          DESCRIPTION                                                       SOURCE  ACTION      RETIRED  REJECTED  ROUTE
 decisions          2           -  -                -                                                                 -       -                 -         -  -
-idea               0           -  -                a future consideration worth revisiting                           config  free              0         0  propose
+idea               0           -  -                a future consideration worth revisiting                           config  free              0         0  write
 preferences        1         180  preference,pref  how Daniel likes things done                                      config  -                 -         -  propose
 rituals            1           -  -                -                                                                 -       -                 -         -  -
 standard           0           -  -                a rule change for the constellation standards, in Daniel's words  config  free,quote        0         0  -

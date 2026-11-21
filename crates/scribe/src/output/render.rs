@@ -358,6 +358,22 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
             if let (Some(by), Some(quote)) = (&entry.stated_by, &entry.quote) {
                 writeln!(out, "stated_by\t{}\t{}", author(by), one_line(quote))?;
             }
+            // An idea the pass captured: where it stands, then the parking
+            // words or the task (`-` for neither).
+            if let Some(outcome) = &entry.outcome {
+                writeln!(
+                    out,
+                    "outcome\t{}\t{}",
+                    outcome.state,
+                    one_line(
+                        outcome
+                            .reason
+                            .as_deref()
+                            .or(outcome.task.as_deref())
+                            .unwrap_or("-")
+                    )
+                )?;
+            }
             if let Some(a) = &entry.admitted {
                 writeln!(
                     out,
@@ -622,24 +638,31 @@ pub(super) fn entry_metadata(out: &mut dyn Write, e: &EntryPayload, color: bool)
     }
     field(out, "author", &author(&e.author))?;
     if let Some(by) = &e.stated_by {
+        let whose = if e.outcome.is_some() {
+            scribe_core::ask::CAPTURED_WHOSE
+        } else {
+            scribe_core::ask::STATED_WHOSE
+        };
         field(
             out,
             "stated_by",
-            &format!(
-                "{} (content is {})",
-                author(by),
-                scribe_core::ask::STATED_WHOSE
-            ),
+            &format!("{} (content is {whose})", author(by)),
         )?;
     }
     if let Some(quote) = &e.quote {
         field(out, "quote", quote)?;
+    }
+    if let Some(outcome) = &e.outcome {
+        field(out, "outcome", &scribe_core::ask::outcome_text(outcome))?;
     }
     if let Some(a) = &e.admitted {
         field(out, "admitted", &admitted(a))?;
     }
     if let Some(action) = &e.action {
         let cancel = match (action.cancel_window_ends, action.past_cancel_window) {
+            (None, _) if e.author.kind == "scribe" => {
+                String::from("none (written by scribe, not an agent)")
+            }
             (None, _) => String::from("none (Daniel's own line)"),
             (Some(ends), true) => format!("ended {}", timestamp(ends)),
             (Some(ends), false) => format!("open until {}", timestamp(ends)),

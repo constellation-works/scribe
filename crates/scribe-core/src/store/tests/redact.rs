@@ -76,6 +76,17 @@ fn session_with_term() -> SessionRecord {
     s
 }
 
+/// An outcome with both free-text fields set, so both are listed. No
+/// stored entry holds both (each state allows one); the redactor's field
+/// list does not depend on the state.
+fn outcome() -> crate::Outcome {
+    crate::Outcome {
+        state: crate::OutcomeState::Parked,
+        reason: Some(String::new()),
+        task: Some(String::new()),
+    }
+}
+
 #[test]
 fn the_redacted_field_inventory_is_exactly_the_fields_masked() {
     // A new free-text field must join both REDACTED_FIELDS and its record's
@@ -90,6 +101,7 @@ fn the_redacted_field_inventory_is_exactly_the_fields_masked() {
         at: T0,
         quote: Some(String::new()),
     });
+    e.outcome = Some(outcome());
     e.window = Some(crate::Window {
         turns: vec![crate::WindowTurn {
             role: crate::Speaker::User,
@@ -131,6 +143,7 @@ fn a_configured_secret_is_masked_in_every_covered_field() {
         at: T0,
         quote: Some(String::new()),
     });
+    e.outcome = Some(outcome());
     for (_, text) in entry_fields(&mut e) {
         *text = leak.clone();
     }

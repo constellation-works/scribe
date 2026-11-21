@@ -450,8 +450,10 @@ fn a_window_where_no_daniel_turn_fires_a_trigger_requests_no_claims() {
 }
 
 #[test]
-fn a_firing_turn_is_named_with_its_tag_and_trigger_and_idea_still_proposes() {
+fn a_firing_turn_is_named_with_its_tag_and_trigger_and_idea_configured_to_propose_proposes() {
     let s = Setup::new();
+    // Config can put `idea` back on the candidate route.
+    s.config("[tags.idea.capture]\nroute = \"propose\"\n");
     let idea = "What if we cached the routing table per host?";
     s.write(
         ON,
@@ -466,15 +468,16 @@ fn a_firing_turn_is_named_with_its_tag_and_trigger_and_idea_still_proposes() {
     let prompt = &s.prompts()[0];
     assert!(
         prompt.contains(
-            "- message u-idea: tag idea (trigger \"what if we\", matched \"What if we\")"
+            "- message u-idea: tag idea (proposed; trigger \"what if we\", matched \"What if we\")"
         ),
         "{prompt}"
     );
     assert!(!prompt.contains("message u-plain"), "{prompt}");
     assert!(
-        prompt.contains("- idea: qualifies: Daniel puts forward something to consider"),
+        prompt.contains("- idea: qualifies: Daniel proposes something that could be built"),
         "{prompt}"
     );
+    assert!(!prompt.contains("under written tags:"), "{prompt}");
     let listed = proposals(&s);
     assert_eq!(listed["total"], 1, "{listed}");
     let p = &listed["proposals"][0];
@@ -1642,7 +1645,7 @@ fn legacy_control_is_read_without_writes_and_new_retry_state_is_strict() {
     );
     setup.pass();
     let current: Value = serde_json::from_slice(&setup.control_bytes()).unwrap();
-    assert_eq!(current["format"], 15);
+    assert_eq!(current["format"], 16);
     assert_eq!(current["sessions"][ON]["consecutive_failures"], 0);
     assert_eq!(current["sessions"][ON]["retry_after"], Value::Null);
     assert_eq!(current["sessions"][ON]["pending_links"], json!([]));
@@ -1898,10 +1901,10 @@ fn a_pass_writes_one_record_of_daniels_terms_and_never_reads_a_session_never_swi
         json!([{"term": "graduate to level 4", "said": DEFINED, "message": "u-1"}])
     );
     assert!(!setup.fx.root().join("entries").exists(), "no entries");
-    // The record is written at format 15: a header and one open segment
+    // The record is written at format 16: a header and one open segment
     // holding this pass's segment text.
     let file = std::fs::read_to_string(setup.record_file()).unwrap();
-    assert!(file.starts_with("---\nformat: 15\n"), "{file}");
+    assert!(file.starts_with("---\nformat: 16\n"), "{file}");
     assert!(file.contains("\n## Log\n### 1. "), "{file}");
     assert!(!file.contains("## Outcome"), "{file}");
     assert_eq!(record["active"], true);
@@ -4189,5 +4192,427 @@ fn a_claim_whose_statement_an_entry_already_says_opens_nothing() {
         proposals(&s)["total"],
         0,
         "the statement is already recorded"
+    );
+}
+
+// --- ideas the pass writes itself (2_design.md §11.6) -----------------------
+
+/// An `idea` claim as the model returns it for a written tag.
+fn idea_claim(quote: &str, message: &str, statement: &str) -> Value {
+    json!({"quote": quote, "message": message, "tag": "idea",
+           "statement": statement, "subject": "the routing table", "outcome": "open"})
+}
+
+fn entries_json(s: &Setup, args: &[&str]) -> Value {
+    let mut all = vec!["entry", "list", "--json"];
+    all.extend_from_slice(args);
+    serde_json::from_slice(&s.fx.ok(&all).stdout).unwrap()
+}
+
+#[test]
+fn the_pass_writes_daniels_idea_itself_as_an_entry_it_authors_with_no_proposal() {
+    let s = Setup::new();
+    let idea = "What if we cached the routing table per host so lookups stay local?";
+    let statement = "Daniel suggests caching the routing table per host so lookups stay local.";
+    s.write(
+        ON,
+        &[
+            line("user", "u-plain", "Please look at the routing table."),
+            line("user", "u-idea", idea),
+        ],
+    );
+    let mut body = answer();
+    body["candidates"] = json!([idea_claim(idea, "u-idea", statement)]);
+    s.answer(&body);
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+
+    // The request names the turn under the written tag, and gives the
+    // tag's definition and the written-tag rules.
+    let prompt = &s.prompts()[0];
+    assert!(
+        prompt.contains(
+            "- message u-idea: tag idea (written; trigger \"what if we\", matched \"What if we\")"
+        ),
+        "{prompt}"
+    );
+    assert!(!prompt.contains("message u-plain"), "{prompt}");
+    assert!(
+        prompt.contains("- idea: qualifies: Daniel proposes something that could be built"),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains("Already recorded under written tags: []"),
+        "{prompt}"
+    );
+
+    // No proposal: one active entry, the statement as content, his span
+    // as quote, authored and stated by the pass, outcome open.
+    assert_eq!(proposals(&s)["total"], 0);
+    let listed = entries_json(&s, &["--tag", "idea"]);
+    assert_eq!(listed["total"], 1, "{listed}");
+    let shown: Value =
+        serde_json::from_slice(&s.fx.ok(&["entry", "show", "idea-1", "--json"]).stdout).unwrap();
+    assert_eq!(shown["status"], "active");
+    assert_eq!(shown["content"], statement);
+    assert_eq!(shown["quote"], idea);
+    assert_eq!(shown["said"], "");
+    assert_eq!(
+        shown["author"],
+        json!({"kind": "scribe", "name": "session-pass"})
+    );
+    assert_eq!(
+        shown["stated_by"],
+        json!({"kind": "scribe", "name": "session-pass"})
+    );
+    assert_eq!(shown["content_from"]["role"], "user");
+    assert_eq!(shown["cite"]["message"], "u-idea");
+    assert_eq!(
+        shown["outcome"],
+        json!({"state": "open", "reason": null, "task": null})
+    );
+
+    // Never listed as Daniel's own; listed under the pass's channel.
+    assert_eq!(
+        entries_json(&s, &["--tag", "idea", "--author-kind", "daniel"])["total"],
+        0
+    );
+    assert_eq!(
+        entries_json(&s, &["--tag", "idea", "--author-kind", "scribe"])["total"],
+        1
+    );
+
+    // `entry show` says the pass captured it, in plain and table form.
+    let plain = text(&s.fx.ok(&["entry", "show", "idea-1"]).stdout);
+    assert!(plain.lines().any(|l| l == "outcome\topen\t-"), "{plain}");
+    assert!(
+        plain
+            .lines()
+            .any(|l| l == format!("stated_by\tscribe:session-pass\t{idea}")),
+        "{plain}"
+    );
+    let table = text(
+        &s.fx
+            .ok(&["entry", "show", "idea-1", "--format", "table"])
+            .stdout,
+    );
+    assert!(
+        table.contains("captured by the session pass (not typed by Daniel)"),
+        "{table}"
+    );
+
+    // One audit line for the session and one for the idea written.
+    let audit = audit_log(&s);
+    assert!(
+        audit
+            .iter()
+            .any(|l| l["command"] == "session pass" && l["target"] == "idea-1"),
+        "{audit:?}"
+    );
+}
+
+#[test]
+fn a_parked_idea_keeps_daniels_words_and_one_that_became_a_task_writes_nothing() {
+    let s = Setup::new();
+    let sharding = "What if we sharded the audit log by month?";
+    let dry_run = "Here's an idea: a dry-run flag for the session pass.";
+    let popup = "What if we dropped the popup preview entirely?";
+    let parked = "let's park the sharding idea until the log is big";
+    s.write(
+        ON,
+        &[
+            line("user", "u-1", sharding),
+            line("user", "u-2", dry_run),
+            line("assistant", "a-1", "Filed ORB-4242 for the dry-run flag."),
+            line("user", "u-3", &format!("ok, {parked}.")),
+            line("user", "u-4", popup),
+        ],
+    );
+    let mut body = answer();
+    body["candidates"] = json!([
+        {"quote": sharding, "message": "u-1", "tag": "idea", "subject": "the audit log",
+         "statement": "Daniel suggests sharding the audit log by month.",
+         "outcome": "parked", "outcome_said": parked, "outcome_message": "u-3"},
+        {"quote": dry_run, "message": "u-2", "tag": "idea", "subject": "session pass",
+         "statement": "Daniel suggests a dry-run flag for the session pass.",
+         "outcome": "task", "task": "ORB-4242"},
+        // Parking words that are not his, verbatim: written open.
+        {"quote": popup, "message": "u-4", "tag": "idea", "subject": "the tmux popup",
+         "statement": "Daniel suggests dropping the tmux popup's preview.",
+         "outcome": "parked", "outcome_said": "drop it for now", "outcome_message": "u-4"}
+    ]);
+    s.answer(&body);
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let listed = entries_json(&s, &["--tag", "idea"]);
+    let entries = listed["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 2, "the task became a task: {listed}");
+    assert_eq!(entries[0]["quote"], sharding);
+    assert_eq!(
+        entries[0]["outcome"],
+        json!({"state": "parked", "reason": parked, "task": null})
+    );
+    assert_eq!(entries[1]["quote"], popup);
+    assert_eq!(entries[1]["outcome"]["state"], "open");
+    assert!(
+        entries
+            .iter()
+            .all(|e| e["quote"] != dry_run && e["content"] != dry_run)
+    );
+    let plain = text(&s.fx.ok(&["entry", "show", "idea-1"]).stdout);
+    assert!(
+        plain
+            .lines()
+            .any(|l| l == format!("outcome\tparked\t{parked}")),
+        "{plain}"
+    );
+
+    // Forgetting it blanks his parking words with the rest of his words.
+    let out = type_settlement(&s, "#scribe forget idea-1");
+    assert_eq!(out.status.code(), Some(0));
+    let forgotten: Value =
+        serde_json::from_slice(&s.fx.ok(&["entry", "show", "idea-1", "--json"]).stdout).unwrap();
+    assert_eq!(forgotten["status"], "forgotten");
+    assert_eq!(
+        forgotten["outcome"],
+        json!({"state": "parked", "reason": null, "task": null})
+    );
+    assert_eq!(forgotten["quote"], Value::Null);
+}
+
+#[test]
+fn an_assistant_turn_never_produces_an_idea_entry() {
+    let s = Setup::new();
+    let suggestion = "What if we cached the routing table per host instead?";
+    s.write(
+        ON,
+        &[
+            line("user", "u-1", "What if we looked at the routing next?"),
+            line("assistant", "a-1", suggestion),
+        ],
+    );
+    let mut body = answer();
+    body["candidates"] = json!([
+        idea_claim(
+            suggestion,
+            "a-1",
+            "The assistant suggests a per-host cache."
+        ),
+        // Named under Daniel's firing turn, but the words are the assistant's.
+        idea_claim(
+            suggestion,
+            "u-1",
+            "The assistant suggests a per-host cache."
+        )
+    ]);
+    s.answer(&body);
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let prompt = &s.prompts()[0];
+    assert!(!prompt.contains("message a-1: tag"), "{prompt}");
+    assert_eq!(entries_json(&s, &["--tag", "idea"])["total"], 0);
+    assert_eq!(proposals(&s)["total"], 0);
+}
+
+#[test]
+fn a_fourth_idea_in_one_pass_is_not_written_and_proposals_keep_their_own_slots() {
+    let s = Setup::new();
+    let ideas = [
+        "What if we cached the routing table per host?",
+        "What if we sharded the audit log by month?",
+        "What if we added a dry-run flag to the pass?",
+        "What if we dropped the popup preview entirely?",
+    ];
+    let preference = "I prefer short progress updates while an agent is working.";
+    let mut lines: Vec<Value> = ideas
+        .iter()
+        .enumerate()
+        .map(|(n, idea)| line("user", &format!("u-{n}"), idea))
+        .collect();
+    lines.push(line("user", "u-pref", preference));
+    s.write(ON, &lines);
+    let mut claims: Vec<Value> = ideas
+        .iter()
+        .enumerate()
+        .map(|(n, idea)| {
+            idea_claim(
+                idea,
+                &format!("u-{n}"),
+                &format!(
+                    "Daniel suggests: {}",
+                    idea.trim_start_matches("What if we ")
+                ),
+            )
+        })
+        .collect();
+    claims.push(json!({"quote": preference, "message": "u-pref", "tag": "preferences"}));
+    let mut body = answer();
+    body["candidates"] = json!(claims);
+    s.answer(&body);
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let prompt = &s.prompts()[0];
+    assert!(
+        prompt.contains(
+            "at most 3 in this window under proposed tags and at most 3 under written tags"
+        ),
+        "{prompt}"
+    );
+    let listed = entries_json(&s, &["--tag", "idea"]);
+    let quotes: Vec<&str> = listed["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["quote"].as_str().unwrap())
+        .collect();
+    assert_eq!(quotes, ideas[..3].to_vec());
+    // The preference still opens its candidate: its slots are its own.
+    let open = proposals(&s);
+    assert_eq!(open["total"], 1, "{open}");
+    assert_eq!(open["proposals"][0]["candidate"]["tag"], "preferences");
+}
+
+#[test]
+fn ideas_an_earlier_window_drafted_but_did_not_write_leave_later_windows_their_slots() {
+    // One message per window. In each of the first three, Daniel's idea
+    // became a task in his own turn, so the drafted idea writes nothing;
+    // the fourth window's idea must still be requested and written, since
+    // only ideas the store wrote spend the pass's three write slots.
+    let s = Setup::new();
+    let filed = [
+        "What if we sharded the audit log by month? I filed ORB-4241 for it.",
+        "What if we added a dry-run flag to the pass? I filed ORB-4242 for it.",
+        "What if we dropped the popup preview? I filed ORB-4243 for it.",
+    ];
+    let open = "What if we cached the routing table per host?";
+    let mut lines: Vec<Value> = filed
+        .iter()
+        .enumerate()
+        .map(|(n, idea)| line("user", &format!("u-{n}"), idea))
+        .collect();
+    lines.push(line("user", "u-open", open));
+    s.write(ON, &lines);
+    let mut answers: Vec<Option<Value>> = filed
+        .iter()
+        .enumerate()
+        .map(|(n, idea)| {
+            let mut claim = idea_claim(
+                idea,
+                &format!("u-{n}"),
+                &format!("Daniel suggests idea {n}, now a task."),
+            );
+            claim["outcome"] = json!("task");
+            claim["task"] = json!(format!("ORB-424{}", n + 1));
+            let mut body = answer();
+            body["candidates"] = json!([claim]);
+            Some(body)
+        })
+        .collect();
+    let mut last = answer();
+    last["candidates"] = json!([idea_claim(
+        open,
+        "u-open",
+        "Daniel suggests caching the routing table per host."
+    )]);
+    answers.push(Some(last));
+    s.answers(&answers);
+    s.scribe("/scribe on");
+    s.config("[catalog]\nwindow_messages = 1\n");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let prompts = s.prompts();
+    assert_eq!(prompts.len(), 4);
+    assert!(
+        prompts[3].contains("at most 3 under written tags"),
+        "{}",
+        prompts[3]
+    );
+    let listed = entries_json(&s, &["--tag", "idea"]);
+    assert_eq!(listed["total"], 1, "{listed}");
+    assert_eq!(listed["entries"][0]["quote"], open);
+}
+
+#[test]
+fn an_idea_an_active_entry_already_covers_is_not_written_and_ideas_are_sent_as_exclusions() {
+    let s = Setup::new();
+    let idea = "What if we cached the routing table per host so lookups stay local?";
+    let statement = "Daniel suggests caching the routing table per host so lookups stay local.";
+    s.write(ON, &[line("user", "u-1", idea)]);
+    let mut body = answer();
+    body["candidates"] = json!([idea_claim(idea, "u-1", statement)]);
+    s.answer(&body);
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    assert_eq!(entries_json(&s, &["--tag", "idea"])["total"], 1);
+
+    // Later in the session he floats it again: once in the same words, once
+    // paraphrased with the statement the model gives the same.
+    let again =
+        "What if we cached the routing table per host so lookups stay local? Still worth it.";
+    let paraphrase = "What if we kept a per-host copy of the routing table?";
+    s.append(
+        ON,
+        &[line("user", "u-2", again), line("user", "u-3", paraphrase)],
+    );
+    let mut body = answer();
+    body["candidates"] = json!([
+        idea_claim(
+            idea,
+            "u-2",
+            "Daniel again suggests a per-host routing table cache."
+        ),
+        idea_claim(paraphrase, "u-3", statement)
+    ]);
+    s.answer(&body);
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    assert_eq!(
+        entries_json(&s, &["--tag", "idea"])["total"],
+        1,
+        "the quote and the statement are each covered by idea-1"
+    );
+    // The existing idea went to the model as an exclusion, statement and
+    // his words.
+    let prompts = s.prompts();
+    let second = prompts.last().unwrap();
+    let excluded = format!(
+        "Already recorded under written tags: [\"{statement} (Daniel's words: \\\"{idea}\\\")\"]"
+    );
+    assert!(second.contains(&excluded), "{second}");
+}
+
+#[test]
+fn the_session_start_stuck_line_does_not_count_pass_captured_ideas() {
+    let s = Setup::new();
+    let idea = "What if we cached the routing table per host so lookups stay local?";
+    s.write(ON, &[line("user", "u-1", idea)]);
+    let mut body = answer();
+    body["candidates"] = json!([idea_claim(
+        idea,
+        "u-1",
+        "Daniel suggests caching the routing table per host."
+    )]);
+    s.answer(&body);
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    // Older than the stuck threshold, and nobody picked it up.
+    let path = s.fx.root().join("entries/idea/idea-1.md");
+    let file = std::fs::read_to_string(&path).unwrap();
+    let file: String = file
+        .lines()
+        .map(|l| {
+            if l.starts_with("created: ") {
+                String::from("created: 2026-01-01T00:00:00Z\n")
+            } else {
+                format!("{l}\n")
+            }
+        })
+        .collect();
+    std::fs::write(&path, file).unwrap();
+    let mut payload = s.payload("SessionStart");
+    payload["source"] = json!("startup");
+    let out = s.hook("session-start", &payload);
+    assert!(
+        !text(&out.stdout).contains("not picked up"),
+        "{}",
+        text(&out.stdout)
     );
 }

@@ -1009,7 +1009,8 @@ run the gate before every push
         .replace("inactive_since: null\n", "")
         .replace("approved_by: null\n", "")
         .replace("instruction: null\n", "")
-        .replace("stated_by: null\n", "");
+        .replace("stated_by: null\n", "")
+        .replace("outcome: null\n", "");
     assert_eq!(entry(&stripped_entry).unwrap(), decoded_entry);
 
     // Format-11 entries must reject later keys.
@@ -1625,7 +1626,8 @@ fn a_format_thirteen_store_upgrades_with_null_statement_subject_and_stated_by_on
     assert!(encoded.contains("\nstated_by: null\n"), "{encoded}");
     let back = encoded
         .replacen(&format!("format: {FORMAT}\n"), "format: 13\n", 1)
-        .replace("stated_by: null\n", "");
+        .replace("stated_by: null\n", "")
+        .replace("outcome: null\n", "");
     assert_eq!(entry(&back).unwrap(), decoded);
     // Local YAML tags on a format-13 string survive the upgrade.
     let tagged = format_thirteen_entry("", "!local scribe");
@@ -1714,6 +1716,7 @@ as_of: null
 approved_by: null
 instruction: null
 stated_by: {stated_by}
+outcome: null
 ---
 {body}
 ",
@@ -1883,14 +1886,117 @@ fn an_instructed_approval_entry_rereads_at_format_15_and_is_refused_at_14() {
         let bytes = crate::store::format::encode_entry(Path::new(ENTRY), &e).unwrap();
         let text = String::from_utf8(bytes).unwrap();
         assert_eq!(entry(&text).unwrap(), e, "{role}");
-        // A format-14 reader never admitted the command as `said`.
-        let old = text.replacen(&format!("format: {FORMAT}\n"), "format: 14\n", 1);
+        // Format 15 (no `outcome` yet) admitted the command as `said`; a
+        // format-14 reader never did.
+        let fifteen = text
+            .replacen(&format!("format: {FORMAT}\n"), "format: 15\n", 1)
+            .replace("outcome: null\n", "");
+        assert_eq!(entry(&fifteen).unwrap(), e, "{role}");
+        let old = fifteen.replacen("format: 15\n", "format: 14\n", 1);
         corrupt_message(&entry(&old).unwrap_err());
         // Nor does this one without `approved_by`.
         let mut unattributed = e.clone();
         unattributed.approved_by = None;
         let bytes = crate::store::format::encode_entry(Path::new(ENTRY), &unattributed).unwrap();
         corrupt_message(&entry(&String::from_utf8(bytes).unwrap()).unwrap_err());
+    }
+}
+
+/// An entry the session pass wrote itself (format 15), built from a stated
+/// entry: the pass is its author, `said` is empty and it has `outcome`. The
+/// store checks the shape, not the tag, so the helper's path is kept.
+fn captured_entry(status: &str, quote: &str, outcome: &str, body: &str) -> String {
+    let pass = "{kind: scribe, name: session-pass}";
+    stated_entry(status, quote, "", pass, body)
+        .replace(
+            "author: {kind: daniel, name: daniel}",
+            &format!("author: {pass}"),
+        )
+        .replace("outcome: null", &format!("outcome: {outcome}"))
+}
+
+#[test]
+fn a_captured_idea_round_trips_with_its_outcome_and_contradictions_are_refused() {
+    let statement = "Daniel suggests caching the routing table per host.";
+    let parked = "{state: parked, reason: \"not now\", task: null}";
+    let open = "{state: open, reason: null, task: null}";
+    let ok = captured_entry(
+        "active",
+        "\"cache it per host? not now\"",
+        parked,
+        statement,
+    );
+    let e = entry(&ok).unwrap();
+    assert_eq!(e.author, crate::Author::session_pass());
+    let outcome = e.outcome.clone().unwrap();
+    assert_eq!(outcome.state, crate::OutcomeState::Parked);
+    assert_eq!(outcome.reason.as_deref(), Some("not now"));
+    let encoded = crate::store::format::encode_entry(Path::new(ENTRY), &e).unwrap();
+    assert_eq!(entry(std::str::from_utf8(&encoded).unwrap()).unwrap(), e);
+    // Forgotten: blank, the quote and the parked words cleared, the state kept.
+    let forgotten = captured_entry(
+        "forgotten",
+        "null",
+        "{state: parked, reason: null, task: null}",
+        "",
+    );
+    let f = entry(&forgotten).unwrap();
+    assert_eq!(f.outcome.unwrap().state, crate::OutcomeState::Parked);
+
+    for (label, bad) in [
+        (
+            "no outcome",
+            captured_entry("active", "\"x\"", "null", statement),
+        ),
+        (
+            "open with a reason",
+            captured_entry(
+                "active",
+                "\"x\"",
+                "{state: open, reason: \"y\", task: null}",
+                statement,
+            ),
+        ),
+        (
+            "parked without words",
+            captured_entry(
+                "active",
+                "\"x\"",
+                "{state: parked, reason: null, task: null}",
+                statement,
+            ),
+        ),
+        (
+            "task without an id",
+            captured_entry(
+                "active",
+                "\"x\"",
+                "{state: task, reason: null, task: null}",
+                statement,
+            ),
+        ),
+        (
+            "no quote",
+            captured_entry("active", "null", open, statement),
+        ),
+        (
+            "a said line",
+            captured_entry("active", "\"x\"", open, statement)
+                .replace("said: \"\"", "said: \"#scribe idea: x\""),
+        ),
+        (
+            "outcome on Daniel's entry",
+            stated_entry(
+                "active",
+                "\"x\"",
+                "#scribe approve p-1",
+                "{kind: scribe, name: session-pass}",
+                statement,
+            )
+            .replace("outcome: null", &format!("outcome: {open}")),
+        ),
+    ] {
+        corrupt_message(&entry(&bad).map(|_| ()).expect_err(label));
     }
 }
 
@@ -1908,6 +2014,12 @@ fn closed_reason_covered_reads_only_on_a_settled_candidate_at_format_15() {
         1,
     );
     assert!(old.contains("\"format\": 14"), "{old}");
+    // Format 16 changed no proposal, so a format-15 one reads as written.
+    let fifteen = old.replacen("\"format\": 14", "\"format\": 15", 1);
+    assert_eq!(
+        decode_proposals(path, fifteen.as_bytes()).unwrap(),
+        [covered.clone()]
+    );
     corrupt_message(&decode_proposals(path, old.as_bytes()).unwrap_err());
     // An instructed rejection with no reason, or covered on a proposal
     // never settled, is refused.
@@ -1921,4 +2033,94 @@ fn closed_reason_covered_reads_only_on_a_settled_candidate_at_format_15() {
     unsettled.settled_at = None;
     let bytes = crate::store::format::encode_proposals(path, &[unsettled]).unwrap();
     corrupt_message(&decode_proposals(path, &bytes).unwrap_err());
+}
+
+#[test]
+fn a_format_fourteen_or_fifteen_entry_reads_with_no_outcome_and_a_stray_outcome_is_refused() {
+    let pass = "{kind: scribe, name: session-pass}";
+    let current = stated_entry("active", "\"ok\"", "#scribe approve p-1", pass, "stmt");
+    for from in [14, 15] {
+        let older = current.replace(&format!("format: {FORMAT}"), &format!("format: {from}"));
+        let old = older.replace("outcome: null\n", "");
+        let e = entry(&old).unwrap();
+        assert_eq!(e.outcome, None, "{from}");
+        assert_eq!(e.stated_by, Some(crate::Author::session_pass()), "{from}");
+        corrupt_message(&entry(&older).map(|_| ()).unwrap_err());
+    }
+}
+
+/// A frozen format-15 entry: an approval an agent ran on Daniel's checked
+/// instruction (the shape format 15 admitted), stated by the pass, with no
+/// `outcome` key. `extra` is inserted after `stated_by`.
+fn format_fifteen_entry(extra: &str, project: &str) -> String {
+    format!(
+        "---
+format: 15
+kind: entry
+id: preferences-1
+tag: preferences
+status: active
+project: {project}
+topics: [ci]
+related: []
+provider: claude-code
+host: host
+author: {{kind: daniel, name: daniel}}
+updated_by: null
+created: 2026-11-01T10:00:00Z
+updated: 2026-11-01T10:00:00Z
+inactive_since: null
+said: \"scribe proposal settle p-1 --approve --author aide --session s-9 --instruction 'approve p-1'\"
+content_from: {{kind: message, role: user, message: m-1, at: 2026-11-01T09:59:00Z}}
+cite: {{session: s-1, message: m-1, at: 2026-11-01T09:59:00Z, prompt_sha256: \"{sha}\", line: 1, cwd: /work}}
+retirement_reason: null
+superseded_by: null
+review_after: null
+quote: \"I prefer short updates, always.\"
+window: null
+evidence: null
+as_of: null
+approved_by: {{kind: agent, name: aide}}
+instruction: {{session: s-9, message: m-9, at: 2026-11-03T10:00:00Z, quote: \"approve p-1\"}}
+stated_by: {{kind: scribe, name: session-pass}}
+{extra}---
+Daniel prefers short updates.
+",
+        sha = "0".repeat(64)
+    )
+}
+
+#[test]
+fn a_format_fifteen_store_upgrades_with_a_null_outcome_only() {
+    // Checked against the frozen format-15 shape, then `outcome` is null and
+    // nothing else changes, including a `!local` project tag.
+    for project in ["scribe", "!local scribe"] {
+        let decoded = entry(&format_fifteen_entry("", project)).unwrap();
+        assert_eq!(decoded.outcome, None);
+        assert_eq!(decoded.project.as_str(), "scribe");
+        assert_eq!(decoded.stated_by, Some(crate::Author::session_pass()));
+        assert_eq!(
+            decoded.approved_by,
+            Some(crate::Author::agent("aide".parse().unwrap()))
+        );
+        assert_eq!(
+            decoded.quote.as_deref(),
+            Some("I prefer short updates, always.")
+        );
+        assert_eq!(decoded.content, "Daniel prefers short updates.");
+        let encoded = String::from_utf8(
+            crate::store::format::encode_entry(Path::new(ENTRY), &decoded).unwrap(),
+        )
+        .unwrap();
+        assert!(encoded.starts_with(&format!("---\nformat: {FORMAT}\n")));
+        assert!(encoded.contains("\noutcome: null\n"), "{encoded}");
+        assert_eq!(entry(&encoded).unwrap(), decoded);
+        let back = encoded
+            .replacen(&format!("format: {FORMAT}\n"), "format: 15\n", 1)
+            .replace("outcome: null\n", "");
+        assert_eq!(entry(&back).unwrap(), decoded);
+    }
+    // Strict at format 15: `outcome` is a format-16 key.
+    let stray = format_fifteen_entry("outcome: null\n", "scribe");
+    corrupt_message(&entry(&stray).unwrap_err());
 }

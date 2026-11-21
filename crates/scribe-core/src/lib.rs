@@ -66,7 +66,8 @@ pub mod verbatim;
 pub use config::{Config, ConfigError, ModelIds, SessionsConfig};
 pub use entry::{
     AgentEntry, Cite, ContentFrom, Entry, EntryError, EntryFilter, EntryId, EntryPatch,
-    EntryStatus, Instruction, NewEntry, Speaker, TagName, Window, WindowTurn,
+    EntryStatus, Instruction, NewEntry, Outcome, OutcomeState, Speaker, TagName, Window,
+    WindowTurn,
 };
 pub use error::{AfterPersistError, Error, Result, WriteRefusal};
 pub use models::Models;

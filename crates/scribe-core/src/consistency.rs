@@ -688,6 +688,10 @@ pub fn forget(
     if let Some(instruction) = &mut entry.instruction {
         instruction.quote = None;
     }
+    // A parked idea's reason is Daniel's words; its state stays.
+    if let Some(outcome) = &mut entry.outcome {
+        outcome.reason = None;
+    }
     entry.updated = now;
     // Forgetting keeps the time a retired or superseded entry left
     // `active`; an active one leaves it now.

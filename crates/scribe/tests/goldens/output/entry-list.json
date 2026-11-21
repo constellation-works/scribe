@@ -46,7 +46,8 @@
       "admitted": null,
       "approved_by": null,
       "instruction": null,
-      "stated_by": null
+      "stated_by": null,
+      "outcome": null
     },
     {
       "id": "preferences-1",
@@ -92,7 +93,8 @@
       "admitted": null,
       "approved_by": null,
       "instruction": null,
-      "stated_by": null
+      "stated_by": null,
+      "outcome": null
     },
     {
       "id": "decisions-1",
@@ -142,7 +144,8 @@
       "admitted": null,
       "approved_by": null,
       "instruction": null,
-      "stated_by": null
+      "stated_by": null,
+      "outcome": null
     },
     {
       "id": "decisions-2",
@@ -193,7 +196,8 @@
       "admitted": null,
       "approved_by": null,
       "instruction": null,
-      "stated_by": null
+      "stated_by": null,
+      "outcome": null
     }
   ],
   "total": 4,

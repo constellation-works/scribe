@@ -96,7 +96,9 @@ pub fn state(entry: &Entry, pickups: &[Pickup], now: OffsetDateTime) -> ActionSt
 }
 
 /// Active action entries older than [`STUCK_AFTER`] at `now` that no
-/// consumer has picked up, counted per tag.
+/// consumer has picked up, counted per tag. An idea the session pass
+/// captured itself is not counted: nobody asked for it to be taken up
+/// (2_design.md §11.6).
 #[must_use]
 pub fn stuck(
     entries: &[Entry],
@@ -108,6 +110,7 @@ pub fn stuck(
     for entry in entries {
         if entry.status == EntryStatus::Active
             && tags.action(&entry.tag).is_some()
+            && !crate::ask::is_pass_captured(entry)
             && now - entry.created >= STUCK_AFTER
             && !pickups.iter().any(|p| p.entry == entry.id)
         {
