@@ -13,6 +13,7 @@ mod consistency;
 mod entry;
 mod hook;
 mod init;
+mod instruction;
 mod plugin;
 mod proposal;
 mod question;

@@ -272,6 +272,19 @@ pub enum WriteRefusal {
     /// `finding_cap`: the writing session already holds the documented
     /// maximum of findings.
     FindingCap,
+    /// `instruction_not_found`: the session's transcript is not on this
+    /// host or not readable, or `--instruction` is in no turn Daniel
+    /// plainly typed in it (docs/design/scribe/2_design.md §12.2).
+    InstructionNotFound,
+    /// `instruction_stale`: the instruction turn is not one of his last
+    /// three typed turns, or is more than 30 minutes old.
+    InstructionStale,
+    /// `instruction_mismatch`: the instruction does not name the target,
+    /// or does not name the act.
+    InstructionMismatch,
+    /// `not_interactive`: the instruction's session is not one Daniel
+    /// types into (§12.5).
+    NotInteractive,
 }
 impl WriteRefusal {
     /// Stable machine-readable code.
@@ -299,6 +312,10 @@ impl WriteRefusal {
             Self::CancelWindow => "cancel_window",
             Self::EvidenceRequired => "evidence_required",
             Self::FindingCap => "finding_cap",
+            Self::InstructionNotFound => "instruction_not_found",
+            Self::InstructionStale => "instruction_stale",
+            Self::InstructionMismatch => "instruction_mismatch",
+            Self::NotInteractive => "not_interactive",
         }
     }
 }

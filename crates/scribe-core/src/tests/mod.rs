@@ -11,6 +11,7 @@ mod config;
 mod consistency;
 mod control;
 mod entry;
+mod instruction;
 mod pass;
 mod proposal;
 mod record;
