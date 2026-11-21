@@ -282,6 +282,67 @@ mod capture {
     }
 
     #[test]
+    fn a_statement_an_active_entry_covers_writes_nothing_and_consumes_no_id() {
+        use crate::consistency::{Settle, Settled};
+        let dir = private_tempdir();
+        let store = Store::open(dir.path());
+        let first = store
+            .capture(
+                vec![draft("preferences", 1, "use rg")],
+                &Redactor::default(),
+            )
+            .unwrap();
+        assert!(matches!(first[0], Captured::Added(_)));
+        let covered = store
+            .capture(
+                vec![draft("preferences", 2, "use rg")],
+                &Redactor::default(),
+            )
+            .unwrap();
+        assert!(matches!(covered[0], Captured::Covered(_)));
+        assert_eq!(covered[0].entry().id.to_string(), "preferences-1");
+        let refinement = store
+            .capture(
+                vec![draft("preferences", 3, "use rg, not grep, in scripts")],
+                &Redactor::default(),
+            )
+            .unwrap();
+        assert!(matches!(refinement[0], Captured::Added(_)));
+        assert_eq!(refinement[0].entry().id.to_string(), "preferences-2");
+        let next = store
+            .capture(vec![draft("preferences", 4, "two")], &Redactor::default())
+            .unwrap();
+        assert_eq!(next[0].entry().id.to_string(), "preferences-3");
+        let replay = store
+            .capture(
+                vec![draft("preferences", 1, "use rg")],
+                &Redactor::default(),
+            )
+            .unwrap();
+        assert!(
+            matches!(replay[0], Captured::Existing(_)),
+            "a same-line replay wins over the cover check"
+        );
+        let cite = draft("preferences", 9, "use rg").cite;
+        let settled = store
+            .settle(
+                &Settle::Retire("preferences-1".parse().unwrap()),
+                &cite,
+                datetime!(2026-11-02 20:00:00 UTC),
+            )
+            .unwrap();
+        assert!(matches!(settled, Settled::Retired(_)));
+        let after = store
+            .capture(
+                vec![draft("preferences", 5, "use rg")],
+                &Redactor::default(),
+            )
+            .unwrap();
+        assert!(matches!(after[0], Captured::Added(_)));
+        assert_eq!(after[0].entry().id.to_string(), "preferences-4");
+    }
+
+    #[test]
     fn a_number_held_by_a_file_that_does_not_parse_is_not_reused() {
         let dir = private_tempdir();
         let root = dir.path();

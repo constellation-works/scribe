@@ -409,6 +409,26 @@ pub struct Reapplied {
     pub status: EntryStatus,
 }
 
+/// An approved candidate a recovery closed because an active entry already
+/// covers its statement. The covering id is not stored on the proposal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CoveredCandidate {
+    /// The candidate proposal, now `rejected`.
+    pub proposal: ProposalId,
+    /// The active entry that covers the candidate's statement.
+    pub by: EntryId,
+}
+
+/// What [`crate::Store::reapply_approved`] repaired: approvals applied
+/// again, and approved candidates closed because a later entry covers them.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReapplyReport {
+    /// Approvals whose older entry was still `active`.
+    pub applied: Vec<Reapplied>,
+    /// Approved candidates closed as `rejected` with no new entry.
+    pub covered: Vec<CoveredCandidate>,
+}
+
 /// Apply every approved proposal whose older entry is still `active` to
 /// `entries` again (§7: approval writes two files, and a crash between them
 /// leaves the entry behind). Returns what changed, by proposal id.
@@ -550,6 +570,16 @@ pub enum Settled {
     Retired(EntryId),
     /// The entry's text was blanked.
     Forgotten(EntryId),
+    /// An open candidate's statement is already covered by an active entry
+    /// of the same tag and project. The proposal is `rejected`, `newer`
+    /// stays empty, and no entry is written. The covering id is named here
+    /// for the reply only; it is not stored on the proposal.
+    Covered {
+        /// The candidate proposal.
+        proposal: ProposalId,
+        /// The active entry that covers the statement.
+        by: EntryId,
+    },
     /// It was already so (a replayed instruction): nothing changed.
     Already(String),
     /// It was refused: nothing changed.
@@ -667,6 +697,22 @@ fn approve(
         ProposalState::Open => {}
     }
     if proposal.kind == ProposalKind::Candidate {
+        let covered_by = proposal.candidate.as_ref().and_then(|candidate| {
+            crate::pass::covering_entry(
+                entries,
+                &candidate.quote,
+                &candidate.tag,
+                &candidate.project,
+            )
+            .map(|entry| entry.id.clone())
+        });
+        if let Some(by) = covered_by {
+            proposal.state = ProposalState::Rejected;
+            proposal.settled_at = Some(now);
+            proposal.settled_by = Some(cite.clone());
+            proposal.settled_author = Some(Author::daniel());
+            return Settled::Covered { proposal: id, by };
+        }
         proposal.state = ProposalState::Approved;
         proposal.settled_at = Some(now);
         proposal.settled_by = Some(cite.clone());

@@ -14,10 +14,11 @@ mod sink;
 mod table;
 
 pub(crate) use payload::{
-    AskPayload, BatchFailure, DeactivatedPayload, DeactivationFailure, EntryPayload, HitPayload,
-    HookOutcome, HookReply, Kin, Output, PassPayload, PassReport, PluginError, PluginReply,
-    PopupRows, ProposalPayload, ReappliedPayload, Record, Records, ScanReport, SessionPayload,
-    SessionsContext, TagPayload, TagShowPayload, TranscriptPayload, TreeRow, WarningPayload,
+    AskPayload, BatchFailure, CoveredPayload, DeactivatedPayload, DeactivationFailure,
+    EntryPayload, HitPayload, HookOutcome, HookReply, Kin, Output, PassPayload, PassReport,
+    PluginError, PluginReply, PopupRows, ProposalPayload, ReappliedPayload, Record, Records,
+    ScanReport, SessionPayload, SessionsContext, TagPayload, TagShowPayload, TranscriptPayload,
+    TreeRow, WarningPayload,
 };
 pub(crate) use sink::{FORMAT_ENV, FormatArg, Sink};
 

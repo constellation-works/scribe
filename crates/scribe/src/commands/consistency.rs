@@ -33,16 +33,16 @@
 //! A scan deactivates sessions directly rather than proposing: an inactive
 //! session is hidden, not changed, and `session activate` reverses it.
 //! Pinned sessions (`keep_active`) are never deactivated by a scan.
-//! Each reapplied approval, opened proposal, deactivated session and
-//! failed batch is one audit line; a scan that changes nothing and fails
-//! nothing writes none.
+//! Each reapplied approval, covered-candidate close, opened proposal,
+//! deactivated session and failed batch is one audit line; a scan that
+//! changes nothing and fails nothing writes none.
 
 use super::RunLimits;
 use crate::app::Context;
 use crate::audit_middleware::AuditMeta;
 use crate::error::CliError;
 use crate::output::{
-    BatchFailure, DeactivatedPayload, DeactivationFailure, Output, ProposalPayload,
+    BatchFailure, CoveredPayload, DeactivatedPayload, DeactivationFailure, Output, ProposalPayload,
     ReappliedPayload, ScanReport,
 };
 use clap::{Args, Subcommand};
@@ -134,13 +134,14 @@ pub(in crate::commands) fn scan<M: Models>(
     // a configured [redact] env name has no value in this environment.
     let redactor = ctx.redactor(&config)?;
     let adapter = models(&config);
-    let reapplied = store.reapply_approved(now)?;
+    let repaired = store.reapply_approved(now)?;
     let closed = store.close_retired_candidates(now)?;
     let entries = store.list_entries(&EntryFilter::default())?.listing.items;
     let proposals = store.proposals()?;
     let found = consistency::candidates(&entries, &proposals, now.date(), consistency::MAX_PAIRS);
     let mut report = ScanReport {
-        reapplied: reapplied
+        reapplied: repaired
+            .applied
             .iter()
             .map(|r| ReappliedPayload {
                 proposal: r.proposal.to_string(),
@@ -150,6 +151,14 @@ pub(in crate::commands) fn scan<M: Models>(
             .collect(),
         opened: Vec::new(),
         closed: closed.iter().map(ProposalPayload::from).collect(),
+        covered: repaired
+            .covered
+            .iter()
+            .map(|item| CoveredPayload {
+                proposal: item.proposal.to_string(),
+                by: item.by.to_string(),
+            })
+            .collect(),
         judged_pairs: 0,
         pairs_left: found.over_cap,
         unrelated_pairs: 0,
@@ -210,6 +219,7 @@ pub(in crate::commands) fn scan<M: Models>(
     let changed = !(report.reapplied.is_empty()
         && report.opened.is_empty()
         && report.closed.is_empty()
+        && report.covered.is_empty()
         && report.failed_batches.is_empty()
         && report.deactivated.is_empty()
         && report.failed_deactivations.is_empty()

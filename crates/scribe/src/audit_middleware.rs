@@ -191,6 +191,11 @@ impl<'a> AuditGuard<'a> {
                     target: Some(p.id.clone()),
                     error_code: None,
                 }))
+                .chain(report.covered.iter().map(|item| Line {
+                    status: AuditStatus::Success,
+                    target: Some(item.proposal.clone()),
+                    error_code: None,
+                }))
                 .chain(report.failed_batches.iter().map(|f| Line {
                     status: AuditStatus::Failure,
                     target: Some(format!("batch:{}", f.batch)),

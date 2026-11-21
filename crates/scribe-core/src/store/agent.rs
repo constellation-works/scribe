@@ -375,6 +375,14 @@ impl Store {
             content: draft.content,
         };
         redactor.entry(&mut entry);
+        if let Some(cover) =
+            crate::pass::covering_entry(&entries, &entry.content, &entry.tag, &entry.project)
+        {
+            return Err(refusal(
+                WriteRefusal::AlreadyCovered,
+                format!("already covered by {}; nothing written", cover.id),
+            ));
+        }
         self.write_entry(&entry, true)?;
         Ok(entry)
     }

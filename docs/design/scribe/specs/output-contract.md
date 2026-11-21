@@ -295,7 +295,7 @@ the message lists up to ten candidates, sorted, and how many more), `daniel_only
 (S12) `invalid_text`, `invalid_topics`, (format 8) `quote_required`,
 `quote_not_found`, `not_action_tag`, `cancel_window`, (§12, `--session` with
 `--instruction`) `instruction_not_found`, `instruction_stale`,
-`instruction_mismatch`, `not_interactive`,
+`instruction_mismatch`, `not_interactive`, `already_covered`,
 `proposal_invalid`, `proposal_not_agent`,
 `session_cataloged`, `transcript_not_found`, for `tmux` `fzf_missing` and
 `tmux_failed` (exit 1; `tmux` renders no payload, its popup owns the
@@ -341,12 +341,19 @@ that is not valid JSON, lacks a field or has an invalid `session_id` exits 1
 with `hook_payload_invalid`.
 The `UserPromptSubmit` reply has one echo line per `#scribe` line: `scribe:
 added <id> to <tag> — "<content>"`, `scribe: already recorded <id> in <tag>
-— "<content>"`, `scribe: refused "<line>" — <reason>` or `scribe: could not
-record "<line>" — <error>`. A form-3 line whose referent the model did not
+— "<content>"`, `scribe: already covered by <id> in <tag> — "<content>"`,
+`scribe: refused "<line>" — <reason>` or `scribe: could not
+record "<line>" — <error>`. A covered line writes no entry and no audit
+line. Stop recovery does not repeat that echo; a prompt the prompt hook
+missed stays quiet when every `#scribe` line is already covered. A form-3 line whose referent the model did not
 resolve is still added, and its echo puts `(guessed: <why>; recorded the
 <role> message before your prompt instead)` after the tag. A settling line
 echoes `scribe: approved p-<n> — <older> is superseded by <newer>; ask
 leaves it out of answers` (`<older> is retired` for a stale proposal),
+`scribe: approved p-<n> — already covered by <entry>; no new entry` when an
+active entry of the same tag and project already covers the candidate (the
+proposal becomes `rejected`, `newer` stays empty, and the covering id is
+named only in the reply),
 `scribe: rejected p-<n> — its entries stay as they are, and it is not
 proposed again`, `scribe: retired <id> — ask leaves it out of answers;
 scribe entry show <id> still has it`, `scribe: forgot <id> — its text is
@@ -355,12 +362,14 @@ blanked for good; the id and cite stay`, `scribe: <id> is already <state>
 `proposal_not_found`, `entry_not_found`, `proposal_settled`,
 `entry_not_active`) or `scribe: could not apply "<line>" — <error>`. A
 change writes one audit line whose `target` is the proposal or entry id; a
-refusal one line with `target` `session:<id>` and its code; a repeat none.
+refusal one line with `target` `session:<id>` and its code; a repeat or an
+already-covered capture none. A covered approval is a change: one audit
+line, target the proposal id, and no error code. Replaying it is a refusal.
 The text is for Daniel and the agent to read; the audit line, not the
 echo, is the record. Daniel's `systemMessage` carries the plain echoes;
 the agent's `additionalContext` carries each echo with a per-line note:
 ` (recorded by scribe; no action needed)` after a recorded, already
-recorded or settled line, and ` (not recorded by scribe; relay this to
+recorded, already covered or settled line, and ` (not recorded by scribe; relay this to
 Daniel)` after a refused line (`scribe: refused …`), a line that could
 not be recorded (`scribe: could not record …`) or a settling line that
 was refused or could not be applied. A refused or failed line therefore
@@ -482,12 +491,17 @@ reason is never added to the audit line).
 `scribe consistency scan --json` and the Orbit tool
 `scribe.consistency-scan` print `{"reapplied": [{"proposal", "entry",
 "status"}], "opened": [<proposal>, ...], "closed": [<proposal>, ...],
+"covered": [{"proposal", "by"}],
 "judged_pairs", "pairs_left", "unrelated_pairs", "dropped_labels",
 "stale_entries", "failed_batches": [{"batch", "error_code"}]}`. `reapplied`
 lists approved proposals whose older entry was still `active` and is now
 `superseded` or `retired`; `opened` holds each proposal opened, in
 `proposal list --json`'s shape, by id; `closed` holds each open candidate
-proposal closed automatically (`tag_retired`), in the same shape; `judged_pairs` counts pairs the model labelled, `pairs_left` those past
+proposal closed automatically (`tag_retired`), in the same shape; `covered`
+holds each approved candidate this scan closed because an active entry
+already covers its statement (`proposal` the candidate, `by` the entry) —
+the proposal is `rejected`, `newer` stays empty, and the covering id is
+not stored on it; `judged_pairs` counts pairs the model labelled, `pairs_left` those past
 the cap of 40 or not reached in this call's time, `unrelated_pairs` those
 labelled `unrelated`, `dropped_labels` labels refused (a quote not verbatim,
 an unknown or repeated pair, an unknown label); `stale_entries` counts
@@ -511,13 +525,13 @@ deactivation is also a plain row `deactivated <session> <route> <cite or
 left, stderr says how many. Plain and
 table print one row per change: `reapplied p-<n> <status> <entry> -`,
 `opened p-<n> <kind> <older> <newer or ->`, `closed p-<n> <closed_reason>
-<older> <newer or ->` and `failed batch-<n> <code> - -` (columns `action
-id what older newer`). When nothing was reapplied, opened, closed or
+<older> <newer or ->`, `covered p-<n> <entry> - -` and `failed batch-<n> <code> - -` (columns `action
+id what older newer`). When nothing was reapplied, opened, closed, covered or
 failed, stdout is empty and stderr says `nothing to propose: …`; when pairs
 are left, stderr says how many. The exit is 0 whenever the store could be
 read, including failed batches. Each reapplied approval (target the entry
 id), opened proposal (target the proposal id), closed proposal (target the
-proposal id) and failed batch (target `batch:<n>`, with its code) writes
+proposal id), covered candidate (target the proposal id) and failed batch (target `batch:<n>`, with its code) writes
 one audit line under `consistency scan`.
 
 ## Ask

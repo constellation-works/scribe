@@ -89,6 +89,10 @@ pub(super) fn run(settling: &Settling, turn: &Turn, ctx: &Context) -> Reply {
                 format!("scribe: approved {proposal} — {what}; ask leaves it out of answers"),
             )
         }
+        Settled::Covered { proposal, by } => done(
+            proposal.to_string(),
+            format!("scribe: approved {proposal} — already covered by {by}; no new entry"),
+        ),
         Settled::Rejected { proposal } => done(
             proposal.to_string(),
             format!(

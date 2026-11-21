@@ -152,6 +152,40 @@ pub(super) fn run(
             });
             continue;
         }
+        // A covered line writes no entry, so it is never in `recorded`.
+        // Asking the store, after cwd is known, keeps Stop from repeating
+        // the prompt hook's "already covered" echo on every later turn. A
+        // missed prompt hook stays quiet too. Config or redactor failure
+        // skips this pre-check; capture still decides, and a covered echo
+        // is dropped while recovering.
+        if let Ok(config) = ctx.config()
+            && let Ok(redactor) = ctx.redactor(&config)
+        {
+            let turn = capture::Turn {
+                session: session.clone(),
+                at: message.at,
+                prompt_sha256: capture::prompt_sha256(&prompt.prompt),
+                cwd: prompt.cwd.clone(),
+                project: super::project::of(std::path::Path::new(&prompt.cwd)),
+                provider: scribe_core::Label::sanitized(
+                    ctx.provider().as_str(),
+                    ctx.provider().as_str(),
+                ),
+                host: ctx.host(),
+            };
+            if let Ok(covered) =
+                ctx.store()
+                    .covered_instruction_lines(&prompt.prompt, &turn, &redactor)
+            {
+                recorded.extend(covered);
+            }
+        }
+        if capture::lines(&prompt.prompt)
+            .iter()
+            .all(|(line, _)| recorded.contains(line))
+        {
+            continue;
+        }
         if let crate::output::Output::Hook(captured) = user_prompt_submit::recover(
             &prompt,
             ctx,

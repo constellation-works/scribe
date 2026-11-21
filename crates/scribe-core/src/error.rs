@@ -285,6 +285,9 @@ pub enum WriteRefusal {
     /// `not_interactive`: the instruction's session is not one Daniel
     /// types into (§12.5).
     NotInteractive,
+    /// `already_covered`: an active entry of the same tag and project
+    /// already says this statement, so nothing was written.
+    AlreadyCovered,
 }
 impl WriteRefusal {
     /// Stable machine-readable code.
@@ -316,6 +319,7 @@ impl WriteRefusal {
             Self::InstructionStale => "instruction_stale",
             Self::InstructionMismatch => "instruction_mismatch",
             Self::NotInteractive => "not_interactive",
+            Self::AlreadyCovered => "already_covered",
         }
     }
 }

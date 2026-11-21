@@ -235,6 +235,7 @@ fn capture_prompt<M: Models>(
     let mut models = Some(models);
     let mut adapter: Option<M> = None;
     let mut drafts = Vec::new();
+    let mut draft_lines = Vec::new();
     let mut plans = Vec::new();
     for item in parsed {
         if recovery
@@ -261,6 +262,7 @@ fn capture_prompt<M: Models>(
                         turn.at,
                     ));
                 }
+                draft_lines.push(instruction.line);
                 drafts.push(draft);
                 Plan::Draft {
                     line: instruction.line,
@@ -303,6 +305,7 @@ fn capture_prompt<M: Models>(
                                         turn.at,
                                     ));
                                 }
+                                draft_lines.push(referent.line);
                                 drafts.push(draft);
                                 Plan::Draft {
                                     line: referent.line,
@@ -337,10 +340,10 @@ fn capture_prompt<M: Models>(
     let mut store_error: Option<scribe_core::Error> = None;
     match stored {
         Ok(results) => {
-            for result in results {
-                if let Some(cite) = &result.entry().cite {
-                    captured.insert(cite.line, result);
-                }
+            // Key by the draft's line. A covered statement's existing entry
+            // cites a different line, so the new line would otherwise miss.
+            for (line, result) in draft_lines.into_iter().zip(results) {
+                captured.insert(line, result);
             }
         }
         Err(err) => store_error = Some(err),
@@ -396,6 +399,13 @@ fn capture_prompt<M: Models>(
                     });
                 }
                 (Some(Captured::Existing(entry)), _) => echoes.push(Echo::recorded(already(entry))),
+                (Some(Captured::Covered(entry)), _) => {
+                    // Stop recovery must not repeat a covered line on later
+                    // turns. The prompt hook (no recovery) echoes it once.
+                    if recovery.is_none() {
+                        echoes.push(Echo::recorded(covered(entry)));
+                    }
+                }
                 (None, Some(err)) => {
                     echoes.push(Echo::not_recorded(format!(
                         "scribe: could not record \"{}\" — {}",
@@ -423,6 +433,15 @@ fn previous(entry: &Entry) -> &'static str {
 fn already(entry: &Entry) -> String {
     format!(
         "scribe: already recorded {} in {} — \"{}\"",
+        entry.id,
+        entry.tag,
+        quote(&entry.content)
+    )
+}
+
+fn covered(entry: &Entry) -> String {
+    format!(
+        "scribe: already covered by {} in {} — \"{}\"",
         entry.id,
         entry.tag,
         quote(&entry.content)
