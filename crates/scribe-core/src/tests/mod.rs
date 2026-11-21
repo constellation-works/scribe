@@ -5,6 +5,7 @@
 
 mod action;
 mod activity;
+mod annotation;
 mod ask;
 mod capture;
 mod config;

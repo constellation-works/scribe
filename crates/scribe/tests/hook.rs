@@ -624,7 +624,8 @@ fn a_prompt_without_an_instruction_line_writes_and_prints_nothing() {
     payload["prompt"] = json!(
         "```\n#scribe preferences: fenced\n```\n> #scribe preferences: quoted\n\
          <pasted_content>\n#scribe preferences: pasted\n</pasted_content>\n\
-         #decision bare marker\n#preferences another\nplain #scribe mention"
+         #decision bare marker\n#preferences another\nplain `#scribe` mention\n\
+         a \"#scribe\" in quotes"
     );
     let out = hook_ok(&fx, "user-prompt-submit", &payload);
     assert!(out.stdout.is_empty(), "no reply: {}", text(&out.stdout));
@@ -2258,4 +2259,319 @@ fn a_typed_line_matching_a_stated_entrys_quote_is_covered() {
         "Stop recovery treats the quote as covered: {}",
         text(&stopped.stdout)
     );
+}
+
+// --- annotations: `#scribe` inside a sentence, cataloged at Stop (§14) ---
+
+const MARKED: &str = "I always want short status updates #scribe preferences";
+
+/// Run `scribe hook <event>` with the fake `claude` on PATH.
+fn hook_path(fx: &Fixture, event: &str, payload: &Value, path: &std::ffi::OsString) -> Output {
+    let child = fx
+        .cmd(&["hook", event])
+        .env("PATH", path)
+        .env("CLAUDE_CODE_OAUTH_TOKEN", "oauth-test-value")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut guard = support::ChildGuard::new(child);
+    guard
+        .child()
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(payload.to_string().as_bytes())
+        .unwrap();
+    let out = guard.finish();
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    out
+}
+
+/// A fake `claude` answering every call with `marks`.
+fn annotating_claude(fx: &Fixture, marks: &Value) -> std::ffi::OsString {
+    let answer = json!({"type": "result", "subtype": "success", "is_error": false,
+                        "result": "", "structured_output": {"marks": marks}});
+    fake_claude(fx, &format!("echo '{answer}'"))
+}
+
+fn none_for(markers: std::ops::RangeInclusive<u32>) -> Value {
+    json!(
+        markers
+            .map(
+                |marker| json!({"marker": marker, "kind": "none", "tag": "", "statement": "",
+                                 "subject": "", "quote": "", "message": "",
+                                 "reason": "only a passing remark"})
+            )
+            .collect::<Vec<_>>()
+    )
+}
+
+/// The transcript: one typed turn per `(uuid, prompt)`, each with a reply.
+fn marked_turns(claude: &Claude, turns: &[(&str, &str)]) {
+    let mut lines = vec![json!({"type": "session-owner", "sessionId": SESSION})];
+    for (uuid, prompt) in turns {
+        lines.push(json!({"type": "user", "uuid": uuid, "sessionId": SESSION,
+                          "timestamp": now_rfc3339(),
+                          "message": {"role": "user", "content": prompt}}));
+        lines.push(json!({"type": "assistant", "uuid": format!("a-{uuid}"), "sessionId": SESSION,
+                          "timestamp": now_rfc3339(),
+                          "message": {"role": "assistant", "content": [{"type": "text", "text": "Noted."}]}}));
+    }
+    write_lines(claude, &lines);
+}
+
+fn marks_json(fx: &Fixture) -> Vec<Value> {
+    match std::fs::read(fx.root().join("marks.json")) {
+        Ok(bytes) => serde_json::from_slice::<Value>(&bytes).unwrap()["marks"]
+            .as_array()
+            .unwrap()
+            .clone(),
+        Err(_) => Vec::new(),
+    }
+}
+
+#[test]
+fn a_marker_inside_a_sentence_is_echoed_at_submit_and_writes_nothing() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let path = annotating_claude(&fx, &none_for(1..=1));
+    let out = hook_path(
+        &fx,
+        "user-prompt-submit",
+        &referent_payload(&claude, MARKED),
+        &path,
+    );
+    let reply = reply(&out);
+    assert_eq!(
+        reply["systemMessage"],
+        "scribe: marked — cataloged after the reply"
+    );
+    let context = reply["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(context.contains("do not record it yourself"), "{context}");
+    assert!(claude_calls(&fx).is_empty(), "no model call at submit");
+    assert!(!fx.root().exists(), "nothing written at submit");
+}
+
+#[test]
+fn stop_catalogs_a_marked_turn_as_daniels_entry_with_scribes_statement_once() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    marked_turns(&claude, &[("u-1", MARKED)]);
+    let path = annotating_claude(
+        &fx,
+        &json!([{"marker": 1, "kind": "entry", "tag": "preferences",
+                 "statement": "Daniel wants short status updates.", "subject": "status updates",
+                 "quote": "I always want short status updates", "message": "u-1", "reason": ""}]),
+    );
+    let out = hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
+    assert_eq!(
+        reply(&out)["systemMessage"],
+        "scribe: added preferences-1 to preferences — \"Daniel wants short status updates.\" · your words: \"I always want short status updates\""
+    );
+    let calls = claude_calls(&fx);
+    assert_eq!(calls.len(), 1);
+    assert!(
+        calls[0].contains(&String::from("<claude-haiku-5-5>")),
+        "{:?}",
+        calls[0]
+    );
+    let stored = entries(&fx);
+    assert_eq!(stored.len(), 1);
+    let entry = &stored[0];
+    assert_eq!(entry["content"], "Daniel wants short status updates.");
+    assert_eq!(entry["quote"], "I always want short status updates");
+    assert_eq!(entry["author"]["kind"], "daniel");
+    assert_eq!(
+        entry["stated_by"],
+        json!({"kind": "scribe", "name": "annotation"})
+    );
+    assert_eq!(entry["said"], MARKED);
+    assert_eq!(entry["cite"]["message"], "u-1");
+    assert!(!fx.root().join("proposals.json").exists(), "no proposal");
+    let marks = marks_json(&fx);
+    assert_eq!(marks.len(), 1);
+    assert_eq!(marks[0]["outcome"], "entry");
+    assert_eq!(marks[0]["entry"], "preferences-1");
+    assert!(
+        audit(&fx)
+            .iter()
+            .any(|l| l["target"] == "preferences-1" && l["command"] == "hook stop"),
+        "{:?}",
+        audit(&fx)
+    );
+
+    // The next Stop neither calls nor echoes.
+    let again = hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
+    assert!(again.stdout.is_empty(), "{}", text(&again.stdout));
+    assert_eq!(claude_calls(&fx).len(), 1);
+    assert_eq!(entries(&fx).len(), 1);
+}
+
+#[test]
+fn a_none_answer_is_echoed_recorded_and_never_asked_again() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    marked_turns(&claude, &[("u-1", MARKED)]);
+    let path = annotating_claude(&fx, &none_for(1..=1));
+    let out = hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
+    assert_eq!(
+        reply(&out)["systemMessage"],
+        "scribe: nothing recorded for #scribe in your message — only a passing remark"
+    );
+    assert_eq!(marks_json(&fx)[0]["outcome"], "none");
+    hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
+    assert_eq!(claude_calls(&fx).len(), 1);
+    assert!(!fx.root().join("entries").exists() || entries(&fx).is_empty());
+}
+
+#[test]
+fn a_failing_model_stays_pending_for_three_attempts_then_refuses_model_failed() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    marked_turns(&claude, &[("u-1", MARKED)]);
+    let path = fake_claude(&fx, "exit 1");
+    for attempt in 1..=2 {
+        let out = hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
+        let echo = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
+        assert!(
+            echo.starts_with("scribe: could not catalog #scribe in your message — "),
+            "{echo}"
+        );
+        assert!(
+            echo.ends_with(&format!("; will retry at the next reply ({attempt} of 3)")),
+            "{echo}"
+        );
+        assert_eq!(marks_json(&fx)[0]["outcome"], "pending");
+    }
+    let out = hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
+    let echo = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
+    assert!(echo.ends_with("; gave up after 3 attempts"), "{echo}");
+    let marks = marks_json(&fx);
+    assert_eq!(marks[0]["outcome"], "refused");
+    assert_eq!(marks[0]["code"], "model_failed");
+    assert_eq!(marks[0]["attempts"], 3);
+    hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
+    assert_eq!(claude_calls(&fx).len(), 3, "never a fourth call");
+    assert!(!fx.root().join("entries").exists() || entries(&fx).is_empty());
+    assert!(audit(&fx).iter().any(|l| l["error_code"] == "model_failed"));
+}
+
+#[test]
+fn a_fourth_marker_is_refused_too_many_marks_before_any_call() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let four = "a #scribe b #scribe c #scribe d #scribe";
+    let path = annotating_claude(&fx, &none_for(1..=3));
+    let submitted = hook_path(
+        &fx,
+        "user-prompt-submit",
+        &referent_payload(&claude, four),
+        &path,
+    );
+    let echo = reply(&submitted)["systemMessage"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(
+        echo.contains("scribe: marked 3 times — cataloged after the reply"),
+        "{echo}"
+    );
+    assert!(
+        echo.contains("at most 3 #scribe markers in one message"),
+        "{echo}"
+    );
+
+    marked_turns(&claude, &[("u-1", four)]);
+    hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
+    assert_eq!(claude_calls(&fx).len(), 1, "one call for the turn");
+    let marks = marks_json(&fx);
+    assert_eq!(marks.len(), 4);
+    let fourth = marks.iter().find(|m| m["marker"] == 4).unwrap();
+    assert_eq!(fourth["outcome"], "refused");
+    assert_eq!(fourth["code"], "too_many_marks");
+    assert!(
+        audit(&fx)
+            .iter()
+            .any(|l| l["error_code"] == "too_many_marks")
+    );
+}
+
+#[test]
+fn one_stop_catalogs_at_most_two_marked_turns_oldest_first() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    marked_turns(
+        &claude,
+        &[
+            ("u-1", "first thought #scribe"),
+            ("u-2", "second thought #scribe"),
+            ("u-3", "third thought #scribe"),
+        ],
+    );
+    let path = annotating_claude(&fx, &none_for(1..=1));
+    hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
+    assert_eq!(claude_calls(&fx).len(), 2);
+    let settled: Vec<Value> = marks_json(&fx)
+        .iter()
+        .map(|m| m["message"].clone())
+        .collect();
+    assert_eq!(settled, vec![json!("u-1"), json!("u-2")]);
+    hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
+    assert_eq!(claude_calls(&fx).len(), 3);
+    assert_eq!(marks_json(&fx).len(), 3);
+}
+
+#[test]
+fn a_mention_or_an_agent_turn_is_never_cataloged() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    marked_turns(
+        &claude,
+        &[
+            ("u-1", "the `#scribe` marker and \"#scribe\" in quotes"),
+            (
+                "u-2",
+                "<agent-message from=\"x\">\nplease note #scribe\n</agent-message>",
+            ),
+        ],
+    );
+    let path = annotating_claude(&fx, &none_for(1..=1));
+    let out = hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
+    assert!(out.stdout.is_empty(), "{}", text(&out.stdout));
+    assert!(claude_calls(&fx).is_empty());
+    assert!(!fx.root().join("marks.json").exists());
+}
+
+#[test]
+fn an_annotation_under_an_action_tag_keeps_its_window() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let typed = "so here is what I am thinking: scribe could read annotations #scribe idea";
+    marked_turns(&claude, &[("u-0", "an earlier turn"), ("u-1", typed)]);
+    let path = annotating_claude(
+        &fx,
+        &json!([{"marker": 1, "kind": "entry", "tag": "idea",
+                 "statement": "Scribe could read annotations.", "subject": "annotations",
+                 "quote": "scribe could read annotations", "message": "u-1", "reason": ""}]),
+    );
+    let out = hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
+    let echo = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
+    assert!(echo.starts_with("scribe: added idea-1 to idea"), "{echo}");
+    let stored = entries(&fx);
+    let entry = by_said(&stored, typed);
+    let shown = fx.ok(&[
+        "entry",
+        "show",
+        entry["id"].as_str().unwrap(),
+        "--window",
+        "--json",
+    ]);
+    let shown: Value = serde_json::from_slice(&shown.stdout).unwrap();
+    let window = shown.to_string();
+    assert!(window.contains("an earlier turn"), "{window}");
+    assert_eq!(entry["stated_by"]["name"], "annotation");
 }

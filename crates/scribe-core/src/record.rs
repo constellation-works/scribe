@@ -191,6 +191,17 @@ impl Author {
         }
     }
 
+    /// scribe's annotation cataloging at `Stop` (2_design.md §14.4): the
+    /// `stated_by` of an entry whose content is scribe's statement of a
+    /// turn Daniel marked with `#scribe`.
+    #[must_use]
+    pub fn annotation() -> Self {
+        Self {
+            kind: AuthorKind::Scribe,
+            name: AuthorName(String::from("annotation")),
+        }
+    }
+
     /// scribe's consistency routine.
     #[must_use]
     pub fn consistency() -> Self {

@@ -1,4 +1,4 @@
-Recover missed #scribe entries, fill in message ids and mark a session pass due, from the Stop hook's JSON on stdin
+Recover missed #scribe entries, catalog #scribe markers, fill in message ids and mark a session pass due, from the Stop hook's JSON on stdin
 
 Usage: scribe hook stop [OPTIONS]
 
@@ -15,8 +15,13 @@ Global options:
 Reads the Stop payload (session_id, transcript_path, optional cwd) on stdin.
 Recovers missed #scribe entry instructions from the transcript and prints
 hook JSON saying what was recorded or refused; otherwise prints nothing.
-Already captured lines are skipped. Calls no model; recovered referents use
-the guessed fallback. Session controls and settling commands are not replayed.
+Already captured lines are skipped. Recovery calls no model; recovered
+referents use the guessed fallback. Session controls and settling commands
+are not replayed. Then each typed turn with a #scribe marker inside a
+sentence that marks.json has not settled gets one models.annotation call
+(30 s; at most 2 turns per Stop and 3 markers per turn; a failed call is
+retried at the next reply, 3 attempts in all), and its checked answer is
+recorded as Daniel's entry with scribe's statement and his quoted words.
 
 Examples:
   scribe hook stop < <payload.json>

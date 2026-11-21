@@ -60,21 +60,7 @@ pub(super) fn run(
     if candidates.is_empty() {
         return Ok(reply);
     }
-    #[derive(serde::Deserialize)]
-    struct Identity {
-        uuid: Option<String>,
-    }
-    let mut raw = BTreeMap::new();
-    for line in bytes.split(|&b| b == b'\n') {
-        // Most lines are tool payloads. Keep a DOM only for candidate user
-        // messages, so an old instruction does not retain the whole file.
-        if let Ok(Identity { uuid: Some(uuid) }) = serde_json::from_slice(line)
-            && candidates.contains(uuid.as_str())
-            && let Ok(value) = serde_json::from_slice::<serde_json::Value>(line)
-        {
-            raw.entry(uuid).or_insert(value);
-        }
-    }
+    let raw = raw_lines(&bytes, &candidates);
     let mut echoes = Vec::new();
     for (index, message) in messages.iter().enumerate() {
         if message.role != Speaker::User || capture::lines(&message.text()).is_empty() {
@@ -112,18 +98,10 @@ pub(super) fn run(
         {
             continue;
         }
-        let Some(mut value) = raw.get(&message.uuid).cloned() else {
+        let Some(value) = raw.get(&message.uuid) else {
             continue;
         };
-        value["session_id"] = serde_json::json!(session);
-        value["transcript_path"] = serde_json::json!(payload.transcript_path);
-        value["prompt"] = serde_json::json!(message.text());
-        if value["cwd"].is_null() {
-            value["cwd"] = serde_json::json!(payload.cwd.as_deref().unwrap_or_default());
-        }
-        // The empty placeholder lets the origin guard skip synthetic turns
-        // even without cwd. It must never reach capture as a citation.
-        let prompt: PromptPayload = match serde_json::from_value(value) {
+        let prompt: PromptPayload = match prompt_of(value, message, session, payload) {
             Ok(prompt) => prompt,
             Err(err) => {
                 echoes.push(format!(
@@ -207,4 +185,50 @@ pub(super) fn run(
     }
     reply.message = (!echoes.is_empty()).then(|| echoes.join("\n"));
     Ok(reply)
+}
+
+/// The raw transcript line of each `candidates` message, by uuid, kept for
+/// its original origin fields and cwd, which parsing the conversation
+/// deliberately strips.
+pub(super) fn raw_lines(
+    bytes: &[u8],
+    candidates: &BTreeSet<&str>,
+) -> BTreeMap<String, serde_json::Value> {
+    #[derive(serde::Deserialize)]
+    struct Identity {
+        uuid: Option<String>,
+    }
+    let mut raw = BTreeMap::new();
+    for line in bytes.split(|&b| b == b'\n') {
+        // Most lines are tool payloads. Keep a DOM only for candidate user
+        // messages, so an old instruction does not retain the whole file.
+        if let Ok(Identity { uuid: Some(uuid) }) = serde_json::from_slice(line)
+            && candidates.contains(uuid.as_str())
+            && let Ok(value) = serde_json::from_slice::<serde_json::Value>(line)
+        {
+            raw.entry(uuid).or_insert(value);
+        }
+    }
+    raw
+}
+
+/// The prompt payload a transcript user message would have had: its raw
+/// line with the session, transcript path and joined text, and the Stop
+/// payload's cwd when the line has none (the empty placeholder lets the
+/// origin guard skip synthetic turns even without cwd; it must never reach
+/// capture as a citation).
+pub(super) fn prompt_of(
+    raw: &serde_json::Value,
+    message: &transcript::Message,
+    session: &SessionId,
+    payload: &StopPayload,
+) -> serde_json::Result<PromptPayload> {
+    let mut value = raw.clone();
+    value["session_id"] = serde_json::json!(session);
+    value["transcript_path"] = serde_json::json!(payload.transcript_path);
+    value["prompt"] = serde_json::json!(message.text());
+    if value["cwd"].is_null() {
+        value["cwd"] = serde_json::json!(payload.cwd.as_deref().unwrap_or_default());
+    }
+    serde_json::from_value(value)
 }

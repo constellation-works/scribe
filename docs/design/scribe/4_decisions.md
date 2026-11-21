@@ -11,7 +11,7 @@ summary: Why superseded entries are hidden not removed, why one JSON file per ta
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529]
 ---
 
 # scribe — Decisions
@@ -3767,7 +3767,7 @@ as the approval's evidence.
 
 ## `#scribe` is an annotation, cataloged at the end of the turn
 
-**Recorded:** 2026-11-21 · [ORB-26510] · **Overridable by Daniel** · proposed, not built
+**Recorded:** 2026-11-21 · [ORB-26510] · **Overridable by Daniel** · approved 2026-11-21 ("Approve as proposed"); step 1 built ([ORB-26529], store format 22), steps 2 and 3 not built
 **Refines:** [`#scribe` capture in 2_design.md §4](./2_design.md#4-scribe), [A claim carries a statement (§11.1)](./2_design.md#111-a-claim-carries-a-statement)
 **Paths:** `crates/scribe-core/src/capture/**`, `crates/scribe/src/hook/**`, `crates/scribe-core/src/store/**`, `docs/design/scribe/2_design.md` §14
 
@@ -3796,7 +3796,7 @@ not annotations, so a model has to tell them apart.
 
 A `#scribe` token anywhere in a typed turn, outside code, quotes,
 blockquotes and pasted content, marks the turn
-([2_design.md §14](./2_design.md#14-scribe-as-an-annotation-proposed)).
+([2_design.md §14](./2_design.md#14-scribe-as-an-annotation)).
 The prompt hook writes nothing for it and echoes that the turn is marked.
 The same turn's `Stop` hook sends a bounded window (the 8 messages before,
 the marked turn and the assistant's reply) to one Haiku call with a 30 s

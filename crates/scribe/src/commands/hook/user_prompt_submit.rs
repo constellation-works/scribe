@@ -64,7 +64,9 @@ use scribe_core::capture::{self, ForgetIssue, Guess, Parsed, Refusal, Refused, S
 use scribe_core::models::ModelError;
 use scribe_core::transcript::{self, Message};
 use scribe_core::trigger::Fired;
-use scribe_core::{Captured, Config, ContentFrom, Entry, Label, Models, SessionId};
+use scribe_core::{
+    Captured, Config, ContentFrom, Entry, Label, Models, Provider, SessionId, annotation,
+};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -78,6 +80,10 @@ const AGENT_NOTE: &str = "(recorded by scribe; no action needed)";
 /// What the agent is told after a refused or failed echo: nothing was
 /// recorded, so the line must not be silently lost.
 const AGENT_RELAY_NOTE: &str = "(not recorded by scribe; relay this to Daniel)";
+/// What the agent is told after a marked echo: Stop catalogs the marker
+/// after the reply, so the agent must not record it as well.
+const AGENT_MARKED_NOTE: &str =
+    "(scribe catalogs this #scribe marker after your reply; do not record it yourself)";
 /// The code of a payload whose transcript failed the provenance check.
 const PROVENANCE_FAILED: &str = "provenance_failed";
 
@@ -91,21 +97,28 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
 /// which decides the note the agent gets for it.
 struct Echo {
     text: String,
-    recorded: bool,
+    note: &'static str,
 }
 
 impl Echo {
     fn recorded(text: String) -> Self {
         Self {
             text,
-            recorded: true,
+            note: AGENT_NOTE,
         }
     }
 
     fn not_recorded(text: String) -> Self {
         Self {
             text,
-            recorded: false,
+            note: AGENT_RELAY_NOTE,
+        }
+    }
+
+    fn marked(text: String) -> Self {
+        Self {
+            text,
+            note: AGENT_MARKED_NOTE,
         }
     }
 }
@@ -192,12 +205,20 @@ fn capture_prompt<M: Models>(
             scribe_core::issue_trigger::fire(&config.tags.issue_capture(), &payload.prompt)
         })
     };
+    // Annotation markers inside his sentences (§14.1): echoed here, written
+    // nothing; the Stop of this turn catalogs them. Stop recovery replays
+    // no echo, and Codex's Stop does not catalog them yet.
+    let mark_echoes = if recovery.is_none() && ctx.provider() != Provider::Codex {
+        marked(&payload.prompt)
+    } else {
+        Vec::new()
+    };
     let lines: Vec<_> = capture::lines(&payload.prompt)
         .into_iter()
         .filter(|(line, _)| !recovery.as_ref().is_some_and(|r| r.recorded.contains(line)))
         .collect();
     if lines.is_empty() {
-        let output = reply(Vec::new(), Vec::new());
+        let output = reply(mark_echoes, Vec::new());
         return Ok(match fired {
             Some(fired) if payload::check(ctx, &payload.transcript_path, &session).is_ok() => {
                 with_hint(output, &fired, &session, &payload.prompt)
@@ -481,6 +502,7 @@ fn capture_prompt<M: Models>(
             },
         }
     }
+    echoes.extend(mark_echoes);
     // The transcript check passed above; a failed one returned before.
     let output = reply(echoes, outcomes);
     Ok(match fired {
@@ -514,6 +536,33 @@ fn with_hint(output: Output, fired: &Fired, session: &SessionId, prompt: &str) -
         }),
     });
     Output::Hook(reply)
+}
+
+/// The echoes of a prompt's annotation markers: one for those Stop will
+/// catalog, and one per marker refused before any call. The refusals are
+/// recorded in `marks.json` and audited at Stop, so none is audited here.
+fn marked(prompt: &str) -> Vec<Echo> {
+    let marks = annotation::marks(prompt);
+    let mut echoes = Vec::new();
+    match marks.iter().filter(|m| m.problem.is_none()).count() {
+        0 => {}
+        1 => echoes.push(Echo::marked(String::from(
+            "scribe: marked — cataloged after the reply",
+        ))),
+        n => echoes.push(Echo::marked(format!(
+            "scribe: marked {n} times — cataloged after the reply"
+        ))),
+    }
+    for mark in &marks {
+        if let Some(problem) = &mark.problem {
+            echoes.push(Echo::not_recorded(format!(
+                "scribe: refused #scribe in \"{}\" — {}",
+                quote(&mark.said),
+                problem.message()
+            )));
+        }
+    }
+    echoes
 }
 
 /// Whose message a guessed entry recorded, for its echo.
@@ -621,14 +670,7 @@ fn reply(echoes: Vec<Echo>, outcomes: Vec<HookOutcome>) -> Output {
             .join("\n");
         let context = echoes
             .iter()
-            .map(|echo| {
-                let note = if echo.recorded {
-                    AGENT_NOTE
-                } else {
-                    AGENT_RELAY_NOTE
-                };
-                format!("{} {note}", echo.text)
-            })
+            .map(|echo| format!("{} {}", echo.text, echo.note))
             .collect::<Vec<_>>()
             .join("\n");
         (Some(text), Some(context))

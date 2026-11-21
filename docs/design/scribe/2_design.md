@@ -7,11 +7,11 @@ status: Draft
 feature: scribe
 doc_role: design
 type: design
-summary: How the scribe plugin is bounded (one binary; Daniel writes through hooks, agents read and write through the CLI taught by one skill, and the MCP surface stays ask), how #scribe entries, /scribe on session records (a rewritable header over an append-only log of segments), active and inactive sessions, ask and search, the consistency routine, backfill by name and the tmux popup work, where everything is stored, which model does what, and the slice plan that builds it; §11–§13 are proposed designs (claims and issues, settling on instruction, and the descriptive memory written from /scribe on sessions; its personal base for sessions that are off, people, recurring dates and light catalog entries are designed but parked 2026-11-21, and scribe reads Claude Code and Codex sessions only); §14 proposes `#scribe` as an annotation anywhere in a typed turn, cataloged at the end of the turn with a statement and a verbatim quote.
+summary: How the scribe plugin is bounded (one binary; Daniel writes through hooks, agents read and write through the CLI taught by one skill, and the MCP surface stays ask), how #scribe entries, /scribe on session records (a rewritable header over an append-only log of segments), active and inactive sessions, ask and search, the consistency routine, backfill by name and the tmux popup work, where everything is stored, which model does what, and the slice plan that builds it; §11–§13 are proposed designs (claims and issues, settling on instruction, and the descriptive memory written from /scribe on sessions; its personal base for sessions that are off, people, recurring dates and light catalog entries are designed but parked 2026-11-21, and scribe reads Claude Code and Codex sessions only); §14 (approved 2026-11-21; step 1 built, store format 22) catalogs `#scribe` as an annotation anywhere in a typed turn, at the end of the turn, with a statement and a verbatim quote.
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26265, ORB-26510]
+related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26265, ORB-26510, ORB-26529]
 ---
 
 # scribe — Design
@@ -713,7 +713,7 @@ environment refuses the write instead of storing text unmasked
 ## 4. `#scribe`
 
 ### 4.1 Detection
-> Proposed change: [§14](#14-scribe-as-an-annotation-proposed) ([ORB-26510]) replaces this rule; the text here is what is built.
+> Approved change: [§14](#14-scribe-as-an-annotation) ([ORB-26510]) replaces this rule at its step 2 ([ORB-26530], not built); the text here is what is built for a line-start `#scribe`.
 
 
 `scribe hook user-prompt-submit` receives `session_id`, `transcript_path`,
@@ -798,7 +798,7 @@ the uuid of the matching message written closest to the cite's `at`; a cite
 whose prompt is not in the transcript yet stays `null` for the next Stop.
 
 ### 4.2 Parsing an instruction
-> Proposed change: [§14](#14-scribe-as-an-annotation-proposed) ([ORB-26510]) replaces this rule; the text here is what is built.
+> Approved change: [§14](#14-scribe-as-an-annotation) ([ORB-26510]) replaces this rule at its step 2 ([ORB-26530], not built); the text here is what is built for a line-start `#scribe`.
 
 
 Model-free grammar, tried in order:
@@ -872,7 +872,7 @@ written. A refused line, marked or not, writes no entry. The forms text in
 that refusal (`FORMS`) includes `#scribe/global`.
 
 ### 4.3 Resolving "this" and "it"
-> Proposed change: [§14](#14-scribe-as-an-annotation-proposed) ([ORB-26510]) replaces this rule; the text here is what is built.
+> Approved change: [§14](#14-scribe-as-an-annotation) ([ORB-26510]) replaces this rule at its step 2 ([ORB-26530], not built); the text here is what is built for a line-start `#scribe`.
 
 
 Only form 3 uses a model. The hook parses the transcript, takes the last 12
@@ -2804,7 +2804,7 @@ Daniel settles a claim he can read alone.
 quote as content with `stated_by: null`, as today. No old claim is
 rewritten by a model.
 
-`#scribe` lines are unchanged here; [§14](#14-scribe-as-an-annotation-proposed) proposes cataloging them with a statement too: what Daniel types or points at is the
+`#scribe` lines are unchanged here; [§14](#14-scribe-as-an-annotation) catalogs them with a statement too (a marker inside a sentence since its step 1; line-start forms at its step 2): what Daniel types or points at is the
 content, verbatim. The statement is for what the pass captures, because
 only there did context go missing.
 
@@ -4772,11 +4772,14 @@ Not built until seen:
 
 (b) and (c) are unchanged and independent of (a1)–(a4).
 
-## 14. `#scribe` as an annotation (proposed)
+## 14. `#scribe` as an annotation
 
-[ORB-26510], designed 2026-11-21 and **not built**. Nothing in this section
-is implemented until Daniel approves it and its tasks land, in the order of
-[§14.9](#149-order-and-sequencing). Where it changes a rule stated earlier
+[ORB-26510], designed 2026-11-21 and **approved** 2026-11-21: Daniel, in
+the chief's chat at 19:18Z, "Approve as proposed", which answers all five
+[§14.11](#1411-questions-for-daniel) questions as proposed. It is built in
+the order of [§14.9](#149-order-and-sequencing): step 1 is built
+([ORB-26529], store format 22; see *As built (step 1)* in §14.9), steps 2
+and 3 are not ([ORB-26530], [ORB-26531]). Where it changes a rule stated earlier
 ([§4.1](#41-detection), [§4.2](#42-parsing-an-instruction),
 [§4.3](#43-resolving-this-and-it), [§4.4](#44-the-reply),
 [§11.1](#111-a-claim-carries-a-statement)), the earlier text describes what
@@ -5000,10 +5003,10 @@ The pass never reads `marks.json`.
 
 ### 14.8 Store format
 
-One step: `marks.json` is a new document (no older form), and an entry's
-`stated_by` admits `{kind: scribe, name: annotation}` with a user
-`content_from` and a non-empty `quote`, beside `session-pass`. The number
-is the next free one when the step lands. `specs/store.md` and
+One step, **format 22** ([ORB-26529]): `marks.json` is a new document (no
+older form), and an entry's `stated_by` admits `{kind: scribe, name:
+annotation}` with a user `content_from`, no `approved_by`, and a non-empty
+`quote` and `said` until it is forgotten, beside `session-pass`. `specs/store.md` and
 `specs/output-contract.md` describe both with the step.
 
 ### 14.9 Order and sequencing
@@ -5018,6 +5021,31 @@ is the next free one when the step lands. `specs/store.md` and
    `models.referent` is deprecated. The skill, help, goldens and
    `specs/output-contract.md` follow.
 3. **The pass skips marked turns** (§14.7).
+
+**As built (step 1)** ([ORB-26529], 2026-11-21). `annotation.rs` in the
+core (markers, window, request, checks, draft), `store/marks.rs`
+(`Store::record_marks`, one locked write of the entries and `marks.json`),
+the prompt hook's echo in `hook/user_prompt_submit.rs` and the Stop step
+in `hook/annotation.rs`, after recovery and before the cadence. Where it
+differs from the text above:
+
+- **Line-start lines are not markers yet.** A line that opens with
+  `#scribe` is still a form 1–4 instruction, captured at submit; only a
+  marker inside a sentence is cataloged at Stop, until step 2.
+- **A marker** is `#scribe` or `#scribe/<word>` that starts the line or
+  follows whitespace or an opening bracket, and is followed by the end of
+  the line, whitespace, `:`, a closing bracket or sentence punctuation.
+- **Refusals before any call** (a settling verb after a marker inside a
+  sentence or a `#scribe/<word>` other than `global`: `unparsed_instruction`;
+  a fourth marker: `too_many_marks`) are echoed by the prompt hook, which
+  writes nothing; Stop records them in `marks.json` and audits them once,
+  with no second echo.
+- **Audit**: an entry audits its id; `none` audits `session:<id>` with no
+  code; a refusal audits its code (`quote_not_verbatim`, `unknown_tag`,
+  `annotation_out_of_bounds`, `covered`, `needs_redaction`,
+  `model_failed`, or the two above); a pending retry audits nothing.
+- **Codex is not wired.** Its Stop reads its own transcripts, so neither
+  hook echoes or catalogs a marker under `--provider codex` yet.
 
 ### 14.10 Limits and what is not built until seen
 
@@ -5044,6 +5072,8 @@ Not built until seen:
 - rewriting old entries into stated ones.
 
 ### 14.11 Questions for Daniel
+
+Answered 2026-11-21 ("Approve as proposed"): all five as proposed.
 
 1. **"Manually" for a verbatim note.** Proposed: nothing new. Every entry
    keeps his exact words in `quote`, and `entry show` prints them.
@@ -5100,6 +5130,8 @@ Not built until seen:
 - [ORB-26510] — designed §14: `#scribe` as an annotation anywhere in a
   typed turn, cataloged at Stop with a statement and his verbatim quote;
   forms 1–3 fold into it.
+- [ORB-26529] — built §14 step 1: markers inside a sentence cataloged at
+  Stop, `marks.json` and store format 22.
 - [ORB-26349] — extended the duplicate check's negation markers, and made
   Stop recovery decide coverage as of the turn.
 

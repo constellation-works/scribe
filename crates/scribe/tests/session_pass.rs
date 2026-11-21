@@ -1645,7 +1645,7 @@ fn legacy_control_is_read_without_writes_and_new_retry_state_is_strict() {
     );
     setup.pass();
     let current: Value = serde_json::from_slice(&setup.control_bytes()).unwrap();
-    assert_eq!(current["format"], 21);
+    assert_eq!(current["format"], 22);
     assert_eq!(current["sessions"][ON]["consecutive_failures"], 0);
     assert_eq!(current["sessions"][ON]["retry_after"], Value::Null);
     assert_eq!(current["sessions"][ON]["pending_links"], json!([]));
@@ -1901,10 +1901,10 @@ fn a_pass_writes_one_record_of_daniels_terms_and_never_reads_a_session_never_swi
         json!([{"term": "graduate to level 4", "said": DEFINED, "message": "u-1"}])
     );
     assert!(!setup.fx.root().join("entries").exists(), "no entries");
-    // The record is written at format 21: a header and one open segment
+    // The record is written at format 22: a header and one open segment
     // holding this pass's segment text.
     let file = std::fs::read_to_string(setup.record_file()).unwrap();
-    assert!(file.starts_with("---\nformat: 21\n"), "{file}");
+    assert!(file.starts_with("---\nformat: 22\n"), "{file}");
     assert!(file.contains("\n## Log\n### 1. "), "{file}");
     assert!(!file.contains("## Outcome"), "{file}");
     assert_eq!(record["active"], true);
@@ -4727,7 +4727,7 @@ fn a_pass_over_a_switched_on_session_writes_memory_items_with_verbatim_occurrenc
     assert!(audit.contains("\"memory:m-1\""), "{audit}");
     let control: Value =
         serde_json::from_slice(&std::fs::read(s.fx.root().join("control.json")).unwrap()).unwrap();
-    assert_eq!(control["format"], 21);
+    assert_eq!(control["format"], 22);
 
     // The same window again appends nothing: the turns are already on the items.
     s.append(
@@ -4941,11 +4941,11 @@ fn an_older_build_cannot_read_a_memory_item_and_a_newer_one_is_refused() {
     let file = s.fx.root().join("memory/m-1.md");
     let original = std::fs::read_to_string(&file).unwrap();
     assert!(
-        original.starts_with("---\nformat: 21\nkind: memory\n"),
+        original.starts_with("---\nformat: 22\nkind: memory\n"),
         "{original}"
     );
 
-    std::fs::write(&file, original.replacen("format: 21", "format: 22", 1)).unwrap();
+    std::fs::write(&file, original.replacen("format: 22", "format: 23", 1)).unwrap();
     let newer = s.run_any(&["memory", "show", "--json"], b"");
     assert_ne!(newer.status.code(), Some(0));
     assert!(
@@ -4958,7 +4958,7 @@ fn an_older_build_cannot_read_a_memory_item_and_a_newer_one_is_refused() {
     // consolidation keys: an older file carrying newer keys is refused,
     // and skipped like any bad file.
     for older in ["format: 20", "format: 19", "format: 18"] {
-        std::fs::write(&file, original.replacen("format: 21", older, 1)).unwrap();
+        std::fs::write(&file, original.replacen("format: 22", older, 1)).unwrap();
         let shown = memory_items(&s, &[]);
         assert_eq!(
             shown["items"].as_array().unwrap().len(),

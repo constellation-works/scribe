@@ -158,6 +158,12 @@ such an entry the table detail's `stated_by` reads `scribe:session-pass
 `parked, in Daniel's words: "<reason>"` or `task <id>`), and `cancel` reads
 `none (written by scribe, not an agent)`; plain adds an
 `outcome\t<state>\t<reason, task or ->` line after the `stated_by` line.
+Store format 22 adds `{kind: "scribe", name: "annotation"}`: an entry Stop
+wrote for a `#scribe` marker inside a sentence of a turn Daniel typed
+(2_design.md §14.4), authored by Daniel, with no proposal. It prints as a
+stated entry: the table detail's `stated_by` reads `scribe:annotation
+(content is scribe's statement of Daniel's turn)` before `quote`, and plain
+prints `stated_by\tscribe:annotation\t<quote>`.
 
 **Session** (`sessions[]`, `session show`): `id`, `status` (`open`,
 `final`), `project`, `topics`, `related` (unchanged: model-extracted
@@ -461,6 +467,32 @@ Daniel)` after a refused line (`scribe: refused …`), a line that could
 not be recorded (`scribe: could not record …`) or a settling line that
 was refused or could not be applied. A refused or failed line therefore
 never says no action is needed, even beside a recorded line.
+
+(Format 22, 2_design.md §14.) A `#scribe` marker inside a sentence (not at
+the start of a line, outside inline code, double quotes, fences,
+blockquotes, indented code and pasted content) writes nothing at submit.
+The `UserPromptSubmit` reply echoes `scribe: marked — cataloged after the
+reply` (`marked <n> times` for several markers), with the agent note
+` (scribe catalogs this #scribe marker after your reply; do not record it
+yourself)`, and `scribe: refused #scribe in "<line>" — <reason>` with the
+relay note for a marker refused before any call (a settling verb after it
+or a `#scribe/<word>` other than `global`: `unparsed_instruction`; a fourth
+marker: `too_many_marks`). The same turn's `Stop` reply then prints, in
+its `systemMessage` after any recovery echo, one line per marker:
+`scribe: added <id> to <tag> — "<statement>" · your words: "<quote>"`,
+`scribe: nothing recorded for #scribe in your message — <reason>` (the
+model found nothing, a check refused the answer, an active entry already
+covers it — `already covered by <id> in <tag>` — or redaction would change
+the quote), or `scribe: could not catalog #scribe in your message —
+<error>; will retry at the next reply (<n> of 3)` and, at the third
+failure, `…; gave up after 3 attempts`. A refusal the prompt hook echoed
+is not echoed again. Audit lines (`hook stop`): an entry's id as `target`;
+`session:<id>` with no code for nothing found; `session:<id>` with the
+refusal code (`unparsed_instruction`, `too_many_marks`,
+`quote_not_verbatim`, `unknown_tag`, `annotation_out_of_bounds`,
+`covered`, `needs_redaction`, `model_failed`) for a refusal; none for a
+pending retry or a marker already settled. Codex does not echo or catalog
+markers yet.
 
 A prompt whose first line is `/scribe on`, `/scribe off`, `/scribe status`,
 `/scribe on --from <id> [--type <type>]`, `/scribe link <id> [--type

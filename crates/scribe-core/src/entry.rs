@@ -621,6 +621,11 @@ pub struct NewEntry {
     pub review_after: Option<Date>,
     /// The chat before the line, under an action tag only.
     pub window: Option<Window>,
+    /// Daniel's verbatim words when `content` is scribe's statement of
+    /// his turn (an annotation, 2_design.md §14.4); `None` otherwise.
+    pub quote: Option<String>,
+    /// Who wrote `content` when it is not his own words; `None` otherwise.
+    pub stated_by: Option<Author>,
 }
 
 impl NewEntry {
@@ -647,14 +652,14 @@ impl NewEntry {
             retirement_reason: None,
             superseded_by: None,
             review_after: self.review_after,
-            quote: None,
+            quote: self.quote,
             window: self.window,
             evidence: None,
             as_of: None,
             approved_by: None,
             instruction: None,
             removal_instruction: None,
-            stated_by: None,
+            stated_by: self.stated_by,
             outcome: None,
             content: self.content,
         }

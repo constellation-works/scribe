@@ -48,6 +48,7 @@ mod issues;
 pub use issues::{ISSUES_DIR, IssueList, MoveTo, Moved};
 mod memory;
 pub use memory::{MEMORY_DIR, MemoryWritten, PassMemory};
+mod marks;
 mod pickups;
 pub use init::{InitFile, InitReport, init_project, integration_hooks};
 mod rebuild;
@@ -58,6 +59,7 @@ pub use rebuild::RebuildGuard;
 pub use agent::{check_agent_author, check_content, check_reason};
 pub use audit::{AUDIT_FILE, AuditEvent, AuditStatus, IssueAudit, IssueStats};
 pub use ids::resolve_prefix;
+pub use marks::{COVERED, MODEL_FAILED, MarkChange, MarkKey, MarkResult, NEEDS_REDACTION};
 pub use redact::{MIN_SECRET_CHARS, REDACTED_FIELDS, Redactor, unresolved_redact_env};
 pub use tags::check_description;
 
@@ -92,6 +94,9 @@ pub const CONTROL_FILE: &str = "control.json";
 pub const PROPOSALS_FILE: &str = "proposals.json";
 /// Consumers' pickups of action entries, from format 8.
 pub const PICKUPS_FILE: &str = "pickups.json";
+/// Each `#scribe` annotation marker's outcome, from format 22
+/// (2_design.md §14.5).
+pub const MARKS_FILE: &str = "marks.json";
 
 /// The lock file's name under the data directory.
 const LOCK_FILE: &str = ".lock";

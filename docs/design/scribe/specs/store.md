@@ -1,6 +1,6 @@
 ---
 type: design
-summary: "Spec: store — layout, record files with YAML frontmatter (format 21: a working item's preference_proposal; format 20: memory consolidation and promotion; format 19: memory items; format 18: entry removal_instruction apart from the approval instruction; format 17: issue records; format 16: entry outcome on a pass-written idea; format 15: instructed approval said and closed_reason covered; format 14: candidate statement and subject, entry stated_by; format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
+summary: "Spec: store — layout, record files with YAML frontmatter (format 22: marks.json and the annotation entry; format 21: a working item's preference_proposal; format 20: memory consolidation and promotion; format 19: memory items; format 18: entry removal_instruction apart from the approval instruction; format 17: issue records; format 16: entry outcome on a pass-written idea; format 15: instructed approval said and closed_reason covered; format 14: candidate statement and subject, entry stated_by; format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
 last_validated: 2026-11-21
 ---
 
@@ -10,7 +10,13 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-The code writes format 21 and reads formats 1–21. Format 21 adds to each
+The code writes format 22 and reads formats 1–22. Format 22 changes no
+stored value: it adds `marks.json`, each `#scribe` annotation marker's
+outcome, and admits an entry with `stated_by: {kind: scribe, name:
+annotation}`, scribe's statement of a turn Daniel marked
+([2_design.md §14](../2_design.md#14-scribe-as-an-annotation)); such an
+entry is written at format 22, so a format-21 build refuses it as too new.
+Format 21 adds to each
 memory item `preference_proposal`: the `preferences` candidate a `working`
 item opened when it recurred across sessions
 ([2_design.md §13.7](../2_design.md#137-from-working-to-preferences));
@@ -78,6 +84,7 @@ user's file could pass for one of Daniel's records.
 ├── tags.json                            0600, optional (introduced at format 5, S12)
 ├── pickups.json                         0600, optional (introduced at format 8)
 ├── memory/m-<n>.md                      0600, one file per memory item (introduced at format 19)
+├── marks.json                           0600, optional (introduced at format 22)
 ├── audit.jsonl                          0600, created by the first audited command
 └── .lock                                0600, created by the first writer, never deleted
 ```
@@ -178,6 +185,18 @@ and clears the quote; `stated_by` stays. A Daniel entry with a quote but no
 `stated_by`, `stated_by` on an agent entry, or any other author or source is
 `store_corrupt`. An entry approved from an older candidate (no statement)
 keeps the quote as its content with `stated_by: null`.
+
+Format 22 admits `stated_by: {kind: scribe, name: annotation}`: an entry
+Stop wrote for a `#scribe` marker inside a sentence of a turn Daniel typed
+(2_design.md §14.4). It has `author: {kind: daniel}`, scribe's statement
+as content, his verbatim span in `quote`, `content_from` his user turn
+(`{kind: message, role: user, message, at}`), the marker's line in `said`,
+a cite with the marked turn's message id and the marker's line, no
+`approved_by` or `instruction`, and under an action tag the §4.6 `window`.
+Forgetting it blanks the content, `said` and the quote; `stated_by`
+stays. An annotation entry below format 22, one with another source, or an
+active, retired or superseded one without its quote and `said` is
+`store_corrupt`.
 
 Format 16 adds `outcome` (`{state: open|parked|task, reason, task}` or
 `null`), upgraded to `null`. It is set exactly on an entry the session pass
@@ -390,7 +409,7 @@ from). `memory forget m-<n>#<k>` blanks one occurrence's quote.
 
 ## JSON documents
 
-- `control.json` (written at format 21; an older file upgrades on read): `{"sessions": {"<session-id>": {"on",
+- `control.json` (written at format 22; an older file upgrades on read): `{"sessions": {"<session-id>": {"on",
   "since", "due", "final", "consecutive_failures", "retry_after",
   "pending_links", "cataloged_by"}}}`. `pending_links` holds `{type, session}` links
   Daniel asserted before the session had a record; the pass that writes
@@ -400,7 +419,7 @@ from). `memory forget m-<n>#<k>` blanks one occurrence's quote.
   automatic attempt waits 5, 10, 20, 40, then at most 60 minutes. Success
   or switching off resets both retry fields. Explicit `--session` bypasses
   the delay.
-- `proposals.json` (written at format 21; an older file upgrades on read): `{"proposals": [{"id": "p-<n>", "kind":
+- `proposals.json` (written at format 22; an older file upgrades on read): `{"proposals": [{"id": "p-<n>", "kind":
   "supersedes"|"stale", "older", "newer", "reason", "quotes": [{"entry",
   "text"}], "state": "open"|"approved"|"rejected", "opened_at",
   "settled_at", "settled_by"}]}`. `newer`, `settled_at` and `settled_by`
@@ -446,13 +465,29 @@ from). `memory forget m-<n>#<k>` blanks one occurrence's quote.
 - `cataloged_by` on a `control.json` switch is `null` or `{at, by}`;
   `/scribe on` keeps it. *(S14)* `session catalog` sets it and the pass
   copies it onto the record.
-- (S12) `tags.json` (written at format 21; introduced at format 5): `{"tags": [{"name",
+- (S12) `tags.json` (written at format 22; introduced at format 5): `{"tags": [{"name",
   "aliases", "description", "stale_after_days", "author", "updated_by", "created",
   "updated"}]}`, sorted by name; `name` and aliases as for config tags,
   `description` accepts 1–300 characters before redaction, `stale_after_days` a positive
   integer or `null`, `author` of kind `agent`; `updated_by` is the last updating agent or
   `null`. Absent is no store tags.
-- `pickups.json` (written at format 21; introduced at format 8, no older form): `{"pickups": [{"entry", "author",
+- `marks.json` (written at format 22; introduced at format 22, no older
+  form): `{"marks": [{"session", "message", "prompt_sha256", "marker",
+  "outcome", "entry", "code", "attempts", "at"}]}`, oldest first: one per
+  `#scribe` marker inside a sentence of a typed turn, keyed by session,
+  message uuid and marker number, holding ids and codes only, never words.
+  `outcome` is `entry` (`entry` the id it wrote, `code` null), `none` (both
+  null), `refused` (`code` the refusal: `unparsed_instruction`,
+  `too_many_marks`, `quote_not_verbatim`, `unknown_tag`,
+  `annotation_out_of_bounds`, `covered`, `needs_redaction` or
+  `model_failed`; `entry` null) or `pending` (both null: a call failed and
+  the next Stop retries it). `attempts` counts the model calls spent; the
+  third failure is `refused` `model_failed`. Every outcome but `pending` is
+  final: the marker is never sent to the model again. An outcome whose
+  fields disagree is `store_corrupt`. Written only by the Stop hook, under
+  the lock, after the entries it records (`Store::record_marks`). Absent is
+  no marks.
+- `pickups.json` (written at format 22; introduced at format 8, no older form): `{"pickups": [{"entry", "author",
   "at", "result", "rejected"}]}`, oldest first: a consumer's note that it
   picked up the action entry `entry` (`author` of kind `agent`, `result` a
   reference or `null`), or with `rejected: true`, that the human rejected
@@ -667,7 +702,7 @@ exits 0.
   other refusal (a link, loose modes, a newer format, an I/O error) fails
   the whole command rather than skipping the file
   ([4_decisions.md](../4_decisions.md#one-malformed-record-makes-its-file-corrupt)).
-- **Format.** One `FORMAT` (20) covers every document. A shape change bumps
+- **Format.** One `FORMAT` (22) covers every document. A shape change bumps
   it and appends one step to `UPGRADES` in `store/format.rs`, which is
   given the document type it upgrades; shipped steps never change. Reads
   upgrade an older document in memory; a newer one is refused and left
@@ -831,6 +866,11 @@ exits 0.
   format-15 to -20 `proposals.json` decode at the current shape. It adds
   the memory item key `preference_proposal`; a format-20 item reads with
   it `null` and is refused if it carries it.
+- **Format 22** (annotations, 2_design.md §14.8). Append-only step 21→22
+  (`annotations`) changes no stored value: a format-18 to -21 entry and a
+  format-15 to -21 `proposals.json` decode at the current shape. It admits
+  `marks.json`, read only at 22 or later, and the annotation `stated_by`
+  on an entry, refused below 22.
 - **Agent writes** (S12). Each write verb takes the lock, checks the
   author guards (a reserved `--author` name — `daniel`, `scribe`,
   `consistency`, `session-pass`, `tag-retired` — is refused `reserved_author`; a Daniel entry's content,

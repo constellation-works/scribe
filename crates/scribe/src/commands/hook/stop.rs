@@ -2,6 +2,10 @@
 //! message ids (§4.1), and mark a switched-on session's pass due (§5.2).
 //! Recovery echoes additions and refusals; it never calls a model.
 //!
+//! Then the `#scribe` markers Daniel typed inside his sentences are
+//! cataloged (`annotation.rs`, §14): the only model call this hook makes,
+//! one per marked turn, bounded.
+//!
 //! `UserPromptSubmit` runs before Claude Code writes the prompt to the
 //! transcript, so an entry's cite starts with `message: null` and the hash
 //! of the prompt. This hook finds the user message whose text has that hash
@@ -42,6 +46,18 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
         .any(|o| o.error_code == Some(PROVENANCE_FAILED))
     {
         outcomes.extend(fill_cites(&payload, &session, ctx)?);
+    }
+    if !outcomes
+        .iter()
+        .any(|o| o.error_code == Some(PROVENANCE_FAILED))
+    {
+        let cataloged =
+            super::annotation::run(&payload, &session, ctx, |config| ctx.models(config))?;
+        if !cataloged.echoes.is_empty() {
+            let echoes = reply.message.take().into_iter().chain(cataloged.echoes);
+            reply.message = Some(echoes.collect::<Vec<_>>().join("\n"));
+        }
+        outcomes.extend(cataloged.outcomes);
     }
     if !outcomes
         .iter()
