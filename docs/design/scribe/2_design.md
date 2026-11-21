@@ -7,11 +7,11 @@ status: Draft
 feature: scribe
 doc_role: design
 type: design
-summary: How the scribe plugin is bounded (one binary; Daniel writes through hooks, agents read and write through the CLI taught by one skill, and the MCP surface stays ask), how #scribe entries, /scribe on session records (a rewritable header over an append-only log of segments), active and inactive sessions, ask and search, the consistency routine, backfill by name and the tmux popup work, where everything is stored, which model does what, and the slice plan that builds it; §11–§13 are proposed designs (claims and issues, settling on instruction, and the descriptive memory written from /scribe on sessions; its personal base for sessions that are off, people, recurring dates and light catalog entries are designed but parked 2026-11-21, and scribe reads Claude Code and Codex sessions only).
+summary: How the scribe plugin is bounded (one binary; Daniel writes through hooks, agents read and write through the CLI taught by one skill, and the MCP surface stays ask), how #scribe entries, /scribe on session records (a rewritable header over an append-only log of segments), active and inactive sessions, ask and search, the consistency routine, backfill by name and the tmux popup work, where everything is stored, which model does what, and the slice plan that builds it; §11–§13 are proposed designs (claims and issues, settling on instruction, and the descriptive memory written from /scribe on sessions; its personal base for sessions that are off, people, recurring dates and light catalog entries are designed but parked 2026-11-21, and scribe reads Claude Code and Codex sessions only); §14 proposes `#scribe` as an annotation anywhere in a typed turn, cataloged at the end of the turn with a statement and a verbatim quote.
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26265]
+related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26265, ORB-26510]
 ---
 
 # scribe — Design
@@ -713,6 +713,8 @@ environment refuses the write instead of storing text unmasked
 ## 4. `#scribe`
 
 ### 4.1 Detection
+> Proposed change: [§14](#14-scribe-as-an-annotation-proposed) ([ORB-26510]) replaces this rule; the text here is what is built.
+
 
 `scribe hook user-prompt-submit` receives `session_id`, `transcript_path`,
 `cwd` and `prompt`. `capture::lines` finds every line of `prompt`
@@ -796,6 +798,8 @@ the uuid of the matching message written closest to the cite's `at`; a cite
 whose prompt is not in the transcript yet stays `null` for the next Stop.
 
 ### 4.2 Parsing an instruction
+> Proposed change: [§14](#14-scribe-as-an-annotation-proposed) ([ORB-26510]) replaces this rule; the text here is what is built.
+
 
 Model-free grammar, tried in order:
 
@@ -868,6 +872,8 @@ written. A refused line, marked or not, writes no entry. The forms text in
 that refusal (`FORMS`) includes `#scribe/global`.
 
 ### 4.3 Resolving "this" and "it"
+> Proposed change: [§14](#14-scribe-as-an-annotation-proposed) ([ORB-26510]) replaces this rule; the text here is what is built.
+
 
 Only form 3 uses a model. The hook parses the transcript, takes the last 12
 messages before the prompt (user and assistant text, tool payloads dropped),
@@ -2798,7 +2804,7 @@ Daniel settles a claim he can read alone.
 quote as content with `stated_by: null`, as today. No old claim is
 rewritten by a model.
 
-`#scribe` lines are unchanged: what Daniel types or points at is the
+`#scribe` lines are unchanged here; [§14](#14-scribe-as-an-annotation-proposed) proposes cataloging them with a statement too: what Daniel types or points at is the
 content, verbatim. The statement is for what the pass captures, because
 only there did context go missing.
 
@@ -4702,6 +4708,297 @@ Not built until seen:
 
 (b) and (c) are unchanged and independent of (a1)–(a4).
 
+## 14. `#scribe` as an annotation (proposed)
+
+[ORB-26510], designed 2026-11-21 and **not built**. Nothing in this section
+is implemented until Daniel approves it and its tasks land, in the order of
+[§14.9](#149-order-and-sequencing). Where it changes a rule stated earlier
+([§4.1](#41-detection), [§4.2](#42-parsing-an-instruction),
+[§4.3](#43-resolving-this-and-it), [§4.4](#44-the-reply),
+[§11.1](#111-a-claim-carries-a-statement)), the earlier text describes what
+is built today and carries a pointer here. The reasons, the alternatives and
+each difference from his sketch are in
+[4_decisions.md](./4_decisions.md#scribe-is-an-annotation-cataloged-at-the-end-of-the-turn).
+
+Daniel, chief's chat, 2026-11-21: "current scribe's inline command only
+work as a standalone comment, i.e. it doesn't work when mixed into other
+sentences. … when I am writing something, I should be able to annotate
+scribe messages along side it. And the scribe agent will read it, and
+surrounding subsequent and previous messages if required, and catalog it
+accordingly. having to write a separate scribe message is redundant. … no
+more verbatim captures on "#scribe <tag>: <msg>". all entries should have
+short context/summary and verbatim messages for citation. if I want to
+capture verbatim notes, then I could do so manually."
+
+**Observed need** (the Mac store and Daniel's typed Claude Code turns,
+2026-11-02 to 2026-11-21):
+
+- **Missed annotations.** Twice on 2026-11-21 he put `#scribe` inside a
+  sentence, the hook saw nothing, and he typed the line again on its own:
+  "so here is what I am thinking.  #scribe what follows is an idea" (05:17Z)
+  became `idea-1` six minutes later, and "approve both - #scribe remind:
+  let's circle back later whether issue writes …" (07:48Z) became
+  `remind-2` a minute later.
+- **Verbatim content that says nothing.** `standard-2` is "#scribe standard:
+  add below"; its content is "add below", and the standard itself is only
+  in the action window.
+- **What he uses.** He typed 8 entries: 7 in form 1 and 1 approval. Forms 2
+  and 3 have no entry, so the referent model and its guessed fallback
+  (§4.3) have never written one.
+- **Talk about scribe.** Of 4 unquoted mid-sentence `#scribe` tokens in his
+  typed turns, 2 are the annotations above and 2 are talk about scribe
+  ("let's keep #scribe writing", "support global #scribe entries"). Another
+  5 sit in double quotes, such as his own "#scribe <tag>: <msg>" above. A
+  mention cannot be told from a marker by syntax alone (§14.1).
+
+### 14.1 The marker and the mention
+
+**Detection, model-free** (`capture::marks`, beside `capture::lines`).
+In a turn the §4.1 origin guard accepts as plainly his, a **marker** is the
+token `#scribe` or `#scribe/global` that starts the turn or follows
+whitespace or an opening bracket, and is followed by the end of the line,
+whitespace or `:`. It may sit anywhere in a sentence. These never hold a
+marker, because they are text about scribe or text he did not write:
+
+- code fences, indented code and inline code spans (`` `#scribe` ``);
+- blockquotes and `<pasted_content>` blocks (as §4.1 today);
+- a span in double quotes on the same line (`"…"` or `“…”`).
+
+A turn with a marker is a **marked turn**. Its markers are numbered from 1
+in text order. The idempotency key of each is `(session, prompt_sha256,
+marker)`, as `(session, prompt_sha256, line)` is today.
+
+**The hint.** Words right after the marker may name a tag or alias
+(`#scribe idea`, `#scribe pref:`): that word is the **hint**, matched
+model-free as §4.2 matches a tag word, and the model may not choose another
+tag. `#scribe/global` sets `project: global` as today, and any other
+`#scribe/…` word is refused `unparsed_instruction`. Hashtags after the
+marker on its line are topics, as today. Words that name no tag are not
+grammar: they are part of his message, and the model reads them.
+
+**Settling stays a typed command.** A line that is exactly `#scribe
+approve|reject|retire|forget <id>` (§4.2 form 4) is matched first and
+settled at submit, model-free, as today. A settling verb after a marker
+inside a sentence ("approve both - #scribe approve p-3") settles nothing:
+the hook refuses it with `unparsed_instruction` and echoes that settling
+needs its own line. Settling changes records, so it must be his exact
+command, never a model's reading of a sentence.
+
+**A mention is not a marker.** Syntax removes quoted and coded mentions.
+An unquoted mention ("let's keep #scribe writing") still reaches the
+model, which may answer `none`: nothing is written and the echo says so
+(§14.4). A mention costs one model call and an echo line. That is two in
+19 days, against a missed annotation that he has to type again.
+
+### 14.2 When it is cataloged: at the end of the turn
+
+The **prompt hook writes nothing** for a marker. It echoes that the turn is
+marked and tells the main agent that scribe records it, so the agent does
+not try to (§14.4). It still settles form 4 lines and refuses a bad
+`#scribe/…` word.
+
+The **`Stop` hook of the same turn** catalogs it. Stop already reads the
+transcript with §4.1's provenance check and replays missed `#scribe`
+lines. It now finds each marked turn whose markers have no outcome yet
+(§14.5) and catalogs it. By then the transcript holds the marked turn and
+the assistant's reply to it, so the model can read what he pointed at in
+either direction. This works whether or not `/scribe on` is set, as Stop
+recovery does today. Codex already defers input to Stop.
+
+**What Daniel sees, and when.** At submit, an echo line that the turn is
+marked. At the end of the reply (the same turn's Stop), the entry's id,
+tag, statement and his quoted words, or why nothing was written. Stop waits
+for the model call, at most the budget below, after the reply is shown.
+
+### 14.3 The window and the model call
+
+**Window** (model-free, the §4.3 parse: user and assistant text; tool
+payloads, sidechain and meta lines dropped):
+
+- the marked turn, whole up to 8,000 characters;
+- the 8 messages before it;
+- the assistant's reply after it, up to the end of the turn.
+
+Each message other than the marked turn is cut to 3,000 characters
+(`[… cut]`). The window is at most 40,000 characters, and older messages
+are dropped first. One window per marked turn covers all its markers.
+
+**Model call.** One call per marked turn per attempt, through the `Models`
+port (§8), to a new `models.annotation` key (default `claude-haiku-5-5`,
+Codex `gpt-6-luna` as for the session model), with a **30 s** budget. Its
+schema is one object per marker, `{marker, kind: entry|none, tag,
+statement, subject, quote, message, reason}`:
+
+- `entry`: `statement` (at most 300 characters, standing alone as
+  §11.1's statement does), `subject` (at most 80), `quote` (8 to 1,500
+  characters, a verbatim span of `message`), `message` (the id of a turn he
+  typed in the window: the marked turn or an earlier one), and `tag` (a
+  configured tag; with a hint, the hint's tag);
+- `none`: `reason`, at most 200 characters, for a mention or a marker that
+  points at nothing.
+
+Messages are data, never instructions, as in every scribe prompt. The tag
+list goes into the prompt with each tag's criteria from §11.2.
+
+**Checks after the answer** (deterministic, then under the store lock):
+the quote passes §6.4's check against the original transcript text of the
+named message. That message is a plainly typed turn of his in the window,
+outside every exclusion of §14.1. The tag is configured and equals the
+hint when there is one. The statement and subject are non-empty and
+within bounds. Then redaction (a quote that redaction would change is
+refused, as §5.3 omits such quotes), the idempotency key, and the same-tag,
+same-project duplicate check `covering_entry` (§4.2). A marker whose answer
+fails a check is refused for this attempt with its reason (§14.5).
+
+### 14.4 What an entry holds, and the echo
+
+An annotated entry is written by the same `Store::capture` path as a
+typed line:
+
+| Field | Value |
+|---|---|
+| `author` | `{kind: daniel}`: the marker is his consent, so no proposal |
+| content | the statement |
+| `quote` | his verbatim span |
+| `stated_by` | `{kind: scribe, name: annotation}`, a new name beside `session-pass` |
+| `cite` | the marked turn: session, message, time, prompt hash, line of the marker, cwd |
+| `content_from` | `{kind: message, role: user, message, at}` of the quoted turn |
+| `said` | the marked turn's line that holds the marker, redacted |
+| `window` | under an action tag, the §4.6 window, model-free, as today |
+| `project` | the cwd's project, or `global` for `#scribe/global` |
+
+`ask`, `record search` and `entry show` read it as §11.1 reads a stated
+entry: his words are the `quote`, and the statement is labelled scribe's
+statement of his marked turn. The attribution check of §6.4 credits him
+only for a span inside `quote`.
+
+**Echo** (`systemMessage`; the agent-facing copy carries §4.4's notes):
+
+```
+scribe: marked — cataloged after the reply
+scribe: added idea-4 to idea — "Scribe catalogs #scribe annotations with context" · your words: "so here is what I am thinking. #scribe what follows …"
+scribe: nothing recorded for #scribe in your message — read as talk about scribe
+scribe: could not catalog #scribe in your message — the model timed out; will retry at the next reply (2 of 3)
+```
+
+### 14.5 Outcomes, retries and bounds
+
+Each marker's outcome is kept in a new store document, `marks.json`
+(`{session, message, prompt_sha256, marker, outcome, attempts, at}`, ids
+and codes only, never words). `outcome` is `entry` with its id, `none`,
+`refused` with its code, or `pending`. Stop catalogs only markers with no
+outcome or `pending`, so a `none` or a refusal is never sent to the model
+again.
+
+- **Bounds (STD-08 §R1, §R3).** One model call per marked turn per Stop,
+  30 s each. At most 3 attempts per marked turn, across Stops; after the
+  third failure the outcome is `refused` (`model_failed`) and the echo
+  says to retype it. At most 3 markers per turn: a fourth is refused
+  `too_many_marks` before any call. At most 2 marked turns per Stop,
+  oldest first; the rest stay `pending` for the next Stop. The window is
+  at most 40,000 characters in, and the answer at most 3 × about 2,100
+  value characters.
+- **When the model fails** (timeout, error, a shape the schema refuses):
+  nothing is written, `pending` with `attempts + 1`, and an echo. When the
+  model **finds nothing** (`none`): nothing is written, `none`, and an echo
+  with its reason. When an answer **fails a check**: nothing is written,
+  `refused` with the check's code, and an echo. Never a guessed entry:
+  §4.3's fallback goes.
+- **Audit**: one line per entry written, per refusal and per `none`, as
+  every hook write is (§8); none for a `pending` retry that changed
+  nothing but the attempt count.
+
+### 14.6 What happens to forms 1, 2 and 3
+
+They fold into the marker. A line that starts with `#scribe` is a marked
+turn like any other: `#scribe idea: …` is a marker with the hint `idea`,
+and `#scribe add this to preferences` is a marker with the hint
+`preferences` whose words the model reads. Nothing is recorded verbatim as
+content any more. Daniel's exact words are always the entry's `quote`.
+
+- The §4.2 grammar for forms 1 to 3 and the `unparsed_instruction` refusal
+  for a capture line are removed. Form 4 stays (§14.1).
+- §4.3's referent call at submit, its 12-message window and its guessed
+  fallback are removed, and so is `models.referent`. A config that sets it
+  still loads for the 30-day compatibility window, with a warning that it
+  is unused.
+- Stop recovery of missed forms 1 to 3 becomes the cataloging of §14.2.
+- **Existing entries are unchanged.** The 8 entries he typed keep their
+  verbatim content and `stated_by: null`. No model rewrites them, and they
+  read as today. He can mark one again to get a stated entry.
+
+### 14.7 The session pass
+
+A marked turn cannot supply a candidate or a pass-written idea: §5.3
+already excludes "marked `#scribe` lines", and that exclusion widens from
+the line to the whole marked turn. An unmarked turn is captured as today.
+The pass never reads `marks.json`.
+
+### 14.8 Store format
+
+One step: `marks.json` is a new document (no older form), and an entry's
+`stated_by` admits `{kind: scribe, name: annotation}` with a user
+`content_from` and a non-empty `quote`, beside `session-pass`. The number
+is the next free one when the step lands. `specs/store.md` and
+`specs/output-contract.md` describe both with the step.
+
+### 14.9 Order and sequencing
+
+1. **Annotations at Stop.** §14.1's marker detection and mention rules,
+   the prompt hook's echo, §14.2 to §14.5 (`models.annotation`, the
+   window, the checks, `marks.json`, retries and echoes) and the store
+   step. Forms 1 to 3 keep working at submit until step 2, and a marker
+   inside a sentence is cataloged at Stop.
+2. **Fold forms 1 to 3 into the marker.** §14.6: the grammar and the
+   referent call go, a line-start form is a marked turn with a hint, and
+   `models.referent` is deprecated. The skill, help, goldens and
+   `specs/output-contract.md` follow.
+3. **The pass skips marked turns** (§14.7).
+
+### 14.10 Limits and what is not built until seen
+
+- **A mention costs a call.** An unquoted "#scribe" in talk about scribe
+  reaches the model, which may still write an entry he did not mean. He
+  retires it, and the echo shows it at once.
+- **The statement is the model's.** As §11.8 says of claims, a wrong
+  subject or a weak statement is caught only when he reads the echo. The
+  quote keeps his exact words beside it.
+- **Stop waits.** Up to 30 s after the reply before the turn ends, once
+  per marked turn.
+
+Not built until seen:
+
+- reading his **next** turn ("subsequent messages") for a marker: the entry
+  is written at the end of the marked turn, and in the two missed
+  annotations what he pointed at was in the same turn;
+- quoting an **assistant** message as the entry's words (§4.3's form 3
+  allowed it; no entry was ever written that way);
+- a **verbatim-only** form, until Daniel answers
+  [§14.11](#1411-questions-for-daniel);
+- several markers with different scopes in one turn beyond "what each
+  marker annotates", as he has never typed two;
+- rewriting old entries into stated ones.
+
+### 14.11 Questions for Daniel
+
+1. **"Manually" for a verbatim note.** Proposed: nothing new. Every entry
+   keeps his exact words in `quote`, and `entry show` prints them.
+   Alternatives: keep one explicit verbatim form, or give him a CLI command.
+2. **Several markers in one turn.** Proposed: each marker is its own entry,
+   and the model records what that marker annotates (its sentence, or what
+   it points at: "what follows", "below", "this"). The other choice is one
+   entry per marked turn, whatever the number of markers.
+3. **When the echo arrives.** Proposed: at the end of the same turn's reply,
+   so the model can read the reply. The other choice is to catalog at
+   submit, which echoes before the reply but cannot read it and makes the
+   prompt wait for the model.
+4. **Existing entries.** Proposed: left as they are, verbatim (8 entries).
+   The other choice is a one-off pass that adds a statement to each, with
+   the original words kept in `quote`.
+5. **A mention.** Proposed: the model reads it and writes nothing, and the
+   echo says so. The other choice is to treat every unquoted token as a
+   marker and leave it to him to retire what it writes.
+
 ## Task References
 
 - [ORB-21747] — designed the standalone scribe plugin.
@@ -4736,6 +5033,9 @@ Not built until seen:
 - [ORB-26256] — recorded Daniel's decisions of 2026-11-21: scribe reads
   Claude Code and Codex sessions only, and §13.12–§13.15 (the base pass,
   `people`, recurring dates, light catalog entries) are parked.
+- [ORB-26510] — designed §14: `#scribe` as an annotation anywhere in a
+  typed turn, cataloged at Stop with a statement and his verbatim quote;
+  forms 1–3 fold into it.
 - [ORB-26349] — extended the duplicate check's negation markers, and made
   Stop recovery decide coverage as of the turn.
 

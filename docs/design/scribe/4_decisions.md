@@ -7,11 +7,11 @@ status: Draft
 feature: scribe
 doc_role: decisions
 type: design
-summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, why action tags are config-marked with a capped window, a cancel window, pickups, a stuck line, a CLI quote check and SSH reads from the owner host, why scribe keeps a descriptive memory the session pass writes without approval, why that memory has a personal base fed by every typed session (with people, recurring dates and light catalog entries) and a work layer fed only by /scribe on sessions, why scribe reads Claude Code and Codex sessions only (no hosted server, app connector or ChatGPT import), why the personal base, people, recurring dates and light catalog entries are parked, why the session pass writes Daniel's ideas itself with their outcome, plus the engineering decisions carried over from the Rust CLI template.
+summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, why action tags are config-marked with a capped window, a cancel window, pickups, a stuck line, a CLI quote check and SSH reads from the owner host, why scribe keeps a descriptive memory the session pass writes without approval, why that memory has a personal base fed by every typed session (with people, recurring dates and light catalog entries) and a work layer fed only by /scribe on sessions, why scribe reads Claude Code and Codex sessions only (no hosted server, app connector or ChatGPT import), why the personal base, people, recurring dates and light catalog entries are parked, why the session pass writes Daniel's ideas itself with their outcome, why #scribe becomes an annotation anywhere in a typed turn cataloged at the end of the turn with a statement and his verbatim quote (proposed), plus the engineering decisions carried over from the Rust CLI template.
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510]
 ---
 
 # scribe — Decisions
@@ -3757,3 +3757,116 @@ as the approval's evidence.
 - A format-17 build refuses a store this build wrote (`store_too_new`).
 - Cost: one more field, and a decoder rule tying `instruction` to
   `approved_by`.
+
+## `#scribe` is an annotation, cataloged at the end of the turn
+
+**Recorded:** 2026-11-21 · [ORB-26510] · **Overridable by Daniel** · proposed, not built
+**Refines:** [`#scribe` capture in 2_design.md §4](./2_design.md#4-scribe), [A claim carries a statement (§11.1)](./2_design.md#111-a-claim-carries-a-statement)
+**Paths:** `crates/scribe-core/src/capture/**`, `crates/scribe/src/hook/**`, `crates/scribe-core/src/store/**`, `docs/design/scribe/2_design.md` §14
+
+### Context
+
+Daniel, chief's chat, 2026-11-21: "current scribe's inline command only
+work as a standalone comment, i.e. it doesn't work when mixed into other
+sentences. I think a better design is this: * when I am writing something,
+I should be able to annotate scribe messages along side it. And the scribe
+agent will read it, and surrounding subsequent and previous messages if
+required, and catalog it accordingly. having to write a separate scribe
+message is redundant. * no more verbatim captures on "#scribe <tag>:
+<msg>". all entries should have short context/summary and verbatim
+messages for citation. if I want to capture verbatim notes, then I could do
+so manually."
+
+The need is observed. Twice that day a `#scribe` inside a sentence was
+missed and he typed it again on its own line (`idea-1`, `remind-2`).
+`standard-2` holds "add below" as its content, because form 1 records the
+words after the colon and the standard was below them. Of his 8 typed
+entries, 7 are form 1 and 1 is an approval; forms 2 and 3 never wrote one.
+Two of his unquoted mid-sentence `#scribe` tokens were talk about scribe,
+not annotations, so a model has to tell them apart.
+
+### Decision
+
+A `#scribe` token anywhere in a typed turn, outside code, quotes,
+blockquotes and pasted content, marks the turn
+([2_design.md §14](./2_design.md#14-scribe-as-an-annotation-proposed)).
+The prompt hook writes nothing for it and echoes that the turn is marked.
+The same turn's `Stop` hook sends a bounded window (the 8 messages before,
+the marked turn and the assistant's reply) to one Haiku call with a 30 s
+budget. The model returns, per marker, either an entry (tag, statement,
+subject, his verbatim quote and the message it comes from) or `none` with
+a reason. Checked entries are written with author `daniel`, content the
+statement, `quote` his span and `stated_by: {kind: scribe, name:
+annotation}`, with no proposal. A word right after the marker that names a
+tag is a hint the model must follow. Forms 1 to 3 fold into the marker,
+and §4.3's referent call and guessed fallback go. Settling (form 4) stays a
+whole-line, model-free command. A `marks.json` store document keeps each
+marker's outcome, so nothing found and refusals are not retried, and a
+model failure is retried at most 3 times. Existing entries are not
+rewritten.
+
+**Differences from his sketch and the chief's proposal, each named:**
+
+1. **When it is written.** The chief's proposal said the echo comes one
+   turn later. Stop runs at the end of the reply to the marked turn, so the
+   entry and its echo come at the end of the same turn, with the reply
+   already in the window.
+2. **"Subsequent messages".** His sketch has scribe read later messages
+   "if required". The design reads the reply after the marked turn but not
+   his next turn. In both missed annotations what he pointed at was in the
+   same turn. Reading his next turn is not built until seen.
+3. **"No more verbatim captures".** Kept as he said for content: the
+   content is always the statement. His words are never lost, because the
+   `quote` holds them verbatim and `entry show` prints them. Whether a
+   separate verbatim form is still wanted is put to him ("manually" is a
+   question, §14.11).
+4. **Settling verbs stay a command.** His sketch covers annotating, not
+   settling; the chief's proposal kept them whole-line. They stay whole-line
+   and model-free because they change records. A verb after a marker in a
+   sentence is refused with a reason, not read by the model.
+5. **A hint binds.** The chief's proposal let the model derive the tag. A
+   tag word right after the marker is his choice and the model must use
+   it; only an unhinted marker is classified.
+6. **No tag found.** The chief's proposal asked for a choice between a
+   refusal and an open proposal. The design echoes `none` with a reason and
+   writes nothing: the marker is his consent to one entry, so a proposal
+   would ask him to approve what he already said, and he can type it again
+   with a hint.
+7. **A durable outcome per marker.** Not in either: added so a `none` or a
+   refusal is not sent to the model again at each Stop, and retries are
+   bounded.
+8. **Existing entries.** Left verbatim, with no model rewrite, as the chief
+   proposed; put to him as a question.
+
+### Alternatives
+
+- **Catalog at submit**, in the prompt hook, as form 3 does today. The echo
+  arrives before the reply. **Cost:** the prompt waits for the model call
+  (up to its budget) on every marked turn, and the model cannot read the
+  reply, which is where "this" often points.
+- **Keep the line grammar and only widen detection** to a marker inside a
+  sentence, recording the words after it verbatim. **Cost:** a marker in a
+  sentence has no clear end, so the content would be a fragment like "what
+  follows is an idea" or "add below", the problem `standard-2` already
+  shows, and Daniel asked for statements.
+- **Every unquoted token is a marker** with no `none` outcome. **Cost:** the
+  two observed mentions would each have written an entry he did not mean,
+  which he would have to retire.
+- **An open proposal when the model is unsure.** **Cost:** he approves what
+  he already marked, and the open queue (20 candidates waiting today) grows.
+
+### Consequences
+
+- A marked turn costs one Haiku call, at most 30 s at the end of the turn,
+  with at most 3 attempts. Stop handles at most 2 marked turns per run.
+- An entry's content is now the model's statement, so a weak or wrong
+  statement is caught only when he reads the echo. His exact words stay in
+  `quote`, and only spans inside it are credited to him.
+- `models.referent` and the form 1 to 3 grammar are removed in step 2 of
+  §14.9; a config that sets `models.referent` loads with a warning for the
+  30-day compatibility window.
+- One store format step adds `marks.json` and the `annotation` statement
+  author.
+- Cost: an unquoted mention spends a call and may still write an entry he
+  did not mean; the content he sees is no longer his own sentence; and the
+  turn ends up to 30 s later when it holds a marker.
