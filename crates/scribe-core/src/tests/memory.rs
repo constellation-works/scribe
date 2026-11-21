@@ -798,6 +798,70 @@ fn forget_reaches_the_items_holding_the_same_words() {
 }
 
 #[test]
+fn forget_follows_a_merge_chain_to_its_end() {
+    let mut items = Vec::new();
+    for (n, statement) in [
+        "Works from a home office in Boston.",
+        "Drinks his coffee black every morning.",
+        "Keeps a standing desk by the window.",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let message = format!("u-{n}");
+        let d = said(statement, statement, &message, Section::Profile);
+        memory::apply(&mut items, &d, &provenance("s-1"), T0);
+    }
+    // m-3 merged into m-2, then m-2 into m-1.
+    items[2].status = MemoryStatus::Merged;
+    items[2].merged_into = Some("m-2".parse().unwrap());
+    items[1].status = MemoryStatus::Merged;
+    items[1].merged_into = Some("m-1".parse().unwrap());
+    assert_eq!(memory::linked(&items, &"m-1".parse().unwrap()), vec![1, 2]);
+    assert_eq!(memory::linked(&items, &"m-2".parse().unwrap()), vec![2]);
+    assert!(memory::linked(&items, &"m-3".parse().unwrap()).is_empty());
+}
+
+#[test]
+fn forget_of_a_profile_change_reaches_the_new_profile_item_and_not_the_superseded_one() {
+    let config = MemoryConfig::default();
+    let mut items = Vec::new();
+    let lives = said(
+        "Lives in Boston.",
+        "I live in Boston",
+        "u-1",
+        Section::Profile,
+    );
+    promote::write(&mut items, &lives, &provenance("s-1"), &config, T0).unwrap();
+    let mut moved = said(
+        "Said he moved to Seattle.",
+        "we finally moved to Seattle",
+        "u-2",
+        Section::Now,
+    );
+    moved.checked.promote = Some(String::from("Lives in Seattle."));
+    moved.checked.same_as = Some("m-1".parse().unwrap());
+    let done = promote::write(&mut items, &moved, &provenance("s-2"), &config, T0).unwrap();
+    let p = &done.promoted[0];
+    let index = |id: &MemoryId| items.iter().position(|i| &i.id == id).unwrap();
+    let now_item = index(p.item.as_ref().unwrap());
+    let milestone = index(&p.to);
+    let profile = index(p.profile_to.as_ref().unwrap());
+    let mut expected = vec![now_item, profile];
+    expected.sort_unstable();
+    assert_eq!(memory::linked(&items, &p.to), expected);
+    // From the profile item, the milestone and the now item go too.
+    let mut expected = vec![now_item, milestone];
+    expected.sort_unstable();
+    assert_eq!(
+        memory::linked(&items, p.profile_to.as_ref().unwrap()),
+        expected
+    );
+    // The superseded profile item holds other words: it stays.
+    assert!(!memory::linked(&items, &p.to).contains(&0));
+}
+
+#[test]
 fn a_working_item_in_three_sessions_proposes_one_preference_and_two_propose_none() {
     let config = MemoryConfig::default();
     let mut items = Vec::new();
