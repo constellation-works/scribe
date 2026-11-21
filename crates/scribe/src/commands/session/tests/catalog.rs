@@ -72,6 +72,7 @@ impl Models for &FakeModels {
 fn answer() -> SessionAnswer {
     SessionAnswer {
         candidates: Vec::new(),
+        memory: Vec::new(),
         title: String::from("Defining crew levels"),
         summary: String::from("Daniel defined what level 4 means for crews."),
         goals: String::from("Name the crew levels."),
@@ -109,6 +110,7 @@ impl Setup {
             home: Some(home.into_os_string()),
             claude_config_dir: None,
             codex_home: None,
+            claude_entrypoint: None,
         };
         let root = dir.path().join("root");
         std::fs::create_dir_all(&root).unwrap();

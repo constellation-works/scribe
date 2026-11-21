@@ -1081,6 +1081,8 @@ pub(crate) enum Records {
     Transcripts(Vec<TranscriptPayload>),
     /// `issue list`, most recently updated first.
     Issues(Vec<IssuePayload>),
+    /// `memory show`, in page order.
+    Memory(Vec<MemoryPayload>),
 }
 
 impl Records {
@@ -1094,6 +1096,7 @@ impl Records {
             Self::Hits(v) => v.len(),
             Self::Transcripts(v) => v.len(),
             Self::Issues(v) => v.len(),
+            Self::Memory(v) => v.len(),
         }
     }
 }
@@ -1178,6 +1181,116 @@ pub(crate) enum Record {
     Session(Box<SessionPayload>),
     Transcript(Box<TranscriptPayload>),
     Issue(Box<IssuePayload>),
+    /// One memory item, with every occurrence.
+    Memory(Box<MemoryPayload>),
+    /// `memory show --page`.
+    MemoryPage(Box<MemoryPagePayload>),
+}
+
+/// One memory item (`memory show`, and its writes;
+/// docs/design/scribe/specs/output-contract.md). Field names are a
+/// contract.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct MemoryPayload {
+    /// `m-<n>`.
+    pub(crate) id: String,
+    /// The id's number, for ordering; not serialized.
+    #[serde(skip)]
+    pub(crate) number: u64,
+    /// `profile`, `projects`, `working`, `now` or `milestones`.
+    pub(crate) section: &'static str,
+    /// `active`, `retired` or `forgotten`.
+    pub(crate) status: &'static str,
+    /// scribe's statement; empty once forgotten.
+    pub(crate) statement: String,
+    /// `projects` only: the project; `null` otherwise.
+    pub(crate) project: Option<String>,
+    /// `now` and `milestones`: the event date; `null` when none was said.
+    pub(crate) event_date: Option<String>,
+    /// A sensitive event.
+    pub(crate) sensitive: bool,
+    /// `loss`, `health`, `relationship` or `family`; `null` otherwise.
+    pub(crate) sensitive_kind: Option<&'static str>,
+    /// Whether the session-start page shows it today.
+    pub(crate) on_page: bool,
+    /// Why not: `retired`, `forgotten`, `section off`, `decayed` or
+    /// `past window`; `null` when on the page.
+    pub(crate) off_page: Option<&'static str>,
+    /// `now` only: whether the page labels it not yet raised.
+    pub(crate) not_yet_raised: bool,
+    /// `now` only: when it was last brought up; `null` when never.
+    pub(crate) acknowledged: Option<scribe_core::memory::Acknowledged>,
+    /// How many occurrences support it.
+    pub(crate) occurrence_count: usize,
+    /// From how many distinct sessions.
+    pub(crate) sessions: usize,
+    /// The newest occurrence's date.
+    #[serde(with = "time::serde::rfc3339")]
+    pub(crate) latest: Timestamp,
+    /// Why an agent retired it; `null` otherwise.
+    pub(crate) retirement_reason: Option<String>,
+    /// scribe's session pass.
+    pub(crate) author: scribe_core::Author,
+    /// Who changed it last.
+    pub(crate) updated_by: scribe_core::Author,
+    /// When it was written.
+    #[serde(with = "time::serde::rfc3339")]
+    pub(crate) created: Timestamp,
+    /// When it last changed.
+    #[serde(with = "time::serde::rfc3339")]
+    pub(crate) updated: Timestamp,
+    /// The turns that support it, newest first, each with the user's
+    /// verbatim quote.
+    pub(crate) occurrences: Vec<scribe_core::memory::Occurrence>,
+}
+
+impl MemoryPayload {
+    /// The payload of `item` on `today`.
+    pub(crate) fn from_item(
+        item: &scribe_core::memory::MemoryItem,
+        config: &scribe_core::memory::MemoryConfig,
+        today: time::Date,
+    ) -> Self {
+        let off = scribe_core::memory::off_page(item, config, today);
+        Self {
+            id: item.id.to_string(),
+            number: item.id.number(),
+            section: item.section.as_str(),
+            status: item.status.as_str(),
+            statement: item.statement.clone(),
+            project: item.project.as_ref().map(ToString::to_string),
+            event_date: item.event_date.map(|d| {
+                d.format(time::macros::format_description!("[year]-[month]-[day]"))
+                    .unwrap_or_default()
+            }),
+            sensitive: item.sensitive,
+            sensitive_kind: item.sensitive_kind.map(|k| k.as_str()),
+            on_page: off.is_none(),
+            off_page: off.map(|o| o.as_str()),
+            not_yet_raised: item.not_yet_raised(today),
+            acknowledged: item.acknowledged.clone(),
+            occurrence_count: item.occurrences.len(),
+            sessions: item.sessions(),
+            latest: item.latest(),
+            retirement_reason: item.retirement_reason.clone(),
+            author: item.author.clone(),
+            updated_by: item.updated_by.clone(),
+            created: item.created,
+            updated: item.updated,
+            occurrences: item.occurrences.clone(),
+        }
+    }
+}
+
+/// `memory show --page`: the page the session-start hook injects.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct MemoryPagePayload {
+    /// The page; `null` when memory is off or there is nothing to show.
+    pub(crate) page: Option<String>,
+    /// Its length in characters.
+    pub(crate) chars: usize,
+    /// Whether the milestone lines pass 600 characters.
+    pub(crate) over_budget: bool,
 }
 
 /// One uncataloged transcript (`transcript list` / `transcript show`).
@@ -1296,6 +1409,11 @@ pub(crate) struct PassPayload {
     pub(crate) error: Option<String>,
     /// Deterministic repairs in successfully persisted windows, in order.
     pub(crate) warnings: Vec<String>,
+    /// Memory items created or occurrences added in persisted windows
+    /// (2_design.md §13.3).
+    pub(crate) memory_written: usize,
+    /// Memory elements refused, by code (`memory_sensitive`, ...).
+    pub(crate) memory_refused: std::collections::BTreeMap<&'static str, usize>,
 }
 
 /// What `session pass` did; `--json` and the `scribe.session-pass` tool
@@ -1319,6 +1437,10 @@ pub(crate) struct PassReport {
     /// retired, and ideas the pass wrote itself: one success audit line each.
     #[serde(skip)]
     pub(crate) persisted_targets: Vec<String>,
+    /// `memory:<id>` once per item created or occurrence added: one success
+    /// audit line each, ids only.
+    #[serde(skip)]
+    pub(crate) memory_targets: Vec<String>,
 }
 
 impl PassReport {

@@ -32,8 +32,8 @@ use scribe_core::models::{
     ASK_SCHEMA, AskAnswer, AskRequest, CONSISTENCY_SCHEMA, ClaimAnswer, ConflictAnswer,
     ConsistencyAnswer, ConsistencyRequest, JudgementAnswer, ModelError, REFERENT_SCHEMA,
     REMOVAL_SCHEMA, ReferentAnswer, ReferentRequest, RemovalAnswer, RemovalJudgementAnswer,
-    RemovalRequest, SESSION_HEADER_SCHEMA, SESSION_SCHEMA, SessionAnswer, SessionHeader,
-    SessionHeaderRequest, SessionRequest,
+    RemovalRequest, SESSION_HEADER_SCHEMA, SessionAnswer, SessionHeader, SessionHeaderRequest,
+    SessionRequest,
 };
 use scribe_core::{Models, Provider};
 use serde::Deserialize;
@@ -203,7 +203,7 @@ impl Models for ClaudeCliModels {
     fn session(&self, request: &SessionRequest) -> Result<SessionAnswer, ModelError> {
         let value = self.call(
             &request.model,
-            SESSION_SCHEMA,
+            &request.schema(),
             request.prompt(),
             request.budget,
         )?;

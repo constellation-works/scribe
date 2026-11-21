@@ -103,6 +103,8 @@ pub(in crate::commands) fn run_with<M: Models>(
             kind: scribe_core::AuthorKind::Agent,
             name: args.author.clone(),
         }),
+        memory_written: 0,
+        memory_refused: std::collections::BTreeMap::new(),
     };
     let records = store
         .list_sessions(&scribe_core::SessionFilter {
@@ -202,6 +204,7 @@ pub(in crate::commands) fn run_with<M: Models>(
                         catalog: false,
                         switch_written: false,
                         persisted_targets: Vec::new(),
+                        memory_targets: Vec::new(),
                     }));
                 }
             };
@@ -273,6 +276,7 @@ pub(in crate::commands) fn run_with<M: Models>(
                     catalog: false,
                     switch_written: false,
                     persisted_targets: Vec::new(),
+                    memory_targets: Vec::new(),
                 }));
             }
             None => {

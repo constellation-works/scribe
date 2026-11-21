@@ -8,6 +8,7 @@ fn env(root: Option<&str>, home: Option<&str>) -> AppEnv {
         home: home.map(Into::into),
         claude_config_dir: None,
         codex_home: None,
+        claude_entrypoint: None,
     }
 }
 

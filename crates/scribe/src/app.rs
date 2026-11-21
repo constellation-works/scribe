@@ -18,6 +18,13 @@ use time::OffsetDateTime;
 /// Environment variable naming the data directory.
 pub(crate) const ROOT_ENV: &str = "SCRIBE_ROOT";
 
+/// Environment variable Claude Code sets on its hooks: `cli` when a person
+/// types into the session.
+const ENTRYPOINT_ENV: &str = "CLAUDE_CODE_ENTRYPOINT";
+
+/// The entry point of an interactive Claude Code session.
+const INTERACTIVE_ENTRYPOINT: &str = "cli";
+
 /// Environment variable that moves Claude Code's state directory.
 const CLAUDE_CONFIG_ENV: &str = "CLAUDE_CONFIG_DIR";
 
@@ -39,6 +46,9 @@ pub(crate) struct AppEnv {
     pub(crate) claude_config_dir: Option<OsString>,
     /// Optional Codex state directory.
     pub(crate) codex_home: Option<OsString>,
+    /// `CLAUDE_CODE_ENTRYPOINT`: `cli` in an interactive Claude Code
+    /// session, `sdk-cli` for every `claude -p` run (2_design.md §12.5).
+    pub(crate) claude_entrypoint: Option<OsString>,
 }
 
 impl AppEnv {
@@ -49,6 +59,7 @@ impl AppEnv {
             home: std::env::var_os("HOME"),
             claude_config_dir: std::env::var_os(CLAUDE_CONFIG_ENV),
             codex_home: std::env::var_os("CODEX_HOME"),
+            claude_entrypoint: std::env::var_os(ENTRYPOINT_ENV),
         }
     }
 }
@@ -61,6 +72,10 @@ pub(crate) struct Context {
     codex_transcripts: Option<PathBuf>,
     codex_archived: Option<PathBuf>,
     provider: Provider,
+    /// Whether this process runs under an interactive Claude Code session
+    /// (`CLAUDE_CODE_ENTRYPOINT=cli`): only then does `SessionStart` inject
+    /// the memory page (2_design.md §13.6).
+    interactive: bool,
     /// The instruction the running command acts on, for its audit line;
     /// shared by the provider-scoped views of one context.
     instruction: Arc<Mutex<InstructionNote>>,
@@ -102,6 +117,10 @@ impl Context {
                 .or_else(|| env.home.clone().map(|h| PathBuf::from(h).join(".codex")))
                 .map(|d| d.join("archived_sessions")),
             provider: Provider::ClaudeCode,
+            interactive: env
+                .claude_entrypoint
+                .as_deref()
+                .is_some_and(|e| e == INTERACTIVE_ENTRYPOINT),
             instruction: Arc::default(),
             issue: Arc::default(),
         })
@@ -117,6 +136,7 @@ impl Context {
             codex_transcripts: None,
             codex_archived: None,
             provider: Provider::ClaudeCode,
+            interactive: false,
             instruction: Arc::default(),
             issue: Arc::default(),
         }
@@ -189,6 +209,11 @@ impl Context {
     }
 
     /// The active transcript provider.
+    /// Whether this runs under an interactive Claude Code session.
+    pub(crate) fn interactive(&self) -> bool {
+        self.interactive
+    }
+
     pub(crate) fn provider(&self) -> Provider {
         self.provider
     }

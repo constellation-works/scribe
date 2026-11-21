@@ -12,7 +12,9 @@
       "author": null,
       "gave_up": false,
       "error": "the model failed: golden model refusal",
-      "warnings": []
+      "warnings": [],
+      "memory_written": 0,
+      "memory_refused": {}
     }
   ],
   "remaining": 0

@@ -51,6 +51,7 @@ mod entry;
 mod error;
 pub mod instruction;
 pub mod issue;
+pub mod memory;
 pub mod models;
 pub mod pass;
 mod proposal;
@@ -90,11 +91,11 @@ pub use session::{
 };
 pub use store::{
     AUDIT_FILE, AuditEvent, AuditStatus, CONFIG_FILE, CONTROL_FILE, Captured, DEFAULT_LOCK_WAIT,
-    ENTRIES_DIR, EntryList, ISSUES_DIR, InitFile, InitReport, IssueAudit, IssueList,
-    MIN_SECRET_CHARS, MoveTo, Moved, PROPOSALS_FILE, PassWrite, PassWritten, REDACTED_FIELDS,
-    RebuildGuard, Redactor, SESSIONS_DIR, SessionList, SessionView, Skipped, Store, TagList,
-    check_agent_author, check_content, check_description, check_reason, init_project,
-    integration_hooks, resolve_prefix, unresolved_redact_env,
+    ENTRIES_DIR, EntryList, ISSUES_DIR, InitFile, InitReport, IssueAudit, IssueList, MEMORY_DIR,
+    MIN_SECRET_CHARS, MemoryWritten, MoveTo, Moved, PROPOSALS_FILE, PassMemory, PassWrite,
+    PassWritten, REDACTED_FIELDS, RebuildGuard, Redactor, SESSIONS_DIR, SessionList, SessionView,
+    Skipped, Store, TagList, check_agent_author, check_content, check_description, check_reason,
+    init_project, integration_hooks, resolve_prefix, unresolved_redact_env,
 };
 pub use tag::{
     ActionTag, CAPTURE_TEXT_CHARS, CaptureFrom, CaptureRoute, CaptureRules, FINDING_TAG,

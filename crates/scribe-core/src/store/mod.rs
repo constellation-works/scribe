@@ -22,6 +22,7 @@
 //! <root>/control.json                       the on/off state
 //! <root>/proposals.json                     the consistency proposals
 //! <root>/issues/<id>.md                     one issue record per file
+//! <root>/memory/<id>.md                     one memory item per file (format 18)
 //! <root>/audit.jsonl                        one line per mutating command
 //! <root>/.lock
 //! ```
@@ -45,6 +46,8 @@ mod init;
 mod issue_file;
 mod issues;
 pub use issues::{ISSUES_DIR, IssueList, MoveTo, Moved};
+mod memory;
+pub use memory::{MEMORY_DIR, MemoryWritten, PassMemory};
 mod pickups;
 pub use init::{InitFile, InitReport, init_project, integration_hooks};
 mod rebuild;
@@ -214,6 +217,8 @@ pub struct PassWritten {
     /// Entries the pass wrote itself under `write` tags (2_design.md
     /// §11.6), in write order.
     pub written_entries: Vec<EntryId>,
+    /// The window's memory write (2_design.md §13.3).
+    pub memory: MemoryWritten,
 }
 
 impl Store {
@@ -897,6 +902,7 @@ impl Store {
         expected: Option<time::OffsetDateTime>,
         kind: PassWrite,
         candidates: &[crate::pass::PassClaim],
+        memory: Option<&PassMemory>,
         redactor: &Redactor,
     ) -> Result<PassWritten> {
         let session = record.id.clone();
@@ -906,6 +912,7 @@ impl Store {
             kind,
             expected,
             candidates,
+            memory,
             true,
             redactor,
         )
@@ -920,7 +927,7 @@ impl Store {
         redactor: &Redactor,
     ) -> Result<Option<SessionRecord>> {
         Ok(self
-            .write_pass_candidates(session, record, kind, expected, &[], false, redactor)?
+            .write_pass_candidates(session, record, kind, expected, &[], None, false, redactor)?
             .record)
     }
 
@@ -932,6 +939,7 @@ impl Store {
         kind: PassWrite,
         expected: Option<time::OffsetDateTime>,
         candidates: &[crate::pass::PassClaim],
+        memory: Option<&PassMemory>,
         run_candidates: bool,
         redactor: &Redactor,
     ) -> Result<PassWritten> {
@@ -967,6 +975,7 @@ impl Store {
                 }
             })?;
         }
+        let mut memory_written = MemoryWritten::default();
         let (written, closed_candidates, written_entries) = match record {
             Some(mut record) => {
                 // A link written while the model ran, or one waiting on the
@@ -1031,6 +1040,13 @@ impl Store {
                     .chain(claims.written.iter().map(ToString::to_string))
                     .collect();
                 let carry = |err| after_persist_ids(&persisted, err);
+                // Memory is written before the cursor advances, so an
+                // interrupted window is replayed and appends nothing twice.
+                if let Some(memory) = memory {
+                    memory_written = self
+                        .write_pass_memory(memory, redactor, record.updated)
+                        .map_err(&carry)?;
+                }
                 let bytes = format::encode_session(&path, &record).map_err(&carry)?;
                 fsio::write_atomic(&path, &bytes).map_err(&carry)?;
                 // Only once the record holds them: the links are stored once.
@@ -1075,6 +1091,7 @@ impl Store {
             record: written,
             closed_candidates,
             written_entries,
+            memory: memory_written,
         })
     }
 

@@ -1,0 +1,31 @@
+Show what scribe has noticed about Daniel from switched-on sessions, and acknowledge, retire or forget an item
+
+Usage: scribe memory [OPTIONS] <COMMAND>
+
+Commands:
+  show    Show memory items on the session-start page, one item in full, or the page itself
+  ack     Mark a now item as raised in this session, so it is not raised again unprompted
+  retire  Retire an item with a reason: off the page, lists and ask, text kept
+  forget  Forget an item, or one occurrence, for good: blank its words, keep its id
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Global options:
+      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json                 Shorthand for --format json
+
+Memory is written by the session pass of a session switched on with
+/scribe on, from Daniel's own turns; nothing else writes it. It describes,
+it never binds: rules are his preferences entries.
+
+Examples:
+  scribe memory show
+  scribe memory show --section now
+  scribe memory show <id>
+  scribe memory show --page
+  scribe memory ack <id> --session <id> --author opus

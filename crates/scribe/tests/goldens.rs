@@ -43,6 +43,11 @@ const HELP: &[(&str, &[&str])] = &[
     ("proposal-update", &["proposal", "update", "--help"]),
     ("proposal-settle", &["proposal", "settle", "--help"]),
     ("proposal-list", &["proposal", "list", "--help"]),
+    ("memory", &["memory", "--help"]),
+    ("memory-show", &["memory", "show", "--help"]),
+    ("memory-ack", &["memory", "ack", "--help"]),
+    ("memory-retire", &["memory", "retire", "--help"]),
+    ("memory-forget", &["memory", "forget", "--help"]),
     ("record", &["record", "--help"]),
     ("record-search", &["record", "search", "--help"]),
     ("consistency", &["consistency", "--help"]),
@@ -1021,5 +1026,78 @@ fn issue_shapes_match_goldens() {
             ));
         }
     }
+    report(&failures);
+}
+/// The memory list and show, unchanged writes on them, and the page,
+/// against the memory fixture (`tests/fixtures/memory`), whose items keep
+/// their place on or off the page whatever the day.
+#[test]
+fn memory_matches_goldens() {
+    let fx = Fixture::new();
+    fx.seed();
+    support::copy_private(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/memory"),
+        &fx.root().join("memory"),
+    );
+    let session = "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02";
+    let mut failures = Vec::new();
+    // The fixture config redacts GITHUB_TOKEN's value, so a write needs it set.
+    let ok = |args: &[&str]| {
+        let out = fx
+            .cmd(args)
+            .env("GITHUB_TOKEN", "synthetic-fixture-token-value")
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{args:?}: {}",
+            text(&out.stderr)
+        );
+        out
+    };
+    let mut capture = |name: &str, args: &[&str]| {
+        for (suffix, mode) in MODES {
+            let out = ok(&[args, *mode].concat());
+            failures.extend(check(
+                &format!("output/{name}.{suffix}"),
+                &text(&out.stdout),
+            ));
+        }
+    };
+    capture("memory-show", &["memory", "show"]);
+    capture("memory-show-all", &["memory", "show", "--include-off-page"]);
+    capture("memory-show-item", &["memory", "show", "m-1"]);
+    capture(
+        "memory-ack",
+        &[
+            "memory",
+            "ack",
+            "m-3",
+            "--session",
+            session,
+            "--author",
+            "opus",
+        ],
+    );
+    capture(
+        "memory-retire",
+        &[
+            "memory", "retire", "m-4", "--author", "opus", "--reason", "again",
+        ],
+    );
+    capture(
+        "memory-forget",
+        &["memory", "forget", "m-5", "--author", "opus", "--confirm"],
+    );
+    // The page names its `now` items by days from today: retire the one
+    // here so the page is the same every day.
+    ok(&[
+        "memory", "retire", "m-3", "--author", "opus", "--reason", "done",
+    ]);
+    capture(
+        "memory-page",
+        &["memory", "show", "--page", "--project", "scribe"],
+    );
     report(&failures);
 }

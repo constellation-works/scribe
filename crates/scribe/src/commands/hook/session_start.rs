@@ -18,6 +18,14 @@
 //! Nothing to report, no store yet, or a store that cannot be read
 //! (logged) prints nothing, so a session always starts. It writes nothing
 //! and is not audited.
+//!
+//! In an interactive Claude Code session (`CLAUDE_CODE_ENTRYPOINT=cli`) it
+//! also gives the agent the memory page as `additionalContext`
+//! (2_design.md §13.6): the memory sections and the last sessions, within
+//! the page budget, read-only. Headless runs (`sdk-cli`), routines and
+//! drains get none. The page does not depend on this session being on.
+//! Milestone lines past 600 characters log `memory_page_over_budget`, a
+//! warning that never fails the hook.
 
 use super::payload::{self, SessionStartPayload};
 use super::project;
@@ -74,13 +82,44 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
         .chain(continuation)
         .collect();
     let message = (!lines.is_empty()).then(|| lines.join("\n"));
+    let context = if ctx.interactive() {
+        memory_page(ctx, &session, payload.cwd.as_deref())
+    } else {
+        None
+    };
     Ok(Output::Hook(HookReply {
         event: EVENT,
         message,
-        context: None,
+        context,
         block: None,
         outcomes: Vec::new(),
     }))
+}
+
+/// The memory page for this session, or `None` when there is none or the
+/// store cannot be read (logged, so the session still starts).
+fn memory_page(ctx: &Context, session: &SessionId, cwd: Option<&str>) -> Option<String> {
+    let project = cwd
+        .map(str::trim)
+        .filter(|cwd| !cwd.is_empty())
+        .map(|cwd| project::of(Path::new(cwd)));
+    match crate::commands::memory::page(ctx, Some(session), project.as_ref()) {
+        Ok(Some(page)) => {
+            if page.over_budget {
+                tracing::warn!(
+                    code = "memory_page_over_budget",
+                    chars = page.text.chars().count(),
+                    "the memory page's milestones pass their budget; injecting it whole"
+                );
+            }
+            Some(page.text)
+        }
+        Ok(None) => None,
+        Err(err) => {
+            tracing::warn!(%err, "cannot read the memory; not injecting the page");
+            None
+        }
+    }
 }
 
 /// The continuation line, or `None` when this session should not be reminded.

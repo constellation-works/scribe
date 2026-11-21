@@ -175,7 +175,11 @@ impl<'a> AuditGuard<'a> {
                         },
                     );
                 }
-                for id in &report.persisted_targets {
+                for id in report
+                    .persisted_targets
+                    .iter()
+                    .chain(&report.memory_targets)
+                {
                     lines.push(Line {
                         status: AuditStatus::Success,
                         target: Some(id.clone()),
@@ -342,7 +346,13 @@ fn target_of(output: &Output) -> Option<String> {
         Output::Show {
             record: Record::Issue(issue),
         } => Some(issue.id.clone()),
-        Output::List { .. } => None,
+        Output::Show {
+            record: Record::Memory(item),
+        } => Some(format!("memory:{}", item.id)),
+        Output::Show {
+            record: Record::MemoryPage(_),
+        }
+        | Output::List { .. } => None,
         // Hook replies, passes and scans are audited per outcome in
         // `mark_result`.
         Output::Hook(_) | Output::Pass(_) | Output::Scan(_) => None,
@@ -357,6 +367,8 @@ fn target_of(output: &Output) -> Option<String> {
 
 fn record_target(record: &Record) -> Option<String> {
     Some(match record {
+        Record::Memory(m) => format!("memory:{}", m.id),
+        Record::MemoryPage(_) => return None,
         Record::Entry(e) => e.id.clone(),
         Record::Session(s) => format!("session:{}", s.id),
         Record::Tag(t) => t.name.to_string(),
