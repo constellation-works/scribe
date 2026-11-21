@@ -99,7 +99,7 @@ naming a turn he typed in the last 30 minutes) may an agent retire or forget
 his entry, or approve or reject a claim a session pass proposed. Agent notes have no typed-turn citation;
 `ask` labels them `agent note (<name>)`. Repeating an unchanged write prints
 the unchanged record with `nothing changed` on stderr and no audit event.
-The store now writes format 15 and reads older formats without rewriting them.
+The store now writes format 16 and reads older formats without rewriting them. Under a tag whose capture route is `write` (the shipped `idea`), a session pass writes up to 3 of Daniel's ideas per session per run itself, with their outcome, as entries it authors (`--author-kind scribe`).
 Passes rewrite the header and open segment and append new
 segments; sealed segments stay unchanged. `[catalog] segment_windows`
 (default 3) bounds each segment's rewrites. Rebuild replaces a record from

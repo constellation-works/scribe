@@ -977,6 +977,7 @@ fn a_claim_needs_a_subject_and_a_statement_within_their_bounds() {
         tag: String::from("preferences"),
         statement,
         subject,
+        ..Default::default()
     };
     let mut a = answer();
     a.candidates = vec![

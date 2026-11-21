@@ -11,7 +11,7 @@ summary: How the scribe plugin is bounded (one binary; Daniel writes through hoo
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256, ORB-26349]
+related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26265]
 ---
 
 # scribe — Design
@@ -1234,8 +1234,12 @@ sealed segment.
 
 A pass writes no tag entries, even if the transcript contains `#preference`
 or an unprocessed `#scribe` line (proposed, not built: it writes memory
-items, which are not tag entries, [§13.3](#133-writing-the-session-pass)). It may open candidate proposals as described
-below; only Daniel's later typed approval creates an entry. Up to S13 there
+items, which are not tag entries, [§13.3](#133-writing-the-session-pass)), with one
+exception: under a tag whose capture route is `write` (the shipped `idea`)
+it writes Daniel's checked idea itself, at most 3 per session per run
+([§11.6](#116-idea-capture-after-finding-is-gone)). Otherwise it may open
+candidate proposals as described below; only Daniel's later typed approval
+creates an entry. Up to S13 there
 is no backfill: sessions that were never switched on are never read. From S14 one more route reads
 a session: Daniel names a past session with `scribe session catalog <id>`
 ([§5.8](#58-cataloging-a-past-session)). scribe still never scans or
@@ -2741,8 +2745,8 @@ p-8: "ok that makes sense. then let's keep it like this."
 ### 11.1 A claim carries a statement
 
 A claim is anything the pass captures from a turn: a candidate proposal
-today, and a pass-written `idea` entry once [ORB-25987] is built
-([§11.6](#116-idea-capture-after-finding-is-gone)). Each one gains a
+and a pass-written `idea` entry (built in step (b2), [ORB-26265],
+[§11.6](#116-idea-capture-after-finding-is-gone)). Each one gains a
 **statement** beside its **quote**.
 
 - **Statement**: one or two sentences, at most 300 characters, written by
@@ -2935,8 +2939,9 @@ field's line. The pass sends the model only the Daniel turns that fire a
 trigger (with tag, trigger and matched words) and those tags' `criteria`
 and `not`; when none fires it requests no claims. The store checks each
 claim's turn again under its lock against the config then on disk and
-stores the recomputed `admitted`. Routes `write` and `agent` are accepted
-in config but capture nothing yet. Because a tag without rules is never
+stores the recomputed `admitted`. Route `agent` is accepted in config but
+captures nothing; route `write` writes the entry itself since step (b2)
+([§11.6](#116-idea-capture-after-finding-is-gone)). Because a tag without rules is never
 captured and `from` takes only `daniel`, the pass no longer opens
 assistant-turn candidates; stored ones still approve. Removing the
 `finding` and `remind` tags, the leftover assistant-candidate code and the
@@ -3139,11 +3144,11 @@ transcript, as §5.3 does for preferences. The only difference is the
 route: under `route = "write"` the checked claim is written as an active
 `idea` entry in the same locked step that would otherwise open a
 candidate, with no proposal. Before that write, the pass calls the shared
-`covering_entry` check under the store lock ([§5.3](#53-a-pass),
+`covering_claim` check under the store lock ([§5.3](#53-a-pass),
 [§11.7](#117-order-and-sequencing) step (b2)). On this direct-write path
 the only meaning-level match is the model's exclusion of existing
 statements in the same session-model call (the bounded
-`candidate_exclusions` the pass already sends); the store applies only the
+`write_exclusions`); the store applies only the
 lexical check and does not call a model again. A paraphrase the model
 still returns is written unless that lexical check catches it. The lexical
 check does not match a short statement against the long raw paragraph it
@@ -3151,8 +3156,9 @@ summarizes. The per-pass bound
 (ORB-25987's 3 ideas per session per invocation, separate from the
 candidate slots) and the stuck-line exemption are as ORB-25987 states.
 
-Two of ORB-25987's points change with this design and need Daniel's
-approval on that task before it is built:
+Two of ORB-25987's points change with this design; Daniel approved both
+(2026-11-21, [4_decisions.md](./4_decisions.md#the-session-pass-writes-daniels-ideas-itself-with-their-outcome)),
+and step (b2) builds them:
 
 - **Content.** ORB-25987 makes the content "byte-for-byte his span". With
   §11.1 the content is the statement, the span is the entry's `quote`, and
@@ -3162,6 +3168,64 @@ approval on that task before it is built:
   Daniel defers. With `from = "daniel"` the triggers fire only on his
   words, and no assistant-turn route remains, so point 4 is not built until
   seen.
+
+**Built (step b2).** The shipped `idea` tag has `route = "write"` (its
+criteria: Daniel proposes something that could be built, changed or tried,
+and the session does not carry it out; its `not`: a direction to act now, a
+preference, a question of fact, an idea the session goes on to carry out).
+
+- **What is written.** A claim under a write-route tag, from a Daniel turn
+  that fired its trigger, whose quote is checked byte-for-byte against the
+  transcript and passes every check a candidate passes (admission again
+  under the lock, statement and subject, provenance, redaction), is written
+  as an active entry in the same locked step, with no proposal: content is
+  the statement, `quote` the span, `author` and `stated_by` are
+  `{kind: scribe, name: session-pass}`, `content_from` is his message, and
+  `said` is empty. It is never listed under `--author-kind daniel` (it is
+  `--author-kind scribe`), and `ask`, `record search` and `entry show`
+  label it "captured by the session pass", apart from a typed
+  `#scribe idea:` entry. Assistant turns never fire a trigger (`from =
+  "daniel"`), so an assistant's idea is never written.
+- **Outcome.** Each such entry has an `outcome` (format 16,
+  [specs/store.md](./specs/store.md)): `open`; `parked` with
+  Daniel's words, kept only when they are a span of the turn the model
+  names and redaction leaves them unchanged (otherwise `open`); or `task`.
+  An idea the model says became a task in the same session writes no entry,
+  and only when the task id it names appears in the session's text;
+  otherwise it is written `open`. The pass never writes `task`; the state is
+  reserved for a later settling route (not built).
+- **Bounds.** At most 3 ideas per session per pass invocation (`MAX_IDEAS`),
+  counted apart from the 3 candidate slots and the 20 open candidates, in
+  the same session-model call (no extra call). The schema allows 6 claims
+  per window; the pass and the store each cut write claims at 3.
+- **Guards, and what each misses.**
+  1. *Model exclusions* (`write_exclusions`): the active entries of the
+     firing write tags in the record's project, each its content and, for a
+     stated entry, Daniel's words, ranked by words shared with the window,
+     at most 10 of 400 characters, sent as data the model must not return.
+     It is the only meaning-level match, so it catches a paraphrase of an
+     existing idea, but it is a model's judgement: not deterministic, and
+     an idea ranked out of the 10 is not seen.
+  2. *Prior candidates* (`claim_covers` under the lock): a claim whose quote
+     or statement an earlier candidate of any state already says is
+     dropped. Lexical, so it misses a paraphrase.
+  3. *Active entries* (`covering_claim`, the shared approval check): an
+     active entry of the same tag and project whose content or quote says
+     the claim's quote or statement. It catches the same or a contained
+     text, and misses a paraphrase and a short typed idea against the long
+     raw paragraph the claim quotes.
+  4. *Retries* (`written_from`): an entry the pass already wrote from the
+     same turn under the tag, with the same quote or forgotten. It stops a
+     retried pass from writing it twice and a forgotten idea from coming
+     back, and misses nothing within one turn; a re-statement in a later
+     turn is left to guards 1 to 3.
+- **Not counted as stuck.** The `SessionStart` stuck line skips
+  pass-captured ideas: nobody took them on purpose, so they are not waiting
+  for an intake.
+- **Cancelling.** Daniel retires or forgets one with `#scribe retire|forget
+  <id>`; forgetting blanks the quote and the parked words too.
+- Not built: off sessions, a digest, settling an earlier idea's outcome
+  later, `related` links, and any write to nebula.
 
 **ORB-26204** (an agent Daniel instructs approves claims and deletes
 records, designed in [§12](#12-settling-and-deleting-on-daniels-instruction-proposed)) sequences after step (a): the cleanup and the trigger gate cut
@@ -3176,11 +3240,12 @@ writes the statement as content like a typed approval.
    and `finding` (format 11).
 2. **(b)** The statement on every claim (format 12).
 3. **(b2)** The pass writing entries itself (`route = "write"`, not an
-   approved or filed proposal), revised as in §11.6. Before it writes, it
-   calls the shared `covering_entry` check under the store lock. On that
+   approved or filed proposal), revised as in §11.6 (built, format 16).
+   Before it writes, it calls the shared `covering_claim` check under the
+   store lock. On that
    direct-write path the only meaning-level match is the model's exclusion
    of existing statements in the same session-model call (the bounded
-   `candidate_exclusions` the pass already sends); the store applies only
+   `write_exclusions`); the store applies only
    the lexical check and does not call a model again. A paraphrase the
    model still returns is written unless the lexical check catches it. The
    lexical check does not match a short statement against the long raw
@@ -4623,6 +4688,8 @@ Not built until seen:
 - [ORB-26214] — designed §11: claim statements, per-tag capture rules, the
   tag set without `remind` and `finding`, the retired-tag cleanup and issues.
 - [ORB-25987] — the pass captures Daniel's ideas; revised by §11.6.
+- [ORB-26265] — built §11.6 (step b2): the pass writes Daniel's ideas
+  itself, with their outcome (format 16).
 - [ORB-26204] — designed §12: an agent Daniel instructs settles claims and deletes records
   through the CLI; sequenced after §11 step (a).
 - [ORB-26219] — designed §13: the `memory` record kind with its five sections, the

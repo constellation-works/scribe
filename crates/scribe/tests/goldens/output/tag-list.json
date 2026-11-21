@@ -27,7 +27,7 @@
         "retired": 0,
         "rejected": 0
       },
-      "route": "propose"
+      "route": "write"
     },
     {
       "author": null,

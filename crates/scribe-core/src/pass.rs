@@ -24,12 +24,15 @@
 //! A window rewrites the header and open segment, then appends up to three
 //! new segments. Sealed text is never sent to the model or rewritten.
 //!
-//! Claims (candidate proposals) pass two gates (§11.2): a model-free
-//! trigger match on Daniel's turns before the call ([`capture_request`]:
-//! no trigger fires, no claim is requested) and the tag's criteria, judged
-//! by the model; the store repeats the trigger match under its lock.
+//! Claims pass two gates (§11.2): a model-free trigger match on Daniel's
+//! turns before the call ([`capture_request`]: no trigger fires, no claim
+//! is requested) and the tag's criteria, judged by the model; the store
+//! repeats the trigger match under its lock. A claim under a `propose` tag
+//! opens a candidate proposal; one under a `write` tag (`idea`, §11.6) is
+//! written by the store as an active entry the pass authors, with its
+//! outcome, at most [`MAX_IDEAS`] per session per invocation.
 //!
-//! A pass writes no tag entries, whatever the transcript holds. No I/O
+//! The pass writes no other entries, whatever the transcript holds. No I/O
 //! (STD-02 R5).
 
 use crate::entry::Speaker;
@@ -52,8 +55,8 @@ mod candidates;
 #[cfg(test)]
 pub(crate) use candidates::covers_statement;
 pub use candidates::{
-    MAX_CANDIDATES, MAX_OPEN_CANDIDATES, PassClaim, candidate_drafts, candidate_exclusions,
-    capture_request,
+    MAX_CANDIDATES, MAX_IDEAS, MAX_OPEN_CANDIDATES, PassClaim, candidate_drafts,
+    candidate_exclusions, capture_request, write_exclusions,
 };
 pub(crate) use candidates::{admission, is_marker, own_span, statement_tokens};
 pub(crate) use candidates::{
@@ -307,6 +310,8 @@ pub fn request(
         candidate_turns: Vec::new(),
         candidate_rules: Vec::new(),
         candidate_exclusions: Vec::new(),
+        write_limit: 0,
+        write_exclusions: Vec::new(),
         budgets: BUDGETS,
         final_pass,
         correction: None,

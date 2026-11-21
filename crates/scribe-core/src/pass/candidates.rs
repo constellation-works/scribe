@@ -5,8 +5,8 @@
 use crate::models::{EntryCandidateAnswer, FiringTurn, PassMessage, SessionRequest, TagCriteria};
 use crate::tag::{TagDef, TagTable};
 use crate::{
-    Admitted, Cite, Entry, EntryCandidate, EntryStatus, Project, Proposal, STATEMENT_CHARS,
-    SUBJECT_CHARS, SessionRecord, Speaker, TagName, transcript, trigger, verbatim,
+    Admitted, Cite, Entry, EntryCandidate, EntryStatus, Outcome, OutcomeState, Project, Proposal,
+    STATEMENT_CHARS, SUBJECT_CHARS, SessionRecord, Speaker, TagName, transcript, trigger, verbatim,
 };
 use std::collections::BTreeSet;
 use time::OffsetDateTime;
@@ -15,6 +15,18 @@ use time::OffsetDateTime;
 pub const MAX_CANDIDATES: usize = 3;
 /// Maximum open candidate proposals across the whole store.
 pub const MAX_OPEN_CANDIDATES: usize = 20;
+/// Maximum ideas the pass writes itself (claims under `write` tags,
+/// 2_design.md §11.6) per session in one pass invocation, across all
+/// windows, apart from [`MAX_CANDIDATES`].
+pub const MAX_IDEAS: usize = 3;
+/// Longest parking words an idea's outcome keeps, in characters.
+pub const OUTCOME_REASON_CHARS: usize = 300;
+/// Longest task id an idea's outcome names, in characters.
+const OUTCOME_TASK_CHARS: usize = 64;
+/// Most existing entries sent as write exclusions, and the characters of
+/// each ([`write_exclusions`]).
+const WRITE_EXCLUSIONS: usize = 10;
+const WRITE_EXCLUSION_CHARS: usize = 400;
 
 /// The capture tags' firing turns in a window and their criteria
 /// (2_design.md §11.2): every Daniel turn of `messages` matched against
@@ -43,6 +55,7 @@ pub fn capture_request(
                     tag: tag.name.to_string(),
                     criteria: tag.capture.criteria.as_ref().map(|c| c.value.clone()),
                     not: tag.capture.not.as_ref().map(|n| n.value.clone()),
+                    writes: tag.capture.writes(),
                 });
             }
         }
@@ -76,10 +89,24 @@ pub(super) fn check(
     answers: Vec<EntryCandidateAnswer>,
     request: &SessionRequest,
 ) -> Vec<EntryCandidateAnswer> {
+    let writes = |tag: &str| {
+        request
+            .candidate_rules
+            .iter()
+            .any(|rule| rule.tag == tag && rule.writes)
+    };
     let mut checked: Vec<EntryCandidateAnswer> = Vec::new();
+    let (mut proposed, mut written) = (0_usize, 0_usize);
     for answer in answers {
-        if checked.len() >= request.candidate_limit.min(MAX_CANDIDATES) {
-            break;
+        // Proposals and written ideas have separate slots (§11.6).
+        let write = writes(&answer.tag);
+        let (taken, limit) = if write {
+            (written, request.write_limit.min(MAX_IDEAS))
+        } else {
+            (proposed, request.candidate_limit.min(MAX_CANDIDATES))
+        };
+        if taken >= limit {
+            continue;
         }
         // Only a turn the request named, under the tag named for it, and
         // only Daniel's own span of it (the fenced/quoted exclusion kept).
@@ -105,6 +132,7 @@ pub(super) fn check(
             || subject.is_empty()
             || subject.chars().count() > SUBJECT_CHARS
             || !fits
+            || (write && !outcome_in_bounds(&answer))
             || checked.iter().any(|prior| {
                 claim_covers(
                     &[prior.quote.as_str(), prior.statement.as_str()],
@@ -118,8 +146,33 @@ pub(super) fn check(
         answer.statement = statement;
         answer.subject = subject;
         checked.push(answer);
+        if write {
+            written += 1;
+        } else {
+            proposed += 1;
+        }
     }
     checked
+}
+
+/// Whether a written claim's outcome fields are a known state within
+/// their bounds; the verbatim checks come later, against the transcript.
+fn outcome_in_bounds(answer: &EntryCandidateAnswer) -> bool {
+    matches!(
+        answer.outcome.as_deref(),
+        None | Some("open" | "parked" | "task")
+    ) && answer
+        .outcome_said
+        .as_ref()
+        .is_none_or(|said| said.chars().count() <= OUTCOME_REASON_CHARS)
+        && answer
+            .outcome_message
+            .as_ref()
+            .is_none_or(|id| id.chars().count() <= 128)
+        && answer
+            .task
+            .as_ref()
+            .is_none_or(|task| task.chars().count() <= OUTCOME_TASK_CHARS)
 }
 
 /// `text` with fenced, indented and blockquoted material and marked
@@ -171,6 +224,63 @@ pub struct PassClaim {
     pub candidate: EntryCandidate,
     /// Daniel's own words of the cited turn (pasted blocks left out).
     pub turn: String,
+    /// Under a `write` tag, the idea's checked outcome (`open` or `parked`;
+    /// an idea that became a task in the session is not drafted); `None`
+    /// under a `propose` tag.
+    pub outcome: Option<Outcome>,
+    /// For a `parked` outcome, Daniel's own words of the turn its reason is
+    /// in, against which the store repeats the verbatim check.
+    pub outcome_turn: Option<String>,
+}
+
+/// A written claim's outcome checked against the transcript: `None` when
+/// the idea became a task in the session (its id appears in the
+/// conversation, at least three characters), so no entry is written. A
+/// `parked` reason that is not a
+/// verbatim span of Daniel's own words in the named turn, or a `task` id
+/// the conversation never writes, leaves the idea `open`.
+fn checked_outcome(
+    answer: &EntryCandidateAnswer,
+    messages: &[transcript::Message],
+) -> Option<(Outcome, Option<String>)> {
+    match answer.outcome.as_deref() {
+        Some("task") => {
+            let task = answer.task.as_deref().map(str::trim).unwrap_or_default();
+            let became = task.chars().count() >= 3
+                && messages.iter().any(|message| message.text().contains(task));
+            if became {
+                return None;
+            }
+            Some((Outcome::open(), None))
+        }
+        Some("parked") => {
+            let parked = answer
+                .outcome_said
+                .as_deref()
+                .zip(answer.outcome_message.as_deref())
+                .and_then(|(said, id)| {
+                    let message = messages
+                        .iter()
+                        .find(|m| m.uuid == id && m.role == Speaker::User)?;
+                    let turn = transcript::daniel_turn(message)?;
+                    (!said.trim().is_empty()
+                        && own_span(&turn.own, said)
+                        && message.text().contains(said))
+                    .then(|| {
+                        (
+                            Outcome {
+                                state: OutcomeState::Parked,
+                                reason: Some(said.to_owned()),
+                                task: None,
+                            },
+                            Some(turn.own),
+                        )
+                    })
+                });
+            Some(parked.unwrap_or((Outcome::open(), None)))
+        }
+        _ => Some((Outcome::open(), None)),
+    }
 }
 
 /// Derive durable provenance from the original transcript, never model
@@ -202,6 +312,12 @@ pub fn candidate_drafts(
             }
             let tag: TagName = answer.tag.parse().ok()?;
             let admitted = admission(tags, &tag, &turn.own)?;
+            let (outcome, outcome_turn) = if tags.get(&tag)?.capture.writes() {
+                let (outcome, outcome_turn) = checked_outcome(answer, messages)?;
+                (Some(outcome), outcome_turn)
+            } else {
+                (None, None)
+            };
             let start = raw.find(&answer.quote)?;
             let line =
                 u32::try_from(raw[..start].bytes().filter(|b| *b == b'\n').count() + 1).ok()?;
@@ -228,6 +344,8 @@ pub fn candidate_drafts(
                     admitted: Some(admitted),
                 },
                 turn: turn.own,
+                outcome,
+                outcome_turn,
             })
         })
         .collect()
@@ -524,5 +642,67 @@ pub fn candidate_exclusions(
         .into_iter()
         .take(15)
         .map(|(_, text)| text.chars().take(400).collect())
+        .collect()
+}
+
+/// The active entries of the request's `write` tags in `project`, for the
+/// model to leave out (2_design.md §11.6): the lexical check cannot match a
+/// short typed idea against the long raw paragraph it summarizes, so the
+/// model sees what is already recorded. Each is its content and, for a
+/// stated entry, Daniel's words; ranked by words shared with the window,
+/// then newest first; at most [`WRITE_EXCLUSIONS`] of
+/// [`WRITE_EXCLUSION_CHARS`] characters each (4,000 in all). Empty when no
+/// write tag fires or no write slot is left.
+#[must_use]
+pub fn write_exclusions(
+    entries: &[Entry],
+    project: &Project,
+    request: &SessionRequest,
+) -> Vec<String> {
+    if request.write_limit == 0 {
+        return Vec::new();
+    }
+    let written: Vec<&str> = request
+        .candidate_rules
+        .iter()
+        .filter(|rule| rule.writes)
+        .map(|rule| rule.tag.as_str())
+        .filter(|tag| request.candidate_turns.iter().any(|turn| turn.tag == *tag))
+        .collect();
+    if written.is_empty() {
+        return Vec::new();
+    }
+    let query = words(
+        &request
+            .messages
+            .iter()
+            .map(|m| m.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" "),
+    );
+    let mut ranked: Vec<(usize, &Entry, String)> = entries
+        .iter()
+        .filter(|entry| {
+            entry.status == EntryStatus::Active
+                && &entry.project == project
+                && written.contains(&entry.tag.as_str())
+        })
+        .map(|entry| {
+            let text = match crate::ask::stated_quote(entry) {
+                Some(quote) => format!("{} (Daniel's words: {quote:?})", entry.content),
+                None => entry.content.clone(),
+            };
+            (words(&text).intersection(&query).count(), entry, text)
+        })
+        .collect();
+    ranked.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| b.1.created.cmp(&a.1.created))
+            .then_with(|| a.1.id.cmp(&b.1.id))
+    });
+    ranked
+        .into_iter()
+        .take(WRITE_EXCLUSIONS)
+        .map(|(_, _, text)| text.chars().take(WRITE_EXCLUSION_CHARS).collect())
         .collect()
 }

@@ -13,7 +13,7 @@ Options:
       --after <TIME>        Only entries created strictly after this instant (RFC 3339, such as 2026-11-15T09:00:00Z): an intake's cursor [default: any]
       --window              Include each entry's transcript window (an action entry's chat before its #scribe line) [default: left out]
       --author <NAME>       Only entries written under this author name, such as daniel or an agent's --author [default: any]
-      --author-kind <KIND>  Only entries written through this channel: daniel (a #scribe line) or agent (entry add) [default: any] [possible values: daniel, agent]
+      --author-kind <KIND>  Only entries written through this channel: daniel (a #scribe line or an approval), agent (entry add) or scribe (an idea the session pass captured) [default: any] [possible values: daniel, agent, scribe]
       --limit <N>           Show at most this many of the matching entries, 1 or more; --json reports the total and whether the list was cut [default: all]
   -h, --help                Print help
   -V, --version             Print version

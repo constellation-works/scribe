@@ -448,7 +448,7 @@ fn the_last_session_is_the_newest_record_returned_whole_without_a_model_call() {
     assert_eq!(
         a.records,
         vec![Found::Session {
-            record: sessions[1].clone(),
+            record: Box::new(sessions[1].clone()),
             terms: Vec::new(),
         }]
     );
@@ -577,7 +577,7 @@ fn a_term_returns_the_sessions_that_define_it_with_their_spans() {
     assert_eq!(
         a.records[0],
         Found::Session {
-            record: defining.clone(),
+            record: Box::new(defining.clone()),
             terms: vec![defining.terms[0].clone()],
         }
     );

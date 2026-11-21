@@ -55,9 +55,9 @@ fn with_no_capture_config_tag_show_prints_the_shipped_defaults() {
     // An alias names the same tag.
     assert_eq!(show(&fx, "pref"), shown);
 
-    // `idea` keeps the propose route; `standard` ships no rules.
+    // The pass writes `idea` entries itself; `standard` ships no rules.
     let idea = show(&fx, "idea");
-    assert_eq!(idea["capture"]["route"], "propose");
+    assert_eq!(idea["capture"]["route"], "write");
     assert_eq!(idea["capture"]["triggers"][4], "what if we");
     assert_eq!(idea["action"]["mode"], "free");
     let standard = show(&fx, "standard");

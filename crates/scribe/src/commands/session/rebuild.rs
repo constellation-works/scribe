@@ -201,7 +201,7 @@ pub(in crate::commands) fn run_with<M: Models>(
                         )],
                         catalog: false,
                         switch_written: false,
-                        closed_candidates: Vec::new(),
+                        persisted_targets: Vec::new(),
                     }));
                 }
             };
@@ -272,7 +272,7 @@ pub(in crate::commands) fn run_with<M: Models>(
                     notices: Vec::new(),
                     catalog: false,
                     switch_written: false,
-                    closed_candidates: Vec::new(),
+                    persisted_targets: Vec::new(),
                 }));
             }
             None => {

@@ -292,13 +292,13 @@ impl Lookup {
 /// A record a lookup returns, as stored.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Found {
-    /// An entry.
-    Entry(Entry),
+    /// An entry (boxed: an entry is much larger than a task).
+    Entry(Box<Entry>),
     /// A session record, with the terms that matched (empty unless the
     /// lookup was for a term).
     Session {
-        /// The record.
-        record: SessionRecord,
+        /// The record (boxed, as an entry is, to keep the enum small).
+        record: Box<SessionRecord>,
         /// The matching terms and their defining spans.
         terms: Vec<Term>,
     },
@@ -569,8 +569,15 @@ fn attribution<'a>(claim: &Claim, evidence: &'a [EvidenceItem]) -> &'a str {
         None => "record",
         Some(EvidenceItem {
             quote: Some(daniel),
+            whose,
             ..
-        }) if verbatim::contains(daniel, &claim.quote) => "Daniel",
+        }) if verbatim::contains(daniel, &claim.quote) => {
+            if whose == CAPTURED_WHOSE {
+                CAPTURED_DANIEL
+            } else {
+                "Daniel"
+            }
+        }
         Some(item) => item.whose.as_str(),
     }
 }
@@ -764,7 +771,7 @@ fn newest_sessions(mut sessions: Vec<&SessionRecord>) -> Vec<&SessionRecord> {
 
 fn session_found(record: &SessionRecord) -> Found {
     Found::Session {
-        record: record.clone(),
+        record: Box::new(record.clone()),
         terms: Vec::new(),
     }
 }
@@ -959,7 +966,7 @@ fn tag_period(
         found
             .into_iter()
             .take(MAX_RECORDS)
-            .map(|e| Found::Entry(e.clone()))
+            .map(|e| Found::Entry(Box::new(e.clone())))
             .collect(),
         &text,
     ))
@@ -1022,7 +1029,7 @@ fn term_lookup(text: &str, sessions: &[&SessionRecord], entries: &[&Entry]) -> O
                 .cloned()
                 .collect();
             (!terms.is_empty()).then(|| Found::Session {
-                record: (*r).clone(),
+                record: Box::new((*r).clone()),
                 terms,
             })
         })
@@ -1042,7 +1049,7 @@ fn term_lookup(text: &str, sessions: &[&SessionRecord], entries: &[&Entry]) -> O
         bodies
             .into_iter()
             .take(room)
-            .map(|e| Found::Entry(e.clone())),
+            .map(|e| Found::Entry(Box::new(e.clone()))),
     );
     let text = format!(
         "The session records where Daniel defined \"{phrase}\", newest first, with his defining words, then the entries that use it."
@@ -1408,14 +1415,42 @@ pub const STATED_WHOSE: &str = "scribe's statement of Daniel's turn";
 /// The label before Daniel's own words beside such a statement.
 pub const STATED_QUOTE_LABEL: &str = "Daniel's words:";
 
+/// Whose words an idea the session pass captured itself is (2_design.md
+/// §11.6): Daniel did not type it or approve it.
+pub const CAPTURED_WHOSE: &str =
+    "scribe's statement of Daniel's turn, captured by the session pass (not typed by Daniel)";
+/// The label of a claim quoting Daniel's words within such an idea.
+pub const CAPTURED_DANIEL: &str = "Daniel (captured by the session pass)";
+
 /// Daniel's verbatim words beside an entry whose content is scribe's
-/// statement of his turn; `None` for every other entry.
+/// statement of his turn: one he approved, or an idea the pass captured;
+/// `None` for every other entry.
 pub(crate) fn stated_quote(entry: &Entry) -> Option<&str> {
     entry
         .stated_by
         .as_ref()
         .and(entry.quote.as_deref())
-        .filter(|_| entry.author.kind == crate::AuthorKind::Daniel)
+        .filter(|_| entry.author.kind == crate::AuthorKind::Daniel || is_pass_captured(entry))
+}
+
+/// Whether the session pass wrote `entry` itself (an idea under a `write`
+/// tag), rather than Daniel typing or approving it.
+#[must_use]
+pub fn is_pass_captured(entry: &Entry) -> bool {
+    entry.author.kind == crate::AuthorKind::Scribe && entry.outcome.is_some()
+}
+
+/// An idea's outcome as one line of evidence or snippet text: `open`,
+/// `parked, in Daniel's words: "<reason>"` or `task <id>`.
+#[must_use]
+pub fn outcome_text(outcome: &crate::Outcome) -> String {
+    match (outcome.state, &outcome.reason, &outcome.task) {
+        (crate::OutcomeState::Parked, Some(reason), _) => {
+            format!("parked, in Daniel's words: \"{reason}\"")
+        }
+        (crate::OutcomeState::Task, _, Some(task)) => format!("task {task}"),
+        (state, ..) => state.as_str().to_owned(),
+    }
 }
 
 fn entry_item(entry: &Entry) -> EvidenceItem {
@@ -1452,6 +1487,17 @@ fn entry_item(entry: &Entry) -> EvidenceItem {
         (
             format!("agent note ({})", entry.author.name),
             entry.content.clone(),
+        )
+    } else if let (Some(quote), Some(outcome)) = (stated_quote(entry), &entry.outcome) {
+        // An idea the pass captured: scribe's statement, Daniel's own
+        // words, and where the idea stands (2_design.md §11.6).
+        (
+            CAPTURED_WHOSE.to_owned(),
+            format!(
+                "{}\n{STATED_QUOTE_LABEL} \"{quote}\"\nOutcome: {}",
+                entry.content,
+                outcome_text(outcome)
+            ),
         )
     } else if let Some(quote) = stated_quote(entry) {
         // Scribe's statement of Daniel's turn, then his own words,

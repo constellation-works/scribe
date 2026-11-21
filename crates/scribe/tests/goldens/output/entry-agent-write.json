@@ -35,5 +35,6 @@
   "admitted": null,
   "approved_by": null,
   "instruction": null,
-  "stated_by": null
+  "stated_by": null,
+  "outcome": null
 }

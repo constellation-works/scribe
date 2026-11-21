@@ -84,7 +84,8 @@ inactive sessions; --include-hidden shows them`.
 and `--until <date>` (`YYYY-MM-DD`, both days included), `--status`,
 repeated `--topic` (every one must match) and repeated `--related
 <kind:target>` (any may match); `entry list` also `--author <name>` and
-`--author-kind daniel|agent`; `proposal list` takes `--state`, `--since`,
+`--author-kind daniel|agent|scribe` (format 16: `scribe` lists the ideas
+the session pass wrote itself; `daniel` never lists them); `proposal list` takes `--state`, `--since`,
 `--until`, `--entry <id>` (the older or the newer entry) and
 `--author-kind daniel|agent|scribe`. An entry's day is its `created`, a
 proposal's its `opened_at`; a session matches when its span, `started` to
@@ -139,7 +140,15 @@ and `said` the command it ran, `scribe proposal settle p-<n> --approve
 words, else `null`). The table detail prints `stated_by
 scribe:session-pass (content is scribe's statement of Daniel's turn)` before
 `quote`; plain prints a `stated_by\t<kind>:<name>\t<quote>` line after the
-entry row.
+entry row. Store format 16 adds `outcome` (`{state, reason, task}`, `state`
+one of `open`, `parked`, `task`, or `null`), set only on an idea the session
+pass wrote itself (author and `stated_by` both `scribe:session-pass`). For
+such an entry the table detail's `stated_by` reads `scribe:session-pass
+(content is scribe's statement of Daniel's turn, captured by the session pass
+(not typed by Daniel))`, an `outcome` field follows `quote` (`open`,
+`parked, in Daniel's words: "<reason>"` or `task <id>`), and `cancel` reads
+`none (written by scribe, not an agent)`; plain adds an
+`outcome\t<state>\t<reason, task or ->` line after the `stated_by` line.
 
 **Session** (`sessions[]`, `session show`): `id`, `status` (`open`,
 `final`), `project`, `topics`, `related` (unchanged: model-extracted
@@ -235,7 +244,10 @@ or for an entry `<id> (<tag>)`), `snippet` (up to 240 characters on one
 line, starting a little before the first matching word, with `…` where it
 was cut; format 14: for an entry with `stated_by`, `scribe's statement of
 Daniel's turn: <statement> | Daniel's words: "<quote>"`, each part cut to
-240 characters), `project`, `topics` (a segment's are its session's plus its
+240 characters; format 16: for an idea the pass wrote itself, `scribe's
+statement of Daniel's turn, captured by the session pass (not typed by
+Daniel): <statement> | Daniel's words: "<quote>" | outcome: <outcome>`),
+`project`, `topics` (a segment's are its session's plus its
 own), `author` (an entry's `{kind, name}`, `null` for a session), `active`
 (a session's flag; `null` for an entry), `updated` (an entry's or
 session's `updated`, a segment's `to`), and `status` (added beside the
@@ -596,8 +608,11 @@ items the model read, or of records a lookup returned; `dropped_quotes`
 counts claims dropped by the check (format 14: an entry with `stated_by` is
 read as scribe's statement of Daniel's turn followed by his labelled words; a
 claim whose `quote` lies in his words has `text` `Daniel`, one whose quote
-lies only in the statement has `text` `scribe's statement of Daniel's turn`,
-and the answer is built from those labels as it is with agent evidence); `hidden_matches` counts superseded or
+lies only in the statement has `text` `scribe's statement of Daniel's turn`
+(format 16: for an idea the pass wrote itself, `Daniel (captured by the
+session pass)` and `scribe's statement of Daniel's turn, captured by the
+session pass (not typed by Daniel)`, and the item the model reads also
+carries its outcome), and the answer is built from those labels as it is with agent evidence); `hidden_matches` counts superseded or
 retired entries that matched and were left out (0 with `include_hidden`).
 `lookup` is `null` when retrieval ran, else `last_session`,
 `named_session`, `next_steps`, `tag_period`, `term` or

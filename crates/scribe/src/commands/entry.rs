@@ -127,7 +127,7 @@ pub(crate) struct ListArgs {
     #[arg(long, value_name = "NAME")]
     pub(crate) author: Option<AuthorName>,
 
-    /// Only entries written through this channel: daniel (a #scribe line) or agent (entry add) [default: any]
+    /// Only entries written through this channel: daniel (a #scribe line or an approval), agent (entry add) or scribe (an idea the session pass captured) [default: any]
     #[arg(long, value_name = "KIND", value_enum)]
     pub(crate) author_kind: Option<EntryAuthorKind>,
 
@@ -143,6 +143,8 @@ pub(crate) enum EntryAuthorKind {
     Daniel,
     // A CLI write verb.
     Agent,
+    // The session pass, capturing an idea itself.
+    Scribe,
 }
 
 impl From<EntryAuthorKind> for AuthorKind {
@@ -150,6 +152,7 @@ impl From<EntryAuthorKind> for AuthorKind {
         match kind {
             EntryAuthorKind::Daniel => Self::Daniel,
             EntryAuthorKind::Agent => Self::Agent,
+            EntryAuthorKind::Scribe => Self::Scribe,
         }
     }
 }

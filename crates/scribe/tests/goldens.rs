@@ -10,7 +10,7 @@
 
 mod support;
 
-use serde_json::json;
+use serde_json::{Value, json};
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Output, Stdio};
@@ -711,4 +711,218 @@ fn stated_claims_match_goldens() {
         }
     }
     report(&failures);
+}
+
+/// Daniel's turn the captured-idea goldens quote, verbatim.
+const CAPTURED_QUOTE: &str = "what if we cached the routing table per host? not now though, let's park it until the drains are quiet.";
+/// Scribe's statement of it, the captured entry's content.
+const CAPTURED: &str = "Daniel suggests caching the routing table per host so lookups stay local.";
+/// His words parking it.
+const PARKED: &str = "let's park it until the drains are quiet";
+
+/// One idea entry in the format the binary writes.
+#[allow(clippy::too_many_arguments)]
+fn idea_entry(
+    id: &str,
+    author: &str,
+    said: &str,
+    content_from: &str,
+    quote: &str,
+    stated_by: &str,
+    outcome: &str,
+    body: &str,
+) -> String {
+    let sha = "0".repeat(64);
+    format!(
+        "---
+format: 16
+kind: entry
+id: {id}
+tag: idea
+status: active
+project: constellation-works/scribe
+topics: []
+related: []
+provider: claude-code
+host: dk-server-1
+author: {author}
+updated_by: null
+created: 2026-11-15T00:05:00Z
+updated: 2026-11-15T00:05:00Z
+inactive_since: null
+said: \"{said}\"
+content_from: {content_from}
+cite: {{session: 7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02, message: user-idea, at: 2026-11-15T00:00:00Z, prompt_sha256: \"{sha}\", line: 1, cwd: /home/daniel/workspace/scribe}}
+retirement_reason: null
+superseded_by: null
+review_after: null
+quote: {quote}
+window: null
+evidence: null
+as_of: null
+approved_by: null
+instruction: null
+stated_by: {stated_by}
+outcome: {outcome}
+---
+{body}
+"
+    )
+}
+
+/// A store holding an idea the session pass captured itself (`idea-1`,
+/// parked in Daniel's words) and one he typed with `#scribe idea:`
+/// (`idea-2`), at format 16 (2_design.md §11.6).
+fn captured_fixture() -> Fixture {
+    let fx = Fixture::new();
+    fx.seed();
+    let dir = fx.root().join("entries/idea");
+    std::fs::create_dir(&dir).unwrap();
+    support::make_private(&dir);
+    let pass = "{kind: scribe, name: session-pass}";
+    let captured = idea_entry(
+        "idea-1",
+        pass,
+        "",
+        "{kind: message, role: user, message: user-idea, at: 2026-11-15T00:00:00Z}",
+        &format!("\"{CAPTURED_QUOTE}\""),
+        pass,
+        &format!("{{state: parked, reason: \"{PARKED}\", task: null}}"),
+        CAPTURED,
+    );
+    let typed = idea_entry(
+        "idea-2",
+        "{kind: daniel, name: daniel}",
+        "#scribe idea: a dry-run flag for the session pass",
+        "{kind: instruction}",
+        "null",
+        "null",
+        "null",
+        "a dry-run flag for the session pass",
+    );
+    for (id, text) in [("idea-1", captured), ("idea-2", typed)] {
+        let path = dir.join(format!("{id}.md"));
+        std::fs::write(&path, text).unwrap();
+        support::make_private(&path);
+    }
+    fx
+}
+
+#[cfg(unix)]
+#[test]
+fn captured_ideas_match_goldens() {
+    let fx = captured_fixture();
+    // `ask --tag idea` with a fake `claude`: one claim quotes Daniel's words
+    // in the captured idea, one its statement, one the idea he typed; the
+    // check labels each (2_design.md §6.4, §11.6).
+    let answer = json!({
+        "status": "answered",
+        "answer": "Daniel floated a per-host routing cache and a dry-run flag.",
+        "claims": [
+            {"text": "his words", "quote": "what if we cached the routing table per host?", "cite": "idea-1"},
+            {"text": "the statement", "quote": "caching the routing table per host", "cite": "idea-1"},
+            {"text": "typed", "quote": "a dry-run flag for the session pass", "cite": "idea-2"}
+        ],
+        "conflicts": []
+    });
+    let reply = fx.elsewhere("claude-reply.json");
+    std::fs::write(
+        &reply,
+        json!({"type":"result", "is_error":false, "result":"", "structured_output":answer})
+            .to_string(),
+    )
+    .unwrap();
+    let script = format!("#!/bin/sh\ncat > /dev/null\ncat '{}'\n", reply.display());
+    let path = fx.fake_program("claude", &script);
+    let commands: &[(&str, &[&str])] = &[
+        ("entry-show-captured", &["entry", "show", "idea-1"]),
+        ("entry-show-typed-idea", &["entry", "show", "idea-2"]),
+        (
+            "record-search-captured",
+            &["record", "search", "routing table per host"],
+        ),
+        (
+            "question-ask-captured",
+            &[
+                "question",
+                "ask",
+                "what ideas did I have for routing?",
+                "--tag",
+                "idea",
+            ],
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (name, args) in commands {
+        for (suffix, mode) in MODES {
+            let out = run_with_input(&fx, &[*args, *mode].concat(), b"", Some(&path));
+            assert_eq!(out.status.code(), Some(0), "{name}: {}", text(&out.stderr));
+            failures.extend(check(
+                &format!("output/{name}.{suffix}"),
+                &without_age(&text(&out.stdout)),
+            ));
+        }
+    }
+    report(&failures);
+
+    // Whatever the goldens say, the labels hold: Daniel's words captured by
+    // the pass, scribe's statement, and Daniel's own typed idea.
+    let out = run_with_input(
+        &fx,
+        &[
+            "question",
+            "ask",
+            "what ideas did I have for routing?",
+            "--tag",
+            "idea",
+            "--json",
+        ],
+        b"",
+        Some(&path),
+    );
+    let asked: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let labels: Vec<&str> = asked["claims"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["text"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            "Daniel (captured by the session pass)",
+            "scribe's statement of Daniel's turn, captured by the session pass (not typed by Daniel)",
+            "Daniel"
+        ]
+    );
+}
+
+/// `out` with an action entry's age, which moves with the clock, masked as
+/// `<age>`: the JSON `age_seconds`, the table's `age` field and the plain
+/// row's last column.
+fn without_age(out: &str) -> String {
+    let lines: Vec<String> = out
+        .lines()
+        .map(|line| {
+            if let Some((head, _)) = line.split_once("\"age_seconds\": ") {
+                format!("{head}\"age_seconds\": \"<age>\",")
+            } else if let Some(rest) = line.strip_prefix("age ") {
+                format!(
+                    "age {}<age>",
+                    " ".repeat(rest.len() - rest.trim_start().len())
+                )
+            } else if line.split('\t').count() == 8 {
+                let mut cols: Vec<&str> = line.split('\t').collect();
+                cols[7] = "<age>";
+                cols.join("\t")
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect();
+    let mut joined = lines.join("\n");
+    if out.ends_with('\n') {
+        joined.push('\n');
+    }
+    joined
 }

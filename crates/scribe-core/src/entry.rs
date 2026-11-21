@@ -405,10 +405,94 @@ pub struct Entry {
     /// with his verbatim words in `quote`; `null` for every other entry.
     #[serde(deserialize_with = "nullable")]
     pub stated_by: Option<Author>,
+    /// Where an idea the session pass captured stands (format 16): `open`,
+    /// `parked` with Daniel's own words setting it aside, or `task` with
+    /// the task it became. Set only on an entry the pass wrote itself
+    /// (`author` `{kind: scribe, name: session-pass}`); `null` for every
+    /// other entry.
+    #[serde(deserialize_with = "nullable")]
+    pub outcome: Option<Outcome>,
     /// What the entry records, verbatim: the file's body, not a frontmatter
     /// key. Empty once forgotten.
     #[serde(skip)]
     pub content: String,
+}
+
+/// Where a pass-captured idea stands (docs/design/scribe/2_design.md
+/// §11.6): every key is required, `null` where it does not apply.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Outcome {
+    /// `open`, `parked` or `task`.
+    pub state: OutcomeState,
+    /// For `parked`, Daniel's own words setting the idea aside, verbatim
+    /// from one of his turns in the cited session; `null` otherwise and
+    /// once the entry is forgotten.
+    #[serde(deserialize_with = "nullable")]
+    pub reason: Option<String>,
+    /// For `task`, the id of the task the idea became; `null` otherwise.
+    #[serde(deserialize_with = "nullable")]
+    pub task: Option<String>,
+}
+
+impl Outcome {
+    /// An idea nothing has settled yet.
+    #[must_use]
+    pub fn open() -> Self {
+        Self {
+            state: OutcomeState::Open,
+            reason: None,
+            task: None,
+        }
+    }
+
+    /// Whether the fields agree with the state: only `parked` carries a
+    /// reason (blank once forgotten, so `None` is accepted when
+    /// `forgotten`), and only `task` a non-empty task id.
+    #[must_use]
+    pub fn is_consistent(&self, forgotten: bool) -> bool {
+        let reason_ok = |r: &Option<String>| match r {
+            Some(text) => !text.trim().is_empty() && !forgotten,
+            None => forgotten,
+        };
+        match self.state {
+            OutcomeState::Open => self.reason.is_none() && self.task.is_none(),
+            OutcomeState::Parked => self.task.is_none() && reason_ok(&self.reason),
+            OutcomeState::Task => {
+                self.reason.is_none() && self.task.as_ref().is_some_and(|t| !t.trim().is_empty())
+            }
+        }
+    }
+}
+
+/// A pass-captured idea's state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OutcomeState {
+    /// Nothing has settled it.
+    Open,
+    /// Daniel set it aside, in his words.
+    Parked,
+    /// It became a task.
+    Task,
+}
+
+impl OutcomeState {
+    /// The canonical lowercase token.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Parked => "parked",
+            Self::Task => "task",
+        }
+    }
+}
+
+impl fmt::Display for OutcomeState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 /// The bounded excerpt of the chat before a typed `#scribe` line under an
@@ -562,6 +646,7 @@ impl NewEntry {
             approved_by: None,
             instruction: None,
             stated_by: None,
+            outcome: None,
             content: self.content,
         }
     }

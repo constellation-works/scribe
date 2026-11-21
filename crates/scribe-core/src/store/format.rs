@@ -41,7 +41,7 @@ use time::OffsetDateTime;
 
 /// The newest store format: this build reads formats 1 to `FORMAT` of every
 /// document and would write `FORMAT`.
-pub(super) const FORMAT: u32 = 15;
+pub(super) const FORMAT: u32 = 16;
 
 /// Which document an upgrade step is applied to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -83,6 +83,7 @@ pub(super) const UPGRADES: &[Upgrade] = &[
     instructed_settlement,
     claim_statement,
     instructed_approval,
+    idea_outcome,
 ];
 
 /// Format 14 -> 15 changes no stored value. It admits two shapes an agent's
@@ -97,6 +98,21 @@ fn instructed_approval(
     _document: Document,
     value: serde_json::Value,
 ) -> serde_json::Result<serde_json::Value> {
+    Ok(value)
+}
+
+/// Format 15 -> 16 adds `outcome` to each entry, `null`: only an idea the
+/// session pass writes itself carries one (2_design.md §11.6), and no
+/// older entry was written that way. Other documents are unchanged.
+fn idea_outcome(
+    document: Document,
+    mut value: serde_json::Value,
+) -> serde_json::Result<serde_json::Value> {
+    if document == Document::Entry
+        && let Some(entry) = value.as_object_mut()
+    {
+        entry.entry("outcome").or_insert(serde_json::Value::Null);
+    }
     Ok(value)
 }
 
@@ -906,6 +922,7 @@ impl EntryV12 {
             approved_by: None,
             instruction: None,
             stated_by: None,
+            outcome: None,
             content: String::new(),
         }
     }
@@ -986,6 +1003,90 @@ impl EntryV13 {
             approved_by: self.approved_by,
             instruction: self.instruction,
             stated_by: None,
+            outcome: None,
+            content: String::new(),
+        }
+    }
+}
+
+/// Frozen format-14 entry shape (no `outcome`), which format 15 kept,
+/// migrated in typed YAML like [`EntryV13`] so local YAML tags stay intact.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EntryV14 {
+    id: EntryId,
+    tag: crate::TagName,
+    status: crate::EntryStatus,
+    project: crate::Project,
+    topics: crate::Topics,
+    related: Vec<crate::Related>,
+    provider: crate::Label,
+    host: crate::Label,
+    author: Author,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    updated_by: Option<Author>,
+    #[serde(with = "time::serde::rfc3339")]
+    created: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    updated: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339::option")]
+    inactive_since: Option<OffsetDateTime>,
+    said: String,
+    content_from: crate::ContentFrom,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    cite: Option<Cite>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    retirement_reason: Option<String>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    superseded_by: Option<EntryId>,
+    #[serde(with = "crate::record::nullable_date")]
+    review_after: Option<time::Date>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    quote: Option<String>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    window: Option<crate::Window>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    evidence: Option<String>,
+    #[serde(with = "crate::record::nullable_date")]
+    as_of: Option<time::Date>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    approved_by: Option<Author>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    instruction: Option<crate::Instruction>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    stated_by: Option<Author>,
+}
+
+impl EntryV14 {
+    fn into_entry(self) -> Entry {
+        Entry {
+            id: self.id,
+            tag: self.tag,
+            status: self.status,
+            project: self.project,
+            topics: self.topics,
+            related: self.related,
+            provider: self.provider,
+            host: self.host,
+            author: self.author,
+            updated_by: self.updated_by,
+            created: self.created,
+            updated: self.updated,
+            inactive_since: self.inactive_since,
+            said: self.said,
+            content_from: self.content_from,
+            cite: self.cite,
+            retirement_reason: self.retirement_reason,
+            superseded_by: self.superseded_by,
+            review_after: self.review_after,
+            quote: self.quote,
+            window: self.window,
+            evidence: self.evidence,
+            as_of: self.as_of,
+            approved_by: self.approved_by,
+            instruction: self.instruction,
+            stated_by: self.stated_by,
+            outcome: None,
             content: String::new(),
         }
     }
@@ -1315,6 +1416,9 @@ pub(super) fn decode_entry(
     } else if from == 13 {
         let old: EntryV13 = yaml_serde::from_value(value).map_err(|e| Error::corrupt(path, e))?;
         old.into_entry()
+    } else if from == 14 || from == 15 {
+        let old: EntryV14 = yaml_serde::from_value(value).map_err(|e| Error::corrupt(path, e))?;
+        old.into_entry()
     } else {
         let json = serde_json::to_value(&value).map_err(|e| Error::corrupt(path, e))?;
         upgrade(path, Document::Entry, from, json)?
@@ -1402,8 +1506,46 @@ pub(super) fn decode_entry(
                 && entry.window.is_none();
             (direct || approved_assistant) && entry.stated_by.is_none()
         }
-        crate::AuthorKind::Scribe => false,
+        // An idea the session pass wrote itself (format 16): scribe's
+        // statement of one of Daniel's turns as content, his words in
+        // `quote` until it is forgotten, nothing typed, and an outcome.
+        crate::AuthorKind::Scribe => {
+            entry.author == Author::session_pass()
+                && entry.stated_by.as_ref() == Some(&Author::session_pass())
+                && entry.cite.is_some()
+                && matches!(
+                    entry.content_from,
+                    crate::ContentFrom::Message {
+                        role: crate::Speaker::User,
+                        ..
+                    }
+                )
+                && entry.said.is_empty()
+                && entry.window.is_none()
+                && entry.evidence.is_none()
+                && entry.approved_by.is_none()
+                && entry.outcome.is_some()
+                && match entry.status {
+                    crate::EntryStatus::Forgotten => entry.quote.is_none(),
+                    crate::EntryStatus::Active
+                    | crate::EntryStatus::Superseded
+                    | crate::EntryStatus::Retired => entry.quote.is_some(),
+                }
+        }
     };
+    let forgotten = entry.status == crate::EntryStatus::Forgotten;
+    let outcome_valid = match &entry.outcome {
+        None => entry.author.kind != crate::AuthorKind::Scribe,
+        Some(outcome) => {
+            entry.author.kind == crate::AuthorKind::Scribe && outcome.is_consistent(forgotten)
+        }
+    };
+    if !outcome_valid {
+        return Err(shape(
+            path,
+            "entry outcome must be set exactly on an idea the session pass wrote, with fields matching its state",
+        ));
+    }
     let active = entry.status == crate::EntryStatus::Active;
     if active != entry.inactive_since.is_none() {
         return Err(shape(
@@ -1808,6 +1950,12 @@ fn decode_json<T: DeserializeOwned>(path: &Path, bytes: &[u8], document: Documen
             {
                 return Err(shape(path, "unknown variant `covered`"));
             }
+        }
+        // Format 16 changed only entries, so a format-15 proposals.json has
+        // the current shape.
+        Document::Proposals if from == 15 => {
+            serde_json::from_slice::<ProposalsDocument>(bytes)
+                .map_err(|e| Error::corrupt(path, e))?;
         }
         Document::Proposals if from == 10 => {
             serde_json::from_slice::<ProposalsV10>(bytes).map_err(|e| Error::corrupt(path, e))?;

@@ -1,0 +1,61 @@
+{
+  "id": "idea-1",
+  "tag": "idea",
+  "status": "active",
+  "project": "constellation-works/scribe",
+  "topics": [],
+  "related": [],
+  "provider": "claude-code",
+  "host": "dk-server-1",
+  "created": "2026-11-15T00:05:00Z",
+  "updated": "2026-11-15T00:05:00Z",
+  "said": "",
+  "content": "Daniel suggests caching the routing table per host so lookups stay local.",
+  "content_from": {
+    "kind": "message",
+    "role": "user",
+    "message": "user-idea",
+    "at": "2026-11-15T00:00:00Z"
+  },
+  "cite": {
+    "session": "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02",
+    "message": "user-idea",
+    "at": "2026-11-15T00:00:00Z",
+    "prompt_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "line": 1,
+    "cwd": "/home/daniel/workspace/scribe"
+  },
+  "superseded_by": null,
+  "review_after": null,
+  "author": {
+    "kind": "scribe",
+    "name": "session-pass"
+  },
+  "updated_by": null,
+  "retirement_reason": null,
+  "quote": "what if we cached the routing table per host? not now though, let's park it until the drains are quiet.",
+  "evidence": null,
+  "as_of": null,
+  "window_turns": null,
+  "window": null,
+  "action": {
+    "age_seconds": "<age>",
+    "cancel_window_ends": null,
+    "past_cancel_window": true,
+    "picked_up": false,
+    "rejected": false,
+    "pickups": []
+  },
+  "admitted": null,
+  "approved_by": null,
+  "instruction": null,
+  "stated_by": {
+    "kind": "scribe",
+    "name": "session-pass"
+  },
+  "outcome": {
+    "state": "parked",
+    "reason": "let's park it until the drains are quiet",
+    "task": null
+  }
+}

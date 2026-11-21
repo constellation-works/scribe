@@ -35,9 +35,11 @@
 //! session); no transcript or messages yet leaves it waiting. Failed runs
 //! exit 1 with each failed session, code and short reason; the plugin answers
 //! `session_pass_failed`. A never-on session is never read. A pass writes
-//! candidate proposals, no entries, and one audit line per session handled (none for waiting).
-//! A window that fails after retired-tag closures were persisted still audits one success
-//! line per closed proposal, then the pass's failure line.
+//! candidate proposals, ideas under `write` tags as entries it authors (at most three per
+//! session per run, 2_design.md §11.6), no other entries, and one audit line per session
+//! handled (none for waiting) plus one per idea written. A window that fails after
+//! retired-tag closures or ideas were persisted still audits one success line per closed
+//! proposal and written idea, then the pass's failure line.
 
 use crate::app::Context;
 use crate::commands::hook::payload::{self, Transcript};
@@ -75,6 +77,11 @@ Also proposes up to 3 claims per session per run, only from Daniel's turns
 that fire a trigger of a tag's capture rules (see scribe tag show <tag>),
 until 20 candidate proposals are open. Review with scribe proposal list;
 only a typed #scribe approve <id> writes an entry; #scribe reject <id> drops it.
+Under a tag whose route is write (idea ships so), the pass writes up to 3
+ideas per session per run itself, with their outcome (open, or parked in
+Daniel's words); an idea that became a task in the session is not written.
+List them with scribe entry list --tag idea --author-kind scribe; cancel one
+with #scribe retire <id> or #scribe forget <id>.
 A failed pass stays due with automatic retry delays of 5, 10, 20, 40,
 then at most 60 minutes. --session retries immediately. Exits 1 when any
 pass failed, naming each failed session, its error code and short reason.
@@ -158,7 +165,7 @@ pub(in crate::commands) fn run_with<M: Models>(
             }],
             catalog: false,
             switch_written: false,
-            closed_candidates: Vec::new(),
+            persisted_targets: Vec::new(),
         }));
     }
     let config = store.config()?;
@@ -189,7 +196,7 @@ pub(in crate::commands) fn run_with<M: Models>(
         })
         .collect();
     let mut passes = Vec::new();
-    let mut closed_candidates = Vec::new();
+    let mut persisted_targets = Vec::new();
     let mut persisted = PersistedAudit::new(store, COMMAND, ctx.now());
     for (n, (id, switch)) in due.into_iter().enumerate() {
         if !limits.may_start(n) {
@@ -206,6 +213,7 @@ pub(in crate::commands) fn run_with<M: Models>(
             id: &id,
             switch: &switch,
             candidate_slots: pass::MAX_CANDIDATES,
+            write_slots: pass::MAX_IDEAS,
             windows: 0,
             segments_sealed: 0,
             segments: None,
@@ -213,7 +221,7 @@ pub(in crate::commands) fn run_with<M: Models>(
             warnings: Vec::new(),
             incomplete: false,
             catalog: None,
-            closed_candidates: Vec::new(),
+            persisted_targets: Vec::new(),
         };
         let result = if let Some((_, reason)) = corrupt.iter().find(|(stem, _)| stem == id.as_str())
         {
@@ -224,7 +232,7 @@ pub(in crate::commands) fn run_with<M: Models>(
         };
         // Record any persisted closures before `job.failed` can return `Err`
         // and bypass `Output::Pass`.
-        persisted.extend(job.closed_candidates.iter().cloned());
+        persisted.extend(job.persisted_targets.iter().cloned());
         let payload = match result {
             Ok(done) => {
                 if done.result != "waiting" {
@@ -235,7 +243,7 @@ pub(in crate::commands) fn run_with<M: Models>(
             Err(failure) => job.failed(failure)?,
         };
         passes.push(payload);
-        closed_candidates.extend(job.closed_candidates);
+        persisted_targets.extend(job.persisted_targets);
         if job.incomplete {
             remaining = remaining.saturating_add(1);
         }
@@ -247,7 +255,7 @@ pub(in crate::commands) fn run_with<M: Models>(
         notices: Vec::new(),
         catalog: false,
         switch_written: false,
-        closed_candidates,
+        persisted_targets,
     }))
 }
 
@@ -301,6 +309,7 @@ pub(in crate::commands) fn run_catalog<M: Models>(
         id,
         switch,
         candidate_slots: pass::MAX_CANDIDATES,
+        write_slots: pass::MAX_IDEAS,
         windows: 0,
         segments_sealed: 0,
         segments: None,
@@ -308,7 +317,7 @@ pub(in crate::commands) fn run_catalog<M: Models>(
         warnings: Vec::new(),
         incomplete: false,
         catalog: Some(CatalogRun { project, ended }),
-        closed_candidates: Vec::new(),
+        persisted_targets: Vec::new(),
     };
     let limits = RunLimits::new(1);
     let result = if let Some((_, reason)) = corrupt.iter().find(|(stem, _)| stem == id.as_str()) {
@@ -319,7 +328,7 @@ pub(in crate::commands) fn run_catalog<M: Models>(
     };
     // Record any persisted closures before `job.failed` can return `Err` and
     // bypass `Output::Pass`.
-    persisted.extend(job.closed_candidates.iter().cloned());
+    persisted.extend(job.persisted_targets.iter().cloned());
     let passes = vec![match result {
         Ok(done) => done,
         Err(failure) => job.failed(failure)?,
@@ -331,7 +340,7 @@ pub(in crate::commands) fn run_catalog<M: Models>(
         notices: Vec::new(),
         catalog: true,
         switch_written: false,
-        closed_candidates: job.closed_candidates,
+        persisted_targets: job.persisted_targets,
     })
 }
 
@@ -351,6 +360,9 @@ struct Job<'a> {
     id: &'a SessionId,
     switch: &'a SessionControl,
     candidate_slots: usize,
+    /// Ideas the pass may still write itself for this session in this
+    /// invocation (`write` tags, 2_design.md §11.6).
+    write_slots: usize,
     windows: usize,
     segments_sealed: usize,
     segments: Option<usize>,
@@ -361,8 +373,9 @@ struct Job<'a> {
     /// whether the transcript's last message is at least a day old.
     catalog: Option<CatalogRun>,
     /// Open candidate proposals closed because their tag is no longer in the
-    /// tag table, for audit logging.
-    closed_candidates: Vec<String>,
+    /// tag table, and entries the pass wrote itself under `write` tags, for
+    /// audit logging.
+    persisted_targets: Vec<String>,
 }
 
 /// One cataloged session's extra facts. Absent for an ordinary pass.
@@ -527,8 +540,27 @@ impl Job<'_> {
             } else {
                 self.candidate_slots
             };
+            request.write_limit = if turns.is_empty() {
+                0
+            } else {
+                self.write_slots
+            };
             request.candidate_turns = turns;
             request.candidate_rules = rules;
+            let cwd = transcript::cwd(&bytes).unwrap_or_default();
+            let mut project = if cwd.is_empty() {
+                Project::sanitized("")
+            } else {
+                project::of(Path::new(&cwd))
+            };
+            // `--project`, or the transcript-list attribution, only for the
+            // first record. A resumed catalog keeps the record's project, as
+            // does every later window (the write exclusions need it now).
+            if let Some(record) = &previous {
+                project = record.project.clone();
+            } else if let Some(catalog) = &self.catalog {
+                project = catalog.project.clone();
+            }
             let entries = self
                 .ctx
                 .store()
@@ -558,14 +590,27 @@ impl Job<'_> {
             }
             request.candidate_exclusions =
                 pass::candidate_exclusions(&entries.listing.items, &proposals, &request);
+            request.write_exclusions =
+                pass::write_exclusions(&entries.listing.items, &project, &request);
             let distilled = distill(self.id, request, &conversation[..end], adapter)?;
+            let written = distilled
+                .candidates
+                .iter()
+                .filter(|c| {
+                    c.tag
+                        .parse()
+                        .ok()
+                        .and_then(|tag| self.config.tags.get(&tag))
+                        .is_some_and(|tag| tag.capture.writes())
+                })
+                .count();
+            self.write_slots = self.write_slots.saturating_sub(written);
             self.candidate_slots = self
                 .candidate_slots
-                .saturating_sub(distilled.candidates.len());
+                .saturating_sub(distilled.candidates.len() - written);
             let candidate_answers = distilled.candidates.clone();
             let dropped = distilled.dropped_terms;
             let warnings = window_warnings(self.windows + 1, &distilled);
-            let cwd = transcript::cwd(&bytes).unwrap_or_default();
             let now = self.ctx.now();
             // The window's first and last messages' times bound the segment.
             let sent = |uuid: Option<&str>| {
@@ -574,18 +619,6 @@ impl Job<'_> {
             };
             let from = sent(first_message.as_deref());
             let to = sent(Some(&through));
-            let mut project = if cwd.is_empty() {
-                Project::sanitized("")
-            } else {
-                project::of(Path::new(&cwd))
-            };
-            // `--project`, or the transcript-list attribution, only for the
-            // first record. A resumed catalog keeps the record's project.
-            if previous.is_none()
-                && let Some(catalog) = &self.catalog
-            {
-                project = catalog.project.clone();
-            }
             let meta = pass::PassMeta {
                 id: self.id.clone(),
                 project,
@@ -646,17 +679,18 @@ impl Job<'_> {
                     // `code` and the message are the later failure's. The
                     // ids are copied first so `Job::failed` still audits them.
                     if let scribe_core::Error::AfterPersist(after) = &err {
-                        self.closed_candidates.extend(after.closed.iter().cloned());
+                        self.persisted_targets.extend(after.closed.iter().cloned());
                     }
                     return Err(PassError::new(err.code(), err.to_string()));
                 }
             };
             previous = written.record;
-            self.closed_candidates.extend(
+            self.persisted_targets.extend(
                 written
                     .closed_candidates
                     .into_iter()
-                    .map(|p| p.id.to_string()),
+                    .map(|p| p.id.to_string())
+                    .chain(written.written_entries.iter().map(ToString::to_string)),
             );
             expected = previous.as_ref().map(|p| p.updated);
             self.segments_sealed += sealed_after.saturating_sub(sealed_before);
