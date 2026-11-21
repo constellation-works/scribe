@@ -1238,3 +1238,249 @@ fn consistency_scan_with_custom_tag_config_keeps_open_preferences_candidates() {
     assert_eq!(open["proposals"][0]["id"], "p-1");
     assert_eq!(open["proposals"][0]["candidate"]["tag"], "preferences");
 }
+
+#[test]
+fn a_scan_that_fails_after_reapply_and_open_still_audits_each_write() {
+    let fx = Fixture::new();
+    let path = fx.fake_program(
+        "claude",
+        "#!/bin/sh\necho call >> \"$HOME/claude-calls\"\nexit 1\n",
+    );
+    let s = Setup {
+        transcript: fx
+            .home()
+            .join(".claude/projects/-work-scribe")
+            .join(format!("{SESSION}.jsonl")),
+        cwd: fx.elsewhere("work/scribe"),
+        fx,
+        path,
+    };
+    std::fs::create_dir_all(s.fx.root()).unwrap();
+    make_private(&s.fx.root());
+    // Active entries:
+    // - preferences-1 will be superseded when p-1 is reapplied
+    // - preferences-2 covers approved candidate p-2 (closed as covered)
+    // - rituals-1 is past review_after so open_proposals opens p-4
+    s.entry(
+        "preferences-1",
+        "2026-01-02T03:04:05Z",
+        OLDER,
+        "active",
+        None,
+    );
+    s.entry(
+        "preferences-2",
+        "2026-02-02T03:04:05Z",
+        NEWER,
+        "active",
+        None,
+    );
+    s.entry(
+        "rituals-1",
+        "2026-01-05T03:04:05Z",
+        RITUAL,
+        "active",
+        Some("2026-03-01"),
+    );
+    let cite = |msg: &str| {
+        json!({
+            "session": SESSION,
+            "message": msg,
+            "at": "2026-11-15T00:00:00Z",
+            "prompt_sha256": "0".repeat(64),
+            "line": 1,
+            "cwd": "/work/scribe"
+        })
+    };
+    let proposals_file = s.fx.root().join("proposals.json");
+    let doc = json!({
+        "format": 11,
+        "proposals": [
+            {
+                "id": "p-1",
+                "kind": "supersedes",
+                "older": "preferences-1",
+                "newer": "preferences-2",
+                "candidate": null,
+                "reason": "Newer replaces older.",
+                "quotes": [],
+                "state": "approved",
+                "opened_at": "2026-11-15T00:00:00Z",
+                "settled_at": "2026-11-15T00:05:00Z",
+                "settled_by": cite("u-approve-1"),
+                "author": {"kind": "scribe", "name": "consistency"},
+                "updated_by": null,
+                "settled_author": {"kind": "daniel", "name": "daniel"},
+                "closed_reason": null
+            },
+            {
+                "id": "p-2",
+                "kind": "candidate",
+                "older": "preferences-3",
+                "newer": null,
+                "candidate": {
+                    "tag": "preferences",
+                    "role": "user",
+                    "quote": NEWER,
+                    "evidence": null,
+                    "cite": cite("u-cand-2"),
+                    "project": "scribe",
+                    "provider": "claude-code",
+                    "host": "host",
+                    "admitted": null
+                },
+                "reason": "Covered approved candidate.",
+                "quotes": [],
+                "state": "approved",
+                "opened_at": "2026-11-15T00:01:00Z",
+                "settled_at": "2026-11-15T00:06:00Z",
+                "settled_by": cite("u-approve-2"),
+                "author": {"kind": "scribe", "name": "session-pass"},
+                "updated_by": null,
+                "settled_author": {"kind": "daniel", "name": "daniel"},
+                "closed_reason": null
+            },
+            {
+                "id": "p-3",
+                "kind": "candidate",
+                "older": "decisions-1",
+                "newer": null,
+                "candidate": {
+                    "tag": "decisions",
+                    "role": "user",
+                    "quote": "I always keep decisions item 1 documented.",
+                    "evidence": null,
+                    "cite": cite("u-cand-3"),
+                    "project": "scribe",
+                    "provider": "claude-code",
+                    "host": "host",
+                    "admitted": null
+                },
+                "reason": "Retired tag candidate.",
+                "quotes": [],
+                "state": "open",
+                "opened_at": "2026-11-15T00:02:00Z",
+                "settled_at": null,
+                "settled_by": null,
+                "author": {"kind": "scribe", "name": "session-pass"},
+                "updated_by": null,
+                "settled_author": null,
+                "closed_reason": null
+            }
+        ]
+    });
+    std::fs::write(&proposals_file, doc.to_string()).unwrap();
+    make_private(&proposals_file);
+
+    // Symlink in sessions/ fails deactivate_sessions AFTER reapply_approved,
+    // close_retired_candidates, and open_proposals have all persisted.
+    let month = s.fx.root().join("sessions/2026/11");
+    std::fs::create_dir_all(&month).unwrap();
+    for dir in [
+        s.fx.root().join("sessions"),
+        s.fx.root().join("sessions/2026"),
+        month.clone(),
+    ] {
+        make_private(&dir);
+    }
+    std::os::unix::fs::symlink("/dev/null", month.join("bad.md")).unwrap();
+
+    let out = s.run(&["consistency", "scan", "--json"], b"");
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    let err: Value = serde_json::from_slice(&out.stderr).unwrap();
+    assert_eq!(err["code"], "store_symlink", "{err}");
+    assert_eq!(
+        s.calls(),
+        0,
+        "stale-only open_proposals needs no model call"
+    );
+
+    let scan_lines: Vec<Value> = s
+        .audit()
+        .into_iter()
+        .filter(|line| line["command"] == "consistency scan")
+        .collect();
+    for expected in ["preferences-1", "p-2", "p-3", "p-4"] {
+        assert_eq!(
+            scan_lines
+                .iter()
+                .filter(|line| line["status"] == "success" && line["target"] == expected)
+                .count(),
+            1,
+            "expected persisted write {expected} to be audited once: {scan_lines:?}"
+        );
+    }
+    assert_eq!(
+        scan_lines
+            .iter()
+            .filter(|line| line["status"] == "failure" && line["error_code"] == "store_symlink")
+            .count(),
+        1,
+        "{scan_lines:?}"
+    );
+}
+
+#[test]
+fn a_scan_that_fails_after_age_deactivation_still_audits_the_deactivated_session() {
+    let s = Setup::new();
+    for file in &session_files() {
+        s.session(file);
+    }
+    removal_entry(&s);
+    let removal = json!({"judgements": [
+        {"pair": "1", "label": "removed", "feature": "the digest",
+         "reason": "The weekly report replaced the digest.", "quote": "ripped out and replaced"},
+    ]});
+    let envelope = |body: &Value| {
+        json!({"type": "result", "subtype": "success", "is_error": false,
+               "result": "", "structured_output": body})
+    };
+    let bad_link = s.fx.root().join("sessions/2026/11/bad.md");
+    let bad_dir = bad_link.parent().unwrap().to_path_buf();
+    std::fs::create_dir_all(&bad_dir).unwrap();
+    for dir in [
+        s.fx.root().join("sessions"),
+        s.fx.root().join("sessions/2026"),
+        bad_dir,
+    ] {
+        make_private(&dir);
+    }
+    // On the removal call (after age deactivation has persisted `s-quiet`),
+    // plant a symlink so the subsequent removal `set_active_many` fails.
+    s.fx.fake_program(
+        "claude",
+        &format!(
+            "#!/bin/sh\necho call >> \"$HOME/claude-calls\"\ncat > \"$HOME/claude-prompt\"\nif grep -q 'cataloged work sessions' \"$HOME/claude-prompt\"; then ln -sf /dev/null '{link}'; echo '{}'; else echo '{}'; fi\n",
+            envelope(&removal),
+            envelope(&contradicts()),
+            link = bad_link.display(),
+        ),
+    );
+
+    let out = s.run(&["consistency", "scan", "--json"], b"");
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    let err: Value = serde_json::from_slice(&out.stderr).unwrap();
+    assert_eq!(err["code"], "store_symlink", "{err}");
+
+    let scan_lines: Vec<Value> = s
+        .audit()
+        .into_iter()
+        .filter(|line| line["command"] == "consistency scan")
+        .collect();
+    assert_eq!(
+        scan_lines
+            .iter()
+            .filter(|line| line["status"] == "success" && line["target"] == "session:s-quiet")
+            .count(),
+        1,
+        "aged session deactivation must be audited even when removal write fails: {scan_lines:?}"
+    );
+    assert_eq!(
+        scan_lines
+            .iter()
+            .filter(|line| line["status"] == "failure" && line["error_code"] == "store_symlink")
+            .count(),
+        1,
+        "{scan_lines:?}"
+    );
+}

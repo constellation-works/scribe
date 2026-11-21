@@ -189,7 +189,9 @@ pub enum EntryStatus {
     Superseded,
     /// Hidden by Daniel or by an approved stale proposal.
     Retired,
-    /// Blanked for good: `said` and `content` are empty; id and cite stay.
+    /// Blanked for good: `said` and `content` are empty, and `evidence`,
+    /// `as_of`, `quote`, `window` and `retirement_reason` are cleared; id and
+    /// cite stay.
     Forgotten,
 }
 

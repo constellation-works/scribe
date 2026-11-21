@@ -85,8 +85,15 @@ pub(in crate::commands) fn run_with<M: Models>(
     let ended = transcript::survey(&begun.bytes)
         .ended
         .is_some_and(|last| transcript::is_day_old(last, ctx.now()));
-    let mut report: PassReport =
-        pass::run_catalog(ctx, models, &begun.id, &begun.switch, project, ended)?;
+    let mut report: PassReport = pass::run_catalog(
+        ctx,
+        models,
+        &begun.id,
+        &begun.switch,
+        project,
+        ended,
+        args.author.as_str(),
+    )?;
     report.switch_written = begun.wrote_switch;
     Ok(Output::Pass(report))
 }

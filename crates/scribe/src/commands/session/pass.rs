@@ -40,9 +40,9 @@
 //! line per closed proposal, then the pass's failure line.
 
 use crate::app::Context;
-use crate::commands::RunLimits;
 use crate::commands::hook::payload::{self, Transcript};
 use crate::commands::hook::project;
+use crate::commands::{PersistedAudit, RunLimits};
 use crate::error::CliError;
 use crate::output::{Output, PassPayload, PassReport};
 use clap::Args;
@@ -190,6 +190,7 @@ pub(in crate::commands) fn run_with<M: Models>(
         .collect();
     let mut passes = Vec::new();
     let mut closed_candidates = Vec::new();
+    let mut persisted = PersistedAudit::new(store, COMMAND, ctx.now());
     for (n, (id, switch)) in due.into_iter().enumerate() {
         if !limits.may_start(n) {
             remaining = remaining.saturating_add(1);
@@ -221,15 +222,25 @@ pub(in crate::commands) fn run_with<M: Models>(
             let previous = found.listing.items.iter().find(|r| r.id == id);
             job.run(previous, &known, &adapter, &limits)
         };
-        passes.push(match result {
-            Ok(done) => done,
+        // Record any persisted closures before `job.failed` can return `Err`
+        // and bypass `Output::Pass`.
+        persisted.extend(job.closed_candidates.iter().cloned());
+        let payload = match result {
+            Ok(done) => {
+                if done.result != "waiting" {
+                    persisted.record(format!("session:{}", done.session));
+                }
+                done
+            }
             Err(failure) => job.failed(failure)?,
-        });
+        };
+        passes.push(payload);
         closed_candidates.extend(job.closed_candidates);
         if job.incomplete {
             remaining = remaining.saturating_add(1);
         }
     }
+    persisted.disarm();
     Ok(Output::Pass(PassReport {
         passes,
         remaining,
@@ -250,6 +261,7 @@ pub(in crate::commands) fn run_catalog<M: Models>(
     switch: &SessionControl,
     project: Project,
     ended: bool,
+    author: &str,
 ) -> Result<PassReport, CliError> {
     let store = ctx.store();
     let config = ctx.config()?;
@@ -280,6 +292,8 @@ pub(in crate::commands) fn run_catalog<M: Models>(
         })
         .collect();
     let adapter = models(&config);
+    let mut persisted =
+        PersistedAudit::new(store, super::catalog::COMMAND, ctx.now()).with_author(author);
     let mut job = Job {
         ctx,
         config: &config,
@@ -303,10 +317,14 @@ pub(in crate::commands) fn run_catalog<M: Models>(
         let previous = found.listing.items.iter().find(|r| &r.id == id);
         job.run(previous, &known, &adapter, &limits)
     };
+    // Record any persisted closures before `job.failed` can return `Err` and
+    // bypass `Output::Pass`.
+    persisted.extend(job.closed_candidates.iter().cloned());
     let passes = vec![match result {
         Ok(done) => done,
         Err(failure) => job.failed(failure)?,
     }];
+    persisted.disarm();
     Ok(PassReport {
         passes,
         remaining: 0,
@@ -627,8 +645,8 @@ impl Job<'_> {
                 Err(err) => {
                     // `code` and the message are the later failure's. The
                     // ids are copied first so `Job::failed` still audits them.
-                    if let scribe_core::Error::AfterPersist { closed, .. } = &err {
-                        self.closed_candidates.extend(closed.iter().cloned());
+                    if let scribe_core::Error::AfterPersist(after) = &err {
+                        self.closed_candidates.extend(after.closed.iter().cloned());
                     }
                     return Err(PassError::new(err.code(), err.to_string()));
                 }

@@ -28,8 +28,8 @@ use crate::audit_middleware::{AuditGuard, AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{Output, Records, WarningPayload};
 use clap::{Args, Subcommand};
-use scribe_core::{DateRange, Skipped};
-use time::Date;
+use scribe_core::{AuditEvent, AuditStatus, DateRange, Skipped, Store};
+use time::{Date, OffsetDateTime};
 
 pub(crate) use consistency::ConsistencyCommand;
 pub(crate) use entry::EntryCommand;
@@ -297,6 +297,81 @@ pub(super) fn list_output(
         records,
         total,
         warnings: skipped.iter().map(WarningPayload::from).collect(),
+    }
+}
+
+/// Durable writes already on disk when a multi-step command returns `Err`
+/// before reaching `AuditGuard::mark_result`. Disarm right before returning
+/// `Ok` so the middleware writes those lines with the command's real duration;
+/// on an early `?` return or unwind, `Drop` writes one success line per target
+/// (`duration_ms: 0`) and fails open (STD-02 R31, STD-03 R4).
+pub(in crate::commands) struct PersistedAudit<'a> {
+    store: &'a Store,
+    command: &'static str,
+    author: Option<String>,
+    at: OffsetDateTime,
+    targets: Vec<String>,
+    armed: bool,
+}
+
+impl<'a> PersistedAudit<'a> {
+    pub(in crate::commands) fn new(
+        store: &'a Store,
+        command: &'static str,
+        at: OffsetDateTime,
+    ) -> Self {
+        Self {
+            store,
+            command,
+            author: None,
+            at,
+            targets: Vec::new(),
+            armed: true,
+        }
+    }
+
+    pub(in crate::commands) fn with_author(mut self, author: &str) -> Self {
+        self.author = Some(author.to_owned());
+        self
+    }
+
+    pub(in crate::commands) fn record(&mut self, target: impl Into<String>) {
+        self.targets.push(target.into());
+    }
+
+    pub(in crate::commands) fn extend(&mut self, targets: impl IntoIterator<Item = String>) {
+        self.targets.extend(targets);
+    }
+
+    pub(in crate::commands) fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for PersistedAudit<'_> {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        for target in &self.targets {
+            let event = AuditEvent {
+                at: self.at,
+                command: self.command.to_owned(),
+                status: AuditStatus::Success,
+                target: Some(target.clone()),
+                error_code: None,
+                author: self.author.clone(),
+                duration_ms: 0,
+            };
+            if let Err(err) = self.store.record_audit(&event) {
+                tracing::warn!(
+                    command = self.command,
+                    %err,
+                    target = %target,
+                    "cannot audit a write already persisted"
+                );
+            }
+        }
     }
 }
 

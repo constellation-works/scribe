@@ -597,8 +597,10 @@ pub enum Settled {
 ///   are;
 /// - retire: an `active` entry becomes `retired`;
 /// - forget: any entry not yet forgotten becomes `forgotten`, its `said`
-///   and `content` blanked, its evidence removed, and every proposal quote,
-///   candidate evidence and reason about it cleared. Session records remain.
+///   and `content` blanked, its `evidence`, `as_of`, `quote`, `window` and
+///   `retirement_reason` cleared, and every proposal quote, candidate
+///   `quote`, `evidence`, `admitted.matched` and `reason` about it cleared.
+///   Session records remain.
 ///
 /// The same instruction again changes nothing and says so.
 pub fn settle(
