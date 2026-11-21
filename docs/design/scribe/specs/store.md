@@ -817,7 +817,7 @@ exits 0.
   (`redact_env_unset`) before anything is stored; already-stored records
   are not rewritten.
 - **Audit.** Lines are appended in one write under `.lock` and `fsync`ed;
-  never rewritten. A line is `{"format": 4, "at", "command", "status",
+  never rewritten. A line is `{"format": 5, "at", "command", "status",
   "target", "error_code", "author", "instruction_session",
   "instruction_message", "issue", "duration_ms"}`: ids and codes, no argument
   values or error text. `target` is the resolved id of the record a write names,
@@ -829,16 +829,28 @@ exits 0.
   and `instruction_message` the uuid of his turn once the check found it,
   else `null`; never the instruction's words. `issue` is `null` except on
   an issue write (`issue add|occur|update|move`) or a `#scribe forget` of an
-  issue or occurrence, where it is `{verb, id, occurrence, session,
-  request_message, moved_to}`: the verb, the issue (a move's source), the
-  occurrence written, moved or forgotten (`null` for a whole issue or an
-  update), the request's session (`--related session:<id>`, or the session
-  the forget line was typed in), the uuid of Daniel's turn holding the
-  request once the quote check found it (`null` for a forget) and a move's
-  `issue-<n>#<m>` target; one line per write or forget, ids only. A
-  format-1 line, with no `author`, a format-2 line, with neither
-  instruction id, and a format-3 line, with no `issue`, still read. A line that cannot be written is a warning and never
-  changes the command's result.
+  issue or occurrence, or a fire of the `issue` trigger in `hook
+  user-prompt-submit`, where it is `{verb, id, occurrence, session,
+  request_message, moved_to, trigger, request_sha256}`: the verb (`add`,
+  `occur`, `update`, `move`, `forget` or `fire`), the issue (a move's
+  source), the occurrence written, moved or forgotten (`null` for a whole
+  issue, an update or a fire), the request's session (`--related
+  session:<id>`, or the session the forget line or the firing turn was
+  typed in), the uuid of Daniel's turn holding the request once the quote
+  check found it (`null` for a forget and a fire: at `UserPromptSubmit` the
+  turn has no uuid yet), a move's `issue-<n>#<m>` target, and (format 5)
+  the fire's trigger phrase as configured and `request_sha256`, the sha256
+  of the request turn: the fire's prompt, or, on an `add` or `occur`, the
+  whole text and each text block of the turn the quote check found (empty
+  otherwise). `issue stats` matches a fire to a write by session and a
+  shared hash. One line per write, forget or fire, ids, hashes and the
+  configured phrase only. A format-1 line, with no `author`, a format-2
+  line, with neither instruction id, a format-3 line, with no `issue`, and
+  a format-4 line, with no `trigger` or `request_sha256`, still read. A line
+  that cannot be written is a warning and never changes the command's
+  result. `issue stats` reads the log without the lock and skips a line
+  that does not parse (a torn last line), counting it; a line of a newer
+  format refuses the read (`store_too_new`).
 
 ## Known gaps
 

@@ -24,7 +24,6 @@ use super::payload::{self, StopPayload, Transcript};
 use crate::app::Context;
 use crate::error::CliError;
 use crate::output::{HookOutcome, Output};
-use scribe_core::capture::prompt_sha256;
 use scribe_core::control::{self, Since};
 use scribe_core::transcript::{self, Message};
 use scribe_core::{Cite, SessionId, Speaker, pass};
@@ -182,8 +181,7 @@ struct Hashed {
 
 impl Hashed {
     fn new(message: Message) -> Self {
-        let mut hashes = vec![prompt_sha256(&message.text())];
-        hashes.extend(message.blocks.iter().map(|b| prompt_sha256(b)));
+        let hashes = scribe_core::capture::prompt_hashes(&message);
         Self { message, hashes }
     }
 }

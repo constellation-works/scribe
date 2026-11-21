@@ -3,10 +3,11 @@
 
 use super::color::{self, Role};
 use super::payload::{
-    AskPayload, EntryPayload, FoundPayload, HitPayload, HookJson, HookReply, HookSpecificJson,
-    IssuePayload, OccurrencePayload, OriginPayload, PassPayload, PassReport, PluginReply,
-    ProposalPayload, Record, Records, ScanReport, SessionPayload, TagPayload, TagShowPayload,
-    TaskPayload, TranscriptPayload, TreeRow, WarningPayload,
+    self, AskPayload, EntryPayload, FoundPayload, HitPayload, HookJson, HookReply,
+    HookSpecificJson, IssuePayload, IssueStatsPayload, OccurrencePayload, OriginPayload,
+    PassPayload, PassReport, PluginReply, ProposalPayload, Record, Records, ScanReport,
+    SessionPayload, TagPayload, TagShowPayload, TaskPayload, TranscriptPayload, TreeRow,
+    WarningPayload,
 };
 use super::sink::{OutputMode, Sink};
 use super::table::{self, Align, Cell, Column};
@@ -91,6 +92,12 @@ const SCAN_COLUMNS: [Column; 5] = [
     col("WHAT", Align::Left, false),
     col("OLDER", Align::Left, false),
     col("NEWER", Align::Left, false),
+];
+
+const ISSUE_STATS_COLUMNS: [Column; 3] = [
+    col("COUNT", Align::Left, false),
+    col("VALUE", Align::Right, false),
+    col("MEANS", Align::Left, false),
 ];
 
 const TAG_COLUMNS: [Column; 10] = [
@@ -1221,6 +1228,81 @@ pub(crate) fn scan(out: &mut dyn Write, sink: &Sink, report: &ScanReport) -> io:
         OutputMode::Table => {
             out.write_all(table::render(&SCAN_COLUMNS, &rows, sink.width, sink.color).as_bytes())
         }
+        OutputMode::Plain | OutputMode::Json => rows
+            .iter()
+            .try_for_each(|row| writeln!(out, "{}", plain_line(row))),
+    }
+}
+
+/// `issue stats`: one row per count, then the two proxy ratios as
+/// `<numerator>/<denominator> (<value>)`, `-` with nothing to divide; or
+/// the JSON object.
+pub(crate) fn issue_stats(
+    out: &mut dyn Write,
+    sink: &Sink,
+    payload: &IssueStatsPayload,
+) -> io::Result<()> {
+    if sink.mode == OutputMode::Json {
+        return write_json(out, payload);
+    }
+    let s = &payload.0;
+    let count = |name: &str, n: u64, means: &str| {
+        vec![
+            Cell::plain(name.to_owned()),
+            Cell::plain(n.to_string()),
+            Cell::plain(means.to_owned()),
+        ]
+    };
+    let proxy = |name: &str, parts: Option<(u64, u64)>, means: &str| {
+        let value = parts.map_or_else(
+            || String::from("-"),
+            |(n, d)| format!("{n}/{d} ({:.3})", payload::ratio(n, d)),
+        );
+        vec![
+            Cell::plain(name.to_owned()),
+            Cell::plain(value),
+            Cell::plain(format!("proxy: {means}")),
+        ]
+    };
+    let rows = vec![
+        count(
+            "fires",
+            s.fires,
+            "issue trigger fires on Daniel's typed turns",
+        ),
+        count(
+            "fires_with_write",
+            s.fires_with_write,
+            "fires followed by an issue write on the same turn",
+        ),
+        count("writes", s.writes, "issue add and occur writes"),
+        count(
+            "writes_without_fire",
+            s.writes_without_fire,
+            "writes whose request turn no fire matched",
+        ),
+        count("writes_forgotten", s.writes_forgotten, "later forgotten"),
+        count(
+            "writes_moved",
+            s.writes_moved,
+            "later moved to another issue",
+        ),
+        count(
+            "writes_withdrawn",
+            s.writes_withdrawn,
+            "forgotten or moved, each counted once",
+        ),
+        proxy("precision", s.precision(), payload::PRECISION_MEANS),
+        proxy(
+            "trigger_yield",
+            s.trigger_yield(),
+            payload::TRIGGER_YIELD_MEANS,
+        ),
+    ];
+    match sink.mode {
+        OutputMode::Table => out.write_all(
+            table::render(&ISSUE_STATS_COLUMNS, &rows, sink.width, sink.color).as_bytes(),
+        ),
         OutputMode::Plain | OutputMode::Json => rows
             .iter()
             .try_for_each(|row| writeln!(out, "{}", plain_line(row))),

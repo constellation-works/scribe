@@ -3074,8 +3074,9 @@ the hook's existing provenance guards (§4.1) and is not a `#scribe` or
 `/scribe` line, `scribe hook user-prompt-submit` matches the `issue` tag's
 triggers without a model. On a match it adds one line to the turn's
 `additionalContext`: that this turn asks for a root cause, the trigger that
-fired, and the commands below. It writes nothing and audits nothing, so it
-runs in every interactive session, whether or not `/scribe on` is set.
+fired, and the commands below. It writes no record, so it runs in every
+interactive session, whether or not `/scribe on` is set; each fire is one
+audit line, so recall and precision can be counted (**Counting**, below).
 (§13.12 proposed adding the hint only in a session that is on; that is
 parked 2026-11-21, so the hint stays as stated here.)
 
@@ -3124,6 +3125,53 @@ the Orbit task or friction itself and links it from the occurrence.
 `issues/` directory and the `issue` kind are new; an older build refuses a
 store holding one. No existing document changes shape.
 
+**Counting** (step c2). Daniel, 2026-11-21, approving step (c): "let's
+circle back later whether issue writes will require approval - we will need
+to first run it without approval and see its recall/precision". So writes
+stay unapproved and both halves are counted, with no model and no prompt
+text:
+
+- Each fire is one audit line (`hook user-prompt-submit`, `issue: {verb:
+  fire, session, trigger, request_sha256}`): the session, the trigger
+  phrase as configured and the prompt's sha256. The turn has no transcript
+  uuid when `UserPromptSubmit` runs, so the hash (the key `#scribe` cites
+  already use, §4.1) stands in for the message uuid; `request_message` is
+  `null` on a fire.
+- Each `issue add` or `occur` line carries, beside the request's uuid, the
+  sha256 of the turn the quote check found it in (its whole text and each
+  text block). A fire and a write name the same request when they share
+  the session and a hash, and the write came after the fire.
+- `scribe issue stats [--since <date>]` (model-free, read-only, no lock)
+  counts from the log: fires; fires followed by a write on the same turn;
+  writes; writes no fire matched; writes later forgotten (`#scribe forget`
+  of the occurrence or the whole issue) or moved (`issue move`), each also
+  counted once as withdrawn. It derives two ratios and names each a proxy:
+  **precision ≈ writes neither forgotten nor moved ÷ writes**, and
+  **trigger yield ≈ fires that led to a write ÷ fires**. Plain, table and
+  `--json` ([specs/output-contract.md](specs/output-contract.md)).
+
+What the counts cannot measure: an investigation no trigger fired on and
+no agent recorded leaves no line, so recall is seen only from the side of
+the writes (`writes_without_fire` are investigations the trigger missed but
+the agent caught; the ones both missed are invisible). A write never
+withdrawn is not shown to be right, only not yet judged wrong, so the
+precision proxy is an upper bound that rises with Daniel's inattention. A
+fire with no write may be a missed write or a trigger that fired on
+something that was no investigation; the counts cannot tell which. A write
+whose request the quote check found in a turn edited after it fired (or a
+write before audit format 5) matches no fire. Lines lost to a failed
+append are not counted.
+
+*Built (step c2):* the trigger is `issue_trigger::fire` over the rules
+`TagTable::issue_capture` returns: `[tags.issue.capture]` when configured,
+else the shipped ones (route `agent`, the triggers in §11.2's table), which
+the pass never takes, and `issue` stays out of the tag table. It matches
+Daniel's own words only: a harness line or `/scribe` line is no turn, and
+pasted, fenced, indented, quoted and `#scribe` lines are left out, as for
+the pass (§11.2). A turn that fails the transcript check, or a config that
+does not load, gives no hint and no line. The audit line is format 5
+(`trigger`, `request_sha256`); the store format is unchanged.
+
 *Built (record and CLI half, step (c)):* formats 13–16 were taken, so issues
 are **format 17** (`issue_kind`, a no-op step). An issue file starts at
 format 17 and an older build refuses one `store_too_new`; a format-16 build
@@ -3131,8 +3179,8 @@ never walks `issues/`, so it does not see them at all. Links take the
 existing kinds (task, pr, repo, session); a friction is linked through its
 task or PR until `related` gains a friction kind. The audit line (format 4)
 carries `issue: {verb, id, occurrence, session, request_message,
-moved_to}`. The trigger hint in `hook user-prompt-submit` is not part of
-this step. The shapes are in [specs/store.md](specs/store.md) (**Issue
+moved_to}`. The trigger hint in `hook user-prompt-submit` came with step
+c2 (**Counting**, above). The shapes are in [specs/store.md](specs/store.md) (**Issue
 files**) and [specs/output-contract.md](specs/output-contract.md).
 
 ### 11.5 What Daniel still approves

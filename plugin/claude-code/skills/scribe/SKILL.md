@@ -221,15 +221,20 @@ not an entry: `issue` is a reserved tag, so `entry add --tag issue` and
 `#scribe issue:` are refused.
 
 - **Search before diagnosing** when the human asks you to investigate a
-  failure: `scribe issue search '<symptoms or error text>' --json` (also
-  `record search --kind issue`). Read a match with `issue show <id> --json`.
+  failure, and always when scribe's prompt hook adds `scribe: this turn
+  asks for a root cause` to the turn (an `issue` trigger fired on their
+  words, in any interactive session, on or off): `scribe issue search
+  '<symptoms or error text>' --json` (also `record search --kind issue`).
+  Read a match with `issue show <id> --json` and say what it found before
+  diagnosing again.
 - **Write the result when you answer, in the session they typed in**: a new
   issue with `scribe issue add --author <name> --related session:<id>
   --request '<their words>' --title '<title>' --signature '<symptom>'
   --summary '<what happened>'`, or another occurrence of a matching one with
   `scribe issue occur <issue-id>` and the same request flags. Add up to 10
   `--error-line`s (your evidence, shown as such), `--cause` and `--fix`
-  (left out, they read "cause not found"), `--project`, and links such as
+  (left out when you found none, so it reads "cause not found": still
+  write the occurrence), `--project`, and links such as
   `--related task:<id>`. `--request` must be the human's request word for
   word from their typed turns of that session (`quote_required`,
   `quote_not_found`); without their words, write nothing. An occurrence on a
@@ -243,6 +248,9 @@ not an entry: `issue` is a reserved tag, so `entry add --tag issue` and
   --title … --signature …`). Occurrences are never edited.
 - A fix that still needs doing is Orbit work: file the task or friction and
   link it from the occurrence. scribe files no work.
+- Every trigger fire and every write is counted in the audit log, so the
+  human can judge recall and precision with `scribe issue stats [--since
+  <date>]`: write on every root-cause answer you give, and only then.
 
 To initialize a requested project integration, use the explicit target:
 

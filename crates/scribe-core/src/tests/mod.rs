@@ -14,6 +14,7 @@ mod entry;
 mod error;
 mod instruction;
 mod issue;
+mod issue_trigger;
 pub(crate) use issue::sample as sample_issue;
 mod memory;
 mod pass;

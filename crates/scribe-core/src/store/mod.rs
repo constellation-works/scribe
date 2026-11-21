@@ -56,7 +56,7 @@ mod tags;
 pub use rebuild::RebuildGuard;
 
 pub use agent::{check_agent_author, check_content, check_reason};
-pub use audit::{AUDIT_FILE, AuditEvent, AuditStatus, IssueAudit};
+pub use audit::{AUDIT_FILE, AuditEvent, AuditStatus, IssueAudit, IssueStats};
 pub use ids::resolve_prefix;
 pub use redact::{MIN_SECRET_CHARS, REDACTED_FIELDS, Redactor, unresolved_redact_env};
 pub use tags::check_description;
@@ -1281,6 +1281,33 @@ impl Store {
         }
         let _lock = self.lock("audit")?;
         fsio::append_private(&path, &line)
+    }
+
+    /// The audit log's events, oldest first, and how many lines did not
+    /// parse. Reads only: no lock, no write; a missing log has none.
+    ///
+    /// # Errors
+    ///
+    /// An unsafe file (a link, loose modes) as for any store read, or a
+    /// line of a newer audit format (`store_too_new`).
+    pub fn audit_events(&self) -> Result<(Vec<AuditEvent>, usize)> {
+        let path = self.audit_path();
+        if !self.root_exists()? || !fsio::inspect_file(&path)? {
+            return Ok((Vec::new(), 0));
+        }
+        audit::decode_lines(&path, &fsio::read(&path)?)
+    }
+
+    /// `issue stats` (2_design.md §11.4): the audit log's trigger fires,
+    /// issue writes and withdrawals, fires and writes from `since` on.
+    /// Reads only, as [`Store::audit_events`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Store::audit_events`].
+    pub fn issue_stats(&self, since: Option<time::Date>) -> Result<IssueStats> {
+        let (events, skipped) = self.audit_events()?;
+        Ok(audit::issue_stats(&events, since, skipped))
     }
 
     fn lock(&self, label: &str) -> Result<LockGuard> {

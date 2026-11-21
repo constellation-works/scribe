@@ -575,6 +575,20 @@ pub fn daniel_turn(message: &Message) -> Option<UserTurn> {
     (!own.is_empty() || !pasted.is_empty()).then_some(UserTurn { own, pasted })
 }
 
+/// Daniel's own words in a prompt he typed, as [`daniel_turn`] reads a
+/// transcript turn: pasted blocks left out; `None` for a synthetic harness
+/// line or a `/scribe` control line.
+#[must_use]
+pub fn typed_own(prompt: &str) -> Option<String> {
+    let start = prompt.trim_start();
+    if SYNTHETIC.iter().any(|tag| start.starts_with(tag)) || control::parse(prompt).is_some() {
+        return None;
+    }
+    // Untrimmed, so an indented first line stays indented for the
+    // trigger's own-line filter.
+    Some(split_pasted_raw(prompt).0)
+}
+
 /// Daniel's turns, in transcript order.
 #[must_use]
 pub fn daniel_turns(messages: &[Message]) -> Vec<UserTurn> {
@@ -687,6 +701,12 @@ fn flatten_cut(text: &str, limit: usize) -> String {
 /// A user turn's own words and the blocks pasted into it. An unclosed block
 /// runs to the end of the turn.
 fn split_pasted(text: &str) -> (String, Vec<String>) {
+    let (own, pasted) = split_pasted_raw(text);
+    (own.trim().to_owned(), pasted)
+}
+
+/// [`split_pasted`] with the own words left untrimmed.
+fn split_pasted_raw(text: &str) -> (String, Vec<String>) {
     let mut own = String::new();
     let mut pasted = Vec::new();
     let mut rest = text;
@@ -708,7 +728,7 @@ fn split_pasted(text: &str) -> (String, Vec<String>) {
     }
     own.push_str(rest);
     pasted.retain(|p| !p.is_empty());
-    (own.trim().to_owned(), pasted)
+    (own, pasted)
 }
 
 fn count_non_overlapping(haystack: &str, needle: &str) -> u32 {

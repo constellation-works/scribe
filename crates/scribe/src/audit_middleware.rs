@@ -15,7 +15,8 @@
 //! instruction its session and turn ids: never argument values or error text,
 //! which can carry entry contents or paths (STD-05 R13).
 //!
-//! A hook run writes one line per record it wrote or refused (two `#scribe`
+//! A hook run writes one line per record it wrote or refused, and one per
+//! `issue` trigger fire (two `#scribe`
 //! lines in one prompt are two lines in the log), and none when it changed
 //! nothing; a session pass one per session passed (a `session catalog` also one
 //! for the switch it wrote, unless a window failed: a failed catalog is one
@@ -25,8 +26,8 @@
 //! nothing; a direct write verb (`entry`, `tag` and `proposal` writes,
 //! `session activate|deactivate`) one when it changed the record and none
 //! when it did not: the `Stop` hook runs after
-//! every reply and usually has nothing to do, and a prompt without
-//! `#scribe` is not a mutation.
+//! every reply and usually has nothing to do, and a prompt with neither
+//! `#scribe` nor an `issue` trigger fire is not a mutation.
 //!
 //! The audit log is a side channel, so it fails open (STD-02 R31): a line that
 //! cannot be written never fails the command that already ran, and is reported
@@ -361,7 +362,8 @@ fn target_of(output: &Output) -> Option<String> {
         | Output::Plugin(_)
         | Output::Popup
         | Output::PopupRows(_)
-        | Output::PopupPreview(_) => None,
+        | Output::PopupPreview(_)
+        | Output::IssueStats(_) => None,
     }
 }
 

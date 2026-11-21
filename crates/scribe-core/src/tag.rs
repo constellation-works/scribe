@@ -186,8 +186,10 @@ pub const CAPTURE_TEXT_CHARS: usize = 300;
 
 /// The shipped capture rules: `(tag, route, triggers, criteria, not)`
 /// (2_design.md §11.2). The pass writes `idea` entries itself (§11.6);
-/// `standard` ships none.
-const SHIPPED_CAPTURE: [(&str, CaptureRoute, &[&str], &str, &str); 2] = [
+/// `standard` ships none. `issue` is not a tag in the table (its records are
+/// issues, §11.4): its rules drive the prompt hook's hint, read through
+/// [`TagTable::issue_capture`].
+const SHIPPED_CAPTURE: [(&str, CaptureRoute, &[&str], &str, &str); 3] = [
     (
         "idea",
         CaptureRoute::Write,
@@ -214,6 +216,19 @@ const SHIPPED_CAPTURE: [(&str, CaptureRoute, &[&str], &str, &str); 2] = [
         ],
         "A standing rule from Daniel that applies beyond the work at hand.",
         "A choice about one page or task (it goes on its Orbit task or the feature's 4_decisions.md); an acknowledgement.",
+    ),
+    (
+        crate::issue::ISSUE_TAG,
+        CaptureRoute::Agent,
+        &[
+            "can you investigate",
+            "look into why",
+            "rca",
+            "root cause",
+            "find root cause",
+        ],
+        "Daniel asks for the cause of something that went wrong.",
+        "How something works; a feature request.",
     ),
 ];
 
@@ -457,6 +472,21 @@ impl TagTable {
     #[must_use]
     pub fn get(&self, name: &TagName) -> Option<&TagDef> {
         self.tags.iter().find(|t| &t.name == name)
+    }
+
+    /// The `issue` capture rules in force: those of a configured `issue`
+    /// tag (`[tags.issue.capture]`, inheriting the shipped fields it does not
+    /// set), else the shipped ones. The prompt hook matches their triggers
+    /// (2_design.md §11.4).
+    #[must_use]
+    pub fn issue_capture(&self) -> CaptureRules {
+        self.tags
+            .iter()
+            .find(|t| t.name.as_str() == crate::issue::ISSUE_TAG)
+            .map_or_else(
+                || CaptureRules::shipped(crate::issue::ISSUE_TAG),
+                |t| t.capture.clone(),
+            )
     }
 
     /// The tag a word in a `#scribe` line names: its name or an alias,

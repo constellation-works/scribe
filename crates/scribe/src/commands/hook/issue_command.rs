@@ -32,6 +32,8 @@ pub(super) fn run(forget: &ForgetIssue, turn: &Turn, ctx: &Context) -> Reply {
         session: Some(turn.session.to_string()),
         request_message: None,
         moved_to: None,
+        trigger: None,
+        request_sha256: Vec::new(),
     };
     match ctx
         .store()

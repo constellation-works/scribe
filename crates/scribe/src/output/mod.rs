@@ -15,9 +15,9 @@ mod table;
 
 pub(crate) use payload::{
     AskPayload, BatchFailure, CoveredPayload, DeactivatedPayload, DeactivationFailure,
-    EntryPayload, HitPayload, HookOutcome, HookReply, IssuePayload, Kin, MemoryPagePayload,
-    MemoryPayload, Output, PassPayload, PassReport, PluginError, PluginReply, PopupRows,
-    ProposalPayload, ReappliedPayload, Record, Records, ScanReport, SessionPayload,
+    EntryPayload, HitPayload, HookOutcome, HookReply, IssuePayload, IssueStatsPayload, Kin,
+    MemoryPagePayload, MemoryPayload, Output, PassPayload, PassReport, PluginError, PluginReply,
+    PopupRows, ProposalPayload, ReappliedPayload, Record, Records, ScanReport, SessionPayload,
     SessionsContext, TagPayload, TagShowPayload, TranscriptPayload, TreeRow, WarningPayload,
 };
 pub(crate) use sink::{FORMAT_ENV, FormatArg, Sink};
@@ -84,7 +84,8 @@ pub(crate) fn finish(sink: &Sink, outcome: Result<Output, CliError>) -> ExitCode
             | Output::Plugin(_)
             | Output::Popup
             | Output::PopupRows(_)
-            | Output::PopupPreview(_) => Ok(()),
+            | Output::PopupPreview(_)
+            | Output::IssueStats(_) => Ok(()),
         }
     });
     match result {
@@ -171,6 +172,15 @@ fn emit(sink: &Sink, output: &Output) -> io::Result<()> {
             let _ = writeln!(err, "{notice}");
         }
     }
+    if let Output::IssueStats(payload) = output
+        && payload.0.skipped_lines > 0
+    {
+        let _ = writeln!(
+            io::stderr().lock(),
+            "warning: skipped {} audit line(s) that did not parse",
+            payload.0.skipped_lines
+        );
+    }
     if let Output::Written { notices, .. } = output {
         let mut err = io::stderr().lock();
         for notice in notices {
@@ -200,6 +210,7 @@ fn emit(sink: &Sink, output: &Output) -> io::Result<()> {
             popup::rows(&mut out, rows, color)?;
         }
         Output::PopupPreview(record) => popup::preview(&mut out, record)?,
+        Output::IssueStats(payload) => render::issue_stats(&mut out, sink, payload)?,
     }
     out.flush()
 }
