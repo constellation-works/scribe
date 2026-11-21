@@ -26,6 +26,11 @@
 //! triggers = ["always", "never", "from now on", "I prefer"]
 //! not = "a choice about one task; an acknowledgement"
 //!
+//! A `[tags.preferences]` table that omits `aliases`, `description` or
+//! `stale_after_days` — including one that sets only `[tags.preferences.capture]`
+//! — keeps the shipped values. `aliases = []` clears them. Omitting
+//! `stale_after_days` on any other tag still means entries never go stale.
+//!
 //! [models]
 //! ask = "claude-sonnet-5-5"
 //! credentials = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"]
@@ -324,8 +329,10 @@ struct RawConfig {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawTag {
+    /// `None` when the key is omitted, so `preferences` keeps its shipped
+    /// aliases. `Some`, including an empty list, is what was configured.
     #[serde(default)]
-    aliases: Vec<String>,
+    aliases: Option<Vec<String>>,
     #[serde(default)]
     description: Option<String>,
     #[serde(default)]
@@ -496,8 +503,13 @@ impl RawTag {
         let key = format!("tags.{name}");
         // A config tag named like a shipped action tag starts from the
         // shipped settings, so `[tags.standard] ask_first = true` keeps it an
-        // action tag; `action = false` makes it a memory tag.
+        // action tag; `action = false` makes it a memory tag. A present
+        // `preferences` tag likewise keeps the shipped aliases, description
+        // and stale window when those keys are omitted.
         let shipped = TagTable::shipped_action(&name);
+        let preferences = (name == "preferences")
+            .then(TagTable::shipped_preferences)
+            .flatten();
         let shipped_action = shipped.as_ref().and_then(|def| def.action);
         let action = if self.action.unwrap_or(shipped_action.is_some()) {
             Some(ActionTag {
@@ -533,9 +545,12 @@ impl RawTag {
                 ),
             });
         }
-        let description = self
-            .description
-            .or_else(|| shipped.and_then(|def| def.description));
+        let description = self.description.or_else(|| {
+            shipped
+                .as_ref()
+                .and_then(|def| def.description.clone())
+                .or_else(|| preferences.as_ref().and_then(|def| def.description.clone()))
+        });
         let capture = match self.capture {
             None => CaptureRules::shipped(&name),
             Some(raw) => raw.resolve(
@@ -544,15 +559,23 @@ impl RawTag {
                 CaptureRules::shipped(&name),
             )?,
         };
-        Ok(TagDef {
-            aliases: self
-                .aliases
+        let aliases = match self.aliases {
+            Some(aliases) => aliases
                 .into_iter()
                 .map(|alias| word(format!("{key}.aliases"), alias.to_lowercase()))
                 .collect::<Result<_, _>>()?,
+            None => preferences
+                .as_ref()
+                .map(|def| def.aliases.clone())
+                .unwrap_or_default(),
+        };
+        Ok(TagDef {
+            aliases,
             name: word(key, name)?,
             description,
-            stale_after_days: self.stale_after_days,
+            stale_after_days: self
+                .stale_after_days
+                .or_else(|| preferences.as_ref().and_then(|def| def.stale_after_days)),
             action,
             require_evidence,
             capture,

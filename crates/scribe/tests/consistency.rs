@@ -1056,3 +1056,104 @@ fn consistency_scan_closes_retired_tag_candidates_without_a_model_call() {
         "{rejected_table}"
     );
 }
+
+#[test]
+fn a_scan_that_fails_after_persisting_closures_still_audits_each_one() {
+    let fx = Fixture::new();
+    let path = fx.fake_program(
+        "claude",
+        "#!/bin/sh\necho call >> \"$HOME/claude-calls\"\nexit 1\n",
+    );
+    let s = Setup {
+        transcript: fx
+            .home()
+            .join(".claude/projects/-work-scribe")
+            .join(format!("{SESSION}.jsonl")),
+        cwd: fx.elsewhere("work/scribe"),
+        fx,
+        path,
+    };
+    std::fs::create_dir_all(s.fx.root()).unwrap();
+    make_private(&s.fx.root());
+    let proposal = json!({
+        "id": "p-1",
+        "kind": "candidate",
+        "older": "decisions-1",
+        "newer": null,
+        "candidate": {
+            "tag": "decisions",
+            "role": "user",
+            "quote": "I always keep decisions item 1 documented.",
+            "evidence": null,
+            "cite": {
+                "session": SESSION,
+                "message": "seed-1",
+                "at": "2026-11-15T00:00:00Z",
+                "prompt_sha256": "0".repeat(64),
+                "line": 1,
+                "cwd": "/work/scribe"
+            },
+            "project": "scribe",
+            "provider": "claude-code",
+            "host": "host",
+            "admitted": null
+        },
+        "reason": "Unmarked decisions statement.",
+        "quotes": [],
+        "state": "open",
+        "opened_at": "2026-11-15T00:01:00Z",
+        "settled_at": null,
+        "settled_by": null,
+        "author": {"kind": "scribe", "name": "session-pass"},
+        "updated_by": null,
+        "settled_author": null,
+        "closed_reason": null
+    });
+    let proposals_file = s.fx.root().join("proposals.json");
+    std::fs::write(
+        &proposals_file,
+        json!({"format": 11, "proposals": [proposal]}).to_string(),
+    )
+    .unwrap();
+    make_private(&proposals_file);
+
+    // A session-file symlink is invisible to the close (that reads proposals
+    // only) and fails list_sessions afterwards, deterministically.
+    let month = s.fx.root().join("sessions/2026/11");
+    std::fs::create_dir_all(&month).unwrap();
+    for dir in [
+        s.fx.root().join("sessions"),
+        s.fx.root().join("sessions/2026"),
+        month.clone(),
+    ] {
+        make_private(&dir);
+    }
+    std::os::unix::fs::symlink("/dev/null", month.join("bad.md")).unwrap();
+
+    let out = s.run(&["consistency", "scan", "--json"], b"");
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    let err: Value = serde_json::from_slice(&out.stderr).unwrap();
+    assert_eq!(err["code"], "store_symlink", "{err}");
+    assert_eq!(s.calls(), 0, "the failure is before any model call");
+
+    let stored: Value =
+        serde_json::from_str(&std::fs::read_to_string(&proposals_file).unwrap()).unwrap();
+    assert_eq!(stored["proposals"][0]["state"], "rejected");
+    assert_eq!(stored["proposals"][0]["closed_reason"], "tag_retired");
+
+    let scan_lines: Vec<Value> = s
+        .audit()
+        .into_iter()
+        .filter(|line| line["command"] == "consistency scan")
+        .collect();
+    let closures = scan_lines
+        .iter()
+        .filter(|line| line["status"] == "success" && line["target"] == "p-1")
+        .count();
+    assert_eq!(closures, 1, "{scan_lines:?}");
+    let failures = scan_lines
+        .iter()
+        .filter(|line| line["status"] == "failure" && line["error_code"] == "store_symlink")
+        .count();
+    assert_eq!(failures, 1, "{scan_lines:?}");
+}

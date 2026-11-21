@@ -479,6 +479,48 @@ fn agent_write_shapes_match_goldens() {
 }
 
 #[test]
+fn consistency_scan_closed_retired_tag_matches_goldens() {
+    let proposal = json!({
+        "id":"p-4", "kind":"candidate", "older":"decisions-1", "newer":null,
+        "candidate": {
+            "tag":"decisions", "quote":"I always keep the store format named.",
+            "cite": {"session":"s-1", "message":"user-choice", "at":"2026-11-15T00:00:00Z",
+                "prompt_sha256":"0".repeat(64), "line":1, "cwd":"/work/scribe"},
+            "project":"scribe", "provider":"claude-code", "host":"host",
+            "role":"user", "evidence":null, "admitted":null
+        },
+        "reason":"Unmarked decisions statement: I always keep the store format named.",
+        "quotes":[],
+        "state":"open", "opened_at":"2026-11-15T00:01:00Z", "settled_at":null,
+        "settled_by":null, "author":{"kind":"scribe", "name":"session-pass"},
+        "settled_author":null, "updated_by":null, "closed_reason":null
+    });
+    let mut failures = Vec::new();
+    for (suffix, mode) in [
+        ("plain.txt", &[][..]),
+        ("table.txt", &["--format", "table"][..]),
+    ] {
+        let fx = Fixture::new();
+        let root = fx.root();
+        std::fs::create_dir_all(&root).unwrap();
+        support::make_private(&root);
+        let path = root.join("proposals.json");
+        std::fs::write(
+            &path,
+            json!({"format":11, "proposals":[proposal]}).to_string(),
+        )
+        .unwrap();
+        support::make_private(&path);
+        let out = fx.ok(&[&["consistency", "scan"][..], mode].concat());
+        failures.extend(check(
+            &format!("output/consistency-scan-closed.{suffix}"),
+            &text(&out.stdout),
+        ));
+    }
+    report(&failures);
+}
+
+#[test]
 fn candidate_proposal_list_matches_goldens() {
     let fx = Fixture::new();
     fx.seed();

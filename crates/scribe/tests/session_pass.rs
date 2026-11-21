@@ -2412,6 +2412,103 @@ fn rebuild_refusals_are_audited_and_leave_the_record_unchanged() {
 }
 
 #[test]
+fn a_pass_that_fails_after_persisting_closures_still_audits_each_one() {
+    let setup = Setup::new();
+    setup.scribe("/scribe on");
+    let proposal = json!({
+        "id": "p-1",
+        "kind": "candidate",
+        "older": "decisions-1",
+        "newer": null,
+        "candidate": {
+            "tag": "decisions",
+            "role": "user",
+            "quote": "I always keep decisions item 1 documented.",
+            "evidence": null,
+            "cite": {
+                "session": ON,
+                "message": "u-1",
+                "at": "2026-11-03T06:00:00Z",
+                "prompt_sha256": "0".repeat(64),
+                "line": 1,
+                "cwd": "/nonexistent/work/scribe"
+            },
+            "project": "scribe",
+            "provider": "claude-code",
+            "host": "host",
+            "admitted": null
+        },
+        "reason": "Unmarked decisions statement.",
+        "quotes": [],
+        "state": "open",
+        "opened_at": "2026-11-03T06:00:00Z",
+        "settled_at": null,
+        "settled_by": null,
+        "author": {"kind": "scribe", "name": "session-pass"},
+        "updated_by": null,
+        "settled_author": null,
+        "closed_reason": null
+    });
+    let proposals = setup.fx.root().join("proposals.json");
+    std::fs::write(
+        &proposals,
+        json!({"format": 11, "proposals": [proposal]}).to_string(),
+    )
+    .unwrap();
+    make_private(&proposals);
+
+    // The month directory is readable, so listing sessions succeeds, and not
+    // writable, so the record write after the closure fails.
+    let month = setup.fx.root().join("sessions/2026/11");
+    std::fs::create_dir_all(&month).unwrap();
+    for dir in [
+        setup.fx.root().join("sessions"),
+        setup.fx.root().join("sessions/2026"),
+        month.clone(),
+    ] {
+        make_private(&dir);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&month, std::fs::Permissions::from_mode(0o500)).unwrap();
+    }
+
+    let out = setup.run_any(&["session", "pass", "--session", ON, "--json"], b"");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&month, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["passes"][0]["result"], "failed");
+    assert_eq!(report["passes"][0]["error_code"], "io_error", "{report}");
+
+    let stored: Value =
+        serde_json::from_str(&std::fs::read_to_string(&proposals).unwrap()).unwrap();
+    assert_eq!(stored["proposals"][0]["state"], "rejected");
+    assert_eq!(stored["proposals"][0]["closed_reason"], "tag_retired");
+
+    let audit = std::fs::read_to_string(setup.fx.root().join("audit.jsonl")).unwrap();
+    let pass_lines: Vec<Value> = audit
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .filter(|line| line["command"] == "session pass")
+        .collect();
+    let closures: Vec<&Value> = pass_lines
+        .iter()
+        .filter(|line| line["status"] == "success" && line["target"] == "p-1")
+        .collect();
+    assert_eq!(closures.len(), 1, "{pass_lines:?}");
+    let failures: Vec<&Value> = pass_lines
+        .iter()
+        .filter(|line| line["status"] == "failure" && line["error_code"] == "io_error")
+        .collect();
+    assert_eq!(failures.len(), 1, "{pass_lines:?}");
+}
+
+#[test]
 fn rebuild_resumes_hidden_checkpoints_and_preserves_identity_links_and_activity() {
     use scribe_core::activity::CatalogedBy;
     use scribe_core::{Author, AuthorKind, LinkType, Redactor, SessionLink, Store};

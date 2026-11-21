@@ -1,6 +1,6 @@
 ---
 type: design
-summary: "Spec: store — layout, record files with YAML frontmatter (format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
+summary: "Spec: store — layout, record files with YAML frontmatter (format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
 last_validated: 2026-11-10
 ---
 
@@ -10,8 +10,11 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-The code writes format 8 and reads formats 1–8. Format 8 adds an entry's
-`quote` and `window` and the `pickups.json` document (action tags,
+The code writes format 11 and reads formats 1–11. Format 11 adds `admitted`
+on a proposal candidate and `closed_reason` on a proposal. Format 10 adds an
+entry's `evidence` and `as_of` and a candidate's `role`. Format 9 adds a
+proposal's `candidate`. Format 8 adds an entry's `quote` and `window` and the
+`pickups.json` document (action tags,
 [2_design.md §4.6](../2_design.md#46-action-tags)). Format 7 adds `provider` to each
 session control and `codex_cursors` to `control.json`; missing older values
 upgrade in memory to `claude-code` and an empty cursor map. Format 6 adds the session
@@ -34,8 +37,8 @@ user's file could pass for one of Daniel's records.
 ├── sessions/<yyyy>/<mm>/<session-id>.md 0600, one file per session record
 ├── control.json                         0600, optional
 ├── proposals.json                       0600, optional
-├── tags.json                            0600, optional (format 5, S12)
-├── pickups.json                         0600, optional (format 8)
+├── tags.json                            0600, optional (introduced at format 5, S12)
+├── pickups.json                         0600, optional (introduced at format 8)
 ├── audit.jsonl                          0600, created by the first audited command
 └── .lock                                0600, created by the first writer, never deleted
 ```
@@ -137,11 +140,12 @@ A format 1–3 record's body is exactly the headings `## Summary`, `## Goals`,
 `## Outcome` and `## Next`, in that order, each followed by its text; any
 other line, another `##` heading included, is section text, and blank lines
 around a section's text are dropped. Text before `## Summary` or a missing
-heading is `store_corrupt`. It reads as format 4 (see **Format 4** below).
+heading is `store_corrupt`. The format-3-to-4 step is where that body becomes
+the current header and log (see **Format 4** below); later steps then apply.
 
 ## JSON documents
 
-- `control.json`: `{"format": 4, "sessions": {"<session-id>": {"on",
+- `control.json` (written at format 11; an older file upgrades on read): `{"sessions": {"<session-id>": {"on",
   "since", "due", "final", "consecutive_failures", "retry_after",
   "pending_links", "cataloged_by"}}}`. `pending_links` holds `{type, session}` links
   Daniel asserted before the session had a record; the pass that writes
@@ -151,7 +155,7 @@ heading is `store_corrupt`. It reads as format 4 (see **Format 4** below).
   automatic attempt waits 5, 10, 20, 40, then at most 60 minutes. Success
   or switching off resets both retry fields. Explicit `--session` bypasses
   the delay.
-- `proposals.json`: `{"format": 4, "proposals": [{"id": "p-<n>", "kind":
+- `proposals.json` (written at format 11; an older file upgrades on read): `{"proposals": [{"id": "p-<n>", "kind":
   "supersedes"|"stale", "older", "newer", "reason", "quotes": [{"entry",
   "text"}], "state": "open"|"approved"|"rejected", "opened_at",
   "settled_at", "settled_by"}]}`. `newer`, `settled_at` and `settled_by`
@@ -170,13 +174,13 @@ heading is `store_corrupt`. It reads as format 4 (see **Format 4** below).
 - `cataloged_by` on a `control.json` switch is `null` or `{at, by}`;
   `/scribe on` keeps it. *(S14)* `session catalog` sets it and the pass
   copies it onto the record.
-- (S12) `tags.json`: `{"format": 5, "tags": [{"name",
+- (S12) `tags.json` (written at format 11; introduced at format 5): `{"tags": [{"name",
   "aliases", "description", "stale_after_days", "author", "updated_by", "created",
   "updated"}]}`, sorted by name; `name` and aliases as for config tags,
   `description` accepts 1–300 characters before redaction, `stale_after_days` a positive
   integer or `null`, `author` of kind `agent`; `updated_by` is the last updating agent or
   `null`. Absent is no store tags.
-- (format 8) `pickups.json`: `{"format": 8, "pickups": [{"entry", "author",
+- `pickups.json` (written at format 11; introduced at format 8, no older form): `{"pickups": [{"entry", "author",
   "at", "result", "rejected"}]}`, oldest first: a consumer's note that it
   picked up the action entry `entry` (`author` of kind `agent`, `result` a
   reference or `null`), or with `rejected: true`, that the human rejected
@@ -229,7 +233,14 @@ paths = ["codebases/orbit"]      # path fragments counted by transcript list
 ```
 
 The default memory tag is `preferences` (aliases `preference`,
-`pref`; stale after 180 days). An entry under a tag no config
+`pref`; stale after 180 days). A `[tags]` table replaces that default set,
+except the shipped action tags. A `[tags.preferences]` table that is present
+— including one that sets only `[tags.preferences.capture]` — keeps the
+shipped aliases, description and `stale_after_days` when those keys are
+omitted. `aliases = []` clears the aliases; an explicit `stale_after_days`
+replaces 180. Omitting `stale_after_days` on any other tag still means the
+entry never goes stale. A config that does not mention `preferences` drops
+it. An entry under a tag no config
 or `tags.json` names (such as a `decisions`, `remind` or `finding` entry
 from before that tag stopped shipping) stays listed, shown, searched,
 cited by `ask` and settled. The
@@ -347,7 +358,7 @@ config tag claims is dropped with a warning naming both.
   other refusal (a link, loose modes, a newer format, an I/O error) fails
   the whole command rather than skipping the file
   ([4_decisions.md](../4_decisions.md#one-malformed-record-makes-its-file-corrupt)).
-- **Format.** One `FORMAT` (5) covers every document. A shape change bumps
+- **Format.** One `FORMAT` (11) covers every document. A shape change bumps
   it and appends one step to `UPGRADES` in `store/format.rs`, which is
   given the document type it upgrades; shipped steps never change. Reads
   upgrade an older document in memory; a newer one is refused and left
@@ -368,12 +379,17 @@ config tag claims is dropped with a warning naming both.
   consistency}` and `settled_author` (Daniel's for a settled one, else
   `null`); control switches `cataloged_by: null`. The step is the only
   place an upgraded segment may exceed 900 characters. The first write of
-  an upgraded document now persists it at format 5; a build older than S8
+  an upgraded document now persists it at format 11; a build older than S8
   refuses format 4 (`store_too_new`).
 - **Format 8**. The format-7-to-8 step adds `quote: null` and
   `window: null` to each entry; `pickups.json` is new and has no older
   form. Other document shapes are unchanged. An older build refuses format
   8 (`store_too_new`).
+- **Format 9**. The format-8-to-9 step adds `candidate: null` to each
+  proposal. Other documents are unchanged.
+- **Format 10**. The format-9-to-10 step adds `evidence: null` and
+  `as_of: null` to each entry, and `role` (`user`) and `evidence: null` to
+  each proposal candidate. Other documents are unchanged.
 - **Format 6**. The format-5-to-6 step adds `rebuilt_by: null` to each session
   record. A rebuild sets it to its `--author` as it finishes (`finish_rebuild`
   writes the record it is given); a pass carries it forward unchanged, so it
@@ -438,7 +454,7 @@ config tag claims is dropped with a warning naming both.
   `admitted` is what is stored.
 - **Agent writes** (S12). Each write verb takes the lock, checks the
   author guards (a reserved `--author` name — `daniel`, `scribe`,
-  `consistency` — is refused `reserved_author`; a Daniel entry's content,
+  `consistency`, `session-pass`, `tag-retired` — is refused `reserved_author`; a Daniel entry's content,
   retirement and the settling of a proposal whose `older` is a Daniel
   entry are refused `daniel_only`; author names between agents are
   attribution only, so any agent may update or retire an active agent
