@@ -1,6 +1,6 @@
 ---
 type: design
-summary: "Spec: store — layout, record files with YAML frontmatter (format 16: entry outcome on a pass-written idea; format 15: instructed approval said and closed_reason covered; format 14: candidate statement and subject, entry stated_by; format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
+summary: "Spec: store — layout, record files with YAML frontmatter (format 17: issue records; format 16: entry outcome on a pass-written idea; format 15: instructed approval said and closed_reason covered; format 14: candidate statement and subject, entry stated_by; format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
 last_validated: 2026-11-21
 ---
 
@@ -10,8 +10,11 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-The code writes format 16 and reads formats 1–16. Format 16 adds an
-entry's `outcome`, set only on an idea the session pass wrote itself
+The code writes format 17 and reads formats 1–17. Format 17 changes no
+stored value: it adds the issue record kind, `issues/<id>.md`, which has no
+older form ([2_design.md §11.4](../2_design.md#114-issues); **Issue files**
+below). Format 16 adds an entry's `outcome`, set only on an idea the session
+pass wrote itself
 ([2_design.md §11.6](../2_design.md#116-idea-capture-after-finding-is-gone)).
 Format 15 changes no
 stored value: it admits an entry approved on Daniel's checked instruction,
@@ -48,6 +51,7 @@ user's file could pass for one of Daniel's records.
 <root>/                                  0700
 ├── config.toml                          0600, optional
 ├── entries/<tag>/<tag>-<n>.md           0600, one file per entry
+├── issues/issue-<n>.md                  0600, one file per issue (introduced at format 17)
 ├── sessions/<yyyy>/<mm>/<session-id>.md 0600, one file per session record
 ├── control.json                         0600, optional
 ├── proposals.json                       0600, optional
@@ -201,9 +205,51 @@ around a section's text are dropped. Text before `## Summary` or a missing
 heading is `store_corrupt`. The format-3-to-4 step is where that body becomes
 the current header and log (see **Format 4** below); later steps then apply.
 
+## Issue files
+
+An issue (`issues/issue-<n>.md`, format 17 and later only; an older format
+in one is `store_corrupt`) is the memory of an incident across projects and
+what fixed it. It is a record file as above with `kind: issue`, written by
+agents through `scribe issue add|occur|update|move` and never approved; the
+tag `issue` is reserved for it (an entry under it, by `entry add` or a
+`#scribe issue:` line, is refused `reserved_tag`, naming the issue commands).
+Frontmatter keys, every one required and no other admitted: `id`, `title`
+(1–120 characters), `status` (`open`, `mitigated`, `resolved` or
+`forgotten`), `signature` (1–5 symptom strings, 1–200 characters each;
+empty once forgotten), `projects`, `hosts`, `topics`, `related`, `author`
+(an agent), `updated_by` (an agent or `null`), `created`, `updated`,
+`occurrences` (newest first) and `gone`. Each occurrence holds `n`, `date`
+(`YYYY-MM-DD`), `host`, `project`, `session` (the session the request was
+typed in), `request_message` (the uuid of Daniel's typed turn holding it),
+`recurred` (`true` when it was added to a `resolved` issue, which reopens
+it), `moved_from` (`issue-<n>#<m>` or `null`) and `author`. `gone` lists
+occurrence numbers that left the issue, `{n, reason: moved|forgotten,
+to}`, so a number is never reused.
+
+The body is `## Cause`, the header's cause (≤600 characters, or nothing),
+`## Fix`, its fix, then `## Occurrences`: one `### <n>. <date> — <host>,
+<project>` section per frontmatter occurrence in the same order, each the
+summary (≤1200 characters), `**Daniel asked:** "<request>"` (his words,
+checked verbatim against his typed turns of `session` when written,
+≤1200 characters), `**Error lines (agent evidence):**` over at most 10
+lines indented four spaces (≤300 characters each), `**Cause:** ` and
+`**Fix:** ` (`cause not found` and `fix not found` when not given) and
+`**Links:** session:<id>[, <link>…]` (at most 10 links beyond the session;
+task, pr, repo and session kinds). A heading that disagrees with its
+occurrence, a section without one, or a missing line is `store_corrupt`.
+
+Occurrences are never edited, only moved (`issue move`, which writes the
+target then the source under the lock, the source's `gone` naming `to`; a
+move does not reopen) or forgotten. `#scribe forget <issue-id>` blanks the
+title, signature, cause, fix and every occurrence (removing them into
+`gone`) and sets `status: forgotten`, keeping the file and its id;
+`#scribe forget <issue-id>#<n>` removes one occurrence into `gone`. No word
+of a forgotten issue or occurrence remains in any store file; the audit
+lines never held any.
+
 ## JSON documents
 
-- `control.json` (written at format 16; an older file upgrades on read): `{"sessions": {"<session-id>": {"on",
+- `control.json` (written at format 17; an older file upgrades on read): `{"sessions": {"<session-id>": {"on",
   "since", "due", "final", "consecutive_failures", "retry_after",
   "pending_links", "cataloged_by"}}}`. `pending_links` holds `{type, session}` links
   Daniel asserted before the session had a record; the pass that writes
@@ -213,7 +259,7 @@ the current header and log (see **Format 4** below); later steps then apply.
   automatic attempt waits 5, 10, 20, 40, then at most 60 minutes. Success
   or switching off resets both retry fields. Explicit `--session` bypasses
   the delay.
-- `proposals.json` (written at format 16; an older file upgrades on read): `{"proposals": [{"id": "p-<n>", "kind":
+- `proposals.json` (written at format 17; an older file upgrades on read): `{"proposals": [{"id": "p-<n>", "kind":
   "supersedes"|"stale", "older", "newer", "reason", "quotes": [{"entry",
   "text"}], "state": "open"|"approved"|"rejected", "opened_at",
   "settled_at", "settled_by"}]}`. `newer`, `settled_at` and `settled_by`
@@ -259,13 +305,13 @@ the current header and log (see **Format 4** below); later steps then apply.
 - `cataloged_by` on a `control.json` switch is `null` or `{at, by}`;
   `/scribe on` keeps it. *(S14)* `session catalog` sets it and the pass
   copies it onto the record.
-- (S12) `tags.json` (written at format 16; introduced at format 5): `{"tags": [{"name",
+- (S12) `tags.json` (written at format 17; introduced at format 5): `{"tags": [{"name",
   "aliases", "description", "stale_after_days", "author", "updated_by", "created",
   "updated"}]}`, sorted by name; `name` and aliases as for config tags,
   `description` accepts 1–300 characters before redaction, `stale_after_days` a positive
   integer or `null`, `author` of kind `agent`; `updated_by` is the last updating agent or
   `null`. Absent is no store tags.
-- `pickups.json` (written at format 16; introduced at format 8, no older form): `{"pickups": [{"entry", "author",
+- `pickups.json` (written at format 17; introduced at format 8, no older form): `{"pickups": [{"entry", "author",
   "at", "result", "rejected"}]}`, oldest first: a consumer's note that it
   picked up the action entry `entry` (`author` of kind `agent`, `result` a
   reference or `null`), or with `rejected: true`, that the human rejected
@@ -589,6 +635,13 @@ exits 0.
   changes. A format-14 or format-15 entry decodes through its frozen shape
   (`EntryV14`) and a format-15 `proposals.json` through `ProposalsDocument`,
   so a stray `outcome` key in an older entry is refused.
+- **Format 17** (issues, 2_design.md §11.4). Append-only step 16→17
+  (`issue_kind`) changes no value; it adds the `issues/` directory, whose
+  files start at format 17. A format-16 build refuses an issue file, and
+  every document this build writes at format 17, as `store_too_new`. A
+  format-16 `proposals.json` decodes through `ProposalsDocument`, since no
+  proposal changed. Issue writes take the lock, redact and write through
+  `write_atomic`; a repeated write that changes nothing writes nothing.
 - **Agent writes** (S12). Each write verb takes the lock, checks the
   author guards (a reserved `--author` name — `daniel`, `scribe`,
   `consistency`, `session-pass`, `tag-retired` — is refused `reserved_author`; a Daniel entry's content,
@@ -660,16 +713,20 @@ exits 0.
   `proposal.candidate.admitted.criteria`; (format 13) also
   `entry.instruction.quote` and `proposal.instruction.quote`; (format 14) also
   `proposal.candidate.statement` and `proposal.candidate.subject`; (format
-  15) also `entry.outcome.reason` and `entry.outcome.task`. A masked segment
+  16) also `entry.outcome.reason` and `entry.outcome.task`; (format 17) also
+  `issue.title`, `issue.signature`, `issue.cause`, `issue.fix`,
+  `issue.occurrences.summary`, `issue.occurrences.request`,
+  `issue.occurrences.error_lines`, `issue.occurrences.cause` and
+  `issue.occurrences.fix`. A masked segment
   heading is cut back to 80 characters. Values shorter than 8 characters are not masked;
   identifiers, timestamps and paths are not free text. A `[redact] env`
   name with no value in the writer's environment refuses the write
   (`redact_env_unset`) before anything is stored; already-stored records
   are not rewritten.
 - **Audit.** Lines are appended in one write under `.lock` and `fsync`ed;
-  never rewritten. A line is `{"format": 3, "at", "command", "status",
+  never rewritten. A line is `{"format": 4, "at", "command", "status",
   "target", "error_code", "author", "instruction_session",
-  "instruction_message", "duration_ms"}`: ids and codes, no argument
+  "instruction_message", "issue", "duration_ms"}`: ids and codes, no argument
   values or error text. `target` is the resolved id of the record a write names,
   on refusal as well as success (`null` when it does not resolve). `author` is
   the `--author` name of a command that takes one, on every line it writes
@@ -677,8 +734,17 @@ exits 0.
   otherwise. `instruction_session` is the `--session` of a write run on
   Daniel's instruction (`proposal settle`, `entry retire`, `entry forget`)
   and `instruction_message` the uuid of his turn once the check found it,
-  else `null`; never the instruction's words. A format-1 line, with no
-  `author`, and a format-2 line, with neither instruction id, still read. A line that cannot be written is a warning and never
+  else `null`; never the instruction's words. `issue` is `null` except on
+  an issue write (`issue add|occur|update|move`) or a `#scribe forget` of an
+  issue or occurrence, where it is `{verb, id, occurrence, session,
+  request_message, moved_to}`: the verb, the issue (a move's source), the
+  occurrence written, moved or forgotten (`null` for a whole issue or an
+  update), the request's session (`--related session:<id>`, or the session
+  the forget line was typed in), the uuid of Daniel's turn holding the
+  request once the quote check found it (`null` for a forget) and a move's
+  `issue-<n>#<m>` target; one line per write or forget, ids only. A
+  format-1 line, with no `author`, a format-2 line, with neither
+  instruction id, and a format-3 line, with no `issue`, still read. A line that cannot be written is a warning and never
   changes the command's result.
 
 ## Known gaps

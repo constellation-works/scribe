@@ -52,6 +52,15 @@ pub const REDACTED_FIELDS: &[&str] = &[
     "proposal.candidate.admitted.matched",
     "proposal.candidate.admitted.criteria",
     "tag.description",
+    "issue.title",
+    "issue.signature",
+    "issue.cause",
+    "issue.fix",
+    "issue.occurrences.summary",
+    "issue.occurrences.request",
+    "issue.occurrences.error_lines",
+    "issue.occurrences.cause",
+    "issue.occurrences.fix",
 ];
 
 /// A value shorter than this is not masked: a one-character "secret" would
@@ -149,6 +158,16 @@ impl Redactor {
     /// Mask a proposal's free text.
     pub fn proposal(&self, proposal: &mut Proposal) {
         self.mask_all(proposal_fields(proposal));
+    }
+
+    /// Mask an issue's free text: its header and every occurrence.
+    pub fn issue(&self, issue: &mut crate::issue::Issue) {
+        self.mask_all(issue_fields(issue));
+    }
+
+    /// Mask one occurrence's free text.
+    pub fn occurrence(&self, occurrence: &mut crate::issue::Occurrence) {
+        self.mask_all(occurrence_fields(occurrence));
     }
 }
 
@@ -392,6 +411,37 @@ pub(super) fn proposal_fields(proposal: &mut Proposal) -> Vec<(&'static str, &mu
             }
         }
     }
+    fields
+}
+
+/// The free text of an issue: the header, then each occurrence's.
+pub(super) fn issue_fields(issue: &mut crate::issue::Issue) -> Vec<(&'static str, &mut String)> {
+    let mut fields = vec![("issue.title", &mut issue.title)];
+    fields.extend(issue.signature.iter_mut().map(|s| ("issue.signature", s)));
+    fields.push(("issue.cause", &mut issue.cause));
+    fields.push(("issue.fix", &mut issue.fix));
+    for occurrence in &mut issue.occurrences {
+        fields.extend(occurrence_fields(occurrence));
+    }
+    fields
+}
+
+/// The free text of one occurrence; each error line is one field.
+pub(super) fn occurrence_fields(
+    occurrence: &mut crate::issue::Occurrence,
+) -> Vec<(&'static str, &mut String)> {
+    let mut fields = vec![
+        ("issue.occurrences.summary", &mut occurrence.summary),
+        ("issue.occurrences.request", &mut occurrence.request),
+    ];
+    fields.extend(
+        occurrence
+            .error_lines
+            .iter_mut()
+            .map(|l| ("issue.occurrences.error_lines", l)),
+    );
+    fields.push(("issue.occurrences.cause", &mut occurrence.cause));
+    fields.push(("issue.occurrences.fix", &mut occurrence.fix));
     fields
 }
 

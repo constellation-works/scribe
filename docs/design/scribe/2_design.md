@@ -3027,7 +3027,7 @@ content is one statement, an issue gains an occurrence each time.
 
 ```markdown
 ---
-format: 13
+format: 17
 kind: issue
 id: issue-3
 title: GitHub API secondary rate limit (HTTP 429) during drains
@@ -3123,6 +3123,17 @@ the Orbit task or friction itself and links it from the occurrence.
 **Store format.** Format 13 if it lands after §11.1 and §11.2: the
 `issues/` directory and the `issue` kind are new; an older build refuses a
 store holding one. No existing document changes shape.
+
+*Built (record and CLI half, step (c)):* formats 13–16 were taken, so issues
+are **format 17** (`issue_kind`, a no-op step). An issue file starts at
+format 17 and an older build refuses one `store_too_new`; a format-16 build
+never walks `issues/`, so it does not see them at all. Links take the
+existing kinds (task, pr, repo, session); a friction is linked through its
+task or PR until `related` gains a friction kind. The audit line (format 4)
+carries `issue: {verb, id, occurrence, session, request_message,
+moved_to}`. The trigger hint in `hook user-prompt-submit` is not part of
+this step. The shapes are in [specs/store.md](specs/store.md) (**Issue
+files**) and [specs/output-contract.md](specs/output-contract.md).
 
 ### 11.5 What Daniel still approves
 
@@ -3252,7 +3263,7 @@ writes the statement as content like a typed approval.
    model still returns is written unless the lexical check catches it. The
    lexical check does not match a short statement against the long raw
    paragraph it summarizes.
-4. **(c)** Issues (format 13).
+4. **(c)** Issues (format 17; the record and CLI half is built).
 
 Each step is its own task, lands with its `specs/store.md`,
 `specs/output-contract.md`, skill and golden updates, and leaves the

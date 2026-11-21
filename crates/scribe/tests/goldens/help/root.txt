@@ -11,6 +11,7 @@ Commands:
   record       Search every stored record for words, ranked as question ask ranks them, with no model call
   consistency  Propose superseding or retiring entries a later one replaced or that are due for review (scan)
   tag          List tags and manage agent-created store tags
+  issue        Record and search issues: incidents that recur across projects, and what fixed them
   question     Answer a question from the records, citing a verbatim quote for every claim
   hook         Run a provider hook: record #scribe lines and settle proposals, switch /scribe on and off, mark session passes due, report open proposals
   tmux         Browse sessions, entries, proposals and backfill candidates in an fzf popup, writing nothing

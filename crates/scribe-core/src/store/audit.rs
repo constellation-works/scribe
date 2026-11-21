@@ -20,8 +20,9 @@ pub const AUDIT_FILE: &str = "audit.jsonl";
 /// The newest audit line format. Bump it, and keep reading the old one, when
 /// the line's shape changes (STD-02 R16). Format 2 adds `author`; a format 1
 /// line reads with none. Format 3 adds `instruction_session` and
-/// `instruction_message`; an older line reads with neither.
-pub(super) const AUDIT_FORMAT: u32 = 3;
+/// `instruction_message`; an older line reads with neither. Format 4 adds
+/// `issue` (2_design.md §11.4); an older line reads with none.
+pub(super) const AUDIT_FORMAT: u32 = 4;
 
 /// How an audited command ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,8 +65,42 @@ pub struct AuditEvent {
     /// found it; `null` when it did not get that far, or without one.
     #[serde(default)]
     pub instruction_message: Option<String>,
+    /// For an issue write or a forget of an issue or an occurrence, what it
+    /// counted against: the verb, the issue, the occurrence, the session and
+    /// the request's message; `null` otherwise. Ids only, so recall and
+    /// precision can be counted from the log without any of the issue's
+    /// words.
+    #[serde(default)]
+    pub issue: Option<IssueAudit>,
     /// Wall time from start to result, in milliseconds.
     pub duration_ms: u64,
+}
+
+/// The ids an issue write or forget is counted by (2_design.md §11.4): one
+/// per audit line, never free text.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IssueAudit {
+    /// `add`, `occur`, `update`, `move` or `forget`.
+    pub verb: String,
+    /// The issue it acted on, once known: for a move, the source.
+    #[serde(default)]
+    pub id: Option<String>,
+    /// The occurrence it wrote, moved or forgot; `null` for a whole issue
+    /// or an update.
+    #[serde(default)]
+    pub occurrence: Option<u32>,
+    /// The session of the request it ran on: the `--related session:<id>`
+    /// of a write, or the session the `#scribe forget` line was typed in.
+    #[serde(default)]
+    pub session: Option<String>,
+    /// The uuid of Daniel's typed turn holding the request, once the quote
+    /// check found it; `null` for a forget, typed in the turn the hook is
+    /// answering.
+    #[serde(default)]
+    pub request_message: Option<String>,
+    /// For a move, where the occurrence went (`issue-<n>#<m>`).
+    #[serde(default)]
+    pub moved_to: Option<String>,
 }
 
 /// A persisted line: the event plus its format.

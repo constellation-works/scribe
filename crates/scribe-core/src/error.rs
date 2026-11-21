@@ -323,6 +323,16 @@ pub enum WriteRefusal {
     /// `already_covered`: an active entry of the same tag and project
     /// already says this statement, so nothing was written.
     AlreadyCovered,
+    /// `reserved_tag`: an entry write named the `issue` tag, which belongs
+    /// to issue records (docs/design/scribe/2_design.md §11.4).
+    ReservedTag,
+    /// `issue_not_found`: no issue has the id.
+    IssueNotFound,
+    /// `occurrence_not_found`: the issue has no occurrence with the number.
+    OccurrenceNotFound,
+    /// `issue_forgotten`: the issue was forgotten, so nothing is written to
+    /// it.
+    IssueForgotten,
 }
 impl WriteRefusal {
     /// Stable machine-readable code.
@@ -355,6 +365,10 @@ impl WriteRefusal {
             Self::InstructionMismatch => "instruction_mismatch",
             Self::NotInteractive => "not_interactive",
             Self::AlreadyCovered => "already_covered",
+            Self::ReservedTag => "reserved_tag",
+            Self::IssueNotFound => "issue_not_found",
+            Self::OccurrenceNotFound => "occurrence_not_found",
+            Self::IssueForgotten => "issue_forgotten",
         }
     }
 }

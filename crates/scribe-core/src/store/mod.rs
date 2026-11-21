@@ -21,6 +21,7 @@
 //! <root>/sessions/<yyyy>/<mm>/<id>.md       one session record per file
 //! <root>/control.json                       the on/off state
 //! <root>/proposals.json                     the consistency proposals
+//! <root>/issues/<id>.md                     one issue record per file
 //! <root>/audit.jsonl                        one line per mutating command
 //! <root>/.lock
 //! ```
@@ -41,6 +42,9 @@ mod format;
 mod fsio;
 mod ids;
 mod init;
+mod issue_file;
+mod issues;
+pub use issues::{ISSUES_DIR, IssueList, MoveTo, Moved};
 mod pickups;
 pub use init::{InitFile, InitReport, init_project, integration_hooks};
 mod rebuild;
@@ -49,7 +53,7 @@ mod tags;
 pub use rebuild::RebuildGuard;
 
 pub use agent::{check_agent_author, check_content, check_reason};
-pub use audit::{AUDIT_FILE, AuditEvent, AuditStatus};
+pub use audit::{AUDIT_FILE, AuditEvent, AuditStatus, IssueAudit};
 pub use ids::resolve_prefix;
 pub use redact::{MIN_SECRET_CHARS, REDACTED_FIELDS, Redactor, unresolved_redact_env};
 pub use tags::check_description;

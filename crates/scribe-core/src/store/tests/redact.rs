@@ -1,4 +1,6 @@
-use super::super::redact::{entry_fields, proposal_fields, session_fields, tag_fields};
+use super::super::redact::{
+    entry_fields, issue_fields, proposal_fields, session_fields, tag_fields,
+};
 use crate::config::Config;
 use crate::proposal::{Proposal, ProposalKind, ProposalState, Quote};
 use crate::session::{SessionRecord, Term};
@@ -120,6 +122,8 @@ fn the_redacted_field_inventory_is_exactly_the_fields_masked() {
     names.extend(proposal_fields(&mut p).into_iter().map(|(n, _)| n));
     let mut tag = store_tag();
     names.extend(tag_fields(&mut tag).into_iter().map(|(n, _)| n));
+    let mut issue = crate::tests::sample_issue();
+    names.extend(issue_fields(&mut issue).into_iter().map(|(n, _)| n));
     names.dedup();
     assert_eq!(names, REDACTED_FIELDS);
 }
@@ -167,6 +171,15 @@ fn a_configured_secret_is_masked_in_every_covered_field() {
     }
     redactor.proposal(&mut p);
     for (name, text) in proposal_fields(&mut p) {
+        assert_eq!(text, masked, "{name}");
+    }
+
+    let mut issue = crate::tests::sample_issue();
+    for (_, text) in issue_fields(&mut issue) {
+        *text = leak.clone();
+    }
+    redactor.issue(&mut issue);
+    for (name, text) in issue_fields(&mut issue) {
         assert_eq!(text, masked, "{name}");
     }
 }

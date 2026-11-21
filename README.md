@@ -28,6 +28,13 @@ session deactivate <id> --author <name> --reason <text>`, and `scribe
 session activate <id> --author <name> [--pin|--unpin]` shows one again or
 exempts it from the scan.
 
+Issues (`scribe issue add|occur|update|move|search|show|list`) are the
+memory of incidents that recur across projects and what fixed them. The
+agent Daniel asked to investigate searches them first and, when it
+answers, writes the result with his request quoted word for word; it needs
+no approval, and Daniel removes a wrong one with `#scribe forget
+issue-<n>` or `#scribe forget issue-<n>#<m>`.
+
 Action tags hold work items for consumers outside scribe instead of
 Daniel's memory: `standard`, `remind` and `idea` ship, and config marks
 any other tag `action = true`. A `#scribe` line under one also keeps the
@@ -70,6 +77,8 @@ scribe session deactivate <id> --author opus --reason 'the feature was removed'
 scribe session activate <id> --author opus --pin
 scribe proposal list --state open --entry <id>
 scribe record search "merge policy" --kind session --since 2026-11-01   # BM25, no model call
+scribe issue search 'HTTP 429 secondary rate limit' --json
+scribe issue occur <id> --author opus --related session:<id> --request '<his words>' --summary 'The drain failed again' --fix 'Paused the drain'
 scribe consistency scan --json
 scribe tag list
 scribe tag list --json | jq '.tags[] | select(.configured | not)'
@@ -79,7 +88,7 @@ scribe question ask "can you fetch me last session summary?" --json   # a lookup
 
 The store is a directory: `--root <dir>`, else `$SCRIBE_ROOT`, else
 `~/.scribe`. Entries are Markdown files with YAML frontmatter under
-`entries/<tag>/<tag>-<n>.md`; session records are
+`entries/<tag>/<tag>-<n>.md`; issues are `issues/issue-<n>.md`; session records are
 `sessions/<yyyy>/<mm>/<session-id>.md`; `control.json` holds which sessions
 are being cataloged, `proposals.json` holds routine and agent proposals,
 `tags.json` holds agent-created tags, `pickups.json` holds consumers' pickups of action entries, and `config.toml` holds configured tags,
@@ -99,7 +108,7 @@ naming a turn he typed in the last 30 minutes) may an agent retire or forget
 his entry, or approve or reject a claim a session pass proposed. Agent notes have no typed-turn citation;
 `ask` labels them `agent note (<name>)`. Repeating an unchanged write prints
 the unchanged record with `nothing changed` on stderr and no audit event.
-The store now writes format 16 and reads older formats without rewriting them. Under a tag whose capture route is `write` (the shipped `idea`), a session pass writes up to 3 of Daniel's ideas per session per run itself, with their outcome, as entries it authors (`--author-kind scribe`).
+The store now writes format 17 and reads older formats without rewriting them. Under a tag whose capture route is `write` (the shipped `idea`), a session pass writes up to 3 of Daniel's ideas per session per run itself, with their outcome, as entries it authors (`--author-kind scribe`).
 Passes rewrite the header and open segment and append new
 segments; sealed segments stay unchanged. `[catalog] segment_windows`
 (default 3) bounds each segment's rewrites. Rebuild replaces a record from

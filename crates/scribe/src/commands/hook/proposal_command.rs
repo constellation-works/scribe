@@ -55,6 +55,7 @@ pub(super) fn run(settling: &Settling, turn: &Turn, ctx: &Context) -> Reply {
         outcome: Some(HookOutcome {
             target: Some(target),
             error_code: None,
+            issue: None,
         }),
     };
     match settled {
@@ -129,5 +130,6 @@ fn refusal(session: &SessionId, code: &'static str) -> HookOutcome {
     HookOutcome {
         target: Some(format!("session:{session}")),
         error_code: Some(code),
+        issue: None,
     }
 }

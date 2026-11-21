@@ -1,7 +1,8 @@
 //! The `record` noun: `record search`, every stored record ranked for a few
 //! words as `question ask` ranks them, with no model and no Orbit call
 //! (docs/design/scribe/2_design.md §6.8). It reads only: no lock, no audit
-//! line (STD-01 R31), and one load of the entries and the sessions.
+//! line (STD-01 R31), and one load of the entries, the sessions and the
+//! issues.
 
 use super::{DateArgs, ListNotice, list_output};
 use crate::app::Context;
@@ -21,22 +22,24 @@ Examples:
   scribe record search \"api\" --json | jq -r '.hits[].cite'";
 
 const SEARCH_EXAMPLES: &str = "\
-Ranks each entry, each session header and each segment of a session's log
-with BM25, as question ask does, and prints the best first; Daniel's own
-entries weigh 1.5 times. The CITE column is what question ask would cite:
-pass it to entry show or session show. Superseded and retired entries and
-inactive sessions are left out unless --include-hidden.
+Ranks each entry, each session header, each segment of a session's log and
+each issue with BM25, as question ask does, and prints the best first;
+Daniel's own entries weigh 1.5 times. The CITE column is what question ask
+would cite: pass it to entry show, session show or issue show. An issue is
+the agent's account, with Daniel's request quoted. Superseded and retired
+entries and inactive sessions are left out unless --include-hidden.
 
 Examples:
   scribe record search \"merge queue\"
   scribe record search release --kind session --since 2026-11-01
   scribe record search \"store format\" --project scribe --topic store --limit 5
+  scribe record search \"rate limit\" --kind issue
   scribe record search \"api\" --json | jq -r '.hits[].cite'";
 
 /// Verbs on the `record` noun.
 #[derive(Debug, Subcommand)]
 pub(crate) enum RecordCommand {
-    /// Rank entries, session headers and segments for words, best first, with no model call
+    /// Rank entries, session headers, segments and issues for words, best first, with no model call
     #[command(after_help = SEARCH_EXAMPLES)]
     Search(SearchArgs),
 }
@@ -48,6 +51,8 @@ pub(crate) enum KindArg {
     Entry,
     // Session headers and segments only.
     Session,
+    // Issue records only.
+    Issue,
 }
 
 /// Arguments to `record search`.
@@ -57,7 +62,7 @@ pub(crate) struct SearchArgs {
     #[arg(value_name = "TERMS")]
     pub(crate) terms: String,
 
-    /// Only this kind of record [default: both]
+    /// Only this kind of record [default: every kind]
     #[arg(long, value_name = "KIND", value_enum)]
     pub(crate) kind: Option<KindArg>,
 
@@ -108,6 +113,7 @@ fn search(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
         kind: args.kind.map(|k| match k {
             KindArg::Entry => RecordKind::Entry,
             KindArg::Session => RecordKind::Session,
+            KindArg::Issue => RecordKind::Issue,
         }),
         project: args.project,
         topics: args.topic,
@@ -122,9 +128,11 @@ fn search(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
         include_inactive: true,
         ..SessionFilter::default()
     })?;
+    let (issues, issues_skipped) = store.issues()?;
     let corpus = Corpus {
         entries: &entries.listing.items,
         sessions: &sessions.listing.items,
+        issues: &issues,
         tags: &config.tags,
     };
     let found = search::search(&query, corpus).map_err(|e| match e {
@@ -132,6 +140,7 @@ fn search(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
     })?;
     let mut skipped = entries.skipped;
     skipped.extend(sessions.skipped);
+    skipped.extend(issues_skipped);
     let mut criteria = vec![format!("{:?}", query.terms)];
     if let Some(kind) = query.kind {
         criteria.push(format!("--kind {}", kind.as_str()));
@@ -144,7 +153,7 @@ fn search(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
     }
     criteria.extend(args.dates.criteria());
     let empty = format!(
-        "no records in {}; entries come from #scribe lines and sessions from /scribe on",
+        "no records in {}; entries come from #scribe lines, sessions from /scribe on and issues from scribe issue add",
         store.root().display()
     );
     let notice = ListNotice {

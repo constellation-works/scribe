@@ -655,7 +655,7 @@ pub(crate) mod nullable_date {
     use time::format_description::BorrowedFormatItem;
     use time::macros::format_description;
 
-    pub(super) const FORMAT: &[BorrowedFormatItem<'static>] =
+    pub(crate) const FORMAT: &[BorrowedFormatItem<'static>] =
         format_description!("[year]-[month]-[day]");
 
     /// Render a date as `YYYY-MM-DD`.

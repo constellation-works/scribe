@@ -42,6 +42,7 @@ fn parse(prompt: &str) -> Vec<Outcome> {
             }
             Parsed::Referent(r) => Err((r.line, "referent")),
             Parsed::Settle(s) => Err((s.line, "settle")),
+            Parsed::ForgetIssue(f) => Err((f.line, "forget_issue")),
             Parsed::Refused(r) => Err((r.line, r.reason.code())),
         })
         .collect()
@@ -238,7 +239,10 @@ fn settles(prompt: &str) -> Vec<Settle> {
         .into_iter()
         .filter_map(|p| match p {
             Parsed::Settle(s) => Some(s.action),
-            Parsed::Instruction(_) | Parsed::Referent(_) | Parsed::Refused(_) => None,
+            Parsed::Instruction(_)
+            | Parsed::Referent(_)
+            | Parsed::ForgetIssue(_)
+            | Parsed::Refused(_) => None,
         })
         .collect()
 }
@@ -858,4 +862,47 @@ fn an_action_window_over_the_cap_drops_its_oldest_turns_and_says_so() {
     assert_eq!(window.turns.len(), 3, "two cut turns and the prompt fit");
     assert!(window.turns[0].cut && !window.turns[2].cut);
     assert_eq!(window.omitted, 3);
+}
+
+#[test]
+fn the_issue_tag_is_reserved_in_forms_one_and_two_whatever_the_case() {
+    for line in [
+        "#scribe issue: the drain hits 429s",
+        "#scribe Issue: the drain hits 429s",
+        "#scribe add the drain hits 429s to issue",
+        "#scribe remember the drain hits 429s under my issue.",
+    ] {
+        assert_eq!(parse(line), [Err((1, "reserved_tag"))], "{line}");
+    }
+    let refused = capture::scan("#scribe issue: x y z", &tags());
+    let [Parsed::Refused(r)] = refused.as_slice() else {
+        panic!("{refused:?}");
+    };
+    assert!(r.message().contains("scribe issue add"), "{}", r.message());
+    // A tag that only ends in "issue" is not the reserved word.
+    assert_eq!(parse("#scribe myissue: x"), [Err((1, "unknown_tag"))]);
+}
+
+#[test]
+fn forget_takes_an_issue_or_one_occurrence_and_other_verbs_do_not() {
+    let forgets: Vec<(u32, String)> = capture::scan(
+        "#scribe forget issue-3\n#scribe forget issue-3#2.\n#scribe forget issue-0",
+        &tags(),
+    )
+    .into_iter()
+    .map(|p| {
+        if let Parsed::ForgetIssue(f) = &p {
+            (f.line, f.target.to_string())
+        } else {
+            (p.line(), format!("{p:?}"))
+        }
+    })
+    .collect();
+    assert_eq!(forgets[0], (1, String::from("issue-3")));
+    assert_eq!(forgets[1], (2, String::from("issue-3#2")));
+    assert!(forgets[2].1.contains("Refused"), "{:?}", forgets[2]);
+    assert_eq!(
+        parse("#scribe retire issue-3#2"),
+        [Err((1, "unparsed_instruction"))]
+    );
 }

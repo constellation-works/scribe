@@ -160,10 +160,12 @@ fn a_hook_writes_one_line_per_write_or_refusal_with_ids_and_codes_only() {
         HookOutcome {
             target: Some(String::from("preferences-1")),
             error_code: None,
+            issue: None,
         },
         HookOutcome {
             target: Some(String::from("session:s-1")),
             error_code: Some("unknown_tag"),
+            issue: None,
         },
     ])));
     drop(guard);

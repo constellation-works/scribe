@@ -1,0 +1,22 @@
+List issues, most recently updated first
+
+Usage: scribe issue list [OPTIONS]
+
+Options:
+      --status <STATUS>    Only issues with this status; forgotten issues are listed only when asked for [default: any but forgotten] [possible values: open, mitigated, resolved, forgotten]
+      --project <PROJECT>  Only issues that occurred in this project [default: any]
+      --host <HOST>        Only issues that occurred on this host [default: any]
+      --limit <N>          Show at most this many issues, 1 or more [default: all]
+  -h, --help               Print help
+  -V, --version            Print version
+
+Global options:
+      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json                 Shorthand for --format json
+
+Examples:
+  scribe issue list
+  scribe issue list --status open --project orbit
+  scribe issue list --json | jq -r '.issues[].title'

@@ -61,6 +61,7 @@ pub(super) fn run(
             vec![HookOutcome {
                 target: target(),
                 error_code: Some(PROVENANCE_FAILED),
+                issue: None,
             }],
         );
     }
@@ -87,6 +88,7 @@ pub(super) fn run(
                 Switch::On | Switch::Off => vec![HookOutcome {
                     target: target(),
                     error_code: Some(err.code()),
+                    issue: None,
                 }],
                 Switch::Link { .. } | Switch::Catalog(_) | Switch::Status | Switch::Unknown(_) => {
                     Vec::new()
@@ -102,10 +104,12 @@ pub(super) fn run(
         Change::SwitchedOn | Change::SwitchedOff => vec![HookOutcome {
             target: target(),
             error_code: None,
+            issue: None,
         }],
         Change::Unknown(_) => vec![HookOutcome {
             target: target(),
             error_code: Some(UNKNOWN_COMMAND),
+            issue: None,
         }],
         Change::AlreadyOn(_) | Change::AlreadyOff | Change::Status(_) => Vec::new(),
     };
@@ -152,6 +156,7 @@ fn run_catalog(switch: &Switch, target: &SessionId, ctx: &Context) -> Output {
                     vec![HookOutcome {
                         target: Some(format!("session:{id}")),
                         error_code: None,
+                        issue: None,
                     }],
                 )
             } else {
@@ -168,6 +173,7 @@ fn run_catalog(switch: &Switch, target: &SessionId, ctx: &Context) -> Output {
             vec![HookOutcome {
                 target: Some(format!("session:{target}")),
                 error_code: Some(err.code()),
+                issue: None,
             }],
         ),
     }
@@ -194,6 +200,7 @@ fn run_link(
                 vec![HookOutcome {
                     target: target(),
                     error_code: None,
+                    issue: None,
                 }]
             } else {
                 Vec::new()
@@ -217,6 +224,7 @@ fn run_link(
             vec![HookOutcome {
                 target: target(),
                 error_code: Some(err.code()),
+                issue: None,
             }],
         ),
     }

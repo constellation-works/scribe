@@ -4,9 +4,9 @@
 use super::color::{self, Role};
 use super::payload::{
     AskPayload, EntryPayload, FoundPayload, HitPayload, HookJson, HookReply, HookSpecificJson,
-    OriginPayload, PassPayload, PassReport, PluginReply, ProposalPayload, Record, Records,
-    ScanReport, SessionPayload, TagPayload, TagShowPayload, TaskPayload, TranscriptPayload,
-    TreeRow, WarningPayload,
+    IssuePayload, OccurrencePayload, OriginPayload, PassPayload, PassReport, PluginReply,
+    ProposalPayload, Record, Records, ScanReport, SessionPayload, TagPayload, TagShowPayload,
+    TaskPayload, TranscriptPayload, TreeRow, WarningPayload,
 };
 use super::sink::{OutputMode, Sink};
 use super::table::{self, Align, Cell, Column};
@@ -106,6 +106,17 @@ const TRANSCRIPT_COLUMNS: [Column; 7] = [
     col("FIRST_PROMPT", Align::Left, true),
 ];
 
+const ISSUE_COLUMNS: [Column; 8] = [
+    col("ID", Align::Left, false),
+    col("STATUS", Align::Left, false),
+    col("OCCURRENCES", Align::Right, false),
+    col("PROJECTS", Align::Left, false),
+    col("HOSTS", Align::Left, false),
+    col("UPDATED", Align::Left, false),
+    col("AUTHOR", Align::Left, false),
+    col("TITLE", Align::Left, true),
+];
+
 const HIT_COLUMNS: [Column; 6] = [
     col("CITE", Align::Left, false),
     col("KIND", Align::Left, false),
@@ -164,6 +175,7 @@ pub(crate) fn list(
             Records::Transcripts(items) => {
                 write_json(out, &envelope("transcripts", items, total, warnings))
             }
+            Records::Issues(items) => write_json(out, &envelope("issues", items, total, warnings)),
         };
     }
     // An empty list prints nothing, not a lone header (STD-01 R16).
@@ -209,6 +221,10 @@ pub(crate) fn list(
         Records::Transcripts(items) => (
             TRANSCRIPT_COLUMNS.to_vec(),
             items.iter().map(transcript_row).collect(),
+        ),
+        Records::Issues(items) => (
+            ISSUE_COLUMNS.to_vec(),
+            items.iter().map(issue_row).collect(),
         ),
     };
     match sink.mode {
@@ -414,6 +430,9 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
             Ok(())
         }
         (OutputMode::Table, Record::Transcript(transcript)) => transcript_detail(out, transcript),
+        (OutputMode::Json, Record::Issue(issue)) => write_json(out, issue),
+        (OutputMode::Plain, Record::Issue(issue)) => issue_plain(out, issue),
+        (OutputMode::Table, Record::Issue(issue)) => issue_detail(out, issue),
     }
 }
 
@@ -1276,6 +1295,127 @@ fn hit_row(h: &HitPayload, mode: OutputMode) -> Vec<Cell> {
 
 /// The widest title a hit's table row shows.
 const TITLE_CELL_CHARS: usize = 40;
+
+fn issue_row(i: &IssuePayload) -> Vec<Cell> {
+    vec![
+        Cell::plain(i.id.clone()),
+        Cell {
+            text: i.status.to_owned(),
+            role: if matches!(i.status, "open" | "mitigated") {
+                Role::Neutral
+            } else {
+                Role::Muted
+            },
+        },
+        Cell::plain(i.occurrences.len().to_string()),
+        Cell::plain(joined(&i.projects)),
+        Cell::plain(joined(&i.hosts)),
+        Cell::plain(timestamp(i.updated)),
+        Cell::plain(author(&i.author)),
+        Cell::plain(one_line(&i.title)),
+    ]
+}
+
+/// An occurrence's state beside its number: `recurred after fix`, `moved
+/// from <ref>`, both, or `-`.
+fn occurrence_note(o: &OccurrencePayload) -> String {
+    let mut notes = Vec::new();
+    if o.recurred {
+        notes.push(String::from("recurred after fix"));
+    }
+    if let Some(from) = &o.moved_from {
+        notes.push(format!("moved from {from}"));
+    }
+    if notes.is_empty() {
+        String::from("-")
+    } else {
+        notes.join("; ")
+    }
+}
+
+/// `issue show` as lines: the list's row, then one tab-separated line per
+/// header field and per occurrence, each labelled by its first field.
+/// Error lines are labelled the agent's evidence.
+fn issue_plain(out: &mut dyn Write, i: &IssuePayload) -> io::Result<()> {
+    writeln!(out, "{}", plain_line(&issue_row(i)))?;
+    writeln!(out, "signature\t{}", one_line(&i.signature.join(" | ")))?;
+    writeln!(out, "cause\t{}", one_line(&i.cause))?;
+    writeln!(out, "fix\t{}", one_line(&i.fix))?;
+    for o in &i.occurrences {
+        writeln!(
+            out,
+            "occurrence\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            o.n,
+            o.date,
+            o.host,
+            o.project,
+            o.session,
+            occurrence_note(o),
+            one_line(&o.summary)
+        )?;
+        writeln!(out, "daniel_asked\t{}\t{}", o.n, one_line(&o.request))?;
+        for line in &o.error_lines {
+            writeln!(out, "agent_evidence\t{}\t{}", o.n, one_line(line))?;
+        }
+        writeln!(out, "occurrence_cause\t{}\t{}", o.n, one_line(&o.cause))?;
+        writeln!(out, "occurrence_fix\t{}\t{}", o.n, one_line(&o.fix))?;
+    }
+    Ok(())
+}
+
+/// `issue show` for a person: the header, then each occurrence, newest
+/// first. Never truncated.
+fn issue_detail(out: &mut dyn Write, i: &IssuePayload) -> io::Result<()> {
+    field(out, "id", &i.id)?;
+    field(out, "title", or_dash(&i.title))?;
+    field(out, "status", i.status)?;
+    field(out, "signature", &joined_lines(&i.signature))?;
+    field(out, "projects", &joined(&i.projects))?;
+    field(out, "hosts", &joined(&i.hosts))?;
+    field(out, "topics", &joined(&i.topics))?;
+    field(out, "related", &joined(&i.related))?;
+    field(out, "author", &author(&i.author))?;
+    field(
+        out,
+        "updated_by",
+        &i.updated_by.as_ref().map_or_else(|| "-".to_owned(), author),
+    )?;
+    field(out, "created", &timestamp(i.created))?;
+    field(out, "updated", &timestamp(i.updated))?;
+    field(out, "cause", or_dash(&i.cause))?;
+    field(out, "fix", or_dash(&i.fix))?;
+    for o in &i.occurrences {
+        writeln!(out)?;
+        field(
+            out,
+            "occurrence",
+            &format!("{}. {} — {}, {}", o.n, o.date, o.host, o.project),
+        )?;
+        field(out, "note", &occurrence_note(o))?;
+        field(out, "session", &o.session)?;
+        field(out, "message", &o.request_message)?;
+        field(out, "author", &author(&o.author))?;
+        field(out, "summary", &o.summary)?;
+        field(out, "daniel_asked", &format!("\"{}\"", o.request))?;
+        // The agent's evidence: never checked against the transcript.
+        field(out, "agent_evidence", &joined_lines(&o.error_lines))?;
+        field(out, "cause", &o.cause)?;
+        field(out, "fix", &o.fix)?;
+        field(out, "links", &joined(&o.links))?;
+    }
+    for g in &i.gone {
+        writeln!(out)?;
+        field(
+            out,
+            "gone",
+            &match &g.to {
+                Some(to) => format!("{}. {} to {to}", g.n, g.reason),
+                None => format!("{}. {}", g.n, g.reason),
+            },
+        )?;
+    }
+    Ok(())
+}
 
 fn transcript_row(t: &TranscriptPayload) -> Vec<Cell> {
     vec![

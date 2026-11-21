@@ -37,6 +37,7 @@ fn run(q: &SearchQuery, entries: &[Entry], sessions: &[SessionRecord]) -> search
         Corpus {
             entries,
             sessions,
+            issues: &[],
             tags: &tags,
         },
     )
@@ -157,6 +158,7 @@ fn terms_with_no_searchable_word_are_refused() {
         Corpus {
             entries: &[],
             sessions: &[],
+            issues: &[],
             tags: &tags,
         },
     )

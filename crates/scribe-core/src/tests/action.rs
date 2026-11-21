@@ -147,6 +147,7 @@ fn ask_leaves_action_entries_out_unless_the_scope_names_their_tag() {
     let corpus = Corpus {
         entries: &entries,
         sessions: &[],
+        issues: &[],
         tags: &tags,
     };
     let mut question = Question {

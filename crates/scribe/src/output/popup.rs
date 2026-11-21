@@ -146,7 +146,9 @@ fn build(records: &Records, year: i32) -> Vec<Row> {
         Records::Entries(items) => entries(items, year),
         Records::Proposals(items) => proposals(items, year),
         Records::Transcripts(items) => transcripts(items, year),
-        Records::SessionTree { .. } | Records::Tags(_) | Records::Hits(_) => Vec::new(),
+        Records::SessionTree { .. } | Records::Tags(_) | Records::Hits(_) | Records::Issues(_) => {
+            Vec::new()
+        }
     }
 }
 
@@ -300,7 +302,7 @@ pub(crate) fn preview(out: &mut dyn Write, record: &Record) -> io::Result<()> {
         Record::Session(s) => session_preview(out, s),
         Record::Entry(e) => entry_preview(out, e),
         Record::Proposal(p) => proposal_preview(out, p),
-        Record::Transcript(_) | Record::Tag(_) | Record::TagRules(_) => Ok(()),
+        Record::Transcript(_) | Record::Tag(_) | Record::TagRules(_) | Record::Issue(_) => Ok(()),
     }
 }
 
