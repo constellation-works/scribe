@@ -2012,8 +2012,9 @@ entry is still `active` (refused `entry_not_active` otherwise), and writes `prop
 the entry, so a crash between them is what the next scan re-applies;
 `reject` of an approved proposal or `approve` of a rejected one is refused
 `proposal_settled`; `retire` takes an `active` entry; `forget` takes any
-entry not yet forgotten and also blanks every proposal quote of it and the
-reason of every proposal about it, so its words leave the store. A repeated
+entry not yet forgotten, clears its text and evidence, and clears every
+proposal quote of it and the reason, candidate quote and evidence of every
+proposal about it. Session records are not erased. A repeated
 instruction echoes `… — nothing changed` and is not audited; a change is
 one audit line whose target is the proposal or entry, a refusal one line
 with its code (`proposal_not_found`, `entry_not_found`,
@@ -3304,7 +3305,7 @@ instruction. `--json` adds the fields; none is renamed or retyped.
 |---|---|---|---|
 | Proposal (any open claim) | `reject`: closed, no entry, `closed_reason: instructed` ([§11.3](#113-the-shipped-tag-set-and-retired-tag-cleanup)'s field) | no; the suppression set keeps it from being proposed again | the proposal with its quote, reason and instruction |
 | Entry | `retire`: hidden from lists and `ask`, `retirement_reason` set | no un-retire verb exists, but the text is intact and can be added again as a new entry | the whole entry, `updated_by`, the instruction |
-| Entry, "forget" or "for good" | `forget`: text blanked for good, with every proposal quote of it and every reason about it (§7) | no | id, tag, dates, author, `updated_by` and the instruction's session and message ids; **not** its quote, which may repeat the words he wants gone |
+| Entry, "forget" or "for good" | `forget`: entry text and evidence cleared, with every proposal quote of it and related candidate quotes, evidence and reasons (§7) | no | id, tag, dates, author, `updated_by` and the instruction's session and message ids; **not** its quote, which may repeat the words he wants gone |
 | Session | `deactivate`: hidden from `ask` and lists unless `--include-inactive` | `session activate` | the record and its log |
 
 "Delete" never removes a file. A removed proposal would leave the
@@ -3315,7 +3316,7 @@ agent's name, the target id, the instruction's session and message ids,
 and the error code on a refusal (`instruction_not_found`,
 `instruction_stale`, `instruction_mismatch`, plus the existing codes). The
 instruction's words are never in the audit line; they live on the record
-(and, after `forget`, nowhere).
+(and, after `forget`, not on the entry or its proposals; session records may retain them).
 
 ### 12.5 Question 4 — only an interactive session he is in
 
@@ -3386,7 +3387,8 @@ Not built until seen:
 - settling a consistency proposal about his entry, or changing his
   entry's content, on instruction (all 20 observed claims are candidates);
 - removing a session record or blanking its text (`session forget`):
-  deactivation is the delete; no need to erase a session's words is seen;
+  entry forget does not erase the session record, including its summary and
+  segment text; deactivation is the delete;
 - forgetting a proposal's words without an entry (a rejected claim keeps
   its quote for suppression);
 - settling many ids in one command or by a description ("all the tmux

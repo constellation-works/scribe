@@ -597,8 +597,8 @@ pub enum Settled {
 ///   are;
 /// - retire: an `active` entry becomes `retired`;
 /// - forget: any entry not yet forgotten becomes `forgotten`, its `said`
-///   and `content` blanked, and every proposal quote of it and every
-///   proposal reason about it blanked too, so its words leave the store.
+///   and `content` blanked, its evidence removed, and every proposal quote,
+///   candidate evidence and reason about it cleared. Session records remain.
 ///
 /// The same instruction again changes nothing and says so.
 pub fn settle(
@@ -658,6 +658,7 @@ pub fn settle(
             entry.status = EntryStatus::Forgotten;
             entry.said.clear();
             entry.content.clear();
+            entry.evidence = None;
             entry.updated = now;
             for proposal in proposals.iter_mut() {
                 let about = proposal.older == *id || proposal.newer.as_ref() == Some(id);
@@ -665,6 +666,7 @@ pub fn settle(
                     proposal.reason.clear();
                     if let Some(candidate) = &mut proposal.candidate {
                         candidate.quote.clear();
+                        candidate.evidence = None;
                     }
                 }
                 for quote in proposal.quotes.iter_mut().filter(|q| q.entry == *id) {
