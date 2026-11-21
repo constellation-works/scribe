@@ -11,7 +11,7 @@ summary: How the scribe plugin is bounded (one binary; Daniel writes through hoo
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26265]
+related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26265, ORB-26246]
 ---
 
 # scribe — Design
@@ -3408,6 +3408,8 @@ refuses it as stale, mismatched or not interactive; `null` only when no
 typed turn held the instruction or that turn has no message id), audit
 format 3.
 
+**Built (task 5 of 6, ORB-26246).** Reading it (§12.3): `entry show` prints `approved by <aide> on your instruction "<quote>" (<session>, <date>)` under the cite for an entry an agent approved on his instruction, and nothing for one he approved by typing. `record search` ends such an entry's snippet with the same line, and `proposal list` adds `approved by` or `rejected by …` to an instructed candidate's reason. `ask` keeps the entry as his words with his 1.5× weight and adds the line to its evidence item as `<approval>approved by <aide> on Daniel's instruction …</approval>`, after the item's text: the model reads it, so it names him in the third person, and no claim can quote it as the entry's words. A prompt rule tells the model to say an agent approved it when it uses the item. `--json` is unchanged: `approved_by` and `instruction` were already on entries and proposals.
+
 **Fixed (ORB-26503, store format 18).** Review ORB-26500 of task 3 found
 five defects, now fixed: a format-14 entry decodes again through typed
 YAML, so a local YAML tag reads as before (format 16's `EntryV14`; a
@@ -3563,7 +3565,8 @@ in the suppression set, recording the same fields.
 instruction "<quote>" (<session>, <date>)` under the cite. `ask` and
 `record search` treat the entry as his words, with his 1.5× weight, and
 add the same line to the evidence, so an answer can say that an agent
-approved it. `proposal list --state approved|rejected` shows the
+approved it (as built, `ask`'s line names "Daniel's instruction" and sits
+outside the item's quotable text). `proposal list --state approved|rejected` shows the
 instruction. `--json` adds the fields; none is renamed or retyped.
 
 ### 12.4 Question 3 — what "delete" means for each record kind
@@ -4787,6 +4790,8 @@ Not built until seen:
 - [ORB-26256] — recorded Daniel's decisions of 2026-11-21: scribe reads
   Claude Code and Codex sessions only, and §13.12–§13.15 (the base pass,
   `people`, recurring dates, light catalog entries) are parked.
+- [ORB-26246] — built §12.3's reading of an instructed approval in `entry show`,
+  `ask`, `record search` and `proposal list`.
 - [ORB-26349] — extended the duplicate check's negation markers, and made
   Stop recovery decide coverage as of the turn.
 

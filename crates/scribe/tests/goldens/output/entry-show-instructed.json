@@ -1,0 +1,63 @@
+{
+  "id": "preferences-2",
+  "tag": "preferences",
+  "status": "active",
+  "project": "constellation-works/scribe",
+  "topics": [],
+  "related": [],
+  "provider": "claude-code",
+  "host": "dk-server-1",
+  "created": "2026-11-15T00:05:00Z",
+  "updated": "2026-11-15T00:05:00Z",
+  "said": "scribe proposal settle p-5 --approve --author opus --session 9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c03 --instruction 'approve p-5, that is how session records should work'",
+  "content": "Daniel prefers that session records keep the whole session's history in an append-only log rather than one rewritten outcome.",
+  "content_from": {
+    "kind": "message",
+    "role": "user",
+    "message": "user-history",
+    "at": "2026-11-15T00:00:00Z"
+  },
+  "cite": {
+    "session": "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02",
+    "message": "user-history",
+    "at": "2026-11-15T00:00:00Z",
+    "prompt_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "line": 1,
+    "cwd": "/home/daniel/workspace/scribe"
+  },
+  "superseded_by": null,
+  "review_after": null,
+  "author": {
+    "kind": "daniel",
+    "name": "daniel"
+  },
+  "updated_by": null,
+  "retirement_reason": null,
+  "quote": "ok that makes sense. then let's keep the whole history in an append-only log, not one rewritten outcome.",
+  "evidence": null,
+  "as_of": null,
+  "window_turns": null,
+  "window": null,
+  "action": null,
+  "admitted": {
+    "trigger": "let's keep",
+    "matched": "let's keep",
+    "criteria": "A standing rule from Daniel that applies beyond the work at hand."
+  },
+  "approved_by": {
+    "kind": "agent",
+    "name": "opus"
+  },
+  "instruction": {
+    "session": "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c03",
+    "message": "user-instruct",
+    "at": "2026-11-15T00:04:30Z",
+    "quote": "approve p-5, that is how session records should work"
+  },
+  "stated_by": {
+    "kind": "scribe",
+    "name": "session-pass"
+  },
+  "outcome": null,
+  "removal_instruction": null
+}

@@ -380,6 +380,9 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
             if let Some(reason) = p.closed_reason {
                 field(out, "closed_reason", reason)?;
             }
+            if let Some(line) = settled_line(p) {
+                field(out, "instruction", &line)?;
+            }
             field(out, "opened", &timestamp(p.opened_at))?;
             field(
                 out,
@@ -395,6 +398,10 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
             // follow on their line, with whose statement it is.
             if let (Some(by), Some(quote)) = (&entry.stated_by, &entry.quote) {
                 writeln!(out, "stated_by\t{}\t{}", author(by), one_line(quote))?;
+            }
+            // An approval an agent made on his instruction (2_design.md §12.3).
+            if let Some(line) = approved_line(entry) {
+                writeln!(out, "approved\t{line}")?;
             }
             // An idea the pass captured: where it stands, then the parking
             // words or the task (`-` for neither).
@@ -762,6 +769,9 @@ pub(super) fn entry_metadata(out: &mut dyn Write, e: &EntryPayload, color: bool)
     field(out, "superseded", e.superseded_by.as_deref().unwrap_or("-"))?;
     field(out, "from", &from)?;
     field(out, "cite", &cite)?;
+    if let Some(line) = approved_line(e) {
+        field(out, "approved", &line)?;
+    }
     field(out, "cwd", e.cite.as_ref().map_or("-", |c| c.cwd.as_str()))?;
     field(out, "said", or_dash(&e.said))?;
     if let Some(reason) = &e.retirement_reason {
@@ -1370,6 +1380,38 @@ fn session_row(s: &SessionPayload, active: bool) -> Vec<Cell> {
     cells
 }
 
+/// `approved by <aide> on your instruction "<quote>" (<session>, <date>)`
+/// for an entry an agent approved on Daniel's checked instruction
+/// (2_design.md §12.3); `None` when he typed the approval.
+fn approved_line(e: &EntryPayload) -> Option<String> {
+    let by = e.approved_by.as_ref()?;
+    let inst = e.instruction.as_ref()?;
+    Some(scribe_core::ask::instructed_line(
+        "approved",
+        &by.name,
+        scribe_core::ask::INSTRUCTION_YOURS,
+        inst.quote.as_deref(),
+        &inst.session,
+        inst.at,
+    ))
+}
+
+/// How a candidate settled on Daniel's checked instruction reads:
+/// `approved by <aide> on your instruction "<quote>" (<session>, <date>)`,
+/// or `rejected by …`; `None` for one he settled by typing, or still open.
+fn settled_line(p: &ProposalPayload) -> Option<String> {
+    let inst = p.instruction.as_ref()?;
+    let by = p.settled_author.as_ref()?;
+    Some(scribe_core::ask::instructed_line(
+        p.state,
+        &by.name,
+        scribe_core::ask::INSTRUCTION_YOURS,
+        inst.quote.as_deref(),
+        &inst.session,
+        inst.at,
+    ))
+}
+
 /// A proposal's rows: one, and for a candidate carrying scribe's
 /// statement, in the table, a second under it holding Daniel's quote in
 /// the `REASON` column (2_design.md §11.1).
@@ -1385,6 +1427,21 @@ fn proposal_rows(p: &ProposalPayload, mode: OutputMode) -> Vec<Vec<Cell>> {
         if let Some(cell) = under.get_mut(PROPOSAL_REASON_COLUMN) {
             *cell = Cell {
                 text: quote,
+                role: Role::Muted,
+            };
+        }
+        rows.push(under);
+    }
+    if mode == OutputMode::Table
+        && let Some(line) = settled_line(p)
+    {
+        let mut under: Vec<Cell> = PROPOSAL_COLUMNS
+            .iter()
+            .map(|_| Cell::plain(String::new()))
+            .collect();
+        if let Some(cell) = under.get_mut(PROPOSAL_REASON_COLUMN) {
+            *cell = Cell {
+                text: line,
                 role: Role::Muted,
             };
         }
@@ -1420,6 +1477,12 @@ fn proposal_row(p: &ProposalPayload, mode: OutputMode) -> Vec<Cell> {
         }
         (Some(statement), _) => one_line(statement),
         (None, _) => one_line(&p.reason),
+    };
+    // The plain line carries the instruction after the reason, where the
+    // table puts it on a row under (2_design.md §12.3).
+    let reason = match settled_line(p) {
+        Some(line) if mode != OutputMode::Table => format!("{reason} | {line}"),
+        _ => reason,
     };
     vec![
         Cell::plain(p.id.clone()),

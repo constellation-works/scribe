@@ -1523,6 +1523,56 @@ pub fn outcome_text(outcome: &crate::Outcome) -> String {
     }
 }
 
+/// Whose instruction a line Daniel reads names: `entry show`, `record
+/// search` and `proposal list` speak to him.
+pub const INSTRUCTION_YOURS: &str = "your";
+/// Whose instruction a line in `ask` evidence names: the model reads it.
+pub const INSTRUCTION_DANIELS: &str = "Daniel's";
+
+/// How a settlement on Daniel's checked instruction reads (2_design.md
+/// §12.3): `approved by <aide> on your instruction "<quote>" (<session>,
+/// <date>)`. `verb` is `approved` or `rejected`; `whose` is
+/// [`INSTRUCTION_YOURS`] or [`INSTRUCTION_DANIELS`]. A forgotten entry's
+/// instruction has no quote, and the line then names only the turn.
+#[must_use]
+pub fn instructed_line(
+    verb: &str,
+    aide: &str,
+    whose: &str,
+    quote: Option<&str>,
+    session: &str,
+    at: OffsetDateTime,
+) -> String {
+    let quoted = quote
+        .map(|q| {
+            format!(
+                " \"{}\"",
+                q.split_whitespace().collect::<Vec<_>>().join(" ")
+            )
+        })
+        .unwrap_or_default();
+    format!(
+        "{verb} by {aide} on {whose} instruction{quoted} ({session}, {})",
+        day(at)
+    )
+}
+
+/// The approved-by line of an entry an agent approved on Daniel's
+/// instruction; `None` for one he approved by typing, or never approved.
+#[must_use]
+pub fn approved_line(entry: &Entry, whose: &str) -> Option<String> {
+    let by = entry.approved_by.as_ref()?;
+    let inst = entry.instruction.as_ref()?;
+    Some(instructed_line(
+        "approved",
+        &by.name.to_string(),
+        whose,
+        inst.quote.as_deref(),
+        inst.session.as_str(),
+        inst.at,
+    ))
+}
+
 fn entry_item(entry: &Entry) -> EvidenceItem {
     let whose = match &entry.content_from {
         ContentFrom::Agent => "agent",
@@ -1587,6 +1637,7 @@ fn entry_item(entry: &Entry) -> EvidenceItem {
         date: day(entry.created),
         text,
         quote: stated_quote(entry).map(str::to_owned),
+        approval: approved_line(entry, INSTRUCTION_DANIELS),
     }
 }
 
@@ -1610,6 +1661,7 @@ fn session_item(record: &SessionRecord) -> EvidenceItem {
         date: day(record.updated),
         text,
         quote: None,
+        approval: None,
     }
 }
 
@@ -1624,6 +1676,7 @@ fn segment_item(record: &SessionRecord, segment: &Segment) -> EvidenceItem {
         date: day(segment.to),
         text: format!("{}\n{}", segment.heading, segment.text),
         quote: None,
+        approval: None,
     }
 }
 
@@ -1686,6 +1739,7 @@ fn issue_item(issue: &Issue) -> EvidenceItem {
         date: day(issue.updated),
         text,
         quote: (!requests.is_empty()).then(|| requests.join("\n")),
+        approval: None,
     }
 }
 
@@ -1698,5 +1752,6 @@ fn task_item(task: &Task, description: &str) -> EvidenceItem {
         date: task.updated.map(day).unwrap_or_default(),
         text: format!("{}\n{description}", task.title),
         quote: None,
+        approval: None,
     }
 }
