@@ -11,8 +11,8 @@
 //! - reject: the proposal is `rejected`, and its pair is never proposed
 //!   again;
 //! - retire: the entry is hidden from answers and stays on disk;
-//! - forget: the entry's `said` and `content`, and the proposal quotes of
-//!   it, are blanked for good; its id, cite and status stay.
+//! - forget: entry text and evidence, proposal quotes of it, and related
+//!   candidate quotes, evidence and reasons are cleared; session records stay.
 //!
 //! A change is one audit line whose target is the proposal or entry; a
 //! refusal is one line with its code; an instruction already applied (a
@@ -107,7 +107,9 @@ pub(super) fn run(settling: &Settling, turn: &Turn, ctx: &Context) -> Reply {
         ),
         Settled::Forgotten(entry) => done(
             entry.to_string(),
-            format!("scribe: forgot {entry} — its text is blanked for good; the id and cite stay"),
+            format!(
+                "scribe: forgot {entry} — entry text and evidence, proposal quotes of it, and related candidate quotes, evidence and reasons are cleared; session records stay"
+            ),
         ),
         Settled::Already(what) => Reply {
             echo: format!("scribe: {what} — nothing changed"),

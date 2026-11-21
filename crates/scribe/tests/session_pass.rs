@@ -200,6 +200,11 @@ fn a_stored_assistant_finding_candidate_still_approves_into_one_agent_entry() {
 fn forgetting_an_assistant_derived_entry_keeps_it_readable_with_blank_content() {
     let quote = "Measured: the reviewer mix alone predicts a 7-point first-pass gap.";
     let s = setup_stored_assistant_finding_candidate(quote);
+    // Format 10 allowed free-form evidence, including the finding itself.
+    let path = s.fx.root().join("proposals.json");
+    let mut fixture: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    fixture["proposals"][0]["candidate"]["evidence"] = json!(quote);
+    std::fs::write(&path, fixture.to_string()).unwrap();
     let approved = type_settlement(&s, "#scribe approve p-1");
     assert!(
         text(&approved.stdout).contains("recorded finding-1 as the agent's entry"),
@@ -251,8 +256,14 @@ fn forgetting_an_assistant_derived_entry_keeps_it_readable_with_blank_content() 
         + &std::fs::read_to_string(s.fx.root().join("entries/finding/finding-1.md")).unwrap();
     assert!(
         !stored.contains(quote),
-        "forgotten words must leave the store"
+        "forgotten words must leave the entry and proposals"
     );
+
+    assert_eq!(listed_entry["evidence"], Value::Null);
+    assert_eq!(shown["evidence"], Value::Null);
+    assert!(!plain_list.contains(quote));
+    assert!(!plain_show.contains(quote));
+    assert!(text(&forgot.stdout).contains("session records stay"));
 
     let replay = type_settlement(&s, "#scribe forget finding-1");
     assert!(
@@ -261,6 +272,41 @@ fn forgetting_an_assistant_derived_entry_keeps_it_readable_with_blank_content() 
         text(&replay.stdout)
     );
     s.run(&["consistency", "scan", "--json"], b"");
+}
+
+#[test]
+fn entry_show_refuses_inconsistent_assistant_entry_shapes() {
+    let s = setup_stored_assistant_finding_candidate("Measured result.");
+    type_settlement(&s, "#scribe approve p-1");
+    let path = s.fx.root().join("entries/finding/finding-1.md");
+    let active = std::fs::read_to_string(&path).unwrap();
+    type_settlement(&s, "#scribe forget finding-1");
+    let forgotten = std::fs::read_to_string(&path).unwrap();
+    let replace_said = |source: &str, value: &str| -> String {
+        source
+            .lines()
+            .map(|line| {
+                if line.starts_with("said:") {
+                    format!("said: {value}\n")
+                } else {
+                    format!("{line}\n")
+                }
+            })
+            .collect()
+    };
+    let mut bad_body = forgotten.clone();
+    bad_body.push_str("leaked words\n");
+    for malformed in [
+        replace_said(&active, "''"),
+        replace_said(&forgotten, "'#scribe approve p-1'"),
+        bad_body,
+    ] {
+        std::fs::write(&path, malformed).unwrap();
+        let out = s.fx.run(&["entry", "show", "finding-1", "--json"]);
+        assert_eq!(out.status.code(), Some(1));
+        let error: Value = serde_json::from_slice(&out.stderr).unwrap();
+        assert_eq!(error["code"], "store_corrupt");
+    }
 }
 
 #[test]
