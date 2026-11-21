@@ -3489,6 +3489,21 @@ a wrong retire is repaired by adding the text again as a new entry; a wrong reje
 forget cannot be undone. It never runs `entry forget` unless his words say
 forget, erase or for good.
 
+**Built (task 6 of 6, ORB-26247).** The aide's side is the section "Settling
+and deleting on the human's instruction" at the end of
+`skills/scribe/SKILL.md`, copied to the two plugin skills by
+`scripts/sync-skills.py`. It sets the §12.1 command shapes, the order (list;
+name each id and its reversal in the reply; act only on an explicit
+instruction; one command per target), the one-line echoes and the reversals
+above. Where the skill is narrower than the CLI, the skill wins for the aide:
+it runs `entry forget` only on the words forget, erase or for good, while
+§12.2 point 5's list also takes purge and permanently. A wrong retire is
+repaired by the human typing the `#scribe <tag>:` line again, because the aide
+never writes an entry of the human's. The reply that names the ids is checked
+for the same negation and exception words as the human's turn, so the skill
+tells the aide to keep that reply free of them. A session deactivation is
+reversed by `session activate` (§12.4).
+
 ### 12.7 Store format
 
 **Built (task 2 of 6, ORB-26365, store format 13).** Step 12→13
