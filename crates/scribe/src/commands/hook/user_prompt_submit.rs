@@ -49,7 +49,7 @@ use super::project;
 use crate::app::Context;
 use crate::error::CliError;
 use crate::output::{HookOutcome, HookReply, Output};
-use scribe_core::capture::{self, Guess, Parsed, Refusal, Refused, Settling, Turn};
+use scribe_core::capture::{self, ForgetIssue, Guess, Parsed, Refusal, Refused, Settling, Turn};
 use scribe_core::models::ModelError;
 use scribe_core::transcript::{self, Message};
 use scribe_core::{Captured, Config, ContentFrom, Entry, Label, Models, SessionId};
@@ -113,6 +113,8 @@ enum Plan {
     Recorded(Box<Entry>),
     /// A settling line (form 4), applied after the entries are recorded.
     Settle(Settling),
+    /// `#scribe forget <issue-id>[#<n>]`, applied with the settling lines.
+    ForgetIssue(ForgetIssue),
 }
 
 /// [`run`] with the `Models` adapter `models` builds for the config, so a
@@ -251,6 +253,12 @@ fn capture_prompt<M: Models>(
                     continue;
                 }
                 Plan::Settle(settling)
+            }
+            Parsed::ForgetIssue(forget) => {
+                if recovery.is_some() {
+                    continue;
+                }
+                Plan::ForgetIssue(forget)
             }
             Parsed::Instruction(instruction) => {
                 let mut draft = capture::draft(&instruction, &turn, &config.tags);
@@ -392,6 +400,19 @@ fn capture_prompt<M: Models>(
                 });
                 outcomes.extend(reply.outcome);
             }
+            Plan::ForgetIssue(forget) => {
+                let reply = super::issue_command::run(&forget, &turn, ctx);
+                let recorded = match &reply.outcome {
+                    Some(outcome) => outcome.error_code.is_none(),
+                    None => true,
+                };
+                echoes.push(if recorded {
+                    Echo::recorded(reply.echo)
+                } else {
+                    Echo::not_recorded(reply.echo)
+                });
+                outcomes.extend(reply.outcome);
+            }
             Plan::Draft { line, said, guess } => match (captured.get(&line), &store_error) {
                 (Some(Captured::Added(entry)), _) => {
                     let guessed = guess
@@ -411,6 +432,7 @@ fn capture_prompt<M: Models>(
                     outcomes.push(HookOutcome {
                         target: Some(entry.id.to_string()),
                         error_code: None,
+                        issue: None,
                     });
                 }
                 (Some(Captured::Existing(entry)), _) => echoes.push(Echo::recorded(already(entry))),
@@ -523,6 +545,7 @@ fn refusal(session: &SessionId, code: &'static str) -> HookOutcome {
     HookOutcome {
         target: Some(format!("session:{session}")),
         error_code: Some(code),
+        issue: None,
     }
 }
 

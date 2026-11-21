@@ -19,6 +19,7 @@ fn event(command: &str) -> AuditEvent {
         author: None,
         instruction_session: None,
         instruction_message: None,
+        issue: None,
         duration_ms: 0,
     }
 }

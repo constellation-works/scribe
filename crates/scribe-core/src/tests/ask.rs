@@ -135,6 +135,7 @@ fn run<T: Tasks>(
     let corpus = Corpus {
         entries,
         sessions,
+        issues: &[],
         tags: &tags,
     };
     ask::answer(

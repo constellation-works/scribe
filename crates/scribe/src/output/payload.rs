@@ -270,6 +270,139 @@ pub(crate) struct EntryPayload {
     pub(crate) outcome: Option<scribe_core::Outcome>,
 }
 
+/// One issue as every output mode sees it (docs/design/scribe/2_design.md
+/// §11.4). Every word in it is the agent's account, but `request`, which is
+/// Daniel's typed request word for word; `error_lines` are the agent's
+/// evidence, not checked against the transcript.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct IssuePayload {
+    /// `issue-<n>`.
+    pub(crate) id: String,
+    pub(crate) title: String,
+    /// `open`, `mitigated`, `resolved` or `forgotten`.
+    pub(crate) status: &'static str,
+    /// The symptom or error strings a later search matches.
+    pub(crate) signature: Vec<String>,
+    /// Every project an occurrence was in.
+    pub(crate) projects: Vec<String>,
+    /// Every host an occurrence was on.
+    pub(crate) hosts: Vec<String>,
+    pub(crate) topics: Vec<String>,
+    /// Every occurrence's session and links.
+    pub(crate) related: Vec<String>,
+    pub(crate) author: AuthorPayload,
+    pub(crate) updated_by: Option<AuthorPayload>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub(crate) created: Timestamp,
+    #[serde(with = "time::serde::rfc3339")]
+    pub(crate) updated: Timestamp,
+    /// The best-known cause, or `cause not found`.
+    pub(crate) cause: String,
+    /// The current best fix, or `fix not found`.
+    pub(crate) fix: String,
+    /// Newest first.
+    pub(crate) occurrences: Vec<OccurrencePayload>,
+    /// Occurrence numbers no longer here: moved to another issue or
+    /// forgotten. Never given again.
+    pub(crate) gone: Vec<GonePayload>,
+}
+
+/// One occurrence of an issue.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct OccurrencePayload {
+    pub(crate) n: u32,
+    /// `YYYY-MM-DD`.
+    pub(crate) date: String,
+    pub(crate) host: String,
+    pub(crate) project: String,
+    /// The session Daniel's request was typed in.
+    pub(crate) session: String,
+    /// The uuid of his typed turn holding `request`.
+    pub(crate) request_message: String,
+    /// Written while the issue was `resolved`: it recurred after the fix.
+    pub(crate) recurred: bool,
+    /// `issue-<n>#<m>` when it was moved here; `null` otherwise.
+    pub(crate) moved_from: Option<String>,
+    pub(crate) author: AuthorPayload,
+    /// The agent's context summary.
+    pub(crate) summary: String,
+    /// Daniel's request, word for word from his typed turn.
+    pub(crate) request: String,
+    /// Key error lines: the agent's evidence.
+    pub(crate) error_lines: Vec<String>,
+    pub(crate) cause: String,
+    pub(crate) fix: String,
+    /// Tasks, PRs, repositories and sessions it links, besides `session`.
+    pub(crate) links: Vec<String>,
+}
+
+/// An occurrence number that left an issue.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct GonePayload {
+    pub(crate) n: u32,
+    /// `moved` or `forgotten`.
+    pub(crate) reason: &'static str,
+    /// Where a moved occurrence went (`issue-<n>#<m>`); `null` otherwise.
+    pub(crate) to: Option<String>,
+}
+
+impl From<&scribe_core::issue::Issue> for IssuePayload {
+    fn from(issue: &scribe_core::issue::Issue) -> Self {
+        Self {
+            id: issue.id.to_string(),
+            title: issue.title.clone(),
+            status: issue.status.as_str(),
+            signature: issue.signature.clone(),
+            projects: issue.projects.iter().map(ToString::to_string).collect(),
+            hosts: issue.hosts.iter().map(ToString::to_string).collect(),
+            topics: strings(issue.topics.as_slice()),
+            related: issue.related.iter().map(ToString::to_string).collect(),
+            author: AuthorPayload::from(&issue.author),
+            updated_by: issue.updated_by.as_ref().map(AuthorPayload::from),
+            created: issue.created,
+            updated: issue.updated,
+            cause: issue.cause.clone(),
+            fix: issue.fix.clone(),
+            occurrences: issue
+                .occurrences
+                .iter()
+                .map(OccurrencePayload::from)
+                .collect(),
+            gone: issue
+                .gone
+                .iter()
+                .map(|g| GonePayload {
+                    n: g.n.get(),
+                    reason: g.reason.as_str(),
+                    to: g.to.clone(),
+                })
+                .collect(),
+        }
+    }
+}
+
+impl From<&scribe_core::issue::Occurrence> for OccurrencePayload {
+    fn from(o: &scribe_core::issue::Occurrence) -> Self {
+        Self {
+            n: o.n.get(),
+            date: scribe_core::DateRange::day(o.date),
+            host: o.host.to_string(),
+            project: o.project.to_string(),
+            session: o.session.to_string(),
+            request_message: o.request_message.clone(),
+            recurred: o.recurred,
+            moved_from: o.moved_from.clone(),
+            author: AuthorPayload::from(&o.author),
+            summary: o.summary.clone(),
+            request: o.request.clone(),
+            error_lines: o.error_lines.clone(),
+            cause: o.cause.clone(),
+            fix: o.fix.clone(),
+            links: o.links.iter().map(ToString::to_string).collect(),
+        }
+    }
+}
+
 /// An action entry's transcript window (docs/design/scribe/2_design.md §4.6).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct WindowPayload {
@@ -938,6 +1071,8 @@ pub(crate) enum Records {
     Hits(Vec<HitPayload>),
     /// `transcript list`.
     Transcripts(Vec<TranscriptPayload>),
+    /// `issue list`, most recently updated first.
+    Issues(Vec<IssuePayload>),
 }
 
 impl Records {
@@ -950,6 +1085,7 @@ impl Records {
             Self::Tags(v) => v.len(),
             Self::Hits(v) => v.len(),
             Self::Transcripts(v) => v.len(),
+            Self::Issues(v) => v.len(),
         }
     }
 }
@@ -1033,6 +1169,7 @@ pub(crate) enum Record {
     Entry(Box<EntryPayload>),
     Session(Box<SessionPayload>),
     Transcript(Box<TranscriptPayload>),
+    Issue(Box<IssuePayload>),
 }
 
 /// One uncataloged transcript (`transcript list` / `transcript show`).
@@ -1092,6 +1229,9 @@ pub(crate) struct HookOutcome {
     pub(crate) target: Option<String>,
     /// The stable code of a refusal; `None` for a write.
     pub(crate) error_code: Option<&'static str>,
+    /// What an issue forget counts against (2_design.md §11.4); `None` for
+    /// every other outcome.
+    pub(crate) issue: Option<scribe_core::IssueAudit>,
 }
 
 /// The JSON a hook prints (Claude Code's hook output).

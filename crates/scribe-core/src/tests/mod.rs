@@ -13,6 +13,8 @@ mod control;
 mod entry;
 mod error;
 mod instruction;
+mod issue;
+pub(crate) use issue::sample as sample_issue;
 mod pass;
 mod proposal;
 mod record;

@@ -12,6 +12,7 @@ fn failed_add() -> AuditEvent {
         author: None,
         instruction_session: None,
         instruction_message: None,
+        issue: None,
         duration_ms: 42,
     }
 }
@@ -59,6 +60,7 @@ fn an_event_has_no_field_for_arguments_or_error_text() {
             "format",
             "instruction_message",
             "instruction_session",
+            "issue",
             "status",
             "target"
         ]

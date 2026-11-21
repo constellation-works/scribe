@@ -17,7 +17,8 @@
 //!
 //! A `#scribe approve|reject|retire|forget` line goes from
 //! `user_prompt_submit.rs` to `proposal_command.rs`, which settles a
-//! proposal or hides or blanks an entry (§3, §7).
+//! proposal or hides or blanks an entry (§3, §7); `#scribe forget
+//! <issue-id>[#<n>]` goes to `issue_command.rs` (§11.4).
 //!
 //! `payload.rs` holds the stdin shapes and the transcript provenance check;
 //! `project.rs` finds the repository a session's cwd belongs to (both also
@@ -28,6 +29,7 @@
 //! Stop recovery uses its guessed fallback without a model call.
 
 mod codex;
+mod issue_command;
 pub(super) mod payload;
 pub(super) mod project;
 mod proposal_command;
@@ -65,7 +67,8 @@ config marks action = true) also stores the turns since the previous
 #scribe line, capped at 40 turns and 12000 characters and cut from the
 oldest; no model is called. #scribe approve <p-id>,
 #scribe reject <p-id>, #scribe retire <entry-id> and #scribe forget
-<entry-id> settle a proposal or hide or blank an entry. A prompt whose first
+<entry-id> settle a proposal or hide or blank an entry; #scribe forget
+<issue-id> or <issue-id>#<n> blanks an issue or removes an occurrence. A prompt whose first
 line is /scribe on, /scribe off or /scribe status switches this session's
 cataloging and is blocked, its status given as the reason; /scribe catalog
 <id> starts Daniel's catalog of a past session, whose windows the next

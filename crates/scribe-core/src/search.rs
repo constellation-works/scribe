@@ -13,6 +13,7 @@
 
 use crate::ask::{self, Corpus, Doc, Origin, RecordKind};
 use crate::entry::Entry;
+use crate::issue::Issue;
 use crate::record::{Author, DateRange, Project, Topic};
 use crate::session::{Segment, SessionRecord};
 use std::collections::BTreeSet;
@@ -60,7 +61,7 @@ pub struct SearchQuery {
 /// One ranked unit.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Hit {
-    /// An entry or a session (its header or one segment).
+    /// An entry, a session (its header or one segment) or an issue.
     pub kind: RecordKind,
     /// What `ask` would cite: an entry id, `session:<id>` or
     /// `session:<id>#<n>`.
@@ -123,6 +124,7 @@ pub fn search(query: &SearchQuery, corpus: Corpus<'_>) -> Result<Found, SearchEr
         corpus,
         |e| keeps_entry(query, e),
         |r, s| keeps_unit(query, r, s),
+        |i| keeps_issue(query, i),
     );
     let mut ranked = ask::rank(&words, corpus, docs, &wanted);
     let hidden_matches = if query.include_hidden {
@@ -149,6 +151,16 @@ fn keeps_entry(query: &SearchQuery, entry: &Entry) -> bool {
         && query.project.as_ref().is_none_or(|p| &entry.project == p)
         && query.topics.iter().all(|t| entry.topics.contains(t))
         && query.dates.contains(entry.created)
+}
+
+fn keeps_issue(query: &SearchQuery, issue: &Issue) -> bool {
+    query.kind.is_none_or(|k| k == RecordKind::Issue)
+        && query
+            .project
+            .as_ref()
+            .is_none_or(|p| issue.projects.contains(p))
+        && query.topics.iter().all(|t| issue.topics.contains(t))
+        && query.dates.overlaps(issue.created, issue.updated)
 }
 
 fn keeps_unit(query: &SearchQuery, record: &SessionRecord, segment: Option<&Segment>) -> bool {
@@ -280,6 +292,52 @@ fn hit(score: f64, doc: &Doc, corpus: Corpus<'_>, wanted: &BTreeSet<String>) -> 
                 active: Some(r.active),
                 status: r.status.as_str(),
                 updated: s.to,
+                evidence: None,
+                as_of: None,
+            })
+        }
+        Origin::Issue(i) => {
+            let issue = corpus.issues.get(i)?;
+            let text = format!(
+                "{}\n{}\n{}\n{}",
+                issue.signature.join(" | "),
+                issue.cause,
+                issue.fix,
+                issue
+                    .occurrences
+                    .iter()
+                    .map(|o| format!("{} {}", o.summary, o.error_lines.join(" | ")))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+            // The agent's account, with Daniel's newest request word for
+            // word, in every output mode (2_design.md §11.4).
+            let snippet = match issue.occurrences.first() {
+                Some(o) => format!(
+                    "{} [{}; Daniel asked: \"{}\"]",
+                    snippet(&text, wanted),
+                    ask::issue_whose(issue),
+                    flatten(&o.request)
+                ),
+                None => format!("{} [{}]", snippet(&text, wanted), ask::issue_whose(issue)),
+            };
+            Some(Hit {
+                kind: RecordKind::Issue,
+                cite,
+                id: issue.id.to_string(),
+                segment: None,
+                score,
+                title: issue.title.clone(),
+                snippet,
+                project: issue.occurrences.first().map_or_else(
+                    || Project::sanitized(Project::GLOBAL),
+                    |o| o.project.clone(),
+                ),
+                topics: issue.topics.as_slice().to_vec(),
+                author: Some(issue.author.clone()),
+                active: None,
+                status: issue.status.as_str(),
+                updated: issue.updated,
                 evidence: None,
                 as_of: None,
             })

@@ -4,7 +4,7 @@
 //! [`run`] is where cross-cutting behaviour attaches, once, for every command
 //! (STD-02 R24): today the audit log, through [`crate::audit_middleware`].
 //! Each noun lives in its own module with its subcommands, flags, help and
-//! handlers (`entry.rs`, `session/`, `proposal.rs`, `record.rs`, `tag.rs`, `question.rs`,
+//! handlers (`entry.rs`, `session/`, `proposal.rs`, `record.rs`, `tag.rs`, `issue.rs`, `question.rs`,
 //! `plugin.rs`, `tmux.rs`); a noun that
 //! outgrows one file becomes a directory, `<noun>/mod.rs` plus one file per
 //! verb, as `hook/` is (STD-02 R18: split along responsibilities, not by length alone).
@@ -14,6 +14,7 @@ mod entry;
 mod hook;
 mod init;
 mod instruction;
+mod issue;
 mod plugin;
 mod proposal;
 mod question;
@@ -68,6 +69,9 @@ pub(crate) enum Command {
     /// List tags and manage agent-created store tags
     #[command(subcommand, after_help = tag::TAG_EXAMPLES)]
     Tag(TagCommand),
+    /// Record and search issues: incidents that recur across projects, and what fixed them
+    #[command(subcommand, after_help = issue::ISSUE_EXAMPLES)]
+    Issue(issue::IssueCommand),
     /// Answer a question from the records, citing a verbatim quote for every claim
     #[command(subcommand, after_help = question::QUESTION_EXAMPLES)]
     Question(QuestionCommand),
@@ -90,6 +94,7 @@ impl Command {
             Self::Entry(command) => command.subject(ctx),
             Self::Session(command) => command.subject(ctx),
             Self::Proposal(command) => command.subject(ctx),
+            Self::Issue(command) => command.subject(ctx),
             Self::Init(_)
             | Self::Transcript(_)
             | Self::Record(_)
@@ -117,6 +122,7 @@ impl Command {
             Self::Record(command) => command.audit(),
             Self::Consistency(command) => command.audit(),
             Self::Tag(command) => command.audit(),
+            Self::Issue(command) => command.audit(),
             Self::Hook(command) => command.audit(),
             Self::Question(command) => command.audit(),
             // Read-only: the popup only lists and shows (STD-01 R31).
@@ -147,6 +153,7 @@ pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
         Command::Record(command) => record::run(command, ctx),
         Command::Consistency(command) => consistency::run(command, ctx),
         Command::Tag(command) => tag::run(command, ctx),
+        Command::Issue(command) => issue::run(command, ctx),
         Command::Hook(command) => hook::run(command, ctx),
         Command::Question(command) => question::run(command, ctx),
         Command::Tmux(args) => tmux::run(args, ctx),
@@ -156,6 +163,7 @@ pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
         audit.mark_result(&result);
         subject.apply(audit);
         audit.set_instruction(ctx.instruction_note());
+        audit.set_issue(ctx.issue_note());
     }
     result
 }
@@ -364,6 +372,7 @@ impl Drop for PersistedAudit<'_> {
                 author: self.author.clone(),
                 instruction_session: None,
                 instruction_message: None,
+                issue: None,
                 duration_ms: 0,
             };
             if let Err(err) = self.store.record_audit(&event) {

@@ -2124,3 +2124,24 @@ fn a_format_fifteen_store_upgrades_with_a_null_outcome_only() {
     let stray = format_fifteen_entry("outcome: null\n", "scribe");
     corrupt_message(&entry(&stray).unwrap_err());
 }
+
+#[test]
+fn a_format_sixteen_proposals_document_reads_at_the_current_shape() {
+    // Formats 16 and 17 changed no proposal (16 changed only entries, 17 added
+    // a record kind), so a format-16 proposals.json has the current shape: the
+    // format-17 document with only its `format` lowered reads back equal, and
+    // a stray key is still refused.
+    let path = Path::new("proposals.json");
+    let old = br#"{"format":3,"proposals":[{"id":"p-1","kind":"stale","older":"preferences-1","newer":null,"reason":"review","quotes":[],"state":"open","opened_at":"2026-11-01T10:00:00Z","settled_at":null,"settled_by":null}]}"#;
+    let proposals = decode_proposals(path, old).unwrap();
+    let encoded = crate::store::format::encode_proposals(path, &proposals).unwrap();
+    let mut value: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+    assert_eq!(value["format"], FORMAT);
+    value["format"] = serde_json::json!(FORMAT - 1);
+    assert_eq!(
+        decode_proposals(path, &serde_json::to_vec(&value).unwrap()).unwrap(),
+        proposals
+    );
+    value["stray"] = serde_json::json!(1);
+    assert!(decode_proposals(path, &serde_json::to_vec(&value).unwrap()).is_err());
+}

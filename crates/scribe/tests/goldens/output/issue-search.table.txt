@@ -1,0 +1,2 @@
+CITE     KIND   SCORE  UPDATED               TITLE                                     SNIPPET
+issue-1  issue  0.904  2026-11-21T11:00:00Z  GitHub API secondary rate limit during …  HTTP 429 | secondary rate limit Parallel pushes from one token Serialize pushes per token The drain stopped when the GitHub API refused pushes. The drain stopped when the GitHub API refused pushes. HTTP 429: You have exceeded a secondary r… [agent account (opus); Daniel asked: "the drain is failing again, look into it"]

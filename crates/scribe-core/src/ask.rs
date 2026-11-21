@@ -33,6 +33,7 @@
 //! No I/O (STD-02 R5).
 
 use crate::entry::{ContentFrom, Entry, EntryStatus, Speaker, TagName};
+use crate::issue::{Issue, IssueStatus};
 use crate::models::{ASK_BUDGET, AskAnswer, AskRequest, EvidenceItem, ModelError, Models};
 use crate::record::{Project, Topic};
 use crate::session::{Segment, SessionId, SessionRecord, Term};
@@ -93,6 +94,8 @@ pub enum RecordKind {
     Entry,
     /// Session records only.
     Session,
+    /// Issue records only (2_design.md §11.4).
+    Issue,
 }
 
 impl RecordKind {
@@ -102,6 +105,7 @@ impl RecordKind {
         match self {
             Self::Entry => "entry",
             Self::Session => "session",
+            Self::Issue => "issue",
         }
     }
 }
@@ -138,6 +142,19 @@ impl Scope {
             && (self.topics.is_empty() || self.topics.iter().any(|t| record.topics.contains(t)))
             && self.project.as_ref().is_none_or(|p| &record.project == p)
             && self.since.is_none_or(|d| record.updated.date() >= d)
+    }
+
+    /// An issue has no tag, so a scope naming tags drops it; it is in
+    /// every project an occurrence was in.
+    fn keeps_issue(&self, issue: &Issue) -> bool {
+        self.kind.is_none_or(|k| k == RecordKind::Issue)
+            && self.tags.is_empty()
+            && (self.topics.is_empty() || self.topics.iter().any(|t| issue.topics.contains(t)))
+            && self
+                .project
+                .as_ref()
+                .is_none_or(|p| issue.projects.contains(p))
+            && self.since.is_none_or(|d| issue.updated.date() >= d)
     }
 
     fn keeps_tasks(&self) -> bool {
@@ -227,6 +244,8 @@ pub struct Corpus<'a> {
     pub entries: &'a [Entry],
     /// Every session record.
     pub sessions: &'a [SessionRecord],
+    /// Every issue record, any status (2_design.md §11.4).
+    pub issues: &'a [Issue],
     /// The configured tags, for tag words in the question.
     pub tags: &'a TagTable,
 }
@@ -497,6 +516,7 @@ pub fn check(reply: AskAnswer, evidence: &[EvidenceItem], hidden: usize) -> Answ
     let has_agent = evidence.iter().any(|e| {
         e.whose.starts_with("agent note (")
             || e.whose.starts_with("agent claim (")
+            || e.whose.starts_with("agent account (")
             || e.quote.is_some()
     });
     let answer = if has_agent {
@@ -1074,6 +1094,8 @@ pub(crate) enum Origin {
     Header(usize),
     /// Segment `log[j]` of `corpus.sessions[i]`.
     Segment(usize, usize),
+    /// `corpus.issues[i]`.
+    Issue(usize),
     /// An Orbit task.
     Task,
 }
@@ -1103,6 +1125,7 @@ pub(crate) fn store_docs(
     corpus: Corpus<'_>,
     keep_entry: impl Fn(&Entry) -> bool,
     keep_unit: impl Fn(&SessionRecord, Option<&Segment>) -> bool,
+    keep_issue: impl Fn(&Issue) -> bool,
 ) -> Vec<Doc> {
     let named_tags: Vec<&TagName> = words
         .iter()
@@ -1172,6 +1195,47 @@ pub(crate) fn store_docs(
             });
         }
     }
+    // One unit per issue, its header and every occurrence; a forgotten
+    // issue has no words left to match.
+    for (i, issue) in corpus.issues.iter().enumerate() {
+        if issue.status == IssueStatus::Forgotten || !keep_issue(issue) {
+            continue;
+        }
+        let mut text = format!(
+            "{} {} {} {} {}",
+            issue.title,
+            issue.signature.join(" "),
+            issue.cause,
+            issue.fix,
+            issue
+                .topics
+                .as_slice()
+                .iter()
+                .map(Topic::as_str)
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        for o in &issue.occurrences {
+            text.push_str(&format!(
+                " {} {} {} {} {}",
+                o.summary,
+                o.request,
+                o.error_lines.join(" "),
+                o.cause,
+                o.fix
+            ));
+        }
+        docs.push(Doc {
+            record: issue.id.to_string(),
+            tokens: tokens(&text),
+            weight: 1.0,
+            order: 1,
+            at: issue.updated,
+            hidden: false,
+            item: issue_item(issue),
+            origin: Origin::Issue(i),
+        });
+    }
     docs
 }
 
@@ -1215,6 +1279,7 @@ fn retrieve<T: Tasks + ?Sized>(question: &Question, corpus: Corpus<'_>, tasks: &
         corpus,
         |e| scope.keeps_entry(e),
         |r, _| scope.keeps_session(r),
+        |i| scope.keeps_issue(i),
     );
     if scope.keeps_tasks() {
         let query_text: Vec<&str> = query.iter().map(String::as_str).collect();
@@ -1357,6 +1422,11 @@ fn record_meta<'a>(corpus: Corpus<'a>, cite: &str) -> (Option<&'a str>, Vec<&'a 
         return (
             Some(e.project.as_str()),
             e.topics.as_slice().iter().collect(),
+        );
+    } else if let Some(i) = corpus.issues.iter().find(|i| i.id.to_string() == cite) {
+        return (
+            i.occurrences.first().map(|o| o.project.as_str()),
+            i.topics.as_slice().iter().collect(),
         );
     }
     (None, Vec::new())
@@ -1554,6 +1624,68 @@ fn segment_item(record: &SessionRecord, segment: &Segment) -> EvidenceItem {
         date: day(segment.to),
         text: format!("{}\n{}", segment.heading, segment.text),
         quote: None,
+    }
+}
+
+/// Whose words an issue is in `ask` evidence and `record search` snippets
+/// (2_design.md §11.4): the agent's account, with Daniel's quoted request.
+#[must_use]
+pub fn issue_whose(issue: &Issue) -> String {
+    format!("agent account ({})", issue.author.name)
+}
+
+/// How many occurrences, newest first, an issue's evidence text carries;
+/// every occurrence is ranked.
+const ISSUE_EVIDENCE_OCCURRENCES: usize = 3;
+
+/// An issue as evidence, cited `issue-<n>`: the agent's account, with
+/// Daniel's typed requests word for word as its `quote`, so a claim quoting
+/// one is his and any other claim is the agent's. Error lines are labelled
+/// the agent's evidence.
+fn issue_item(issue: &Issue) -> EvidenceItem {
+    let mut text = format!(
+        "{}\nSignature: {}\nCause: {}\nFix: {}",
+        issue.title,
+        issue.signature.join(" | "),
+        issue.cause,
+        issue.fix
+    );
+    for o in issue.occurrences.iter().take(ISSUE_EVIDENCE_OCCURRENCES) {
+        let recurred = if o.recurred {
+            "; recurred after fix"
+        } else {
+            ""
+        };
+        text.push_str(&format!(
+            "\nOccurrence {} ({}, {}, {}{recurred}): {}\nDaniel asked: \"{}\"",
+            o.n,
+            crate::record::DateRange::day(o.date),
+            o.host,
+            o.project,
+            o.summary,
+            o.request
+        ));
+        if !o.error_lines.is_empty() {
+            text.push_str(&format!(
+                "\nError lines (agent evidence): {}",
+                o.error_lines.join(" | ")
+            ));
+        }
+        text.push_str(&format!("\nCause: {}\nFix: {}", o.cause, o.fix));
+    }
+    let requests: Vec<&str> = issue
+        .occurrences
+        .iter()
+        .map(|o| o.request.as_str())
+        .collect();
+    EvidenceItem {
+        cite: issue.id.to_string(),
+        kind: "issue",
+        whose: issue_whose(issue),
+        status: issue.status.as_str().to_owned(),
+        date: day(issue.updated),
+        text,
+        quote: (!requests.is_empty()).then(|| requests.join("\n")),
     }
 }
 

@@ -1,0 +1,29 @@
+Record and search issues: incidents that recur across projects, and what fixed them
+
+Usage: scribe issue [OPTIONS] <COMMAND>
+
+Commands:
+  add     Record a new issue with its first occurrence (no approval; Daniel forgets what is wrong)
+  occur   Add an occurrence to an issue; one on a resolved issue reopens it
+  update  Change an issue's cause, fix or status
+  move    Move a wrongly matched occurrence to another issue or a new one
+  search  Rank issues for words, best first, with no model call
+  show    Show one issue in full: its cause, fix and every occurrence
+  list    List issues, most recently updated first
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Global options:
+      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json                 Shorthand for --format json
+
+Examples:
+  scribe issue search 'HTTP 429 secondary rate limit'
+  scribe issue list --status open
+  scribe issue show <issue-id>
+  scribe issue occur <issue-id> --author opus --related session:<id> --request '<his words>' --summary '<what happened>'

@@ -146,6 +146,9 @@ pub enum Refusal {
     MalformedMarker,
     /// [`GLOBAL_OPENER`] on a line that does not record an entry.
     MarkerNotOnEntry,
+    /// The tag word is `issue`, which names issue records, not a tag
+    /// (2_design.md §11.4).
+    ReservedTag,
 }
 
 impl Refusal {
@@ -161,6 +164,7 @@ impl Refusal {
             | Self::MarkerNotOnEntry => "unparsed_instruction",
             Self::Unsupported { .. } => "unsupported_instruction",
             Self::NoReferent => "no_referent",
+            Self::ReservedTag => "reserved_tag",
         }
     }
 }
@@ -193,6 +197,12 @@ impl fmt::Display for Refusal {
             Self::MarkerNotOnEntry => write!(
                 f,
                 "the global marker records an entry, and this line does not; use {FORMS}"
+            ),
+            Self::ReservedTag => write!(
+                f,
+                "\"{}\" is reserved for issue records, not entries; use {}",
+                crate::issue::ISSUE_TAG,
+                crate::issue::ISSUE_COMMANDS
             ),
         }
     }
@@ -253,6 +263,17 @@ pub struct Settling {
     pub action: Settle,
 }
 
+/// A `#scribe forget issue-<n>[#<m>]` line.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ForgetIssue {
+    /// The line's number within the prompt, from 1.
+    pub line: u32,
+    /// The whole line exactly as typed.
+    pub said: String,
+    /// The issue, and the occurrence when one is named.
+    pub target: crate::issue::IssueRef,
+}
+
 /// The result for one `#scribe` line.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Parsed {
@@ -262,6 +283,9 @@ pub enum Parsed {
     Referent(Referent),
     /// It settles a proposal or changes an entry's status (form 4).
     Settle(Settling),
+    /// `#scribe forget issue-<n>` or `issue-<n>#<m>`: blank an issue or
+    /// remove one occurrence (2_design.md §11.4).
+    ForgetIssue(ForgetIssue),
     /// It was refused.
     Refused(Refused),
 }
@@ -274,6 +298,7 @@ impl Parsed {
             Self::Instruction(i) => i.line,
             Self::Referent(r) => r.line,
             Self::Settle(s) => s.line,
+            Self::ForgetIssue(f) => f.line,
             Self::Refused(r) => r.line,
         }
     }
@@ -524,6 +549,15 @@ fn parse(line: u32, said: &str, tags: &TagTable) -> Parsed {
         } else {
             ""
         };
+        if verb == "forget"
+            && let Ok(target) = id.parse::<crate::issue::IssueRef>()
+        {
+            return Parsed::ForgetIssue(ForgetIssue {
+                line,
+                said: said.to_owned(),
+                target,
+            });
+        }
         let action = match verb.as_str() {
             "approve" | "reject" => id.parse::<ProposalId>().ok().map(|p| {
                 if verb == "approve" {
@@ -589,7 +623,13 @@ fn parse(line: u32, said: &str, tags: &TagTable) -> Parsed {
             if content.is_empty() {
                 return refuse(Refusal::Unparsed);
             }
+            if crate::issue::is_reserved_tag(head) {
+                return refuse(Refusal::ReservedTag);
+            }
             return match tags.resolve(head) {
+                Some(def) if crate::issue::is_reserved_tag(def.name.as_str()) => {
+                    refuse(Refusal::ReservedTag)
+                }
                 Some(def) => instruction(def.name.clone(), content),
                 None => refuse(unknown(head)),
             };
@@ -611,6 +651,9 @@ fn parse(line: u32, said: &str, tags: &TagTable) -> Parsed {
         return refuse(Refusal::Unparsed);
     }
     let content = &said[body[begin].start..body[prep - 1].end];
+    if crate::issue::is_reserved_tag(tag_word) {
+        return refuse(Refusal::ReservedTag);
+    }
     let Some(def) = tags.resolve(tag_word) else {
         return refuse(unknown(tag_word));
     };

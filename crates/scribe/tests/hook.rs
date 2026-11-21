@@ -875,6 +875,7 @@ fn the_audit_log_holds_ids_and_codes_never_what_was_said() {
                 "format",
                 "instruction_message",
                 "instruction_session",
+                "issue",
                 "status",
                 "target"
             ]

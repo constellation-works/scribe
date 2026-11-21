@@ -52,6 +52,14 @@ const HELP: &[(&str, &[&str])] = &[
     ("tag-update", &["tag", "update", "--help"]),
     ("tag-list", &["tag", "list", "--help"]),
     ("tag-show", &["tag", "show", "--help"]),
+    ("issue", &["issue", "--help"]),
+    ("issue-add", &["issue", "add", "--help"]),
+    ("issue-occur", &["issue", "occur", "--help"]),
+    ("issue-update", &["issue", "update", "--help"]),
+    ("issue-move", &["issue", "move", "--help"]),
+    ("issue-search", &["issue", "search", "--help"]),
+    ("issue-show", &["issue", "show", "--help"]),
+    ("issue-list", &["issue", "list", "--help"]),
     ("question", &["question", "--help"]),
     ("question-ask", &["question", "ask", "--help"]),
     ("hook", &["hook", "--help"]),
@@ -720,7 +728,7 @@ const CAPTURED: &str = "Daniel suggests caching the routing table per host so lo
 /// His words parking it.
 const PARKED: &str = "let's park it until the drains are quiet";
 
-/// One idea entry in the format the binary writes.
+/// One idea entry at format 16, the format that first carried `outcome`.
 #[allow(clippy::too_many_arguments)]
 fn idea_entry(
     id: &str,
@@ -925,4 +933,93 @@ fn without_age(out: &str) -> String {
         joined.push('\n');
     }
     joined
+}
+
+#[test]
+fn issue_shapes_match_goldens() {
+    use scribe_core::issue::{IssuePatch, IssueStatus, NewIssue, NewOccurrence};
+    use scribe_core::{Author, Label, Project, Redactor, Store, Topics};
+    let fx = Fixture::new();
+    let store = Store::open(fx.root());
+    let at = |h| time::macros::datetime!(2026-11-21 09:00 UTC) + time::Duration::hours(h);
+    let opus = || Author::agent("opus".parse().unwrap());
+    let redactor = Redactor::default();
+    let occurrence = |request: &str, project: &str, error_lines: Vec<String>| NewOccurrence {
+        date: at(0).date(),
+        host: Label::sanitized("dk-server-1", "host"),
+        project: Project::sanitized(project),
+        session: "7e2d4c1a-9b3f-4e8d-a6c5-1f0e2d3c4b5a".parse().unwrap(),
+        request_message: String::from("u-1"),
+        request: request.to_owned(),
+        summary: String::from("The drain stopped when the GitHub API refused pushes."),
+        error_lines,
+        cause: None,
+        fix: Some(String::from("Paused the drain for an hour")),
+        links: vec!["task:ORB-1".parse().unwrap()],
+    };
+    store
+        .add_issue(
+            &NewIssue {
+                title: String::from("GitHub API secondary rate limit during drains"),
+                signature: vec![
+                    String::from("HTTP 429"),
+                    String::from("secondary rate limit"),
+                ],
+                topics: Topics::try_from(vec!["github".parse().unwrap()]).unwrap(),
+                cause: None,
+                fix: None,
+            },
+            occurrence(
+                "can you investigate why the drain keeps failing",
+                "orbit",
+                vec![String::from(
+                    "HTTP 429: You have exceeded a secondary rate limit",
+                )],
+            ),
+            opus(),
+            at(0),
+            &redactor,
+        )
+        .unwrap();
+    store
+        .update_issue(
+            "issue-1",
+            &IssuePatch {
+                cause: Some(String::from("Parallel pushes from one token")),
+                fix: Some(String::from("Serialize pushes per token")),
+                status: Some(IssueStatus::Resolved),
+            },
+            opus(),
+            at(1),
+            &redactor,
+        )
+        .unwrap();
+    store
+        .occur_issue(
+            "issue-1",
+            occurrence(
+                "the drain is failing again, look into it",
+                "scribe",
+                Vec::new(),
+            ),
+            opus(),
+            at(2),
+            &redactor,
+        )
+        .unwrap();
+    let mut failures = Vec::new();
+    for (name, args) in [
+        ("issue-list", vec!["issue", "list"]),
+        ("issue-show", vec!["issue", "show", "issue-1"]),
+        ("issue-search", vec!["issue", "search", "rate limit"]),
+    ] {
+        for (suffix, mode) in MODES {
+            let out = fx.ok(&[args.as_slice(), *mode].concat());
+            failures.extend(check(
+                &format!("output/{name}.{suffix}"),
+                &text(&out.stdout),
+            ));
+        }
+    }
+    report(&failures);
 }

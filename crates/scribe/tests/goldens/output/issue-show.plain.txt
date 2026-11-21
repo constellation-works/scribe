@@ -1,0 +1,13 @@
+issue-1	open	2	orbit,scribe	dk-server-1	2026-11-21T11:00:00Z	agent:opus	GitHub API secondary rate limit during drains
+signature	HTTP 429 | secondary rate limit
+cause	Parallel pushes from one token
+fix	Serialize pushes per token
+occurrence	2	2026-11-21	dk-server-1	scribe	7e2d4c1a-9b3f-4e8d-a6c5-1f0e2d3c4b5a	recurred after fix	The drain stopped when the GitHub API refused pushes.
+daniel_asked	2	the drain is failing again, look into it
+occurrence_cause	2	cause not found
+occurrence_fix	2	Paused the drain for an hour
+occurrence	1	2026-11-21	dk-server-1	orbit	7e2d4c1a-9b3f-4e8d-a6c5-1f0e2d3c4b5a	-	The drain stopped when the GitHub API refused pushes.
+daniel_asked	1	can you investigate why the drain keeps failing
+agent_evidence	1	HTTP 429: You have exceeded a secondary rate limit
+occurrence_cause	1	cause not found
+occurrence_fix	1	Paused the drain for an hour

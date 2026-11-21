@@ -3,7 +3,7 @@ Search every stored record for words, ranked as question ask ranks them, with no
 Usage: scribe record [OPTIONS] <COMMAND>
 
 Commands:
-  search  Rank entries, session headers and segments for words, best first, with no model call
+  search  Rank entries, session headers, segments and issues for words, best first, with no model call
   help    Print this message or the help of the given subcommand(s)
 
 Options:

@@ -41,7 +41,7 @@ use time::OffsetDateTime;
 
 /// The newest store format: this build reads formats 1 to `FORMAT` of every
 /// document and would write `FORMAT`.
-pub(super) const FORMAT: u32 = 16;
+pub(super) const FORMAT: u32 = 17;
 
 /// Which document an upgrade step is applied to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,7 +84,20 @@ pub(super) const UPGRADES: &[Upgrade] = &[
     claim_statement,
     instructed_approval,
     idea_outcome,
+    issue_kind,
 ];
+
+/// Format 16 -> 17 changes no stored value. It adds a record kind: the
+/// `issues/` directory of `issue` records (2_design.md §11.4), which have
+/// no older form. An issue file carries format 17, so a format-16 build
+/// that reads one refuses it as too new rather than as corrupt; every other
+/// document is unchanged.
+fn issue_kind(
+    _document: Document,
+    value: serde_json::Value,
+) -> serde_json::Result<serde_json::Value> {
+    Ok(value)
+}
 
 /// Format 14 -> 15 changes no stored value. It admits two shapes an agent's
 /// approval of a claim on Daniel's checked instruction writes (2_design.md
@@ -1301,7 +1314,7 @@ impl fmt::Display for ShapeError {
 
 impl std::error::Error for ShapeError {}
 
-fn shape(path: &Path, message: impl Into<String>) -> Error {
+pub(super) fn shape(path: &Path, message: impl Into<String>) -> Error {
     Error::corrupt(path, ShapeError(message.into()))
 }
 
@@ -1367,7 +1380,11 @@ pub(super) fn split_frontmatter<'a>(path: &Path, bytes: &'a [u8]) -> Result<(&'a
 
 /// Parse frontmatter: check `format` and `kind`, returning the file's format
 /// and the remaining mapping as a YAML value.
-fn parse_frontmatter(path: &Path, front: &str, kind: &str) -> Result<(u32, yaml_serde::Value)> {
+pub(super) fn parse_frontmatter(
+    path: &Path,
+    front: &str,
+    kind: &str,
+) -> Result<(u32, yaml_serde::Value)> {
     let mut map: yaml_serde::Mapping =
         yaml_serde::from_str(front).map_err(|e| Error::corrupt(path, e))?;
     let probe = yaml_serde::from_value::<FormatProbe>(yaml_serde::Value::Mapping(map.clone()))
@@ -1951,9 +1968,10 @@ fn decode_json<T: DeserializeOwned>(path: &Path, bytes: &[u8], document: Documen
                 return Err(shape(path, "unknown variant `covered`"));
             }
         }
-        // Format 16 changed only entries, so a format-15 proposals.json has
-        // the current shape.
-        Document::Proposals if from == 15 => {
+        // Formats 16 and 17 changed no proposal (16 changed only entries, 17
+        // added a record kind), so a format-15 or format-16 proposals.json
+        // has the current shape.
+        Document::Proposals if from == 15 || from == 16 => {
             serde_json::from_slice::<ProposalsDocument>(bytes)
                 .map_err(|e| Error::corrupt(path, e))?;
         }

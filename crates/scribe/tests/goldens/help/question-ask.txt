@@ -22,6 +22,7 @@ Options:
           Possible values:
           - entry:   Entries only
           - session: Session records only
+          - issue:   Issue records only
 
       --since <DATE>
           Only records changed on or after this day, YYYY-MM-DD [default: any]

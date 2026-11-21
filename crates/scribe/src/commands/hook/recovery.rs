@@ -39,6 +39,7 @@ pub(super) fn run(
             reply.outcomes.push(crate::output::HookOutcome {
                 target: Some(format!("session:{session}")),
                 error_code: Some("provenance_failed"),
+                issue: None,
             });
             return Ok(reply);
         }
@@ -132,6 +133,7 @@ pub(super) fn run(
                 reply.outcomes.push(crate::output::HookOutcome {
                     target: Some(format!("session:{session}")),
                     error_code: Some("hook_payload_invalid"),
+                    issue: None,
                 });
                 continue;
             }
@@ -149,6 +151,7 @@ pub(super) fn run(
             reply.outcomes.push(crate::output::HookOutcome {
                 target: Some(format!("session:{session}")),
                 error_code: Some("hook_payload_invalid"),
+                issue: None,
             });
             continue;
         }

@@ -486,8 +486,11 @@ fn parse_question(input: AskInput) -> Result<Question, String> {
         None => None,
         Some("entry") => Some(RecordKind::Entry),
         Some("session") => Some(RecordKind::Session),
+        Some("issue") => Some(RecordKind::Issue),
         Some(other) => {
-            return Err(format!("scope.kind: {other:?} is not entry or session"));
+            return Err(format!(
+                "scope.kind: {other:?} is not entry, session or issue"
+            ));
         }
     };
     let since = input
