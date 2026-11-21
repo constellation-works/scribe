@@ -658,9 +658,11 @@ in that session (`memory_not_now` for another section,
 reason; `memory forget <id>[#<n>] --author <name> --confirm` blanks its
 text for good, or one occurrence's quote (without `--confirm`,
 `confirm_required`); forgetting a whole item also blanks the items merged
-into it and the other side of a promotion. Each prints the item and writes
-one audit line naming `memory:<id>`; the same write again changes nothing
-and still prints it.
+into it, directly or through another merged item, and every other side of
+a promotion (the `now` item, the milestone and rule (a)'s new profile item
+`profile_to`), leaving a superseded profile item. Each prints the item
+and writes one audit line naming `memory:<id>`; the same write again
+changes nothing and still prints it.
 
 (Format 20.) `memory rules` prints the promotion rules and page windows in
 effect, read-only and unaudited. JSON is `{"rules": [{"rule", "value",
