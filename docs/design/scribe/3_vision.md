@@ -1,7 +1,7 @@
 ---
 title: scribe — Vision
 owner: claude
-last_updated: 2026-11-10
+last_updated: 2026-11-21
 last_validated: 2026-11-02
 status: Draft
 feature: scribe
@@ -11,7 +11,7 @@ summary: Where the scribe plugin may go after its slices — more providers, cro
 tags: [scribe]
 paths: ["crates/**", "plugin/**"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21744, ORB-23892]
+related_artifacts: [ORB-21747, ORB-21744, ORB-23892, ORB-26219]
 ---
 
 # scribe — Vision
@@ -58,6 +58,18 @@ plan in [2_design.md §10](./2_design.md#10-slice-plan).
    sessions only. If box workers need scribe, does that wait for a
    cross-host store (question 2), or does the skill learn to reach the Mac
    over SSH?
+9. **Memory for a user who lives elsewhere.** The memory of
+   [2_design.md §13](./2_design.md#13-memory-profile-projects-working-now-and-milestones-proposed)
+   is built only from sessions scribe reads. Daniel, 2026-11-21, of a
+   regular user: "She is bounded to chatGPT and resistant to change because
+   of memory." Three routes are named here and none is designed: **importing
+   a ChatGPT export** into sessions and memory items; **an app connector**
+   that reads such a provider's conversations as they happen; and
+   **always-on capture with an off-the-record switch**, the reverse of
+   today's `/scribe on`. The first test before any of them: import one
+   export with its owner's consent, build the memory page from it, and
+   have the owner read the page. Each would need its own provenance story,
+   since none of these turns is typed through a scribe hook.
 
 ## 2. Prior Work
 
@@ -83,8 +95,21 @@ the model, has checked against the record.
 
 ## 4. Deliberately Out of Scope
 
-- Capturing anything Daniel did not mark: no inference of preferences from
-  behaviour, no tag entries from session passes.
+- Binding anything Daniel did not mark: no inference of **preferences**
+  from behaviour, and no tag entries from session passes; a preference
+  binds agents only once he approves it.
+
+  Amended 2026-11-21 ([ORB-26219]) for **descriptive memory only**: the
+  session pass writes memory items (`profile`, `projects`, `working`, `now`,
+  `milestones`) from his typed turns in sessions he switched on, with his
+  verbatim quotes and no approval step
+  ([2_design.md §13](./2_design.md#13-memory-profile-projects-working-now-and-milestones-proposed)).
+  Daniel, chief's chat, 2026-11-21: "I think we should expand scribe's role
+  to manage memory system … What we are lacking is a holistic memory, e.g.
+  user profile, interests, projects, working preferences, etc." A memory
+  item describes; it never binds an agent. A recurring `working` item
+  reaches `preferences` only as a candidate he approves
+  ([4_decisions.md](./4_decisions.md#scribe-keeps-a-descriptive-memory-the-pass-writes-without-approval)).
 - A desktop or web UI. The CLI, the SessionStart line and, from S13, the
   tmux popup are the views ([4_decisions.md](./4_decisions.md#humans-browse-scribe-in-a-tmux-popup-over-fzf)).
 - Scanning or cataloging sessions on scribe's own initiative. Backfill
@@ -109,5 +134,6 @@ the model, has checked against the record.
 
 - [ORB-21747] — designed the standalone scribe plugin.
 - [ORB-21744] — the orbit-office scribe redesign this plugin supersedes (archived).
+- [ORB-26219] — designed the descriptive memory and amended §4 for it.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.

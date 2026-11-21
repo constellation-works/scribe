@@ -7,11 +7,11 @@ status: Draft
 feature: scribe
 doc_role: decisions
 type: design
-summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, why action tags are config-marked with a capped window, a cancel window, pickups, a stuck line, a CLI quote check and SSH reads from the owner host, plus the engineering decisions carried over from the Rust CLI template.
+summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, why action tags are config-marked with a capped window, a cancel window, pickups, a stuck line, a CLI quote check and SSH reads from the owner host, why scribe keeps a descriptive memory the session pass writes without approval, plus the engineering decisions carried over from the Rust CLI template.
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219]
 ---
 
 # scribe — Decisions
@@ -2943,3 +2943,159 @@ Alternatives considered:
   can write a transcript file as him can forge an instruction (an
   accident guard, STD-05@1 §R5, not a boundary); the aide must run on the
   Mac, where the store and its transcript are.
+
+## scribe keeps a descriptive memory the pass writes without approval
+
+**Recorded:** 2026-11-21 · [ORB-26219] · **Overridable by Daniel** · proposed, not built
+**Reverses:** [3_vision.md §4](./3_vision.md#4-deliberately-out-of-scope)'s "no inference of preferences from behaviour", for descriptive memory only
+**Paths:** `crates/scribe-core/src/pass/` (the pass's model output), `crates/scribe-core/src/consistency.rs`, `crates/scribe/src/commands/hook/` (`session-start`) — design §13
+
+### Context
+
+Daniel, chief's chat, 2026-11-21 (ws_constellation ORB-26194, relayed by
+the chief): "I think we should expand scribe's role to manage memory
+system. we already keep track of sessions, preferences, and issues (these
+are the main defaults - rest are my additions). What we are lacking is a
+holistic memory, e.g. user profile, interests, projects, working
+preferences, etc. we used to do this back in the days, checkout
+knowledgebase/almanac/about-me. can you propose a design". On the chief's
+four sections: "let's just include profile, projects, and working."
+
+Then, of a regular user: "the scribe design was been focused too much on
+my personal use. I think now thinking from the perspective of a regular
+user like my wife. She is bounded to chatGPT and resistant to change
+because of memory." "memory --- provides a holistic overview of the user
+-- akin to how a human builds a \"sense\" of another person; preferences,
+projects, recent events/sessions (list last n title and session_id?)".
+"Say, my wife had a sad event yesterday and is in solemn mood; humans will
+adjust their interaction based on that … Or if there is a big exciting
+event coming up, like a wedding, asking about how that's going … would
+feel more personalized." On the `now` lifecycle: "I would say don't fade
+it out until the due date. … It feels nice when other people remember
+details about you (not me really but for my wife this is true) even after
+the event (not reference it but at least be able to recall)." "I would say
+session is a dump of history. and we add \"events\" or something, for big
+life events like getting married, having a child, graduating, promotion,
+moving to a new city, etc. and we can promote some of \"now\"." "yes
+milestones sounds good." On sending older milestones through `ask`:
+"should we still restrict to \"ask\" for older sessions? I don't see the
+added benefit." To filing each step: "Yes, file it", "Yes, add it".
+
+What the old `about-me` got wrong, read by the chief on 2026-11-21: it was
+run by hand (last 2026-07-08) and went stale; it was whole-file prose, so
+no claim had its own source or date and each pass rewrote everything;
+stable facts and current priorities shared a file; nothing injected it at
+session start. Measured: 60 Claude auto-memory notes on this host
+(2026-11-20) against 2 scribe `preferences` entries.
+
+### Decision
+
+1. **One record kind, `memory`, with five fixed sections**: `profile`,
+   `projects`, `working`, `now`, `milestones`. An item is a statement
+   with occurrences, each a verbatim quote of the user with its date and
+   session, the shape of §11.4's issues.
+2. **Writing is implicit and scribe's.** The session pass writes at most
+   three items per pass from the user's typed turns of an on session, each
+   quote checked verbatim; the author is `{kind: scribe, name:
+   session-pass}`, never Daniel; there is no approval step.
+3. **Memory describes; preferences bind.** A `working` item is never a
+   rule; one that recurs in three sessions is offered as a `preferences`
+   candidate he approves.
+4. **Time is derived, not written.** Decay (90 days, `projects` and
+   `working`; `profile` never decays) and the `now` windows (until its date
+   and 14 days after; 7 days after the latest mention when undated) are
+   computed when read, so the read-only `SessionStart` hook needs no
+   routine.
+5. **`now` stores what was said, never a mood**; the `acknowledged` mark
+   limits unprompted mentions and never removes an item from the page.
+6. **`milestones` are permanent, all on the page**, promoted from `now` by
+   three editable defaults (a profile fact changes; recurs in three
+   sessions; the user says so).
+7. **The page goes to the agent of an interactive session only**, about
+   2,400 characters, with the last 5 sessions as the index.
+8. **Sensitive content** is refused (credentials, finance, health detail,
+   third parties' identifying details) except a stated personal event in
+   `now`, kept with the short window, promoted only by recurrence or his
+   word, and removable with `#scribe forget`.
+9. **Every section is switchable alone, and personal life is a setting
+   off by default.** `[memory.sections]` switches each of the five; with
+   `[memory] personal = false`, the shipped default and Daniel's work
+   store, no personal event or household fact is written in any section.
+   Daniel approved `work` and `personal` presets on 2026-11-21 ("Yes, add
+   presets"), designed in [ORB-26240] after this decision; this one only
+   guarantees the settings they set.
+
+Alternatives considered:
+
+- **Keep Claude auto-memory only.** Cost: it is Claude's alone (Codex and
+  other providers read none of the 60 notes), each note is prose with no
+  quote, source session or date, nothing consolidates or decays them, and
+  a regular user of another provider has nothing.
+- **Revive the hand-run `about-me`.** Cost: it went four months stale
+  because a person had to run the distiller; whole-file prose cannot go
+  stale one claim at a time, every run rewrites the files, and nothing
+  reads it at session start.
+- **Approve each item, as preferences are.** Cost: a queue the 20-open cap
+  already chokes (§11), for statements that bind nothing; against his
+  principle of implicit value (1_overview.md, 2026-11-20).
+- **Memory as entries under a `memory` tag.** Cost: an entry is one
+  statement, so a repeat would rewrite it or duplicate it, and recurrence,
+  the basis of promotion and of the preference proposal, could not be
+  counted (the reason issues are their own kind).
+- **One record kind per section.** Cost: five shapes, five sets of verbs
+  and checks for items that differ only in their lifetime.
+- **Store the inferred mood** ("is in a solemn mood"). Cost: a diagnosis
+  scribe cannot check against his words, which outlives the day it was
+  true and is the most sensitive thing it could keep.
+- **Fade a `now` item a few days after it is said**, or remove it once
+  raised (the chief's first proposal). Cost: Daniel rejected both: "don't
+  fade it out until the due date".
+- **Send milestones older than a year through `ask`.** Cost: Daniel saw
+  no benefit; the list is a handful a year, so the page holds it.
+- **Inject the page into every session**, headless runs included. Cost:
+  personal events in every Orbit drain's context, for agents that never
+  converse with him.
+- **Keep personal events whenever they are typed**, with no `personal`
+  setting. Cost: Daniel's work store, the shipped default, would fold in
+  his family's events, which the presets he approved keep apart.
+- **Decay `profile` like the others** (the chief's proposal applied 90
+  days to every section). Cost: stable facts are rarely restated, so the
+  page would lose who he is while keeping what he did lately.
+
+Differences from the chief's proposal on ORB-26219, each named: the page
+budget is 2,400 characters, not 1,500, because `now`, `milestones` and the
+sessions list were added after the estimate; the pass merges a repeat at
+once (`same_as` and a lexical guard) as well as in the weekly scan, since
+`now` items live for days and recurrence must count in time; `profile`
+does not decay; decay and windows are derived rather than written; a
+milestone may be written directly when rule (a) or (c) holds on the turn;
+sensitive events are flagged by a model-free word list as well as the
+model, are kept only in `now` or `milestones` and are never promoted by
+rule (a); a `now` statement with a mood word its quote lacks is refused;
+the acknowledged mark is set by the agent's `memory ack` or by the user
+raising the item, and a dated item is "not yet raised" again once its
+date passes, which gives the follow-up; statements name third parties by
+relation, not name; the page is injected only into interactive sessions;
+an agent may retire or forget an item without his instruction check,
+since items are scribe-authored; personal life is kept only with
+`[memory] personal` on, off by default (the captain's steering of
+2026-11-21, relaying the approved presets).
+
+### Consequences
+
+- Every interactive session starts with about 600 tokens of memory the
+  agent reads; Daniel sees what is kept with `scribe memory show`.
+- One store format step adds the `memory/` directory and kind; a
+  `working` promotion opens a `preferences` candidate within the 20-open
+  cap.
+- `ask` and the attribution check read the user's words only from
+  occurrence quotes, never from statements.
+- Not built until seen: importing `about-me` or Claude auto-memory,
+  export to files, an `interests` section, hand-written items, a
+  milestone cap, an edit verb, and the ChatGPT import, app connector and
+  always-on capture of 3_vision.md §1.
+- Cost: what the page says about him is scribe's sentence, chosen and
+  sectioned by a model without his review, so a wrong statement shapes
+  agents' behaviour until he retires it; the health and third-party gates
+  beyond the word lists are model judgement; a personal event he typed in
+  an on session is kept, unless forgotten, as long as the store.
