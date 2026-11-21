@@ -5,8 +5,8 @@
 use crate::models::{EntryCandidateAnswer, FiringTurn, PassMessage, SessionRequest, TagCriteria};
 use crate::tag::{TagDef, TagTable};
 use crate::{
-    Admitted, Cite, Entry, EntryCandidate, EntryStatus, Project, Proposal, SessionRecord, Speaker,
-    TagName, transcript, trigger, verbatim,
+    Admitted, Cite, Entry, EntryCandidate, EntryStatus, Project, Proposal, STATEMENT_CHARS,
+    SUBJECT_CHARS, SessionRecord, Speaker, TagName, transcript, trigger, verbatim,
 };
 use std::collections::BTreeSet;
 use time::OffsetDateTime;
@@ -93,15 +93,30 @@ pub(super) fn check(
                     && message.role == Speaker::User
                     && own_span(&message.text, &answer.quote)
             });
+        // A claim names what it is about and states it so it stands
+        // alone (2_design.md §11.1): an empty subject or statement, or one
+        // past its bound, opens nothing.
+        let statement = answer.statement.trim().to_owned();
+        let subject = answer.subject.trim().to_owned();
         if answer.quote.chars().count() > 400
             || answer.message.chars().count() > 128
+            || statement.is_empty()
+            || statement.chars().count() > STATEMENT_CHARS
+            || subject.is_empty()
+            || subject.chars().count() > SUBJECT_CHARS
             || !fits
-            || checked
-                .iter()
-                .any(|prior| covers_statement(&prior.quote, &answer.quote))
+            || checked.iter().any(|prior| {
+                claim_covers(
+                    &[prior.quote.as_str(), prior.statement.as_str()],
+                    &[answer.quote.as_str(), statement.as_str()],
+                )
+            })
         {
             continue;
         }
+        let mut answer = answer;
+        answer.statement = statement;
+        answer.subject = subject;
         checked.push(answer);
     }
     checked
@@ -182,6 +197,9 @@ pub fn candidate_drafts(
             if !own_span(&turn.own, &answer.quote) || !raw.contains(&answer.quote) {
                 return None;
             }
+            if answer.statement.trim().is_empty() || answer.subject.trim().is_empty() {
+                return None;
+            }
             let tag: TagName = answer.tag.parse().ok()?;
             let admitted = admission(tags, &tag, &turn.own)?;
             let start = raw.find(&answer.quote)?;
@@ -192,6 +210,9 @@ pub fn candidate_drafts(
                     tag,
                     role: Speaker::User,
                     quote: answer.quote.clone(),
+                    statement: Some(answer.statement.trim().to_owned())
+                        .filter(|text| !text.is_empty()),
+                    subject: Some(answer.subject.trim().to_owned()).filter(|text| !text.is_empty()),
                     evidence: None,
                     cite: Cite {
                         session: record.id.clone(),
@@ -412,6 +433,64 @@ pub(crate) fn covering_entry<'a>(
         })
 }
 
+/// Whether any of the `existing` texts already says any of the `new`
+/// ones, by [`covers_statement`]. A pass claim says two things, Daniel's
+/// quote and scribe's statement of it, and an approved one keeps both
+/// (content and `quote`), so the duplicate checks compare every pair
+/// (2_design.md §11.1).
+#[must_use]
+pub(crate) fn claim_covers(existing: &[&str], new: &[&str]) -> bool {
+    existing
+        .iter()
+        .any(|old| new.iter().any(|text| covers_statement(old, text)))
+}
+
+/// What an entry says, for the claim duplicate checks: its content and, for
+/// an approved pass statement, Daniel's quote beside it.
+pub(crate) fn entry_says(entry: &Entry) -> Vec<&str> {
+    let mut texts = vec![entry.content.as_str()];
+    if entry.stated_by.is_some()
+        && let Some(quote) = &entry.quote
+    {
+        texts.push(quote);
+    }
+    texts
+}
+
+/// What a candidate says: Daniel's quote and, when the pass gave one,
+/// its statement.
+pub(crate) fn candidate_says(candidate: &EntryCandidate) -> Vec<&str> {
+    let mut texts = vec![candidate.quote.as_str()];
+    if let Some(statement) = &candidate.statement {
+        texts.push(statement);
+    }
+    texts
+}
+
+/// The oldest active entry of the candidate's tag and project that already
+/// says its quote or its statement ([`claim_covers`]), if any: the shared
+/// check approval runs before it writes the candidate's entry.
+#[must_use]
+pub(crate) fn covering_claim<'a>(
+    entries: &'a [Entry],
+    candidate: &EntryCandidate,
+) -> Option<&'a Entry> {
+    let new = candidate_says(candidate);
+    entries
+        .iter()
+        .filter(|entry| {
+            entry.status == EntryStatus::Active
+                && entry.tag == candidate.tag
+                && entry.project == candidate.project
+        })
+        .filter(|entry| claim_covers(&entry_says(entry), &new))
+        .min_by(|left, right| {
+            left.created
+                .cmp(&right.created)
+                .then_with(|| left.id.cmp(&right.id))
+        })
+}
+
 /// Relevant existing statements, at most 6,000 value characters (400 each).
 /// All entries remain available to the deterministic store check, uncapped.
 #[must_use]
@@ -432,7 +511,7 @@ pub fn candidate_exclusions(
         proposals
             .iter()
             .filter_map(|p| p.candidate.as_ref())
-            .map(|c| c.quote.as_str()),
+            .map(|c| c.statement.as_deref().unwrap_or(&c.quote)),
     );
     let mut ranked: Vec<_> = statements
         .map(|text| (words(text).intersection(&query).count(), text))

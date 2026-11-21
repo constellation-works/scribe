@@ -680,6 +680,8 @@ pub fn settle(
                     proposal.reason.clear();
                     if let Some(candidate) = &mut proposal.candidate {
                         candidate.quote.clear();
+                        candidate.statement = None;
+                        candidate.subject = None;
                         candidate.evidence = None;
                         if let Some(admitted) = &mut candidate.admitted {
                             admitted.matched.clear();
@@ -720,13 +722,7 @@ fn approve(
     }
     if proposal.kind == ProposalKind::Candidate {
         let covered_by = proposal.candidate.as_ref().and_then(|candidate| {
-            crate::pass::covering_entry(
-                entries,
-                &candidate.quote,
-                &candidate.tag,
-                &candidate.project,
-            )
-            .map(|entry| entry.id.clone())
+            crate::pass::covering_claim(entries, candidate).map(|entry| entry.id.clone())
         });
         if let Some(by) = covered_by {
             proposal.state = ProposalState::Rejected;

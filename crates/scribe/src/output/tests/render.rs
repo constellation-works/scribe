@@ -51,6 +51,7 @@ fn entry(id: &str, content: &str) -> EntryPayload {
         admitted: None,
         approved_by: None,
         instruction: None,
+        stated_by: None,
         action: None,
     }
 }

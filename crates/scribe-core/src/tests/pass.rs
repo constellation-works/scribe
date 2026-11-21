@@ -907,3 +907,67 @@ fn covers_turn_ends_at_the_time_an_entry_left_active_not_its_last_update() {
         T0 - Duration::hours(2)
     ));
 }
+
+#[test]
+fn a_claim_needs_a_subject_and_a_statement_within_their_bounds() {
+    use crate::models::{EntryCandidateAnswer, FiringTurn};
+    let turns: Vec<Message> = (1..=4)
+        .map(|n| {
+            message(
+                &format!("u-{n}"),
+                Speaker::User,
+                &format!("I prefer option number {n} for every build we run."),
+            )
+        })
+        .collect();
+    let conversation = pass::conversation(&turns);
+    let mut request = pass::request(
+        "fake",
+        None,
+        Vec::new(),
+        pass::window(&conversation, None, WINDOW_CHARS),
+        Vec::new(),
+        Vec::new(),
+        false,
+    );
+    request.candidate_limit = 3;
+    request.candidate_turns = (1..=4)
+        .map(|n| FiringTurn {
+            message: format!("u-{n}"),
+            tag: String::from("preferences"),
+            trigger: String::from("I prefer"),
+            matched: String::from("I prefer"),
+        })
+        .collect();
+    let claim = |n: usize, statement: String, subject: String| EntryCandidateAnswer {
+        quote: format!("I prefer option number {n} for every build we run."),
+        message: format!("u-{n}"),
+        tag: String::from("preferences"),
+        statement,
+        subject,
+    };
+    let mut a = answer();
+    a.candidates = vec![
+        // At the bounds, padded: kept, trimmed.
+        claim(
+            1,
+            format!(" {} ", "s".repeat(300)),
+            format!(" {} ", "t".repeat(80)),
+        ),
+        // A statement past 300 characters.
+        claim(2, "s".repeat(301), String::from("the build")),
+        // No subject: the window does not name what the turn is about.
+        claim(
+            3,
+            String::from("Daniel prefers option 3."),
+            String::from("  "),
+        ),
+        // A subject past 80 characters.
+        claim(4, String::from("Daniel prefers option 4."), "t".repeat(81)),
+    ];
+    let distilled = pass::check(a, &conversation, &request).unwrap();
+    assert_eq!(distilled.candidates.len(), 1, "{:?}", distilled.candidates);
+    assert_eq!(distilled.candidates[0].message, "u-1");
+    assert_eq!(distilled.candidates[0].statement, "s".repeat(300));
+    assert_eq!(distilled.candidates[0].subject, "t".repeat(80));
+}

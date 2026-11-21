@@ -86,13 +86,16 @@ and grouped, never as a gate on the work:
 - **Entries.** When this session is on (the hook acknowledged `/scribe on`,
   or its `session show <id> --json` reports `on: true`), stop offering
   ready-to-type lines for preferences. The session pass now
-  proposes unmarked statements from the human's own turns, with the exact
-  quote, source turn and suggested memory tag. It offers
+  proposes unmarked statements from the human's own turns: scribe's own
+  one-sentence statement of the claim and its subject, the exact quote,
+  source turn and suggested memory tag. It offers
   at most three per session pass, with at most twenty open candidates in
   the store. Mention open candidates in the brief; the human keeps one
   with `#scribe approve <proposal-id>` or drops it for good with
   `#scribe reject <proposal-id>`. Approval writes the entry as theirs,
-  citing the original turn. If an active entry of the same tag and project
+  citing the original turn: its content is scribe's statement (`stated_by`
+  is `scribe:session-pass`) and its `quote` their words, so quote only the
+  `quote` as theirs. If an active entry of the same tag and project
   already covers that statement, approval writes nothing and names the
   existing entry. No entry exists before approval. Action tags
   you write yourself follow their separate rules below.

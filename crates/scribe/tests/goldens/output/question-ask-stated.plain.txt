@@ -1,0 +1,3 @@
+answered	Daniel: "keep the whole history in an append-only log" [preferences-2] scribe's statement of Daniel's turn: "session records keep the whole session's history" [preferences-2]
+claim	preferences-2	keep the whole history in an append-only log	Daniel
+claim	preferences-2	session records keep the whole session's history	scribe's statement of Daniel's turn

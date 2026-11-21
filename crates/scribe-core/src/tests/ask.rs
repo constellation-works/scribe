@@ -884,3 +884,78 @@ fn mixed_author_conflicts_keep_both_labels_and_a_nonempty_safe_answer() {
     );
     assert!(!result.answer.contains("Daniel says"));
 }
+
+/// An approved pass claim: scribe's statement as content, Daniel's
+/// verbatim words in `quote` (2_design.md §11.1).
+fn stated(id: &str, statement: &str, quote: &str) -> Entry {
+    let mut e = decision(id, 0, statement);
+    e.said = String::from("#scribe approve p-1");
+    e.content_from = ContentFrom::Message {
+        role: Speaker::User,
+        message: String::from("u-1"),
+        at: T0,
+    };
+    e.quote = Some(quote.to_owned());
+    e.stated_by = Some(crate::Author::session_pass());
+    e
+}
+
+const STATEMENT: &str =
+    "Daniel prefers that session records keep the whole history in an append-only log.";
+const HIS_WORDS: &str = "ok that makes sense, keep the whole history in an append-only log then.";
+
+#[test]
+fn a_stated_entry_is_scribes_statement_followed_by_daniels_labelled_words() {
+    let models = FakeModels::answering(answered(Vec::new()));
+    run(
+        &question("how do session records keep their history?"),
+        &[stated("preferences-1", STATEMENT, HIS_WORDS)],
+        &[],
+        &models,
+        &NoTasks,
+    );
+    let item = &models.calls.borrow()[0].evidence[0];
+    assert_eq!(item.whose, "scribe's statement of Daniel's turn");
+    assert_eq!(
+        item.text,
+        format!("{STATEMENT}\nDaniel's words: \"{HIS_WORDS}\"")
+    );
+    assert_eq!(item.quote.as_deref(), Some(HIS_WORDS));
+}
+
+#[test]
+fn a_claim_is_daniels_only_when_its_quote_is_in_his_words_never_in_the_statement() {
+    let mut reply = answered(vec![
+        claim(
+            "Daniel said to keep the history",
+            "Daniel prefers that session records keep the whole history",
+            "preferences-1",
+        ),
+        claim(
+            "Daniel said it",
+            "keep the whole history in an append-only log then",
+            "preferences-1",
+        ),
+    ]);
+    reply.answer = String::from("Daniel said session records keep the whole history.");
+    let models = FakeModels::answering(reply);
+    let result = run(
+        &question("how do session records keep their history?"),
+        &[stated("preferences-1", STATEMENT, HIS_WORDS)],
+        &[],
+        &models,
+        &NoTasks,
+    );
+    assert_eq!(result.claims.len(), 2, "both quotes are in the item");
+    // The span only in scribe's statement is never attributed to Daniel.
+    assert_eq!(result.claims[0].text, "scribe's statement of Daniel's turn");
+    // The span in his quoted words is his.
+    assert_eq!(result.claims[1].text, "Daniel");
+    // The answer is built from those labels, not the model's prose.
+    assert!(!result.answer.contains("Daniel said"), "{}", result.answer);
+    assert_eq!(
+        result.answer,
+        "scribe's statement of Daniel's turn: \"Daniel prefers that session records keep the whole history\" [preferences-1]\n\
+         Daniel: \"keep the whole history in an append-only log then\" [preferences-1]"
+    );
+}

@@ -42,6 +42,8 @@ fn proposal() -> Proposal {
             tag: "preferences".parse().unwrap(),
             role: crate::Speaker::User,
             quote: String::new(),
+            statement: Some(String::new()),
+            subject: Some(String::new()),
             evidence: Some(String::new()),
             cite: entry("preferences-1", T0).cite.unwrap(),
             project: crate::Project::sanitized("scribe"),

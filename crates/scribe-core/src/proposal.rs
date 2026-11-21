@@ -215,6 +215,11 @@ pub struct Admitted {
     pub criteria: Option<String>,
 }
 
+/// The longest statement a pass claim carries, in characters (2_design.md §11.1).
+pub const STATEMENT_CHARS: usize = 300;
+/// The longest subject a pass claim carries, in characters (2_design.md §11.1).
+pub const SUBJECT_CHARS: usize = 80;
+
 /// Checked words offered by a session pass: Daniel's unmarked statement, or
 /// an assistant turn's measured result or open item (format 10). Metadata
 /// is derived from the transcript and session, never supplied by the model.
@@ -231,6 +236,19 @@ pub struct EntryCandidate {
     pub role: Speaker,
     /// Exact span of that turn, at most 400 characters.
     pub quote: String,
+    /// The pass's statement of the claim (format 14, 2_design.md §11.1):
+    /// one or two sentences of at most [`STATEMENT_CHARS`] characters that
+    /// stand alone, naming the subject and stating the rule or idea, in
+    /// the session model's words, redacted. Approval makes it the entry's
+    /// content and `quote` the entry's `quote`. `null` for a candidate
+    /// opened before statements, which approves with the quote as content.
+    #[serde(deserialize_with = "nullable")]
+    pub statement: Option<String>,
+    /// What the statement is about, as a short noun phrase of at most
+    /// [`SUBJECT_CHARS`] characters (format 14), redacted; `null` beside a
+    /// `null` statement.
+    #[serde(deserialize_with = "nullable")]
+    pub subject: Option<String>,
     /// A finding candidate's evidence pointer, copied to the approved
     /// entry; `null` for other tags (the cited turn is the pointer).
     #[serde(deserialize_with = "nullable")]
@@ -294,6 +312,16 @@ impl Proposal {
             window: None,
         }
         .into_entry(self.older.clone());
+        if candidate.role == Speaker::User
+            && let Some(statement) = &candidate.statement
+        {
+            // Scribe's statement of Daniel's turn is the content; his
+            // verbatim words stay in `quote`, and the entry stays his
+            // (2_design.md §11.1).
+            entry.quote = Some(candidate.quote.clone());
+            entry.content.clone_from(statement);
+            entry.stated_by = Some(Author::session_pass());
+        }
         if candidate.role == Speaker::Assistant {
             // The assistant's own words, kept on Daniel's typed approval:
             // an agent-authored entry, never attributed to Daniel. A

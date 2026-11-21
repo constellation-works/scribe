@@ -194,6 +194,16 @@ fn hit(score: f64, doc: &Doc, corpus: Corpus<'_>, wanted: &BTreeSet<String>) -> 
                     ),
                     e.evidence.as_deref().unwrap_or_default()
                 )
+            } else if let Some(quote) = ask::stated_quote(e) {
+                // Scribe's statement of Daniel's turn, then his own words,
+                // labelled as his (2_design.md §11.1).
+                format!(
+                    "{}: {} | {} \"{}\"",
+                    ask::STATED_WHOSE,
+                    snippet(text, wanted),
+                    ask::STATED_QUOTE_LABEL,
+                    snippet(quote, wanted)
+                )
             } else {
                 snippet(text, wanted)
             };

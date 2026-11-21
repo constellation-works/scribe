@@ -354,6 +354,10 @@ fn proposal_preview(out: &mut dyn Write, p: &ProposalPayload) -> io::Result<()> 
     detail(out, "older", &p.older)?;
     if let Some(candidate) = &p.candidate {
         detail(out, "tag", candidate.tag.as_str())?;
+        if let Some(statement) = &candidate.statement {
+            detail(out, "statement", statement)?;
+            detail(out, "subject", candidate.subject.as_deref().unwrap_or(""))?;
+        }
         detail(out, "quote", &candidate.quote)?;
         detail(out, "session", candidate.cite.session.as_str())?;
         detail(
