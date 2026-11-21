@@ -183,7 +183,7 @@ impl From<&Cite> for CitePayload {
     }
 }
 
-/// Daniel's checked instruction that authorized an agent write (format 12).
+/// Daniel's checked instruction that authorized an agent write (format 13).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct InstructionPayload {
     pub(crate) session: String,
