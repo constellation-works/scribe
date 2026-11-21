@@ -7,11 +7,11 @@ status: Draft
 feature: scribe
 doc_role: decisions
 type: design
-summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, why action tags are config-marked with a capped window, a cancel window, pickups, a stuck line, a CLI quote check and SSH reads from the owner host, why scribe keeps a descriptive memory the session pass writes without approval, plus the engineering decisions carried over from the Rust CLI template.
+summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, why action tags are config-marked with a capped window, a cancel window, pickups, a stuck line, a CLI quote check and SSH reads from the owner host, why scribe keeps a descriptive memory the session pass writes without approval, why that memory has a personal base fed by every typed session (with people, recurring dates and light catalog entries) and a work layer fed only by /scribe on sessions, plus the engineering decisions carried over from the Rust CLI template.
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240]
 ---
 
 # scribe — Decisions
@@ -2109,6 +2109,8 @@ show` prints `rebuilt_by` only in `--json`.
 - [ORB-25080] — `#scribe/global` records a typed line with `project: global`.
 - [ORB-26204] — an agent Daniel instructs settles claims and deletes
   records through the CLI (proposed).
+- [ORB-26240] — the personal memory base and the per-session work layer,
+  `people`, recurring dates and light catalog entries (proposed).
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
 
@@ -3025,6 +3027,13 @@ session start. Measured: 60 Claude auto-memory notes on this host
    presets"), designed in [ORB-26240] after this decision; this one only
    guarantees the settings they set.
 
+   > **Superseded in part, 2026-11-21 ([ORB-26240]):** point 2's source
+   > (on sessions only) and point 9's default and its presets. `personal`
+   > ships on in every store, off interactive sessions feed the personal
+   > base, and the separation is per session: see
+   > [Memory has a personal base from every typed session and a work layer from on sessions](#memory-has-a-personal-base-from-every-typed-session-and-a-work-layer-from-on-sessions).
+   > The section switches stand.
+
 Alternatives considered:
 
 - **Keep Claude auto-memory only.** Cost: it is Claude's alone (Codex and
@@ -3099,3 +3108,140 @@ since items are scribe-authored; personal life is kept only with
   agents' behaviour until he retires it; the health and third-party gates
   beyond the word lists are model judgement; a personal event he typed in
   an on session is kept, unless forgotten, as long as the store.
+
+## Memory has a personal base from every typed session and a work layer from on sessions
+
+**Recorded:** 2026-11-21 · [ORB-26240] · **Overridable by Daniel** · proposed, not built
+**Supersedes in part:** [scribe keeps a descriptive memory the pass writes without approval](#scribe-keeps-a-descriptive-memory-the-pass-writes-without-approval), points 2 (on sessions as the only source) and 9 (`personal = false` by default, and the presets)
+**Reverses:** [3_vision.md §4](./3_vision.md#4-deliberately-out-of-scope)'s "Scanning or cataloging sessions on scribe's own initiative", for the personal base and light catalog entries of interactive sessions only
+**Paths:** `crates/scribe-core/src/pass/`, `crates/scribe-core/src/control.rs`, `crates/scribe/src/commands/hook/` (`stop`, `session-start`) — design §13.12–§13.16
+
+### Context
+
+Daniel, chief's chat, 2026-11-21 (ws_constellation ORB-26194, relayed by
+the chief), on recurring dates and people: "Also, I forgot about recurring
+dates, e.g. birthdays of the user and family members, wedding anniversary
+date, etc. it would be nice if agent says happy birthday, or remind the
+user on upcoming family birthdays. any suggestions for these? now that I
+see, it may be appropriate to build a brief profiles of those close to the
+user, e.g. husband's profession and birthday, if they are brought up. and
+pets as well." To "Add a \"people\" section and recurring dates to
+ORB-26219 before it starts?": "Yes, add both".
+
+On presets, after "Yes, add presets": "just to be clear, let's say a user
+inits with personal preset. the user is still able to do \"/scribe on\" for
+work right? I think that is the right separation. work related sessions
+should be selectively chosen. also, I am fine with using personal as the
+base - I don't ever share anything personal anyways so there is nothing
+there to fill".
+
+To "Should a session you do not switch on still leave a light catalog
+entry (title and summary)?": "Yes, light entry".
+
+ORB-26219 had shipped `[memory] personal = false` as the default and read
+only sessions he switched on. Need: Daniel's example of a regular user, not
+yet observed in use; for him the base is expected to stay empty.
+
+### Decision
+
+1. **The split is per session, not per store.** Every store ships the same
+   default. A **personal base** (`profile`, `now`, `milestones`, `people`,
+   recurring dates; memory items only, no tag entries, no candidates, no
+   approvals) is fed by every interactive session a human types in, on or
+   off. A **work layer** (the session record with its log, claims, issues,
+   `projects`, `working` and work facts in the base sections) is fed only by
+   a session switched on with `/scribe on`. `sdk-cli` and unmarked sessions
+   feed neither.
+2. **A base pass** reads an off interactive session after 30 idle minutes
+   or at session end, one `session` model call per window under §13.3's
+   bounds, keeping personal-layer elements only.
+3. **`/scribe private`** keeps one session out of the base and the catalog.
+4. **A session that is off leaves a light catalog entry** (title, date,
+   summary of at most 300 characters), as Daniel decided. It is the base
+   pass's behaviour, not a setting: it stops only with `[memory] base =
+   false` or `/scribe private`. The page's recent-sessions list prefers
+   sessions switched on in the last 14 days.
+5. **`people`** is a sixth section: a person or pet record made on a stated
+   relation or a second mention in another session, at most 5 facts of 120
+   characters and 4 dates, each with his verbatim quote. A third party's
+   health, finances, beliefs, contact details, address and age are never
+   kept; a record is shown in `scribe memory show` and removed with
+   `#scribe forget p-<n>`, which suppresses it.
+6. **Recurring dates are a yearly field** on `profile`, `people` dates and
+   `milestones` (a wedding milestone yields the anniversary), computed into
+   the page's `now` by the read-only `SessionStart` hook with no model
+   call: 14 days ahead for others' dates and anniversaries, on the day for
+   the user's own; `acknowledged` per year; no push.
+7. **No preset.** Each difference is one setting (`personal`, `base`,
+   `base_idle_minutes`, `[memory.sections] people`, `[memory.recurring]`).
+
+Alternatives considered:
+
+- **Presets chosen once per store** (`work` default, `personal`; the first
+  proposal, approved and then revised by Daniel). Cost: one person has both
+  kinds of conversation, so a store-wide choice either drops a regular
+  user's work sessions or Daniel's family events; Daniel's own words chose
+  the per-session cut.
+- **Read only on sessions, as ORB-26219 did.** Cost: a regular user would
+  have to type `/scribe on` in every chat for scribe to know her at all,
+  the friction Daniel's example (a user "resistant to change because of
+  memory") rules out.
+- **(b) An off session leaves nothing but memory items**, with
+  `[sessions] on_by_default` for a regular user. Cost: her catalog is empty
+  unless every session is fully on, which brings the work layer's claims
+  and approvals into personal chats; Daniel decided (a).
+- **A `[sessions] light_catalog` setting.** Cost: one more state in the
+  pass and its tests, for a need not seen; `/scribe private` and `base =
+  false` already stop it.
+- **Light entries as a separate record kind.** Cost: a second shape for
+  sessions, second list and show verbs, and a migration when a light
+  session is switched on; a `depth` field on the header costs one store
+  format step.
+- **The recent-sessions list by recency alone.** Cost: Daniel's ~60 light
+  entries a week push his chosen sessions off the page.
+- **A `people` record on every name** (no second-mention rule). Cost: a
+  name said once in passing becomes a profile of someone who did not opt
+  in.
+- **Keep a third party's health or similar facts** when the user states
+  them. Cost: the most sensitive facts about someone with no say, kept for
+  the store's lifetime; the user's own `now` item already carries the
+  event for its short window.
+- **Store reminders in `now`** when a date nears (a routine writing
+  items). Cost: a routine that must run on time, writes to clean up after
+  each year, and a `SessionStart` that is no longer read-only.
+- **Push a reminder** (notice, mail). Cost: a new surface and its consent,
+  for a need not seen; the reminder is said at the next session.
+
+Differences from the chief's proposal, each named: the base pass reads off
+sessions after 30 idle minutes or at session end, which the proposal left
+open; `/scribe private` is added, so the always-on base has a per-session
+off switch (the reverse of `/scribe on` that 3_vision.md question 9 named);
+the `#scribe` hook stays in every session, so the base is "no tags" for the
+pass only; work relations (colleague, manager) make no `people` record; a
+name without a relation is held only as a salted hash until its second
+session; "brief" is 5 facts, 120 characters each, 4 dates, and a sixth
+fact supersedes the stalest; a person's year of birth is never kept, the
+user's own may be; sensitive items never recur; recurring milestones are
+found by an editable word list; the user's own wedding anniversary uses the
+14-day window, since he plans for it; the page gains a `people` part and
+2,700 characters; the light entry is a behaviour, not a setting; the
+recent-sessions list prefers sessions switched on in the last 14 days.
+
+### Consequences
+
+- About 60 base passes and 60 light entries a week on Daniel's Mac, to
+  keep a base expected to stay empty; for a regular user, every chat is
+  recallable and feeds her memory.
+- Store format steps: `layer`, `person`, `recurs` on items (in ORB-26219's
+  step (a)); the `people/` kind; `depth` on session headers. An older
+  build refuses a store holding them.
+- The issue hint of §11.4 runs only in on sessions.
+- Not built until seen: presets, push notifications, non-yearly dates and
+  user-set reminders, anniversaries of a loss, a cap on people, contact or
+  calendar import, un-suppressing a person, forgetting a light entry's
+  words, a light-entry setting, a base for non-interactive sessions.
+- Cost: scribe now reads what the user types in sessions he did not
+  choose, unless he says `/scribe private`; facts about people who did not
+  opt in are kept on his word alone, with the third-party gates beyond the
+  word lists left to the model; a light summary is a model's sentence
+  about a conversation he never chose to record.

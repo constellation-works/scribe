@@ -11,7 +11,7 @@ summary: Where the scribe plugin may go after its slices — more providers, cro
 tags: [scribe]
 paths: ["crates/**", "plugin/**"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21744, ORB-23892, ORB-26219]
+related_artifacts: [ORB-21747, ORB-21744, ORB-23892, ORB-26219, ORB-26240]
 ---
 
 # scribe — Vision
@@ -66,7 +66,11 @@ plan in [2_design.md §10](./2_design.md#10-slice-plan).
    a ChatGPT export** into sessions and memory items; **an app connector**
    that reads such a provider's conversations as they happen; and
    **always-on capture with an off-the-record switch**, the reverse of
-   today's `/scribe on`. The first test before any of them: import one
+   today's `/scribe on`. (The third is now designed for the personal base
+   and light catalog entries of the sessions scribe already reads, with
+   `/scribe private` as the switch,
+   [2_design.md §13.12](./2_design.md#1312-a-personal-base-and-a-work-layer-per-session);
+   it does not reach a provider scribe has no hook in.) The first test before any of them: import one
    export with its owner's consent, build the memory page from it, and
    have the owner read the page. Each would need its own provenance story,
    since none of these turns is typed through a scribe hook.
@@ -114,6 +118,17 @@ the model, has checked against the record.
   tmux popup are the views ([4_decisions.md](./4_decisions.md#humans-browse-scribe-in-a-tmux-popup-over-fzf)).
 - Scanning or cataloging sessions on scribe's own initiative. Backfill
   catalogs only sessions Daniel names.
+
+  Amended 2026-11-21 ([ORB-26240]) for **interactive sessions only**: every
+  session a human types in feeds the personal memory base and, when it is
+  not switched on, leaves a light catalog entry (title, date, short
+  summary), unless he types `/scribe private`
+  ([2_design.md §13.12](./2_design.md#1312-a-personal-base-and-a-work-layer-per-session),
+  [§13.15](./2_design.md#1315-what-a-session-that-is-not-switched-on-leaves)).
+  Daniel, chief's chat, 2026-11-21: "I am fine with using personal as the
+  base", and to a light entry for sessions not switched on: "Yes, light
+  entry". Work sessions stay chosen one by one with `/scribe on`; backfill
+  still catalogs only sessions he names; headless runs are never read.
 - Tasks, calendars and the Library: orbit-office keeps those.
 
 ## 5. References
@@ -135,5 +150,7 @@ the model, has checked against the record.
 - [ORB-21747] — designed the standalone scribe plugin.
 - [ORB-21744] — the orbit-office scribe redesign this plugin supersedes (archived).
 - [ORB-26219] — designed the descriptive memory and amended §4 for it.
+- [ORB-26240] — amended §4 and question 9 for the personal base and light
+  catalog entries.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
