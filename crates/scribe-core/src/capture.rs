@@ -296,6 +296,17 @@ pub fn scan(prompt: &str, tags: &TagTable) -> Vec<Parsed> {
 /// is most of them.
 #[must_use]
 pub fn lines(prompt: &str) -> Vec<(u32, &str)> {
+    plain_lines(prompt)
+        .into_iter()
+        .filter(|(_, line)| is_instruction(line.trim_start()))
+        .collect()
+}
+
+/// The lines of `prompt` that are typed text: `(number from 1, the line
+/// without its `\r`)`, every line inside a code fence (and the fence lines
+/// themselves), a blockquote line and a `<pasted_content>` block left out.
+#[must_use]
+pub fn plain_lines(prompt: &str) -> Vec<(u32, &str)> {
     let mut found = Vec::new();
     let mut fence: Option<(char, usize)> = None;
     let mut pasted = false;
@@ -327,12 +338,69 @@ pub fn lines(prompt: &str) -> Vec<(u32, &str)> {
         if trimmed.starts_with('>') {
             continue;
         }
-        if is_instruction(trimmed) {
-            let number = u32::try_from(index + 1).unwrap_or(u32::MAX);
-            found.push((number, line));
-        }
+        let number = u32::try_from(index + 1).unwrap_or(u32::MAX);
+        found.push((number, line));
     }
     found
+}
+
+/// Origin values that mean Daniel typed the prompt himself.
+const PLAIN_SOURCES: &[&str] = &[
+    "typed",
+    "user",
+    "human",
+    "daniel",
+    "interactive",
+    "keyboard",
+    "manual",
+    "direct",
+    "user-typed",
+    "plain",
+];
+
+/// Opening tags of agent- or system-written user turns. A prompt carrying
+/// one of these anywhere is not Daniel's typing, however a `#scribe` line
+/// sits inside it.
+const AGENT_WRAPPERS: &[&str] = &[
+    "<agent-message",
+    "<task-notification",
+    "<side-sessions-event",
+    "<side-session-event",
+    "<side-session",
+    "<scheduled-prompt",
+    "<scheduled-loop",
+    "<scheduled",
+    "<loop-prompt",
+    "<loop-",
+    "<teammate-message",
+    "<cross-session",
+];
+
+/// The origin guard (docs/design/scribe/2_design.md §4.1): whether a user
+/// turn was written by an agent or the harness, not plainly typed by
+/// Daniel. `origins` are the turn's origin claims where the harness gives
+/// them (`source`, `prompt_source`, `origin`, `prompt_origin`); `prompt` is
+/// its text. A non-plain origin value, an agent wrapper anywhere in the
+/// prompt, or a prompt opening with a markup tag (a plainly typed prompt
+/// does not open that way) is not his. An accident guard (STD-05 R5): a
+/// process running as Daniel can still forge a plain turn.
+#[must_use]
+pub fn agent_originated(origins: &[&str], prompt: &str) -> bool {
+    for source in origins {
+        let normalized = source.trim().to_lowercase().replace(['_', ' '], "-");
+        if !normalized.is_empty() && !PLAIN_SOURCES.contains(&normalized.as_str()) {
+            return true;
+        }
+    }
+    // Underscores and hyphens spell the same wrapper (`<agent_message>`).
+    let lower = prompt.to_lowercase().replace('_', "-");
+    if AGENT_WRAPPERS.iter().any(|tag| lower.contains(tag)) {
+        return true;
+    }
+    let trimmed = lower.trim_start_matches('\u{feff}').trim_start();
+    trimmed
+        .strip_prefix('<')
+        .is_some_and(|rest| rest.chars().next().is_some_and(|c| c.is_ascii_alphabetic()))
 }
 
 /// A fence opener or closer: three or more backticks or tildes.

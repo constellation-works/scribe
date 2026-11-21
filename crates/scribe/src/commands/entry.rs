@@ -288,7 +288,15 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
         EntryCommand::Retire(args) => {
             scribe_core::check_agent_author(&args.author)?;
             scribe_core::check_reason(&args.reason)?;
-            ctx.store().resolve_entry(&args.id)?;
+            let target = ctx.store().resolve_entry(&args.id)?;
+            // Before the store lock; a refusal changes nothing. A passing
+            // check does not yet widen what retire accepts (§12.1).
+            super::instruction::check(
+                ctx,
+                &args.instruction,
+                scribe_core::instruction::Act::Retire,
+                &scribe_core::instruction::Target::new(target.id.to_string(), &args.id),
+            )?;
             let redactor = ctx.redactor(&ctx.store().config()?)?;
             let (entry, changed) = ctx.store().retire_agent_entry(
                 &args.id,
@@ -562,6 +570,8 @@ pub(crate) struct RetireArgs {
     /// Why the note no longer applies
     #[arg(long)]
     reason: String,
+    #[command(flatten)]
+    instruction: super::instruction::InstructionArgs,
 }
 
 fn written_with_action(

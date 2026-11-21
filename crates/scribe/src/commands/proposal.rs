@@ -184,7 +184,19 @@ pub(super) fn run(command: ProposalCommand, ctx: &Context) -> Result<Output, Cli
             if let Some(reason) = &args.reason {
                 scribe_core::check_reason(reason)?;
             }
-            ctx.store().resolve_proposal(&args.id)?;
+            let target = ctx.store().resolve_proposal(&args.id)?;
+            // Before the store lock; a refusal changes nothing. A passing
+            // check does not yet widen what settle accepts (§12.1).
+            super::instruction::check(
+                ctx,
+                &args.instruction,
+                if args.approve {
+                    scribe_core::instruction::Act::Approve
+                } else {
+                    scribe_core::instruction::Act::Reject
+                },
+                &scribe_core::instruction::Target::new(target.id.to_string(), &args.id),
+            )?;
             let redactor = ctx.redactor(&ctx.store().config()?)?;
             let (proposal, changed) = ctx.store().change_agent_proposal(
                 &args.id,
@@ -306,6 +318,8 @@ pub(crate) struct SettleArgs {
     /// Replacement explanation for the settlement
     #[arg(long)]
     reason: Option<String>,
+    #[command(flatten)]
+    instruction: super::instruction::InstructionArgs,
 }
 
 fn written(proposal: scribe_core::Proposal, changed: bool) -> Output {

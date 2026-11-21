@@ -6,12 +6,14 @@ Arguments:
   <ID>  Proposal id or unique prefix
 
 Options:
-      --author <AUTHOR>  Agent name
-      --approve          Apply the proposal
-      --reject           Close without applying
-      --reason <REASON>  Replacement explanation for the settlement
-  -h, --help             Print help
-  -V, --version          Print version
+      --author <AUTHOR>      Agent name
+      --approve              Apply the proposal
+      --reject               Close without applying
+      --reason <REASON>      Replacement explanation for the settlement
+      --session <ID>         The session you run in, whose transcript holds Daniel's instruction; requires --instruction
+      --instruction <WORDS>  Daniel's instruction, word for word from one of his last three typed turns of --session within 30 minutes, naming the id (or answering your reply that names it) and the act; requires --session
+  -h, --help                 Print help
+  -V, --version              Print version
 
 Global options:
       --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]

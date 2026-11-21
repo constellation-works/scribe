@@ -3073,6 +3073,17 @@ tasks land after [§11.7](#117-order-and-sequencing) step (a). Where it
 changes a rule stated earlier ([§1.1](#11-the-cli-agent-surface)'s guard,
 [§5.3](#53-a-pass)'s "Agents cannot settle or edit candidate proposals"),
 the earlier text describes what is built today and carries a pointer here.
+
+**Built (task 1 of 6, ORB-26242).** The check of §12.2 and §12.5 and its
+refusal codes: `scribe-core/src/instruction.rs` (word lists, freshness,
+entry points; no I/O) and `scribe/src/commands/instruction.rs` (finding and
+reading the transcript). `proposal settle` and `entry retire` take
+`--session` and `--instruction` and run the check before the lock, but a
+passing check does not yet widen what they accept: a candidate is still
+refused `daniel_only` and Daniel's entry is still not retired until tasks
+3 and 4 land. `entry forget` and the instruction record of §12.3 are not
+built.
+
 The reasons and alternatives are in
 [4_decisions.md](./4_decisions.md#an-agent-settles-claims-and-deletes-records-on-daniels-checked-instruction).
 
@@ -3131,7 +3142,9 @@ runs these checks; any failure refuses the command and changes nothing.
    one user turn that §4.1's origin guard accepts as plainly typed:
    no agent or harness wrapper, not inside a fence, blockquote or
    `<pasted_content>` block, not a sidechain or meta line. Otherwise
-   `instruction_not_found`.
+   `instruction_not_found`. A short answer below §6.4's 8 characters
+   ("yes") passes when it is his whole turn; when several of his turns
+   hold the span, the latest is the instruction.
 3. **Fresh.** That turn is one of the session's last three typed user turns
    and was written at most 30 minutes before the command runs. Otherwise
    `instruction_stale`. An old instruction cannot be reused to settle
@@ -3153,7 +3166,9 @@ runs these checks; any failure refuses the command and changes nothing.
 
    For approve, when his turn's only match is an affirmative (yes, ok,
    okay, go ahead, do it), the reply he answered must contain "approve" or
-   "accept" next to the ids. For reject, retire and forget, the verb's word
+   "accept" next to the ids (on the same line as the id). Words match
+   whole and case-insensitively ("keeper" is not "keep"). For reject,
+   retire and forget, the verb's word
    must be in his own turn; an affirmative alone does not delete anything.
    Otherwise `instruction_mismatch`.
 
@@ -3228,13 +3243,23 @@ instruction's words are never in the audit line; they live on the record
 Three checks, all in the CLI before the lock:
 
 1. **Interactive.** The instruction turn's transcript line records the
-   harness entry point of an interactive session: Claude Code's
-   `entrypoint: "cli"`, never `"sdk-cli"` (`claude -p`, which every Orbit
-   run, routine and drain uses; the 40 most recent transcripts on
-   dk-server-1 on 2026-11-21 were all `"sdk-cli"`). A turn with any other
-   or no entry point is refused `not_interactive`. Codex's equivalent
-   field is mapped by the implementation task, or Codex sessions are
-   refused until it is.
+   harness entry point of an interactive session. For Claude Code that is
+   `entrypoint` `"cli"` (the terminal) or `"claude-desktop"` (the desktop
+   app); `"sdk-cli"` (`claude -p` and the Agent SDK, which every Orbit run,
+   routine and drain uses) and any other or no value is refused
+   `not_interactive`. On the Mac over the 7 days to 2026-11-21 the
+   transcripts were `sdk-cli` 336, `claude-desktop` 62 and `cli` 0, so
+   Daniel's own sessions are `claude-desktop`; the 40 most recent
+   transcripts on dk-server-1 that day were all `sdk-cli`. For Codex the
+   entry point is the rollout's `session_meta.payload.source`: `"cli"`
+   (the terminal UI, `originator: codex-tui`) and `"vscode"` (the IDE and
+   desktop app) are interactive; `"exec"` (`codex exec`,
+   `originator: codex_exec`) and a subagent's source are refused
+   `not_interactive` before the rollout is parsed. Of 400 rollouts
+   sampled on dk-server-1 on 2026-11-21, 353 were `exec`, 28 a Codex
+   Desktop `guardian` subagent and 2 `cli`; the parse already admits only
+   `cli` and `vscode` main threads (§4.1), so the mapping refuses nothing
+   capture accepts.
 2. **Typed by him and fresh** — §12.2 checks 2 and 3: a turn he typed in
    the last 30 minutes, among the last three, so the session is one he is
    in now.

@@ -42,67 +42,21 @@ pub(super) struct PromptPayload {
     pub(super) prompt_origin: Option<String>,
 }
 
-/// Source values that mean Daniel typed the prompt himself.
-const PLAIN_SOURCES: &[&str] = &[
-    "typed",
-    "user",
-    "human",
-    "daniel",
-    "interactive",
-    "keyboard",
-    "manual",
-    "direct",
-    "user-typed",
-    "plain",
-];
-
-/// Opening tags of agent- or system-written user turns. A prompt carrying
-/// one of these anywhere is not Daniel's typing, however a `#scribe` line
-/// sits inside it.
-const AGENT_WRAPPERS: &[&str] = &[
-    "<agent-message",
-    "<task-notification",
-    "<side-sessions-event",
-    "<side-session-event",
-    "<side-session",
-    "<scheduled-prompt",
-    "<scheduled-loop",
-    "<scheduled",
-    "<loop-prompt",
-    "<loop-",
-    "<teammate-message",
-    "<cross-session",
-];
-
 /// Whether this payload's turn was written by an agent or the harness,
-/// not plainly typed by Daniel: a non-plain origin field, an agent
-/// wrapper anywhere in the prompt, or a prompt opening with a markup tag
-/// (a plainly typed prompt does not open that way). Such a turn records
-/// nothing, decides nothing and does not switch `/scribe` on or off.
-/// This is an accident guard like the transcript check (STD-05 R5): a
-/// process running as Daniel can still forge a plain payload.
+/// not plainly typed by Daniel ([`scribe_core::capture::agent_originated`]
+/// over its origin fields and prompt). Such a turn records nothing, decides
+/// nothing and does not switch `/scribe` on or off.
 pub(super) fn agent_originated(payload: &PromptPayload) -> bool {
-    let sources = [
+    let origins: Vec<&str> = [
         payload.source.as_deref(),
         payload.prompt_source.as_deref(),
         payload.origin.as_deref(),
         payload.prompt_origin.as_deref(),
-    ];
-    for source in sources.into_iter().flatten() {
-        let normalized = source.trim().to_lowercase().replace(['_', ' '], "-");
-        if !normalized.is_empty() && !PLAIN_SOURCES.contains(&normalized.as_str()) {
-            return true;
-        }
-    }
-    // Underscores and hyphens spell the same wrapper (`<agent_message>`).
-    let lower = payload.prompt.to_lowercase().replace('_', "-");
-    if AGENT_WRAPPERS.iter().any(|tag| lower.contains(tag)) {
-        return true;
-    }
-    let trimmed = lower.trim_start_matches('\u{feff}').trim_start();
-    trimmed
-        .strip_prefix('<')
-        .is_some_and(|rest| rest.chars().next().is_some_and(|c| c.is_ascii_alphabetic()))
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    scribe_core::capture::agent_originated(&origins, &payload.prompt)
 }
 
 /// The fields of the `SessionStart` payload scribe uses.
@@ -302,6 +256,46 @@ pub(in crate::commands) fn read_checked(
     path: &Path,
     session: &SessionId,
 ) -> Result<Option<Vec<u8>>, Unreadable> {
+    let Some(bytes) = read_checked_with(ctx, path, session, Rollout::Verify)? else {
+        return Ok(None);
+    };
+    if ctx.provider() == scribe_core::Provider::Codex {
+        let rollout = scribe_core::codex::parse(&bytes).map_err(Unreadable::Refused)?;
+        if rollout.session != *session {
+            return Err(Unreadable::Refused(String::from(
+                "Codex session_meta does not match session_id",
+            )));
+        }
+    }
+    Ok(Some(bytes))
+}
+
+/// [`read_checked`] without its Codex rollout check: the file's path,
+/// type, owner, mode and size are checked on the one open handle and its
+/// bytes returned unparsed, for a caller that classifies a Codex session
+/// itself before parsing it (the instruction check refuses a `codex exec`
+/// rollout as not interactive rather than as unreadable).
+pub(in crate::commands) fn read_checked_bytes(
+    ctx: &crate::app::Context,
+    path: &Path,
+    session: &SessionId,
+) -> Result<Option<Vec<u8>>, Unreadable> {
+    read_checked_with(ctx, path, session, Rollout::Unparsed)
+}
+
+/// Whether a Codex read parses the rollout and checks its identity.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Rollout {
+    Verify,
+    Unparsed,
+}
+
+fn read_checked_with(
+    ctx: &crate::app::Context,
+    path: &Path,
+    session: &SessionId,
+    rollout: Rollout,
+) -> Result<Option<Vec<u8>>, Unreadable> {
     let refused = |why: &str| Unreadable::Refused(String::from(why));
     let root = ctx
         .transcript_roots()
@@ -328,19 +322,13 @@ pub(in crate::commands) fn read_checked(
         return Err(refused("the transcript is not a regular file"));
     }
     owned_by_this_user(&meta).map_err(Unreadable::Refused)?;
-    let bytes = read_opened(ctx, path, file).map_err(|e| {
+    let bytes = read_opened(ctx, path, file, rollout).map_err(|e| {
         if e.kind() == std::io::ErrorKind::InvalidInput {
             Unreadable::Refused(e.to_string())
         } else {
             Unreadable::Io(e)
         }
     })?;
-    if ctx.provider() == scribe_core::Provider::Codex {
-        let rollout = scribe_core::codex::parse(&bytes).map_err(Unreadable::Refused)?;
-        if rollout.session != *session {
-            return Err(refused("Codex session_meta does not match session_id"));
-        }
-    }
     Ok(Some(bytes))
 }
 
@@ -362,7 +350,7 @@ pub(in crate::commands) fn read_for(
     path: &Path,
 ) -> std::io::Result<Vec<u8>> {
     let file = open_transcript(ctx, path)?;
-    read_opened(ctx, path, file)
+    read_opened(ctx, path, file, Rollout::Verify)
 }
 
 fn invalid(why: String) -> std::io::Error {
@@ -413,6 +401,7 @@ fn read_opened(
     ctx: &crate::app::Context,
     path: &Path,
     mut file: std::fs::File,
+    rollout: Rollout,
 ) -> std::io::Result<Vec<u8>> {
     let meta = file.metadata()?;
     if !meta.is_file() {
@@ -440,6 +429,9 @@ fn read_opened(
     (&mut file).take(MAX + 1).read_to_end(&mut bytes)?;
     if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX {
         return Err(invalid(String::from("Codex transcript exceeds 64 MiB")));
+    }
+    if rollout == Rollout::Unparsed {
+        return Ok(bytes);
     }
     let rollout = scribe_core::codex::parse(&bytes).map_err(invalid)?;
     let named = path.file_stem().and_then(|s| s.to_str()).is_some_and(|s| {

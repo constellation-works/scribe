@@ -293,7 +293,9 @@ Stable codes: `entry_not_found`, `session_not_found`, `io_error`,
 the message lists up to ten candidates, sorted, and how many more), `daniel_only`, `reserved_author`, `tag_not_found`, `tag_conflict`, `tag_configured`,
 `proposal_not_found`, `proposal_settled`, `entry_not_active`,
 (S12) `invalid_text`, `invalid_topics`, (format 8) `quote_required`,
-`quote_not_found`, `not_action_tag`, `cancel_window`,
+`quote_not_found`, `not_action_tag`, `cancel_window`, (§12, `--session` with
+`--instruction`) `instruction_not_found`, `instruction_stale`,
+`instruction_mismatch`, `not_interactive`,
 `proposal_invalid`, `proposal_not_agent`,
 `session_cataloged`, `transcript_not_found`, for `tmux` `fzf_missing` and
 `tmux_failed` (exit 1; `tmux` renders no payload, its popup owns the

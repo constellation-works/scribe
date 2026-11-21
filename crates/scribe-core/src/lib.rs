@@ -18,7 +18,9 @@
 //!   in [`pass`]; the consistency routine's candidates and checks and the
 //!   settling verbs (`approve`, `reject`, `retire`, `forget`) in
 //!   [`consistency`]; reading a Claude Code transcript in [`transcript`]; the
-//!   quote check in [`verbatim`]; and the [`Models`] port, every model call
+//!   quote check in [`verbatim`]; the check of an instruction Daniel typed
+//!   for an agent's write (word lists, freshness, interactive entry points)
+//!   in [`instruction`]; and the [`Models`] port, every model call
 //!   as a typed request, in [`models`];
 //! - persistence in `store`: the file-backed [`Store`], its formats, the
 //!   audit log ([`AuditEvent`]), the [`Redactor`] and the filesystem
@@ -46,6 +48,7 @@ pub mod consistency;
 pub mod control;
 mod entry;
 mod error;
+pub mod instruction;
 pub mod models;
 pub mod pass;
 mod proposal;

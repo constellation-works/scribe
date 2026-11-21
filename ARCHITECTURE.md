@@ -28,7 +28,7 @@ Why persistence is a module inside the core rather than a third crate:
 
 Checked by grep over non-test sources:
 
-- Every `scribe-core` module except `store/` (today `entry.rs`, `tag.rs`, `session.rs`, `activity.rs`, `proposal.rs`, `record.rs`, `config.rs`, `capture.rs`, `control.rs`, `pass.rs`, `ask.rs`, `action.rs`, `search.rs`, `consistency.rs`, `transcript.rs`, `verbatim.rs`, `models.rs`, `error.rs`, `lib.rs`, and any module added later) imports no `std::fs`, `std::net`, `std::process`, `tempfile` or `rustix`, and no `crate::store`.
+- Every `scribe-core` module except `store/` (today `entry.rs`, `tag.rs`, `session.rs`, `activity.rs`, `proposal.rs`, `record.rs`, `config.rs`, `capture.rs`, `control.rs`, `pass.rs`, `ask.rs`, `action.rs`, `search.rs`, `consistency.rs`, `transcript.rs`, `verbatim.rs`, `trigger.rs`, `instruction.rs`, `models.rs`, `error.rs`, `lib.rs`, and any module added later) imports no `std::fs`, `std::net`, `std::process`, `tempfile` or `rustix`, and no `crate::store`.
 - `scribe-core/src/store/fsio.rs` imports nothing from the business modules or the rest of `store`; `store/format.rs`, `store/redact.rs` and `store/audit.rs` do no file I/O.
 - `scribe-core` reads no environment variables and discovers no paths (`std::env::`, `home_dir`, `current_dir`).
 - `scribe/src/app.rs`, `scribe/src/models.rs`, `scribe/src/tasks.rs` and `scribe/src/popup.rs` import no `cli`, `commands`, `audit_middleware` or `output`.
