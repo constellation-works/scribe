@@ -233,6 +233,7 @@ fn draft(statement: &str, message: &str, section: Section) -> Draft {
             same_as: None,
             sensitive: false,
             sensitive_kind: None,
+            promote: None,
         },
         event_date: None,
         turn: TURN.to_owned(),
@@ -431,4 +432,365 @@ fn forget_blanks_the_statement_and_every_quote_and_keeps_the_id() {
     assert!(it.occurrences.iter().all(|o| o.quote.is_empty()));
     assert_eq!(it.id.as_str(), "m-1");
     assert!(!memory::forget(&mut it, Author::consistency(), T0));
+}
+
+// Slice (b): consolidation and promotion (2_design.md §13.4, §13.5).
+
+use crate::memory::consolidate::{self, Change, Label as PairLabel};
+use crate::memory::promote::{self, PromotionRule};
+use crate::models::{ConsistencyAnswer, JudgementAnswer};
+
+/// A draft with its own statement, quote and turn.
+fn said(statement: &str, quote: &str, message: &str, section: Section) -> Draft {
+    let mut d = draft(statement, message, section);
+    d.checked.quote = quote.to_owned();
+    d.turn = format!("{quote}, as it happens.");
+    d
+}
+
+fn label(pair: &str, label: &str, older: &str, newer: &str) -> ConsistencyAnswer {
+    ConsistencyAnswer {
+        judgements: vec![JudgementAnswer {
+            pair: pair.to_owned(),
+            label: label.to_owned(),
+            reason: String::from("both describe where he works"),
+            older_quote: older.to_owned(),
+            newer_quote: newer.to_owned(),
+        }],
+    }
+}
+
+const HOME: &str = "I work from a home office in Boston";
+const COWORK: &str = "I work from a coworking space in Boston now";
+
+/// Two active profile items that overlap by a quarter but are not
+/// duplicates: m-1 (older, session s-1) and m-2 (newer, session s-2).
+fn office_pair() -> Vec<MemoryItem> {
+    let mut items = Vec::new();
+    let older = said(
+        "Works from a home office in Boston.",
+        HOME,
+        "u-1",
+        Section::Profile,
+    );
+    memory::apply(&mut items, &older, &provenance("s-1"), T0);
+    let mut newer = said(
+        "Works from a coworking space in Boston.",
+        COWORK,
+        "u-2",
+        Section::Profile,
+    );
+    newer.at = T0 + Duration::days(30);
+    memory::apply(
+        &mut items,
+        &newer,
+        &provenance("s-2"),
+        T0 + Duration::days(30),
+    );
+    assert_eq!(items.len(), 2, "two items, not one");
+    items
+}
+
+#[test]
+fn a_same_label_merges_the_newer_item_into_the_older_keeping_every_occurrence_and_quote() {
+    let mut items = office_pair();
+    let found = consolidate::candidates(&items, 40);
+    assert_eq!(found.pairs.len(), 1);
+    assert_eq!(found.pairs[0].older.id.as_str(), "m-1");
+    let judged = consolidate::judge(label("1", "same", "home office", "coworking"), &found.pairs);
+    assert_eq!(judged.dropped, 0);
+    assert_eq!(judged.judgements[0].label, PairLabel::Same);
+    let by = Author::consistency();
+    let later = T0 + Duration::days(60);
+    let changes = consolidate::apply(&mut items, &judged.judgements, &by, later);
+    assert_eq!(
+        changes,
+        vec![Change::Merged {
+            item: "m-2".parse().unwrap(),
+            into: "m-1".parse().unwrap()
+        }]
+    );
+    let (older, newer) = (&items[0], &items[1]);
+    assert_eq!(older.status, MemoryStatus::Active);
+    let quotes: Vec<&str> = older.occurrences.iter().map(|o| o.quote.as_str()).collect();
+    assert_eq!(quotes, vec![COWORK, HOME], "newest first, both kept");
+    assert_eq!(older.occurrences[0].n, 2, "renumbered past the target's");
+    assert!(
+        older
+            .occurrences
+            .iter()
+            .all(|o| o.author == Author::session_pass()),
+        "each occurrence keeps its author"
+    );
+    assert_eq!(older.updated_by, by);
+    assert_eq!(newer.status, MemoryStatus::Merged);
+    assert_eq!(newer.merged_into.as_ref().unwrap().as_str(), "m-1");
+    assert!(newer.occurrences.is_empty());
+    assert_eq!(
+        memory::off_page(newer, &MemoryConfig::default(), later.date()),
+        Some(OffPage::Merged)
+    );
+
+    // Again: nothing to pair, and the same labels change nothing.
+    let before = items.clone();
+    assert!(consolidate::candidates(&items, 40).pairs.is_empty());
+    assert!(consolidate::apply(&mut items, &judged.judgements, &by, later).is_empty());
+    assert_eq!(items, before);
+}
+
+#[test]
+fn a_contradicts_label_supersedes_the_older_item_and_both_keep_their_occurrences() {
+    let mut items = office_pair();
+    let found = consolidate::candidates(&items, 40);
+    let judged = consolidate::judge(
+        label("1", "contradicts", "home office", "coworking space"),
+        &found.pairs,
+    );
+    let by = Author::consistency();
+    let changes = consolidate::apply(&mut items, &judged.judgements, &by, T0);
+    assert_eq!(
+        changes,
+        vec![Change::Superseded {
+            item: "m-1".parse().unwrap(),
+            by: "m-2".parse().unwrap()
+        }]
+    );
+    assert_eq!(items[0].status, MemoryStatus::Superseded);
+    assert_eq!(items[0].superseded_by.as_ref().unwrap().as_str(), "m-2");
+    assert_eq!(items[0].occurrences[0].quote, HOME);
+    assert_eq!(items[1].status, MemoryStatus::Active);
+    assert_eq!(items[1].occurrences[0].quote, COWORK);
+    let before = items.clone();
+    assert!(consolidate::candidates(&items, 40).pairs.is_empty());
+    assert!(consolidate::apply(&mut items, &judged.judgements, &by, T0).is_empty());
+    assert_eq!(items, before);
+}
+
+#[test]
+fn a_label_survives_only_with_verbatim_quotes_and_unrelated_is_never_offered_again() {
+    let mut items = office_pair();
+    let found = consolidate::candidates(&items, 40);
+    // A quote not in the older item's quotes, an unknown pair, an unknown
+    // label: all dropped.
+    for answer in [
+        label("1", "same", "a home in Seattle", "coworking"),
+        label("2", "same", "home office", "coworking"),
+        label("1", "refines", "home office", "coworking"),
+    ] {
+        let judged = consolidate::judge(answer, &found.pairs);
+        assert!(judged.judgements.is_empty());
+        assert_eq!(judged.dropped, 1);
+    }
+    let judged = consolidate::judge(label("1", "unrelated", "", ""), &found.pairs);
+    assert_eq!(judged.judgements[0].label, PairLabel::Unrelated);
+    let by = Author::consistency();
+    consolidate::apply(&mut items, &judged.judgements, &by, T0);
+    assert_eq!(
+        items[0].unrelated_to,
+        vec!["m-2".parse::<MemoryId>().unwrap()]
+    );
+    assert_eq!(items[1].status, MemoryStatus::Active);
+    assert!(consolidate::candidates(&items, 40).pairs.is_empty());
+}
+
+#[test]
+fn a_milestones_element_with_no_rule_is_a_now_item_and_one_the_user_calls_a_big_day_is_a_milestone()
+{
+    let config = MemoryConfig::default();
+    let mut items = Vec::new();
+    let plain = said(
+        "Said the scribe 1.0 release shipped.",
+        "the scribe 1.0 release shipped today",
+        "u-1",
+        Section::Milestones,
+    );
+    let done = promote::write(&mut items, &plain, &provenance("s-1"), &config, T0).unwrap();
+    assert_eq!(done.applied, Applied::Created("m-1".parse().unwrap()));
+    assert!(done.promoted.is_empty());
+    assert_eq!(items[0].section, Section::Now, "no rule held: a now item");
+
+    // Rule (c): his turn says it is a big day.
+    let mut big = said(
+        "Said the orbit 2.0 launch went out.",
+        "the orbit 2.0 launch went out",
+        "u-2",
+        Section::Now,
+    );
+    big.turn = String::from("the orbit 2.0 launch went out, big day for me");
+    let done = promote::write(&mut items, &big, &provenance("s-1"), &config, T0).unwrap();
+    assert_eq!(done.promoted.len(), 1);
+    let p = &done.promoted[0];
+    assert_eq!(p.rule, PromotionRule::UserSays);
+    let now_item = items.iter().find(|i| i.id.as_str() == "m-2").unwrap();
+    assert_eq!(now_item.status, MemoryStatus::Promoted);
+    assert!(now_item.occurrences.is_empty(), "moved to the milestone");
+    let milestone = items.iter().find(|i| i.id == p.to).unwrap();
+    assert_eq!(milestone.section, Section::Milestones);
+    assert_eq!(milestone.promoted_from.as_ref().unwrap().as_str(), "m-2");
+    assert_eq!(
+        milestone.promotion.as_ref().unwrap().rule,
+        PromotionRule::UserSays
+    );
+    assert_eq!(
+        milestone.occurrences[0].quote,
+        "the orbit 2.0 launch went out"
+    );
+    assert_eq!(milestone.event_date, Some(T0.date()));
+
+    // The same turn again changes nothing.
+    let before = items.clone();
+    let again = promote::write(&mut items, &big, &provenance("s-1"), &config, T0).unwrap();
+    assert!(matches!(again.applied, Applied::Replayed(_)));
+    assert!(again.promoted.is_empty());
+    assert_eq!(items, before);
+
+    // With now switched off, an unpromoted milestones element is refused.
+    let mut off = MemoryConfig::default();
+    off.sections.now = false;
+    let mut none = Vec::new();
+    assert_eq!(
+        promote::write(&mut none, &plain, &provenance("s-1"), &off, T0),
+        Err(Refusal::SectionOff)
+    );
+}
+
+#[test]
+fn a_now_item_raised_in_three_sessions_is_promoted_and_one_in_two_stays() {
+    let config = MemoryConfig::default();
+    let mut items = Vec::new();
+    for (n, session) in ["s-1", "s-2"].into_iter().enumerate() {
+        let mut d = said(
+            "Said the box migration is under way.",
+            "the box migration is under way",
+            &format!("u-{n}"),
+            Section::Now,
+        );
+        d.checked.same_as = Some("m-1".parse().unwrap());
+        promote::write(&mut items, &d, &provenance(session), &config, T0).unwrap();
+    }
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].status, MemoryStatus::Active, "two sessions: stays");
+    let mut third = said(
+        "Said the box migration is under way.",
+        "the box migration is under way",
+        "u-9",
+        Section::Now,
+    );
+    third.checked.same_as = Some("m-1".parse().unwrap());
+    let done = promote::write(&mut items, &third, &provenance("s-3"), &config, T0).unwrap();
+    assert_eq!(done.promoted.len(), 1);
+    assert_eq!(done.promoted[0].rule, PromotionRule::RecursInSessions);
+    assert_eq!(items[0].status, MemoryStatus::Promoted);
+    assert_eq!(items[1].section, Section::Milestones);
+    assert_eq!(items[1].sessions(), 3);
+
+    // Off at 0.
+    let mut off = MemoryConfig::default();
+    off.promote.recurs_in_sessions.value = 0;
+    let mut kept = Vec::new();
+    for (n, session) in ["s-1", "s-2", "s-3"].into_iter().enumerate() {
+        let mut d = said(
+            "Said the box migration is under way.",
+            "the box migration is under way",
+            &format!("u-{n}"),
+            Section::Now,
+        );
+        d.checked.same_as = Some("m-1".parse().unwrap());
+        promote::write(&mut kept, &d, &provenance(session), &off, T0).unwrap();
+    }
+    assert_eq!(kept[0].status, MemoryStatus::Active);
+}
+
+#[test]
+fn a_profile_change_writes_the_milestone_and_the_new_profile_item_and_supersedes_the_old() {
+    let config = MemoryConfig::default();
+    let mut items = Vec::new();
+    let lives = said(
+        "Lives in Boston.",
+        "I live in Boston these days",
+        "u-1",
+        Section::Profile,
+    );
+    promote::write(&mut items, &lives, &provenance("s-1"), &config, T0).unwrap();
+    let mut moved = said(
+        "Said he moved to Seattle.",
+        "we finally moved to Seattle",
+        "u-2",
+        Section::Now,
+    );
+    moved.checked.promote = Some(String::from("Lives in Seattle."));
+    moved.checked.same_as = Some("m-1".parse().unwrap());
+    let done = promote::write(&mut items, &moved, &provenance("s-2"), &config, T0).unwrap();
+    assert_eq!(done.promoted.len(), 1);
+    let p = &done.promoted[0];
+    assert_eq!(p.rule, PromotionRule::ProfileChange);
+    assert_eq!(p.profile_from.as_ref().unwrap().as_str(), "m-1");
+    let new_profile = items
+        .iter()
+        .find(|i| Some(&i.id) == p.profile_to.as_ref())
+        .unwrap();
+    assert_eq!(new_profile.statement, "Lives in Seattle.");
+    assert_eq!(new_profile.section, Section::Profile);
+    assert_eq!(
+        new_profile.occurrences[0].quote,
+        "we finally moved to Seattle"
+    );
+    let old = &items[0];
+    assert_eq!(old.status, MemoryStatus::Superseded);
+    assert_eq!(old.superseded_by.as_ref(), p.profile_to.as_ref());
+    let milestone = items.iter().find(|i| i.id == p.to).unwrap();
+    let journal = milestone.promotion.as_ref().unwrap();
+    assert_eq!(journal.profile_from.as_ref().unwrap().as_str(), "m-1");
+    assert_eq!(journal.profile_to, p.profile_to);
+
+    // A promote statement with profile_change off promotes nothing.
+    let mut off = MemoryConfig::default();
+    off.promote.profile_change.value = false;
+    let mut kept = Vec::new();
+    let done = promote::write(&mut kept, &moved, &provenance("s-2"), &off, T0).unwrap();
+    assert!(done.promoted.is_empty());
+    assert_eq!(kept[0].section, Section::Now);
+    assert_eq!(kept[0].status, MemoryStatus::Active);
+}
+
+#[test]
+fn a_promotion_cut_short_by_a_crash_is_completed_once() {
+    let config = MemoryConfig::default();
+    let mut items = Vec::new();
+    let mut big = said(
+        "Said the orbit 2.0 launch went out.",
+        "the orbit 2.0 launch went out",
+        "u-1",
+        Section::Now,
+    );
+    big.turn = String::from("the orbit 2.0 launch went out, never forget it");
+    promote::write(&mut items, &big, &provenance("s-1"), &config, T0).unwrap();
+    // The milestone was written; the now item's file was not.
+    let milestone = items[1].clone();
+    let mut crashed = vec![items[0].clone(), milestone];
+    crashed[0].status = MemoryStatus::Active;
+    crashed[0].promotion = None;
+    crashed[0].occurrences = crashed[1].occurrences.clone();
+    let by = Author::consistency();
+    let changed = promote::complete(&mut crashed, &by, T0);
+    assert_eq!(changed, vec!["m-1".parse::<MemoryId>().unwrap()]);
+    assert_eq!(crashed[0].status, MemoryStatus::Promoted);
+    assert!(
+        crashed[0].occurrences.is_empty(),
+        "held once, on the milestone"
+    );
+    assert_eq!(crashed[1].occurrences.len(), 1);
+    let before = crashed.clone();
+    assert!(promote::complete(&mut crashed, &by, T0).is_empty());
+    assert_eq!(crashed, before);
+}
+
+#[test]
+fn forget_reaches_the_items_holding_the_same_words() {
+    let mut items = office_pair();
+    let found = consolidate::candidates(&items, 40);
+    let judged = consolidate::judge(label("1", "same", "home office", "coworking"), &found.pairs);
+    consolidate::apply(&mut items, &judged.judgements, &Author::consistency(), T0);
+    assert_eq!(memory::linked(&items, &"m-1".parse().unwrap()), vec![1]);
+    assert!(memory::linked(&items, &"m-2".parse().unwrap()).is_empty());
 }

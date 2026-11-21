@@ -45,6 +45,7 @@ const HELP: &[(&str, &[&str])] = &[
     ("proposal-list", &["proposal", "list", "--help"]),
     ("memory", &["memory", "--help"]),
     ("memory-show", &["memory", "show", "--help"]),
+    ("memory-rules", &["memory", "rules", "--help"]),
     ("memory-ack", &["memory", "ack", "--help"]),
     ("memory-retire", &["memory", "retire", "--help"]),
     ("memory-forget", &["memory", "forget", "--help"]),
@@ -1231,6 +1232,7 @@ fn memory_matches_goldens() {
     capture("memory-show", &["memory", "show"]);
     capture("memory-show-all", &["memory", "show", "--include-off-page"]);
     capture("memory-show-item", &["memory", "show", "m-1"]);
+    capture("memory-rules", &["memory", "rules"]);
     capture(
         "memory-ack",
         &[

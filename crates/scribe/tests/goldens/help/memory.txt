@@ -4,6 +4,7 @@ Usage: scribe memory [OPTIONS] <COMMAND>
 
 Commands:
   show    Show memory items on the session-start page, one item in full, or the page itself
+  rules   Show the promotion rules and page windows in effect, each with its origin
   ack     Mark a now item as raised in this session, so it is not raised again unprompted
   retire  Retire an item with a reason: off the page, lists and ask, text kept
   forget  Forget an item, or one occurrence, for good: blank its words, keep its id
@@ -28,4 +29,5 @@ Examples:
   scribe memory show --section now
   scribe memory show <id>
   scribe memory show --page
+  scribe memory rules
   scribe memory ack <id> --session <id> --author opus

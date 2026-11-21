@@ -48,11 +48,13 @@ use crate::app::Context;
 use crate::audit_middleware::AuditMeta;
 use crate::error::CliError;
 use crate::output::{
-    BatchFailure, CoveredPayload, DeactivatedPayload, DeactivationFailure, Output, ProposalPayload,
-    ReappliedPayload, ScanReport,
+    BatchFailure, CoveredPayload, DeactivatedPayload, DeactivationFailure, MemoryScanPayload,
+    MergedPayload, Output, PromotedPayload, ProposalPayload, ReappliedPayload, ScanReport,
+    SupersededPayload,
 };
 use clap::{Args, Subcommand};
 use scribe_core::activity::{self, ActiveRoute, SetActive};
+use scribe_core::memory::consolidate;
 use scribe_core::{
     Config, EntryFilter, Models, Redactor, SessionFilter, SessionId, Store, consistency,
 };
@@ -186,6 +188,7 @@ pub(in crate::commands) fn scan<M: Models>(
         removal_pairs_left: 0,
         dropped_removal_labels: 0,
         failed_removal_batches: Vec::new(),
+        memory: MemoryScanPayload::default(),
         notices: Vec::new(),
     };
     let mut calls = 0usize;
@@ -231,15 +234,23 @@ pub(in crate::commands) fn scan<M: Models>(
         adapter: &adapter,
         limits: &limits,
     };
+    let calls = consolidate_memory(&session_scan, calls, &mut report.memory, &mut persisted)?;
     deactivate_sessions(&session_scan, calls, &mut report, &mut persisted)?;
-    let changed = !(report.reapplied.is_empty()
-        && report.opened.is_empty()
-        && report.closed.is_empty()
-        && report.covered.is_empty()
-        && report.failed_batches.is_empty()
-        && report.deactivated.is_empty()
-        && report.failed_deactivations.is_empty()
-        && report.failed_removal_batches.is_empty());
+    let memory = &report.memory;
+    let memory_changed = !(memory.merged.is_empty()
+        && memory.superseded.is_empty()
+        && memory.promoted.is_empty()
+        && memory.completed.is_empty()
+        && memory.failed_batches.is_empty());
+    let changed = memory_changed
+        || !(report.reapplied.is_empty()
+            && report.opened.is_empty()
+            && report.closed.is_empty()
+            && report.covered.is_empty()
+            && report.failed_batches.is_empty()
+            && report.deactivated.is_empty()
+            && report.failed_deactivations.is_empty()
+            && report.failed_removal_batches.is_empty());
     if !changed {
         report
             .notices
@@ -253,6 +264,12 @@ pub(in crate::commands) fn scan<M: Models>(
         report.notices.push(format!(
             "{} candidate pairs left for the next scan",
             report.pairs_left
+        ));
+    }
+    if report.memory.pairs_left > 0 {
+        report.notices.push(format!(
+            "{} memory pairs left for the next scan",
+            report.memory.pairs_left
         ));
     }
     if report.removal_pairs_left > 0 {
@@ -273,6 +290,99 @@ struct SessionScan<'a, M> {
     redactor: &'a Redactor,
     adapter: &'a M,
     limits: &'a RunLimits,
+}
+
+/// The most memory batches one scan judges.
+fn max_memory_batches() -> usize {
+    consistency::MAX_PAIRS.div_ceil(consistency::BATCH)
+}
+
+/// The scan's memory steps (§13.5), after the entry steps and before the
+/// session steps: the model labels the memory pairs (only while `[memory]
+/// enabled`: a store with memory switched off sends no item to a model),
+/// then one locked store call completes journalled promotions, applies the
+/// surviving labels and recounts rule (b). One audit line per item
+/// changed. Returns the model calls made so far.
+fn consolidate_memory<M: Models>(
+    scan: &SessionScan<'_, M>,
+    mut calls: usize,
+    report: &mut MemoryScanPayload,
+    persisted: &mut PersistedAudit<'_>,
+) -> Result<usize, CliError> {
+    let SessionScan {
+        store,
+        now,
+        config,
+        adapter,
+        limits,
+        ..
+    } = *scan;
+    let (items, _) = store.memory_items()?;
+    if items.is_empty() {
+        return Ok(calls);
+    }
+    let mut judgements = Vec::new();
+    if config.memory.enabled {
+        let found = consolidate::candidates(&items, consistency::MAX_PAIRS);
+        report.pairs_left = found.over_cap;
+        for (n, batch) in found.pairs.chunks(consistency::BATCH).enumerate() {
+            let may_start = n < max_memory_batches() && (calls == 0 || limits.may_continue());
+            if !may_start {
+                report.pairs_left = report.pairs_left.saturating_add(batch.len());
+                continue;
+            }
+            calls = calls.saturating_add(1);
+            let request = consolidate::request(&config.models.consistency, batch);
+            match adapter.memory_pairs(&request) {
+                Ok(answer) => {
+                    let judged = consolidate::judge(answer, batch);
+                    report.pairs_judged = report.pairs_judged.saturating_add(batch.len());
+                    report.dropped_labels = report.dropped_labels.saturating_add(judged.dropped);
+                    judgements.extend(judged.judgements);
+                }
+                Err(err) => {
+                    tracing::warn!(batch = n.saturating_add(1), %err, "the memory consistency model call failed");
+                    report.failed_batches.push(BatchFailure {
+                        batch: n.saturating_add(1),
+                        error_code: err.code(),
+                    });
+                }
+            }
+        }
+    }
+    let done = store.consolidate_memory(&judgements, now)?;
+    report.targets = done.items.iter().map(|id| format!("memory:{id}")).collect();
+    persisted.extend(report.targets.iter().cloned());
+    for change in done.changes {
+        match change {
+            consolidate::Change::Merged { item, into } => report.merged.push(MergedPayload {
+                item: item.to_string(),
+                into: into.to_string(),
+            }),
+            consolidate::Change::Superseded { item, by } => {
+                report.superseded.push(SupersededPayload {
+                    item: item.to_string(),
+                    by: by.to_string(),
+                });
+            }
+            consolidate::Change::Unrelated { .. } => {
+                report.unrelated = report.unrelated.saturating_add(1);
+            }
+        }
+    }
+    report.promoted = done
+        .promoted
+        .iter()
+        .filter_map(|p| {
+            Some(PromotedPayload {
+                item: p.item.as_ref()?.to_string(),
+                to: p.to.to_string(),
+                rule: p.rule.as_str(),
+            })
+        })
+        .collect();
+    report.completed = done.completed.iter().map(ToString::to_string).collect();
+    Ok(calls)
 }
 
 /// The scan's session steps (§7, S10), skipping pinned and inactive

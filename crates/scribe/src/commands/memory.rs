@@ -1,7 +1,7 @@
 //! `scribe memory`: read what scribe has noticed about Daniel, and the
 //! agent writes on it (docs/design/scribe/2_design.md §13.4, §13.6, §13.9).
 //!
-//! `show` reads only: no lock, no audit. `ack`, `retire` and `forget` are
+//! `show` and `rules` read only: no lock, no audit. `ack`, `retire` and `forget` are
 //! audited agent writes. Items are scribe-authored, so an agent retires or
 //! forgets one without Daniel's instruction check, as it may an agent note.
 
@@ -9,7 +9,9 @@ use super::{ListNotice, list_output};
 use crate::app::Context;
 use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
-use crate::output::{MemoryPagePayload, MemoryPayload, Output, Record, Records};
+use crate::output::{
+    MemoryPagePayload, MemoryPayload, MemoryRulesPayload, Output, Record, Records,
+};
 use clap::{Args, Subcommand};
 use scribe_core::memory::{self, MemoryItem, MemoryStatus, RecentSession, Section};
 use scribe_core::{AuthorName, Project, SessionFilter, SessionId};
@@ -24,6 +26,7 @@ Examples:
   scribe memory show --section now
   scribe memory show <id>
   scribe memory show --page
+  scribe memory rules
   scribe memory ack <id> --session <id> --author opus";
 
 const SHOW_EXAMPLES: &str = "\
@@ -37,6 +40,16 @@ Examples:
   scribe memory show --project scribe
   scribe memory show <id> --json
   scribe memory show --page";
+
+const RULES_EXAMPLES: &str = "\
+Prints the rules that promote a now item to milestones and the windows
+after which an item leaves the session-start page, each with its value
+and where it came from: shipped, or config with the file and line. Set
+them under [memory] and [memory.promote] in config.toml.
+
+Examples:
+  scribe memory rules
+  scribe memory rules --json | jq '.rules[] | {rule, value}'";
 
 const ACK_EXAMPLES: &str = "\
 Run it after raising a now item the user did not bring up himself, so the
@@ -67,6 +80,9 @@ pub(crate) enum MemoryCommand {
     /// Show memory items on the session-start page, one item in full, or the page itself
     #[command(after_help = SHOW_EXAMPLES)]
     Show(ShowArgs),
+    /// Show the promotion rules and page windows in effect, each with its origin
+    #[command(after_help = RULES_EXAMPLES)]
+    Rules(RulesArgs),
     /// Mark a now item as raised in this session, so it is not raised again unprompted
     #[command(after_help = ACK_EXAMPLES)]
     Ack(AckArgs),
@@ -101,6 +117,10 @@ pub(crate) struct ShowArgs {
     #[arg(long, conflicts_with = "id")]
     page: bool,
 }
+
+/// Arguments to `memory rules`: none.
+#[derive(Debug, Args)]
+pub(crate) struct RulesArgs {}
 
 /// Arguments to `memory ack`.
 #[derive(Debug, Args)]
@@ -153,7 +173,7 @@ impl MemoryCommand {
             author: Some(author.as_str().to_owned()),
         };
         match self {
-            Self::Show(_) => AuditSubject::default(),
+            Self::Show(_) | Self::Rules(_) => AuditSubject::default(),
             Self::Ack(args) => of(&args.id, &args.author),
             Self::Retire(args) => of(&args.id, &args.author),
             Self::Forget(args) => of(&args.id, &args.author),
@@ -163,7 +183,7 @@ impl MemoryCommand {
     /// Audit every write; `show` is read-only. See [`super::Command::audit`].
     pub(super) fn audit(&self) -> Option<AuditMeta> {
         match self {
-            Self::Show(_) => None,
+            Self::Show(_) | Self::Rules(_) => None,
             Self::Ack(_) => Some(AuditMeta {
                 command: "memory ack",
             }),
@@ -181,6 +201,16 @@ impl MemoryCommand {
 pub(super) fn run(command: MemoryCommand, ctx: &Context) -> Result<Output, CliError> {
     match command {
         MemoryCommand::Show(args) => show(&args, ctx),
+        MemoryCommand::Rules(RulesArgs {}) => {
+            let config = ctx.config()?;
+            let file = ctx.store().config_path().display().to_string();
+            Ok(Output::Show {
+                record: Record::MemoryRules(Box::new(MemoryRulesPayload::new(
+                    &config.memory,
+                    &file,
+                ))),
+            })
+        }
         MemoryCommand::Ack(args) => {
             let (item, changed) =
                 ctx.store()

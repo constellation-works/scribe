@@ -9,6 +9,8 @@
 
 use super::agent::{check_agent_author, check_reason, refusal};
 use super::{CONTROL_FILE, RECORD_EXT, Redactor, Skipped, Store, format, fsio, ids};
+use crate::memory::consolidate::{self, Change, Judgement};
+use crate::memory::promote::{self, Promoted};
 use crate::memory::{
     self, Applied, Draft, MemoryId, MemoryItem, MemoryStatus, Provenance, Refusal,
 };
@@ -26,6 +28,21 @@ pub struct MemoryWritten {
     pub applied: Vec<Applied>,
     /// Drafts refused under the lock, by code.
     pub refused: Vec<Refusal>,
+    /// The promotions the drafts caused (§13.4).
+    pub promoted: Vec<Promoted>,
+}
+
+/// What the scan's memory steps changed (§13.5).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Consolidated {
+    /// Merges, supersedes and pairs judged unrelated, in label order.
+    pub changes: Vec<Change>,
+    /// Journalled promotions completed: the items changed.
+    pub completed: Vec<MemoryId>,
+    /// Rule (b)'s promotions after the merges.
+    pub promoted: Vec<Promoted>,
+    /// Every item whose file changed, in id order: one audit line each.
+    pub items: Vec<MemoryId>,
 }
 
 /// The memory a pass window writes with its record.
@@ -148,20 +165,90 @@ impl Store {
                 written.refused.push(Refusal::Sensitive);
                 continue;
             }
-            written
-                .applied
-                .push(memory::apply(&mut items, draft, &pass.provenance, now));
+            if let Some(promote) = &element.promote
+                && redactor.mask(promote) != *promote
+            {
+                written.refused.push(Refusal::Sensitive);
+                continue;
+            }
+            match promote::write(&mut items, draft, &pass.provenance, &config.memory, now) {
+                Ok(done) => {
+                    written.applied.push(done.applied);
+                    written.promoted.extend(done.promoted);
+                }
+                Err(refused) => written.refused.push(refused),
+            }
         }
-        let changed: Vec<&MemoryItem> = items.iter().filter(|i| !before.contains(i)).collect();
-        if changed.is_empty() {
-            return Ok(written);
-        }
-        let dir = self.root.join(MEMORY_DIR);
-        self.prepare_subdir(&dir)?;
-        for item in changed {
+        self.write_changed(&before, &items)?;
+        Ok(written)
+    }
+
+    /// Write every item of `items` that differs from `before`, those that
+    /// gained (a new item, a milestone with its journal, a merge's target)
+    /// first, so a crash between the files leaves the occurrences on both
+    /// rather than on neither, and the next scan completes the change.
+    /// The caller holds the lock.
+    fn write_changed(&self, before: &[MemoryItem], items: &[MemoryItem]) -> Result<Vec<MemoryId>> {
+        let mut changed: Vec<(bool, &MemoryItem)> = items
+            .iter()
+            .filter(|i| !before.contains(i))
+            .map(|i| {
+                let old = before.iter().find(|b| b.id == i.id);
+                let gained = old.is_none_or(|b| i.occurrences.len() > b.occurrences.len());
+                (!gained, i)
+            })
+            .collect();
+        changed.sort_by_key(|(later, i)| (*later, i.id.number()));
+        for (_, item) in &changed {
             self.write_memory(item)?;
         }
-        Ok(written)
+        let mut ids: Vec<MemoryId> = changed.into_iter().map(|(_, i)| i.id.clone()).collect();
+        ids.sort_by_key(MemoryId::number);
+        Ok(ids)
+    }
+
+    /// The scan's memory steps under the store lock (§13.5): journalled
+    /// promotions completed, the surviving labels applied (merge,
+    /// supersede, unrelated), then rule (b) recounted. Every change is by
+    /// `{kind: scribe, name: consistency}`. Applying the same labels again
+    /// changes nothing.
+    ///
+    /// # Errors
+    ///
+    /// A memory file that does not parse, and store failures.
+    pub fn consolidate_memory(
+        &self,
+        judgements: &[Judgement],
+        now: OffsetDateTime,
+    ) -> Result<Consolidated> {
+        self.prepare_dir(&self.root)?;
+        let _lock = self.lock("consistency scan")?;
+        let config = self.config()?;
+        let (mut items, skipped) = self.memory_items()?;
+        if let Some(bad) = skipped.into_iter().next() {
+            return Err(bad.error);
+        }
+        let before = items.clone();
+        let by = Author::consistency();
+        let completed = promote::complete(&mut items, &by, now);
+        let changes = consolidate::apply(&mut items, judgements, &by, now);
+        let promoted = promote::recount(&mut items, &config.memory.promote, &by, now)
+            .into_iter()
+            .map(|(item, to)| Promoted {
+                item: Some(item),
+                to,
+                rule: promote::PromotionRule::RecursInSessions,
+                profile_to: None,
+                profile_from: None,
+            })
+            .collect();
+        let items = self.write_changed(&before, &items)?;
+        Ok(Consolidated {
+            changes,
+            completed,
+            promoted,
+            items,
+        })
     }
 
     /// Replace `item`'s file and stamp `control.json` with the current
@@ -246,7 +333,10 @@ impl Store {
         let mut item = self.resolve_memory(id)?;
         match item.status {
             MemoryStatus::Retired => return Ok((item, false)),
-            MemoryStatus::Forgotten => return Err(not_active(&item)),
+            MemoryStatus::Forgotten
+            | MemoryStatus::Merged
+            | MemoryStatus::Superseded
+            | MemoryStatus::Promoted => return Err(not_active(&item)),
             MemoryStatus::Active => {}
         }
         item.status = MemoryStatus::Retired;
@@ -259,7 +349,8 @@ impl Store {
 
     /// Forget an item for good for the agent `author` (§13.9): with
     /// `occurrence`, only that occurrence's quote; otherwise the statement,
-    /// every quote and any reason, the item `forgotten`. No file is
+    /// every quote and any reason, the item `forgotten`, and so are the
+    /// items holding the same words ([`memory::linked`]). No file is
     /// removed; id, section, dates and authors stay. Forgetting what is
     /// already forgotten changes nothing.
     ///
@@ -280,7 +371,18 @@ impl Store {
         let mut item = self.resolve_memory(id)?;
         let by = Author::agent(author);
         let changed = match occurrence {
-            None => memory::forget(&mut item, by, now),
+            None => {
+                // The items holding the same words go with it: those merged
+                // into it, and the other side of a promotion.
+                let (mut items, _) = self.memory_items()?;
+                for index in memory::linked(&items, &item.id) {
+                    let linked = &mut items[index];
+                    if memory::forget(linked, by.clone(), now) {
+                        self.write_memory(linked)?;
+                    }
+                }
+                memory::forget(&mut item, by, now)
+            }
             Some(n) => memory::forget_occurrence(&mut item, n, by, now).ok_or_else(|| {
                 refusal(
                     WriteRefusal::MemoryNotFound,

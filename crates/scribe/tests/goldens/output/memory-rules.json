@@ -1,0 +1,70 @@
+{
+  "rules": [
+    {
+      "rule": "promote.profile_change",
+      "value": true,
+      "origin": {
+        "source": "shipped",
+        "file": null,
+        "line": null
+      },
+      "meaning": "a now or milestones event that changes a profile fact becomes a milestone and replaces that profile item"
+    },
+    {
+      "rule": "promote.recurs_in_sessions",
+      "value": 3,
+      "origin": {
+        "source": "shipped",
+        "file": null,
+        "line": null
+      },
+      "meaning": "a now item raised in this many distinct sessions becomes a milestone; 0 switches it off"
+    },
+    {
+      "rule": "promote.user_says",
+      "value": [
+        "milestone",
+        "big day",
+        "remember this",
+        "never forget",
+        "life changing"
+      ],
+      "origin": {
+        "source": "shipped",
+        "file": null,
+        "line": null
+      },
+      "meaning": "one of these phrases in the user's turn makes the event a milestone"
+    },
+    {
+      "rule": "decay_days",
+      "value": 90,
+      "origin": {
+        "source": "shipped",
+        "file": null,
+        "line": null
+      },
+      "meaning": "a projects or working item leaves the page this many days after its latest occurrence"
+    },
+    {
+      "rule": "now_undated_days",
+      "value": 7,
+      "origin": {
+        "source": "shipped",
+        "file": null,
+        "line": null
+      },
+      "meaning": "an undated now item leaves the page this many days after its latest occurrence"
+    },
+    {
+      "rule": "now_after_days",
+      "value": 14,
+      "origin": {
+        "source": "shipped",
+        "file": null,
+        "line": null
+      },
+      "meaning": "a dated now item leaves the page this many days after its date"
+    }
+  ]
+}

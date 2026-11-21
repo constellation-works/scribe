@@ -22,6 +22,10 @@
   "sessions": 1,
   "latest": "2026-11-02T18:59:00Z",
   "retirement_reason": null,
+  "promoted_from": null,
+  "promotion": null,
+  "merged_into": null,
+  "superseded_by": null,
   "author": {
     "kind": "scribe",
     "name": "session-pass"
