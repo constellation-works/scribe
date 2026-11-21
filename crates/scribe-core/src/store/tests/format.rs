@@ -2103,7 +2103,10 @@ fn a_format_fifteen_store_upgrades_with_a_null_outcome_only() {
             decoded.approved_by,
             Some(crate::Author::agent("aide".parse().unwrap()))
         );
-        assert_eq!(decoded.quote.as_deref(), Some("I prefer short updates, always."));
+        assert_eq!(
+            decoded.quote.as_deref(),
+            Some("I prefer short updates, always.")
+        );
         assert_eq!(decoded.content, "Daniel prefers short updates.");
         let encoded = String::from_utf8(
             crate::store::format::encode_entry(Path::new(ENTRY), &decoded).unwrap(),
