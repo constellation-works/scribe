@@ -3180,8 +3180,9 @@ does not load, gives no hint and no line. The audit line is format 5
 
 *Built (record and CLI half, step (c)):* formats 13–16 were taken, so issues
 are **format 17** (`issue_kind`, a no-op step). An issue file starts at
-format 17 and an older build refuses one `store_too_new`; a format-16 build
-never walks `issues/`, so it does not see them at all. Links take the
+format 17; a format-16 build never walks `issues/`, so it does not see
+them at all (it refuses the store's other format-17 documents
+`store_too_new`). Links take the
 existing kinds (task, pr, repo, session); a friction is linked through its
 task or PR until `related` gains a friction kind. The audit line (format 4)
 carries `issue: {verb, id, occurrence, session, request_message,

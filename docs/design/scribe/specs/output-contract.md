@@ -276,7 +276,9 @@ session's `open` or `final`).
 `id` (`issue-<n>`), `title`, `status` (`open`, `mitigated`, `resolved` or
 `forgotten`), `signature` (strings), `projects`, `hosts`, `topics`,
 `related` (every occurrence's session and links, `kind:target`), `author`
-and `updated_by` (`{kind: "agent", name}`; `updated_by` may be `null`),
+and `updated_by` (`{kind: "agent", name}`; `updated_by` may be `null`, and
+is `{kind: "daniel"}` after his `#scribe forget` of the issue or an
+occurrence),
 `created`, `updated`, `cause` and `fix` (`cause not found` / `fix not
 found` until known; empty once forgotten), `occurrences` (newest first) and
 `gone`. An occurrence is `{n, date, host, project, session,
@@ -380,7 +382,8 @@ the message lists up to ten candidates, sorted, and how many more), `daniel_only
 `instruction_mismatch` (including negation or exception markers in the instruction or answered reply), `not_interactive`, `already_covered`,
 `proposal_invalid`, `proposal_not_agent`,
 `session_cataloged`, `transcript_not_found`, (format 19) `memory_not_found`,
-`memory_not_active`, `memory_not_now`, for `tmux` `fzf_missing` and
+`memory_not_active`, `memory_not_now`, (format 17) `issue_not_found`,
+`occurrence_not_found`, `issue_forgotten`, `reserved_tag`, for `tmux` `fzf_missing` and
 `tmux_failed` (exit 1; `tmux` renders no payload, its popup owns the
 terminal), for `session pass`
 `session_pass_failed` and `session_not_on`, and for `question
@@ -388,7 +391,9 @@ ask` the model codes `model_timeout`, `model_unavailable`, `model_failed`,
 `model_malformed`. A hook's refusals
 are not errors and appear only in its reply and audit lines:
 `unknown_tag`, `unparsed_instruction`, `unsupported_instruction`,
-`no_referent`, `provenance_failed`, `unknown_scribe_command`. A session
+`no_referent`, `provenance_failed`, `unknown_scribe_command`, and (format
+17) `reserved_tag` for a `#scribe issue:` line and `issue_not_found` or
+`occurrence_not_found` for a `#scribe forget` of an issue. A session
 pass's failures appear in its report and audit lines, and the run's
 `session_pass_failed` error names each with its code:
 `provenance_failed`, `io_error`, `session_answer_invalid` (budgets or

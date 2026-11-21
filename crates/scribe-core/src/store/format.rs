@@ -171,9 +171,8 @@ fn memory_preference_proposal(
 
 /// Format 16 -> 17 changes no stored value. It adds a record kind: the
 /// `issues/` directory of `issue` records (2_design.md §11.4), which have
-/// no older form. An issue file carries format 17, so a format-16 build
-/// that reads one refuses it as too new rather than as corrupt; every other
-/// document is unchanged.
+/// no older form. An issue file carries format 17; a format-16 build never
+/// reads `issues/`, and every other document is unchanged.
 fn issue_kind(
     _document: Document,
     value: serde_json::Value,

@@ -248,7 +248,7 @@ impl Store {
         let _lock = self.lock("issue update")?;
         let (mut issue, _) = self.resolve_issue(input)?;
         writable(&issue)?;
-        let changed = masked.apply(&mut issue);
+        let changed = masked.apply(&mut issue)?;
         if changed {
             issue.touch(author, now);
             self.write_issue(&issue, false)?;
@@ -381,7 +381,9 @@ impl Store {
     /// Forget an issue, or one occurrence of it, for good (Daniel's
     /// `#scribe forget <issue-id>` or `<issue-id>#<n>`): its words leave the
     /// file, which is replaced whole; the id and the occurrence numbers stay,
-    /// marked forgotten, so neither is given again. Returns whether anything
+    /// marked forgotten, so neither is given again. A forgotten occurrence's
+    /// cause and fix also leave every header that holds them, here and in
+    /// each issue it was moved from ([`Issue::unsay`]). Returns whether anything
     /// changed: forgetting what is already forgotten changes nothing.
     ///
     /// # Errors
@@ -396,8 +398,16 @@ impl Store {
         self.prepare_dir(&self.root)?;
         let _lock = self.lock("issue forget")?;
         let mut issue = self.issue(target.issue)?;
+        // The occurrences whose words go: their cause and fix also leave
+        // every header they were copied into, here and along their moves.
+        let going: Vec<_> = issue
+            .occurrences
+            .iter()
+            .filter(|o| target.occurrence.is_none_or(|n| o.n == n))
+            .map(|o| (o.n, o.cause.clone(), o.fix.clone()))
+            .collect();
         let changed = match target.occurrence {
-            None => issue.forget(by, now),
+            None => issue.forget(by.clone(), now),
             Some(n) => {
                 if issue.occurrence(n).is_none()
                     && issue
@@ -415,15 +425,59 @@ impl Store {
                             to: None,
                         },
                     )?;
-                    issue.touch(by, now);
+                    for (_, cause, fix) in &going {
+                        issue.unsay(cause, fix);
+                    }
+                    issue.touch(by.clone(), now);
                     true
                 }
             }
         };
         if changed {
             self.write_issue(&issue, false)?;
+            self.unsay_moved_from(issue.id, &going, &by, now)?;
         }
         Ok((issue, changed))
+    }
+
+    /// Take forgotten occurrences' words out of the headers of the issues
+    /// they were moved from, following each move back (a `moved` gone
+    /// entry naming `<issue>#<n>`) to where it was first written. The caller
+    /// holds the lock. Issues that are unreadable are left alone.
+    fn unsay_moved_from(
+        &self,
+        id: IssueId,
+        going: &[(NonZeroU32, String, String)],
+        by: &Author,
+        now: OffsetDateTime,
+    ) -> Result<()> {
+        let (mut issues, _) = self.load_issues()?;
+        let mut changed = std::collections::BTreeSet::new();
+        for (n, cause, fix) in going {
+            let mut at = vec![format!("{id}#{n}")];
+            while let Some(to) = at.pop() {
+                for other in &mut issues {
+                    let from: Vec<_> = other
+                        .gone
+                        .iter()
+                        .filter(|g| g.reason == GoneReason::Moved && g.to.as_deref() == Some(&to))
+                        .map(|g| format!("{}#{}", other.id, g.n))
+                        .collect();
+                    if from.is_empty() {
+                        continue;
+                    }
+                    if other.unsay(cause, fix) {
+                        other.touch(by.clone(), now);
+                        changed.insert(other.id);
+                    }
+                    at.extend(from);
+                }
+            }
+        }
+        for issue in issues.iter().filter(|i| changed.contains(&i.id)) {
+            self.write_issue(issue, false)?;
+        }
+        Ok(())
     }
 
     /// Every issue id on disk, unreadable files included.
