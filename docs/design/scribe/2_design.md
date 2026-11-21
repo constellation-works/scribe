@@ -3256,8 +3256,11 @@ preference, a question of fact, an idea the session goes on to carry out).
   Daniel's words, kept only when they are a span of the turn the model
   names and redaction leaves them unchanged (otherwise `open`); or `task`.
   An idea the model says became a task in the same session writes no entry,
-  and only when the task id it names appears in the session's text;
-  otherwise it is written `open`. The pass never writes `task`; the state is
+  and only when the task it names is shaped like an id (3 or more
+  characters, one token, with a digit: `ORB-4242`, `#112`) and a session
+  message writes it as a whole token (no letter, digit, `-` or `_` touching
+  either end); otherwise it is written `open`, so an ordinary word such as
+  `task` never drops an idea. The pass never writes `task`; the state is
   reserved for a later settling route (not built).
 - **Bounds.** At most 3 ideas per session per pass invocation (`MAX_IDEAS`),
   counted apart from the 3 candidate slots and the 20 open candidates, in
@@ -3520,7 +3523,10 @@ runs these checks; any failure refuses the command and changes nothing.
    dont, can’t, cannot, won’t, shouldn’t, except, unless and without), and
    also refuses but, stop, cancel, other than, avoid and only ("approve only
    p-4" is refused too). The scan covers the whole turn and the whole answered
-   message, not just the line that names the target; this over-refusal is
+   message, not just the line that names the target, except that the
+   answered message's snake_case words (a refusal code the agent echoed,
+   such as `instruction_not_found`) are skipped, so a corrected retry that
+   answers the echo is not refused for the code's `not`; this over-refusal is
    kept as designed, since it never accepts a write it should refuse. This
    conservative rule refuses “Don’t forget to approve p-4” even when approval was intended;
    ask for a plainer instruction. Otherwise `instruction_mismatch`.

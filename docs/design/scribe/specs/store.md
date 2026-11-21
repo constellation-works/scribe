@@ -208,7 +208,9 @@ content and his verbatim span in `quote`, and `window`, `evidence` and
 `approved_by` `null`. `open` has `reason` and `task` `null`; `parked` has
 Daniel's parking words verbatim in `reason` (redacted text) and `task`
 `null`; `task` has a task id (at most 64 characters) in `task` and `reason`
-`null` (reserved: the pass never writes it). Forgetting such an entry blanks
+`null` (reserved: the pass never writes it; a pass drops an idea as
+become-a-task only for an id-shaped task, one token with a digit, that a
+session message writes as a whole token). Forgetting such an entry blanks
 the content, clears the quote and the parked `reason`; `outcome.state`
 stays. An `outcome` on any other entry, a pass-written entry without one, or
 any other author or source on it is `store_corrupt`.
