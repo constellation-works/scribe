@@ -7,11 +7,11 @@ status: Draft
 feature: scribe
 doc_role: design
 type: design
-summary: How the scribe plugin is bounded (one binary; Daniel writes through hooks, agents read and write through the CLI taught by one skill, and the MCP surface stays ask), how #scribe entries, /scribe on session records (a rewritable header over an append-only log of segments), active and inactive sessions, ask and search, the consistency routine, backfill by name and the tmux popup work, where everything is stored, which model does what, and the slice plan that builds it.
+summary: How the scribe plugin is bounded (one binary; Daniel writes through hooks, agents read and write through the CLI taught by one skill, and the MCP surface stays ask), how #scribe entries, /scribe on session records (a rewritable header over an append-only log of segments), active and inactive sessions, ask and search, the consistency routine, backfill by name and the tmux popup work, where everything is stored, which model does what, and the slice plan that builds it; §11–§13 are proposed designs (claims and issues, settling on instruction, and the descriptive memory).
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204]
+related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240]
 ---
 
 # scribe — Design
@@ -102,6 +102,9 @@ session in the same project was recorded within the last day, adds
 ([§5.4](#54-session-links), [§7](#7-consistency-routine)). It prints nothing
 otherwise. It reads only; it does not create `config.toml`
 ([§3](#3-storage)).
+(Proposed, not built: it also gives the agent the memory page as
+`additionalContext` in interactive sessions,
+[§13.6](#136-reading-back).)
 
 Entry writes never go through Orbit's tool surface: the hooks call the
 binary, and from S12 agents call the CLI ([§1.1](#11-the-cli-agent-surface)). The two routine tools write session records and proposals, but they
@@ -1201,7 +1204,8 @@ segment and may open new segments; the write appends, never rewrites, a
 sealed segment.
 
 A pass writes no tag entries, even if the transcript contains `#preference`
-or an unprocessed `#scribe` line. It may open candidate proposals as described
+or an unprocessed `#scribe` line (proposed, not built: it writes memory
+items, which are not tag entries, [§13.3](#133-writing-the-session-pass)). It may open candidate proposals as described
 below; only Daniel's later typed approval creates an entry. Up to S13 there
 is no backfill: sessions that were never switched on are never read. From S14 one more route reads
 a session: Daniel names a past session with `scribe session catalog <id>`
@@ -1857,6 +1861,10 @@ the entry's or session's status. When hidden records matched and are left
 out, stderr says how many.
 
 ## 7. Consistency routine
+
+> Proposed change ([§13.5](#135-consolidation-the-weekly-consistency-routine),
+> not built): the scan also merges and supersedes memory items and
+> completes their promotions, directly and without proposals.
 
 The `scribe-consistency` routine (`0 6 * * 1`, weekly, seeded disabled)
 runs `scribe.consistency-scan`. First it re-applies each approved proposal
@@ -3267,6 +3275,579 @@ Not built until seen:
 - instructions from a non-interactive or remote session, and any token or
   confirmation dialog beyond the transcript check.
 
+## 13. Memory: profile, projects, working, now and milestones (proposed)
+
+[ORB-26219], designed 2026-11-21 and **not built**. Nothing in this
+section is implemented until Daniel approves it and its implementation
+tasks land, in the order of [§13.10](#1310-order-and-sequencing), after
+[§11.7](#117-order-and-sequencing) step (b). Where it changes a rule stated
+earlier (§5.3's "A pass writes no tag entries" and its bounds, §7's
+steps, the `SessionStart` hook of §1, which today tells only Daniel and
+never the agent), the earlier text describes what is built today and
+carries a pointer here. It reverses
+[3_vision.md §4](./3_vision.md#4-deliberately-out-of-scope) for descriptive
+memory only. The reasons and the alternatives are in
+[4_decisions.md](./4_decisions.md#scribe-keeps-a-descriptive-memory-the-pass-writes-without-approval).
+
+Daniel, chief's chat, 2026-11-21: "I think we should expand scribe's role
+to manage memory system. we already keep track of sessions, preferences,
+and issues … What we are lacking is a holistic memory, e.g. user profile,
+interests, projects, working preferences, etc." Then: "let's just include
+profile, projects, and working." Thinking of a user other than himself:
+"memory --- provides a holistic overview of the user -- akin to how a human
+builds a \"sense\" of another person; preferences, projects, recent
+events/sessions (list last n title and session_id?)". On time-bound events:
+"don't fade it out until the due date … It feels nice when other people
+remember details about you … even after the event (not reference it but at
+least be able to recall)", and "we add \"events\" or something, for big life
+events like getting married, having a child, graduating, promotion, moving
+to a new city, etc. and we can promote some of \"now\"", named "milestones".
+
+**Observed need** (ws_constellation ORB-26194, 2026-11-21): about 60
+Claude-only auto-memory notes on this host (60 files under
+`~/.claude/projects/*/memory/`, counted 2026-11-20) against 2 scribe
+`preferences` entries, so other providers read none of what agents have
+learnt about how he works; about 8 of those notes exist only to say what a
+repository is or that it is retired; the old hand-run profile
+(`knowledgebase/almanac/about-me`, last distilled 2026-07-08) still named a
+host that has since changed role, and nothing injected it at session start.
+Handoffs carry today's state ("a release under way", "dk-server-1
+unreachable") by hand. The `now` need of a regular user (Daniel's example
+of his wife) is stated, not yet observed in use.
+
+### 13.1 Three layers and five sections
+
+| Layer | What it holds | Lifetime | How an agent reads it |
+|---|---|---|---|
+| Sessions ([§5](#5-scribe-on)) | the dump of history | permanent | the last 5 on the page; the rest through `record search` and `ask` |
+| `memory` | a sense of the user | by section, below | the session-start page; `scribe memory show`; `ask` |
+| `preferences` (an entry tag) | rules that bind agents | until retired | as today; Daniel approves each |
+
+A **memory item** is one statement about the user with the occurrences
+that support it. Its **section** is exactly one of:
+
+| Section | Holds | Example statement | Scope | On the page |
+|---|---|---|---|---|
+| `profile` | role, skills, hosts, environment (and, with `personal` on, household as he states it) | "Runs his agents from a Mac and two Linux boxes." | global | until superseded; no decay |
+| `projects` | a project's purpose, status and current focus, with an as-of date; only what Orbit does not hold (why it exists and where it stands, never its tasks) | "scribe: being widened from preferences to a whole memory (as of 2026-11-21)." | one project | the current project's only; 90-day decay |
+| `working` | how he steers agents, as observed | "Asks for the design to be filed as a task before any build." | global | 90-day decay |
+| `now` | upcoming things and recent happenings | "Said his sister's wedding is on 2026-12-12." | global | [§13.4](#134-now-and-milestones) |
+| `milestones` | big, dated life or project events | "2026-06-14 — married." "2026-10-02 — pulsar decommissioned." | global | always, no age cutoff |
+
+`working` **describes**; `preferences` **binds**. An agent may adapt to a
+`working` item but must not treat it as a rule; only an approved
+`preferences` entry is one (§11.5 unchanged). A `working` item that recurs
+is offered to him as a preference ([§13.7](#137-from-working-to-preferences)).
+
+The section names are fixed in code (`scribe-core::memory::Section`, a
+closed enum); config can switch a section off, not add one. An `interests`
+section is not built (Daniel dropped it).
+
+**Every section is switchable, and none is unconditional.** Each section
+has its own setting (`[memory.sections] <name> = true|false`), and
+`[memory] enabled = false` switches all five off. A section switched off is
+neither written by the pass (the model is not asked for it, and an element
+naming it is refused, `memory_section_off`) nor shown on the page;
+`memory show` lists its items only with `--include-off-page`, labelled
+`section off`; its items stay in the store, unread,
+until it is switched on again or they are forgotten. The last-n sessions
+list is not a section and has its own setting (`recent_sessions = 0`).
+
+**Work and personal.** A second setting, `[memory] personal`, decides
+whether personal life is kept at all. **Off in the shipped default**, which
+is Daniel's work store: the pass is told to keep only what bears on work,
+and every element the sensitive word list of
+[§13.8](#138-sensitive-content) flags, or that the model marks personal, is
+refused in every section (`memory_personal_off`). So in the shipped default
+`now` holds work state ("a release under way", "dk-server-1 unreachable")
+and `milestones` work milestones ("pulsar decommissioned"); no family
+event, loss or household fact is written. Turning `personal` on admits the
+personal events of §13.4 and §13.8 (Daniel's example of a regular user).
+How a store chooses these settings as a whole (`work` and `personal`
+presets) is designed in [ORB-26240], after this section; this section only
+requires that every setting it names can be set alone.
+
+### 13.2 The item and its occurrences
+
+A record kind of its own, like an issue (§11.4) and for the same reason: an
+item grows an occurrence each time the user says it again, while an entry
+is one statement. **File** `memory/<id>.md`, id `m-<n>` allocated like
+entry ids, frontmatter only (no body):
+
+```markdown
+---
+format: <n>
+kind: memory
+id: m-14
+section: now                       # profile | projects | working | now | milestones
+status: active                     # active | merged | superseded | promoted | retired | forgotten
+statement: Said his sister's wedding is on 2026-12-12.
+project: null                      # projects only: the project key sessions use
+event_date: 2026-12-12             # now and milestones; null otherwise
+sensitive: false                   # §13.8
+sensitive_kind: null               # loss | health | relationship | family
+acknowledged: null                 # now only: {at, session, author}
+promoted_from: null                # milestones: the now item it came from
+promotion: null                    # {rule, to, profile_from, profile_to} on the promoted item
+merged_into: null
+superseded_by: null
+preference_proposal: null          # §13.7: the candidate opened for a working item
+author: {kind: scribe, name: session-pass}
+updated_by: {kind: scribe, name: session-pass}
+created: 2026-11-21T05:40:00Z
+updated: 2026-11-21T05:40:00Z
+occurrences:
+  - {n: 2, date: 2026-11-28, session: <id>, message: <uuid>, host: <host>, project: <key>, quote: "the wedding is two weeks out and I'm still on the seating", author: {kind: scribe, name: session-pass}}
+  - {n: 1, date: 2026-11-21, session: <id>, message: <uuid>, host: <host>, project: <key>, quote: "my sister's wedding is on december 12", author: {kind: scribe, name: session-pass}}
+---
+```
+
+- **Statement**: at most 200 characters, written by the pass's `session`
+  model, standing alone (§11.1's rule: it names its subject). It reports
+  what the user said or did, in the third person; it passes the redactor.
+- **Occurrence**: one turn that supports the statement: its date (the
+  turn's timestamp, not the pass's), session, message uuid, host, project,
+  and the user's **verbatim quote** (8–400 characters, checked as in
+  §13.3). Occurrences are newest first and are never edited; they are
+  removed only by `forget` ([§13.9](#139-correction)) or moved by a merge.
+- **Author**: `{kind: scribe, name: session-pass}` on the item and on each
+  occurrence it writes; `{kind: scribe, name: consistency}` for a merge,
+  supersede or promotion the routine makes. Never `{kind: daniel}`: the
+  statement is scribe's, and only the quote is his
+  ([4_decisions.md](./4_decisions.md#daniel-writes-only-through-his-typed-prompt-agent-names-are-attribution)
+  is unchanged).
+- **Derived, never stored**: whether an item is on the page, and why not
+  (decayed, past its window). It is a pure function of the item and the
+  day, in `scribe-core`, so no routine has to run for an item to leave the
+  page, and `SessionStart` stays read-only
+  ([4_decisions.md](./4_decisions.md#session-start-reads-only)).
+
+### 13.3 Writing: the session pass
+
+Writing is implicit: no `#scribe` line, no proposal, no approval. In an
+on session's ordinary pass (including the windows of a session Daniel
+names with `session catalog`, §5.8), the same `session` model call that
+updates the record returns a `memory` array beside `candidates`.
+`session rebuild` leaves it disabled, as it does candidates.
+
+- **Source.** Only the user's typed turns of a session he switched on (or
+  named for catalog), with every exclusion of §5.3: pasted blocks, fenced
+  or indented code, blockquotes, marked `#scribe` lines, synthetic and
+  meta turns. Assistant turns are never a source (§11.3 already stops the
+  pass reading them).
+- **Bound.** At most **3 memory items per session per pass invocation**,
+  shared across its windows and separate from the 3 candidate slots;
+  refused items consume a slot. Each array element is `{section,
+  statement, quote, message, event_date?, project?, same_as?,
+  sensitive_kind?, promote?}`: statement 200, quote 400, message 128,
+  section 12, event date 10, project 64, `same_as` 16, `sensitive_kind` 16,
+  `promote` 160 characters, at most **1,006 value characters per element,
+  3,018 per window**, in the same call with no extra call or timeout
+  budget. Input grows by the active items of the sections, at most 40
+  statements of at most 200 characters (8,000), selected newest first and
+  by word overlap with the window, each with its id, so the model can name
+  a repeat.
+- **The verbatim check.** As for candidates: the quote must be a verbatim
+  span of the turn its `message` names, in the current window, checked
+  again against the original transcript under the store lock, with the
+  cite, timestamp, host and project derived by the pass, not the model. A
+  quote the redactor would change drops the item.
+- **Dates.** The window gives each turn's timestamp; the model resolves
+  "next Saturday" against it. A model-free check keeps `event_date` only if
+  it is a real date within a year before and two years after the turn;
+  otherwise it is `null` (the item is then undated, §13.4).
+- **A repeat is an occurrence, not an item.** When the model names
+  `same_as: m-<n>`, the pass appends an occurrence to that item if it is
+  active, in the same section, and shares at least one content token in
+  four with the new statement (`ask`'s tokenizer, as §7); otherwise the
+  element opens a new item. The statement of the existing item is kept;
+  the routine decides whether the new words supersede it (§13.5). An
+  occurrence from a session already on the item is still appended (it is
+  a new turn) but counts once toward recurrence.
+- **Duplicates without `same_as`.** Under the lock, a new statement whose
+  normalized tokens equal, contain or overlap (Jaccard ≥ 0.8) an active
+  item's in the same section becomes an occurrence of that item instead,
+  as §5.3's duplicate guard does for candidates.
+- **The sensitive-content gate** of [§13.8](#138-sensitive-content) runs
+  last; a refused element writes nothing and is counted in the pass
+  report (`memory_refused`, by code).
+- **Write.** Items and occurrences are written under the store lock before
+  the record cursor advances, after the record's own checks, through
+  `write_atomic` per file; a replayed window appends no second occurrence
+  for the same message uuid. One audit line per item created or
+  occurrence added, with ids only. The pass report gains `memory_written`
+  and `memory_refused`.
+
+**Config** (`[memory]`, every key optional, shown with its default):
+
+```toml
+[memory]
+enabled = true                 # false: every section off
+personal = false               # false: personal life is never kept (§13.1)
+decay_days = 90                # projects and working leave the page
+now_undated_days = 7           # an undated now item leaves the page
+now_after_days = 14            # a dated now item stays this long after its date
+page_chars = 2400              # the session-start page budget
+recent_sessions = 5            # the last-n sessions on the page
+promote_working_sessions = 3   # §13.7; 0 switches it off
+
+[memory.sections]              # each section switched on or off alone
+profile = true
+projects = true
+working = true
+now = true
+milestones = true
+```
+
+### 13.4 `now` and `milestones`
+
+**`now`** holds what is happening to the user: a release under way, a
+host down, and, with `personal` on (§13.1), a wedding next month, a rough
+day, a loss. An item stores **what the user
+said, with its verbatim quote, never an inferred state**: "Said his
+grandmother died on 2026-11-20", never "is in a solemn mood". The
+conversing model derives the tone from the event and its age; scribe
+stores no mood, diagnosis or judgement. The pass enforces this without a
+model: a `now` statement containing a word from the mood list in
+`scribe-core::memory` (sad, solemn, upset, depressed, anxious, stressed,
+grieving, happy, excited, angry, mood, and the like) that its quote does
+not itself contain is refused (`memory_inferred`).
+
+Lifecycle, all derived from the item's dates (§13.2):
+
+| `now` item | On the session-start page | Then |
+|---|---|---|
+| dated (`event_date` set), upcoming | from its first occurrence through its date | stays, below |
+| dated, date passed | for `now_after_days` = **14** days after its date | leaves the page |
+| undated (a happening with no date: a rough day, a trip "this week") | for `now_undated_days` = **7** days after its latest occurrence; a new occurrence restarts the count | leaves the page |
+
+An item that leaves the page is not changed: it stays `active` in the
+store, in `scribe memory show --include-off-page`, in `ask` and `record
+search`, and in its session. What fades is the tone adjustment, not the
+memory. A big event does not fade: it is promoted.
+
+**The `acknowledged` mark** limits **unprompted mentions only**; it never
+removes an item from the page. It records when the item was last brought
+up: `{at, session, author}`. It is set when
+
+- the agent raises the item unprompted and then runs `scribe memory ack
+  <m-id> --session <id> --author <name>` (an audited agent write; the
+  skill tells the agent to); or
+- the user raises it himself: a new occurrence from his turn sets the mark
+  to that turn.
+
+The page labels an item **not yet raised** when it has no mark, or when
+its date has passed and its mark is from before the date. So a wedding is
+raised once before it ("how is the seating going") and once after
+("congratulations — how did it go"), and otherwise stays on the page as
+something the agent knows and ties a conversation to when it fits.
+
+**`milestones`** are permanent and dated: married, a child, graduated,
+promoted, moved city, a loss; for a project the like of "pulsar
+decommissioned". A milestone never decays and never leaves the page; it is
+removed only by retire or forget. The agent knows every milestone and
+raises one only when the conversation goes there ("recall, don't
+reference"); the page says so in its header line.
+
+**Promotion from `now` to `milestones`**, on three shipped defaults Daniel
+edits like the capture rules of §11.2:
+
+```toml
+[memory.promote]
+profile_change = true          # (a) the event changes a profile fact
+recurs_in_sessions = 3         # (b) 0 switches it off
+user_says = ["milestone", "big day", "remember this", "never forget", "life changing"]   # (c)
+```
+
+- **(a) A `profile` fact changes** (married, a parent, a new city, a new
+  job). The model returns `promote: "<the new profile statement>"` on the
+  element, naming the `profile` item it replaces (`same_as`) when one
+  exists. In one locked step the pass writes the milestone (with
+  `promoted_from` and its date), marks the `now` item `promoted`, and
+  writes the new `profile` item, setting the old one `superseded` with
+  `superseded_by`. The milestone's `promotion` records every id, so a crash
+  between the files is completed by the next consistency scan, as approvals
+  are re-applied (§7).
+- **(b) The same event recurs in three or more sessions**: model-free,
+  counted over the distinct sessions of the item's occurrences after each
+  write and after each merge (§13.5).
+- **(c) The user says so**: one of `user_says` occurs in his turn (matched
+  as §11.2's triggers), and the model names the item. Once §12 lands, the
+  aide may also promote on his checked instruction (`scribe memory promote
+  <m-id> --session <id> --instruction '<his words>'`, §12.2's checks).
+
+The pass may write a milestone directly, without a `now` item, only when
+rule (a) or (c) holds on that turn ("we got married last June" in passing
+is a `now` item for 7 days unless it changes his profile). Each field
+overrides its shipped default alone; `user_says` replaces the whole list;
+`scribe memory rules` prints the effective rules with their origin
+(`shipped`, `config` with file and line), like `tag show` (§11.2).
+
+### 13.5 Consolidation: the weekly consistency routine
+
+§7's scan gains memory steps, after the entry steps and before the session
+steps, within the same routine, deadline and model:
+
+1. **Pairs, model-free.** Within one section (and one project for
+   `projects`), active items whose statements overlap by at least one
+   content token in four; at most 40 pairs per scan, newest first; a pair
+   judged before is never offered again.
+2. **Judgement.** The `consistency` model labels each pair `same`,
+   `contradicts` or `unrelated`, with a reason and one verbatim quote from
+   each side's occurrences. A label survives only if both quotes pass the
+   verbatim check against the items' stored quotes.
+3. **Merge** (`same`): the newer item's occurrences move onto the older
+   item, newest first, keeping each occurrence's author; the newer item
+   becomes `merged` with `merged_into`. The older item keeps its id, so
+   cites and links hold.
+4. **Supersede** (`contradicts`): the newer item supersedes the older,
+   which becomes `superseded` with `superseded_by`; the model may not
+   reverse the order (§7's rule). "Lives in Boston" (2025) is superseded by
+   "moved to Seattle" (2026).
+5. **Promotion catch-up**: rule (b) recounted after merges, and any
+   promotion journalled on a milestone but not completed is completed.
+6. **Decay** needs no step: it is derived (§13.2). An item whose latest
+   occurrence is older than `decay_days` = **90** leaves the page and stays
+   in the store; a new occurrence brings it back. Decay applies to
+   `projects` and `working` only. **`profile`** facts are stable and rarely
+   restated, so they leave the page only when superseded; `now` follows
+   §13.4; `milestones` never leave.
+
+Unlike §7's entry steps, the memory steps change items directly rather
+than proposing: memory is descriptive, scribe-authored and needs no
+approval, and every change is reversible by reading the occurrences (a
+merge moves them, a supersede keeps both items). Each change is one audit
+line (target `memory:<id>`) and an entry in the scan report's `memory`
+block. The routine stays seeded disabled; until Daniel enables it, the
+pass's `same_as` and duplicate guard are the only consolidation.
+
+### 13.6 Reading back
+
+**The session-start page.** `scribe hook session-start` adds the page as
+the hook's `additionalContext` (Claude Code's `SessionStart`
+`hookSpecificOutput`), so the **agent** reads it; the lines for Daniel stay
+in `systemMessage` as today. It is built read-only, with no lock and no
+write, from the store and the day. It is injected **only into an
+interactive session**: the hook reads Claude Code's entry point
+(`CLAUDE_CODE_ENTRYPOINT=cli`, the interactive value §12.5 relies on;
+`sdk-cli` for every `claude -p` run) and adds no page otherwise, so
+headless Orbit runs, routines and drains carry none of it. Codex's
+equivalent is mapped by the implementation task, or Codex sessions get
+the page through the skill (`scribe memory show --page`) until it is.
+The page does not depend on this session being on: reading needs no
+switch; only writing does.
+
+A section switched off (§13.1) has no part on the page. The example below
+is a store with `personal` on; in the shipped work default the `now` and
+`milestones` lines hold only work state and work milestones.
+
+Layout and budget (`page_chars` = **2,400** characters, about 600 tokens,
+for every part but `milestones`, whose lines come on top), sections in this
+order, each line one item and its id:
+
+```text
+scribe memory — what you know about Daniel. Descriptive, not rules: rules are his preferences. Raise milestones only when the conversation goes there.
+Now:
+- 2026-12-12 sister's wedding (in 21 days; not yet raised) [m-14]
+- release of orbit under way, said 2026-11-21 [m-15]
+Milestones:
+- 2026-06-14 married [m-3]
+- 2026-10-02 pulsar decommissioned [m-9]
+Profile: runs agents from a Mac and two Linux boxes [m-1]; …
+Project scribe (as of 2026-11-21): being widened to a whole memory [m-11]
+Working: files the design as a task before any build [m-6]; …
+Recent sessions: <id> "scribe memory design" (2026-11-21); <id> "…" (2026-11-20); … (5)
+More: scribe memory show · scribe session show <id> · scribe ask
+```
+
+| Part | Budget | Selection |
+|---|---|---|
+| header and footer | 260 | fixed |
+| `now` | 600 | on-page items, dated ones by date (soonest first), then undated by latest occurrence; at most 8 |
+| `milestones` | no cap | every milestone, one dated line each (at most 100 characters), oldest first |
+| `profile` | 400 | on-page items, most occurrences first |
+| `projects` | 300 | the current project's items (the working directory's project key, as §5.4) |
+| `working` | 440 | on-page items, most distinct sessions first |
+| recent sessions | 400 | the last **n = 5** active sessions by last message, title and id, excluding this one |
+
+A part over its budget drops whole items from its end and says
+`(+k more)`; unused budget passes to `working`, then `profile`.
+Milestones are never cut: when their lines pass 600 characters the page is
+still injected whole, and the hook logs `memory_page_over_budget` (a
+warning, never a failure), which is the signal that a cap is needed (not
+built until seen). Items are rendered from their statement only; quotes stay in the
+store. An item marked `sensitive` (§13.8) shows its statement as stored and
+no quote, like any other.
+
+**`scribe memory show`** (read-only, no lock, no audit) renders the full
+pages: every on-page item of every section (or `--section <s>`, `--project
+<key>`), each with its statement, id, occurrence count, latest date and,
+for `now`, its page window and mark; `--include-off-page` adds decayed,
+past-window, merged and superseded items labelled with why;
+`scribe memory show <m-id>` prints one item with every occurrence and its
+quote; `--page` prints exactly what the hook would inject. `--json` gives
+the list envelope `{items, total, truncated, warnings}`; field names are a
+contract from the first release.
+
+**`ask` and `record search`** treat items as records: `record search
+--kind memory` and `ask` retrieval include them; evidence shows "scribe's
+statement" followed by his quoted words with their session and date. The
+attribution check of §6.4 accepts a claim attributed to Daniel only when
+the cited span is in an occurrence's quote, never in a statement. An item
+weighs 1.0 in `ask`, not the 1.5 of his own entries. Retired and forgotten
+items are left out; off-page items are included, labelled.
+
+### 13.7 From `working` to `preferences`
+
+When a `working` item's occurrences span **three or more distinct
+sessions** (the same count as rule (b), its own config key
+`[memory] promote_working_sessions = 3`), the pass, under the lock after
+the occurrence that crossed it, opens one candidate proposal under
+`preferences`: the item's statement as the §11.1 statement, its latest
+occurrence's quote and cite as the claim's quote, and `admitted:
+{trigger: "memory:recurs", matched: "<m-id>", criteria: <the tag's>}`. It
+counts against the 20-open cap (at the cap it is not opened, and is
+retried at the next occurrence), passes the suppression set, and is
+recorded on the item (`preference_proposal`), so it opens once. Daniel
+approves or rejects it as any candidate (§5.3, or on instruction, §12);
+approval writes his `preferences` entry with `stated_by` set, and the
+`working` item stays as it is. A rejection is never asked again.
+
+### 13.8 Sensitive content
+
+Only what the user typed in a session he switched on (or named for
+catalog) is read; nothing is read from tool output, pasted text or
+assistant turns (§13.3).
+
+**Never kept, in any section** (refused, `memory_sensitive`):
+
+- credentials, keys, tokens, passwords, and any text the redactor changes
+  (model-free: the redactor runs on statement and quote, and a change
+  drops the element);
+- financial details: account or card numbers, balances, salaries, debts,
+  amounts owed (model-free: the redactor's account and card patterns, plus
+  the `finance` word list in `scribe-core::memory`; the model is told the
+  rule as well);
+- health details beyond the event: diagnoses, conditions, medications,
+  symptoms, test results, of the user or anyone else;
+- third parties' identifying details: names of people other than public
+  figures and colleagues named for work, contact details, addresses, ages.
+  A statement names a person by relation ("his sister"), not by name. The
+  quote stays verbatim: it is his own words, already in the session record
+  he switched on, and it is never shown on the page.
+
+**Kept, only when `[memory] personal` is on (off in the shipped work
+default, §13.1), in `now` only, with the short lifetime**: an event in his
+or his family's life that he stated, as the event and at the level he said it
+("said his grandmother died on 2026-11-20", "said he has surgery on
+2026-12-03"), never its medical or financial detail. Such an item carries
+`sensitive: true` and the kind (`loss`, `health`, `relationship`,
+`family`), set by the model and forced by a model-free word list (died,
+passed away, funeral, hospital, surgery, diagnosed, divorce, miscarriage,
+pregnant, and the like): when the list matches, the element is sensitive
+whatever the model said. A sensitive item
+
+- is accepted only in `now` or `milestones` (in `profile`, `projects` or
+  `working` it is refused, so health and family events never become
+  standing facts);
+- stays on the page for the §13.4 window (until its date and 14 days
+  after, or 7 days after its latest mention when undated), then leaves the
+  page and stays in the store, in `scribe memory show
+  --include-off-page`, `ask` and its session, until removed;
+- is promoted to a milestone only by rule (b) or (c), never by (a): no
+  `profile` fact is derived from it;
+- is shown in `scribe memory show` like any item, so he can see exactly
+  what is kept;
+- is removed with `#scribe forget <m-id>`, or by the aide on his word
+  (§13.9), which blanks its statement and every quote.
+
+How the pass enforces it, in order, after the verbatim check and before
+the write: the section switch (model-free), the redactor (model-free), the
+word lists (model-free; `finance` refuses, `sensitive` forces the flag, and
+with `personal` off a flagged element is refused), the section rule for sensitive items
+(model-free), the mood rule of §13.4 (model-free), and the model's
+instruction to drop health detail and third parties' details (model
+judgement, the only gate that reads meaning; [§13.11](#1311-limits-and-what-is-not-built-until-seen)).
+Refusals are counted in the pass report and audited by code only, never
+with the text.
+
+### 13.9 Correction
+
+What exists, extended to memory ids:
+
+- `#scribe retire <m-id>` hides an item from the page, `ask` and lists
+  (`retired`); `#scribe forget <m-id>` blanks its statement and every
+  occurrence's quote for good (`forgotten`; id, section, dates and authors
+  stay), and `#scribe forget <m-id>#<n>` one occurrence. The settling
+  verbs of §7 accept `m-` ids; a repeated instruction echoes "nothing
+  changed".
+- Items are scribe-authored, so an agent may retire or forget one without
+  his instruction check, as it may retire agent-authored entries (§1.1):
+  `scribe memory retire <m-id> --author <name> --reason <text>`, `scribe
+  memory forget <m-id>[#<n>] --author <name> --confirm` (STD-01@2 §R5).
+  The skill tells the aide to run them when he says an item is wrong or
+  asks for it to be forgotten, and to echo the result in one line.
+- A wrong statement with right quotes is corrected by retiring it; the
+  next occurrence opens a fresh item. There is no edit verb.
+
+Every change is one audit line with the id and the code, never the words,
+so a forgotten item's words leave the store.
+
+### 13.10 Order and sequencing
+
+After [§11.7](#117-order-and-sequencing) step (b), whose statement and
+`stated_by` this reuses:
+
+1. **(a)** The `memory` record kind, pass extraction with its checks and
+   the sensitive gate, `scribe memory show` and `ack`, retire and forget,
+   and the session-start page with the last-n sessions (one store format
+   step, numbered when it lands: the `memory/` directory and the `memory`
+   kind; an older build refuses a store holding one).
+2. **(b)** Consolidation: the consistency scan's merge and supersede, the
+   `now` to `milestones` promotion rules and `scribe memory rules`, and
+   the derived decay and page windows (decay ships in (a) as derived; (b)
+   adds the routine steps).
+3. **(c)** A recurring `working` item proposed as a `preferences`
+   candidate.
+
+Each lands with its `specs/store.md`, `specs/output-contract.md`, skill and
+golden updates.
+
+### 13.11 Limits and what is not built until seen
+
+- **Sections, events and sensitivity are the model's judgement.** The
+  model-free gates catch credentials, listed finance and loss words, a mood
+  word not in the quote, and a sensitive item outside `now` or
+  `milestones`; a health detail phrased without a listed word, or a third
+  party named in a statement, is caught only by the model, and by Daniel
+  reading `scribe memory show`.
+- **The mood rule is a word list.** "Sounded tired" passes if "tired" is
+  not listed.
+- **The page is in every interactive session's context**, about 600
+  tokens, whether or not the session needs it.
+- **Acknowledgement depends on the agent** running `memory ack`; an agent
+  that does not will raise an item again in the next session.
+- **Promotion (a) trusts the model's profile statement**; a wrong one
+  supersedes a right profile fact until he retires it.
+- **Only providers scribe reads.** A user whose conversations are
+  elsewhere (Daniel's example) has no memory until an import exists
+  ([3_vision.md §1](./3_vision.md#1-open-questions)).
+
+Not built until seen:
+
+- importing the old `about-me` (four months stale), or Claude's
+  auto-memory notes (the better seed, if Daniel later wants one);
+- export to Markdown files, or reading the store from the box;
+- an `interests` section, or sections defined in config;
+- `#scribe <section>:` lines that write an item by hand;
+- a cap on the milestones list, or on an item's occurrences;
+- an edit verb for an item's statement;
+- a page for headless runs, or per-agent page budgets;
+- a model-level duplicate check in the pass beyond `same_as` and the
+  lexical guard;
+- importing a ChatGPT export, an app connector, and always-on capture with
+  an off-the-record switch ([3_vision.md §1](./3_vision.md#1-open-questions)).
+
 ## Task References
 
 - [ORB-21747] — designed the standalone scribe plugin.
@@ -3291,6 +3872,9 @@ Not built until seen:
 - [ORB-25987] — the pass captures Daniel's ideas; revised by §11.6.
 - [ORB-26204] — designed §12: an agent Daniel instructs settles claims and deletes records
   through the CLI; sequenced after §11 step (a).
+- [ORB-26219] — designed §13: the `memory` record kind with its five sections, the
+  pass that writes it, consolidation, the session-start page and correction.
+- [ORB-26240] — designs the `work` and `personal` presets over §13's settings.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
 
