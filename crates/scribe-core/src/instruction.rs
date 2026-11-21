@@ -13,8 +13,8 @@
 //! It is an accident guard (STD-05 R5), like every provenance check in
 //! scribe: it stops an agent acting on its own, a stale or misread
 //! instruction and an instruction meant for another record. A process
-//! running as Daniel can write a transcript file, and the word lists do not
-//! understand negation.
+//! running as Daniel can write a transcript file. A negated act is refused;
+//! sarcasm still passes.
 
 use crate::capture;
 use crate::entry::Speaker;
@@ -97,7 +97,17 @@ pub const AFFIRMATIVES: &[&str] = &["yes", "ok", "okay", "go ahead", "do it"];
 
 /// Words of the answered reply that make a bare affirmative an approval,
 /// when they sit on the same line as the target's id.
-pub const APPROVE_IN_REPLY: &[&str] = &["approve", "approved", "accept", "accepted"];
+pub const APPROVE_IN_REPLY: &[&str] = &["approve", "accept"];
+
+/// Words that negate an act they precede in the same clause. The duplicate
+/// check uses this list when it lands.
+pub(crate) const NEGATIONS: &[&str] = &[
+    "don't", "do not", "dont", "never", "not", "no", "stop", "cancel", "without",
+];
+
+/// Punctuation that ends a clause. An apostrophe is not one, so `don't`
+/// stays a word, and a negation does not cross the break.
+const CLAUSE_BREAKS: &[char] = &['.', '!', '?', ';', ':', ','];
 
 /// One message of the session, as the check reads it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -174,9 +184,13 @@ pub struct Instructed {
 /// - `instruction_not_found`: `quote` is in no turn Daniel plainly typed;
 /// - `not_interactive`: the turn's entry point is not an interactive one;
 /// - `instruction_stale`: the turn is not one of his last [`RECENT_TURNS`]
-///   typed turns, or was typed more than [`FRESH_FOR`] before `now`;
+///   typed turns, was typed more than [`FRESH_FOR`] before `now`, or is
+///   dated ahead of `now`;
 /// - `instruction_mismatch`: neither the turn nor the assistant message just
-///   before it names the target, or his turn does not name the act.
+///   before it names the target, or his turn does not name the act;
+/// - `instruction_negated`: the act word on a line that names the target is
+///   negated in the same clause (`don't`, `do not`, `dont`, `never`, `not`,
+///   `no`, `stop`, `cancel`, `without`).
 ///
 /// # Errors
 ///
@@ -213,12 +227,19 @@ pub fn check(spoken: &[Spoken], request: &Request<'_>) -> Result<Instructed, Err
         ));
     }
     let recent = typed.len() - rank <= RECENT_TURNS;
-    let age = request.now - turn.message.at;
-    if !recent || age > FRESH_FOR {
+    // Callers pass `now` at whole-second resolution. A fraction of that
+    // second is not ahead of the command; a later second is.
+    let at = turn
+        .message
+        .at
+        .replace_nanosecond(0)
+        .unwrap_or(turn.message.at);
+    let age = request.now - at;
+    if !recent || age.is_negative() || age > FRESH_FOR {
         return Err(refuse(
             WriteRefusal::InstructionStale,
             format!(
-                "the instruction is not one of Daniel's last {RECENT_TURNS} typed turns of the last {} minutes; ask him again",
+                "the instruction is not one of Daniel's last {RECENT_TURNS} typed turns of the last {} minutes, or it is dated ahead of the command; ask him again",
                 FRESH_FOR.whole_minutes()
             ),
         ));
@@ -237,6 +258,15 @@ pub fn check(spoken: &[Spoken], request: &Request<'_>) -> Result<Instructed, Err
             format!(
                 "neither the instruction nor the reply it answers names {}; name the id in your reply before acting",
                 request.target.id
+            ),
+        ));
+    }
+    if act_on_target_is_negated(words, request.act, request.target) {
+        return Err(refuse(
+            WriteRefusal::InstructionNegated,
+            format!(
+                "the instruction negates {} of {}; act only on what Daniel's words ask for",
+                request.act, request.target.id
             ),
         ));
     }
@@ -281,6 +311,9 @@ pub fn names_target(text: &str, target: &Target) -> bool {
 }
 
 fn mentions(text: &str, id: &str) -> bool {
+    if id.is_empty() {
+        return false;
+    }
     let id_char = |c: char| c.is_alphanumeric() || matches!(c, '-' | '_');
     text.match_indices(id).any(|(at, _)| {
         let before = text[..at].chars().next_back();
@@ -289,43 +322,145 @@ fn mentions(text: &str, id: &str) -> bool {
     })
 }
 
-/// §12.2 check 5: whether his own words name `act`. For [`Act::Approve`] a
-/// bare affirmative counts only when `reply`, the message he answered, has
-/// "approve" or "accept" on a line naming the target.
+/// §12.2 check 5: whether his own words name `act` without negating it.
+/// For [`Act::Approve`] a bare affirmative counts only when `reply`, the
+/// message he answered, has an un-negated "approve" or "accept" on a line
+/// naming the target. Past tense ("approved", "accepted") does not.
 #[must_use]
 pub fn names_act(words: &str, reply: Option<&str>, act: Act, target: &Target) -> bool {
-    let tokens = tokens_of(words);
-    if act.words().iter().any(|w| has_phrase(&tokens, w)) {
+    if text_has_unnegated(words, act.words()) {
         return true;
     }
-    if act != Act::Approve || !AFFIRMATIVES.iter().any(|w| has_phrase(&tokens, w)) {
+    if act != Act::Approve || !text_has_unnegated(words, AFFIRMATIVES) {
         return false;
     }
     reply.is_some_and(|reply| {
-        reply.lines().any(|line| {
-            names_target(line, target) && {
-                let line = tokens_of(line);
-                APPROVE_IN_REPLY.iter().any(|w| has_phrase(&line, w))
-            }
-        })
+        reply
+            .lines()
+            .any(|line| names_target(line, target) && line_has_unnegated(line, APPROVE_IN_REPLY))
     })
 }
 
-/// Lowercased runs of letters and digits.
-fn tokens_of(text: &str) -> Vec<String> {
-    text.split(|c: char| !c.is_alphanumeric())
-        .filter(|t| !t.is_empty())
-        .map(str::to_lowercase)
+/// Whether a clause that names `target` negates `act`. When the act and the
+/// target never share a clause, every occurrence of the act being negated
+/// counts the same way. One negated clause is enough: a later clause that
+/// affirms the same target does not undo it.
+fn act_on_target_is_negated(words: &str, act: Act, target: &Target) -> bool {
+    let phrases = act.words();
+    let mut saw_act_with_target = false;
+    let mut saw_negated = false;
+    for line in words.lines() {
+        if !names_target(line, target) {
+            continue;
+        }
+        for clause in clauses(line) {
+            if !names_target(clause, target) {
+                continue;
+            }
+            let hits = phrase_hits(clause, phrases);
+            if hits.positive || hits.negated {
+                saw_act_with_target = true;
+            }
+            if hits.negated {
+                saw_negated = true;
+            }
+        }
+    }
+    if saw_act_with_target {
+        return saw_negated;
+    }
+    let hits = text_hits(words, phrases);
+    hits.negated && !hits.positive
+}
+
+struct PhraseHits {
+    positive: bool,
+    negated: bool,
+}
+
+fn text_has_unnegated(text: &str, phrases: &[&str]) -> bool {
+    text_hits(text, phrases).positive
+}
+
+fn line_has_unnegated(line: &str, phrases: &[&str]) -> bool {
+    clauses(line).any(|clause| phrase_hits(clause, phrases).positive)
+}
+
+fn text_hits(text: &str, phrases: &[&str]) -> PhraseHits {
+    let mut hits = PhraseHits {
+        positive: false,
+        negated: false,
+    };
+    for line in text.lines() {
+        for clause in clauses(line) {
+            let next = phrase_hits(clause, phrases);
+            hits.positive |= next.positive;
+            hits.negated |= next.negated;
+        }
+    }
+    hits
+}
+
+fn clauses(line: &str) -> impl Iterator<Item = &str> {
+    line.split(CLAUSE_BREAKS)
+        .map(str::trim)
+        .filter(|clause| !clause.is_empty())
+}
+
+/// Whole words of `clause`. An apostrophe stays inside the word, and a
+/// curly apostrophe is folded to `'`, so `don't` and `don’t` are one word.
+fn clause_words(clause: &str) -> Vec<String> {
+    clause
+        .split(|c: char| !is_word_char(c))
+        .filter(|word| !word.is_empty())
+        .map(normalize_word)
+        .filter(|word| !word.is_empty())
         .collect()
 }
 
-/// Whether `phrase`'s words occur consecutively in `tokens`.
-fn has_phrase(tokens: &[String], phrase: &str) -> bool {
-    let words: Vec<&str> = phrase.split(' ').collect();
-    !words.is_empty()
-        && tokens
-            .windows(words.len())
-            .any(|w| w.iter().zip(&words).all(|(t, p)| t == p))
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || matches!(c, '\'' | '\u{2019}' | '\u{2018}')
+}
+
+fn normalize_word(word: &str) -> String {
+    word.trim_matches(|c| matches!(c, '\'' | '\u{2019}' | '\u{2018}'))
+        .replace(['\u{2019}', '\u{2018}'], "'")
+        .to_lowercase()
+}
+
+fn phrase_hits(clause: &str, phrases: &[&str]) -> PhraseHits {
+    let words = clause_words(clause);
+    let mut hits = PhraseHits {
+        positive: false,
+        negated: false,
+    };
+    for phrase in phrases {
+        let parts: Vec<String> = phrase.split(' ').map(str::to_lowercase).collect();
+        if parts.is_empty() || words.len() < parts.len() {
+            continue;
+        }
+        for (start, window) in words.windows(parts.len()).enumerate() {
+            if window.iter().zip(&parts).all(|(word, part)| word == part) {
+                if negation_before(&words[..start]) {
+                    hits.negated = true;
+                } else {
+                    hits.positive = true;
+                }
+            }
+        }
+    }
+    hits
+}
+
+fn negation_before(words: &[String]) -> bool {
+    NEGATIONS.iter().any(|negation| {
+        let parts: Vec<&str> = negation.split(' ').collect();
+        !parts.is_empty()
+            && words.len() >= parts.len()
+            && words
+                .windows(parts.len())
+                .any(|window| window.iter().zip(&parts).all(|(word, part)| word == part))
+    })
 }
 
 /// His own words in a typed turn: pasted blocks, code fences and
@@ -343,6 +478,8 @@ pub fn own_words(text: &str) -> String {
 /// the conversation: the entry point and the origin claims.
 #[derive(Deserialize)]
 struct LineMeta {
+    #[serde(rename = "type", default)]
+    kind: Option<serde_json::Value>,
     #[serde(default)]
     uuid: Option<serde_json::Value>,
     #[serde(default)]
@@ -364,6 +501,24 @@ struct LineMeta {
 struct Claims {
     entrypoint: Option<String>,
     origins: Vec<String>,
+    /// A present origin field whose value is not a string. That turn is
+    /// not plainly typed, the same as a non-plain string origin.
+    not_plain: bool,
+}
+
+/// An origin field: absent, a string, or some other JSON value.
+enum OriginValue {
+    Absent,
+    Text(String),
+    NotPlain,
+}
+
+fn origin_value(value: Option<&serde_json::Value>) -> OriginValue {
+    match value {
+        None => OriginValue::Absent,
+        Some(serde_json::Value::String(text)) => OriginValue::Text(text.clone()),
+        Some(_) => OriginValue::NotPlain,
+    }
 }
 
 fn string(value: Option<&serde_json::Value>) -> Option<String> {
@@ -375,8 +530,9 @@ fn string(value: Option<&serde_json::Value>) -> Option<String> {
 /// [`transcript::daniel_turn`] keeps it and §4.1's origin guard
 /// ([`capture::agent_originated`]) passes its line's origin fields and
 /// text, and each message's `entrypoint` checked against
-/// [`INTERACTIVE_ENTRYPOINTS`]. A replayed line keeps its first copy's
-/// fields, as the conversation keeps its first copy.
+/// [`INTERACTIVE_ENTRYPOINTS`]. Only `user` and `assistant` lines supply
+/// claims. A non-string origin field is not plain. A replayed line keeps
+/// its first copy's fields, as the conversation keeps its first copy.
 #[must_use]
 pub fn claude_conversation(bytes: &[u8]) -> Vec<Spoken> {
     let mut claims: BTreeMap<String, Claims> = BTreeMap::new();
@@ -384,22 +540,37 @@ pub fn claude_conversation(bytes: &[u8]) -> Vec<Spoken> {
         let Ok(meta) = serde_json::from_slice::<LineMeta>(line) else {
             continue;
         };
+        if !matches!(
+            string(meta.kind.as_ref()).as_deref(),
+            Some("user" | "assistant")
+        ) {
+            continue;
+        }
         let Some(uuid) = string(meta.uuid.as_ref()) else {
             continue;
         };
-        claims.entry(uuid).or_insert_with(|| Claims {
-            entrypoint: string(meta.entrypoint.as_ref()),
-            origins: [
+        claims.entry(uuid).or_insert_with(|| {
+            let mut origins = Vec::new();
+            let mut not_plain = false;
+            for field in [
                 &meta.source,
                 &meta.prompt_source_camel,
                 &meta.prompt_source,
                 &meta.origin,
                 &meta.prompt_origin_camel,
                 &meta.prompt_origin,
-            ]
-            .into_iter()
-            .filter_map(|v| string(v.as_ref()))
-            .collect(),
+            ] {
+                match origin_value(field.as_ref()) {
+                    OriginValue::Absent => {}
+                    OriginValue::Text(text) => origins.push(text),
+                    OriginValue::NotPlain => not_plain = true,
+                }
+            }
+            Claims {
+                entrypoint: string(meta.entrypoint.as_ref()),
+                origins,
+                not_plain,
+            }
         });
     }
     transcript::parse(bytes)
@@ -410,8 +581,9 @@ pub fn claude_conversation(bytes: &[u8]) -> Vec<Spoken> {
             let origins: Vec<&str> = claim
                 .map(|c| c.origins.iter().map(String::as_str).collect())
                 .unwrap_or_default();
+            let not_plain = claim.is_some_and(|c| c.not_plain);
             let typed = transcript::daniel_turn(&message)
-                .filter(|_| !capture::agent_originated(&origins, &message.text()))
+                .filter(|_| !not_plain && !capture::agent_originated(&origins, &message.text()))
                 .map(|turn| own_words(&turn.own))
                 .filter(|own| !own.trim().is_empty());
             let interactive = entrypoint
@@ -432,7 +604,9 @@ pub fn claude_conversation(bytes: &[u8]) -> Vec<Spoken> {
 /// and any other source (`exec`, a subagent's) is refused
 /// `not_interactive` before the rollout is parsed. The typed turns are
 /// those [`crate::codex::parse`] attributes to Daniel by the host's content
-/// provenance.
+/// provenance. A `/scribe` control line is not a typed turn, as
+/// [`transcript::daniel_turn`] excludes it for Claude, so it does not count
+/// toward the three-turn window.
 ///
 /// # Errors
 ///
@@ -469,8 +643,8 @@ pub fn codex_conversation(bytes: &[u8], session: &SessionId) -> Result<Vec<Spoke
         .messages
         .into_iter()
         .map(|message| {
-            let typed = (message.role == Speaker::User)
-                .then(|| own_words(&message.text()))
+            let typed = transcript::daniel_turn(&message)
+                .map(|turn| own_words(&turn.own))
                 .filter(|own| !own.trim().is_empty());
             Spoken {
                 message,

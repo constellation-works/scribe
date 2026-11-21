@@ -3144,14 +3144,23 @@ runs these checks; any failure refuses the command and changes nothing.
    `<pasted_content>` block, not a sidechain or meta line. Otherwise
    `instruction_not_found`. A short answer below §6.4's 8 characters
    ("yes") passes when it is his whole turn; when several of his turns
-   hold the span, the latest is the instruction.
+   hold the span, the latest is the instruction. A non-string `source`,
+   `promptSource` (or `prompt_source`), `origin` or `promptOrigin` (or
+   `prompt_origin`) is not a plain value, so that turn is not his. Those
+   claims are read only from `user` and `assistant` lines; an earlier
+   summary or other line does not supply them. A `/scribe` control line
+   is not a typed turn, for Claude or Codex, and does not count toward
+   the three turns of check 3.
 3. **Fresh.** That turn is one of the session's last three typed user turns
-   and was written at most 30 minutes before the command runs. Otherwise
-   `instruction_stale`. An old instruction cannot be reused to settle
-   claims opened since.
+   and was written at most 30 minutes before the command runs. A timestamp
+   a second or more ahead of the command is stale too: the command clock
+   is whole seconds, so a fraction of the current second is not ahead of
+   it. Otherwise `instruction_stale`. An old or future-dated instruction
+   cannot be reused to settle claims opened since.
 4. **It names the target.** The target's id (exact, or the unique prefix
    the command resolved) appears either in that turn or in the assistant
-   message immediately before it, the reply he answered. Otherwise
+   message immediately before it, the reply he answered. An empty id
+   names nothing. Otherwise
    `instruction_mismatch`. "Approve p-4 and p-9" names its targets; so
    does "yes" after "Approve p-4 and p-9?".
 5. **It names the act.** Model-free word lists in `scribe-core`
@@ -3166,11 +3175,25 @@ runs these checks; any failure refuses the command and changes nothing.
 
    For approve, when his turn's only match is an affirmative (yes, ok,
    okay, go ahead, do it), the reply he answered must contain "approve" or
-   "accept" next to the ids (on the same line as the id). Words match
+   "accept" next to the ids (on the same line as the id). The past tense,
+   "approved" or "accepted", does not. Words match
    whole and case-insensitively ("keeper" is not "keep"). For reject,
    retire and forget, the verb's word
    must be in his own turn; an affirmative alone does not delete anything.
    Otherwise `instruction_mismatch`.
+
+   A negated act is `instruction_negated`. The act word on a line that
+   names the target is negated when `don't`, `do not`, `dont`, `never`,
+   `not`, `no`, `stop`, `cancel` or `without` precedes it in the same
+   clause. A clause ends at `.` `!` `?` `;` `:` or `,`, so a negation does
+   not cross that break (`no, retire <id>` still retires; `don't retire
+   <id>, retire <other>` refuses only `<id>`). One negated clause naming
+   the target refuses the turn even when another clause affirms it: a
+   false accept is the failure this check exists to stop, and refusing
+   the negated line costs nothing. When the target is named only in the
+   reply he answered, a turn whose every act word is negated is refused
+   the same way. `can't` and `cannot` are not in the list. Sarcasm with
+   no negation word still passes.
 
 The store, under its lock, checks only that an instructed write carries an
 instruction record (§12.3) and re-checks the target's state; reading the
@@ -3181,8 +3204,9 @@ This is an accident guard (STD-05@1 §R5), like every provenance check in
 scribe: it stops an agent acting on its own, a stale or misread
 instruction, and an instruction meant for another record. It is not a
 security boundary: a process running as Daniel can write a transcript
-file. It also does not understand negation ("don't approve p-4" passes
-check 5); the aide's echo and the reversal routes of §12.6 cover that.
+file. It refuses a negated act (`instruction_negated`, check 5). It
+does not understand sarcasm ("oh sure, retire <id>, brilliant" passes);
+the aide's echo and the reversal routes of §12.6 cover that.
 
 ### 12.3 Question 2 — whose entry an approval writes, and how it reads
 
@@ -3234,8 +3258,9 @@ break the cites and `superseded_by` links of others. **Audit**: one line
 per change or refusal, as every write verb (§1.1): the command, the
 agent's name, the target id, the instruction's session and message ids,
 and the error code on a refusal (`instruction_not_found`,
-`instruction_stale`, `instruction_mismatch`, plus the existing codes). The
-instruction's words are never in the audit line; they live on the record
+`instruction_stale`, `instruction_mismatch`, `instruction_negated`, plus
+the existing codes). The instruction's words are never in the audit line;
+they live on the record
 (and, after `forget`, nowhere).
 
 ### 12.5 Question 4 — only an interactive session he is in
@@ -3294,9 +3319,12 @@ the step lands.
 
 ### 12.8 Limits and what is not built until seen
 
-- **Word lists, not meaning.** Negation and sarcasm pass; a turn naming
-  two acts ("approve p-4, reject p-5") passes both lists for both ids, so
-  the aide's choice decides which id gets which verb.
+- **Word lists, not meaning.** Negation of the act is refused
+  (`instruction_negated`, §12.2 check 5). Sarcasm still passes. A turn
+  naming two acts ("approve p-4, reject p-5") passes both lists for both
+  ids when neither act is negated, so the aide's choice decides which id
+  gets which verb. A negation covers the rest of its clause, including a
+  later act before the next break.
 - **Same user.** An agent able to write a transcript file can forge an
   instruction; this is the accident guard of §4.1, not a boundary.
 - **Mac only.** The aide must run on the host of the store and of its own

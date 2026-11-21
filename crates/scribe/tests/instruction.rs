@@ -442,3 +442,86 @@ fn codex_cli_and_vscode_sessions_are_interactive_and_exec_is_not() {
         }
     }
 }
+
+#[test]
+fn a_negated_instruction_is_refused_and_a_plain_one_still_passes() {
+    let fx = store_with_agent_entry();
+    claude(
+        &fx,
+        Some("cli"),
+        &[
+            ("u-1", "user", "don't retire preferences-2", 3),
+            ("u-2", "user", "do not approve p-1", 2),
+            ("u-3", "user", "retire preferences-2", 1),
+        ],
+    );
+    let before = state(&fx);
+    assert_eq!(
+        run(&fx, &retire("preferences-2", "don't retire preferences-2")),
+        (Some(1), Some(String::from("instruction_negated")))
+    );
+    assert_eq!(
+        run(
+            &fx,
+            &[
+                "proposal",
+                "settle",
+                "p-1",
+                "--approve",
+                "--author",
+                "opus",
+                "--session",
+                SESSION,
+                "--instruction",
+                "do not approve p-1",
+            ],
+        ),
+        (Some(1), Some(String::from("instruction_negated")))
+    );
+    assert_eq!(state(&fx), before, "a negated instruction changes nothing");
+    assert!(
+        ok(&fx, &retire("preferences-2", "retire preferences-2"))
+            .status
+            .success()
+    );
+}
+
+#[test]
+fn codex_scribe_lines_do_not_push_the_instruction_out_of_the_window() {
+    let fx = store_with_agent_entry();
+    codex(
+        &fx,
+        "cli",
+        &[
+            ("m-1", "retire preferences-2 please", 4),
+            ("m-2", "/scribe on", 3),
+            ("m-3", "second real turn", 2),
+            ("m-4", "third real turn", 1),
+        ],
+    );
+    let out = exec(
+        &fx,
+        &[
+            "--provider",
+            "codex",
+            "entry",
+            "retire",
+            "preferences-2",
+            "--author",
+            "opus",
+            "--reason",
+            "Daniel asked",
+            "--session",
+            CODEX_SESSION,
+            "--instruction",
+            "retire preferences-2 please",
+            "--json",
+        ],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "control line counted: {}",
+        text(&out.stderr)
+    );
+}
