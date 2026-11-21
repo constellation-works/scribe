@@ -331,6 +331,12 @@ pub struct Entry {
     /// When it last changed.
     #[serde(with = "time::serde::rfc3339")]
     pub updated: OffsetDateTime,
+    /// When it stopped being `active`: the retirement, supersession or
+    /// forgetting that took it out (format 12). `null` while active. Later
+    /// metadata writes move `updated`, never this, so Stop recovery can
+    /// tell which turns the entry was still active for.
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub inactive_since: Option<OffsetDateTime>,
     /// The full `#scribe` line exactly as Daniel typed it, or a candidate
     /// approval's canonical command; empty once forgotten.
     pub said: String,
@@ -509,6 +515,7 @@ impl NewEntry {
             updated_by: None,
             created: self.created,
             updated: self.created,
+            inactive_since: None,
             said: self.said,
             content_from: self.content_from,
             cite: Some(self.cite),

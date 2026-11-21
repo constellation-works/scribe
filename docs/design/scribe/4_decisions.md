@@ -11,7 +11,7 @@ summary: Why superseded entries are hidden not removed, why one JSON file per ta
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360]
 ---
 
 # scribe — Decisions
@@ -2113,6 +2113,8 @@ show` prints `rebuilt_by` only in `--json`.
   `people`, recurring dates and light catalog entries (proposed).
 - [ORB-26349] — extended the duplicate check's negation markers, and made
   Stop recovery decide coverage as of the turn.
+- [ORB-26360] — entry `inactive_since` (format 12), whole-second Stop
+  coverage, and the coverage check for resolved referents.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
 
@@ -3450,3 +3452,49 @@ a line that may have been covered is the worse miss.
 - Cost: there is no separate retirement timestamp, so the rule uses
   `updated`, which other writes also set. A forgotten line is not
   protected, and a same-second line typed after retirement is not captured.
+
+## Stop coverage ends when the entry left active, in whole seconds
+
+**Recorded:** 2026-11 · [ORB-26360]
+**Code anchors:** `crates/scribe-core/src/pass/candidates.rs::covers_turn`, `crates/scribe-core/src/store/mod.rs::covered_draft`, `crates/scribe-core/src/store/format.rs::entry_inactive_since`
+
+### Context
+
+[Stop recovery keeps a line covered when it was typed](#stop-recovery-keeps-a-line-covered-when-it-was-typed)
+read `updated` as the end of a retired or superseded entry's active
+window. Review ORB-26357 found three gaps: `updated` is whole seconds while
+transcript turns carry fractions, so a turn at .250 before a retirement at
+.800 of the same second was treated as uncovered; form-3 referent lines
+were never checked, so a resolved referent was written once its covering
+entry was retired; and a metadata write after retirement (`entry update`,
+cite filling) moves `updated`, so a later missed line could be dropped as
+covered.
+
+### Decision
+
+Entries gain `inactive_since` (store format 12): the time a retirement,
+supersession or forgetting took the entry out of `active`, `null` while it
+is active, never moved by metadata writes. `covers_turn` ends the active
+window there, and compares it and `created` with the turn in whole
+seconds, so a tie inside a second still counts as active (the earlier
+decision's rule). Stop recovery applies the same check to a form-3
+referent after it resolves, through `Store::covered_draft`, and skips a
+covered one quietly as it skips a covered form-2 line.
+
+A new field was chosen over deriving the time from proposals or the audit
+log: direct retirement has no proposal, and audit lines carry no
+timestamps of state. The upgrade fills `inactive_since` from `updated` for
+entries already inactive, since no better time exists in an older record.
+
+### Consequences
+
+- The three findings are closed: a sub-second turn inside the retirement's
+  second is covered, a covered referent is not captured after retirement,
+  and a metadata edit no longer changes which turns an entry covered.
+- An entry retired before format 12 and edited afterwards keeps the edit
+  time as its `inactive_since`; such a store may treat a few more turns as
+  covered, the old behaviour.
+- A line typed later in the retirement's own second is still treated as
+  covered; the order inside the second is not recorded.
+- Cost: a format bump, so a build older than format 12 refuses the store
+  (`store_too_new`).

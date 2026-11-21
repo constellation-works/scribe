@@ -497,6 +497,125 @@ fn stop_does_not_capture_a_line_covered_when_typed_after_retirement() {
     );
 }
 
+/// The entry's `updated` time from `entry show`, parsed.
+fn updated_of(fx: &Fixture, id: &str) -> time::OffsetDateTime {
+    let shown = fx.ok(&["entry", "show", id, "--json"]);
+    let shown: Value = serde_json::from_slice(&shown.stdout).unwrap();
+    time::OffsetDateTime::parse(
+        shown["updated"].as_str().unwrap(),
+        &time::format_description::well_known::Rfc3339,
+    )
+    .unwrap()
+}
+
+fn rfc3339(at: time::OffsetDateTime) -> String {
+    at.format(&time::format_description::well_known::Rfc3339)
+        .unwrap()
+}
+
+/// Replace the transcript with `lines`, one JSON object per line.
+fn write_lines(claude: &Claude, lines: &[Value]) {
+    std::fs::write(
+        &claude.transcript,
+        lines
+            .iter()
+            .map(|line| format!("{line}\n"))
+            .collect::<String>(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn stop_does_not_capture_a_line_typed_sub_second_before_a_retirement_in_the_same_second() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let mut payload = claude.payload("user-prompt-submit.json");
+    payload["prompt"] = json!("#scribe preferences: use cargo test in CI");
+    hook_ok(&fx, "user-prompt-submit", &payload);
+    payload["prompt"] = json!("#scribe retire preferences-1");
+    let retired = hook_ok(&fx, "user-prompt-submit", &payload);
+    assert!(
+        text(&retired.stdout).contains("retired preferences-1"),
+        "{}",
+        text(&retired.stdout)
+    );
+    // The store keeps the retirement in whole seconds; the transcript keeps
+    // the turn's fraction. A line typed at .250 of the retirement's second
+    // was typed while the entry was active (or in a tie, which counts as
+    // active).
+    let retirement = updated_of(&fx, "preferences-1");
+    let typed = retirement + time::Duration::milliseconds(250);
+    write_lines(
+        &claude,
+        &[
+            json!({"type": "session-owner", "sessionId": SESSION}),
+            json!({"type": "user", "uuid": "u-early", "sessionId": SESSION,
+                   "timestamp": rfc3339(typed), "cwd": claude.cwd,
+                   "message": {"role": "user",
+                               "content": "just before\n#scribe preferences: use cargo test in CI"}}),
+        ],
+    );
+
+    let stopped = hook_ok(&fx, "stop", &claude.payload("stop.json"));
+    let found = entries(&fx);
+    assert_eq!(
+        found.len(),
+        1,
+        "Stop captured a line covered when typed: {} {found:?}",
+        text(&stopped.stdout)
+    );
+    assert_eq!(found[0]["status"], "retired");
+}
+
+#[test]
+fn stop_does_not_capture_a_referent_covered_when_typed_after_retirement() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let mut payload = claude.payload("user-prompt-submit.json");
+    payload["prompt"] = json!("#scribe preferences: use cargo test in CI");
+    hook_ok(&fx, "user-prompt-submit", &payload);
+    let created = updated_of(&fx, "preferences-1");
+    // A form-3 line whose referent (the assistant message before it) says
+    // what the active entry already said; then a later one after the
+    // entry is retired, which is still captured.
+    write_lines(
+        &claude,
+        &[
+            json!({"type": "session-owner", "sessionId": SESSION}),
+            json!({"type": "assistant", "uuid": "a-early", "sessionId": SESSION,
+                   "timestamp": rfc3339(created), "message": {"content": "use cargo test in CI"}}),
+            json!({"type": "user", "uuid": "u-early", "sessionId": SESSION,
+                   "timestamp": rfc3339(created), "cwd": claude.cwd,
+                   "message": {"role": "user", "content": "#scribe add this to preferences"}}),
+            json!({"type": "assistant", "uuid": "a-late", "sessionId": SESSION,
+                   "timestamp": rfc3339(created + time::Duration::hours(2)),
+                   "message": {"content": "use cargo test in CI"}}),
+            json!({"type": "user", "uuid": "u-late", "sessionId": SESSION,
+                   "timestamp": rfc3339(created + time::Duration::hours(2)), "cwd": claude.cwd,
+                   "message": {"role": "user", "content": "again\n#scribe add this to preferences"}}),
+        ],
+    );
+    payload["prompt"] = json!("#scribe retire preferences-1");
+    let retired = hook_ok(&fx, "user-prompt-submit", &payload);
+    assert!(
+        text(&retired.stdout).contains("retired preferences-1"),
+        "{}",
+        text(&retired.stdout)
+    );
+
+    let stopped = hook_ok(&fx, "stop", &claude.payload("stop.json"));
+    let echo = text(&stopped.stdout);
+    let found = entries(&fx);
+    assert_eq!(
+        found.len(),
+        2,
+        "only the referent typed after retirement is captured: {echo} {found:?}"
+    );
+    let captured = found.iter().find(|e| e["id"] == "preferences-2").unwrap();
+    assert_eq!(captured["cite"]["message"], "u-late", "{captured}");
+    assert_eq!(captured["content_from"]["message"], "a-late", "{captured}");
+}
+
 #[test]
 fn a_prompt_without_an_instruction_line_writes_and_prints_nothing() {
     let fx = Fixture::new();

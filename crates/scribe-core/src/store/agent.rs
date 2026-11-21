@@ -359,6 +359,7 @@ impl Store {
             updated_by: None,
             created: now,
             updated: now,
+            inactive_since: None,
             said: String::new(),
             content_from: ContentFrom::Agent,
             cite: None,
@@ -478,6 +479,7 @@ impl Store {
         entry.status = EntryStatus::Retired;
         entry.retirement_reason = Some(redactor.mask(reason));
         entry.updated = now;
+        entry.inactive_since = Some(now);
         entry.updated_by = Some(Author::agent(author));
         self.write_entry(&entry, false)?;
         Ok((entry, true))

@@ -764,8 +764,12 @@ the key again under its lock. It also skips a line an entry covered at that
 turn's timestamp, including an entry retired or superseded since: coverage
 is decided as of the turn (`covers_turn`), not from the entries active when
 Stop runs, so retiring the covering entry does not make a later Stop write
-the line. A line typed after the entry was retired is not covered by that
-rule and is still captured. A forgotten entry's words are blank, so it
+the line. The active window ends at the entry's `inactive_since` (format
+12), which a later metadata write does not move, and both sides are
+compared in whole seconds because stored times are whole seconds while
+transcript times are not. A form-3 referent gets the same check once it is
+resolved (`Store::covered_draft`). A line typed after the entry was retired
+is not covered by that rule and is still captured. A forgotten entry's words are blank, so it
 cannot answer. This retries partial failures and remains
 silent and write-free when everything is recorded. Refusals and failures
 are echoed and audited, and retried on later Stops; they are never treated
