@@ -52,6 +52,8 @@ scribe entry list --tag standard --after 2026-11-15T09:00:00Z --window --json
 scribe entry pickup <id> --author standards-intake --result task:<id>
 scribe entry update <id> --author opus --add-topic api
 scribe entry retire <id> --author opus --reason 'No longer applies'
+scribe entry retire <id> --author opus --reason 'Daniel asked' --session <id> --instruction '<his words>'
+scribe entry forget <id> --author opus --session <id> --instruction '<his words>' --confirm
 scribe tag add notes --author opus --description 'Agent notes'
 scribe tag update notes --author opus --add-alias note
 scribe proposal add --kind stale --older <id> --reason 'Review needed' --author opus

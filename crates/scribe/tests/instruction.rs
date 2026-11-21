@@ -1,7 +1,9 @@
 //! End-to-end tests of the instruction check (docs/design/scribe/2_design.md
 //! §12.2, §12.5): `--session` and `--instruction` on `proposal settle` and
 //! `entry retire`, given together or not at all, and each refusal code,
-//! which changes nothing in the store.
+//! which changes nothing in the store; then what a passing check allows
+//! (§12.1, §12.4): `entry retire` of Daniel's entry, and `entry forget`,
+//! which leaves no store file holding the words forgotten.
 //!
 //! Every run is the built binary with a temp `HOME` and data root; the
 //! transcripts are fixtures written relative to the real clock, since the
@@ -470,4 +472,298 @@ fn an_instruction_typed_this_instant_is_not_stale() {
             "a turn typed just now passes"
         );
     }
+}
+
+/// Daniel's superseded entry `decisions-1` in the seeded store, word for
+/// word, which the open proposal `p-1` quotes.
+const DECISION: &str = "merge agent PRs with a merge commit";
+
+/// Daniel's active entry `preferences-1` in the seeded store, word for word.
+const PREFERENCE: &str = "short commit subjects, imperative mood";
+
+/// `entry forget <id>` on `instruction` in [`SESSION`], with `--confirm`.
+fn forget<'a>(id: &'a str, instruction: &'a str) -> Vec<&'a str> {
+    vec![
+        "entry",
+        "forget",
+        id,
+        "--author",
+        "opus",
+        "--session",
+        SESSION,
+        "--instruction",
+        instruction,
+        "--confirm",
+    ]
+}
+
+/// The audit log's lines for `command`.
+fn audit_lines(fx: &Fixture, command: &str) -> Vec<Value> {
+    std::fs::read_to_string(fx.root().join("audit.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .map(|l| serde_json::from_str::<Value>(l).unwrap())
+        .filter(|l| l["command"] == command)
+        .collect()
+}
+
+/// Every file under the store root whose bytes hold `needle`.
+fn files_holding(fx: &Fixture, needle: &str) -> Vec<PathBuf> {
+    snapshot(&fx.root())
+        .into_iter()
+        .filter(|(_, bytes, _)| {
+            bytes
+                .windows(needle.len())
+                .any(|window| window == needle.as_bytes())
+        })
+        .map(|(path, _, _)| path)
+        .collect()
+}
+
+#[test]
+fn instructed_retire_hides_daniels_entry_and_keeps_its_text() {
+    let fx = Fixture::new();
+    fx.seed();
+    let words = "please retire preferences-1, it is outdated";
+    claude(&fx, Some("claude-desktop"), &[("u-1", "user", words, 1)]);
+    // Without the instruction his entry is still his to retire.
+    assert_eq!(
+        run(
+            &fx,
+            &[
+                "entry",
+                "retire",
+                "preferences-1",
+                "--author",
+                "opus",
+                "--reason",
+                "Daniel asked"
+            ]
+        ),
+        (Some(1), Some(String::from("daniel_only")))
+    );
+    let out = ok(&fx, &retire("preferences-1", words));
+    assert_eq!(text(&out.stderr).trim(), "", "it changed the entry");
+
+    let shown: Value =
+        serde_json::from_slice(&ok(&fx, &["entry", "show", "preferences-1", "--json"]).stdout)
+            .unwrap();
+    assert_eq!(shown["status"], "retired");
+    assert_eq!(shown["retirement_reason"], "Daniel asked");
+    assert_eq!(shown["content"], PREFERENCE, "retiring keeps the text");
+    assert_eq!(shown["author"]["kind"], "daniel", "it stays his entry");
+    assert_eq!(shown["updated_by"]["name"], "opus");
+    assert_eq!(shown["instruction"]["session"], SESSION);
+    assert_eq!(shown["instruction"]["message"], "u-1");
+    assert_eq!(shown["instruction"]["quote"], words);
+
+    let active: Value =
+        serde_json::from_slice(&ok(&fx, &["entry", "list", "--status", "active", "--json"]).stdout)
+            .unwrap();
+    let ids: Vec<&str> = active["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["id"].as_str().unwrap())
+        .collect();
+    assert!(!ids.contains(&"preferences-1"), "{ids:?}");
+    assert!(ids.contains(&"decisions-2"), "{ids:?}");
+
+    // `ask` hands the model the active decision, never the retired one.
+    let claude = "#!/bin/sh\n\
+        cat > \"$HOME/claude-stdin\"\n\
+        printf '{\"type\":\"result\",\"is_error\":false,\"result\":\"\",\"structured_output\":{\"status\":\"no_record\",\"answer\":\"\",\"claims\":[],\"conflicts\":[]}}\\n'\n";
+    let path = fx.fake_program("claude", claude);
+    let out = fx
+        .cmd(&[
+            "question",
+            "ask",
+            "how should commit subjects read and how do we merge agent PRs",
+            "--json",
+        ])
+        .env("GITHUB_TOKEN", "synthetic-fixture-token-value")
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let prompt = std::fs::read_to_string(fx.home().join("claude-stdin")).unwrap();
+    assert!(prompt.contains("squash-merge agent PRs"), "{prompt}");
+    assert!(!prompt.contains(PREFERENCE), "{prompt}");
+
+    let lines = audit_lines(&fx, "entry retire");
+    assert_eq!(lines.len(), 2, "one refusal and one change: {lines:?}");
+    assert_eq!(lines[0]["error_code"], "daniel_only");
+    assert_eq!(lines[1]["status"], "success");
+    assert_eq!(lines[1]["target"], "preferences-1");
+    let audit = std::fs::read_to_string(fx.root().join("audit.jsonl")).unwrap();
+    assert!(
+        !audit.contains(words),
+        "the instruction's words are not audited"
+    );
+}
+
+#[test]
+fn forget_without_confirm_or_an_instruction_is_refused_and_changes_nothing() {
+    let fx = Fixture::new();
+    fx.seed();
+    let words = "forget decisions-1 for good";
+    claude(
+        &fx,
+        Some("cli"),
+        &[
+            ("u-1", "user", "retire decisions-1 please", 2),
+            ("u-2", "user", words, 1),
+        ],
+    );
+    let before = state(&fx);
+    let bare = ["entry", "forget", "decisions-1", "--author", "opus"];
+    let cases: [(Vec<&str>, i32, &str); 4] = [
+        // No instruction at all: the verb exists only with one.
+        (bare.to_vec(), 2, "usage_error"),
+        ([&bare[..], &["--confirm"]].concat(), 2, "usage_error"),
+        // An instruction, but no --confirm.
+        (
+            [&bare[..], &["--session", SESSION, "--instruction", words]].concat(),
+            1,
+            "confirm_required",
+        ),
+        // Confirmed, but his words say retire, not forget.
+        (
+            forget("decisions-1", "retire decisions-1 please"),
+            1,
+            "instruction_mismatch",
+        ),
+    ];
+    for (args, exit, code) in &cases {
+        assert_eq!(
+            run(&fx, args),
+            (Some(*exit), Some((*code).to_owned())),
+            "{args:?}"
+        );
+    }
+    // Half an instruction is a parse error, as for every instructed verb.
+    let out = exec(
+        &fx,
+        &[&bare[..], &["--session", SESSION, "--confirm"]].concat(),
+    );
+    assert_eq!(out.status.code(), Some(2), "{}", text(&out.stderr));
+    assert_eq!(state(&fx), before, "every refusal changes nothing");
+
+    let lines = audit_lines(&fx, "entry forget");
+    assert_eq!(lines.len(), cases.len(), "one line per refusal: {lines:?}");
+    for (line, (_, _, code)) in lines.iter().zip(&cases) {
+        assert_eq!(line["status"], "failure", "{line}");
+        assert_eq!(line["error_code"], *code, "{line}");
+        assert_eq!(line["target"], "decisions-1", "{line}");
+    }
+    let audit = std::fs::read_to_string(fx.root().join("audit.jsonl")).unwrap();
+    assert!(
+        !audit.contains(words),
+        "the instruction's words are not audited"
+    );
+}
+
+#[test]
+fn forget_leaves_no_store_file_holding_the_entry_its_quotes_or_the_instruction() {
+    let fx = Fixture::new();
+    fx.seed();
+    let retire_words = "please retire preferences-1 today";
+    let forget_words = "now forget preferences-1 for good";
+    let purge_words = "and purge decisions-1 as well";
+    claude(
+        &fx,
+        Some("cli"),
+        &[
+            ("u-1", "user", retire_words, 3),
+            ("u-2", "user", forget_words, 2),
+            ("u-3", "user", purge_words, 1),
+        ],
+    );
+    // Retired first on his word, so the entry holds an instruction quote.
+    ok(&fx, &retire("preferences-1", retire_words));
+    let reason = "The newer decision replaces merge commits";
+    for held in [PREFERENCE, retire_words, DECISION, reason] {
+        assert!(!files_holding(&fx, held).is_empty(), "{held}");
+    }
+
+    for (id, words, message) in [
+        ("preferences-1", forget_words, "u-2"),
+        ("decisions-1", purge_words, "u-3"),
+    ] {
+        let out = ok(&fx, &forget(id, words));
+        assert_eq!(text(&out.stderr).trim(), "", "{id} changed");
+        // The file stays, keeping its id, tag, dates, author and the
+        // instruction's ids.
+        let shown: Value =
+            serde_json::from_slice(&ok(&fx, &["entry", "show", id, "--json"]).stdout).unwrap();
+        assert_eq!(shown["id"], id);
+        assert_eq!(shown["status"], "forgotten");
+        assert_eq!(shown["content"], "");
+        assert_eq!(shown["author"]["kind"], "daniel");
+        assert_eq!(shown["updated_by"]["name"], "opus");
+        assert_eq!(shown["instruction"]["session"], SESSION);
+        assert_eq!(shown["instruction"]["message"], message);
+        assert_eq!(shown["instruction"]["quote"], Value::Null);
+    }
+
+    for gone in [
+        PREFERENCE,
+        DECISION,
+        retire_words,
+        forget_words,
+        purge_words,
+        reason,
+    ] {
+        assert_eq!(files_holding(&fx, gone), Vec::<PathBuf>::new(), "{gone}");
+    }
+    assert!(
+        fx.root()
+            .join("entries/preferences/preferences-1.md")
+            .exists()
+    );
+    assert!(fx.root().join("entries/decisions/decisions-1.md").exists());
+    // Another entry's quote on the same proposal stays.
+    assert!(!files_holding(&fx, "squash-merge agent PRs").is_empty());
+
+    // Again: nothing to change, so no audit line.
+    let again = ok(&fx, &forget("preferences-1", forget_words));
+    assert_eq!(text(&again.stderr).trim(), "nothing changed");
+    let lines = audit_lines(&fx, "entry forget");
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    for (line, id) in lines.iter().zip(["preferences-1", "decisions-1"]) {
+        assert_eq!(line["status"], "success", "{line}");
+        assert_eq!(line["target"], id, "{line}");
+        assert_eq!(line["author"], "opus", "{line}");
+    }
+}
+
+#[test]
+fn an_instruction_does_not_let_entry_update_change_daniels_content() {
+    let fx = Fixture::new();
+    fx.seed();
+    let words = "remove preferences-1 and rewrite it";
+    claude(&fx, Some("cli"), &[("u-1", "user", words, 1)]);
+    let before = state(&fx);
+    let update = [
+        "entry",
+        "update",
+        "preferences-1",
+        "--author",
+        "opus",
+        "--content",
+        "rewritten",
+    ];
+    assert_eq!(
+        run(&fx, &update),
+        (Some(1), Some(String::from("daniel_only")))
+    );
+    let out = exec(
+        &fx,
+        &[&update[..], &["--session", SESSION, "--instruction", words]].concat(),
+    );
+    assert_eq!(out.status.code(), Some(2), "{}", text(&out.stderr));
+    assert_eq!(state(&fx), before);
+    let lines = audit_lines(&fx, "entry update");
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert_eq!(lines[0]["error_code"], "daniel_only");
 }

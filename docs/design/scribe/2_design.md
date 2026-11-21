@@ -3211,6 +3211,20 @@ refused `daniel_only` and Daniel's entry is still not retired until tasks
 3 and 4 land. `entry forget` and the instruction record of §12.3 are not
 built.
 
+**Built (task 4 of 6, ORB-26245).** The entry rows of §12.1 and §12.4: with
+a passing check, `entry retire` accepts an entry Daniel wrote, hides it from
+`entry list --status active` and `ask` with `retirement_reason` set, keeps
+its text and records `instruction` with the redacted quote. `entry forget
+<id> --author <name> --session <id> --instruction '<words>' --confirm`
+refuses `usage_error` (exit 2) without an instruction and `confirm_required`
+without `--confirm`, both before the transcript is read; it then applies the
+same forget as `#scribe forget` (`consistency::forget`), keeping the
+instruction's session, message and time but not its quote. Content changes
+to his entries stay refused (`entry update` takes no instruction). Each
+change or refusal writes one audit line with the command, target and
+`--author`, never the instruction's words; the line does not yet carry the
+instruction's session and message ids, which the entry records.
+
 The reasons and alternatives are in
 [4_decisions.md](./4_decisions.md#an-agent-settles-claims-and-deletes-records-on-daniels-checked-instruction).
 

@@ -652,50 +652,65 @@ pub fn settle(
                 }
             }
         }
-        Settle::Forget(id) => {
-            let Some(entry) = entries.iter_mut().find(|e| e.id == *id) else {
-                return Settled::Refused(SettleRefusal::NoEntry(id.clone()));
-            };
-            if entry.status == EntryStatus::Forgotten {
-                return Settled::Already(format!("{id} is already forgotten"));
+        Settle::Forget(id) => forget(id, proposals, entries, now),
+    }
+}
+
+/// Forget the entry `id`: any entry not yet forgotten becomes `forgotten`,
+/// its `said` and `content` blanked, its `evidence`, `as_of`, `quote`,
+/// `window` and `retirement_reason` cleared and its instruction's quote
+/// dropped, and every proposal quote, candidate `quote`, `evidence`,
+/// `admitted.matched`, instruction quote and `reason` about it cleared.
+/// Session records remain. The typed `#scribe forget` and the instructed
+/// `entry forget` both apply it; an entry already forgotten is
+/// [`Settled::Already`].
+pub fn forget(
+    id: &EntryId,
+    proposals: &mut [Proposal],
+    entries: &mut [Entry],
+    now: OffsetDateTime,
+) -> Settled {
+    let Some(entry) = entries.iter_mut().find(|e| e.id == *id) else {
+        return Settled::Refused(SettleRefusal::NoEntry(id.clone()));
+    };
+    if entry.status == EntryStatus::Forgotten {
+        return Settled::Already(format!("{id} is already forgotten"));
+    }
+    entry.status = EntryStatus::Forgotten;
+    entry.said.clear();
+    entry.content.clear();
+    entry.evidence = None;
+    entry.as_of = None;
+    entry.quote = None;
+    entry.window = None;
+    entry.retirement_reason = None;
+    if let Some(instruction) = &mut entry.instruction {
+        instruction.quote = None;
+    }
+    entry.updated = now;
+    // Forgetting keeps the time a retired or superseded entry left
+    // `active`; an active one leaves it now.
+    entry.inactive_since.get_or_insert(now);
+    for proposal in proposals.iter_mut() {
+        let about = proposal.older == *id || proposal.newer.as_ref() == Some(id);
+        if about {
+            proposal.reason.clear();
+            if let Some(candidate) = &mut proposal.candidate {
+                candidate.quote.clear();
+                candidate.evidence = None;
+                if let Some(admitted) = &mut candidate.admitted {
+                    admitted.matched.clear();
+                }
             }
-            entry.status = EntryStatus::Forgotten;
-            entry.said.clear();
-            entry.content.clear();
-            entry.evidence = None;
-            entry.as_of = None;
-            entry.quote = None;
-            entry.window = None;
-            entry.retirement_reason = None;
-            if let Some(instruction) = &mut entry.instruction {
+            if let Some(instruction) = &mut proposal.instruction {
                 instruction.quote = None;
             }
-            entry.updated = now;
-            // Forgetting keeps the time a retired or superseded entry left
-            // `active`; an active one leaves it now.
-            entry.inactive_since.get_or_insert(now);
-            for proposal in proposals.iter_mut() {
-                let about = proposal.older == *id || proposal.newer.as_ref() == Some(id);
-                if about {
-                    proposal.reason.clear();
-                    if let Some(candidate) = &mut proposal.candidate {
-                        candidate.quote.clear();
-                        candidate.evidence = None;
-                        if let Some(admitted) = &mut candidate.admitted {
-                            admitted.matched.clear();
-                        }
-                    }
-                    if let Some(instruction) = &mut proposal.instruction {
-                        instruction.quote = None;
-                    }
-                }
-                for quote in proposal.quotes.iter_mut().filter(|q| q.entry == *id) {
-                    quote.text.clear();
-                }
-            }
-            Settled::Forgotten(id.clone())
+        }
+        for quote in proposal.quotes.iter_mut().filter(|q| q.entry == *id) {
+            quote.text.clear();
         }
     }
+    Settled::Forgotten(id.clone())
 }
 
 fn approve(
