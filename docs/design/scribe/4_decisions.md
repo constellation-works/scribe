@@ -7,11 +7,11 @@ status: Draft
 feature: scribe
 doc_role: decisions
 type: design
-summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, why action tags are config-marked with a capped window, a cancel window, pickups, a stuck line, a CLI quote check and SSH reads from the owner host, why scribe keeps a descriptive memory the session pass writes without approval, why that memory has a personal base fed by every typed session (with people, recurring dates and light catalog entries) and a work layer fed only by /scribe on sessions, plus the engineering decisions carried over from the Rust CLI template.
+summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, why action tags are config-marked with a capped window, a cancel window, pickups, a stuck line, a CLI quote check and SSH reads from the owner host, why scribe keeps a descriptive memory the session pass writes without approval, why that memory has a personal base fed by every typed session (with people, recurring dates and light catalog entries) and a work layer fed only by /scribe on sessions, why scribe reads Claude Code and Codex sessions only (no hosted server, app connector or ChatGPT import), why the personal base, people, recurring dates and light catalog entries are parked, plus the engineering decisions carried over from the Rust CLI template.
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256]
 ---
 
 # scribe — Decisions
@@ -3034,6 +3034,12 @@ session start. Measured: 60 Claude auto-memory notes on this host
    > [Memory has a personal base from every typed session and a work layer from on sessions](#memory-has-a-personal-base-from-every-typed-session-and-a-work-layer-from-on-sessions).
    > The section switches stand.
 
+   > **ORB-26240 parked 2026-11-21 ([ORB-26256]):** point 2 stands again
+   > (an on session is the only source). Point 9's default stays as
+   > ORB-26240 set it, `personal` on, and means the pass of an on session
+   > may keep personal elements; see
+   > [The personal base, people, recurring dates and light catalog entries are parked](#the-personal-base-people-recurring-dates-and-light-catalog-entries-are-parked).
+
 Alternatives considered:
 
 - **Keep Claude auto-memory only.** Cost: it is Claude's alone (Codex and
@@ -3101,8 +3107,10 @@ since items are scribe-authored; personal life is kept only with
   occurrence quotes, never from statements.
 - Not built until seen: importing `about-me` or Claude auto-memory,
   export to files, an `interests` section, hand-written items, a
-  milestone cap, an edit verb, and the ChatGPT import, app connector and
-  always-on capture of 3_vision.md §1.
+  milestone cap, an edit verb, and always-on capture of a session the user
+  did not switch on (designed in the entry below, parked 2026-11-21).
+  A ChatGPT import and an app connector are not planned at all
+  ([scribe reads Claude Code and Codex sessions only](#scribe-reads-claude-code-and-codex-sessions-only)).
 - Cost: what the page says about him is scribe's sentence, chosen and
   sectioned by a model without his review, so a wrong statement shapes
   agents' behaviour until he retires it; the health and third-party gates
@@ -3111,10 +3119,18 @@ since items are scribe-authored; personal life is kept only with
 
 ## Memory has a personal base from every typed session and a work layer from on sessions
 
-**Recorded:** 2026-11-21 · [ORB-26240] · **Overridable by Daniel** · proposed, not built
+**Recorded:** 2026-11-21 · [ORB-26240] · **Overridable by Daniel** · proposed, not built · **points 1–7 parked 2026-11-21** ([ORB-26256], below)
 **Supersedes in part:** [scribe keeps a descriptive memory the pass writes without approval](#scribe-keeps-a-descriptive-memory-the-pass-writes-without-approval), points 2 (on sessions as the only source) and 9 (`personal = false` by default, and the presets)
 **Reverses:** [3_vision.md §4](./3_vision.md#4-deliberately-out-of-scope)'s "Scanning or cataloging sessions on scribe's own initiative", for the personal base and light catalog entries of interactive sessions only
 **Paths:** `crates/scribe-core/src/pass/`, `crates/scribe-core/src/control.rs`, `crates/scribe/src/commands/hook/` (`stop`, `session-start`) — design §13.12–§13.16
+
+> **Parked 2026-11-21 ([ORB-26256]).** Daniel: "park 2-5, keep 1, 6, 7".
+> Points 1–7 below (the base pass, `/scribe private`, light catalog
+> entries, `people`, recurring dates, and the settings they need) are
+> parked, and nothing here is scheduled; the text stays for when he unparks
+> it. What survives: `[memory] personal` ships on, and means the pass of
+> an `/scribe on` session may keep personal elements. See
+> [The personal base, people, recurring dates and light catalog entries are parked](#the-personal-base-people-recurring-dates-and-light-catalog-entries-are-parked).
 
 ### Context
 
@@ -3245,3 +3261,134 @@ recent-sessions list prefers sessions switched on in the last 14 days.
   opt in are kept on his word alone, with the third-party gates beyond the
   word lists left to the model; a light summary is a model's sentence
   about a conversation he never chose to record.
+
+## scribe reads Claude Code and Codex sessions only
+
+**Recorded:** 2026-11-21 · [ORB-26256] · **Overridable by Daniel**
+**Supersedes in part:** [3_vision.md §1](./3_vision.md#1-open-questions) question 9's three routes (a ChatGPT export import, an app connector, always-on capture), and the "importing a ChatGPT export, an app connector" lines of [scribe keeps a descriptive memory the pass writes without approval](#scribe-keeps-a-descriptive-memory-the-pass-writes-without-approval) and of design §13.11
+**Paths:** none (a scope decision; no code or store shape changes) — design §13.11, 3_vision.md §1
+
+### Context
+
+Daniel, chief's chat, 2026-11-21 (ws_constellation ORB-26194, relayed by
+the chief), after the design had named routes for "a user who lives
+elsewhere", his wife, who "is bounded to chatGPT and resistant to change
+because of memory" (§13's opening): "no hosted server - I am not managing
+other's memory. claude code and codex support only then. so be it".
+
+Until then 3_vision.md question 9 listed three undesigned routes to a
+provider scribe has no hook in: importing a ChatGPT export, an app
+connector that reads such conversations as they happen, and always-on
+capture with an off-the-record switch. A connector or a hosted import is a
+server that holds other people's conversations and memory, run by Daniel.
+
+### Decision
+
+1. **scribe reads Claude Code and Codex sessions, and nothing else.** Its
+   memory, catalog and `ask` are built from those two providers'
+   transcripts, on the host that runs them. A user whose conversations are
+   elsewhere is not a user scribe serves.
+2. **No hosted server, app connector or ChatGPT-export import**, as future
+   work or as "not built until seen". They are removed from 3_vision.md
+   question 9, §13.11 and the memory decision's consequences, not deferred.
+3. Daniel's reason, in his words: "I am not managing other's memory". A
+   server that keeps a stranger's memory is a service he operates for
+   them, with its consent, retention and breach questions; scribe is his
+   own tool.
+
+Alternatives considered:
+
+- **A hosted scribe** that other users reach over the network. Cost:
+  Daniel would run a service holding other people's words, which he
+  declined; it would also need accounts, a store per user and a
+  provenance story for turns not typed through a scribe hook.
+- **An app connector or ChatGPT export import**, kept as "not built until
+  seen". Cost: a standing promise to a provider scribe cannot read
+  verbatim, so no `ask` quote could be checked against what the user typed
+  (the rule every answer keeps); Daniel closed it ("so be it").
+
+Differences from the chief's proposal: none; this records his words.
+
+### Consequences
+
+- The regular-user example of §13 (a user in ChatGPT) is no longer a
+  target: nothing in the plan serves her.
+- 3_vision.md question 9 is answered; questions 1 and 8 (other providers,
+  box workers) are unchanged, and Codex is a reader scribe already
+  supports ([2_design.md, Codex integration](./2_design.md#codex-integration-and-portable-skill)).
+- Not built, and not planned: a hosted server, an app connector, a
+  ChatGPT export import.
+- Cost: a user who lives in another provider gets no scribe memory at
+  all, and Daniel's wife, the example that shaped §13, is not served.
+
+## The personal base, people, recurring dates and light catalog entries are parked
+
+**Recorded:** 2026-11-21 · [ORB-26256] · **Overridable by Daniel** · design only; nothing parked was built
+**Parks:** points 1–7 of [Memory has a personal base from every typed session and a work layer from on sessions](#memory-has-a-personal-base-from-every-typed-session-and-a-work-layer-from-on-sessions), and the settings they need; their text is kept for when he unparks them
+**Paths:** none (a sequencing decision) — design §13.10, §13.12–§13.16
+
+### Context
+
+Daniel, chief's chat, 2026-11-21, on the consolidated task list of §13
+(the chief's numbering): "park 2-5, keep 1, 6, 7". The captain reads that
+as: parked are the personal base pass for off sessions with `/scribe
+private` (§13.12), people records (§13.13), recurring dates (§13.14) and
+light catalog entries for off sessions (§13.15); kept are slice (a), the
+`memory` kind with the session-start page, (b) consolidation and promotion,
+and (c) `working` → `preferences` candidates (§13.10).
+
+Taken the same day as [scribe reads Claude Code and Codex sessions
+only](#scribe-reads-claude-code-and-codex-sessions-only), which removes
+the user the parked parts were for.
+
+### Decision
+
+1. **Parked: §13.12, §13.13, §13.14 and §13.15** (and the limits and order
+   of §13.16 that belong to them). Their text stays in the design, marked
+   "parked 2026-11-21" with his words, for when he unparks them. Nothing in
+   them is built or scheduled.
+2. **Kept, unchanged: §13.10 (a), (b) and (c).**
+3. **Reason.** Claude Code and Codex only, so there is no surface whose
+   sessions the base would serve beyond what `/scribe on` already covers.
+   (The design adds no better one: the base's own cost, about 60 base
+   passes and 60 light entries a week on Daniel's Mac to keep a base he
+   expects to stay empty, §13.16, was set against a regular user who is
+   now out of scope.)
+4. **While the base is parked, memory items are written only from sessions
+   switched on with `/scribe on`**, including the personal sections
+   (`profile`, `now`, `milestones`). A session that is off writes nothing,
+   as today.
+5. **Slice (a) does not add `layer`, `person` or `recurs`.** Only parked
+   parts read them; they come, as a store format step, with the part that
+   needs them. The settings that exist only for parked parts (`[memory]
+   base`, `base_idle_minutes`, `[memory.sections] people`,
+   `[memory.recurring]`) are not shipped with (a).
+6. **`[memory] personal = true`** ships, as under ORB-26240, and means: the
+   pass of an on session may keep the personal elements (household in
+   `profile`, personal events in `now`, personal milestones); `false`
+   refuses them as ORB-26219 did (`memory_personal_off`). It no longer says
+   which sessions feed memory.
+
+Alternatives considered:
+
+- **Build the base anyway** for Daniel's own sessions. Cost: 60 base
+  passes a week for a base he expects to stay empty; he parked it.
+- **Delete the parked sections.** Cost: the design work (the third-party
+  gates, the salted-hash ledger, the derived recurring dates) is lost if he
+  unparks them; he asked that the text be kept.
+- **Ship `layer`, `person` and `recurs` now as nullable fields**, as
+  §13.16 had planned. Cost: three persisted fields nothing reads, which
+  the persisted-shape rule makes permanent; adding a field later is a store
+  format step like any other.
+
+### Consequences
+
+- Slice (a)'s store format step is the `memory/` directory and kind, as
+  ORB-26219 had it, without the addendum's fields.
+- The issue hint of §11.4 stays as built: it runs in every interactive
+  session.
+- The session-start page keeps ORB-26219's layout (2,400 characters; no
+  `people` part; no derived recurring lines).
+- Cost: a regular user who never types `/scribe on` has no memory and no
+  catalog; the gap between "every session feeds memory" and "only chosen
+  sessions" is the work Daniel parked.

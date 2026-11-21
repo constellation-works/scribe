@@ -7,11 +7,11 @@ status: Draft
 feature: scribe
 doc_role: design
 type: design
-summary: How the scribe plugin is bounded (one binary; Daniel writes through hooks, agents read and write through the CLI taught by one skill, and the MCP surface stays ask), how #scribe entries, /scribe on session records (a rewritable header over an append-only log of segments), active and inactive sessions, ask and search, the consistency routine, backfill by name and the tmux popup work, where everything is stored, which model does what, and the slice plan that builds it; §11–§13 are proposed designs (claims and issues, settling on instruction, and the descriptive memory, with its personal base from every typed session, its work layer from /scribe on sessions, people, recurring dates and light catalog entries).
+summary: How the scribe plugin is bounded (one binary; Daniel writes through hooks, agents read and write through the CLI taught by one skill, and the MCP surface stays ask), how #scribe entries, /scribe on session records (a rewritable header over an append-only log of segments), active and inactive sessions, ask and search, the consistency routine, backfill by name and the tmux popup work, where everything is stored, which model does what, and the slice plan that builds it; §11–§13 are proposed designs (claims and issues, settling on instruction, and the descriptive memory written from /scribe on sessions; its personal base for sessions that are off, people, recurring dates and light catalog entries are designed but parked 2026-11-21, and scribe reads Claude Code and Codex sessions only).
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240]
+related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256]
 ---
 
 # scribe — Design
@@ -104,8 +104,8 @@ otherwise. It reads only; it does not create `config.toml`
 ([§3](#3-storage)).
 (Proposed, not built: it also gives the agent the memory page as
 `additionalContext` in interactive sessions,
-[§13.6](#136-reading-back), with recurring dates computed into its `now`
-part, [§13.14](#1314-recurring-dates).)
+[§13.6](#136-reading-back). Recurring dates computed into its `now` part,
+[§13.14](#1314-recurring-dates), are parked.)
 
 Entry writes never go through Orbit's tool surface: the hooks call the
 binary, and from S12 agents call the CLI ([§1.1](#11-the-cli-agent-surface)). The two routine tools write session records and proposals, but they
@@ -1077,11 +1077,13 @@ A prompt whose first line is `/scribe on`, `/scribe off` or `/scribe status`
 (or a link command, [§5.4](#54-session-links), or `/scribe catalog <id>`,
 [§5.8](#58-cataloging-a-past-session)) is intercepted by the `UserPromptSubmit` hook, which updates `control.json`
 and returns `decision: "block"` with the status as `reason`, so no model
-turn is spent. Every session starts off. (Proposed, not built: an
-interactive session that is off still feeds the personal memory base and
-leaves a light catalog entry, and `/scribe private` stops that for one
-session, [§13.12](#1312-a-personal-base-and-a-work-layer-per-session) and
-[§13.15](#1315-what-a-session-that-is-not-switched-on-leaves).) `on` records `on_since` and marks a
+turn is spent. Every session starts off. (Designed, then parked
+2026-11-21, not built: an interactive session that is off would still feed
+a personal memory base and leave a light catalog entry, with `/scribe
+private` to stop that for one session,
+[§13.12](#1312-a-personal-base-and-a-work-layer-per-session) and
+[§13.15](#1315-what-a-session-that-is-not-switched-on-leaves). While they
+are parked an off session writes nothing.) `on` records `on_since` and marks a
 pass due; `off` stops further passes and keeps the record. `/scribe on` in a
 session that is already on is a no-op that says so.
 
@@ -2935,9 +2937,8 @@ triggers without a model. On a match it adds one line to the turn's
 `additionalContext`: that this turn asks for a root cause, the trigger that
 fired, and the commands below. It writes nothing and audits nothing, so it
 runs in every interactive session, whether or not `/scribe on` is set.
-(Amended by [§13.12](#1312-a-personal-base-and-a-work-layer-per-session),
-proposed: issues belong to the work layer, so the hint is added only in a
-session that is on.)
+(§13.12 proposed adding the hint only in a session that is on; that is
+parked 2026-11-21, so the hint stays as stated here.)
 
 **Writer.** The agent in the chat, the one that gives Daniel the answer:
 
@@ -3303,19 +3304,50 @@ carries a pointer here. It reverses
 memory only. The reasons and the alternatives are in
 [4_decisions.md](./4_decisions.md#scribe-keeps-a-descriptive-memory-the-pass-writes-without-approval).
 
-[ORB-26240], designed 2026-11-21 and **not built**, amends this section in
+[ORB-26240], designed 2026-11-21 and **not built**, added
 [§13.12](#1312-a-personal-base-and-a-work-layer-per-session) to
 [§13.16](#1316-limits-of-the-addendum-and-what-is-not-built-until-seen):
-memory is split per session into a **personal base** that every session a
-human types in feeds (`profile`, `now`, `milestones`, a sixth section
+memory split per session into a **personal base** that every session a
+human types in would feed (`profile`, `now`, `milestones`, a sixth section
 `people`, and recurring dates) and a **work layer** that only sessions
-switched on with `/scribe on` feed (the session record, claims, issues,
-`projects` and `working`); a session that is not switched on also leaves a
-**light catalog entry** (Daniel decided this, §13.15). Where §13.1–§13.11
-say "a session he switched on" as the only source, or `personal = false`
-as the default, §13.12 supersedes them and the text carries a pointer. The
-reasons are in
-[4_decisions.md](./4_decisions.md#memory-has-a-personal-base-from-every-typed-session-and-a-work-layer-from-on-sessions).
+switched on with `/scribe on` feed, with a **light catalog entry** for a
+session that is off. **Those parts are parked, 2026-11-21 ([ORB-26256]).**
+Daniel, chief's chat, 2026-11-21, of the consolidated task list of this
+section: "park 2-5, keep 1, 6, 7". Parked, each marked in its own section
+with his words and its text kept for when he unparks it: the base pass for
+off sessions with `/scribe private` (§13.12), `people` (§13.13), recurring
+dates (§13.14) and light catalog entries (§13.15). Kept: the three steps of
+[§13.10](#1310-order-and-sequencing), (a) the `memory` kind and the
+session-start page, (b) consolidation and promotion, and (c) `working`
+items proposed as `preferences` candidates. The reason: Daniel decided the
+same day that scribe reads **Claude Code and Codex sessions only** ("no
+hosted server - I am not managing other's memory. claude code and codex
+support only then. so be it", [4_decisions.md](./4_decisions.md#scribe-reads-claude-code-and-codex-sessions-only)),
+so there is no surface whose sessions a base would serve beyond what
+`/scribe on` already covers. The decision is in
+[4_decisions.md](./4_decisions.md#the-personal-base-people-recurring-dates-and-light-catalog-entries-are-parked).
+
+What the parking means for the rest of this section:
+
+- **Sources.** While the base is parked, memory items are written **only
+  from sessions switched on with `/scribe on`** (or named with `session
+  catalog`, §5.8), including the personal sections (`profile`, `now`,
+  `milestones`). An off session writes nothing, as today. Where §13.3 and
+  §13.8 say "a session he switched on" as the only source, that is the rule
+  in force; the pointers to §13.12 describe the parked design.
+- **Fields.** Slice (a) does not add `layer`, `person` or `recurs` to an
+  item: only parked parts read them. They come, in a store format step of
+  their own, with the part that needs them (`layer` with the base pass,
+  `person` with `people`, `recurs` with recurring dates).
+- **Settings.** `[memory] base`, `base_idle_minutes`, `[memory.sections]
+  people` and `[memory.recurring]` exist only for parked parts and are not
+  shipped with (a).
+- **`[memory] personal`** ships **true** (§13.1). It decides whether the
+  pass of an on session may keep personal elements; it does not choose
+  which sessions feed memory.
+- **Sections and page.** Five sections, a page of 2,400 characters, no
+  `people` part, no derived recurring lines, and a recent-sessions list of
+  the sessions on record.
 
 Daniel, chief's chat, 2026-11-21: "I think we should expand scribe's role
 to manage memory system. we already keep track of sessions, preferences,
@@ -3345,9 +3377,9 @@ of his wife) is stated, not yet observed in use.
 
 ### 13.1 Three layers and five sections
 
-(Six with `people`, [§13.13](#1313-people). "Layer" in this table is the
-kind of record; the personal base and the work layer of §13.12 are which
-sessions feed which sections.)
+(A sixth section, `people`, is designed in [§13.13](#1313-people) and
+parked 2026-11-21. "Layer" in this table is the kind of record, not the
+personal base and work layer of the parked §13.12.)
 
 | Layer | What it holds | Lifetime | How an agent reads it |
 |---|---|---|---|
@@ -3365,7 +3397,7 @@ that support it. Its **section** is exactly one of:
 | `working` | how he steers agents, as observed | "Asks for the design to be filed as a task before any build." | global | 90-day decay |
 | `now` | upcoming things and recent happenings | "Said his sister's wedding is on 2026-12-12." | global | [§13.4](#134-now-and-milestones) |
 | `milestones` | big, dated life or project events | "2026-06-14 — married." "2026-10-02 — pulsar decommissioned." | global | always, no age cutoff |
-| `people` ([§13.13](#1313-people)) | brief records of people and pets close to the user, made only when the user brings them up | "Sam (his husband): works as a nurse." | one person | always, one line each |
+| `people` ([§13.13](#1313-people), **parked 2026-11-21, not part of (a)**) | brief records of people and pets close to the user, made only when the user brings them up | "Sam (his husband): works as a nurse." | one person | always, one line each |
 
 `working` **describes**; `preferences` **binds**. An agent may adapt to a
 `working` item but must not treat it as a rule; only an approved
@@ -3373,8 +3405,9 @@ that support it. Its **section** is exactly one of:
 is offered to him as a preference ([§13.7](#137-from-working-to-preferences)).
 
 The section names are fixed in code (`scribe-core::memory::Section`, a
-closed enum, six members with `people`); config can switch a section off, not add one. An `interests`
-section is not built (Daniel dropped it).
+closed enum, five members; `people` joins it only if
+[§13.13](#1313-people) is unparked); config can switch a section off, not
+add one. An `interests` section is not built (Daniel dropped it).
 
 **Every section is switchable, and none is unconditional.** Each section
 has its own setting (`[memory.sections] <name> = true|false`), and
@@ -3386,24 +3419,27 @@ naming it is refused, `memory_section_off`) nor shown on the page;
 until it is switched on again or they are forgotten. The last-n sessions
 list is not a section and has its own setting (`recent_sessions = 0`).
 
-**Work and personal.** *Superseded in part by
-[§13.12](#1312-a-personal-base-and-a-work-layer-per-session) (proposed):
-`personal` now ships **on** in every store, Daniel's included, and which
-session wrote an item decides its layer; the paragraph below is ORB-26219's
-text and describes the setting turned off.* A second setting, `[memory] personal`, decides
-whether personal life is kept at all. **Off in the shipped default**, which
-is Daniel's work store: the pass is told to keep only what bears on work,
-and every element the sensitive word list of
-[§13.8](#138-sensitive-content) flags, or that the model marks personal, is
-refused in every section (`memory_personal_off`). So in the shipped default
+**Work and personal.** A second setting, `[memory] personal`, decides
+whether personal life is kept at all, and it ships **true** (the default of
+[ORB-26240], kept when its base was parked; ORB-26219 had shipped false).
+Memory is written only from sessions switched on with `/scribe on`, and
+`personal = true` means the pass of such a session may keep the personal
+elements it finds in what he typed: household facts in `profile`, personal
+events in `now` (§13.4), personal milestones, and the stated events
+[§13.8](#138-sensitive-content) allows. Each element the model returns
+carries a transient personal mark, checked when written and not stored.
+For Daniel, whose on sessions are work, these stay empty. `personal =
+false` refuses every element the sensitive word list of §13.8 flags, or
+that the model marks personal, in every section (`memory_personal_off`), so
 `now` holds work state ("a release under way", "dk-server-1 unreachable")
 and `milestones` work milestones ("pulsar decommissioned"); no family
-event, loss or household fact is written. Turning `personal` on admits the
-personal events of §13.4 and §13.8 (Daniel's example of a regular user).
+event, loss or household fact is written. The setting does not choose
+**which** sessions feed memory: that is only `/scribe on` while the base
+([§13.12](#1312-a-personal-base-and-a-work-layer-per-session)) is parked.
 How a store chooses these settings as a whole was first to be `work` and
-`personal` presets; [ORB-26240] replaced them with the per-session split of
-§13.12, which needs no preset. This section only requires that every
-setting it names can be set alone.
+`personal` presets; [ORB-26240] replaced them with a per-session split,
+which is parked, so no preset is built. This section only requires that
+every setting it names can be set alone.
 
 ### 13.2 The item and its occurrences
 
@@ -3417,17 +3453,14 @@ entry ids, frontmatter only (no body):
 format: <n>
 kind: memory
 id: m-14
-section: now                       # profile | projects | working | now | milestones | people
-layer: personal                    # §13.12: personal | work
-person: null                       # §13.13: people items only, the p-<n> they describe
-recurs: null                       # §13.14: yearly on a dated profile or milestones item
+section: now                       # profile | projects | working | now | milestones
 status: active                     # active | merged | superseded | promoted | retired | forgotten
 statement: Said his sister's wedding is on 2026-12-12.
 project: null                      # projects only: the project key sessions use
 event_date: 2026-12-12             # now and milestones; null otherwise
 sensitive: false                   # §13.8
 sensitive_kind: null               # loss | health | relationship | family
-acknowledged: null                 # now only: {at, session, author}; recurring: {year, at, session, author}, §13.14
+acknowledged: null                 # now only: {at, session, author}
 promoted_from: null                # milestones: the now item it came from
 promotion: null                    # {rule, to, profile_from, profile_to} on the promoted item
 merged_into: null
@@ -3472,10 +3505,9 @@ updates the record returns a `memory` array beside `candidates`.
 `session rebuild` leaves it disabled, as it does candidates.
 
 - **Source.** Only the user's typed turns of a session he switched on (or
-  named for catalog), with every exclusion of §5.3 (amended by
-  [§13.12](#1312-a-personal-base-and-a-work-layer-per-session): the typed
-  turns of an interactive session that is not switched on feed the
-  personal base through the base pass, with the same exclusions): pasted blocks, fenced
+  named for catalog; a session that is off writes nothing, the base pass of
+  the parked [§13.12](#1312-a-personal-base-and-a-work-layer-per-session)
+  not being built), with every exclusion of §5.3: pasted blocks, fenced
   or indented code, blockquotes, marked `#scribe` lines, synthetic and
   meta turns. Assistant turns are never a source (§11.3 already stops the
   pass reading them).
@@ -3527,7 +3559,7 @@ updates the record returns a `memory` array beside `candidates`.
 ```toml
 [memory]
 enabled = true                 # false: every section off
-personal = true                # §13.12 (was false in ORB-26219): false keeps no personal-layer item from any session
+personal = true                # ORB-26240's default, kept (ORB-26219 shipped false); false: no personal element from an on session, §13.1
 decay_days = 90                # projects and working leave the page
 now_undated_days = 7           # an undated now item leaves the page
 now_after_days = 14            # a dated now item stays this long after its date
@@ -3682,7 +3714,7 @@ The page does not depend on this session being on: reading needs no
 switch; only writing does.
 
 A section switched off (§13.1) has no part on the page. The example below
-is a store with `personal` on (the default under §13.12); with `personal` off the `now` and
+is a store with `personal` on (the shipped default, §13.1); with `personal` off the `now` and
 `milestones` lines hold only work state and work milestones.
 
 Layout and budget (`page_chars` = **2,400** characters, about 600 tokens,
@@ -3714,11 +3746,12 @@ More: scribe memory show · scribe session show <id> · scribe ask
 | `working` | 440 | on-page items, most distinct sessions first |
 | recent sessions | 400 | the last **n = 5** active sessions by last message, title and id, excluding this one |
 
-[§13.13](#1313-people) adds a `people` part (300 characters, after
-`milestones`) and raises `page_chars` to **2,700**; recurring dates of
-[§13.14](#1314-recurring-dates) are lines of the `now` part; the recent
-sessions part prefers switched-on sessions
-([§13.15](#1315-what-a-session-that-is-not-switched-on-leaves)).
+(Parked 2026-11-21: [§13.13](#1313-people) would add a `people` part (300
+characters, after `milestones`) and raise `page_chars` to **2,700**;
+recurring dates of [§13.14](#1314-recurring-dates) would be lines of the
+`now` part; the recent sessions part would prefer switched-on sessions
+([§13.15](#1315-what-a-session-that-is-not-switched-on-leaves)). None is
+part of (a): the page is the layout above.)
 
 A part over its budget drops whole items from its end and says
 `(+k more)`; unused budget passes to `working`, then `profile`.
@@ -3766,9 +3799,10 @@ approval writes his `preferences` entry with `stated_by` set, and the
 ### 13.8 Sensitive content
 
 Only what the user typed in a session he switched on (or named for
-catalog) is read, and, under [§13.12](#1312-a-personal-base-and-a-work-layer-per-session),
-what he typed in an interactive session that is off and not private; nothing is read from tool output, pasted text or
-assistant turns (§13.3).
+catalog) is read; nothing is read from tool output, pasted text or
+assistant turns (§13.3). (The base pass of the parked
+[§13.12](#1312-a-personal-base-and-a-work-layer-per-session) would also read
+what he typed in an interactive session that is off and not private.)
 
 **Never kept, in any section** (refused, `memory_sensitive`):
 
@@ -3785,12 +3819,11 @@ assistant turns (§13.3).
   figures and colleagues named for work, contact details, addresses, ages.
   A statement names a person by relation ("his sister"), not by name. The
   quote stays verbatim: it is his own words, already in the session record
-  he switched on, and it is never shown on the page. (Amended by
-  [§13.13](#1313-people): a `people` record keeps the name the user calls a
-  person or pet by, as he typed it, and nothing else identifying.)
+  he switched on, and it is never shown on the page. (The parked
+  [§13.13](#1313-people) would let a `people` record keep the name the user
+  calls a person or pet by, as he typed it, and nothing else identifying.)
 
-**Kept, only when `[memory] personal` is on (off in ORB-26219's shipped
-default, on under [§13.12](#1312-a-personal-base-and-a-work-layer-per-session)), in `now` only, with the short lifetime**: an event in his
+**Kept, only when `[memory] personal` is on (the shipped default, §13.1; ORB-26219 had it off), in `now` only, with the short lifetime**: an event in his
 or his family's life that he stated, as the event and at the level he said it
 ("said his grandmother died on 2026-11-20", "said he has surgery on
 2026-12-03"), never its medical or financial detail. Such an item carries
@@ -3826,8 +3859,8 @@ with the text.
 
 ### 13.9 Correction
 
-What exists, extended to memory ids (and to `people` records' `p-` ids,
-[§13.13](#1313-people)):
+What exists, extended to memory ids (and, if the parked
+[§13.13](#1313-people) is built, to `people` records' `p-` ids):
 
 - `#scribe retire <m-id>` hides an item from the page, `ask` and lists
   (`retired`); `#scribe forget <m-id>` blanks its statement and every
@@ -3856,7 +3889,13 @@ After [§11.7](#117-order-and-sequencing) step (b), whose statement and
    the sensitive gate, `scribe memory show` and `ack`, retire and forget,
    and the session-start page with the last-n sessions (one store format
    step, numbered when it lands: the `memory/` directory and the `memory`
-   kind; an older build refuses a store holding one).
+   kind; an older build refuses a store holding one). Items carry no
+   `layer`, `person` or `recurs` field, and (a) ships none of `[memory]
+   base`, `base_idle_minutes`, `[memory.sections] people` or
+   `[memory.recurring]`: only the parked parts read them (§13.12–§13.14),
+   so each field and setting comes, with its own store format step where it
+   is persisted, with the part that needs it. `[memory] personal` ships
+   true (§13.1).
 2. **(b)** Consolidation: the consistency scan's merge and supersede, the
    `now` to `milestones` promotion rules and `scribe memory rules`, and
    the derived decay and page windows (decay ships in (a) as derived; (b)
@@ -3865,9 +3904,9 @@ After [§11.7](#117-order-and-sequencing) step (b), whose statement and
    candidate.
 
 Each lands with its `specs/store.md`, `specs/output-contract.md`, skill and
-golden updates. [ORB-26240]'s addendum amends (a) and adds steps (a1)–(a4)
-after it ([§13.16](#1316-limits-of-the-addendum-and-what-is-not-built-until-seen));
-(b) and (c) are unchanged.
+golden updates. Daniel, 2026-11-21, of the consolidated list: "park 2-5,
+keep 1, 6, 7". (a), (b) and (c) are kept. [ORB-26240]'s steps (a1)–(a4)
+(§13.16) are parked with §13.12–§13.15 and are not scheduled.
 
 ### 13.11 Limits and what is not built until seen
 
@@ -3880,14 +3919,17 @@ after it ([§13.16](#1316-limits-of-the-addendum-and-what-is-not-built-until-see
 - **The mood rule is a word list.** "Sounded tired" passes if "tired" is
   not listed.
 - **The page is in every interactive session's context**, about 600
-  tokens (about 675 with `people`, §13.13), whether or not the session needs it.
+  tokens, whether or not the session needs it.
 - **Acknowledgement depends on the agent** running `memory ack`; an agent
   that does not will raise an item again in the next session.
 - **Promotion (a) trusts the model's profile statement**; a wrong one
   supersedes a right profile fact until he retires it.
-- **Only providers scribe reads.** A user whose conversations are
-  elsewhere (Daniel's example) has no memory until an import exists
-  ([3_vision.md §1](./3_vision.md#1-open-questions)).
+- **Only Claude Code and Codex sessions, and only those switched on.** A
+  user whose conversations are elsewhere (Daniel's example of a user in
+  ChatGPT) has no memory, by his decision of 2026-11-21 ("claude code and
+  codex support only then. so be it",
+  [4_decisions.md](./4_decisions.md#scribe-reads-claude-code-and-codex-sessions-only)),
+  and a session that is off writes nothing while the base is parked.
 
 Not built until seen:
 
@@ -3901,10 +3943,15 @@ Not built until seen:
 - a page for headless runs, or per-agent page budgets;
 - a model-level duplicate check in the pass beyond `same_as` and the
   lexical guard;
-- importing a ChatGPT export, an app connector, and always-on capture with
-  an off-the-record switch ([3_vision.md §1](./3_vision.md#1-open-questions)).
+- always-on capture with an off-the-record switch (designed and parked,
+  §13.12).
 
 ### 13.12 A personal base and a work layer, per session
+
+> **Parked 2026-11-21 ([ORB-26256]).** Daniel, chief's chat, 2026-11-21: "park 2-5, keep 1, 6, 7".
+> Reason: Claude Code and Codex only ([4_decisions.md](./4_decisions.md#scribe-reads-claude-code-and-codex-sessions-only)), so there is no surface whose sessions the base pass and `/scribe private` would serve beyond what `/scribe on` already covers.
+> Nothing below is built or scheduled; the text is kept for when he unparks it.
+> While it is parked, memory items are written only from sessions switched on with `/scribe on`, and `[memory] personal = true` only admits personal elements from those (§13.1). The settings `[memory] base` and `base_idle_minutes` and the `layer` field are not shipped with (a), and the issue hint of §11.4 stays in every interactive session.
 
 [ORB-26240], designed 2026-11-21, **not built**. Daniel, chief's chat,
 2026-11-21, after approving `work` and `personal` presets ("Yes, add
@@ -4001,6 +4048,11 @@ above or in §13.3, so no named set has a member to choose between.
 needs several settings changed together and asks for it.
 
 ### 13.13 `people`
+
+> **Parked 2026-11-21 ([ORB-26256]).** Daniel, chief's chat, 2026-11-21: "park 2-5, keep 1, 6, 7".
+> Reason: Claude Code and Codex only ([4_decisions.md](./4_decisions.md#scribe-reads-claude-code-and-codex-sessions-only)), so there is no surface whose sessions a `people` record would serve beyond what `/scribe on` already covers.
+> Nothing below is built or scheduled; the text is kept for when he unparks it.
+> Slice (a) adds no `person` field and no `[memory.sections] people`; they come with this part.
 
 Daniel, chief's chat, 2026-11-21: "it may be appropriate to build a brief
 profiles of those close to the user, e.g. husband's profession and
@@ -4103,6 +4155,11 @@ The page budget rises to **2,700**.
 
 ### 13.14 Recurring dates
 
+> **Parked 2026-11-21 ([ORB-26256]).** Daniel, chief's chat, 2026-11-21: "park 2-5, keep 1, 6, 7".
+> Reason: Claude Code and Codex only ([4_decisions.md](./4_decisions.md#scribe-reads-claude-code-and-codex-sessions-only)), so there is no surface whose sessions a recurring-dates reminder would serve beyond what `/scribe on` already covers.
+> Nothing below is built or scheduled; the text is kept for when he unparks it.
+> Slice (a) adds no `recurs` field and no `[memory.recurring]`; they come with this part, and `SessionStart` adds no derived `now` lines.
+
 Daniel, chief's chat, 2026-11-21: "Also, I forgot about recurring dates,
 e.g. birthdays of the user and family members, wedding anniversary date,
 etc. it would be nice if agent says happy birthday, or remind the user on
@@ -4166,6 +4223,11 @@ another surface and are not built until seen.
 
 ### 13.15 What a session that is not switched on leaves
 
+> **Parked 2026-11-21 ([ORB-26256]).** Daniel, chief's chat, 2026-11-21: "park 2-5, keep 1, 6, 7".
+> Reason: Claude Code and Codex only ([4_decisions.md](./4_decisions.md#scribe-reads-claude-code-and-codex-sessions-only)), so there is no surface whose sessions a light catalog entry would serve beyond what `/scribe on` already covers.
+> Nothing below is built or scheduled; the text is kept for when he unparks it.
+> A session that is off leaves nothing; `depth: light` is not added to session headers, and the page's recent-sessions list is the plain list of §13.6.
+
 **Decided by Daniel**, chief's chat, 2026-11-21, to "Should a session you
 do not switch on still leave a light catalog entry (title and summary)?":
 "Yes, light entry". A session a human typed in that is not switched on
@@ -4221,6 +4283,8 @@ says `(light)` when it is one. A regular user who never switches a session
 on sees his last 5 light entries.
 
 ### 13.16 Limits of the addendum and what is not built until seen
+
+> **Parked 2026-11-21 ([ORB-26256]) with §13.12–§13.15**, whose limits and order this section records. The "(a), amended" step below is **not in force**: (a) adds no `layer`, `person` or `recurs`, and `personal` ships true for the reason of §13.1. (a1)–(a4) are not scheduled. Text kept for when he unparks them.
 
 - **The base reads by default.** Every interactive session is read unless
   the user types `/scribe private`; a conversation he forgot to mark is
@@ -4309,6 +4373,9 @@ Not built until seen:
 - [ORB-26240] — designed §13.12–§13.16: the personal base and the work layer
   per session, `people`, recurring dates and light catalog entries,
   replacing the presets.
+- [ORB-26256] — recorded Daniel's decisions of 2026-11-21: scribe reads
+  Claude Code and Codex sessions only, and §13.12–§13.15 (the base pass,
+  `people`, recurring dates, light catalog entries) are parked.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
 

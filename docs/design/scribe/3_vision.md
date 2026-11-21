@@ -7,11 +7,11 @@ status: Draft
 feature: scribe
 doc_role: vision
 type: design
-summary: Where the scribe plugin may go after its slices — more providers, cross-host stores, better retrieval, an opt-in import of orbit-office decisions, a real TUI if the tmux popup proves too small — and what it deliberately leaves out.
+summary: Where the scribe plugin may go after its slices — more providers (Claude Code and Codex only, decided 2026-11-21), cross-host stores, better retrieval, an opt-in import of orbit-office decisions, a real TUI if the tmux popup proves too small — and what it deliberately leaves out.
 tags: [scribe]
 paths: ["crates/**", "plugin/**"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21744, ORB-23892, ORB-26219, ORB-26240]
+related_artifacts: [ORB-21747, ORB-21744, ORB-23892, ORB-26219, ORB-26240, ORB-26256]
 ---
 
 # scribe — Vision
@@ -58,22 +58,20 @@ plan in [2_design.md §10](./2_design.md#10-slice-plan).
    sessions only. If box workers need scribe, does that wait for a
    cross-host store (question 2), or does the skill learn to reach the Mac
    over SSH?
-9. **Memory for a user who lives elsewhere.** The memory of
-   [2_design.md §13](./2_design.md#13-memory-profile-projects-working-now-and-milestones-proposed)
-   is built only from sessions scribe reads. Daniel, 2026-11-21, of a
-   regular user: "She is bounded to chatGPT and resistant to change because
-   of memory." Three routes are named here and none is designed: **importing
-   a ChatGPT export** into sessions and memory items; **an app connector**
-   that reads such a provider's conversations as they happen; and
-   **always-on capture with an off-the-record switch**, the reverse of
-   today's `/scribe on`. (The third is now designed for the personal base
-   and light catalog entries of the sessions scribe already reads, with
-   `/scribe private` as the switch,
-   [2_design.md §13.12](./2_design.md#1312-a-personal-base-and-a-work-layer-per-session);
-   it does not reach a provider scribe has no hook in.) The first test before any of them: import one
-   export with its owner's consent, build the memory page from it, and
-   have the owner read the page. Each would need its own provenance story,
-   since none of these turns is typed through a scribe hook.
+9. **Memory for a user who lives elsewhere.** Answered 2026-11-21: scribe
+   reads Claude Code and Codex sessions only. Daniel, of a regular user
+   ("She is bounded to chatGPT and resistant to change because of
+   memory"), then: "no hosted server - I am not managing other's memory.
+   claude code and codex support only then. so be it". There is no
+   ChatGPT-export import, app connector or hosted server, as future work
+   or otherwise ([4_decisions.md](./4_decisions.md#scribe-reads-claude-code-and-codex-sessions-only)).
+   The third route, always-on capture of a session that is not switched on
+   with `/scribe private` as the off switch, was designed for the sessions
+   scribe already reads
+   ([2_design.md §13.12](./2_design.md#1312-a-personal-base-and-a-work-layer-per-session))
+   and is parked, with its personal base, light catalog entries, `people`
+   and recurring dates
+   ([4_decisions.md](./4_decisions.md#the-personal-base-people-recurring-dates-and-light-catalog-entries-are-parked)).
 
 ## 2. Prior Work
 
