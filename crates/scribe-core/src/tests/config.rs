@@ -246,6 +246,49 @@ fn capture_rules_override_field_by_field_with_their_line() {
 }
 
 #[test]
+fn a_partial_preferences_table_keeps_shipped_aliases_description_and_stale_days() {
+    let shipped = Config::parse("")
+        .unwrap()
+        .tags
+        .resolve("preferences")
+        .unwrap()
+        .clone();
+    let only_capture =
+        Config::parse("[tags.preferences.capture]\ntriggers = [\"from now on\"]\n").unwrap();
+    let prefs = only_capture.tags.resolve("preferences").unwrap();
+    assert_eq!(prefs.aliases, shipped.aliases);
+    assert_eq!(
+        prefs.description.as_deref(),
+        Some("how Daniel likes things done")
+    );
+    assert_eq!(prefs.stale_after_days, std::num::NonZeroU32::new(180));
+    assert_eq!(
+        prefs.capture.triggers.as_ref().unwrap().value,
+        ["from now on"]
+    );
+
+    let cleared =
+        Config::parse("[tags.preferences]\naliases = []\nstale_after_days = 7\n").unwrap();
+    let cleared = cleared.tags.resolve("preferences").unwrap();
+    assert!(
+        cleared.aliases.is_empty(),
+        "an explicit empty list is not an omit"
+    );
+    assert_eq!(cleared.stale_after_days, std::num::NonZeroU32::new(7));
+    assert_eq!(cleared.description, shipped.description);
+
+    let rituals = Config::parse("[tags.rituals]\n").unwrap();
+    assert!(
+        rituals.tags.resolve("preferences").is_none(),
+        "a config that never mentions preferences still drops it"
+    );
+    let rituals = rituals.tags.resolve("rituals").unwrap();
+    assert!(rituals.aliases.is_empty());
+    assert_eq!(rituals.stale_after_days, None);
+    assert_eq!(rituals.description, None);
+}
+
+#[test]
 fn bad_capture_rules_are_refused_naming_the_field() {
     for (toml, needle) in [
         (

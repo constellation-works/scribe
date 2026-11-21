@@ -44,7 +44,7 @@ pub enum TriggerError {
     Wildcard(String),
     /// A `*` glued to a word, or a sentence end inside the phrase.
     #[error(
-        "trigger '{0}' must be words separated by spaces, with '*' as a word of its own and no '.', '!' or '?'"
+        "trigger '{0}' must be words separated by spaces, with '*' as a word of its own and no '.', '!', '?', line break or NUL"
     )]
     Shape(String),
 }

@@ -36,6 +36,8 @@
 //! exit 1 with each failed session, code and short reason; the plugin answers
 //! `session_pass_failed`. A never-on session is never read. A pass writes
 //! candidate proposals, no entries, and one audit line per session handled (none for waiting).
+//! A window that fails after retired-tag closures were persisted still audits one success
+//! line per closed proposal, then the pass's failure line.
 
 use crate::app::Context;
 use crate::commands::RunLimits;
@@ -614,11 +616,23 @@ impl Job<'_> {
             } else {
                 scribe_core::PassWrite::Settle(self.switch.final_pass)
             };
-            let written = self
-                .ctx
-                .store()
-                .write_pass_window(record, expected, mode, &candidates, self.redactor)
-                .map_err(|err| PassError::new(err.code(), err.to_string()))?;
+            let written = match self.ctx.store().write_pass_window(
+                record,
+                expected,
+                mode,
+                &candidates,
+                self.redactor,
+            ) {
+                Ok(written) => written,
+                Err(err) => {
+                    // `code` and the message are the later failure's. The
+                    // ids are copied first so `Job::failed` still audits them.
+                    if let scribe_core::Error::AfterPersist { closed, .. } = &err {
+                        self.closed_candidates.extend(closed.iter().cloned());
+                    }
+                    return Err(PassError::new(err.code(), err.to_string()));
+                }
+            };
             previous = written.record;
             self.closed_candidates.extend(
                 written

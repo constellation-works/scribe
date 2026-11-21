@@ -7,19 +7,22 @@
 //! 1. applies again every approved proposal whose older entry is still
 //!    `active` (an approval writes two files; a crash between them leaves
 //!    the entry behind) — [`scribe_core::Store::reapply_approved`];
-//! 2. finds the candidates ([`consistency::candidates`]): same-tag active
+//! 2. closes open candidate proposals whose tag is no longer in the
+//!    effective tag table, without a model call or a new entry
+//!    ([`scribe_core::Store::close_retired_candidates`]);
+//! 3. finds the candidates ([`consistency::candidates`]): same-tag active
 //!    pairs that share a topic or whose words overlap, newest first and at
 //!    most [`consistency::MAX_PAIRS`], skipping any pair with a proposal in
 //!    any state; and the active entries past `review_after`;
-//! 3. asks the `consistency` model to label the pairs, in batches of
+//! 4. asks the `consistency` model to label the pairs, in batches of
 //!    [`consistency::BATCH`], each within 120 s; a label of `contradicts`
 //!    or `refines` survives only with a verbatim quote of each entry
 //!    ([`consistency::judge`]);
-//! 4. opens one `supersedes` proposal per surviving label and one `stale`
+//! 5. opens one `supersedes` proposal per surviving label and one `stale`
 //!    proposal per entry due for review, in one locked store call;
-//! 5. (S10) deactivates every active, unpinned session whose last message
+//! 6. (S10) deactivates every active, unpinned session whose last message
 //!    is older than `[sessions] inactive_after_days` (route `age`);
-//! 6. (S10) asks the model about removed-feature pairs
+//! 7. (S10) asks the model about removed-feature pairs
 //!    ([`consistency::removal_candidates`]: an active, unpinned session and
 //!    a later entry Daniel wrote with a removal cue, at most
 //!    [`consistency::MAX_REMOVAL_PAIRS`]) and deactivates each session a
@@ -33,9 +36,11 @@
 //! A scan deactivates sessions directly rather than proposing: an inactive
 //! session is hidden, not changed, and `session activate` reverses it.
 //! Pinned sessions (`keep_active`) are never deactivated by a scan.
-//! Each reapplied approval, covered-candidate close, opened proposal,
-//! deactivated session and failed batch is one audit line; a scan that
-//! changes nothing and fails nothing writes none.
+//! Each reapplied approval, closed retired-tag candidate, covered-candidate
+//! close, opened proposal, deactivated session and failed batch is one
+//! audit line; a scan that changes nothing and fails nothing writes none.
+//! When a later step fails after retired-tag closures are already on disk,
+//! the scan still writes one success line per closure, then its failure line.
 
 use super::RunLimits;
 use crate::app::Context;
@@ -48,7 +53,8 @@ use crate::output::{
 use clap::{Args, Subcommand};
 use scribe_core::activity::{self, ActiveRoute, SetActive};
 use scribe_core::{
-    Config, EntryFilter, Models, Redactor, SessionFilter, SessionId, Store, consistency,
+    AuditEvent, AuditStatus, Config, EntryFilter, Models, Redactor, SessionFilter, SessionId,
+    Store, consistency,
 };
 
 /// The command path in the audit log.
@@ -136,6 +142,19 @@ pub(in crate::commands) fn scan<M: Models>(
     let adapter = models(&config);
     let repaired = store.reapply_approved(now)?;
     let closed = store.close_retired_candidates(now)?;
+    // Armed until the success return. A later `?` drops this and audits the
+    // closures already on disk (the lock from the close is already released);
+    // the middleware then writes the scan's failure line. Success leaves the
+    // lines to the middleware, which records the command's real duration.
+    let mut persisted_closures = PersistedClosures {
+        store,
+        at: now,
+        ids: closed
+            .iter()
+            .map(|proposal| proposal.id.to_string())
+            .collect(),
+        armed: true,
+    };
     let entries = store.list_entries(&EntryFilter::default())?.listing.items;
     let proposals = store.proposals()?;
     let found = consistency::candidates(&entries, &proposals, now.date(), consistency::MAX_PAIRS);
@@ -245,7 +264,41 @@ pub(in crate::commands) fn scan<M: Models>(
             report.removal_pairs_left
         ));
     }
+    persisted_closures.armed = false;
     Ok(Output::Scan(Box::new(report)))
+}
+
+/// Closures already written when `scan` fails later. Drop writes one success
+/// line each, with `duration_ms` 0 because the command has not finished, and
+/// fails open (STD-02 R31). Disarm on the success path so those lines are
+/// not written twice.
+struct PersistedClosures<'a> {
+    store: &'a Store,
+    at: time::OffsetDateTime,
+    ids: Vec<String>,
+    armed: bool,
+}
+
+impl Drop for PersistedClosures<'_> {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        for id in &self.ids {
+            let event = AuditEvent {
+                at: self.at,
+                command: COMMAND.to_owned(),
+                status: AuditStatus::Success,
+                target: Some(id.clone()),
+                error_code: None,
+                author: None,
+                duration_ms: 0,
+            };
+            if let Err(err) = self.store.record_audit(&event) {
+                tracing::warn!(%err, target = %id, "cannot audit a closure already persisted");
+            }
+        }
+    }
 }
 
 /// What the scan's session steps share with the rest of the scan.

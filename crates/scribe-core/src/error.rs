@@ -171,6 +171,17 @@ pub enum Error {
         /// The owner-only mode to set: `700` for a directory, `600` for a file.
         fix: &'static str,
     },
+    /// Proposals were already persisted, then a later step failed. `closed`
+    /// names those proposals so the command can still audit them. The
+    /// message and [`Error::code`] are the later failure's (STD-02 R31).
+    #[error("{source}")]
+    AfterPersist {
+        /// Proposal ids already written.
+        closed: Vec<String>,
+        /// The step that failed afterwards.
+        #[source]
+        source: Box<Error>,
+    },
 }
 
 impl Error {
@@ -195,6 +206,7 @@ impl Error {
             Self::Symlink { .. } => "store_symlink",
             Self::ForeignOwner { .. } => "store_foreign_owner",
             Self::Permissions { .. } => "store_permissions",
+            Self::AfterPersist { source, .. } => source.code(),
         }
     }
 

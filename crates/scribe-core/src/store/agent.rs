@@ -17,8 +17,8 @@ pub(super) fn refusal(kind: WriteRefusal, message: impl Into<String>) -> Error {
     }
 }
 
-/// Refuse a reserved name on an agent-channel write: `daniel`, `scribe`
-/// and the routine names `consistency` and `session-pass` name Daniel's and
+/// Refuse a reserved name on an agent-channel write: `daniel`, `scribe`,
+/// `consistency`, `session-pass` and `tag-retired` name Daniel's and
 /// scribe's own channels, so a record
 /// written with one could be mistaken for theirs.
 ///

@@ -1053,3 +1053,107 @@ fn close_retired_candidates_respects_config_shipped_and_store_tags() {
     }
     assert!(store.close_retired_candidates(t1).unwrap().is_empty());
 }
+
+#[test]
+fn corrupt_or_unreadable_config_and_tags_close_no_candidate() {
+    use crate::Redactor;
+    use crate::control::{self, Switch};
+    use crate::entry::{Cite, Speaker};
+    use crate::proposal::{EntryCandidate, Proposal, ProposalKind, ProposalState};
+    use crate::record::{Author, Label, Project};
+    let t0 = time::macros::datetime!(2026-11-15 10:00 UTC);
+    let proposal = Proposal {
+        id: "p-1".parse().unwrap(),
+        kind: ProposalKind::Candidate,
+        older: "decisions-1".parse().unwrap(),
+        newer: None,
+        candidate: Some(EntryCandidate {
+            tag: "decisions".parse().unwrap(),
+            role: Speaker::User,
+            quote: String::from("I always want this kept."),
+            evidence: None,
+            cite: Cite {
+                session: "s-1".parse().unwrap(),
+                message: Some(String::from("m-1")),
+                at: t0,
+                prompt_sha256: "0".repeat(64),
+                line: 1,
+                cwd: String::from("/work"),
+            },
+            project: Project::sanitized("scribe"),
+            provider: Label::sanitized("claude-code", "claude-code"),
+            host: Label::sanitized("host", "host"),
+            admitted: None,
+        }),
+        reason: String::from("candidate"),
+        quotes: Vec::new(),
+        state: ProposalState::Open,
+        opened_at: t0,
+        settled_at: None,
+        settled_by: None,
+        author: Author::session_pass(),
+        updated_by: None,
+        settled_author: None,
+        closed_reason: None,
+    };
+    let cases: &[(&str, &str, &str)] = &[
+        ("config.toml", "this is not toml\n", "config_invalid"),
+        ("tags.json", "{", "store_corrupt"),
+    ];
+    for (rel, text, code) in cases {
+        let dir = private_tempdir();
+        let store = Store::open(dir.path());
+        store
+            .update_control(|state| {
+                control::switch(state, &"s-1".parse().unwrap(), &Switch::On, t0)
+            })
+            .unwrap();
+        store
+            .write_proposals(std::slice::from_ref(&proposal))
+            .unwrap();
+        put(dir.path(), rel, text);
+        let err = store.close_retired_candidates(t0).unwrap_err();
+        assert_eq!(err.code(), *code, "{rel}: {err}");
+        assert_eq!(store.proposals().unwrap()[0].state, ProposalState::Open);
+        let record = crate::tests::session("s-1", t0);
+        let err = store
+            .open_pass_candidates(&record, &[], &Redactor::new([]))
+            .unwrap_err();
+        assert_eq!(err.code(), *code, "pass {rel}: {err}");
+        assert_eq!(store.proposals().unwrap()[0].state, ProposalState::Open);
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for rel in ["config.toml", "tags.json"] {
+            let dir = private_tempdir();
+            let store = Store::open(dir.path());
+            store
+                .update_control(|state| {
+                    control::switch(state, &"s-1".parse().unwrap(), &Switch::On, t0)
+                })
+                .unwrap();
+            store
+                .write_proposals(std::slice::from_ref(&proposal))
+                .unwrap();
+            let body = if rel == "config.toml" {
+                "[tags.preferences]\n"
+            } else {
+                "{\"format\":11,\"tags\":[]}\n"
+            };
+            put(dir.path(), rel, body);
+            let path = dir.path().join(rel);
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+            let scan_err = store.close_retired_candidates(t0).unwrap_err();
+            let record = crate::tests::session("s-1", t0);
+            let pass_err = store
+                .open_pass_candidates(&record, &[], &Redactor::new([]))
+                .unwrap_err();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+            assert_eq!(scan_err.code(), "io_error", "{rel}: {scan_err}");
+            assert_eq!(pass_err.code(), "io_error", "pass {rel}: {pass_err}");
+            assert_eq!(store.proposals().unwrap()[0].state, ProposalState::Open);
+        }
+    }
+}

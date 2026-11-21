@@ -114,6 +114,30 @@ fn bad_phrases_are_refused() {
 }
 
 #[test]
+fn shape_names_every_refused_character_and_punctuation_separates_words() {
+    for phrase in [
+        "stop. now",
+        "stop! now",
+        "stop? now",
+        "a\nb",
+        "a\rb",
+        "a\0b",
+    ] {
+        let err = trigger::check(phrase).unwrap_err();
+        let text = err.to_string();
+        assert!(matches!(err, TriggerError::Shape(_)), "{phrase:?}: {err:?}");
+        for needle in ["'.'", "'!'", "'?'", "line break", "NUL"] {
+            assert!(text.contains(needle), "{phrase:?}: {text}");
+        }
+    }
+    assert_eq!(find("always", "always_on").as_deref(), Some("always"));
+    assert_eq!(
+        find("from now on", "from now, on we go").as_deref(),
+        Some("from now, on")
+    );
+}
+
+#[test]
 fn the_first_trigger_in_list_order_fires_and_matched_is_capped() {
     let triggers = vec![String::from("never"), String::from("always")];
     assert_eq!(

@@ -1000,14 +1000,20 @@ impl Store {
                 } else {
                     Vec::new()
                 };
-                fsio::write_atomic(&path, &format::encode_session(&path, &record)?)?;
+                // Closures are already in proposals.json. A later failure
+                // carries their ids so the command can still audit them;
+                // the code and message stay the later failure's.
+                let carry = |err| after_persist(&closed, err);
+                let bytes = format::encode_session(&path, &record).map_err(&carry)?;
+                fsio::write_atomic(&path, &bytes).map_err(&carry)?;
                 // Only once the record holds them: the links are stored once.
                 if !pending.is_empty() {
                     self.change_control(|state| {
                         if let Some(control) = state.sessions.get_mut(session) {
                             control.pending_links.retain(|l| !pending.contains(l));
                         }
-                    })?;
+                    })
+                    .map_err(&carry)?;
                 }
                 (Some(record), closed)
             }
@@ -1015,7 +1021,8 @@ impl Store {
         };
         match kind {
             PassWrite::Settle(ran_final) => {
-                self.change_control(|state| control::settle(state, session, ran_final))?;
+                self.change_control(|state| control::settle(state, session, ran_final))
+                    .map_err(|err| after_persist(&closed_candidates, err))?;
             }
             PassWrite::CatalogFinal => {
                 // Settle and switch off together. Off does not record a time.
@@ -1027,7 +1034,8 @@ impl Store {
                         &control::Switch::Off,
                         time::OffsetDateTime::UNIX_EPOCH,
                     );
-                })?;
+                })
+                .map_err(|err| after_persist(&closed_candidates, err))?;
             }
             PassWrite::Checkpoint | PassWrite::CatalogLive => {}
         }
@@ -1315,6 +1323,19 @@ fn check_active_author(request: &SetActive) -> Result<()> {
         agent::check_agent_author(&by.name)?;
     }
     Ok(())
+}
+
+/// Attach `closed` proposal ids to `err` when a later step failed after
+/// those proposals were written. An empty list leaves `err` as it is.
+fn after_persist(closed: &[Proposal], err: Error) -> Error {
+    if closed.is_empty() {
+        err
+    } else {
+        Error::AfterPersist {
+            closed: closed.iter().map(|p| p.id.to_string()).collect(),
+            source: Box::new(err),
+        }
+    }
 }
 
 fn merge_links(links: &mut Vec<SessionLink>, more: &[SessionLink]) {

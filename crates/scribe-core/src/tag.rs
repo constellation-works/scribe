@@ -359,9 +359,18 @@ impl TagTable {
     /// `pref`; stale after 180 days).
     #[must_use]
     pub fn defaults() -> Self {
+        let tags = Self::shipped_preferences().into_iter().collect();
+        Self { tags }.with_shipped_actions()
+    }
+
+    /// The shipped `preferences` tag on its own: aliases `preference` and
+    /// `pref`, the shipped description, stale after 180 days. A partial
+    /// `[tags.preferences]` table inherits the fields it omits from this.
+    #[must_use]
+    pub fn shipped_preferences() -> Option<TagDef> {
         let name = |s: &str| TagName::try_from(s.to_owned());
-        let tags = (|| {
-            Ok::<_, crate::entry::EntryError>(vec![TagDef {
+        (|| {
+            Ok::<_, crate::entry::EntryError>(TagDef {
                 name: name("preferences")?,
                 aliases: vec![name("preference")?, name("pref")?],
                 description: Some(String::from("how Daniel likes things done")),
@@ -369,10 +378,9 @@ impl TagTable {
                 action: None,
                 require_evidence: false,
                 capture: CaptureRules::shipped("preferences"),
-            }])
+            })
         })()
-        .unwrap_or_default();
-        Self { tags }.with_shipped_actions()
+        .ok()
     }
 
     /// The shipped action tag named `name`, as scribe defines it.

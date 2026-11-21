@@ -2813,18 +2813,31 @@ not = "A choice about one page or task (it goes on its Orbit task or the feature
   nothing under the tag ([§11.4](#114-issues)).
 - `triggers`: phrases matched case-insensitively on word boundaries.
   Inside a phrase, `*` stands for zero to four words, and the match must
-  lie within one sentence (a sentence ends at `.`, `!`, `?` or a line
-  break). Matching is in `scribe-core` and does no I/O. An empty list
-  means the pass captures nothing under the tag.
+  lie within one sentence (a sentence ends at `.`, `!`, `?`, a line
+  break or a NUL). A phrase that contains one of those is refused
+  (`config_invalid`); the error names each of them. Other punctuation
+  (a comma, hyphen, underscore or parentheses) is a word separator in
+  both the phrase and the text, so `always` matches `always_on` and
+  `by default` matches `by-default`. An apostrophe between letters stays
+  inside the word (`here's`). Matching is in `scribe-core` and does no
+  I/O. An empty list means the pass captures nothing under the tag.
 - `criteria` and `not`: plain text, at most 300 characters each, given to
   the `session` model as the tag's definition.
 
 Each field overrides the shipped default for that field alone; `triggers`
-replaces the whole list. A tag with no capture rules, shipped or
-configured, is never captured by the pass, which is how `standard` stays
-on its own routes (§4.6). Capture rules apply only to the pass and the
-prompt hook; a `#scribe` line Daniel types is captured whatever its words.
-Store tags (`tags.json`) take no capture rules (not built until seen).
+replaces the whole list. A `[tags.preferences]` table that omits `aliases`,
+`description` or `stale_after_days` keeps the shipped values (aliases
+`preference` and `pref`, the shipped description, stale after 180 days),
+including when only `[tags.preferences.capture]` is set. An explicit
+`aliases = []` clears the aliases; an explicit `stale_after_days` replaces
+180. Omitting `stale_after_days` on any other tag still means the entry
+never goes stale. A `[tags]` table that does not mention `preferences`
+still drops that tag; the shipped action tags stay. A tag with no capture
+rules, shipped or configured, is never captured by the pass, which is how
+`standard` stays on its own routes (§4.6). Capture rules apply only to the
+pass and the prompt hook; a `#scribe` line Daniel types is captured
+whatever its words. Store tags (`tags.json`) take no capture rules (not
+built until seen).
 
 **Shipped defaults.**
 
@@ -2908,7 +2921,9 @@ automatically: its state becomes `rejected`, `settled_author` is
 `{kind: scribe, name: tag-retired}`, `settled_by` is `null`, and the new
 field `closed_reason` is `tag_retired`. This runs under the store lock in
 the candidate write path before the cap is counted, so every pass frees
-the slots, and in `consistency scan`; each close is one audit line. It
+the slots, and in `consistency scan`; each close is one audit line. If the
+command fails after those closures are already on disk, it still writes one
+success audit line per closed proposal, then its failure line. It
 needs no model and writes no entry. A closed candidate stays in the
 suppression set like any rejection, and `proposal list --state rejected`
 shows its reason. On 2026-11-21 it would close 16 of the 20 (7 `decisions`,

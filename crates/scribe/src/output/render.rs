@@ -947,7 +947,9 @@ pub(crate) fn pass(out: &mut dyn Write, sink: &Sink, report: &PassReport) -> io:
 }
 
 /// A consistency scan's report: a table or tab-separated lines, one per
-/// approval re-applied, proposal opened, session deactivated or deactivation
+/// approval re-applied, proposal opened, retired-tag candidate closed
+/// (`closed`, the proposal id, `closed_reason` or kind, older, newer),
+/// covered candidate, session deactivated or deactivation
 /// failed, or the JSON object. A scan that changed nothing prints nothing
 /// but the JSON object.
 pub(crate) fn scan(out: &mut dyn Write, sink: &Sink, report: &ScanReport) -> io::Result<()> {

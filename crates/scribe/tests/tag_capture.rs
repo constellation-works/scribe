@@ -116,6 +116,13 @@ fn overriding_one_field_changes_only_that_field_with_its_file_and_line() {
     assert_eq!(replaced["capture"]["triggers"], json!(["from now on"]));
     assert_eq!(replaced["capture"]["origin"]["triggers"]["line"], 2);
     assert_eq!(replaced["capture"]["origin"]["not"]["source"], "shipped");
+    assert_eq!(
+        replaced["aliases"],
+        json!(["preference", "pref"]),
+        "omitted aliases stay the shipped ones"
+    );
+    assert_eq!(replaced["description"], "how Daniel likes things done");
+    assert_eq!(replaced["stale_after_days"], 180);
 }
 
 #[test]
