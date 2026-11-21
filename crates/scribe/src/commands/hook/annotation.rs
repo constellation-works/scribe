@@ -22,7 +22,9 @@
 //! with no marker, or whose markers are all settled, reads only the
 //! transcript and `marks.json`: no lock, no write, no call.
 //!
-//! Codex does not catalog markers yet: its Stop reads its own transcripts.
+//! Under Codex the Stop reads Codex's own rollout (`scribe_core::codex`):
+//! its user messages are the host-attributed typed inputs, its cwd the
+//! session's, and a `$scribe` skill control is skipped as a `/scribe` one is.
 
 use super::payload::{self, StopPayload, Transcript};
 use super::project;
@@ -89,9 +91,6 @@ pub(super) fn run<M: Models>(
     models: impl FnOnce(&Config) -> M,
 ) -> Result<Cataloged, CliError> {
     let mut out = Cataloged::default();
-    if ctx.provider() == Provider::Codex {
-        return Ok(out);
-    }
     // Recovery checked the transcript first and reported a failure.
     if !matches!(
         payload::check(ctx, &payload.transcript_path, session),
@@ -104,7 +103,16 @@ pub(super) fn run<M: Models>(
             what: payload.transcript_path.display().to_string(),
             source,
         })?;
-    let messages = transcript::parse(&bytes);
+    // Codex: the rollout's verified typed inputs and assistant text, and
+    // the session's cwd; the dispatcher already checked its identity.
+    let (messages, codex_cwd) = if ctx.provider() == Provider::Codex {
+        match scribe_core::codex::parse(&bytes) {
+            Ok(rollout) if rollout.session == *session => (rollout.messages, Some(rollout.cwd)),
+            _ => return Ok(out),
+        }
+    } else {
+        (transcript::parse(&bytes), None)
+    };
     let marked: Vec<(usize, Vec<Mark>)> = messages
         .iter()
         .enumerate()
@@ -130,7 +138,11 @@ pub(super) fn run<M: Models>(
     if candidates.is_empty() {
         return Ok(out);
     }
-    let raw = recovery::raw_lines(&bytes, &candidates);
+    let raw = if codex_cwd.is_some() {
+        std::collections::BTreeMap::new()
+    } else {
+        recovery::raw_lines(&bytes, &candidates)
+    };
     let mut work = Vec::new();
     for (index, marks) in marked {
         let message = &messages[index];
@@ -138,26 +150,39 @@ pub(super) fn run<M: Models>(
             continue;
         }
         // Only a turn he plainly typed is his: not an agent or harness
-        // wrapper, not a session control.
-        let Some(prompt) = raw
-            .get(&message.uuid)
-            .and_then(|value| recovery::prompt_of(value, message, session, payload).ok())
-        else {
-            continue;
+        // wrapper, not a session control. Codex's rollout keeps only
+        // host-attributed typed inputs.
+        let cwd = match &codex_cwd {
+            Some(cwd) => {
+                if super::codex::is_control(&message.text()) {
+                    continue;
+                }
+                cwd.clone()
+            }
+            None => {
+                let Some(prompt) = raw
+                    .get(&message.uuid)
+                    .and_then(|value| recovery::prompt_of(value, message, session, payload).ok())
+                else {
+                    continue;
+                };
+                if payload::agent_originated(&prompt)
+                    || scribe_core::control::parse(&prompt.prompt).is_some()
+                {
+                    continue;
+                }
+                prompt.cwd
+            }
         };
-        if payload::agent_originated(&prompt)
-            || scribe_core::control::parse(&prompt.prompt).is_some()
-            || transcript::daniel_turn(message).is_none()
-            || prompt.cwd.is_empty()
-        {
+        if transcript::daniel_turn(message).is_none() || cwd.is_empty() {
             continue;
         }
         let turn = Turn {
             session: session.clone(),
             at: message.at,
-            prompt_sha256: capture::prompt_sha256(&prompt.prompt),
-            cwd: prompt.cwd.clone(),
-            project: project::of(std::path::Path::new(&prompt.cwd)),
+            prompt_sha256: capture::prompt_sha256(&message.text()),
+            project: project::of(std::path::Path::new(&cwd)),
+            cwd,
             provider: Label::sanitized(ctx.provider().as_str(), ctx.provider().as_str()),
             host: ctx.host(),
         };

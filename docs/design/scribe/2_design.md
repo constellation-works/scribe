@@ -5060,8 +5060,14 @@ differs from the text above:
   code; a refusal audits its code (`quote_not_verbatim`, `unknown_tag`,
   `annotation_out_of_bounds`, `covered`, `needs_redaction`,
   `model_failed`, or the two above); a pending retry audits nothing.
-- **Codex is not wired.** Its Stop reads its own transcripts, so neither
-  hook echoes or catalogs a marker under `--provider codex` yet.
+- **Codex** ([ORB-26535]). Under `--provider codex` the prompt hook
+  (`hook/codex.rs`) echoes a marker once the typed turn is verified in the
+  rollout (before that it says Stop will retry), and Stop catalogs it from
+  Codex's own rollout (`scribe_core::codex`): its host-attributed typed
+  inputs and assistant text make the window, its `session_meta` cwd the
+  cite's, and a `$scribe` skill control is skipped as `/scribe` is. The
+  bounds, `marks.json` outcomes, echoes and audit are the same. The Codex
+  model adapter's schema check now admits the answer's integer `marker`.
 
 ### 14.10 Limits and what is not built until seen
 
