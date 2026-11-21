@@ -181,6 +181,8 @@ pub struct Config {
     /// Path fragments per project slug, for transcript attribution. None
     /// by default (docs/design/scribe/2_design.md §5.8).
     pub projects: BTreeMap<Project, Vec<String>>,
+    /// `[memory]` (docs/design/scribe/2_design.md §13.3).
+    pub memory: crate::memory::MemoryConfig,
 }
 
 impl Default for Config {
@@ -196,6 +198,7 @@ impl Default for Config {
             sessions: SessionsConfig::default(),
             redact_env: Vec::new(),
             projects: BTreeMap::new(),
+            memory: crate::memory::MemoryConfig::default(),
         }
     }
 }
@@ -282,6 +285,7 @@ impl Config {
             },
             redact_env: raw.redact.env,
             projects: projects_from(text, raw.projects)?,
+            memory: raw.memory.resolve().map_err(unlocated)?,
         })
     }
 
@@ -336,6 +340,87 @@ struct RawConfig {
     redact: RawRedact,
     #[serde(default)]
     projects: BTreeMap<String, RawProject>,
+    #[serde(default)]
+    memory: RawMemory,
+}
+
+/// `[memory]`: every key optional, each overriding its default alone. The
+/// parked settings (`base`, `base_idle_minutes`, `[memory.sections]
+/// people`, `[memory.recurring]`) are not accepted.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawMemory {
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    personal: Option<bool>,
+    #[serde(default)]
+    decay_days: Option<NonZeroU32>,
+    #[serde(default)]
+    now_undated_days: Option<NonZeroU32>,
+    #[serde(default)]
+    now_after_days: Option<u32>,
+    #[serde(default)]
+    page_chars: Option<usize>,
+    #[serde(default)]
+    recent_sessions: Option<usize>,
+    #[serde(default)]
+    sections: RawMemorySections,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawMemorySections {
+    #[serde(default)]
+    profile: Option<bool>,
+    #[serde(default)]
+    projects: Option<bool>,
+    #[serde(default)]
+    working: Option<bool>,
+    #[serde(default)]
+    now: Option<bool>,
+    #[serde(default)]
+    milestones: Option<bool>,
+}
+
+impl RawMemory {
+    /// The configured values over the defaults. `page_chars` takes 600 to
+    /// 10,000 and `recent_sessions` at most 20.
+    fn resolve(self) -> Result<crate::memory::MemoryConfig, String> {
+        let base = crate::memory::MemoryConfig::default();
+        let page_chars = self.page_chars.unwrap_or(base.page_chars);
+        if !(600..=10_000).contains(&page_chars) {
+            return Err(format!(
+                "memory.page_chars = {page_chars} is out of range; give 600 to 10000"
+            ));
+        }
+        let recent_sessions = self.recent_sessions.unwrap_or(base.recent_sessions);
+        if recent_sessions > 20 {
+            return Err(format!(
+                "memory.recent_sessions = {recent_sessions} is out of range; give 0 to 20"
+            ));
+        }
+        let s = self.sections;
+        let d = base.sections;
+        Ok(crate::memory::MemoryConfig {
+            enabled: self.enabled.unwrap_or(base.enabled),
+            personal: self.personal.unwrap_or(base.personal),
+            decay_days: self.decay_days.map_or(base.decay_days, NonZeroU32::get),
+            now_undated_days: self
+                .now_undated_days
+                .map_or(base.now_undated_days, NonZeroU32::get),
+            now_after_days: self.now_after_days.unwrap_or(base.now_after_days),
+            page_chars,
+            recent_sessions,
+            sections: crate::memory::SectionSwitches {
+                profile: s.profile.unwrap_or(d.profile),
+                projects: s.projects.unwrap_or(d.projects),
+                working: s.working.unwrap_or(d.working),
+                now: s.now.unwrap_or(d.now),
+                milestones: s.milestones.unwrap_or(d.milestones),
+            },
+        })
+    }
 }
 
 #[derive(Deserialize)]

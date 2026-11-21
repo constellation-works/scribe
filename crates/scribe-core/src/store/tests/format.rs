@@ -1740,8 +1740,9 @@ fn an_older_entry_keeps_an_approval_instruction_and_moves_a_removal_one() {
             .unwrap();
     assert!(encoded.contains("\ninstruction: null\n"), "{encoded}");
     assert_eq!(entry(&encoded).unwrap(), decoded);
-    // The JSON route of older formats splits the same way.
-    let step = UPGRADES[UPGRADES.len() - 1];
+    // The JSON route of older formats splits the same way: the 17 -> 18
+    // step (`UPGRADES[n - 1]` upgrades format n).
+    let step = UPGRADES[17 - 1];
     let moved = step(
         crate::store::format::Document::Entry,
         serde_json::json!({"approved_by": null, "instruction": {"message": "m-9"}}),
@@ -1768,6 +1769,9 @@ fn an_older_entry_keeps_an_approval_instruction_and_moves_a_removal_one() {
             crate::store::format::encode_entry(Path::new(ENTRY), &approved).unwrap(),
         )
         .unwrap();
+        // Format 19 changed no entry: a format-18 entry has the current shape.
+        let v18 = text.replacen(&format!("format: {FORMAT}\n"), "format: 18\n", 1);
+        assert_eq!(entry(&v18).unwrap(), approved, "{role}");
         let v17 = text
             .replacen(&format!("format: {FORMAT}\n"), "format: 17\n", 1)
             .replacen("removal_instruction: null\n", "", 1);
@@ -2257,21 +2261,24 @@ fn a_format_fifteen_store_upgrades_with_a_null_outcome_only() {
 
 #[test]
 fn a_format_sixteen_proposals_document_reads_at_the_current_shape() {
-    // Formats 16 and 17 changed no proposal (16 changed only entries, 17 added
-    // a record kind), so a format-16 proposals.json has the current shape: the
-    // format-17 document with only its `format` lowered reads back equal, and
-    // a stray key is still refused.
+    // Formats 16 to 19 changed no proposal (16 and 18 changed only entries,
+    // 17 and 19 added record kinds), so a format-16 to format-18 proposals.json
+    // has the current shape: the current document with only its `format`
+    // lowered reads back equal, and a stray key is still refused.
     let path = Path::new("proposals.json");
     let old = br#"{"format":3,"proposals":[{"id":"p-1","kind":"stale","older":"preferences-1","newer":null,"reason":"review","quotes":[],"state":"open","opened_at":"2026-11-01T10:00:00Z","settled_at":null,"settled_by":null}]}"#;
     let proposals = decode_proposals(path, old).unwrap();
     let encoded = crate::store::format::encode_proposals(path, &proposals).unwrap();
     let mut value: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
     assert_eq!(value["format"], FORMAT);
-    value["format"] = serde_json::json!(FORMAT - 1);
-    assert_eq!(
-        decode_proposals(path, &serde_json::to_vec(&value).unwrap()).unwrap(),
-        proposals
-    );
+    for older in [16, 17, 18] {
+        value["format"] = serde_json::json!(older);
+        assert_eq!(
+            decode_proposals(path, &serde_json::to_vec(&value).unwrap()).unwrap(),
+            proposals,
+            "format {older}"
+        );
+    }
     value["stray"] = serde_json::json!(1);
     assert!(decode_proposals(path, &serde_json::to_vec(&value).unwrap()).is_err());
 }

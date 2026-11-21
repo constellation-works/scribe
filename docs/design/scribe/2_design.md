@@ -3649,9 +3649,12 @@ Not built until seen:
 
 ## 13. Memory: profile, projects, working, now and milestones (proposed)
 
-[ORB-26219], designed 2026-11-21 and **not built**. Nothing in this
-section is implemented until Daniel approves it and its implementation
-tasks land, in the order of [§13.10](#1310-order-and-sequencing), after
+[ORB-26219], designed 2026-11-21. Step (a) of
+[§13.10](#1310-order-and-sequencing) is built (ORB-26258, store format 19):
+the `memory` kind, pass extraction with its checks and sensitive gate,
+`scribe memory show|ack|retire|forget`, and the session-start page; the
+rest is **not built** until its implementation tasks land, in that order,
+after
 [§11.7](#117-order-and-sequencing) step (b). Where it changes a rule stated
 earlier (§5.3's "A pass writes no tag entries" and its bounds, §7's
 steps, the `SessionStart` hook of §1, which today tells only Daniel and
@@ -4091,7 +4094,7 @@ Profile: runs agents from a Mac and two Linux boxes [m-1]; …
 Project scribe (as of 2026-11-21): being widened to a whole memory [m-11]
 Working: files the design as a task before any build [m-6]; …
 Recent sessions: <id> "scribe memory design" (2026-11-21); <id> "…" (2026-11-20); … (5)
-More: scribe memory show · scribe session show <id> · scribe ask
+More: scribe memory show · scribe session show <id> · scribe question ask
 ```
 
 | Part | Budget | Selection |

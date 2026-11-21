@@ -34,6 +34,16 @@ const ENTRY_COLUMNS: [Column; 8] = [
     col("AGE", Align::Right, false),
 ];
 
+const MEMORY_COLUMNS: [Column; 7] = [
+    col("ID", Align::Left, false),
+    col("SECTION", Align::Left, false),
+    col("STATUS", Align::Left, false),
+    col("PAGE", Align::Left, false),
+    col("SEEN", Align::Right, false),
+    col("LATEST", Align::Left, false),
+    col("STATEMENT", Align::Left, true),
+];
+
 const SESSION_TREE_COLUMNS: [Column; 8] = [
     col("ID", Align::Left, false),
     col("PARENT", Align::Left, false),
@@ -176,6 +186,7 @@ pub(crate) fn list(
                 write_json(out, &envelope("transcripts", items, total, warnings))
             }
             Records::Issues(items) => write_json(out, &envelope("issues", items, total, warnings)),
+            Records::Memory(items) => write_json(out, &envelope("items", items, total, warnings)),
         };
     }
     // An empty list prints nothing, not a lone header (STD-01 R16).
@@ -225,6 +236,10 @@ pub(crate) fn list(
         Records::Issues(items) => (
             ISSUE_COLUMNS.to_vec(),
             items.iter().map(issue_row).collect(),
+        ),
+        Records::Memory(items) => (
+            MEMORY_COLUMNS.to_vec(),
+            items.iter().map(memory_row).collect(),
         ),
     };
     match sink.mode {
@@ -433,7 +448,97 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
         (OutputMode::Json, Record::Issue(issue)) => write_json(out, issue),
         (OutputMode::Plain, Record::Issue(issue)) => issue_plain(out, issue),
         (OutputMode::Table, Record::Issue(issue)) => issue_detail(out, issue),
+        (OutputMode::Json, Record::Memory(item)) => write_json(out, item),
+        (OutputMode::Plain, Record::Memory(item)) => {
+            writeln!(out, "{}", plain_line(&memory_row(item)))?;
+            for o in &item.occurrences {
+                writeln!(
+                    out,
+                    "occurrence\t{}\t{}\t{}\t{}\t{}",
+                    o.n,
+                    timestamp(o.date),
+                    o.session,
+                    o.message,
+                    one_line(&o.quote)
+                )?;
+            }
+            Ok(())
+        }
+        (OutputMode::Table, Record::Memory(item)) => memory_detail(out, item),
+        (OutputMode::Json, Record::MemoryPage(page)) => write_json(out, page),
+        (OutputMode::Plain | OutputMode::Table, Record::MemoryPage(page)) => match &page.page {
+            Some(text) => writeln!(out, "{text}"),
+            None => Ok(()),
+        },
     }
+}
+
+fn memory_row(m: &super::payload::MemoryPayload) -> Vec<Cell> {
+    vec![
+        Cell::plain(m.id.clone()),
+        Cell::plain(m.section.to_owned()),
+        Cell {
+            text: m.status.to_owned(),
+            role: color::role_for_status(m.status),
+        },
+        Cell::plain(m.off_page.unwrap_or("on").to_owned()),
+        Cell::plain(m.occurrence_count.to_string()),
+        Cell::plain(timestamp(m.latest)),
+        Cell::plain(one_line(&m.statement)),
+    ]
+}
+
+fn memory_detail(out: &mut dyn Write, m: &super::payload::MemoryPayload) -> io::Result<()> {
+    let or_dash = |v: Option<&str>| v.unwrap_or("-").to_owned();
+    field(out, "id", &m.id)?;
+    field(out, "section", m.section)?;
+    field(out, "status", m.status)?;
+    field(out, "statement", &m.statement)?;
+    field(out, "page", m.off_page.unwrap_or("on"))?;
+    field(out, "project", &or_dash(m.project.as_deref()))?;
+    field(out, "event_date", &or_dash(m.event_date.as_deref()))?;
+    field(
+        out,
+        "sensitive",
+        &m.sensitive_kind
+            .map_or_else(|| m.sensitive.to_string(), |k| format!("true ({k})")),
+    )?;
+    if m.section == "now" {
+        field(
+            out,
+            "acknowledged",
+            &m.acknowledged.as_ref().map_or_else(
+                || String::from("-"),
+                |a| format!("{} in {} by {}", timestamp(a.at), a.session, a.author),
+            ),
+        )?;
+        field(out, "not_yet_raised", &m.not_yet_raised.to_string())?;
+    }
+    if let Some(reason) = &m.retirement_reason {
+        field(out, "retirement_reason", reason)?;
+    }
+    field(out, "author", &m.author.to_string())?;
+    field(out, "updated_by", &m.updated_by.to_string())?;
+    field(out, "created", &timestamp(m.created))?;
+    field(out, "updated", &timestamp(m.updated))?;
+    for o in &m.occurrences {
+        field(
+            out,
+            &format!("occurrence {}", o.n),
+            &format!(
+                "{} {} {}\n{}",
+                timestamp(o.date),
+                o.session,
+                o.message,
+                if o.quote.is_empty() {
+                    "(forgotten)"
+                } else {
+                    &o.quote
+                }
+            ),
+        )?;
+    }
+    Ok(())
 }
 
 /// A hook's reply: one line of Claude Code hook JSON, or nothing when the

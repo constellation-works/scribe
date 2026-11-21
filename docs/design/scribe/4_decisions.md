@@ -2960,7 +2960,7 @@ Alternatives considered:
 
 ## scribe keeps a descriptive memory the pass writes without approval
 
-**Recorded:** 2026-11-21 · [ORB-26219] · **Overridable by Daniel** · proposed, not built
+**Recorded:** 2026-11-21 · [ORB-26219] · **Overridable by Daniel** · step (a) built (ORB-26258, store format 19); the rest not built
 **Reverses:** [3_vision.md §4](./3_vision.md#4-deliberately-out-of-scope)'s "no inference of preferences from behaviour", for descriptive memory only
 **Paths:** `crates/scribe-core/src/pass/` (the pass's model output), `crates/scribe-core/src/consistency.rs`, `crates/scribe/src/commands/hook/` (`session-start`) — design §13
 
@@ -3112,7 +3112,7 @@ since items are scribe-authored; personal life is kept only with
 
 - Every interactive session starts with about 600 tokens of memory the
   agent reads; Daniel sees what is kept with `scribe memory show`.
-- One store format step adds the `memory/` directory and kind; a
+- One store format step (19, `memory_items`) adds the `memory/` directory and kind; a
   `working` promotion opens a `preferences` candidate within the 20-open
   cap.
 - `ask` and the attribution check read the user's words only from

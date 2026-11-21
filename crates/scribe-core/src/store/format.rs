@@ -41,7 +41,7 @@ use time::OffsetDateTime;
 
 /// The newest store format: this build reads formats 1 to `FORMAT` of every
 /// document and would write `FORMAT`.
-pub(super) const FORMAT: u32 = 18;
+pub(super) const FORMAT: u32 = 19;
 
 /// Which document an upgrade step is applied to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,7 +86,24 @@ pub(super) const UPGRADES: &[Upgrade] = &[
     idea_outcome,
     issue_kind,
     removal_instruction,
+    memory_items,
 ];
+
+/// The first format a memory item exists at: `memory/<id>.md` has no older
+/// form.
+pub(super) const MEMORY_SINCE: u32 = 19;
+
+/// Format 18 -> 19 changes no stored value. It adds the `memory/`
+/// directory, one `memory/<id>.md` per memory item (2_design.md §13.2),
+/// which has no older form. A memory write also rewrites `control.json` at
+/// this format, so a format-18 build refuses a store that holds a memory
+/// item rather than reading the store without it.
+fn memory_items(
+    _document: Document,
+    value: serde_json::Value,
+) -> serde_json::Result<serde_json::Value> {
+    Ok(value)
+}
 
 /// Format 16 -> 17 changes no stored value. It adds a record kind: the
 /// `issues/` directory of `issue` records (2_design.md §11.4), which have
@@ -1437,6 +1454,7 @@ struct SwitchV1 {
 /// What the frontmatter's `kind` says a Markdown record is.
 const ENTRY_KIND: &str = "entry";
 const SESSION_KIND: &str = "session";
+const MEMORY_KIND: &str = "memory";
 
 /// A shape problem found after parsing: a missing delimiter, a section out
 /// of order, a record whose id does not match its file.
@@ -2132,10 +2150,10 @@ fn decode_json<T: DeserializeOwned>(path: &Path, bytes: &[u8], document: Documen
                 return Err(shape(path, "unknown variant `covered`"));
             }
         }
-        // Formats 16 to 18 changed no proposal (16 and 18 changed only
-        // entries, 17 added a record kind), so a format-15 to format-17
+        // Formats 16 to 19 changed no proposal (16 and 18 changed only
+        // entries, 17 and 19 added record kinds), so a format-15 to format-18
         // proposals.json has the current shape.
-        Document::Proposals if (15..=17).contains(&from) => {
+        Document::Proposals if (15..=18).contains(&from) => {
             serde_json::from_slice::<ProposalsDocument>(bytes)
                 .map_err(|e| Error::corrupt(path, e))?;
         }
@@ -2392,4 +2410,60 @@ pub(super) fn encode_pickups(path: &Path, pickups: &[crate::action::Pickup]) -> 
     .map_err(|e| Error::corrupt(path, e))?;
     bytes.push(b'\n');
     Ok(bytes)
+}
+
+/// Parse a memory item file (format [`MEMORY_SINCE`] and later): frontmatter
+/// only, every key required, and an id that matches the file's stem.
+pub(super) fn decode_memory(
+    path: &Path,
+    bytes: &[u8],
+    expected: &str,
+) -> Result<crate::memory::MemoryItem> {
+    let (front, body) = split_frontmatter(path, bytes)?;
+    let (from, value) = parse_frontmatter(path, front, MEMORY_KIND)?;
+    if from < MEMORY_SINCE {
+        return Err(shape(
+            path,
+            format!("a memory item has format {MEMORY_SINCE} or later, not {from}"),
+        ));
+    }
+    if !body.trim().is_empty() {
+        return Err(shape(path, "a memory item has no body"));
+    }
+    let item: crate::memory::MemoryItem =
+        yaml_serde::from_value(value).map_err(|e| Error::corrupt(path, e))?;
+    if item.id.as_str() != expected {
+        return Err(shape(
+            path,
+            format!("id {} does not match its file name {expected}", item.id),
+        ));
+    }
+    if item.statement.chars().count() > crate::memory::STATEMENT_CHARS
+        || (item.sensitive && !item.section.holds_sensitive())
+        || item.occurrences.is_empty()
+    {
+        return Err(shape(
+            path,
+            "a memory item needs an occurrence, a statement of at most 200 characters, and a sensitive event only in now or milestones",
+        ));
+    }
+    Ok(item)
+}
+
+/// A memory item's bytes at the current format.
+pub(super) fn encode_memory(path: &Path, item: &crate::memory::MemoryItem) -> Result<Vec<u8>> {
+    #[derive(Serialize)]
+    struct MemoryFile<'a> {
+        format: u32,
+        kind: &'static str,
+        #[serde(flatten)]
+        item: &'a crate::memory::MemoryItem,
+    }
+    let front = yaml_serde::to_string(&MemoryFile {
+        format: FORMAT,
+        kind: MEMORY_KIND,
+        item,
+    })
+    .map_err(|e| Error::corrupt(path, e))?;
+    Ok(format!("---\n{front}---\n").into_bytes())
 }

@@ -120,6 +120,7 @@ fn the_window_starts_after_scribed_through_and_keeps_the_oldest_first() {
 fn answer() -> SessionAnswer {
     SessionAnswer {
         candidates: Vec::new(),
+        memory: Vec::new(),
         title: String::from("Planning the orchestrator"),
         summary: String::from("Daniel planned the resident orchestrator."),
         goals: String::from("Define the orchestrator."),
@@ -433,6 +434,7 @@ fn segment_at(starts_at: &str, text: String) -> NewSegmentAnswer {
 fn overflow_answer(new: Vec<NewSegmentAnswer>) -> SessionAnswer {
     SessionAnswer {
         candidates: Vec::new(),
+        memory: Vec::new(),
         open: Some(SegmentAnswer {
             heading: String::from("part 1"),
             text: "o".repeat(800),

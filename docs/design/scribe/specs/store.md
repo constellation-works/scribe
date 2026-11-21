@@ -1,6 +1,6 @@
 ---
 type: design
-summary: "Spec: store — layout, record files with YAML frontmatter (format 18: entry removal_instruction apart from the approval instruction; format 17: issue records; format 16: entry outcome on a pass-written idea; format 15: instructed approval said and closed_reason covered; format 14: candidate statement and subject, entry stated_by; format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
+summary: "Spec: store — layout, record files with YAML frontmatter (format 19: memory items; format 18: entry removal_instruction apart from the approval instruction; format 17: issue records; format 16: entry outcome on a pass-written idea; format 15: instructed approval said and closed_reason covered; format 14: candidate statement and subject, entry stated_by; format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
 last_validated: 2026-11-21
 ---
 
@@ -10,7 +10,12 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-The code writes format 18 and reads formats 1–18. Format 18 adds
+The code writes format 19 and reads formats 1–19. Format 19 adds the
+`memory/` directory of memory items, the things the session pass notices
+about Daniel in switched-on sessions
+([2_design.md §13](../2_design.md#13-memory-profile-projects-working-now-and-milestones-proposed)); a memory write rewrites
+`control.json` at format 19, so an older build refuses the store instead of
+reading it without its memory. Format 18 adds
 `removal_instruction` to each entry: the checked instruction that retired or
 forgot it, kept apart from `instruction`, which is now only the instruction
 an agent approved the entry on
@@ -61,6 +66,7 @@ user's file could pass for one of Daniel's records.
 ├── proposals.json                       0600, optional
 ├── tags.json                            0600, optional (introduced at format 5, S12)
 ├── pickups.json                         0600, optional (introduced at format 8)
+├── memory/m-<n>.md                      0600, one file per memory item (introduced at format 19)
 ├── audit.jsonl                          0600, created by the first audited command
 └── .lock                                0600, created by the first writer, never deleted
 ```
@@ -262,6 +268,48 @@ title, signature, cause, fix and every occurrence (removing them into
 of a forgotten issue or occurrence remains in any store file; the audit
 lines never held any.
 
+## Memory items
+
+`memory/m-<n>.md` is frontmatter only, written by the session pass and
+changed by the agent's `scribe memory ack|retire|forget`
+([2_design.md §13.2](../2_design.md#132-the-item-and-its-occurrences)):
+
+```yaml
+---
+format: 19
+kind: memory
+id: m-1                     # matches the file stem; numbered past the highest
+section: now                # profile | projects | working | now | milestones
+status: active              # active | retired | forgotten
+statement: Said his sister's wedding is on 2026-12-12.   # '' once forgotten
+project: null               # the session's project, for a projects item
+event_date: 2026-12-12      # now and milestones only, or null
+sensitive: false            # forced by the sensitive word list
+sensitive_kind: null        # loss | health | relationship | family
+acknowledged: null          # now only: {at, session, author} of the agent's ack
+retirement_reason: null     # redacted; blanked when forgotten
+author: {kind: scribe, name: session-pass}
+updated_by: {kind: scribe, name: session-pass}
+created: 2026-11-21T18:00:00Z
+updated: 2026-11-21T18:00:00Z
+occurrences:                # newest first; one per turn that said it
+- {n: 1, date: …, session: …, message: …, host: …, project: …, quote: …, author: …}
+---
+```
+
+There is no `layer`, `person` or `recurs` field: those belong to the
+parked slices (§13.12–13.14). A memory file below format 19, or whose `id`
+is not its stem, is `store_corrupt` and skipped; above it, `store_too_new`.
+A pass writes memory under the same lock as its record, after its
+candidates and before the record: each draft is checked again under the
+lock (its quote a verbatim span of the user's own turn, its section on in
+the config on disk, its text unchanged by the redactor), then folded in —
+a repeat of an item (`same_as`, or a near-duplicate statement in the same
+section) becomes a new occurrence; a turn already on the item appends
+nothing, so a replayed window writes nothing. Forget blanks the statement,
+every quote and any reason and keeps the file, its id, section, dates and
+authors; `memory forget m-<n>#<k>` blanks one occurrence's quote.
+
 ## JSON documents
 
 - `control.json` (written at format 18; an older file upgrades on read): `{"sessions": {"<session-id>": {"on",
@@ -372,6 +420,22 @@ env = []                         # more variables whose values are masked
 
 [sessions]
 inactive_after_days = 120        # days since a session's last message
+
+[memory]                         # 2_design.md §13; the parked keys are refused
+enabled = true                   # false: the pass asks for no memory
+personal = true                  # false: personal and sensitive elements are refused
+decay_days = 90                  # projects and working leave the page after this
+now_undated_days = 7             # an undated now item leaves the page after this
+now_after_days = 14              # a dated now item leaves the page this long after its date
+page_chars = 2400                # the session-start page budget, 600-10000
+recent_sessions = 5              # sessions listed on the page, 0-20
+
+[memory.sections]                # each section on by default
+profile = true
+projects = true
+working = true
+now = true
+milestones = true
 
 # Accepted by the parser (S14). None by default.
 [projects.orbit]
@@ -519,7 +583,7 @@ exits 0.
   other refusal (a link, loose modes, a newer format, an I/O error) fails
   the whole command rather than skipping the file
   ([4_decisions.md](../4_decisions.md#one-malformed-record-makes-its-file-corrupt)).
-- **Format.** One `FORMAT` (13) covers every document. A shape change bumps
+- **Format.** One `FORMAT` (19) covers every document. A shape change bumps
   it and appends one step to `UPGRADES` in `store/format.rs`, which is
   given the document type it upgrades; shipped steps never change. Reads
   upgrade an older document in memory; a newer one is refused and left
@@ -665,6 +729,9 @@ exits 0.
   stray format-18 key is refused; formats 13 to 15 split the same way in
   `EntryV13` and `EntryV14`, and a format-16 or format-17 `proposals.json` has the
   current shape.
+- **Format 19** (memory, 2_design.md §13). Append-only step 18→19
+  (`memory_items`) changes no existing document; it admits `memory/`,
+  whose files carry their own `format` and are read only at 19 or later.
 - **Agent writes** (S12). Each write verb takes the lock, checks the
   author guards (a reserved `--author` name — `daniel`, `scribe`,
   `consistency`, `session-pass`, `tag-retired` — is refused `reserved_author`; a Daniel entry's content,

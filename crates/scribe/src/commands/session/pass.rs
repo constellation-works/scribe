@@ -52,7 +52,7 @@ use scribe_core::control::{self};
 use scribe_core::models::SessionRequest;
 use scribe_core::{
     Config, Label, Models, Project, Redactor, SessionControl, SessionFilter, SessionId,
-    SessionRecord, pass, transcript,
+    SessionRecord, memory, pass, transcript,
 };
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -166,6 +166,7 @@ pub(in crate::commands) fn run_with<M: Models>(
             catalog: false,
             switch_written: false,
             persisted_targets: Vec::new(),
+            memory_targets: Vec::new(),
         }));
     }
     let config = store.config()?;
@@ -197,6 +198,7 @@ pub(in crate::commands) fn run_with<M: Models>(
         .collect();
     let mut passes = Vec::new();
     let mut persisted_targets = Vec::new();
+    let mut memory_targets = Vec::new();
     let mut persisted = PersistedAudit::new(store, COMMAND, ctx.now());
     for (n, (id, switch)) in due.into_iter().enumerate() {
         if !limits.may_start(n) {
@@ -214,6 +216,7 @@ pub(in crate::commands) fn run_with<M: Models>(
             switch: &switch,
             candidate_slots: pass::MAX_CANDIDATES,
             write_slots: pass::MAX_IDEAS,
+            memory: MemoryTally::default(),
             windows: 0,
             segments_sealed: 0,
             segments: None,
@@ -233,6 +236,7 @@ pub(in crate::commands) fn run_with<M: Models>(
         // Record any persisted closures before `job.failed` can return `Err`
         // and bypass `Output::Pass`.
         persisted.extend(job.persisted_targets.iter().cloned());
+        persisted.extend(job.memory.targets.iter().cloned());
         let payload = match result {
             Ok(done) => {
                 if done.result != "waiting" {
@@ -244,6 +248,7 @@ pub(in crate::commands) fn run_with<M: Models>(
         };
         passes.push(payload);
         persisted_targets.extend(job.persisted_targets);
+        memory_targets.extend(job.memory.targets);
         if job.incomplete {
             remaining = remaining.saturating_add(1);
         }
@@ -256,6 +261,7 @@ pub(in crate::commands) fn run_with<M: Models>(
         catalog: false,
         switch_written: false,
         persisted_targets,
+        memory_targets,
     }))
 }
 
@@ -310,6 +316,7 @@ pub(in crate::commands) fn run_catalog<M: Models>(
         switch,
         candidate_slots: pass::MAX_CANDIDATES,
         write_slots: pass::MAX_IDEAS,
+        memory: MemoryTally::default(),
         windows: 0,
         segments_sealed: 0,
         segments: None,
@@ -329,6 +336,7 @@ pub(in crate::commands) fn run_catalog<M: Models>(
     // Record any persisted closures before `job.failed` can return `Err` and
     // bypass `Output::Pass`.
     persisted.extend(job.persisted_targets.iter().cloned());
+    persisted.extend(job.memory.targets.iter().cloned());
     let passes = vec![match result {
         Ok(done) => done,
         Err(failure) => job.failed(failure)?,
@@ -341,6 +349,7 @@ pub(in crate::commands) fn run_catalog<M: Models>(
         catalog: true,
         switch_written: false,
         persisted_targets: job.persisted_targets,
+        memory_targets: job.memory.targets,
     })
 }
 
@@ -363,6 +372,8 @@ struct Job<'a> {
     /// Ideas the pass may still write itself for this session in this
     /// invocation (`write` tags, 2_design.md §11.6).
     write_slots: usize,
+    /// Memory written and refused across this invocation's windows.
+    memory: MemoryTally,
     windows: usize,
     segments_sealed: usize,
     segments: Option<usize>,
@@ -376,6 +387,35 @@ struct Job<'a> {
     /// tag table, and entries the pass wrote itself under `write` tags, for
     /// audit logging.
     persisted_targets: Vec<String>,
+}
+
+/// One session's memory across its windows (2_design.md §13.3): the slots
+/// left (refused elements use theirs), what was written and refused, and
+/// the audit targets.
+struct MemoryTally {
+    slots: usize,
+    written: usize,
+    refused: std::collections::BTreeMap<&'static str, usize>,
+    targets: Vec<String>,
+}
+
+impl Default for MemoryTally {
+    fn default() -> Self {
+        Self {
+            slots: memory::MAX_PER_PASS,
+            written: 0,
+            refused: std::collections::BTreeMap::new(),
+            targets: Vec::new(),
+        }
+    }
+}
+
+impl MemoryTally {
+    fn refuse(&mut self, refusals: impl IntoIterator<Item = memory::Refusal>) {
+        for refusal in refusals {
+            *self.refused.entry(refusal.code()).or_default() += 1;
+        }
+    }
 }
 
 /// One cataloged session's extra facts. Absent for an ordinary pass.
@@ -592,7 +632,33 @@ impl Job<'_> {
                 pass::candidate_exclusions(&entries.listing.items, &proposals, &request);
             request.write_exclusions =
                 pass::write_exclusions(&entries.listing.items, &project, &request);
+            // Memory (2_design.md §13.3): only from a session switched on,
+            // as every pass's is, within the invocation's slots.
+            let memory_config = &self.config.memory;
+            let sections = memory_config.sections_on();
+            if !sections.is_empty() && self.memory.slots > 0 {
+                let (items, _) = self
+                    .ctx
+                    .store()
+                    .memory_items()
+                    .map_err(|err| PassError::new(err.code(), err.to_string()))?;
+                request.memory_limit = self.memory.slots;
+                request.memory_sections = sections.iter().map(|s| s.as_str()).collect();
+                request.memory_personal = memory_config.personal;
+                request.memory_items = memory::context(&items, &request.messages, memory_config);
+            }
+            let memory_limit = request.memory_limit;
             let distilled = distill(self.id, request, &conversation[..end], adapter)?;
+            let masks = |text: &str| self.redactor.mask(text) != text;
+            let checked = memory::check(
+                &distilled.memory,
+                &conversation[offset..end],
+                memory_limit,
+                memory_config,
+                &masks,
+            );
+            self.memory.slots = self.memory.slots.saturating_sub(checked.used);
+            let (memory_drafts, unverified) = memory::drafts(checked.checked, &messages);
             // Candidate slots are spent by what the model returned; write
             // slots only by what the store wrote, below, since a drafted idea
             // may still be dropped (a task outcome, a duplicate) and must not
@@ -670,11 +736,20 @@ impl Job<'_> {
             } else {
                 scribe_core::PassWrite::Settle(self.switch.final_pass)
             };
+            let pass_memory = scribe_core::PassMemory {
+                drafts: memory_drafts,
+                provenance: memory::Provenance {
+                    session: self.id.clone(),
+                    host: self.ctx.host(),
+                    project: record.project.clone(),
+                },
+            };
             let written = match self.ctx.store().write_pass_window(
                 record,
                 expected,
                 mode,
                 &candidates,
+                Some(&pass_memory),
                 self.redactor,
             ) {
                 Ok(written) => written,
@@ -691,6 +766,18 @@ impl Job<'_> {
                 .write_slots
                 .saturating_sub(written.written_entries.len());
             previous = written.record;
+            self.memory.refuse(checked.refused);
+            self.memory.refuse(unverified);
+            self.memory.refuse(written.memory.refused);
+            for applied in written.memory.applied {
+                match applied {
+                    memory::Applied::Created(id) | memory::Applied::Appended(id) => {
+                        self.memory.written += 1;
+                        self.memory.targets.push(format!("memory:{id}"));
+                    }
+                    memory::Applied::Replayed(_) => {}
+                }
+            }
             self.persisted_targets.extend(
                 written
                     .closed_candidates
@@ -833,6 +920,8 @@ impl Job<'_> {
             gave_up: false,
             error: Some(short_reason(self.redactor, &failure.message)),
             warnings: self.warnings.clone(),
+            memory_written: self.memory.written,
+            memory_refused: self.memory.refused.clone(),
         })
     }
 
@@ -850,6 +939,8 @@ impl Job<'_> {
             gave_up: false,
             error: None,
             warnings: self.warnings.clone(),
+            memory_written: self.memory.written,
+            memory_refused: self.memory.refused.clone(),
         }
     }
 }

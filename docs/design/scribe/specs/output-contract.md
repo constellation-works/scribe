@@ -50,6 +50,7 @@ is `-`, lists are comma-joined, and timestamps are RFC 3339.
 | `record search` (S11) | `cite kind score updated title snippet` (`score` to three decimals; the table cuts `title` to 40 characters and fits `snippet` to the width) |
 | `issue list`, `issue add\|occur\|update\|move` (format 17) | `id status occurrences projects hosts updated author title` (`author` is `agent:<name>`). `issue show` and every issue write print that row, then `signature\t<a \| b>`, `cause\t<cause>` and `fix\t<fix>`, and for each occurrence, newest first, `occurrence\t<n>\t<date>\t<host>\t<project>\t<session>\t<note>\t<summary>` (`note` is `recurred after fix`, `moved from issue-<n>#<m>`, both joined by `; `, or `-`), `daniel_asked\t<n>\t<request>`, one `agent_evidence\t<n>\t<error line>` per error line, `occurrence_cause\t<n>\t<cause>` and `occurrence_fix\t<n>\t<fix>`. The table detail prints the same as fields, the error lines under `agent_evidence` |
 | `issue search` (format 17) | as `record search`, every hit of kind `issue` |
+| `memory show` (format 19) | `id section status page seen latest statement` (`page` is `on` or why the item is off it: `retired`, `forgotten`, `section_off`, `decayed`, `past_window`; `seen` counts occurrences; `latest` is the newest occurrence's date; a forgotten statement is `-`). Sorted by section in page order (`now`, `milestones`, `profile`, `projects`, `working`), then id. `memory show <id>`, `ack`, `retire` and `forget` print the row, then one `occurrence\t<n>\t<date>\t<session>\t<message>\t<quote>` line each, newest first (`-` for a forgotten quote); the table prints the item's fields one per line |
 | `transcript list` *(S14)* | `session project daniel_turns bytes started ended first_prompt` |
 
 Search hits are best first; on a tie entries come before sessions, then
@@ -67,7 +68,7 @@ Every list is
 `{"<key>": [<record>, ...], "total": <integer>, "truncated": <boolean>,
 "warnings": [<warning>, ...]}`, with `<key>` `entries`, `sessions`,
 `proposals` or `tags`, (S11) `hits` for `record search` and (format 17)
-`issue search`, `issues` for `issue list`, and *(S14)*
+`issue search`, `issues` for `issue list`, (format 19) `items` for `memory show`, and *(S14)*
 `transcripts` for `transcript list`. `total` counts the records that matched the filters;
 `truncated` is true when `--limit` returned fewer. No matches is the same
 envelope with an empty array. A warning is `{"path", "code", "error"}` for a
@@ -371,7 +372,8 @@ the message lists up to ten candidates, sorted, and how many more), `daniel_only
 `--instruction`) `instruction_not_found`, `instruction_stale`,
 `instruction_mismatch` (including negation or exception markers in the instruction or answered reply), `not_interactive`, `already_covered`,
 `proposal_invalid`, `proposal_not_agent`,
-`session_cataloged`, `transcript_not_found`, for `tmux` `fzf_missing` and
+`session_cataloged`, `transcript_not_found`, (format 19) `memory_not_found`,
+`memory_not_active`, `memory_not_now`, for `tmux` `fzf_missing` and
 `tmux_failed` (exit 1; `tmux` renders no payload, its popup owns the
 terminal), for `session pass`
 `session_pass_failed` and `session_not_on`, and for `question
@@ -408,7 +410,12 @@ project was updated within the last day, it adds one more line of that
 `scribe: this may continue <id> (recorded) — type /scribe on --from <id> to keep recording`,
 naming the record updated most recently. No line when this session's
 switch is on or it already has a record, when no record in the project is
-that recent, or when the sessions cannot be read. It
+that recent, or when the sessions cannot be read. (Format 19) In an
+interactive session (`CLAUDE_CODE_ENTRYPOINT` is `cli`) with memory to
+show, `SessionStart` also gives the agent the memory page (as `memory show
+--page` prints it) as `hookSpecificOutput.additionalContext`
+(`hookEventName` `SessionStart`); a headless run (any other entrypoint, or
+none) gets no page. It
 exits 0 whenever the payload parsed, including when every line was refused
 or the store could not be used, so the prompt is never blocked; a payload
 that is not valid JSON, lacks a field or has an invalid `session_id` exits 1
@@ -518,7 +525,13 @@ with `session_pass_failed`, naming the failure and the rebuild command to
 resume; it does not change the control switch. `--confirm` missing refuses
 with `confirm_required`, naming the current segment and pass counts;
 `transcript_missing` and `session_busy` also refuse before model calls.
-One audit line names `session:<id>` for success or refusal. *(S14, built)*
+One audit line names `session:<id>` for success or refusal. (Format 19) A
+pass also carries `memory_written` (memory items created or given an
+occurrence across persisted windows) and `memory_refused` (`{"<code>":
+<count>}` of elements refused: `memory_invalid`, `memory_unverified`,
+`memory_section_off`, `memory_sensitive`, `memory_personal_off`,
+`memory_inferred`); a refusal is not a failure, and the pass's audit line
+names each `memory:<id>` it wrote in `targets`. *(S14, built)*
 `session catalog` prints the same report with its one session and
 `remaining: 0`. `author` stays `null` (the catalog flag is not a JSON
 field). A failure exits 1 with `session_pass_failed` and names
@@ -564,6 +577,46 @@ under `--json`). `--session <id>` naming a session that is not on exits 1
 with `session_not_on` before any pass. Each pass except a `waiting`
 one writes one audit line (`target` `session:<id>`, with its code only; the
 reason is never added to the audit line).
+
+## Memory
+
+(Format 19, [2_design.md §13](../2_design.md#13-memory-profile-projects-working-now-and-milestones-proposed).)
+`scribe memory show --json` prints the list envelope with key `items`; by
+default the items on the page, with `--include-off-page` every item, with
+`--section <s>` and `--project <p>` (a `projects` item's project) as filters.
+An item is `{"id", "section", "status", "statement", "project",
+"event_date", "sensitive", "sensitive_kind", "on_page", "off_page",
+"not_yet_raised", "acknowledged", "occurrence_count", "sessions", "latest",
+"retirement_reason", "author", "updated_by", "created", "updated",
+"occurrences"}`: `status` is `active`, `retired` or `forgotten`; `off_page`
+is `null` or the reason it is off the page (as the plain `page` column);
+`not_yet_raised` is true for a `now` item no agent acknowledged, or whose
+date passed since it was; `acknowledged` is `null` or `{"at", "session",
+"author"}`; `sessions` counts distinct sessions among the occurrences; an
+occurrence is `{"n", "date", "session", "message", "host", "project",
+"quote", "author"}`, newest first. A forgotten item's `statement`, quotes
+and `retirement_reason` are empty or `null`.
+
+`memory show <id>` (an id or a unique prefix) prints one item.
+`memory ack <id> --session <id> --author <name>` marks a `now` item raised
+in that session (`memory_not_now` for another section,
+`memory_not_active` for a retired or forgotten one); `memory retire <id>
+--author <name> --reason <text>` takes it off the page with its redacted
+reason; `memory forget <id>[#<n>] --author <name> --confirm` blanks its
+text for good, or one occurrence's quote (without `--confirm`,
+`confirm_required`). Each prints the item and writes one audit line naming
+`memory:<id>`; the same write again changes nothing and still prints it.
+
+`memory show --page [--project <p>]` prints the session-start page:
+plain and table the page text, JSON `{"page": <text or null>, "chars",
+"over_budget"}`. The page is the header line, then `Now:` (at most 8
+lines, by date), `Milestones:` (never cut), `Profile:`, `Project <p> (as
+of <date>):` (the current project's items only), `Working:`, and `Recent
+sessions:` (the last `[memory] recent_sessions` active records other than
+this session), then the footer line. A part over its budget drops whole
+items from its end and says `(+<k> more)`; within `[memory] page_chars`
+(2400) apart from milestones; `over_budget` is true when milestones pass
+600 characters, and the hook logs `memory_page_over_budget`.
 
 ## Consistency scan report
 

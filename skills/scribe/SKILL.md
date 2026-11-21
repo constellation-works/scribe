@@ -78,6 +78,29 @@ item may be done since. Say so, and check an item's current state (its
 task, PR or file) before acting on it or calling it open. Don't act on an
 item unless the human asks.
 
+## Memory: what scribe has noticed about the human
+
+In an interactive Claude Code session the `SessionStart` hook gives you a
+memory page: `Now`, `Milestones`, `Profile`, the current project,
+`Working`, and the recent sessions, each line one item and its id
+(`[m-<n>]`). In Codex, or when the page is missing, read it with
+`scribe memory show --page --json`. The items are scribe's statements of
+what the human said in switched-on sessions, not rules: rules are their
+preferences. Their exact words are on each item's occurrences
+(`scribe memory show <m-id> --json`); quote only those as theirs.
+
+- **Now.** Raise a `now` item marked "not yet raised" once, when the
+  conversation goes near it, then mark it raised for this session:
+  `scribe memory ack <m-id> --session <this session id> --author <name>`.
+- **Milestones.** Raise one only when the conversation goes there.
+- **Wrong or outdated.** When the human says an item is wrong or no longer
+  true, run `scribe memory retire <m-id> --author <name> --reason "<their
+  words>"`. When they ask scribe to forget it, run `scribe memory forget
+  <m-id> --author <name> --confirm` (`<m-id>#<n>` forgets one occurrence's
+  quote); it cannot be undone.
+- Never write a memory item yourself: only the session pass writes them,
+  and only from sessions switched on with `/scribe on`.
+
 ## Keep the store useful: suggest, the human decides
 
 Suggest at natural pauses (the brief, the end of a task), a few at a time

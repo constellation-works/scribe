@@ -333,6 +333,13 @@ pub enum WriteRefusal {
     /// `issue_forgotten`: the issue was forgotten, so nothing is written to
     /// it.
     IssueForgotten,
+    /// `memory_not_found`: no memory item has this id, or no occurrence
+    /// this number.
+    MemoryNotFound,
+    /// `memory_not_active`: the item is retired or forgotten.
+    MemoryNotActive,
+    /// `memory_not_now`: `memory ack` of an item outside `now`.
+    MemoryNotNow,
 }
 impl WriteRefusal {
     /// Stable machine-readable code.
@@ -369,6 +376,9 @@ impl WriteRefusal {
             Self::IssueNotFound => "issue_not_found",
             Self::OccurrenceNotFound => "occurrence_not_found",
             Self::IssueForgotten => "issue_forgotten",
+            Self::MemoryNotFound => "memory_not_found",
+            Self::MemoryNotActive => "memory_not_active",
+            Self::MemoryNotNow => "memory_not_now",
         }
     }
 }

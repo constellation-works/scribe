@@ -8,6 +8,7 @@ Commands:
   session      List and show the records of sessions cataloged with /scribe on, and write them (pass, catalog)
   transcript   List uncataloged provider transcripts and show one, writing nothing
   proposal     Read, open, update and settle proposals
+  memory       Show what scribe has noticed about Daniel from switched-on sessions, and acknowledge, retire or forget an item
   record       Search every stored record for words, ranked as question ask ranks them, with no model call
   consistency  Propose superseding or retiring entries a later one replaced or that are due for review (scan)
   tag          List tags and manage agent-created store tags
