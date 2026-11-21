@@ -128,13 +128,8 @@ fn pass_candidate_waits_for_typed_approval_and_keeps_original_user_cite() {
     assert_eq!(shown["admitted"], Value::Null);
 }
 
-#[test]
-fn a_stored_assistant_finding_candidate_still_approves_into_one_agent_entry() {
-    // The pass no longer opens assistant-turn candidates (capture rules read
-    // Daniel's turns only), but one opened before, in a format-10 store,
-    // still settles: approval writes the agent's entry, never Daniel's.
+fn setup_stored_assistant_finding_candidate(quote: &str) -> Setup {
     let s = Setup::new();
-    let quote = "Measured: the reviewer mix alone predicts a 7-point first-pass gap.";
     s.write(
         ON,
         &[
@@ -164,6 +159,16 @@ fn a_stored_assistant_finding_candidate_still_approves_into_one_agent_entry() {
     )
     .unwrap();
     make_private(&path);
+    s
+}
+
+#[test]
+fn a_stored_assistant_finding_candidate_still_approves_into_one_agent_entry() {
+    // The pass no longer opens assistant-turn candidates (capture rules read
+    // Daniel's turns only), but one opened before, in a format-10 store,
+    // still settles: approval writes the agent's entry, never Daniel's.
+    let quote = "Measured: the reviewer mix alone predicts a 7-point first-pass gap.";
+    let s = setup_stored_assistant_finding_candidate(quote);
     let ps = proposals(&s);
     assert_eq!(ps["proposals"][0]["candidate"]["admitted"], Value::Null);
     assert_eq!(ps["proposals"][0]["closed_reason"], Value::Null);
@@ -189,6 +194,73 @@ fn a_stored_assistant_finding_candidate_still_approves_into_one_agent_entry() {
     assert_eq!(entry["content_from"]["role"], "assistant");
     assert_eq!(entry["evidence"], "exp-5342a4d6");
     assert_eq!(entry["as_of"], "2026-11-03");
+}
+
+#[test]
+fn forgetting_an_assistant_derived_entry_keeps_it_readable_with_blank_content() {
+    let quote = "Measured: the reviewer mix alone predicts a 7-point first-pass gap.";
+    let s = setup_stored_assistant_finding_candidate(quote);
+    let approved = type_settlement(&s, "#scribe approve p-1");
+    assert!(
+        text(&approved.stdout).contains("recorded finding-1 as the agent's entry"),
+        "{}",
+        text(&approved.stdout)
+    );
+
+    let forgot = type_settlement(&s, "#scribe forget finding-1");
+    assert!(
+        text(&forgot.stdout).contains("forgot finding-1"),
+        "{}",
+        text(&forgot.stdout)
+    );
+
+    let listed: Value = serde_json::from_slice(
+        &s.fx
+            .ok(&["entry", "list", "--tag", "finding", "--json"])
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(listed["warnings"], json!([]));
+    assert_eq!(listed["total"], 1);
+    let listed_entry = &listed["entries"][0];
+    assert_eq!(listed_entry["id"], "finding-1");
+    assert_eq!(listed_entry["status"], "forgotten");
+    assert_eq!(listed_entry["said"], "");
+    assert_eq!(listed_entry["content"], "");
+    assert_eq!(listed_entry["author"]["kind"], "agent");
+    assert_eq!(listed_entry["author"]["name"], "assistant");
+
+    let shown: Value =
+        serde_json::from_slice(&s.fx.ok(&["entry", "show", "finding-1", "--json"]).stdout).unwrap();
+    assert_eq!(shown["id"], "finding-1");
+    assert_eq!(shown["status"], "forgotten");
+    assert_eq!(shown["said"], "");
+    assert_eq!(shown["content"], "");
+    assert_eq!(shown["author"]["kind"], "agent");
+    assert_eq!(shown["author"]["name"], "assistant");
+    assert_eq!(shown["content_from"]["role"], "assistant");
+    assert_eq!(shown["cite"]["message"], "a-find");
+
+    let plain_list = text(&s.fx.ok(&["entry", "list", "--tag", "finding"]).stdout);
+    assert!(plain_list.contains("finding-1"), "{plain_list}");
+    assert!(plain_list.contains("forgotten"), "{plain_list}");
+    let plain_show = text(&s.fx.ok(&["entry", "show", "finding-1"]).stdout);
+    assert!(plain_show.contains("forgotten"), "{plain_show}");
+
+    let stored = std::fs::read_to_string(s.fx.root().join("proposals.json")).unwrap()
+        + &std::fs::read_to_string(s.fx.root().join("entries/finding/finding-1.md")).unwrap();
+    assert!(
+        !stored.contains(quote),
+        "forgotten words must leave the store"
+    );
+
+    let replay = type_settlement(&s, "#scribe forget finding-1");
+    assert!(
+        text(&replay.stdout).contains("already forgotten"),
+        "{}",
+        text(&replay.stdout)
+    );
+    s.run(&["consistency", "scan", "--json"], b"");
 }
 
 #[test]

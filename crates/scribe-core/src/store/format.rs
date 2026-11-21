@@ -911,13 +911,20 @@ pub(super) fn decode_entry(
         crate::AuthorKind::Agent => {
             // A direct CLI note, or (format 10) an assistant turn kept by
             // a typed candidate approval: the cite is that turn, `said`
-            // the approval command, and the words are the assistant's.
+            // the approval command (or blank, along with the body, once
+            // forgotten), and the words are the assistant's.
             let direct = entry.cite.is_none()
                 && entry.said.is_empty()
                 && entry.content_from == crate::ContentFrom::Agent
                 && entry.window.is_none();
+            let approved_said = match entry.status {
+                crate::EntryStatus::Forgotten => entry.said.is_empty() && body.is_empty(),
+                crate::EntryStatus::Active
+                | crate::EntryStatus::Superseded
+                | crate::EntryStatus::Retired => entry.said.starts_with("#scribe approve p-"),
+            };
             let approved_assistant = entry.cite.is_some()
-                && entry.said.starts_with("#scribe approve p-")
+                && approved_said
                 && matches!(
                     entry.content_from,
                     crate::ContentFrom::Message {
