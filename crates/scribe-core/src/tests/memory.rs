@@ -238,6 +238,8 @@ fn draft(statement: &str, message: &str, section: Section) -> Draft {
         event_date: None,
         turn: TURN.to_owned(),
         at: T0,
+        prompt_sha256: "a".repeat(64),
+        line: 1,
     }
 }
 
@@ -793,4 +795,60 @@ fn forget_reaches_the_items_holding_the_same_words() {
     consolidate::apply(&mut items, &judged.judgements, &Author::consistency(), T0);
     assert_eq!(memory::linked(&items, &"m-1".parse().unwrap()), vec![1]);
     assert!(memory::linked(&items, &"m-2".parse().unwrap()).is_empty());
+}
+
+#[test]
+fn a_working_item_in_three_sessions_proposes_one_preference_and_two_propose_none() {
+    let config = MemoryConfig::default();
+    let mut items = Vec::new();
+    let mut last = None;
+    for (n, session) in ["s-1", "s-2", "s-3"].into_iter().enumerate() {
+        let mut d = said(
+            "Wants pull requests opened against agent-main.",
+            "open the pull request against agent-main",
+            &format!("u-{n}"),
+            Section::Working,
+        );
+        if n > 0 {
+            d.checked.same_as = Some("m-1".parse().unwrap());
+        }
+        promote::write(&mut items, &d, &provenance(session), &config, T0).unwrap();
+        assert_eq!(
+            memory::proposes_preference(&items[0], &config),
+            n == 2,
+            "{} sessions",
+            n + 1
+        );
+        last = Some(d);
+    }
+    let draft = last.unwrap();
+    let record = super::session(
+        "0b8ef4a6-0c6a-4d77-9c41-6a4f7b2c1d10",
+        T0 - Duration::hours(1),
+    );
+    let tags = crate::TagTable::defaults();
+    let candidate = memory::preference_candidate(&items[0], &draft, &record, &tags).unwrap();
+    assert_eq!(candidate.tag.as_str(), "preferences");
+    assert_eq!(candidate.role, Speaker::User);
+    assert_eq!(
+        candidate.statement.as_deref(),
+        Some("Wants pull requests opened against agent-main.")
+    );
+    assert_eq!(candidate.quote, draft.checked.quote);
+    assert_eq!(candidate.cite.message.as_deref(), Some("u-2"));
+    assert!(candidate.has_valid_provenance());
+    let admitted = candidate.admitted.unwrap();
+    assert_eq!(admitted.trigger, memory::RECURS_TRIGGER);
+    assert_eq!(admitted.matched, "m-1");
+
+    // Once proposed, never again; 0 switches it off; other sections never.
+    let mut proposed = items[0].clone();
+    proposed.preference_proposal = Some("p-1".parse().unwrap());
+    assert!(!memory::proposes_preference(&proposed, &config));
+    let mut off = MemoryConfig::default();
+    off.promote_working_sessions.value = 0;
+    assert!(!memory::proposes_preference(&items[0], &off));
+    let mut now = items[0].clone();
+    now.section = Section::Now;
+    assert!(!memory::proposes_preference(&now, &config));
 }

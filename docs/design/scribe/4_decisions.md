@@ -2960,7 +2960,7 @@ Alternatives considered:
 
 ## scribe keeps a descriptive memory the pass writes without approval
 
-**Recorded:** 2026-11-21 · [ORB-26219] · **Overridable by Daniel** · steps (a) built (ORB-26258, store format 19) and (b) built (ORB-26259, store format 20); step (c) not built
+**Recorded:** 2026-11-21 · [ORB-26219] · **Overridable by Daniel** · steps (a) built (ORB-26258, store format 19), (b) built (ORB-26259, store format 20) and (c) built (ORB-26260, store format 21)
 **Reverses:** [3_vision.md §4](./3_vision.md#4-deliberately-out-of-scope)'s "no inference of preferences from behaviour", for descriptive memory only
 **Paths:** `crates/scribe-core/src/pass/` (the pass's model output), `crates/scribe-core/src/consistency.rs`, `crates/scribe/src/commands/hook/` (`session-start`) — design §13
 
@@ -3114,7 +3114,9 @@ since items are scribe-authored; personal life is kept only with
   agent reads; Daniel sees what is kept with `scribe memory show`.
 - Store format step 19 (`memory_items`) adds the `memory/` directory and
   kind; step 20 (`memory_consolidation`) adds the merge, supersede and
-  promotion keys and statuses, which a format-19 build refuses. A merge and
+  promotion keys and statuses, which a format-19 build refuses; step 21
+  (`memory_preference_proposal`) adds a `working` item's
+  `preference_proposal`, which a format-20 build refuses. A merge and
   a promotion move the occurrences rather than copy them, so the user's
   words are stored once and `forget` follows the link to every item that
   held them; a

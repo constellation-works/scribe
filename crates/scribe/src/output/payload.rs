@@ -1242,6 +1242,9 @@ pub(crate) struct MemoryPayload {
     pub(crate) merged_into: Option<String>,
     /// `superseded`: the item that replaced it; `null` otherwise.
     pub(crate) superseded_by: Option<String>,
+    /// `working`: the `preferences` candidate opened when it recurred
+    /// across sessions; `null` otherwise.
+    pub(crate) preference_proposal: Option<String>,
     /// scribe's session pass.
     pub(crate) author: scribe_core::Author,
     /// Who changed it last.
@@ -1290,6 +1293,7 @@ impl MemoryPayload {
             promotion: item.promotion.clone(),
             merged_into: item.merged_into.as_ref().map(ToString::to_string),
             superseded_by: item.superseded_by.as_ref().map(ToString::to_string),
+            preference_proposal: item.preference_proposal.as_ref().map(ToString::to_string),
             author: item.author.clone(),
             updated_by: item.updated_by.clone(),
             created: item.created,
@@ -1303,7 +1307,8 @@ impl MemoryPayload {
 /// with its origin (2_design.md §13.4). Field names are a contract.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct MemoryRulesPayload {
-    /// In a fixed order: the three promotion rules, then the windows.
+    /// In a fixed order: the three promotion rules, the `working` proposal
+    /// rule, then the windows.
     pub(crate) rules: Vec<MemoryRulePayload>,
 }
 
@@ -1311,7 +1316,8 @@ pub(crate) struct MemoryRulesPayload {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct MemoryRulePayload {
     /// Its config key under `[memory]`: `promote.profile_change`,
-    /// `promote.recurs_in_sessions`, `promote.user_says`, `decay_days`,
+    /// `promote.recurs_in_sessions`, `promote.user_says`,
+    /// `promote_working_sessions`, `decay_days`,
     /// `now_undated_days` or `now_after_days`.
     pub(crate) rule: &'static str,
     /// Its effective value: a boolean, a number of sessions or days, or the
@@ -1355,6 +1361,12 @@ impl MemoryRulesPayload {
                     serde_json::Value::from(p.user_says.value.clone()),
                     OriginPayload::of(Some(&p.user_says), file),
                     "one of these phrases in the user's turn makes the event a milestone",
+                ),
+                rule(
+                    "promote_working_sessions",
+                    serde_json::Value::from(config.promote_working_sessions.value),
+                    OriginPayload::of(Some(&config.promote_working_sessions), file),
+                    "a working item raised in this many distinct sessions is proposed once as a preferences candidate; 0 switches it off",
                 ),
                 rule(
                     "decay_days",
@@ -1513,6 +1525,9 @@ pub(crate) struct PassPayload {
     /// directly on rule (a) or (c), in persisted windows (2_design.md
     /// §13.4).
     pub(crate) memory_promoted: usize,
+    /// `preferences` candidates opened for `working` items that recur
+    /// across sessions, in persisted windows (2_design.md §13.7).
+    pub(crate) memory_proposed: usize,
     /// Memory elements refused, by code (`memory_sensitive`, ...).
     pub(crate) memory_refused: std::collections::BTreeMap<&'static str, usize>,
 }

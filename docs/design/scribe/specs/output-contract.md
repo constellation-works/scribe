@@ -530,12 +530,14 @@ One audit line names `session:<id>` for success or refusal. (Format 19) A
 pass also carries `memory_written` (memory items created or given an
 occurrence across persisted windows), (format 20) `memory_promoted` (`now`
 items promoted to `milestones` and milestones written directly on rule (a)
-or (c), including rule (b)'s recount) and `memory_refused` (`{"<code>":
+or (c), including rule (b)'s recount), (format 21) `memory_proposed`
+(`preferences` candidates opened for recurring `working` items,
+[2_design.md §13.7](../2_design.md#137-from-working-to-preferences)) and `memory_refused` (`{"<code>":
 <count>}` of elements refused: `memory_invalid`, `memory_unverified`,
 `memory_section_off`, `memory_sensitive`, `memory_personal_off`,
 `memory_inferred`); a refusal is not a failure, and the pass's audit line
 names each `memory:<id>` it wrote in `targets`, a promotion's milestone and
-profile items included. *(S14, built)*
+profile items included, and each `p-<n>` it opened for a `working` item. *(S14, built)*
 `session catalog` prints the same report with its one session and
 `remaining: 0`. `author` stays `null` (the catalog flag is not a JSON
 field). A failure exits 1 with `session_pass_failed` and names
@@ -592,15 +594,17 @@ An item is `{"id", "section", "status", "statement", "project",
 "event_date", "sensitive", "sensitive_kind", "on_page", "off_page",
 "not_yet_raised", "acknowledged", "occurrence_count", "sessions", "latest",
 "retirement_reason", "promoted_from", "promotion", "merged_into",
-"superseded_by", "author", "updated_by", "created", "updated",
-"occurrences"}`: `status` is `active`, `merged`, `superseded`, `promoted`,
+"superseded_by", "preference_proposal", "author", "updated_by", "created",
+"updated", "occurrences"}`: `status` is `active`, `merged`, `superseded`, `promoted`,
 `retired` or `forgotten`; `off_page` is `null` or the reason it is off the
 page (as the plain `page` column); (format 20) `promoted_from` is a
 milestone's `now` item, `promotion` `null` or `{"rule", "to",
 "profile_from", "profile_to"}` (`rule` `profile_change`,
 `recurs_in_sessions` or `user_says`) on a milestone and its promoted `now`
 item, `merged_into` and `superseded_by` the item a merged or superseded
-one went to, each `null` otherwise;
+one went to, each `null` otherwise; (format 21) `preference_proposal` is
+the `preferences` candidate (`p-<n>`) a `working` item opened when it
+recurred across sessions, else `null`;
 `not_yet_raised` is true for a `now` item no agent acknowledged, or whose
 date passed since it was; `acknowledged` is `null` or `{"at", "session",
 "author"}`; `sessions` counts distinct sessions among the occurrences; an
@@ -624,7 +628,8 @@ and still prints it.
 effect, read-only and unaudited. JSON is `{"rules": [{"rule", "value",
 "origin": {"source", "file", "line"}, "meaning"}]}` in a fixed order:
 `promote.profile_change` (a boolean), `promote.recurs_in_sessions` (a
-number; 0 is off), `promote.user_says` (a list of phrases), `decay_days`,
+number; 0 is off), `promote.user_says` (a list of phrases), (format 21)
+`promote_working_sessions` (a number of sessions; 0 is off), `decay_days`,
 `now_undated_days`, `now_after_days` (numbers of days). `origin` is as in
 `tag show`: `source` `shipped` (file and line `null`) or `config` with the
 config file and the key's 1-based line. Plain prints `<rule>\t<value>\t<origin>`

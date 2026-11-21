@@ -223,6 +223,122 @@ impl Store {
         Ok(ClaimsWritten { closed, written })
     }
 
+    /// Open the `preferences` candidates recurring `working` items earned
+    /// (2_design.md §13.7), under the lock the caller holds. Each is checked
+    /// as a pass candidate is: within the open-candidate cap (at the cap it
+    /// is not opened and is tried again at the item's next occurrence), its
+    /// quote unchanged by the redactor, and no prior candidate and no active
+    /// `preferences` entry already saying it (the shared duplicate check). A
+    /// prior candidate admitted for the same item (a crash after the
+    /// proposal and before the item) is linked, not opened again. Returns
+    /// `(proposal, item, opened)` per candidate linked or opened.
+    pub(super) fn open_memory_candidates(
+        &self,
+        candidates: &[(crate::memory::MemoryId, EntryCandidate)],
+        redactor: &Redactor,
+        now: time::OffsetDateTime,
+    ) -> Result<Vec<(ProposalId, crate::memory::MemoryId, bool)>> {
+        let (entries, skipped) = self.load_entries()?;
+        if !skipped.is_empty() {
+            // Without every entry, absence of an existing statement is unknown.
+            tracing::warn!(
+                skipped = skipped.len(),
+                "not proposing working items: some entries are unreadable"
+            );
+            return Ok(Vec::new());
+        }
+        let mut proposals = self.proposals()?;
+        let mut open = proposals
+            .iter()
+            .filter(|p| p.kind == ProposalKind::Candidate && p.state == ProposalState::Open)
+            .count();
+        let mut ids: Vec<_> = entries
+            .iter()
+            .map(|e| e.id.clone())
+            .chain(
+                proposals
+                    .iter()
+                    .filter(|p| p.kind == ProposalKind::Candidate)
+                    .map(|p| p.older.clone()),
+            )
+            .collect();
+        let mut next = proposals.iter().map(|p| p.id.number()).max().unwrap_or(0);
+        let mut out = Vec::new();
+        for (item, candidate) in candidates {
+            let earlier = proposals.iter().find(|p| {
+                p.candidate
+                    .as_ref()
+                    .and_then(|c| c.admitted.as_ref())
+                    .is_some_and(|a| {
+                        a.trigger == crate::memory::RECURS_TRIGGER && a.matched == item.as_str()
+                    })
+            });
+            if let Some(earlier) = earlier {
+                out.push((earlier.id.clone(), item.clone(), false));
+                continue;
+            }
+            let says = candidate_says(candidate);
+            if open >= MAX_OPEN_CANDIDATES
+                || !candidate.has_valid_provenance()
+                || candidate.quote != redactor.mask(&candidate.quote)
+                || proposals
+                    .iter()
+                    .filter_map(|p| p.candidate.as_ref())
+                    .any(|prior| claim_covers(&candidate_says(prior), &says))
+                || entries.iter().any(|entry| {
+                    entry.status == EntryStatus::Active
+                        && entry.tag == candidate.tag
+                        && claim_covers(&entry_says(entry), &says)
+                })
+            {
+                continue;
+            }
+            let Some(number) = next.checked_add(1) else {
+                break;
+            };
+            next = number;
+            let id: ProposalId = format!("p-{next}")
+                .parse()
+                .map_err(|e| Error::corrupt(self.root.join(super::PROPOSALS_FILE), e))?;
+            let older = EntryId::next_in(&candidate.tag, &ids);
+            ids.push(older.clone());
+            let mut draft = candidate.clone();
+            draft.statement = draft.statement.as_deref().map(|text| redactor.mask(text));
+            let mut proposal = Proposal {
+                id: id.clone(),
+                kind: ProposalKind::Candidate,
+                older,
+                newer: None,
+                reason: format!(
+                    "Recurring working item {item}: {}",
+                    draft.statement.as_deref().unwrap_or(&draft.quote)
+                )
+                .chars()
+                .take(300)
+                .collect(),
+                candidate: Some(draft),
+                quotes: Vec::new(),
+                state: ProposalState::Open,
+                opened_at: now,
+                settled_at: None,
+                settled_by: None,
+                author: Author::session_pass(),
+                updated_by: None,
+                settled_author: None,
+                closed_reason: None,
+                instruction: None,
+            };
+            redactor.proposal(&mut proposal);
+            proposals.push(proposal);
+            open += 1;
+            out.push((id, item.clone(), true));
+        }
+        if out.iter().any(|(_, _, opened)| *opened) {
+            self.write_proposals(&proposals)?;
+        }
+        Ok(out)
+    }
+
     /// Close every open candidate proposal whose tag is absent from the
     /// effective tag table (`config.toml`, shipped tags, and `tags.json`),
     /// under the store lock (2_design.md §11.3). Returns the closed proposals

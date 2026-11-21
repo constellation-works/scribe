@@ -97,6 +97,10 @@ preferences. Their exact words are on each item's occurrences
   in three sessions, or the human calls it a milestone or a big day; when
   they ask why, `scribe memory rules` prints the rules and where each came
   from.
+- **Working.** A `working` item raised in three sessions is offered to the
+  human once as a `preferences` candidate (the item's
+  `preference_proposal`); it becomes a preference only when they approve
+  it, like any candidate.
 - **Wrong or outdated.** When the human says an item is wrong or no longer
   true, run `scribe memory retire <m-id> --author <name> --reason "<their
   words>"`. When they ask scribe to forget it, run `scribe memory forget

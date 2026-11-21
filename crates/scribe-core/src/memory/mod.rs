@@ -14,8 +14,8 @@
 //! Items carry no `layer`, `person` or `recurs` field: only the parked
 //! parts of §13.12-13.14 read them. Slice (b) adds the routine's merges and
 //! supersedes ([`consolidate`]) and the promotion of `now` items to
-//! `milestones` ([`promote`]); the `working` to `preferences` proposal is
-//! slice (c).
+//! `milestones` ([`promote`]); slice (c) proposes a recurring `working`
+//! item as a `preferences` candidate ([`proposes_preference`], §13.7).
 //!
 //! No I/O (STD-02 R5): the store reads and writes the files, the CLI reads
 //! the transcript and the clock.
@@ -59,6 +59,15 @@ pub const PAGE_CHARS: usize = 2400;
 /// The characters of milestone lines past which the hook logs
 /// `memory_page_over_budget`.
 pub const MILESTONES_WARN_CHARS: usize = 600;
+
+/// The distinct sessions a `working` item's occurrences span before it is
+/// proposed as a `preferences` candidate, as shipped (§13.7).
+pub const PROMOTE_WORKING_SESSIONS: u32 = 3;
+/// The subject a recurring `working` item's candidate carries: what every
+/// `working` item is about (§13.1).
+pub const WORKING_SUBJECT: &str = "how he works with agents";
+/// The trigger a recurring `working` item's candidate is admitted by.
+pub const RECURS_TRIGGER: &str = "memory:recurs";
 
 /// The five sections, in page order (§13.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -373,6 +382,10 @@ pub struct MemoryItem {
     /// the pair is never offered again (format 20).
     #[serde(default)]
     pub unrelated_to: Vec<MemoryId>,
+    /// `working`: the `preferences` candidate opened for it when it
+    /// recurred (format 21, §13.7), so it opens once.
+    #[serde(default, deserialize_with = "nullable")]
+    pub preference_proposal: Option<crate::ProposalId>,
     /// Who wrote it: scribe's session pass.
     pub author: Author,
     /// Who changed it last.
@@ -450,6 +463,10 @@ pub struct MemoryConfig {
     /// Where `decay_days`, `now_undated_days` and `now_after_days` came
     /// from, for `memory rules`.
     pub windows: WindowOrigins,
+    /// How many distinct sessions a `working` item's occurrences span
+    /// before it is proposed as a `preferences` candidate (§13.7); 0
+    /// switches the proposal off.
+    pub promote_working_sessions: crate::tag::Rule<u32>,
 }
 
 /// Where each page window's value came from.
@@ -486,6 +503,10 @@ impl Default for MemoryConfig {
             sections: SectionSwitches::default(),
             promote: PromoteRules::default(),
             windows: WindowOrigins::default(),
+            promote_working_sessions: crate::tag::Rule {
+                value: PROMOTE_WORKING_SESSIONS,
+                origin: crate::tag::RuleOrigin::Shipped,
+            },
         }
     }
 }
@@ -872,6 +893,11 @@ pub struct Draft {
     pub turn: String,
     /// When the turn was sent.
     pub at: OffsetDateTime,
+    /// SHA-256 of the turn's original text: the cite of a `preferences`
+    /// candidate the item may open (§13.7).
+    pub prompt_sha256: String,
+    /// The quote's line within the turn's original text, from 1.
+    pub line: u32,
 }
 
 /// Tie each checked element to its turn in the original transcript, never
@@ -894,7 +920,11 @@ pub fn drafts(
                 crate::pass::own_span(&turn.own, &element.quote)
                     && m.text().contains(&element.quote)
             });
-        let Some((message, turn)) = found else {
+        let raw = found.as_ref().map(|(m, _)| m.text()).unwrap_or_default();
+        let line = raw
+            .find(&element.quote)
+            .and_then(|start| u32::try_from(raw[..start].matches('\n').count() + 1).ok());
+        let (Some((message, turn)), Some(line)) = (found, line) else {
             refused.push(Refusal::Unverified);
             continue;
         };
@@ -908,6 +938,8 @@ pub fn drafts(
             event_date,
             turn: turn.own,
             at: message.at,
+            prompt_sha256: crate::capture::prompt_sha256(&raw),
+            line,
         });
     }
     (out, refused)
@@ -1042,6 +1074,7 @@ pub fn apply(
         merged_into: None,
         superseded_by: None,
         unrelated_to: Vec::new(),
+        preference_proposal: None,
         author: author.clone(),
         updated_by: author,
         created: now,
@@ -1049,6 +1082,59 @@ pub fn apply(
         occurrences: vec![occurrence(1, draft, provenance)],
     });
     Applied::Created(id)
+}
+
+/// Whether `item` is due a `preferences` candidate (§13.7): an active
+/// `working` item with none opened yet, whose occurrences span at least
+/// `promote_working_sessions` distinct sessions (0 switches it off).
+#[must_use]
+pub fn proposes_preference(item: &MemoryItem, config: &MemoryConfig) -> bool {
+    let n = config.promote_working_sessions.value;
+    n > 0
+        && item.section == Section::Working
+        && item.status == MemoryStatus::Active
+        && item.preference_proposal.is_none()
+        && item.sessions() >= usize::try_from(n).unwrap_or(usize::MAX)
+}
+
+/// The `preferences` candidate a recurring `working` item opens (§13.7):
+/// the item's statement as the claim's statement, the turn of `draft` (the
+/// occurrence that crossed the count, or a later one) as its quote and
+/// cite, admitted by [`RECURS_TRIGGER`] with the item's id as the matched
+/// words and the tag's criteria. `None` when the tag is not in the table.
+#[must_use]
+pub fn preference_candidate(
+    item: &MemoryItem,
+    draft: &Draft,
+    record: &crate::SessionRecord,
+    tags: &crate::TagTable,
+) -> Option<crate::EntryCandidate> {
+    let tag: crate::TagName = "preferences".parse().ok()?;
+    let def = tags.get(&tag)?;
+    Some(crate::EntryCandidate {
+        tag,
+        role: Speaker::User,
+        quote: draft.checked.quote.clone(),
+        statement: Some(item.statement.clone()),
+        subject: Some(WORKING_SUBJECT.to_owned()),
+        evidence: None,
+        cite: crate::Cite {
+            session: record.id.clone(),
+            message: Some(draft.checked.message.clone()),
+            at: draft.at,
+            prompt_sha256: draft.prompt_sha256.clone(),
+            line: draft.line,
+            cwd: record.cwd.clone(),
+        },
+        project: record.project.clone(),
+        provider: record.provider.clone(),
+        host: record.host.clone(),
+        admitted: Some(crate::Admitted {
+            trigger: RECURS_TRIGGER.to_owned(),
+            matched: item.id.to_string(),
+            criteria: def.capture.criteria.as_ref().map(|c| c.value.clone()),
+        }),
+    })
 }
 
 /// Whether an element of `section` may join an item of `item`: its own

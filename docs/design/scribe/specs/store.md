@@ -1,6 +1,6 @@
 ---
 type: design
-summary: "Spec: store — layout, record files with YAML frontmatter (format 20: memory consolidation and promotion; format 19: memory items; format 18: entry removal_instruction apart from the approval instruction; format 17: issue records; format 16: entry outcome on a pass-written idea; format 15: instructed approval said and closed_reason covered; format 14: candidate statement and subject, entry stated_by; format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
+summary: "Spec: store — layout, record files with YAML frontmatter (format 21: a working item's preference_proposal; format 20: memory consolidation and promotion; format 19: memory items; format 18: entry removal_instruction apart from the approval instruction; format 17: issue records; format 16: entry outcome on a pass-written idea; format 15: instructed approval said and closed_reason covered; format 14: candidate statement and subject, entry stated_by; format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
 last_validated: 2026-11-21
 ---
 
@@ -10,7 +10,12 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-The code writes format 20 and reads formats 1–20. Format 20 adds to each
+The code writes format 21 and reads formats 1–21. Format 21 adds to each
+memory item `preference_proposal`: the `preferences` candidate a `working`
+item opened when it recurred across sessions
+([2_design.md §13.7](../2_design.md#137-from-working-to-preferences));
+a memory write rewrites `control.json` at format 21, so a format-20 build
+refuses the store. Format 20 adds to each
 memory item the consolidation and promotion keys (`promoted_from`,
 `promotion`, `merged_into`, `superseded_by`, `unrelated_to`) and the
 statuses `merged`, `superseded` and `promoted`
@@ -300,6 +305,7 @@ promotion: null             # {rule, to, profile_from, profile_to}: on the miles
 merged_into: null           # merged: the item holding its occurrences
 superseded_by: null         # superseded: the item that replaced it
 unrelated_to: []            # newer items the scan judged unrelated to this one
+preference_proposal: null   # working: the preferences candidate it opened (§13.7)
 author: {kind: scribe, name: session-pass}
 updated_by: {kind: scribe, name: session-pass}
 created: 2026-11-21T18:00:00Z
@@ -314,7 +320,9 @@ parked slices (§13.12–13.14). A memory file below format 19, or whose `id`
 is not its stem, is `store_corrupt` and skipped; above it, `store_too_new`.
 A format-19 file has none of the format-20 keys or statuses (one that
 does is `store_corrupt`) and reads with them empty; a format-20 file has
-every key. Only an item merged or promoted (`merged_into`, or a `now` item
+every format-20 key. A format-20 file has no `preference_proposal` (one
+that does is `store_corrupt`) and reads with it `null`; a format-21 file
+has it. Only an item merged or promoted (`merged_into`, or a `now` item
 with `promotion`) may have no occurrence, and a `merged`, `superseded` or
 `promoted` item names the item it went to.
 A pass writes memory under the same lock as its record, after its
@@ -344,6 +352,23 @@ promoted. A replayed turn promotes nothing. Changed files are written
 gainers first (a new item, a milestone with its journal, a merge's
 target), so a crash leaves words on both items rather than on neither.
 
+**From `working` to `preferences`** (§13.7, `Store::open_memory_candidates`)
+runs last, under the same lock. A `working` item that a draft created or
+added to, still active, with no `preference_proposal`, whose occurrences
+now come from `promote_working_sessions` distinct sessions (0 switches it
+off) opens one candidate proposal under `preferences`: role `user`, the
+item's statement as its statement, the draft's quote and cite (the turn
+that crossed the count) as the claim's, subject `how he works with
+agents`, and `admitted: {trigger: "memory:recurs", matched: "<m-id>",
+criteria}`. It is checked as a pass candidate is: within the 20-open cap
+(at the cap it is not opened, and is tried again at the item's next
+occurrence), its quote unchanged by the redactor, and no prior candidate
+and no active `preferences` entry already saying it. `proposals.json` is
+written first, then the item with `preference_proposal`; a candidate
+already admitted for the item (a crash between the two) is linked, not
+opened again. Approval or rejection is a candidate's (§5.3, §12): approval
+writes Daniel's entry with `stated_by`, and the item stays as it is.
+
 **Consolidation** (§13.5, `memory/consolidate.rs`,
 `Store::consolidate_memory`) runs in the consistency scan under the lock,
 as `{kind: scribe, name: consistency}`: every promotion a milestone
@@ -365,7 +390,7 @@ from). `memory forget m-<n>#<k>` blanks one occurrence's quote.
 
 ## JSON documents
 
-- `control.json` (written at format 20; an older file upgrades on read): `{"sessions": {"<session-id>": {"on",
+- `control.json` (written at format 21; an older file upgrades on read): `{"sessions": {"<session-id>": {"on",
   "since", "due", "final", "consecutive_failures", "retry_after",
   "pending_links", "cataloged_by"}}}`. `pending_links` holds `{type, session}` links
   Daniel asserted before the session had a record; the pass that writes
@@ -375,7 +400,7 @@ from). `memory forget m-<n>#<k>` blanks one occurrence's quote.
   automatic attempt waits 5, 10, 20, 40, then at most 60 minutes. Success
   or switching off resets both retry fields. Explicit `--session` bypasses
   the delay.
-- `proposals.json` (written at format 20; an older file upgrades on read): `{"proposals": [{"id": "p-<n>", "kind":
+- `proposals.json` (written at format 21; an older file upgrades on read): `{"proposals": [{"id": "p-<n>", "kind":
   "supersedes"|"stale", "older", "newer", "reason", "quotes": [{"entry",
   "text"}], "state": "open"|"approved"|"rejected", "opened_at",
   "settled_at", "settled_by"}]}`. `newer`, `settled_at` and `settled_by`
@@ -421,13 +446,13 @@ from). `memory forget m-<n>#<k>` blanks one occurrence's quote.
 - `cataloged_by` on a `control.json` switch is `null` or `{at, by}`;
   `/scribe on` keeps it. *(S14)* `session catalog` sets it and the pass
   copies it onto the record.
-- (S12) `tags.json` (written at format 20; introduced at format 5): `{"tags": [{"name",
+- (S12) `tags.json` (written at format 21; introduced at format 5): `{"tags": [{"name",
   "aliases", "description", "stale_after_days", "author", "updated_by", "created",
   "updated"}]}`, sorted by name; `name` and aliases as for config tags,
   `description` accepts 1–300 characters before redaction, `stale_after_days` a positive
   integer or `null`, `author` of kind `agent`; `updated_by` is the last updating agent or
   `null`. Absent is no store tags.
-- `pickups.json` (written at format 20; introduced at format 8, no older form): `{"pickups": [{"entry", "author",
+- `pickups.json` (written at format 21; introduced at format 8, no older form): `{"pickups": [{"entry", "author",
   "at", "result", "rejected"}]}`, oldest first: a consumer's note that it
   picked up the action entry `entry` (`author` of kind `agent`, `result` a
   reference or `null`), or with `rejected: true`, that the human rejected
@@ -482,6 +507,7 @@ now_undated_days = 7             # an undated now item leaves the page after thi
 now_after_days = 14              # a dated now item leaves the page this long after its date
 page_chars = 2400                # the session-start page budget, 600-10000
 recent_sessions = 5              # sessions listed on the page, 0-20
+promote_working_sessions = 3     # a working item in this many sessions is proposed as a preference, 0-100; 0 switches it off
 
 [memory.sections]                # each section on by default
 profile = true
@@ -798,6 +824,13 @@ exits 0.
   `superseded_by` and `unrelated_to` and the statuses `merged`,
   `superseded` and `promoted`; a format-19 item reads with them empty and
   is refused if it carries them.
+- **Format 21** (a recurring `working` item proposed as a preference,
+  2_design.md §13.7). Append-only step 20→21
+  (`memory_preference_proposal`) changes no entry, session,
+  `control.json` or `proposals.json`: a format-18 to -20 entry and a
+  format-15 to -20 `proposals.json` decode at the current shape. It adds
+  the memory item key `preference_proposal`; a format-20 item reads with
+  it `null` and is refused if it carries it.
 - **Agent writes** (S12). Each write verb takes the lock, checks the
   author guards (a reserved `--author` name — `daniel`, `scribe`,
   `consistency`, `session-pass`, `tag-retired` — is refused `reserved_author`; a Daniel entry's content,
