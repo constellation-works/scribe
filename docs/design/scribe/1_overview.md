@@ -5,7 +5,7 @@ last_updated: 2026-11-21
 last_validated: 2026-11-02
 status: Draft
 stage: building
-next: 2_design.md §14 annotations, step 2 (fold forms 1–3 into the marker, ORB-26530) then step 3 (the pass skips marked turns, ORB-26531); step 1 built (store format 22); S7 discussions unfiled
+next: 2_design.md §14 annotations built (steps 1–3, store format 22; Codex wired, ORB-26535); S7 discussions unfiled
 feature: scribe
 doc_role: overview
 type: design

@@ -1,11 +1,12 @@
-//! `scribe hook user-prompt-submit`: record each `#scribe` line of a typed
-//! prompt (docs/design/scribe/2_design.md §4.1–§4.4).
+//! `scribe hook user-prompt-submit`: echo the `#scribe` markers of a typed
+//! prompt and apply its settling commands (docs/design/scribe/2_design.md
+//! §4.4, §14).
 //!
 //! A turn that is not plainly typed by Daniel (an agent or harness wrapper
 //! such as `<agent-message>`, `<task-notification>`,
 //! `<side-sessions-event>` or a scheduled/loop wrapper, or a non-plain
 //! payload origin field; see `payload::agent_originated`) is skipped at
-//! once: it records nothing, settles nothing and does not run `/scribe`.
+//! once: it echoes nothing, settles nothing and does not run `/scribe`.
 //!
 //! Every such turn is also matched, without a model, against the `issue`
 //! tag's triggers (2_design.md §11.4, `scribe_core::issue_trigger::fire`),
@@ -18,67 +19,48 @@
 //! phrase and the prompt's sha256, never its words. A config that does not
 //! load gives no hint.
 //!
-//! A prompt with no `#scribe` line and no trigger fire returns at once:
-//! nothing is read, written, audited or printed. Otherwise the transcript provenance is checked, the
-//! config loaded, every line parsed, and the parsed ones recorded in one
-//! store call, which finds an entry already written for the same line instead
-//! of writing it again.
-//!
-//! A form-3 line (`#scribe add this to preferences`) is resolved first, outside
-//! the store lock (§4.3): unless this prompt already recorded it, the
-//! transcript's last 12 messages go to the referent model through the
-//! `Models` port, and its span is checked verbatim; on a timeout, a failed
-//! check or a model error the previous assistant message is recorded instead
-//! and the echo says it was guessed. A session with no earlier message has
-//! nothing to point at and the line is refused as `no_referent`.
-//!
-//! A line under an action tag (`#scribe standard: …`, `idea`
-//! or any tag config marks `action = true`) also stores a transcript
-//! window on its entry: the turns since the previous `#scribe` line of the
-//! session, then the prompt, capped and cut from the oldest turn
-//! (`capture::action_window`, §4.6). It reads the transcript once and calls
-//! no model; other tags keep no window.
+//! Every `#scribe` Daniel typed, inside a sentence or opening a line
+//! (`#scribe idea: …`, `#scribe add this to preferences`), is a marker
+//! (§14.6): this hook writes nothing and calls no model for it, it only
+//! echoes that the marker is noted; the Stop of this turn catalogs it
+//! (`annotation.rs`). Under Codex the adapter (`codex.rs`) echoes them
+//! instead, once it has verified the typed turn.
 //!
 //! A settling line (`#scribe approve|reject <p-id>`,
-//! `#scribe retire|forget <entry-id>`, form 4) goes to `proposal_command.rs`
-//! after the entries are recorded, and is echoed in its place.
+//! `#scribe retire|forget <entry-id>`, form 4) is a whole-line command, not
+//! a marker: after the transcript check it goes to `proposal_command.rs`
+//! (or `issue_command.rs` for an issue id) and is echoed in its place.
 //!
 //! A prompt whose first line is `/scribe on`, `/scribe off` or
 //! `/scribe status` is not a turn: `scribe_command.rs` switches the session
 //! and blocks it (§5.1), and its `#scribe` lines, if any, are not read.
 //!
-//! The reply tells Daniel (`systemMessage`) one echo per `#scribe` line.
-//! The main agent (`additionalContext`) gets the same echoes, each with a
-//! note for that line: recorded lines say no action is needed, refused or
-//! failed lines say they were not recorded and must be relayed to Daniel.
-//! The hook never blocks the prompt: a refusal or a store failure is a
-//! reply, not an error exit, so the rest of the prompt still reaches the
-//! agent.
+//! The reply tells Daniel (`systemMessage`) one echo per settling line and
+//! one for the markers. The main agent (`additionalContext`) gets the same
+//! echoes, each with a note: applied lines say no action is needed,
+//! refused or failed lines say they must be relayed to Daniel, and markers
+//! say scribe catalogs them after the reply. The hook never blocks the
+//! prompt: a refusal or a store failure is a reply, not an error exit, so
+//! the rest of the prompt still reaches the agent.
 
-use super::payload::{self, PromptPayload, Transcript};
+use super::payload::{self, PromptPayload};
 use super::project;
 use crate::app::Context;
 use crate::error::CliError;
 use crate::output::{HookOutcome, HookReply, Output};
-use scribe_core::capture::{self, ForgetIssue, Guess, Parsed, Refusal, Refused, Settling, Turn};
-use scribe_core::models::ModelError;
-use scribe_core::transcript::{self, Message};
+use scribe_core::capture::{self, Parsed, Turn};
 use scribe_core::trigger::Fired;
-use scribe_core::{
-    Captured, Config, ContentFrom, Entry, Label, Models, Provider, SessionId, annotation,
-};
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use scribe_core::{Label, Provider, SessionId, annotation};
 
 /// The hook event this replies to.
 const EVENT: &str = "UserPromptSubmit";
 /// The longest quote an echo shows, in characters; `entry show` has it all.
 const ECHO_CHARS: usize = 200;
-/// What the agent is told after a recorded echo, so it does not record it
+/// What the agent is told after an applied echo, so it does not act on it
 /// again.
 const AGENT_NOTE: &str = "(recorded by scribe; no action needed)";
 /// What the agent is told after a refused or failed echo: nothing was
-/// recorded, so the line must not be silently lost.
+/// applied, so the line must not be silently lost.
 const AGENT_RELAY_NOTE: &str = "(not recorded by scribe; relay this to Daniel)";
 /// What the agent is told after a marked echo: Stop catalogs the marker
 /// after the reply, so the agent must not record it as well.
@@ -87,14 +69,13 @@ const AGENT_MARKED_NOTE: &str =
 /// The code of a payload whose transcript failed the provenance check.
 const PROVENANCE_FAILED: &str = "provenance_failed";
 
-/// Run the hook on its stdin payload, resolving referents with the `claude`
-/// CLI.
+/// Run the hook on its stdin payload.
 pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
-    run_with(input, ctx, |config| ctx.models(config))
+    let payload: PromptPayload = payload::decode(input)?;
+    capture_prompt(&payload, ctx)
 }
 
-/// One echo line, and whether its line was recorded (or already applied),
-/// which decides the note the agent gets for it.
+/// One echo line and the note the agent gets for it.
 struct Echo {
     text: String,
     note: &'static str,
@@ -121,62 +102,19 @@ impl Echo {
             note: AGENT_MARKED_NOTE,
         }
     }
+
+    /// The echo of a settling command's reply: recorded unless its
+    /// outcome carries a code (a refusal or failure).
+    fn settled(echo: String, outcome: Option<&HookOutcome>) -> Self {
+        if outcome.is_some_and(|o| o.error_code.is_some()) {
+            Self::not_recorded(echo)
+        } else {
+            Self::recorded(echo)
+        }
+    }
 }
 
-/// What one `#scribe` line comes to before the store is called.
-enum Plan {
-    /// Refused while parsing or resolving.
-    Refused(Refused),
-    /// A draft goes to the store; `guess` says why a referent was guessed.
-    Draft {
-        line: u32,
-        said: String,
-        guess: Option<Guess>,
-    },
-    /// A referent line this prompt already recorded: echoed, the model not
-    /// asked again.
-    Recorded(Box<Entry>),
-    /// A settling line (form 4), applied after the entries are recorded.
-    Settle(Settling),
-    /// `#scribe forget <issue-id>[#<n>]`, applied with the settling lines.
-    ForgetIssue(ForgetIssue),
-}
-
-/// [`run`] with the `Models` adapter `models` builds for the config, so a
-/// test can answer referents with a fake.
-pub(super) fn run_with<M: Models>(
-    input: &[u8],
-    ctx: &Context,
-    models: impl FnOnce(&Config) -> M,
-) -> Result<Output, CliError> {
-    let payload: PromptPayload = payload::decode(input)?;
-    capture_prompt(&payload, ctx, models, None)
-}
-
-/// A transcript prompt's original position and already recorded lines.
-pub(super) struct Recovery<'a> {
-    pub(super) message: &'a Message,
-    pub(super) before: &'a [Message],
-    pub(super) recorded: BTreeSet<u32>,
-}
-
-/// Recover an entry-producing prompt without calling a model or replaying
-/// session controls or settling commands. Referents use the existing guessed
-/// fallback, with the same echo explaining why.
-pub(super) fn recover(
-    payload: &PromptPayload,
-    ctx: &Context,
-    recovery: Recovery<'_>,
-) -> Result<Output, CliError> {
-    capture_prompt(payload, ctx, |config| ctx.models(config), Some(recovery))
-}
-
-fn capture_prompt<M: Models>(
-    payload: &PromptPayload,
-    ctx: &Context,
-    models: impl FnOnce(&Config) -> M,
-    recovery: Option<Recovery<'_>>,
-) -> Result<Output, CliError> {
+fn capture_prompt(payload: &PromptPayload, ctx: &Context) -> Result<Output, CliError> {
     let session = payload::session(&payload.session_id)?;
     if ctx
         .store()
@@ -192,34 +130,22 @@ fn capture_prompt<M: Models>(
         return Ok(reply(Vec::new(), Vec::new()));
     }
     if let Some(switch) = scribe_core::control::parse(&payload.prompt) {
-        if recovery.is_some() {
-            return Ok(reply(Vec::new(), Vec::new()));
-        }
         return Ok(super::scribe_command::run(&switch, payload, &session, ctx));
     }
-    // Stop recovery replays a prompt already answered: no second hint.
-    let fired = if recovery.is_some() {
-        None
-    } else {
-        ctx.config().ok().and_then(|config| {
-            scribe_core::issue_trigger::fire(&config.tags.issue_capture(), &payload.prompt)
-        })
-    };
-    // Annotation markers inside his sentences (§14.1): echoed here, written
-    // nothing; the Stop of this turn catalogs them. Stop recovery replays
-    // no echo; under Codex the adapter echoes them once the typed turn is
-    // verified (`codex.rs`, [`mark_echoes`]), since its Stop replays turns
-    // through here.
-    let mark_echoes = if recovery.is_none() && ctx.provider() != Provider::Codex {
-        marked(&payload.prompt)
-    } else {
+    let fired = ctx.config().ok().and_then(|config| {
+        scribe_core::issue_trigger::fire(&config.tags.issue_capture(), &payload.prompt)
+    });
+    // Markers (§14.6): echoed here, written nothing; the Stop of this turn
+    // catalogs them. Under Codex the adapter echoes them once the typed
+    // turn is verified (`codex.rs`, [`mark_echoes`]), since its Stop replays
+    // turns through here.
+    let mark_echoes = if ctx.provider() == Provider::Codex {
         Vec::new()
+    } else {
+        marked(&payload.prompt)
     };
-    let lines: Vec<_> = capture::lines(&payload.prompt)
-        .into_iter()
-        .filter(|(line, _)| !recovery.as_ref().is_some_and(|r| r.recorded.contains(line)))
-        .collect();
-    if lines.is_empty() {
+    let parsed = capture::scan(&payload.prompt);
+    if parsed.is_empty() {
         let output = reply(mark_echoes, Vec::new());
         return Ok(match fired {
             Some(fired) if payload::check(ctx, &payload.transcript_path, &session).is_ok() => {
@@ -228,204 +154,40 @@ fn capture_prompt<M: Models>(
             _ => output,
         });
     }
-    let failed_all = |message: &str, code: &'static str| {
-        let echoes = lines
-            .iter()
-            .map(|(_, said)| {
-                Echo::not_recorded(format!(
-                    "scribe: could not record \"{}\" — {message}",
-                    quote(said)
-                ))
-            })
-            .collect();
-        let outcomes = lines.iter().map(|_| refusal(&session, code)).collect();
-        Ok(reply(echoes, outcomes))
-    };
 
     // A missing transcript passes: the first prompt of a session can
     // arrive before Claude Code has written the file.
-    let transcript = match payload::check(ctx, &payload.transcript_path, &session) {
-        Ok(found) => found,
-        Err(reason) => {
-            return failed_all(
-                &format!("the hook payload failed the transcript check: {reason}"),
-                PROVENANCE_FAILED,
-            );
-        }
-    };
-    let config = match ctx.config() {
-        Ok(config) => config,
-        Err(err) => return failed_all(&err.to_string(), err.code()),
-    };
-    // Fail closed before recording anything when a configured [redact] env
-    // name has no value here: the capture would store it unmasked.
-    let redactor = match ctx.redactor(&config) {
-        Ok(redactor) => redactor,
-        Err(err) => return failed_all(&err.to_string(), err.code()),
-    };
+    if let Err(reason) = payload::check(ctx, &payload.transcript_path, &session) {
+        let echoes = parsed
+            .iter()
+            .map(|item| {
+                Echo::not_recorded(format!(
+                    "scribe: could not record \"{}\" — the hook payload failed the transcript check: {reason}",
+                    quote(said_of(item))
+                ))
+            })
+            .collect();
+        let outcomes = parsed
+            .iter()
+            .map(|_| refusal(&session, PROVENANCE_FAILED))
+            .collect();
+        return Ok(reply(echoes, outcomes));
+    }
 
-    let at = recovery
-        .as_ref()
-        .map_or_else(|| ctx.now(), |r| r.message.at);
     let turn = Turn {
         session: session.clone(),
-        at,
+        at: ctx.now(),
         prompt_sha256: capture::prompt_sha256(&payload.prompt),
         cwd: payload.cwd.clone(),
-        // The cwd's project. A line that opens with `#scribe/global`
-        // overrides this when its draft is built.
         project: project::of(std::path::Path::new(&payload.cwd)),
         provider: Label::sanitized(ctx.provider().as_str(), ctx.provider().as_str()),
         host: ctx.host(),
     };
-    let parsed = capture::scan(&payload.prompt, &config.tags);
-    let mut referents = Referents::new(ctx, &turn, transcript, &payload.transcript_path);
-    if let Some(recovery) = &recovery {
-        referents.messages = Some(recovery.before.to_vec());
-    }
-    let mut models = Some(models);
-    let mut adapter: Option<M> = None;
-    let mut drafts = Vec::new();
-    let mut draft_lines = Vec::new();
-    let mut plans = Vec::new();
-    for item in parsed {
-        if recovery
-            .as_ref()
-            .is_some_and(|r| r.recorded.contains(&item.line()))
-        {
-            continue;
-        }
-        let plan = match item {
-            Parsed::Refused(refused) => Plan::Refused(refused),
-            Parsed::Settle(settling) => {
-                if recovery.is_some() {
-                    continue;
-                }
-                Plan::Settle(settling)
-            }
-            Parsed::ForgetIssue(forget) => {
-                if recovery.is_some() {
-                    continue;
-                }
-                Plan::ForgetIssue(forget)
-            }
-            Parsed::Instruction(instruction) => {
-                let mut draft = capture::draft(&instruction, &turn, &config.tags);
-                if config.tags.action(&draft.tag).is_some() {
-                    draft.window = Some(capture::action_window(
-                        referents.messages(),
-                        &turn.prompt_sha256,
-                        &payload.prompt,
-                        turn.at,
-                    ));
-                }
-                draft_lines.push(instruction.line);
-                drafts.push(draft);
-                Plan::Draft {
-                    line: instruction.line,
-                    said: instruction.said,
-                    guess: None,
-                }
-            }
-            Parsed::Referent(referent) => {
-                if let Some(entry) = referents.recorded(referent.line) {
-                    Plan::Recorded(Box::new(entry))
-                } else {
-                    let window = capture::window(referents.messages(), &turn.prompt_sha256);
-                    if window.is_empty() {
-                        let marked = referent.global;
-                        Plan::Refused(Refused {
-                            line: referent.line,
-                            said: referent.said,
-                            reason: Refusal::NoReferent,
-                            marked,
-                        })
-                    } else {
-                        if recovery.is_none() && adapter.is_none() {
-                            adapter = models.take().map(|build| build(&config));
-                        }
-                        let request =
-                            capture::referent_request(&referent, &window, &config.models.referent);
-                        let answer = match &adapter {
-                            Some(adapter) => adapter.referent(&request),
-                            None => Err(ModelError::Unavailable(String::from(
-                                "Stop recovery does not call models",
-                            ))),
-                        };
-                        match capture::resolve(&referent, &window, answer, &turn, &config.tags) {
-                            // Stop recovery skips a resolved referent that an
-                            // entry covered when it was typed, as it skips a
-                            // covered form-2 line before this runs: capture
-                            // consults only entries active now, so a later
-                            // retirement would otherwise write it. A read
-                            // failure leaves the decision to capture.
-                            Some((draft, _))
-                                if recovery.is_some()
-                                    && ctx
-                                        .store()
-                                        .covered_draft(&draft, turn.at, &redactor)
-                                        .unwrap_or(false) =>
-                            {
-                                continue;
-                            }
-                            Some((mut draft, guess)) => {
-                                if config.tags.action(&draft.tag).is_some() {
-                                    draft.window = Some(capture::action_window(
-                                        referents.messages(),
-                                        &turn.prompt_sha256,
-                                        &payload.prompt,
-                                        turn.at,
-                                    ));
-                                }
-                                draft_lines.push(referent.line);
-                                drafts.push(draft);
-                                Plan::Draft {
-                                    line: referent.line,
-                                    said: referent.said,
-                                    guess,
-                                }
-                            }
-                            None => {
-                                let marked = referent.global;
-                                Plan::Refused(Refused {
-                                    line: referent.line,
-                                    said: referent.said,
-                                    reason: Refusal::NoReferent,
-                                    marked,
-                                })
-                            }
-                        }
-                    }
-                }
-            }
-        };
-        plans.push(plan);
-    }
-    if let Some(recovery) = &recovery {
-        for draft in &mut drafts {
-            draft.cite.message = Some(recovery.message.uuid.clone());
-        }
-    }
-    let stored = ctx.store().capture(drafts, &redactor);
-
-    let mut captured: BTreeMap<u32, Captured> = BTreeMap::new();
-    let mut store_error: Option<scribe_core::Error> = None;
-    match stored {
-        Ok(results) => {
-            // Key by the draft's line. A covered statement's existing entry
-            // cites a different line, so the new line would otherwise miss.
-            for (line, result) in draft_lines.into_iter().zip(results) {
-                captured.insert(line, result);
-            }
-        }
-        Err(err) => store_error = Some(err),
-    }
-
     let mut echoes = Vec::new();
     let mut outcomes = Vec::new();
-    for plan in plans {
-        match plan {
-            Plan::Refused(refused) => {
+    for item in parsed {
+        match item {
+            Parsed::Refused(refused) => {
                 echoes.push(Echo::not_recorded(format!(
                     "scribe: refused \"{}\" — {}",
                     quote(&refused.said),
@@ -433,75 +195,16 @@ fn capture_prompt<M: Models>(
                 )));
                 outcomes.push(refusal(&session, refused.reason.code()));
             }
-            Plan::Recorded(entry) => echoes.push(Echo::recorded(already(&entry))),
-            Plan::Settle(settling) => {
+            Parsed::Settle(settling) => {
                 let reply = super::proposal_command::run(&settling, &turn, ctx);
-                // An outcome with a code is a refusal or failure; `None`
-                // (already applied) and a codeless outcome need no relay.
-                let recorded = match &reply.outcome {
-                    Some(outcome) => outcome.error_code.is_none(),
-                    None => true,
-                };
-                echoes.push(if recorded {
-                    Echo::recorded(reply.echo)
-                } else {
-                    Echo::not_recorded(reply.echo)
-                });
+                echoes.push(Echo::settled(reply.echo, reply.outcome.as_ref()));
                 outcomes.extend(reply.outcome);
             }
-            Plan::ForgetIssue(forget) => {
+            Parsed::ForgetIssue(forget) => {
                 let reply = super::issue_command::run(&forget, &turn, ctx);
-                let recorded = match &reply.outcome {
-                    Some(outcome) => outcome.error_code.is_none(),
-                    None => true,
-                };
-                echoes.push(if recorded {
-                    Echo::recorded(reply.echo)
-                } else {
-                    Echo::not_recorded(reply.echo)
-                });
+                echoes.push(Echo::settled(reply.echo, reply.outcome.as_ref()));
                 outcomes.extend(reply.outcome);
             }
-            Plan::Draft { line, said, guess } => match (captured.get(&line), &store_error) {
-                (Some(Captured::Added(entry)), _) => {
-                    let guessed = guess
-                        .map(|g| {
-                            format!(
-                                " (guessed: {g}; recorded the {} message before your prompt instead)",
-                                previous(entry)
-                            )
-                        })
-                        .unwrap_or_default();
-                    echoes.push(Echo::recorded(format!(
-                        "scribe: added {} to {}{guessed} — \"{}\"",
-                        entry.id,
-                        entry.tag,
-                        quote(&entry.content)
-                    )));
-                    outcomes.push(HookOutcome {
-                        target: Some(entry.id.to_string()),
-                        error_code: None,
-                        issue: None,
-                    });
-                }
-                (Some(Captured::Existing(entry)), _) => echoes.push(Echo::recorded(already(entry))),
-                (Some(Captured::Covered(entry)), _) => {
-                    // Stop recovery must not repeat a covered line on later
-                    // turns. The prompt hook (no recovery) echoes it once.
-                    if recovery.is_none() {
-                        echoes.push(Echo::recorded(covered(entry)));
-                    }
-                }
-                (None, Some(err)) => {
-                    echoes.push(Echo::not_recorded(format!(
-                        "scribe: could not record \"{}\" — {}",
-                        quote(&said),
-                        chain(err)
-                    )));
-                    outcomes.push(refusal(&session, err.code()));
-                }
-                (None, None) => {}
-            },
         }
     }
     echoes.extend(mark_echoes);
@@ -511,6 +214,15 @@ fn capture_prompt<M: Models>(
         Some(fired) => with_hint(output, &fired, &session, &payload.prompt),
         None => output,
     })
+}
+
+/// The line a parsed settling command came from, as typed.
+fn said_of(item: &Parsed) -> &str {
+    match item {
+        Parsed::Settle(settling) => &settling.said,
+        Parsed::ForgetIssue(forget) => &forget.said,
+        Parsed::Refused(refused) => &refused.said,
+    }
 }
 
 /// `output` with the issue trigger's hint for the agent after its echoes,
@@ -577,89 +289,6 @@ fn marked(prompt: &str) -> Vec<Echo> {
         }
     }
     echoes
-}
-
-/// Whose message a guessed entry recorded, for its echo.
-fn previous(entry: &Entry) -> &'static str {
-    match &entry.content_from {
-        ContentFrom::Message { role, .. } => role.as_str(),
-        ContentFrom::Instruction => "last",
-        ContentFrom::Agent => "agent",
-    }
-}
-
-fn already(entry: &Entry) -> String {
-    format!(
-        "scribe: already recorded {} in {} — \"{}\"",
-        entry.id,
-        entry.tag,
-        quote(&entry.content)
-    )
-}
-
-fn covered(entry: &Entry) -> String {
-    format!(
-        "scribe: already covered by {} in {} — \"{}\"",
-        entry.id,
-        entry.tag,
-        quote(&entry.content)
-    )
-}
-
-/// What form-3 lines need, read at most once per run and only when a
-/// referent line is present: the entries this prompt already recorded and
-/// the transcript's messages.
-struct Referents<'a> {
-    ctx: &'a Context,
-    turn: &'a Turn,
-    transcript: Transcript,
-    path: &'a Path,
-    recorded: Option<Vec<Entry>>,
-    messages: Option<Vec<Message>>,
-}
-
-impl<'a> Referents<'a> {
-    fn new(ctx: &'a Context, turn: &'a Turn, transcript: Transcript, path: &'a Path) -> Self {
-        Self {
-            ctx,
-            turn,
-            transcript,
-            path,
-            recorded: None,
-            messages: None,
-        }
-    }
-
-    /// The entry this prompt already recorded for `line`. A store that
-    /// cannot be read finds none; the capture that follows reports it.
-    fn recorded(&mut self, line: u32) -> Option<Entry> {
-        let (ctx, turn) = (self.ctx, self.turn);
-        self.recorded
-            .get_or_insert_with(|| {
-                ctx.store()
-                    .entries_from_prompt(&turn.session, &turn.prompt_sha256)
-                    .unwrap_or_default()
-            })
-            .iter()
-            .find(|e| e.cite.as_ref().is_some_and(|c| c.line == line))
-            .cloned()
-    }
-
-    /// The transcript's messages: none when it does not exist yet or
-    /// cannot be read.
-    fn messages(&mut self) -> &[Message] {
-        let (transcript, path) = (&self.transcript, self.path);
-        self.messages.get_or_insert_with(|| match transcript {
-            Transcript::Missing => Vec::new(),
-            Transcript::Present => match payload::read_for(self.ctx, path) {
-                Ok(bytes) => transcript::parse(&bytes),
-                Err(err) => {
-                    tracing::warn!(path = %path.display(), %err, "cannot read the transcript");
-                    Vec::new()
-                }
-            },
-        })
-    }
 }
 
 fn refusal(session: &SessionId, code: &'static str) -> HookOutcome {

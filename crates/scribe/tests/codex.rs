@@ -99,11 +99,9 @@ print(json.dumps({'type':'turn.completed','usage':{}}))
 fn verified_skill_opt_in_capture_luna_pass_citations_off_and_provider_isolation() {
     let f = Fixture::new();
     let mut c = Codex::new(&f);
-    c.typed(
-        "old",
-        "previous",
-        "#scribe preferences: historical input must not be replayed",
-    );
+    // A settling command typed before this turn is history: it is not
+    // replayed when scribe turns on.
+    c.typed("old", "previous", "#scribe reject p-9");
     let on = "[$scribe:scribe](/installed/skills/scribe/SKILL.md) on";
     c.typed("on", "current", on);
     c.typed("choice", "current", "We choose compact widgets.");
@@ -123,21 +121,63 @@ fn verified_skill_opt_in_capture_luna_pass_citations_off_and_provider_isolation(
         json!([{"provenance":{"type":"skills"}}]);
     c.rows.push(injected);
     c.write();
-    let reply = c.hook(&f, "Stop", "current", "");
-    assert!(text(&reply.stdout).contains("scribe: on"));
+    // The typed `#scribe preferences:` line folds into the annotation marker
+    // (2_design.md §14.6) and Codex's Stop catalogs it, with its tag as the
+    // hint; the quoted, fenced, pasted and injected ones are not markers, so
+    // the model sees one marker and only one mark is written.
+    let annotate = annotating_codex(
+        &f,
+        &json!([{"marker": 1, "kind": "entry", "tag": "preferences",
+                 "statement": "Daniel prefers compact widgets.", "subject": "widgets",
+                 "quote": "We prefer compact widgets.", "message": "capture", "reason": ""}]),
+    );
+    let reply = c.hook_with(&f, "Stop", "current", "", &annotate);
+    assert!(
+        text(&reply.stdout).contains("scribe: on"),
+        "{}",
+        text(&reply.stdout)
+    );
+    assert!(
+        text(&reply.stdout).contains("added preferences-1 to preferences"),
+        "{}",
+        text(&reply.stdout)
+    );
+    let call = std::fs::read_to_string(f.home().join("model-calls.jsonl")).unwrap();
+    assert_eq!(model_calls(&f), 1);
+    for excluded in [
+        "historical",
+        "quoted text",
+        "fenced text",
+        "pasted text",
+        "injected skill",
+    ] {
+        assert!(
+            !call.contains(excluded),
+            "{excluded} reached the model: {call}"
+        );
+    }
     let e = entries(&f);
     assert_eq!(e.len(), 1);
-    assert_eq!(e[0]["provider"], "codex");
+    assert_eq!(e[0]["quote"], "We prefer compact widgets.");
     assert_eq!(e[0]["cite"]["message"], "capture");
+    let marks = marks_json(&f);
+    assert_eq!(marks.len(), 1);
+    assert_eq!(marks[0]["outcome"], "entry");
+    // The luna pass below reads its own calls from a fresh log.
+    std::fs::remove_file(f.home().join("model-calls.jsonl")).unwrap();
     let control: Value =
         serde_json::from_slice(&std::fs::read(f.root().join("control.json")).unwrap()).unwrap();
     assert_eq!(control["sessions"][ID]["provider"], "codex");
     let before = support::snapshot(&f.root());
-    c.hook(&f, "Stop", "current", "");
+    c.hook_with(&f, "Stop", "current", "", &annotate);
     assert_eq!(
         support::snapshot(&f.root()),
         before,
         "duplicate delivery is a no-op"
+    );
+    assert!(
+        !f.home().join("model-calls.jsonl").exists(),
+        "no second annotation call"
     );
     let path = fake_model(&f);
     let out = f
@@ -479,15 +519,53 @@ fn unsupported_transcripts_return_nonblocking_refusal_for_ordinary_prompts() {
 #[test]
 fn whitespace_preserves_original_prompt_hash_lines_and_message_citation() {
     let f = Fixture::new();
+    f.seed();
+    let before = entries(&f);
     let mut c = Codex::new(&f);
-    let prompt = "\n#scribe preferences: Preserve my exact citation.\n";
-    c.typed("whitespace", "t", prompt);
+    // A line-start capture form folds into the annotation marker
+    // (2_design.md §14.6): Codex's Stop catalogs it like any marker, and the
+    // model may answer none.
+    let capture = "\n#scribe preferences: Preserve my exact citation.\n";
+    c.typed("capture", "t", capture);
     c.write();
-    c.hook(&f, "Stop", "t", "");
-    let all = entries(&f);
-    assert_eq!(all.len(), 1);
-    assert_eq!(all[0]["cite"]["message"], "whitespace");
-    assert_eq!(all[0]["cite"]["line"], 2);
+    let path = annotating_codex(&f, &none_for(1..=1));
+    let out = c.hook_with(&f, "Stop", "t", "", &path);
+    assert_eq!(model_calls(&f), 1, "{}", text(&out.stdout));
+    assert_eq!(entries(&f), before);
+    let marks = marks_json(&f);
+    assert_eq!(marks.len(), 1);
+    assert_eq!(marks[0]["outcome"], "none");
+    // A settling line keeps the citation: the hash of the prompt as typed,
+    // leading newline included, and the line's number within it.
+    let prompt = "\n#scribe reject p-1\n";
+    c.typed("whitespace", "t2", prompt);
+    c.write();
+    let out = c.hook(&f, "Stop", "t2", "");
+    assert!(
+        text(&out.stdout).contains("scribe: rejected p-1"),
+        "{}",
+        text(&out.stdout)
+    );
+    let listed: Value =
+        serde_json::from_slice(&f.ok(&["proposal", "list", "--json"]).stdout).unwrap();
+    let p1 = listed["proposals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == "p-1")
+        .unwrap();
+    assert_eq!(p1["state"], "rejected");
+    let cite = &p1["settled_by"];
+    assert_eq!(cite["session"], ID);
+    assert_eq!(
+        cite["prompt_sha256"],
+        scribe_core::capture::prompt_sha256(prompt)
+    );
+    assert_ne!(
+        cite["prompt_sha256"],
+        scribe_core::capture::prompt_sha256(prompt.trim())
+    );
+    assert_eq!(cite["line"], 2);
 }
 
 #[test]

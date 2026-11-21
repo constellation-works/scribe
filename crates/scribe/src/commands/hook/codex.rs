@@ -274,9 +274,12 @@ fn ingest(event: &'static str, input: &[u8], ctx: &Context) -> Result<Output, Cl
             });
         }
     }
+    // Stop's own echoes (the markers it cataloged) follow the replayed
+    // turns' replies, so a catch-up Stop still reports what it recorded.
     if event == "Stop"
         && let Output::Hook(reply) = stop::run(input, ctx)?
     {
+        replies.extend(reply.message);
         outcomes.extend(reply.outcomes);
     }
     let message = (!replies.is_empty()).then(|| replies.join("\n"));

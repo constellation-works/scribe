@@ -390,9 +390,10 @@ terminal), for `session pass`
 ask` the model codes `model_timeout`, `model_unavailable`, `model_failed`,
 `model_malformed`. A hook's refusals
 are not errors and appear only in its reply and audit lines:
-`unknown_tag`, `unparsed_instruction`, `unsupported_instruction`,
-`no_referent`, `provenance_failed`, `unknown_scribe_command`, and (format
-17) `reserved_tag` for a `#scribe issue:` line and `issue_not_found` or
+`unknown_tag`, `unparsed_instruction`, `too_many_marks`,
+`quote_not_verbatim`, `annotation_out_of_bounds`, `covered`,
+`needs_redaction`, `model_failed`, `provenance_failed`,
+`unknown_scribe_command`, and (format 17) `issue_not_found` or
 `occurrence_not_found` for a `#scribe forget` of an issue. A session
 pass's failures appear in its report and audit lines, and the run's
 `session_pass_failed` error names each with its code:
@@ -407,8 +408,8 @@ for and the `list` command that shows the existing ids.
 (`--json` and `--plain` change nothing): one compact line,
 `{"systemMessage": "...", "hookSpecificOutput": {"hookEventName":
 "UserPromptSubmit", "additionalContext": "..."}}`, or nothing at all when
-there is nothing to say (a prompt without `#scribe`, every `Stop` and
-`SessionEnd`, and a `SessionStart` with no open proposal, no stuck
+there is nothing to say (a prompt without `#scribe`, a `Stop` with
+nothing cataloged or refused, every `SessionEnd`, and a `SessionStart` with no open proposal, no stuck
 action entry and no continuation to suggest). `SessionStart` with open proposals prints
 `{"systemMessage": "scribe: <n> proposals to review — scribe proposal
 list"}` (`1 proposal`), and nothing for the agent. (Format 8) When active
@@ -432,17 +433,8 @@ exits 0 whenever the payload parsed, including when every line was refused
 or the store could not be used, so the prompt is never blocked; a payload
 that is not valid JSON, lacks a field or has an invalid `session_id` exits 1
 with `hook_payload_invalid`.
-The `UserPromptSubmit` reply has one echo line per `#scribe` line: `scribe:
-added <id> to <tag> — "<content>"`, `scribe: already recorded <id> in <tag>
-— "<content>"`, `scribe: already covered by <id> in <tag> — "<content>"`,
-`scribe: refused "<line>" — <reason>` or `scribe: could not
-record "<line>" — <error>`. A covered line writes no entry and no audit
-line. Stop recovery does not repeat that echo; a prompt the prompt hook
-missed stays quiet when every `#scribe` line is already covered, including
-a line whose covering entry was retired or superseded after the turn. A
-line typed after that retirement is still captured. A form-3 line whose referent the model did not
-resolve is still added, and its echo puts `(guessed: <why>; recorded the
-<role> message before your prompt instead)` after the tag. A settling line
+The `UserPromptSubmit` reply has one echo line per settling line (form 4,
+a whole line; 2_design.md §4.4), then the marker echoes below. A settling line
 echoes `scribe: approved p-<n> — <older> is superseded by <newer>; ask
 leaves it out of answers` (`<older> is retired` for a stale proposal),
 `scribe: approved p-<n> — already covered by <entry>; no new entry` when an
@@ -461,21 +453,23 @@ reasons are cleared; session records stay`, `scribe: <id> is already <state>
 `entry_not_active`) or `scribe: could not apply "<line>" — <error>`. A
 change writes one audit line whose `target` is the proposal or entry id; a
 refusal one line with `target` `session:<id>` and its code; a repeat or an
-already-covered capture none. A covered approval is a change: one audit
+already-covered approval none. A covered approval is a change: one audit
 line, target the proposal id, and no error code. Replaying it is a refusal.
 The text is for Daniel and the agent to read; the audit line, not the
 echo, is the record. Daniel's `systemMessage` carries the plain echoes;
 the agent's `additionalContext` carries each echo with a per-line note:
-` (recorded by scribe; no action needed)` after a recorded, already
-recorded, already covered or settled line, and ` (not recorded by scribe; relay this to
-Daniel)` after a refused line (`scribe: refused …`), a line that could
-not be recorded (`scribe: could not record …`) or a settling line that
-was refused or could not be applied. A refused or failed line therefore
-never says no action is needed, even beside a recorded line.
+` (recorded by scribe; no action needed)` after a settled line, and
+` (not recorded by scribe; relay this to Daniel)` after a refused line
+(`scribe: refused …`), a settling line whose transcript failed the
+provenance check (`scribe: could not record "<line>" — the hook payload
+failed the transcript check: <reason>`, code `provenance_failed`) or one
+that could not be applied. A refused or failed line therefore never says
+no action is needed, even beside a settled one.
 
-(Format 22, 2_design.md §14.) A `#scribe` marker inside a sentence (not at
-the start of a line, outside inline code, double quotes, fences,
-blockquotes, indented code and pasted content) writes nothing at submit.
+(Format 22, 2_design.md §14.) A `#scribe` marker, inside a sentence or
+opening a line that is not a settling command (§14.6; outside inline code,
+double quotes, fences, blockquotes, indented code and pasted content),
+writes nothing at submit and calls no model.
 The `UserPromptSubmit` reply echoes `scribe: marked — cataloged after the
 reply` (`marked <n> times` for several markers), with the agent note
 ` (scribe catalogs this #scribe marker after your reply; do not record it
@@ -483,7 +477,7 @@ yourself)`, and `scribe: refused #scribe in "<line>" — <reason>` with the
 relay note for a marker refused before any call (a settling verb after it
 or a `#scribe/<word>` other than `global`: `unparsed_instruction`; a fourth
 marker: `too_many_marks`). The same turn's `Stop` reply then prints, in
-its `systemMessage` after any recovery echo, one line per marker:
+its `systemMessage`, one line per marker:
 `scribe: added <id> to <tag> — "<statement>" · your words: "<quote>"`,
 `scribe: nothing recorded for #scribe in your message — <reason>` (the
 model found nothing, a check refused the answer, an active entry already
@@ -496,11 +490,15 @@ is not echoed again. Audit lines (`hook stop`): an entry's id as `target`;
 refusal code (`unparsed_instruction`, `too_many_marks`,
 `quote_not_verbatim`, `unknown_tag`, `annotation_out_of_bounds`,
 `covered`, `needs_redaction`, `model_failed`) for a refusal; none for a
-pending retry or a marker already settled. Under `--provider codex` the
-same echoes and audit lines hold: the prompt hook echoes a marker once the
-typed turn is in the rollout (before that it refuses with `provenance_failed`,
-`typed input not yet verified …; Stop will retry`), and Stop catalogs from
-the rollout.
+pending retry or a marker already settled. A marker on a line an older
+store recorded verbatim (an entry cites that prompt and line) is not
+cataloged again. When the transcript fails the provenance check, `Stop`
+echoes `scribe: could not check for #scribe markers — <reason>`, audits
+`provenance_failed` and does nothing else. Under `--provider codex` the
+same echoes and audit lines hold, line-start forms included: the prompt
+hook echoes a marker once the typed turn is in the rollout (before that it
+refuses with `provenance_failed`, `typed input not yet verified …; Stop will
+retry`), and Stop catalogs from the rollout.
 
 A prompt whose first line is `/scribe on`, `/scribe off`, `/scribe status`,
 `/scribe on --from <id> [--type <type>]`, `/scribe link <id> [--type

@@ -2,12 +2,15 @@
 
 A standalone Orbit plugin that keeps Daniel's explicitly marked preferences, catalogs the sessions he turns on, and answers agents' questions about him with verbatim citations. Design: [docs/design/scribe/1_overview.md](docs/design/scribe/1_overview.md).
 
-A `#scribe` line Daniel types in Claude Code or a supported Codex desktop user thread is recorded as an entry by the
-`UserPromptSubmit` hook (forms `#scribe <tag>: <content>` and `#scribe add
-<content> to <tag>`, and `#scribe add this to <tag>`, whose "this" a model
-resolves). The same line opening `#scribe/global` instead of `#scribe` stores
+A `#scribe` Daniel types in a Claude Code prompt, inside a sentence or
+opening a line (`#scribe idea: …`, `#scribe add this to preferences`), marks
+what it annotates: the `UserPromptSubmit` hook echoes it, and after the reply
+the `Stop` hook catalogs it with one bounded model call, as an entry whose
+content is scribe's statement and whose `quote` is his exact words. A tag
+named after the marker, or at the end of its line (`… to preferences`), is a
+hint the model must follow. `#scribe/global` instead of `#scribe` stores
 `project: global`, for every repository; without it the entry keeps the
-working directory's project. `/scribe on` in a session catalogs it: `scribe session pass`
+working directory's project. Codex desktop threads work the same way once the typed turn is verified. `/scribe on` in a session catalogs it: `scribe session pass`
 writes one record per session whose pass is due and proposes unmarked preferences
 from Daniel's own turns (up to three per session pass, twenty open
 candidates store-wide). `scribe proposal list --state open --json` shows their
@@ -206,7 +209,7 @@ provider = "codex"                 # or explicit "claude-code" transport
 ask = "gpt-6-luna"
 session = "gpt-6-luna"
 consistency = "gpt-6-luna"
-referent = "gpt-6-luna"
+annotation = "gpt-6-luna"
 credentials = ["OPENAI_API_KEY"]     # existing Codex login also works
 ```
 
@@ -240,16 +243,15 @@ packaging: [Build plugins](https://developers.openai.com/plugins/build/plugins#b
 `PATH`, and the `/scribe` command: `SessionStart` runs `scribe hook
 session-start`, which tells Daniel how many proposals are open;
 `UserPromptSubmit` runs `scribe hook user-prompt-submit`, which
-records each `#scribe` line of the typed prompt (lines in code fences,
-blockquotes and pasted blocks are skipped), applies each `#scribe
-approve|reject|retire|forget`, and replies to Daniel and the
-agent with what it recorded, settled or refused; `Stop` runs `scribe hook stop`,
-which recovers entry instructions the prompt hook missed, echoes what it
-recorded or refused, and fills each new entry's cite with the transcript
-message's id. Already captured lines are skipped; recovery keeps the original
-message's time and cwd (falling back to the hook's cwd when absent), and uses
-the guessed fallback for referents without calling a model. It does not replay
-session controls or settling commands. For a session that is on, Stop also
+echoes each `#scribe` marker of the typed prompt (code fences,
+blockquotes, pasted blocks and quoted mentions are skipped), applies each
+whole-line `#scribe approve|reject|retire|forget`, and replies to Daniel and
+the agent with what it marked, settled or refused; `Stop` runs `scribe hook
+stop`, which catalogs the session's unsettled markers (one `models.annotation`
+call per marked turn, at most two turns per Stop), echoes what it recorded or
+why not, and fills the message id of an older entry's cite. A line an older
+store already recorded verbatim is not cataloged again, and settling
+commands are never replayed. For a session that is on, Stop also
 marks a pass due every `every_minutes` or
 `every_turns` (`[catalog]` in `config.toml`); `SessionEnd` runs `scribe
 hook session-end`, which marks the last pass due and final. A prompt whose
@@ -259,7 +261,7 @@ by the `UserPromptSubmit` hook and never reaches the model; so are
 link this session to the one it was spawned from (or continues), refusing
 an unknown id, a self-link or a cycle. Claude Code's hook input and
 transcripts name no parent session, so links are only ever typed. No hook calls a
-model except for a `#scribe add this` line; the pass does. Each
+model except Stop's annotation call; the pass does. Each
 write and refusal leaves one line in `audit.jsonl` with ids, the `--author`
 name and error codes only. Install it from this checkout after `make install`:
 

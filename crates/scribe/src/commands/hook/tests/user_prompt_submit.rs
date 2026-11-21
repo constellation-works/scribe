@@ -1,37 +1,15 @@
-//! `user-prompt-submit` with a fake `Models`: form-3 lines resolved by a
-//! scripted answer, and each failure (a timeout, a model error, a span that
-//! fails the verbatim check) still writing exactly one entry, the guessed
-//! fallback, with an echo that says so (2_design.md §4.3).
+//! `user-prompt-submit` in process: a line-start `#scribe` line is a marker
+//! (2_design.md §14.6), echoed and left for Stop, never recorded here and
+//! never sent to a model.
 
 use crate::app::{AppEnv, Context};
-use crate::commands::hook::user_prompt_submit::run_with;
+use crate::commands::hook::user_prompt_submit::run;
 use crate::output::Output;
-use scribe_core::models::{
-    ModelError, ReferentAnswer, ReferentRequest, SessionAnswer, SessionRequest,
-};
-use scribe_core::{ContentFrom, EntryFilter, Models, Speaker};
+use scribe_core::EntryFilter;
 use serde_json::json;
-use std::cell::Cell;
-use std::time::Duration;
 
 const SESSION: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f";
 const SPOKEN: &str = "I recommend we squash-merge agent PRs and keep merge commits for releases.";
-
-/// A `Models` answering every referent with `answer`, counting calls.
-struct FakeModels {
-    answer: Result<ReferentAnswer, ModelError>,
-    calls: Cell<usize>,
-}
-
-impl Models for FakeModels {
-    fn referent(&self, _request: &ReferentRequest) -> Result<ReferentAnswer, ModelError> {
-        self.calls.set(self.calls.get() + 1);
-        self.answer.clone()
-    }
-    fn session(&self, _request: &SessionRequest) -> Result<SessionAnswer, ModelError> {
-        Err(ModelError::Unavailable(String::from("referent tests only")))
-    }
-}
 
 /// A temp home with a transcript for `SESSION`, and a context over a temp
 /// store.
@@ -80,18 +58,16 @@ impl Setup {
         .into_bytes()
     }
 
-    /// Run the hook with `answer` as the model's: the reply text and the
-    /// number of model calls.
-    fn run(&self, prompt: &str, answer: Result<ReferentAnswer, ModelError>) -> (String, usize) {
-        let models = FakeModels {
-            answer,
-            calls: Cell::new(0),
-        };
-        let output = run_with(&self.input(prompt), &self.ctx, |_| &models).unwrap();
+    /// Run the hook: Daniel's echo and the agent's context.
+    fn run(&self, prompt: &str) -> (String, String) {
+        let output = run(&self.input(prompt), &self.ctx).unwrap();
         let Output::Hook(reply) = output else {
             panic!("a hook reply");
         };
-        (reply.message.unwrap_or_default(), models.calls.get())
+        (
+            reply.message.unwrap_or_default(),
+            reply.context.unwrap_or_default(),
+        )
     }
 
     fn entries(&self) -> Vec<scribe_core::Entry> {
@@ -102,22 +78,6 @@ impl Setup {
             .listing
             .items
     }
-}
-
-impl Models for &FakeModels {
-    fn referent(&self, request: &ReferentRequest) -> Result<ReferentAnswer, ModelError> {
-        (*self).referent(request)
-    }
-    fn session(&self, request: &SessionRequest) -> Result<SessionAnswer, ModelError> {
-        (*self).session(request)
-    }
-}
-
-fn span(message: &str, span: &str) -> Result<ReferentAnswer, ModelError> {
-    Ok(ReferentAnswer {
-        message: message.to_owned(),
-        span: span.to_owned(),
-    })
 }
 
 #[test]
@@ -131,95 +91,30 @@ fn agent_originated_prompts_record_nothing() {
     ];
     for prompt in wrappers {
         let setup = Setup::new();
-        let (echo, calls) = setup.run(
-            prompt,
-            Err(ModelError::Failed(String::from("must not be called"))),
-        );
+        let (echo, _) = setup.run(prompt);
         assert_eq!(echo, "", "wrapper {prompt:?}");
-        assert_eq!(calls, 0, "wrapper {prompt:?}");
         assert!(setup.entries().is_empty(), "wrapper {prompt:?}");
     }
 }
 
 #[test]
-fn add_this_records_the_chosen_span_citing_its_role() {
-    let setup = Setup::new();
-    let (echo, calls) = setup.run(
+fn a_capture_line_is_echoed_as_marked_and_writes_nothing() {
+    for prompt in [
+        "#scribe idea: a dry-run flag for prune",
         "#scribe add this to preferences",
-        span(
-            "a-1",
-            "squash-merge agent PRs and keep merge commits for releases",
-        ),
-    );
-    assert_eq!(calls, 1);
-    assert_eq!(
-        echo,
-        "scribe: added preferences-1 to preferences — \"squash-merge agent PRs and keep merge commits for releases\""
-    );
-    let entries = setup.entries();
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].said, "#scribe add this to preferences");
-    assert_eq!(
-        entries[0].content,
-        "squash-merge agent PRs and keep merge commits for releases"
-    );
-    assert!(matches!(
-        &entries[0].content_from,
-        ContentFrom::Message { role: Speaker::Assistant, message, .. } if message == "a-1"
-    ));
-
-    // A replay echoes the entry without asking the model again.
-    let (echo, calls) = setup.run(
-        "#scribe add this to preferences",
-        Err(ModelError::Failed(String::from("must not be called"))),
-    );
-    assert_eq!(calls, 0);
-    assert!(
-        echo.starts_with("scribe: already recorded preferences-1"),
-        "{echo}"
-    );
-    assert_eq!(setup.entries().len(), 1);
-}
-
-#[test]
-fn a_timeout_a_model_error_and_a_failed_check_each_write_one_guessed_entry() {
-    let cases = [
-        (
-            Err(ModelError::Timeout {
-                budget: Duration::from_secs(20),
-            }),
-            "did not answer within 20 s",
-        ),
-        (
-            Err(ModelError::Failed(String::from(
-                "claude ended with exit status: 1",
-            ))),
-            "the model failed",
-        ),
-        (
-            span("a-1", "we always rebase agent PRs"),
-            "not word for word",
-        ),
-    ];
-    for (answer, reason) in cases {
+        "#scribe add short commit subjects to my preferences",
+        "#scribe/global preferences: squash-merge agent PRs",
+    ] {
         let setup = Setup::new();
-        let (echo, calls) = setup.run("#scribe add it to my preferences", answer);
-        assert_eq!(calls, 1);
-        let entries = setup.entries();
-        assert_eq!(entries.len(), 1, "exactly one entry: {echo}");
-        assert_eq!(entries[0].content, SPOKEN, "the previous assistant message");
-        assert!(matches!(
-            &entries[0].content_from,
-            ContentFrom::Message { role: Speaker::Assistant, message, .. } if message == "a-1"
-        ));
-        assert!(
-            echo.starts_with("scribe: added preferences-1 to preferences (guessed: "),
-            "{echo}"
+        let (echo, context) = setup.run(prompt);
+        assert_eq!(
+            echo, "scribe: marked — cataloged after the reply",
+            "{prompt}"
         );
-        assert!(echo.contains(reason), "{reason}: {echo}");
         assert!(
-            echo.contains("recorded the assistant message before your prompt instead"),
-            "{echo}"
+            context.contains("do not record it yourself"),
+            "{prompt}: {context}"
         );
+        assert!(setup.entries().is_empty(), "{prompt}");
     }
 }

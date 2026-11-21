@@ -93,8 +93,6 @@ pub struct ModelIds {
     pub session: String,
     /// Judges candidate pairs.
     pub consistency: String,
-    /// Resolves "this" and "it".
-    pub referent: String,
     /// Catalogs `#scribe` annotations at `Stop` (2_design.md §14.3).
     pub annotation: String,
     /// The environment variables that carry the model credential; passed to
@@ -110,7 +108,6 @@ impl ModelIds {
             ask: String::from("gpt-6-luna"),
             session: String::from("gpt-6-luna"),
             consistency: String::from("gpt-6-luna"),
-            referent: String::from("gpt-6-luna"),
             annotation: String::from("gpt-6-luna"),
             credentials: vec![String::from("OPENAI_API_KEY")],
         }
@@ -124,7 +121,6 @@ impl Default for ModelIds {
             ask: String::from("claude-sonnet-5-5"),
             session: String::from("claude-haiku-5-5"),
             consistency: String::from("claude-haiku-5-5"),
-            referent: String::from("claude-haiku-5-5"),
             annotation: String::from("claude-haiku-5-5"),
             credentials: vec![
                 String::from("CLAUDE_CODE_OAUTH_TOKEN"),
@@ -168,6 +164,9 @@ pub struct Config {
     /// they are not errors, and an empty list means the merge changed nothing
     /// a shipped tag already held.
     pub tag_warnings: Vec<String>,
+    /// Keys this file sets that this build no longer reads; they load,
+    /// for the compatibility window, and the CLI warns about each.
+    pub warnings: Vec<String>,
     /// The model ids and credential names.
     pub models: ModelIds,
     /// Models for Codex-origin work, defaulting to Luna.
@@ -194,6 +193,7 @@ impl Default for Config {
         Self {
             tags: TagTable::defaults(),
             tag_warnings: Vec::new(),
+            warnings: Vec::new(),
             models: ModelIds::default(),
             codex_models: ModelIds::codex(),
             catalog: Cadence::default(),
@@ -239,6 +239,19 @@ impl Config {
                 merge_with_shipped(declared).map_err(|e| unlocated(e.message))?
             }
         };
+        // `models.referent` named the form-3 referent call, removed with
+        // §14 step 2 (2_design.md §14.6). A config that sets it still loads
+        // for the 30-day compatibility window.
+        let warnings: Vec<String> = [
+            (raw.models.referent.is_some(), "models.referent"),
+            (raw.codex.models.referent.is_some(), "codex.models.referent"),
+        ]
+        .into_iter()
+        .filter(|(set, _)| *set)
+        .map(|(_, key)| {
+            format!("config key {key} is unused: #scribe lines are cataloged by models.annotation; remove it")
+        })
+        .collect();
         let models = raw.models.resolve(ModelIds::default());
         let codex_models = raw.codex.models.resolve(ModelIds::codex());
         for name in models
@@ -254,13 +267,7 @@ impl Config {
             }
         }
         for ids in [&models, &codex_models] {
-            for model in [
-                &ids.ask,
-                &ids.session,
-                &ids.consistency,
-                &ids.referent,
-                &ids.annotation,
-            ] {
+            for model in [&ids.ask, &ids.session, &ids.consistency, &ids.annotation] {
                 if model.trim().is_empty() || model.chars().any(char::is_control) {
                     return Err(unlocated(String::from(
                         "model ids must be nonempty and contain no control characters",
@@ -273,6 +280,7 @@ impl Config {
         Ok(Self {
             tags,
             tag_warnings,
+            warnings,
             models,
             codex_models,
             catalog: Cadence {
@@ -927,6 +935,7 @@ struct RawModels {
     ask: Option<String>,
     session: Option<String>,
     consistency: Option<String>,
+    /// Deprecated: read only to warn that it is unused.
     referent: Option<String>,
     annotation: Option<String>,
     credentials: Option<Vec<String>>,
@@ -948,7 +957,6 @@ impl RawModels {
             ask: self.ask.unwrap_or(defaults.ask),
             session: self.session.unwrap_or(defaults.session),
             consistency: self.consistency.unwrap_or(defaults.consistency),
-            referent: self.referent.unwrap_or(defaults.referent),
             annotation: self.annotation.unwrap_or(defaults.annotation),
             credentials: self.credentials.unwrap_or(defaults.credentials),
         }

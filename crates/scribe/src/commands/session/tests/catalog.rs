@@ -8,8 +8,8 @@ use crate::app::{AppEnv, Context};
 use crate::output::{Output, PassReport};
 use scribe_core::control::{self, Switch};
 use scribe_core::models::{
-    ModelError, NewSegmentAnswer, ReferentAnswer, ReferentRequest, SegmentAnswer, SessionAnswer,
-    SessionHeader, SessionHeaderRequest, SessionRequest, TermAnswer,
+    ModelError, NewSegmentAnswer, SegmentAnswer, SessionAnswer, SessionHeader,
+    SessionHeaderRequest, SessionRequest, TermAnswer,
 };
 use scribe_core::{AuthorKind, Models, Project, SessionId, SessionStatus};
 use serde_json::json;
@@ -26,10 +26,6 @@ struct FakeModels {
 }
 
 impl Models for &FakeModels {
-    fn referent(&self, _request: &ReferentRequest) -> Result<ReferentAnswer, ModelError> {
-        Err(ModelError::Unavailable(String::from("catalog tests only")))
-    }
-
     fn session(&self, request: &SessionRequest) -> Result<SessionAnswer, ModelError> {
         *self.asked.borrow_mut() += 1;
         self.answer.clone().map(|mut answer| {

@@ -67,9 +67,8 @@ use crate::activity::{self, ActiveOutcome, SetActive};
 use crate::config::Config;
 use crate::consistency::{self, Draft, ReapplyReport, Settle, Settled};
 use crate::control;
-use crate::entry::{Cite, Entry, EntryFilter, EntryId, NewEntry};
+use crate::entry::{Cite, Entry, EntryFilter, EntryId};
 use crate::error::{Error, Result};
-use crate::pass::{covering_entry, covers_turn};
 use crate::proposal::{Proposal, ProposalId};
 use crate::record::Listing;
 use crate::session::{
@@ -77,7 +76,7 @@ use crate::session::{
 };
 use crate::tag::{self, TagSummary};
 use fsio::LockGuard;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -165,30 +164,6 @@ pub struct TagList {
     pub warnings: Vec<String>,
     /// Entry files left out of the counts because they did not parse.
     pub skipped: Vec<Skipped>,
-}
-
-/// What [`Store::capture`] did with one draft.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Captured {
-    /// It was written as a new entry.
-    Added(Entry),
-    /// An entry for the same `#scribe` line already existed (a retried or
-    /// replayed hook); nothing was written.
-    Existing(Entry),
-    /// An active entry of the same tag and project already covers the
-    /// statement. Nothing was written and no id was consumed. The entry is
-    /// the one that covers it.
-    Covered(Entry),
-}
-
-impl Captured {
-    /// The entry written or found.
-    #[must_use]
-    pub fn entry(&self) -> &Entry {
-        match self {
-            Self::Added(entry) | Self::Existing(entry) | Self::Covered(entry) => entry,
-        }
-    }
 }
 
 /// A scribe store rooted at one data directory.
@@ -280,7 +255,16 @@ impl Store {
         }
         let bytes = fsio::read(&path)?;
         let text = std::str::from_utf8(&bytes).map_err(|e| Error::corrupt(&path, e))?;
-        Config::parse(text).map_err(|source| Error::Config { path, source })
+        let config = Config::parse(text).map_err(|source| Error::Config { path, source })?;
+        // Keys this build no longer reads: logged once per process, however
+        // often a command loads the config.
+        static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if !config.warnings.is_empty() && !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            for warning in &config.warnings {
+                tracing::warn!("{warning}");
+            }
+        }
+        Ok(config)
     }
 
     /// Entries matching `filter`, oldest first, and how many matched. A
@@ -624,108 +608,9 @@ impl Store {
         })
     }
 
-    /// Record each draft as a new entry, once.
-    ///
-    /// Under the store lock, each draft is checked against the existing
-    /// entries by its cite's `(session, prompt_sha256, line)`: a match is
-    /// returned as [`Captured::Existing`] and nothing is written, so a
-    /// retried or replayed hook never writes twice. Otherwise, when an
-    /// active entry of the same tag and project already covers the redacted
-    /// statement ([`covering_entry`]), the draft is [`Captured::Covered`]:
-    /// nothing is written and no id is consumed. A same-line replay wins
-    /// over that check. Otherwise the draft gets the next id in its tag
-    /// (one past the highest, counting files that do not parse, so a number
-    /// is never reused), its free text passes `redactor`, and it is written
-    /// with [`fsio::write_atomic`]. Missing directories are created
-    /// owner-only.
-    pub fn capture(&self, drafts: Vec<NewEntry>, redactor: &Redactor) -> Result<Vec<Captured>> {
-        if drafts.is_empty() {
-            return Ok(Vec::new());
-        }
-        self.prepare_dir(&self.root)?;
-        let _lock = self.lock("capture")?;
-        let (mut entries, skipped) = self.load_entries()?;
-        let mut ids: Vec<EntryId> = entries.iter().map(|e| e.id.clone()).collect();
-        ids.extend(
-            skipped
-                .iter()
-                .filter_map(|s| s.path.file_stem()?.to_str()?.parse().ok()),
-        );
-        ids.extend(self.candidate_reserved_ids()?);
-        let mut out = Vec::with_capacity(drafts.len());
-        for draft in drafts {
-            if let Some(found) = entries
-                .iter()
-                .find(|e| e.cite.as_ref().is_some_and(|c| c.same_line(&draft.cite)))
-            {
-                out.push(Captured::Existing(found.clone()));
-                continue;
-            }
-            let content = redactor.mask(&draft.content);
-            if let Some(cover) = covering_entry(&entries, &content, &draft.tag, &draft.project) {
-                out.push(Captured::Covered(cover.clone()));
-                continue;
-            }
-            let id = EntryId::next_in(&draft.tag, &ids);
-            let mut entry = draft.into_entry(id.clone());
-            redactor.entry(&mut entry);
-            self.write_entry(&entry, true)?;
-            ids.push(id);
-            entries.push(entry.clone());
-            out.push(Captured::Added(entry));
-        }
-        Ok(out)
-    }
-
-    /// Line numbers of typed `#scribe <tag>: <words>` instructions in
-    /// `prompt` that capture would refuse, or that an entry covered at
-    /// `turn.at` even though that entry is retired or superseded now.
-    /// The caller builds `turn` the same way capture does. This read does
-    /// not lock and does not write. Capture under the lock still decides
-    /// a line that was not covered when typed, and it only consults
-    /// entries that are active now, so Stop must skip the lines returned
-    /// here or a later retirement is written as a new entry. Referents
-    /// are not included: their content is not known until they are
-    /// resolved, and [`Store::covered_draft`] answers for them then.
-    pub fn covered_instruction_lines(
-        &self,
-        prompt: &str,
-        turn: &crate::capture::Turn,
-        redactor: &Redactor,
-    ) -> Result<BTreeSet<u32>> {
-        let config = self.config()?;
-        let (entries, _) = self.load_entries()?;
-        let mut lines = BTreeSet::new();
-        for item in crate::capture::scan(prompt, &config.tags) {
-            let crate::capture::Parsed::Instruction(instruction) = item else {
-                continue;
-            };
-            let draft = crate::capture::draft(&instruction, turn, &config.tags);
-            if covered(&entries, &draft, turn.at, redactor) {
-                lines.insert(instruction.line);
-            }
-        }
-        Ok(lines)
-    }
-
-    /// Whether capture would refuse `draft` as covered, or an entry that is
-    /// retired or superseded now covered it at `at`: the same question as
-    /// [`Store::covered_instruction_lines`], for a draft already built,
-    /// such as a resolved form-3 referent. Reads only; Stop skips a draft
-    /// this answers for.
-    pub fn covered_draft(
-        &self,
-        draft: &NewEntry,
-        at: time::OffsetDateTime,
-        redactor: &Redactor,
-    ) -> Result<bool> {
-        let (entries, _) = self.load_entries()?;
-        Ok(covered(&entries, draft, at, redactor))
-    }
-
     /// The entries already recorded from one prompt: `session` and
-    /// `prompt_sha256` as their cite has them. Reads only, so the hook can
-    /// echo a replayed form-3 line without asking the model again.
+    /// `prompt_sha256` as their cite has them. Reads only, so `Stop` can
+    /// skip a `#scribe` line an entry was already written for.
     pub fn entries_from_prompt(
         &self,
         session: &SessionId,
@@ -1434,21 +1319,6 @@ fn merge_links(links: &mut Vec<SessionLink>, more: &[SessionLink]) {
 }
 
 /// Whether `entry` is from `session` and still waits for its message uuid.
-/// Whether `draft`, masked as capture masks it, is covered now or was
-/// covered at `at` by one of `entries`.
-fn covered(
-    entries: &[Entry],
-    draft: &NewEntry,
-    at: time::OffsetDateTime,
-    redactor: &Redactor,
-) -> bool {
-    let content = redactor.mask(&draft.content);
-    covering_entry(entries, &content, &draft.tag, &draft.project).is_some()
-        || entries
-            .iter()
-            .any(|entry| covers_turn(entry, &content, &draft.tag, &draft.project, at))
-}
-
 fn unfilled(entry: &Entry, session: &SessionId) -> bool {
     entry
         .cite

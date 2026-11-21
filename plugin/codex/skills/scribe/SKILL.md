@@ -133,11 +133,10 @@ and grouped, never as a gate on the work:
   existing entry. No entry exists before approval. Action tags
   you write yourself follow their separate rules below.
   When the session is off or its state is unknown, and the human states a
-  standing preference or rule worth keeping, offer a ready-to-type
-  `#scribe <tag>: <words>` line in their words. When it applies in every repository, offer
-  `#scribe/global <tag>: <words>` instead (the same `/global` opener works
-  on `#scribe add <words> to <tag>` and `#scribe add this to <tag>`). Only
-  their typed line records their words, so never write it for them.
+  standing preference or rule worth keeping, suggest they mark it: a
+  `#scribe <tag>` after their sentence (or `#scribe/global <tag>` when it
+  applies in every repository). Only their typed marker records their words,
+  so never write it for them.
   Something you established yourself can become an agent entry under your
   own `--author`, once they agree.
   Don't offer a line for a choice about a piece of work. Record a decision
@@ -219,7 +218,7 @@ about them; `question ask` skips them unless its scope names their tag.
   their yes.
 - **Their preferences stay theirs.** In an on session, let
   the pass propose them for typed approval. In an off session or when its
-  state is unknown, offer a `#scribe <tag>: <words>` line for them to type.
+  state is unknown, suggest they mark their sentence with `#scribe <tag>`.
   Never write their entry yourself.
 
 ## Issues: incidents that recur, and what fixed them
@@ -279,15 +278,15 @@ Codex skill mention link) is also supported. On enables session cataloging;
 off stops further passes and keeps the record. `/scribe on --from <id>` and
 `/scribe link <id> --type continues` link related sessions, and
 `/scribe catalog <id>` catalogs a past session as the human's; its windows run
-at the next `scribe session pass`. The human's typed
-`#scribe <tag>: <words>` explicitly records an entry in the working
-directory's project. `#scribe/global` in place of `#scribe` on that line,
-on `#scribe add <words> to <tag>`, or on `#scribe add this to <tag>`, records
-it with `project: global` for every repository. In Claude Code, a `#scribe`
-inside a sentence of the human's typed turn marks it: after your reply
-scribe catalogs it as their entry, its content scribe's statement
-(`stated_by` is `scribe:annotation`) and its `quote` their words. Do not
-record it yourself, and quote only the `quote` as theirs. `#scribe approve|reject
+at the next `scribe session pass`. In Claude Code and Codex, every `#scribe` in the
+human's typed turn, inside a sentence or opening a line (`#scribe idea: …`,
+`#scribe add this to preferences`), marks it: after your reply scribe
+catalogs it as their entry in the working directory's project, its content
+scribe's statement (`stated_by` is `scribe:annotation`) and its `quote` their
+words. A tag named after the marker or at the end of its line is the tag.
+`#scribe/global` in place of `#scribe` records it with `project: global` for
+every repository. Do not record it yourself, and quote only the `quote` as
+theirs. `#scribe approve|reject
 <proposal-id>` and `#scribe retire|forget <entry-id>` control existing records
 and do not take the global opener. Forget clears the entry's text and evidence, proposal quotes of it, and
 related candidate quotes, evidence and reasons; session records are not erased.
@@ -365,7 +364,7 @@ or delete. Every act follows the same order.
      entry from an assistant's claim retires under your own `--author`; the
      human's entry retires on their instruction. Its text is kept.
    - **Retire**: repaired by adding the text again as a new entry, which the
-     human types as `#scribe <tag>: <words>`, because you never write their
+     human marks with `#scribe <tag>`, because you never write their
      entry. `scribe entry show <e-id>` still shows the text.
    - **Reject**: irreversible. The claim closes and stays out of future
      proposals.

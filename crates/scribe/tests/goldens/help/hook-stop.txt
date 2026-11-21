@@ -1,4 +1,4 @@
-Recover missed #scribe entries, catalog #scribe markers, fill in message ids and mark a session pass due, from the Stop hook's JSON on stdin
+Catalog #scribe markers, fill in message ids and mark a session pass due, from the Stop hook's JSON on stdin
 
 Usage: scribe hook stop [OPTIONS]
 
@@ -13,15 +13,19 @@ Global options:
       --json                 Shorthand for --format json
 
 Reads the Stop payload (session_id, transcript_path, optional cwd) on stdin.
-Recovers missed #scribe entry instructions from the transcript and prints
-hook JSON saying what was recorded or refused; otherwise prints nothing.
-Already captured lines are skipped. Recovery calls no model; recovered
-referents use the guessed fallback. Session controls and settling commands
-are not replayed. Then each typed turn with a #scribe marker inside a
-sentence that marks.json has not settled gets one models.annotation call
-(30 s; at most 2 turns per Stop and 3 markers per turn; a failed call is
-retried at the next reply, 3 attempts in all), and its checked answer is
-recorded as Daniel's entry with scribe's statement and his quoted words.
+Each typed turn with a #scribe marker that marks.json has not settled gets
+one models.annotation call (30 s; at most 2 turns per Stop and 3 markers
+per turn; a failed call is retried at the next reply, 3 attempts in all),
+and its checked answer is recorded as Daniel's entry with scribe's statement
+and his quoted words. A tag named after the marker, or at the end of a line
+it opens, is a hint the model must follow. #scribe/global in place of
+#scribe records the entry with project global, for every repository; the
+working directory's project stays the default. Under an action tag
+(standard, idea, or any tag config marks action = true) the entry also keeps
+the turns since the previous #scribe turn, capped at 40 turns and 12000
+characters and cut from the oldest. A line an older entry already records is
+not cataloged again, and settling commands are never replayed. Prints hook
+JSON saying what was recorded or why not; otherwise nothing.
 
 Examples:
   scribe hook stop < <payload.json>

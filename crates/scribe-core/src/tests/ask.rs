@@ -8,8 +8,8 @@ use crate::ask::{
 };
 use crate::entry::{ContentFrom, Entry, EntryStatus, Speaker};
 use crate::models::{
-    AskAnswer, AskRequest, ClaimAnswer, ConflictAnswer, ModelError, Models, ReferentAnswer,
-    ReferentRequest, SessionAnswer, SessionRequest,
+    AskAnswer, AskRequest, ClaimAnswer, ConflictAnswer, ModelError, Models, SessionAnswer,
+    SessionRequest,
 };
 use crate::session::{SessionRecord, Term};
 use crate::tag::TagTable;
@@ -48,10 +48,6 @@ impl FakeModels {
 }
 
 impl Models for FakeModels {
-    fn referent(&self, _: &ReferentRequest) -> Result<ReferentAnswer, ModelError> {
-        Err(ModelError::Unavailable(String::from("not in this test")))
-    }
-
     fn session(&self, _: &SessionRequest) -> Result<SessionAnswer, ModelError> {
         Err(ModelError::Unavailable(String::from("not in this test")))
     }

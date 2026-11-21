@@ -9,7 +9,6 @@ use crate::{
     STATEMENT_CHARS, SUBJECT_CHARS, SessionRecord, Speaker, TagName, transcript, trigger, verbatim,
 };
 use std::collections::BTreeSet;
-use time::OffsetDateTime;
 
 /// Maximum candidates per session in one pass invocation, across all windows.
 pub const MAX_CANDIDATES: usize = 3;
@@ -77,8 +76,9 @@ fn fire(tag: &TagDef, own: &str) -> Option<trigger::Fired> {
 
 /// Whether Daniel marked the turn whose own words are `own` (2_design.md
 /// §5.3, §14.7): a `#scribe` marker inside a sentence, as
-/// [`crate::annotation::marks`] finds it (refused markers included), or a
-/// line that opens with the marker, a form 1–4 instruction. Fenced, quoted
+/// [`crate::annotation::marks`] finds it (refused markers included, and
+/// since §14.6 every line-start form but a settling command), or a line
+/// that opens with the marker, which adds the form-4 settling lines. Fenced, quoted
 /// and pasted lines hold neither, as `capture::plain_lines` leaves them out.
 /// The pass skips the whole turn; it never reads `marks.json`.
 pub(crate) fn is_marked(own: &str) -> bool {
@@ -199,6 +199,13 @@ fn outcome_in_bounds(answer: &EntryCandidateAnswer) -> bool {
 /// instructions replaced by a NUL barrier each, so neither a quote nor a
 /// trigger match can be spliced across an excluded line.
 pub(crate) fn own_lines(text: &str) -> String {
+    own_lines_where(text, |_| false)
+}
+
+/// [`own_lines`], but a line that opens with `#scribe` is kept when
+/// `keep` says so: an annotation's check keeps a line-start marker, whose
+/// words are Daniel's (2_design.md §14.6).
+fn own_lines_where(text: &str, keep: impl Fn(&str) -> bool) -> String {
     let mut fence: Option<(char, usize)> = None;
     let mut own = String::new();
     for line in text.split_inclusive('\n') {
@@ -217,7 +224,7 @@ pub(crate) fn own_lines(text: &str) -> String {
             fence = Some(marker);
             own.push('\0');
         } else if trimmed.starts_with('>')
-            || trimmed.starts_with("#scribe")
+            || (trimmed.starts_with("#scribe") && !keep(trimmed.trim_end()))
             || line.starts_with("    ")
             || line.starts_with('\t')
         {
@@ -233,6 +240,15 @@ pub(crate) fn own_lines(text: &str) -> String {
 /// fenced, indented and blockquoted material and marked instructions.
 pub(crate) fn own_span(text: &str, quote: &str) -> bool {
     verbatim::contains(text, quote) && text.contains(quote) && own_lines(text).contains(quote)
+}
+
+/// [`own_span`] for an annotation (§14.3): a line-start `#scribe` line is a
+/// marker whose words are Daniel's own (§14.6), so a quote may come from
+/// it; a settling command's line is still left out.
+pub(crate) fn own_marked_span(text: &str, quote: &str) -> bool {
+    verbatim::contains(text, quote)
+        && text.contains(quote)
+        && own_lines_where(text, |line| !crate::capture::settles(line)).contains(quote)
 }
 
 /// A checked claim on its way to the store: the candidate and Daniel's own
@@ -526,55 +542,10 @@ pub(crate) fn covers_statement(existing: &str, new: &str) -> bool {
         .any(|window| window == new.as_slice())
 }
 
-/// Whether `entry` covered `statement` at `at`.
-///
-/// Live capture uses [`covering_entry`] and ignores anything that is not
-/// active now, so a line typed after an entry is retired is still written.
-/// Stop recovery also asks this, so a line covered when it was typed is
-/// not captured after that entry is retired or superseded.
-///
-/// An entry that is still active covers `at` when it already existed
-/// (`created <= at`). A retired or superseded entry covers `at` when it
-/// existed and left `active` at or after `at` (`inactive_since`, which a
-/// later metadata write does not move), and it still says the statement
-/// ([`entry_says`]: its content or, for an approved pass statement,
-/// Daniel's quote). Stored times are whole seconds while transcript times are
-/// not, so both sides are compared in whole seconds: a tie inside that
-/// second counts as still active, since the order inside the second is not
-/// recorded and recapturing a line that may have been covered is the worse
-/// miss. A forgotten entry's content is blank, so it cannot answer.
-#[must_use]
-pub(crate) fn covers_turn(
-    entry: &Entry,
-    statement: &str,
-    tag: &TagName,
-    project: &Project,
-    at: OffsetDateTime,
-) -> bool {
-    let at = whole_second(at);
-    if &entry.tag != tag || &entry.project != project || whole_second(entry.created) > at {
-        return false;
-    }
-    let active_then = match entry.status {
-        EntryStatus::Active => true,
-        EntryStatus::Retired | EntryStatus::Superseded => entry
-            .inactive_since
-            .is_some_and(|since| whole_second(since) >= at),
-        EntryStatus::Forgotten => false,
-    };
-    active_then && claim_covers(&entry_says(entry), &[statement])
-}
-
-/// `at` without its fraction of a second.
-fn whole_second(at: OffsetDateTime) -> OffsetDateTime {
-    at.replace_nanosecond(0).unwrap_or(at)
-}
-
 /// The oldest active entry of `tag` and `project` that already says
 /// `statement` ([`entry_says`]: its content or, for an approved pass
 /// statement, Daniel's quote), if any. Retired, superseded and forgotten entries do
-/// not cover a new line. Comparison is [`covers_statement`]. A turn those
-/// entries were still active for is [`covers_turn`].
+/// not cover a new line. Comparison is [`covers_statement`].
 #[must_use]
 pub(crate) fn covering_entry<'a>(
     entries: &'a [Entry],
