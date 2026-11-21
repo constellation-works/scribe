@@ -1825,6 +1825,41 @@ fn a_marker_inside_a_sentence_is_echoed_at_submit_and_writes_nothing() {
 }
 
 #[test]
+fn a_marker_after_a_stray_quote_or_ending_a_global_sentence_is_echoed_and_cataloged() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    // A lone `"` (inches) opens no quoted span, and sentence punctuation
+    // may follow `#scribe/global`.
+    let typed = "I buy the 12\" pipe from the corner shop #scribe/global.";
+    let path = annotating_claude(
+        &fx,
+        &json!([{"marker": 1, "kind": "entry", "tag": "preferences",
+                 "statement": "Daniel buys the 12-inch pipe from the corner shop.",
+                 "subject": "pipe", "quote": "I buy the 12\" pipe from the corner shop",
+                 "message": "u-1", "reason": ""}]),
+    );
+    let submitted = hook_path(
+        &fx,
+        "user-prompt-submit",
+        &prompt_payload(&claude, typed),
+        &path,
+    );
+    assert_eq!(
+        reply(&submitted)["systemMessage"],
+        "scribe: marked — cataloged after the reply"
+    );
+    marked_turns(&claude, &[("u-1", typed)]);
+    let out = hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
+    let message = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
+    assert!(message.contains("scribe: added"), "{message}");
+    let global = listed(&fx, "global");
+    assert_eq!(global.len(), 1, "{global:?}");
+    let marks = marks_json(&fx);
+    assert_eq!(marks.len(), 1, "{marks:?}");
+    assert_eq!(marks[0]["outcome"], "entry");
+}
+
+#[test]
 fn stop_catalogs_a_marked_turn_as_daniels_entry_with_scribes_statement_once() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);

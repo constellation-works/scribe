@@ -169,7 +169,8 @@ const DETERMINERS: [&str; 2] = ["my", "the"];
 /// none (as `capture::plain_lines` leaves them out), nor does an indented
 /// code line or a whole-line settling command (form 4). Within a line,
 /// a token in an inline code span or a double-quoted span (`"…"`, `“…”`) is
-/// a mention, not a marker. A marker is [`MARKER`] or `#scribe/<word>`
+/// a mention, not a marker; a backtick or quote with no partner on its line
+/// (`a 12" pipe`) opens no span. A marker is [`MARKER`] or `#scribe/<word>`
 /// that starts the line or follows whitespace or an opening bracket, and
 /// is followed by the end of the line, whitespace, `:`, a closing bracket
 /// or sentence punctuation.
@@ -195,11 +196,13 @@ pub fn marks(text: &str) -> Vec<Mark> {
 
 /// Byte offsets in `line` where a marker starts, outside code and quotes.
 fn tokens(line: &str) -> Vec<usize> {
+    let lone = unpaired(line);
     let mut out = Vec::new();
     let (mut code, mut quoted, mut curly) = (false, false, false);
     let mut prev: Option<char> = None;
     for (at, c) in line.char_indices() {
         match c {
+            _ if lone.contains(&at) => {}
             '`' => code = !code,
             '"' if !code => quoted = !quoted,
             '“' if !code => curly = true,
@@ -223,12 +226,42 @@ fn tokens(line: &str) -> Vec<usize> {
     out
 }
 
+/// Byte offsets of the span openers in `line` that no partner closes: the
+/// last backtick of an odd count, the last straight quote of an odd count
+/// outside code, and a `“` with no `”` after it. Such an opener is a stray
+/// character (`a 12" pipe`), so it hides nothing that follows it.
+fn unpaired(line: &str) -> Vec<usize> {
+    let mut lone = Vec::new();
+    let ticks: Vec<usize> = line.match_indices('`').map(|(at, _)| at).collect();
+    if ticks.len() % 2 == 1 {
+        lone.extend(ticks.last());
+    }
+    let mut code = false;
+    let mut quotes = Vec::new();
+    let mut open_curly = None;
+    for (at, c) in line.char_indices() {
+        match c {
+            '`' if !lone.contains(&at) => code = !code,
+            '"' if !code => quotes.push(at),
+            '“' if !code && open_curly.is_none() => open_curly = Some(at),
+            '”' if !code => open_curly = None,
+            _ => {}
+        }
+    }
+    if quotes.len() % 2 == 1 {
+        lone.extend(quotes.last());
+    }
+    lone.extend(open_curly);
+    lone
+}
+
 /// The marker starting at byte `start` of `said`.
 fn parse(number: u32, line: u32, said: &str, start: usize) -> Mark {
     let rest = &said[start + MARKER.len()..];
     let mut words = rest.split_whitespace();
     let opener_tail = if rest.starts_with('/') {
-        words.next().map(|w| w.trim_end_matches(':'))
+        // Sentence punctuation may follow the opener: `… #scribe/global.`
+        words.next().map(|w| w.trim_end_matches(PUNCTUATION))
     } else {
         None
     };
