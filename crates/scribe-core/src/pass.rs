@@ -54,7 +54,7 @@ pub use candidates::{
     capture_request,
 };
 pub(crate) use candidates::{admission, own_span};
-pub(crate) use candidates::{covering_entry, covers_statement};
+pub(crate) use candidates::{covering_entry, covers_statement, covers_turn};
 mod repair;
 pub use repair::repair;
 

@@ -60,7 +60,7 @@ use crate::consistency::{self, Draft, ReapplyReport, Settle, Settled};
 use crate::control;
 use crate::entry::{Cite, Entry, EntryFilter, EntryId, NewEntry};
 use crate::error::{Error, Result};
-use crate::pass::covering_entry;
+use crate::pass::{covering_entry, covers_turn};
 use crate::proposal::{Proposal, ProposalId};
 use crate::record::Listing;
 use crate::session::{
@@ -658,10 +658,14 @@ impl Store {
     }
 
     /// Line numbers of typed `#scribe <tag>: <words>` instructions in
-    /// `prompt` that [`covering_entry`] would refuse. The caller builds
-    /// `turn` the same way capture does. This read does not lock; the
-    /// capture under the lock remains the check that writes. Referents are
-    /// not included: their content is not known until they are resolved.
+    /// `prompt` that capture would refuse, or that an entry covered at
+    /// `turn.at` even though that entry is retired or superseded now.
+    /// The caller builds `turn` the same way capture does. This read does
+    /// not lock and does not write. Capture under the lock still decides
+    /// a line that was not covered when typed, and it only consults
+    /// entries that are active now, so Stop must skip the lines returned
+    /// here or a later retirement is written as a new entry. Referents
+    /// are not included: their content is not known until they are resolved.
     pub fn covered_instruction_lines(
         &self,
         prompt: &str,
@@ -677,7 +681,12 @@ impl Store {
             };
             let draft = crate::capture::draft(&instruction, turn, &config.tags);
             let content = redactor.mask(&draft.content);
-            if covering_entry(&entries, &content, &draft.tag, &draft.project).is_some() {
+            let covered_now =
+                covering_entry(&entries, &content, &draft.tag, &draft.project).is_some();
+            let covered_then = entries
+                .iter()
+                .any(|entry| covers_turn(entry, &content, &draft.tag, &draft.project, turn.at));
+            if covered_now || covered_then {
                 lines.insert(instruction.line);
             }
         }

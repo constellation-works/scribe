@@ -11,7 +11,7 @@ summary: How the scribe plugin is bounded (one binary; Daniel writes through hoo
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256]
+related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256, ORB-26349]
 ---
 
 # scribe — Design
@@ -759,7 +759,13 @@ Recovery scans the whole conversation on each Stop and uses existing cites
 as its progress record rather than advancing a cursor past an unwritten
 line. It skips lines already captured for `(session, prompt_sha256, line)`,
 including individual text blocks of a multi-block message; the store checks
-the key again under its lock. This retries partial failures and remains
+the key again under its lock. It also skips a line an entry covered at that
+turn's timestamp, including an entry retired or superseded since: coverage
+is decided as of the turn (`covers_turn`), not from the entries active when
+Stop runs, so retiring the covering entry does not make a later Stop write
+the line. A line typed after the entry was retired is not covered by that
+rule and is still captured. A forgotten entry's words are blank, so it
+cannot answer. This retries partial failures and remains
 silent and write-free when everything is recorded. Refusals and failures
 are echoed and audited, and retried on later Stops; they are never treated
 as successful captures. No model runs during recovery: referents use the
@@ -802,7 +808,9 @@ the same tag and project already covers, using the one lexical predicate
 `covers_statement` ([§5.3](#53-a-pass)). Nothing is written and no id is
 consumed. The hook echoes `scribe: already covered by <id> in <tag> —
 "…"`, exits 0, and writes no audit line. Retired, superseded and forgotten
-entries do not cover. A different tag or project still writes. The check
+entries do not cover a new line. Stop recovery still treats a retired or
+superseded entry as covering a turn it was active for
+([§4.1](#41-detection)). A different tag or project still writes. The check
 does not match a short typed line against the long paragraph it
 summarizes, and it does not catch a paraphrase.
 
@@ -910,8 +918,10 @@ an active entry of the same tag and project already covers echoes `scribe:
 already covered by <id> in <tag> — "…"` and writes no audit line; the
 agent note is the recorded note. The `Stop` hook does not repeat that
 covered echo on a later turn, and a prompt the prompt hook missed stays
-quiet when every `#scribe` line is already covered. When
-the store or `config.toml` cannot be used, each line echoes `scribe: could
+quiet when every `#scribe` line is already covered, including a line
+whose covering entry has since been retired or superseded: coverage is
+as of the turn ([§4.1](#41-detection)). When the store or `config.toml`
+cannot be used, each line echoes `scribe: could
 not record "…" — <error>` and the hook still exits 0, so the prompt goes
 through. Quotes in an echo are flattened to one line and cut at 200
 characters (`scribe entry show <id>` has the whole text). The `Stop` hook
@@ -1315,7 +1325,9 @@ a pass; an explicit catalog is still required for past sessions.
   Otherwise an existing statement covers a new one only when the new one
   adds nothing: it is a contiguous window of the existing tokens, it has at
   least four tokens, and the two sides use the same counts of `not`,
-  `never`, `no`, `don't`, `dont`, `avoid`, `except`, `unless` and `only`.
+  `never`, `no`, `don't`, `dont`, `can't`, `cant`, `cannot`, `won't`,
+  `wont`, `shouldn't`, `shouldnt`, `doesn't`, `doesnt`, `didn't`, `didnt`,
+  `isn't`, `isnt`, `avoid`, `except`, `unless`, `only` and `without`.
   A longer refinement, a reordering, a match inside a word, or a polarity
   or exception change is kept. Candidate opening uses this predicate, not
   symmetric containment or Jaccard, so the same definition cannot suppress
@@ -4469,6 +4481,8 @@ Not built until seen:
 - [ORB-26256] — recorded Daniel's decisions of 2026-11-21: scribe reads
   Claude Code and Codex sessions only, and §13.12–§13.15 (the base pass,
   `people`, recurring dates, light catalog entries) are parked.
+- [ORB-26349] — extended the duplicate check's negation markers, and made
+  Stop recovery decide coverage as of the turn.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
 

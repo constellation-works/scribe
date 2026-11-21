@@ -11,7 +11,7 @@ summary: Why superseded entries are hidden not removed, why one JSON file per ta
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349]
 ---
 
 # scribe — Decisions
@@ -2111,6 +2111,8 @@ show` prints `rebuilt_by` only in `--json`.
   records through the CLI (proposed).
 - [ORB-26240] — the personal memory base and the per-session work layer,
   `people`, recurring dates and light catalog entries (proposed).
+- [ORB-26349] — extended the duplicate check's negation markers, and made
+  Stop recovery decide coverage as of the turn.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
 
@@ -3392,3 +3394,58 @@ Alternatives considered:
 - Cost: a regular user who never types `/scribe on` has no memory and no
   catalog; the gap between "every session feeds memory" and "only chosen
   sessions" is the work Daniel parked.
+
+## Stop recovery keeps a line covered when it was typed
+
+**Recorded:** 2026-11 · [ORB-26349]
+**Code anchors:** `crates/scribe-core/src/pass/candidates.rs::covers_turn`, `crates/scribe-core/src/store/mod.rs::covered_instruction_lines`
+
+### Context
+
+Stop recovery asks which `#scribe` lines an entry already covers, so it
+does not write them and does not repeat the prompt hook's echo. That
+question used the entries active when Stop ran. Retiring the covering
+entry later in the same session made the next Stop treat the earlier line
+as new and write it, even though the line was covered when Daniel typed it.
+The prompt hook may have been missed: the first Stop is often the first
+observer, and by then the entry may already be retired.
+
+### Decision
+
+Coverage for Stop recovery is as of the turn. An entry covers that turn
+when it is the same tag and project, `covers_statement` matches, and the
+entry was active at the turn's timestamp. It already existed
+(`created <= at`). A retired or superseded entry had not yet left active
+when `updated >= at`, because retirement and supersession set `updated`
+and leave the content in place. An entry that is still active also covers
+through `covering_entry`, including one recorded after the turn, so a
+later entry still suppresses a duplicate. A new `#scribe` line typed after
+retirement is still written: live capture ignores retired, superseded and
+forgotten entries.
+
+The alternative was a durable log of covered turns, written when the
+prompt hook or Stop first observed the cover. That would survive `forget`,
+which blanks the words, and a later edit of `updated`. It would also be a
+new store document and a format step, and it would miss a turn whose
+prompt hook was missed and whose covering entry was retired before the
+first Stop. The timestamps already on the entry answer "active at this
+turn" for retire and supersede without that document.
+
+A same-second tie counts as still active. Entry timestamps are whole
+seconds, so the order inside that second is not recorded, and recapturing
+a line that may have been covered is the worse miss.
+
+### Consequences
+
+- A line covered when typed is not captured by a later Stop after the
+  covering entry is retired or superseded.
+- A forgotten entry's content is blank, so Stop cannot see that it covered
+  the turn. A missed line can be written again. That follows from blanking
+  the words.
+- A metadata write that moves `updated` on an already-retired entry to
+  after a turn can make Stop treat that turn as covered. Cite filling runs
+  after recovery in the same Stop, so the first Stop after the turn still
+  sees the retirement time.
+- Cost: there is no separate retirement timestamp, so the rule uses
+  `updated`, which other writes also set. A forgotten line is not
+  protected, and a same-second line typed after retirement is not captured.
