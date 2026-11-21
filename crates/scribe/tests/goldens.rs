@@ -721,6 +721,168 @@ fn stated_claims_match_goldens() {
     report(&failures);
 }
 
+/// Daniel's instruction that approved `p-5` in the instructed goldens.
+const INSTRUCTED_WORDS: &str = "approve p-5, that is how session records should work";
+/// His instruction that rejected `p-6`.
+const REJECTED_WORDS: &str = "reject p-6, the popup can list more";
+/// The interactive session he typed it in.
+const INSTRUCTED_SESSION: &str = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c03";
+
+/// [`stated_fixture`], with `p-5` approved by the agent `opus` on Daniel's
+/// checked instruction rather than by him typing it, and `p-6` rejected on
+/// the same instruction (2_design.md §12.3).
+fn instructed_fixture() -> Fixture {
+    let fx = stated_fixture();
+    let root = fx.root();
+    let instruction = format!(
+        "{{session: {INSTRUCTED_SESSION}, message: user-instruct, at: 2026-11-15T00:04:30Z, quote: \"{INSTRUCTED_WORDS}\"}}"
+    );
+    let path = root.join("entries/preferences/preferences-2.md");
+    let entry = std::fs::read_to_string(&path)
+        .unwrap()
+        // Format 15 first carried an approval made on his instruction.
+        .replace("format: 14\n", "format: 15\n")
+        .replace(
+            "said: \"#scribe approve p-5\"",
+            &format!(
+                "said: \"scribe proposal settle p-5 --approve --author opus --session {INSTRUCTED_SESSION} --instruction '{INSTRUCTED_WORDS}'\""
+            ),
+        )
+        .replace(
+            "approved_by: null\ninstruction: null",
+            &format!("approved_by: {{kind: agent, name: opus}}\ninstruction: {instruction}"),
+        );
+    std::fs::write(&path, entry).unwrap();
+    let path = root.join("proposals.json");
+    let mut doc: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let inst = json!({"session":INSTRUCTED_SESSION, "message":"user-instruct",
+        "at":"2026-11-15T00:04:30Z", "quote":INSTRUCTED_WORDS});
+    let settled_by = json!({"session":INSTRUCTED_SESSION, "message":"user-instruct",
+        "at":"2026-11-15T00:04:30Z", "prompt_sha256":"0".repeat(64), "line":1,
+        "cwd":"/home/daniel/workspace/scribe"});
+    for p in doc["proposals"].as_array_mut().unwrap() {
+        p["settled_author"] = json!({"kind":"agent", "name":"opus"});
+        p["settled_by"] = settled_by.clone();
+        p["instruction"] = inst.clone();
+        if p["id"] == "p-6" {
+            p["instruction"]["message"] = json!("user-reject");
+            p["instruction"]["at"] = json!("2026-11-15T00:06:30Z");
+            p["instruction"]["quote"] = json!(REJECTED_WORDS);
+            p["settled_by"]["message"] = json!("user-reject");
+            p["settled_by"]["at"] = json!("2026-11-15T00:06:30Z");
+            p["state"] = json!("rejected");
+            p["settled_at"] = json!("2026-11-15T00:07:00Z");
+            p["closed_reason"] = json!("instructed");
+        }
+    }
+    std::fs::write(&path, doc.to_string()).unwrap();
+    fx
+}
+
+#[test]
+fn instructed_approvals_match_goldens() {
+    let fx = instructed_fixture();
+    let commands: &[(&str, &[&str])] = &[
+        ("entry-show-instructed", &["entry", "show", "preferences-2"]),
+        ("proposal-list-instructed", &["proposal", "list"]),
+        (
+            "record-search-instructed",
+            &["record", "search", "append-only log history"],
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (name, args) in commands {
+        for (suffix, mode) in MODES {
+            let out = fx.ok(&[*args, *mode].concat());
+            failures.extend(check(
+                &format!("output/{name}.{suffix}"),
+                &text(&out.stdout),
+            ));
+        }
+    }
+    report(&failures);
+}
+
+#[test]
+fn only_an_instructed_approval_carries_the_approved_by_line() {
+    let line = format!(
+        "approved by opus on your instruction \"{INSTRUCTED_WORDS}\" ({INSTRUCTED_SESSION}, 2026-11-15)"
+    );
+    for (fx, instructed) in [(stated_fixture(), false), (instructed_fixture(), true)] {
+        for mode in ["--format", "plain"] {
+            let args: &[&str] = if mode == "plain" {
+                &["entry", "show", "preferences-2"]
+            } else {
+                &["entry", "show", "preferences-2", "--format", "table"]
+            };
+            let out = text(&fx.ok(args).stdout);
+            assert_eq!(out.contains(&line), instructed, "{out}");
+            assert_eq!(out.contains("approved by"), instructed, "{out}");
+        }
+        let search = text(
+            &fx.ok(&["record", "search", "append-only log history"])
+                .stdout,
+        );
+        assert_eq!(search.contains(&line), instructed, "{search}");
+        let proposals = text(&fx.ok(&["proposal", "list", "--state", "approved"]).stdout);
+        assert_eq!(proposals.contains(&line), instructed, "{proposals}");
+        let rejected = text(&fx.ok(&["proposal", "list", "--state", "rejected"]).stdout);
+        assert_eq!(
+            rejected.contains(&format!(
+                "rejected by opus on your instruction \"{REJECTED_WORDS}\""
+            )),
+            instructed,
+            "{rejected}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn ask_evidence_names_an_instructed_approval_outside_the_quotable_text() {
+    let fx = instructed_fixture();
+    let answer = json!({"status":"no_record", "answer":"", "claims":[], "conflicts":[]});
+    let reply = fx.elsewhere("claude-reply.json");
+    std::fs::write(
+        &reply,
+        json!({"type":"result", "is_error":false, "result":"", "structured_output":answer})
+            .to_string(),
+    )
+    .unwrap();
+    let prompt = fx.elsewhere("prompt.txt");
+    let script = format!(
+        "#!/bin/sh\ncat > '{}'\ncat '{}'\n",
+        prompt.display(),
+        reply.display()
+    );
+    let path = fx.fake_program("claude", &script);
+    let out = run_with_input(
+        &fx,
+        &[
+            "question",
+            "ask",
+            "how should session records keep their history?",
+        ],
+        b"",
+        Some(&path),
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let prompt = std::fs::read_to_string(&prompt).unwrap();
+    let item = prompt
+        .split("<evidence ")
+        .find(|item| item.contains("cite=\"preferences-2\""))
+        .unwrap_or_else(|| panic!("{prompt}"));
+    let line = format!(
+        "<approval>approved by opus on Daniel's instruction \"{INSTRUCTED_WORDS}\" ({INSTRUCTED_SESSION}, 2026-11-15)</approval>\n</evidence>"
+    );
+    assert!(item.contains(&line), "{item}");
+    // It is still his entry, weighted as his words.
+    assert!(
+        item.contains("words=\"scribe's statement of Daniel's turn\""),
+        "{item}"
+    );
+}
+
 /// Daniel's turn the captured-idea goldens quote, verbatim.
 const CAPTURED_QUOTE: &str = "what if we cached the routing table per host? not now though, let's park it until the drains are quiet.";
 /// Scribe's statement of it, the captured entry's content.

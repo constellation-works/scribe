@@ -230,6 +230,12 @@ fn hit(score: f64, doc: &Doc, corpus: Corpus<'_>, wanted: &BTreeSet<String>) -> 
             } else {
                 snippet(text, wanted)
             };
+            // An approval an agent made on his instruction says so after
+            // the snippet, in every output mode (2_design.md §12.3).
+            let snippet = match ask::approved_line(e, ask::INSTRUCTION_YOURS) {
+                Some(line) => format!("{snippet} | {line}"),
+                None => snippet,
+            };
             Some(Hit {
                 kind: RecordKind::Entry,
                 cite,
