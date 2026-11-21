@@ -492,7 +492,8 @@ The body is `content`, verbatim.
   ("this", "it"); then `role` says whose words it is, and `ask` must never
   present an assistant's words as Daniel's.
 - `status` is `active`, `superseded`, `retired` or `forgotten`; `forgotten`
-  keeps the id and `cite` but blanks `said` and `content`
+  keeps the id and `cite` but clears `said`, `content`, `evidence`, `as_of`,
+  `quote`, `window` and `retirement_reason`
   ([4_decisions.md](./4_decisions.md#superseded-and-stale-entries-are-hidden-not-removed)).
 - `review_after` comes from the tag's `stale_after_days` (180 days for
   `preferences`; none for a tag that sets no `stale_after_days`).
@@ -1368,7 +1369,8 @@ a pass; an explicit catalog is still required for past sessions.
   consistency scan. Rejection writes no entry and keeps the statement in the
   suppression set. Agents cannot settle or edit candidate proposals (proposed,
   not built: on his checked instruction, [§12](#12-settling-and-deleting-on-daniels-instruction-proposed)). Forgetting
-  the resulting entry blanks the candidate's copy too and recovery preserves
+  the resulting entry blanks the candidate's copy too (its `quote`, `evidence`
+  and `admitted.matched`) and recovery preserves
   the forgotten entry.
 
 The in-session skill offers ready-to-type preference lines only
@@ -3254,8 +3256,11 @@ runs these checks; any failure refuses the command and changes nothing.
    message it answers contains a negation or exception marker anywhere. It
    shares the duplicate check’s markers (including not, no, never, don’t,
    dont, can’t, cannot, won’t, shouldn’t, except, unless and without), and
-   also refuses but, stop, cancel and other than. This conservative rule
-   refuses “Don’t forget to approve p-4” even when approval was intended;
+   also refuses but, stop, cancel, other than, avoid and only ("approve only
+   p-4" is refused too). The scan covers the whole turn and the whole answered
+   message, not just the line that names the target; this over-refusal is
+   kept as designed, since it never accepts a write it should refuse. This
+   conservative rule refuses “Don’t forget to approve p-4” even when approval was intended;
    ask for a plainer instruction. Otherwise `instruction_mismatch`.
 
 The store, under its lock, checks only that an instructed write carries an

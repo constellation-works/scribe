@@ -486,6 +486,84 @@ fn forget_blanks_the_entry_and_every_proposal_text_about_it() {
 }
 
 #[test]
+fn forget_clears_every_free_text_field_of_the_entry_and_its_candidates() {
+    use crate::entry::{Speaker, Window, WindowTurn};
+    use crate::proposal::{Admitted, EntryCandidate};
+    use crate::record::{Author, Label, Project};
+    let mut entries = store();
+    {
+        let e = &mut entries[0];
+        e.evidence = Some(String::from("task:ORB-1"));
+        e.as_of = Some(date!(2026 - 11 - 01));
+        e.quote = Some(String::from("quoted correction"));
+        e.retirement_reason = Some(String::from("because of the quoted words"));
+        e.window = Some(Window {
+            turns: vec![WindowTurn {
+                role: Speaker::User,
+                message: None,
+                at: T0,
+                text: String::from("#scribe standard: the forgotten words"),
+                cut: false,
+            }],
+            truncated: false,
+            omitted: 0,
+        });
+    }
+    let mut about = proposal(
+        "p-1",
+        ProposalKind::Candidate,
+        "preferences-1",
+        None,
+        ProposalState::Approved,
+    );
+    about.candidate = Some(EntryCandidate {
+        tag: "preferences".parse().unwrap(),
+        role: Speaker::User,
+        quote: String::from("the forgotten words"),
+        evidence: Some(String::from("task:ORB-1")),
+        cite: cite(),
+        project: Project::sanitized("scribe"),
+        provider: Label::sanitized("claude-code", "claude-code"),
+        host: Label::sanitized("host", "host"),
+        admitted: Some(Admitted {
+            trigger: String::from("from now on"),
+            matched: String::from("from now on, the forgotten words"),
+            criteria: None,
+        }),
+    });
+    about.author = Author::session_pass();
+    let mut proposals = vec![about];
+    let done = consistency::settle(
+        &Settle::Forget(id("preferences-1")),
+        &mut proposals,
+        &mut entries,
+        &cite(),
+        NOW,
+    );
+    assert_eq!(done, Settled::Forgotten(id("preferences-1")));
+    let e = &entries[0];
+    assert_eq!(
+        (
+            &e.evidence,
+            &e.as_of,
+            &e.quote,
+            &e.retirement_reason,
+            &e.window
+        ),
+        (&None, &None, &None, &None, &None),
+        "the entry keeps no forgotten words, evidence date, quote, window or reason"
+    );
+    let candidate = proposals[0].candidate.as_ref().unwrap();
+    assert_eq!((candidate.quote.as_str(), &candidate.evidence), ("", &None));
+    let admitted = candidate.admitted.as_ref().unwrap();
+    assert_eq!(admitted.matched, "", "the matched words are cleared");
+    assert_eq!(
+        admitted.trigger, "from now on",
+        "the configured trigger stays"
+    );
+}
+
+#[test]
 fn reapply_finishes_an_approval_whose_entry_is_still_active() {
     let mut entries = store();
     let proposals = vec![
