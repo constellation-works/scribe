@@ -7,8 +7,19 @@
 //! payload origin field; see `payload::agent_originated`) is skipped at
 //! once: it records nothing, settles nothing and does not run `/scribe`.
 //!
-//! A prompt with no `#scribe` line returns at once: nothing is read, written,
-//! audited or printed. Otherwise the transcript provenance is checked, the
+//! Every such turn is also matched, without a model, against the `issue`
+//! tag's triggers (2_design.md §11.4, `scribe_core::issue_trigger::fire`),
+//! in Daniel's own words only (pasted, fenced, indented, quoted and
+//! `#scribe` lines left out), whether or not the session is on. On a match
+//! that passes the transcript check the agent gets one more
+//! `additionalContext` line (asking for a root cause: search issues first,
+//! record the answer with `issue add` or `issue occur`), Daniel sees
+//! nothing, and the fire is one audit line: the session, the trigger
+//! phrase and the prompt's sha256, never its words. A config that does not
+//! load gives no hint.
+//!
+//! A prompt with no `#scribe` line and no trigger fire returns at once:
+//! nothing is read, written, audited or printed. Otherwise the transcript provenance is checked, the
 //! config loaded, every line parsed, and the parsed ones recorded in one
 //! store call, which finds an entry already written for the same line instead
 //! of writing it again.
@@ -52,6 +63,7 @@ use crate::output::{HookOutcome, HookReply, Output};
 use scribe_core::capture::{self, ForgetIssue, Guess, Parsed, Refusal, Refused, Settling, Turn};
 use scribe_core::models::ModelError;
 use scribe_core::transcript::{self, Message};
+use scribe_core::trigger::Fired;
 use scribe_core::{Captured, Config, ContentFrom, Entry, Label, Models, SessionId};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -172,12 +184,26 @@ fn capture_prompt<M: Models>(
         }
         return Ok(super::scribe_command::run(&switch, payload, &session, ctx));
     }
+    // Stop recovery replays a prompt already answered: no second hint.
+    let fired = if recovery.is_some() {
+        None
+    } else {
+        ctx.config().ok().and_then(|config| {
+            scribe_core::issue_trigger::fire(&config.tags.issue_capture(), &payload.prompt)
+        })
+    };
     let lines: Vec<_> = capture::lines(&payload.prompt)
         .into_iter()
         .filter(|(line, _)| !recovery.as_ref().is_some_and(|r| r.recorded.contains(line)))
         .collect();
     if lines.is_empty() {
-        return Ok(reply(Vec::new(), Vec::new()));
+        let output = reply(Vec::new(), Vec::new());
+        return Ok(match fired {
+            Some(fired) if payload::check(ctx, &payload.transcript_path, &session).is_ok() => {
+                with_hint(output, &fired, &session, &payload.prompt)
+            }
+            _ => output,
+        });
     }
     let failed_all = |message: &str, code: &'static str| {
         let echoes = lines
@@ -455,7 +481,39 @@ fn capture_prompt<M: Models>(
             },
         }
     }
-    Ok(reply(echoes, outcomes))
+    // The transcript check passed above; a failed one returned before.
+    let output = reply(echoes, outcomes);
+    Ok(match fired {
+        Some(fired) => with_hint(output, &fired, &session, &payload.prompt),
+        None => output,
+    })
+}
+
+/// `output` with the issue trigger's hint for the agent after its echoes,
+/// and the fire as one more audit outcome. Daniel's message is unchanged.
+fn with_hint(output: Output, fired: &Fired, session: &SessionId, prompt: &str) -> Output {
+    let Output::Hook(mut reply) = output else {
+        return output;
+    };
+    let session = session.to_string();
+    let hint = scribe_core::issue_trigger::hint(fired, &session);
+    reply.context = Some(match reply.context.take() {
+        Some(context) => format!("{context}\n{hint}"),
+        None => hint,
+    });
+    reply.outcomes.push(HookOutcome {
+        target: Some(format!("session:{session}")),
+        error_code: None,
+        // Ids, the configured phrase and the prompt's hash: never its words.
+        issue: Some(scribe_core::IssueAudit {
+            verb: String::from(scribe_core::issue_trigger::FIRE_VERB),
+            session: Some(session.clone()),
+            trigger: Some(fired.trigger.clone()),
+            request_sha256: vec![capture::prompt_sha256(prompt)],
+            ..scribe_core::IssueAudit::default()
+        }),
+    });
+    Output::Hook(reply)
 }
 
 /// Whose message a guessed entry recorded, for its echo.

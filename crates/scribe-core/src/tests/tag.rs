@@ -100,7 +100,7 @@ fn a_summary_counts_entries_per_tag_and_keeps_unconfigured_ones() {
 }
 
 #[test]
-fn preferences_ships_propose_idea_ships_write_and_standard_ships_none() {
+fn preferences_ships_propose_idea_ships_write_issue_ships_agent_and_standard_ships_none() {
     use crate::tag::{CaptureRoute, CaptureRules};
     for (tag, route) in [
         ("preferences", CaptureRoute::Propose),
@@ -115,11 +115,23 @@ fn preferences_ships_propose_idea_ships_write_and_standard_ships_none() {
         );
         assert!(rules.criteria.is_some() && rules.not.is_some(), "{tag}");
     }
-    for tag in ["standard", "remind", "finding", "issue"] {
+    for tag in ["standard", "remind", "finding"] {
         assert_eq!(CaptureRules::shipped(tag), CaptureRules::default(), "{tag}");
     }
+    // `issue` ships the prompt hook's rules (2_design.md §11.4), which the
+    // pass never takes, and no tag in the table.
+    let issue = CaptureRules::shipped("issue");
+    assert_eq!(issue.route(), Some(CaptureRoute::Agent));
+    assert!(issue.pass_triggers().is_none());
+    assert!(
+        issue
+            .triggers
+            .as_ref()
+            .is_some_and(|t| t.value.contains(&String::from("root cause")))
+    );
     let table = TagTable::defaults();
     assert!(table.resolve("issue").is_none(), "no issue tag ships");
+    assert_eq!(table.issue_capture(), issue);
 }
 
 #[test]

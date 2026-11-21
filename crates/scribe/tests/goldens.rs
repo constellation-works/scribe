@@ -65,6 +65,7 @@ const HELP: &[(&str, &[&str])] = &[
     ("issue-search", &["issue", "search", "--help"]),
     ("issue-show", &["issue", "show", "--help"]),
     ("issue-list", &["issue", "list", "--help"]),
+    ("issue-stats", &["issue", "stats", "--help"]),
     ("question", &["question", "--help"]),
     ("question-ask", &["question", "ask", "--help"]),
     ("hook", &["hook", "--help"]),
@@ -1099,5 +1100,73 @@ fn memory_matches_goldens() {
         "memory-page",
         &["memory", "show", "--page", "--project", "scribe"],
     );
+    report(&failures);
+}
+
+#[test]
+fn issue_stats_matches_goldens() {
+    use scribe_core::{AuditEvent, AuditStatus, IssueAudit, Store};
+    let fx = Fixture::new();
+    let store = Store::open(fx.root());
+    let at = |h| time::macros::datetime!(2026-11-21 09:00 UTC) + time::Duration::hours(h);
+    let session = "7e2d4c1a-9b3f-4e8d-a6c5-1f0e2d3c4b5a";
+    let line = |h, command: &str, issue: IssueAudit| AuditEvent {
+        at: at(h),
+        command: command.to_owned(),
+        status: AuditStatus::Success,
+        target: None,
+        error_code: None,
+        author: None,
+        instruction_session: None,
+        instruction_message: None,
+        issue: Some(issue),
+        duration_ms: 3,
+    };
+    let sha = |c: char| c.to_string().repeat(64);
+    let fire = |c| IssueAudit {
+        verb: String::from("fire"),
+        session: Some(session.to_owned()),
+        trigger: Some(String::from("can you investigate")),
+        request_sha256: vec![sha(c)],
+        ..IssueAudit::default()
+    };
+    let write = |verb: &str, id: &str, n, c| IssueAudit {
+        verb: verb.to_owned(),
+        id: Some(id.to_owned()),
+        occurrence: Some(n),
+        session: Some(session.to_owned()),
+        request_message: Some(format!("u-{c}")),
+        request_sha256: vec![sha(c)],
+        ..IssueAudit::default()
+    };
+    let withdraw = |verb: &str, id: &str, n| IssueAudit {
+        verb: verb.to_owned(),
+        id: Some(id.to_owned()),
+        occurrence: Some(n),
+        ..IssueAudit::default()
+    };
+    for event in [
+        line(0, "hook user-prompt-submit", fire('a')),
+        line(1, "issue add", write("add", "issue-1", 1, 'a')),
+        line(2, "hook user-prompt-submit", fire('b')),
+        line(3, "issue occur", write("occur", "issue-1", 2, 'c')),
+        line(
+            4,
+            "hook user-prompt-submit",
+            withdraw("forget", "issue-1", 2),
+        ),
+        line(5, "issue add", write("add", "issue-2", 1, 'd')),
+        line(6, "issue move", withdraw("move", "issue-2", 1)),
+    ] {
+        store.record_audit(&event).unwrap();
+    }
+    let mut failures = Vec::new();
+    for (suffix, mode) in MODES {
+        let out = fx.ok(&[&["issue", "stats"][..], *mode].concat());
+        failures.extend(check(
+            &format!("output/issue-stats.{suffix}"),
+            &text(&out.stdout),
+        ));
+    }
     report(&failures);
 }

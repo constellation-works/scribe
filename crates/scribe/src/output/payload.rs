@@ -1868,4 +1868,81 @@ pub(crate) enum Output {
     PopupRows(PopupRows),
     /// The popup's preview of one record (the hidden `tmux preview`).
     PopupPreview(Record),
+    /// `issue stats`: the counts behind the issue trigger's recall and
+    /// precision.
+    IssueStats(IssueStatsPayload),
+}
+
+/// `issue stats` (2_design.md §11.4): counts from the audit log, and the
+/// two ratios, each named as the proxy it is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct IssueStatsPayload(pub(crate) scribe_core::IssueStats);
+
+/// What each ratio of `issue stats` divides, as it is shown.
+pub(crate) const PRECISION_MEANS: &str = "writes neither forgotten nor moved / writes";
+/// See [`PRECISION_MEANS`].
+pub(crate) const TRIGGER_YIELD_MEANS: &str = "fires that led to a write / fires";
+
+/// One ratio: its parts, its value to three places and what it divides.
+#[derive(Serialize)]
+struct RatioJson {
+    numerator: u64,
+    denominator: u64,
+    value: f64,
+    means: &'static str,
+}
+
+impl RatioJson {
+    fn new(parts: Option<(u64, u64)>, means: &'static str) -> Option<Self> {
+        parts.map(|(numerator, denominator)| Self {
+            numerator,
+            denominator,
+            value: ratio(numerator, denominator),
+            means,
+        })
+    }
+}
+
+/// `numerator / denominator` to three decimal places (counts past
+/// `u32::MAX` saturate, far beyond any audit log).
+pub(crate) fn ratio(numerator: u64, denominator: u64) -> f64 {
+    let wide = |n: u64| f64::from(u32::try_from(n).unwrap_or(u32::MAX));
+    if denominator == 0 {
+        return 0.0;
+    }
+    ((wide(numerator) / wide(denominator)) * 1000.0).round() / 1000.0
+}
+
+impl Serialize for IssueStatsPayload {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        #[derive(Serialize)]
+        struct Json {
+            since: Option<String>,
+            fires: u64,
+            fires_with_write: u64,
+            writes: u64,
+            writes_without_fire: u64,
+            writes_forgotten: u64,
+            writes_moved: u64,
+            writes_withdrawn: u64,
+            precision_proxy: Option<RatioJson>,
+            trigger_yield_proxy: Option<RatioJson>,
+            skipped_lines: usize,
+        }
+        let s = &self.0;
+        Json {
+            since: s.since.map(scribe_core::DateRange::day),
+            fires: s.fires,
+            fires_with_write: s.fires_with_write,
+            writes: s.writes,
+            writes_without_fire: s.writes_without_fire,
+            writes_forgotten: s.writes_forgotten,
+            writes_moved: s.writes_moved,
+            writes_withdrawn: s.writes_withdrawn,
+            precision_proxy: RatioJson::new(s.precision(), PRECISION_MEANS),
+            trigger_yield_proxy: RatioJson::new(s.trigger_yield(), TRIGGER_YIELD_MEANS),
+            skipped_lines: s.skipped_lines,
+        }
+        .serialize(serializer)
+    }
 }

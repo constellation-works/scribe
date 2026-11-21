@@ -29,11 +29,16 @@ session activate <id> --author <name> [--pin|--unpin]` shows one again or
 exempts it from the scan.
 
 Issues (`scribe issue add|occur|update|move|search|show|list`) are the
-memory of incidents that recur across projects and what fixed them. The
-agent Daniel asked to investigate searches them first and, when it
-answers, writes the result with his request quoted word for word; it needs
-no approval, and Daniel removes a wrong one with `#scribe forget
-issue-<n>` or `#scribe forget issue-<n>#<m>`.
+memory of incidents that recur across projects and what fixed them. When
+one of Daniel's typed turns fires an `issue` trigger ("can you
+investigate", "root cause", …; `[tags.issue.capture]`), the prompt hook
+tells the agent the turn asks for a root cause. The agent searches issues
+first and, when it answers, writes the result with his request quoted word
+for word; it needs no approval, and Daniel removes a wrong one with
+`#scribe forget issue-<n>` or `#scribe forget issue-<n>#<m>`. Every fire
+and write is counted in the audit log; `scribe issue stats [--since
+<date>]` reports fires, writes and withdrawals with proxy ratios for
+precision and trigger yield.
 
 Action tags hold work items for consumers outside scribe instead of
 Daniel's memory: `standard`, `remind` and `idea` ship, and config marks

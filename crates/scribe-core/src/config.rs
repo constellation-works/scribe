@@ -652,10 +652,11 @@ impl RawTag {
         let description = self
             .description
             .or_else(|| shipped.as_ref().and_then(|def| def.description.clone()));
+        // `issue` is no shipped tag but ships capture rules (§11.4), which a
+        // `[tags.issue.capture]` table overrides field by field.
         let shipped_capture = shipped
             .as_ref()
-            .map(|def| def.capture.clone())
-            .unwrap_or_default();
+            .map_or_else(|| CaptureRules::shipped(&name), |def| def.capture.clone());
         let capture = match self.capture {
             None => shipped_capture,
             Some(raw) => raw.resolve(&format!("{key}.capture"), text, shipped_capture)?,

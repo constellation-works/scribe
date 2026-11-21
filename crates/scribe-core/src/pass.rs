@@ -54,6 +54,7 @@ use time::OffsetDateTime;
 mod candidates;
 #[cfg(test)]
 pub(crate) use candidates::covers_statement;
+pub(crate) use candidates::own_lines;
 pub use candidates::{
     MAX_CANDIDATES, MAX_IDEAS, MAX_OPEN_CANDIDATES, PassClaim, candidate_drafts,
     candidate_exclusions, capture_request, write_exclusions,
