@@ -405,6 +405,7 @@ fn a_topic_hashtag_or_a_tag_named_global_is_not_the_marker() {
             stale_after_days: None,
             action: None,
             require_evidence: false,
+            capture: crate::tag::CaptureRules::default(),
         },
         TagDef {
             name: "global".parse().unwrap(),
@@ -413,6 +414,7 @@ fn a_topic_hashtag_or_a_tag_named_global_is_not_the_marker() {
             stale_after_days: None,
             action: None,
             require_evidence: false,
+            capture: crate::tag::CaptureRules::default(),
         },
     ])
     .unwrap();

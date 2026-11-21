@@ -290,7 +290,7 @@ pub(crate) fn preview(out: &mut dyn Write, record: &Record) -> io::Result<()> {
         Record::Session(s) => session_preview(out, s),
         Record::Entry(e) => entry_preview(out, e),
         Record::Proposal(p) => proposal_preview(out, p),
-        Record::Transcript(_) | Record::Tag(_) => Ok(()),
+        Record::Transcript(_) | Record::Tag(_) | Record::TagRules(_) => Ok(()),
     }
 }
 

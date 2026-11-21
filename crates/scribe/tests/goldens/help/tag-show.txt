@@ -1,0 +1,27 @@
+Show one tag's settings and capture rules, with each field's origin
+
+Usage: scribe tag show [OPTIONS] <TAG>
+
+Arguments:
+  <TAG>  The tag's name or one of its aliases
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Global options:
+      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json                 Shorthand for --format json
+
+Each capture field shows its origin: shipped (scribe's default), config
+(config.toml, with its line) or none. Set fields under
+[tags.<name>.capture] in config.toml: from, route, triggers, criteria and
+not; each overrides its shipped default alone, and triggers replaces the
+whole list. The session pass proposes a claim under a tag only from a turn
+of Daniel's where one of its triggers occurs.
+
+Examples:
+  scribe tag show preferences
+  scribe tag show pref --json | jq '.capture.triggers'

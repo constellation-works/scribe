@@ -31,6 +31,7 @@ fn proposal() -> Proposal {
         author: crate::record::Author::consistency(),
         updated_by: None,
         settled_author: None,
+        closed_reason: None,
         candidate: Some(crate::EntryCandidate {
             tag: "preferences".parse().unwrap(),
             role: crate::Speaker::User,
@@ -40,6 +41,11 @@ fn proposal() -> Proposal {
             project: crate::Project::sanitized("scribe"),
             provider: crate::Label::sanitized("claude-code", "claude-code"),
             host: crate::Label::sanitized("host", "host"),
+            admitted: Some(crate::Admitted {
+                trigger: String::from("I prefer"),
+                matched: String::new(),
+                criteria: Some(String::new()),
+            }),
         }),
     }
 }

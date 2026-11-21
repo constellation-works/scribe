@@ -69,7 +69,8 @@ window_chars). Each window rewrites the header and open segment, appends
 new segments and checkpoints the record. Sealed segments stay unchanged;
 [catalog] segment_windows (default 3) bounds how long a segment stays open.
 --json reports windows, segments, seals and how many due sessions remain.
-Also proposes up to 3 unmarked preferences per session per run,
+Also proposes up to 3 claims per session per run, only from Daniel's turns
+that fire a trigger of a tag's capture rules (see scribe tag show <tag>),
 until 20 candidate proposals are open. Review with scribe proposal list;
 only a typed #scribe approve <id> writes an entry; #scribe reject <id> drops it.
 A failed pass stays due with automatic retry delays of 5, 10, 20, 40,
@@ -488,23 +489,16 @@ impl Job<'_> {
                 terms.into_iter().take(MAX_LISTED).collect(),
                 final_pass && last,
             );
-            request.candidate_limit = self.candidate_slots;
-            request.candidate_tags = self
-                .config
-                .tags
-                .tags()
-                .iter()
-                .filter(|tag| tag.require_evidence || tag.action.is_some_and(|a| !a.require_quote))
-                .map(|tag| tag.name.to_string())
-                .collect();
-            request.candidate_memory_tags = self
-                .config
-                .tags
-                .tags()
-                .iter()
-                .filter(|tag| tag.action.is_none() && !tag.require_evidence)
-                .map(|tag| tag.name.to_string())
-                .collect();
+            // The trigger gate (2_design.md §11.2): no Daniel turn in the
+            // window fires a capture tag's trigger, no claim is requested.
+            let (turns, rules) = pass::capture_request(&self.config.tags, &request.messages);
+            request.candidate_limit = if turns.is_empty() {
+                0
+            } else {
+                self.candidate_slots
+            };
+            request.candidate_turns = turns;
+            request.candidate_rules = rules;
             let entries = self
                 .ctx
                 .store()
@@ -593,7 +587,8 @@ impl Job<'_> {
                 .iter()
                 .filter(|s| s.state == scribe_core::SegmentState::Sealed)
                 .count();
-            let candidates = pass::candidate_drafts(&candidate_answers, &messages, &record);
+            let candidates =
+                pass::candidate_drafts(&candidate_answers, &messages, &record, &self.config.tags);
             let mode = if !last {
                 scribe_core::PassWrite::Checkpoint
             } else if self.catalog.as_ref().is_some_and(|c| c.ended) {

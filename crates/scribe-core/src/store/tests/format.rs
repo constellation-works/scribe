@@ -308,6 +308,10 @@ fn format_six_proposals_keep_agent_metadata_and_format_seven_controls_require_id
         .as_object_mut()
         .unwrap()
         .remove("candidate");
+    value["proposals"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("closed_reason");
     let back = decode_proposals(path, &serde_json::to_vec(&value).unwrap()).unwrap();
     assert_eq!(back, proposals);
     let missing = br#"{"format":7,"sessions":{}}"#;
@@ -337,6 +341,51 @@ fn a_format_nine_candidate_reads_as_daniels_words_without_evidence() {
         r#""tag":"preferences","role":"user""#,
     );
     assert!(decode_proposals(Path::new("proposals.json"), stray.as_bytes()).is_err());
+}
+
+#[test]
+fn a_format_ten_store_upgrades_with_null_admission_and_closed_reason_only() {
+    // Format 10 -> 11: a candidate gains `admitted: null` and each proposal
+    // `closed_reason: null`; nothing else changes, and a format-10 file
+    // already carrying a format-11 key is refused by the frozen shape.
+    let cite = format!(
+        r#"{{"session":"s-1","message":"m-1","at":"2026-11-01T10:00:00Z","prompt_sha256":"{}","line":1,"cwd":"/work"}}"#,
+        "0".repeat(64)
+    );
+    let candidate = format!(
+        r#"{{"id":"p-1","kind":"candidate","older":"preferences-1","candidate":{{"tag":"preferences","role":"user","quote":"I prefer short updates.","evidence":null,"cite":{cite},"project":"scribe","provider":"claude-code","host":"host"}},"newer":null,"reason":"Unmarked preferences statement","quotes":[],"state":"open","opened_at":"2026-11-01T10:00:00Z","settled_at":null,"settled_by":null,"author":{{"kind":"scribe","name":"session-pass"}},"updated_by":null,"settled_author":null}}"#
+    );
+    let stale = r#"{"id":"p-2","kind":"stale","older":"preferences-2","candidate":null,"newer":null,"reason":"review","quotes":[],"state":"rejected","opened_at":"2026-11-01T10:00:00Z","settled_at":"2026-11-02T10:00:00Z","settled_by":null,"author":{"kind":"scribe","name":"consistency"},"updated_by":null,"settled_author":{"kind":"daniel","name":"daniel"}}"#;
+    let old = format!(r#"{{"format":10,"proposals":[{candidate},{stale}]}}"#);
+    let path = Path::new("proposals.json");
+    let proposals = decode_proposals(path, old.as_bytes()).unwrap();
+    assert_eq!(proposals.len(), 2);
+    assert_eq!(proposals[0].candidate.as_ref().unwrap().admitted, None);
+    assert!(proposals.iter().all(|p| p.closed_reason.is_none()));
+
+    // Re-encoded at format 11, the old keys and values are untouched: the
+    // document differs only by the two new nulls and the format number.
+    let encoded = crate::store::format::encode_proposals(path, &proposals).unwrap();
+    let mut value: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+    assert_eq!(value["format"], 11);
+    for p in value["proposals"].as_array_mut().unwrap() {
+        let p = p.as_object_mut().unwrap();
+        assert_eq!(p.remove("closed_reason"), Some(serde_json::Value::Null));
+        if let Some(c) = p.get_mut("candidate").and_then(|c| c.as_object_mut()) {
+            assert_eq!(c.remove("admitted"), Some(serde_json::Value::Null));
+        }
+    }
+    value["format"] = serde_json::json!(10);
+    let original: serde_json::Value = serde_json::from_str(&old).unwrap();
+    assert_eq!(value, original);
+
+    let stray = old.replace(
+        r#""settled_author":null}"#,
+        r#""settled_author":null,"closed_reason":null}"#,
+    );
+    assert!(decode_proposals(path, stray.as_bytes()).is_err());
+    let stray = old.replace(r#""host":"host"}"#, r#""host":"host","admitted":null}"#);
+    assert!(decode_proposals(path, stray.as_bytes()).is_err());
 }
 
 #[test]

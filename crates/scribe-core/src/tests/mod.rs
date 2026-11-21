@@ -18,6 +18,7 @@ mod search;
 mod session;
 mod tag;
 mod transcript;
+mod trigger;
 mod verbatim;
 
 use crate::entry::{Cite, ContentFrom, Entry, EntryStatus};

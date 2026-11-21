@@ -42,6 +42,7 @@ fn a_word_claimed_by_two_tags_is_refused() {
         stale_after_days: None,
         action: None,
         require_evidence: false,
+        capture: crate::tag::CaptureRules::default(),
     };
     let err =
         TagTable::new(vec![tag("decisions", &["dec"]), tag("declines", &["dec"])]).unwrap_err();
@@ -65,6 +66,7 @@ fn review_after_counts_the_stale_days_from_creation() {
         stale_after_days: NonZeroU32::new(180),
         action: None,
         require_evidence: false,
+        capture: crate::tag::CaptureRules::default(),
     };
     assert_eq!(
         def.review_after(date!(2026 - 11 - 02)),
@@ -100,4 +102,36 @@ fn a_summary_counts_entries_per_tag_and_keeps_unconfigured_ones() {
             ("standard", 0, true)
         ]
     );
+}
+
+#[test]
+fn preferences_and_idea_ship_propose_rules_and_standard_ships_none() {
+    use crate::tag::{CaptureRoute, CaptureRules};
+    for tag in ["preferences", "idea"] {
+        let rules = CaptureRules::shipped(tag);
+        assert_eq!(rules.route(), Some(CaptureRoute::Propose), "{tag}");
+        assert!(
+            rules.pass_triggers().is_some_and(|t| !t.is_empty()),
+            "{tag}"
+        );
+        assert!(rules.criteria.is_some() && rules.not.is_some(), "{tag}");
+    }
+    for tag in ["standard", "remind", "finding", "issue"] {
+        assert_eq!(CaptureRules::shipped(tag), CaptureRules::default(), "{tag}");
+    }
+    let table = TagTable::defaults();
+    assert!(table.resolve("issue").is_none(), "no issue tag ships");
+}
+
+#[test]
+fn only_the_propose_route_gives_the_pass_triggers() {
+    use crate::tag::{CaptureRoute, CaptureRules, Rule, RuleOrigin};
+    let mut rules = CaptureRules::shipped("preferences");
+    for route in [CaptureRoute::Write, CaptureRoute::Agent] {
+        rules.route = Some(Rule {
+            value: route,
+            origin: RuleOrigin::Config { line: None },
+        });
+        assert!(rules.pass_triggers().is_none(), "{route:?}");
+    }
 }

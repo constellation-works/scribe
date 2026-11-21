@@ -6,6 +6,7 @@ Commands:
   add     Create an agent-owned tag in the store
   update  Update a store tag; configured tags remain in config.toml
   list    List config and store tags, their aliases, sources and entry counts
+  show    Show one tag's settings and capture rules, with each field's origin
   help    Print this message or the help of the given subcommand(s)
 
 Options:
@@ -21,3 +22,4 @@ Global options:
 Examples:
   scribe tag list
   scribe tag list --json | jq -r '.tags[].name'
+  scribe tag show preferences

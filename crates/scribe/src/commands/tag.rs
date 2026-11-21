@@ -4,13 +4,26 @@ use super::{ListNotice, list_output};
 use crate::app::Context;
 use crate::audit_middleware::AuditMeta;
 use crate::error::CliError;
-use crate::output::{Output, Record, Records, TagPayload};
+use crate::output::{Output, Record, Records, TagPayload, TagShowPayload};
 use clap::{Args, Subcommand};
 
 pub(super) const TAG_EXAMPLES: &str = "\
 Examples:
   scribe tag list
-  scribe tag list --json | jq -r '.tags[].name'";
+  scribe tag list --json | jq -r '.tags[].name'
+  scribe tag show preferences";
+
+const SHOW_EXAMPLES: &str = "\
+Each capture field shows its origin: shipped (scribe's default), config
+(config.toml, with its line) or none. Set fields under
+[tags.<name>.capture] in config.toml: from, route, triggers, criteria and
+not; each overrides its shipped default alone, and triggers replaces the
+whole list. The session pass proposes a claim under a tag only from a turn
+of Daniel's where one of its triggers occurs.
+
+Examples:
+  scribe tag show preferences
+  scribe tag show pref --json | jq '.capture.triggers'";
 
 const LIST_EXAMPLES: &str = "\
 Examples:
@@ -31,6 +44,16 @@ pub(crate) enum TagCommand {
     /// List config and store tags, their aliases, sources and entry counts
     #[command(after_help = LIST_EXAMPLES)]
     List(ListArgs),
+    /// Show one tag's settings and capture rules, with each field's origin
+    #[command(after_help = SHOW_EXAMPLES)]
+    Show(ShowArgs),
+}
+
+/// Arguments to `tag show`.
+#[derive(Debug, Args)]
+pub(crate) struct ShowArgs {
+    /// The tag's name or one of its aliases
+    tag: String,
 }
 
 /// Arguments to `tag list` (none yet).
@@ -41,7 +64,7 @@ impl TagCommand {
     /// Audit every write; listings remain read-only.
     pub(super) fn audit(&self) -> Option<AuditMeta> {
         match self {
-            Self::List(_) => None,
+            Self::List(_) | Self::Show(_) => None,
             Self::Add(_) => Some(AuditMeta { command: "tag add" }),
             Self::Update(_) => Some(AuditMeta {
                 command: "tag update",
@@ -54,6 +77,7 @@ impl TagCommand {
 pub(super) fn run(command: TagCommand, ctx: &Context) -> Result<Output, CliError> {
     match command {
         TagCommand::List(ListArgs {}) => list(ctx),
+        TagCommand::Show(args) => show(&args, ctx),
         TagCommand::Add(args) => {
             let now = ctx.now();
             let tag = scribe_core::StoreTag {
@@ -97,6 +121,15 @@ pub(super) fn run(command: TagCommand, ctx: &Context) -> Result<Output, CliError
             Ok(Output::written(Record::Tag(Box::new(tag)), changed))
         }
     }
+}
+
+/// Read-only: no lock, no audit, no write.
+fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
+    let (def, source) = ctx.store().tag_definition(&args.tag)?;
+    let file = ctx.store().config_path().display().to_string();
+    Ok(Output::Show {
+        record: Record::TagRules(Box::new(TagShowPayload::new(&def, source, &file))),
+    })
 }
 
 fn list(ctx: &Context) -> Result<Output, CliError> {

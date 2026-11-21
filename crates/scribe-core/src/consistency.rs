@@ -121,6 +121,7 @@ impl Draft {
             author: Author::consistency(),
             updated_by: None,
             settled_author: None,
+            closed_reason: None,
             candidate: None,
         }
     }

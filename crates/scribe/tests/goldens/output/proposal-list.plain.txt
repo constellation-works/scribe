@@ -1,2 +1,2 @@
-p-1	supersedes	open	decisions-1	decisions-2	2026-11-02T20:00:00Z	The newer decision replaces merge commits with squash merges for agent PRs.
-p-2	stale	rejected	rituals-1	-	2026-10-12T06:00:00Z	Past its review date and no session since mentions it.
+p-1	supersedes	open	decisions-1	decisions-2	2026-11-02T20:00:00Z	The newer decision replaces merge commits with squash merges for agent PRs.	-
+p-2	stale	rejected	rituals-1	-	2026-10-12T06:00:00Z	Past its review date and no session since mentions it.	-

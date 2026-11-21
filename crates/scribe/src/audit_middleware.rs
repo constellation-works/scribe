@@ -271,6 +271,9 @@ fn target_of(output: &Output) -> Option<String> {
             record: Record::Tag(tag),
         } => Some(tag.name.to_string()),
         Output::Show {
+            record: Record::TagRules(tag),
+        } => Some(tag.tag.clone()),
+        Output::Show {
             record: Record::Proposal(proposal),
         } => Some(proposal.id.clone()),
         Output::Show {
@@ -300,6 +303,7 @@ fn record_target(record: &Record) -> Option<String> {
         Record::Entry(e) => e.id.clone(),
         Record::Session(s) => format!("session:{}", s.id),
         Record::Tag(t) => t.name.to_string(),
+        Record::TagRules(t) => t.tag.clone(),
         Record::Proposal(p) => p.id.clone(),
         Record::Transcript(t) => format!("session:{}", t.session),
     })

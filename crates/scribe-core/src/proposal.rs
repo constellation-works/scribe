@@ -166,6 +166,45 @@ pub struct Proposal {
     /// Who settled it, set exactly when `state` is not `open`.
     #[serde(deserialize_with = "nullable")]
     pub settled_author: Option<Author>,
+    /// Why scribe itself closed it, such as `tag_retired`; `null` when
+    /// Daniel or an agent settled it, or it is open (format 11).
+    #[serde(deserialize_with = "nullable")]
+    pub closed_reason: Option<ClosedReason>,
+}
+
+/// Why scribe closed a proposal without Daniel (2_design.md §11.3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClosedReason {
+    /// Its candidate's tag is no longer in the tag table.
+    TagRetired,
+}
+
+impl ClosedReason {
+    /// The canonical token.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::TagRetired => "tag_retired",
+        }
+    }
+}
+
+/// What admitted a pass claim under its tag (2_design.md §11.2): the
+/// trigger phrase as configured, the turn's words it matched (verbatim, at
+/// most 120 characters) and the tag's `criteria` in force. Written once; a
+/// later config change does not rewrite it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Admitted {
+    /// The trigger phrase, as configured.
+    pub trigger: String,
+    /// The words of the turn it matched.
+    pub matched: String,
+    /// The tag's `criteria` when the claim was admitted; `null` when the tag
+    /// had none.
+    #[serde(deserialize_with = "nullable")]
+    pub criteria: Option<String>,
 }
 
 /// Checked words offered by a session pass: Daniel's unmarked statement, or
@@ -196,6 +235,10 @@ pub struct EntryCandidate {
     pub provider: Label,
     /// Host that read the transcript.
     pub host: Label,
+    /// The trigger and criteria that admitted it (format 11); `null` for a
+    /// candidate opened before capture rules.
+    #[serde(deserialize_with = "nullable")]
+    pub admitted: Option<Admitted>,
 }
 
 impl EntryCandidate {

@@ -41,7 +41,7 @@ use time::OffsetDateTime;
 
 /// The newest store format: this build reads formats 1 to `FORMAT` of every
 /// document and would write `FORMAT`.
-pub(super) const FORMAT: u32 = 10;
+pub(super) const FORMAT: u32 = 11;
 
 /// Which document an upgrade step is applied to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,7 +78,40 @@ pub(super) const UPGRADES: &[Upgrade] = &[
     action_entries,
     entry_candidates,
     finding_entries,
+    capture_admission,
 ];
+
+/// Format 10 -> 11 adds `admitted` (what trigger and criteria admitted it)
+/// to each proposal candidate and `closed_reason` (why scribe closed it) to
+/// each proposal, both `null` for a proposal opened before capture rules.
+/// Other documents are unchanged.
+fn capture_admission(
+    document: Document,
+    mut value: serde_json::Value,
+) -> serde_json::Result<serde_json::Value> {
+    if document == Document::Proposals {
+        for proposal in value
+            .get_mut("proposals")
+            .and_then(serde_json::Value::as_array_mut)
+            .into_iter()
+            .flatten()
+            .filter_map(serde_json::Value::as_object_mut)
+        {
+            proposal
+                .entry("closed_reason")
+                .or_insert(serde_json::Value::Null);
+            if let Some(candidate) = proposal
+                .get_mut("candidate")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                candidate
+                    .entry("admitted")
+                    .or_insert(serde_json::Value::Null);
+            }
+        }
+    }
+    Ok(value)
+}
 
 /// Format 9 -> 10 adds `evidence` and `as_of` to each entry, both `null`
 /// for an entry written before findings, and `role` (`user`) and
@@ -618,6 +651,56 @@ struct ProposalV9 {
 struct CandidateV9 {
     tag: crate::TagName,
     quote: String,
+    cite: Cite,
+    project: crate::Project,
+    provider: crate::Label,
+    host: crate::Label,
+}
+
+/// Frozen format-10 proposal shape (no `closed_reason`, and a candidate
+/// without `admitted`), checked before the 10 -> 11 upgrade.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "frozen shape checked before upgrade")]
+struct ProposalsV10 {
+    format: u32,
+    proposals: Vec<ProposalV10>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "frozen shape checked before upgrade")]
+struct ProposalV10 {
+    id: ProposalId,
+    kind: ProposalKind,
+    older: EntryId,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    candidate: Option<CandidateV10>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    newer: Option<EntryId>,
+    reason: String,
+    quotes: Vec<Quote>,
+    state: ProposalState,
+    #[serde(with = "time::serde::rfc3339")]
+    opened_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339::option")]
+    settled_at: Option<OffsetDateTime>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    settled_by: Option<Cite>,
+    author: Author,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    updated_by: Option<Author>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    settled_author: Option<Author>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "frozen shape checked before upgrade")]
+struct CandidateV10 {
+    tag: crate::TagName,
+    role: crate::Speaker,
+    quote: String,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    evidence: Option<String>,
     cite: Cite,
     project: crate::Project,
     provider: crate::Label,
@@ -1205,6 +1288,9 @@ fn decode_json<T: DeserializeOwned>(path: &Path, bytes: &[u8], document: Documen
         Document::Proposals if from == 4 => {
             serde_json::from_slice::<ProposalsV4>(bytes).map_err(|e| Error::corrupt(path, e))?;
         }
+        Document::Proposals if from == 10 => {
+            serde_json::from_slice::<ProposalsV10>(bytes).map_err(|e| Error::corrupt(path, e))?;
+        }
         Document::Proposals if from == 9 => {
             serde_json::from_slice::<ProposalsV9>(bytes).map_err(|e| Error::corrupt(path, e))?;
         }
@@ -1253,6 +1339,13 @@ pub(super) fn encode_control(path: &Path, state: &ControlState) -> Result<Vec<u8
 pub(super) fn decode_proposals(path: &Path, bytes: &[u8]) -> Result<Vec<Proposal>> {
     let doc: ProposalsDocument = decode_json(path, bytes, Document::Proposals)?;
     for proposal in &doc.proposals {
+        // Only a closed proposal carries a reason scribe closed it.
+        if proposal.closed_reason.is_some() && proposal.state != ProposalState::Rejected {
+            return Err(shape(
+                path,
+                "closed_reason on a proposal that is not rejected",
+            ));
+        }
         match (&proposal.kind, &proposal.candidate) {
             (ProposalKind::Candidate, Some(candidate))
                 if proposal.newer.is_none()

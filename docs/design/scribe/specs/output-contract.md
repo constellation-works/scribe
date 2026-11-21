@@ -44,8 +44,9 @@ is `-`, lists are comma-joined, and timestamps are RFC 3339.
 | `session list` | `id status due project topics updated title` (`due` is `yes` or `no`) |
 | `session list --tree` | `id parent status due project topics updated title` (`parent` is the session the row nests under, its `spawned_from` link else its first `continues` link, or `-`) |
 | `session list --include-inactive` | `id status active due project topics updated title` (`active` is `yes` or `no`); without the flag the columns are unchanged, inactive sessions are left out, and when any matched the notice `<n> inactive session(s) also match and are hidden; --include-inactive lists them` goes to stderr. With `--tree` too, `active` follows `status` |
-| `proposal list` | `id kind state older newer opened_at reason` |
-| `tag list` | `name entries stale_after_days aliases description`, (S12) `source` (`config` or `store`), then `action` (`free` or `ask-first`, with `,quote` when the tag requires a quote), `retired` and `rejected` (counts of agent entries); the last three are `-` for a tag that is not an action tag |
+| `proposal list` | `id kind state older newer opened_at reason admitted` (format 11: `admitted` is `trigger "<phrase>" matched "<words>"; criteria: <criteria or ->` for a candidate a capture rule admitted, else `-`) |
+| `tag list` | `name entries stale_after_days aliases description`, (S12) `source` (`config` or `store`), then `action` (`free` or `ask-first`, with `,quote` when the tag requires a quote), `retired` and `rejected` (counts of agent entries); the last three are `-` for a tag that is not an action tag; (format 11) then `route` (the tag's capture route, `propose`, `write` or `agent`, or `-` when it has no capture rules) |
+| `tag show <tag>` (format 11) | one `<field>\t<value>\t<origin>` line each for `tag`, `source`, `aliases`, `description`, `stale_after_days`, `action` (`free`/`ask-first`, with `,quote`, or `-`), then the capture rules `from`, `route`, `triggers` (quoted, comma separated), `criteria` and `not`; `origin` is `shipped`, `config <file>:<line>` or `none` (an unset rule's value is `-`), and `-` for the first six. The table prints `<field> <value>  (<origin>)` |
 | `record search` (S11) | `cite kind score updated title snippet` (`score` to three decimals; the table cuts `title` to 40 characters and fits `snippet` to the width) |
 | `transcript list` *(S14)* | `session project daniel_turns bytes started ended first_prompt` |
 
@@ -106,7 +107,11 @@ instruction), `cite` (`{session, message, at, prompt_sha256, line, cwd}`;
 `message` may be `null`), `superseded_by` (an id or `null`),
 `review_after` (`YYYY-MM-DD` or `null`), `author` (`{kind, name}`, `kind`
 `daniel` or `agent`), `updated_by` (an author or `null`) and
-`retirement_reason` (text or `null`). (S12) An
+`retirement_reason` (text or `null`). (Format 11) `entry show` adds
+`admitted` (the `{trigger, matched, criteria}` of the approved candidate
+proposal that created the entry, or `null`); plain prints it as an
+`admitted\t<trigger>\t<matched>\t<criteria>` line, and the table detail
+as an `admitted` field. (S12) An
 agent entry has `said` `""`, `content_from` `{kind: "agent",
 role: null, message: null, at: null}` and `cite` `null`; a Daniel entry's
 `cite` is never `null`, so a reader of Daniel's entries sees no change.
@@ -172,7 +177,22 @@ as `<id> <type> (<title>)`, one per line, or `-`.
 text}]`), `state` (`open`, `approved`, `rejected`), `opened_at`,
 `settled_at` (or `null`), `settled_by` (a cite or `null`), `author` and
 `settled_author` (`{kind, name}` or `null`), and `updated_by` (the last
-agent who revised the reason, or `null`).
+agent who revised the reason, or `null`). Store format 11 adds
+`closed_reason` (`tag_retired` when scribe closed it without Daniel, else
+`null`) and, on a `candidate` object, `admitted` (`{trigger, matched,
+criteria}`: the capture-rule trigger as configured, the turn's words it
+matched, verbatim and at most 120 characters, and the tag's `criteria`
+then in force or `null`; `null` on a candidate opened before format 11).
+
+**Tag rules** (`tag show <tag> --json`, format 11): `tag`, `source`
+(`config` or `store`), `aliases`, `description` (or `null`),
+`stale_after_days` (or `null`), `action` (`{mode, require_quote}` or
+`null`) and `capture` (`{from, route, triggers, criteria, not, origin}`).
+Each capture field is `null` when the tag has no such rule; `origin` has
+one `{source, file, line}` per field, `source` `shipped`, `config` or
+`none`, and `file` and `line` set only for `config` (the config file and
+the 1-based line of the key). The lookup takes a name or alias and is
+read-only; an unknown word is refused `tag_not_found`.
 
 **Tag** (`tags[]`): `name`, `aliases`, `description` (or `null`),
 `stale_after_days` (integer or `null`), `configured` (false for a directory
@@ -183,7 +203,8 @@ no configured tag names), `entries` (count, any status). (S12) Adds
 retired, rejected}` (`mode` `free` or `ask-first`; `retired` counts the
 agent entries under it that were retired or forgotten, `rejected` those a
 consumer recorded as rejected). A shipped action tag reports `source`
-`config`. `configured` is true only
+`config`. Format 11 adds `route` (the capture route, or `null` when the
+tag has no capture rules). `configured` is true only
 for config tags, even though a store tag is also routable.
 
 **Hit** (S11, `hits[]`): `kind` (`entry` or `session`; *(S7)*
