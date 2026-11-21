@@ -2107,6 +2107,8 @@ show` prints `rebuilt_by` only in `--json`.
 - [ORB-24030] — host-controlled identity: Daniel's writes only through his
   typed prompt, agent author names as attribution only.
 - [ORB-25080] — `#scribe/global` records a typed line with `project: global`.
+- [ORB-26204] — an agent Daniel instructs settles claims and deletes
+  records through the CLI (proposed).
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
 
@@ -2849,3 +2851,95 @@ guards stay; ORB-25987's content becomes the statement and its point 4
   Daniel's, so a wrong statement he approved misstates him until retired;
   a preference phrased with no trigger is never proposed; an issue exists
   only when the agent follows the hook line.
+
+## An agent settles claims and deletes records on Daniel's checked instruction
+
+**Recorded:** 2026-11-21 · [ORB-26204] · **Overridable by Daniel** · proposed, not built
+**Refines:** "Daniel writes only through his typed prompt; agent names are attribution" (no CLI path records `{kind: daniel}`), "Entries Daniel wrote are settled only by Daniel", and §5.3's "Agents cannot settle or edit candidate proposals"
+**Paths:** `crates/scribe-core/src/store/agent.rs` (`change_agent_proposal`, the `daniel_only` refusal of a candidate), `crates/scribe/src/commands/entry.rs` (`verify_quote`, `RetireArgs`), `crates/scribe/src/commands/proposal.rs` — design §12
+
+### Context
+
+Daniel, chief's chat, 2026-11-21: "I will be interacting with the scribe
+primarily to manage scribe artifacts, e.g. instruct scribe to approve
+certain claims, delete certain artifacts, etc. the scribe will be using cli
+tool to perform these operations." Asked "File a scribe design task so the
+aide can approve claims and delete on your instruction?", he answered "Yes,
+file it". "The scribe" is the formation's aide, an agent session he types
+to.
+
+Today the CLI refuses every candidate (`daniel_only`), refuses retiring or
+rewriting his entries, and has no forget or delete verb; his only route is
+one typed `#scribe approve|reject|retire|forget <id>` line per record.
+Measured on the Mac store, 2026-11-21: 20 open proposals, all candidates.
+
+### Decision
+
+1. **His instruction is a checked span of a turn he typed.** The agent
+   passes `--session <id> --instruction '<his words>'`; the CLI reads that
+   transcript on this host with §4.1's provenance checks and requires the
+   words to be a verbatim span of a plainly typed user turn, one of the
+   last three and at most 30 minutes old, naming the target id (in his
+   turn or in the reply he answered) and the act (model-free word lists).
+2. **An approved claim from his turn is his entry; the agent is recorded
+   as its settler.** `author: {kind: daniel}` as a typed approval writes
+   it, with `approved_by: {kind: agent, name}` on the entry and
+   `settled_author`, `settled_by` and `instruction` on the proposal; `ask`,
+   `record search` and `entry show` say an agent approved it on his
+   instruction. Assistant-turn claims still become agent entries.
+3. **"Delete" never removes a file.** A claim is rejected
+   (`closed_reason: instructed`), an entry retired, or forgotten only when
+   his words say forget, erase or for good (new `entry forget`, with
+   `--confirm` per STD-01@2 §R5), a session deactivated. The audit keeps
+   ids and codes; after `forget` the instruction's words are dropped too.
+4. **Only an interactive session he is in.** The instruction turn must carry
+   Claude Code's interactive `entrypoint: "cli"`, not `"sdk-cli"` (every
+   `claude -p` run), and be fresh and typed by him as in 1.
+
+Alternatives considered:
+
+- **Keep `#scribe`-only settlement** (the aide replies with the lines for
+  him to type). Cost: one typed line per record with its id (20 lines for
+  today's queue), against his stated way of working, where the aide runs
+  the CLI.
+- **`#scribe` with several ids per line** (`#scribe approve p-4 p-9`), the
+  aide composing it for him. Cost: he still types or pastes ids, a
+  pasted line can land in a `<pasted_content>` block, which §4.1 skips,
+  and it does not serve deletes he states in words.
+- **Lift `daniel_only` with no evidence** (any agent's `--author` may
+  settle a candidate). Cost: any agent, including headless Orbit runs, can
+  turn its own reading of a chat into his preferences; ORB-24030 removed
+  exactly this kind of claimed identity.
+- **A one-time code the hook shows him** (a `systemMessage` the model
+  does not see, which he retypes to the aide). Cost: a code to type on
+  every instruction, and a hook write on every prompt; it is still
+  forgeable by a process running as him, so it buys no boundary the
+  transcript check lacks.
+- **The hook records each typed prompt as a ticket the CLI redeems.**
+  Cost: a store write on every typed turn of every session, for the same
+  evidence the transcript already holds.
+- **Write the approved entry as the agent's.** Cost: his own checked words
+  lose their attribution and 1.5× weight in `ask`, which is what a claim
+  exists to capture; the approver is recorded instead.
+- **Delete by removing files.** Cost: a removed claim leaves the
+  suppression set and the pass proposes it again; a removed entry breaks
+  other records' cites and `superseded_by` links.
+
+### Consequences
+
+- The aide can work through his queue in words, and the store can still
+  tell an instructed settle (instruction recorded, checked) from an agent
+  acting alone (refused `daniel_only` as today).
+- One store format step adds `instruction` on proposals and
+  `approved_by`/`instruction` on entries; `closed_reason` gains
+  `instructed`.
+- Not built until seen: consistency proposals about his entries or
+  content changes on instruction, session removal or `session forget`,
+  forgetting a rejected claim's words, multi-id or description-based
+  settling, and instructions from non-interactive or remote sessions.
+- Cost: a claim he approved through the aide counts as his words; the
+  checks are word lists, so a negated or misdirected instruction passes
+  and only the aide's echo and his later retire catch it; an agent that
+  can write a transcript file as him can forge an instruction (an
+  accident guard, STD-05@1 §R5, not a boundary); the aide must run on the
+  Mac, where the store and its transcript are.

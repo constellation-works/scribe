@@ -11,7 +11,7 @@ summary: How the scribe plugin is bounded (one binary; Daniel writes through hoo
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214]
+related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204]
 ---
 
 # scribe — Design
@@ -214,6 +214,9 @@ Rules every verb keeps:
   Daniel's. Agents may open a proposal against a Daniel entry; Daniel
   settles it with `#scribe approve|reject`. `#scribe forget` stays
   Daniel's alone ([4_decisions.md](./4_decisions.md#entries-daniel-wrote-are-settled-only-by-daniel)).
+  Proposed, not built: with a checked instruction of his, an agent may
+  settle a candidate and retire or forget his entry
+  ([§12](#12-settling-and-deleting-on-daniels-instruction-proposed)).
   Between agents, author names are attribution only: any agent may update
   or retire another agent's entry, update an open agent proposal or settle
   one, including its own, and the record keeps who changed it
@@ -1324,7 +1327,8 @@ a pass; an explicit catalog is still required for past sessions.
   entry. Approved proposals
   journal the entry creation, recoverable by a repeated approval or the
   consistency scan. Rejection writes no entry and keeps the statement in the
-  suppression set. Agents cannot settle or edit candidate proposals. Forgetting
+  suppression set. Agents cannot settle or edit candidate proposals (proposed,
+  not built: on his checked instruction, [§12](#12-settling-and-deleting-on-daniels-instruction-proposed)). Forgetting
   the resulting entry blanks the candidate's copy too and recovery preserves
   the forgotten entry.
 
@@ -2994,7 +2998,7 @@ approval on that task before it is built:
   seen.
 
 **ORB-26204** (an agent Daniel instructs approves claims and deletes
-records) sequences after step (a): the cleanup and the trigger gate cut
+records, designed in [§12](#12-settling-and-deleting-on-daniels-instruction-proposed)) sequences after step (a): the cleanup and the trigger gate cut
 the queue he must settle, from 20 open claims to about 4, before any new
 settle route is designed against it. Its design may proceed in parallel;
 its implementation lands after (a), and if it lands after (b) its approval
@@ -3038,6 +3042,231 @@ Not built until seen:
 - issues in the session-start brief, and any bound on an issue's number of
   occurrences or compaction of old ones.
 
+## 12. Settling and deleting on Daniel's instruction (proposed)
+
+[ORB-26204], designed 2026-11-21 and **not built**. Nothing in this
+section is implemented until Daniel approves it and its implementation
+tasks land after [§11.7](#117-order-and-sequencing) step (a). Where it
+changes a rule stated earlier ([§1.1](#11-the-cli-agent-surface)'s guard,
+[§5.3](#53-a-pass)'s "Agents cannot settle or edit candidate proposals"),
+the earlier text describes what is built today and carries a pointer here.
+The reasons and alternatives are in
+[4_decisions.md](./4_decisions.md#an-agent-settles-claims-and-deletes-records-on-daniels-checked-instruction).
+
+Daniel, chief's chat, 2026-11-21: "I will be interacting with the scribe
+primarily to manage scribe artifacts, e.g. instruct scribe to approve
+certain claims, delete certain artifacts, etc. the scribe will be using cli
+tool to perform these operations." "The scribe" is the formation's aide, an
+agent session he types to; a claim is an open candidate proposal (§5.3).
+
+**What the CLI refuses today** (read at 5362ac2):
+`Store::change_agent_proposal` (`crates/scribe-core/src/store/agent.rs`)
+refuses every `candidate` with `daniel_only` ("Daniel settles candidate
+proposals through #scribe approve or reject"), and a proposal whose older
+entry is Daniel's the same way; `entry retire` and content changes by
+`entry update` are refused on his entries; there is no CLI `forget` and no
+delete verb for any record. **Observed need**: 20 open proposals on the
+Mac store, all candidates (11 from his turns, 9 from assistants' turns),
+about 4 once §11.3's cleanup closes the retired-tag ones.
+
+### 12.1 The route
+
+The aide lists what Daniel asks about (`proposal list`, `entry list`,
+`record search`), names the ids in its reply, and on his answer runs one
+command per target with his words attached:
+
+| Daniel says | The aide runs |
+|---|---|
+| approve or reject a claim | `scribe proposal settle <p-id> --approve\|--reject --author <name> --session <id> --instruction '<his words>'` |
+| delete a claim | the same, `--reject` |
+| delete an entry | `scribe entry retire <id> --author <name> --reason <text> --session <id> --instruction '<his words>'` |
+| forget an entry for good | `scribe entry forget <id> --author <name> --session <id> --instruction '<his words>' --confirm` (new verb) |
+| delete a session | `scribe session deactivate <id> --author <name> --reason <text>` (unchanged, [§5.7](#57-active-and-inactive-sessions)) |
+
+`--instruction` and `--session` come together or not at all (a usage
+error, exit 2). Without them every verb behaves as built today. With them,
+and only after the checks of §12.2 pass, `proposal settle` accepts a
+`candidate` and `entry retire` accepts an entry Daniel wrote. `entry
+forget` exists only with them. Nothing else widens: an instruction does not
+let an agent change his entry's content, settle a consistency proposal
+about his entry, or write any entry other than the one a candidate already
+reserved.
+
+### 12.2 Question 1 — how his instruction is evidenced, and what the store verifies
+
+The agent passes the session it is running in (`--session <id>`) and a
+verbatim span of Daniel's instruction (`--instruction`). The CLI, before
+it takes the store lock, finds that session's transcript on this host and
+runs these checks; any failure refuses the command and changes nothing.
+
+1. **Provenance.** The transcript passes §4.1's checks (under the
+   transcripts root, owned by this uid, named `<id>.jsonl`, one no-follow
+   handle for check and read), as `verify_quote` does today
+   (`crates/scribe/src/commands/entry.rs`). No transcript on this host:
+   `instruction_not_found`.
+2. **His typed turn.** `--instruction` is a verbatim span (§6.4's check) of
+   one user turn that §4.1's origin guard accepts as plainly typed:
+   no agent or harness wrapper, not inside a fence, blockquote or
+   `<pasted_content>` block, not a sidechain or meta line. Otherwise
+   `instruction_not_found`.
+3. **Fresh.** That turn is one of the session's last three typed user turns
+   and was written at most 30 minutes before the command runs. Otherwise
+   `instruction_stale`. An old instruction cannot be reused to settle
+   claims opened since.
+4. **It names the target.** The target's id (exact, or the unique prefix
+   the command resolved) appears either in that turn or in the assistant
+   message immediately before it, the reply he answered. Otherwise
+   `instruction_mismatch`. "Approve p-4 and p-9" names its targets; so
+   does "yes" after "Approve p-4 and p-9?".
+5. **It names the act.** Model-free word lists in `scribe-core`
+   (`instruction.rs`, no I/O):
+
+   | Verb | His turn contains one of |
+   |---|---|
+   | approve | approve, accept, keep, yes, ok, okay, go ahead, do it |
+   | reject | reject, decline, drop, discard, delete, remove |
+   | retire | retire, delete, remove, hide, drop |
+   | forget | forget, erase, purge, permanently, for good |
+
+   For approve, when his turn's only match is an affirmative (yes, ok,
+   okay, go ahead, do it), the reply he answered must contain "approve" or
+   "accept" next to the ids. For reject, retire and forget, the verb's word
+   must be in his own turn; an affirmative alone does not delete anything.
+   Otherwise `instruction_mismatch`.
+
+The store, under its lock, checks only that an instructed write carries an
+instruction record (§12.3) and re-checks the target's state; reading the
+transcript is I/O and stays in the CLI, as the action-tag quote check does
+([4_decisions.md](./4_decisions.md#the-quote-check-runs-in-the-cli-against-this-hosts-transcript)).
+
+This is an accident guard (STD-05@1 §R5), like every provenance check in
+scribe: it stops an agent acting on its own, a stale or misread
+instruction, and an instruction meant for another record. It is not a
+security boundary: a process running as Daniel can write a transcript
+file. It also does not understand negation ("don't approve p-4" passes
+check 5); the aide's echo and the reversal routes of §12.6 cover that.
+
+### 12.3 Question 2 — whose entry an approval writes, and how it reads
+
+**A candidate from his turn** is approved into the entry the candidate
+reserved, **as his**: `author: {kind: daniel}`, the original turn's cite
+and `content_from: message` (user), exactly as a typed `#scribe approve`
+writes it, because the content is words the pass already checked against
+his turn (or, once §11.1 lands, a statement with his checked words in
+`quote` and `stated_by` set). What differs is who settled it:
+
+- the proposal records `settled_author: {kind: agent, name: <aide>}`,
+  `settled_by` the instruction turn's cite (session and message uuid,
+  both known from the transcript), and a new `instruction: {session,
+  message, at, quote}` (the quote redacted);
+- the entry records a new `approved_by: {kind: agent, name}` (`null` when
+  he typed the approval) and `said` is the canonical command with
+  `--instruction`, not a `#scribe` line.
+
+This refines the rule of
+[4_decisions.md](./4_decisions.md#daniel-writes-only-through-his-typed-prompt-agent-names-are-attribution)
+that no CLI path records `{kind: daniel}`: the CLI still never records
+words as his that are not already checked as his typed words; it only
+settles a claim made of them, on a typed instruction it has checked.
+
+**A candidate from an assistant's turn** is approved into one
+agent-authored entry, as a typed approval writes it today (§5.3), with the
+same proposal fields. **A rejection** writes no entry and keeps the claim
+in the suppression set, recording the same fields.
+
+**Reading it.** `entry show` prints `approved by <aide> on your
+instruction "<quote>" (<session>, <date>)` under the cite. `ask` and
+`record search` treat the entry as his words, with his 1.5× weight, and
+add the same line to the evidence, so an answer can say that an agent
+approved it. `proposal list --state approved|rejected` shows the
+instruction. `--json` adds the fields; none is renamed or retyped.
+
+### 12.4 Question 3 — what "delete" means for each record kind
+
+| Kind | "Delete" does | Reversible | What stays |
+|---|---|---|---|
+| Proposal (any open claim) | `reject`: closed, no entry, `closed_reason: instructed` ([§11.3](#113-the-shipped-tag-set-and-retired-tag-cleanup)'s field) | no; the suppression set keeps it from being proposed again | the proposal with its quote, reason and instruction |
+| Entry | `retire`: hidden from lists and `ask`, `retirement_reason` set | no un-retire verb exists, but the text is intact and can be added again as a new entry | the whole entry, `updated_by`, the instruction |
+| Entry, "forget" or "for good" | `forget`: text blanked for good, with every proposal quote of it and every reason about it (§7) | no | id, tag, dates, author, `updated_by` and the instruction's session and message ids; **not** its quote, which may repeat the words he wants gone |
+| Session | `deactivate`: hidden from `ask` and lists unless `--include-inactive` | `session activate` | the record and its log |
+
+"Delete" never removes a file. A removed proposal would leave the
+suppression set and come back on the next pass; a removed entry would
+break the cites and `superseded_by` links of others. **Audit**: one line
+per change or refusal, as every write verb (§1.1): the command, the
+agent's name, the target id, the instruction's session and message ids,
+and the error code on a refusal (`instruction_not_found`,
+`instruction_stale`, `instruction_mismatch`, plus the existing codes). The
+instruction's words are never in the audit line; they live on the record
+(and, after `forget`, nowhere).
+
+### 12.5 Question 4 — only an interactive session he is in
+
+Three checks, all in the CLI before the lock:
+
+1. **Interactive.** The instruction turn's transcript line records the
+   harness entry point of an interactive session: Claude Code's
+   `entrypoint: "cli"`, never `"sdk-cli"` (`claude -p`, which every Orbit
+   run, routine and drain uses; the 40 most recent transcripts on
+   dk-server-1 on 2026-11-21 were all `"sdk-cli"`). A turn with any other
+   or no entry point is refused `not_interactive`. Codex's equivalent
+   field is mapped by the implementation task, or Codex sessions are
+   refused until it is.
+2. **Typed by him and fresh** — §12.2 checks 2 and 3: a turn he typed in
+   the last 30 minutes, among the last three, so the session is one he is
+   in now.
+3. **On this host.** The transcript is read from this host's transcripts
+   root, so the aide must run where the store is (the Mac). An aide on
+   another host is refused `instruction_not_found`.
+
+The CLI cannot tell that `--session` is the caller's own session: an
+agent in another session could name his. Checks 2 and 4 of §12.2 bound
+that to the targets and act his recent typed words name. The skill tells
+the aide to pass its own session id.
+
+### 12.6 The aide's side (the skill)
+
+The skill's settling section tells the aide to: list before acting and
+name every id in its reply; act only on his explicit instruction in this
+session; run one command per target; echo each result in one line (`p-4
+approved as e-…`, `e-12 retired`), and the reversal: a wrongly approved
+claim's entry is retired (`#scribe retire <id>`, or on his instruction);
+a wrong retire is repaired by adding the text again as a new entry; a wrong reject or
+forget cannot be undone. It never runs `entry forget` unless his words say
+forget, erase or for good.
+
+### 12.7 Store format
+
+One step, numbered when it lands (after §11's format 11 at the earliest):
+a proposal gains `instruction` (`null` on upgrade); an entry gains
+`approved_by` and `instruction` (`null` on upgrade). `closed_reason`
+comes from §11.2's format 11, gaining the value `instructed`.
+`specs/store.md` and `specs/output-contract.md` describe the fields when
+the step lands.
+
+### 12.8 Limits and what is not built until seen
+
+- **Word lists, not meaning.** Negation and sarcasm pass; a turn naming
+  two acts ("approve p-4, reject p-5") passes both lists for both ids, so
+  the aide's choice decides which id gets which verb.
+- **Same user.** An agent able to write a transcript file can forge an
+  instruction; this is the accident guard of §4.1, not a boundary.
+- **Mac only.** The aide must run on the host of the store and of its own
+  transcript.
+
+Not built until seen:
+
+- settling a consistency proposal about his entry, or changing his
+  entry's content, on instruction (all 20 observed claims are candidates);
+- removing a session record or blanking its text (`session forget`):
+  deactivation is the delete; no need to erase a session's words is seen;
+- forgetting a proposal's words without an entry (a rejected claim keeps
+  its quote for suppression);
+- settling many ids in one command or by a description ("all the tmux
+  claims") resolved by the store rather than by the aide listing ids;
+- instructions from a non-interactive or remote session, and any token or
+  confirmation dialog beyond the transcript check.
+
 ## Task References
 
 - [ORB-21747] — designed the standalone scribe plugin.
@@ -3060,7 +3289,8 @@ Not built until seen:
 - [ORB-26214] — designed §11: claim statements, per-tag capture rules, the
   tag set without `remind` and `finding`, the retired-tag cleanup and issues.
 - [ORB-25987] — the pass captures Daniel's ideas; revised by §11.6.
-- [ORB-26204] — design: an agent Daniel instructs settles claims; sequenced after §11 step (a).
+- [ORB-26204] — designed §12: an agent Daniel instructs settles claims and deletes records
+  through the CLI; sequenced after §11 step (a).
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
 
