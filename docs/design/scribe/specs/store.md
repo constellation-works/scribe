@@ -414,9 +414,11 @@ longer both active changes nothing.
 
 Forget blanks the statement, every quote and any reason and keeps the file,
 its id, section, dates and authors, and does the same to the items holding
-the same words: those merged into it, and the other side of a promotion
-(the milestone of a promoted `now` item, or the `now` item a milestone came
-from). `memory forget m-<n>#<k>` blanks one occurrence's quote.
+the same words: those merged into it, directly or through another merged
+item; and, across a promotion, the `now` item, the milestone and rule (a)'s
+new profile item (`profile_to`), whichever of the three is named. The
+profile item a change superseded (`profile_from`) holds other words and
+stays. `memory forget m-<n>#<k>` blanks one occurrence's quote.
 
 ## JSON documents
 
