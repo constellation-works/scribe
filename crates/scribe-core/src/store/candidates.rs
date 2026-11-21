@@ -460,6 +460,7 @@ fn pass_entry(
         as_of: None,
         approved_by: None,
         instruction: None,
+        removal_instruction: None,
         stated_by: Some(Author::session_pass()),
         outcome: Some(outcome),
         content: draft.statement.clone().unwrap_or_default(),

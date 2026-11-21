@@ -393,6 +393,7 @@ impl Store {
             evidence: draft.evidence,
             approved_by: None,
             instruction: None,
+            removal_instruction: None,
             stated_by: None,
             outcome: None,
             content: draft.content,
@@ -470,7 +471,9 @@ impl Store {
     /// Retire an entry, preserving the reason and author. An agent's note
     /// retires on the agent's word; Daniel's entry only on his checked
     /// `instruction` (docs/design/scribe/2_design.md §12.1), which the entry
-    /// then records with its quote redacted. Retiring keeps the text.
+    /// then records in `removal_instruction` with its quote redacted, apart
+    /// from the `instruction` an agent approved it on. Retiring keeps the
+    /// text.
     #[allow(
         clippy::too_many_arguments,
         reason = "explicit retirement inputs at the store boundary"
@@ -512,7 +515,8 @@ impl Store {
         entry.inactive_since = Some(now);
         entry.updated_by = Some(Author::agent(author));
         if let Some(instructed) = instruction {
-            entry.instruction = Some(crate::Instruction {
+            required_message(instructed)?;
+            entry.removal_instruction = Some(crate::Instruction {
                 session: instructed.session.clone(),
                 message: instructed.message.clone(),
                 at: instructed.at,
@@ -528,7 +532,8 @@ impl Store {
     /// blanked with every proposal quote, candidate quote and reason about it
     /// ([`crate::consistency::forget`]). The entry keeps its id, tag, dates
     /// and author, records the agent in `updated_by` and the instruction's
-    /// session and message ids, but not its quote, which may repeat the words
+    /// session and message ids in `removal_instruction`, apart from any
+    /// approval's `instruction`, but not its quote, which may repeat the words
     /// he wants gone. No file is removed. `proposals.json` is written first,
     /// then the entry. Forgetting a forgotten entry changes nothing.
     pub fn forget_entry(
@@ -539,6 +544,7 @@ impl Store {
         now: OffsetDateTime,
     ) -> Result<(Entry, bool)> {
         check_agent_author(&author)?;
+        required_message(instruction)?;
         self.prepare_dir(&self.root)?;
         let _lock = self.lock("entry forget")?;
         let target = self.resolve_entry(id)?;
@@ -560,7 +566,7 @@ impl Store {
             ));
         };
         entry.updated_by = Some(Author::agent(author));
-        entry.instruction = Some(crate::Instruction {
+        entry.removal_instruction = Some(crate::Instruction {
             session: instruction.session.clone(),
             message: instruction.message.clone(),
             at: instruction.at,
@@ -701,12 +707,13 @@ impl Store {
         if p.kind == ProposalKind::Candidate {
             let Some(instructed) = instruction.filter(|_| change != crate::ProposalChange::Update)
             else {
+                // Without an instruction the refusal reads as it always has.
                 return Err(refusal(
                     WriteRefusal::DanielOnly,
-                    if change == crate::ProposalChange::Update {
+                    if instruction.is_some() {
                         "Daniel settles candidate proposals through #scribe approve or reject; their reason is scribe's"
                     } else {
-                        "Daniel settles candidate proposals through #scribe approve or reject, or on his instruction with --session and --instruction"
+                        "Daniel settles candidate proposals through #scribe approve or reject"
                     },
                 ));
             };
@@ -847,6 +854,7 @@ impl Store {
         let same_instruction = p.instruction.as_ref().is_some_and(|held| {
             held.session == instructed.session && held.message == instructed.message
         });
+        required_message(instructed)?;
         if p.state != ProposalState::Open {
             // The same command again, or an approval an active entry was
             // found to cover, is done; any other settlement stands.
@@ -862,6 +870,17 @@ impl Store {
             return Err(refusal(
                 WriteRefusal::ProposalSettled,
                 format!("{} is already {}", p.id, p.state.as_str()),
+            ));
+        }
+        // An instruction cannot settle a claim opened after he typed it
+        // (2_design.md §12.2 check 3): he never saw it.
+        if instructed.at < p.opened_at {
+            return Err(refusal(
+                WriteRefusal::InstructionStale,
+                format!(
+                    "the instruction was typed before {} opened; ask Daniel again",
+                    p.id
+                ),
             ));
         }
         p.state = if approve {
@@ -892,4 +911,17 @@ impl Store {
         }
         Ok((proposals[i].clone(), true))
     }
+}
+
+/// Refuse an instruction without the message id of the turn that backs
+/// it: every record of it names that turn, and a store with a blank one
+/// does not read.
+fn required_message(instructed: &crate::instruction::Instructed) -> Result<()> {
+    if instructed.message.trim().is_empty() {
+        return Err(refusal(
+            WriteRefusal::InstructionNotFound,
+            "the instruction's turn has no message id; ask Daniel again",
+        ));
+    }
+    Ok(())
 }

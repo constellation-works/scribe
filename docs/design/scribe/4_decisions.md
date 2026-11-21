@@ -3671,3 +3671,89 @@ searched. nebula stays curated: nothing here writes to it.
   one of them curated knowledge, filling a corpus kept for vetted material
   with ideas Daniel himself expects to be mostly bad, and would have needed
   nebula's review for each.
+
+## Audit lines name the instruction's session and message (audit format 3)
+
+**Recorded:** 2026-11-21 · [ORB-26244], [ORB-26503] · **Overridable by Daniel** · built
+**Refines:** "Every mutating command is audited" (audit lines carry ids and codes, never values)
+**Paths:** `crates/scribe-core/src/store/audit.rs` (`AUDIT_FORMAT`), `crates/scribe/src/audit_middleware.rs`, `crates/scribe/src/commands/instruction.rs` (`check`), `crates/scribe-core/src/instruction.rs` (`located_message`) — design §12.4, specs/output-contract.md
+
+### Context
+
+A write an agent runs on Daniel's instruction (`proposal settle`, `entry
+retire`, `entry forget` with `--session` and `--instruction`) changes his
+records on his word. The audit log is where a later reader checks which
+turn backed each change or refusal; before format 3 a line named the
+command, target and author only. Review ORB-26500 found that task 3 noted
+the turn's message id only once every check passed, so a refusal after the
+turn was found (stale, mismatched) lost it.
+
+### Decision
+
+1. **Audit format 3** adds `instruction_session` (from `--session`) and
+   `instruction_message` to every line; an older line reads with neither
+   (STD-02 R16). Neither field carries the instruction's words.
+2. **`instruction_message` is the turn the check located**, whether or not
+   it then passes: the CLI notes `located_message` before the remaining
+   checks. It is `null` only when no turn Daniel typed holds the
+   instruction, or that turn has no message id (which is refused).
+
+The alternative was to note the message only on success, keeping refusals
+minimal. That leaves a refused stale or mismatched instruction untraceable
+to the turn it quoted, which is exactly what an audit of a refused act on
+his word needs.
+
+### Consequences
+
+- An audit reader can tie every instructed change or refusal to his turn.
+- Readers must accept both shapes; the format-2 reader test covers it.
+
+## An entry keeps its approval instruction apart from its removal
+
+**Recorded:** 2026-11-21 · [ORB-26503] · **Overridable by Daniel** · built
+**Refines:** "An agent settles claims and deletes records on Daniel's checked instruction" (one `instruction` per entry)
+**Paths:** `crates/scribe-core/src/entry.rs` (`Entry::removal_instruction`), `crates/scribe-core/src/store/agent.rs` (`retire_agent_entry`, `forget_entry`), `crates/scribe-core/src/store/format.rs` (`removal_instruction`, step 17→18; `EntryV16`) — design §12.3, §12.4, §12.7
+
+### Context
+
+Format 13 gave an entry one `instruction`: the checked instruction that
+approved, retired or forgot it. Review ORB-26500 found that retiring an
+entry an agent approved on instruction replaced the approval's instruction
+with the retirement's, so `entry show --json` paired `approved_by` and the
+approval command with the retirement's words: a removal presented as the
+evidence for an approval.
+
+### Decision
+
+1. **A second field, `removal_instruction`**, holds the instruction an
+   entry was retired or forgotten on. `instruction` is from format 18 only
+   the instruction `approved_by` approved on, set exactly when `approved_by`
+   is, and nothing later replaces it. The decoder refuses an `instruction`
+   without `approved_by` and a `removal_instruction` on an entry that is
+   neither retired nor forgotten.
+2. **Store format 18.** The step 17→18 moves an older entry's `instruction`
+   to `removal_instruction` when it has no `approved_by`; an approved entry
+   keeps it as the approval's. A format-15 to format-17 approved entry already retired on
+   instruction lost its approval's instruction then and cannot be told
+   apart; its proposal still holds the approval's `instruction`.
+3. **Forgetting blanks both quotes** and keeps both instructions' ids.
+4. Format-14 to format-17 entries decode through typed YAML (`EntryV14`,
+   `EntryV16`), like formats 10–13, so a local YAML tag reads as before (the
+   same review found that bumping to 15 had sent format-14 entries through
+   a JSON conversion that read `!local scribe` as a map; format 16's
+   `EntryV14` already restored typed decoding, and a fixture test now pins
+   it).
+
+The alternative was to keep `instruction` as the latest act and add an
+`approval_instruction`. Then a reader pairing `approved_by` with
+`instruction`, as format 13 to 15 documented, would still read a retirement
+as the approval's evidence.
+
+### Consequences
+
+- `entry show --json` and `entry list --json` gain `removal_instruction`; a
+  retired or forgotten entry of Daniel's reports its instruction there and
+  `instruction: null`, a change of meaning for that one case.
+- A format-17 build refuses a store this build wrote (`store_too_new`).
+- Cost: one more field, and a decoder rule tying `instruction` to
+  `approved_by`.

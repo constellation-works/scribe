@@ -685,7 +685,10 @@ pub fn forget(
     entry.quote = None;
     entry.window = None;
     entry.retirement_reason = None;
-    if let Some(instruction) = &mut entry.instruction {
+    for instruction in [&mut entry.instruction, &mut entry.removal_instruction]
+        .into_iter()
+        .flatten()
+    {
         instruction.quote = None;
     }
     // A parked idea's reason is Daniel's words; its state stays.

@@ -137,7 +137,11 @@ with --window)`). Store format 13 adds `approved_by` (`{kind, name}` of kind
 `null`, where `quote` is `null` once forgotten). An entry an agent approved
 on Daniel's instruction (format 15) has `approved_by` and `instruction` set
 and `said` the command it ran, `scribe proposal settle p-<n> --approve
---author <name> --session <id> --instruction '<his words>'`. Store format 14 adds
+--author <name> --session <id> --instruction '<his words>'`. Store format 18
+adds `removal_instruction` (`{session, message, at, quote}` or `null`, last
+in the object): the instruction an agent retired or forgot the entry on,
+kept apart from `instruction`, which is then only the approval's and never
+replaced by a later retirement or forgetting. Store format 14 adds
 `stated_by` (`{kind, name}`, `{kind: "scribe", name: "session-pass"}` when
 `content` is scribe's statement of Daniel's turn and `quote` his verbatim
 words, else `null`). The table detail prints `stated_by
@@ -348,7 +352,11 @@ names that author in `author`, and a refused write names both its resolved
 target and its author. A write given `--session` and `--instruction`
 (`proposal settle`, `entry retire`, `entry forget`) also names
 `instruction_session` and, once the check found his turn,
-`instruction_message` (audit format 3), never the instruction's words.
+`instruction_message` (audit format 3), never the instruction's words. A
+refusal after his turn was found (`not_interactive`, `instruction_stale`,
+`instruction_mismatch`, or a store refusal) names its message too;
+`instruction_message` is `null` only when no turn of his held the
+instruction, or the turn holding it has no message id.
 
 Stable codes: `entry_not_found`, `session_not_found`, `io_error`,
 `store_corrupt`, `config_invalid`, `store_too_new`, `store_locked`,
@@ -565,8 +573,10 @@ reason is never added to the audit line).
 "covered": [{"proposal", "by"}],
 "judged_pairs", "pairs_left", "unrelated_pairs", "dropped_labels",
 "stale_entries", "failed_batches": [{"batch", "error_code"}]}`. `reapplied`
-lists approved proposals whose older entry was still `active` and is now
-`superseded` or `retired`; `opened` holds each proposal opened, in
+lists approved proposals the scan finished: a supersession or retirement
+whose older entry was still `active` and is now `superseded` or `retired`
+(its `status`), and an approved candidate whose reserved entry was missing
+and is now written, with `status: active`; `opened` holds each proposal opened, in
 `proposal list --json`'s shape, by id; `closed` holds each open candidate
 proposal closed automatically (`tag_retired`), in the same shape; `covered`
 holds each approved candidate this scan closed because an active entry

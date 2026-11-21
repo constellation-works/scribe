@@ -57,5 +57,6 @@
     "state": "parked",
     "reason": "let's park it until the drains are quiet",
     "task": null
-  }
+  },
+  "removal_instruction": null
 }

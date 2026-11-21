@@ -257,8 +257,9 @@ pub(crate) struct EntryPayload {
     pub(crate) admitted: Option<scribe_core::Admitted>,
     /// The agent that approved this candidate on Daniel's instruction; `null` otherwise.
     pub(crate) approved_by: Option<AuthorPayload>,
-    /// Daniel's checked instruction that approved, retired or forgot this entry;
-    /// `null` otherwise.
+    /// Daniel's checked instruction `approved_by` approved this candidate
+    /// on; `null` otherwise. A later retirement or forgetting never
+    /// replaces it.
     pub(crate) instruction: Option<InstructionPayload>,
     /// Whose words `content` is when not the author's: `{kind: scribe,
     /// name: session-pass}` when it is scribe's statement of Daniel's turn
@@ -268,6 +269,9 @@ pub(crate) struct EntryPayload {
     /// open|parked|task, reason, task}`, `reason` Daniel's own words
     /// parking it; `null` for every other entry.
     pub(crate) outcome: Option<scribe_core::Outcome>,
+    /// Daniel's checked instruction that retired or forgot this entry;
+    /// `null` otherwise.
+    pub(crate) removal_instruction: Option<InstructionPayload>,
 }
 
 /// One issue as every output mode sees it (docs/design/scribe/2_design.md
@@ -571,6 +575,10 @@ impl From<&Entry> for EntryPayload {
             instruction: entry.instruction.as_ref().map(InstructionPayload::from),
             stated_by: entry.stated_by.as_ref().map(AuthorPayload::from),
             outcome: entry.outcome.clone(),
+            removal_instruction: entry
+                .removal_instruction
+                .as_ref()
+                .map(InstructionPayload::from),
         }
     }
 }
