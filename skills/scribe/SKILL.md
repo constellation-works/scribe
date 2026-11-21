@@ -78,6 +78,34 @@ item may be done since. Say so, and check an item's current state (its
 task, PR or file) before acting on it or calling it open. Don't act on an
 item unless the human asks.
 
+## Memory: what scribe has noticed about the human
+
+In an interactive Claude Code session the `SessionStart` hook gives you a
+memory page: `Now`, `Milestones`, `Profile`, the current project,
+`Working`, and the recent sessions, each line one item and its id
+(`[m-<n>]`). In Codex, or when the page is missing, read it with
+`scribe memory show --page --json`. The items are scribe's statements of
+what the human said in switched-on sessions, not rules: rules are their
+preferences. Their exact words are on each item's occurrences
+(`scribe memory show <m-id> --json`); quote only those as theirs.
+
+- **Now.** Raise a `now` item marked "not yet raised" once, when the
+  conversation goes near it, then mark it raised for this session:
+  `scribe memory ack <m-id> --session <this session id> --author <name>`.
+- **Milestones.** Raise one only when the conversation goes there. A `now`
+  item becomes a milestone on its own when it changes a profile fact, recurs
+  in three sessions, or the human calls it a milestone or a big day; when
+  they ask why, `scribe memory rules` prints the rules and where each came
+  from.
+- **Wrong or outdated.** When the human says an item is wrong or no longer
+  true, run `scribe memory retire <m-id> --author <name> --reason "<their
+  words>"`. When they ask scribe to forget it, run `scribe memory forget
+  <m-id> --author <name> --confirm` (`<m-id>#<n>` forgets one occurrence's
+  quote); it cannot be undone.
+- Never write a memory item yourself: only the session pass writes them,
+  and only from sessions switched on with `/scribe on`; the consistency
+  scan merges repeats and supersedes outdated ones.
+
 ## Keep the store useful: suggest, the human decides
 
 Suggest at natural pauses (the brief, the end of a task), a few at a time
@@ -198,15 +226,20 @@ not an entry: `issue` is a reserved tag, so `entry add --tag issue` and
 `#scribe issue:` are refused.
 
 - **Search before diagnosing** when the human asks you to investigate a
-  failure: `scribe issue search '<symptoms or error text>' --json` (also
-  `record search --kind issue`). Read a match with `issue show <id> --json`.
+  failure, and always when scribe's prompt hook adds `scribe: this turn
+  asks for a root cause` to the turn (an `issue` trigger fired on their
+  words, in any interactive session, on or off): `scribe issue search
+  '<symptoms or error text>' --json` (also `record search --kind issue`).
+  Read a match with `issue show <id> --json` and say what it found before
+  diagnosing again.
 - **Write the result when you answer, in the session they typed in**: a new
   issue with `scribe issue add --author <name> --related session:<id>
   --request '<their words>' --title '<title>' --signature '<symptom>'
   --summary '<what happened>'`, or another occurrence of a matching one with
   `scribe issue occur <issue-id>` and the same request flags. Add up to 10
   `--error-line`s (your evidence, shown as such), `--cause` and `--fix`
-  (left out, they read "cause not found"), `--project`, and links such as
+  (left out when you found none, so it reads "cause not found": still
+  write the occurrence), `--project`, and links such as
   `--related task:<id>`. `--request` must be the human's request word for
   word from their typed turns of that session (`quote_required`,
   `quote_not_found`); without their words, write nothing. An occurrence on a
@@ -220,6 +253,9 @@ not an entry: `issue` is a reserved tag, so `entry add --tag issue` and
   --title … --signature …`). Occurrences are never edited.
 - A fix that still needs doing is Orbit work: file the task or friction and
   link it from the occurrence. scribe files no work.
+- Every trigger fire and every write is counted in the audit log, so the
+  human can judge recall and precision with `scribe issue stats [--since
+  <date>]`: write on every root-cause answer you give, and only then.
 
 To initialize a requested project integration, use the explicit target:
 

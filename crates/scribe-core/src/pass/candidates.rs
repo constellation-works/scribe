@@ -178,7 +178,7 @@ fn outcome_in_bounds(answer: &EntryCandidateAnswer) -> bool {
 /// `text` with fenced, indented and blockquoted material and marked
 /// instructions replaced by a NUL barrier each, so neither a quote nor a
 /// trigger match can be spliced across an excluded line.
-fn own_lines(text: &str) -> String {
+pub(crate) fn own_lines(text: &str) -> String {
     let mut fence: Option<(char, usize)> = None;
     let mut own = String::new();
     for line in text.split_inclusive('\n') {

@@ -3,10 +3,11 @@
 
 use super::color::{self, Role};
 use super::payload::{
-    AskPayload, EntryPayload, FoundPayload, HitPayload, HookJson, HookReply, HookSpecificJson,
-    IssuePayload, OccurrencePayload, OriginPayload, PassPayload, PassReport, PluginReply,
-    ProposalPayload, Record, Records, ScanReport, SessionPayload, TagPayload, TagShowPayload,
-    TaskPayload, TranscriptPayload, TreeRow, WarningPayload,
+    self, AskPayload, EntryPayload, FoundPayload, HitPayload, HookJson, HookReply,
+    HookSpecificJson, IssuePayload, IssueStatsPayload, OccurrencePayload, OriginPayload,
+    PassPayload, PassReport, PluginReply, ProposalPayload, Record, Records, ScanReport,
+    SessionPayload, TagPayload, TagShowPayload, TaskPayload, TranscriptPayload, TreeRow,
+    WarningPayload,
 };
 use super::sink::{OutputMode, Sink};
 use super::table::{self, Align, Cell, Column};
@@ -32,6 +33,16 @@ const ENTRY_COLUMNS: [Column; 8] = [
     col("CONTENT", Align::Left, true),
     col("AUTHOR", Align::Left, false),
     col("AGE", Align::Right, false),
+];
+
+const MEMORY_COLUMNS: [Column; 7] = [
+    col("ID", Align::Left, false),
+    col("SECTION", Align::Left, false),
+    col("STATUS", Align::Left, false),
+    col("PAGE", Align::Left, false),
+    col("SEEN", Align::Right, false),
+    col("LATEST", Align::Left, false),
+    col("STATEMENT", Align::Left, true),
 ];
 
 const SESSION_TREE_COLUMNS: [Column; 8] = [
@@ -81,6 +92,19 @@ const SCAN_COLUMNS: [Column; 5] = [
     col("WHAT", Align::Left, false),
     col("OLDER", Align::Left, false),
     col("NEWER", Align::Left, false),
+];
+
+const ISSUE_STATS_COLUMNS: [Column; 3] = [
+    col("COUNT", Align::Left, false),
+    col("VALUE", Align::Right, false),
+    col("MEANS", Align::Left, false),
+];
+
+const MEMORY_RULE_COLUMNS: [Column; 4] = [
+    col("RULE", Align::Left, false),
+    col("VALUE", Align::Left, false),
+    col("ORIGIN", Align::Left, false),
+    col("MEANING", Align::Left, true),
 ];
 
 const TAG_COLUMNS: [Column; 10] = [
@@ -176,6 +200,7 @@ pub(crate) fn list(
                 write_json(out, &envelope("transcripts", items, total, warnings))
             }
             Records::Issues(items) => write_json(out, &envelope("issues", items, total, warnings)),
+            Records::Memory(items) => write_json(out, &envelope("items", items, total, warnings)),
         };
     }
     // An empty list prints nothing, not a lone header (STD-01 R16).
@@ -225,6 +250,10 @@ pub(crate) fn list(
         Records::Issues(items) => (
             ISSUE_COLUMNS.to_vec(),
             items.iter().map(issue_row).collect(),
+        ),
+        Records::Memory(items) => (
+            MEMORY_COLUMNS.to_vec(),
+            items.iter().map(memory_row).collect(),
         ),
     };
     match sink.mode {
@@ -358,6 +387,9 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
             if let Some(reason) = p.closed_reason {
                 field(out, "closed_reason", reason)?;
             }
+            if let Some(line) = settled_line(p) {
+                field(out, "instruction", &line)?;
+            }
             field(out, "opened", &timestamp(p.opened_at))?;
             field(
                 out,
@@ -373,6 +405,10 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
             // follow on their line, with whose statement it is.
             if let (Some(by), Some(quote)) = (&entry.stated_by, &entry.quote) {
                 writeln!(out, "stated_by\t{}\t{}", author(by), one_line(quote))?;
+            }
+            // An approval an agent made on his instruction (2_design.md §12.3).
+            if let Some(line) = approved_line(entry) {
+                writeln!(out, "approved\t{line}")?;
             }
             // An idea the pass captured: where it stands, then the parking
             // words or the task (`-` for neither).
@@ -433,7 +469,101 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
         (OutputMode::Json, Record::Issue(issue)) => write_json(out, issue),
         (OutputMode::Plain, Record::Issue(issue)) => issue_plain(out, issue),
         (OutputMode::Table, Record::Issue(issue)) => issue_detail(out, issue),
+        (OutputMode::Json, Record::Memory(item)) => write_json(out, item),
+        (OutputMode::Plain, Record::Memory(item)) => {
+            writeln!(out, "{}", plain_line(&memory_row(item)))?;
+            for o in &item.occurrences {
+                writeln!(
+                    out,
+                    "occurrence\t{}\t{}\t{}\t{}\t{}",
+                    o.n,
+                    timestamp(o.date),
+                    o.session,
+                    o.message,
+                    one_line(&o.quote)
+                )?;
+            }
+            Ok(())
+        }
+        (OutputMode::Table, Record::Memory(item)) => memory_detail(out, item),
+        (OutputMode::Json, Record::MemoryRules(rules)) => write_json(out, rules),
+        (OutputMode::Plain | OutputMode::Table, Record::MemoryRules(rules)) => {
+            memory_rules(out, sink, rules)
+        }
+        (OutputMode::Json, Record::MemoryPage(page)) => write_json(out, page),
+        (OutputMode::Plain | OutputMode::Table, Record::MemoryPage(page)) => match &page.page {
+            Some(text) => writeln!(out, "{text}"),
+            None => Ok(()),
+        },
     }
+}
+
+fn memory_row(m: &super::payload::MemoryPayload) -> Vec<Cell> {
+    vec![
+        Cell::plain(m.id.clone()),
+        Cell::plain(m.section.to_owned()),
+        Cell {
+            text: m.status.to_owned(),
+            role: color::role_for_status(m.status),
+        },
+        Cell::plain(m.off_page.unwrap_or("on").to_owned()),
+        Cell::plain(m.occurrence_count.to_string()),
+        Cell::plain(timestamp(m.latest)),
+        Cell::plain(one_line(&m.statement)),
+    ]
+}
+
+fn memory_detail(out: &mut dyn Write, m: &super::payload::MemoryPayload) -> io::Result<()> {
+    let or_dash = |v: Option<&str>| v.unwrap_or("-").to_owned();
+    field(out, "id", &m.id)?;
+    field(out, "section", m.section)?;
+    field(out, "status", m.status)?;
+    field(out, "statement", &m.statement)?;
+    field(out, "page", m.off_page.unwrap_or("on"))?;
+    field(out, "project", &or_dash(m.project.as_deref()))?;
+    field(out, "event_date", &or_dash(m.event_date.as_deref()))?;
+    field(
+        out,
+        "sensitive",
+        &m.sensitive_kind
+            .map_or_else(|| m.sensitive.to_string(), |k| format!("true ({k})")),
+    )?;
+    if m.section == "now" {
+        field(
+            out,
+            "acknowledged",
+            &m.acknowledged.as_ref().map_or_else(
+                || String::from("-"),
+                |a| format!("{} in {} by {}", timestamp(a.at), a.session, a.author),
+            ),
+        )?;
+        field(out, "not_yet_raised", &m.not_yet_raised.to_string())?;
+    }
+    if let Some(reason) = &m.retirement_reason {
+        field(out, "retirement_reason", reason)?;
+    }
+    field(out, "author", &m.author.to_string())?;
+    field(out, "updated_by", &m.updated_by.to_string())?;
+    field(out, "created", &timestamp(m.created))?;
+    field(out, "updated", &timestamp(m.updated))?;
+    for o in &m.occurrences {
+        field(
+            out,
+            &format!("occurrence {}", o.n),
+            &format!(
+                "{} {} {}\n{}",
+                timestamp(o.date),
+                o.session,
+                o.message,
+                if o.quote.is_empty() {
+                    "(forgotten)"
+                } else {
+                    &o.quote
+                }
+            ),
+        )?;
+    }
+    Ok(())
 }
 
 /// A hook's reply: one line of Claude Code hook JSON, or nothing when the
@@ -650,6 +780,9 @@ pub(super) fn entry_metadata(out: &mut dyn Write, e: &EntryPayload, color: bool)
     field(out, "superseded", e.superseded_by.as_deref().unwrap_or("-"))?;
     field(out, "from", &from)?;
     field(out, "cite", &cite)?;
+    if let Some(line) = approved_line(e) {
+        field(out, "approved", &line)?;
+    }
     field(out, "cwd", e.cite.as_ref().map_or("-", |c| c.cwd.as_str()))?;
     field(out, "said", or_dash(&e.said))?;
     if let Some(reason) = &e.retirement_reason {
@@ -739,11 +872,7 @@ pub(super) fn entry_metadata(out: &mut dyn Write, e: &EntryPayload, color: bool)
 /// and origin. Plain is `<field>\t<value>\t<origin>` lines (origin `-` for
 /// a setting); the table aligns the same lines, labels first.
 fn tag_rules(out: &mut dyn Write, t: &TagShowPayload, table: bool) -> io::Result<()> {
-    let origin = |o: &OriginPayload| match (&o.file, o.line) {
-        (Some(file), Some(line)) => format!("{} {file}:{line}", o.source),
-        (Some(file), None) => format!("{} {file}", o.source),
-        (None, _) => o.source.to_owned(),
-    };
+    let origin = origin_text;
     let c = &t.capture;
     let action = t.action.as_ref().map_or_else(
         || String::from("-"),
@@ -826,6 +955,52 @@ fn tag_rules(out: &mut dyn Write, t: &TagShowPayload, table: bool) -> io::Result
         }
     }
     Ok(())
+}
+
+/// `memory rules`: plain is `<rule>\t<value>\t<origin>` lines, like `tag
+/// show`; the table adds each rule's meaning, cut to fit (`--json` keeps
+/// it whole).
+fn memory_rules(
+    out: &mut dyn Write,
+    sink: &Sink,
+    rules: &super::payload::MemoryRulesPayload,
+) -> io::Result<()> {
+    let rows: Vec<Vec<Cell>> = rules
+        .rules
+        .iter()
+        .map(|r| {
+            let value = r.value.as_array().map_or_else(
+                || r.value.to_string(),
+                |list| {
+                    list.iter()
+                        .map(|v| format!("{:?}", v.as_str().unwrap_or_default()))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                },
+            );
+            vec![
+                Cell::plain(r.rule),
+                Cell::plain(value),
+                Cell::plain(origin_text(&r.origin)),
+                Cell::plain(r.meaning),
+            ]
+        })
+        .collect();
+    if sink.mode == OutputMode::Table {
+        return out.write_all(
+            table::render(&MEMORY_RULE_COLUMNS, &rows, sink.width, sink.color).as_bytes(),
+        );
+    }
+    rows.iter()
+        .try_for_each(|row| writeln!(out, "{}", plain_line(&row[..3])))
+}
+
+fn origin_text(o: &OriginPayload) -> String {
+    match (&o.file, o.line) {
+        (Some(file), Some(line)) => format!("{} {file}:{line}", o.source),
+        (Some(file), None) => format!("{} {file}", o.source),
+        (None, _) => o.source.to_owned(),
+    }
 }
 
 fn session_detail(out: &mut dyn Write, sink: &Sink, s: &SessionPayload) -> io::Result<()> {
@@ -1097,6 +1272,55 @@ pub(crate) fn scan(out: &mut dyn Write, sink: &Sink, report: &ScanReport) -> io:
             Cell::plain("-"),
         ]);
     }
+    let memory = &report.memory;
+    for m in &memory.merged {
+        rows.push(vec![
+            Cell::plain("merged"),
+            Cell::plain(m.item.clone()),
+            Cell::plain("memory"),
+            Cell::plain(m.into.clone()),
+            Cell::plain(m.item.clone()),
+        ]);
+    }
+    for m in &memory.superseded {
+        rows.push(vec![
+            Cell::plain("superseded"),
+            Cell::plain(m.item.clone()),
+            Cell::plain("memory"),
+            Cell::plain(m.item.clone()),
+            Cell::plain(m.by.clone()),
+        ]);
+    }
+    for m in &memory.promoted {
+        rows.push(vec![
+            Cell::plain("promoted"),
+            Cell::plain(m.item.clone()),
+            Cell::plain(m.rule),
+            Cell::plain(m.item.clone()),
+            Cell::plain(m.to.clone()),
+        ]);
+    }
+    for id in &memory.completed {
+        rows.push(vec![
+            Cell::plain("completed"),
+            Cell::plain(id.clone()),
+            Cell::plain("memory"),
+            Cell::plain("-"),
+            Cell::plain("-"),
+        ]);
+    }
+    for f in &memory.failed_batches {
+        rows.push(vec![
+            Cell {
+                text: String::from("failed"),
+                role: Role::Warn,
+            },
+            Cell::plain(format!("memory-batch-{}", f.batch)),
+            Cell::plain(f.error_code),
+            Cell::plain("-"),
+            Cell::plain("-"),
+        ]);
+    }
     for f in &report.failed_removal_batches {
         rows.push(vec![
             Cell {
@@ -1116,6 +1340,81 @@ pub(crate) fn scan(out: &mut dyn Write, sink: &Sink, report: &ScanReport) -> io:
         OutputMode::Table => {
             out.write_all(table::render(&SCAN_COLUMNS, &rows, sink.width, sink.color).as_bytes())
         }
+        OutputMode::Plain | OutputMode::Json => rows
+            .iter()
+            .try_for_each(|row| writeln!(out, "{}", plain_line(row))),
+    }
+}
+
+/// `issue stats`: one row per count, then the two proxy ratios as
+/// `<numerator>/<denominator> (<value>)`, `-` with nothing to divide; or
+/// the JSON object.
+pub(crate) fn issue_stats(
+    out: &mut dyn Write,
+    sink: &Sink,
+    payload: &IssueStatsPayload,
+) -> io::Result<()> {
+    if sink.mode == OutputMode::Json {
+        return write_json(out, payload);
+    }
+    let s = &payload.0;
+    let count = |name: &str, n: u64, means: &str| {
+        vec![
+            Cell::plain(name.to_owned()),
+            Cell::plain(n.to_string()),
+            Cell::plain(means.to_owned()),
+        ]
+    };
+    let proxy = |name: &str, parts: Option<(u64, u64)>, means: &str| {
+        let value = parts.map_or_else(
+            || String::from("-"),
+            |(n, d)| format!("{n}/{d} ({:.3})", payload::ratio(n, d)),
+        );
+        vec![
+            Cell::plain(name.to_owned()),
+            Cell::plain(value),
+            Cell::plain(format!("proxy: {means}")),
+        ]
+    };
+    let rows = vec![
+        count(
+            "fires",
+            s.fires,
+            "issue trigger fires on Daniel's typed turns",
+        ),
+        count(
+            "fires_with_write",
+            s.fires_with_write,
+            "fires followed by an issue write on the same turn",
+        ),
+        count("writes", s.writes, "issue add and occur writes"),
+        count(
+            "writes_without_fire",
+            s.writes_without_fire,
+            "writes whose request turn no fire matched",
+        ),
+        count("writes_forgotten", s.writes_forgotten, "later forgotten"),
+        count(
+            "writes_moved",
+            s.writes_moved,
+            "later moved to another issue",
+        ),
+        count(
+            "writes_withdrawn",
+            s.writes_withdrawn,
+            "forgotten or moved, each counted once",
+        ),
+        proxy("precision", s.precision(), payload::PRECISION_MEANS),
+        proxy(
+            "trigger_yield",
+            s.trigger_yield(),
+            payload::TRIGGER_YIELD_MEANS,
+        ),
+    ];
+    match sink.mode {
+        OutputMode::Table => out.write_all(
+            table::render(&ISSUE_STATS_COLUMNS, &rows, sink.width, sink.color).as_bytes(),
+        ),
         OutputMode::Plain | OutputMode::Json => rows
             .iter()
             .try_for_each(|row| writeln!(out, "{}", plain_line(row))),
@@ -1183,6 +1482,38 @@ fn session_row(s: &SessionPayload, active: bool) -> Vec<Cell> {
     cells
 }
 
+/// `approved by <aide> on your instruction "<quote>" (<session>, <date>)`
+/// for an entry an agent approved on Daniel's checked instruction
+/// (2_design.md §12.3); `None` when he typed the approval.
+fn approved_line(e: &EntryPayload) -> Option<String> {
+    let by = e.approved_by.as_ref()?;
+    let inst = e.instruction.as_ref()?;
+    Some(scribe_core::ask::instructed_line(
+        "approved",
+        &by.name,
+        scribe_core::ask::INSTRUCTION_YOURS,
+        inst.quote.as_deref(),
+        &inst.session,
+        inst.at,
+    ))
+}
+
+/// How a candidate settled on Daniel's checked instruction reads:
+/// `approved by <aide> on your instruction "<quote>" (<session>, <date>)`,
+/// or `rejected by …`; `None` for one he settled by typing, or still open.
+fn settled_line(p: &ProposalPayload) -> Option<String> {
+    let inst = p.instruction.as_ref()?;
+    let by = p.settled_author.as_ref()?;
+    Some(scribe_core::ask::instructed_line(
+        p.state,
+        &by.name,
+        scribe_core::ask::INSTRUCTION_YOURS,
+        inst.quote.as_deref(),
+        &inst.session,
+        inst.at,
+    ))
+}
+
 /// A proposal's rows: one, and for a candidate carrying scribe's
 /// statement, in the table, a second under it holding Daniel's quote in
 /// the `REASON` column (2_design.md §11.1).
@@ -1198,6 +1529,21 @@ fn proposal_rows(p: &ProposalPayload, mode: OutputMode) -> Vec<Vec<Cell>> {
         if let Some(cell) = under.get_mut(PROPOSAL_REASON_COLUMN) {
             *cell = Cell {
                 text: quote,
+                role: Role::Muted,
+            };
+        }
+        rows.push(under);
+    }
+    if mode == OutputMode::Table
+        && let Some(line) = settled_line(p)
+    {
+        let mut under: Vec<Cell> = PROPOSAL_COLUMNS
+            .iter()
+            .map(|_| Cell::plain(String::new()))
+            .collect();
+        if let Some(cell) = under.get_mut(PROPOSAL_REASON_COLUMN) {
+            *cell = Cell {
+                text: line,
                 role: Role::Muted,
             };
         }
@@ -1233,6 +1579,12 @@ fn proposal_row(p: &ProposalPayload, mode: OutputMode) -> Vec<Cell> {
         }
         (Some(statement), _) => one_line(statement),
         (None, _) => one_line(&p.reason),
+    };
+    // The plain line carries the instruction after the reason, where the
+    // table puts it on a row under (2_design.md §12.3).
+    let reason = match settled_line(p) {
+        Some(line) if mode != OutputMode::Table => format!("{reason} | {line}"),
+        _ => reason,
     };
     vec![
         Cell::plain(p.id.clone()),

@@ -181,6 +181,8 @@ pub struct Config {
     /// Path fragments per project slug, for transcript attribution. None
     /// by default (docs/design/scribe/2_design.md §5.8).
     pub projects: BTreeMap<Project, Vec<String>>,
+    /// `[memory]` (docs/design/scribe/2_design.md §13.3).
+    pub memory: crate::memory::MemoryConfig,
 }
 
 impl Default for Config {
@@ -196,6 +198,7 @@ impl Default for Config {
             sessions: SessionsConfig::default(),
             redact_env: Vec::new(),
             projects: BTreeMap::new(),
+            memory: crate::memory::MemoryConfig::default(),
         }
     }
 }
@@ -282,6 +285,7 @@ impl Config {
             },
             redact_env: raw.redact.env,
             projects: projects_from(text, raw.projects)?,
+            memory: raw.memory.resolve(text)?,
         })
     }
 
@@ -336,6 +340,173 @@ struct RawConfig {
     redact: RawRedact,
     #[serde(default)]
     projects: BTreeMap<String, RawProject>,
+    #[serde(default)]
+    memory: RawMemory,
+}
+
+/// `[memory]`: every key optional, each overriding its default alone. The
+/// parked settings (`base`, `base_idle_minutes`, `[memory.sections]
+/// people`, `[memory.recurring]`) are not accepted.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawMemory {
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    personal: Option<bool>,
+    #[serde(default)]
+    decay_days: Option<toml::Spanned<NonZeroU32>>,
+    #[serde(default)]
+    now_undated_days: Option<toml::Spanned<NonZeroU32>>,
+    #[serde(default)]
+    now_after_days: Option<toml::Spanned<u32>>,
+    #[serde(default)]
+    page_chars: Option<usize>,
+    #[serde(default)]
+    recent_sessions: Option<usize>,
+    #[serde(default)]
+    sections: RawMemorySections,
+    #[serde(default)]
+    promote: RawPromote,
+}
+
+/// `[memory.promote]` (2_design.md §13.4): each key overrides its shipped
+/// default alone; `user_says` replaces the whole list.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawPromote {
+    #[serde(default)]
+    profile_change: Option<toml::Spanned<bool>>,
+    #[serde(default)]
+    recurs_in_sessions: Option<toml::Spanned<u32>>,
+    #[serde(default)]
+    user_says: Option<toml::Spanned<Vec<String>>>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawMemorySections {
+    #[serde(default)]
+    profile: Option<bool>,
+    #[serde(default)]
+    projects: Option<bool>,
+    #[serde(default)]
+    working: Option<bool>,
+    #[serde(default)]
+    now: Option<bool>,
+    #[serde(default)]
+    milestones: Option<bool>,
+}
+
+impl RawMemory {
+    /// The configured values over the defaults, each with its origin.
+    /// `page_chars` takes 600 to 10,000, `recent_sessions` at most 20 and
+    /// `recurs_in_sessions` at most 100; each `user_says` phrase is checked
+    /// as a capture trigger.
+    fn resolve(self, text: &str) -> Result<crate::memory::MemoryConfig, ConfigError> {
+        use crate::tag::{Rule, RuleOrigin};
+        let at = |span: std::ops::Range<usize>| Some(line_of(text, span.start));
+        let origin = |span: std::ops::Range<usize>| RuleOrigin::Config { line: at(span) };
+        let unlocated = |message: String| ConfigError {
+            line: None,
+            message,
+        };
+        let base = crate::memory::MemoryConfig::default();
+        let page_chars = self.page_chars.unwrap_or(base.page_chars);
+        if !(600..=10_000).contains(&page_chars) {
+            return Err(unlocated(format!(
+                "memory.page_chars = {page_chars} is out of range; give 600 to 10000"
+            )));
+        }
+        let recent_sessions = self.recent_sessions.unwrap_or(base.recent_sessions);
+        if recent_sessions > 20 {
+            return Err(unlocated(format!(
+                "memory.recent_sessions = {recent_sessions} is out of range; give 0 to 20"
+            )));
+        }
+        let mut windows = base.windows;
+        let decay_days = self.decay_days.map_or(base.decay_days, |v| {
+            windows.decay_days = origin(v.span());
+            v.into_inner().get()
+        });
+        let now_undated_days = self.now_undated_days.map_or(base.now_undated_days, |v| {
+            windows.now_undated_days = origin(v.span());
+            v.into_inner().get()
+        });
+        let now_after_days = self.now_after_days.map_or(base.now_after_days, |v| {
+            windows.now_after_days = origin(v.span());
+            v.into_inner()
+        });
+        let mut promote = base.promote.clone();
+        if let Some(v) = self.promote.profile_change {
+            promote.profile_change = Rule {
+                origin: origin(v.span()),
+                value: v.into_inner(),
+            };
+        }
+        if let Some(v) = self.promote.recurs_in_sessions {
+            let span = v.span();
+            let value = v.into_inner();
+            if value > 100 {
+                return Err(ConfigError {
+                    line: at(span),
+                    message: format!(
+                        "memory.promote.recurs_in_sessions = {value} is out of range; give 0 to 100"
+                    ),
+                });
+            }
+            promote.recurs_in_sessions = Rule {
+                value,
+                origin: origin(span),
+            };
+        }
+        if let Some(v) = self.promote.user_says {
+            let span = v.span();
+            let refuse = |message: String| ConfigError {
+                line: at(span.clone()),
+                message,
+            };
+            let list = v.into_inner();
+            if list.len() > crate::trigger::MAX_TRIGGERS {
+                return Err(refuse(format!(
+                    "memory.promote.user_says: at most {} phrases",
+                    crate::trigger::MAX_TRIGGERS
+                )));
+            }
+            let mut seen: Vec<String> = Vec::new();
+            for phrase in list {
+                crate::trigger::check(&phrase)
+                    .map_err(|e| refuse(format!("memory.promote.user_says: {e}")))?;
+                if !seen.contains(&phrase) {
+                    seen.push(phrase);
+                }
+            }
+            promote.user_says = Rule {
+                value: seen,
+                origin: origin(span),
+            };
+        }
+        let s = self.sections;
+        let d = base.sections;
+        Ok(crate::memory::MemoryConfig {
+            enabled: self.enabled.unwrap_or(base.enabled),
+            personal: self.personal.unwrap_or(base.personal),
+            decay_days,
+            now_undated_days,
+            now_after_days,
+            page_chars,
+            recent_sessions,
+            sections: crate::memory::SectionSwitches {
+                profile: s.profile.unwrap_or(d.profile),
+                projects: s.projects.unwrap_or(d.projects),
+                working: s.working.unwrap_or(d.working),
+                now: s.now.unwrap_or(d.now),
+                milestones: s.milestones.unwrap_or(d.milestones),
+            },
+            promote,
+            windows,
+        })
+    }
 }
 
 #[derive(Deserialize)]
@@ -567,10 +738,11 @@ impl RawTag {
         let description = self
             .description
             .or_else(|| shipped.as_ref().and_then(|def| def.description.clone()));
+        // `issue` is no shipped tag but ships capture rules (§11.4), which a
+        // `[tags.issue.capture]` table overrides field by field.
         let shipped_capture = shipped
             .as_ref()
-            .map(|def| def.capture.clone())
-            .unwrap_or_default();
+            .map_or_else(|| CaptureRules::shipped(&name), |def| def.capture.clone());
         let capture = match self.capture {
             None => shipped_capture,
             Some(raw) => raw.resolve(&format!("{key}.capture"), text, shipped_capture)?,

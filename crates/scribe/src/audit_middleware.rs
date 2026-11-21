@@ -15,7 +15,8 @@
 //! instruction its session and turn ids: never argument values or error text,
 //! which can carry entry contents or paths (STD-05 R13).
 //!
-//! A hook run writes one line per record it wrote or refused (two `#scribe`
+//! A hook run writes one line per record it wrote or refused, and one per
+//! `issue` trigger fire (two `#scribe`
 //! lines in one prompt are two lines in the log), and none when it changed
 //! nothing; a session pass one per session passed (a `session catalog` also one
 //! for the switch it wrote, unless a window failed: a failed catalog is one
@@ -25,8 +26,8 @@
 //! nothing; a direct write verb (`entry`, `tag` and `proposal` writes,
 //! `session activate|deactivate`) one when it changed the record and none
 //! when it did not: the `Stop` hook runs after
-//! every reply and usually has nothing to do, and a prompt without
-//! `#scribe` is not a mutation.
+//! every reply and usually has nothing to do, and a prompt with neither
+//! `#scribe` nor an `issue` trigger fire is not a mutation.
 //!
 //! The audit log is a side channel, so it fails open (STD-02 R31): a line that
 //! cannot be written never fails the command that already ran, and is reported
@@ -175,7 +176,11 @@ impl<'a> AuditGuard<'a> {
                         },
                     );
                 }
-                for id in &report.persisted_targets {
+                for id in report
+                    .persisted_targets
+                    .iter()
+                    .chain(&report.memory_targets)
+                {
                     lines.push(Line {
                         status: AuditStatus::Success,
                         target: Some(id.clone()),
@@ -233,6 +238,18 @@ impl<'a> AuditGuard<'a> {
                 .chain(report.failed_removal_batches.iter().map(|f| Line {
                     status: AuditStatus::Failure,
                     target: Some(format!("removal-batch:{}", f.batch)),
+                    error_code: Some(f.error_code),
+                    issue: None,
+                }))
+                .chain(report.memory.targets.iter().map(|target| Line {
+                    status: AuditStatus::Success,
+                    target: Some(target.clone()),
+                    error_code: None,
+                    issue: None,
+                }))
+                .chain(report.memory.failed_batches.iter().map(|f| Line {
+                    status: AuditStatus::Failure,
+                    target: Some(format!("memory-batch:{}", f.batch)),
                     error_code: Some(f.error_code),
                     issue: None,
                 }))
@@ -342,7 +359,13 @@ fn target_of(output: &Output) -> Option<String> {
         Output::Show {
             record: Record::Issue(issue),
         } => Some(issue.id.clone()),
-        Output::List { .. } => None,
+        Output::Show {
+            record: Record::Memory(item),
+        } => Some(format!("memory:{}", item.id)),
+        Output::Show {
+            record: Record::MemoryPage(_) | Record::MemoryRules(_),
+        }
+        | Output::List { .. } => None,
         // Hook replies, passes and scans are audited per outcome in
         // `mark_result`.
         Output::Hook(_) | Output::Pass(_) | Output::Scan(_) => None,
@@ -351,12 +374,15 @@ fn target_of(output: &Output) -> Option<String> {
         | Output::Plugin(_)
         | Output::Popup
         | Output::PopupRows(_)
-        | Output::PopupPreview(_) => None,
+        | Output::PopupPreview(_)
+        | Output::IssueStats(_) => None,
     }
 }
 
 fn record_target(record: &Record) -> Option<String> {
     Some(match record {
+        Record::Memory(m) => format!("memory:{}", m.id),
+        Record::MemoryPage(_) | Record::MemoryRules(_) => return None,
         Record::Entry(e) => e.id.clone(),
         Record::Session(s) => format!("session:{}", s.id),
         Record::Tag(t) => t.name.to_string(),

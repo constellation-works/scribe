@@ -1,0 +1,15 @@
+id          m-4
+section     working
+status      retired
+statement   Reviews every agent PR himself.
+page        retired
+project     -
+event_date  -
+sensitive   false
+retirement_reason no longer true
+author      scribe:session-pass
+updated_by  scribe:session-pass
+created     2026-11-02T19:00:00Z
+updated     2026-11-02T19:00:00Z
+occurrence 1 2026-11-02T18:57:00Z 7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02 u-6
+             I review every agent PR myself

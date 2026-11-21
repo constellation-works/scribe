@@ -669,8 +669,23 @@ fn parse(line: u32, said: &str, tags: &TagTable) -> Parsed {
     instruction(def.name.clone(), content)
 }
 
+/// The hashes a transcript turn's text can match a typed prompt by: of the
+/// whole text and of each text block, as the `Stop` hook matches cites.
+#[must_use]
+pub fn prompt_hashes(message: &crate::transcript::Message) -> Vec<String> {
+    let mut hashes = vec![prompt_sha256(&message.text())];
+    for block in &message.blocks {
+        let hash = prompt_sha256(block);
+        if !hashes.contains(&hash) {
+            hashes.push(hash);
+        }
+    }
+    hashes
+}
+
 /// SHA-256 of a prompt's text, lowercase hex: the cite's `prompt_sha256`,
-/// which the `Stop` hook matches against the transcript.
+/// which the `Stop` hook matches against the transcript, and a trigger
+/// fire's key in the audit log (2_design.md §11.4).
 #[must_use]
 pub fn prompt_sha256(prompt: &str) -> String {
     let digest = Sha256::digest(prompt.as_bytes());

@@ -1,0 +1,6 @@
+ID   SECTION     STATUS     PAGE       SEEN  LATEST                STATEMENT
+m-3  now         active     on            1  2026-11-02T18:59:00Z  Said a scribe release is planned for 2099-01-01.
+m-2  milestones  active     on            1  2026-10-20T09:12:00Z  Decommissioned pulsar.
+m-1  profile     active     on            2  2026-11-02T18:58:00Z  Runs Orbit on a home server and a Mac mini.
+m-5  profile     forgotten  forgotten     1  2026-11-02T18:56:00Z  -
+m-4  working     retired    retired       1  2026-11-02T18:57:00Z  Reviews every agent PR himself.

@@ -1081,6 +1081,8 @@ pub(crate) enum Records {
     Transcripts(Vec<TranscriptPayload>),
     /// `issue list`, most recently updated first.
     Issues(Vec<IssuePayload>),
+    /// `memory show`, in page order.
+    Memory(Vec<MemoryPayload>),
 }
 
 impl Records {
@@ -1094,6 +1096,7 @@ impl Records {
             Self::Hits(v) => v.len(),
             Self::Transcripts(v) => v.len(),
             Self::Issues(v) => v.len(),
+            Self::Memory(v) => v.len(),
         }
     }
 }
@@ -1178,6 +1181,213 @@ pub(crate) enum Record {
     Session(Box<SessionPayload>),
     Transcript(Box<TranscriptPayload>),
     Issue(Box<IssuePayload>),
+    /// One memory item, with every occurrence.
+    Memory(Box<MemoryPayload>),
+    /// `memory show --page`.
+    MemoryPage(Box<MemoryPagePayload>),
+    /// `memory rules`.
+    MemoryRules(Box<MemoryRulesPayload>),
+}
+
+/// One memory item (`memory show`, and its writes;
+/// docs/design/scribe/specs/output-contract.md). Field names are a
+/// contract.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct MemoryPayload {
+    /// `m-<n>`.
+    pub(crate) id: String,
+    /// The id's number, for ordering; not serialized.
+    #[serde(skip)]
+    pub(crate) number: u64,
+    /// `profile`, `projects`, `working`, `now` or `milestones`.
+    pub(crate) section: &'static str,
+    /// `active`, `merged`, `superseded`, `promoted`, `retired` or
+    /// `forgotten`.
+    pub(crate) status: &'static str,
+    /// scribe's statement; empty once forgotten.
+    pub(crate) statement: String,
+    /// `projects` only: the project; `null` otherwise.
+    pub(crate) project: Option<String>,
+    /// `now` and `milestones`: the event date; `null` when none was said.
+    pub(crate) event_date: Option<String>,
+    /// A sensitive event.
+    pub(crate) sensitive: bool,
+    /// `loss`, `health`, `relationship` or `family`; `null` otherwise.
+    pub(crate) sensitive_kind: Option<&'static str>,
+    /// Whether the session-start page shows it today.
+    pub(crate) on_page: bool,
+    /// Why not: `merged`, `superseded`, `promoted`, `retired`,
+    /// `forgotten`, `section_off`, `decayed` or `past_window`; `null` when
+    /// on the page.
+    pub(crate) off_page: Option<&'static str>,
+    /// `now` only: whether the page labels it not yet raised.
+    pub(crate) not_yet_raised: bool,
+    /// `now` only: when it was last brought up; `null` when never.
+    pub(crate) acknowledged: Option<scribe_core::memory::Acknowledged>,
+    /// How many occurrences support it.
+    pub(crate) occurrence_count: usize,
+    /// From how many distinct sessions.
+    pub(crate) sessions: usize,
+    /// The newest occurrence's date.
+    #[serde(with = "time::serde::rfc3339")]
+    pub(crate) latest: Timestamp,
+    /// Why an agent retired it; `null` otherwise.
+    pub(crate) retirement_reason: Option<String>,
+    /// `milestones`: the `now` item it was promoted from; `null` otherwise.
+    pub(crate) promoted_from: Option<String>,
+    /// A promotion: `{rule, to, profile_from, profile_to}` on the milestone
+    /// and on the `now` item it came from; `null` otherwise.
+    pub(crate) promotion: Option<scribe_core::memory::Promotion>,
+    /// `merged`: the item that holds its occurrences; `null` otherwise.
+    pub(crate) merged_into: Option<String>,
+    /// `superseded`: the item that replaced it; `null` otherwise.
+    pub(crate) superseded_by: Option<String>,
+    /// scribe's session pass.
+    pub(crate) author: scribe_core::Author,
+    /// Who changed it last.
+    pub(crate) updated_by: scribe_core::Author,
+    /// When it was written.
+    #[serde(with = "time::serde::rfc3339")]
+    pub(crate) created: Timestamp,
+    /// When it last changed.
+    #[serde(with = "time::serde::rfc3339")]
+    pub(crate) updated: Timestamp,
+    /// The turns that support it, newest first, each with the user's
+    /// verbatim quote.
+    pub(crate) occurrences: Vec<scribe_core::memory::Occurrence>,
+}
+
+impl MemoryPayload {
+    /// The payload of `item` on `today`.
+    pub(crate) fn from_item(
+        item: &scribe_core::memory::MemoryItem,
+        config: &scribe_core::memory::MemoryConfig,
+        today: time::Date,
+    ) -> Self {
+        let off = scribe_core::memory::off_page(item, config, today);
+        Self {
+            id: item.id.to_string(),
+            number: item.id.number(),
+            section: item.section.as_str(),
+            status: item.status.as_str(),
+            statement: item.statement.clone(),
+            project: item.project.as_ref().map(ToString::to_string),
+            event_date: item.event_date.map(|d| {
+                d.format(time::macros::format_description!("[year]-[month]-[day]"))
+                    .unwrap_or_default()
+            }),
+            sensitive: item.sensitive,
+            sensitive_kind: item.sensitive_kind.map(|k| k.as_str()),
+            on_page: off.is_none(),
+            off_page: off.map(|o| o.as_str()),
+            not_yet_raised: item.not_yet_raised(today),
+            acknowledged: item.acknowledged.clone(),
+            occurrence_count: item.occurrences.len(),
+            sessions: item.sessions(),
+            latest: item.latest(),
+            retirement_reason: item.retirement_reason.clone(),
+            promoted_from: item.promoted_from.as_ref().map(ToString::to_string),
+            promotion: item.promotion.clone(),
+            merged_into: item.merged_into.as_ref().map(ToString::to_string),
+            superseded_by: item.superseded_by.as_ref().map(ToString::to_string),
+            author: item.author.clone(),
+            updated_by: item.updated_by.clone(),
+            created: item.created,
+            updated: item.updated,
+            occurrences: item.occurrences.clone(),
+        }
+    }
+}
+
+/// `memory rules`: the effective promotion rules and page windows, each
+/// with its origin (2_design.md §13.4). Field names are a contract.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct MemoryRulesPayload {
+    /// In a fixed order: the three promotion rules, then the windows.
+    pub(crate) rules: Vec<MemoryRulePayload>,
+}
+
+/// One rule.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct MemoryRulePayload {
+    /// Its config key under `[memory]`: `promote.profile_change`,
+    /// `promote.recurs_in_sessions`, `promote.user_says`, `decay_days`,
+    /// `now_undated_days` or `now_after_days`.
+    pub(crate) rule: &'static str,
+    /// Its effective value: a boolean, a number of sessions or days, or the
+    /// list of phrases.
+    pub(crate) value: serde_json::Value,
+    /// Where it came from.
+    pub(crate) origin: OriginPayload,
+    /// What it does, in one line.
+    pub(crate) meaning: &'static str,
+}
+
+impl MemoryRulesPayload {
+    /// The rules of `config`, whose config file is `file`.
+    pub(crate) fn new(config: &scribe_core::memory::MemoryConfig, file: &str) -> Self {
+        use scribe_core::{Rule, RuleOrigin};
+        let p = &config.promote;
+        let w = &config.windows;
+        let at = |origin: RuleOrigin| OriginPayload::of(Some(&Rule { value: (), origin }), file);
+        let rule = |rule, value, origin, meaning| MemoryRulePayload {
+            rule,
+            value,
+            origin,
+            meaning,
+        };
+        Self {
+            rules: vec![
+                rule(
+                    "promote.profile_change",
+                    serde_json::Value::Bool(p.profile_change.value),
+                    OriginPayload::of(Some(&p.profile_change), file),
+                    "a now or milestones event that changes a profile fact becomes a milestone and replaces that profile item",
+                ),
+                rule(
+                    "promote.recurs_in_sessions",
+                    serde_json::Value::from(p.recurs_in_sessions.value),
+                    OriginPayload::of(Some(&p.recurs_in_sessions), file),
+                    "a now item raised in this many distinct sessions becomes a milestone; 0 switches it off",
+                ),
+                rule(
+                    "promote.user_says",
+                    serde_json::Value::from(p.user_says.value.clone()),
+                    OriginPayload::of(Some(&p.user_says), file),
+                    "one of these phrases in the user's turn makes the event a milestone",
+                ),
+                rule(
+                    "decay_days",
+                    serde_json::Value::from(config.decay_days),
+                    at(w.decay_days),
+                    "a projects or working item leaves the page this many days after its latest occurrence",
+                ),
+                rule(
+                    "now_undated_days",
+                    serde_json::Value::from(config.now_undated_days),
+                    at(w.now_undated_days),
+                    "an undated now item leaves the page this many days after its latest occurrence",
+                ),
+                rule(
+                    "now_after_days",
+                    serde_json::Value::from(config.now_after_days),
+                    at(w.now_after_days),
+                    "a dated now item leaves the page this many days after its date",
+                ),
+            ],
+        }
+    }
+}
+
+/// `memory show --page`: the page the session-start hook injects.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct MemoryPagePayload {
+    /// The page; `null` when memory is off or there is nothing to show.
+    pub(crate) page: Option<String>,
+    /// Its length in characters.
+    pub(crate) chars: usize,
+    /// Whether the milestone lines pass 600 characters.
+    pub(crate) over_budget: bool,
 }
 
 /// One uncataloged transcript (`transcript list` / `transcript show`).
@@ -1296,6 +1506,15 @@ pub(crate) struct PassPayload {
     pub(crate) error: Option<String>,
     /// Deterministic repairs in successfully persisted windows, in order.
     pub(crate) warnings: Vec<String>,
+    /// Memory items created or occurrences added in persisted windows
+    /// (2_design.md §13.3).
+    pub(crate) memory_written: usize,
+    /// `now` items promoted to `milestones`, and milestones written
+    /// directly on rule (a) or (c), in persisted windows (2_design.md
+    /// §13.4).
+    pub(crate) memory_promoted: usize,
+    /// Memory elements refused, by code (`memory_sensitive`, ...).
+    pub(crate) memory_refused: std::collections::BTreeMap<&'static str, usize>,
 }
 
 /// What `session pass` did; `--json` and the `scribe.session-pass` tool
@@ -1319,6 +1538,10 @@ pub(crate) struct PassReport {
     /// retired, and ideas the pass wrote itself: one success audit line each.
     #[serde(skip)]
     pub(crate) persisted_targets: Vec<String>,
+    /// `memory:<id>` once per item created or occurrence added: one success
+    /// audit line each, ids only.
+    #[serde(skip)]
+    pub(crate) memory_targets: Vec<String>,
 }
 
 impl PassReport {
@@ -1439,9 +1662,68 @@ pub(crate) struct ScanReport {
     /// Removed-feature batches the model failed; their pairs are offered
     /// again while their later record is recent.
     pub(crate) failed_removal_batches: Vec<BatchFailure>,
+    /// The memory steps (2_design.md §13.5).
+    pub(crate) memory: MemoryScanPayload,
     /// Lines for stderr, printed in every mode.
     #[serde(skip)]
     pub(crate) notices: Vec<String>,
+}
+
+/// What a scan's memory steps did.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub(crate) struct MemoryScanPayload {
+    /// Memory pairs the model labelled.
+    pub(crate) pairs_judged: usize,
+    /// Memory pairs past the cap of 40 or not reached in this call's time.
+    pub(crate) pairs_left: usize,
+    /// Pairs labelled `unrelated`, never offered again.
+    pub(crate) unrelated: usize,
+    /// Labels refused: a quote not verbatim in its item's quotes, an
+    /// unknown or repeated pair, an unknown label.
+    pub(crate) dropped_labels: usize,
+    /// Batches the model failed; their pairs are offered again next scan.
+    pub(crate) failed_batches: Vec<BatchFailure>,
+    /// Items merged into an older one (`same`).
+    pub(crate) merged: Vec<MergedPayload>,
+    /// Items a newer one superseded (`contradicts`).
+    pub(crate) superseded: Vec<SupersededPayload>,
+    /// `now` items promoted to `milestones` (rule (b) after the merges).
+    pub(crate) promoted: Vec<PromotedPayload>,
+    /// Items changed to complete a promotion a crash cut short.
+    pub(crate) completed: Vec<String>,
+    /// Every item whose file the scan changed, `memory:<id>`: one audit
+    /// line each.
+    #[serde(skip)]
+    pub(crate) targets: Vec<String>,
+}
+
+/// An item a scan merged.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct MergedPayload {
+    /// The newer item, now `merged`.
+    pub(crate) item: String,
+    /// The older item that holds its occurrences.
+    pub(crate) into: String,
+}
+
+/// An item a scan superseded.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct SupersededPayload {
+    /// The older item, now `superseded`.
+    pub(crate) item: String,
+    /// The newer item.
+    pub(crate) by: String,
+}
+
+/// A promotion.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct PromotedPayload {
+    /// The `now` item, now `promoted`.
+    pub(crate) item: String,
+    /// The milestone.
+    pub(crate) to: String,
+    /// `profile_change`, `recurs_in_sessions` or `user_says`.
+    pub(crate) rule: &'static str,
 }
 
 /// A session a scan deactivated.
@@ -1746,4 +2028,81 @@ pub(crate) enum Output {
     PopupRows(PopupRows),
     /// The popup's preview of one record (the hidden `tmux preview`).
     PopupPreview(Record),
+    /// `issue stats`: the counts behind the issue trigger's recall and
+    /// precision.
+    IssueStats(IssueStatsPayload),
+}
+
+/// `issue stats` (2_design.md §11.4): counts from the audit log, and the
+/// two ratios, each named as the proxy it is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct IssueStatsPayload(pub(crate) scribe_core::IssueStats);
+
+/// What each ratio of `issue stats` divides, as it is shown.
+pub(crate) const PRECISION_MEANS: &str = "writes neither forgotten nor moved / writes";
+/// See [`PRECISION_MEANS`].
+pub(crate) const TRIGGER_YIELD_MEANS: &str = "fires that led to a write / fires";
+
+/// One ratio: its parts, its value to three places and what it divides.
+#[derive(Serialize)]
+struct RatioJson {
+    numerator: u64,
+    denominator: u64,
+    value: f64,
+    means: &'static str,
+}
+
+impl RatioJson {
+    fn new(parts: Option<(u64, u64)>, means: &'static str) -> Option<Self> {
+        parts.map(|(numerator, denominator)| Self {
+            numerator,
+            denominator,
+            value: ratio(numerator, denominator),
+            means,
+        })
+    }
+}
+
+/// `numerator / denominator` to three decimal places (counts past
+/// `u32::MAX` saturate, far beyond any audit log).
+pub(crate) fn ratio(numerator: u64, denominator: u64) -> f64 {
+    let wide = |n: u64| f64::from(u32::try_from(n).unwrap_or(u32::MAX));
+    if denominator == 0 {
+        return 0.0;
+    }
+    ((wide(numerator) / wide(denominator)) * 1000.0).round() / 1000.0
+}
+
+impl Serialize for IssueStatsPayload {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        #[derive(Serialize)]
+        struct Json {
+            since: Option<String>,
+            fires: u64,
+            fires_with_write: u64,
+            writes: u64,
+            writes_without_fire: u64,
+            writes_forgotten: u64,
+            writes_moved: u64,
+            writes_withdrawn: u64,
+            precision_proxy: Option<RatioJson>,
+            trigger_yield_proxy: Option<RatioJson>,
+            skipped_lines: usize,
+        }
+        let s = &self.0;
+        Json {
+            since: s.since.map(scribe_core::DateRange::day),
+            fires: s.fires,
+            fires_with_write: s.fires_with_write,
+            writes: s.writes,
+            writes_without_fire: s.writes_without_fire,
+            writes_forgotten: s.writes_forgotten,
+            writes_moved: s.writes_moved,
+            writes_withdrawn: s.writes_withdrawn,
+            precision_proxy: RatioJson::new(s.precision(), PRECISION_MEANS),
+            trigger_yield_proxy: RatioJson::new(s.trigger_yield(), TRIGGER_YIELD_MEANS),
+            skipped_lines: s.skipped_lines,
+        }
+        .serialize(serializer)
+    }
 }

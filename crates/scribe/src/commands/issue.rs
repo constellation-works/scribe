@@ -78,6 +78,18 @@ Examples:
   scribe issue search 'HTTP 429 secondary rate limit'
   scribe issue search 'cpu exhausted' --project orbit --json | jq -r '.hits[].cite'";
 
+const STATS_EXAMPLES: &str = "\
+Counts from the audit log, with no model call: issue trigger fires, the
+fires an issue write on the same turn followed, writes no fire matched,
+and writes later forgotten or moved. The two ratios are proxies: precision
+is writes neither forgotten nor moved / writes, trigger yield is fires that
+led to a write / fires. Investigations no trigger fired on and no agent
+recorded are not counted.
+
+Examples:
+  scribe issue stats
+  scribe issue stats --since 2026-11-01 --json | jq '.precision_proxy.value'";
+
 const SHOW_EXAMPLES: &str = "\
 Examples:
   scribe issue show <issue-id>
@@ -113,6 +125,16 @@ pub(crate) enum IssueCommand {
     /// List issues, most recently updated first
     #[command(after_help = LIST_EXAMPLES)]
     List(ListArgs),
+    /// Count trigger fires, issue writes and withdrawals, for recall and precision
+    #[command(after_help = STATS_EXAMPLES)]
+    Stats(StatsArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct StatsArgs {
+    /// Count fires and writes from this day on (YYYY-MM-DD) [default: the whole log]
+    #[arg(long, value_name = "DATE", value_parser = super::day_parser)]
+    since: Option<time::Date>,
 }
 
 /// Daniel's request and the session it was typed in.
@@ -275,7 +297,9 @@ impl IssueCommand {
     pub(super) fn subject(&self, ctx: &Context) -> AuditSubject {
         let author = |a: &AuthorName| Some(a.as_str().to_owned());
         match self {
-            Self::Search(_) | Self::Show(_) | Self::List(_) => AuditSubject::default(),
+            Self::Search(_) | Self::Show(_) | Self::List(_) | Self::Stats(_) => {
+                AuditSubject::default()
+            }
             Self::Add(args) => AuditSubject {
                 target: None,
                 author: author(&args.author),
@@ -300,7 +324,7 @@ impl IssueCommand {
     pub(super) fn audit(&self) -> Option<AuditMeta> {
         let meta = |command| Some(AuditMeta { command });
         match self {
-            Self::Search(_) | Self::Show(_) | Self::List(_) => None,
+            Self::Search(_) | Self::Show(_) | Self::List(_) | Self::Stats(_) => None,
             Self::Add(_) => meta("issue add"),
             Self::Occur(_) => meta("issue occur"),
             Self::Update(_) => meta("issue update"),
@@ -332,6 +356,9 @@ pub(super) fn run(command: IssueCommand, ctx: &Context) -> Result<Output, CliErr
             })
         }
         IssueCommand::List(args) => list(args, ctx),
+        IssueCommand::Stats(args) => Ok(Output::IssueStats(crate::output::IssueStatsPayload(
+            ctx.store().issue_stats(args.since)?,
+        ))),
     }
 }
 
@@ -348,7 +375,8 @@ fn refuse(kind: WriteRefusal, message: impl Into<String>) -> CliError {
 }
 
 /// The request a write carries, once checked: its session, the uuid of
-/// Daniel's typed turn that holds it, and the words.
+/// Daniel's typed turn that holds it, and the words. The turn's hashes go
+/// to the audit line, where `issue stats` matches them to a trigger fire.
 struct Request {
     session: SessionId,
     message: String,
@@ -387,10 +415,11 @@ fn check_request(ctx: &Context, verb: &str, args: &RequestArgs) -> Result<Reques
         ));
     }
     for id in &sessions {
-        if let Some(message) = find_request(ctx, id, words)? {
+        if let Some((message, hashes)) = find_request(ctx, id, words)? {
             ctx.note_issue(verb, |a| {
                 a.session = Some(id.to_string());
                 a.request_message = Some(message.clone());
+                a.request_sha256 = hashes;
             });
             return Ok(Request {
                 session: id.clone(),
@@ -405,10 +434,14 @@ fn check_request(ctx: &Context, verb: &str, args: &RequestArgs) -> Result<Reques
     ))
 }
 
-/// The uuid of Daniel's typed turn in session `id` whose own words hold
-/// `words`, or `None` when its transcript is missing, fails the provenance
-/// check or holds no such turn.
-fn find_request(ctx: &Context, id: &SessionId, words: &str) -> Result<Option<String>, CliError> {
+/// The uuid and text hashes of Daniel's typed turn in session `id` whose
+/// own words hold `words`, or `None` when its transcript is missing, fails
+/// the provenance check or holds no such turn.
+fn find_request(
+    ctx: &Context,
+    id: &SessionId,
+    words: &str,
+) -> Result<Option<(String, Vec<String>)>, CliError> {
     use super::hook::payload;
     let Some(path) = payload::locate(ctx, id)? else {
         return Ok(None);
@@ -430,7 +463,7 @@ fn find_request(ctx: &Context, id: &SessionId, words: &str) -> Result<Option<Str
     Ok(messages.iter().find_map(|m| {
         scribe_core::transcript::daniel_turn(m)
             .filter(|turn| scribe_core::verbatim::contains(&turn.own, words))
-            .map(|_| m.uuid.clone())
+            .map(|_| (m.uuid.clone(), scribe_core::capture::prompt_hashes(m)))
     }))
 }
 

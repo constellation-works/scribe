@@ -15,6 +15,7 @@ mod hook;
 mod init;
 mod instruction;
 mod issue;
+pub(in crate::commands) mod memory;
 mod plugin;
 mod proposal;
 mod question;
@@ -35,6 +36,7 @@ use time::{Date, OffsetDateTime};
 pub(crate) use consistency::ConsistencyCommand;
 pub(crate) use entry::EntryCommand;
 pub(crate) use hook::HookCommand;
+pub(crate) use memory::MemoryCommand;
 pub(crate) use plugin::PluginCommand;
 pub(crate) use proposal::ProposalCommand;
 pub(crate) use question::QuestionCommand;
@@ -60,6 +62,9 @@ pub(crate) enum Command {
     /// Read, open, update and settle proposals
     #[command(subcommand, after_help = proposal::PROPOSAL_EXAMPLES)]
     Proposal(ProposalCommand),
+    /// Show what scribe has noticed about Daniel from switched-on sessions, and acknowledge, retire or forget an item
+    #[command(subcommand, after_help = memory::MEMORY_EXAMPLES)]
+    Memory(MemoryCommand),
     /// Search every stored record for words, ranked as question ask ranks them, with no model call
     #[command(subcommand, after_help = record::RECORD_EXAMPLES)]
     Record(RecordCommand),
@@ -95,6 +100,7 @@ impl Command {
             Self::Session(command) => command.subject(ctx),
             Self::Proposal(command) => command.subject(ctx),
             Self::Issue(command) => command.subject(ctx),
+            Self::Memory(command) => command.subject(ctx),
             Self::Init(_)
             | Self::Transcript(_)
             | Self::Record(_)
@@ -119,6 +125,7 @@ impl Command {
             Self::Session(command) => command.audit(),
             Self::Transcript(command) => command.audit(),
             Self::Proposal(command) => command.audit(),
+            Self::Memory(command) => command.audit(),
             Self::Record(command) => command.audit(),
             Self::Consistency(command) => command.audit(),
             Self::Tag(command) => command.audit(),
@@ -150,6 +157,7 @@ pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
         Command::Session(command) => session::run(command, ctx),
         Command::Transcript(command) => transcript::run(command, ctx),
         Command::Proposal(command) => proposal::run(command, ctx),
+        Command::Memory(command) => memory::run(command, ctx),
         Command::Record(command) => record::run(command, ctx),
         Command::Consistency(command) => consistency::run(command, ctx),
         Command::Tag(command) => tag::run(command, ctx),

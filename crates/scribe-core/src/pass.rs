@@ -54,6 +54,7 @@ use time::OffsetDateTime;
 mod candidates;
 #[cfg(test)]
 pub(crate) use candidates::covers_statement;
+pub(crate) use candidates::own_lines;
 pub use candidates::{
     MAX_CANDIDATES, MAX_IDEAS, MAX_OPEN_CANDIDATES, PassClaim, candidate_drafts,
     candidate_exclusions, capture_request, write_exclusions,
@@ -312,6 +313,10 @@ pub fn request(
         candidate_exclusions: Vec::new(),
         write_limit: 0,
         write_exclusions: Vec::new(),
+        memory_limit: 0,
+        memory_sections: Vec::new(),
+        memory_personal: false,
+        memory_items: Vec::new(),
         budgets: BUDGETS,
         final_pass,
         correction: None,
@@ -355,6 +360,9 @@ pub enum Invalid {
 pub struct Distilled {
     /// Locally checked candidate statements from this window.
     pub candidates: Vec<crate::models::EntryCandidateAnswer>,
+    /// The model's memory elements, unchecked: the caller checks them with
+    /// [`crate::memory::check`] against the config and redactor.
+    pub memory: Vec<crate::models::MemoryAnswer>,
     /// The title.
     pub title: String,
     /// `## Summary`.
@@ -606,8 +614,15 @@ fn check_with_rules(
     }
 
     let candidates = candidates::check(answer.candidates, request);
+    // Only as many as the request asked for; none when it asked for none.
+    let memory = answer
+        .memory
+        .into_iter()
+        .take(request.memory_limit)
+        .collect();
     Ok(Distilled {
         candidates,
+        memory,
         title,
         summary,
         goals,

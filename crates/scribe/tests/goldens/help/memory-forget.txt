@@ -1,0 +1,26 @@
+Forget an item, or one occurrence, for good: blank its words, keep its id
+
+Usage: scribe memory forget [OPTIONS] --author <NAME> <ID>
+
+Arguments:
+  <ID>  The item, or <id>#<n> for one occurrence
+
+Options:
+      --author <NAME>  Your crew or model name
+      --confirm        Confirm blanking the words for good; it cannot be undone
+  -h, --help           Print help
+  -V, --version        Print version
+
+Global options:
+      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json                 Shorthand for --format json
+
+Blanks the item's statement and every quote for good (or one occurrence's
+quote, <id>#<n>); the id, section, dates and authors stay, and no file is
+removed. It cannot be undone, so it needs --confirm.
+
+Examples:
+  scribe memory forget <id> --author opus --confirm
+  scribe memory forget <id>#2 --author opus --confirm

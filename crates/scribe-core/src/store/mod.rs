@@ -22,6 +22,7 @@
 //! <root>/control.json                       the on/off state
 //! <root>/proposals.json                     the consistency proposals
 //! <root>/issues/<id>.md                     one issue record per file
+//! <root>/memory/<id>.md                     one memory item per file (format 18)
 //! <root>/audit.jsonl                        one line per mutating command
 //! <root>/.lock
 //! ```
@@ -45,6 +46,8 @@ mod init;
 mod issue_file;
 mod issues;
 pub use issues::{ISSUES_DIR, IssueList, MoveTo, Moved};
+mod memory;
+pub use memory::{MEMORY_DIR, MemoryWritten, PassMemory};
 mod pickups;
 pub use init::{InitFile, InitReport, init_project, integration_hooks};
 mod rebuild;
@@ -53,7 +56,7 @@ mod tags;
 pub use rebuild::RebuildGuard;
 
 pub use agent::{check_agent_author, check_content, check_reason};
-pub use audit::{AUDIT_FILE, AuditEvent, AuditStatus, IssueAudit};
+pub use audit::{AUDIT_FILE, AuditEvent, AuditStatus, IssueAudit, IssueStats};
 pub use ids::resolve_prefix;
 pub use redact::{MIN_SECRET_CHARS, REDACTED_FIELDS, Redactor, unresolved_redact_env};
 pub use tags::check_description;
@@ -214,6 +217,8 @@ pub struct PassWritten {
     /// Entries the pass wrote itself under `write` tags (2_design.md
     /// §11.6), in write order.
     pub written_entries: Vec<EntryId>,
+    /// The window's memory write (2_design.md §13.3).
+    pub memory: MemoryWritten,
 }
 
 impl Store {
@@ -897,6 +902,7 @@ impl Store {
         expected: Option<time::OffsetDateTime>,
         kind: PassWrite,
         candidates: &[crate::pass::PassClaim],
+        memory: Option<&PassMemory>,
         redactor: &Redactor,
     ) -> Result<PassWritten> {
         let session = record.id.clone();
@@ -906,6 +912,7 @@ impl Store {
             kind,
             expected,
             candidates,
+            memory,
             true,
             redactor,
         )
@@ -920,7 +927,7 @@ impl Store {
         redactor: &Redactor,
     ) -> Result<Option<SessionRecord>> {
         Ok(self
-            .write_pass_candidates(session, record, kind, expected, &[], false, redactor)?
+            .write_pass_candidates(session, record, kind, expected, &[], None, false, redactor)?
             .record)
     }
 
@@ -932,6 +939,7 @@ impl Store {
         kind: PassWrite,
         expected: Option<time::OffsetDateTime>,
         candidates: &[crate::pass::PassClaim],
+        memory: Option<&PassMemory>,
         run_candidates: bool,
         redactor: &Redactor,
     ) -> Result<PassWritten> {
@@ -967,6 +975,7 @@ impl Store {
                 }
             })?;
         }
+        let mut memory_written = MemoryWritten::default();
         let (written, closed_candidates, written_entries) = match record {
             Some(mut record) => {
                 // A link written while the model ran, or one waiting on the
@@ -1031,6 +1040,13 @@ impl Store {
                     .chain(claims.written.iter().map(ToString::to_string))
                     .collect();
                 let carry = |err| after_persist_ids(&persisted, err);
+                // Memory is written before the cursor advances, so an
+                // interrupted window is replayed and appends nothing twice.
+                if let Some(memory) = memory {
+                    memory_written = self
+                        .write_pass_memory(memory, redactor, record.updated)
+                        .map_err(&carry)?;
+                }
                 let bytes = format::encode_session(&path, &record).map_err(&carry)?;
                 fsio::write_atomic(&path, &bytes).map_err(&carry)?;
                 // Only once the record holds them: the links are stored once.
@@ -1075,6 +1091,7 @@ impl Store {
             record: written,
             closed_candidates,
             written_entries,
+            memory: memory_written,
         })
     }
 
@@ -1264,6 +1281,33 @@ impl Store {
         }
         let _lock = self.lock("audit")?;
         fsio::append_private(&path, &line)
+    }
+
+    /// The audit log's events, oldest first, and how many lines did not
+    /// parse. Reads only: no lock, no write; a missing log has none.
+    ///
+    /// # Errors
+    ///
+    /// An unsafe file (a link, loose modes) as for any store read, or a
+    /// line of a newer audit format (`store_too_new`).
+    pub fn audit_events(&self) -> Result<(Vec<AuditEvent>, usize)> {
+        let path = self.audit_path();
+        if !self.root_exists()? || !fsio::inspect_file(&path)? {
+            return Ok((Vec::new(), 0));
+        }
+        audit::decode_lines(&path, &fsio::read(&path)?)
+    }
+
+    /// `issue stats` (2_design.md §11.4): the audit log's trigger fires,
+    /// issue writes and withdrawals, fires and writes from `since` on.
+    /// Reads only, as [`Store::audit_events`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Store::audit_events`].
+    pub fn issue_stats(&self, since: Option<time::Date>) -> Result<IssueStats> {
+        let (events, skipped) = self.audit_events()?;
+        Ok(audit::issue_stats(&events, since, skipped))
     }
 
     fn lock(&self, label: &str) -> Result<LockGuard> {

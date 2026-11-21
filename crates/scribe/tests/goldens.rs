@@ -43,6 +43,12 @@ const HELP: &[(&str, &[&str])] = &[
     ("proposal-update", &["proposal", "update", "--help"]),
     ("proposal-settle", &["proposal", "settle", "--help"]),
     ("proposal-list", &["proposal", "list", "--help"]),
+    ("memory", &["memory", "--help"]),
+    ("memory-show", &["memory", "show", "--help"]),
+    ("memory-rules", &["memory", "rules", "--help"]),
+    ("memory-ack", &["memory", "ack", "--help"]),
+    ("memory-retire", &["memory", "retire", "--help"]),
+    ("memory-forget", &["memory", "forget", "--help"]),
     ("record", &["record", "--help"]),
     ("record-search", &["record", "search", "--help"]),
     ("consistency", &["consistency", "--help"]),
@@ -60,6 +66,7 @@ const HELP: &[(&str, &[&str])] = &[
     ("issue-search", &["issue", "search", "--help"]),
     ("issue-show", &["issue", "show", "--help"]),
     ("issue-list", &["issue", "list", "--help"]),
+    ("issue-stats", &["issue", "stats", "--help"]),
     ("question", &["question", "--help"]),
     ("question-ask", &["question", "ask", "--help"]),
     ("hook", &["hook", "--help"]),
@@ -721,6 +728,168 @@ fn stated_claims_match_goldens() {
     report(&failures);
 }
 
+/// Daniel's instruction that approved `p-5` in the instructed goldens.
+const INSTRUCTED_WORDS: &str = "approve p-5, that is how session records should work";
+/// His instruction that rejected `p-6`.
+const REJECTED_WORDS: &str = "reject p-6, the popup can list more";
+/// The interactive session he typed it in.
+const INSTRUCTED_SESSION: &str = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c03";
+
+/// [`stated_fixture`], with `p-5` approved by the agent `opus` on Daniel's
+/// checked instruction rather than by him typing it, and `p-6` rejected on
+/// the same instruction (2_design.md §12.3).
+fn instructed_fixture() -> Fixture {
+    let fx = stated_fixture();
+    let root = fx.root();
+    let instruction = format!(
+        "{{session: {INSTRUCTED_SESSION}, message: user-instruct, at: 2026-11-15T00:04:30Z, quote: \"{INSTRUCTED_WORDS}\"}}"
+    );
+    let path = root.join("entries/preferences/preferences-2.md");
+    let entry = std::fs::read_to_string(&path)
+        .unwrap()
+        // Format 15 first carried an approval made on his instruction.
+        .replace("format: 14\n", "format: 15\n")
+        .replace(
+            "said: \"#scribe approve p-5\"",
+            &format!(
+                "said: \"scribe proposal settle p-5 --approve --author opus --session {INSTRUCTED_SESSION} --instruction '{INSTRUCTED_WORDS}'\""
+            ),
+        )
+        .replace(
+            "approved_by: null\ninstruction: null",
+            &format!("approved_by: {{kind: agent, name: opus}}\ninstruction: {instruction}"),
+        );
+    std::fs::write(&path, entry).unwrap();
+    let path = root.join("proposals.json");
+    let mut doc: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let inst = json!({"session":INSTRUCTED_SESSION, "message":"user-instruct",
+        "at":"2026-11-15T00:04:30Z", "quote":INSTRUCTED_WORDS});
+    let settled_by = json!({"session":INSTRUCTED_SESSION, "message":"user-instruct",
+        "at":"2026-11-15T00:04:30Z", "prompt_sha256":"0".repeat(64), "line":1,
+        "cwd":"/home/daniel/workspace/scribe"});
+    for p in doc["proposals"].as_array_mut().unwrap() {
+        p["settled_author"] = json!({"kind":"agent", "name":"opus"});
+        p["settled_by"] = settled_by.clone();
+        p["instruction"] = inst.clone();
+        if p["id"] == "p-6" {
+            p["instruction"]["message"] = json!("user-reject");
+            p["instruction"]["at"] = json!("2026-11-15T00:06:30Z");
+            p["instruction"]["quote"] = json!(REJECTED_WORDS);
+            p["settled_by"]["message"] = json!("user-reject");
+            p["settled_by"]["at"] = json!("2026-11-15T00:06:30Z");
+            p["state"] = json!("rejected");
+            p["settled_at"] = json!("2026-11-15T00:07:00Z");
+            p["closed_reason"] = json!("instructed");
+        }
+    }
+    std::fs::write(&path, doc.to_string()).unwrap();
+    fx
+}
+
+#[test]
+fn instructed_approvals_match_goldens() {
+    let fx = instructed_fixture();
+    let commands: &[(&str, &[&str])] = &[
+        ("entry-show-instructed", &["entry", "show", "preferences-2"]),
+        ("proposal-list-instructed", &["proposal", "list"]),
+        (
+            "record-search-instructed",
+            &["record", "search", "append-only log history"],
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (name, args) in commands {
+        for (suffix, mode) in MODES {
+            let out = fx.ok(&[*args, *mode].concat());
+            failures.extend(check(
+                &format!("output/{name}.{suffix}"),
+                &text(&out.stdout),
+            ));
+        }
+    }
+    report(&failures);
+}
+
+#[test]
+fn only_an_instructed_approval_carries_the_approved_by_line() {
+    let line = format!(
+        "approved by opus on your instruction \"{INSTRUCTED_WORDS}\" ({INSTRUCTED_SESSION}, 2026-11-15)"
+    );
+    for (fx, instructed) in [(stated_fixture(), false), (instructed_fixture(), true)] {
+        for mode in ["--format", "plain"] {
+            let args: &[&str] = if mode == "plain" {
+                &["entry", "show", "preferences-2"]
+            } else {
+                &["entry", "show", "preferences-2", "--format", "table"]
+            };
+            let out = text(&fx.ok(args).stdout);
+            assert_eq!(out.contains(&line), instructed, "{out}");
+            assert_eq!(out.contains("approved by"), instructed, "{out}");
+        }
+        let search = text(
+            &fx.ok(&["record", "search", "append-only log history"])
+                .stdout,
+        );
+        assert_eq!(search.contains(&line), instructed, "{search}");
+        let proposals = text(&fx.ok(&["proposal", "list", "--state", "approved"]).stdout);
+        assert_eq!(proposals.contains(&line), instructed, "{proposals}");
+        let rejected = text(&fx.ok(&["proposal", "list", "--state", "rejected"]).stdout);
+        assert_eq!(
+            rejected.contains(&format!(
+                "rejected by opus on your instruction \"{REJECTED_WORDS}\""
+            )),
+            instructed,
+            "{rejected}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn ask_evidence_names_an_instructed_approval_outside_the_quotable_text() {
+    let fx = instructed_fixture();
+    let answer = json!({"status":"no_record", "answer":"", "claims":[], "conflicts":[]});
+    let reply = fx.elsewhere("claude-reply.json");
+    std::fs::write(
+        &reply,
+        json!({"type":"result", "is_error":false, "result":"", "structured_output":answer})
+            .to_string(),
+    )
+    .unwrap();
+    let prompt = fx.elsewhere("prompt.txt");
+    let script = format!(
+        "#!/bin/sh\ncat > '{}'\ncat '{}'\n",
+        prompt.display(),
+        reply.display()
+    );
+    let path = fx.fake_program("claude", &script);
+    let out = run_with_input(
+        &fx,
+        &[
+            "question",
+            "ask",
+            "how should session records keep their history?",
+        ],
+        b"",
+        Some(&path),
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let prompt = std::fs::read_to_string(&prompt).unwrap();
+    let item = prompt
+        .split("<evidence ")
+        .find(|item| item.contains("cite=\"preferences-2\""))
+        .unwrap_or_else(|| panic!("{prompt}"));
+    let line = format!(
+        "<approval>approved by opus on Daniel's instruction \"{INSTRUCTED_WORDS}\" ({INSTRUCTED_SESSION}, 2026-11-15)</approval>\n</evidence>"
+    );
+    assert!(item.contains(&line), "{item}");
+    // It is still his entry, weighted as his words.
+    assert!(
+        item.contains("words=\"scribe's statement of Daniel's turn\""),
+        "{item}"
+    );
+}
+
 /// Daniel's turn the captured-idea goldens quote, verbatim.
 const CAPTURED_QUOTE: &str = "what if we cached the routing table per host? not now though, let's park it until the drains are quiet.";
 /// Scribe's statement of it, the captured entry's content.
@@ -1020,6 +1189,148 @@ fn issue_shapes_match_goldens() {
                 &text(&out.stdout),
             ));
         }
+    }
+    report(&failures);
+}
+/// The memory list and show, unchanged writes on them, and the page,
+/// against the memory fixture (`tests/fixtures/memory`), whose items keep
+/// their place on or off the page whatever the day.
+#[test]
+fn memory_matches_goldens() {
+    let fx = Fixture::new();
+    fx.seed();
+    support::copy_private(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/memory"),
+        &fx.root().join("memory"),
+    );
+    let session = "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02";
+    let mut failures = Vec::new();
+    // The fixture config redacts GITHUB_TOKEN's value, so a write needs it set.
+    let ok = |args: &[&str]| {
+        let out = fx
+            .cmd(args)
+            .env("GITHUB_TOKEN", "synthetic-fixture-token-value")
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{args:?}: {}",
+            text(&out.stderr)
+        );
+        out
+    };
+    let mut capture = |name: &str, args: &[&str]| {
+        for (suffix, mode) in MODES {
+            let out = ok(&[args, *mode].concat());
+            failures.extend(check(
+                &format!("output/{name}.{suffix}"),
+                &text(&out.stdout),
+            ));
+        }
+    };
+    capture("memory-show", &["memory", "show"]);
+    capture("memory-show-all", &["memory", "show", "--include-off-page"]);
+    capture("memory-show-item", &["memory", "show", "m-1"]);
+    capture("memory-rules", &["memory", "rules"]);
+    capture(
+        "memory-ack",
+        &[
+            "memory",
+            "ack",
+            "m-3",
+            "--session",
+            session,
+            "--author",
+            "opus",
+        ],
+    );
+    capture(
+        "memory-retire",
+        &[
+            "memory", "retire", "m-4", "--author", "opus", "--reason", "again",
+        ],
+    );
+    capture(
+        "memory-forget",
+        &["memory", "forget", "m-5", "--author", "opus", "--confirm"],
+    );
+    // The page names its `now` items by days from today: retire the one
+    // here so the page is the same every day.
+    ok(&[
+        "memory", "retire", "m-3", "--author", "opus", "--reason", "done",
+    ]);
+    capture(
+        "memory-page",
+        &["memory", "show", "--page", "--project", "scribe"],
+    );
+    report(&failures);
+}
+
+#[test]
+fn issue_stats_matches_goldens() {
+    use scribe_core::{AuditEvent, AuditStatus, IssueAudit, Store};
+    let fx = Fixture::new();
+    let store = Store::open(fx.root());
+    let at = |h| time::macros::datetime!(2026-11-21 09:00 UTC) + time::Duration::hours(h);
+    let session = "7e2d4c1a-9b3f-4e8d-a6c5-1f0e2d3c4b5a";
+    let line = |h, command: &str, issue: IssueAudit| AuditEvent {
+        at: at(h),
+        command: command.to_owned(),
+        status: AuditStatus::Success,
+        target: None,
+        error_code: None,
+        author: None,
+        instruction_session: None,
+        instruction_message: None,
+        issue: Some(issue),
+        duration_ms: 3,
+    };
+    let sha = |c: char| c.to_string().repeat(64);
+    let fire = |c| IssueAudit {
+        verb: String::from("fire"),
+        session: Some(session.to_owned()),
+        trigger: Some(String::from("can you investigate")),
+        request_sha256: vec![sha(c)],
+        ..IssueAudit::default()
+    };
+    let write = |verb: &str, id: &str, n, c| IssueAudit {
+        verb: verb.to_owned(),
+        id: Some(id.to_owned()),
+        occurrence: Some(n),
+        session: Some(session.to_owned()),
+        request_message: Some(format!("u-{c}")),
+        request_sha256: vec![sha(c)],
+        ..IssueAudit::default()
+    };
+    let withdraw = |verb: &str, id: &str, n| IssueAudit {
+        verb: verb.to_owned(),
+        id: Some(id.to_owned()),
+        occurrence: Some(n),
+        ..IssueAudit::default()
+    };
+    for event in [
+        line(0, "hook user-prompt-submit", fire('a')),
+        line(1, "issue add", write("add", "issue-1", 1, 'a')),
+        line(2, "hook user-prompt-submit", fire('b')),
+        line(3, "issue occur", write("occur", "issue-1", 2, 'c')),
+        line(
+            4,
+            "hook user-prompt-submit",
+            withdraw("forget", "issue-1", 2),
+        ),
+        line(5, "issue add", write("add", "issue-2", 1, 'd')),
+        line(6, "issue move", withdraw("move", "issue-2", 1)),
+    ] {
+        store.record_audit(&event).unwrap();
+    }
+    let mut failures = Vec::new();
+    for (suffix, mode) in MODES {
+        let out = fx.ok(&[&["issue", "stats"][..], *mode].concat());
+        failures.extend(check(
+            &format!("output/issue-stats.{suffix}"),
+            &text(&out.stdout),
+        ));
     }
     report(&failures);
 }

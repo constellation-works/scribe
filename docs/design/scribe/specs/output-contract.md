@@ -44,12 +44,14 @@ is `-`, lists are comma-joined, and timestamps are RFC 3339.
 | `session list` | `id status due project topics updated title` (`due` is `yes` or `no`) |
 | `session list --tree` | `id parent status due project topics updated title` (`parent` is the session the row nests under, its `spawned_from` link else its first `continues` link, or `-`) |
 | `session list --include-inactive` | `id status active due project topics updated title` (`active` is `yes` or `no`); without the flag the columns are unchanged, inactive sessions are left out, and when any matched the notice `<n> inactive session(s) also match and are hidden; --include-inactive lists them` goes to stderr. With `--tree` too, `active` follows `status` |
-| `proposal list` | `id kind state older newer opened_at reason admitted closed_reason` (format 11: `admitted` is `trigger "<phrase>" matched "<words>"; criteria: <criteria or ->` for a candidate a capture rule admitted, else `-`; `closed_reason` is `tag_retired` when scribe closed it without Daniel, `instructed` when an agent rejected it on Daniel's checked instruction (format 13), `covered` when an approved candidate's entry was missing and an active entry covers it (format 15), else `-`; format 14: for a candidate with a statement, `reason` is the statement, and the table prints `Daniel's words: "<quote>"` on a row under it in the same column, while plain joins them as `<statement> \| Daniel's words: "<quote>"`; the single-proposal detail a proposal write prints (`proposal add`, `update`, `settle`; there is no `proposal show`) adds `statement` and `subject` fields before `quote` in the table, and its JSON carries both on `candidate`) |
+| `proposal list` | `id kind state older newer opened_at reason admitted closed_reason` (format 11: `admitted` is `trigger "<phrase>" matched "<words>"; criteria: <criteria or ->` for a candidate a capture rule admitted, else `-`; `closed_reason` is `tag_retired` when scribe closed it without Daniel, `instructed` when an agent rejected it on Daniel's checked instruction (format 13), `covered` when an approved candidate's entry was missing and an active entry covers it (format 15), else `-`; format 14: for a candidate with a statement, `reason` is the statement, and the table prints `Daniel's words: "<quote>"` on a row under it in the same column, while plain joins them as `<statement> \| Daniel's words: "<quote>"`; the single-proposal detail a proposal write prints (`proposal add`, `update`, `settle`; there is no `proposal show`) adds `statement` and `subject` fields before `quote` in the table, and its JSON carries both on `candidate`; (ORB-26246) a candidate an agent settled on Daniel's instruction adds `<approved\|rejected> by <agent> on your instruction "<quote>" (<session>, <date>)`: plain joins it after the reason with ` \| `, the table prints it on a row under, in the same column, and a proposal write's detail adds it as an `instruction` field) |
 | `tag list` | `name entries stale_after_days aliases description`, (S12) `source` (`config` or `store`), then `action` (`free` or `ask-first`, with `,quote` when the tag requires a quote), `retired` and `rejected` (counts of agent entries); the last three are `-` for a tag that is not an action tag; (format 11) then `route` (the tag's capture route, `propose`, `write` or `agent`, or `-` when it has no capture rules) |
 | `tag show <tag>` (format 11) | one `<field>\t<value>\t<origin>` line each for `tag`, `source`, `aliases`, `description`, `stale_after_days`, `action` (`free`/`ask-first`, with `,quote`, or `-`), then the capture rules `from`, `route`, `triggers` (quoted, comma separated), `criteria` and `not`; `origin` is `shipped`, `config <file>:<line>` or `none` (an unset rule's value is `-`), and `-` for the first six. The table prints `<field> <value>  (<origin>)` |
-| `record search` (S11) | `cite kind score updated title snippet` (`score` to three decimals; the table cuts `title` to 40 characters and fits `snippet` to the width) |
+| `record search` (S11) | `cite kind score updated title snippet` (`score` to three decimals; the table cuts `title` to 40 characters and fits `snippet` to the width; (ORB-26246) an entry an agent approved on Daniel's instruction ends its snippet, in every mode, with ` \| approved by <agent> on your instruction "<quote>" (<session>, <date>)`) |
 | `issue list`, `issue add\|occur\|update\|move` (format 17) | `id status occurrences projects hosts updated author title` (`author` is `agent:<name>`). `issue show` and every issue write print that row, then `signature\t<a \| b>`, `cause\t<cause>` and `fix\t<fix>`, and for each occurrence, newest first, `occurrence\t<n>\t<date>\t<host>\t<project>\t<session>\t<note>\t<summary>` (`note` is `recurred after fix`, `moved from issue-<n>#<m>`, both joined by `; `, or `-`), `daniel_asked\t<n>\t<request>`, one `agent_evidence\t<n>\t<error line>` per error line, `occurrence_cause\t<n>\t<cause>` and `occurrence_fix\t<n>\t<fix>`. The table detail prints the same as fields, the error lines under `agent_evidence` |
 | `issue search` (format 17) | as `record search`, every hit of kind `issue` |
+| `memory show` (format 19) | `id section status page seen latest statement` (`page` is `on` or why the item is off it: `merged`, `superseded`, `promoted` (format 20), `retired`, `forgotten`, `section_off`, `decayed`, `past_window`; `seen` counts occurrences; `latest` is the newest occurrence's date; a forgotten statement is `-`). Sorted by section in page order (`now`, `milestones`, `profile`, `projects`, `working`), then id. `memory show <id>`, `ack`, `retire` and `forget` print the row, then one `occurrence\t<n>\t<date>\t<session>\t<message>\t<quote>` line each, newest first (`-` for a forgotten quote); the table prints the item's fields one per line |
+| `issue stats` (audit format 5) | `count value means`: one row each for `fires`, `fires_with_write`, `writes`, `writes_without_fire`, `writes_forgotten`, `writes_moved` and `writes_withdrawn`, then `precision` and `trigger_yield` as `<numerator>/<denominator> (<value to 3 places>)` (`-` with nothing to divide) with `means` `proxy: <what it divides>`. `--json` is `{since, fires, fires_with_write, writes, writes_without_fire, writes_forgotten, writes_moved, writes_withdrawn, precision_proxy, trigger_yield_proxy, skipped_lines}`, each proxy `{numerator, denominator, value, means}` or `null`. Lines of the audit log that did not parse are a stderr warning |
 | `transcript list` *(S14)* | `session project daniel_turns bytes started ended first_prompt` |
 
 Search hits are best first; on a tie entries come before sessions, then
@@ -67,7 +69,7 @@ Every list is
 `{"<key>": [<record>, ...], "total": <integer>, "truncated": <boolean>,
 "warnings": [<warning>, ...]}`, with `<key>` `entries`, `sessions`,
 `proposals` or `tags`, (S11) `hits` for `record search` and (format 17)
-`issue search`, `issues` for `issue list`, and *(S14)*
+`issue search`, `issues` for `issue list`, (format 19) `items` for `memory show`, and *(S14)*
 `transcripts` for `transcript list`. `total` counts the records that matched the filters;
 `truncated` is true when `--limit` returned fewer. No matches is the same
 envelope with an empty array. A warning is `{"path", "code", "error"}` for a
@@ -141,7 +143,7 @@ and `said` the command it ran, `scribe proposal settle p-<n> --approve
 adds `removal_instruction` (`{session, message, at, quote}` or `null`, last
 in the object): the instruction an agent retired or forgot the entry on,
 kept apart from `instruction`, which is then only the approval's and never
-replaced by a later retirement or forgetting. Store format 14 adds
+replaced by a later retirement or forgetting. (ORB-26246) For an entry an agent approved on his instruction, `entry show` prints `approved by <agent> on your instruction "<quote>" (<session>, <date>)` (the quote left out once forgotten): as an `approved` field under `cite` in the table detail, and plain as an `approved\t<line>` line after any `stated_by` line; an entry he approved by typing prints neither. Store format 14 adds
 `stated_by` (`{kind, name}`, `{kind: "scribe", name: "session-pass"}` when
 `content` is scribe's statement of Daniel's turn and `quote` his verbatim
 words, else `null`). The table detail prints `stated_by
@@ -371,7 +373,8 @@ the message lists up to ten candidates, sorted, and how many more), `daniel_only
 `--instruction`) `instruction_not_found`, `instruction_stale`,
 `instruction_mismatch` (including negation or exception markers in the instruction or answered reply), `not_interactive`, `already_covered`,
 `proposal_invalid`, `proposal_not_agent`,
-`session_cataloged`, `transcript_not_found`, for `tmux` `fzf_missing` and
+`session_cataloged`, `transcript_not_found`, (format 19) `memory_not_found`,
+`memory_not_active`, `memory_not_now`, for `tmux` `fzf_missing` and
 `tmux_failed` (exit 1; `tmux` renders no payload, its popup owns the
 terminal), for `session pass`
 `session_pass_failed` and `session_not_on`, and for `question
@@ -408,7 +411,12 @@ project was updated within the last day, it adds one more line of that
 `scribe: this may continue <id> (recorded) — type /scribe on --from <id> to keep recording`,
 naming the record updated most recently. No line when this session's
 switch is on or it already has a record, when no record in the project is
-that recent, or when the sessions cannot be read. It
+that recent, or when the sessions cannot be read. (Format 19) In an
+interactive session (`CLAUDE_CODE_ENTRYPOINT` is `cli`) with memory to
+show, `SessionStart` also gives the agent the memory page (as `memory show
+--page` prints it) as `hookSpecificOutput.additionalContext`
+(`hookEventName` `SessionStart`); a headless run (any other entrypoint, or
+none) gets no page. It
 exits 0 whenever the payload parsed, including when every line was refused
 or the store could not be used, so the prompt is never blocked; a payload
 that is not valid JSON, lacks a field or has an invalid `session_id` exits 1
@@ -518,7 +526,16 @@ with `session_pass_failed`, naming the failure and the rebuild command to
 resume; it does not change the control switch. `--confirm` missing refuses
 with `confirm_required`, naming the current segment and pass counts;
 `transcript_missing` and `session_busy` also refuse before model calls.
-One audit line names `session:<id>` for success or refusal. *(S14, built)*
+One audit line names `session:<id>` for success or refusal. (Format 19) A
+pass also carries `memory_written` (memory items created or given an
+occurrence across persisted windows), (format 20) `memory_promoted` (`now`
+items promoted to `milestones` and milestones written directly on rule (a)
+or (c), including rule (b)'s recount) and `memory_refused` (`{"<code>":
+<count>}` of elements refused: `memory_invalid`, `memory_unverified`,
+`memory_section_off`, `memory_sensitive`, `memory_personal_off`,
+`memory_inferred`); a refusal is not a failure, and the pass's audit line
+names each `memory:<id>` it wrote in `targets`, a promotion's milestone and
+profile items included. *(S14, built)*
 `session catalog` prints the same report with its one session and
 `remaining: 0`. `author` stays `null` (the catalog flag is not a JSON
 field). A failure exits 1 with `session_pass_failed` and names
@@ -565,6 +582,66 @@ with `session_not_on` before any pass. Each pass except a `waiting`
 one writes one audit line (`target` `session:<id>`, with its code only; the
 reason is never added to the audit line).
 
+## Memory
+
+(Format 19, [2_design.md §13](../2_design.md#13-memory-profile-projects-working-now-and-milestones-proposed).)
+`scribe memory show --json` prints the list envelope with key `items`; by
+default the items on the page, with `--include-off-page` every item, with
+`--section <s>` and `--project <p>` (a `projects` item's project) as filters.
+An item is `{"id", "section", "status", "statement", "project",
+"event_date", "sensitive", "sensitive_kind", "on_page", "off_page",
+"not_yet_raised", "acknowledged", "occurrence_count", "sessions", "latest",
+"retirement_reason", "promoted_from", "promotion", "merged_into",
+"superseded_by", "author", "updated_by", "created", "updated",
+"occurrences"}`: `status` is `active`, `merged`, `superseded`, `promoted`,
+`retired` or `forgotten`; `off_page` is `null` or the reason it is off the
+page (as the plain `page` column); (format 20) `promoted_from` is a
+milestone's `now` item, `promotion` `null` or `{"rule", "to",
+"profile_from", "profile_to"}` (`rule` `profile_change`,
+`recurs_in_sessions` or `user_says`) on a milestone and its promoted `now`
+item, `merged_into` and `superseded_by` the item a merged or superseded
+one went to, each `null` otherwise;
+`not_yet_raised` is true for a `now` item no agent acknowledged, or whose
+date passed since it was; `acknowledged` is `null` or `{"at", "session",
+"author"}`; `sessions` counts distinct sessions among the occurrences; an
+occurrence is `{"n", "date", "session", "message", "host", "project",
+"quote", "author"}`, newest first. A forgotten item's `statement`, quotes
+and `retirement_reason` are empty or `null`.
+
+`memory show <id>` (an id or a unique prefix) prints one item.
+`memory ack <id> --session <id> --author <name>` marks a `now` item raised
+in that session (`memory_not_now` for another section,
+`memory_not_active` for any status but `active`); `memory retire <id>
+--author <name> --reason <text>` takes it off the page with its redacted
+reason; `memory forget <id>[#<n>] --author <name> --confirm` blanks its
+text for good, or one occurrence's quote (without `--confirm`,
+`confirm_required`); forgetting a whole item also blanks the items merged
+into it and the other side of a promotion. Each prints the item and writes
+one audit line naming `memory:<id>`; the same write again changes nothing
+and still prints it.
+
+(Format 20.) `memory rules` prints the promotion rules and page windows in
+effect, read-only and unaudited. JSON is `{"rules": [{"rule", "value",
+"origin": {"source", "file", "line"}, "meaning"}]}` in a fixed order:
+`promote.profile_change` (a boolean), `promote.recurs_in_sessions` (a
+number; 0 is off), `promote.user_says` (a list of phrases), `decay_days`,
+`now_undated_days`, `now_after_days` (numbers of days). `origin` is as in
+`tag show`: `source` `shipped` (file and line `null`) or `config` with the
+config file and the key's 1-based line. Plain prints `<rule>\t<value>\t<origin>`
+lines (a list as quoted phrases joined by `, `; origin `shipped` or
+`config <file>:<line>`); the table adds the `meaning` column, cut to fit.
+
+`memory show --page [--project <p>]` prints the session-start page:
+plain and table the page text, JSON `{"page": <text or null>, "chars",
+"over_budget"}`. The page is the header line, then `Now:` (at most 8
+lines, by date), `Milestones:` (never cut), `Profile:`, `Project <p> (as
+of <date>):` (the current project's items only), `Working:`, and `Recent
+sessions:` (the last `[memory] recent_sessions` active records other than
+this session), then the footer line. A part over its budget drops whole
+items from its end and says `(+<k> more)`; within `[memory] page_chars`
+(2400) apart from milestones; `over_budget` is true when milestones pass
+600 characters, and the hook logs `memory_page_over_budget`.
+
 ## Consistency scan report
 
 `scribe consistency scan --json` and the Orbit tool
@@ -572,7 +649,7 @@ reason is never added to the audit line).
 "status"}], "opened": [<proposal>, ...], "closed": [<proposal>, ...],
 "covered": [{"proposal", "by"}],
 "judged_pairs", "pairs_left", "unrelated_pairs", "dropped_labels",
-"stale_entries", "failed_batches": [{"batch", "error_code"}]}`. `reapplied`
+"stale_entries", "failed_batches": [{"batch", "error_code"}], "memory": {…}}`. `reapplied`
 lists approved proposals the scan finished: a supersession or retirement
 whose older entry was still `active` and is now `superseded` or `retired`
 (its `status`), and an approved candidate whose reserved entry was missing
@@ -615,6 +692,26 @@ read, including failed batches. Each reapplied approval (target the entry
 id), opened proposal (target the proposal id), closed proposal (target the
 proposal id), covered candidate (target the proposal id) and failed batch (target `batch:<n>`, with its code) writes
 one audit line under `consistency scan`.
+
+(Format 20, [2_design.md §13.5](../2_design.md#135-consolidation-the-weekly-consistency-routine).)
+`memory` is `{"pairs_judged", "pairs_left", "unrelated", "dropped_labels",
+"failed_batches": [{"batch", "error_code"}], "merged": [{"item", "into"}],
+"superseded": [{"item", "by"}], "promoted": [{"item", "to", "rule"}],
+"completed": [<id>, ...]}`: memory pairs the model labelled, those past the
+cap of 40 or not reached in this call's time, those labelled `unrelated`
+(never offered again), labels refused (a quote not verbatim in one of that
+side's quotes, an unknown or repeated pair, an unknown label), the batches
+of ten the model failed (numbered from 1 apart from the others), each
+newer item merged into an older one, each older item superseded, each
+`now` item promoted by rule (b) after the merges, and each item changed to
+complete a promotion a crash cut short. Pairs are judged only while
+`[memory] enabled`. Plain and table add the rows `merged <item> memory
+<into> <item>`, `superseded <item> memory <item> <by>`, `promoted <item>
+<rule> <item> <to>`, `completed <id> memory - -` and `failed
+memory-batch-<n> <code> - -`. Each item whose file changed writes one audit
+line (target `memory:<id>`), and each failed memory batch one (target
+`memory-batch:<n>`, with its code); when memory pairs are left, stderr says
+how many.
 
 ## Ask
 

@@ -1740,8 +1740,9 @@ fn an_older_entry_keeps_an_approval_instruction_and_moves_a_removal_one() {
             .unwrap();
     assert!(encoded.contains("\ninstruction: null\n"), "{encoded}");
     assert_eq!(entry(&encoded).unwrap(), decoded);
-    // The JSON route of older formats splits the same way.
-    let step = UPGRADES[UPGRADES.len() - 1];
+    // The JSON route of older formats splits the same way: the 17 -> 18
+    // step (`UPGRADES[n - 1]` upgrades format n).
+    let step = UPGRADES[17 - 1];
     let moved = step(
         crate::store::format::Document::Entry,
         serde_json::json!({"approved_by": null, "instruction": {"message": "m-9"}}),
@@ -1768,6 +1769,16 @@ fn an_older_entry_keeps_an_approval_instruction_and_moves_a_removal_one() {
             crate::store::format::encode_entry(Path::new(ENTRY), &approved).unwrap(),
         )
         .unwrap();
+        // Formats 19 and 20 changed no entry: a format-18 or -19 entry has
+        // the current shape.
+        for from in [18, 19] {
+            let older = text.replacen(
+                &format!("format: {FORMAT}\n"),
+                &format!("format: {from}\n"),
+                1,
+            );
+            assert_eq!(entry(&older).unwrap(), approved, "{role} {from}");
+        }
         let v17 = text
             .replacen(&format!("format: {FORMAT}\n"), "format: 17\n", 1)
             .replacen("removal_instruction: null\n", "", 1);
@@ -2257,21 +2268,80 @@ fn a_format_fifteen_store_upgrades_with_a_null_outcome_only() {
 
 #[test]
 fn a_format_sixteen_proposals_document_reads_at_the_current_shape() {
-    // Formats 16 and 17 changed no proposal (16 changed only entries, 17 added
-    // a record kind), so a format-16 proposals.json has the current shape: the
-    // format-17 document with only its `format` lowered reads back equal, and
-    // a stray key is still refused.
+    // Formats 16 to 20 changed no proposal (16 and 18 changed only entries,
+    // 17 and 19 added record kinds, 20 changed memory items), so a format-16
+    // to format-19 proposals.json
+    // has the current shape: the current document with only its `format`
+    // lowered reads back equal, and a stray key is still refused.
     let path = Path::new("proposals.json");
     let old = br#"{"format":3,"proposals":[{"id":"p-1","kind":"stale","older":"preferences-1","newer":null,"reason":"review","quotes":[],"state":"open","opened_at":"2026-11-01T10:00:00Z","settled_at":null,"settled_by":null}]}"#;
     let proposals = decode_proposals(path, old).unwrap();
     let encoded = crate::store::format::encode_proposals(path, &proposals).unwrap();
     let mut value: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
     assert_eq!(value["format"], FORMAT);
-    value["format"] = serde_json::json!(FORMAT - 1);
-    assert_eq!(
-        decode_proposals(path, &serde_json::to_vec(&value).unwrap()).unwrap(),
-        proposals
-    );
+    for older in [16, 17, 18, 19] {
+        value["format"] = serde_json::json!(older);
+        assert_eq!(
+            decode_proposals(path, &serde_json::to_vec(&value).unwrap()).unwrap(),
+            proposals,
+            "format {older}"
+        );
+    }
     value["stray"] = serde_json::json!(1);
     assert!(decode_proposals(path, &serde_json::to_vec(&value).unwrap()).is_err());
+}
+
+const MEMORY_FILE: &str = "memory/m-1.md";
+
+/// A memory item at format `format`, with `extra` frontmatter lines, the
+/// status `status` and the occurrences `occurrences` (a YAML list).
+fn memory_text(format: u32, status: &str, extra: &str, occurrences: &str) -> String {
+    format!(
+        "---\nformat: {format}\nkind: memory\nid: m-1\nsection: now\nstatus: {status}\n\
+         statement: Said the release ships on 2026-12-01.\nproject: null\n\
+         event_date: 2026-12-01\nsensitive: false\nsensitive_kind: null\n\
+         acknowledged: null\nretirement_reason: null\n{extra}\
+         author: {{kind: scribe, name: session-pass}}\n\
+         updated_by: {{kind: scribe, name: session-pass}}\n\
+         created: 2026-11-21T05:40:00Z\nupdated: 2026-11-21T05:40:00Z\n\
+         occurrences: {occurrences}\n---\n"
+    )
+}
+
+const ONE_OCCURRENCE: &str = "[{n: 1, date: 2026-11-21T05:40:00Z, session: 0b8ef4a6-0c6a-4d77-9c41-6a4f7b2c1d10, message: u-1, host: mac, project: scribe, quote: \"the release ships on december 1\", author: {kind: scribe, name: session-pass}}]";
+
+const NO_LINKS: &str = "promoted_from: null\npromotion: null\nmerged_into: null\nsuperseded_by: null\nunrelated_to: []\n";
+
+fn memory(text: &str) -> crate::Result<crate::memory::MemoryItem> {
+    crate::store::format::decode_memory(Path::new(MEMORY_FILE), text.as_bytes(), "m-1")
+}
+
+#[test]
+fn a_format_nineteen_memory_item_reads_without_the_consolidation_keys_and_refuses_them() {
+    let item = memory(&memory_text(19, "active", "", ONE_OCCURRENCE)).unwrap();
+    assert_eq!(item.merged_into, None);
+    assert!(item.unrelated_to.is_empty());
+    let current = memory(&memory_text(FORMAT, "active", NO_LINKS, ONE_OCCURRENCE)).unwrap();
+    assert_eq!(current, item);
+    // Format 19 has neither the keys nor the statuses.
+    corrupt_message(&memory(&memory_text(19, "active", NO_LINKS, ONE_OCCURRENCE)).unwrap_err());
+    corrupt_message(&memory(&memory_text(19, "superseded", "", ONE_OCCURRENCE)).unwrap_err());
+    // Format 20 requires every key.
+    corrupt_message(&memory(&memory_text(FORMAT, "active", "", ONE_OCCURRENCE)).unwrap_err());
+}
+
+#[test]
+fn only_a_merged_or_promoted_memory_item_may_hold_no_occurrence_and_it_names_its_target() {
+    let merged = NO_LINKS.replacen("merged_into: null", "merged_into: m-2", 1);
+    let item = memory(&memory_text(FORMAT, "merged", &merged, "[]")).unwrap();
+    assert_eq!(item.merged_into.unwrap().as_str(), "m-2");
+    let promoted = NO_LINKS.replacen(
+        "promotion: null",
+        "promotion: {rule: user_says, to: m-2, profile_from: null, profile_to: null}",
+        1,
+    );
+    memory(&memory_text(FORMAT, "promoted", &promoted, "[]")).unwrap();
+    // An active item needs an occurrence; a merged one names its target.
+    corrupt_message(&memory(&memory_text(FORMAT, "active", NO_LINKS, "[]")).unwrap_err());
+    corrupt_message(&memory(&memory_text(FORMAT, "merged", NO_LINKS, "[]")).unwrap_err());
 }

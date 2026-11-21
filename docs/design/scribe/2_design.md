@@ -3080,8 +3080,9 @@ the hook's existing provenance guards (§4.1) and is not a `#scribe` or
 `/scribe` line, `scribe hook user-prompt-submit` matches the `issue` tag's
 triggers without a model. On a match it adds one line to the turn's
 `additionalContext`: that this turn asks for a root cause, the trigger that
-fired, and the commands below. It writes nothing and audits nothing, so it
-runs in every interactive session, whether or not `/scribe on` is set.
+fired, and the commands below. It writes no record, so it runs in every
+interactive session, whether or not `/scribe on` is set; each fire is one
+audit line, so recall and precision can be counted (**Counting**, below).
 (§13.12 proposed adding the hint only in a session that is on; that is
 parked 2026-11-21, so the hint stays as stated here.)
 
@@ -3130,6 +3131,53 @@ the Orbit task or friction itself and links it from the occurrence.
 `issues/` directory and the `issue` kind are new; an older build refuses a
 store holding one. No existing document changes shape.
 
+**Counting** (step c2). Daniel, 2026-11-21, approving step (c): "let's
+circle back later whether issue writes will require approval - we will need
+to first run it without approval and see its recall/precision". So writes
+stay unapproved and both halves are counted, with no model and no prompt
+text:
+
+- Each fire is one audit line (`hook user-prompt-submit`, `issue: {verb:
+  fire, session, trigger, request_sha256}`): the session, the trigger
+  phrase as configured and the prompt's sha256. The turn has no transcript
+  uuid when `UserPromptSubmit` runs, so the hash (the key `#scribe` cites
+  already use, §4.1) stands in for the message uuid; `request_message` is
+  `null` on a fire.
+- Each `issue add` or `occur` line carries, beside the request's uuid, the
+  sha256 of the turn the quote check found it in (its whole text and each
+  text block). A fire and a write name the same request when they share
+  the session and a hash, and the write came after the fire.
+- `scribe issue stats [--since <date>]` (model-free, read-only, no lock)
+  counts from the log: fires; fires followed by a write on the same turn;
+  writes; writes no fire matched; writes later forgotten (`#scribe forget`
+  of the occurrence or the whole issue) or moved (`issue move`), each also
+  counted once as withdrawn. It derives two ratios and names each a proxy:
+  **precision ≈ writes neither forgotten nor moved ÷ writes**, and
+  **trigger yield ≈ fires that led to a write ÷ fires**. Plain, table and
+  `--json` ([specs/output-contract.md](specs/output-contract.md)).
+
+What the counts cannot measure: an investigation no trigger fired on and
+no agent recorded leaves no line, so recall is seen only from the side of
+the writes (`writes_without_fire` are investigations the trigger missed but
+the agent caught; the ones both missed are invisible). A write never
+withdrawn is not shown to be right, only not yet judged wrong, so the
+precision proxy is an upper bound that rises with Daniel's inattention. A
+fire with no write may be a missed write or a trigger that fired on
+something that was no investigation; the counts cannot tell which. A write
+whose request the quote check found in a turn edited after it fired (or a
+write before audit format 5) matches no fire. Lines lost to a failed
+append are not counted.
+
+*Built (step c2):* the trigger is `issue_trigger::fire` over the rules
+`TagTable::issue_capture` returns: `[tags.issue.capture]` when configured,
+else the shipped ones (route `agent`, the triggers in §11.2's table), which
+the pass never takes, and `issue` stays out of the tag table. It matches
+Daniel's own words only: a harness line or `/scribe` line is no turn, and
+pasted, fenced, indented, quoted and `#scribe` lines are left out, as for
+the pass (§11.2). A turn that fails the transcript check, or a config that
+does not load, gives no hint and no line. The audit line is format 5
+(`trigger`, `request_sha256`); the store format is unchanged.
+
 *Built (record and CLI half, step (c)):* formats 13–16 were taken, so issues
 are **format 17** (`issue_kind`, a no-op step). An issue file starts at
 format 17 and an older build refuses one `store_too_new`; a format-16 build
@@ -3137,8 +3185,8 @@ never walks `issues/`, so it does not see them at all. Links take the
 existing kinds (task, pr, repo, session); a friction is linked through its
 task or PR until `related` gains a friction kind. The audit line (format 4)
 carries `issue: {verb, id, occurrence, session, request_message,
-moved_to}`. The trigger hint in `hook user-prompt-submit` is not part of
-this step. The shapes are in [specs/store.md](specs/store.md) (**Issue
+moved_to}`. The trigger hint in `hook user-prompt-submit` came with step
+c2 (**Counting**, above). The shapes are in [specs/store.md](specs/store.md) (**Issue
 files**) and [specs/output-contract.md](specs/output-contract.md).
 
 ### 11.5 What Daniel still approves
@@ -3366,6 +3414,8 @@ refuses it as stale, mismatched or not interactive; `null` only when no
 typed turn held the instruction or that turn has no message id), audit
 format 3.
 
+**Built (task 5 of 6, ORB-26246).** Reading it (§12.3): `entry show` prints `approved by <aide> on your instruction "<quote>" (<session>, <date>)` under the cite for an entry an agent approved on his instruction, and nothing for one he approved by typing. `record search` ends such an entry's snippet with the same line, and `proposal list` adds `approved by` or `rejected by …` to an instructed candidate's reason. `ask` keeps the entry as his words with his 1.5× weight and adds the line to its evidence item as `<approval>approved by <aide> on Daniel's instruction …</approval>`, after the item's text: the model reads it, so it names him in the third person, and no claim can quote it as the entry's words. A prompt rule tells the model to say an agent approved it when it uses the item. `--json` is unchanged: `approved_by` and `instruction` were already on entries and proposals.
+
 **Fixed (ORB-26503, store format 18).** Review ORB-26500 of task 3 found
 five defects, now fixed: a format-14 entry decodes again through typed
 YAML, so a local YAML tag reads as before (format 16's `EntryV14`; a
@@ -3521,7 +3571,8 @@ in the suppression set, recording the same fields.
 instruction "<quote>" (<session>, <date>)` under the cite. `ask` and
 `record search` treat the entry as his words, with his 1.5× weight, and
 add the same line to the evidence, so an answer can say that an agent
-approved it. `proposal list --state approved|rejected` shows the
+approved it (as built, `ask`'s line names "Daniel's instruction" and sits
+outside the item's quotable text). `proposal list --state approved|rejected` shows the
 instruction. `--json` adds the fields; none is renamed or retyped.
 
 ### 12.4 Question 3 — what "delete" means for each record kind
@@ -3655,9 +3706,19 @@ Not built until seen:
 
 ## 13. Memory: profile, projects, working, now and milestones (proposed)
 
-[ORB-26219], designed 2026-11-21 and **not built**. Nothing in this
-section is implemented until Daniel approves it and its implementation
-tasks land, in the order of [§13.10](#1310-order-and-sequencing), after
+[ORB-26219], designed 2026-11-21. Steps (a) and (b) of
+[§13.10](#1310-order-and-sequencing) are built: (a) (ORB-26258, store
+format 19) the `memory` kind, pass extraction with its checks and sensitive
+gate, `scribe memory show|ack|retire|forget`, and the session-start page;
+(b) (ORB-26259, store format 20) the consistency scan's merge and
+supersede, the `now` to `milestones` promotion rules and `scribe memory
+rules`. As built, a merge and a promotion **move** the occurrences (the
+merged or promoted item keeps none, and `forget` follows the link), a pair
+judged `unrelated` is kept on the older item (`unrelated_to`) so it is
+never offered again, and the pass's `milestones` element that no rule (a)
+or (c) holds for is written as a `now` item. Step (c) is **not built**
+until its implementation task lands,
+after
 [§11.7](#117-order-and-sequencing) step (b). Where it changes a rule stated
 earlier (§5.3's "A pass writes no tag entries" and its bounds, §7's
 steps, the `SessionStart` hook of §1, which today tells only Daniel and
@@ -4097,7 +4158,7 @@ Profile: runs agents from a Mac and two Linux boxes [m-1]; …
 Project scribe (as of 2026-11-21): being widened to a whole memory [m-11]
 Working: files the design as a task before any build [m-6]; …
 Recent sessions: <id> "scribe memory design" (2026-11-21); <id> "…" (2026-11-20); … (5)
-More: scribe memory show · scribe session show <id> · scribe ask
+More: scribe memory show · scribe session show <id> · scribe question ask
 ```
 
 | Part | Budget | Selection |
