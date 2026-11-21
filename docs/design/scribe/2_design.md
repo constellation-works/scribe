@@ -1,7 +1,7 @@
 ---
 title: scribe — Design
 owner: claude
-last_updated: 2026-11-20
+last_updated: 2026-11-21
 last_validated: 2026-11-02
 status: Draft
 feature: scribe
@@ -11,7 +11,7 @@ summary: How the scribe plugin is bounded (one binary; Daniel writes through hoo
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005]
+related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214]
 ---
 
 # scribe — Design
@@ -924,6 +924,11 @@ The echo names the file path, the points added and any dropped quotes.
 
 ### 4.6 Action tags
 
+> Proposed change ([§11.3](#113-the-shipped-tag-set-and-retired-tag-cleanup),
+> not built): `remind` stops shipping; `idea` gains capture rules
+> ([§11.2](#112-capture-rules-per-tag)) and is written by the pass
+> ([§11.6](#116-idea-capture-after-finding-is-gone)).
+
 [ORB-25112]. Most tags hold the human's memory: preferences
 `ask` answers from. A decision is not a shipped tag: it is recorded on its
 Orbit task with the human's words quoted, or in a feature's `4_decisions.md`
@@ -1005,6 +1010,10 @@ same read surface; there is no replica
 ([4_decisions.md](./4_decisions.md#the-owner-host-reads-action-entries-over-ssh)).
 
 ### 4.7 Findings
+
+> Proposed change ([§11.3](#113-the-shipped-tag-set-and-retired-tag-cleanup),
+> not built): `finding` stops shipping and the pass stops reading assistant
+> turns; the `require_evidence` guards stay for a config that declares it.
 
 [ORB-25177]. A **finding** is an agent's measured or verified result,
 recorded once so a later session finds it through `ask` or `record search`
@@ -1240,6 +1249,14 @@ As built (S4), in `scribe-core::pass` and `commands/session/pass.rs`:
   read, and the switch's `final` flag counts as for a due pass.
 
 #### Unmarked preferences
+
+> Proposed change ([§11](#11-claims-in-context-capture-rules-and-issues-proposed),
+> not built): a claim passes its tag's trigger and criteria gates
+> ([§11.2](#112-capture-rules-per-tag)), carries a statement that becomes
+> the approved entry's content while the quote stays attached
+> ([§11.1](#111-a-claim-carries-a-statement)), candidates whose tag is no
+> longer in the tag table close automatically, and assistant-turn
+> candidates go ([§11.3](#113-the-shipped-tag-set-and-retired-tag-cleanup)).
 
 An on session's ordinary pass (including an explicitly requested catalog's
 windows) offers candidates beside the record in the same model call.
@@ -2618,6 +2635,409 @@ there once S4 is in use, so two scribes never intercept the same
 route under `.agents/skills/scribe/` for providers other than Claude Code,
 pointing at the same commands; that is a constellation change.
 
+## 11. Claims in context, capture rules and issues (proposed)
+
+[ORB-26214], designed 2026-11-21 and **not built**. Nothing in this
+section is implemented until Daniel approves it and its implementation
+tasks land, in the order of [§11.7](#117-order-and-sequencing). Where it
+changes a rule stated earlier (§4.6, §4.7, §5.3), the earlier text
+describes what is built today and carries a pointer here. The reasons and
+the alternatives are in
+[4_decisions.md](./4_decisions.md#claims-carry-a-statement-tags-carry-capture-rules-and-issues-are-their-own-record).
+
+Daniel, chief's chat, 2026-11-21: "few issues with current cataloging. 1.
+they are out of context - I propose having the scribe summarize the context
+and quote verbatim where appropriate 2. decisions and tasks are just noise
+- good thing we got rid of them 3. to reduce noise, we need a set of
+trigger words and criteria for each tags - start with sensible defaults and
+able to be modified 4. let's also get rid of remind 5. let's introduce
+"issues" …".
+
+**Observed need** (the Mac store, 2026-11-21): 20 open candidate
+proposals, which is the store-wide cap of §5.3, so every pass asks the model
+for none. 14 of them sit under `decisions` (7) or `task` (7), tags that no
+longer ship, and 2 under `finding`. Several cannot be read alone, such as
+p-8: "ok that makes sense. then let's keep it like this."
+
+### 11.1 A claim carries a statement
+
+A claim is anything the pass captures from a turn: a candidate proposal
+today, and a pass-written `idea` entry once [ORB-25987] is built
+([§11.6](#116-idea-capture-after-finding-is-gone)). Each one gains a
+**statement** beside its **quote**.
+
+- **Statement**: one or two sentences, at most 300 characters, written by
+  the pass's `session` model, that stand alone. It names the subject (the
+  page, task, feature, tool or host the turn is about) and states the rule
+  or idea. "Daniel prefers that session records keep the whole session's
+  history in an append-only log rather than one rewritten outcome", not
+  "ok that makes sense".
+- **Subject**: the statement's referent as a short noun phrase (at most 80
+  characters), returned as its own field. An empty subject means the
+  window does not name what the turn is about; the pass then opens no
+  claim. This is the model's judgement: no deterministic check can tell
+  that a referent is right, only that one was given
+  ([§11.8](#118-limits-and-what-is-not-built-until-seen)).
+- **Quote**: unchanged. A verbatim span of the named turn, checked against
+  the original transcript exactly as §5.3 does today, with every exclusion
+  (pasted, quoted, fenced, marked lines) kept.
+
+**Bound (STD-08 §R1, §R3).** The statement and subject add at most 380
+value characters per claim, so at most 1,140 per window across §5.3's three
+claim slots, in the same model call with no extra call or timeout budget.
+The slots and the 20-open cap are unchanged.
+
+The statement and subject pass the redactor. A statement whose redaction
+changes it is kept redacted; only the quote must stay unredacted (§5.3's
+rule that a quote needing redaction is omitted stands).
+
+**Approval changes what an entry's content is.** Today an approved
+candidate's entry has the quote as its content (§5.3, "Persistence and
+consent"). With a statement, the approved entry's **content is the
+statement**, and its `quote` field (an entry field since store format 8,
+until now set only on action entries) holds the verbatim quote. The cite,
+`content_from: message` (user) and the author `{kind: daniel}` are
+unchanged: Daniel approved the claim, and the quote is his. A new entry
+field `stated_by` records whose words the content is: `{kind: scribe,
+name: session-pass}` for an approved statement, `null` (the content is the
+author's own words) for every other entry.
+
+**Reading it.** `ask` evidence and `record search` snippets show an entry
+with `stated_by` set as "scribe's statement of Daniel's turn" followed by
+his quote, labelled as his words. The deterministic attribution check of
+§6.4 accepts a claim attributed to Daniel only when the cited span is in
+the `quote`, never in a scribe statement. `entry show` prints both.
+`proposal list` shows the statement first and the quote under it, so
+Daniel settles a claim he can read alone.
+
+**Older candidates.** A candidate opened before this change has
+`statement: null` and `subject: null`. Approving one still writes the
+quote as content with `stated_by: null`, as today. No old claim is
+rewritten by a model.
+
+`#scribe` lines are unchanged: what Daniel types or points at is the
+content, verbatim. The statement is for what the pass captures, because
+only there did context go missing.
+
+**Store format.** Format 12, after [§11.2](#112-capture-rules-per-tag)'s
+format 11: a candidate payload gains
+`statement` and `subject` (`null` on upgrade); an entry gains `stated_by`
+(`null` on upgrade). One append-only step in `store/format.rs::UPGRADES`;
+`specs/store.md` describes the fields when the step lands.
+
+### 11.2 Capture rules per tag
+
+A tag's **capture rules** decide which turns the pass may turn into a
+claim under it. A turn must pass two gates, in order:
+
+1. **Trigger**, model-free: one of the tag's trigger phrases occurs in the
+   turn.
+2. **Criteria**, model judgement: the turn meets the tag's `criteria` and
+   none of its `not`.
+
+Config, under the tag (`[tags.<name>.capture]`):
+
+```toml
+[tags.preferences.capture]
+from = "daniel"                  # whose turns; only "daniel" is accepted for now
+route = "propose"                # propose | write | agent
+triggers = ["always", "never", "should not", "from now on", "I prefer", "by default"]
+criteria = "A standing rule from Daniel that applies beyond the work at hand."
+not = "A choice about one page or task (it goes on its Orbit task or the feature's 4_decisions.md); an acknowledgement."
+```
+
+- `from`: whose turns are read. Only `daniel` (his typed turns, with
+  §5.3's exclusions) is accepted; `assistant` is refused
+  (`config_invalid`) until a need for assistant-turn capture is seen again
+  ([§11.3](#113-the-shipped-tag-set-and-retired-tag-cleanup)).
+- `route`: what a claim becomes. `propose` opens a candidate proposal that
+  Daniel settles (§5.3); `write` has the pass write the entry itself, with
+  no proposal ([§11.6](#116-idea-capture-after-finding-is-gone)); `agent`
+  has the prompt hook tell the agent in the chat, and the pass captures
+  nothing under the tag ([§11.4](#114-issues)).
+- `triggers`: phrases matched case-insensitively on word boundaries.
+  Inside a phrase, `*` stands for zero to four words, and the match must
+  lie within one sentence (a sentence ends at `.`, `!`, `?` or a line
+  break). Matching is in `scribe-core` and does no I/O. An empty list
+  means the pass captures nothing under the tag.
+- `criteria` and `not`: plain text, at most 300 characters each, given to
+  the `session` model as the tag's definition.
+
+Each field overrides the shipped default for that field alone; `triggers`
+replaces the whole list. A tag with no capture rules, shipped or
+configured, is never captured by the pass, which is how `standard` stays
+on its own routes (§4.6). Capture rules apply only to the pass and the
+prompt hook; a `#scribe` line Daniel types is captured whatever its words.
+Store tags (`tags.json`) take no capture rules (not built until seen).
+
+**Shipped defaults.**
+
+| Tag | Route | Triggers | Qualifies | Not |
+|---|---|---|---|---|
+| `preferences` | `propose` | "always", "never", "should not", "from now on", "I prefer", "by default" | a standing rule from Daniel that applies beyond the work at hand | a choice about one page or task (its Orbit task or `4_decisions.md`); an acknowledgement |
+| `idea` | `write` | "have * an idea", "had an idea", "here's an idea", "what do you think about * idea", "what if we" | he puts forward something to consider, not an instruction to do it now | a direction to act now; a preference; a question of fact |
+| `issue` | `agent` | "can you investigate", "look into why", "rca", "root cause", "find root cause" | he asks for the cause of something that went wrong | how something works; a feature request |
+
+**In the pass.** Before a window's model call, the pass matches every
+capture tag's triggers against Daniel's turns in the window. If none
+fires, the call requests zero claims, as at the cap, which saves the
+output and removes the main source of noise. Otherwise the call names each
+firing turn with its tag and trigger, and gives the tags' `criteria` and
+`not`; the model returns claims only for those turns. Under the store
+lock the pass checks again that the claim's turn fires a trigger of the
+claim's tag, and refuses the claim otherwise.
+
+**Provenance.** Each claim records what admitted it: `admitted: {trigger,
+matched, criteria}`, the trigger phrase as configured, the matched words
+of the turn (verbatim, at most 120 characters) and the `criteria` text in
+force. A later config change does not rewrite it. `proposal list` and
+`entry show` print it.
+
+**Reading the rules.** `scribe tag show <tag>` (new, read-only, no lock,
+no audit) prints the tag's settings and its effective capture rules, each
+field with its origin: `shipped`, `config` (with the file and line) or
+`none`. `--json` gives `{tag, action, capture: {from, route, triggers,
+criteria, not, origin: {<field>: …}}}`. `tag list` adds the route
+column.
+
+**Store format.** Format 11 (on today's 10): a candidate payload gains
+`admitted` (`null` on upgrade); a proposal gains `closed_reason`
+([§11.3](#113-the-shipped-tag-set-and-retired-tag-cleanup); `null` on
+upgrade).
+
+### 11.3 The shipped tag set and retired-tag cleanup
+
+After the change scribe ships `preferences` (memory), `idea` and `standard`
+(action, as today) and `issue` (its own record kind, §11.4). It stops
+shipping `remind` and `finding`.
+
+- `remind`: Daniel, 2026-11-21: "let's also get rid of remind". A
+  check-back is an Orbit task with a not-before date. `remind` leaves
+  `SHIPPED_ACTION_TAGS`; nothing else about action tags changes.
+- `finding`: Daniel, 2026-11-21: "finding - let's delete this for now."
+  The tag leaves the shipped set, the skill stops telling agents to write
+  findings, and the session pass stops reading assistant turns at all:
+  the assistant-turn candidates of §4.7 ("The pass as safety net") and
+  §5.3 go, for `finding`, `remind` and `idea` alike. The entry fields
+  `evidence` and `as_of`, the `require_evidence` flag and its guards stay
+  (they are persisted contract and cost nothing idle), so a config that
+  declares `[tags.finding] require_evidence = true` still works as §4.7
+  says, and existing findings still read as an agent's claim.
+- `standard`: unchanged here (Daniel: "ok let's keep standard, and route
+  it to a larger model."; the routing is the constellation intake's,
+  ws_constellation ORB-26216). It ships no capture rules, so the pass never
+  proposes it.
+
+As with `task`, `friction` and `decisions`, an entry already stored under
+a tag that no longer ships stays listed, shown, searched, cited and
+settleable by id; no store-format change is needed for the tag set.
+
+**Retired-tag cleanup.** An open candidate whose tag is no longer in the
+tag table (config, shipped or `tags.json`) can never be approved into a
+listed tag, yet it holds a slot of the 20-open cap. It is closed
+automatically: its state becomes `rejected`, `settled_author` is
+`{kind: scribe, name: tag-retired}`, `settled_by` is `null`, and the new
+field `closed_reason` is `tag_retired`. This runs under the store lock in
+the candidate write path before the cap is counted, so every pass frees
+the slots, and in `consistency scan`; each close is one audit line. It
+needs no model and writes no entry. A closed candidate stays in the
+suppression set like any rejection, and `proposal list --state rejected`
+shows its reason. On 2026-11-21 it would close 16 of the 20 (7 `decisions`,
+7 `task`, 2 `finding`).
+
+### 11.4 Issues
+
+An **issue** is the memory of an incident that recurs across projects and
+what fixed it: "the GitHub API answered 429", "CPU exhausted on
+dk-server-1". Daniel, 2026-11-21: "we will catalog issues we've faced, e.g.
+github api 429 request issue we faced yesterday, cpu resource exhaustion
+incidents. and upon similar incidents, the scribe will append the new
+incident under "occurrences" section with date and summary, fixes." On who
+writes it: "agent should write it - summarize context and add verbatim
+quotes."
+
+It is a record kind of its own, not an entry, because it grows: an entry's
+content is one statement, an issue gains an occurrence each time.
+
+**File** (`issues/<id>.md`, id `issue-<n>`, allocated like entry ids):
+
+```markdown
+---
+format: 13
+kind: issue
+id: issue-3
+title: GitHub API secondary rate limit (HTTP 429) during drains
+status: open                       # open | mitigated | resolved
+signature: ["HTTP 429", "secondary rate limit", "API rate limit exceeded"]
+projects: [orbit]
+hosts: [dk-server-1]
+topics: [github, rate-limit]
+related: [task:ORB-…, pr:<owner>/<repo>#…]
+author: {kind: agent, name: <crew>}
+updated_by: {kind: agent, name: <crew>}
+created: …
+updated: …
+occurrences:
+  - {n: 2, date: 2026-11-21, host: dk-server-1, project: orbit, session: <id>, request_message: <uuid>, recurred: false, moved_from: null, author: {kind: agent, name: <crew>}}
+  - {n: 1, …}
+---
+## Cause
+<the best-known cause, or "cause not found">
+## Fix
+<the current best fix or mitigation>
+## Occurrences
+### 2. 2026-11-21 — dk-server-1, orbit
+<context summary, written by the agent>
+**Daniel asked:** "can you investigate why the drain keeps failing"
+**Error lines (agent evidence):**
+    HTTP 429 …
+**Cause:** … **Fix:** …
+**Links:** session:<id>, task:ORB-…, pr:…
+### 1. …
+```
+
+Header: `title` (120 characters), `signature` (1–5 symptom or error
+strings of at most 200 characters; what a later search matches), `status`,
+`## Cause` and `## Fix` (600 characters each). Occurrences, newest first,
+each with its date, host and project, a context summary (1200 characters),
+Daniel's request word for word, up to 10 key error lines (300 characters
+each), the root cause and fix or "cause not found", and links to the
+session and to Orbit tasks, frictions and PRs. Every free-text field
+passes the redactor.
+
+**Trigger.** Daniel's typed investigation request. On a turn that passes
+the hook's existing provenance guards (§4.1) and is not a `#scribe` or
+`/scribe` line, `scribe hook user-prompt-submit` matches the `issue` tag's
+triggers without a model. On a match it adds one line to the turn's
+`additionalContext`: that this turn asks for a root cause, the trigger that
+fired, and the commands below. It writes nothing and audits nothing, so it
+runs in every interactive session, whether or not `/scribe on` is set.
+
+**Writer.** The agent in the chat, the one that gives Daniel the answer:
+
+1. Before diagnosing, it searches existing issues: `scribe issue search
+   '<symptoms or error text>'` (model-free, over titles, signatures and
+   occurrences; also `record search --kind issue`).
+2. When it answers, it writes the result: `scribe issue add` for a new
+   issue, or `scribe issue occur <issue-id>` for an occurrence on the
+   matching one, each with `--author <crew> --related session:<id>
+   --request '<Daniel's words>'`, the context summary, error lines, cause
+   and fix. It prints one line naming the id and how to cancel
+   (`#scribe forget <issue-id>` or `<issue-id>#<n>`).
+3. If no cause is found, it writes the occurrence with "cause not found".
+   A later occurrence that finds it updates `## Cause` and `## Fix`
+   (`scribe issue update <issue-id> --cause … --fix … --status …`).
+
+**Checks.** `--request` must be a verbatim span of one of Daniel's typed
+turns in the named session's transcript on this host (§4.6's quote check;
+`quote_required`, `quote_not_found`). Error lines are the agent's
+evidence, labelled so wherever they are shown, and are not checked against
+the transcript (tool output is not in the parsed conversation). An
+occurrence written after the issue is `resolved` sets the status back to
+`open` and marks the occurrence `recurred: true`, shown as "recurred after
+fix". A wrongly matched occurrence is moved with `scribe issue move
+<issue-id>#<n> --to <issue-id>` (or `--new`), which keeps `moved_from`.
+Occurrences are never edited or removed except by move or Daniel's
+`#scribe forget`; the file is replaced whole through `write_atomic` under
+the lock, as every record is.
+
+**No approval.** An issue is an agent entry of cited facts, append-only.
+Daniel does not settle it; he forgets an occurrence or an issue that is
+wrong. Issues are not in the `SessionStart` brief or line; `ask` and
+`record search` return them, labelled as the agent's account with his
+quoted request. `issue` is a reserved tag name: `entry add --tag issue`
+and `#scribe issue:` are refused, naming the `issue` commands, so the
+capture rules live under `[tags.issue.capture]` like every tag's.
+
+**Boundary with Orbit.** A friction is a defect report against one product,
+and it closes. An issue is the memory of an incident across projects and
+what fixed it. scribe files no work: if a fix needs doing, the agent files
+the Orbit task or friction itself and links it from the occurrence.
+
+**Store format.** Format 13 if it lands after §11.1 and §11.2: the
+`issues/` directory and the `issue` kind are new; an older build refuses a
+store holding one. No existing document changes shape.
+
+### 11.5 What Daniel still approves
+
+Only `preferences` claims, through the candidate proposals of §5.3, and
+`standard` entries, through their existing route (a `#scribe` line he
+types, or an agent entry quoting him, then the intake's change he
+reviews). Ideas are written by the pass, issues by the agent; he cancels
+either with `#scribe retire|forget <id>`.
+
+### 11.6 Idea capture after `finding` is gone
+
+[ORB-25987] (the pass captures Daniel's ideas itself) was to reuse the span
+route of [ORB-25983] (the pass writes findings), in which the model points
+at a span and the pass copies it. ORB-25983 was archived on Daniel's "Stop
+and close it" (2026-11-21), so no span route exists. Idea capture is built
+on the **existing candidate route** instead: the model returns a quote and
+a message id, and the pass checks the quote verbatim against the original
+transcript, as §5.3 does for preferences. The only difference is the
+route: under `route = "write"` the checked claim is written as an active
+`idea` entry in the same locked step that would otherwise open a
+candidate, with no proposal. The duplicate guard, the per-pass bound
+(ORB-25987's 3 ideas per session per invocation, separate from the
+candidate slots) and the stuck-line exemption are as ORB-25987 states.
+
+Two of ORB-25987's points change with this design and need Daniel's
+approval on that task before it is built:
+
+- **Content.** ORB-25987 makes the content "byte-for-byte his span". With
+  §11.1 the content is the statement, the span is the entry's `quote`, and
+  `stated_by` says the pass wrote the statement. The span is still checked
+  byte-for-byte.
+- **Assistant ideas.** ORB-25987 point 4 captures an assistant suggestion
+  Daniel defers. With `from = "daniel"` the triggers fire only on his
+  words, and no assistant-turn route remains, so point 4 is not built until
+  seen.
+
+**ORB-26204** (an agent Daniel instructs approves claims and deletes
+records) sequences after step (a): the cleanup and the trigger gate cut
+the queue he must settle, from 20 open claims to about 4, before any new
+settle route is designed against it. Its design may proceed in parallel;
+its implementation lands after (a), and if it lands after (b) its approval
+writes the statement as content like a typed approval.
+
+### 11.7 Order and sequencing
+
+1. **(a)** Capture rules, the retired-tag cleanup, and dropping `remind`
+   and `finding` (format 11).
+2. **(b)** The statement on every claim (format 12). ORB-25987, revised as
+   in §11.6, follows (b).
+3. **(c)** Issues (format 13).
+
+Each step is its own task, lands with its `specs/store.md`,
+`specs/output-contract.md`, skill and golden updates, and leaves the
+store readable by the next step's build.
+
+### 11.8 Limits and what is not built until seen
+
+- **A trigger is a word, not a meaning.** "never" fires on "I never got
+  that error"; the criteria gate removes it, at the cost of the model call
+  the trigger gate was to save. A preference phrased without any trigger
+  is missed; Daniel adds a trigger in config, or types `#scribe`.
+- **The subject check is the model's.** An empty subject is refused; a
+  wrong one is not caught. Daniel reads it before approving a preference;
+  an idea's wrong subject is caught only when read.
+- **The hook line is advice.** An agent can ignore it, and no issue is
+  written.
+
+Not built until seen:
+
+- a backstop when an agent ignores the issue hook line (for example the
+  pass noticing an investigation with no issue written);
+- issue triggers on symptom words ("429", "out of memory") rather than his
+  request;
+- `from = "assistant"` capture for any tag, and ORB-25987's deferred
+  assistant ideas;
+- capture rules on store tags (`tags.json`);
+- a model that matches an occurrence to an issue (the agent searches and
+  chooses);
+- issues in the session-start brief, and any bound on an issue's number of
+  occurrences or compaction of old ones.
+
 ## Task References
 
 - [ORB-21747] — designed the standalone scribe plugin.
@@ -2637,6 +3057,10 @@ pointing at the same commands; that is a constellation change.
   synthetic recording and the redaction tool.
 - [ORB-24030] — `/scribe catalog <id>` as Daniel's only catalog channel; agent
   author names as attribution only.
+- [ORB-26214] — designed §11: claim statements, per-tag capture rules, the
+  tag set without `remind` and `finding`, the retired-tag cleanup and issues.
+- [ORB-25987] — the pass captures Daniel's ideas; revised by §11.6.
+- [ORB-26204] — design: an agent Daniel instructs settles claims; sequenced after §11 step (a).
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
 

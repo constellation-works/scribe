@@ -1,7 +1,7 @@
 ---
 title: scribe — Decisions
 owner: claude
-last_updated: 2026-11-20
+last_updated: 2026-11-21
 last_validated: 2026-11-02
 status: Draft
 feature: scribe
@@ -11,7 +11,7 @@ summary: Why superseded entries are hidden not removed, why one JSON file per ta
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214]
 ---
 
 # scribe — Decisions
@@ -2730,3 +2730,122 @@ settled by id.
 - Cost: a standing decision with no task to sit on is recorded as a
   preference, and a `decisions` entry stops showing in `tag list` unless
   config declares the tag again.
+
+## Claims carry a statement, tags carry capture rules, and issues are their own record
+
+**Recorded:** 2026-11-21 · [ORB-26214] · **Overridable by Daniel** · proposed, not built
+**Paths:** `crates/scribe-core/src/tag.rs` (`SHIPPED_ACTION_TAGS`, `FINDING_TAG`), `crates/scribe-core/src/pass/candidates.rs`, `crates/scribe-core/src/store/candidates.rs`, `crates/scribe/src/commands/hook/user_prompt_submit.rs` — design §11
+
+### Context
+
+Daniel, chief's chat, 2026-11-21: "few issues with current cataloging. 1.
+they are out of context - I propose having the scribe summarize the context
+and quote verbatim where appropriate 2. decisions and tasks are just noise
+- good thing we got rid of them 3. to reduce noise, we need a set of
+trigger words and criteria for each tags - start with sensible defaults and
+able to be modified 4. let's also get rid of remind 5. let's introduce
+"issues" - we will catalog issues we've faced, e.g. github api 429 request
+issue we faced yesterday, cpu resource exhaustion incidents. and upon
+similar incidents, the scribe will append the new incident under
+"occurrences" section with date and summary, fixes."
+
+Then: "suggested triggers () * idea: "have * an idea", "what do you think
+about* idea" - anything along these lines. * issues: "can you investigate
+....", "rca", "find root cause" - the agent should persist this and answers
+that follow * finding - let's delete this for now." On who writes an
+issue: "agent should write it - summarize context and add verbatim
+quotes." On `standard`: "ok let's keep standard, and route it to a larger
+model." Earlier the same day: "Keep idea". He answered "Yes, file it" to
+filing the revised design.
+
+Measured on the Mac store, 2026-11-21: 20 open candidate proposals, the
+store-wide cap, so the pass opens none; 14 under `decisions` or `task`,
+tags that no longer ship, and 2 under `finding`; several unreadable alone
+(p-8: "ok that makes sense. then let's keep it like this.").
+
+### Decision
+
+Six choices, specified in design §11. Each supersedes the earlier rule it
+names, and only that.
+
+1. **A claim's content is a statement; the quote stays attached.** The pass
+   writes a standalone statement (300 characters) and a subject (80) beside
+   the verbatim quote; an empty subject opens no claim. On approval the
+   statement is the entry's content, the quote is its `quote`, and
+   `stated_by: {kind: scribe, name: session-pass}` says whose words the
+   content is. This supersedes "approved content is the exact quote"
+   (§5.3, from "Session passes propose unmarked statements; Daniel alone
+   creates their entries"). Older candidates keep that rule.
+   Alternatives: keep the quote as content and show a context field beside
+   it (cost: `ask` still answers from the fragment and lists stay
+   unreadable); let the model rewrite the quote (cost: no verifiable words
+   remain); quote a wider span (cost: p-8's referent is often several turns
+   back, so the span grows past the 400-character quote bound and is still
+   not a sentence that stands alone).
+2. **Two gates per tag: a model-free trigger, then the criteria.** Config
+   `[tags.<name>.capture]` with `from`, `route`, `triggers`, `criteria` and
+   `not`, shipped defaults overridable field by field, the admitting
+   trigger and criteria kept on each claim, and `scribe tag show`.
+   Alternatives: criteria only, given to the model (cost: today's noise,
+   and a model call on every window); triggers only (cost: "never" fires on
+   ordinary sentences); a model-chosen trigger list (cost: not checkable
+   without a model and not editable by Daniel).
+3. **`remind` and `finding` stop shipping, and the pass stops reading
+   assistant turns.** This supersedes the shipped sets of "Action tags are
+   marked in config, and three ship", "`task` and `friction` no longer ship
+   as action tags" and "Decisions are recorded on their Orbit task, not in
+   a shipped tag", and the pass's safety net in "Findings are scribe
+   entries with no worker". The `evidence`/`as_of` fields and the
+   `require_evidence` guards stay. Alternatives: keep the tags shipped but
+   never proposed (cost: unused tags stay in `tag list` and the skill);
+   delete the finding code too (cost: a persisted-contract change and the
+   existing findings' labels, for no observed gain).
+4. **An open candidate under a tag no longer in the tag table closes
+   itself** as `rejected` with `closed_reason: tag_retired`, before the cap
+   is counted. Alternatives: Daniel rejects them by hand (cost: 16 typed
+   lines today, and again at every tag change); delete them (cost: they
+   leave the suppression set and the pass may propose them again); raise
+   the cap (cost: the noise the cap bounds).
+5. **Issues are a record kind the agent writes, with no approval.** A
+   header (title, signature, status, cause, fix) over occurrences newest
+   first; the prompt hook flags his investigation request without a model;
+   the answering agent searches, then writes an issue or an occurrence; his
+   request is quote-checked, the agent's error lines are labelled its
+   evidence. Alternatives: an entry under an `issue` tag (cost: an entry is
+   one statement, so each occurrence would rewrite it); an Orbit friction
+   (cost: it is scoped to one product and closes, so the next incident
+   elsewhere starts from nothing); the pass writes issues from the
+   transcript (cost: the parsed conversation has no tool output, so the
+   error lines and the fix would be lost); a candidate Daniel approves
+   (cost: against his "agent should write it", and the queue the cap
+   bounds grows).
+6. **Idea capture is built on the candidate route, not the span route.**
+   ORB-25983's span route was archived with it; under `route = "write"` the
+   pass writes the quote-checked claim as an `idea` entry instead of
+   opening a candidate. Alternative: build the span route for ideas alone
+   (cost: a second capture mechanism for one tag, with its own checks).
+
+Differences from the chief's proposal on ORB-26214: the `route` and
+`subject` fields are added; `from` accepts only `daniel` until a need is
+seen; `*` is defined as zero to four words; the approved entry records
+`stated_by`; the cleanup closes as `rejected` with a reason, in the
+candidate write path and the consistency scan; the issue hook runs in
+every interactive session, on or off; `issue` is a reserved tag name and
+an occurrence is cancelled with `#scribe forget`; the `require_evidence`
+guards stay; ORB-25987's content becomes the statement and its point 4
+(deferred assistant ideas) is not built until seen.
+
+### Consequences
+
+- What Daniel approves shrinks to `preferences` claims and `standard`
+  entries; ideas and issues are cancelled, not approved.
+- `ask` and the attribution check must read Daniel's words from `quote`,
+  not from content, for every entry with `stated_by` set.
+- Three store formats, one per step: 11 (capture provenance and
+  `closed_reason`), 12 (statement, subject, `stated_by`), 13 (issues).
+- ORB-25987 needs its content and point-4 criteria revised before it is
+  built; ORB-26204's implementation follows step (a).
+- Cost: an approved preference's content is scribe's sentence, not
+  Daniel's, so a wrong statement he approved misstates him until retired;
+  a preference phrased with no trigger is never proposed; an issue exists
+  only when the agent follows the hook line.
