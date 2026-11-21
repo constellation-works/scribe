@@ -593,7 +593,11 @@ impl Job<'_> {
             request.write_exclusions =
                 pass::write_exclusions(&entries.listing.items, &project, &request);
             let distilled = distill(self.id, request, &conversation[..end], adapter)?;
-            let written = distilled
+            // Candidate slots are spent by what the model returned; write
+            // slots only by what the store wrote, below, since a drafted idea
+            // may still be dropped (a task outcome, a duplicate) and must not
+            // shrink a later window's limit.
+            let write_answers = distilled
                 .candidates
                 .iter()
                 .filter(|c| {
@@ -604,10 +608,9 @@ impl Job<'_> {
                         .is_some_and(|tag| tag.capture.writes())
                 })
                 .count();
-            self.write_slots = self.write_slots.saturating_sub(written);
             self.candidate_slots = self
                 .candidate_slots
-                .saturating_sub(distilled.candidates.len() - written);
+                .saturating_sub(distilled.candidates.len() - write_answers);
             let candidate_answers = distilled.candidates.clone();
             let dropped = distilled.dropped_terms;
             let warnings = window_warnings(self.windows + 1, &distilled);
@@ -684,6 +687,9 @@ impl Job<'_> {
                     return Err(PassError::new(err.code(), err.to_string()));
                 }
             };
+            self.write_slots = self
+                .write_slots
+                .saturating_sub(written.written_entries.len());
             previous = written.record;
             self.persisted_targets.extend(
                 written

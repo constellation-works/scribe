@@ -3197,7 +3197,9 @@ preference, a question of fact, an idea the session goes on to carry out).
 - **Bounds.** At most 3 ideas per session per pass invocation (`MAX_IDEAS`),
   counted apart from the 3 candidate slots and the 20 open candidates, in
   the same session-model call (no extra call). The schema allows 6 claims
-  per window; the pass and the store each cut write claims at 3.
+  per window; the pass and the store each cut write claims at 3. Across a
+  pass's windows only ideas the store wrote spend the 3: a drafted idea
+  dropped as a task or a duplicate leaves a later window its slot.
 - **Guards, and what each misses.**
   1. *Model exclusions* (`write_exclusions`): the active entries of the
      firing write tags in the record's project, each its content and, for a

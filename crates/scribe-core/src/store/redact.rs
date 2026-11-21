@@ -31,6 +31,8 @@ pub const REDACTED_FIELDS: &[&str] = &[
     "entry.evidence",
     "entry.instruction.quote",
     "entry.window.text",
+    "entry.outcome.reason",
+    "entry.outcome.task",
     "session.title",
     "session.summary",
     "session.goals",

@@ -1645,7 +1645,7 @@ fn legacy_control_is_read_without_writes_and_new_retry_state_is_strict() {
     );
     setup.pass();
     let current: Value = serde_json::from_slice(&setup.control_bytes()).unwrap();
-    assert_eq!(current["format"], 15);
+    assert_eq!(current["format"], 16);
     assert_eq!(current["sessions"][ON]["consecutive_failures"], 0);
     assert_eq!(current["sessions"][ON]["retry_after"], Value::Null);
     assert_eq!(current["sessions"][ON]["pending_links"], json!([]));
@@ -4470,6 +4470,65 @@ fn a_fourth_idea_in_one_pass_is_not_written_and_proposals_keep_their_own_slots()
     let open = proposals(&s);
     assert_eq!(open["total"], 1, "{open}");
     assert_eq!(open["proposals"][0]["candidate"]["tag"], "preferences");
+}
+
+#[test]
+fn ideas_an_earlier_window_drafted_but_did_not_write_leave_later_windows_their_slots() {
+    // One message per window. In each of the first three, Daniel's idea
+    // became a task in his own turn, so the drafted idea writes nothing;
+    // the fourth window's idea must still be requested and written, since
+    // only ideas the store wrote spend the pass's three write slots.
+    let s = Setup::new();
+    let filed = [
+        "What if we sharded the audit log by month? I filed ORB-4241 for it.",
+        "What if we added a dry-run flag to the pass? I filed ORB-4242 for it.",
+        "What if we dropped the popup preview? I filed ORB-4243 for it.",
+    ];
+    let open = "What if we cached the routing table per host?";
+    let mut lines: Vec<Value> = filed
+        .iter()
+        .enumerate()
+        .map(|(n, idea)| line("user", &format!("u-{n}"), idea))
+        .collect();
+    lines.push(line("user", "u-open", open));
+    s.write(ON, &lines);
+    let mut answers: Vec<Option<Value>> = filed
+        .iter()
+        .enumerate()
+        .map(|(n, idea)| {
+            let mut claim = idea_claim(
+                idea,
+                &format!("u-{n}"),
+                &format!("Daniel suggests idea {n}, now a task."),
+            );
+            claim["outcome"] = json!("task");
+            claim["task"] = json!(format!("ORB-424{}", n + 1));
+            let mut body = answer();
+            body["candidates"] = json!([claim]);
+            Some(body)
+        })
+        .collect();
+    let mut last = answer();
+    last["candidates"] = json!([idea_claim(
+        open,
+        "u-open",
+        "Daniel suggests caching the routing table per host."
+    )]);
+    answers.push(Some(last));
+    s.answers(&answers);
+    s.scribe("/scribe on");
+    s.config("[catalog]\nwindow_messages = 1\n");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let prompts = s.prompts();
+    assert_eq!(prompts.len(), 4);
+    assert!(
+        prompts[3].contains("at most 3 under written tags"),
+        "{}",
+        prompts[3]
+    );
+    let listed = entries_json(&s, &["--tag", "idea"]);
+    assert_eq!(listed["total"], 1, "{listed}");
+    assert_eq!(listed["entries"][0]["quote"], open);
 }
 
 #[test]
