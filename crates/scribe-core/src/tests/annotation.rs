@@ -53,6 +53,38 @@ fn a_marker_at_the_end_or_before_a_colon_or_bracketed_is_a_marker() {
 }
 
 #[test]
+fn a_global_opener_takes_sentence_punctuation() {
+    for text in [
+        "keep tabs on this #scribe/global.",
+        "#scribe/global, idea: x",
+        "(keep tabs on this #scribe/global)",
+        "keep tabs on this #scribe/global!",
+    ] {
+        let marks = annotation::marks(text);
+        assert_eq!(marks.len(), 1, "{text}");
+        assert!(marks[0].global, "{text}: {marks:?}");
+        assert_eq!(marks[0].problem, None, "{text}");
+    }
+    let bad = annotation::marks("keep tabs #scribe/globals.");
+    assert_eq!(bad[0].problem, Some(MarkProblem::BadOpener), "{bad:?}");
+}
+
+#[test]
+fn a_stray_quote_or_backtick_does_not_hide_a_marker_after_it() {
+    for text in [
+        "a 12\" pipe, remember #scribe idea",
+        "a “stray opener, remember #scribe idea",
+        "a stray ` tick, remember #scribe idea",
+        "\"quoted\" then a 12\" pipe #scribe",
+    ] {
+        assert_eq!(annotation::marks(text).len(), 1, "{text}");
+    }
+    // A paired span still hides its mention, before or after the stray.
+    assert!(annotation::marks("a 12\" pipe and `#scribe` in code").is_empty());
+    assert!(annotation::marks("he wrote \"#scribe\" there, 12\" pipe").is_empty());
+}
+
+#[test]
 fn a_mention_writes_nothing() {
     for text in [
         "the `#scribe` marker is neat",
