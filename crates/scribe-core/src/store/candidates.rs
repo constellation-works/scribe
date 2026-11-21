@@ -236,8 +236,11 @@ impl Store {
 
     /// Approved proposals are the recovery journal, as for consistency approvals.
     /// An approved candidate whose statement an active entry now covers is
-    /// closed as `rejected` and reported in [`ReapplyReport::covered`]; the
-    /// covering id is not stored on the proposal.
+    /// closed as `rejected` with `closed_reason: covered`, keeping its
+    /// settlement and instruction, and reported in
+    /// [`ReapplyReport::covered`]; the covering id is not stored on the
+    /// proposal. An instructed approval is replayed with its agent and
+    /// instruction ([`Proposal::candidate_entry`]).
     pub(super) fn reapply_candidates(&self) -> Result<ReapplyReport> {
         if !self
             .proposals()?
@@ -264,7 +267,10 @@ impl Store {
                 }),
                 CandidateWrite::Present => {}
                 CandidateWrite::Covered { by } => {
+                    // The approval and its instruction stay; the close says
+                    // why, so it never reads as a rejection (format 15).
                     proposal.state = ProposalState::Rejected;
+                    proposal.closed_reason = Some(crate::ClosedReason::Covered);
                     report.covered.push(CoveredCandidate {
                         proposal: snapshot.id,
                         by,

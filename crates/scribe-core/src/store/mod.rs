@@ -1174,7 +1174,11 @@ impl Store {
                 }
                 candidates::CandidateWrite::Present => {}
                 candidates::CandidateWrite::Covered { by } => {
+                    // Approved, but an active entry now says it: closed as
+                    // covered, keeping who approved it and on what
+                    // instruction, never as a rejection (format 15).
                     proposals[index].state = crate::ProposalState::Rejected;
+                    proposals[index].closed_reason = Some(crate::ClosedReason::Covered);
                     self.write_proposals(&proposals)?;
                     settled = Settled::Covered { proposal: *id, by };
                 }

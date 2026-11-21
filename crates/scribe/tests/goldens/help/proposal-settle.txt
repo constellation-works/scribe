@@ -1,4 +1,4 @@
-Approve or reject a proposal about an agent entry
+Approve or reject a proposal about an agent entry, or a claim on Daniel's instruction
 
 Usage: scribe proposal settle [OPTIONS] --author <AUTHOR> <ID>
 
@@ -23,3 +23,4 @@ Global options:
 
 Examples:
   scribe proposal settle <id> --approve --author opus
+  scribe proposal settle <id> --reject --author opus --session <id> --instruction '<his words>'

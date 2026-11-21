@@ -1823,3 +1823,102 @@ fn a_candidate_statement_needs_its_subject_and_a_user_turn() {
         corrupt_message(&decode_proposals(path, bad.as_bytes()).unwrap_err());
     }
 }
+
+/// An approved candidate `p-1` reserving `preferences-1`, settled by the
+/// agent `aide` on Daniel's instruction `m-9` (2_design.md §12.3), from a
+/// turn of `role`, with a statement on a user claim.
+fn instructed_approval(role: &str) -> crate::Proposal {
+    let sha = "0".repeat(64);
+    let statement = if role == "user" {
+        serde_json::json!("Daniel prefers tabs.")
+    } else {
+        serde_json::Value::Null
+    };
+    let subject = if role == "user" {
+        serde_json::json!("indentation")
+    } else {
+        serde_json::Value::Null
+    };
+    let doc = serde_json::json!({"format": FORMAT, "proposals": [{
+        "id": "p-1", "kind": "candidate", "older": "preferences-1", "newer": null,
+        "candidate": {"tag": "preferences", "role": role, "quote": "I prefer tabs, always.",
+            "evidence": null, "statement": statement, "subject": subject,
+            "cite": {"session": "s-1", "message": "m-1", "at": "2026-11-01T10:00:00Z",
+                "prompt_sha256": sha, "line": 1, "cwd": "/work"},
+            "project": "scribe", "provider": "claude-code", "host": "host", "admitted": null},
+        "reason": "Unmarked preferences statement", "quotes": [], "state": "approved",
+        "opened_at": "2026-11-01T10:00:00Z", "settled_at": "2026-11-03T10:05:00Z",
+        "settled_by": {"session": "s-9", "message": "m-9", "at": "2026-11-03T10:00:00Z",
+            "prompt_sha256": sha, "line": 1, "cwd": ""},
+        "author": {"kind": "scribe", "name": "session-pass"}, "updated_by": null,
+        "settled_author": {"kind": "agent", "name": "aide"}, "closed_reason": null,
+        "instruction": {"session": "s-9", "message": "m-9", "at": "2026-11-03T10:00:00Z",
+            "quote": "approve p-1, it's right"}
+    }]});
+    decode_proposals(Path::new("proposals.json"), doc.to_string().as_bytes())
+        .unwrap()
+        .remove(0)
+}
+
+#[test]
+fn an_instructed_approval_entry_rereads_at_format_15_and_is_refused_at_14() {
+    for role in ["user", "assistant"] {
+        let proposal = instructed_approval(role);
+        let e = proposal.candidate_entry(None).unwrap();
+        assert_eq!(
+            e.said,
+            "scribe proposal settle p-1 --approve --author aide --session s-9 --instruction 'approve p-1, it'\\''s right'"
+        );
+        assert_eq!(
+            e.approved_by,
+            Some(crate::Author::agent("aide".parse().unwrap()))
+        );
+        assert_eq!(e.instruction, proposal.instruction);
+        let kind = if role == "user" {
+            crate::AuthorKind::Daniel
+        } else {
+            crate::AuthorKind::Agent
+        };
+        assert_eq!(e.author.kind, kind, "{role}");
+        let bytes = crate::store::format::encode_entry(Path::new(ENTRY), &e).unwrap();
+        let text = String::from_utf8(bytes).unwrap();
+        assert_eq!(entry(&text).unwrap(), e, "{role}");
+        // A format-14 reader never admitted the command as `said`.
+        let old = text.replacen(&format!("format: {FORMAT}\n"), "format: 14\n", 1);
+        corrupt_message(&entry(&old).unwrap_err());
+        // Nor does this one without `approved_by`.
+        let mut unattributed = e.clone();
+        unattributed.approved_by = None;
+        let bytes = crate::store::format::encode_entry(Path::new(ENTRY), &unattributed).unwrap();
+        corrupt_message(&entry(&String::from_utf8(bytes).unwrap()).unwrap_err());
+    }
+}
+
+#[test]
+fn closed_reason_covered_reads_only_on_a_settled_candidate_at_format_15() {
+    let path = Path::new("proposals.json");
+    let mut covered = instructed_approval("user");
+    covered.state = crate::ProposalState::Rejected;
+    covered.closed_reason = Some(crate::ClosedReason::Covered);
+    let bytes = crate::store::format::encode_proposals(path, &[covered.clone()]).unwrap();
+    assert_eq!(decode_proposals(path, &bytes).unwrap(), [covered.clone()]);
+    let old = String::from_utf8(bytes).unwrap().replacen(
+        &format!("\"format\": {FORMAT}"),
+        "\"format\": 14",
+        1,
+    );
+    assert!(old.contains("\"format\": 14"), "{old}");
+    corrupt_message(&decode_proposals(path, old.as_bytes()).unwrap_err());
+    // An instructed rejection with no reason, or covered on a proposal
+    // never settled, is refused.
+    let mut unexplained = covered.clone();
+    unexplained.closed_reason = None;
+    let bytes = crate::store::format::encode_proposals(path, &[unexplained]).unwrap();
+    corrupt_message(&decode_proposals(path, &bytes).unwrap_err());
+    let mut unsettled = covered;
+    unsettled.instruction = None;
+    unsettled.settled_by = None;
+    unsettled.settled_at = None;
+    let bytes = crate::store::format::encode_proposals(path, &[unsettled]).unwrap();
+    corrupt_message(&decode_proposals(path, &bytes).unwrap_err());
+}

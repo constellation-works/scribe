@@ -59,6 +59,7 @@ scribe tag update notes --author opus --add-alias note
 scribe proposal add --kind stale --older <id> --reason 'Review needed' --author opus
 scribe proposal update <id> --author opus --reason 'New evidence'
 scribe proposal settle <id> --reject --author opus
+scribe proposal settle <id> --approve --author opus --session <id> --instruction '<his words>'
 scribe session list --project constellation-works/scribe
 scribe session list --since 2026-11-01 --status final --topic release --topic store
 scribe session show <id> --json | jq -r .next
@@ -92,11 +93,13 @@ and write nothing, including audit lines. Direct agent writes, session
 passes and rebuilds, `session deactivate` and `session activate`, and consistency scans are audited. Each direct write
 requires `--author` and records kind `agent`, even for the name `daniel`.
 Agents may annotate Daniel's topics and references, but cannot replace his
-content, retire his entries or settle proposals about them. Daniel still
-settles those through `#scribe`. Agent notes have no typed-turn citation;
+content or settle proposals about his entries; Daniel settles those through
+`#scribe`. Only on his checked instruction (`--session` and `--instruction`,
+naming a turn he typed in the last 30 minutes) may an agent retire or forget
+his entry, or approve or reject a claim a session pass proposed. Agent notes have no typed-turn citation;
 `ask` labels them `agent note (<name>)`. Repeating an unchanged write prints
 the unchanged record with `nothing changed` on stderr and no audit event.
-The store now writes format 14 and reads older formats without rewriting them.
+The store now writes format 15 and reads older formats without rewriting them.
 Passes rewrite the header and open segment and append new
 segments; sealed segments stay unchanged. `[catalog] segment_windows`
 (default 3) bounds each segment's rewrites. Rebuild replaces a record from

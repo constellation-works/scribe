@@ -41,7 +41,7 @@ use time::OffsetDateTime;
 
 /// The newest store format: this build reads formats 1 to `FORMAT` of every
 /// document and would write `FORMAT`.
-pub(super) const FORMAT: u32 = 14;
+pub(super) const FORMAT: u32 = 15;
 
 /// Which document an upgrade step is applied to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,7 +82,23 @@ pub(super) const UPGRADES: &[Upgrade] = &[
     entry_inactive_since,
     instructed_settlement,
     claim_statement,
+    instructed_approval,
 ];
+
+/// Format 14 -> 15 changes no stored value. It admits two shapes an agent's
+/// approval of a claim on Daniel's checked instruction writes (2_design.md
+/// §12.3): an entry with `approved_by` whose `said` is the canonical
+/// `scribe proposal settle p-<n> --approve ...` command rather than a
+/// `#scribe approve` line, and `closed_reason: covered` on an approved
+/// candidate closed because an active entry covers it. A format-14 reader
+/// refuses both, so the bump makes an older build report the store as too
+/// new rather than as corrupt.
+fn instructed_approval(
+    _document: Document,
+    value: serde_json::Value,
+) -> serde_json::Result<serde_json::Value> {
+    Ok(value)
+}
 
 /// Format 11 -> 12 adds `inactive_since` to each entry: `null` for an
 /// active one, and `updated` for one already retired, superseded or
@@ -1315,6 +1331,15 @@ pub(super) fn decode_entry(
             ),
         ));
     }
+    // A claim approval's `said`: the typed `#scribe approve p-<n>` line, or
+    // (format 15) the canonical `proposal settle` command an agent ran on
+    // Daniel's checked instruction, only beside its `approved_by`.
+    let approval_said = |said: &str| {
+        said.starts_with("#scribe approve p-")
+            || (from >= 15
+                && entry.approved_by.is_some()
+                && said.starts_with(crate::proposal::INSTRUCTED_SAID_PREFIX))
+    };
     let valid = match entry.author.kind {
         crate::AuthorKind::Daniel => {
             entry.cite.is_some()
@@ -1342,8 +1367,7 @@ pub(super) fn decode_entry(
                                 crate::EntryStatus::Active
                                 | crate::EntryStatus::Superseded
                                 | crate::EntryStatus::Retired => {
-                                    entry.quote.is_some()
-                                        && entry.said.starts_with("#scribe approve p-")
+                                    entry.quote.is_some() && approval_said(&entry.said)
                                 }
                             }
                     }
@@ -1363,7 +1387,7 @@ pub(super) fn decode_entry(
                 crate::EntryStatus::Forgotten => entry.said.is_empty() && body.is_empty(),
                 crate::EntryStatus::Active
                 | crate::EntryStatus::Superseded
-                | crate::EntryStatus::Retired => entry.said.starts_with("#scribe approve p-"),
+                | crate::EntryStatus::Retired => approval_said(&entry.said),
             };
             let approved_assistant = entry.cite.is_some()
                 && approved_said
@@ -1773,6 +1797,18 @@ fn decode_json<T: DeserializeOwned>(path: &Path, bytes: &[u8], document: Documen
         Document::Proposals if from == 13 => {
             serde_json::from_slice::<ProposalsV13>(bytes).map_err(|e| Error::corrupt(path, e))?;
         }
+        // Format 15 changed no key, only admitted `closed_reason: covered`.
+        Document::Proposals if from == 14 => {
+            let doc = serde_json::from_slice::<ProposalsDocument>(bytes)
+                .map_err(|e| Error::corrupt(path, e))?;
+            if doc
+                .proposals
+                .iter()
+                .any(|p| p.closed_reason == Some(crate::ClosedReason::Covered))
+            {
+                return Err(shape(path, "unknown variant `covered`"));
+            }
+        }
         Document::Proposals if from == 10 => {
             serde_json::from_slice::<ProposalsV10>(bytes).map_err(|e| Error::corrupt(path, e))?;
         }
@@ -1868,11 +1904,14 @@ pub(super) fn decode_proposals(path: &Path, bytes: &[u8]) -> Result<Vec<Proposal
                     ));
                 }
                 if proposal.state == ProposalState::Rejected
-                    && proposal.closed_reason != Some(crate::ClosedReason::Instructed)
+                    && !matches!(
+                        proposal.closed_reason,
+                        Some(crate::ClosedReason::Instructed | crate::ClosedReason::Covered)
+                    )
                 {
                     return Err(shape(
                         path,
-                        "rejected proposal with instruction requires closed_reason instructed",
+                        "rejected proposal with instruction requires closed_reason instructed or covered",
                     ));
                 }
             }
@@ -1883,6 +1922,18 @@ pub(super) fn decode_proposals(path: &Path, bytes: &[u8]) -> Result<Vec<Proposal
                 ));
             }
             None => {}
+        }
+        // `covered` (format 15) closes an approved candidate whose entry an
+        // active one covers; it keeps the approval's settlement.
+        if proposal.closed_reason == Some(crate::ClosedReason::Covered)
+            && (proposal.kind != ProposalKind::Candidate
+                || proposal.settled_at.is_none()
+                || proposal.settled_author.is_none())
+        {
+            return Err(shape(
+                path,
+                "closed_reason covered requires a settled candidate proposal",
+            ));
         }
         match (&proposal.kind, &proposal.candidate) {
             (ProposalKind::Candidate, Some(candidate))

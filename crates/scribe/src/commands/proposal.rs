@@ -33,8 +33,10 @@ pub(crate) enum ProposalCommand {
         after_help = "Examples:\n  scribe proposal update <id> --author opus --reason 'New evidence'"
     )]
     Update(UpdateArgs),
-    /// Approve or reject a proposal about an agent entry
-    #[command(after_help = "Examples:\n  scribe proposal settle <id> --approve --author opus")]
+    /// Approve or reject a proposal about an agent entry, or a claim on Daniel's instruction
+    #[command(
+        after_help = "Examples:\n  scribe proposal settle <id> --approve --author opus\n  scribe proposal settle <id> --reject --author opus --session <id> --instruction '<his words>'"
+    )]
     Settle(SettleArgs),
     /// List every proposal by id and its settlement state
     #[command(after_help = LIST_EXAMPLES)]
@@ -173,6 +175,7 @@ pub(super) fn run(command: ProposalCommand, ctx: &Context) -> Result<Output, Cli
                 &args.id,
                 scribe_core::ProposalChange::Update,
                 Some(&args.reason),
+                None,
                 args.author,
                 ctx.now(),
                 &redactor,
@@ -180,14 +183,16 @@ pub(super) fn run(command: ProposalCommand, ctx: &Context) -> Result<Output, Cli
             Ok(written(proposal, changed))
         }
         ProposalCommand::Settle(args) => {
+            args.instruction.note(ctx);
             scribe_core::check_agent_author(&args.author)?;
             if let Some(reason) = &args.reason {
                 scribe_core::check_reason(reason)?;
             }
             let target = ctx.store().resolve_proposal(&args.id)?;
             // Before the store lock; a refusal changes nothing. A passing
-            // check does not yet widen what settle accepts (§12.1).
-            super::instruction::check(
+            // check lets settle accept a candidate (2_design.md §12.1); a
+            // proposal about Daniel's entry stays his.
+            let instructed = super::instruction::check(
                 ctx,
                 &args.instruction,
                 if args.approve {
@@ -206,6 +211,7 @@ pub(super) fn run(command: ProposalCommand, ctx: &Context) -> Result<Output, Cli
                     scribe_core::ProposalChange::Reject
                 },
                 args.reason.as_deref(),
+                instructed.as_ref(),
                 args.author,
                 ctx.now(),
                 &redactor,

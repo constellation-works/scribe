@@ -10,8 +10,9 @@
 //! Which commands are audited is declared per command in
 //! `commands::Command::audit`; read-only commands are not, because they must
 //! not write (STD-01 R31). The line holds the command path, the record acted
-//! on, the outcome, the stable error code and, for a command that takes an
-//! `--author`, that name (STD-05 R2): never argument values or error text,
+//! on, the outcome, the stable error code, for a command that takes an
+//! `--author`, that name (STD-05 R2), and for a write run on Daniel's
+//! instruction its session and turn ids: never argument values or error text,
 //! which can carry entry contents or paths (STD-05 R13).
 //!
 //! A hook run writes one line per record it wrote or refused (two `#scribe`
@@ -90,6 +91,7 @@ pub(crate) struct AuditGuard<'a> {
     started: Instant,
     lines: Vec<Line>,
     author: Option<String>,
+    instruction: crate::app::InstructionNote,
 }
 
 impl<'a> AuditGuard<'a> {
@@ -107,6 +109,7 @@ impl<'a> AuditGuard<'a> {
                 error_code: None,
             }],
             author: None,
+            instruction: crate::app::InstructionNote::default(),
         }
     }
 
@@ -243,6 +246,12 @@ impl<'a> AuditGuard<'a> {
         self.author = Some(author.to_owned());
     }
 
+    /// Name the instruction a write ran on, by its session and turn ids
+    /// only (2_design.md §12.4), on every line it writes.
+    pub(crate) fn set_instruction(&mut self, note: crate::app::InstructionNote) {
+        self.instruction = note;
+    }
+
     /// The lines this guard will write, in order.
     pub(crate) fn events(&self) -> Vec<AuditEvent> {
         let duration_ms = u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
@@ -255,6 +264,8 @@ impl<'a> AuditGuard<'a> {
                 target: line.target.clone(),
                 error_code: line.error_code.map(str::to_owned),
                 author: self.author.clone(),
+                instruction_session: self.instruction.session.clone(),
+                instruction_message: self.instruction.message.clone(),
                 duration_ms,
             })
             .collect()

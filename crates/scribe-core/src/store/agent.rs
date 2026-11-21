@@ -650,12 +650,21 @@ impl Store {
         Ok((proposal, true))
     }
 
-    /// Change an open agent proposal's reason or settle an agent entry's proposal.
+    /// Change an open agent proposal's reason or settle an agent entry's
+    /// proposal. With Daniel's checked `instruction` (2_design.md §12.1,
+    /// §12.3), an approve or reject also settles a session-pass candidate
+    /// ([`Store::settle_candidate_on_instruction`]); nothing else widens: a
+    /// proposal about his entry is still his to settle.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "explicit settlement inputs at the store boundary"
+    )]
     pub fn change_agent_proposal(
         &self,
         id: &str,
         change: crate::ProposalChange,
         reason: Option<&str>,
+        instruction: Option<&crate::instruction::Instructed>,
         author: AuthorName,
         now: OffsetDateTime,
         redactor: &Redactor,
@@ -671,10 +680,21 @@ impl Store {
         let i = self.proposal_index(id, &ids)?;
         let p = &mut proposals[i];
         if p.kind == ProposalKind::Candidate {
-            return Err(refusal(
-                WriteRefusal::DanielOnly,
-                "Daniel settles candidate proposals through #scribe approve or reject",
-            ));
+            let Some(instructed) = instruction.filter(|_| change != crate::ProposalChange::Update)
+            else {
+                return Err(refusal(
+                    WriteRefusal::DanielOnly,
+                    if change == crate::ProposalChange::Update {
+                        "Daniel settles candidate proposals through #scribe approve or reject; their reason is scribe's"
+                    } else {
+                        "Daniel settles candidate proposals through #scribe approve or reject, or on his instruction with --session and --instruction"
+                    },
+                ));
+            };
+            let approve = change == crate::ProposalChange::Approve;
+            return self.settle_candidate_on_instruction(
+                proposals, i, approve, reason, instructed, author, now, redactor,
+            );
         }
         let before = p.clone();
         let reason_changed = reason.is_some_and(|r| redactor.mask(r) != p.reason);
@@ -768,5 +788,89 @@ impl Store {
             self.write_entry(&entry, false)?;
         }
         Ok((result, changed))
+    }
+
+    /// Settle candidate `proposals[i]` on Daniel's checked `instructed`
+    /// (2_design.md §12.3). The caller holds the lock. The candidate must be
+    /// open; the same instruction again changes nothing. An approval writes
+    /// the reserved entry as a typed approval does (his for a claim from his
+    /// turn, the assistant's for one from an assistant turn), with
+    /// `approved_by` the agent; a claim an active entry already covers is
+    /// closed `rejected` with `closed_reason: covered` and writes none. A
+    /// rejection writes no entry and sets `closed_reason: instructed`. Either way the proposal records the agent
+    /// in `settled_author`, the instruction turn's cite in `settled_by` and
+    /// `instruction` with its quote redacted. `proposals.json` is written
+    /// before the entry, so a crash between them leaves an approved proposal
+    /// the next scan re-applies with the same attribution.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "explicit settlement inputs at the store boundary"
+    )]
+    fn settle_candidate_on_instruction(
+        &self,
+        mut proposals: Vec<Proposal>,
+        i: usize,
+        approve: bool,
+        reason: Option<&str>,
+        instructed: &crate::instruction::Instructed,
+        author: AuthorName,
+        now: OffsetDateTime,
+        redactor: &Redactor,
+    ) -> Result<(Proposal, bool)> {
+        let p = &mut proposals[i];
+        // A candidate's reason is scribe's: an agent never replaces it.
+        if reason.is_some_and(|r| redactor.mask(r) != p.reason) {
+            return Err(refusal(
+                WriteRefusal::ProposalNotAgent,
+                "only an agent-opened proposal's reason can be changed; settle without --reason to keep the original reason",
+            ));
+        }
+        let same_instruction = p.instruction.as_ref().is_some_and(|held| {
+            held.session == instructed.session && held.message == instructed.message
+        });
+        if p.state != ProposalState::Open {
+            // The same command again, or an approval an active entry was
+            // found to cover, is done; any other settlement stands.
+            let done = if approve {
+                p.state == ProposalState::Approved
+                    || p.closed_reason == Some(crate::ClosedReason::Covered)
+            } else {
+                p.closed_reason == Some(crate::ClosedReason::Instructed)
+            };
+            if same_instruction && done {
+                return Ok((p.clone(), false));
+            }
+            return Err(refusal(
+                WriteRefusal::ProposalSettled,
+                format!("{} is already {}", p.id, p.state.as_str()),
+            ));
+        }
+        p.state = if approve {
+            ProposalState::Approved
+        } else {
+            ProposalState::Rejected
+        };
+        p.settled_at = Some(now);
+        p.settled_by = Some(instructed.cite());
+        p.settled_author = Some(Author::agent(author));
+        p.instruction = Some(instructed.record(|q| redactor.mask(q)));
+        if !approve {
+            p.closed_reason = Some(crate::ClosedReason::Instructed);
+            let result = p.clone();
+            self.write_proposals(&proposals)?;
+            return Ok((result, true));
+        }
+        self.write_proposals(&proposals)?;
+        let snapshot = proposals[i].clone();
+        if let super::candidates::CandidateWrite::Covered { .. } =
+            self.write_candidate_entry(&snapshot)?
+        {
+            // An active entry already says it: the approval is kept, with
+            // its instruction, and closed as covered without an entry.
+            proposals[i].state = ProposalState::Rejected;
+            proposals[i].closed_reason = Some(crate::ClosedReason::Covered);
+            self.write_proposals(&proposals)?;
+        }
+        Ok((proposals[i].clone(), true))
     }
 }

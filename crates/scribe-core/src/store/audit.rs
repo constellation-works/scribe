@@ -19,8 +19,9 @@ pub const AUDIT_FILE: &str = "audit.jsonl";
 
 /// The newest audit line format. Bump it, and keep reading the old one, when
 /// the line's shape changes (STD-02 R16). Format 2 adds `author`; a format 1
-/// line reads with none.
-pub(super) const AUDIT_FORMAT: u32 = 2;
+/// line reads with none. Format 3 adds `instruction_session` and
+/// `instruction_message`; an older line reads with neither.
+pub(super) const AUDIT_FORMAT: u32 = 3;
 
 /// How an audited command ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,6 +55,15 @@ pub struct AuditEvent {
     /// command's arguments (STD-05 R2); `null` when none was given.
     #[serde(default)]
     pub author: Option<String>,
+    /// For a write run on Daniel's instruction (`--session`), the session
+    /// it was looked for in (2_design.md §12.4); `null` otherwise. Never the
+    /// instruction's words.
+    #[serde(default)]
+    pub instruction_session: Option<String>,
+    /// The uuid of the turn that backs that instruction, once the check
+    /// found it; `null` when it did not get that far, or without one.
+    #[serde(default)]
+    pub instruction_message: Option<String>,
     /// Wall time from start to result, in milliseconds.
     pub duration_ms: u64,
 }

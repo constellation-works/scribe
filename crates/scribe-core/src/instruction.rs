@@ -166,6 +166,49 @@ pub struct Instructed {
     pub at: OffsetDateTime,
     /// The span the command quoted, as given.
     pub quote: String,
+    /// SHA-256 of the turn's whole text, lowercase hex (a cite's
+    /// `prompt_sha256`).
+    pub prompt_sha256: String,
+    /// The line of the turn the quote starts on, from 1.
+    pub line: u32,
+}
+
+impl Instructed {
+    /// The instruction turn as a cite: a settlement's `settled_by`
+    /// (2_design.md §12.3). The transcript's working directory is not read,
+    /// so `cwd` is empty.
+    #[must_use]
+    pub fn cite(&self) -> crate::Cite {
+        crate::Cite {
+            session: self.session.clone(),
+            message: Some(self.message.clone()),
+            at: self.at,
+            prompt_sha256: self.prompt_sha256.clone(),
+            line: self.line,
+            cwd: String::new(),
+        }
+    }
+
+    /// The record the store keeps of it, its quote masked by `mask`.
+    #[must_use]
+    pub fn record(&self, mask: impl Fn(&str) -> String) -> crate::Instruction {
+        crate::Instruction {
+            session: self.session.clone(),
+            message: self.message.clone(),
+            at: self.at,
+            quote: Some(mask(&self.quote)),
+        }
+    }
+}
+
+/// The line of `text`, from 1, that the first line of `quote` starts on;
+/// 1 when it cannot be placed exactly (a quote that differs in spacing).
+fn quote_line(text: &str, quote: &str) -> u32 {
+    let head = quote.trim().lines().next().unwrap_or_default();
+    let before = text.find(head).map_or("", |at| &text[..at]);
+    u32::try_from(before.matches('\n').count())
+        .unwrap_or(u32::MAX - 1)
+        .saturating_add(1)
 }
 
 /// Run §12.2 checks 2 to 5 and §12.5's interactive check over `spoken`, the
@@ -259,11 +302,14 @@ pub fn check(spoken: &[Spoken], request: &Request<'_>) -> Result<Instructed, Err
             ),
         ));
     }
+    let text = turn.message.text();
     Ok(Instructed {
         session: request.session.clone(),
         message: turn.message.uuid.clone(),
         at: turn.message.at,
         quote: request.quote.to_owned(),
+        prompt_sha256: capture::prompt_sha256(&text),
+        line: quote_line(&text, request.quote),
     })
 }
 
