@@ -3225,7 +3225,7 @@ runs these checks; any failure refuses the command and changes nothing.
    ("yes") passes when it is his whole turn; when several of his turns
    hold the span, the latest is the instruction.
 3. **Fresh.** That turn is one of the session's last three typed user turns
-   and was written at most 30 minutes before the command runs. Otherwise
+   and was written at most 30 minutes before the command runs, never in the future. Otherwise
    `instruction_stale`. An old instruction cannot be reused to settle
    claims opened since.
 4. **It names the target.** The target's id (exact, or the unique prefix
@@ -3249,7 +3249,13 @@ runs these checks; any failure refuses the command and changes nothing.
    whole and case-insensitively ("keeper" is not "keep"). For reject,
    retire and forget, the verb's word
    must be in his own turn; an affirmative alone does not delete anything.
-   Otherwise `instruction_mismatch`.
+   The check also refuses `instruction_mismatch` if his turn or the assistant
+   message it answers contains a negation or exception marker anywhere. It
+   shares the duplicate check’s markers (including not, no, never, don’t,
+   dont, can’t, cannot, won’t, shouldn’t, except, unless and without), and
+   also refuses but, stop, cancel and other than. This conservative rule
+   refuses “Don’t forget to approve p-4” even when approval was intended;
+   ask for a plainer instruction. Otherwise `instruction_mismatch`.
 
 The store, under its lock, checks only that an instructed write carries an
 instruction record (§12.3) and re-checks the target's state; reading the
@@ -3260,8 +3266,8 @@ This is an accident guard (STD-05@1 §R5), like every provenance check in
 scribe: it stops an agent acting on its own, a stale or misread
 instruction, and an instruction meant for another record. It is not a
 security boundary: a process running as Daniel can write a transcript
-file. It also does not understand negation ("don't approve p-4" passes
-check 5); the aide's echo and the reversal routes of §12.6 cover that.
+file. The marker check refuses some intended instructions and does not
+understand sarcasm or associate each act with its target.
 
 ### 12.3 Question 2 — whose entry an approval writes, and how it reads
 
@@ -3373,9 +3379,11 @@ the step lands.
 
 ### 12.8 Limits and what is not built until seen
 
-- **Word lists, not meaning.** Negation and sarcasm pass; a turn naming
-  two acts ("approve p-4, reject p-5") passes both lists for both ids, so
-  the aide's choice decides which id gets which verb.
+- **Word lists, not meaning.** Negation and exception markers cause a
+  conservative refusal, including “Don’t forget to approve p-4”. Sarcasm
+  still passes, and a turn naming two acts ("approve p-4, reject p-5")
+  passes both lists for both ids, so the aide’s choice decides which id
+  gets which verb.
 - **Same user.** An agent able to write a transcript file can forge an
   instruction; this is the accident guard of §4.1, not a boundary.
 - **Mac only.** The aide must run on the host of the store and of its own

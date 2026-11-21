@@ -14,7 +14,7 @@
 //! scribe: it stops an agent acting on its own, a stale or misread
 //! instruction and an instruction meant for another record. A process
 //! running as Daniel can write a transcript file, and the word lists do not
-//! understand negation.
+//! understand meaning.
 
 use crate::capture;
 use crate::entry::Speaker;
@@ -97,7 +97,7 @@ pub const AFFIRMATIVES: &[&str] = &["yes", "ok", "okay", "go ahead", "do it"];
 
 /// Words of the answered reply that make a bare affirmative an approval,
 /// when they sit on the same line as the target's id.
-pub const APPROVE_IN_REPLY: &[&str] = &["approve", "approved", "accept", "accepted"];
+pub const APPROVE_IN_REPLY: &[&str] = &["approve", "accept"];
 
 /// One message of the session, as the check reads it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -214,7 +214,7 @@ pub fn check(spoken: &[Spoken], request: &Request<'_>) -> Result<Instructed, Err
     }
     let recent = typed.len() - rank <= RECENT_TURNS;
     let age = request.now - turn.message.at;
-    if !recent || age > FRESH_FOR {
+    if !recent || age < time::Duration::ZERO || age > FRESH_FOR {
         return Err(refuse(
             WriteRefusal::InstructionStale,
             format!(
@@ -237,6 +237,14 @@ pub fn check(spoken: &[Spoken], request: &Request<'_>) -> Result<Instructed, Err
             format!(
                 "neither the instruction nor the reply it answers names {}; name the id in your reply before acting",
                 request.target.id
+            ),
+        ));
+    }
+    if has_exception(words) || reply.is_some_and(has_exception) {
+        return Err(refuse(
+            WriteRefusal::InstructionMismatch,
+            String::from(
+                "the instruction or reply contains a negation or exception; ask Daniel for a plainer instruction",
             ),
         ));
     }
@@ -282,11 +290,12 @@ pub fn names_target(text: &str, target: &Target) -> bool {
 
 fn mentions(text: &str, id: &str) -> bool {
     let id_char = |c: char| c.is_alphanumeric() || matches!(c, '-' | '_');
-    text.match_indices(id).any(|(at, _)| {
-        let before = text[..at].chars().next_back();
-        let after = text[at + id.len()..].chars().next();
-        !before.is_some_and(id_char) && !after.is_some_and(id_char)
-    })
+    !id.is_empty()
+        && text.match_indices(id).any(|(at, _)| {
+            let before = text[..at].chars().next_back();
+            let after = text[at + id.len()..].chars().next();
+            !before.is_some_and(id_char) && !after.is_some_and(id_char)
+        })
 }
 
 /// §12.2 check 5: whether his own words name `act`. For [`Act::Approve`] a
@@ -309,6 +318,15 @@ pub fn names_act(words: &str, reply: Option<&str>, act: Act, target: &Target) ->
             }
         })
     })
+}
+
+fn has_exception(text: &str) -> bool {
+    let tokens = crate::pass::statement_tokens(text);
+    tokens.iter().any(|token| {
+        crate::pass::is_marker(token) || matches!(token.as_str(), "but" | "stop" | "cancel")
+    }) || tokens
+        .windows(2)
+        .any(|pair| pair[0] == "other" && pair[1] == "than")
 }
 
 /// Lowercased runs of letters and digits.
@@ -343,25 +361,34 @@ pub fn own_words(text: &str) -> String {
 /// the conversation: the entry point and the origin claims.
 #[derive(Deserialize)]
 struct LineMeta {
+    #[serde(rename = "type", default)]
+    kind: Option<String>,
     #[serde(default)]
     uuid: Option<serde_json::Value>,
     #[serde(default)]
     entrypoint: Option<serde_json::Value>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "present_value")]
     source: Option<serde_json::Value>,
-    #[serde(default, rename = "promptSource")]
+    #[serde(default, rename = "promptSource", deserialize_with = "present_value")]
     prompt_source_camel: Option<serde_json::Value>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "present_value")]
     prompt_source: Option<serde_json::Value>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "present_value")]
     origin: Option<serde_json::Value>,
-    #[serde(default, rename = "promptOrigin")]
+    #[serde(default, rename = "promptOrigin", deserialize_with = "present_value")]
     prompt_origin_camel: Option<serde_json::Value>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "present_value")]
     prompt_origin: Option<serde_json::Value>,
 }
 
+fn present_value<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<serde_json::Value>, D::Error> {
+    serde_json::Value::deserialize(deserializer).map(Some)
+}
+
 struct Claims {
+    invalid_origin: bool,
     entrypoint: Option<String>,
     origins: Vec<String>,
 }
@@ -384,10 +411,23 @@ pub fn claude_conversation(bytes: &[u8]) -> Vec<Spoken> {
         let Ok(meta) = serde_json::from_slice::<LineMeta>(line) else {
             continue;
         };
+        if !matches!(meta.kind.as_deref(), Some("user" | "assistant")) {
+            continue;
+        }
         let Some(uuid) = string(meta.uuid.as_ref()) else {
             continue;
         };
         claims.entry(uuid).or_insert_with(|| Claims {
+            invalid_origin: [
+                &meta.source,
+                &meta.prompt_source_camel,
+                &meta.prompt_source,
+                &meta.origin,
+                &meta.prompt_origin_camel,
+                &meta.prompt_origin,
+            ]
+            .into_iter()
+            .any(|v| v.as_ref().is_some_and(|v| !v.is_string())),
             entrypoint: string(meta.entrypoint.as_ref()),
             origins: [
                 &meta.source,
@@ -411,7 +451,10 @@ pub fn claude_conversation(bytes: &[u8]) -> Vec<Spoken> {
                 .map(|c| c.origins.iter().map(String::as_str).collect())
                 .unwrap_or_default();
             let typed = transcript::daniel_turn(&message)
-                .filter(|_| !capture::agent_originated(&origins, &message.text()))
+                .filter(|_| {
+                    claim.is_some_and(|c| !c.invalid_origin)
+                        && !capture::agent_originated(&origins, &message.text())
+                })
                 .map(|turn| own_words(&turn.own))
                 .filter(|own| !own.trim().is_empty());
             let interactive = entrypoint
@@ -469,8 +512,8 @@ pub fn codex_conversation(bytes: &[u8], session: &SessionId) -> Result<Vec<Spoke
         .messages
         .into_iter()
         .map(|message| {
-            let typed = (message.role == Speaker::User)
-                .then(|| own_words(&message.text()))
+            let typed = transcript::daniel_turn(&message)
+                .map(|turn| own_words(&turn.own))
                 .filter(|own| !own.trim().is_empty());
             Spoken {
                 message,

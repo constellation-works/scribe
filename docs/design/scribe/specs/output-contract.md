@@ -295,7 +295,7 @@ the message lists up to ten candidates, sorted, and how many more), `daniel_only
 (S12) `invalid_text`, `invalid_topics`, (format 8) `quote_required`,
 `quote_not_found`, `not_action_tag`, `cancel_window`, (§12, `--session` with
 `--instruction`) `instruction_not_found`, `instruction_stale`,
-`instruction_mismatch`, `not_interactive`, `already_covered`,
+`instruction_mismatch` (including negation or exception markers in the instruction or answered reply), `not_interactive`, `already_covered`,
 `proposal_invalid`, `proposal_not_agent`,
 `session_cataloged`, `transcript_not_found`, for `tmux` `fzf_missing` and
 `tmux_failed` (exit 1; `tmux` renders no payload, its popup owns the

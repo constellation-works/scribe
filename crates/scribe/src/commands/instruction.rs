@@ -83,7 +83,7 @@ pub(super) fn check(
         quote,
         act,
         target,
-        now: ctx.now(),
+        now: time::OffsetDateTime::now_utc(),
     };
     Ok(Some(instruction::check(&spoken, &request)?))
 }

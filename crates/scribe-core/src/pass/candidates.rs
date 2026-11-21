@@ -223,8 +223,6 @@ const MIN_COVER_TOKENS: usize = 4;
 /// apostrophe, so both forms occur. The same pairing covers `can't`,
 /// `won't`, `shouldn't`, `doesn't`, `didn't` and `isn't`.
 ///
-/// The instruction check (`instruction.rs`) has no negation list. It does
-/// not understand negation, so this list is not shared with it.
 const MARKERS: [&str; 23] = [
     "not",
     "never",
@@ -250,6 +248,10 @@ const MARKERS: [&str; 23] = [
     "only",
     "without",
 ];
+
+pub(crate) fn is_marker(token: &str) -> bool {
+    MARKERS.contains(&token)
+}
 
 /// Ordered tokens of a statement. One normalizer for the duplicate check
 /// and for [`words`]: Unicode normalization, trimmed, lowercased, with curly
