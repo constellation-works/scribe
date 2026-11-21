@@ -270,7 +270,8 @@ Frontmatter keys, every one required and no other admitted: `id`, `title`
 (1–120 characters), `status` (`open`, `mitigated`, `resolved` or
 `forgotten`), `signature` (1–5 symptom strings, 1–200 characters each;
 empty once forgotten), `projects`, `hosts`, `topics`, `related`, `author`
-(an agent), `updated_by` (an agent or `null`), `created`, `updated`,
+(an agent), `updated_by` (the agent that changed it last, `daniel` after
+his `#scribe forget`, or `null`), `created`, `updated`,
 `occurrences` (newest first) and `gone`. Each occurrence holds `n`, `date`
 (`YYYY-MM-DD`), `host`, `project`, `session` (the session the request was
 typed in), `request_message` (the uuid of Daniel's typed turn holding it),
@@ -296,9 +297,17 @@ target then the source under the lock, the source's `gone` naming `to`; a
 move does not reopen) or forgotten. `#scribe forget <issue-id>` blanks the
 title, signature, cause, fix and every occurrence (removing them into
 `gone`) and sets `status: forgotten`, keeping the file and its id;
-`#scribe forget <issue-id>#<n>` removes one occurrence into `gone`. No word
-of a forgotten issue or occurrence remains in any store file; the audit
-lines never held any.
+`#scribe forget <issue-id>#<n>` removes one occurrence into `gone`, and
+takes its cause and fix out of every header that holds them: its own
+issue's, and, following its moves back (a `moved` gone entry naming it),
+each issue it was moved from, since `issue add` and `issue move --new` copy
+an occurrence's cause and fix into the header. Such a header falls back to
+the newest remaining occurrence's own cause or fix that does not hold them,
+else to `cause not found` / `fix not found`. No word of a forgotten issue
+or occurrence remains in any store file; the audit lines never held any.
+`issue update` checks its cause and fix against their bounds after
+redaction, which can lengthen them; one past its bound is refused
+`invalid_text` naming the flag, and nothing is written.
 
 ## Memory items
 
@@ -837,8 +846,9 @@ exits 0.
   so a stray `outcome` key in an older entry is refused.
 - **Format 17** (issues, 2_design.md §11.4). Append-only step 16→17
   (`issue_kind`) changes no value; it adds the `issues/` directory, whose
-  files start at format 17. A format-16 build refuses an issue file, and
-  every document this build writes at format 17, as `store_too_new`. A
+  files start at format 17. A format-16 build never reads `issues/`; it
+  refuses every other document this build writes at format 17 as
+  `store_too_new`. A
   format-16 `proposals.json` decodes through `ProposalsDocument`, since no
   proposal changed. Issue writes take the lock, redact and write through
   `write_atomic`; a repeated write that changes nothing writes nothing.

@@ -307,7 +307,8 @@ pub struct Issue {
     pub related: Vec<Related>,
     /// The agent that added it.
     pub author: Author,
-    /// The agent that changed it last, or `None`.
+    /// Who changed it last: an agent, or Daniel after his forget; `None`
+    /// until changed.
     pub updated_by: Option<Author>,
     /// When it was added.
     pub created: OffsetDateTime,
@@ -428,6 +429,39 @@ impl Issue {
         self.topics = Topics::default();
         self.touch(by, now);
         true
+    }
+
+    /// Take a forgotten occurrence's `cause` and `fix` out of the header,
+    /// which `issue add` and `issue move --new` copy from it: a header cause
+    /// or fix that holds them falls back to the newest remaining
+    /// occurrence's own that does not, else to the not-found text. Returns
+    /// whether the header changed.
+    pub fn unsay(&mut self, cause: &str, fix: &str) -> bool {
+        let holds = |header: &str, words: &str, missing: &str| {
+            !words.is_empty() && words != missing && header.contains(words)
+        };
+        let mut changed = false;
+        if holds(&self.cause, cause, CAUSE_NOT_FOUND) {
+            self.cause = self
+                .occurrences
+                .iter()
+                .map(|o| o.cause.as_str())
+                .find(|c| *c != CAUSE_NOT_FOUND && !holds(c, cause, CAUSE_NOT_FOUND))
+                .unwrap_or(CAUSE_NOT_FOUND)
+                .to_owned();
+            changed = true;
+        }
+        if holds(&self.fix, fix, FIX_NOT_FOUND) {
+            self.fix = self
+                .occurrences
+                .iter()
+                .map(|o| o.fix.as_str())
+                .find(|f| *f != FIX_NOT_FOUND && !holds(f, fix, FIX_NOT_FOUND))
+                .unwrap_or(FIX_NOT_FOUND)
+                .to_owned();
+            changed = true;
+        }
+        changed
     }
 
     /// Record a change by `by` at `now` and derive the header lists again.
@@ -627,23 +661,33 @@ impl IssuePatch {
     }
 
     /// Apply it to `issue`; returns whether anything changed. The caller has
-    /// redacted the text.
-    pub fn apply(&self, issue: &mut Issue) -> bool {
+    /// redacted the text, which may have lengthened it, so its bounds are
+    /// checked again; on a refusal `issue` is unchanged.
+    ///
+    /// # Errors
+    ///
+    /// `invalid_text` naming `--cause` or `--fix` when the redacted text is
+    /// out of bounds.
+    pub fn apply(&self, issue: &mut Issue) -> Result<bool> {
+        let cause = match &self.cause {
+            Some(cause) => Some(header_text("--cause", Some(cause), CAUSE_NOT_FOUND)?),
+            None => None,
+        };
+        let fix = match &self.fix {
+            Some(fix) => Some(header_text("--fix", Some(fix), FIX_NOT_FOUND)?),
+            None => None,
+        };
         let before = (issue.cause.clone(), issue.fix.clone(), issue.status);
-        if let Some(cause) = &self.cause
-            && let Ok(cause) = header_text("--cause", Some(cause), CAUSE_NOT_FOUND)
-        {
+        if let Some(cause) = cause {
             issue.cause = cause;
         }
-        if let Some(fix) = &self.fix
-            && let Ok(fix) = header_text("--fix", Some(fix), FIX_NOT_FOUND)
-        {
+        if let Some(fix) = fix {
             issue.fix = fix;
         }
         if let Some(status) = self.status {
             issue.status = status;
         }
-        before != (issue.cause.clone(), issue.fix.clone(), issue.status)
+        Ok(before != (issue.cause.clone(), issue.fix.clone(), issue.status))
     }
 }
 

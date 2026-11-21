@@ -230,8 +230,11 @@ fn a_new_issue_and_a_patch_are_bounded() {
         status: Some(IssueStatus::Resolved),
         ..IssuePatch::default()
     };
-    assert!(patch.apply(&mut issue));
-    assert!(!patch.apply(&mut issue), "unchanged the second time");
+    assert!(patch.apply(&mut issue).unwrap());
+    assert!(
+        !patch.apply(&mut issue).unwrap(),
+        "unchanged the second time"
+    );
 }
 
 #[test]

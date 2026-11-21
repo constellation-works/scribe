@@ -1172,3 +1172,130 @@ fn issue_stats_counts_fires_writes_and_withdrawals_from_the_audit_log() {
     let err = refused(&fx, &["issue", "stats"]);
     assert_eq!(err["code"], "store_too_new");
 }
+
+const FORGOTTEN_CAUSE: &str = "Wombat cache stampede on the flamingo host";
+const FORGOTTEN_FIX: &str = "Pinned the wombat cache to one writer";
+
+/// `issue add` with a cause and fix, which it also copies into the header.
+fn add_with_cause(fx: &Fixture, s: &str) {
+    let mut args = add_args(s, ASK_1);
+    args.extend(["--cause", FORGOTTEN_CAUSE, "--fix", FORGOTTEN_FIX]);
+    let added = ok_json(fx, &args);
+    assert_eq!(added["cause"], FORGOTTEN_CAUSE, "{added}");
+}
+
+/// No store file holds the forgotten cause or fix.
+fn assert_no_forgotten_words(fx: &Fixture) {
+    let mut files = Vec::new();
+    every_file(&fx.root(), &mut files);
+    for (path, body) in &files {
+        for word in ["Wombat", "wombat", "flamingo"] {
+            assert!(
+                !body.contains(word),
+                "{word} left in {}: {body}",
+                path.display()
+            );
+        }
+    }
+}
+
+#[test]
+fn forgetting_an_occurrence_takes_its_cause_and_fix_out_of_the_header() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let s = session();
+    add_with_cause(&fx, &s);
+    let reply = claude.prompt(&fx, "#scribe forget issue-1#1");
+    assert!(reply.contains("forgot issue-1#1"), "{reply}");
+    let shown = ok_json(&fx, &["issue", "show", "issue-1"]);
+    assert_eq!(shown["cause"], "cause not found", "{shown}");
+    assert_eq!(shown["fix"], "fix not found", "{shown}");
+    assert_eq!(
+        shown["title"],
+        "GitHub API secondary rate limit during drains"
+    );
+    assert_no_forgotten_words(&fx);
+}
+
+#[test]
+fn forgetting_a_moved_occurrence_takes_its_words_out_of_both_headers() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let s = session();
+    add_with_cause(&fx, &s);
+    fx.ok(&[
+        "issue",
+        "occur",
+        "issue-1",
+        "--author",
+        "opus",
+        "--related",
+        &s,
+        "--request",
+        ASK_2,
+        "--summary",
+        "The limit was hit again.",
+        "--cause",
+        "Too many parallel pushes",
+    ]);
+    let moved = ok_json(
+        &fx,
+        &[
+            "issue",
+            "move",
+            "issue-1#1",
+            "--author",
+            "opus",
+            "--new",
+            "--title",
+            "Cache stampede",
+            "--signature",
+            "cache stampede",
+        ],
+    );
+    assert_eq!(moved["cause"], FORGOTTEN_CAUSE, "--new copies the header");
+
+    let reply = claude.prompt(&fx, "#scribe forget issue-2#1");
+    assert!(reply.contains("forgot issue-2#1"), "{reply}");
+    assert_no_forgotten_words(&fx);
+    // The source falls back to its remaining occurrence's cause.
+    let source = ok_json(&fx, &["issue", "show", "issue-1"]);
+    assert_eq!(source["cause"], "Too many parallel pushes", "{source}");
+    assert_eq!(source["fix"], "fix not found", "{source}");
+    assert_eq!(source["updated_by"]["kind"], "daniel", "{source}");
+}
+
+#[test]
+fn an_update_whose_redacted_cause_overruns_its_bound_is_refused_naming_the_field() {
+    let fx = Fixture::new();
+    let _claude = Claude::new(&fx);
+    let s = session();
+    fx.ok(&add_args(&s, ASK_1));
+    let config = fx.root().join("config.toml");
+    std::fs::write(&config, "[redact]\nenv = [\"ISSUE_TEST_SECRET\"]\n").unwrap();
+    make_private(&config);
+    let before = audit(&fx.root()).len();
+    // 599 characters, under the 600 bound; masking lengthens the value.
+    let cause = format!("{} abcd1234", "x".repeat(590));
+    let out = fx
+        .cmd(&[
+            "issue", "update", "issue-1", "--author", "opus", "--cause", &cause, "--json",
+        ])
+        .env("ISSUE_TEST_SECRET", "abcd1234")
+        .output()
+        .unwrap();
+    assert_ne!(out.status.code(), Some(0), "{}", text(&out.stdout));
+    let err: Value = serde_json::from_slice(&out.stderr).unwrap();
+    assert_eq!(err["code"], "invalid_text", "{err}");
+    assert!(err["error"].as_str().unwrap().contains("--cause"), "{err}");
+    let shown = ok_json(&fx, &["issue", "show", "issue-1"]);
+    assert_eq!(shown["cause"], "cause not found");
+    // Only the refusal is audited; no update line.
+    let after = audit(&fx.root());
+    assert!(
+        after[before..]
+            .iter()
+            .all(|l| l["error_code"] == "invalid_text"),
+        "{after:?}"
+    );
+}
