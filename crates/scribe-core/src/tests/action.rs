@@ -66,12 +66,12 @@ fn state_reports_its_own_pickups_oldest_first_and_any_rejection() {
 #[test]
 fn stuck_counts_active_unpicked_action_entries_past_the_age_per_tag() {
     let tags = TagTable::defaults();
-    let mut retired = entry("remind-3", T0);
+    let mut retired = entry("idea-3", T0);
     retired.status = EntryStatus::Retired;
-    let picked = entry("idea-1", T0);
+    let picked = entry("idea-4", T0);
     let entries = [
-        entry("remind-1", T0),
-        entry("remind-2", T0 + Duration::minutes(30)),
+        entry("idea-1", T0),
+        entry("idea-2", T0 + Duration::minutes(30)),
         retired,
         picked.clone(),
         entry("standard-1", T0),
@@ -82,7 +82,7 @@ fn stuck_counts_active_unpicked_action_entries_past_the_age_per_tag() {
     let view: Vec<(&str, usize)> = counts.iter().map(|(t, n)| (t.as_str(), *n)).collect();
     assert_eq!(
         view,
-        [("remind", 1), ("standard", 1)],
+        [("idea", 1), ("standard", 1)],
         "too young, retired, picked up and memory entries are not stuck"
     );
     assert!(action::stuck(&entries, &tags, &[], T0).is_empty());
@@ -91,19 +91,19 @@ fn stuck_counts_active_unpicked_action_entries_past_the_age_per_tag() {
 #[test]
 fn tag_counts_count_retired_and_rejected_agent_entries_per_action_tag() {
     let tags = TagTable::defaults();
-    let mut retired = agent("remind-1");
+    let mut retired = agent("standard-1");
     retired.status = EntryStatus::Retired;
-    let mut forgotten = agent("remind-2");
+    let mut forgotten = agent("standard-2");
     forgotten.status = EntryStatus::Forgotten;
     let rejected = agent("idea-1");
-    let mut daniels = entry("remind-3", T0);
+    let mut daniels = entry("standard-3", T0);
     daniels.status = EntryStatus::Retired;
     let mut memory = agent("preferences-1");
     memory.status = EntryStatus::Retired;
     let entries = [retired, forgotten, rejected.clone(), daniels, memory];
     let counts = action::tag_counts(&entries, &tags, &[pickup(&rejected, true, 10)]);
     let view: Vec<(&str, (usize, usize))> = counts.iter().map(|(t, n)| (t.as_str(), *n)).collect();
-    assert_eq!(view, [("idea", (0, 1)), ("remind", (2, 0))]);
+    assert_eq!(view, [("idea", (0, 1)), ("standard", (2, 0))]);
 }
 
 #[test]
@@ -143,7 +143,7 @@ fn a_quote_is_found_only_in_daniels_own_typed_words() {
 #[test]
 fn ask_leaves_action_entries_out_unless_the_scope_names_their_tag() {
     let tags = TagTable::defaults();
-    let entries = [entry("preferences-1", T0), entry("remind-1", T0)];
+    let entries = [entry("preferences-1", T0), entry("idea-1", T0)];
     let corpus = Corpus {
         entries: &entries,
         sessions: &[],
@@ -163,9 +163,9 @@ fn ask_leaves_action_entries_out_unless_the_scope_names_their_tag() {
         ids(ask::without_actions(&question, corpus)),
         ["preferences-1"]
     );
-    question.scope.tags = vec![name("remind")];
+    question.scope.tags = vec![name("idea")];
     assert_eq!(
         ids(ask::without_actions(&question, corpus)),
-        ["preferences-1", "remind-1"]
+        ["preferences-1", "idea-1"]
     );
 }

@@ -1,6 +1,4 @@
-finding	0	-	-	a measured or verified result, with its evidence	config	-	-	-	-
 idea	0	-	-	a future consideration worth revisiting	config	free	0	0	propose
 notes	1	-	note	Agent notes	store	-	-	-	-
 preferences	0	180	preference,pref	how Daniel likes things done	config	-	-	-	propose
-remind	0	-	-	something to check back on at a later time	config	free	0	0	-
 standard	0	-	-	a rule change for the constellation standards, in Daniel's words	config	free,quote	0	0	-

@@ -1057,9 +1057,37 @@ fn settling_a_scribe_proposal_cannot_replace_its_reason() {
     assert_eq!(settled["settled_author"]["name"], "sonnet");
 }
 
+fn write_finding_config(fx: &Fixture) {
+    fx.create_private_dir_all(&fx.root());
+    let config = fx.root().join("config.toml");
+    std::fs::write(
+        &config,
+        "[tags.preferences]\n[tags.finding]\nrequire_evidence = true\n",
+    )
+    .unwrap();
+    support::make_private(&config);
+}
+
 #[test]
 fn a_finding_without_evidence_is_refused_and_writes_nothing() {
     let fx = Fixture::new();
+    // Without config, `finding` does not ship and is refused as unknown.
+    let unconfigured = fx.run(&[
+        "entry",
+        "add",
+        "--tag",
+        "finding",
+        "--author",
+        "opus",
+        "--evidence",
+        "exp-1",
+        "The reviewer mix alone predicts a 7-point gap",
+        "--json",
+    ]);
+    assert_eq!(unconfigured.status.code(), Some(1));
+    assert_eq!(json(&unconfigured.stderr)["code"], "tag_not_found");
+
+    write_finding_config(&fx);
     let out = fx.run(&[
         "entry",
         "add",
@@ -1084,7 +1112,7 @@ fn a_finding_without_evidence_is_refused_and_writes_nothing() {
     );
     assert_eq!(list["total"], 0, "a refused finding writes nothing");
 
-    // Evidence belongs to a finding only.
+    // Evidence belongs to a require_evidence tag only.
     let out = fx.run(&[
         "entry",
         "add",
@@ -1104,6 +1132,7 @@ fn a_finding_without_evidence_is_refused_and_writes_nothing() {
 #[test]
 fn a_finding_records_its_pointer_as_of_date_and_agent_author() {
     let fx = Fixture::new();
+    write_finding_config(&fx);
     let added = json(
         &fx.ok(&[
             "entry",
@@ -1154,6 +1183,7 @@ fn a_finding_records_its_pointer_as_of_date_and_agent_author() {
 #[test]
 fn the_fourth_finding_of_a_session_is_refused_and_names_the_cap() {
     let fx = Fixture::new();
+    write_finding_config(&fx);
     let add = |session: &str, n: usize| {
         fx.run(&[
             "entry",
@@ -1191,4 +1221,114 @@ fn the_fourth_finding_of_a_session_is_refused_and_names_the_cap() {
             .stdout,
     );
     assert_eq!(list["total"], 4);
+}
+
+#[test]
+fn stored_remind_and_finding_entries_stay_readable_searchable_and_asked_without_config() {
+    let fx = Fixture::new();
+    // Without tag config, `tag list` lists neither `remind` nor `finding`.
+    let empty_tags = json(&fx.ok(&["tag", "list", "--json"]).stdout);
+    let tag_names: Vec<&str> = empty_tags["tags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(tag_names, ["idea", "preferences", "standard"]);
+
+    // Seed entries under `finding` and `remind` via a temporary config, then
+    // remove config.toml so neither tag is configured.
+    fx.create_private_dir_all(&fx.root());
+    let config = fx.root().join("config.toml");
+    std::fs::write(
+        &config,
+        "[tags.finding]\nrequire_evidence = true\n[tags.remind]\naction = true\n",
+    )
+    .unwrap();
+    support::make_private(&config);
+    fx.ok(&[
+        "entry",
+        "add",
+        "--tag",
+        "finding",
+        "--author",
+        "opus",
+        "--evidence",
+        "exp-99",
+        "Observed 44% against 67% on the reviewer mix",
+    ]);
+    fx.ok(&[
+        "entry",
+        "add",
+        "--tag",
+        "remind",
+        "--author",
+        "opus",
+        "Re-check the widget cache warmup after deploy",
+    ]);
+    std::fs::remove_file(&config).unwrap();
+
+    for id in ["finding-1", "remind-1"] {
+        let listed = json(&fx.ok(&["entry", "list", "--json"]).stdout);
+        assert!(
+            listed["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["id"] == id),
+            "{id} missing from entry list"
+        );
+        let shown = json(&fx.ok(&["entry", "show", id, "--json"]).stdout);
+        assert_eq!(shown["id"], id);
+    }
+    let finding_hit = json(
+        &fx.ok(&["record", "search", "reviewer mix", "--json"])
+            .stdout,
+    );
+    assert_eq!(finding_hit["hits"][0]["id"], "finding-1");
+    assert_eq!(finding_hit["hits"][0]["evidence"], "exp-99");
+    let remind_hit = json(
+        &fx.ok(&["record", "search", "widget cache warmup", "--json"])
+            .stdout,
+    );
+    assert_eq!(remind_hit["hits"][0]["id"], "remind-1");
+
+    let claude = "#!/bin/sh\n\
+        cat > \"$HOME/claude-stdin\"\n\
+        printf '{\"type\":\"result\",\"is_error\":false,\"result\":\"\",\"structured_output\":%s}\\n' \"$(cat \"$HOME/claude-answer.json\")\"\n";
+    let path = fx.fake_program("claude", claude);
+    std::fs::write(
+        fx.home().join("claude-answer.json"),
+        serde_json::json!({
+            "status": "answered",
+            "answer": "Reviewer mix gap was observed and cache warmup check remains.",
+            "claims": [
+                {"text": "opus claimed 44% vs 67%", "quote": "Observed 44% against 67% on the reviewer mix", "cite": "finding-1"},
+                {"text": "check widget cache warmup", "quote": "Re-check the widget cache warmup after deploy", "cite": "remind-1"}
+            ],
+            "conflicts": []
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let out = fx
+        .cmd(&[
+            "question",
+            "ask",
+            "what about reviewer mix and widget cache",
+            "--json",
+        ])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let asked = json(&out.stdout);
+    assert_eq!(asked["status"], "answered");
+    let cites: Vec<&str> = asked["claims"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["cite"].as_str().unwrap())
+        .collect();
+    assert_eq!(cites, ["finding-1", "remind-1"]);
 }

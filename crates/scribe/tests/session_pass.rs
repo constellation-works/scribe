@@ -194,8 +194,9 @@ fn a_stored_assistant_finding_candidate_still_approves_into_one_agent_entry() {
 #[test]
 fn pass_opens_no_candidate_from_an_assistant_turn() {
     // Daniel's turn fires a trigger, so claims are requested, but a claim
-    // on an assistant turn (a finding or a check-back) is refused: no tag's
-    // capture rules read assistant turns.
+    // on an assistant turn (a measured result or a future consideration) is
+    // refused: no tag's capture rules read assistant turns, while Daniel's
+    // turns are still read.
     for (tag, quote) in [
         (
             "finding",
@@ -222,7 +223,35 @@ fn pass_opens_no_candidate_from_an_assistant_turn() {
         s.scribe("/scribe on");
         s.run(&["session", "pass", "--session", ON, "--json"], b"");
         assert_eq!(proposals(&s)["total"], 0, "{tag}");
+        assert_eq!(s.record(ON).unwrap()["scribed_through"], "a-1", "{tag}");
     }
+
+    // Daniel's own firing turn in the same conversation still opens a claim.
+    let s = Setup::new();
+    let daniel_quote = "Always measure before you change the mix.";
+    s.write(
+        ON,
+        &[
+            line("user", "u-1", daniel_quote),
+            line(
+                "assistant",
+                "a-1",
+                "Measured: the reviewer mix alone predicts a 7-point gap.",
+            ),
+        ],
+    );
+    let mut body = answer();
+    body["candidates"] = json!([
+        {"quote": "Measured: the reviewer mix alone predicts a 7-point gap.", "message": "a-1", "tag": "finding"},
+        {"quote": daniel_quote, "message": "u-1", "tag": "preferences"}
+    ]);
+    s.answer(&body);
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let listed = proposals(&s);
+    assert_eq!(listed["total"], 1, "{listed}");
+    assert_eq!(listed["proposals"][0]["candidate"]["tag"], "preferences");
+    assert_eq!(listed["proposals"][0]["candidate"]["quote"], daniel_quote);
 }
 
 #[test]
@@ -410,7 +439,7 @@ fn no_candidate_is_opened_from_a_tool_payload() {
     );
     let mut body = answer();
     body["candidates"] = json!([{
-        "quote": payload_text, "message": "a-tool", "tag": "finding", "evidence": "run-1"
+        "quote": payload_text, "message": "a-tool", "tag": "preferences"
     }]);
     s.answer(&body);
     s.scribe("/scribe on");
@@ -421,6 +450,10 @@ fn no_candidate_is_opened_from_a_tool_payload() {
 #[test]
 fn session_start_output_is_the_same_with_many_findings() {
     let s = Setup::new();
+    s.fx.create_private_dir_all(&s.fx.root());
+    let config = s.fx.root().join("config.toml");
+    std::fs::write(&config, "[tags.finding]\nrequire_evidence = true\n").unwrap();
+    make_private(&config);
     let before = s.hook("session-start", &s.payload("SessionStart")).stdout;
     for n in 0..6 {
         s.fx.ok(&[

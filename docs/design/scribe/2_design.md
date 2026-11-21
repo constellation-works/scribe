@@ -879,7 +879,7 @@ never blocks the turn, so the rest of the prompt still reaches the agent:
 
 ```
 scribe: added preferences-12 to preferences — "squash-merge agent PRs; keep merge commits for releases"
-scribe: refused "#scribe add it to rituals" — no tag "rituals"; tags: preferences, finding, idea, remind, standard
+scribe: refused "#scribe add it to rituals" — no tag "rituals"; tags: idea, preferences, standard
 ```
 
 The agent-facing text adds a note to each echo line: a recorded (or
@@ -930,10 +930,9 @@ The echo names the file path, the points added and any dropped quotes.
 
 ### 4.6 Action tags
 
-> Proposed change ([§11.3](#113-the-shipped-tag-set-and-retired-tag-cleanup),
-> not built): `remind` stops shipping; `idea` gains capture rules
-> ([§11.2](#112-capture-rules-per-tag)) and is written by the pass
-> ([§11.6](#116-idea-capture-after-finding-is-gone)).
+> Proposed change ([§11.6](#116-idea-capture-after-finding-is-gone),
+> not built): `idea` switches from `propose` to `write` capture once §11.1
+> lands. (`remind` stopped shipping in step (a2), [§11.3](#113-the-shipped-tag-set-and-retired-tag-cleanup).)
 
 [ORB-25112]. Most tags hold the human's memory: preferences
 `ask` answers from. A decision is not a shipped tag: it is recorded on its
@@ -948,7 +947,7 @@ scribe never calls Orbit or any consumer; it keeps the entries and exposes them 
 **Which tags.** Config marks a tag `action = true` (`[tags.<name>]`), with
 two optional switches: `require_quote` (an agent's entry must quote the
 human) and `ask_first` (agents ask before writing). `standard`
-(`require_quote`), `remind` and `idea` ship, with no
+(`require_quote`) and `idea` ship, with no
 aliases; a config
 with its own `[tags]` keeps them unless it claims their names, and a config
 tag of the same name starts from the shipped settings
@@ -1015,37 +1014,24 @@ are captured on the Mac. The owner reads the Mac's store over SSH, with the
 same read surface; there is no replica
 ([4_decisions.md](./4_decisions.md#the-owner-host-reads-action-entries-over-ssh)).
 
-### 4.7 Findings
+### 4.7 Evidence-backed findings (configured tags)
 
-> Proposed change ([§11.3](#113-the-shipped-tag-set-and-retired-tag-cleanup),
-> not built): `finding` stops shipping and the pass stops reading assistant
-> turns; the `require_evidence` guards stay for a config that declares it.
+[ORB-25177], updated by [§11.3](#113-the-shipped-tag-set-and-retired-tag-cleanup).
+`finding` no longer ships as a default tag and the session pass no longer
+reads assistant turns. The `evidence` and `as_of` entry fields, the
+`require_evidence` config flag and its guards, and the agent-claim reading
+behaviour stay: a config that declares `[tags.finding] require_evidence = true`
+(or any memory tag with `require_evidence = true`) still works as below, and
+existing `finding` entries stay listed, shown, searched and cited as that
+agent's claim.
 
-[ORB-25177]. A **finding** is an agent's measured or verified result,
-recorded once so a later session finds it through `ask` or `record search`
-instead of re-deriving it: "In exp-5342a4d6, after the 11-14 memory
-rewrite, the reviewer mix alone predicts a first-pass gap of about 7
-points (51% against 58%); observed 44% against 67% on 32 and 27 tasks."
-Pending work is filed in Orbit, a check-back is a `remind` entry and a future
-consideration an `idea` entry — action tags with consumers. A finding
-has no worker
-([4_decisions.md](./4_decisions.md#findings-are-scribe-entries-with-no-worker)).
+**Which tag.** Config marks a memory tag `require_evidence = true`
+(`[tags.<name>]`; an action tag refuses the flag). It has no consumer, no
+transcript window and nothing for an intake to read: `entry pickup` refuses
+it (`not_action_tag`), and the `SessionStart` stuck-entries line never
+counts it.
 
-**Which tag.** `finding` ships as a memory tag, kept by a config with its
-own `[tags]` unless it claims the name, like the shipped action tags
-(`remind` and `idea` ship beside `standard`). It is
-marked `require_evidence` (config `require_evidence = true` on a memory
-tag; an action tag refuses the flag). No consumer, no transcript window,
-nothing for an intake to read: `entry pickup` refuses it
-(`not_action_tag`), the `SessionStart` stuck-entries line never counts
-it, and neither the session-start line nor the skill's session brief
-lists findings, so neither grows with history. Findings are pulled
-through search only.
-
-**Writing one.** The agent that measured or verified the result writes it
-at the time, under the free-use guards of §4.6 (an interactive session
-Daniel is in, unasked, one visible line naming the entry id; Daniel
-cancels with `#scribe retire <id>`):
+**Writing one.** Under a `require_evidence` tag, an agent writes:
 
 ```sh
 scribe entry add --tag finding --author <crew> --related session:<id> \
@@ -1068,28 +1054,19 @@ them:
   names no session is counted under its author and the write's day,
   against that author's other unnamed-session findings of that day. The
   fourth is refused (`finding_cap`) and the refusal names the cap.
-  Daniel-approved pass candidates do not take this route; the candidate
-  caps below bound them instead.
 
 **Reading one.** `ask` evidence labels a finding `agent claim (<author>)
 as of <date>; evidence: <pointer>`, and the deterministic attribution
 check copies that label into each surviving claim, so an answer can
 never present it as Daniel's words (§6.4). `record search` returns the
 same marking in the snippet plus the hit's `evidence` and `as_of`
-fields; `entry show`/`list` carry both fields too. The skill says what
-qualifies — a number or a verified fact, an evidence pointer, and costly
-to re-derive — and to search findings before re-measuring something.
+fields; `entry show`/`list` carry both fields too.
 
-**The pass as safety net.** What agents did not record, the session pass
-catches: beside Daniel's unmarked statements (§5.3) it may propose an
-assistant turn's own recap — a measured result under `finding`, or
-something the assistant says needs a check-back or is a future
-consideration under the fitting free action tag (`remind`, `idea`); open
-work is filed in Orbit by the agent, never proposed. Approval writes one
-agent-authored entry (`{kind: agent, name: assistant}`) quoting that
-turn and citing it, never an entry attributed to Daniel; a finding so
-kept carries the candidate's evidence pointer, or `session:<id>` when
-the turn named none, with the turn's date as its as-of.
+**No pass route.** The session pass reads only Daniel's turns
+([§5.3](#53-a-pass)) and opens no candidates from assistant turns, for
+`finding`, `remind`, `idea` or any other tag. Previously stored format-10
+assistant-turn candidates still approve into an agent-authored entry
+(`{kind: agent, name: assistant}`).
 
 ## 5. `/scribe on`
 
@@ -1258,12 +1235,13 @@ As built (S4), in `scribe-core::pass` and `commands/session/pass.rs`:
 #### Unmarked preferences
 
 > Proposed change ([§11](#11-claims-in-context-capture-rules-and-issues-proposed),
-> not built): a claim passes its tag's trigger and criteria gates
-> ([§11.2](#112-capture-rules-per-tag)), carries a statement that becomes
-> the approved entry's content while the quote stays attached
-> ([§11.1](#111-a-claim-carries-a-statement)), candidates whose tag is no
-> longer in the tag table close automatically, and assistant-turn
-> candidates go ([§11.3](#113-the-shipped-tag-set-and-retired-tag-cleanup)).
+> not built): a claim carries a statement that becomes the approved entry's
+> content while the quote stays attached ([§11.1](#111-a-claim-carries-a-statement)),
+> candidates whose tag is no longer in the tag table close automatically
+> ([§11.3](#113-the-shipped-tag-set-and-retired-tag-cleanup)), and `idea`
+> switches to `write` capture ([§11.6](#116-idea-capture-after-finding-is-gone)).
+> Per-tag capture rules ([§11.2](#112-capture-rules-per-tag)), dropping
+> `remind` and `finding`, and removing assistant-turn candidates are built.
 
 An on session's ordinary pass (including an explicitly requested catalog's
 windows) offers candidates beside the record in the same model call.
@@ -1274,35 +1252,30 @@ a pass; an explicit catalog is still required for past sessions.
   per pass invocation**, shared across all its windows; duplicate or otherwise
   refused checked suggestions consume a slot too. At most **20 open candidate
   proposals store-wide**, checked under the same lock as every proposal write.
-  Other proposal kinds do not count. At the cap the pass still updates its record,
+  Other proposal kinds do not count. At the cap or when no Daniel turn in the
+  window fires a capture-rule trigger, the pass still updates its record,
   requesting zero candidates. Rejecting or approving frees an open slot.
 - **Added output per window.** `candidates` is an array of at most 3
-  `{quote, message, tag, evidence?}` objects. Each quote is 8–400
-  characters, each message id at most 128, each tag at most 32, and a
-  finding candidate's evidence pointer at most 512 (omitted otherwise):
-  at most **3,216 value characters plus JSON syntax**, and no extra model
-  call or timeout budget. Assistant-turn candidates draw on the same
-  3-per-pass and 20-open caps above — no added budget.
+  `{quote, message, tag}` objects. Each quote is 8–400
+  characters, each message id at most 128, and each tag at most 32:
+  at most **1,680 value characters plus JSON syntax**, and no extra model
+  call or timeout budget.
   A header compression retry keeps the original candidates locally. Older
   model adapters may omit the field, which means none. Relevant recorded or
   proposed statements add at most 6,000 value characters of input (15 spans
   of at most 400), selected by word overlap with the window.
-- **Evidence.** From Daniel's turns the model suggests standing preferences
-  only (a choice about one piece of work belongs on its Orbit task and is
-  not proposed), with a canonical configured memory tag (never an action
-  tag or `finding`). From an assistant turn — read its own recap first —
-  it suggests a measured or verified result under `finding`, or something
-  it says needs a check-back or is a future consideration under a free
-  action tag such as `remind` or `idea`, with an evidence pointer when the turn names
-  one ([§4.7](#47-findings)). Each candidate must name a message in the
-  current window and quote its own text exactly. The pass checks again
-  against the original transcript and derives the cite, timestamp, prompt
-  hash, line, cwd, project, provider and host itself. Pasted blocks,
-  fenced or indented code, blockquotes, marked `#scribe` lines, unknown
-  or future message ids, and truncation markers cannot supply a
-  candidate; tool calls and tool results never reach a message's text
-  (§3, transcript parsing), so no candidate is ever opened from a tool
-  payload.
+- **Evidence.** Only Daniel's turns that fire a tag's capture-rule trigger
+  ([§11.2](#112-capture-rules-per-tag)) may supply a candidate, under the
+  tag named for that turn. Assistant turns are never used for candidates.
+  Each candidate must name a firing turn in the current window and quote
+  its own text exactly. The pass checks again against the original
+  transcript and under the store lock against the config then on disk, and
+  derives `admitted`, the cite, timestamp, prompt hash, line, cwd, project,
+  provider and host itself. Pasted blocks, fenced or indented code,
+  blockquotes, marked `#scribe` lines, unknown or future message ids, and
+  truncation markers cannot supply a candidate; tool calls and tool results
+  never reach a message's text (§3, transcript parsing), so no candidate is
+  ever opened from a tool payload.
   Plain pasted prose without provider or textual paste markers cannot be
   distinguished from typed prose; this remains an accident guard.
 - **Duplicates.** The model is instructed to exclude statements an entry or
@@ -1322,8 +1295,8 @@ a pass; an explicit catalog is still required for past sessions.
   <id>` creates the reserved entry as Daniel's, with the quote as content and
   the original turn's cite and `content_from: message` (user). `said` records
   the canonical approving command; the proposal also keeps the approving
-  turn's cite. Approval of an assistant-turn candidate instead writes
-  exactly one agent-authored entry (`{kind: agent, name: assistant}`),
+  turn's cite. Previously stored format-10 assistant-turn candidates still
+  approve into one agent-authored entry (`{kind: agent, name: assistant}`),
   with `content_from: message` (assistant), the candidate's evidence
   pointer (or `session:<id>` for a finding that named none) and the
   turn's date as its as-of — never an entry attributed to Daniel; its
@@ -2869,6 +2842,15 @@ needs no model and writes no entry. A closed candidate stays in the
 suppression set like any rejection, and `proposal list --state rejected`
 shows its reason. On 2026-11-21 it would close 16 of the 20 (7 `decisions`,
 7 `task`, 2 `finding`).
+
+**Built (step a2).** `remind` left `SHIPPED_ACTION_TAGS`, `finding` left
+the shipped memory tags (`TagTable::shipped_finding` removed; `[tags.finding]`
+without `require_evidence = true` is a plain tag), `EntryCandidateAnswer`
+and `SESSION_SCHEMA` dropped the assistant-candidate `evidence` field, the
+three skill copies stopped telling agents to write findings or reminders,
+and §4.7 and §5.3 match the new behaviour. `evidence`, `as_of`,
+`require_evidence` and stored `finding`/`remind` records and format-10
+assistant candidates remain intact. Retired-tag cleanup is step (a3).
 
 ### 11.4 Issues
 

@@ -9,20 +9,17 @@ fn name(s: &str) -> TagName {
 }
 
 #[test]
-fn the_defaults_are_preferences_and_the_shipped_finding_and_action_tags() {
+fn the_defaults_are_preferences_and_the_shipped_action_tags() {
     let table = TagTable::defaults();
     let names: Vec<&str> = table.tags().iter().map(|t| t.name.as_str()).collect();
-    assert_eq!(
-        names,
-        ["finding", "idea", "preferences", "remind", "standard"]
-    );
+    assert_eq!(names, ["idea", "preferences", "standard"]);
     assert!(table.action(&name("preferences")).is_none());
     let standard = table.action(&name("standard")).unwrap();
     assert!(standard.require_quote && !standard.ask_first);
-    assert!(!table.action(&name("remind")).unwrap().require_quote);
+    assert!(!table.action(&name("idea")).unwrap().require_quote);
     assert!(table.action(&name("task")).is_none());
     assert!(table.action(&name("friction")).is_none());
-    for word in ["decisions", "decision", "dec"] {
+    for word in ["decisions", "decision", "dec", "remind", "finding"] {
         assert!(table.resolve(word).is_none(), "{word} is no longer shipped");
     }
     assert_eq!(table.resolve("pref").unwrap().name.as_str(), "preferences");
@@ -94,10 +91,8 @@ fn a_summary_counts_entries_per_tag_and_keeps_unconfigured_ones() {
     assert_eq!(
         view,
         [
-            ("finding", 0, true),
             ("idea", 0, true),
             ("preferences", 2, true),
-            ("remind", 0, true),
             ("rituals", 1, false),
             ("standard", 0, true)
         ]

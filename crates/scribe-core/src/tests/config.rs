@@ -42,7 +42,7 @@ env = ["GITHUB_TOKEN", "ANTHROPIC_API_KEY"]
     let names: Vec<&str> = config.tags.tags().iter().map(|t| t.name.as_str()).collect();
     assert_eq!(
         names,
-        ["finding", "idea", "remind", "rituals", "standard"],
+        ["idea", "rituals", "standard"],
         "a [tags] table replaces the defaults but keeps the shipped action tags"
     );
     assert_eq!(
@@ -184,10 +184,26 @@ fn action_tags_come_from_config_and_shipped_ones_can_be_retuned() {
             .as_deref(),
         Some("a rule change for the constellation standards, in Daniel's words")
     );
-    assert!(action("remind").is_some() && action("idea").is_some());
+    assert!(action("standard").is_some() && action("idea").is_some());
     assert!(
-        action("task").is_none() && action("friction").is_none(),
-        "task and friction no longer ship"
+        action("task").is_none() && action("friction").is_none() && action("remind").is_none(),
+        "task, friction and remind no longer ship"
+    );
+    assert!(
+        config.tags.resolve("finding").is_none(),
+        "finding no longer ships"
+    );
+    let finding = Config::parse("[tags.finding]\nrequire_evidence = true\n").unwrap();
+    assert!(
+        finding.tags.require_evidence(&"finding".parse().unwrap()),
+        "a config can still declare [tags.finding] require_evidence = true"
+    );
+    let plain_finding = Config::parse("[tags.finding]\n").unwrap();
+    assert!(
+        !plain_finding
+            .tags
+            .require_evidence(&"finding".parse().unwrap()),
+        "without require_evidence = true, finding is a plain memory tag"
     );
     let declared = Config::parse("[tags.task]\naction = true\n").unwrap();
     assert!(

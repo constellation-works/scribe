@@ -19,7 +19,7 @@
 //! action = true
 //! require_quote = true
 //!
-//! [tags.remind]
+//! [tags.idea]
 //! ask_first = true
 //!
 //! [tags.preferences.capture]
@@ -522,15 +522,9 @@ impl RawTag {
             }
             None
         };
-        // `require_evidence` marks a finding-like memory tag; the shipped
-        // `finding` tag defaults it on, `require_evidence = false` turns it
-        // off, and an action tag refuses it (its evidence is its window).
-        let shipped_finding = (name == crate::tag::FINDING_TAG)
-            .then(crate::tag::TagTable::shipped_finding)
-            .flatten();
-        let require_evidence = self
-            .require_evidence
-            .unwrap_or_else(|| shipped_finding.as_ref().is_some_and(|d| d.require_evidence));
+        // `require_evidence` marks a finding-like memory tag; an action tag
+        // refuses it (its evidence is its window).
+        let require_evidence = self.require_evidence.unwrap_or(false);
         if require_evidence && action.is_some() {
             return Err(ConfigError {
                 line: None,
@@ -541,8 +535,7 @@ impl RawTag {
         }
         let description = self
             .description
-            .or_else(|| shipped.and_then(|def| def.description))
-            .or_else(|| shipped_finding.and_then(|def| def.description));
+            .or_else(|| shipped.and_then(|def| def.description));
         let capture = match self.capture {
             None => CaptureRules::shipped(&name),
             Some(raw) => raw.resolve(

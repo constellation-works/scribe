@@ -71,8 +71,8 @@ fn a_missing_root_reads_as_an_empty_store() {
     let tags = store.list_tags().unwrap();
     assert_eq!(
         tags.tags.len(),
-        5,
-        "preferences, the shipped action tags and finding, with no entries"
+        3,
+        "preferences and the shipped action tags, with no entries"
     );
     let err = store.entry(&"preferences-1".parse().unwrap()).unwrap_err();
     assert_eq!(err.code(), "entry_not_found");

@@ -164,14 +164,14 @@ fn an_unknown_tag_is_refused_with_every_configured_tag() {
         refused.reason,
         Refusal::UnknownTag {
             word: String::from("rituals"),
-            tags: ["finding", "idea", "preferences", "remind", "standard"]
+            tags: ["idea", "preferences", "standard"]
                 .map(|t| TagName::try_from(String::from(t)).unwrap())
                 .to_vec(),
         }
     );
     assert_eq!(
         refused.reason.to_string(),
-        "no tag \"rituals\"; tags: finding, idea, preferences, remind, standard"
+        "no tag \"rituals\"; tags: idea, preferences, standard"
     );
     assert_eq!(
         parse("#scribe rituals: stand-up at nine"),
