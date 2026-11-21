@@ -246,8 +246,10 @@ fn checked_outcome(
     match answer.outcome.as_deref() {
         Some("task") => {
             let task = answer.task.as_deref().map(str::trim).unwrap_or_default();
-            let became = task.chars().count() >= 3
-                && messages.iter().any(|message| message.text().contains(task));
+            let became = is_task_id(task)
+                && messages
+                    .iter()
+                    .any(|message| names_task_id(&message.text(), task));
             if became {
                 return None;
             }
@@ -281,6 +283,26 @@ fn checked_outcome(
         }
         _ => Some((Outcome::open(), None)),
     }
+}
+
+/// Whether `task` is shaped like a task id: at least 3 characters, one
+/// token, holding a digit (`ORB-4242`, `#112`, `owner/repo#7`). An ordinary
+/// word such as `task` or `the` is not one, so it never stands for a task.
+fn is_task_id(task: &str) -> bool {
+    task.chars().count() >= 3
+        && !task.chars().any(char::is_whitespace)
+        && task.chars().any(|ch| ch.is_ascii_digit())
+}
+
+/// Whether `text` writes `task` as a whole token: no id character touches
+/// either end of the match, so `ORB-42` is not found in `ORB-4242`.
+fn names_task_id(text: &str, task: &str) -> bool {
+    let joins = |ch: char| ch.is_alphanumeric() || ch == '-' || ch == '_';
+    text.match_indices(task).any(|(at, _)| {
+        let before = text[..at].chars().next_back();
+        let after = text[at + task.len()..].chars().next();
+        !before.is_some_and(joins) && !after.is_some_and(joins)
+    })
 }
 
 /// Derive durable provenance from the original transcript, never model

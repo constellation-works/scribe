@@ -332,14 +332,19 @@ or delete. Every act follows the same order.
    their answer, so keep it plain. Put `approve` or `accept` on the line of
    each approval's id. Keep the whole reply free of the words the check
    refuses, even when the act is intended: not, no, never, don't, dont, can't,
-   cannot, won't, shouldn't, except, unless, without, but, stop, cancel, other
-   than, avoid, only. Give each act's reversal in this reply (rule 7), worded
-   without them.
+   cant, cannot, won't, wont, shouldn't, shouldnt, doesn't, doesnt, didn't,
+   didnt, isn't, isnt, except, unless, without, only, avoid, but, stop,
+   cancel and other than (curly apostrophes count too). A snake_case code
+   such as `instruction_not_found` is exempt. Give each act's reversal in this
+   reply (rule 7), worded without them.
 3. **Act only on an explicit instruction in this session.** It names the act
    and the ids, or answers your reply that names them, such as `approve p-<n>`
-   or `yes` after your reply lists `p-<n>: approve`. A request such as "clean
-   up the queue" or "the stale ones" names no id: list the candidates, name
-   them, and wait.
+   or `yes` after your reply lists `p-<n>: approve`. A bare `yes`, `ok`,
+   `go ahead` or `do it` backs only an approval. Reject, retire and forget
+   need the act's own word in the human's turn (`reject p-<n>`, `retire it`,
+   `forget e-<n>`); after `yes` to one of those, ask them to say the act. A
+   request such as "clean up the queue" or "the stale ones" names no id: list
+   the candidates, name them, and wait.
 4. **Pass their words verbatim, with your own session id.** `--instruction` is
    a span of one of the human's typed turns in this session, one of their last
    three, written within the last 30 minutes. Never paraphrase it or join
@@ -370,11 +375,13 @@ or delete. Every act follows the same order.
      --author <name>`.
 8. **Echo each result in one line**: `p-<n> approved as e-<n>`, `p-<n>
    rejected`, `e-<n> retired`, `e-<n> forgotten`, `<session id> deactivated`.
-   A refusal echoes its code and stops that target: `instruction_not_found`,
-   `instruction_stale`, `instruction_mismatch`, `not_interactive`, or whatever
-   code the command prints. Do not reword their words, switch verbs or retry to
-   get past the check. Ask them to name the id and say the act again in a new
-   message.
+   A refusal echoes its code exactly as printed and stops that target:
+   `instruction_not_found`, `instruction_stale`, `instruction_mismatch`,
+   `not_interactive`, or whatever code the command prints. The check skips
+   snake_case codes, so echoing one leaves their next answer valid; keep the
+   rest of that reply free of rule 2's words. Do not reword their words,
+   switch verbs or retry to get past the check. Ask them to name the id and
+   say the act again in a new message.
 9. **Forget only on their words.** Run `entry forget` only when their words say
    forget, erase or for good. If they say purge or permanently alone, ask them
    to say forget, erase or for good first.

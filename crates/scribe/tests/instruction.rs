@@ -332,6 +332,32 @@ fn a_fresh_instruction_naming_the_target_and_act_passes() {
 }
 
 #[test]
+fn a_retry_answering_a_reply_that_echoed_a_refusal_code_passes() {
+    // The skill has the agent echo a refusal's code; the code's `not` must
+    // not refuse the human's corrected instruction that answers that reply.
+    let fx = store_with_agent_entry();
+    claude(
+        &fx,
+        Some("cli"),
+        &[
+            (
+                "a-1",
+                "assistant",
+                "preferences-2: instruction_not_found. Name the id and say the act again.",
+                1,
+            ),
+            ("u-1", "user", "retire preferences-2", 0),
+        ],
+    );
+    let out = ok(&fx, &retire("preferences-2", "retire preferences-2"));
+    assert!(out.status.success());
+    let shown: Value =
+        serde_json::from_slice(&ok(&fx, &["entry", "show", "preferences-2", "--json"]).stdout)
+            .unwrap();
+    assert_eq!(shown["status"], "retired");
+}
+
+#[test]
 fn approve_takes_a_bare_yes_only_after_a_reply_asking_to_approve_the_id() {
     let fx = store_with_agent_entry();
     let settle = |instruction: &'static str| {

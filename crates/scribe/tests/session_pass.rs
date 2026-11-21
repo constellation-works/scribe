@@ -4312,6 +4312,38 @@ fn the_pass_writes_daniels_idea_itself_as_an_entry_it_authors_with_no_proposal()
 }
 
 #[test]
+fn an_ordinary_word_or_part_of_an_id_named_as_the_task_writes_the_idea_open() {
+    // Each task the model names appears in the session's text, but neither
+    // is a task id the session wrote: `task` is an ordinary word, and
+    // `ORB-42` is only part of `ORB-4242`. Both ideas are written open.
+    let s = Setup::new();
+    let word = "What if we made the stale-session sweep a task for the box?";
+    let part = "What if we split the pass prompt? I filed ORB-4242 for that.";
+    s.write(ON, &[line("user", "u-1", word), line("user", "u-2", part)]);
+    let mut word_claim = idea_claim(word, "u-1", "Daniel suggests a box task for the sweep.");
+    word_claim["outcome"] = json!("task");
+    word_claim["task"] = json!("task");
+    let mut part_claim = idea_claim(part, "u-2", "Daniel suggests splitting the pass prompt.");
+    part_claim["outcome"] = json!("task");
+    part_claim["task"] = json!("ORB-42");
+    let mut body = answer();
+    body["candidates"] = json!([word_claim, part_claim]);
+    s.answer(&body);
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let listed = entries_json(&s, &["--tag", "idea"]);
+    let entries = listed["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 2, "{listed}");
+    for (entry, quote) in entries.iter().zip([word, part]) {
+        assert_eq!(entry["quote"], quote);
+        assert_eq!(
+            entry["outcome"],
+            json!({"state": "open", "reason": null, "task": null})
+        );
+    }
+}
+
+#[test]
 fn a_parked_idea_keeps_daniels_words_and_one_that_became_a_task_writes_nothing() {
     let s = Setup::new();
     let sharding = "What if we sharded the audit log by month?";

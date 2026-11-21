@@ -324,7 +324,7 @@ pub fn check(spoken: &[Spoken], request: &Request<'_>) -> Result<Instructed, Err
             ),
         ));
     }
-    if has_exception(words) || reply.is_some_and(has_exception) {
+    if has_exception(words) || reply.is_some_and(|r| has_exception(&without_codes(r))) {
         return Err(refuse(
             WriteRefusal::InstructionMismatch,
             String::from(
@@ -414,6 +414,18 @@ fn has_exception(text: &str) -> bool {
     }) || tokens
         .windows(2)
         .any(|pair| pair[0] == "other" && pair[1] == "than")
+}
+
+/// The reply without its snake_case words. A reply that echoes a refusal
+/// code, such as `instruction_not_found`, would otherwise hold the marker
+/// `not` and refuse the human's corrected retry that answers it. A code is
+/// never the human's exception, so it is left out of the scan.
+fn without_codes(reply: &str) -> String {
+    reply
+        .split_whitespace()
+        .filter(|word| !word.contains('_'))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Lowercased runs of letters and digits.
