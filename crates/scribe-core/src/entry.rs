@@ -399,6 +399,12 @@ pub struct Entry {
     /// (format 13); `null` otherwise.
     #[serde(deserialize_with = "nullable")]
     pub instruction: Option<Instruction>,
+    /// Whose words `content` is when they are not the author's own
+    /// (format 14): `{kind: scribe, name: session-pass}` for an approved
+    /// pass claim whose content is scribe's statement of Daniel's turn,
+    /// with his verbatim words in `quote`; `null` for every other entry.
+    #[serde(deserialize_with = "nullable")]
+    pub stated_by: Option<Author>,
     /// What the entry records, verbatim: the file's body, not a frontmatter
     /// key. Empty once forgotten.
     #[serde(skip)]
@@ -555,6 +561,7 @@ impl NewEntry {
             as_of: None,
             approved_by: None,
             instruction: None,
+            stated_by: None,
             content: self.content,
         }
     }

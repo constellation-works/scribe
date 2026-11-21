@@ -723,3 +723,78 @@ fn enter_and_ctrl_y_on_a_notice_row_do_nothing_and_its_preview_says_so() {
     assert!(read(&cap, "pbcopy.txt").is_empty());
     assert!(read(&cap, "tmux-args.txt").is_empty());
 }
+
+/// Daniel's raw words behind the stated candidate.
+const STATED_QUOTE: &str = "yeah, for the popup just show the newest five, nothing older.";
+
+/// Replace the fixture's proposals with one open pass candidate carrying
+/// scribe's statement beside Daniel's raw quote (format 14).
+fn seed_stated_candidate(fx: &Fixture) {
+    let path = fx.root().join("proposals.json");
+    let cite = serde_json::json!({"session":"7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02",
+        "message":"user-popup", "at":"2026-11-02T00:00:00Z",
+        "prompt_sha256":"0".repeat(64), "line":1, "cwd":"/work/scribe"});
+    let quote = STATED_QUOTE;
+    let proposal = serde_json::json!({
+        "id":"p-6", "kind":"candidate", "older":"preferences-3", "newer":null,
+        "candidate": {
+            "tag":"preferences", "role":"user", "quote":quote,
+            "statement":"Daniel prefers that the scribe tmux popup lists only the five newest records.",
+            "subject":"the scribe tmux popup", "evidence":null, "cite":cite,
+            "project":"constellation-works/scribe", "provider":"claude-code",
+            "host":"dk-server-1", "admitted":null
+        },
+        "reason":format!("Unmarked preferences statement: {quote}"), "quotes":[],
+        "state":"open", "opened_at":"2026-11-02T00:06:00Z", "settled_at":null,
+        "settled_by":null, "author":{"kind":"scribe", "name":"session-pass"},
+        "settled_author":null, "updated_by":null, "closed_reason":null, "instruction":null
+    });
+    std::fs::write(
+        &path,
+        serde_json::json!({"format":14, "proposals":[proposal]}).to_string(),
+    )
+    .unwrap();
+    support::make_private(&path);
+}
+
+#[test]
+fn a_stated_candidate_shows_scribes_statement_in_its_row_and_preview() {
+    let fx = Fixture::new();
+    fx.seed();
+    seed_stated_candidate(&fx);
+    let proposals = fields(&rows(&fx, &["proposals", "--year", "2026"], &[]));
+    assert_eq!(proposals[0].1, "p-6");
+    let shown = visible(&proposals[0].2);
+    assert!(
+        shown.ends_with(
+            "record preferences-3 after approval: Daniel prefers that the scribe tmux popup lists only the five newest records."
+        ),
+        "{shown}"
+    );
+
+    let (mut cmd, cap) = popup(&fx);
+    let out = cmd
+        .env("FAKE_FZF_PRESS", "ctrl-p")
+        .env("FAKE_PICK", "p-6")
+        .env("FAKE_FZF_PREVIEW", "1")
+        .output()
+        .expect("run tmux");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let preview = read(&cap, "preview.txt");
+    let head = preview.split("## Details").next().unwrap_or_default();
+    assert!(
+        head.contains("## Statement\nDaniel prefers that the scribe tmux popup lists only the five newest records."),
+        "{preview}"
+    );
+    assert!(
+        !head.contains("Unmarked preferences statement"),
+        "{preview}"
+    );
+    // Daniel's own words stay in the details.
+    assert!(preview.contains(STATED_QUOTE), "{preview}");
+}

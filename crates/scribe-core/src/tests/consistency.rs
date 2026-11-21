@@ -520,6 +520,8 @@ fn forget_clears_every_free_text_field_of_the_entry_and_its_candidates() {
         tag: "preferences".parse().unwrap(),
         role: Speaker::User,
         quote: String::from("the forgotten words"),
+        statement: None,
+        subject: None,
         evidence: Some(String::from("task:ORB-1")),
         cite: cite(),
         project: Project::sanitized("scribe"),

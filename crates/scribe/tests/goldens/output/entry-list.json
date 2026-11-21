@@ -45,7 +45,8 @@
       "action": null,
       "admitted": null,
       "approved_by": null,
-      "instruction": null
+      "instruction": null,
+      "stated_by": null
     },
     {
       "id": "preferences-1",
@@ -90,7 +91,8 @@
       "action": null,
       "admitted": null,
       "approved_by": null,
-      "instruction": null
+      "instruction": null,
+      "stated_by": null
     },
     {
       "id": "decisions-1",
@@ -139,7 +141,8 @@
       "action": null,
       "admitted": null,
       "approved_by": null,
-      "instruction": null
+      "instruction": null,
+      "stated_by": null
     },
     {
       "id": "decisions-2",
@@ -189,7 +192,8 @@
       "action": null,
       "admitted": null,
       "approved_by": null,
-      "instruction": null
+      "instruction": null,
+      "stated_by": null
     }
   ],
   "total": 4,

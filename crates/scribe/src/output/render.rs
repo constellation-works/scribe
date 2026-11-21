@@ -196,7 +196,10 @@ pub(crate) fn list(
         ),
         Records::Proposals(items) => (
             PROPOSAL_COLUMNS.to_vec(),
-            items.iter().map(proposal_row).collect(),
+            items
+                .iter()
+                .flat_map(|p| proposal_rows(p, sink.mode))
+                .collect(),
         ),
         Records::Tags(items) => (TAG_COLUMNS.to_vec(), items.iter().map(tag_row).collect()),
         Records::Hits(items) => (
@@ -265,7 +268,7 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
                 .join(",")
         ),
         (OutputMode::Plain, Record::Proposal(p)) => {
-            writeln!(out, "{}", plain_line(&proposal_row(p)))
+            writeln!(out, "{}", plain_line(&proposal_row(p, OutputMode::Plain)))
         }
         (OutputMode::Table, Record::Tag(tag)) => {
             field(out, "name", tag.name.as_str())?;
@@ -302,6 +305,10 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
             field(out, "state", p.state)?;
             field(out, "older", &p.older)?;
             if let Some(candidate) = &p.candidate {
+                if let Some(statement) = &candidate.statement {
+                    field(out, "statement", statement)?;
+                    field(out, "subject", candidate.subject.as_deref().unwrap_or("-"))?;
+                }
                 field(out, "quote", &candidate.quote)?;
                 field(out, "tag", candidate.tag.as_str())?;
                 field(out, "session", candidate.cite.session.as_str())?;
@@ -346,6 +353,11 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
         (OutputMode::Json, Record::Session(session)) => write_json(out, session),
         (OutputMode::Plain, Record::Entry(entry)) => {
             writeln!(out, "{}", plain_line(&entry_row(entry)))?;
+            // Scribe's statement is the row's content; Daniel's own words
+            // follow on their line, with whose statement it is.
+            if let (Some(by), Some(quote)) = (&entry.stated_by, &entry.quote) {
+                writeln!(out, "stated_by\t{}\t{}", author(by), one_line(quote))?;
+            }
             if let Some(a) = &entry.admitted {
                 writeln!(
                     out,
@@ -609,6 +621,17 @@ pub(super) fn entry_metadata(out: &mut dyn Write, e: &EntryPayload, color: bool)
         field(out, "retirement_reason", reason)?;
     }
     field(out, "author", &author(&e.author))?;
+    if let Some(by) = &e.stated_by {
+        field(
+            out,
+            "stated_by",
+            &format!(
+                "{} (content is {})",
+                author(by),
+                scribe_core::ask::STATED_WHOSE
+            ),
+        )?;
+    }
     if let Some(quote) = &e.quote {
         field(out, "quote", quote)?;
     }
@@ -1118,7 +1141,57 @@ fn session_row(s: &SessionPayload, active: bool) -> Vec<Cell> {
     cells
 }
 
-fn proposal_row(p: &ProposalPayload) -> Vec<Cell> {
+/// A proposal's rows: one, and for a candidate carrying scribe's
+/// statement, in the table, a second under it holding Daniel's quote in
+/// the `REASON` column (2_design.md §11.1).
+fn proposal_rows(p: &ProposalPayload, mode: OutputMode) -> Vec<Vec<Cell>> {
+    let mut rows = vec![proposal_row(p, mode)];
+    if mode == OutputMode::Table
+        && let Some(quote) = stated_candidate_quote(p)
+    {
+        let mut under: Vec<Cell> = PROPOSAL_COLUMNS
+            .iter()
+            .map(|_| Cell::plain(String::new()))
+            .collect();
+        if let Some(cell) = under.get_mut(PROPOSAL_REASON_COLUMN) {
+            *cell = Cell {
+                text: quote,
+                role: Role::Muted,
+            };
+        }
+        rows.push(under);
+    }
+    rows
+}
+
+/// Where `REASON` sits in [`PROPOSAL_COLUMNS`].
+const PROPOSAL_REASON_COLUMN: usize = 6;
+
+/// `Daniel's words: "<quote>"` for a candidate carrying scribe's statement.
+fn stated_candidate_quote(p: &ProposalPayload) -> Option<String> {
+    let candidate = p.candidate.as_ref()?;
+    candidate.statement.as_ref()?;
+    Some(format!(
+        "{} \"{}\"",
+        scribe_core::ask::STATED_QUOTE_LABEL,
+        one_line(&candidate.quote)
+    ))
+}
+
+/// A proposal's line. A candidate carrying scribe's statement shows the
+/// statement as its reason; the plain line adds Daniel's quote after it,
+/// where the table puts it on the row under.
+fn proposal_row(p: &ProposalPayload, mode: OutputMode) -> Vec<Cell> {
+    let reason = match (
+        p.candidate.as_ref().and_then(|c| c.statement.as_deref()),
+        stated_candidate_quote(p),
+    ) {
+        (Some(statement), Some(quote)) if mode != OutputMode::Table => {
+            format!("{} | {quote}", one_line(statement))
+        }
+        (Some(statement), _) => one_line(statement),
+        (None, _) => one_line(&p.reason),
+    };
     vec![
         Cell::plain(p.id.clone()),
         Cell::plain(p.kind),
@@ -1133,7 +1206,7 @@ fn proposal_row(p: &ProposalPayload) -> Vec<Cell> {
         Cell::plain(p.older.clone()),
         Cell::plain(p.newer.clone().unwrap_or_else(|| String::from("-"))),
         Cell::plain(timestamp(p.opened_at)),
-        Cell::plain(one_line(&p.reason)),
+        Cell::plain(reason),
         Cell::plain(
             p.candidate
                 .as_ref()

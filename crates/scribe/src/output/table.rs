@@ -133,6 +133,10 @@ fn push_line(out: &mut String, columns: &[Column], widths: &[usize], cells: &[Ce
             out.push_str("  ");
         }
     }
+    // A row whose trailing cells are blank (a proposal's quote row) ends at
+    // its last text, not in padding.
+    let end = out.trim_end_matches(' ').len();
+    out.truncate(end);
     out.push('\n');
 }
 

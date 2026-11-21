@@ -41,7 +41,7 @@ use time::OffsetDateTime;
 
 /// The newest store format: this build reads formats 1 to `FORMAT` of every
 /// document and would write `FORMAT`.
-pub(super) const FORMAT: u32 = 13;
+pub(super) const FORMAT: u32 = 14;
 
 /// Which document an upgrade step is applied to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,6 +81,7 @@ pub(super) const UPGRADES: &[Upgrade] = &[
     capture_admission,
     entry_inactive_since,
     instructed_settlement,
+    claim_statement,
 ];
 
 /// Format 11 -> 12 adds `inactive_since` to each entry: `null` for an
@@ -138,6 +139,43 @@ fn instructed_settlement(
             {
                 proposal
                     .entry("instruction")
+                    .or_insert(serde_json::Value::Null);
+            }
+        }
+        Document::Session | Document::Control => {}
+    }
+    Ok(value)
+}
+
+/// Format 13 -> 14 adds `statement` and `subject` to each proposal
+/// candidate and `stated_by` to each entry, all `null`: every claim opened
+/// before statements approves with its quote as content, and every entry's
+/// content is its author's own words (2_design.md §11.1). Other documents
+/// are unchanged.
+fn claim_statement(
+    document: Document,
+    mut value: serde_json::Value,
+) -> serde_json::Result<serde_json::Value> {
+    match document {
+        Document::Entry => {
+            if let Some(entry) = value.as_object_mut() {
+                entry.entry("stated_by").or_insert(serde_json::Value::Null);
+            }
+        }
+        Document::Proposals => {
+            for candidate in value
+                .get_mut("proposals")
+                .and_then(serde_json::Value::as_array_mut)
+                .into_iter()
+                .flatten()
+                .filter_map(|p| p.get_mut("candidate"))
+                .filter_map(serde_json::Value::as_object_mut)
+            {
+                candidate
+                    .entry("statement")
+                    .or_insert(serde_json::Value::Null);
+                candidate
+                    .entry("subject")
                     .or_insert(serde_json::Value::Null);
             }
         }
@@ -851,9 +889,152 @@ impl EntryV12 {
             as_of: self.as_of,
             approved_by: None,
             instruction: None,
+            stated_by: None,
             content: String::new(),
         }
     }
+}
+
+/// Frozen format-13 entry shape (no `stated_by`), migrated in typed YAML
+/// like [`EntryV12`] so local YAML tags stay intact.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EntryV13 {
+    id: EntryId,
+    tag: crate::TagName,
+    status: crate::EntryStatus,
+    project: crate::Project,
+    topics: crate::Topics,
+    related: Vec<crate::Related>,
+    provider: crate::Label,
+    host: crate::Label,
+    author: Author,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    updated_by: Option<Author>,
+    #[serde(with = "time::serde::rfc3339")]
+    created: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    updated: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339::option")]
+    inactive_since: Option<OffsetDateTime>,
+    said: String,
+    content_from: crate::ContentFrom,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    cite: Option<Cite>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    retirement_reason: Option<String>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    superseded_by: Option<EntryId>,
+    #[serde(with = "crate::record::nullable_date")]
+    review_after: Option<time::Date>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    quote: Option<String>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    window: Option<crate::Window>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    evidence: Option<String>,
+    #[serde(with = "crate::record::nullable_date")]
+    as_of: Option<time::Date>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    approved_by: Option<Author>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    instruction: Option<crate::Instruction>,
+}
+
+impl EntryV13 {
+    fn into_entry(self) -> Entry {
+        Entry {
+            id: self.id,
+            tag: self.tag,
+            status: self.status,
+            project: self.project,
+            topics: self.topics,
+            related: self.related,
+            provider: self.provider,
+            host: self.host,
+            author: self.author,
+            updated_by: self.updated_by,
+            created: self.created,
+            updated: self.updated,
+            inactive_since: self.inactive_since,
+            said: self.said,
+            content_from: self.content_from,
+            cite: self.cite,
+            retirement_reason: self.retirement_reason,
+            superseded_by: self.superseded_by,
+            review_after: self.review_after,
+            quote: self.quote,
+            window: self.window,
+            evidence: self.evidence,
+            as_of: self.as_of,
+            approved_by: self.approved_by,
+            instruction: self.instruction,
+            stated_by: None,
+            content: String::new(),
+        }
+    }
+}
+
+/// Frozen format-13 proposal shape (candidates without `statement` or
+/// `subject`, which have the format-11 candidate shape), checked before
+/// the 13 -> 14 upgrade.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "frozen shape checked before upgrade")]
+struct ProposalsV13 {
+    format: u32,
+    proposals: Vec<ProposalV13>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[allow(dead_code, reason = "frozen shape checked before upgrade")]
+enum ClosedReasonV13 {
+    TagRetired,
+    Instructed,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "frozen shape checked before upgrade")]
+struct InstructionV13 {
+    session: crate::SessionId,
+    message: String,
+    #[serde(with = "time::serde::rfc3339")]
+    at: OffsetDateTime,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    quote: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "frozen shape checked before upgrade")]
+struct ProposalV13 {
+    id: ProposalId,
+    kind: ProposalKind,
+    older: EntryId,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    candidate: Option<CandidateV11>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    newer: Option<EntryId>,
+    reason: String,
+    quotes: Vec<Quote>,
+    state: ProposalState,
+    #[serde(with = "time::serde::rfc3339")]
+    opened_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339::option")]
+    settled_at: Option<OffsetDateTime>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    settled_by: Option<Cite>,
+    author: Author,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    updated_by: Option<Author>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    settled_author: Option<Author>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    closed_reason: Option<ClosedReasonV13>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    instruction: Option<InstructionV13>,
 }
 
 /// Frozen format-11 proposal shape (no `instruction`, and `closed_reason` only
@@ -1115,6 +1296,9 @@ pub(super) fn decode_entry(
         }
         let old: EntryV12 = yaml_serde::from_value(value).map_err(|e| Error::corrupt(path, e))?;
         old.into_entry(from)
+    } else if from == 13 {
+        let old: EntryV13 = yaml_serde::from_value(value).map_err(|e| Error::corrupt(path, e))?;
+        old.into_entry()
     } else {
         let json = serde_json::to_value(&value).map_err(|e| Error::corrupt(path, e))?;
         upgrade(path, Document::Entry, from, json)?
@@ -1135,7 +1319,35 @@ pub(super) fn decode_entry(
         crate::AuthorKind::Daniel => {
             entry.cite.is_some()
                 && entry.content_from != crate::ContentFrom::Agent
-                && entry.quote.is_none()
+                && match &entry.stated_by {
+                    // Daniel's own words: no separate quote.
+                    None => entry.quote.is_none(),
+                    // Scribe's statement of Daniel's turn (format 14): an
+                    // approved pass claim from his message, his words in
+                    // `quote` until the entry is forgotten.
+                    Some(by) => {
+                        *by == Author::session_pass()
+                            && matches!(
+                                entry.content_from,
+                                crate::ContentFrom::Message {
+                                    role: crate::Speaker::User,
+                                    ..
+                                }
+                            )
+                            && entry.window.is_none()
+                            && match entry.status {
+                                crate::EntryStatus::Forgotten => {
+                                    entry.quote.is_none() && entry.said.is_empty()
+                                }
+                                crate::EntryStatus::Active
+                                | crate::EntryStatus::Superseded
+                                | crate::EntryStatus::Retired => {
+                                    entry.quote.is_some()
+                                        && entry.said.starts_with("#scribe approve p-")
+                                }
+                            }
+                    }
+                }
         }
         crate::AuthorKind::Agent => {
             // A direct CLI note, or (format 10) an assistant turn kept by
@@ -1164,7 +1376,7 @@ pub(super) fn decode_entry(
                 )
                 && entry.quote.is_none()
                 && entry.window.is_none();
-            direct || approved_assistant
+            (direct || approved_assistant) && entry.stated_by.is_none()
         }
         crate::AuthorKind::Scribe => false,
     };
@@ -1178,7 +1390,7 @@ pub(super) fn decode_entry(
     if !valid {
         return Err(shape(
             path,
-            "entry author, said, content_from, cite, quote and window disagree",
+            "entry author, said, content_from, cite, quote, window and stated_by disagree",
         ));
     }
     if let Some(approved_by) = &entry.approved_by {
@@ -1558,6 +1770,9 @@ fn decode_json<T: DeserializeOwned>(path: &Path, bytes: &[u8], document: Documen
         Document::Proposals if from == 11 || from == 12 => {
             serde_json::from_slice::<ProposalsV11>(bytes).map_err(|e| Error::corrupt(path, e))?;
         }
+        Document::Proposals if from == 13 => {
+            serde_json::from_slice::<ProposalsV13>(bytes).map_err(|e| Error::corrupt(path, e))?;
+        }
         Document::Proposals if from == 10 => {
             serde_json::from_slice::<ProposalsV10>(bytes).map_err(|e| Error::corrupt(path, e))?;
         }
@@ -1609,6 +1824,18 @@ pub(super) fn encode_control(path: &Path, state: &ControlState) -> Result<Vec<u8
 pub(super) fn decode_proposals(path: &Path, bytes: &[u8]) -> Result<Vec<Proposal>> {
     let doc: ProposalsDocument = decode_json(path, bytes, Document::Proposals)?;
     for proposal in &doc.proposals {
+        // A statement is scribe's statement of Daniel's turn (format 14):
+        // only on a candidate from his words, with its subject beside it.
+        // A forgotten candidate has neither.
+        if let Some(candidate) = &proposal.candidate
+            && (candidate.statement.is_some() != candidate.subject.is_some()
+                || (candidate.statement.is_some() && candidate.role != crate::Speaker::User))
+        {
+            return Err(shape(
+                path,
+                "candidate statement and subject must be set together, on a user candidate",
+            ));
+        }
         // Only a closed proposal carries a reason scribe closed it.
         if proposal.closed_reason.is_some() && proposal.state != ProposalState::Rejected {
             return Err(shape(

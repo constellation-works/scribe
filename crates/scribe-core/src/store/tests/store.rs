@@ -1076,6 +1076,8 @@ fn close_retired_candidates_respects_config_shipped_and_store_tags() {
             tag: tag.parse().unwrap(),
             role: Speaker::User,
             quote: format!("I always want item {n}."),
+            statement: None,
+            subject: None,
             evidence: None,
             cite: Cite {
                 session: "s-1".parse().unwrap(),
@@ -1147,6 +1149,8 @@ fn corrupt_or_unreadable_config_and_tags_close_no_candidate() {
             tag: "decisions".parse().unwrap(),
             role: Speaker::User,
             quote: String::from("I always want this kept."),
+            statement: None,
+            subject: None,
             evidence: None,
             cite: Cite {
                 session: "s-1".parse().unwrap(),
@@ -1312,6 +1316,8 @@ I prefer secret phrase XYZ123
             tag: "preferences".parse().unwrap(),
             role: crate::Speaker::User,
             quote: String::from("I prefer secret phrase XYZ123"),
+            statement: None,
+            subject: None,
             evidence: None,
             cite: Cite {
                 session: "s-1".parse().unwrap(),

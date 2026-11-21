@@ -558,3 +558,157 @@ fn candidate_proposal_list_matches_goldens() {
     }
     report(&failures);
 }
+
+/// Daniel's turn the stated-claim goldens quote, verbatim.
+const STATED_QUOTE: &str = "ok that makes sense. then let's keep the whole history in an append-only log, not one rewritten outcome.";
+/// Scribe's statement of it, the approved entry's content.
+const STATED: &str = "Daniel prefers that session records keep the whole session's history in an append-only log rather than one rewritten outcome.";
+
+/// A store holding one approved pass claim with scribe's statement
+/// (`preferences-2`, from `p-5`) and one open one (`p-6`), at format 14
+/// (2_design.md §11.1).
+fn stated_fixture() -> Fixture {
+    let fx = Fixture::new();
+    fx.seed();
+    let root = fx.root();
+    let sha = "0".repeat(64);
+    let entry = format!(
+        "---
+format: 14
+kind: entry
+id: preferences-2
+tag: preferences
+status: active
+project: constellation-works/scribe
+topics: []
+related: []
+provider: claude-code
+host: dk-server-1
+author: {{kind: daniel, name: daniel}}
+updated_by: null
+created: 2026-11-15T00:05:00Z
+updated: 2026-11-15T00:05:00Z
+inactive_since: null
+said: \"#scribe approve p-5\"
+content_from: {{kind: message, role: user, message: user-history, at: 2026-11-15T00:00:00Z}}
+cite: {{session: 7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02, message: user-history, at: 2026-11-15T00:00:00Z, prompt_sha256: \"{sha}\", line: 1, cwd: /home/daniel/workspace/scribe}}
+retirement_reason: null
+superseded_by: null
+review_after: null
+quote: \"{STATED_QUOTE}\"
+window: null
+evidence: null
+as_of: null
+approved_by: null
+instruction: null
+stated_by: {{kind: scribe, name: session-pass}}
+---
+{STATED}
+"
+    );
+    let path = root.join("entries/preferences/preferences-2.md");
+    std::fs::write(&path, entry).unwrap();
+    support::make_private(&path);
+    let cite = |message: &str| {
+        json!({"session":"7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02", "message":message,
+            "at":"2026-11-15T00:00:00Z", "prompt_sha256":sha, "line":1,
+            "cwd":"/home/daniel/workspace/scribe"})
+    };
+    let admitted = json!({"trigger":"let's keep", "matched":"let's keep",
+        "criteria":"A standing rule from Daniel that applies beyond the work at hand."});
+    let approved = json!({
+        "id":"p-5", "kind":"candidate", "older":"preferences-2", "newer":null,
+        "candidate": {
+            "tag":"preferences", "role":"user", "quote":STATED_QUOTE,
+            "statement":STATED, "subject":"session records",
+            "evidence":null, "cite":cite("user-history"),
+            "project":"constellation-works/scribe", "provider":"claude-code",
+            "host":"dk-server-1", "admitted":admitted
+        },
+        "reason":format!("Unmarked preferences statement: {STATED_QUOTE}"), "quotes":[],
+        "state":"approved", "opened_at":"2026-11-15T00:01:00Z",
+        "settled_at":"2026-11-15T00:05:00Z", "settled_by":cite("user-approve"),
+        "author":{"kind":"scribe", "name":"session-pass"},
+        "settled_author":{"kind":"daniel", "name":"daniel"}, "updated_by":null,
+        "closed_reason":null, "instruction":null
+    });
+    let open_quote = "yeah, for the popup just show the newest five, nothing older.";
+    let open = json!({
+        "id":"p-6", "kind":"candidate", "older":"preferences-3", "newer":null,
+        "candidate": {
+            "tag":"preferences", "role":"user", "quote":open_quote,
+            "statement":"Daniel prefers that the scribe tmux popup lists only the five newest records.",
+            "subject":"the scribe tmux popup",
+            "evidence":null, "cite":cite("user-popup"),
+            "project":"constellation-works/scribe", "provider":"claude-code",
+            "host":"dk-server-1", "admitted":admitted
+        },
+        "reason":format!("Unmarked preferences statement: {open_quote}"), "quotes":[],
+        "state":"open", "opened_at":"2026-11-15T00:06:00Z", "settled_at":null,
+        "settled_by":null, "author":{"kind":"scribe", "name":"session-pass"},
+        "settled_author":null, "updated_by":null, "closed_reason":null, "instruction":null
+    });
+    let path = root.join("proposals.json");
+    std::fs::write(
+        &path,
+        json!({"format":14, "proposals":[approved, open]}).to_string(),
+    )
+    .unwrap();
+    support::make_private(&path);
+    fx
+}
+
+#[cfg(unix)]
+#[test]
+fn stated_claims_match_goldens() {
+    let fx = stated_fixture();
+    // `ask` with a fake `claude`: one claim quotes Daniel's words, one
+    // quotes scribe's statement; the check labels each by whose words the
+    // quote is (2_design.md §6.4, §11.1).
+    let answer = json!({
+        "status": "answered",
+        "answer": "Daniel said session records keep an append-only log.",
+        "claims": [
+            {"text": "his words", "quote": "keep the whole history in an append-only log", "cite": "preferences-2"},
+            {"text": "the statement", "quote": "session records keep the whole session's history", "cite": "preferences-2"}
+        ],
+        "conflicts": []
+    });
+    let reply = fx.elsewhere("claude-reply.json");
+    std::fs::write(
+        &reply,
+        json!({"type":"result", "is_error":false, "result":"", "structured_output":answer})
+            .to_string(),
+    )
+    .unwrap();
+    let script = format!("#!/bin/sh\ncat > /dev/null\ncat '{}'\n", reply.display());
+    let path = fx.fake_program("claude", &script);
+    let commands: &[(&str, &[&str])] = &[
+        ("entry-show-stated", &["entry", "show", "preferences-2"]),
+        ("proposal-list-stated", &["proposal", "list"]),
+        (
+            "record-search-stated",
+            &["record", "search", "append-only log history"],
+        ),
+        (
+            "question-ask-stated",
+            &[
+                "question",
+                "ask",
+                "how should session records keep their history?",
+            ],
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (name, args) in commands {
+        for (suffix, mode) in MODES {
+            let out = run_with_input(&fx, &[*args, *mode].concat(), b"", Some(&path));
+            assert_eq!(out.status.code(), Some(0), "{name}: {}", text(&out.stderr));
+            failures.extend(check(
+                &format!("output/{name}.{suffix}"),
+                &text(&out.stdout),
+            ));
+        }
+    }
+    report(&failures);
+}
