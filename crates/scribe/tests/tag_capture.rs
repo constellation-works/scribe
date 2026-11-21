@@ -205,3 +205,168 @@ fn a_new_tag_takes_capture_rules_from_config_and_no_issue_tag_ships() {
     let out = Fixture::new().run(&["tag", "show", "issue", "--json"]);
     assert_eq!(out.status.code(), Some(1));
 }
+
+fn listed(fx: &Fixture) -> Value {
+    serde_json::from_slice(&fx.ok(&["tag", "list", "--json"]).stdout).unwrap()
+}
+
+fn reads(fx: &Fixture) {
+    fx.ok(&["tag", "list"]);
+    fx.ok(&["entry", "list", "--json"]);
+    fx.ok(&["record", "search", "preference", "--json"]);
+}
+
+#[test]
+fn declaring_a_new_tag_keeps_all_shipped_tags_and_their_defaults() {
+    let fx = Fixture::new();
+    config(&fx, "[tags.remind]\naction = true\n");
+
+    let listed = listed(&fx);
+    let tags = listed["tags"].as_array().unwrap();
+    let names: Vec<&str> = tags.iter().map(|t| t["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["idea", "preferences", "remind", "standard"]);
+
+    let prefs = tags.iter().find(|t| t["name"] == "preferences").unwrap();
+    assert_eq!(prefs["stale_after_days"], 180);
+    assert_eq!(prefs["aliases"], json!(["preference", "pref"]));
+    assert_eq!(prefs["description"], "how Daniel likes things done");
+    assert_eq!(prefs["configured"], true);
+    assert_eq!(prefs["source"], "config");
+    assert_eq!(prefs["route"], "propose");
+    assert_eq!(prefs["action"], Value::Null);
+
+    let remind = tags.iter().find(|t| t["name"] == "remind").unwrap();
+    assert_eq!(
+        remind["action"],
+        json!({"mode": "free", "require_quote": false, "retired": 0, "rejected": 0})
+    );
+    assert_eq!(remind["configured"], true);
+    assert_eq!(remind["source"], "config");
+    assert!(text(&fx.ok(&["tag", "list"]).stderr).is_empty());
+
+    let shown = show(&fx, "preferences");
+    assert_eq!(shown["stale_after_days"], 180);
+    assert_eq!(shown["aliases"], json!(["preference", "pref"]));
+    assert_eq!(shown["capture"]["triggers"], json!(SHIPPED_TRIGGERS));
+    let shipped = json!({"source": "shipped", "file": null, "line": null});
+    for field in ["from", "route", "triggers", "criteria", "not"] {
+        assert_eq!(shown["capture"]["origin"][field], shipped, "{field}");
+    }
+}
+
+#[test]
+fn partial_preferences_overrides_only_set_fields_and_reports_origins() {
+    let fx = Fixture::new();
+    let file = config(&fx, "[tags.preferences]\nstale_after_days = 90\n");
+
+    let shown = show(&fx, "preferences");
+    assert_eq!(shown["stale_after_days"], 90);
+    assert_eq!(shown["aliases"], json!(["preference", "pref"]));
+    assert_eq!(shown["description"], "how Daniel likes things done");
+    assert_eq!(shown["capture"]["triggers"], json!(SHIPPED_TRIGGERS));
+    let shipped = json!({"source": "shipped", "file": null, "line": null});
+    for field in ["from", "route", "triggers", "criteria", "not"] {
+        assert_eq!(shown["capture"]["origin"][field], shipped, "{field}");
+    }
+
+    config(
+        &fx,
+        "[tags.preferences]\nstale_after_days = 90\n\n[tags.preferences.capture]\ncriteria = \"A standing rule across projects.\"\n",
+    );
+    let updated = show(&fx, "preferences");
+    assert_eq!(updated["stale_after_days"], 90);
+    assert_eq!(updated["aliases"], json!(["preference", "pref"]));
+    assert_eq!(updated["description"], "how Daniel likes things done");
+    assert_eq!(
+        updated["capture"]["criteria"],
+        "A standing rule across projects."
+    );
+    assert_eq!(
+        updated["capture"]["origin"]["criteria"],
+        json!({"source": "config", "file": file.display().to_string(), "line": 5})
+    );
+    for field in ["from", "route", "triggers", "not"] {
+        assert_eq!(updated["capture"]["origin"][field], shipped, "{field}");
+    }
+}
+
+#[test]
+fn a_config_claim_of_a_shipped_word_stays_readable_and_warns() {
+    let fx = Fixture::new();
+    config(&fx, "[tags.rituals]\naliases = [\"pref\"]\n");
+    reads(&fx);
+    let list = fx.ok(&["tag", "list", "--json"]);
+    let stderr = text(&list.stderr);
+    assert!(
+        stderr.contains("shipped tag preferences alias pref is claimed by config tag rituals"),
+        "{stderr}"
+    );
+    let tags: Value = serde_json::from_slice(&list.stdout).unwrap();
+    let prefs = tags["tags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "preferences")
+        .unwrap();
+    assert_eq!(prefs["aliases"], json!(["preference"]));
+    assert_eq!(show(&fx, "pref")["tag"], "rituals");
+    assert_eq!(show(&fx, "preference")["tag"], "preferences");
+
+    config(&fx, "[tags.rituals]\naliases = [\"standard\"]\n");
+    reads(&fx);
+    let list = fx.ok(&["tag", "list"]);
+    let stderr = text(&list.stderr);
+    assert!(
+        stderr.contains("shipped tag standard is claimed by config tag rituals"),
+        "{stderr}"
+    );
+    assert_eq!(show(&fx, "standard")["tag"], "rituals");
+    assert_eq!(show(&fx, "idea")["tag"], "idea");
+
+    // Two of his own entries still refuse the file.
+    config(
+        &fx,
+        "[tags.rituals]\naliases = [\"pref\"]\n[tags.habits]\naliases = [\"pref\"]\n",
+    );
+    let refused = fx.run(&["tag", "list", "--json"]);
+    assert_eq!(refused.status.code(), Some(1));
+    let err: Value = serde_json::from_slice(&refused.stderr).unwrap();
+    assert_eq!(err["code"], "config_invalid", "{err}");
+    assert!(err["error"].as_str().unwrap().contains("'pref'"), "{err}");
+}
+
+#[test]
+fn the_mac_preferences_and_remind_config_reads_as_the_shipped_preferences_tag() {
+    let fx = Fixture::new();
+    config(
+        &fx,
+        "[tags.preferences]\naliases = [\"preference\", \"pref\"]\n\n[tags.remind]\naction = true\n",
+    );
+    reads(&fx);
+    assert!(text(&fx.ok(&["tag", "list"]).stderr).is_empty());
+    let tags = listed(&fx);
+    let names: Vec<&str> = tags["tags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["idea", "preferences", "remind", "standard"]);
+    let prefs = tags["tags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "preferences")
+        .unwrap();
+    assert_eq!(prefs["aliases"], json!(["preference", "pref"]));
+    assert_eq!(prefs["stale_after_days"], 180);
+    assert_eq!(prefs["description"], "how Daniel likes things done");
+    assert_eq!(prefs["route"], "propose");
+    let shown = show(&fx, "preferences");
+    let shipped = json!({"source": "shipped", "file": null, "line": null});
+    for field in ["from", "route", "triggers", "criteria", "not"] {
+        assert_eq!(shown["capture"]["origin"][field], shipped, "{field}");
+    }
+    assert_eq!(show(&fx, "pref")["tag"], "preferences");
+    assert_eq!(show(&fx, "remind")["action"]["mode"], "free");
+}

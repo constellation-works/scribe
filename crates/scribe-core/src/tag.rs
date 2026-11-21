@@ -1,12 +1,16 @@
 //! The tag table: which tags exist, their aliases, and how long an entry in
 //! each stays fresh.
 //!
-//! Tags come from `config.toml` (`[tags.<name>]`) and agent-created
-//! `tags.json`; config claims take precedence. Without a config the defaults below apply: `preferences`
-//! (docs/design/scribe/4_decisions.md, "Decisions are recorded on their Orbit
-//! task, not in a shipped tag"), plus the shipped action tags `standard`
-//! and `idea`, which a config with its own tags keeps unless it claims their
-//! names ("Action tags are marked in config").
+//! Tags come from `config.toml` (`[tags.<name>]`), merged over the shipped
+//! defaults (`preferences`, `idea`, `standard`) and agent-created
+//! `tags.json`; config claims take precedence. Without a config the shipped
+//! defaults apply: `preferences` (docs/design/scribe/4_decisions.md,
+//! "Decisions are recorded on their Orbit task, not in a shipped tag"), plus
+//! the shipped action tags `standard` and `idea`. Declaring `[tags.<name>]`
+//! adds a new tag and overrides only the fields set on a shipped tag. A
+//! config word that collides with a shipped name or alias wins: that shipped
+//! tag loses the word, and `tag list` warns ("Config tags merge with the
+//! shipped set").
 //! An action tag's entries are work items a consumer outside scribe picks
 //! up; `ask` leaves them out unless asked. A memory tag configured with
 //! `require_evidence = true` (such as `finding` when configured) records an
@@ -355,17 +359,33 @@ impl TagTable {
         Ok((Self::new(tags)?, warnings))
     }
 
-    /// The memory tag scribe ships with: `preferences` (aliases `preference`,
-    /// `pref`; stale after 180 days).
+    /// The tags scribe ships: `preferences` (aliases `preference`, `pref`;
+    /// stale after 180 days) and the action tags `idea` and `standard`.
     #[must_use]
     pub fn defaults() -> Self {
-        let tags = Self::shipped_preferences().into_iter().collect();
-        Self { tags }.with_shipped_actions()
+        let mut tags: Vec<TagDef> = Self::shipped_preferences().into_iter().collect();
+        for (name, _, _) in SHIPPED_ACTION_TAGS {
+            if let Some(def) = Self::shipped_action(name) {
+                tags.push(def);
+            }
+        }
+        tags.sort_by(|left, right| left.name.cmp(&right.name));
+        Self { tags }
+    }
+
+    /// The shipped tag named `name` (`preferences`, `idea`, or `standard`).
+    /// A partial `[tags.<name>]` table inherits the fields it omits from this.
+    #[must_use]
+    pub fn shipped(name: &str) -> Option<TagDef> {
+        if name == "preferences" {
+            Self::shipped_preferences()
+        } else {
+            Self::shipped_action(name)
+        }
     }
 
     /// The shipped `preferences` tag on its own: aliases `preference` and
-    /// `pref`, the shipped description, stale after 180 days. A partial
-    /// `[tags.preferences]` table inherits the fields it omits from this.
+    /// `pref`, the shipped description, stale after 180 days.
     #[must_use]
     pub fn shipped_preferences() -> Option<TagDef> {
         let name = |s: &str| TagName::try_from(s.to_owned());
@@ -403,22 +423,6 @@ impl TagTable {
                     capture: CaptureRules::shipped(n),
                 })
             })
-    }
-
-    /// This table plus every shipped action tag whose name it does not already
-    /// claim (as a name or an alias), so a config that declares its own tags
-    /// still has them; a config tag of the same name replaces one.
-    #[must_use]
-    pub fn with_shipped_actions(mut self) -> Self {
-        for (name, _, _) in SHIPPED_ACTION_TAGS {
-            if self.resolve(name).is_none()
-                && let Some(def) = Self::shipped_action(name)
-            {
-                self.tags.push(def);
-            }
-        }
-        self.tags.sort_by(|a, b| a.name.cmp(&b.name));
-        self
     }
 
     /// The action settings of the tag named `name`, or `None` for a memory

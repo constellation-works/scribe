@@ -3415,3 +3415,69 @@ fn pass_closes_retired_tag_candidates_before_cap_and_suppresses_their_quotes() {
         "{rejected_table}"
     );
 }
+
+#[test]
+fn pass_with_custom_tag_config_keeps_open_preferences_candidates() {
+    let s = Setup::new();
+    s.scribe("/scribe on");
+    let config = s.fx.root().join("config.toml");
+    std::fs::write(&config, "[tags.remind]\naction = true\n").unwrap();
+    make_private(&config);
+
+    let open_pref = json!({
+        "id": "p-1",
+        "kind": "candidate",
+        "older": "preferences-1",
+        "newer": null,
+        "candidate": {
+            "tag": "preferences",
+            "role": "user",
+            "quote": "I always prefer clear commit messages.",
+            "evidence": null,
+            "cite": {
+                "session": ON,
+                "message": "seed-1",
+                "at": "2026-11-15T00:00:00Z",
+                "prompt_sha256": "0".repeat(64),
+                "line": 1,
+                "cwd": "/nonexistent/work/scribe"
+            },
+            "project": "scribe",
+            "provider": "claude-code",
+            "host": "host",
+            "admitted": null
+        },
+        "reason": "Unmarked preferences statement: I always prefer clear commit messages.",
+        "quotes": [],
+        "state": "open",
+        "opened_at": "2026-11-15T00:01:00Z",
+        "settled_at": null,
+        "settled_by": null,
+        "author": {"kind": "scribe", "name": "session-pass"},
+        "updated_by": null,
+        "settled_author": null,
+        "closed_reason": null
+    });
+    let proposals_path = s.fx.root().join("proposals.json");
+    std::fs::write(
+        &proposals_path,
+        json!({"format": 11, "proposals": [open_pref]}).to_string(),
+    )
+    .unwrap();
+    make_private(&proposals_path);
+
+    let new_quote = "I prefer concise summaries in every session pass.";
+    s.write(ON, &[line("user", "u-new", new_quote)]);
+    s.answer(&candidate_answer(new_quote, "u-new", "preferences"));
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+
+    let listed = proposals(&s);
+    assert_eq!(listed["total"], 2, "{listed}");
+    let list = listed["proposals"].as_array().unwrap();
+    assert_eq!(list[0]["id"], "p-1");
+    assert_eq!(list[0]["state"], "open");
+    assert!(list[0]["closed_reason"].is_null());
+    assert_eq!(list[1]["id"], "p-2");
+    assert_eq!(list[1]["state"], "open");
+    assert_eq!(list[1]["candidate"]["tag"], "preferences");
+}

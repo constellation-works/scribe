@@ -42,8 +42,8 @@ env = ["GITHUB_TOKEN", "ANTHROPIC_API_KEY"]
     let names: Vec<&str> = config.tags.tags().iter().map(|t| t.name.as_str()).collect();
     assert_eq!(
         names,
-        ["idea", "rituals", "standard"],
-        "a [tags] table replaces the defaults but keeps the shipped action tags"
+        ["idea", "preferences", "rituals", "standard"],
+        "a [tags] table merges with the shipped tags"
     );
     assert_eq!(
         config.tags.resolve("ritual").unwrap().name.as_str(),
@@ -278,14 +278,158 @@ fn a_partial_preferences_table_keeps_shipped_aliases_description_and_stale_days(
     assert_eq!(cleared.description, shipped.description);
 
     let rituals = Config::parse("[tags.rituals]\n").unwrap();
-    assert!(
-        rituals.tags.resolve("preferences").is_none(),
-        "a config that never mentions preferences still drops it"
+    assert_eq!(
+        rituals.tags.resolve("preferences"),
+        Some(&shipped),
+        "a config that never mentions preferences keeps the shipped preferences tag"
     );
+    assert!(rituals.tag_warnings.is_empty());
     let rituals = rituals.tags.resolve("rituals").unwrap();
     assert!(rituals.aliases.is_empty());
     assert_eq!(rituals.stale_after_days, None);
     assert_eq!(rituals.description, None);
+
+    let stale_only = Config::parse("[tags.preferences]\nstale_after_days = 90\n").unwrap();
+    let stale_prefs = stale_only.tags.resolve("preferences").unwrap();
+    assert_eq!(stale_prefs.stale_after_days, std::num::NonZeroU32::new(90));
+    assert_eq!(stale_prefs.aliases, shipped.aliases);
+    assert_eq!(stale_prefs.description, shipped.description);
+    assert_eq!(stale_prefs.capture, shipped.capture);
+    assert!(stale_only.tag_warnings.is_empty());
+
+    let remind = Config::parse("[tags.remind]\naction = true\n").unwrap();
+    let names: Vec<&str> = remind.tags.tags().iter().map(|t| t.name.as_str()).collect();
+    assert_eq!(names, ["idea", "preferences", "remind", "standard"]);
+    assert_eq!(remind.tags.resolve("preferences"), Some(&shipped));
+    assert!(remind.tag_warnings.is_empty());
+    assert!(
+        remind
+            .tags
+            .action(&"remind".parse().unwrap())
+            .is_some_and(|action| !action.require_quote && !action.ask_first)
+    );
+}
+
+#[test]
+fn a_shipped_word_yields_to_config_and_two_config_entries_do_not() {
+    use crate::tag::{ActionTag, CaptureRules, TagTable};
+
+    let alias_of_shipped = Config::parse("[tags.rituals]\naliases = [\"pref\"]\n").unwrap();
+    assert_eq!(
+        alias_of_shipped.tags.resolve("pref").unwrap().name.as_str(),
+        "rituals"
+    );
+    let prefs = alias_of_shipped.tags.resolve("preferences").unwrap();
+    assert_eq!(
+        prefs.aliases.iter().map(|a| a.as_str()).collect::<Vec<_>>(),
+        ["preference"],
+        "preferences loses only the alias the config claimed"
+    );
+    assert_eq!(prefs.stale_after_days, std::num::NonZeroU32::new(180));
+    assert_eq!(
+        prefs.description.as_deref(),
+        Some("how Daniel likes things done")
+    );
+    assert_eq!(prefs.capture, CaptureRules::shipped("preferences"));
+    assert_eq!(
+        alias_of_shipped.tag_warnings,
+        ["shipped tag preferences alias pref is claimed by config tag rituals"]
+    );
+    assert!(alias_of_shipped.tags.resolve("standard").is_some());
+    assert!(alias_of_shipped.tags.resolve("idea").is_some());
+
+    let name_of_shipped = Config::parse("[tags.rituals]\naliases = [\"standard\"]\n").unwrap();
+    assert_eq!(
+        name_of_shipped
+            .tags
+            .resolve("standard")
+            .unwrap()
+            .name
+            .as_str(),
+        "rituals"
+    );
+    assert!(
+        name_of_shipped
+            .tags
+            .get(&"standard".parse().unwrap())
+            .is_none()
+    );
+    assert!(name_of_shipped.tags.resolve("preferences").is_some());
+    assert!(name_of_shipped.tags.resolve("idea").is_some());
+    assert_eq!(
+        name_of_shipped.tag_warnings,
+        ["shipped tag standard is claimed by config tag rituals"]
+    );
+
+    // An omitted alias list does not claim the shipped aliases, so another
+    // entry may take one and the declared shipped tag keeps its other fields.
+    let inherited = Config::parse(
+        "[tags.preferences]\nstale_after_days = 90\n[tags.rituals]\naliases = [\"pref\"]\n",
+    )
+    .unwrap();
+    let prefs = inherited.tags.resolve("preferences").unwrap();
+    assert_eq!(prefs.stale_after_days, std::num::NonZeroU32::new(90));
+    assert_eq!(
+        prefs.aliases.iter().map(|a| a.as_str()).collect::<Vec<_>>(),
+        ["preference"]
+    );
+    assert_eq!(
+        inherited.tags.resolve("pref").unwrap().name.as_str(),
+        "rituals"
+    );
+
+    let err = Config::parse(
+        "[tags.rituals]\naliases = [\"pref\"]\n[tags.habits]\naliases = [\"pref\"]\n",
+    )
+    .unwrap_err();
+    assert!(err.message.contains("'pref'"), "{err}");
+    assert!(err.message.contains("rituals"), "{err}");
+    assert!(err.message.contains("habits"), "{err}");
+
+    let err = Config::parse(
+        "[tags.preferences]\naliases = [\"preference\", \"pref\"]\n[tags.rituals]\naliases = [\"pref\"]\n",
+    )
+    .unwrap_err();
+    assert!(err.message.contains("'pref'"), "{err}");
+
+    // Daniel's Mac file: the preferences block repeats the shipped aliases,
+    // and remind is an extra action tag. The effective table matches a
+    // preferences tag that still carries every shipped field.
+    let mac = Config::parse(
+        "[tags.preferences]\naliases = [\"preference\", \"pref\"]\n\n[tags.remind]\naction = true\n",
+    )
+    .unwrap();
+    assert!(mac.tag_warnings.is_empty(), "{:?}", mac.tag_warnings);
+    let names: Vec<&str> = mac.tags.tags().iter().map(|t| t.name.as_str()).collect();
+    assert_eq!(names, ["idea", "preferences", "remind", "standard"]);
+    let shipped = TagTable::shipped_preferences().unwrap();
+    let prefs = mac.tags.resolve("preferences").unwrap();
+    assert_eq!(prefs.aliases, shipped.aliases);
+    assert_eq!(prefs.description, shipped.description);
+    assert_eq!(prefs.stale_after_days, shipped.stale_after_days);
+    assert_eq!(prefs.action, None);
+    assert!(!prefs.require_evidence);
+    assert_eq!(prefs.capture, shipped.capture);
+    assert_eq!(
+        mac.tags.resolve("idea").unwrap(),
+        &TagTable::shipped_action("idea").unwrap()
+    );
+    assert_eq!(
+        mac.tags.resolve("standard").unwrap(),
+        &TagTable::shipped_action("standard").unwrap()
+    );
+    let remind = mac.tags.resolve("remind").unwrap();
+    assert_eq!(
+        remind.action,
+        Some(ActionTag {
+            require_quote: false,
+            ask_first: false,
+        })
+    );
+    assert!(remind.aliases.is_empty());
+    assert_eq!(remind.description, None);
+    assert_eq!(remind.stale_after_days, None);
+    assert_eq!(remind.capture, CaptureRules::default());
 }
 
 #[test]

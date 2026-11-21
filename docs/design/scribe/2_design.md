@@ -663,8 +663,19 @@ changed by `tag update` (`tag_configured`). A store tag is used exactly
 like a config tag, by `#scribe` lines and by `entry add`
 ([4_decisions.md](./4_decisions.md#agent-created-tags-live-in-the-store-and-config-tags-win)).
 
-**Config** (`config.toml`): `[tags.<name>]` with `aliases`, `description`
-and `stale_after_days`; `[sources]` with `discussions_readonly`, a list of
+**Config** (`config.toml`): `[tags.<name>]` with `aliases`, `description`,
+`stale_after_days`, `action`, `require_quote`, `ask_first`,
+`require_evidence` and `[tags.<name>.capture]` (`from`, `route`,
+`triggers`, `criteria`, `not`; [§11.2](#112-capture-rules-per-tag)). Config
+tags merge with the shipped set (`preferences`, `idea`, `standard`): declaring
+a new tag adds it, and declaring a shipped tag overrides only the fields it
+sets and inherits the rest. A name or alias the file sets that a shipped tag
+also holds is Daniel's: the shipped tag loses that alias, or is left out when
+the word is its name, and `tag list` warns. Two config entries that claim one
+word are refused. No config syntax removes a shipped tag except claiming its
+name
+([4_decisions.md](./4_decisions.md#config-tags-merge-with-the-shipped-set)).
+`[sources]` with `discussions_readonly`, a list of
 directories `ask` reads as extra discussion evidence and never writes
 (default: the constellation almanac's `15-discussions`, when present); `[models]` with `ask`, `distill`, `session`, `consistency`,
 `referent` and `credentials` (the variables model calls are given, default
@@ -979,10 +990,13 @@ scribe never calls Orbit or any consumer; it keeps the entries and exposes them 
 two optional switches: `require_quote` (an agent's entry must quote the
 human) and `ask_first` (agents ask before writing). `standard`
 (`require_quote`) and `idea` ship, with no
-aliases; a config
-with its own `[tags]` keeps them unless it claims their names, and a config
-tag of the same name starts from the shipped settings
-([4_decisions.md](./4_decisions.md#action-tags-are-marked-in-config-and-three-ship)).
+aliases. A config merges with those shipped tags. A config tag of the same
+name overrides only the fields it sets and inherits the rest (`action = false`
+turns it into a memory tag). A different config entry that claims the shipped
+name, as its own name or as an alias, leaves that shipped tag out, and `tag
+list` warns; the file stays readable
+([4_decisions.md](./4_decisions.md#action-tags-are-marked-in-config-and-three-ship),
+[4_decisions.md](./4_decisions.md#config-tags-merge-with-the-shipped-set)).
 A new action tag needs no code change. `tag list` shows each action tag's
 mode (`free` or `ask-first`, `,quote`) and its counts of retired and
 rejected agent entries, the evidence for flipping a tag to ask-first.
@@ -2829,19 +2843,30 @@ not = "A choice about one page or task (it goes on its Orbit task or the feature
   the `session` model as the tag's definition.
 
 Each field overrides the shipped default for that field alone; `triggers`
-replaces the whole list. A `[tags.preferences]` table that omits `aliases`,
-`description` or `stale_after_days` keeps the shipped values (aliases
-`preference` and `pref`, the shipped description, stale after 180 days),
-including when only `[tags.preferences.capture]` is set. An explicit
-`aliases = []` clears the aliases; an explicit `stale_after_days` replaces
-180. Omitting `stale_after_days` on any other tag still means the entry
-never goes stale. A `[tags]` table that does not mention `preferences`
-still drops that tag; the shipped action tags stay. A tag with no capture
-rules, shipped or configured, is never captured by the pass, which is how
-`standard` stays on its own routes (§4.6). Capture rules apply only to the
-pass and the prompt hook; a `#scribe` line Daniel types is captured
-whatever its words. Store tags (`tags.json`) take no capture rules (not
-built until seen).
+replaces the whole list. `[tags]` merges with the shipped set (`preferences`,
+`idea`, `standard`): a declared tag that is not shipped is added, and a
+declared shipped tag overrides only the fields it sets and inherits the rest
+(`aliases`, `description`, `stale_after_days`, `action`, `require_quote`,
+`ask_first`, `require_evidence`, and each capture field). For `preferences`,
+omitting `aliases`, `description` or `stale_after_days` — including when only
+`[tags.preferences.capture]` is set, or when `preferences` is not mentioned —
+keeps the shipped values (aliases `preference` and `pref`, the shipped
+description, stale after 180 days). An explicit `aliases = []` clears the
+aliases; an explicit `stale_after_days` replaces 180. Omitting
+`stale_after_days` on any tag that ships no interval still means the entry
+never goes stale. A word the config sets (a tag name, or an alias in an
+`aliases` list the file writes) that a shipped tag also holds is Daniel's.
+The shipped tag loses that alias, or is left out when the word is its name,
+and `tag list` names both tags on stderr. Omitting `aliases` does not claim
+the inherited ones, so another config tag may take one. Two config entries
+that claim one word are `config_invalid`. There is no way to remove a shipped
+tag except by claiming its name. A tag with no capture rules, shipped or
+configured, is never captured by the pass, which is how `standard` stays on
+its own routes (§4.6). Capture rules apply only to the pass and the prompt
+hook; a `#scribe` line Daniel types is captured whatever its words. Store
+tags (`tags.json`) take no capture rules (not built until seen). `tag show`
+reports `config` only for capture fields the file sets, and `shipped` for the
+rest.
 
 **Shipped defaults.**
 
