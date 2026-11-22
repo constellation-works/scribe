@@ -55,12 +55,6 @@ pub fn check_reason(reason: &str) -> Result<()> {
     required_reason(reason)
 }
 
-/// The `reserved_tag` refusal when `tag` is the issue tag: issues are
-/// their own record kind (2_design.md §11.4).
-fn reserved(tag: &str) -> Option<Error> {
-    crate::issue::is_reserved_tag(tag).then(crate::issue::reserved_tag)
-}
-
 fn unknown_tag() -> Error {
     refusal(
         WriteRefusal::TagNotFound,
@@ -282,18 +276,12 @@ impl Store {
         evidence: Option<&str>,
     ) -> Result<crate::TagDef> {
         required(content)?;
-        if let Some(refused) = reserved(tag.as_str()) {
-            return Err(refused);
-        }
         let def = self
             .config()?
             .tags
             .resolve(tag.as_str())
             .cloned()
             .ok_or_else(unknown_tag)?;
-        if let Some(refused) = reserved(def.name.as_str()) {
-            return Err(refused);
-        }
         check_quote(&def, quote)?;
         check_evidence(&def, evidence)?;
         Ok(def)
@@ -327,16 +315,10 @@ impl Store {
         self.prepare_dir(&self.root)?;
         let _lock = self.lock("entry add")?;
         let config = self.config()?;
-        if let Some(refused) = reserved(draft.tag.as_str()) {
-            return Err(refused);
-        }
         let tag = config
             .tags
             .resolve(draft.tag.as_str())
             .ok_or_else(unknown_tag)?;
-        if let Some(refused) = reserved(tag.name.as_str()) {
-            return Err(refused);
-        }
         check_quote(tag, draft.quote.as_deref())?;
         check_evidence(tag, draft.evidence.as_deref())?;
         let (entries, skipped) = self.load_entries()?;

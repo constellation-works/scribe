@@ -20,7 +20,8 @@
       "by default"
     ],
     "criteria": "A standing rule from the user that applies beyond the work at hand.",
-    "not": "A choice about one page or task (it goes on its Orbit task or the feature's 4_decisions.md); an acknowledgement.",
+    "not": "A choice about one page or task; an acknowledgement; a one-off command.",
+    "max_open": 10,
     "origin": {
       "from": {
         "source": "shipped",
@@ -43,6 +44,11 @@
         "line": null
       },
       "not": {
+        "source": "shipped",
+        "file": null,
+        "line": null
+      },
+      "max_open": {
         "source": "shipped",
         "file": null,
         "line": null

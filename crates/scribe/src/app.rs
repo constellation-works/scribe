@@ -9,7 +9,7 @@
 use crate::error::CliError;
 use crate::models::{ClaudeCliModels, allowed_env};
 use crate::tasks::{self, OrbitTasks};
-use scribe_core::{Config, IssueAudit, Label, Provider, Redactor, Store, unresolved_redact_env};
+use scribe_core::{Config, Label, Provider, Redactor, Store, unresolved_redact_env};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -79,9 +79,6 @@ pub(crate) struct Context {
     /// The instruction the running command acts on, for its audit line;
     /// shared by the provider-scoped views of one context.
     instruction: Arc<Mutex<InstructionNote>>,
-    /// The ids an issue write or forget counts against, for its audit
-    /// line (2_design.md §11.4).
-    issue: Arc<Mutex<Option<IssueAudit>>>,
 }
 
 /// The ids of the user's instruction a write ran on (2_design.md §12.4): the
@@ -122,7 +119,6 @@ impl Context {
                 .as_deref()
                 .is_some_and(|e| e == INTERACTIVE_ENTRYPOINT),
             instruction: Arc::default(),
-            issue: Arc::default(),
         })
     }
 
@@ -138,7 +134,6 @@ impl Context {
             provider: Provider::ClaudeCode,
             interactive: false,
             instruction: Arc::default(),
-            issue: Arc::default(),
         }
     }
 
@@ -189,23 +184,6 @@ impl Context {
             .lock()
             .map(|note| note.clone())
             .unwrap_or_default()
-    }
-
-    /// Note what an issue write or forget counts against, as soon as each
-    /// id is known, so a refusal's audit line names what got that far.
-    pub(crate) fn note_issue(&self, verb: &str, update: impl FnOnce(&mut IssueAudit)) {
-        if let Ok(mut note) = self.issue.lock() {
-            let audit = note.get_or_insert_with(|| IssueAudit {
-                verb: verb.to_owned(),
-                ..IssueAudit::default()
-            });
-            update(audit);
-        }
-    }
-
-    /// What the running command noted of the issue it wrote.
-    pub(crate) fn issue_note(&self) -> Option<IssueAudit> {
-        self.issue.lock().ok().and_then(|note| note.clone())
     }
 
     /// The active transcript provider.

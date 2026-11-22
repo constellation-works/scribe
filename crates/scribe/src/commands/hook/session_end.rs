@@ -29,7 +29,6 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
         vec![HookOutcome {
             target: Some(format!("session:{session}")),
             error_code: None,
-            issue: None,
         }]
     } else {
         Vec::new()

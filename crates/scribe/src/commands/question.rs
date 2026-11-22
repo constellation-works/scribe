@@ -41,7 +41,7 @@ Examples:
 pub(crate) enum QuestionCommand {
     /// Answer a question from stored records and Orbit tasks
     ///
-    /// Answers a question from the recorded entries, session records, issues and Orbit tasks, citing each quote.
+    /// Answers a question from the recorded entries, session records and Orbit tasks, citing each quote.
     #[command(after_help = ASK_EXAMPLES)]
     Ask(AskArgs),
 }
@@ -53,8 +53,6 @@ pub(crate) enum KindArg {
     Entry,
     /// Session records only
     Session,
-    /// Issue records only
-    Issue,
 }
 
 /// Arguments to `question ask`.
@@ -111,7 +109,6 @@ pub(super) fn run(command: QuestionCommand, ctx: &Context) -> Result<Output, Cli
                     kind: args.kind.map(|k| match k {
                         KindArg::Entry => RecordKind::Entry,
                         KindArg::Session => RecordKind::Session,
-                        KindArg::Issue => RecordKind::Issue,
                     }),
                     since: args.since,
                 },
@@ -160,11 +157,9 @@ fn answer_with_config<M: Models, T: Tasks + ?Sized>(
             *tag = def.name.clone();
         }
     }
-    let (issues, issues_skipped) = store.issues()?;
     let corpus = Corpus {
         entries: &entries.listing.items,
         sessions: &sessions.listing.items,
-        issues: &issues,
         tags: &config.tags,
         user: &config.user,
     };
@@ -180,7 +175,6 @@ fn answer_with_config<M: Models, T: Tasks + ?Sized>(
     )?;
     let mut skipped = entries.skipped;
     skipped.extend(sessions.skipped);
-    skipped.extend(issues_skipped);
     let context = SessionsContext {
         control: &sessions.control,
         children: &sessions.children,

@@ -45,9 +45,10 @@ fn with_no_capture_config_tag_show_prints_the_shipped_defaults() {
             "route": "propose",
             "triggers": SHIPPED_TRIGGERS,
             "criteria": "A standing rule from the user that applies beyond the work at hand.",
-            "not": "A choice about one page or task (it goes on its Orbit task or the feature's 4_decisions.md); an acknowledgement.",
+            "not": "A choice about one page or task; an acknowledgement; a one-off command.",
+            "max_open": 10,
             "origin": {"from": shipped, "route": shipped, "triggers": shipped,
-                       "criteria": shipped, "not": shipped}
+                       "criteria": shipped, "not": shipped, "max_open": shipped}
         })
     );
     assert_eq!(shown["tag"], "preferences");
@@ -55,17 +56,27 @@ fn with_no_capture_config_tag_show_prints_the_shipped_defaults() {
     // An alias names the same tag.
     assert_eq!(show(&fx, "pref"), shown);
 
-    // The pass writes `idea` entries itself; `standard` ships no rules.
-    let idea = show(&fx, "idea");
-    assert_eq!(idea["capture"]["route"], "write");
-    assert_eq!(idea["capture"]["triggers"][4], "what if we");
-    assert_eq!(idea["action"]["mode"], "free");
+    // `standard` is the other shipped catcher; `idea` is only a config
+    // example (specs/catchers.md).
     let standard = show(&fx, "standard");
+    assert_eq!(standard["capture"]["route"], "propose");
+    assert_eq!(standard["capture"]["from"], "user");
+    assert_eq!(standard["capture"]["triggers"][0], "as a standard");
+    assert_eq!(standard["capture"]["max_open"], 10);
+    assert_eq!(standard["action"]["require_quote"], true);
+    assert_eq!(
+        fx.run(&["tag", "show", "idea", "--json"]).status.code(),
+        Some(1)
+    );
+    // A tag that catches nothing has no cap.
+    config(&fx, "[tags.rituals]\naction = true\n");
+    let rituals = show(&fx, "rituals");
     let none = json!({"source": "none", "file": null, "line": null});
-    for field in ["from", "route", "triggers", "criteria", "not"] {
-        assert_eq!(standard["capture"][field], Value::Null, "{field}");
-        assert_eq!(standard["capture"]["origin"][field], none, "{field}");
+    for field in ["from", "route", "triggers", "criteria", "not", "max_open"] {
+        assert_eq!(rituals["capture"][field], Value::Null, "{field}");
+        assert_eq!(rituals["capture"]["origin"][field], none, "{field}");
     }
+    config(&fx, "");
 
     // Plain: one `<field>\t<value>\t<origin>` line each.
     let plain = text(&fx.ok(&["tag", "show", "preferences"]).stdout);
@@ -81,7 +92,7 @@ fn overriding_one_field_changes_only_that_field_with_its_file_and_line() {
     let before = show(&fx, "preferences");
     let file = config(
         &fx,
-        "[tags.preferences]\naliases = [\"preference\", \"pref\"]\ndescription = \"how the user likes things done\"\nstale_after_days = 180\n\n[tags.preferences.capture]\ncriteria = \"A rule Daniel states for every project.\"\n",
+        "[tags.preferences]\naliases = [\"preference\", \"pref\"]\ndescription = \"A standing rule {user} wants agents to follow.\"\nstale_after_days = 180\n\n[tags.preferences.capture]\ncriteria = \"A rule Daniel states for every project.\"\n",
     );
     let after = show(&fx, "preferences");
     assert_eq!(
@@ -121,7 +132,10 @@ fn overriding_one_field_changes_only_that_field_with_its_file_and_line() {
         json!(["preference", "pref"]),
         "omitted aliases stay the shipped ones"
     );
-    assert_eq!(replaced["description"], "how the user likes things done");
+    assert_eq!(
+        replaced["description"],
+        "A standing rule the user wants agents to follow."
+    );
     assert_eq!(replaced["stale_after_days"], 180);
 }
 
@@ -140,15 +154,23 @@ fn tag_show_is_read_only_and_unknown_tags_are_refused() {
 }
 
 #[test]
-fn from_assistant_and_bad_capture_fields_are_refused_as_config_invalid() {
+fn bad_capture_fields_are_refused_as_config_invalid() {
     for (toml, needle) in [
         (
-            "[tags.preferences.capture]\nfrom = \"assistant\"\n",
-            "from = \"assistant\" is not accepted",
+            "[tags.preferences.capture]\nfrom = \"everyone\"\n",
+            "is not one of: user, assistant, both",
         ),
         (
             "[tags.preferences.capture]\nroute = \"file\"\n",
-            "is not one of: propose, write, agent",
+            "is not one of: propose, write",
+        ),
+        (
+            "[tags.preferences.capture]\nmax_open = 0\n",
+            "max_open: from 1 to 20",
+        ),
+        (
+            "[tags.preferences.capture]\nmax_open = 21\n",
+            "max_open: from 1 to 20",
         ),
         (
             "[tags.preferences.capture]\ntriggers = [\"* idea\"]\n",
@@ -197,7 +219,7 @@ fn a_new_tag_takes_capture_rules_from_config_and_no_issue_tag_ships() {
         .map(|t| (t["name"].as_str().unwrap().to_owned(), t["route"].clone()))
         .collect();
     assert!(routes.contains(&(String::from("rituals"), json!("propose"))));
-    assert!(routes.contains(&(String::from("standard"), Value::Null)));
+    assert!(routes.contains(&(String::from("standard"), json!("propose"))));
     assert!(
         !routes.iter().any(|(name, _)| name == "issue"),
         "no issue tag ships: {routes:?}"
@@ -224,12 +246,15 @@ fn declaring_a_new_tag_keeps_all_shipped_tags_and_their_defaults() {
     let listed = listed(&fx);
     let tags = listed["tags"].as_array().unwrap();
     let names: Vec<&str> = tags.iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["idea", "preferences", "remind", "standard"]);
+    assert_eq!(names, ["preferences", "remind", "standard"]);
 
     let prefs = tags.iter().find(|t| t["name"] == "preferences").unwrap();
     assert_eq!(prefs["stale_after_days"], 180);
     assert_eq!(prefs["aliases"], json!(["preference", "pref"]));
-    assert_eq!(prefs["description"], "how the user likes things done");
+    assert_eq!(
+        prefs["description"],
+        "A standing rule the user wants agents to follow."
+    );
     assert_eq!(prefs["configured"], true);
     assert_eq!(prefs["source"], "config");
     assert_eq!(prefs["route"], "propose");
@@ -249,7 +274,7 @@ fn declaring_a_new_tag_keeps_all_shipped_tags_and_their_defaults() {
     assert_eq!(shown["aliases"], json!(["preference", "pref"]));
     assert_eq!(shown["capture"]["triggers"], json!(SHIPPED_TRIGGERS));
     let shipped = json!({"source": "shipped", "file": null, "line": null});
-    for field in ["from", "route", "triggers", "criteria", "not"] {
+    for field in ["from", "route", "triggers", "criteria", "not", "max_open"] {
         assert_eq!(shown["capture"]["origin"][field], shipped, "{field}");
     }
 }
@@ -262,10 +287,13 @@ fn partial_preferences_overrides_only_set_fields_and_reports_origins() {
     let shown = show(&fx, "preferences");
     assert_eq!(shown["stale_after_days"], 90);
     assert_eq!(shown["aliases"], json!(["preference", "pref"]));
-    assert_eq!(shown["description"], "how the user likes things done");
+    assert_eq!(
+        shown["description"],
+        "A standing rule the user wants agents to follow."
+    );
     assert_eq!(shown["capture"]["triggers"], json!(SHIPPED_TRIGGERS));
     let shipped = json!({"source": "shipped", "file": null, "line": null});
-    for field in ["from", "route", "triggers", "criteria", "not"] {
+    for field in ["from", "route", "triggers", "criteria", "not", "max_open"] {
         assert_eq!(shown["capture"]["origin"][field], shipped, "{field}");
     }
 
@@ -276,7 +304,10 @@ fn partial_preferences_overrides_only_set_fields_and_reports_origins() {
     let updated = show(&fx, "preferences");
     assert_eq!(updated["stale_after_days"], 90);
     assert_eq!(updated["aliases"], json!(["preference", "pref"]));
-    assert_eq!(updated["description"], "how the user likes things done");
+    assert_eq!(
+        updated["description"],
+        "A standing rule the user wants agents to follow."
+    );
     assert_eq!(
         updated["capture"]["criteria"],
         "A standing rule across projects."
@@ -321,7 +352,7 @@ fn a_config_claim_of_a_shipped_word_stays_readable_and_warns() {
         "{stderr}"
     );
     assert_eq!(show(&fx, "standard")["tag"], "rituals");
-    assert_eq!(show(&fx, "idea")["tag"], "idea");
+    assert_eq!(show(&fx, "preference")["tag"], "preferences");
 
     // Two of his own entries still refuse the file.
     config(
@@ -351,7 +382,7 @@ fn the_mac_preferences_and_remind_config_reads_as_the_shipped_preferences_tag() 
         .iter()
         .map(|t| t["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, ["idea", "preferences", "remind", "standard"]);
+    assert_eq!(names, ["preferences", "remind", "standard"]);
     let prefs = tags["tags"]
         .as_array()
         .unwrap()
@@ -360,11 +391,14 @@ fn the_mac_preferences_and_remind_config_reads_as_the_shipped_preferences_tag() 
         .unwrap();
     assert_eq!(prefs["aliases"], json!(["preference", "pref"]));
     assert_eq!(prefs["stale_after_days"], 180);
-    assert_eq!(prefs["description"], "how the user likes things done");
+    assert_eq!(
+        prefs["description"],
+        "A standing rule the user wants agents to follow."
+    );
     assert_eq!(prefs["route"], "propose");
     let shown = show(&fx, "preferences");
     let shipped = json!({"source": "shipped", "file": null, "line": null});
-    for field in ["from", "route", "triggers", "criteria", "not"] {
+    for field in ["from", "route", "triggers", "criteria", "not", "max_open"] {
         assert_eq!(shown["capture"]["origin"][field], shipped, "{field}");
     }
     assert_eq!(show(&fx, "pref")["tag"], "preferences");

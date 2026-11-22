@@ -17,8 +17,9 @@ the value stored before it, `{kind: daniel, name: daniel}`, reads as
 `control.json`, `proposals.json`, issues, `marks.json`, `pickups.json` and
 `audit.jsonl`), and the next write persists `user` at format 23, which a
 format-22 build refuses as too new. `user` is a reserved `--author` name,
-and `daniel` stays one. A tag's `[tags.<name>.capture] from` is `user`;
-`daniel` is still read. Format 22 changes no
+and `daniel` stays one. A tag's `[tags.<name>.capture] from` is `user`
+(phase 2: or `assistant` or `both`, specs/catchers.md); `daniel` is still
+read as `user`. Format 22 changes no
 stored value: it adds `marks.json`, each `#scribe` annotation marker's
 outcome, and admits an entry with `stated_by: {kind: scribe, name:
 annotation}`, scribe's statement of a turn Daniel marked
@@ -85,7 +86,8 @@ user's file could pass for one of Daniel's records.
 <root>/                                  0700
 ├── config.toml                          0600, optional
 ├── entries/<tag>/<tag>-<n>.md           0600, one file per entry
-├── issues/issue-<n>.md                  0600, one file per issue (introduced at format 17)
+├── issues/issue-<n>.md                  0600, one file per issue (formats 17–23; phase 2 converts each to an entry)
+├── pre-issue-<yyyy-mm-dd>/issue-<n>.md   0600, an issue file after its conversion (phase 2)
 ├── sessions/<yyyy>/<mm>/<session-id>.md 0600, one file per session record
 ├── control.json                         0600, optional
 ├── proposals.json                       0600, optional
@@ -210,9 +212,10 @@ Format 16 adds `outcome` (`{state: open|parked|task, reason, task}` or
 `null`), upgraded to `null`. It is set exactly on an entry the session pass
 wrote itself under a `write`-route tag (2_design.md §11.6), and `null` on
 every other entry. Such an entry has `author` and `stated_by` both `{kind:
-scribe, name: session-pass}`, `said: ""`, `content_from` Daniel's user turn
-(`{kind: message, role: user, message, at}`), a cite, scribe's statement as
-content and his verbatim span in `quote`, and `window`, `evidence` and
+scribe, name: session-pass}`, `said: ""`, `content_from` the turn it caught
+(`{kind: message, role, message, at}`: Daniel's user turn, or from phase 2
+an assistant turn under a catcher whose `from` reads it), a cite, scribe's
+statement as content and that turn's verbatim span in `quote`, and `window`, `evidence` and
 `approved_by` `null`. `open` has `reason` and `task` `null`; `parked` has
 Daniel's parking words verbatim in `reason` (redacted text) and `task`
 `null`; `task` has a task id (at most 64 characters) in `task` and `reason`
@@ -268,12 +271,19 @@ the current header and log (see **Format 4** below); later steps then apply.
 
 ## Issue files
 
+Phase 2 (2_design.md §15.9) removed issue records. Under the store lock,
+the first write converts each `issues/issue-<n>.md` to one entry under the
+tag `issue` with no model call and moves the file to
+`pre-issue-<yyyy-mm-dd>/`; a file that does not parse stays and is tried
+again ([specs/catchers.md](catchers.md#stored-issues-become-issue-entries)).
+`issue` is no longer a reserved tag. The shape below is what that
+conversion reads.
+
 An issue (`issues/issue-<n>.md`, format 17 and later only; an older format
 in one is `store_corrupt`) is the memory of an incident across projects and
 what fixed it. It is a record file as above with `kind: issue`, written by
-agents through `scribe issue add|occur|update|move` and never approved; the
-tag `issue` is reserved for it (an entry under it, by `entry add` or a
-`#scribe issue:` line, is refused `reserved_tag`, naming the issue commands).
+agents through the former `scribe issue add|occur|update|move` and never
+approved; until phase 2 the tag `issue` was reserved for it.
 Frontmatter keys, every one required and no other admitted: `id`, `title`
 (1–120 characters), `status` (`open`, `mitigated`, `resolved` or
 `forgotten`), `signature` (1–5 symptom strings, 1–200 characters each;
@@ -598,7 +608,8 @@ character other than a newline or tab, are `config_invalid`. Neither key
 changes a stored record.
 
 The shipped tags are `preferences` (aliases `preference`, `pref`; stale after
-180 days) and the action tags `idea` and `standard` (`require_quote`). A
+180 days) and the action tag `standard` (`require_quote`), both catchers
+([specs/catchers.md](catchers.md)); `idea` stopped shipping in phase 2. A
 `[tags]` table merges with that set: declaring a tag that is not shipped adds
 it, and declaring a shipped tag overrides only the fields it sets (`aliases`,
 `description`, `stale_after_days`, `action`, `require_quote`, `ask_first`,
@@ -718,7 +729,7 @@ exits 0.
   `settled_by` `null`, `settled_author` `{kind: scribe, name: tag-retired}`,
   and `closed_reason` `tag_retired`. Each close writes one audit line naming
   its proposal id; open candidates under tags in the table (including
-  `preferences` and `idea`) and non-candidate proposals are untouched. The
+  `preferences` and `standard`) and non-candidate proposals are untouched. The
   closed candidate keeps its reserved `older` entry id and stays in the
   suppression set like any rejection.
 - **Modes and owners.** Every load refuses the root, a subdirectory, a
@@ -827,7 +838,9 @@ exits 0.
   `not`), each overriding the shipped rule of the same name alone;
   `triggers` replaces the shipped list whole (at most 32, each at most 120
   characters), `criteria` and `not` take at most 300 characters, and
-  `from = "assistant"` is refused `config_invalid`. A tag scribe ships no
+  `from = "assistant"` is refused `config_invalid` (phase 2 accepts
+  `assistant` and `both`, adds `max_open`, 1–20, and warns on the removed
+  `route = "agent"`, which then catches nothing). A tag scribe ships no
   rules for must give `from`, `route` and `triggers`. A pass claim is
   written only under the lock, after its turn is checked again to fire a
   trigger of its tag under the config then on disk; the recomputed
@@ -1024,9 +1037,11 @@ exits 0.
   line, with neither instruction id, a format-3 line, with no `issue`, and
   a format-4 line, with no `trigger` or `request_sha256`, still read. A line
   that cannot be written is a warning and never changes the command's
-  result. `issue stats` reads the log without the lock and skips a line
-  that does not parse (a torn last line), counting it; a line of a newer
-  format refuses the read (`store_too_new`).
+  result. `issue stats` read the log without the lock and skipped a line
+  that did not parse (a torn last line), counting it; a line of a newer
+  format refuses the read (`store_too_new`). Phase 2 removes `issue stats`
+  and the `fire`, and writes `issue: null` on every line; earlier lines
+  with an `issue` object still read, as history nothing counts.
 
 ## Known gaps
 

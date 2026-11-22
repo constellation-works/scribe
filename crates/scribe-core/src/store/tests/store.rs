@@ -74,8 +74,8 @@ fn a_missing_root_reads_as_an_empty_store() {
     let tags = store.list_tags().unwrap();
     assert_eq!(
         tags.tags.len(),
-        3,
-        "preferences and the shipped action tags, with no entries"
+        2,
+        "preferences and standard, with no entries"
     );
     let err = store.entry(&"preferences-1".parse().unwrap()).unwrap_err();
     assert_eq!(err.code(), "entry_not_found");
@@ -901,7 +901,7 @@ fn close_retired_candidates_respects_config_shipped_and_store_tags() {
     let proposals = vec![
         mk(1, "decisions"),
         mk(2, "preferences"),
-        mk(3, "idea"),
+        mk(3, "standard"),
         mk(4, "custom"),
         mk(5, "notes"),
     ];

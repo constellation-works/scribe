@@ -1,5 +1,4 @@
-NAME         ENTRIES  STALE DAYS  ALIASES          DESCRIPTION                                                         SOURCE  ACTION      RETIRED  REJECTED  ROUTE
-idea               0           -  -                a future consideration worth revisiting                             config  free              0         0  write
-notes              1           -  note             Agent notes                                                         store   -                 -         -  -
-preferences        0         180  preference,pref  how the user likes things done                                      config  -                 -         -  propose
-standard           0           -  -                a rule change for the constellation standards, in the user's words  config  free,quote        0         0  -
+NAME         ENTRIES  STALE DAYS  ALIASES          DESCRIPTION                                                                               SOURCE  ACTION      RETIRED  REJECTED  ROUTE
+notes              1           -  note             Agent notes                                                                               store   -                 -         -  -
+preferences        0         180  preference,pref  A standing rule the user wants agents to follow.                                          config  -                 -         -  propose
+standard           0           -  -                A rule for how code or docs are written across the user's projects, in the user's words.  config  free,quote        0         0  propose

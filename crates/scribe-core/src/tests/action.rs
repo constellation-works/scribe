@@ -7,7 +7,6 @@ use crate::action::{self, CANCEL_WINDOW, Pickup, STUCK_AFTER};
 use crate::ask::{self, Corpus, Question, Scope};
 use crate::entry::{Entry, EntryStatus, Speaker, TagName};
 use crate::record::{Author, AuthorName};
-use crate::tag::TagTable;
 use crate::transcript::Message;
 use time::Duration;
 
@@ -65,7 +64,7 @@ fn state_reports_its_own_pickups_oldest_first_and_any_rejection() {
 
 #[test]
 fn stuck_counts_active_unpicked_action_entries_past_the_age_per_tag() {
-    let tags = TagTable::defaults();
+    let tags = crate::tests::tags_with_idea();
     let mut retired = entry("idea-3", T0);
     retired.status = EntryStatus::Retired;
     let picked = entry("idea-4", T0);
@@ -90,7 +89,7 @@ fn stuck_counts_active_unpicked_action_entries_past_the_age_per_tag() {
 
 #[test]
 fn tag_counts_count_retired_and_rejected_agent_entries_per_action_tag() {
-    let tags = TagTable::defaults();
+    let tags = crate::tests::tags_with_idea();
     let mut retired = agent("standard-1");
     retired.status = EntryStatus::Retired;
     let mut forgotten = agent("standard-2");
@@ -142,12 +141,11 @@ fn a_quote_is_found_only_in_daniels_own_typed_words() {
 
 #[test]
 fn ask_leaves_action_entries_out_unless_the_scope_names_their_tag() {
-    let tags = TagTable::defaults();
+    let tags = crate::tests::tags_with_idea();
     let entries = [entry("preferences-1", T0), entry("idea-1", T0)];
     let corpus = Corpus {
         entries: &entries,
         sessions: &[],
-        issues: &[],
         tags: &tags,
         user: &crate::voice::UserName::default(),
     };

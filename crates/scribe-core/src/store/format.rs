@@ -1782,20 +1782,16 @@ pub(super) fn decode_entry(
                 && entry.window.is_none();
             (direct || approved_assistant) && entry.stated_by.is_none()
         }
-        // An idea the session pass wrote itself (format 16): scribe's
-        // statement of one of Daniel's turns as content, his words in
-        // `quote` until it is forgotten, nothing typed, and an outcome.
+        // An entry a write-route catcher had the session pass write itself
+        // (format 16, 2_design.md §15.2): scribe's statement of one turn as
+        // content, that turn's words in `quote` until it is forgotten,
+        // nothing typed, and an outcome. The turn is the user's or, under a
+        // catcher whose `from` reads the assistant, the assistant's.
         crate::AuthorKind::Scribe => {
             entry.author == Author::session_pass()
                 && entry.stated_by.as_ref() == Some(&Author::session_pass())
                 && entry.cite.is_some()
-                && matches!(
-                    entry.content_from,
-                    crate::ContentFrom::Message {
-                        role: crate::Speaker::User,
-                        ..
-                    }
-                )
+                && matches!(entry.content_from, crate::ContentFrom::Message { .. })
                 && entry.said.is_empty()
                 && entry.window.is_none()
                 && entry.evidence.is_none()

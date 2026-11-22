@@ -83,14 +83,6 @@ impl Store {
     /// holds the name or an alias.
     pub fn check_new_tag(&self, tag: &StoreTag) -> Result<()> {
         check_description(&tag.description)?;
-        if crate::issue::is_reserved_tag(tag.name.as_str())
-            || tag
-                .aliases
-                .iter()
-                .any(|a| crate::issue::is_reserved_tag(a.as_str()))
-        {
-            return Err(crate::issue::reserved_tag());
-        }
         let configured = self.config_only()?.tags;
         if let Some(held) = configured.resolve(tag.name.as_str()) {
             let message = if held.name == tag.name {

@@ -3,11 +3,10 @@
 
 use super::color::{self, Role};
 use super::payload::{
-    self, AskPayload, EntryPayload, FoundPayload, HitPayload, HookJson, HookReply,
-    HookSpecificJson, IssuePayload, IssueStatsPayload, OccurrencePayload, OriginPayload,
-    PassPayload, PassReport, PluginReply, ProposalPayload, Record, Records, ScanReport,
-    SessionPayload, TagPayload, TagShowPayload, TaskPayload, TranscriptPayload, TreeRow,
-    WarningPayload,
+    AskPayload, EntryPayload, FoundPayload, HitPayload, HookJson, HookReply, HookSpecificJson,
+    OriginPayload, PassPayload, PassReport, PluginReply, ProposalPayload, Record, Records,
+    ScanReport, SessionPayload, TagPayload, TagShowPayload, TaskPayload, TranscriptPayload,
+    TreeRow, WarningPayload,
 };
 use super::sink::{OutputMode, Sink};
 use super::table::{self, Align, Cell, Column};
@@ -94,12 +93,6 @@ const SCAN_COLUMNS: [Column; 5] = [
     col("NEWER", Align::Left, false),
 ];
 
-const ISSUE_STATS_COLUMNS: [Column; 3] = [
-    col("COUNT", Align::Left, false),
-    col("VALUE", Align::Right, false),
-    col("MEANS", Align::Left, false),
-];
-
 const MEMORY_RULE_COLUMNS: [Column; 4] = [
     col("RULE", Align::Left, false),
     col("VALUE", Align::Left, false),
@@ -128,17 +121,6 @@ const TRANSCRIPT_COLUMNS: [Column; 7] = [
     col("STARTED", Align::Left, false),
     col("ENDED", Align::Left, false),
     col("FIRST_PROMPT", Align::Left, true),
-];
-
-const ISSUE_COLUMNS: [Column; 8] = [
-    col("ID", Align::Left, false),
-    col("STATUS", Align::Left, false),
-    col("OCCURRENCES", Align::Right, false),
-    col("PROJECTS", Align::Left, false),
-    col("HOSTS", Align::Left, false),
-    col("UPDATED", Align::Left, false),
-    col("AUTHOR", Align::Left, false),
-    col("TITLE", Align::Left, true),
 ];
 
 const HIT_COLUMNS: [Column; 6] = [
@@ -199,7 +181,6 @@ pub(crate) fn list(
             Records::Transcripts(items) => {
                 write_json(out, &envelope("transcripts", items, total, warnings))
             }
-            Records::Issues(items) => write_json(out, &envelope("issues", items, total, warnings)),
             Records::Memory(items) => write_json(out, &envelope("items", items, total, warnings)),
         };
     }
@@ -246,10 +227,6 @@ pub(crate) fn list(
         Records::Transcripts(items) => (
             TRANSCRIPT_COLUMNS.to_vec(),
             items.iter().map(transcript_row).collect(),
-        ),
-        Records::Issues(items) => (
-            ISSUE_COLUMNS.to_vec(),
-            items.iter().map(issue_row).collect(),
         ),
         Records::Memory(items) => (
             MEMORY_COLUMNS.to_vec(),
@@ -466,9 +443,6 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
             Ok(())
         }
         (OutputMode::Table, Record::Transcript(transcript)) => transcript_detail(out, transcript),
-        (OutputMode::Json, Record::Issue(issue)) => write_json(out, issue),
-        (OutputMode::Plain, Record::Issue(issue)) => issue_plain(out, issue),
-        (OutputMode::Table, Record::Issue(issue)) => issue_detail(out, issue),
         (OutputMode::Json, Record::Memory(item)) => write_json(out, item),
         (OutputMode::Plain, Record::Memory(item)) => {
             writeln!(out, "{}", plain_line(&memory_row(item)))?;
@@ -797,7 +771,12 @@ pub(super) fn entry_metadata(out: &mut dyn Write, e: &EntryPayload, color: bool)
         // Output carries no config, so it names the user generically.
         let user = scribe_core::voice::UserName::default();
         let whose = if e.outcome.is_some() {
-            scribe_core::ask::captured_whose(&user)
+            let speaker = if e.content_from.role == Some("assistant") {
+                scribe_core::Speaker::Assistant
+            } else {
+                scribe_core::Speaker::User
+            };
+            scribe_core::ask::captured_whose(&user, speaker)
         } else {
             scribe_core::ask::stated_whose(&user)
         };
@@ -946,6 +925,12 @@ fn tag_rules(out: &mut dyn Write, t: &TagShowPayload, table: bool) -> io::Result
             "not",
             one_line(c.not.as_deref().unwrap_or("-")),
             origin(&c.origin.not),
+        ),
+        (
+            "max_open",
+            c.max_open
+                .map_or_else(|| String::from("-"), |n| n.to_string()),
+            origin(&c.origin.max_open),
         ),
     ];
     for (label, value, from) in rows {
@@ -1356,81 +1341,6 @@ pub(crate) fn scan(out: &mut dyn Write, sink: &Sink, report: &ScanReport) -> io:
     }
 }
 
-/// `issue stats`: one row per count, then the two proxy ratios as
-/// `<numerator>/<denominator> (<value>)`, `-` with nothing to divide; or
-/// the JSON object.
-pub(crate) fn issue_stats(
-    out: &mut dyn Write,
-    sink: &Sink,
-    payload: &IssueStatsPayload,
-) -> io::Result<()> {
-    if sink.mode == OutputMode::Json {
-        return write_json(out, payload);
-    }
-    let s = &payload.0;
-    let count = |name: &str, n: u64, means: &str| {
-        vec![
-            Cell::plain(name.to_owned()),
-            Cell::plain(n.to_string()),
-            Cell::plain(means.to_owned()),
-        ]
-    };
-    let proxy = |name: &str, parts: Option<(u64, u64)>, means: &str| {
-        let value = parts.map_or_else(
-            || String::from("-"),
-            |(n, d)| format!("{n}/{d} ({:.3})", payload::ratio(n, d)),
-        );
-        vec![
-            Cell::plain(name.to_owned()),
-            Cell::plain(value),
-            Cell::plain(format!("proxy: {means}")),
-        ]
-    };
-    let rows = vec![
-        count(
-            "fires",
-            s.fires,
-            "issue trigger fires on the user's typed turns",
-        ),
-        count(
-            "fires_with_write",
-            s.fires_with_write,
-            "fires followed by an issue write on the same turn",
-        ),
-        count("writes", s.writes, "issue add and occur writes"),
-        count(
-            "writes_without_fire",
-            s.writes_without_fire,
-            "writes whose request turn no fire matched",
-        ),
-        count("writes_forgotten", s.writes_forgotten, "later forgotten"),
-        count(
-            "writes_moved",
-            s.writes_moved,
-            "later moved to another issue",
-        ),
-        count(
-            "writes_withdrawn",
-            s.writes_withdrawn,
-            "forgotten or moved, each counted once",
-        ),
-        proxy("precision", s.precision(), payload::PRECISION_MEANS),
-        proxy(
-            "trigger_yield",
-            s.trigger_yield(),
-            payload::TRIGGER_YIELD_MEANS,
-        ),
-    ];
-    match sink.mode {
-        OutputMode::Table => out.write_all(
-            table::render(&ISSUE_STATS_COLUMNS, &rows, sink.width, sink.color).as_bytes(),
-        ),
-        OutputMode::Plain | OutputMode::Json => rows
-            .iter()
-            .try_for_each(|row| writeln!(out, "{}", plain_line(row))),
-    }
-}
-
 fn pass_row(p: &PassPayload) -> Vec<Cell> {
     vec![
         Cell::plain(p.session.clone()),
@@ -1565,13 +1475,14 @@ fn proposal_rows(p: &ProposalPayload, mode: OutputMode) -> Vec<Vec<Cell>> {
 /// Where `REASON` sits in [`PROPOSAL_COLUMNS`].
 const PROPOSAL_REASON_COLUMN: usize = 6;
 
-/// `The user's words: "<quote>"` for a candidate carrying scribe's statement.
+/// `The user's words: "<quote>"` (or the assistant's) for a candidate
+/// carrying scribe's statement.
 fn stated_candidate_quote(p: &ProposalPayload) -> Option<String> {
     let candidate = p.candidate.as_ref()?;
     candidate.statement.as_ref()?;
     Some(format!(
         "{} \"{}\"",
-        scribe_core::ask::stated_quote_label(&scribe_core::voice::UserName::default()),
+        scribe_core::ask::words_label(&scribe_core::voice::UserName::default(), candidate.role),
         one_line(&candidate.quote)
     ))
 }
@@ -1657,127 +1568,6 @@ fn hit_row(h: &HitPayload, mode: OutputMode) -> Vec<Cell> {
 
 /// The widest title a hit's table row shows.
 const TITLE_CELL_CHARS: usize = 40;
-
-fn issue_row(i: &IssuePayload) -> Vec<Cell> {
-    vec![
-        Cell::plain(i.id.clone()),
-        Cell {
-            text: i.status.to_owned(),
-            role: if matches!(i.status, "open" | "mitigated") {
-                Role::Neutral
-            } else {
-                Role::Muted
-            },
-        },
-        Cell::plain(i.occurrences.len().to_string()),
-        Cell::plain(joined(&i.projects)),
-        Cell::plain(joined(&i.hosts)),
-        Cell::plain(timestamp(i.updated)),
-        Cell::plain(author(&i.author)),
-        Cell::plain(one_line(&i.title)),
-    ]
-}
-
-/// An occurrence's state beside its number: `recurred after fix`, `moved
-/// from <ref>`, both, or `-`.
-fn occurrence_note(o: &OccurrencePayload) -> String {
-    let mut notes = Vec::new();
-    if o.recurred {
-        notes.push(String::from("recurred after fix"));
-    }
-    if let Some(from) = &o.moved_from {
-        notes.push(format!("moved from {from}"));
-    }
-    if notes.is_empty() {
-        String::from("-")
-    } else {
-        notes.join("; ")
-    }
-}
-
-/// `issue show` as lines: the list's row, then one tab-separated line per
-/// header field and per occurrence, each labelled by its first field.
-/// Error lines are labelled the agent's evidence.
-fn issue_plain(out: &mut dyn Write, i: &IssuePayload) -> io::Result<()> {
-    writeln!(out, "{}", plain_line(&issue_row(i)))?;
-    writeln!(out, "signature\t{}", one_line(&i.signature.join(" | ")))?;
-    writeln!(out, "cause\t{}", one_line(&i.cause))?;
-    writeln!(out, "fix\t{}", one_line(&i.fix))?;
-    for o in &i.occurrences {
-        writeln!(
-            out,
-            "occurrence\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-            o.n,
-            o.date,
-            o.host,
-            o.project,
-            o.session,
-            occurrence_note(o),
-            one_line(&o.summary)
-        )?;
-        writeln!(out, "user_asked\t{}\t{}", o.n, one_line(&o.request))?;
-        for line in &o.error_lines {
-            writeln!(out, "agent_evidence\t{}\t{}", o.n, one_line(line))?;
-        }
-        writeln!(out, "occurrence_cause\t{}\t{}", o.n, one_line(&o.cause))?;
-        writeln!(out, "occurrence_fix\t{}\t{}", o.n, one_line(&o.fix))?;
-    }
-    Ok(())
-}
-
-/// `issue show` for a person: the header, then each occurrence, newest
-/// first. Never truncated.
-fn issue_detail(out: &mut dyn Write, i: &IssuePayload) -> io::Result<()> {
-    field(out, "id", &i.id)?;
-    field(out, "title", or_dash(&i.title))?;
-    field(out, "status", i.status)?;
-    field(out, "signature", &joined_lines(&i.signature))?;
-    field(out, "projects", &joined(&i.projects))?;
-    field(out, "hosts", &joined(&i.hosts))?;
-    field(out, "topics", &joined(&i.topics))?;
-    field(out, "related", &joined(&i.related))?;
-    field(out, "author", &author(&i.author))?;
-    field(
-        out,
-        "updated_by",
-        &i.updated_by.as_ref().map_or_else(|| "-".to_owned(), author),
-    )?;
-    field(out, "created", &timestamp(i.created))?;
-    field(out, "updated", &timestamp(i.updated))?;
-    field(out, "cause", or_dash(&i.cause))?;
-    field(out, "fix", or_dash(&i.fix))?;
-    for o in &i.occurrences {
-        writeln!(out)?;
-        field(
-            out,
-            "occurrence",
-            &format!("{}. {} — {}, {}", o.n, o.date, o.host, o.project),
-        )?;
-        field(out, "note", &occurrence_note(o))?;
-        field(out, "session", &o.session)?;
-        field(out, "message", &o.request_message)?;
-        field(out, "author", &author(&o.author))?;
-        field(out, "summary", &o.summary)?;
-        field(out, "user_asked", &format!("\"{}\"", o.request))?;
-        // The agent's evidence: never checked against the transcript.
-        field(out, "agent_evidence", &joined_lines(&o.error_lines))?;
-        field(out, "cause", &o.cause)?;
-        field(out, "fix", &o.fix)?;
-        field(out, "links", &joined(&o.links))?;
-    }
-    for g in &i.gone {
-        writeln!(out)?;
-        field(
-            out,
-            "gone",
-            &match &g.to {
-                Some(to) => format!("{}. {} to {to}", g.n, g.reason),
-                None => format!("{}. {}", g.n, g.reason),
-            },
-        )?;
-    }
-    Ok(())
-}
 
 fn transcript_row(t: &TranscriptPayload) -> Vec<Cell> {
     vec![

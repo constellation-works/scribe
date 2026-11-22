@@ -76,6 +76,7 @@ fn agent_entry_verbs_record_authors_redact_and_audit_only_changes() {
 #[test]
 fn entry_add_refuses_a_statement_an_active_entry_already_covers() {
     let fx = Fixture::new();
+    fx.config(support::IDEA_CATCHER);
     let statement = "use rg in scripts today";
     let add = |tag: &str, project: Option<&str>, words: &str, as_json: bool| {
         let mut args = vec!["entry", "add", "--tag", tag, "--author", "opus"];
@@ -1349,7 +1350,7 @@ fn stored_remind_and_finding_entries_stay_readable_searchable_and_asked_without_
         .iter()
         .map(|t| t["name"].as_str().unwrap())
         .collect();
-    assert_eq!(tag_names, ["idea", "preferences", "standard"]);
+    assert_eq!(tag_names, ["preferences", "standard"]);
 
     // Seed entries under `finding` and `remind` via a temporary config, then
     // remove config.toml so neither tag is configured.

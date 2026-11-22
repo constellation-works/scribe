@@ -15,23 +15,6 @@
     {
       "author": null,
       "source": "config",
-      "name": "idea",
-      "aliases": [],
-      "description": "a future consideration worth revisiting",
-      "stale_after_days": null,
-      "configured": true,
-      "entries": 0,
-      "action": {
-        "mode": "free",
-        "require_quote": false,
-        "retired": 0,
-        "rejected": 0
-      },
-      "route": "write"
-    },
-    {
-      "author": null,
-      "source": "config",
       "name": "preferences",
       "aliases": [
         "preference",
@@ -61,7 +44,7 @@
       "source": "config",
       "name": "standard",
       "aliases": [],
-      "description": "a rule change for the constellation standards, in the user's words",
+      "description": "A rule for how code or docs are written across the user's projects, in the user's words.",
       "stale_after_days": null,
       "configured": true,
       "entries": 0,
@@ -71,10 +54,10 @@
         "retired": 0,
         "rejected": 0
       },
-      "route": null
+      "route": "propose"
     }
   ],
-  "total": 5,
+  "total": 4,
   "truncated": false,
   "warnings": []
 }

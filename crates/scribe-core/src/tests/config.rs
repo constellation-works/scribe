@@ -43,7 +43,7 @@ env = ["GITHUB_TOKEN", "ANTHROPIC_API_KEY"]
     let names: Vec<&str> = config.tags.tags().iter().map(|t| t.name.as_str()).collect();
     assert_eq!(
         names,
-        ["idea", "preferences", "rituals", "standard"],
+        ["preferences", "rituals", "standard"],
         "a [tags] table merges with the shipped tags"
     );
     assert_eq!(
@@ -198,7 +198,9 @@ fn action_tags_come_from_config_and_shipped_ones_can_be_retuned() {
             .unwrap()
             .description
             .as_deref(),
-        Some("a rule change for the constellation standards, in {user}'s words")
+        Some(
+            "A rule for how code or docs are written across {user}'s projects, in {user}'s words."
+        )
     );
     assert!(action("standard").is_some() && action("idea").is_some());
     assert!(
@@ -275,7 +277,7 @@ fn a_partial_preferences_table_keeps_shipped_aliases_description_and_stale_days(
     assert_eq!(prefs.aliases, shipped.aliases);
     assert_eq!(
         prefs.description.as_deref(),
-        Some("how {user} likes things done")
+        Some("A standing rule {user} wants agents to follow.")
     );
     assert_eq!(prefs.stale_after_days, std::num::NonZeroU32::new(180));
     assert_eq!(
@@ -315,7 +317,7 @@ fn a_partial_preferences_table_keeps_shipped_aliases_description_and_stale_days(
 
     let remind = Config::parse("[tags.remind]\naction = true\n").unwrap();
     let names: Vec<&str> = remind.tags.tags().iter().map(|t| t.name.as_str()).collect();
-    assert_eq!(names, ["idea", "preferences", "remind", "standard"]);
+    assert_eq!(names, ["preferences", "remind", "standard"]);
     assert_eq!(remind.tags.resolve("preferences"), Some(&shipped));
     assert!(remind.tag_warnings.is_empty());
     assert!(
@@ -344,7 +346,7 @@ fn a_shipped_word_yields_to_config_and_two_config_entries_do_not() {
     assert_eq!(prefs.stale_after_days, std::num::NonZeroU32::new(180));
     assert_eq!(
         prefs.description.as_deref(),
-        Some("how {user} likes things done")
+        Some("A standing rule {user} wants agents to follow.")
     );
     assert_eq!(prefs.capture, CaptureRules::shipped("preferences"));
     assert_eq!(
@@ -352,7 +354,7 @@ fn a_shipped_word_yields_to_config_and_two_config_entries_do_not() {
         ["shipped tag preferences alias pref is claimed by config tag rituals"]
     );
     assert!(alias_of_shipped.tags.resolve("standard").is_some());
-    assert!(alias_of_shipped.tags.resolve("idea").is_some());
+    assert!(alias_of_shipped.tags.resolve("idea").is_none());
 
     let name_of_shipped = Config::parse("[tags.rituals]\naliases = [\"standard\"]\n").unwrap();
     assert_eq!(
@@ -371,7 +373,7 @@ fn a_shipped_word_yields_to_config_and_two_config_entries_do_not() {
             .is_none()
     );
     assert!(name_of_shipped.tags.resolve("preferences").is_some());
-    assert!(name_of_shipped.tags.resolve("idea").is_some());
+    assert!(name_of_shipped.tags.resolve("idea").is_none());
     assert_eq!(
         name_of_shipped.tag_warnings,
         ["shipped tag standard is claimed by config tag rituals"]
@@ -417,7 +419,7 @@ fn a_shipped_word_yields_to_config_and_two_config_entries_do_not() {
     .unwrap();
     assert!(mac.tag_warnings.is_empty(), "{:?}", mac.tag_warnings);
     let names: Vec<&str> = mac.tags.tags().iter().map(|t| t.name.as_str()).collect();
-    assert_eq!(names, ["idea", "preferences", "remind", "standard"]);
+    assert_eq!(names, ["preferences", "remind", "standard"]);
     let shipped = TagTable::shipped_preferences().unwrap();
     let prefs = mac.tags.resolve("preferences").unwrap();
     assert_eq!(prefs.aliases, shipped.aliases);
@@ -426,10 +428,8 @@ fn a_shipped_word_yields_to_config_and_two_config_entries_do_not() {
     assert_eq!(prefs.action, None);
     assert!(!prefs.require_evidence);
     assert_eq!(prefs.capture, shipped.capture);
-    assert_eq!(
-        mac.tags.resolve("idea").unwrap(),
-        &TagTable::shipped_action("idea").unwrap()
-    );
+    assert!(mac.tags.resolve("idea").is_none());
+    assert!(TagTable::shipped_action("idea").is_none());
     assert_eq!(
         mac.tags.resolve("standard").unwrap(),
         &TagTable::shipped_action("standard").unwrap()
@@ -451,10 +451,6 @@ fn a_shipped_word_yields_to_config_and_two_config_entries_do_not() {
 #[test]
 fn bad_capture_rules_are_refused_naming_the_field() {
     for (toml, needle) in [
-        (
-            "[tags.preferences.capture]\nfrom = \"assistant\"\n",
-            "from = \"assistant\" is not accepted",
-        ),
         ("[tags.preferences.capture]\nfrom = \"robot\"\n", "from"),
         ("[tags.preferences.capture]\nroute = \"file\"\n", "route"),
         (

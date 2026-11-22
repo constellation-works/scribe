@@ -30,7 +30,7 @@
 //! repeats the trigger match under its lock. A claim under a `propose` tag
 //! opens a candidate proposal; one under a `write` tag (`idea`, §11.6) is
 //! written by the store as an active entry the pass authors, with its
-//! outcome, at most [`MAX_IDEAS`] per session per invocation.
+//! outcome, at most [`MAX_COLLECTED`] per session per invocation.
 //!
 //! The pass writes no other entries, whatever the transcript holds. No I/O
 //! (STD-02 R5).
@@ -54,9 +54,8 @@ use time::OffsetDateTime;
 mod candidates;
 #[cfg(test)]
 pub(crate) use candidates::covers_statement;
-pub(crate) use candidates::own_lines;
 pub use candidates::{
-    MAX_CANDIDATES, MAX_IDEAS, MAX_OPEN_CANDIDATES, PassClaim, candidate_drafts,
+    MAX_CANDIDATES, MAX_COLLECTED, MAX_OPEN_CANDIDATES, PassClaim, candidate_drafts,
     candidate_exclusions, capture_request, write_exclusions,
 };
 pub(crate) use candidates::{admission, is_marker, own_marked_span, own_span, statement_tokens};

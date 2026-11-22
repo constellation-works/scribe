@@ -56,7 +56,6 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
         reply.outcomes.push(HookOutcome {
             target: Some(format!("session:{session}")),
             error_code: Some(PROVENANCE_FAILED),
-            issue: None,
         });
         return Ok(Output::Hook(reply));
     }
@@ -125,7 +124,6 @@ fn mark_due(
                 return Ok(vec![HookOutcome {
                     target: Some(format!("session:{session}")),
                     error_code: Some(PROVENANCE_FAILED),
-                    issue: None,
                 }]);
             }
         }
@@ -145,7 +143,6 @@ fn mark_due(
         vec![HookOutcome {
             target: Some(format!("session:{session}")),
             error_code: None,
-            issue: None,
         }]
     } else {
         Vec::new()
@@ -178,7 +175,6 @@ fn fill_cites(
             return Ok(vec![HookOutcome {
                 target: Some(format!("session:{session}")),
                 error_code: Some(PROVENANCE_FAILED),
-                issue: None,
             }]);
         }
     }
@@ -196,7 +192,6 @@ fn fill_cites(
         .map(|id| HookOutcome {
             target: Some(id.to_string()),
             error_code: None,
-            issue: None,
         })
         .collect())
 }

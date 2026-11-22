@@ -1,9 +1,0 @@
-fires	2	issue trigger fires on the user's typed turns
-fires_with_write	1	fires followed by an issue write on the same turn
-writes	3	issue add and occur writes
-writes_without_fire	2	writes whose request turn no fire matched
-writes_forgotten	1	later forgotten
-writes_moved	1	later moved to another issue
-writes_withdrawn	2	forgotten or moved, each counted once
-precision	1/3 (0.333)	proxy: writes neither forgotten nor moved / writes
-trigger_yield	1/2 (0.500)	proxy: fires that led to a write / fires

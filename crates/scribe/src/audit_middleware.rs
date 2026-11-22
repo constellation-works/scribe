@@ -15,8 +15,7 @@
 //! instruction its session and turn ids: never argument values or error text,
 //! which can carry entry contents or paths (STD-05 R13).
 //!
-//! A hook run writes one line per record it wrote or refused, and one per
-//! `issue` trigger fire (two `#scribe`
+//! A hook run writes one line per record it wrote or refused (two `#scribe`
 //! lines in one prompt are two lines in the log), and none when it changed
 //! nothing; a session pass one per session passed (a `session catalog` also one
 //! for the switch it wrote, unless a window failed: a failed catalog is one
@@ -26,8 +25,8 @@
 //! nothing; a direct write verb (`entry`, `tag` and `proposal` writes,
 //! `session activate|deactivate`) one when it changed the record and none
 //! when it did not: the `Stop` hook runs after
-//! every reply and usually has nothing to do, and a prompt with neither
-//! `#scribe` nor an `issue` trigger fire is not a mutation.
+//! every reply and usually has nothing to do, and a prompt with no
+//! `#scribe` line is not a mutation.
 //!
 //! The audit log is a side channel, so it fails open (STD-02 R31): a line that
 //! cannot be written never fails the command that already ran, and is reported
@@ -37,7 +36,7 @@
 
 use crate::error::CliError;
 use crate::output::{Output, Record};
-use scribe_core::{AuditEvent, AuditStatus, IssueAudit, Store};
+use scribe_core::{AuditEvent, AuditStatus, Store};
 use std::time::Instant;
 use time::OffsetDateTime;
 
@@ -56,8 +55,6 @@ struct Line {
     status: AuditStatus,
     target: Option<String>,
     error_code: Option<&'static str>,
-    /// What the line counts against when it is a hook's issue forget.
-    issue: Option<IssueAudit>,
 }
 
 /// What a write verb names before it runs, so a refused write is still
@@ -95,7 +92,6 @@ pub(crate) struct AuditGuard<'a> {
     lines: Vec<Line>,
     author: Option<String>,
     instruction: crate::app::InstructionNote,
-    issue: Option<IssueAudit>,
 }
 
 impl<'a> AuditGuard<'a> {
@@ -111,11 +107,9 @@ impl<'a> AuditGuard<'a> {
                 status: AuditStatus::Failure,
                 target: None,
                 error_code: None,
-                issue: None,
             }],
             author: None,
             instruction: crate::app::InstructionNote::default(),
-            issue: None,
         }
     }
 
@@ -137,7 +131,6 @@ impl<'a> AuditGuard<'a> {
                     },
                     target: outcome.target.clone(),
                     error_code: outcome.error_code,
-                    issue: outcome.issue.clone(),
                 })
                 .collect(),
             Ok(Output::Pass(report)) => {
@@ -153,7 +146,6 @@ impl<'a> AuditGuard<'a> {
                         },
                         target: Some(format!("session:{}", p.session)),
                         error_code: p.error_code,
-                        issue: None,
                     })
                     .collect();
                 // A catalog that wrote its switch logs the switch as one more
@@ -172,7 +164,6 @@ impl<'a> AuditGuard<'a> {
                             status: AuditStatus::Success,
                             target,
                             error_code: None,
-                            issue: None,
                         },
                     );
                 }
@@ -185,7 +176,6 @@ impl<'a> AuditGuard<'a> {
                         status: AuditStatus::Success,
                         target: Some(id.clone()),
                         error_code: None,
-                        issue: None,
                     });
                 }
                 lines
@@ -197,74 +187,62 @@ impl<'a> AuditGuard<'a> {
                     status: AuditStatus::Success,
                     target: Some(r.entry.clone()),
                     error_code: None,
-                    issue: None,
                 })
                 .chain(report.opened.iter().map(|p| Line {
                     status: AuditStatus::Success,
                     target: Some(p.id.clone()),
                     error_code: None,
-                    issue: None,
                 }))
                 .chain(report.closed.iter().map(|p| Line {
                     status: AuditStatus::Success,
                     target: Some(p.id.clone()),
                     error_code: None,
-                    issue: None,
                 }))
                 .chain(report.covered.iter().map(|item| Line {
                     status: AuditStatus::Success,
                     target: Some(item.proposal.clone()),
                     error_code: None,
-                    issue: None,
                 }))
                 .chain(report.failed_batches.iter().map(|f| Line {
                     status: AuditStatus::Failure,
                     target: Some(format!("batch:{}", f.batch)),
                     error_code: Some(f.error_code),
-                    issue: None,
                 }))
                 .chain(report.deactivated.iter().map(|d| Line {
                     status: AuditStatus::Success,
                     target: Some(format!("session:{}", d.session)),
                     error_code: None,
-                    issue: None,
                 }))
                 .chain(report.failed_deactivations.iter().map(|f| Line {
                     status: AuditStatus::Failure,
                     target: Some(format!("session:{}", f.session)),
                     error_code: Some(f.error_code),
-                    issue: None,
                 }))
                 .chain(report.failed_removal_batches.iter().map(|f| Line {
                     status: AuditStatus::Failure,
                     target: Some(format!("removal-batch:{}", f.batch)),
                     error_code: Some(f.error_code),
-                    issue: None,
                 }))
                 .chain(report.memory.targets.iter().map(|target| Line {
                     status: AuditStatus::Success,
                     target: Some(target.clone()),
                     error_code: None,
-                    issue: None,
                 }))
                 .chain(report.memory.failed_batches.iter().map(|f| Line {
                     status: AuditStatus::Failure,
                     target: Some(format!("memory-batch:{}", f.batch)),
                     error_code: Some(f.error_code),
-                    issue: None,
                 }))
                 .collect(),
             Ok(output) => vec![Line {
                 status: AuditStatus::Success,
                 target: target_of(output),
                 error_code: None,
-                issue: None,
             }],
             Err(err) => vec![Line {
                 status: AuditStatus::Failure,
                 target: None,
                 error_code: Some(err.code()),
-                issue: None,
             }],
         };
     }
@@ -288,12 +266,6 @@ impl<'a> AuditGuard<'a> {
         self.instruction = note;
     }
 
-    /// Name what an issue write counts against (2_design.md §11.4), on
-    /// every line it writes that does not carry its own.
-    pub(crate) fn set_issue(&mut self, issue: Option<IssueAudit>) {
-        self.issue = issue;
-    }
-
     /// The lines this guard will write, in order.
     pub(crate) fn events(&self) -> Vec<AuditEvent> {
         let duration_ms = u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
@@ -308,7 +280,7 @@ impl<'a> AuditGuard<'a> {
                 author: self.author.clone(),
                 instruction_session: self.instruction.session.clone(),
                 instruction_message: self.instruction.message.clone(),
-                issue: line.issue.clone().or_else(|| self.issue.clone()),
+                issue: None,
                 duration_ms,
             })
             .collect()
@@ -357,9 +329,6 @@ fn target_of(output: &Output) -> Option<String> {
             record: Record::Transcript(transcript),
         } => Some(format!("session:{}", transcript.session)),
         Output::Show {
-            record: Record::Issue(issue),
-        } => Some(issue.id.clone()),
-        Output::Show {
             record: Record::Memory(item),
         } => Some(format!("memory:{}", item.id)),
         Output::Show {
@@ -374,8 +343,7 @@ fn target_of(output: &Output) -> Option<String> {
         | Output::Plugin(_)
         | Output::Popup
         | Output::PopupRows(_)
-        | Output::PopupPreview(_)
-        | Output::IssueStats(_) => None,
+        | Output::PopupPreview(_) => None,
     }
 }
 
@@ -389,6 +357,5 @@ fn record_target(record: &Record) -> Option<String> {
         Record::TagRules(t) => t.tag.clone(),
         Record::Proposal(p) => p.id.clone(),
         Record::Transcript(t) => format!("session:{}", t.session),
-        Record::Issue(i) => i.id.clone(),
     })
 }

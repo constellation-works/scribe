@@ -3044,6 +3044,12 @@ suppression set.
 
 ### 11.4 Issues
 
+> Removed in phase 2 of §15.9 (ORB-26651): the issue record kind and its
+> CLI are gone, and stored issues become `issue` entries (§15.11). An
+> incident is now caught by the `issue` example catcher in
+> [specs/catchers.md](specs/catchers.md). This section records the design
+> as it was built.
+
 An **issue** is the memory of an incident that recurs across projects and
 what fixed it: "the GitHub API answered 429", "CPU exhausted on
 dk-server-1". Daniel, 2026-11-21: "we will catalog issues we've faced, e.g.

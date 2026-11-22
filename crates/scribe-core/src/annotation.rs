@@ -121,8 +121,7 @@ pub struct Mark {
 impl Mark {
     /// The tag its next word names (a tag or an alias), else the tag its
     /// line ends with ([`Mark::tail`]), which the model may not change;
-    /// `None` when neither names one. `issue` names issue records, never a
-    /// hint.
+    /// `None` when neither names one.
     #[must_use]
     pub fn hint<'a>(&self, tags: &'a TagTable) -> Option<&'a TagName> {
         [self.word.as_deref(), self.tail.as_deref()]
@@ -130,7 +129,7 @@ impl Mark {
             .flatten()
             .filter_map(|word| tags.resolve(word))
             .map(|def| &def.name)
-            .find(|name| !crate::issue::is_reserved_tag(name.as_str()))
+            .next()
     }
 }
 
@@ -395,7 +394,6 @@ pub fn request(
         tags: tags
             .tags()
             .iter()
-            .filter(|def| !crate::issue::is_reserved_tag(def.name.as_str()))
             .map(|def| AnnotationTag {
                 name: def.name.to_string(),
                 description: def.description.clone(),
@@ -517,7 +515,6 @@ pub fn check(
             let tag = tags
                 .resolve(answer.tag.trim())
                 .map(|def| def.name.clone())
-                .filter(|name| !crate::issue::is_reserved_tag(name.as_str()))
                 .ok_or(CheckRefusal::WrongTag)?;
             if mark.hint(tags).is_some_and(|hint| *hint != tag) {
                 return Err(CheckRefusal::WrongTag);

@@ -1,6 +1,6 @@
 Answer a question from stored records and Orbit tasks
 
-Answers a question from the recorded entries, session records, issues and Orbit tasks, citing each quote.
+Answers a question from the recorded entries, session records and Orbit tasks, citing each quote.
 
 Usage: scribe question ask [OPTIONS] <QUESTION>
 
@@ -24,7 +24,6 @@ Options:
           Possible values:
           - entry:   Entries only
           - session: Session records only
-          - issue:   Issue records only
 
       --since <DATE>
           Only records changed on or after this day, YYYY-MM-DD [default: any]

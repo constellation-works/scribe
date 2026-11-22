@@ -3,12 +3,12 @@
 use super::{Redactor, Store};
 use crate::consistency::{CoveredCandidate, Reapplied, ReapplyReport};
 use crate::pass::{
-    MAX_CANDIDATES, MAX_IDEAS, MAX_OPEN_CANDIDATES, admission, candidate_says, claim_covers,
+    MAX_CANDIDATES, MAX_COLLECTED, MAX_OPEN_CANDIDATES, admission, candidate_says, claim_covers,
     covering_claim, entry_says, own_span,
 };
 use crate::{
     Author, ContentFrom, Entry, EntryCandidate, EntryId, EntryStatus, Error, Outcome, OutcomeState,
-    Proposal, ProposalId, ProposalKind, ProposalState, Result, SessionRecord, Speaker, Topics,
+    Proposal, ProposalId, ProposalKind, ProposalState, Result, SessionRecord, Topics,
 };
 
 /// What the candidate write path changed under the store lock.
@@ -39,7 +39,7 @@ impl Store {
     ///
     /// A claim under a `write` tag (2_design.md §11.6) is written here as an
     /// active entry the pass authors, with no proposal, at most
-    /// [`MAX_IDEAS`] per call and outside the open-candidate cap, once the
+    /// [`MAX_COLLECTED`] per call and outside the open-candidate cap, once the
     /// same checks as a candidate pass and no active entry of its tag and
     /// project, no prior candidate and no entry the pass wrote from the same
     /// turn already says it.
@@ -99,27 +99,44 @@ impl Store {
             .collect();
         let mut next = proposals.iter().map(|p| p.id.number()).max().unwrap_or(0);
         let mut changed = false;
-        let (mut proposed, mut written) = (0_usize, Vec::new());
+        let (mut proposed, mut written) = (0_usize, Vec::<EntryId>::new());
         for claim in drafts {
-            let writes = config
-                .tags
-                .get(&claim.candidate.tag)
-                .is_some_and(|tag| tag.capture.writes());
+            let tag = config.tags.get(&claim.candidate.tag);
+            let writes = tag.is_some_and(|tag| tag.capture.writes());
             if writes {
-                if written.len() >= MAX_IDEAS {
+                // The bound on collected entries applies per tag (§15.2).
+                let collected = written
+                    .iter()
+                    .filter(|id| id.tag() == &claim.candidate.tag)
+                    .count();
+                if collected >= MAX_COLLECTED {
                     continue;
                 }
-            } else if proposed >= MAX_CANDIDATES || open >= MAX_OPEN_CANDIDATES {
+            } else if proposed >= MAX_CANDIDATES
+                || open >= MAX_OPEN_CANDIDATES
+                || open_under(&proposals, &claim.candidate.tag)
+                    >= tag.map_or(0, |tag| {
+                        usize::try_from(tag.capture.max_open()).unwrap_or(usize::MAX)
+                    })
+            {
                 continue;
             }
             // The capture gate, repeated under the lock against the config
-            // read now (2_design.md §11.2): a claim is Daniel's own words,
-            // and a trigger of its tag fires in the turn it cites. The
-            // admission persisted is the one computed here.
-            let Some(admitted) = (claim.candidate.role == crate::Speaker::User
-                && own_span(&claim.turn, &claim.candidate.quote))
-            .then(|| admission(&config.tags, &claim.candidate.tag, &claim.turn))
-            .flatten() else {
+            // read now (2_design.md §11.2, §15.2): a claim is the own words of
+            // a turn by a speaker its tag reads, and a trigger of the tag
+            // fires in that turn. The admission persisted is the one
+            // computed here.
+            let Some(admitted) = own_span(&claim.turn, &claim.candidate.quote)
+                .then(|| {
+                    admission(
+                        &config.tags,
+                        &claim.candidate.tag,
+                        claim.candidate.role,
+                        &claim.turn,
+                    )
+                })
+                .flatten()
+            else {
                 continue;
             };
             // The bounds hold the model's words as given; masking a secret
@@ -446,7 +463,7 @@ fn pass_entry(
         inactive_since: None,
         said: String::new(),
         content_from: ContentFrom::Message {
-            role: Speaker::User,
+            role: draft.role,
             message: draft.cite.message.clone().unwrap_or_default(),
             at: draft.cite.at,
         },
@@ -465,4 +482,14 @@ fn pass_entry(
         outcome: Some(outcome),
         content: draft.statement.clone().unwrap_or_default(),
     }
+}
+
+/// How many open claims `tag` holds: the count its `max_open` caps
+/// (2_design.md §15.2).
+fn open_under(proposals: &[Proposal], tag: &crate::TagName) -> usize {
+    proposals
+        .iter()
+        .filter(|p| p.kind == ProposalKind::Candidate && p.state == ProposalState::Open)
+        .filter(|p| p.candidate.as_ref().is_some_and(|c| &c.tag == tag))
+        .count()
 }

@@ -957,7 +957,7 @@ fn consistency_scan_closes_retired_tag_candidates_without_a_model_call() {
         ("task", 7),
         ("finding", 2),
         ("preferences", 2),
-        ("idea", 2),
+        ("standard", 2),
     ] {
         for i in 1..=count {
             n += 1;
@@ -1039,7 +1039,7 @@ fn consistency_scan_closes_retired_tag_candidates_without_a_model_call() {
     assert_eq!(s.calls(), 0);
     assert_eq!(s.audit().len(), 16);
 
-    // Open preferences and idea candidates remain untouched.
+    // Open preferences and standard candidates remain untouched.
     let open = s.json(&["proposal", "list", "--state", "open", "--json"]);
     assert_eq!(open["total"], 4);
     let rejected_table = text(

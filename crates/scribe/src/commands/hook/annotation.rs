@@ -367,7 +367,6 @@ fn echo(out: &mut Cataloged, session: &SessionId, result: MarkResult, say: Say) 
             out.outcomes.push(HookOutcome {
                 target: Some(entry.id.to_string()),
                 error_code: None,
-                issue: None,
             });
         }
         (MarkResult::Covered(entry), _) => {
@@ -390,7 +389,6 @@ fn echo(out: &mut Cataloged, session: &SessionId, result: MarkResult, say: Say) 
             out.outcomes.push(HookOutcome {
                 target: Some(format!("session:{session}")),
                 error_code: None,
-                issue: None,
             });
         }
         (MarkResult::Refused(code), say) => {
@@ -423,7 +421,6 @@ fn refusal(session: &SessionId, code: &'static str) -> HookOutcome {
     HookOutcome {
         target: Some(format!("session:{session}")),
         error_code: Some(code),
-        issue: None,
     }
 }
 

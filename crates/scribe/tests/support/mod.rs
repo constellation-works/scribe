@@ -43,6 +43,15 @@ impl Fixture {
         self.dir.path().join(name)
     }
 
+    /// Write `toml` as the data root's `config.toml`, owner-only.
+    pub fn config(&self, toml: &str) {
+        let root = self.root();
+        self.create_private_dir_all(&root);
+        let file = root.join("config.toml");
+        std::fs::write(&file, toml).expect("write fixture config");
+        make_private(&file);
+    }
+
     /// Create a directory tree inside the fixture with owner-only permissions.
     pub fn create_private_dir_all(&self, path: &Path) {
         assert!(
@@ -251,4 +260,22 @@ pub fn write_entries(root: &Path, count: usize) {
         std::fs::write(&path, entry_text(n, &content)).expect("write entry");
         make_private(&path);
     }
+}
+
+/// The `idea` catcher that shipped before phase 2 (2_design.md §15.9),
+/// now a config example: tests that catch ideas declare it.
+pub const IDEA_CATCHER: &str = r#"[tags.idea]
+action = true
+description = "a future consideration worth revisiting"
+[tags.idea.capture]
+from = "user"
+route = "write"
+triggers = ["have * an idea", "had an idea", "here's an idea", "what do you think about * idea", "what if we"]
+criteria = "The user proposes something that could be built, changed or tried, and the session does not carry it out."
+not = "A direction to act now; a preference; a question of fact; an idea the session goes on to carry out."
+"#;
+
+/// [`IDEA_CATCHER`] on `route` instead of `write`.
+pub fn idea_catcher_on(route: &str) -> String {
+    IDEA_CATCHER.replace("route = \"write\"", &format!("route = \"{route}\""))
 }

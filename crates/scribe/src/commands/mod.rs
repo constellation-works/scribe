@@ -4,7 +4,7 @@
 //! [`run`] is where cross-cutting behaviour attaches, once, for every command
 //! (STD-02 R24): today the audit log, through [`crate::audit_middleware`].
 //! Each noun lives in its own module with its subcommands, flags, help and
-//! handlers (`entry.rs`, `session/`, `proposal.rs`, `record.rs`, `tag.rs`, `issue.rs`, `question.rs`,
+//! handlers (`entry.rs`, `session/`, `proposal.rs`, `record.rs`, `tag.rs`, `question.rs`,
 //! `brief.rs`, `plugin.rs`, `tmux.rs`); a noun that
 //! outgrows one file becomes a directory, `<noun>/mod.rs` plus one file per
 //! verb, as `hook/` is (STD-02 R18: split along responsibilities, not by length alone).
@@ -15,7 +15,6 @@ mod entry;
 mod hook;
 mod init;
 mod instruction;
-mod issue;
 pub(in crate::commands) mod memory;
 mod plugin;
 mod proposal;
@@ -73,7 +72,7 @@ pub(crate) enum Command {
     Memory(MemoryCommand),
     /// Search every stored record by words, with no model call
     ///
-    /// Ranks entries, session headers, segments and issues for words, best first, as question ask ranks them, with no model call.
+    /// Ranks entries, session headers and segments for words, best first, as question ask ranks them, with no model call.
     #[command(after_help = search::SEARCH_EXAMPLES)]
     Search(search::SearchArgs),
     /// Propose superseding or retiring entries via scan
@@ -84,11 +83,6 @@ pub(crate) enum Command {
     /// List tags and manage agent-created store tags
     #[command(subcommand, after_help = tag::TAG_EXAMPLES)]
     Tag(TagCommand),
-    /// Record and search recurring incidents across projects
-    ///
-    /// Records and searches issues: incidents that recur across projects, and what fixed them.
-    #[command(subcommand, after_help = issue::ISSUE_EXAMPLES)]
-    Issue(issue::IssueCommand),
     /// Show the session-start page: memory, recent sessions, open claims
     ///
     /// Shows the session-start page the hook injects: the memory page, the last sessions (this project's first) and every open claim grouped by tag with the id that settles it; model-free, writing nothing.
@@ -122,7 +116,6 @@ impl Command {
             Self::Entry(command) => command.subject(ctx),
             Self::Session(command) => command.subject(ctx),
             Self::Proposal(command) => command.subject(ctx),
-            Self::Issue(command) => command.subject(ctx),
             Self::Memory(command) => command.subject(ctx),
             Self::Init(_)
             | Self::Transcript(_)
@@ -153,7 +146,6 @@ impl Command {
             Self::Search(args) => search::audit(args),
             Self::Consistency(command) => command.audit(),
             Self::Tag(command) => command.audit(),
-            Self::Issue(command) => command.audit(),
             Self::Hook(command) => command.audit(),
             Self::Question(command) => command.audit(),
             // Read-only: the popup only lists and shows, and the brief only
@@ -186,7 +178,6 @@ pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
         Command::Search(args) => search::run(args, ctx),
         Command::Consistency(command) => consistency::run(command, ctx),
         Command::Tag(command) => tag::run(command, ctx),
-        Command::Issue(command) => issue::run(command, ctx),
         Command::Hook(command) => hook::run(command, ctx),
         Command::Question(command) => question::run(command, ctx),
         Command::Brief(args) => brief::run(&args, ctx),
@@ -197,7 +188,6 @@ pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
         audit.mark_result(&result);
         subject.apply(audit);
         audit.set_instruction(ctx.instruction_note());
-        audit.set_issue(ctx.issue_note());
     }
     result
 }
