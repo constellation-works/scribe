@@ -228,6 +228,15 @@ thread_local! {
     pub(super) static CRASH_AFTER_COMMIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// Record that `item` cites `cites`, so a forget of it deletes them.
+fn link(commit: &mut MemoryCommit, item: &str, cites: &[(SessionId, String)]) {
+    for (session, message) in cites {
+        commit
+            .links
+            .push((item.to_owned(), session.to_string(), message.clone()));
+    }
+}
+
 fn sha256(text: &str) -> String {
     crate::capture::prompt_sha256(text)
 }
@@ -658,6 +667,7 @@ impl Store {
                 removed_at: now,
             });
         }
+        commit.links.clone_from(&plan.links);
         for id in &plan.remove {
             commit.ops.push(FileOp {
                 path: format!("{id}{RECORD_EXT}"),
@@ -707,7 +717,8 @@ impl Store {
             let mut commit = MemoryCommit::default();
             for change in changes {
                 match change {
-                    PassChange::Now(item) => {
+                    PassChange::Now(item, cites) => {
+                        link(&mut commit, item.stem.as_str(), &cites);
                         if !files.now.contains(&item) {
                             written
                                 .written
@@ -715,7 +726,8 @@ impl Store {
                             commit.ops.push(now_op(&path, &item)?);
                         }
                     }
-                    PassChange::Milestone(item) => {
+                    PassChange::Milestone(item, cites) => {
+                        link(&mut commit, item.stem.as_str(), &cites);
                         if !files.milestones.contains(&item) {
                             written
                                 .written
@@ -846,6 +858,7 @@ impl Store {
             let commit = MemoryCommit {
                 ops: vec![op],
                 forget_history: vec![stem.clone()],
+                forget_messages: vec![stem.clone()],
                 ..MemoryCommit::default()
             };
             Ok((commit, shown))
@@ -1138,6 +1151,9 @@ impl Store {
                 };
                 if let Some(item) = from {
                     promoted.push(&item.stem);
+                    commit
+                        .link_copies
+                        .push((item.stem.to_string(), Stem::new(date, &title).to_string()));
                 }
                 stones.push(Milestone {
                     stem: Stem::new(date, &title),

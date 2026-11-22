@@ -473,3 +473,71 @@ fn format_twenty_four_items_migrate_on_the_first_write() {
     // The profile item is a hint for the first rebuild.
     assert_eq!(inputs.hints, ["profile (m-3): Works on scribe and orbit"]);
 }
+
+#[test]
+fn forgetting_a_migrated_item_deletes_the_messages_its_occurrences_cite() {
+    let dir = private_tempdir();
+    let store = Store::open(dir.path().join("store"));
+    let redactor = Redactor::default();
+    let session = "0b8ef4a6-0c6a-4d77-9c41-000000000001";
+    store
+        .write_messages(
+            &[
+                crate::message::NewMessage {
+                    session: session.parse().unwrap(),
+                    message: String::from("u-1"),
+                    role: crate::entry::Speaker::User,
+                    at: T0,
+                    text: String::from("the release ships on december 1"),
+                },
+                crate::message::NewMessage {
+                    session: session.parse().unwrap(),
+                    message: String::from("u-2"),
+                    role: crate::entry::Speaker::User,
+                    at: T0,
+                    text: String::from("the crews run overnight"),
+                },
+            ],
+            &redactor,
+        )
+        .unwrap();
+    let mem = store.root().join("memory");
+    fs::create_dir_all(&mem).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&mem, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let item = legacy(
+        1,
+        Section::Now,
+        MemoryStatus::Active,
+        "Release ships",
+        Some(date!(2026 - 12 - 01)),
+    );
+    let path = mem.join("m-1.md");
+    fs::write(&path, format::encode_memory(&path, &item).unwrap()).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let found = |text: &str| {
+        store
+            .search_messages(&crate::ask::tokens(text))
+            .unwrap()
+            .matches
+            .len()
+    };
+    assert_eq!(found("release"), 1);
+    store
+        .forget_memory(
+            "2026-12-01-release-ships",
+            "opus".parse().unwrap(),
+            &redactor,
+            T0,
+        )
+        .unwrap();
+    assert_eq!(found("release"), 0, "the cited turn is gone");
+    assert_eq!(found("crews"), 1, "another turn stays");
+}

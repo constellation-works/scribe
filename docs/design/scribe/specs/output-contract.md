@@ -674,7 +674,8 @@ prints a stored profile revision: plain and table its text, JSON
 raised in that session (`memory_not_now` for a milestone); the same
 session again changes nothing. `memory forget <stem> --author <name>
 --confirm` removes a `now` item or milestone for good with its history
-(without `--confirm`, `confirm_required`; `profile` is `usage_error`, as
+and the messages it cites, which `scribe search --kind message` then no
+longer finds (without `--confirm`, `confirm_required`; `profile` is `usage_error`, as
 the profile is corrected by editing it). `memory restore <n>` writes
 revision `n` back as a new revision. Each prints the item and writes one
 audit line.

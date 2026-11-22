@@ -126,8 +126,9 @@ CREATE TABLE profile_cursor (
 ) STRICT;
 ";
 
-/// Version 2 (phase 5): the memory journal of §15.6 and the pass's signal
-/// per window.
+/// Version 2 (phase 5): the memory journal of §15.6, the messages each
+/// memory item cites (so a forget deletes them, §15.7), and the pass's
+/// signal per window.
 const V2: &str = "
 CREATE TABLE memory_journal (
     id       INTEGER PRIMARY KEY,
@@ -137,6 +138,13 @@ CREATE TABLE memory_journal (
     revision INTEGER REFERENCES profile_revisions (n)
 ) STRICT;
 CREATE INDEX memory_journal_open ON memory_journal (done) WHERE done = 0;
+
+CREATE TABLE memory_messages (
+    item    TEXT NOT NULL CHECK (length(item) >= 1),
+    session TEXT NOT NULL CHECK (length(session) BETWEEN 1 AND 128),
+    message TEXT NOT NULL CHECK (length(message) >= 1),
+    PRIMARY KEY (item, session, message)
+) STRICT;
 
 CREATE TABLE pass_signals (
     session TEXT    NOT NULL CHECK (length(session) BETWEEN 1 AND 128),

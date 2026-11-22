@@ -33,6 +33,22 @@ pub struct Migration {
     pub working: Vec<MemoryItem>,
     /// Every `m-<n>` file, to remove.
     pub remove: Vec<String>,
+    /// The messages each item cites: (item, session, message id), keyed by
+    /// the `m-<n>` id its history row carries and, for an item that becomes
+    /// a file, by that file's stem too, so forgetting it deletes them.
+    pub links: Vec<(String, String, String)>,
+}
+
+/// The (session, message id) of each occurrence of `item`.
+fn cites(item: &MemoryItem) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for o in &item.occurrences {
+        let key = (o.session.to_string(), o.message.clone());
+        if !o.message.is_empty() && !out.contains(&key) {
+            out.push(key);
+        }
+    }
+    out
 }
 
 /// A title for a migrated item: its statement cut at [`TITLE_CHARS`] on a
@@ -96,12 +112,21 @@ pub fn plan(items: &[MemoryItem], today: Date) -> Migration {
             history_text(item),
             sessions.iter().map(ToString::to_string).collect(),
         ));
+        let cited = cites(item);
+        let link = |out: &mut Migration, key: &str| {
+            for (session, message) in &cited {
+                out.links
+                    .push((key.to_owned(), session.clone(), message.clone()));
+            }
+        };
+        link(&mut out, item.id.as_str());
         if item.status != MemoryStatus::Active {
             continue;
         }
         let updated: OffsetDateTime = item.updated;
         match (item.section, item.event_date) {
             (Section::Now, Some(date)) if !expired(date, today) && !sessions.is_empty() => {
+                link(&mut out, Stem::new(date, &item.statement).as_str());
                 out.now.push(NowItem {
                     stem: Stem::new(date, &item.statement),
                     date,
@@ -118,6 +143,7 @@ pub fn plan(items: &[MemoryItem], today: Date) -> Migration {
             }
             (Section::Milestones, date) if !sessions.is_empty() => {
                 let date = date.unwrap_or_else(|| item.created.date());
+                link(&mut out, Stem::new(date, &item.statement).as_str());
                 out.milestones.push(Milestone {
                     stem: Stem::new(date, &item.statement),
                     date,

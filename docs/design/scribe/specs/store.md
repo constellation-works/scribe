@@ -164,8 +164,8 @@ file.
   numbered list, each run in its own `BEGIN IMMEDIATE` transaction that
   re-reads the version, so racing writers run each step once. A version
   above this build's is `store_too_new` for readers and writers. Version 1
-  is phase 4's; version 2 (phase 5) adds `memory_journal` and
-  `pass_signals`. Every table is `STRICT`; times are RFC 3339 UTC text.
+  is phase 4's; version 2 (phase 5) adds `memory_journal`,
+  `memory_messages` and `pass_signals`. Every table is `STRICT`; times are RFC 3339 UTC text.
 - **Errors.** A file SQLite cannot read as a database is `store_corrupt`;
   any other SQLite failure is `store_database`.
 
@@ -181,6 +181,7 @@ file.
 | `profile_revisions` | `n INTEGER PRIMARY KEY AUTOINCREMENT` (the revision); `created TEXT NOT NULL`; `content TEXT NOT NULL`; `file_sha256 TEXT`, `NULL` until the journal closes, else 64 hex characters | `memory refresh` and `memory restore` |
 | `profile_cursor` | `id INTEGER PRIMARY KEY CHECK (id = 1)`; `through_at TEXT NOT NULL`; `through_session TEXT NOT NULL`, 1–128 characters | `memory refresh`; one row |
 | `memory_journal` | `id INTEGER PRIMARY KEY`; `created TEXT NOT NULL`; `ops TEXT NOT NULL`, a JSON array of `{path, content}` (content `null` removes the file); `done INTEGER NOT NULL CHECK (done IN (0, 1))`; `revision INTEGER REFERENCES profile_revisions(n)`; a partial index on the open rows | every memory write (version 2) |
+| `memory_messages` | `item TEXT NOT NULL`, non-empty (a `now` or milestone stem, or a migrated `m-<n>`); `session TEXT NOT NULL`, 1–128 characters; `message TEXT NOT NULL`, non-empty; `PRIMARY KEY (item, session, message)` | the session pass (the turn an element quotes, and a completed candidate's turn), the migration (each occurrence's turn), `memory refresh` (a promoted `now` item's links copied to its milestone); `memory forget` deletes an item's rows (version 2) |
 | `pass_signals` | `session TEXT NOT NULL`, 1–128 characters; `through TEXT NOT NULL`, non-empty (the window's last message); `signal INTEGER NOT NULL CHECK (signal BETWEEN 0 AND 3)`; `PRIMARY KEY (session, through)` | the session pass (version 2) |
 
 ### Messages
@@ -202,9 +203,10 @@ file.
   stays the cursor: a crash between the two reruns the window, which writes
   the same rows (a row changes only when its text, role or time does).
 - **Forget.** `#scribe forget <entry-id>` (and `entry forget`) deletes the
-  messages the entry and its candidate proposals cite. `memory forget`
-  deletes no message: a `now` item or milestone cites sessions, not
-  messages. The rows go before
+  messages the entry and its candidate proposals cite; `memory forget`
+  deletes those its item cites (`memory_messages`: the turn each element
+  quoted, a completed candidate's turn, a migrated item's occurrences),
+  in the same transaction as the item's history and links. The rows go before
   the files are written; `secure_delete` overwrites their pages, an FTS5
   `optimize` rebuilds the index without their terms, and a `TRUNCATE`
   checkpoint empties the WAL. A forget on a store without a database
@@ -527,11 +529,16 @@ by its event date, else its creation); every item except a forgotten one
 leaves a `memory_history` row (its statement and quotes); an active
 `working` item whose newest quote fires the `preferences` capture trigger
 opens a claim first, cited by that quote's hash, `admitted.trigger`
-`migrated working memory`; and every `m-<n>.md` is removed. Reads leave the
+`migrated working memory`; each item's occurrence turns are linked in
+`memory_messages` under its `m-<n>` and, for an item that becomes a file,
+its stem; and every `m-<n>.md` is removed. Reads leave the
 items and warn how many await migration.
 
-**Forget** (`memory forget <stem> --confirm`) removes the file and deletes
-the item's `memory_history` rows. The profile is not forgotten: it is
+**Forget** (`memory forget <stem> --confirm`) removes the file and, in
+the journal's transaction, deletes the item's `memory_history` rows, the
+messages it cites and its `memory_messages` rows; when a message went, an
+FTS5 `optimize` runs in the transaction and a `TRUNCATE` checkpoint after
+it, as for an entry forget, so no trace of the words is left. The profile is not forgotten: it is
 corrected by editing it outside Pinned.
 
 ## JSON documents
