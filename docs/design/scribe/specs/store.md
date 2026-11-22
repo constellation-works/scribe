@@ -121,6 +121,7 @@ user's file could pass for one of Daniel's records.
 ├── pre-sqlite-<yyyy-mm-dd>/             0700, the files the move took in (`sessions/`, `entries/`, the JSON documents, `audit.jsonl`, `.codex-<id>.lock`), kept except when a forget erases a session or an entry from them
 ├── locks/codex-<id>.lock                0600, the Codex ingestion lock of a session (phase 6)
 ├── locks/rebuild-<id>.lock              0600, the rebuild lock of a session (phase 6)
+├── locks/archive-forget.lock            0600, serializes `pre-sqlite-*` rewrites during entry forget
 ├── proposals.json                       0600, optional until the move (formats 1–26); after it an empty format stamp
 ├── tags.json                            0600, optional (introduced at format 5, S12); after the move an empty format stamp
 ├── pickups.json                         0600, optional (introduced at format 8); after the move an empty format stamp
@@ -394,7 +395,11 @@ line has the session's `s-<n>` as its target.
   `pre-sqlite-<date>/entries*/`, drops or rewrites the matching proposals in
   `pre-sqlite-<date>/proposals.json*` atomically (keeping every claim the
   database keeps), and drops any `pre-sqlite-<date>/audit.jsonl*` lines
-  carrying the entry's text in a free-text value. An audit line's structural
+  carrying the entry's text in a free-text value. These post-commit
+  `pre-sqlite-*` rewrites run under `locks/archive-forget.lock` (`flock` /
+  `LockFileEx`, bounded by the lock wait) so concurrent forgets serialize
+  their read-modify-writes and cannot restore one another's erased text. An
+  audit line's structural
   fields (ids, command, status, author, codes, counts) never match, so an
   entry whose body is a common word such as `success` removes no unrelated
   event. A torn line, which the reader skips, is dropped if it contains the

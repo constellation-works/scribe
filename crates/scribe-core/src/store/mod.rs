@@ -30,7 +30,7 @@
 //!   tags.json, marks.json, pickups.json       build refuses the store
 //! <root>/pre-sqlite-<date>/                 the files the move took in, kept except on forget
 //! <root>/pre-issue-<date>/<id>.md           issue records moved aside once converted
-//! <root>/locks/                             per-session locks (Codex catalog, rebuild)
+//! <root>/locks/                             advisory locks (Codex catalog, rebuild, archive forget)
 //! ```
 //!
 //! Reads take no lock and write nothing (STD-01 R31): SQLite's WAL gives a

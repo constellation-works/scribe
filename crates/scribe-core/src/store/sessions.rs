@@ -31,7 +31,7 @@ use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 
-/// The directory of per-session lock files under the root.
+/// The directory of advisory lock files under the root.
 pub const LOCKS_DIR: &str = "locks";
 
 /// What the moved-aside files directory is called: `pre-sqlite-<date>`.
@@ -315,8 +315,8 @@ impl Store {
         format::decode_session_at(path, &fsio::read(path)?, id.as_str(), None)
     }
 
-    /// The session's lock file under `locks/`, the directory created
-    /// owner-only when missing.
+    /// A lock file under `locks/`, the directory created owner-only when
+    /// missing.
     pub(super) fn lock_path(&self, name: &str) -> Result<PathBuf> {
         self.prepare_dir(&self.root)?;
         let dir = self.root.join(LOCKS_DIR);
