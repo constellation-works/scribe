@@ -266,7 +266,10 @@ pub fn linked_context(links: &[SessionLink], records: &[SessionRecord]) -> Vec<L
 /// sessions this one links to ([`linked_context`]); `voice` names the user
 /// and carries `[instructions] session`.
 #[must_use]
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each pass input is a separate argument named at the call site; a struct would only move them"
+)]
 pub fn request(
     model: &str,
     previous: Option<&SessionRecord>,
