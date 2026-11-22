@@ -1,17 +1,17 @@
 ---
 title: scribe — Design
 owner: claude
-last_updated: 2026-11-21
+last_updated: 2026-11-22
 last_validated: 2026-11-02
 status: Draft
 feature: scribe
 doc_role: design
 type: design
-summary: How the scribe plugin is bounded (one binary; Daniel writes through hooks, agents read and write through the CLI taught by one skill, and the MCP surface stays ask), how #scribe entries, /scribe on session records (a rewritable header over an append-only log of segments), active and inactive sessions, ask and search, the consistency routine, backfill by name and the tmux popup work, where everything is stored, which model does what, and the slice plan that builds it; §11–§13 are proposed designs (claims and issues, settling on instruction, and the descriptive memory written from /scribe on sessions; its personal base for sessions that are off, people, recurring dates and light catalog entries are designed but parked 2026-11-21, and scribe reads Claude Code and Codex sessions only); §14 (approved 2026-11-21; step 1 built, store format 22) catalogs `#scribe` as an annotation anywhere in a typed turn, at the end of the turn, with a statement and a verbatim quote.
+summary: How the scribe plugin is bounded (one binary; Daniel writes through hooks, agents read and write through the CLI taught by one skill, and the MCP surface stays ask), how #scribe entries, /scribe on session records (a rewritable header over an append-only log of segments), active and inactive sessions, ask and search, the consistency routine, backfill by name and the tmux popup work, where everything is stored, which model does what, and the slice plan that builds it; §11–§13 are proposed designs (claims and issues, settling on instruction, and the descriptive memory written from /scribe on sessions; its personal base for sessions that are off, people, recurring dates and light catalog entries are designed but parked 2026-11-21, and scribe reads Claude Code and Codex sessions only); §14 (approved 2026-11-21; step 1 built, store format 22) catalogs `#scribe` as an annotation anywhere in a typed turn, at the end of the turn, with a statement and a verbatim quote; §15 (proposed 2026-11-22, not built) makes tags configurable catchers whose inferred catches are claims with a context paragraph and a verbatim quote, adds `scribe brief`, fixes memory to `profile.md`, `now/` and `milestones/` with a weekly profile job, removes every personal name from shipped text, makes `issue` a catcher tag instead of a record kind, and moves sessions, entries, claims, state and audit into one SQLite database.
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26265, ORB-26510, ORB-26529]
+related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26642]
 ---
 
 # scribe — Design
@@ -5153,6 +5153,1077 @@ Answered 2026-11-21 ("Approve as proposed"): all five as proposed.
    echo says so. The other choice is to treat every unquoted token as a
    marker and leave it to him to retire what it writes.
 
+## 15. Catchers, claims with context, one memory shape and a SQLite store (proposed)
+
+[ORB-26640], designed 2026-11-22 and **not built**. Nothing in this section
+is implemented until Daniel approves it. After that, its tasks land in the
+order of [§15.9](#159-phases). Where it changes a rule stated earlier, the
+earlier text describes what is built at store format 22 and carries a pointer
+here once the phase that changes it lands:
+
+- §3, the Markdown store;
+- §5.3, the pass's claims;
+- §11.1–§11.2, statements and capture rules;
+- §11.4, issues, which stop being a record kind;
+- §13, memory;
+- §14.4, an annotation's content.
+
+The reasons and the alternatives are in
+[4_decisions.md](./4_decisions.md#tags-are-catchers-memory-is-a-fixed-synthesis-and-the-rest-lives-in-one-sqlite-database-proposed).
+
+Daniel, chief's chat, 2026-11-22: "I am planning to open source this, if
+proven to be effective - so we need to keep things generic, without
+personalizing around me". On tags: "I propose using tags as a customizable
+tool that \"catches\" certain aspects from chat sessions … Defaults we ship:
+preference and standard only." On claims: "All tag entries inferred by the
+scribe are, by default, claims … no single line statements - summarize the
+context behind the quote, and the verbatim quote." On memory: "no on/off and
+no customization for now. everyone gets the same shape. \"now\" (list of
+markdowns), \"profile\" (single markdown), and \"milestones\" (list of
+markdowns)." On storage: "just memory as files, and the rest (tags & session
+& audit log) in sqlite?" He accepted the chief's proposal ("your proposal
+sounds good"), which this section writes up. Where it differs from the
+proposal, [§15.10](#1510-differences-from-the-proposal) lists each difference
+with its reason.
+
+**Observed need** (the Mac store, `~/.scribe`, read 2026-11-22; the task's
+`global-orbit/.scribe` does not exist on the Mac):
+
+- **Memory.** The three memory items are not memory. `m-3` ("told the agent
+  to run the requeue on <task> after the review found blocking defects") is
+  a one-off command kept as `working`. `m-1` is a merge rule kept as
+  `working`, when a rule is what a `preferences` entry is for. `m-2` is a
+  project decision kept as `projects`, when a project decision belongs on
+  its Orbit task. The `working` definition in
+  `SessionRequest::memory_prompt` (`scribe-core::models`, "how he steers
+  agents, as observed") has no test for a standing habit.
+- **Prompts.** `models.rs` names Daniel 43 times. Non-test code under
+  `crates/` names him 494 times, `plugin/**` and the skill 24 times. The
+  page header is "what you know about Daniel". The author kind `daniel` is
+  persisted on every entry he wrote.
+- **Open claims.** Of 6 open claims, 3 are `finding` candidates from
+  assistant turns. `finding` no longer ships, so nobody is asked to settle
+  them.
+- **Store size.** There are 37 session files (1.2 MB) and 1,296 audit lines
+  (296 KB). `store/format.rs` is 2,654 lines, holding 21 upgrade steps and
+  every codec.
+
+### 15.1 The dividing rule
+
+Three kinds of record. Each has one job and one home.
+
+| Kind | What it is | Written by | Home |
+|---|---|---|---|
+| **Tag entry** | a remark caught from a session, under a tag the user configured; always cites one quote | the user (typed `#scribe`), or scribe on the user's approval, or scribe directly for a collector tag | SQLite (`entries`) |
+| **Memory** | a synthesis of what is true of the user now, written as prose | scribe: the session pass for `now` and stated milestones, the weekly profile job for `profile` and promotions | Markdown files under `memory/` |
+| **Session** | what happened in one conversation: header, segments, the user's typed turns | the session pass | SQLite (`sessions`, `segments`, `messages`) |
+
+The test for where something goes is its form, not its topic. A sentence
+that only holds because the user said it at a given moment is an entry, and
+it keeps the quote. A sentence that summarises many moments is memory, and
+it cites the sessions it came from. A rule that binds agents is always an
+entry (a `preference` or a `standard`), never memory.
+
+Agent notes (`scribe entry add`) stay outside this rule and keep their
+command. **Issues stop being a record kind** (§11.4 is removed). An incident
+is caught by a catcher tag like any other remark, and `issue` is an example
+catcher, not a default. See
+[§15.10](#1510-differences-from-the-proposal), item 2. Daniel, chief's chat,
+2026-11-22, reading `scribe --help`: "we are getting rid of "issue"
+correct? not sure why it shows up as command. it should be a tag".
+
+**What changes from format 22.**
+
+- `working` goes, because a working habit with a quote behind it is a
+  preference claim.
+- `projects` goes, because a project's purpose and status is a paragraph of
+  the profile, and a project decision belongs on its Orbit task.
+- The memory item with occurrences (`m-<n>`) goes. Memory stops holding
+  quotes and cites sessions instead.
+
+### 15.2 Tags are catchers
+
+A tag is a **catcher**: a rule in `config.toml` that says what to catch from
+a session and what a catch becomes. Today's `[tags.<name>]` and
+`[tags.<name>.capture]` (§11.2, `config.rs::RawCapture`,
+`tag::CaptureRules`) are already most of one. Triggers, criteria, `not` and
+a route exist and are checked twice: before the model call and again under
+the lock. The redesign generalises what is there instead of adding a
+parallel schema.
+
+```toml
+[tags.preferences]                # shipped; `preference` is its alias
+aliases = ["preference", "pref"]
+description = "A standing rule the user wants agents to follow."
+stale_after_days = 180
+
+[tags.preferences.capture]
+from = "user"                     # user | assistant | both
+route = "propose"                 # propose: a claim the user settles; write: a collected entry, no approval
+triggers = ["always", "never", "should not", "from now on", "I prefer", "by default"]
+criteria = "A standing rule from the user that applies beyond the work at hand."
+not = "A choice about one page or task; an acknowledgement; a one-off command."
+max_open = 10                     # open claims this tag may hold
+```
+
+**Fields.**
+
+- **`description`, `aliases`, `stale_after_days`.** Unchanged.
+- **`from`** (new values). Says whose turns the catcher reads:
+  - `user`: today's `daniel`, which stays accepted as an alias for the
+    30-day compatibility window, with a warning.
+  - `assistant`: the assistant's turns.
+  - `both`.
+
+  The pass reads assistant turns for a catcher only when its `from` names
+  them, and only turns that fire one of its triggers. The quote is checked
+  verbatim against that turn as today, and the claim records the speaker
+  (`EntryCandidate.role`, which already holds `Speaker::Assistant`).
+  `ask` and the brief never present an assistant quote as the user's words.
+  The attribution check of §6.4 already keys on `content_from.role`.
+- **`route`** keeps two values, `propose` and `write`. It replaces the
+  proposal's `approval` field ([§15.10](#1510-differences-from-the-proposal),
+  item 1).
+  - `propose` opens a claim the user settles. It is the default.
+  - `write` has the pass write the entry itself with no claim: a
+    **collector** such as "every mention of orbit". This is what the
+    shipped `idea` does today (§11.6), so the code path, its per-run bound
+    (`MAX_IDEAS`, renamed `MAX_COLLECTED` and applied per tag) and its
+    exclusions already exist.
+  - `agent` goes. It served only `issue`, whose route-`agent` rules had the
+    prompt hook add a root-cause line to the agent's context. That line
+    goes with it, and `issue` becomes an ordinary catcher (the example
+    below).
+- **`triggers`, `criteria`, `not`.** Unchanged in meaning and matching
+  (`trigger.rs`). `criteria` and `not` are the catcher's **instruction**:
+  what qualifies and what does not, at most 300 characters each, given to
+  the model as the tag's definition. They are the "instructions" Daniel
+  asked to be configurable ([§15.10](#1510-differences-from-the-proposal),
+  item 3).
+- **`max_open`** (new, default 10). The number of open claims one tag may
+  hold, under the store-wide cap of 20 (`MAX_OPEN_CANDIDATES`). On
+  2026-11-21, two tags that no longer shipped held 14 of the 20 slots
+  (§11.3), so no other tag could open a claim. Once the user can add
+  catchers, one noisy catcher would starve `preference` the same way.
+
+**The shipped set: `preference` and `standard`.**
+
+| Tag | From | Route | Triggers | Qualifies | Not |
+|---|---|---|---|---|---|
+| `preferences` (alias `preference`, `pref`; description "A standing rule the user wants agents to follow."; `stale_after_days = 180`) | user | propose | "always", "never", "should not", "from now on", "I prefer", "by default" | a standing rule from the user that applies beyond the work at hand | a choice about one page or task; an acknowledgement; a one-off command |
+| `standard` (`action = true`, `require_quote = true`, description "A rule for how code or docs are written across the user's projects, in the user's words.", no `stale_after_days`: it never goes stale, as today) | user | propose | "as a standard", "our standard", "every repo", "all repos", "across repos", "house style", "convention" | a rule for how code or docs are written across the user's projects | a rule for one repository or one change; a preference about how agents talk or work |
+
+- **`preference` is the alias it is today.** The shipped tag keeps the
+  name `preferences`, and `preference` (Daniel's word) stays one of its
+  aliases (`tag.rs`, the shipped `preferences` definition), so `#scribe
+  preference: …` resolves to it. Every existing id (`preferences-1`,
+  `preferences-2`) and every `--tag preferences` call keeps working. Renaming stored ids would
+  break the cites in sessions, proposals and audit lines for a cosmetic
+  gain.
+- **`standard` gains capture rules.** Today it has none, so the pass never
+  proposes one (§11.3). Shipped as a catcher, it is useful to any user who
+  keeps coding standards. The constellation's own routing of a standard to
+  a larger model stays outside scribe.
+- **`idea` stops shipping.** Its 2 stored entries stay listed, searched,
+  cited and settleable by id, as `task` and `decisions` did (§11.3). The design keeps it as an example below. A
+  user who wants it pastes the example into `config.toml`.
+- **`remind` and `finding` left the shipped set in §11.3.** Only their
+  stored entries remain.
+
+**Example catchers** (for `specs/catchers.md`, written
+with phase 2; they are documentation, not shipped config):
+
+```toml
+# Every mention of a project, collected without approval.
+[tags.orbit]
+description = "Anything the user says about Orbit."
+[tags.orbit.capture]
+from = "user"
+route = "write"
+triggers = ["orbit"]
+criteria = "The user says something about Orbit: a plan, a problem, a judgement."
+not = "Orbit named only as a path or a command."
+
+# Work an agent left for the user to do by hand.
+[tags.todo]
+description = "Something an agent said the user must do."
+[tags.todo.capture]
+from = "assistant"
+route = "write"
+triggers = ["you need to", "you'll need to", "you will need to", "left for you", "you must", "manual step", "todo"]
+criteria = "The assistant names a step only the user can take (a login, an approval, a purchase, a decision)."
+not = "A step the assistant will take itself; an option the user may take."
+
+# Incidents: what went wrong, its cause and its fix, from either side.
+[tags.issue]
+description = "Something that went wrong, with its cause and fix when known."
+[tags.issue.capture]
+from = "both"
+route = "write"
+triggers = ["root cause", "rca", "look into why", "can you investigate", "the cause was", "caused by", "fixed by"]
+criteria = "A failure in the user's tools or work, with what caused it or what fixed it, or the user asking for that cause."
+not = "How something works; a feature request; a failure the turn only names in passing."
+
+# Ideas: today's shipped `idea` rules, with "he" made "the user".
+[tags.idea]
+action = true
+[tags.idea.capture]
+from = "user"
+route = "write"
+triggers = ["have * an idea", "had an idea", "here's an idea", "what do you think about * idea", "what if we"]
+criteria = "The user puts forward something to consider, not an instruction to do it now."
+not = "A direction to act now; a preference; a question of fact."
+```
+
+**Typed `#scribe` stays an entry at once.** An annotation (§14) is the
+user's own consent to one entry, so it opens no claim. Only what scribe
+infers is a claim, and only under a `propose` catcher. A typed marker may
+name any tag in the table, catcher or not.
+
+**What changes from format 22.**
+
+- `CaptureFrom` gains `User`, `Assistant` and `Both`. `Daniel` reads as
+  `User`.
+- `CaptureRules` gains `max_open`.
+- `CaptureRoute::Agent`, `TagTable::issue_capture`, `issue_trigger.rs` and
+  the prompt hook's issue line go.
+- The issue record kind goes: `issue.rs`, `store/issues.rs`,
+  `store/issue_file.rs` and `commands/issue.rs`.
+  - Its CLI goes too: the `scribe issue` noun (`add`, `occur`, `update`,
+    `move`, `search`, `show`, `list`, `stats`), `#scribe forget
+    <issue-id>[#<n>]` (`hook/issue_command.rs`) and `record search --kind
+    issue`.
+  - So do `ask`'s issue evidence, occurrences, and the resolved and
+    reopened (`recurred`) states.
+  - `issue` stops being a reserved tag name.
+- This is a breaking CLI change. It lands in phase 2 with the approved
+  design, never before.
+- `SHIPPED_CAPTURE` holds `preference` and `standard`.
+- `SHIPPED_ACTION_TAGS` loses `idea`. `standard` keeps `action = true`,
+  because its window and quote check stay.
+- The pass's turn filter in `pass/candidates.rs`, which keeps only
+  `Speaker::User` turns, follows each firing catcher's `from`.
+- The persisted candidate already holds `role`, so no format step is
+  needed for `from`. `max_open` is config only.
+
+### 15.3 Claims with context
+
+A **claim** is what a `propose` catcher opens: scribe's reading of one turn,
+which the user approves or rejects. A collected entry (`route = "write"`)
+and an annotation entry (§14) have the same fields, so every inferred
+record reads alike.
+
+| Field | Bound | What it holds |
+|---|---|---|
+| `tag` | | the catcher |
+| `subject` | 80 | a short label for lists, never the content: "merge policy for agent PRs" |
+| `context` | 2–4 sentences, 600 | what was being discussed and what the remark settles, standing alone; written by the `session` model in the third person ("the user", or `[user] name`) |
+| `quote` | 8–400 | the verbatim span of the cited turn, checked as today |
+| `speaker` | | `user` or `assistant` (today's `role`) |
+| `cite` | | session, message, timestamp, host, project, derived by the pass, never by the model |
+| `admitted` | | trigger, matched words, criteria, as today (§11.2) |
+
+**The context paragraph replaces the one-line statement.** Daniel: "no
+single line statements". The 300-character `statement` of §11.1 was meant
+to stand alone and often does not. A paragraph has room to say what the
+remark was a reply to. Context of the kind "The user and the agent were
+choosing how scribe stores session records. The user rejected a single
+2,500-character outcome because rewrites lose the session's start, and
+asked for an append-only log." can be settled without opening the session.
+A claim with an empty `subject`, or with a `context` under two sentences,
+opens nothing, as an empty subject does today.
+
+**Approval writes the entry with the same fields.**
+
+- The entry's content is the context, and its `quote`, speaker and cite are
+  the claim's.
+- `stated_by` is `{kind: scribe, name: session-pass}`, as today.
+- The author is the user (`{kind: user}`) when the speaker is the user. It
+  is `{kind: agent, name: assistant}` when the speaker is the assistant, the
+  second agent shape `candidate_entry` already builds for an assistant
+  candidate.
+
+**Bounds** (STD-08 §R1, §R3).
+
+- Per claim: context and subject add at most 680 value characters, against
+  the 380 of statement and subject today.
+- Per answer: the session schema admits at most 6 candidates
+  (`SESSION_SCHEMA`, `maxItems: 6`), so context and subject add at most
+  4,080 value characters to one answer, in the same call with no added call
+  or timeout budget. The store keeps at most 3 claims per session per pass
+  invocation (`MAX_CANDIDATES`); the rest are refused as today.
+- The slots, the store-wide cap of 20 and the duplicate checks are
+  unchanged. The duplicate check compares context and quote as it now
+  compares statement and quote.
+
+**Older claims and entries are not rewritten.**
+
+- An open candidate with a `statement` and no `context` is shown with its
+  statement in the context's place, labelled `older claim`.
+- An entry approved from a statement keeps it as content.
+- No model rewrites a stored record.
+
+**What changes from format 22.**
+
+- A candidate payload gains `context`. `statement` stays readable and is no
+  longer written.
+- The session schema in `models.rs` (`SESSION_SCHEMA`) asks for `context`
+  in place of `statement`.
+- An annotation (§14.4) writes `context` too, so `AnnotationRequest`'s
+  schema changes the same way.
+- In phase 3 this is one format step on the file store (format 24,
+  `claim_context`, after phase 2's format 23). In phase 7 it becomes a
+  column.
+
+### 15.4 The brief: one session-start page
+
+`scribe brief` is **the** session-start page. It is one **model-free,
+read-only** command (no lock, no write, no audit) that only puts stored text
+together. The `SessionStart` hook injects it, and a manual instruction ("run
+`scribe brief`") calls the same command. There is no separate `memory
+overview` verb. Today the skill builds a brief from five CLI calls
+(`SKILL.md`, "Start of a session"), and the hook injects a separate memory
+page. Both become this one page.
+
+Daniel, chief's chat, 2026-11-22: "we need a new cli command, e.g. `scribe
+memory overview`, that will put together memory entries into a single
+holistic overview … this can be used in start session injection hook or
+manual instruction". The chief answered with the layout below, and Daniel
+said: "yes, put it on both tasks and tell the captain" (recorded on
+[ORB-26640], 03:10Z).
+
+**Memory proper is its own block.** `scribe memory show` with no id prints
+memory and nothing else: Profile, Now and Milestones. `scribe brief` embeds
+that block verbatim and adds two parts after it. Recent sessions are part of
+the brief, not of `memory`, because a session is its own kind of record
+(§15.1).
+
+**Layout**, in this order. Every line carries its date:
+
+```text
+## Profile (as of 2026-11-24)
+<profile.md in full>
+## Now
+- 2026-12-01-hackathon-deadline · due 2026-12-01 · Hackathon submission deadline
+- 2026-12-12-sisters-wedding · due 2026-12-12 · Sister's wedding
+## Milestones
+- 2026-10-02-pulsar-decommissioned · 2026-10-02 · Pulsar decommissioned
+- 2026-06-14-married · 2026-06-14 · Married
+## Recent sessions
+- s-41 · 2026-11-21 · scribe · Annotations anywhere in a typed turn
+- s-40 · 2026-11-20 · scribe · …
+- s-37 · 2026-11-19 · orbit · …
+## Open claims
+preference
+- p-22 · preference · "squash-merge agent PRs; keep merge commits for releases"
+standard
+- p-24 · standard · "…"
+```
+
+**Parts, line formats and caps.** The caps are fixed, because the page is
+injected into every interactive session.
+
+| Part | Line | Order | Cap |
+|---|---|---|---|
+| `## Profile (as of <date>)` | `profile.md` in full; the date is its last revision | | none here: the profile job caps it at 6,000 characters when it writes it (§15.6) |
+| `## Now` | `- <id> · due <date> · <title>` | nearest date first | every item: a `now` item exists only with a date and leaves 14 days after it (§15.5), so the part bounds itself |
+| `## Milestones` | `- <id> · <date> · <title>` | newest first | the last 5 |
+| `## Recent sessions` | `- <id> · <date> · <project> · <title>` (the date of its last message; titles only; the id is for `scribe session show`) | this project's sessions first, then the others, each group newest first; this session left out | the last 5 |
+| `## Open claims` | `- <id> · <tag> · "<quote>"` | grouped by tag, tags in table order, oldest first within a tag | every open claim (the store cap is 20); a quote over 200 characters is cut with `…` |
+
+- **Ids.** A `now` or milestone id is its file stem, the `<date>-<slug>` of
+  §15.5. `scribe memory show <id>` prints that file, and `scribe memory ack
+  <id>` marks it raised. A session id is `s-<n>` (§15.7), and the provider
+  UUID before phase 6. A claim id is `p-<n>`.
+- **Empty parts.** An empty part prints its heading and `(none)`, so a
+  reader can tell it is empty and not cut off.
+- **What the page leaves out.** The quotes behind memory, a claim's context
+  paragraph (§15.3), session summaries and `next` items. `scribe proposal
+  list` and `scribe session show <id>` print them. The `raised` mark of
+  §15.5 is not shown either. The skill tells the agent to raise a `now`
+  item at most once before its date and once after it, and to run `scribe
+  memory ack` when it does.
+
+**Where it runs.**
+
+- The `SessionStart` hook puts the whole page in `additionalContext`, only
+  in an interactive session (the `CLAUDE_CODE_ENTRYPOINT=cli` gate the page
+  uses today), so Orbit runs and routines carry none of it.
+- The skill's start-of-session steps become two:
+  1. **Read the active preferences**, global and project, as today's step 2
+     does (`SKILL.md`, "Start of a session"), and follow them for the whole
+     session. The brief shows no entries, and its layout is the one Daniel
+     agreed, so the binding rules are not put on the page. They stay a read
+     of their own: they bind, the page describes.
+  2. **Present the brief** in the first message: the recent sessions, then
+     the open claims, and how to settle them. Use the memory block; don't
+     recite it.
+- A Codex session runs `scribe brief` through the skill until its hook adds
+  it.
+- `--json` gives `{memory: {profile, now, milestones}, sessions, claims,
+  truncated, warnings}`, and `scribe memory show --json` gives the `memory`
+  object alone.
+
+**What exists before the new memory shape, and what waits for it.**
+
+- **Now, on today's store** ([ORB-26642]):
+  - `scribe brief` with its `## Recent sessions` and `## Open claims` parts,
+    in the line formats above;
+  - the hook injecting it.
+
+  Until phase 5, the memory block is today's `scribe memory show --page`
+  text less its recent-sessions part, which the brief's own part replaces
+  (so the five sections of §13.6 and their header and footer). Session ids are provider UUIDs
+  until phase 6.
+- **With the new memory shape** (phase 5):
+  - the `## Profile`, `## Now` and `## Milestones` parts, read from
+    `memory/`;
+  - `scribe memory show` with no id printing that block instead of today's
+    pages, and `--page` deprecated to an alias of it for the 30-day window.
+
+**What changes from format 22.** No stored shape. The hook stops injecting
+the memory page on its own: it injects the brief, which contains the page.
+The hook's `systemMessage` line "N proposals to review" stays, because it is
+for the user, not the agent.
+
+### 15.5 Memory: one fixed shape
+
+```
+memory/
+├── profile.md                       one document: who the user is now
+├── now/2026-12-01-hackathon-deadline.md
+├── now/2026-11-28-orbit-release.md
+├── milestones/2026-10-02-pulsar-decommissioned.md
+└── milestones/2026-06-14-married.md
+```
+
+**No switches and no customization.**
+
+- These `[memory]` keys go: `enabled`, `personal`, `decay_days`,
+  `now_undated_days`, `now_after_days`, `page_chars`, `recent_sessions`,
+  `promote_working_sessions`, `[memory.sections]` and `[memory.promote]`.
+- A config that sets one of them loads with a warning (`config_deprecated`)
+  for the 30-day window, then is refused (`config_invalid`).
+- Every user gets the same shape, budgets and rules.
+- The brief is gated only by the interactive check. A store with no memory
+  files yet prints the memory parts as `(none)`.
+
+Memory files are prose. Each is written whole by scribe through
+`write_atomic`. The frontmatter is small and the body is Markdown.
+
+**`now`**: something the user plans or is doing, with an explicit date or
+deadline. There is no date-less item.
+
+```markdown
+---
+date: 2026-12-01              # the event date or deadline, resolved against the turn
+kind: deadline                # deadline | event | plan
+sources: [s-41, s-44]
+updated: 2026-11-24T18:02:11Z
+---
+# Hackathon submission deadline
+
+The user is joining a hackathon; the submission deadline is Tuesday 2026-12-01.
+```
+
+- **Who writes it.** The session pass, from the user's turns only, at most
+  3 `now` writes per session per pass invocation (today's `MAX_PER_PASS`).
+  The test is in the prompt and in code. The model must return a date that
+  is a real calendar date, within a year before and two years after the
+  turn (today's check), and the item must be something **the user** plans,
+  attends or must meet. A task an agent was told to run is not an item;
+  `m-3` would be refused.
+- **An undated candidate.** "I am joining the hackathon" with no date
+  writes no file. The pass keeps it as a pending candidate, at most 5 per
+  session, with its subject and message id, in the `now_pending` table
+  (§15.7). The next windows of the same session are given those candidates.
+  A later turn that gives the date ("the deadline is next Tuesday")
+  completes one, and the item is written with both sessions in `sources`.
+  When the session goes `final`, its pending candidates are dropped.
+- **An update.** The pass is given the current `now` items (file stem,
+  title, date) and may update one in place by stem, for example a moved
+  date. It never opens a second file for the same event.
+- **When the date passes.** An item stays in `now/` for 14 days after its
+  date (fixed), so an agent can still ask how it went. After that, the
+  weekly job (§15.6) either promotes it to a milestone, if it qualifies, or
+  removes the file. A removed item's text and sources go to the
+  `memory_history` table, so `ask` and `record search` still recall it.
+
+**`milestones`**: a dated event that changed a fact in the profile, or one
+the user called a milestone. The file shape is that of `now` without
+`kind`. A milestone is permanent and leaves only by `scribe memory forget`.
+
+- The session pass writes a milestone directly only when the user's turn
+  calls it one (today's `user_says` rule (c), with its phrases fixed in
+  code).
+- The weekly job writes a milestone when its rebuild changes a profile fact
+  (rule (a)). It is the one reader that sees the profile before and after.
+- Rule (b), recurrence, goes. It counted occurrences, which items no longer
+  have.
+
+**`profile.md`**: one document, rebuilt weekly (§15.6). Its section
+headings are fixed in code, in this order:
+
+| Section | Holds |
+|---|---|
+| Role and work | profession, employer or kind of work, as stated |
+| Current focus | what the user is working on these weeks, undated (dated things are `now`) |
+| Projects | one paragraph per active project: name, purpose, status, as of a date |
+| Goals | what the user says they are working towards, short and long term |
+| Environment | machines, tools, providers, languages |
+| How they work | descriptive habits, each linking the preference entries that bind (`preferences-12`); never states a rule of its own |
+| Pinned | the user's own text, copied byte for byte by every rebuild |
+
+- **Pinned.** The job never changes it. A user who wants a fact kept writes
+  it there.
+- **Hand edits.** An edit outside Pinned is detected: the file's sha256
+  differs from the last stored revision. The job then receives the diff as
+  the user's corrections. A correction wins over the job's sources unless a
+  later session contradicts it.
+- **Revisions.** Each rebuild is a revision in `profile_revisions` (§15.7).
+  `scribe memory show --revision <n>` prints one, and `scribe memory
+  restore <n>` writes it back.
+
+**Reading it.** Memory is printed by `scribe memory show` with no id
+(Profile, Now, Milestones), the block that `scribe brief` embeds, with the
+layout and caps of [§15.4](#154-the-brief-one-session-start-page). Nothing
+else injects memory. The `acknowledged` mark of §13.4 stays as frontmatter on
+a `now` file (`raised: {at, session}`), set by `scribe memory ack <id>`.
+
+**What changes from format 22.**
+
+- `memory::Section` loses `Projects` and `Working`, and the pass stops
+  writing `Profile`. The pass writes only `now` and stated milestones.
+- `m-<n>` items, occurrences, the consolidation pairs (`MemoryPairsRequest`,
+  `memory/consolidate.rs`), the recurrence and working promotions
+  (`memory/promote.rs`, `Store::open_memory_candidates`), and every
+  `[memory]` switch go.
+- The sensitive-content gate (§13.8) and the mood rule (§13.4) stay, fixed
+  in code. A `now` statement that infers a mood its quote does not hold is
+  still refused.
+- `scribe memory show|ack|forget` take a file stem (`now/2026-12-01-…`) or
+  `profile`. `retire` goes: a `now` item removed by hand is forgotten, and
+  the profile is corrected by editing it.
+
+### 15.6 The weekly profile job
+
+`scribe memory refresh` rebuilds `profile.md` and settles passed `now`
+items. Any scheduler can call it: the seeded Orbit routine, cron, or a
+user's own launchd job. It has no dependency on Orbit, built in phase 5,
+when the database exists. It writes through a SQLite write transaction and
+the journal of §15.6, and holds the store lock as well until phase 7
+retires it. It is audited, and is idempotent: a second run
+with nothing new writes nothing.
+
+**Input** (bounded, STD-08 §R1):
+
+- the current `profile.md` and, when hand-edited, the diff (at most 4,000
+  characters);
+- the summaries of every session whose last message is after the job's
+  cursor, oldest first, at most 40 sessions and 1,500 characters each per
+  run. A longer backlog is taken over several runs, and the cursor moves
+  only through the sessions read.
+- the user's verbatim messages from the **3 sessions with the highest
+  signal** among those, at most 12,000 characters per session, from the
+  `messages` table (§15.7). Signal is one integer 0–3 the session pass
+  already returns with each window ("how much this window says about who
+  the user is: role, goals, projects, habits"), summed over a session's
+  windows; ties go to the longer user text. It costs one small field in an
+  existing call.
+- the active `now` items and every milestone, with titles and dates only;
+- the preference entries' ids and subjects, so "How they work" can link
+  them.
+
+**Model.** `[models] profile`: `claude-sonnet-5-5` under Claude Code, a
+stronger model than the pass's `claude-haiku-5-5`, and `gpt-6-luna` under
+Codex, Luna being the approved Codex default for every call. One call, with
+a 120 s budget fixed in code.
+
+**Output checks** (model-free, before anything is written):
+
+- the seven headings, exactly, in order;
+- Pinned byte-identical;
+- at most 6,000 characters;
+- every linked entry id exists;
+- the redactor leaves it unchanged, and the credential and sensitive gates
+  pass;
+- any promoted milestones named by stem and date.
+
+A failed check writes nothing, reports its code, and keeps the cursor. The
+next run retries.
+
+**Write.** Files sit outside SQLite, so no transaction covers them. Every
+memory write (this job, and the pass's `now` and milestone writes) follows
+one order, with a **journal** in the database:
+
+1. **Commit, before any file is touched.** One transaction holds:
+   - the new revision row;
+   - the cursor;
+   - the `memory_history` rows for the `now` files past their 14 days;
+   - one audit row per file;
+   - one `memory_journal` row listing the file operations with their full
+     content: write `profile.md`, write each promoted milestone, remove
+     each expired `now` file.
+2. **Apply the file operations** in order, each through `write_atomic` or
+   one `unlink`. Each is idempotent: a file is written to its stated
+   content, and a missing file is already removed.
+3. **Close the journal** in a second transaction. This sets the journal
+   row `done` and records each written file's sha256 on its revision
+   (`profile_revisions.file_sha256`).
+
+**Recovery.**
+
+- A crash before step 1 leaves nothing.
+- A crash after step 1 leaves an open journal. The next memory **write**
+  (`memory refresh`, a pass that writes memory, `memory ack`, `memory
+  forget`) replays it first, inside its own write transaction, before its
+  own work.
+- Reads never replay. `scribe memory show` and `scribe brief` stay
+  read-only (STD-01 R31): with an open journal they print the committed
+  revision from the database instead of the file, and warn
+  `memory_pending`.
+
+**A crash leftover against a hand edit.** `profile.md`'s sha256 differs
+from its last closed revision's `file_sha256` in two cases:
+
+- **With an open journal**, the file is a crash leftover. The replay
+  overwrites it.
+- **With no open journal**, the file is a hand edit. The next refresh
+  takes the diff as the user's corrections (§15.5).
+
+The database is the source of truth for the profile, and the file is its
+rendering.
+
+**Seeding.** The first run on a migrated store has no profile. It reads
+every active session (the backlog rule above) and today's `profile` and
+`projects` items as hints, labelled as such.
+
+### 15.7 Storage: one SQLite database
+
+```
+~/.scribe/                 0700, owner-checked on every load
+├── config.toml            the user's; read-only to scribe
+├── scribe.db              0600; WAL mode; everything below but memory/
+├── scribe.db-wal, -shm    SQLite's own
+└── memory/                profile.md, now/, milestones/ (§15.5)
+```
+
+**The dependency.** `rusqlite` with its `bundled` feature (SQLite compiled
+in, FTS5 enabled), in `scribe-core::store` only. `ARCHITECTURE.md` and
+`scripts/check-dependency-direction.sh` change in the same task, per the
+repo rule. Phase 4 confirms that `bundled` builds FTS5 on both CI operating
+systems before any table depends on it.
+
+**Tables** (columns abridged; types and constraints go in `specs/store.md`
+with phase 4):
+
+| Table | Holds | Replaces |
+|---|---|---|
+| `meta` | schema version (`PRAGMA user_version`), store id, created | `format:` in every document |
+| `sessions` | `id INTEGER PRIMARY KEY AUTOINCREMENT` shown as `s-<n>`; `provider_session` (the transcript UUID, unique per provider), provider, host, project, cwd, title, status, active, keep_active, active_change, cataloged_by, started, on_since, scribed_through, passes, summary, goals, next (JSON list), topics, related, signal; and the switch fields on, since, due, final, consecutive_failures, retry_after | `sessions/<yyyy>/<mm>/<uuid>.md` frontmatter and header, and `control.json`'s switches |
+| `segments` | session, n, heading, first_message, last_message, from, to, state, windows, origin, topics, related, text | the `log:` list and the `## Log` body |
+| `session_links`, `session_terms` | today's `links` and `terms` | frontmatter lists |
+| `messages` | session, provider message id, role, at, text (redacted on write), sha256; with an FTS5 index | nothing (new) |
+| `entries` | tag, n (`<tag>-<n>` kept), every field of today's entry, `context` | `entries/<tag>/<id>.md` |
+| `claims` | every field of today's proposal (`p-<n>` kept) and candidate, `context` | `proposals.json` |
+| `agent_tags` | today's store tags | `tags.json` |
+| `marks`, `pickups` | today's documents, row per item | `marks.json`, `pickups.json` |
+| `codex_cursors` | per rollout | `control.json`'s `codex_cursors` |
+| `now_pending`, `memory_history`, `profile_revisions`, `profile_cursor` | §15.5, §15.6 | nothing (new) |
+| `audit` | every field of today's line (format 5), one row per write | `audit.jsonl` |
+
+**Messages.**
+
+- **What is stored.** Only the user's typed turns of a switched-on session,
+  with §5.3's exclusions (pasted blocks, fenced code, synthetic and meta
+  turns). The text passes the redactor before it is written (STD-05). The
+  only assistant turns stored are those a claim or a collected entry cites
+  (decision 3), with `role = assistant`.
+- **When.**
+  - **From phase 6,** when the session row and its `scribed_through` are in
+    the database, the pass writes a window's turns in the transaction that
+    advances `scribed_through`.
+  - **In phases 4–5,** `scribed_through` is still in the session file. The
+    pass commits the window's messages first, then writes the session file
+    through `write_atomic` as today. A message's key is unique (`session`,
+    provider message id), so the insert is an upsert. A crash between the
+    two leaves messages past the file's cursor, and the rerun of that
+    window writes the same rows again. The file's cursor stays the truth
+    until phase 6.
+- **Not stored.** A session that is off stores nothing, as today.
+- **Forget.** `#scribe forget s-<n>` deletes the session's messages and
+  segments' text, and keeps the row as `forgotten`. It replaces today's
+  forget of a record file.
+- **Search.** BM25 over messages is FTS5's `bm25()`. `record search --kind
+  message` and `ask` retrieval use it. Embeddings are not built until a
+  miss is seen that BM25 cannot fix.
+
+**Ids.**
+
+- A session is `s-<n>`, matching `p-<n>` and `<tag>-<n>`.
+- The provider UUID is a column. Every command that takes a session id
+  accepts either form, and a unique UUID prefix still resolves (S11).
+- Cites written before the move (`session:<uuid>`) resolve through the
+  column, so no stored cite is rewritten.
+- `INTEGER PRIMARY KEY AUTOINCREMENT` follows Daniel's suggestion ("id
+  can be integer AUTOINCREMENT"). Here it keeps an id from being reused
+  after a forget.
+- Daniel's earlier idea of file names such as `s<ddhhmm>-<short-title>-<suffix>`
+  has no use once sessions have no files. `s-<n>` is short in an echo, and
+  the title is a column.
+
+**What SQLite replaces.**
+
+- **Lock and atomic writes.** The store lock (`fsio::LockGuard`, `.lock`)
+  and the whole-file atomic rewrite of every document give way to SQLite
+  transactions. Hooks in concurrent sessions take `BEGIN IMMEDIATE` with a
+  `busy_timeout` equal to today's `lock_wait`, and a timeout is still
+  `Error::Locked`.
+- **One commit per write.** A write and its audit row commit together. This
+  removes two gaps of the file store:
+  - the approval gap that `reapply_approved` repairs (§7);
+  - the gap that lets a failed command write success lines for closures
+    already on disk (§11.3).
+- **Upgrades.** `store/format.rs::UPGRADES` and its 21 steps give way to a
+  numbered list of SQL migrations keyed on `user_version`, each run in its
+  own transaction.
+- **Reads.** Reads still take no lock and write nothing (STD-01 R31).
+  - Every reader opens the database read-only (`SQLITE_OPEN_READ_ONLY`).
+  - In WAL mode a read-only open needs the `-wal` and `-shm` files to
+    exist, or a directory it can create them in. So writers set
+    `SQLITE_FCNTL_PERSIST_WAL`, which keeps both files after the last
+    connection closes.
+  - On a read-only root that lacks them (a copied or mounted store), the
+    reader retries with `immutable=1`. That is safe there, because no
+    writer can exist, and the reader labels its output `read-only copy`.
+
+**Per-session locks and rebuild checkpoints.** Two locks are held across
+model calls, which no SQLite transaction may be:
+
+- `.codex-<id>.lock`, which serialises Codex ingestion of one session
+  (`Store::lock_codex_ingestion`);
+- `.<id>.rebuild.lock`, beside the record, which serialises `session
+  rebuild` (`Store::lock_rebuild`).
+
+Both stay as OS advisory lock files in a `locks/` directory of the root
+(`fsio::LockGuard` stays for them alone). They hold no data. The rebuild
+checkpoint `.<id>.rebuild.md` (a partial rebuilt record) becomes a
+`rebuild_checkpoints` row from phase 6.
+
+**The cost, and its remedy.** The store is no longer greppable, diffable or
+openable in an editor, except for memory. `scribe export` is read-only, and
+writes the store as Markdown (one file per entry and session, the
+shapes of today's files) or as JSONL (one line per row, per table) into a
+directory the user names. It is the backup, the review copy and the way out
+of scribe. It is built in the first storage phase that moves a record kind,
+so no kind is ever unreadable outside the binary.
+
+**Migration.**
+
+- `scribe store migrate` reads a format-22 (or older) file store with
+  today's decoders and writes `scribe.db` in one transaction. It checks the
+  row count per kind against the files, then moves the old files to
+  `~/.scribe/pre-sqlite-<date>/`. They are kept, never deleted by scribe.
+- It is refused while any session is switched on, and while any rebuild
+  checkpoint `.<id>.rebuild.md` exists: the user resumes the rebuild
+  (`session rebuild`) or discards it first, so no partial record is
+  imported. It is also refused on a store that already has `scribe.db`.
+- Every new build runs it at its first write and refuses to write a file
+  store.
+- The file decoders stay for the 30-day compatibility window, then go with
+  `format.rs`.
+
+### 15.8 Generic and configurable
+
+**Nothing shipped names a person.**
+
+- Prompts, skill text, hook messages, help, errors and output labels say
+  "the user".
+- An optional `[user] name = "…"` reaches the prompts ("the user, <name>")
+  only. Output labels and the brief never use it, because they are parsed.
+- `AuthorKind::Daniel` becomes `AuthorKind::User`, serialised `user`.
+  - On the file store (phases 1–2), `daniel` is still read, and the next
+    write persists `user` (part of format step 23).
+  - In `--json`, the change is recorded as a contract change in
+    `specs/output-contract.md`. Its only readers are the skill and the tmux
+    popup, which ship in the same package.
+  - Labels such as `CAPTURED_DANIEL` and `STATED_WHOSE` ("scribe's statement
+    of Daniel's turn") become "the user's".
+- The design docs keep Daniel's words as provenance. They are the record of
+  why, not shipped text.
+
+**What a user can change in `config.toml`**, with the shipped default:
+
+| Key | Changes | Shipped default |
+|---|---|---|
+| `[user] name` | how prompts name the user | none: "the user" |
+| `[tags.<name>]` `description`, `aliases`, `stale_after_days`, `action`, `require_quote`, `ask_first` | a tag's settings, as today | `preference` and `standard` as in §15.2 |
+| `[tags.<name>.capture]` `from`, `route`, `triggers`, `criteria`, `not`, `max_open` | what a catcher catches and what a catch becomes | as in §15.2; a new tag captures nothing until it has triggers |
+| `[instructions] session`, `annotation`, `ask` | the user's own guidance, at most 1,000 characters each, added to that prompt in a delimited "the user's instructions" block placed **before** the fixed output contract | empty |
+| `[models] provider`, `session`, `annotation`, `ask`, `consistency`, `profile` | which model each call uses (timeouts are fixed in code, as today) | today's (Claude Code: `claude-sonnet-5-5` for `ask`, `claude-haiku-5-5` for the rest; Codex: `gpt-6-luna` for every call); `profile`: `claude-sonnet-5-5` under Claude Code, `gpt-6-luna` under Codex (the approved Luna default) |
+| `[sessions] inactive_after_days`, cadence keys | as today | as today |
+
+**What stays fixed in code:**
+
+- **The output contract of every model call.** The JSON schema, the
+  verbatim quote and its check against the transcript, the redactor, the
+  refusal of credentials and finance identifiers, the sensitive gate and
+  the mood rule, and the date check. User instructions come before it in
+  the prompt, and the store checks every answer against the contract
+  whatever the prompt said.
+- **The memory shape.** The three parts, the profile's seven headings,
+  Pinned, the brief's layout and caps, and the 14-day window.
+- **Attribution.** Only a span in a quote is credited to its speaker, and
+  an assistant quote is never the user's.
+- **The bounds.** Claim slots, the 20-open cap, the collected-entry bound,
+  the brief's caps, and the profile job's input caps.
+
+**Shipped prompts**, each saying "the user":
+
+| Prompt | Builder | What it asks for |
+|---|---|---|
+| session pass | `SessionRequest::prompt` | the header and segment; claims under firing catchers with context and quote; `now` writes and stated milestones; the window's signal |
+| annotation | `AnnotationRequest::prompt` | per marker, an entry (tag, subject, context, quote) or `none` with a reason |
+| session header | `SessionHeaderRequest::prompt` | as today |
+| ask | `AskRequest::prompt` | an answer from cited evidence, as today |
+| consistency | `ConsistencyRequest::prompt`, `RemovalRequest::prompt` | entry supersession and removal, as today; the memory pairs prompt goes |
+| profile | `ProfileRequest::prompt` (new) | the profile rebuild of §15.6 |
+
+**What changes from format 22.**
+
+- The prompts drop every "Daniel" for "the user" or the configured name.
+- `[instructions]` and `[user]` are new config tables.
+- The persisted author kind `daniel` becomes `user`.
+
+### 15.9 Phases
+
+The meaning comes before the storage. Each phase leaves a store the next
+phase's build reads, and lands with its `specs/` and skill updates and its
+goldens. Each line gives what the phase does, then what it proves.
+
+1. **Stop writing `working` memory.**
+   - Does: the pass no longer asks for `working` or `projects` items or
+     writes them, and the working-to-preference proposal (§13.7) is
+     removed.
+   - Proves: the `m-3` class of item is no longer written. This is the
+     observed failure, fixed first and small.
+   Alongside it, and needing nothing from phases 2–5: **the brief**
+   ([ORB-26642]): `scribe brief` with Recent sessions and Open claims, and
+   today's `memory show --page` text as the memory block; the hook injects
+   it. Proves: one command gives the session-start page within its fixed
+   caps, from stored text only.
+2. **Generic prompts, catchers and configurable instructions.**
+   - Does: "the user" everywhere shipped; `[user] name`; `[instructions]`;
+     `from = user|assistant|both`; `max_open`; route `agent` and the issue
+     record kind removed, with the `scribe issue` noun, `issue stats`, the
+     hook's root-cause line, `#scribe forget <issue-id>` and `record search
+     --kind issue`; any stored issues converted to `issue` entries
+     (§15.11); the shipped set is `preference` and `standard`; `idea` and
+     `issue` become examples; author kind `user`. Format 23.
+   - Proves: a grep of shipped text finds no name. A config-only catcher
+     (the `orbit` collector and the assistant `todo` catcher) catches in a
+     replay fixture with no code change, and so does the `issue` example on
+     an incident turn. A user instruction reaches the
+     model while a contract-breaking answer is still refused.
+3. **Claims with context.**
+   - Does: `context` on claims, collected entries and annotations; format
+     24.
+   - Proves: each open claim can be settled without opening its session.
+4. **SQLite foundation and the messages table.**
+   - Does: the dependency; `scribe.db` with `meta`, `messages` and its FTS5
+     index, `now_pending`, `memory_history`, `profile_revisions` and
+     `profile_cursor`; the pass commits a window's messages (upserted on
+     session and message id), then writes the session file with its cursor
+     as today, the file's cursor staying the truth until phase 6 (§15.7);
+     `record search --kind message`.
+   - Proves: `bundled` builds with FTS5 on both CI operating systems. WAL
+     and `busy_timeout` hold under concurrent hook processes in a harness
+     (never synthetic load on a real host). Redaction happens on write.
+     The database is owner-only and checked on load.
+5. **The memory shape and the profile job.**
+   - Does: `memory/profile.md`, `now/`, `milestones/`; `scribe memory
+     refresh`; the `## Profile`, `## Now` and `## Milestones` block from
+     files, printed by `scribe memory show` with no id; the `[memory]` switches deprecated;
+     consolidation and promotion code removed; the existing items migrated
+     (§15.11).
+   - Proves: a `now` item exists only with a date. An undated candidate
+     completes later in the same session and is dropped at its end. A
+     rebuild keeps Pinned, is idempotent, and resumes from its cursor. A
+     passed item becomes a milestone or history.
+6. **Sessions into SQLite, and `scribe export`.**
+   - Does: `sessions`, `segments`, links, terms, the switch fields of
+     `control.json` and `codex_cursors`; `s-<n>` ids with UUID lookups;
+     `scribe export` for sessions; `scribe store migrate` for the session
+     kind.
+   - Proves: every session reads back the same through `session show
+     --json` before and after (golden). Old `session:<uuid>` cites resolve.
+     A pass is one transaction, its memory files following the journal of
+     §15.6.
+7. **Entries, claims, state and audit into SQLite.**
+   - Does: `entries`, `claims`, `agent_tags`, `marks`, `pickups`
+     and `audit`; the store lock, `write_atomic` for documents and
+     `UPGRADES` retired (`write_atomic` stays for memory files); export for
+     every kind.
+   - Proves: an approval and its audit row commit together, and
+     `reapply_approved` has nothing to repair. Every `audit.jsonl` line
+     reads back from the table, the issue fields of formats 4–5 included.
+8. **Remove the file store** after the 30-day window.
+   - Does: the decoders, `format.rs` and the file-store tests.
+   - Proves: nothing reads a format-22 file.
+
+**Implementation tasks** (titles and scope; none is filed until Daniel
+approves this design; each carries the `scribe` tag):
+
+| # | Title | Scope |
+|---|---|---|
+| 1 | scribe: stop writing working and projects memory | `memory_prompt`, `Section` writes, `memory/promote.rs` working path, skill; no format change |
+| 2 | scribe: generic prompts, `[user]` and `[instructions]` | every shipped prompt, label and skill line; config tables; `AuthorKind::User`; format 23 |
+| 3 | scribe: catchers — `from`, `max_open`, the shipped set; `issue` becomes a tag | `config.rs`, `tag.rs`, `trigger.rs`, `pass/candidates.rs`; removes `issue.rs`, `issue_trigger.rs`, `store/issues.rs`, `store/issue_file.rs`, `commands/issue.rs`, `hook/issue_command.rs`, the `ask` and search issue paths; issue-to-entry conversion; `specs/catchers.md`; breaking CLI change |
+| 4 | scribe: claims carry a context paragraph | `SESSION_SCHEMA`, annotation schema, `proposal.rs`, `store/candidates.rs`, outputs, popup |
+| 5 | scribe: `scribe brief` as the session-start page ([ORB-26642], filed before this design's approval on Daniel's "Yes, three lieutenants") | new read-only command with Recent sessions and Open claims, today's page as the memory block, hook, skill, goldens |
+| 6 | scribe: SQLite foundation and the messages table | dependency, `ARCHITECTURE.md`, dependency script, `scribe.db`, `meta`, `messages` + FTS5, memory support tables, `record search --kind message` |
+| 7 | scribe: memory as profile, now and milestones, with `memory refresh` | `memory/`, `store/memory.rs`, `ProfileRequest`, `memory show` with no id and the brief's memory block, the routine seed, migration of `m-<n>` |
+| 8 | scribe: sessions in SQLite with `s-<n>` ids, and `scribe export` | `session.rs`, `store/` session code, `control.json` fields, `store migrate`, `export` |
+| 9 | scribe: entries, claims, state and audit in SQLite | remaining kinds; lock and `UPGRADES` retired |
+| 10 | scribe: remove the file store after the compatibility window | decoders, `format.rs`, tests |
+
+### 15.10 Differences from the proposal
+
+Each item is a difference from the chief's proposal in [ORB-26640] or from
+Daniel's words, with its reason.
+
+1. **No `approval` field; `route` already says it.** The proposal adds
+   `approval = "required" | "none"`. The code already has `route = propose |
+   write` (`tag::CaptureRoute`), with a built and checked direct-write path
+   (§11.6). A second field would allow `route = write, approval = required`,
+   which means nothing. One field, two values.
+2. **`issue` is a tag, not a record kind** (Daniel, 2026-11-22, replacing
+   decision 2 of the proposal, which kept issue records outside the
+   redesign). The design removes the record kind and its CLI, and ships
+   `issue` as an example catcher, not a default. Asked "Should `issue`
+   ship as a third default tag?", Daniel answered "No, example only"
+   (2026-11-22). The Mac store holds no issue record. As a `write` catcher reading both sides, it keeps the
+   incident's context and verbatim quote, which is most of what an issue
+   held. What it loses: occurrences across sessions, the resolved and
+   reopened states, and `issue stats`. Those parts never had data to
+   justify them: no issue record was ever written, and the audit log holds
+   one trigger fire.
+3. **The instruction is `criteria` and `not`.** The proposal names "an
+   instruction" per tag. The code already gives the model a positive and a
+   negative test per tag, recorded in each claim's `admitted.criteria`, a
+   persisted contract. The design keeps those two fields as the catcher's
+   instruction, and adds `[instructions]` for guidance that spans tags
+   (Daniel: "a user should be able to update instructions").
+4. **A subject stays beside the context.** The proposal drops the one-line
+   statement. The design drops it as content, but keeps the 80-character
+   `subject` as a label, because the brief and `proposal list` need one line
+   per claim and an empty subject is today's referent check.
+5. **The shipped tag stays `preferences`, with `preference` as its alias.**
+   Daniel names it `preference`. That word already resolves, as an alias,
+   and the stored name and ids stay, so no cite breaks.
+6. **`standard` ships with capture rules.** The proposal ships it as a
+   default. Today it has no rules and is never caught, so shipping it as a
+   catcher needs triggers. The design gives it the generic ones in §15.2.
+7. **`now` is written by the pass, the profile by the job, and milestones by
+   both.** The proposal does not say who writes a milestone. A profile
+   change is visible only to the job that rebuilds the profile, and a stated
+   milestone only to the pass that reads the turn.
+8. **Memory cites sessions, not quotes.** The proposal keeps memory as prose
+   files. The design also removes quotes and occurrences from memory: the
+   verbatim words live in `messages`, and a memory file cites `s-<n>`. That
+   is what makes memory a synthesis rather than a second copy of entries.
+9. **Ids are `s-<n>`, but not `m-<n>`.** The proposal matches `s-<n>` to
+   `m-<n>`. Memory items no longer exist as numbered records: `now` and
+   milestone files are named by date and slug, as Daniel described ("list
+   of markdowns").
+10. **The SQLite foundation comes before the memory shape.** Decision 4 puts
+    all meaning (memory included) before storage. Three parts of the memory
+    shape need tables: pending undated candidates, removed `now` history,
+    and profile revisions with the verbatim messages the job reads. Building
+    them on the file store first would be built twice. So the meaning that
+    needs no storage goes first: `working` stops in phase 1, and catchers,
+    claims follow in phases 2–3, and the brief lands beside phase 1. The SQLite foundation, with
+    the messages table first (as decision 4 says), comes next, then memory.
+11. **A per-tag cap.** Not in the proposal. It is added because catchers are
+    user-defined, and the store-wide cap was observed full of two tags.
+12. **The profile records hand edits.** Not in the proposal, which has only
+    Pinned. An edit elsewhere is fed to the job as a correction instead of
+    being silently overwritten.
+13. **No `memory overview` verb.** Daniel asked for `scribe memory
+    overview`, a holistic overview for the start-of-session hook or a
+    manual instruction. As he agreed on 2026-11-22, `scribe brief` is that
+    page, and `scribe memory show` with no id is its memory block (§15.4).
+    Recent sessions moved out of `memory` into the brief, because a session
+    is its own kind of record. One command for one page means the hook and
+    the manual instruction cannot drift apart.
+14. **A passed `now` item stays 14 days.** The proposal has an item leave
+    `now` when its date passes. The design keeps it for 14 days after (the
+    fixed form of today's `now_after_days = 14`). In those days the agent
+    can ask how it went, as Daniel wanted of `now` on 2026-11-21: "It feels
+    nice when other people remember details about you … even after the
+    event". After them, it becomes a milestone or history.
+15. **The brief lists session titles, not summaries.** Daniel's words were
+    "the scribe will summarize past couple sessions". The brief shows the
+    last 5 sessions as one dated title line each, the layout he agreed at
+    03:10Z on 2026-11-22 ("yes, put it on both tasks and tell the
+    captain"), recorded on [ORB-26640]. The page is injected into every
+    session, so it keeps fixed caps, and a summary is one `scribe session
+    show <id>` away.
+16. **Removing the `personal` switch keeps household facts on for every
+    user.** Today `[memory] personal` ships `true` (`MemoryConfig::default`),
+    so the default does not change. What changes is that no user can turn
+    it off: a user who wants a work-only memory loses that choice. This
+    follows Daniel's "no on/off and no customization for now". The fixed
+    sensitive-content gate (§13.8) and the mood rule still apply to every
+    user. Cost: a user who shares a machine or wants work-only memory has
+    no setting for it until a need is seen.
+
+### 15.11 Every record kind and state file: fate and migration
+
+| Today (format 22) | Fate | Migration step |
+|---|---|---|
+| `entries/<tag>/<id>.md` (12 on the Mac) | `entries` rows; ids kept | phase 7: imported field for field; `author.kind: daniel` read as `user` (phase 2 rewrites on write); content unchanged |
+| entries under tags that no longer ship (`finding`, `remind`, `idea`) | kept, readable and settleable by id | phase 7 like any entry; no tag needed in config |
+| `sessions/<yyyy>/<mm>/<uuid>.md` (37) | `sessions`, `segments`, `session_links`, `session_terms` rows | phase 6: `s-<n>` by `created` order; UUID into `provider_session`; body sections into columns; `check_log` run on every record before import |
+| `control.json` | switch fields on `sessions`; `codex_cursors` table | phase 6: a switch with no record makes a header-only session row |
+| `proposals.json` (21; 6 open) | `claims` rows; ids kept | phase 7; phase 3 shows open statement-only candidates as `older claim`; the 3 open `finding` candidates stay open, because the Mac's `config.toml` still declares `[tags.finding]`, so the retired-tag cleanup of §11.3 does not close them; they wait for Daniel to settle them or drop the table |
+| `memory/m-<n>.md` | removed; their content seeds the first profile or a `now` file | phase 5: a `profile` or `projects` item becomes a hint to the first refresh; a `now` item with a date in the future, or under 14 days past, becomes a `now` file; a `milestones` item becomes a milestone file; a `working` item is dropped; every item's text and occurrences go to `memory_history` |
+| `m-1` (working: merge right after each task) | dropped from memory; offered as a `preference` claim with its quote | phase 5 opens the claim, since it is a standing rule; Daniel settles it |
+| `m-2` (projects: keep the crew-memory machinery internally) | a hint to the first profile refresh, under Projects | phase 5 |
+| `m-3` (working: run the requeue) | dropped; kept only in `memory_history` | phase 5 |
+| `issues/issue-<n>.md` (0 on the Mac) | removed as a kind; each becomes one entry under the `issue` tag | phase 2, model-free: the content is the issue's title, cause and fix, joined; the `quote` is its verified request; the cite is the request's session and message; the author is the agent that wrote it; each occurrence's session becomes a `related` `session:<id>`. The files move to `pre-issue-<date>/`. A store with no `[tags.issue]` gets the example table added to the effective tag table only for reading those entries, never as a catcher |
+| issue fields on audit lines (formats 4–5; 1 trigger fire on the Mac) | kept as history; nothing reads them | phase 7 imports them as written; `issue stats` is gone from phase 2 |
+| `tags.json` | `agent_tags` rows | phase 7 |
+| `marks.json` | `marks` rows | phase 7 |
+| `pickups.json` | `pickups` rows | phase 7 |
+| `audit.jsonl` (1,296 lines) | `audit` rows | phase 7: every line imported with its format; torn lines counted and reported, as `audit_events` does |
+| `.lock` | removed | phase 7; SQLite's locking replaces it, and memory files follow the journal order of §15.6 |
+| `.codex-<id>.lock`, `.<id>.rebuild.lock` | kept as lock files, moved to `locks/` | phase 6; they serialise work across model calls and hold no data |
+| `sessions/…/.<id>.rebuild.md` (rebuild checkpoints) | `rebuild_checkpoints` rows | phase 6; `store migrate` refuses while one exists, so the user finishes or discards it first |
+| `scribe-init.json`, `.scribe-init.lock` (in the provider's config directory, outside the store) | unchanged | none: they belong to `scribe init`, not the store |
+| `config.toml` | stays the user's file | phase 2 adds `[user]`, `[instructions]`, and warns on `[tags.issue.capture]` route `agent` for 30 days, then refuses it; phase 5 deprecates `[memory]` keys; `from = "daniel"` read as `user` |
+| `store/format.rs::UPGRADES` | replaced by SQL migrations on `user_version` | phase 8 removes it after the window |
+
+### 15.12 Limits and what is not built until seen
+
+- **A catcher is still a word list.** A remark phrased without a trigger is
+  missed, and the user adds a trigger or types `#scribe`. An assistant
+  catcher such as `todo` will fire often, so it ships only as an example.
+- **The context is the model's.** A wrong context is caught only when the
+  user reads it before approving. A collected entry's context may never be
+  read.
+- **The signal score is the model's.** A weak score may pick the wrong three
+  sessions for verbatim reading. The summaries still cover every session.
+- **The database is one file on one host.** Reading from another host stays
+  the owner-host SSH read of today. A corrupt database is restored from the
+  user's own backup or `scribe export`. scribe takes no backups of its own.
+- **An incident is caught like any remark.** Without occurrences, the same
+  failure seen twice is two `issue` entries. `scribe entry list --tag issue`
+  lists both.
+- **Not built until seen:** embeddings over messages; storing every
+  assistant turn; per-user memory sections or memory switches; a hosted or
+  synced store; a configurable profile layout.
+
 ## Task References
 
 - [ORB-21747] — designed the standalone scribe plugin.
@@ -5196,6 +6267,12 @@ Answered 2026-11-21 ("Approve as proposed"): all five as proposed.
   referent call and Stop recovery removed, `models.referent` deprecated.
 - [ORB-26349] — extended the duplicate check's negation markers, and made
   Stop recovery decide coverage as of the turn.
+- [ORB-26642] — builds `scribe brief` as the session-start page (Recent
+  sessions and Open claims) on today's store.
+- [ORB-26640] — designed §15: tags as catchers, claims with a context
+  paragraph and `scribe brief`, memory as `profile.md`, `now/` and
+  `milestones/` with a weekly profile job, generic prompts, and one SQLite
+  store, with `issue` a tag rather than a record kind (proposed, not built).
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
 
