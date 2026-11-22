@@ -24,7 +24,7 @@
           "id": "p-6",
           "kind": "candidate",
           "quote": "yeah, for the popup just show the newest five, nothing older.",
-          "statement": "Daniel prefers that the scribe tmux popup lists only the five newest records.",
+          "statement": "The user prefers that the scribe tmux popup lists only the five newest records.",
           "subject": "the scribe tmux popup",
           "older": null,
           "newer": null,

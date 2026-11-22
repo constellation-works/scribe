@@ -41,7 +41,7 @@ fn candidate(n: u64, tag: &str, state: ProposalState, statement: Option<&str>) -
         settled_by: None,
         author: Author::session_pass(),
         updated_by: None,
-        settled_author: (state != ProposalState::Open).then(Author::daniel),
+        settled_author: (state != ProposalState::Open).then(Author::user),
         closed_reason: None,
         instruction: None,
     }

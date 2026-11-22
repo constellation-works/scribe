@@ -420,6 +420,12 @@ fn pass_asks_for_standing_preferences_only_and_never_proposes_a_decision() {
         admitted["criteria"],
         "A standing rule from the user that applies beyond the work at hand."
     );
+    // Stored text never keeps the prompt placeholder (2_design.md §15.8).
+    let stored = std::fs::read_to_string(s.fx.root().join("proposals.json")).unwrap();
+    assert!(
+        !stored.contains("{user}") && !stored.contains("{User}"),
+        "{stored}"
+    );
 }
 
 #[test]

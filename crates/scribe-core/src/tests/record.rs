@@ -63,6 +63,7 @@ fn a_listing_counts_every_match_before_the_limit() {
 #[test]
 fn reserved_author_names_cover_every_internal_channel() {
     for reserved in [
+        "user",
         "daniel",
         "scribe",
         "consistency",

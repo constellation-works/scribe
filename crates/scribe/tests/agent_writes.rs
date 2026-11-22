@@ -823,6 +823,7 @@ fn a_session_id_that_resolves_to_no_record_leaves_the_audit_target_null() {
 fn reserved_author_names_are_refused_on_every_agent_write() {
     let fx = Fixture::new();
     for name in [
+        "user",
         "daniel",
         "scribe",
         "consistency",
