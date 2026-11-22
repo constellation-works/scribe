@@ -383,6 +383,77 @@ fn an_approval_and_its_audit_line_commit_together() {
     );
 }
 
+#[test]
+fn migrate_and_its_audit_line_commit_or_roll_back_together() {
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+    file_store(&root);
+    let store = Store::open(&root);
+    let line = AuditEvent {
+        at: NOW,
+        command: String::from("store migrate"),
+        status: AuditStatus::Success,
+        target: Some(String::from("store:records")),
+        error_code: None,
+        author: None,
+        instruction_session: None,
+        instruction_message: None,
+        issue: None,
+        duration_ms: 1,
+    };
+    let migrate_lines = |store: &Store| {
+        store
+            .audit_events()
+            .unwrap()
+            .0
+            .into_iter()
+            .filter(|e| e.at == NOW && e.command == "store migrate")
+            .count()
+    };
+
+    // Failure after migrate_store and record_audit rolls back both.
+    let failed: Result<(), Error> = store.transaction(|| {
+        store.migrate_store(NOW)?;
+        store.record_audit(&line)?;
+        Err(Error::corrupt(&root, "interrupted after migrate"))
+    });
+    assert!(failed.is_err());
+    assert!(root.join("sessions/2026/11/s-1.md").is_file());
+    assert!(root.join("entries/preferences/preferences-1.md").is_file());
+    assert!(!root.join("pre-sqlite-2026-11-02").exists());
+    assert_eq!(migrate_lines(&store), 0);
+
+    // Calling migrate_store after another write already began inside a
+    // transaction is still refused and rolls back that write.
+    let nested = store.transaction(|| {
+        store.settle(&Settle::Approve("p-1".parse().unwrap()), &cite(), NOW)?;
+        store.migrate_store(NOW)?;
+        Ok::<_, Error>(())
+    });
+    assert!(nested.is_err());
+    assert_eq!(store.proposals().unwrap()[0].state, ProposalState::Open);
+    assert!(root.join("sessions/2026/11/s-1.md").is_file());
+    assert!(!root.join("pre-sqlite-2026-11-02").exists());
+
+    // Success commits the migration and its audit row together, moves the
+    // files aside after commit, and populates moved_to.
+    let moved = store
+        .transaction(|| {
+            let moved = store.migrate_store(NOW)?;
+            store.record_audit(&line)?;
+            Ok::<_, Error>(moved)
+        })
+        .unwrap();
+    assert_eq!(moved.moved_to.as_deref(), Some("pre-sqlite-2026-11-02"));
+    assert!(!root.join("sessions").exists());
+    assert!(!root.join("entries").exists());
+    assert!(
+        root.join("pre-sqlite-2026-11-02/sessions/2026/11/s-1.md")
+            .is_file()
+    );
+    assert_eq!(migrate_lines(&store), 1);
+}
+
 fn candidate_proposal(
     id: &str,
     entry_id: &str,

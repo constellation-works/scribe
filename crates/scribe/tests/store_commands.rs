@@ -68,6 +68,99 @@ fn migrate_refuses_while_a_session_is_on_then_moves_every_session() {
 }
 
 #[test]
+fn migrate_and_its_success_audit_commit_or_roll_back_together() {
+    let fx = Fixture::new();
+    fx.seed();
+    // Create scribe.db at the current schema without migrating records yet.
+    let refused = fx.run(&["store", "migrate", "--json"]);
+    assert_eq!(refused.status.code(), Some(1), "{}", text(&refused.stderr));
+
+    let control = fx.root().join("control.json");
+    let text_now = std::fs::read_to_string(&control).unwrap();
+    std::fs::write(
+        &control,
+        text_now.replace(
+            r#"{"on": true, "since": "2026-11-02T18:55:00Z", "due": true"#,
+            r#"{"on": false, "since": "2026-11-02T18:55:00Z", "due": false"#,
+        ),
+    )
+    .unwrap();
+    make_private(&control);
+
+    {
+        let conn = rusqlite::Connection::open(fx.root().join("scribe.db")).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER block_migrate_success_audit
+             BEFORE INSERT ON audit
+             WHEN NEW.command = 'store migrate' AND NEW.status = 'success'
+             BEGIN
+                 SELECT RAISE(ABORT, 'injected audit failure');
+             END;",
+        )
+        .unwrap();
+    }
+
+    let aborted = fx.run(&["store", "migrate", "--json"]);
+    assert_eq!(
+        aborted.status.code(),
+        Some(1),
+        "audit failure must roll back migration: {}",
+        text(&aborted.stdout)
+    );
+    assert!(fx.root().join("sessions").is_dir());
+    assert!(fx.root().join("entries").is_dir());
+    assert!(fx.root().join("proposals.json").is_file());
+    let has_aside = std::fs::read_dir(fx.root())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .any(|e| e.file_name().to_string_lossy().starts_with("pre-sqlite-"));
+    assert!(!has_aside, "files must stay when migration rolls back");
+
+    {
+        let conn = rusqlite::Connection::open(fx.root().join("scribe.db")).unwrap();
+        let kinds: i64 = conn
+            .query_row("SELECT count(*) FROM record_kinds", [], |r| r.get(0))
+            .unwrap();
+        let sessions: i64 = conn
+            .query_row("SELECT count(*) FROM sessions", [], |r| r.get(0))
+            .unwrap();
+        let entries: i64 = conn
+            .query_row("SELECT count(*) FROM entries", [], |r| r.get(0))
+            .unwrap();
+        let audits: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM audit WHERE command = 'store migrate' AND status = 'success'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(kinds, 0, "record_kinds must roll back");
+        assert_eq!(sessions, 0, "sessions must roll back");
+        assert_eq!(entries, 0, "entries must roll back");
+        assert_eq!(audits, 0, "success audit must not exist");
+        conn.execute_batch("DROP TRIGGER block_migrate_success_audit;")
+            .unwrap();
+    }
+
+    let moved = json(&fx.ok(&["store", "migrate", "--json"]));
+    assert_eq!(moved["sessions"], 3, "{moved}");
+    let aside = moved["moved_to"].as_str().unwrap();
+    assert!(aside.starts_with("pre-sqlite-"), "{aside}");
+    assert!(!fx.root().join("sessions").exists());
+    assert!(!fx.root().join("entries").exists());
+
+    let conn = rusqlite::Connection::open(fx.root().join("scribe.db")).unwrap();
+    let success_audits: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM audit WHERE command = 'store migrate' AND status = 'success' AND target = 'store:records'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(success_audits, 1);
+}
+
+#[test]
 fn export_writes_every_session_and_writes_nothing_to_the_store() {
     let fx = Fixture::new();
     fx.seed();

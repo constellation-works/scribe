@@ -167,13 +167,27 @@ impl Store {
     ) -> std::result::Result<T, E> {
         if self.in_write() {
             if mode == Move::ByHand {
-                // `store migrate`'s refusals run at its own move; inside
-                // another write that move has already been made.
-                return Err(Error::corrupt(
-                    self.root.join(DB_FILE),
-                    "store migrate runs as a transaction of its own, not inside another write",
-                )
-                .into());
+                let adopted = PENDING.with(|p| {
+                    let mut pending = p.borrow_mut();
+                    let Some(pending) = pending.as_mut().filter(|p| p.root == self.root) else {
+                        return false;
+                    };
+                    if pending.open.is_some() {
+                        return false;
+                    }
+                    pending.mode = Move::ByHand;
+                    pending.now = now;
+                    true
+                });
+                if !adopted {
+                    // `store migrate`'s refusals run at its own move; inside
+                    // another write that move has already been made.
+                    return Err(Error::corrupt(
+                        self.root.join(DB_FILE),
+                        "store migrate runs as a transaction of its own, not inside another write",
+                    )
+                    .into());
+                }
             }
             return f();
         }
@@ -296,6 +310,16 @@ impl Store {
                 }
                 None => false,
             }
+        })
+    }
+
+    /// Whether the pending write has scheduled moving legacy files aside
+    /// after commit.
+    pub(super) fn aside_pending(&self) -> bool {
+        PENDING.with(|p| {
+            p.borrow()
+                .as_ref()
+                .is_some_and(|p| p.root == self.root && p.after.aside)
         })
     }
 
