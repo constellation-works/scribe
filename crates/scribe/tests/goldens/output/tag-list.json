@@ -61,7 +61,7 @@
       "source": "config",
       "name": "standard",
       "aliases": [],
-      "description": "a rule change for the constellation standards, in Daniel's words",
+      "description": "a rule change for the constellation standards, in the user's words",
       "stale_after_days": null,
       "configured": true,
       "entries": 0,

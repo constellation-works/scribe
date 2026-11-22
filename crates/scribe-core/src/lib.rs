@@ -67,6 +67,7 @@ mod tag;
 pub mod transcript;
 pub mod trigger;
 pub mod verbatim;
+pub mod voice;
 
 pub use config::{Config, ConfigError, ModelIds, SessionsConfig};
 pub use entry::{

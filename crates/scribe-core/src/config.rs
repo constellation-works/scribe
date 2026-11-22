@@ -1,7 +1,7 @@
 //! `config.toml`: tags, model ids, cadence, the session age limit and the
 //! credential names whose values the redactor masks.
 //!
-//! Daniel edits the file and scribe only reads it; a missing file means the
+//! The user edits the file and scribe only reads it; a missing file means the
 //! defaults. A bad key or value is refused at load, naming it, never
 //! defaulted (STD-02 R28; docs/design/scribe/4_decisions.md, "Environment
 //! settings fall back rather than refuse"). This module parses text; the
@@ -13,7 +13,7 @@
 //! stale_after_days = 180
 //!
 //! [tags.rituals]
-//! description = "how Daniel starts and ends a day"
+//! description = "how the user starts and ends a day"
 //!
 //! [tags.direction]
 //! action = true
@@ -34,7 +34,7 @@
 //! `require_evidence`, and capture fields). `aliases = []` clears shipped
 //! aliases. Omitting `stale_after_days` on a tag with no shipped interval
 //! means entries never go stale. A word the config sets that a shipped tag
-//! also uses is Daniel's: the shipped tag loses that alias, or is left out
+//! also uses is the user's: the shipped tag loses that alias, or is left out
 //! when the word is its name, and `tag list` warns. Two config entries that
 //! claim one word are refused. Nothing in config deletes a shipped tag
 //! except claiming its name.
@@ -55,6 +55,12 @@
 //!
 //! [redact]
 //! env = ["GITHUB_TOKEN"]
+//!
+//! [user]
+//! name = "Sam"
+//!
+//! [instructions]
+//! ask = "You answer a question about what {user} decided, prefers or did."
 //!
 //! [projects.scribe]
 //! paths = ["codebases/scribe"]
@@ -186,6 +192,10 @@ pub struct Config {
     pub projects: BTreeMap<Project, Vec<String>>,
     /// `[memory]` (docs/design/scribe/2_design.md §13.3).
     pub memory: crate::memory::MemoryConfig,
+    /// `[user] name`: how prompts name the user; "the user" when unset.
+    pub user: crate::voice::UserName,
+    /// `[instructions]`: per-use instruction texts replacing the shipped ones.
+    pub instructions: crate::voice::Instructions,
 }
 
 impl Default for Config {
@@ -203,6 +213,8 @@ impl Default for Config {
             redact_env: Vec::new(),
             projects: BTreeMap::new(),
             memory: crate::memory::MemoryConfig::default(),
+            user: crate::voice::UserName::default(),
+            instructions: crate::voice::Instructions::default(),
         }
     }
 }
@@ -216,6 +228,16 @@ impl Config {
             config.models = self.codex_models.clone();
         }
         config
+    }
+
+    /// What a request for `model_use` is voiced with: `[user] name` and
+    /// that use's `[instructions]` text, when the file sets them.
+    #[must_use]
+    pub fn voice(&self, model_use: crate::voice::ModelUse) -> crate::voice::Voice {
+        crate::voice::Voice {
+            user: self.user.clone(),
+            instructions: self.instructions.get(model_use).map(str::to_owned),
+        }
     }
 
     /// Parse `config.toml`'s text. A missing table or key takes its default;
@@ -304,6 +326,11 @@ impl Config {
             redact_env: raw.redact.env,
             projects: projects_from(text, raw.projects)?,
             memory: raw.memory.resolve(text)?,
+            user: match raw.user.name {
+                None => crate::voice::UserName::default(),
+                Some(name) => crate::voice::UserName::named(&name).map_err(unlocated)?,
+            },
+            instructions: raw.instructions.resolve().map_err(unlocated)?,
         })
     }
 
@@ -360,6 +387,52 @@ struct RawConfig {
     projects: BTreeMap<String, RawProject>,
     #[serde(default)]
     memory: RawMemory,
+    #[serde(default)]
+    user: RawUser,
+    #[serde(default)]
+    instructions: RawInstructions,
+}
+
+/// `[user]`: how prompts name the user.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawUser {
+    name: Option<String>,
+}
+
+/// `[instructions]`: one optional text per model use
+/// ([`crate::voice::ModelUse::key`]).
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawInstructions {
+    annotation: Option<String>,
+    session: Option<String>,
+    session_header: Option<String>,
+    ask: Option<String>,
+    consistency: Option<String>,
+    memory_pairs: Option<String>,
+    removal: Option<String>,
+}
+
+impl RawInstructions {
+    fn resolve(self) -> Result<crate::voice::Instructions, String> {
+        use crate::voice::ModelUse;
+        let mut out = crate::voice::Instructions::default();
+        for (model_use, text) in [
+            (ModelUse::Annotation, self.annotation),
+            (ModelUse::Session, self.session),
+            (ModelUse::SessionHeader, self.session_header),
+            (ModelUse::Ask, self.ask),
+            (ModelUse::Consistency, self.consistency),
+            (ModelUse::MemoryPairs, self.memory_pairs),
+            (ModelUse::Removal, self.removal),
+        ] {
+            if let Some(text) = text {
+                out.set(model_use, &text)?;
+            }
+        }
+        Ok(out)
+    }
 }
 
 /// `[memory]`: every key optional, each overriding its default alone. The
@@ -610,7 +683,7 @@ impl RawCapture {
                     return Err(refuse(
                         span,
                         format!(
-                            "{key}.from = \"assistant\" is not accepted: the pass reads only Daniel's turns; use \"daniel\""
+                            "{key}.from = \"assistant\" is not accepted: the pass reads only the user's turns; use \"daniel\""
                         ),
                     ));
                 }

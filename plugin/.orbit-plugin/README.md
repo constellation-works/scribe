@@ -1,7 +1,7 @@
 # scribe — Orbit plugin
 
 The Orbit side of scribe ([design](../../docs/design/scribe/2_design.md#1-boundary-and-surfaces)):
-one MCP tool, `scribe.ask`, answering from Daniel's `#scribe` entries, his
+one MCP tool, `scribe.ask`, answering from the user's `#scribe` entries, their
 session records and Orbit tasks, with every quote checked verbatim. The
 backend is the installed `scribe` binary (`bin/scribe-plugin` execs
 `scribe plugin call`); this tree holds only the manifest, schemas and tests.
@@ -17,7 +17,7 @@ The Claude Code hooks that write entries are a separate package,
 `routines/` and `jobs/` hold the two routines, seeded by `orbit plugin
 enable` with `enabled: false`: `scribe-session-pass` (`*/5 * * * *`, the
 records of sessions whose pass is due, as `scribe session pass` writes them;
-enabled on each host after review; Daniel can also run it by hand where
+enabled on each host after review; the user can also run it by hand where
 `claude` is on `PATH`) and `scribe-consistency` (`0 6 * * 1`, proposals,
 as `scribe consistency scan` opens them). Each runs one job step that
 calls its tool. A call starts no later session or window after 50 s and no
@@ -80,9 +80,7 @@ The routines ship disabled so the operator can review each host's setup,
 following Orbit's convention. `orbit routine list` shows them; enable the
 session routine with `orbit routine enable scribe-session-pass` once the
 store and transcripts are configured and `claude` is reachable from the
-Orbit clock's `PATH`. Once enabled it runs every 5 minutes. Daniel,
-2026-11-10: "perhaps routine was not a bad idea then? let's add that back".
-The Mac enabled it that day; the shipped default remains disabled.
+Orbit clock's `PATH`. Once enabled it runs every 5 minutes; the shipped default remains disabled.
 
 Also run `scribe session pass` by hand (due sessions, five per run) or
 `scribe session pass --session <id>` (a named session, due or not, ignoring

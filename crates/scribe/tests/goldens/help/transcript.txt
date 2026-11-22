@@ -4,7 +4,7 @@ Usage: scribe transcript [OPTIONS] <COMMAND>
 
 Commands:
   list  List uncataloged transcripts, newest first, writing nothing
-  show  Show one transcript and Daniel's first five turns, writing nothing
+  show  Show one transcript and the user's first five turns, writing nothing
   help  Print this message or the help of the given subcommand(s)
 
 Options:
@@ -21,7 +21,7 @@ Lists provider transcripts that have no session record and no switch,
 selected with --provider codex or claude-code (the default),
 newest first, and writes nothing. --min-turns defaults to 20. project is
 the configured [projects.<slug>] path with the most mentions, else the
-cwd's project. show prints one transcript with Daniel's first five turns.
+cwd's project. show prints one transcript with the user's first five turns.
 
 Examples:
   scribe transcript list --since 2026-10-01 --project scribe

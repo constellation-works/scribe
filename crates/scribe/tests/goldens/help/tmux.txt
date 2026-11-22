@@ -50,7 +50,7 @@ Keys:
               an entry in full, a proposal as its fields. On a backfill
               candidate, put '/scribe catalog <id>' in the tmux paste buffer
               and say so; typed into a Claude Code prompt, it catalogs the
-              session as Daniel's (the CLI refuses --author daniel)
+              session as the user's (the CLI refuses --author daniel)
   ctrl-y      copy the record's id (tmux buffer, and pbcopy when present)
   ctrl-s      sessions            ctrl-e  active entries
   ctrl-p      open proposals      ctrl-b  backfill candidates (uncataloged

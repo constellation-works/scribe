@@ -54,7 +54,7 @@ Global options:
           Shorthand for --format json
 
 Lookups (the newest session, a named session, open next steps, a tag's
-entries today or this week, month or year, a term Daniel defined, the last
+entries today or this week, month or year, a term the user defined, the last
 on-call session for a workspace) return the stored records with no model
 call. Anything else is answered by the configured ask model from the
 records that match, and every quote it gives is checked verbatim against

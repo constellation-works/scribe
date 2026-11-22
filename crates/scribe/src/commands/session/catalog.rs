@@ -11,11 +11,11 @@
 //! Who cataloged it is a channel, like every `author`. The CLI records
 //! `kind: agent` under the caller's `--author` and refuses the reserved
 //! names (`daniel`, `scribe`, `consistency`) `reserved_author`, with or
-//! without a terminal: Daniel catalogs by typing `/scribe catalog <id>` in
-//! his prompt, which the hook turns into a catalog switch with
+//! without a terminal: the user catalogs by typing `/scribe catalog <id>` in
+//! their prompt, which the hook turns into a catalog switch with
 //! `cataloged_by: {kind: daniel}` ([`begin`]); this command, or the next
 //! `session pass`, then runs its windows and keeps that attribution
-//! (4_decisions.md "Daniel writes only through his typed prompt").
+//! (4_decisions.md "The user writes only through their typed prompt").
 
 use super::pass;
 use crate::app::Context;
@@ -38,8 +38,8 @@ final and switched off; a newer one stays on and due. A failed catalog
 keeps its checkpoint; run the same command again to resume. Writes no entries.
 
 A new catalog is recorded as kind agent under --author; the reserved names
-daniel, scribe and consistency are refused. Daniel catalogs as himself by
-typing /scribe catalog <id> in his prompt; running this command on that
+daniel, scribe and consistency are refused. The user catalogs as themselves by
+typing /scribe catalog <id> in their prompt; running this command on that
 session afterwards runs its windows and keeps cataloged_by daniel.
 
 Examples:
@@ -114,7 +114,7 @@ pub(in crate::commands) struct Begun {
 /// value, and start a catalog switch recorded as cataloged by `by`, or
 /// resume one a catalog already wrote (keeping its `since` and
 /// `cataloged_by`). Shared by this command (`by` an agent) and the
-/// `/scribe catalog <id>` prompt command (`by` Daniel). Runs no window.
+/// `/scribe catalog <id>` prompt command (`by` the user). Runs no window.
 ///
 /// # Errors
 ///

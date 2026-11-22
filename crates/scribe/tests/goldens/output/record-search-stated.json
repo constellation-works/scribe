@@ -7,7 +7,7 @@
       "segment": null,
       "score": 9.671,
       "title": "preferences-2 (preferences)",
-      "snippet": "scribe's statement of Daniel's turn: Daniel prefers that session records keep the whole session's history in an append-only log rather than one rewritten outcome. | Daniel's words: \"ok that makes sense. then let's keep the whole history in an append-only log, not one rewritten outcome.\"",
+      "snippet": "scribe's statement of the user's turn: Daniel prefers that session records keep the whole session's history in an append-only log rather than one rewritten outcome. | The user's words: \"ok that makes sense. then let's keep the whole history in an append-only log, not one rewritten outcome.\"",
       "project": "constellation-works/scribe",
       "topics": [],
       "author": {

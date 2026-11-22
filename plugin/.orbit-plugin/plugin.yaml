@@ -10,8 +10,8 @@ metadata:
   name: scribe
   version: 0.3.0
   description: >-
-    Daniel's explicitly recorded preferences and the records of
-    the sessions he cataloged, answered with verbatim citations.
+    The user's explicitly recorded preferences and the records of
+    the sessions they cataloged, answered with verbatim citations.
   homepage: https://github.com/constellation-works/scribe
 spec:
   requires:
@@ -67,13 +67,13 @@ spec:
   tools:
     - name: ask
       description: >-
-        Answer a question about what Daniel decided, prefers or did, from his
-        #scribe entries, the session records he turned on with /scribe on, and
+        Answer a question about what the user decided, prefers or did, from their
+        #scribe entries, the session records they turned on with /scribe on, and
         Orbit tasks. Every claim carries a quote checked verbatim against the
         record it cites; claims that fail are dropped and counted, two
         disagreeing records come back as a conflict with both cites, and
         nothing recorded is `no_record`. Lookups (the last session, a named
-        session, open next steps, a tag's entries this week, a term Daniel
+        session, open next steps, a tag's entries this week, a term the user
         defined, the last on-call session for a workspace) return the stored
         records verbatim with status `record`. Writes nothing.
       execution_kind: read_only
@@ -97,7 +97,7 @@ spec:
         The scribe-consistency routine's job: re-apply interrupted approvals,
         then open a proposal for each entry a later one replaced and each
         entry due for review, as `scribe consistency scan --json` does. Changes
-        no entry otherwise; Daniel settles proposals with #scribe approve or
+        no entry otherwise; the user settles proposals with #scribe approve or
         #scribe reject. Needs [plugins.scribe] root.
       execution_kind: mutating
       agent_callable: false

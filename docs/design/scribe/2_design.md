@@ -689,7 +689,10 @@ directories `ask` reads as extra discussion evidence and never writes
 with `paths`, the path fragments whose mentions attribute a transcript to
 that project ([§5.8](#58-cataloging-a-past-session); none by default);
 `[redact]` with `env`, further
-variables whose values are masked. A missing file or table is the defaults;
+variables whose values are masked; `[user]` with `name`, how prompts name
+the user (default "the user"), and `[instructions]`, per-use instruction
+texts that replace the shipped ones ahead of the fixed output contract
+([specs/store.md](./specs/store.md#config)). A missing file or table is the defaults;
 an unknown key or bad value is refused, naming the file and line
 ([specs/store.md](./specs/store.md#config)).
 The file is created by `scribe hook session-start` on first run with the

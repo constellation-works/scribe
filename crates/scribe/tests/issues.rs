@@ -335,7 +335,7 @@ fn an_issue_is_added_occurred_updated_shown_listed_and_searched() {
         assert_eq!(hit["kind"], "issue");
         let snippet = hit["snippet"].as_str().unwrap();
         assert!(
-            snippet.contains("[agent account (opus); Daniel asked: \"find out why"),
+            snippet.contains("[agent account (opus); the user asked: \"find out why"),
             "{snippet}"
         );
     }
@@ -961,7 +961,7 @@ fn ask_cites_an_issue_as_the_agents_account_with_daniels_request_as_his() {
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     let v = json_of(&out);
     assert_eq!(v["status"], "answered", "{v}");
-    assert_eq!(v["claims"][0]["text"], "Daniel");
+    assert_eq!(v["claims"][0]["text"], "The user");
     assert_eq!(v["claims"][1]["text"], "agent account (opus)");
     let answer = v["answer"].as_str().unwrap();
     assert!(

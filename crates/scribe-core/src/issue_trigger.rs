@@ -32,7 +32,7 @@ pub fn fire(rules: &CaptureRules, prompt: &str) -> Option<Fired> {
 #[must_use]
 pub fn hint(fired: &Fired, session: &str) -> String {
     format!(
-        "scribe: this turn asks for a root cause (issue trigger \"{}\" fired). Before diagnosing, run `scribe issue search '<symptoms or error text>'`. When you answer, record it: `scribe issue occur <issue-id>` on a matching issue, else `scribe issue add`, each with `--author <your name> --related session:{session} --request '<Daniel's words, verbatim>'` (leave `--cause` out when no cause is found: it reads \"cause not found\"), then tell Daniel in one line the id and that `#scribe forget <issue-id>` cancels it.",
+        "scribe: this turn asks for a root cause (issue trigger \"{}\" fired). Before diagnosing, run `scribe issue search '<symptoms or error text>'`. When you answer, record it: `scribe issue occur <issue-id>` on a matching issue, else `scribe issue add`, each with `--author <your name> --related session:{session} --request '<the user's words, verbatim>'` (leave `--cause` out when no cause is found: it reads \"cause not found\"), then tell the user in one line the id and that `#scribe forget <issue-id>` cancels it.",
         fired.trigger
     )
 }

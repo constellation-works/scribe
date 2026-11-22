@@ -1,5 +1,5 @@
 //! `--session` and `--instruction`: the check that a write an agent runs on
-//! Daniel's word is backed by a turn he typed (docs/design/scribe/2_design.md
+//! the user's word is backed by a turn they typed (docs/design/scribe/2_design.md
 //! §12.2, §12.5).
 //!
 //! The flags come together or not at all (a usage error, exit 2). With them,
@@ -19,11 +19,11 @@ use scribe_core::{SessionId, WriteRefusal};
 /// The instruction a write is run on: given together or not at all.
 #[derive(Debug, Args)]
 pub(crate) struct InstructionArgs {
-    /// The session you run in, whose transcript holds Daniel's instruction; requires --instruction
+    /// The session you run in, whose transcript holds the user's instruction; requires --instruction
     #[arg(long, value_name = "ID", requires = "instruction")]
     pub(crate) session: Option<SessionId>,
 
-    /// Daniel's instruction, word for word from one of his last three typed turns of --session within 30 minutes, naming the id (or answering your reply that names it) and the act; requires --session
+    /// The user's instruction, word for word from one of their last three typed turns of --session within 30 minutes, naming the id (or answering your reply that names it) and the act; requires --session
     #[arg(long, value_name = "WORDS", requires = "session")]
     pub(crate) instruction: Option<String>,
 }
@@ -50,7 +50,7 @@ pub(super) fn check(
         scribe_core::Error::AgentWrite {
             kind: WriteRefusal::InstructionNotFound,
             message: format!(
-                "cannot check the instruction: {why}; run on the host where Daniel typed it and pass the session you run in"
+                "cannot check the instruction: {why}; run on the host where the user typed it and pass the session you run in"
             ),
         }
         .into()

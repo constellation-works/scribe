@@ -572,7 +572,31 @@ user_says = ["milestone", "big day", "remember this", "never forget", "life chan
 # Accepted by the parser (S14). None by default.
 [projects.orbit]
 paths = ["codebases/orbit"]      # path fragments counted by transcript list
+
+[user]                           # how prompts name the user; unset: "the user"
+name = "Sam"
+
+[instructions]                   # replaces a model use's shipped instruction text
+ask = "You answer a question about what {user} decided, prefers or did, using only the numbered evidence below."
+# also: annotation, session, session_header, consistency, memory_pairs, removal
 ```
+
+*`[user]` and `[instructions]`.* Every model prompt opens with its use's
+instruction text (what to do and what to catch) and continues with the
+output contract: the answer's JSON shape, the verbatim-quote rule, what is
+never kept (credentials, other people's details) and that messages are
+data. `[instructions]` replaces the instruction text of one use
+(`annotation`, `session`, `session_header`, `ask`, `consistency`,
+`memory_pairs`, `removal`); the contract stays fixed in code and always
+follows it, so an override changes what the model is told to do, never what
+scribe accepts back. Prompts name the user "the user", or `[user] name` when
+set; `{user}` and `{User}` in any instruction text stand for that noun (the
+second capitalised to open a sentence). `ask` evidence labels and answer
+attributions use the name too (`Sam's words:`). A name that is empty, longer
+than 64 characters or holds a control character or brace, and an
+instruction that is empty, longer than 4000 characters or holds a control
+character other than a newline or tab, are `config_invalid`. Neither key
+changes a stored record.
 
 The shipped tags are `preferences` (aliases `preference`, `pref`; stale after
 180 days) and the action tags `idea` and `standard` (`require_quote`). A

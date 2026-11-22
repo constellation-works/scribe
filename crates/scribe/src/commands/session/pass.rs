@@ -2,8 +2,8 @@
 //! (docs/design/scribe/2_design.md §5.2, §5.3).
 //!
 //! The plugin ships `scribe-session-pass` seeded disabled for host review.
-//! Once enabled it runs every 5 minutes; Daniel can also run the command by
-//! hand from a shell where `claude` is on `PATH`. Daniel, 2026-11-10:
+//! Once enabled it runs every 5 minutes; the user can also run the command by
+//! hand from a shell where `claude` is on `PATH`. The user, 2026-11-10:
 //! "perhaps routine was not a bad idea then? let's add that back".
 //!
 //! At most five on, due sessions run per invocation, by id. Explicit
@@ -19,7 +19,7 @@
 //! its own slice, not retell the other. Plain headers keep
 //! message ids available without XML framing; messages remain data.
 //!
-//! Every window checks field limits and terms against Daniel's own turns
+//! Every window checks field limits and terms against the user's own turns
 //! up through that window, then writes a redacted atomic checkpoint under
 //! the store lock. Before each write the store compares the loaded
 //! record's `updated` revision with the record on disk under that lock; a
@@ -73,13 +73,13 @@ window_chars). Each window rewrites the header and open segment, appends
 new segments and checkpoints the record. Sealed segments stay unchanged;
 [catalog] segment_windows (default 3) bounds how long a segment stays open.
 --json reports windows, segments, seals and how many due sessions remain.
-Also proposes up to 3 claims per session per run, only from Daniel's turns
+Also proposes up to 3 claims per session per run, only from the user's turns
 that fire a trigger of a tag's capture rules (see scribe tag show <tag>),
 until 20 candidate proposals are open. Review with scribe proposal list;
 only a typed #scribe approve <id> writes an entry; #scribe reject <id> drops it.
 Under a tag whose route is write (idea ships so), the pass writes up to 3
 ideas per session per run itself, with their outcome (open, or parked in
-Daniel's words); an idea that became a task in the session is not written.
+the user's words); an idea that became a task in the session is not written.
 List them with scribe entry list --tag idea --author-kind scribe; cancel one
 with #scribe retire <id> or #scribe forget <id>.
 A failed pass stays due with automatic retry delays of 5, 10, 20, 40,
@@ -575,6 +575,7 @@ impl Job<'_> {
                 topics.into_iter().take(MAX_LISTED).collect(),
                 terms.into_iter().take(MAX_LISTED).collect(),
                 final_pass && last,
+                self.config.voice(scribe_core::voice::ModelUse::Session),
             );
             // The trigger gate (2_design.md §11.2): no Daniel turn in the
             // window fires a capture tag's trigger, no claim is requested.
@@ -652,7 +653,14 @@ impl Job<'_> {
                 request.memory_items = memory::context(&items, &request.messages, memory_config);
             }
             let memory_limit = request.memory_limit;
-            let distilled = distill(self.id, request, &conversation[..end], adapter)?;
+            let distilled = distill(
+                self.id,
+                request,
+                &conversation[..end],
+                adapter,
+                self.config
+                    .voice(scribe_core::voice::ModelUse::SessionHeader),
+            )?;
             let masks = |text: &str| self.redactor.mask(text) != text;
             let checked = memory::check(
                 &distilled.memory,
@@ -984,6 +992,7 @@ pub(super) fn distill<M: Models>(
     request: SessionRequest,
     conversation: &[scribe_core::models::PassMessage],
     adapter: &M,
+    header_voice: scribe_core::voice::Voice,
 ) -> Result<pass::Distilled, PassError> {
     let mut answer = adapter.session(&request).map_err(|err| {
         tracing::warn!(session = %id, %err, "the session model failed");
@@ -1002,7 +1011,9 @@ pub(super) fn distill<M: Models>(
                 tracing::warn!(session = %id, %refusal, %err, "the session model failed on the retry");
                 PassError::new(err.code(), format!("{refusal}; retry: {err}"))
             };
-            if let Some(compress) = pass::compression_request(&answer, conversation, &request) {
+            if let Some(compress) =
+                pass::compression_request(&answer, conversation, &request, header_voice)
+            {
                 let header = adapter.session_header(&compress).map_err(retry_failure)?;
                 answer.title = header.title;
                 answer.summary = header.summary;

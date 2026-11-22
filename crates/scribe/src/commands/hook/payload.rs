@@ -2,7 +2,7 @@
 //! check (docs/design/scribe/2_design.md §4.1).
 //!
 //! The payload is a claim, not authority (STD-05 R1): any process running as
-//! Daniel can pipe JSON into `scribe hook`. Before a hook acts on a session,
+//! the user can pipe JSON into `scribe hook`. Before a hook acts on a session,
 //! it confirms the payload's `transcript_path` is a Claude Code transcript
 //! of this user for that session: under the transcripts directory, named
 //! `<session_id>.jsonl`, a regular file (not a link) owned by this uid. That
@@ -43,7 +43,7 @@ pub(super) struct PromptPayload {
 }
 
 /// Whether this payload's turn was written by an agent or the harness,
-/// not plainly typed by Daniel ([`scribe_core::capture::agent_originated`]
+/// not plainly typed by the user ([`scribe_core::capture::agent_originated`]
 /// over its origin fields and prompt). Such a turn records nothing, decides
 /// nothing and does not switch `/scribe` on or off.
 pub(super) fn agent_originated(payload: &PromptPayload) -> bool {

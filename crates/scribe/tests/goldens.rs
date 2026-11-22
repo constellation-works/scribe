@@ -196,6 +196,19 @@ fn help_matches_goldens() {
 }
 
 #[test]
+fn no_help_page_names_a_person() {
+    // Help speaks of "the user"; scribe ships to anyone (`[user] name`
+    // names them in prompts, never in help).
+    let fx = Fixture::new();
+    let named: Vec<&str> = HELP
+        .iter()
+        .filter(|(_, args)| text(&fx.ok(args).stdout).contains("Daniel"))
+        .map(|(name, _)| *name)
+        .collect();
+    assert!(named.is_empty(), "help names a person: {named:?}");
+}
+
+#[test]
 fn every_help_page_has_a_golden() {
     // Each subcommand path in the tree is pinned, so a new verb cannot ship
     // without its help golden.
@@ -628,7 +641,7 @@ fn candidate_proposal_list_matches_goldens() {
             "project":"scribe", "provider":"claude-code", "host":"host",
             "role":"user", "evidence":null,
             "admitted": {"trigger":"I prefer", "matched":"I prefer",
-                "criteria":"A standing rule from Daniel that applies beyond the work at hand."}
+                "criteria":"A standing rule from the user that applies beyond the work at hand."}
         },
         "reason":"Unmarked preference: I prefer concise progress updates.", "quotes":[],
         "state":"open", "opened_at":"2026-11-15T00:01:00Z", "settled_at":null,
@@ -709,7 +722,7 @@ stated_by: {{kind: scribe, name: session-pass}}
             "cwd":"/home/daniel/workspace/scribe"})
     };
     let admitted = json!({"trigger":"let's keep", "matched":"let's keep",
-        "criteria":"A standing rule from Daniel that applies beyond the work at hand."});
+        "criteria":"A standing rule from the user that applies beyond the work at hand."});
     let approved = json!({
         "id":"p-5", "kind":"candidate", "older":"preferences-2", "newer":null,
         "candidate": {
@@ -959,12 +972,12 @@ fn ask_evidence_names_an_instructed_approval_outside_the_quotable_text() {
         .find(|item| item.contains("cite=\"preferences-2\""))
         .unwrap_or_else(|| panic!("{prompt}"));
     let line = format!(
-        "<approval>approved by opus on Daniel's instruction \"{INSTRUCTED_WORDS}\" ({INSTRUCTED_SESSION}, 2026-11-15)</approval>\n</evidence>"
+        "<approval>approved by opus on the user's instruction \"{INSTRUCTED_WORDS}\" ({INSTRUCTED_SESSION}, 2026-11-15)</approval>\n</evidence>"
     );
     assert!(item.contains(&line), "{item}");
     // It is still his entry, weighted as his words.
     assert!(
-        item.contains("words=\"scribe's statement of Daniel's turn\""),
+        item.contains("words=\"scribe's statement of the user's turn\""),
         "{item}"
     );
 }
@@ -1146,9 +1159,9 @@ fn captured_ideas_match_goldens() {
     assert_eq!(
         labels,
         [
-            "Daniel (captured by the session pass)",
-            "scribe's statement of Daniel's turn, captured by the session pass (not typed by Daniel)",
-            "Daniel"
+            "The user (captured by the session pass)",
+            "scribe's statement of the user's turn, captured by the session pass (not typed by the user)",
+            "The user"
         ]
     );
 }

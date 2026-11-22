@@ -10,8 +10,8 @@ Options:
       --cause <CAUSE>    The best-known cause (at most 600 characters)
       --fix <FIX>        The current best fix or mitigation (at most 600 characters)
       --status <STATUS>  The new status [possible values: open, mitigated, resolved]
-      --related <REF>    Reference, repeatable: session:<id> names the session Daniel's request was typed in; task:<id>, pr:<owner>/<repo>#<n> and repo:<slug> are linked
-      --request <WORDS>  Daniel's request, word for word from one of his typed turns in the session --related names
+      --related <REF>    Reference, repeatable: session:<id> names the session the user's request was typed in; task:<id>, pr:<owner>/<repo>#<n> and repo:<slug> are linked
+      --request <WORDS>  The user's request, word for word from one of their typed turns in the session --related names
   -h, --help             Print help
   -V, --version          Print version
 
@@ -23,4 +23,4 @@ Global options:
 
 Examples:
   scribe issue update <issue-id> --author opus --cause '<the cause found>' --fix '<the fix>' --status resolved
-  scribe issue update <issue-id> --author opus --status mitigated --related session:<id> --request '<his words>'
+  scribe issue update <issue-id> --author opus --status mitigated --related session:<id> --request '<their words>'

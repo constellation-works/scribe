@@ -66,9 +66,9 @@ pub(crate) enum Command {
     /// Read, open, update and settle proposals
     #[command(subcommand, after_help = proposal::PROPOSAL_EXAMPLES)]
     Proposal(ProposalCommand),
-    /// Show what scribe noticed about Daniel and manage memory items
+    /// Show what scribe noticed about the user and manage memory items
     ///
-    /// Shows what scribe has noticed about Daniel from switched-on sessions, and lets you acknowledge, retire or forget an item.
+    /// Shows what scribe has noticed about the user from switched-on sessions, and lets you acknowledge, retire or forget an item.
     #[command(subcommand, after_help = memory::MEMORY_EXAMPLES)]
     Memory(MemoryCommand),
     /// Search every stored record by words, with no model call

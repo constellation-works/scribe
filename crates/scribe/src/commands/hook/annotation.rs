@@ -1,4 +1,4 @@
-//! Catalog the `#scribe` markers Daniel typed inside his sentences, at the
+//! Catalog the `#scribe` markers the user typed inside their sentences, at the
 //! Stop of the turn (docs/design/scribe/2_design.md §14).
 //!
 //! The prompt hook only echoed the marker. Here, after the reply, each
@@ -8,7 +8,7 @@
 //! (`annotation::check`) and recorded in one store call that writes the
 //! entries and `marks.json` (`Store::record_marks`):
 //!
-//! - an entry: Daniel's, content scribe's statement, `quote` his words,
+//! - an entry: the user's, content scribe's statement, `quote` their words,
 //!   `stated_by` scribe:annotation, no proposal;
 //! - none: nothing written, never asked again;
 //! - refused (a check, a cover, redaction, or a marker refused before any
@@ -17,7 +17,7 @@
 //!   Stop retries it, up to [`MAX_ATTEMPTS`] calls, then refused
 //!   `model_failed`.
 //!
-//! Daniel sees an echo for every outcome except a marker the prompt hook
+//! The user sees an echo for every outcome except a marker the prompt hook
 //! already refused, which is recorded and audited here silently. A turn
 //! with no marker, or whose markers are all settled, reads only the
 //! transcript and `marks.json`: no lock, no write, no call.
@@ -47,7 +47,7 @@ use scribe_core::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-/// What the hook tells Daniel and audits.
+/// What the hook tells the user and audits.
 #[derive(Default)]
 pub(super) struct Cataloged {
     pub(super) echoes: Vec<String>,
@@ -264,7 +264,13 @@ pub(super) fn run<M: Models>(
             .filter(|m| transcript::daniel_turn(m).is_some())
             .collect();
         let open: Vec<&Mark> = item.open.iter().collect();
-        let request = annotation::request(&open, window, &config.tags, &config.models.annotation);
+        let request = annotation::request(
+            &open,
+            window,
+            &config.tags,
+            &config.models.annotation,
+            config.voice(scribe_core::voice::ModelUse::Annotation),
+        );
         if adapter.is_none() {
             adapter = models.take().map(|build| build(&config));
         }

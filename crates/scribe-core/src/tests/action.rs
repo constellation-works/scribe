@@ -149,6 +149,7 @@ fn ask_leaves_action_entries_out_unless_the_scope_names_their_tag() {
         sessions: &[],
         issues: &[],
         tags: &tags,
+        user: &crate::voice::UserName::default(),
     };
     let mut question = Question {
         text: String::from("what next"),

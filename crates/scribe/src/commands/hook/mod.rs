@@ -6,11 +6,11 @@
 //!   and apply its settling commands; a prompt whose first line
 //!   is `/scribe on|off|status|link|catalog` goes to `scribe_command.rs`
 //!   instead, which switches cataloging and blocks the prompt (§5.1, §5.8);
-//! - `stop.rs`: after a reply, catalog the `#scribe` markers Daniel typed
+//! - `stop.rs`: after a reply, catalog the `#scribe` markers the user typed
 //!   through `annotation.rs` (§14), fill in message ids, and mark a
 //!   switched-on session's pass due by minutes or turns (§5.2);
 //! - `session_end.rs`: mark a switched-on session's last pass due and final;
-//! - `session_start.rs`: tell Daniel how many proposals are open (§7),
+//! - `session_start.rs`: tell the user how many proposals are open (§7),
 //!   how many action entries no consumer has picked up (§4.6), and the
 //!   `/scribe on --from <id>` command when this session may continue a
 //!   recorded one (§5.4).
@@ -58,7 +58,7 @@ Examples:
 const PROMPT_EXAMPLES: &str = "\
 Reads the UserPromptSubmit payload (session_id, transcript_path, cwd, prompt)
 on stdin. Prints Claude Code hook JSON when the prompt has a #scribe line,
-and nothing otherwise; never blocks such a prompt. Every #scribe Daniel
+and nothing otherwise; never blocks such a prompt. Every #scribe the user
 typed, inside a sentence or opening a line (#scribe idea: ..., #scribe add
 this to preferences), not quoted or in code, is a marker: it is echoed as
 marked and cataloged at Stop, and nothing is written here; no model is
@@ -68,7 +68,7 @@ proposal or hide or blank an entry; #scribe forget <issue-id> or
 <issue-id>#<n> blanks an issue or removes an occurrence. A prompt whose first
 line is /scribe on, /scribe off or /scribe status switches this session's
 cataloging and is blocked, its status given as the reason; /scribe catalog
-<id> starts Daniel's catalog of a past session, whose windows the next
+<id> starts the user's catalog of a past session, whose windows the next
 session pass runs.
 
 Examples:
@@ -79,8 +79,8 @@ Reads the Stop payload (session_id, transcript_path, optional cwd) on stdin.
 Each typed turn with a #scribe marker that marks.json has not settled gets
 one models.annotation call (30 s; at most 2 turns per Stop and 3 markers
 per turn; a failed call is retried at the next reply, 3 attempts in all),
-and its checked answer is recorded as Daniel's entry with scribe's statement
-and his quoted words. A tag named after the marker, or at the end of a line
+and its checked answer is recorded as the user's entry with scribe's statement
+and their quoted words. A tag named after the marker, or at the end of a line
 it opens, is a hint the model must follow. #scribe/global in place of
 #scribe records the entry with project global, for every repository; the
 working directory's project stays the default. Under an action tag
@@ -95,7 +95,7 @@ Examples:
 
 const SESSION_START_EXAMPLES: &str = "\
 Reads the SessionStart payload (session_id, and cwd when the harness sends
-it) on stdin. Prints a message for Daniel when proposals are open, when
+it) on stdin. Prints a message for the user when proposals are open, when
 action entries have waited over an hour with no pickup, or when this
 session is not opted in and a session in the same project was recorded
 within the last day. Nothing otherwise, and nothing for the agent. Reads
@@ -116,7 +116,7 @@ Examples:
 pub(crate) enum HookCommand {
     /// Handle the SessionStart hook JSON from stdin
     ///
-    /// Tells Daniel how many proposals are open, which action entries are unpicked, and when this session may continue a recorded one, from the SessionStart hook's JSON on stdin.
+    /// Tells the user how many proposals are open, which action entries are unpicked, and when this session may continue a recorded one, from the SessionStart hook's JSON on stdin.
     #[command(after_help = SESSION_START_EXAMPLES)]
     SessionStart(HookArgs),
     /// Handle the UserPromptSubmit hook JSON from stdin

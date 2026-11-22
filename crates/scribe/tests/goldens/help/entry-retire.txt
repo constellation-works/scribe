@@ -1,6 +1,6 @@
 Retire an entry with a reason
 
-Retires an agent note, or Daniel's entry on his instruction.
+Retires an agent note, or the user's entry on their instruction.
 
 Usage: scribe entry retire [OPTIONS] --author <AUTHOR> --reason <REASON> <ID>
 
@@ -16,10 +16,10 @@ Options:
           Why the note no longer applies
 
       --session <ID>
-          The session you run in, whose transcript holds Daniel's instruction; requires --instruction
+          The session you run in, whose transcript holds the user's instruction; requires --instruction
 
       --instruction <WORDS>
-          Daniel's instruction, word for word from one of his last three typed turns of --session within 30 minutes, naming the id (or answering your reply that names it) and the act; requires --session
+          The user's instruction, word for word from one of their last three typed turns of --session within 30 minutes, naming the id (or answering your reply that names it) and the act; requires --session
 
   -h, --help
           Print help (see a summary with '-h')
@@ -42,8 +42,8 @@ Global options:
       --json
           Shorthand for --format json
 
-Daniel's entry retires only on his instruction: --session and --instruction.
+The user's entry retires only on their instruction: --session and --instruction.
 
 Examples:
   scribe entry retire <id> --author opus --reason 'No longer applies'
-  scribe entry retire <id> --author opus --reason 'Daniel asked' --session <id> --instruction '<his words>'
+  scribe entry retire <id> --author opus --reason 'The user asked' --session <id> --instruction '<their words>'

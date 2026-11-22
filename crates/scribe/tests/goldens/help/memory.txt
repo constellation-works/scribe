@@ -1,6 +1,6 @@
-Show what scribe noticed about Daniel and manage memory items
+Show what scribe noticed about the user and manage memory items
 
-Shows what scribe has noticed about Daniel from switched-on sessions, and lets you acknowledge, retire or forget an item.
+Shows what scribe has noticed about the user from switched-on sessions, and lets you acknowledge, retire or forget an item.
 
 Usage: scribe memory [OPTIONS] <COMMAND>
 
@@ -35,8 +35,8 @@ Global options:
           Shorthand for --format json
 
 Memory is written by the session pass of a session switched on with
-/scribe on, from Daniel's own turns; nothing else writes it. It describes,
-it never binds: rules are his preferences entries.
+/scribe on, from the user's own turns; nothing else writes it. It describes,
+it never binds: rules are their preferences entries.
 
 Examples:
   scribe memory show

@@ -369,15 +369,18 @@ fn cut(text: &str, max: usize) -> String {
 }
 
 /// The call for one marked turn: its markers the model reads (those with
-/// no problem), the window and every configured tag with its criteria.
+/// no problem), the window and every configured tag with its criteria,
+/// voiced with `voice`.
 #[must_use]
 pub fn request(
     marks: &[&Mark],
     window: Vec<AnnotationMessage>,
     tags: &TagTable,
     model: &str,
+    voice: crate::voice::Voice,
 ) -> AnnotationRequest {
     AnnotationRequest {
+        voice,
         model: model.to_owned(),
         budget: budget(),
         marks: marks

@@ -258,13 +258,14 @@ pub fn candidates(
 
 /// The model request for one batch of pairs, numbered from 1.
 #[must_use]
-pub fn request(model: &str, pairs: &[Pair]) -> ConsistencyRequest {
+pub fn request(model: &str, pairs: &[Pair], voice: crate::voice::Voice) -> ConsistencyRequest {
     let side = |e: &Entry| PairSide {
         id: e.id.to_string(),
         date: e.created.date().to_string(),
         text: e.content.clone(),
     };
     ConsistencyRequest {
+        voice,
         model: model.to_owned(),
         budget: CONSISTENCY_BUDGET,
         pairs: pairs
@@ -988,8 +989,13 @@ pub fn removal_candidates(
 /// The model request for one batch of removed-feature pairs, numbered
 /// from 1.
 #[must_use]
-pub fn removal_request(model: &str, pairs: &[RemovalPair]) -> RemovalRequest {
+pub fn removal_request(
+    model: &str,
+    pairs: &[RemovalPair],
+    voice: crate::voice::Voice,
+) -> RemovalRequest {
     RemovalRequest {
+        voice,
         model: model.to_owned(),
         budget: CONSISTENCY_BUDGET,
         pairs: pairs

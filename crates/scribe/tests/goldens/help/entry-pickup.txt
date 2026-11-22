@@ -16,7 +16,7 @@ Options:
           What the consumer made of it (task:<id>, pr:<owner>/<repo>#<n>, repo:<slug> or session:<id>)
 
       --rejected
-          Daniel rejected the result
+          The user rejected the result
 
   -h, --help
           Print help (see a summary with '-h')

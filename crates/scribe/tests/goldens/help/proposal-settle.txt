@@ -1,6 +1,6 @@
 Approve or reject a proposal or candidate
 
-Approves or rejects a proposal about an agent entry, or a claim on Daniel's instruction.
+Approves or rejects a proposal about an agent entry, or a claim on the user's instruction.
 
 Usage: scribe proposal settle [OPTIONS] --author <AUTHOR> <ID>
 
@@ -22,10 +22,10 @@ Options:
           Replacement explanation for the settlement
 
       --session <ID>
-          The session you run in, whose transcript holds Daniel's instruction; requires --instruction
+          The session you run in, whose transcript holds the user's instruction; requires --instruction
 
       --instruction <WORDS>
-          Daniel's instruction, word for word from one of his last three typed turns of --session within 30 minutes, naming the id (or answering your reply that names it) and the act; requires --session
+          The user's instruction, word for word from one of their last three typed turns of --session within 30 minutes, naming the id (or answering your reply that names it) and the act; requires --session
 
   -h, --help
           Print help (see a summary with '-h')
@@ -50,4 +50,4 @@ Global options:
 
 Examples:
   scribe proposal settle <id> --approve --author opus
-  scribe proposal settle <id> --reject --author opus --session <id> --instruction '<his words>'
+  scribe proposal settle <id> --reject --author opus --session <id> --instruction '<their words>'

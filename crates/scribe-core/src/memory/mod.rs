@@ -1305,7 +1305,7 @@ pub struct Page {
     pub over_budget: bool,
 }
 
-const HEADER: &str = "scribe memory — what you know about Daniel. Descriptive, not rules: rules are his preferences. Raise milestones only when the conversation goes there.";
+const HEADER: &str = "scribe memory — what you know about the user. Descriptive, not rules: rules are their preferences. Raise milestones only when the conversation goes there.";
 const FOOTER: &str = "More: scribe memory show · scribe session show <id> · scribe question ask";
 
 /// The parts' base budgets of §13.6, scaled to `page_chars`.

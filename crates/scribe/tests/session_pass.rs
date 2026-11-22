@@ -77,7 +77,7 @@ fn pass_candidate_waits_for_typed_approval_and_keeps_original_user_cite() {
 
     // What admitted the claim is printed by `proposal list` and `entry show`
     // in every form.
-    let criteria = "A standing rule from Daniel that applies beyond the work at hand.";
+    let criteria = "A standing rule from the user that applies beyond the work at hand.";
     let admitted = json!({"trigger": "I prefer", "matched": "I prefer", "criteria": criteria});
     assert_eq!(entry["admitted"], admitted);
     assert_eq!(p["candidate"]["admitted"], admitted);
@@ -408,7 +408,7 @@ fn pass_asks_for_standing_preferences_only_and_never_proposes_a_decision() {
         );
         assert!(!prompt.contains("message u-choice"), "{prompt}");
         assert!(
-            prompt.contains("A standing rule from Daniel that applies beyond the work at hand."),
+            prompt.contains("A standing rule from the user that applies beyond the work at hand."),
             "{prompt}"
         );
     }
@@ -418,7 +418,7 @@ fn pass_asks_for_standing_preferences_only_and_never_proposes_a_decision() {
     assert_eq!(admitted["matched"], "always");
     assert_eq!(
         admitted["criteria"],
-        "A standing rule from Daniel that applies beyond the work at hand."
+        "A standing rule from the user that applies beyond the work at hand."
     );
 }
 
@@ -474,7 +474,7 @@ fn a_firing_turn_is_named_with_its_tag_and_trigger_and_idea_configured_to_propos
     );
     assert!(!prompt.contains("message u-plain"), "{prompt}");
     assert!(
-        prompt.contains("- idea: qualifies: Daniel proposes something that could be built"),
+        prompt.contains("- idea: qualifies: The user proposes something that could be built"),
         "{prompt}"
     );
     assert!(!prompt.contains("under written tags:"), "{prompt}");
@@ -4115,7 +4115,7 @@ fn a_pass_claim_carries_a_statement_and_subject_and_an_empty_subject_opens_nothi
     // `proposal list` reads the statement first and Daniel's words after it.
     let plain = text(&s.fx.ok(&["proposal", "list"]).stdout);
     assert!(
-        plain.contains(&format!("\t{statement} | Daniel's words: \"{quote}\"\t")),
+        plain.contains(&format!("\t{statement} | The user's words: \"{quote}\"\t")),
         "{plain}"
     );
 
@@ -4379,7 +4379,7 @@ fn the_pass_writes_daniels_idea_itself_as_an_entry_it_authors_with_no_proposal()
     );
     assert!(!prompt.contains("message u-plain"), "{prompt}");
     assert!(
-        prompt.contains("- idea: qualifies: Daniel proposes something that could be built"),
+        prompt.contains("- idea: qualifies: The user proposes something that could be built"),
         "{prompt}"
     );
     assert!(
@@ -4438,7 +4438,7 @@ fn the_pass_writes_daniels_idea_itself_as_an_entry_it_authors_with_no_proposal()
             .stdout,
     );
     assert!(
-        table.contains("captured by the session pass (not typed by Daniel)"),
+        table.contains("captured by the session pass (not typed by the user)"),
         "{table}"
     );
 
@@ -4747,7 +4747,7 @@ fn an_idea_an_active_entry_already_covers_is_not_written_and_ideas_are_sent_as_e
     let prompts = s.prompts();
     let second = prompts.last().unwrap();
     let excluded = format!(
-        "Already recorded under written tags: [\"{statement} (Daniel's words: \\\"{idea}\\\")\"]"
+        "Already recorded under written tags: [\"{statement} (the user's words: \\\"{idea}\\\")\"]"
     );
     assert!(second.contains(&excluded), "{second}");
 }

@@ -200,7 +200,7 @@ const SHIPPED_CAPTURE: [(&str, CaptureRoute, &[&str], &str, &str); 3] = [
             "what do you think about * idea",
             "what if we",
         ],
-        "Daniel proposes something that could be built, changed or tried, and the session does not carry it out.",
+        "The user proposes something that could be built, changed or tried, and the session does not carry it out.",
         "A direction to act now; a preference; a question of fact; an idea the session goes on to carry out.",
     ),
     (
@@ -214,7 +214,7 @@ const SHIPPED_CAPTURE: [(&str, CaptureRoute, &[&str], &str, &str); 3] = [
             "I prefer",
             "by default",
         ],
-        "A standing rule from Daniel that applies beyond the work at hand.",
+        "A standing rule from the user that applies beyond the work at hand.",
         "A choice about one page or task (it goes on its Orbit task or the feature's 4_decisions.md); an acknowledgement.",
     ),
     (
@@ -227,7 +227,7 @@ const SHIPPED_CAPTURE: [(&str, CaptureRoute, &[&str], &str, &str); 3] = [
             "root cause",
             "find root cause",
         ],
-        "Daniel asks for the cause of something that went wrong.",
+        "The user asks for the cause of something that went wrong.",
         "How something works; a feature request.",
     ),
 ];
@@ -306,7 +306,7 @@ pub const SHIPPED_ACTION_TAGS: [(&str, &str, bool); 2] = [
     ("idea", "a future consideration worth revisiting", false),
     (
         "standard",
-        "a rule change for the constellation standards, in Daniel's words",
+        "a rule change for the constellation standards, in the user's words",
         true,
     ),
 ];
@@ -416,7 +416,7 @@ impl TagTable {
             Ok::<_, crate::entry::EntryError>(TagDef {
                 name: name("preferences")?,
                 aliases: vec![name("preference")?, name("pref")?],
-                description: Some(String::from("how Daniel likes things done")),
+                description: Some(String::from("how the user likes things done")),
                 stale_after_days: NonZeroU32::new(180),
                 action: None,
                 require_evidence: false,

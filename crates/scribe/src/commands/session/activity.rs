@@ -1,7 +1,7 @@
 //! `session deactivate` and `session activate`: the `manual` route of a
 //! session's `active` flag (docs/design/scribe/2_design.md §5.7).
 //!
-//! An agent or Daniel hides a session whose feature no longer exists, with
+//! An agent or the user hides a session whose feature no longer exists, with
 //! a reason (and a cite of what says so), or shows it again, optionally
 //! pinning it (`keep_active`) so the consistency routine never deactivates
 //! it. scribe never reads a repository to decide whether a feature exists:

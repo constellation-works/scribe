@@ -5,7 +5,7 @@
 //! A prompt whose first line is a `/scribe` command never reaches the
 //! model: the hook switches the session in `control.json` and returns
 //! `decision: "block"` with the status as the `reason` Claude Code shows
-//! Daniel. `on` records when and marks a pass due; `on` again is a no-op
+//! the user. `on` records when and marks a pass due; `on` again is a no-op
 //! that says so; `off` stops further passes and keeps the record; `status`
 //! and any other argument change nothing. `/scribe on --from <id>` and
 //! `/scribe link <id> [--type continues]` link this session to another one
@@ -13,13 +13,13 @@
 //! self-link, a cycle, a second parent or (for `link`) a session that is not
 //! cataloged is refused with its code and changes nothing.
 //!
-//! `/scribe catalog <id>` is Daniel's only way to catalog a past session by
+//! `/scribe catalog <id>` is the user's only way to catalog a past session by
 //! name: it writes the catalog switch with `cataloged_by: {kind: daniel}`
 //! (as `session catalog` does, with the same checks and the same
 //! `session_cataloged` refusal) and runs no window, because a catalog can
 //! take many model calls; `session catalog` or the next `session pass` runs
 //! them and keeps the attribution. Agents' prompts never reach here
-//! (`payload::agent_originated`), so no CLI path records Daniel.
+//! (`payload::agent_originated`), so no CLI path records the user.
 //!
 //! The payload is checked like a `#scribe` line's (an accident guard, not a
 //! security boundary): a transcript outside Claude Code's projects
@@ -124,7 +124,7 @@ pub(super) fn run(
     blocked(status(&change, record.as_ref()), outcomes)
 }
 
-/// The command as Daniel typed it, for a reply.
+/// The command as the user typed it, for a reply.
 fn typed(switch: &Switch) -> String {
     match switch {
         Switch::On => String::from("/scribe on"),
@@ -141,7 +141,7 @@ fn typed(switch: &Switch) -> String {
     }
 }
 
-/// `/scribe catalog <id>`: start Daniel's catalog of a past session, or say
+/// `/scribe catalog <id>`: start the user's catalog of a past session, or say
 /// that one is already under way. Audited as a write when the switch was
 /// written and as a refusal with its code; a resume writes nothing.
 fn run_catalog(switch: &Switch, target: &SessionId, ctx: &Context) -> Output {

@@ -1,4 +1,4 @@
-Show one transcript and Daniel's first five turns, writing nothing
+Show one transcript and the user's first five turns, writing nothing
 
 Usage: scribe transcript show [OPTIONS] <ID>
 

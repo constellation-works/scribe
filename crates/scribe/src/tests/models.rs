@@ -84,6 +84,7 @@ fn request(budget: Duration) -> AnnotationRequest {
             marked: false,
         }],
         tags: Vec::new(),
+        voice: scribe_core::voice::Voice::default(),
     }
 }
 

@@ -7,7 +7,7 @@
 //!
 //! 1. **Lookups** ([`Lookup`], §6.5), model-free: the newest session, a
 //!    named session, open next steps, a tag's entries in a period, a term
-//!    Daniel defined, and the newest orchestration task for a workspace.
+//!    the user defined, and the newest orchestration task for a workspace.
 //!    A lookup returns the stored records themselves (`status: record`)
 //!    without a model call; one that finds nothing falls through.
 //! 2. **Retrieval** (§6.2, §6.7), model-free: scope filters, tokenizing,
@@ -39,6 +39,7 @@ use crate::record::{Project, Topic};
 use crate::session::{Segment, SessionId, SessionRecord, Term};
 use crate::tag::TagTable;
 use crate::verbatim;
+use crate::voice::{UserName, Voice};
 use std::collections::{BTreeMap, BTreeSet};
 use time::{Date, Duration, OffsetDateTime};
 
@@ -54,7 +55,7 @@ pub const TASK_DESCRIPTION_CHARS: usize = 1_000;
 pub const MAX_QUESTION_CHARS: usize = 2_000;
 /// The most records a lookup returns.
 pub const MAX_RECORDS: usize = 10;
-/// Entries are Daniel's explicit words, so they outrank summaries (§6.2).
+/// Entries are the user's explicit words, so they outrank summaries (§6.2).
 const ENTRY_WEIGHT: f64 = 1.5;
 /// An entry in a tag the question names ranks higher again.
 const TAG_BOOST: f64 = 1.5;
@@ -248,6 +249,8 @@ pub struct Corpus<'a> {
     pub issues: &'a [Issue],
     /// The configured tags, for tag words in the question.
     pub tags: &'a TagTable,
+    /// How evidence labels and answers name the user (`[user] name`).
+    pub user: &'a UserName,
 }
 
 /// How an answer stands.
@@ -287,7 +290,7 @@ pub enum Lookup {
     NextSteps,
     /// A tag's entries in a period.
     TagPeriod,
-    /// The records where Daniel defined a term.
+    /// The records where the user defined a term.
     Term,
     /// The newest orchestration task naming a workspace.
     OrchestratorSession,
@@ -390,7 +393,8 @@ pub const NO_RECORD: &str = "Nothing recorded answers this.";
 pub const HIDDEN_NOTE: &str = "A superseded or retired entry, or an inactive session, also matches; ask with include_hidden to see it.";
 
 /// Answer `question` from `corpus`, the tasks `tasks` finds and the `ask`
-/// model `model` (an id from `config.toml`), at time `now`.
+/// model `model` (an id from `config.toml`) voiced with `voice`, at time
+/// `now`.
 ///
 /// # Errors
 ///
@@ -402,6 +406,7 @@ pub fn answer<M: Models + ?Sized, T: Tasks + ?Sized>(
     models: &M,
     tasks: &T,
     model: &str,
+    voice: &Voice,
     now: OffsetDateTime,
 ) -> Result<Answer, ModelError> {
     // Action entries are work items, not memory: they are evidence only
@@ -423,9 +428,15 @@ pub fn answer<M: Models + ?Sized, T: Tasks + ?Sized>(
         budget: ASK_BUDGET,
         question: question.text.clone(),
         evidence: retrieved.evidence,
+        voice: voice.clone(),
     };
     let reply = models.ask(&request)?;
-    Ok(check(reply, &request.evidence, retrieved.hidden_matches))
+    Ok(check(
+        reply,
+        &request.evidence,
+        retrieved.hidden_matches,
+        corpus.user,
+    ))
 }
 
 /// `corpus`'s entries less those under an action tag the question's scope
@@ -468,8 +479,14 @@ fn with_hidden_note(text: String, hidden: usize) -> String {
 /// claim survives only if its cite names an item and its quote is verbatim
 /// in that item's text; a conflict survives only if it names at least two
 /// items. With no claim and no conflict left, the answer is `no_record`.
+/// `user` names the user in the labels a claim gets.
 #[must_use]
-pub fn check(reply: AskAnswer, evidence: &[EvidenceItem], hidden: usize) -> Answer {
+pub fn check(
+    reply: AskAnswer,
+    evidence: &[EvidenceItem],
+    hidden: usize,
+    user: &UserName,
+) -> Answer {
     let text_of = |cite: &str| evidence.iter().find(|e| e.cite == cite).map(|e| &e.text);
     let offered = reply.claims.len();
     let claims: Vec<Claim> = reply
@@ -509,7 +526,7 @@ pub fn check(reply: AskAnswer, evidence: &[EvidenceItem], hidden: usize) -> Answ
     if status == Status::NoRecord {
         return no_record(evidence.len(), dropped, hidden);
     }
-    // Agent notes and scribe's statements are never Daniel's words, so
+    // Agent notes and scribe's statements are never the user's words, so
     // with either in the evidence every claim is labelled by whose words
     // its quote is, deterministically, and the answer is built from those
     // labels rather than the model's prose.
@@ -522,7 +539,14 @@ pub fn check(reply: AskAnswer, evidence: &[EvidenceItem], hidden: usize) -> Answ
     let answer = if has_agent {
         claims
             .iter()
-            .map(|c| format!("{}: \"{}\" [{}]", attribution(c, evidence), c.quote, c.cite))
+            .map(|c| {
+                format!(
+                    "{}: \"{}\" [{}]",
+                    attribution(c, evidence, user),
+                    c.quote,
+                    c.cite
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n")
     } else {
@@ -532,7 +556,7 @@ pub fn check(reply: AskAnswer, evidence: &[EvidenceItem], hidden: usize) -> Answ
         claims
             .into_iter()
             .map(|mut c| {
-                c.text = attribution(&c, evidence).to_owned();
+                c.text = attribution(&c, evidence, user);
                 c
             })
             .collect()
@@ -582,23 +606,23 @@ pub fn check(reply: AskAnswer, evidence: &[EvidenceItem], hidden: usize) -> Answ
 
 /// Whose words a checked claim's quote is (§6.4, §11.1): the cited item's
 /// `whose`, except that a quote from an entry holding scribe's statement of
-/// Daniel's turn is Daniel's only when it lies within his quoted words;
-/// anywhere else in that item it is scribe's statement.
-fn attribution<'a>(claim: &Claim, evidence: &'a [EvidenceItem]) -> &'a str {
+/// the user's turn is the user's only when it lies within their quoted
+/// words; anywhere else in that item it is scribe's statement.
+fn attribution(claim: &Claim, evidence: &[EvidenceItem], user: &UserName) -> String {
     match evidence.iter().find(|e| e.cite == claim.cite) {
-        None => "record",
+        None => String::from("record"),
         Some(EvidenceItem {
-            quote: Some(daniel),
+            quote: Some(theirs),
             whose,
             ..
-        }) if verbatim::contains(daniel, &claim.quote) => {
-            if whose == CAPTURED_WHOSE {
-                CAPTURED_DANIEL
+        }) if verbatim::contains(theirs, &claim.quote) => {
+            if *whose == captured_whose(user) {
+                captured_user(user)
             } else {
-                "Daniel"
+                user.title().to_owned()
             }
         }
-        Some(item) => item.whose.as_str(),
+        Some(item) => item.whose.clone(),
     }
 }
 
@@ -772,7 +796,7 @@ fn lookup<T: Tasks + ?Sized>(
     if let Some(found) = tag_period(&words, corpus.tags, &entries, now) {
         return Some(found);
     }
-    term_lookup(&question.text, &sessions, &entries)
+    term_lookup(&question.text, &sessions, &entries, corpus.user)
 }
 
 fn visible(entry: &Entry, include_hidden: bool) -> bool {
@@ -1034,7 +1058,12 @@ fn asked_phrase(text: &str) -> String {
 /// The session records whose `terms` hold the phrase the question asks
 /// about, newest first, each with its matching terms; then the entries whose
 /// body contains it.
-fn term_lookup(text: &str, sessions: &[&SessionRecord], entries: &[&Entry]) -> Option<Answer> {
+fn term_lookup(
+    text: &str,
+    sessions: &[&SessionRecord],
+    entries: &[&Entry],
+    user: &UserName,
+) -> Option<Answer> {
     let phrase = asked_phrase(text);
     if phrase.chars().count() < 3 {
         return None;
@@ -1072,7 +1101,8 @@ fn term_lookup(text: &str, sessions: &[&SessionRecord], entries: &[&Entry]) -> O
             .map(|e| Found::Entry(Box::new(e.clone()))),
     );
     let text = format!(
-        "The session records where Daniel defined \"{phrase}\", newest first, with his defining words, then the entries that use it."
+        "The session records where {} defined \"{phrase}\", newest first, with the defining words, then the entries that use it.",
+        user.noun()
     );
     Some(record_answer(Lookup::Term, found, &text))
 }
@@ -1158,7 +1188,7 @@ pub(crate) fn store_docs(
             order: 0,
             at: entry.updated,
             hidden: entry.status.is_hidden(),
-            item: entry_item(entry),
+            item: entry_item(entry, corpus.user),
             origin: Origin::Entry(i),
         });
     }
@@ -1175,7 +1205,7 @@ pub(crate) fn store_docs(
                 order: 1,
                 at: record.updated,
                 hidden: !record.active,
-                item: session_item(record),
+                item: session_item(record, corpus.user),
                 origin: Origin::Header(i),
             });
         }
@@ -1232,7 +1262,7 @@ pub(crate) fn store_docs(
             order: 1,
             at: issue.updated,
             hidden: false,
-            item: issue_item(issue),
+            item: issue_item(issue, corpus.user),
             origin: Origin::Issue(i),
         });
     }
@@ -1481,19 +1511,35 @@ fn day(at: OffsetDateTime) -> String {
 
 /// Whose words an approved pass statement is, in `ask` evidence and in
 /// `record search` snippets (2_design.md §11.1).
-pub const STATED_WHOSE: &str = "scribe's statement of Daniel's turn";
-/// The label before Daniel's own words beside such a statement.
-pub const STATED_QUOTE_LABEL: &str = "Daniel's words:";
+#[must_use]
+pub fn stated_whose(user: &UserName) -> String {
+    format!("scribe's statement of {}'s turn", user.noun())
+}
+
+/// The label before the user's own words beside such a statement.
+#[must_use]
+pub fn stated_quote_label(user: &UserName) -> String {
+    format!("{}'s words:", user.title())
+}
 
 /// Whose words an idea the session pass captured itself is (2_design.md
-/// §11.6): Daniel did not type it or approve it.
-pub const CAPTURED_WHOSE: &str =
-    "scribe's statement of Daniel's turn, captured by the session pass (not typed by Daniel)";
-/// The label of a claim quoting Daniel's words within such an idea.
-pub const CAPTURED_DANIEL: &str = "Daniel (captured by the session pass)";
+/// §11.6): the user did not type it or approve it.
+#[must_use]
+pub fn captured_whose(user: &UserName) -> String {
+    let noun = user.noun();
+    format!(
+        "scribe's statement of {noun}'s turn, captured by the session pass (not typed by {noun})"
+    )
+}
 
-/// Daniel's verbatim words beside an entry whose content is scribe's
-/// statement of his turn: one he approved, or an idea the pass captured;
+/// The label of a claim quoting the user's words within such an idea.
+#[must_use]
+pub fn captured_user(user: &UserName) -> String {
+    format!("{} (captured by the session pass)", user.title())
+}
+
+/// The user's verbatim words beside an entry whose content is scribe's
+/// statement of their turn: one they approved, or an idea the pass captured;
 /// `None` for every other entry.
 pub(crate) fn stated_quote(entry: &Entry) -> Option<&str> {
     entry
@@ -1504,35 +1550,39 @@ pub(crate) fn stated_quote(entry: &Entry) -> Option<&str> {
 }
 
 /// Whether the session pass wrote `entry` itself (an idea under a `write`
-/// tag), rather than Daniel typing or approving it.
+/// tag), rather than the user typing or approving it.
 #[must_use]
 pub fn is_pass_captured(entry: &Entry) -> bool {
     entry.author.kind == crate::AuthorKind::Scribe && entry.outcome.is_some()
 }
 
 /// An idea's outcome as one line of evidence or snippet text: `open`,
-/// `parked, in Daniel's words: "<reason>"` or `task <id>`.
+/// `parked, in the user's words: "<reason>"` or `task <id>`.
 #[must_use]
-pub fn outcome_text(outcome: &crate::Outcome) -> String {
+pub fn outcome_text(outcome: &crate::Outcome, user: &UserName) -> String {
     match (outcome.state, &outcome.reason, &outcome.task) {
         (crate::OutcomeState::Parked, Some(reason), _) => {
-            format!("parked, in Daniel's words: \"{reason}\"")
+            format!("parked, in {}'s words: \"{reason}\"", user.noun())
         }
         (crate::OutcomeState::Task, _, Some(task)) => format!("task {task}"),
         (state, ..) => state.as_str().to_owned(),
     }
 }
 
-/// Whose instruction a line Daniel reads names: `entry show`, `record
-/// search` and `proposal list` speak to him.
+/// Whose instruction a line the user reads names: `entry show`, `record
+/// search` and `proposal list` speak to them.
 pub const INSTRUCTION_YOURS: &str = "your";
-/// Whose instruction a line in `ask` evidence names: the model reads it.
-pub const INSTRUCTION_DANIELS: &str = "Daniel's";
 
-/// How a settlement on Daniel's checked instruction reads (2_design.md
+/// Whose instruction a line in `ask` evidence names: the model reads it.
+#[must_use]
+pub fn instruction_theirs(user: &UserName) -> String {
+    format!("{}'s", user.noun())
+}
+
+/// How a settlement on the user's checked instruction reads (2_design.md
 /// §12.3): `approved by <aide> on your instruction "<quote>" (<session>,
 /// <date>)`. `verb` is `approved` or `rejected`; `whose` is
-/// [`INSTRUCTION_YOURS`] or [`INSTRUCTION_DANIELS`]. A forgotten entry's
+/// [`INSTRUCTION_YOURS`] or [`instruction_theirs`]. A forgotten entry's
 /// instruction has no quote, and the line then names only the turn.
 #[must_use]
 pub fn instructed_line(
@@ -1557,8 +1607,8 @@ pub fn instructed_line(
     )
 }
 
-/// The approved-by line of an entry an agent approved on Daniel's
-/// instruction; `None` for one he approved by typing, or never approved.
+/// The approved-by line of an entry an agent approved on the user's
+/// instruction; `None` for one they approved by typing, or never approved.
 #[must_use]
 pub fn approved_line(entry: &Entry, whose: &str) -> Option<String> {
     let by = entry.approved_by.as_ref()?;
@@ -1573,21 +1623,21 @@ pub fn approved_line(entry: &Entry, whose: &str) -> Option<String> {
     ))
 }
 
-fn entry_item(entry: &Entry) -> EvidenceItem {
+fn entry_item(entry: &Entry, user: &UserName) -> EvidenceItem {
     let whose = match &entry.content_from {
-        ContentFrom::Agent => "agent",
+        ContentFrom::Agent => String::from("agent"),
         ContentFrom::Instruction
         | ContentFrom::Message {
             role: Speaker::User,
             ..
-        } => "Daniel",
+        } => user.title().to_owned(),
         ContentFrom::Message {
             role: Speaker::Assistant,
             ..
-        } => "assistant (recorded by Daniel)",
+        } => format!("assistant (recorded by {})", user.noun()),
     };
     // A finding is that agent's claim as of its date, with the evidence
-    // pointer it can be checked against — never Daniel's words. The
+    // pointer it can be checked against — never the user's words. The
     // pointer rides in `whose` (which the deterministic check copies
     // into each claim) and in the text a claim may quote.
     let (whose, text) = if entry.author.kind == crate::AuthorKind::Agent && entry.is_finding() {
@@ -1609,25 +1659,30 @@ fn entry_item(entry: &Entry) -> EvidenceItem {
             entry.content.clone(),
         )
     } else if let (Some(quote), Some(outcome)) = (stated_quote(entry), &entry.outcome) {
-        // An idea the pass captured: scribe's statement, Daniel's own
+        // An idea the pass captured: scribe's statement, the user's own
         // words, and where the idea stands (2_design.md §11.6).
         (
-            CAPTURED_WHOSE.to_owned(),
+            captured_whose(user),
             format!(
-                "{}\n{STATED_QUOTE_LABEL} \"{quote}\"\nOutcome: {}",
+                "{}\n{} \"{quote}\"\nOutcome: {}",
                 entry.content,
-                outcome_text(outcome)
+                stated_quote_label(user),
+                outcome_text(outcome, user)
             ),
         )
     } else if let Some(quote) = stated_quote(entry) {
-        // Scribe's statement of Daniel's turn, then his own words,
-        // labelled as his (2_design.md §11.1).
+        // Scribe's statement of the user's turn, then their own words,
+        // labelled as theirs (2_design.md §11.1).
         (
-            STATED_WHOSE.to_owned(),
-            format!("{}\n{STATED_QUOTE_LABEL} \"{quote}\"", entry.content),
+            stated_whose(user),
+            format!(
+                "{}\n{} \"{quote}\"",
+                entry.content,
+                stated_quote_label(user)
+            ),
         )
     } else {
-        (whose.to_owned(), entry.content.clone())
+        (whose, entry.content.clone())
     };
     EvidenceItem {
         cite: entry.id.to_string(),
@@ -1637,20 +1692,22 @@ fn entry_item(entry: &Entry) -> EvidenceItem {
         date: day(entry.created),
         text,
         quote: stated_quote(entry).map(str::to_owned),
-        approval: approved_line(entry, INSTRUCTION_DANIELS),
+        approval: approved_line(entry, &instruction_theirs(user)),
     }
 }
 
 /// A session's header as evidence, cited `session:<id>`.
-fn session_item(record: &SessionRecord) -> EvidenceItem {
+fn session_item(record: &SessionRecord, user: &UserName) -> EvidenceItem {
     let mut text = format!(
         "{}\n## Summary\n{}\n## Goals\n{}\n## Next\n{}",
         record.title, record.summary, record.goals, record.next
     );
     for term in &record.terms {
         text.push_str(&format!(
-            "\nterm \"{}\", defined by Daniel: \"{}\"",
-            term.term, term.said
+            "\nterm \"{}\", defined by {}: \"{}\"",
+            term.term,
+            user.noun(),
+            term.said
         ));
     }
     EvidenceItem {
@@ -1681,7 +1738,7 @@ fn segment_item(record: &SessionRecord, segment: &Segment) -> EvidenceItem {
 }
 
 /// Whose words an issue is in `ask` evidence and `record search` snippets
-/// (2_design.md §11.4): the agent's account, with Daniel's quoted request.
+/// (2_design.md §11.4): the agent's account, with the user's quoted request.
 #[must_use]
 pub fn issue_whose(issue: &Issue) -> String {
     format!("agent account ({})", issue.author.name)
@@ -1692,10 +1749,10 @@ pub fn issue_whose(issue: &Issue) -> String {
 const ISSUE_EVIDENCE_OCCURRENCES: usize = 3;
 
 /// An issue as evidence, cited `issue-<n>`: the agent's account, with
-/// Daniel's typed requests word for word as its `quote`, so a claim quoting
-/// one is his and any other claim is the agent's. Error lines are labelled
+/// the user's typed requests word for word as its `quote`, so a claim quoting
+/// one is theirs and any other claim is the agent's. Error lines are labelled
 /// the agent's evidence.
-fn issue_item(issue: &Issue) -> EvidenceItem {
+fn issue_item(issue: &Issue, user: &UserName) -> EvidenceItem {
     let mut text = format!(
         "{}\nSignature: {}\nCause: {}\nFix: {}",
         issue.title,
@@ -1710,12 +1767,13 @@ fn issue_item(issue: &Issue) -> EvidenceItem {
             ""
         };
         text.push_str(&format!(
-            "\nOccurrence {} ({}, {}, {}{recurred}): {}\nDaniel asked: \"{}\"",
+            "\nOccurrence {} ({}, {}, {}{recurred}): {}\n{} asked: \"{}\"",
             o.n,
             crate::record::DateRange::day(o.date),
             o.host,
             o.project,
             o.summary,
+            user.title(),
             o.request
         ));
         if !o.error_lines.is_empty() {

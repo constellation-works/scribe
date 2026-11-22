@@ -23,7 +23,7 @@ Examples:
 /// Verbs on the `proposal` noun.
 #[derive(Debug, Subcommand)]
 pub(crate) enum ProposalCommand {
-    /// Open a proposal, including against a Daniel entry
+    /// Open a proposal, including against an entry of the user's
     #[command(
         after_help = "Examples:\n  scribe proposal add --kind stale --older <id> --reason 'Review needed' --author opus"
     )]
@@ -35,9 +35,9 @@ pub(crate) enum ProposalCommand {
     Update(UpdateArgs),
     /// Approve or reject a proposal or candidate
     ///
-    /// Approves or rejects a proposal about an agent entry, or a claim on Daniel's instruction.
+    /// Approves or rejects a proposal about an agent entry, or a claim on the user's instruction.
     #[command(
-        after_help = "Examples:\n  scribe proposal settle <id> --approve --author opus\n  scribe proposal settle <id> --reject --author opus --session <id> --instruction '<his words>'"
+        after_help = "Examples:\n  scribe proposal settle <id> --approve --author opus\n  scribe proposal settle <id> --reject --author opus --session <id> --instruction '<their words>'"
     )]
     Settle(SettleArgs),
     /// List every proposal by id and its settlement state

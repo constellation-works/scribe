@@ -24,9 +24,9 @@ Examples:
 const SEARCH_EXAMPLES: &str = "\
 Ranks each entry, each session header, each segment of a session's log and
 each issue with BM25, as question ask does, and prints the best first;
-Daniel's own entries weigh 1.5 times. The CITE column is what question ask
+the user's own entries weigh 1.5 times. The CITE column is what question ask
 would cite: pass it to entry show, session show or issue show. An issue is
-the agent's account, with Daniel's request quoted. Superseded and retired
+the agent's account, with the user's request quoted. Superseded and retired
 entries and inactive sessions are left out unless --include-hidden.
 
 Examples:
@@ -136,6 +136,7 @@ fn search(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
         sessions: &sessions.listing.items,
         issues: &issues,
         tags: &config.tags,
+        user: &config.user,
     };
     let found = search::search(&query, corpus).map_err(|e| match e {
         SearchError::NoTerms(_) => CliError::Usage(e.to_string()),

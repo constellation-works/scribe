@@ -1,4 +1,4 @@
-//! The `session` noun: list and show the records of sessions Daniel switched
+//! The `session` noun: list and show the records of sessions the user switched
 //! on with `/scribe on`, and `pass`, which writes them. `show` and `list`
 //! carry each record's `links` (stored on the child) and its `children`
 //! (derived at read time from the other records' links); `list --tree`

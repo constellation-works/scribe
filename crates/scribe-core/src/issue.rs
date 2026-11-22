@@ -648,7 +648,7 @@ impl IssuePatch {
         }
         if self.status == Some(IssueStatus::Forgotten) {
             return Err(text_refusal(
-                "an issue is forgotten only by Daniel's #scribe forget <issue-id>; use open, mitigated or resolved",
+                "an issue is forgotten only by the user's #scribe forget <issue-id>; use open, mitigated or resolved",
             ));
         }
         if let Some(cause) = &self.cause {

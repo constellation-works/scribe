@@ -1,4 +1,4 @@
-Open a proposal, including against a Daniel entry
+Open a proposal, including against an entry of the user's
 
 Usage: scribe proposal add [OPTIONS] --kind <KIND> --older <OLDER> --reason <REASON> --author <AUTHOR>
 

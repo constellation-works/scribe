@@ -13,10 +13,10 @@ Options:
           Agent name
 
       --related <REF>
-          Reference, repeatable: session:<id> names the session Daniel's request was typed in; task:<id>, pr:<owner>/<repo>#<n> and repo:<slug> are linked
+          Reference, repeatable: session:<id> names the session the user's request was typed in; task:<id>, pr:<owner>/<repo>#<n> and repo:<slug> are linked
 
       --request <WORDS>
-          Daniel's request, word for word from one of his typed turns in the session --related names
+          The user's request, word for word from one of their typed turns in the session --related names
 
       --summary <SUMMARY>
           What happened, in your words (at most 1200 characters)
@@ -57,8 +57,8 @@ Global options:
           Shorthand for --format json
 
 An occurrence on a resolved issue reopens it and is marked "recurred after
-fix". Daniel cancels with #scribe forget <issue-id>#<n>.
+fix". The user cancels with #scribe forget <issue-id>#<n>.
 
 Examples:
-  scribe issue occur <issue-id> --author opus --related session:<id> --request '<his words>' --summary '<what happened>'
-  scribe issue occur <issue-id> --author opus --related session:<id> --request '<his words>' --summary '<what happened>' --error-line '<a key error line>' --fix '<what fixed it>'
+  scribe issue occur <issue-id> --author opus --related session:<id> --request '<their words>' --summary '<what happened>'
+  scribe issue occur <issue-id> --author opus --related session:<id> --request '<their words>' --summary '<what happened>' --error-line '<a key error line>' --fix '<what fixed it>'

@@ -20,7 +20,7 @@ Each capture field shows its origin: shipped (scribe's default), config
 [tags.<name>.capture] in config.toml: from, route, triggers, criteria and
 not; each overrides its shipped default alone, and triggers replaces the
 whole list. The session pass proposes a claim under a tag only from a turn
-of Daniel's where one of its triggers occurs.
+of the user's where one of its triggers occurs.
 
 Examples:
   scribe tag show preferences

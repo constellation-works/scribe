@@ -267,7 +267,7 @@ pub fn check(spoken: &[Spoken], request: &Request<'_>) -> Result<Instructed, Err
         return Err(refuse(
             WriteRefusal::InstructionNotFound,
             format!(
-                "--instruction is not word for word in a turn Daniel typed in session {}; quote his own words exactly (at least {} characters, or his whole turn)",
+                "--instruction is not word for word in a turn the user typed in session {}; quote their own words exactly (at least {} characters, or their whole turn)",
                 request.session,
                 verbatim::MIN_QUOTE_CHARS
             ),
@@ -281,7 +281,7 @@ pub fn check(spoken: &[Spoken], request: &Request<'_>) -> Result<Instructed, Err
         return Err(refuse(
             WriteRefusal::InstructionNotFound,
             format!(
-                "the turn holding --instruction in session {} has no message id; ask Daniel again",
+                "the turn holding --instruction in session {} has no message id; ask the user again",
                 request.session
             ),
         ));
@@ -290,7 +290,7 @@ pub fn check(spoken: &[Spoken], request: &Request<'_>) -> Result<Instructed, Err
         return Err(refuse(
             WriteRefusal::NotInteractive,
             format!(
-                "session {} is not an interactive session (entry point {}); act on Daniel's instruction only in a session he types into",
+                "session {} is not an interactive session (entry point {}); act on the user's instruction only in a session they type into",
                 request.session,
                 turn.entrypoint.as_deref().unwrap_or("none recorded")
             ),
@@ -302,7 +302,7 @@ pub fn check(spoken: &[Spoken], request: &Request<'_>) -> Result<Instructed, Err
         return Err(refuse(
             WriteRefusal::InstructionStale,
             format!(
-                "the instruction is not one of Daniel's last {RECENT_TURNS} typed turns of the last {} minutes; ask him again",
+                "the instruction is not one of the user's last {RECENT_TURNS} typed turns of the last {} minutes; ask them again",
                 FRESH_FOR.whole_minutes()
             ),
         ));
@@ -328,7 +328,7 @@ pub fn check(spoken: &[Spoken], request: &Request<'_>) -> Result<Instructed, Err
         return Err(refuse(
             WriteRefusal::InstructionMismatch,
             String::from(
-                "the instruction or reply contains a negation or exception; ask Daniel for a plainer instruction",
+                "the instruction or reply contains a negation or exception; ask the user for a plainer instruction",
             ),
         ));
     }
@@ -336,7 +336,7 @@ pub fn check(spoken: &[Spoken], request: &Request<'_>) -> Result<Instructed, Err
         return Err(refuse(
             WriteRefusal::InstructionMismatch,
             format!(
-                "the instruction does not say to {} {}; act only on what Daniel's words ask for",
+                "the instruction does not say to {} {}; act only on what the user's words ask for",
                 request.act, request.target.id
             ),
         ));
@@ -591,7 +591,7 @@ pub fn codex_conversation(bytes: &[u8], session: &SessionId) -> Result<Vec<Spoke
         return Err(refuse(
             WriteRefusal::NotInteractive,
             format!(
-                "session {session} is not an interactive session (entry point {entrypoint}); act on Daniel's instruction only in a session he types into"
+                "session {session} is not an interactive session (entry point {entrypoint}); act on the user's instruction only in a session they type into"
             ),
         ));
     }

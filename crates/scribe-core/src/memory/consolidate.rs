@@ -104,7 +104,7 @@ fn ordered<'a>(a: &'a MemoryItem, b: &'a MemoryItem) -> (&'a MemoryItem, &'a Mem
 
 /// The model request for one batch of pairs, numbered from 1.
 #[must_use]
-pub fn request(model: &str, pairs: &[Pair]) -> MemoryPairsRequest {
+pub fn request(model: &str, pairs: &[Pair], voice: crate::voice::Voice) -> MemoryPairsRequest {
     let side = |i: &MemoryItem| MemoryPairSide {
         id: i.id.to_string(),
         date: i.latest().date().to_string(),
@@ -112,6 +112,7 @@ pub fn request(model: &str, pairs: &[Pair]) -> MemoryPairsRequest {
         quotes: quotes(i).map(str::to_owned).collect(),
     };
     MemoryPairsRequest {
+        voice,
         model: model.to_owned(),
         budget: CONSISTENCY_BUDGET,
         pairs: pairs

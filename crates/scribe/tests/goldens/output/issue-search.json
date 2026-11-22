@@ -7,7 +7,7 @@
       "segment": null,
       "score": 0.904,
       "title": "GitHub API secondary rate limit during drains",
-      "snippet": "HTTP 429 | secondary rate limit Parallel pushes from one token Serialize pushes per token The drain stopped when the GitHub API refused pushes. The drain stopped when the GitHub API refused pushes. HTTP 429: You have exceeded a secondary r… [agent account (opus); Daniel asked: \"the drain is failing again, look into it\"]",
+      "snippet": "HTTP 429 | secondary rate limit Parallel pushes from one token Serialize pushes per token The drain stopped when the GitHub API refused pushes. The drain stopped when the GitHub API refused pushes. HTTP 429: You have exceeded a secondary r… [agent account (opus); the user asked: \"the drain is failing again, look into it\"]",
       "project": "scribe",
       "topics": [
         "github"

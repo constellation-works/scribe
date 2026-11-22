@@ -1,6 +1,6 @@
 Handle the SessionStart hook JSON from stdin
 
-Tells Daniel how many proposals are open, which action entries are unpicked, and when this session may continue a recorded one, from the SessionStart hook's JSON on stdin.
+Tells the user how many proposals are open, which action entries are unpicked, and when this session may continue a recorded one, from the SessionStart hook's JSON on stdin.
 
 Usage: scribe hook session-start [OPTIONS]
 
@@ -27,7 +27,7 @@ Global options:
           Shorthand for --format json
 
 Reads the SessionStart payload (session_id, and cwd when the harness sends
-it) on stdin. Prints a message for Daniel when proposals are open, when
+it) on stdin. Prints a message for the user when proposals are open, when
 action entries have waited over an hour with no pickup, or when this
 session is not opted in and a session in the same project was recorded
 within the last day. Nothing otherwise, and nothing for the agent. Reads
