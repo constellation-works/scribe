@@ -2,22 +2,29 @@ Read Daniel's recorded preferences, and the records of the sessions he cataloged
 
 Usage: scribe [OPTIONS] <COMMAND>
 
-Commands:
+Setup:
   init         Scaffold the embedded skill and selected provider hooks
+
+Records:
   entry        Read entries and write agent notes
   session      List, show and write session records cataloged with /scribe on
-  transcript   List uncataloged provider transcripts and show one, writing nothing
   proposal     Read, open, update and settle proposals
   memory       Show what scribe noticed about Daniel and manage memory items
-  record       Search every stored record by words, with no model call
-  consistency  Propose superseding or retiring entries via scan
-  tag          List tags and manage agent-created store tags
   issue        Record and search recurring incidents across projects
+  tag          List tags and manage agent-created store tags
+
+Find:
   question     Answer a question from the records with verbatim quotes
-  hook         Run a provider hook for session and prompt events
+  record       Search every stored record by words, with no model call
+  transcript   List uncataloged provider transcripts and show one, writing nothing
   tmux         Browse sessions, entries and proposals in an fzf popup
+
+Upkeep:
+  consistency  Propose superseding or retiring entries via scan
+
+Integration:
+  hook         Run a provider hook for session and prompt events
   plugin       Serve the Orbit plugin's tools (the plugin backend runs this)
-  help         Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help     Print help

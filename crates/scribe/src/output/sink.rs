@@ -129,6 +129,15 @@ pub(crate) fn resolve_color(is_tty: bool, env: &SinkEnv) -> bool {
     env.term.as_deref() != Some("dumb")
 }
 
+/// Columns the root help may wrap command rows into.
+///
+/// `None` when stdout is not a terminal or `COLUMNS` is unset, so each
+/// command stays on one line. Piped `--help`, which is how the golden is
+/// captured, therefore does not depend on the machine (STD-01 R17, R24).
+pub(crate) fn help_width() -> Option<usize> {
+    Sink::from_process(None).width
+}
+
 /// Only a terminal has a width; piped output is never truncated (STD-01 R9).
 fn resolve_width(is_tty: bool, columns: Option<&str>) -> Option<usize> {
     if !is_tty {
