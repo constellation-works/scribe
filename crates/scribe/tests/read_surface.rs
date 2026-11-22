@@ -87,6 +87,51 @@ fn copy_session(fx: &Fixture, id: &str) {
 }
 
 #[test]
+fn brief_reads_only_and_calls_no_model() {
+    let fx = Fixture::new();
+    fx.seed();
+    let called = fx.elsewhere("claude-called");
+    let path = fx.fake_program(
+        "claude",
+        &format!("#!/bin/sh\ntouch '{}'\nexit 1\n", called.display()),
+    );
+    let before = snapshot(&fx.root());
+    let mut cmd = fx.cmd(&["brief", "--project", "constellation-works/scribe", "--json"]);
+    let out = cmd.env("PATH", &path).output().unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(snapshot(&fx.root()), before, "brief wrote to the store");
+    assert!(!fx.root().join("audit.jsonl").exists());
+    assert!(!called.exists(), "brief ran the model CLI");
+    let brief = json(&out.stdout);
+    let sessions = brief["sessions"].as_array().unwrap();
+    // The fixture's inactive session is left out.
+    let ids: Vec<&str> = sessions.iter().map(|s| s["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, [SESSION, LEGACY]);
+    assert!(!ids.contains(&INACTIVE));
+    let at: Vec<&str> = sessions.iter().map(|s| s["at"].as_str().unwrap()).collect();
+    assert!(
+        at.windows(2).all(|w| w[0] >= w[1]),
+        "not newest first: {at:?}"
+    );
+    // Only the open proposal is a claim; the rejected one is not.
+    assert_eq!(brief["claim_count"], 1);
+    assert_eq!(brief["claims"][0]["tag"], "decisions");
+    assert_eq!(brief["claims"][0]["claims"][0]["id"], "p-1");
+    assert_eq!(brief["claims"][0]["claims"][0]["kind"], "supersedes");
+    assert_eq!(
+        brief["claims"][0]["claims"][0]["quote"],
+        "merge agent PRs with a merge commit"
+    );
+}
+
+#[test]
+fn brief_sessions_out_of_range_is_a_usage_error() {
+    let fx = Fixture::new();
+    let error = usage_error(&fx, &["brief", "--sessions", "21"]);
+    assert_eq!(error["code"], "usage_error");
+}
+
+#[test]
 fn search_ranks_the_store_reads_only_and_calls_nothing() {
     let fx = Fixture::new();
     fx.seed();

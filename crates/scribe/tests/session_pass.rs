@@ -5150,7 +5150,11 @@ fn the_session_start_page_lists_memory_and_recent_sessions_in_interactive_sessio
     let page = interactive["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .unwrap_or_else(|| panic!("{interactive}"));
-    assert!(page.starts_with("scribe memory — "), "{page}");
+    // The brief carries the memory page as its top block.
+    assert!(
+        page.starts_with("# scribe brief\n\nscribe memory — "),
+        "{page}"
+    );
     assert!(page.contains("Now:\n- 2026-12-12"), "{page}");
     assert!(page.contains("[m-1]"), "{page}");
     assert!(
@@ -5158,7 +5162,10 @@ fn the_session_start_page_lists_memory_and_recent_sessions_in_interactive_sessio
         "{page}"
     );
     assert!(page.contains(&format!("Recent sessions: {ON}")), "{page}");
-    assert!(page.chars().count() <= 2400, "{}", page.chars().count());
+    let memory = page
+        .split_once("\n\n## Recent sessions")
+        .map_or(page, |(memory, _)| memory);
+    assert!(memory.chars().count() <= 2400, "{}", memory.chars().count());
 
     let headless = start("sdk-cli");
     assert_eq!(headless["hookSpecificOutput"], Value::Null, "{headless}");

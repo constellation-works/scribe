@@ -5,10 +5,11 @@
 //! (STD-02 R24): today the audit log, through [`crate::audit_middleware`].
 //! Each noun lives in its own module with its subcommands, flags, help and
 //! handlers (`entry.rs`, `session/`, `proposal.rs`, `record.rs`, `tag.rs`, `issue.rs`, `question.rs`,
-//! `plugin.rs`, `tmux.rs`); a noun that
+//! `brief.rs`, `plugin.rs`, `tmux.rs`); a noun that
 //! outgrows one file becomes a directory, `<noun>/mod.rs` plus one file per
 //! verb, as `hook/` is (STD-02 R18: split along responsibilities, not by length alone).
 
+pub(in crate::commands) mod brief;
 mod consistency;
 mod entry;
 mod hook;
@@ -88,6 +89,11 @@ pub(crate) enum Command {
     /// Records and searches issues: incidents that recur across projects, and what fixed them.
     #[command(subcommand, after_help = issue::ISSUE_EXAMPLES)]
     Issue(issue::IssueCommand),
+    /// Show the session-start page: memory, recent sessions, open claims
+    ///
+    /// Shows the session-start page the hook injects: the memory page, the last sessions (this project's first) and every open claim grouped by tag with the id that settles it; model-free, writing nothing.
+    #[command(after_help = brief::EXAMPLES)]
+    Brief(brief::BriefArgs),
     /// Answer a question from the records with verbatim quotes
     ///
     /// Answers a question from the records, citing a verbatim quote for every claim.
@@ -125,6 +131,7 @@ impl Command {
             | Self::Tag(_)
             | Self::Hook(_)
             | Self::Question(_)
+            | Self::Brief(_)
             | Self::Tmux(_)
             | Self::Plugin(_) => AuditSubject::default(),
         }
@@ -149,8 +156,9 @@ impl Command {
             Self::Issue(command) => command.audit(),
             Self::Hook(command) => command.audit(),
             Self::Question(command) => command.audit(),
-            // Read-only: the popup only lists and shows (STD-01 R31).
-            Self::Tmux(_) => None,
+            // Read-only: the popup only lists and shows, and the brief only
+            // reads (STD-01 R31).
+            Self::Tmux(_) | Self::Brief(_) => None,
             Self::Plugin(command) => command.audit(),
         }
     }
@@ -181,6 +189,7 @@ pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
         Command::Issue(command) => issue::run(command, ctx),
         Command::Hook(command) => hook::run(command, ctx),
         Command::Question(command) => question::run(command, ctx),
+        Command::Brief(args) => brief::run(&args, ctx),
         Command::Tmux(args) => tmux::run(args, ctx),
         Command::Plugin(command) => plugin::run(command, ctx),
     };

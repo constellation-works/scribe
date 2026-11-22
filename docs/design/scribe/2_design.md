@@ -1972,7 +1972,27 @@ naming the record updated most recently. It does not write the link
 already opted in (its switch is on, or it already has a record), when no
 active record in the project was updated that recently, or when the
 sessions cannot be read; a read error is logged and the session still
-starts. The agent is not told. Daniel settles each open proposal in a
+starts. The agent is not told these lines. In an interactive session
+(`CLAUDE_CODE_ENTRYPOINT=cli`) it is given the brief instead, as
+`additionalContext`: `scribe brief`, the one session-start page, model-free
+and read-only. Its top block is the memory page of §13.6, kept whole (so
+the design's Profile, Now and Milestones can replace it without touching
+the rest); then `## Recent sessions`, the last five active records other
+than the session starting, the working directory's project first, each
+newest first, titles only (`- <id> · <date> · <project> · <title>`); then
+`## Open claims`, every open proposal grouped by tag (its candidate's tag,
+or for a consistency proposal the tag of the entry it would change), one
+dated line each with its id and the words it rests on (`- <id> · <date> ·
+<tag> · "<quote>"`). Every line carries its date and the caps are fixed,
+because the page goes into every interactive session. The scribe skill has
+the agent present it at the start of every interactive session. The brief
+sits alongside the count rather than replacing it: the count is Daniel's
+own line in every session, headless ones included, while the brief is
+context for the agent, which headless runs, routines and drains do not
+get. With no memory page, no session and no claim it adds nothing. The
+JSON keeps each claim's statement, subject and the entries it would change
+beside the quote, so the richer claim's context paragraph is one more
+field. Daniel settles each open proposal in a
 typed turn: `#scribe approve p-4` sets the older entry `superseded` (or
 `retired` for a stale proposal) and records `superseded_by`; `#scribe reject
 p-4` closes it for good. `#scribe retire <entry-id>` hides an entry directly;

@@ -26,6 +26,15 @@
 //! drains get none. The page does not depend on this session being on.
 //! Milestone lines past 600 characters log `memory_page_over_budget`, a
 //! warning that never fails the hook.
+//!
+//! The context is the brief (`scribe brief`), the one session-start page:
+//! the memory page as its top block, then the last sessions (this project's
+//! first, this one left out), then every open claim grouped by tag with its
+//! id, so the agent can present them and the user can settle a claim by its
+//! id. The brief sits alongside the proposal count, not in its place: the
+//! count is the user's `systemMessage`, shown in every session, while the
+//! brief is agent context, given only to an interactive session. With no
+//! memory page, no session and no claim it adds nothing.
 
 use super::payload::{self, SessionStartPayload};
 use super::project;
@@ -83,7 +92,7 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
         .collect();
     let message = (!lines.is_empty()).then(|| lines.join("\n"));
     let context = if ctx.interactive() {
-        memory_page(ctx, &session, payload.cwd.as_deref())
+        brief_text(ctx, &session, payload.cwd.as_deref())
     } else {
         None
     };
@@ -117,6 +126,37 @@ fn memory_page(ctx: &Context, session: &SessionId, cwd: Option<&str>) -> Option<
         Ok(None) => None,
         Err(err) => {
             tracing::warn!(%err, "cannot read the memory; not injecting the page");
+            None
+        }
+    }
+}
+
+/// The brief for this session's project, or `None` when it has no memory
+/// page, no session and no claim, or the store cannot be read (logged, so
+/// the session still starts). A memory page that cannot be read is left
+/// out (logged by [`memory_page`]); the rest is still given. With no `cwd`,
+/// every project's sessions by date alone.
+fn brief_text(ctx: &Context, session: &SessionId, cwd: Option<&str>) -> Option<String> {
+    let project = cwd
+        .map(str::trim)
+        .filter(|cwd| !cwd.is_empty())
+        .map(|cwd| project::of(Path::new(cwd)));
+    let memory = memory_page(ctx, session, cwd);
+    match crate::commands::brief::brief(
+        ctx,
+        memory,
+        project.as_ref(),
+        Some(session),
+        scribe_core::brief::DEFAULT_SESSIONS,
+    ) {
+        Ok(brief)
+            if brief.memory.is_none() && brief.sessions.is_empty() && brief.claims.is_empty() =>
+        {
+            None
+        }
+        Ok(brief) => Some(brief.text()),
+        Err(err) => {
+            tracing::warn!(%err, "cannot read the sessions or proposals; not injecting the brief");
             None
         }
     }

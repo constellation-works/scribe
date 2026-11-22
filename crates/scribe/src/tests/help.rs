@@ -91,7 +91,7 @@ fn piped_root_help_uses_one_column_and_the_declaration() {
             seen += 1;
         }
     }
-    assert_eq!(seen, 14);
+    assert_eq!(seen, 15);
     assert!(column.is_some());
 }
 

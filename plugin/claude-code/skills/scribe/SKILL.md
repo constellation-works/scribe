@@ -1,6 +1,6 @@
 ---
 name: scribe
-description: Read recorded preferences and opted-in session history with citations; write clearly attributed agent notes, and explain or initialize scribe capture for Codex or Claude Code. Use at the start of every session in a project to read the user's global and project preferences and brief them on that project's last cataloged session, and while working to suggest entries, tags and stale-session deactivations.
+description: Read recorded preferences and opted-in session history with citations; write clearly attributed agent notes, and explain or initialize scribe capture for Codex or Claude Code. Use at the start of every session in a project to read the user's global and project preferences and present the brief of that project's last sessions and open claims, and while working to suggest entries, tags and stale-session deactivations.
 ---
 
 Use the installed `scribe` binary. The store is `$SCRIBE_ROOT`, otherwise
@@ -35,11 +35,11 @@ about them are the human's to settle. Catalog a past session
 typing `/scribe catalog <id>`. Recording work does not grant permission to
 publish, merge or change unrelated configuration.
 
-## Start of a session: read preferences, brief the last session
+## Start of a session: read preferences, present the brief
 
-On the first turn of a session in a project, read the human's preferences
-and brief them on that project's last cataloged session before starting
-their task. If the first message is urgent, answer it first and do this
+On the first turn of every interactive session in a project, read the
+human's preferences and present the brief, the project's last sessions and
+every open claim, before starting their task. If the first message is urgent, answer it first and do this
 right after.
 
 1. The project is the repository name from the working directory's git
@@ -54,24 +54,29 @@ right after.
    or on the task, and in the feature's `4_decisions.md` when it is a
    design decision. Don't recite the entries in the brief, and
    leave action-tag entries (below) out of it.
-3. Run `scribe session list --project <project> --json`. The list is oldest
-   first and `--limit` keeps the oldest, so take the record with the newest
-   `updated`, skipping this session's own record. If nothing matches, say so
-   in one line and continue.
-4. Run `scribe session show <id> --json` and read `title`, `updated`,
-   `summary`, `goals`, `outcome` and `next`. In a pipe, the default text
-   output contains a list row and segment rows. Run
-   `scribe session show <id> --segment <n> --json` when an item needs the
-   segment's context.
-5. Run `scribe proposal list --state open --json`.
+3. Read the brief. In an interactive Claude Code session the `SessionStart`
+   hook gives it to you as context, the block that starts `# scribe brief`.
+   In Codex, or when it is missing, run
+   `scribe brief --project <project> --json`. It holds the memory page
+   (below), `## Recent sessions` (the last five, this project's first and
+   without this session's own, each a dated title with its id) and
+   `## Open claims` (every open claim grouped by tag, each dated with its
+   id `p-<n>` and the words it rests on).
+4. For the last session in this project, run `scribe session show <id>
+   --json` and read `summary`, `goals` and `next`;
+   `scribe session show <id> --segment <n> --json` gives a segment's context.
 
-The brief is a short message of its own:
+Present the brief as a short message of its own:
 
-- When the last session was, and what it was about and got done.
-- Every pending, unresolved or parked item from `next` and the summary, one
-  line each.
-- Open proposals waiting on the human.
-- The citation `session:<id>`.
+- The last sessions: when each was and what it was about; for the last one
+  in this project, what got done, with its citation `session:<id>`. With
+  none, say so in one line.
+- Every pending, unresolved or parked item from that session's summary and
+  `next`, one line each.
+- Every open claim, grouped by tag, one line each with its id and the
+  quoted words. Tell the human they settle one by typing
+  `#scribe approve <id>` or `#scribe reject <id>`. With none, say so in one
+  line.
 
 The record is a model-written summary from the time it was written, so an
 item may be done since. Say so, and check an item's current state (its
@@ -80,8 +85,8 @@ item unless the human asks.
 
 ## Memory: what scribe has noticed about the human
 
-In an interactive Claude Code session the `SessionStart` hook gives you a
-memory page: `Now`, `Milestones`, `Profile`, the current project,
+In an interactive Claude Code session the brief the `SessionStart` hook
+gives you opens with a memory page: `Now`, `Milestones`, `Profile`, the current project,
 `Working`, and the recent sessions, each line one item and its id
 (`[m-<n>]`). In Codex, or when the page is missing, read it with
 `scribe memory show --page --json`. The items are scribe's statements of

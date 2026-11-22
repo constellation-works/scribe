@@ -310,7 +310,8 @@ pub(crate) fn preview(out: &mut dyn Write, record: &Record) -> io::Result<()> {
         | Record::Issue(_)
         | Record::Memory(_)
         | Record::MemoryPage(_)
-        | Record::MemoryRules(_) => Ok(()),
+        | Record::MemoryRules(_)
+        | Record::Brief(_) => Ok(()),
     }
 }
 

@@ -8,7 +8,8 @@
 //!   ([`SessionRecord`], its log of [`Segment`]s, [`ControlState`],
 //!   [`Cadence`]) in `session`; whether a session is still current and who
 //!   cataloged it in [`activity`];
-//!   proposals ([`Proposal`]) in `proposal`; the shared metadata
+//!   proposals ([`Proposal`]) in `proposal`; the session brief, the last
+//!   sessions and the open claims, in [`brief`]; the shared metadata
 //!   ([`Project`], [`Topic`], [`Related`], [`Author`]) in `record`; `config.toml`
 //!   ([`Config`]) in `config`; parsing a typed turn into `#scribe`
 //!   instructions and an action entry's transcript window in [`capture`];
@@ -43,6 +44,7 @@ pub mod action;
 pub mod activity;
 pub mod annotation;
 pub mod ask;
+pub mod brief;
 pub mod capture;
 pub mod codex;
 mod config;

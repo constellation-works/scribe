@@ -60,6 +60,7 @@ const HELP: &[(&str, &[&str])] = &[
     ("tag-update", &["tag", "update", "--help"]),
     ("tag-list", &["tag", "list", "--help"]),
     ("tag-show", &["tag", "show", "--help"]),
+    ("brief", &["brief", "--help"]),
     ("question", &["question", "--help"]),
     ("question-ask", &["question", "ask", "--help"]),
     ("search", &["search", "--help"]),
@@ -126,6 +127,17 @@ const OUTPUT: &[(&str, &[&str])] = &[
         &["session", "show", "0f8e7a52-3c1d-4b6e-9a2f-5d4c3b2a1e01"],
     ),
     ("proposal-list", &["proposal", "list"]),
+    // The last two sessions in the project and the open consistency claim.
+    (
+        "brief",
+        &[
+            "brief",
+            "--project",
+            "constellation-works/scribe",
+            "--sessions",
+            "2",
+        ],
+    ),
     // Ranked with no model call: entries, session headers and segments.
     ("search", &["search", "merge agent PRs"]),
     ("tag-list", &["tag", "list"]),
@@ -762,6 +774,31 @@ stated_by: {{kind: scribe, name: session-pass}}
     .unwrap();
     support::make_private(&path);
     fx
+}
+
+/// `scribe brief` with an open pass claim (the stated fixture's `p-6`, under
+/// its tag, with its statement, subject and quote), and on an empty store.
+#[test]
+fn brief_matches_goldens() {
+    let stated = stated_fixture();
+    let empty = Fixture::new();
+    let cases: &[(&str, &Fixture)] = &[("brief-claims", &stated), ("brief-empty", &empty)];
+    let mut failures = Vec::new();
+    for (name, fx) in cases {
+        for (suffix, mode) in MODES {
+            let args = [
+                &["brief", "--project", "constellation-works/scribe"][..],
+                *mode,
+            ]
+            .concat();
+            let out = fx.ok(&args);
+            failures.extend(check(
+                &format!("output/{name}.{suffix}"),
+                &text(&out.stdout),
+            ));
+        }
+    }
+    report(&failures);
 }
 
 #[cfg(unix)]
