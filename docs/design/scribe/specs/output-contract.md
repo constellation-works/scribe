@@ -450,7 +450,9 @@ on), `handoff_shape` and `handoff_too_long` (a `handoff` entry whose body
 violates the six fixed headings in order or exceeds 3,000 characters),
 `not_memory_tag` (`entry add --spoken` on an action tag, `handoff`, or a
 `require_evidence` tag), `needs_redaction` (a spoken-instruction `--quote`
-or annotation quote containing text redaction would alter), for `tmux` `fzf_missing` and
+or annotation quote containing text redaction would alter), `not_agent_note`
+(`entry update --content` on an approved claim rather than a direct agent
+note), for `tmux` `fzf_missing` and
 `tmux_failed` (exit 1; `tmux` renders no payload, its popup owns the
 terminal), for `session pass`
 `session_pass_failed` and `session_not_on`, and for `question

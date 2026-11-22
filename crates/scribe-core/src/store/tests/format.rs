@@ -2761,6 +2761,24 @@ fn a_spoken_instruction_agent_entry_reads_with_agent_stated_by_and_quote() {
         .replace(statement, "");
     assert_eq!(entry(&forgotten).unwrap().quote, None);
 
+    // A subsequent metadata-only edit by a third agent after another agent
+    // rewrote the statement keeps the entry readable.
+    let re_edited = raw
+        .replace("updated_by: null", "updated_by: {kind: agent, name: haiku}")
+        .replace(
+            &format!("stated_by: {agent}"),
+            "stated_by: {kind: agent, name: sonnet}",
+        );
+    let re_decoded = entry(&re_edited).unwrap();
+    assert_eq!(
+        re_decoded.stated_by,
+        Some(crate::Author::agent("sonnet".parse().unwrap()))
+    );
+    assert_eq!(
+        re_decoded.updated_by,
+        Some(crate::Author::agent("haiku".parse().unwrap()))
+    );
+
     // Active without quote, or mismatched/scribe stated_by, is refused.
     corrupt_message(
         &entry(&raw.replace("quote: \"short updates please\"", "quote: null")).unwrap_err(),
