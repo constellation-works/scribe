@@ -13,7 +13,8 @@
 //! grammar of forms 1 to 3 and the referent call are gone. Only form 4 is
 //! parsed here, a whole line, model-free:
 //!
-//! 4. `#scribe approve|reject <p-id>` · `#scribe retire|forget <entry-id>`
+//! 4. `#scribe approve|reject <p-id>` · `#scribe retire|forget <entry-id>` ·
+//!    `#scribe forget <session-id>` (`s-<n>`, or the provider's UUID; §15.7)
 //!
 //! It parses to a [`Settling`] ([`crate::consistency::settle`] applies it).
 //! A settling verb with the wrong kind of id is refused,
@@ -343,6 +344,7 @@ fn parse(line: u32, said: &str) -> Option<Parsed> {
                 Settle::Reject(p)
             }
         }),
+        "forget" if session_id(id).is_some() => session_id(id).map(Settle::ForgetSession),
         _ => id.parse::<EntryId>().ok().map(|e| {
             if verb == "retire" {
                 Settle::Retire(e)
@@ -358,14 +360,29 @@ fn parse(line: u32, said: &str) -> Option<Parsed> {
             action,
         })),
         None => {
-            let expected = if matches!(verb.as_str(), "approve" | "reject") {
-                "a proposal id, such as p-4"
-            } else {
-                "an entry id, such as preferences-12"
+            let expected = match verb.as_str() {
+                "approve" | "reject" => "a proposal id, such as p-4",
+                "forget" => "an entry id, such as preferences-12, or a session id, such as s-4",
+                _ => "an entry id, such as preferences-12",
             };
             refuse(Refusal::BadId { verb, expected })
         }
     }
+}
+
+/// The session a forget names: `s-<n>` (no leading zero), or a provider
+/// session id in UUID form, which an entry id could otherwise swallow when
+/// its last group is all digits. Anything else is an entry id or nothing.
+fn session_id(id: &str) -> Option<SessionId> {
+    let numbered = id.strip_prefix("s-").is_some_and(|n| {
+        !n.is_empty() && !n.starts_with('0') && n.bytes().all(|b| b.is_ascii_digit())
+    });
+    let groups: Vec<&str> = id.split('-').collect();
+    let uuid = groups.iter().map(|g| g.len()).eq([8, 4, 4, 4, 12])
+        && groups
+            .iter()
+            .all(|g| g.bytes().all(|b| b.is_ascii_hexdigit()));
+    (numbered || uuid).then(|| id.parse().ok()).flatten()
 }
 
 /// The hashes a transcript turn's text can match a typed prompt by: of the

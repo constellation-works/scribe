@@ -259,3 +259,23 @@ fn forget_issue_n_names_the_entry_an_issue_became_and_an_occurrence_is_refused()
         [(1, "unparsed_instruction"), (2, "unparsed_instruction")]
     );
 }
+
+#[test]
+fn forget_takes_a_session_as_s_n_or_its_uuid_before_an_entry_id() {
+    let session = |id: &str| Settle::ForgetSession(id.parse().unwrap());
+    assert_eq!(settles("#scribe forget s-12"), [session("s-12")]);
+    // A UUID whose last group is all digits would read as an entry id.
+    let uuid = "7c2b9d14-8e5f-4a3b-b1c6-202611220930";
+    assert_eq!(settles(&format!("#scribe forget {uuid}.")), [session(uuid)]);
+    assert_eq!(
+        settles("#scribe forget preferences-4"),
+        [Settle::Forget(
+            EntryId::try_from(String::from("preferences-4")).unwrap()
+        )]
+    );
+    // Retire takes entries only, and `s-012` does not round-trip.
+    assert_eq!(
+        parse("#scribe retire 7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02\n#scribe forget s-012"),
+        [(1, "unparsed_instruction"), (2, "unparsed_instruction")]
+    );
+}

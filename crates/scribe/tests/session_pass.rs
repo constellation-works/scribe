@@ -557,6 +557,115 @@ fn forgetting_an_entry_deletes_the_stored_message_it_cites() {
 }
 
 #[test]
+fn forgetting_a_session_erases_its_words_keeps_its_id_and_takes_no_more_writes() {
+    let s = Setup::new();
+    let quote = "I prefer the lighthouse keeper plan for every Saturday release.";
+    s.write(
+        ON,
+        &[
+            line("user", "u-1", quote),
+            line(
+                "user",
+                "u-2",
+                "The lighthouse budget stays fixed this quarter.",
+            ),
+        ],
+    );
+    s.answer(&candidate_answer(quote, "u-1", "preferences"));
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let search = |terms: &str| -> Value {
+        serde_json::from_slice(
+            &s.fx
+                .ok(&["search", terms, "--kind", "message", "--json"])
+                .stdout,
+        )
+        .unwrap()
+    };
+    let show = |id: &str| -> Value {
+        serde_json::from_slice(&s.fx.ok(&["session", "show", id, "--json"]).stdout).unwrap()
+    };
+    assert_eq!(search("lighthouse")["total"], 2);
+    let before = show(ON);
+    assert_eq!(before["short_id"], "s-1");
+    assert_eq!(before["forgotten"], Value::Null);
+    assert_eq!(before["on"], true);
+    assert_ne!(before["log"][0]["text"], "");
+
+    // Typed while the session is on: it is switched off in the same write.
+    let forgot = text(&type_settlement(&s, "#scribe forget s-1").stdout);
+    assert!(forgot.contains("scribe: forgot s-1"), "{forgot}");
+    assert!(forgot.contains("switched off for good"), "{forgot}");
+    assert_eq!(search("lighthouse")["total"], 0, "{}", search("lighthouse"));
+    let db = std::fs::read(s.fx.root().join("scribe.db")).unwrap();
+    let wal = std::fs::read(s.fx.root().join("scribe.db-wal")).unwrap_or_default();
+    for bytes in [&db, &wal] {
+        let bytes = String::from_utf8_lossy(bytes);
+        for words in ["lighthouse budget", "Level 4 is defined."] {
+            assert!(!bytes.contains(words), "{words:?} is left in the database");
+        }
+    }
+    let after = show("s-1");
+    assert_eq!(after["id"], ON);
+    assert_eq!(after["short_id"], "s-1");
+    assert!(after["forgotten"].is_string(), "{after}");
+    assert_eq!(after["on"], false);
+    assert_eq!(after["summary"], "");
+    assert_eq!(after["terms"], json!([]));
+    assert!(
+        after["log"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|seg| seg["text"] == ""),
+        "{after}"
+    );
+    let table = text(&s.fx.ok(&["session", "show", "s-1"]).stdout);
+    assert!(table.contains("forgotten"), "{table}");
+    // A claim citing the session keeps its own text.
+    assert_eq!(proposals(&s)["proposals"][0]["candidate"]["quote"], quote);
+    // Audited, with the session as the target.
+    let last = audit_log(&s).pop().unwrap();
+    assert_eq!(last["target"], "s-1", "{last}");
+    // Replayed: nothing changes.
+    let again = text(&type_settlement(&s, "#scribe forget s-1").stdout);
+    assert!(again.contains("already forgotten"), "{again}");
+    // It cannot be switched on again, and a pass writes nothing to it.
+    let on = s.scribe("/scribe on");
+    assert!(on.contains("forgotten"), "{on}");
+    assert_eq!(show("s-1")["on"], false);
+
+    // The provider-id form, from another session; a new session after it
+    // never takes a forgotten number.
+    const OTHER: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e61";
+    const THIRD: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e62";
+    let switch_on = |session: &str| {
+        s.write(
+            session,
+            &[line("user", "o-1", "The harbour crane needs a new cable.")],
+        );
+        let mut payload = s.payload("UserPromptSubmit");
+        payload["session_id"] = json!(session);
+        payload["transcript_path"] = json!(s.transcript(session));
+        payload["prompt"] = json!("/scribe on");
+        s.hook("user-prompt-submit", &payload);
+    };
+    switch_on(OTHER);
+    s.answer(&answer());
+    s.run(&["session", "pass", "--session", OTHER, "--json"], b"");
+    assert_eq!(show(OTHER)["short_id"], "s-2");
+    assert_eq!(search("harbour")["total"], 1);
+    let forgot = text(&type_settlement(&s, &format!("#scribe forget {OTHER}")).stdout);
+    assert!(forgot.contains("scribe: forgot s-2"), "{forgot}");
+    assert_eq!(search("harbour")["total"], 0);
+    assert!(show(OTHER)["forgotten"].is_string());
+    assert_eq!(audit_log(&s).pop().unwrap()["target"], "s-2");
+    switch_on(THIRD);
+    s.run(&["session", "pass", "--session", THIRD, "--json"], b"");
+    assert_eq!(show(THIRD)["short_id"], "s-3");
+}
+
+#[test]
 fn a_window_where_no_daniel_turn_fires_a_trigger_requests_no_claims() {
     let s = Setup::new();
     let quote = "Let us use the blue-green rollout for this migration.";

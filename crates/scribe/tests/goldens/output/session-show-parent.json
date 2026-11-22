@@ -2,6 +2,7 @@
   "id": "0f8e7a52-3c1d-4b6e-9a2f-5d4c3b2a1e01",
   "short_id": "s-1",
   "status": "final",
+  "forgotten": null,
   "project": "constellation-works/scribe",
   "topics": [
     "design"

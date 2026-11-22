@@ -541,6 +541,10 @@ pub(crate) struct SessionPayload {
     pub(crate) short_id: Option<String>,
     /// `open` or `final`.
     pub(crate) status: &'static str,
+    /// When `#scribe forget` erased the session's words (2_design.md
+    /// §15.7), or `null`.
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub(crate) forgotten: Option<Timestamp>,
     pub(crate) project: String,
     pub(crate) topics: Vec<String>,
     pub(crate) related: Vec<String>,
@@ -605,6 +609,7 @@ impl SessionPayload {
             id: record.id.to_string(),
             short_id: None,
             status: record.status.as_str(),
+            forgotten: None,
             project: record.project.to_string(),
             topics: strings(record.topics.as_slice()),
             related: strings(&record.related),
@@ -644,6 +649,12 @@ impl SessionPayload {
             log: None,
             log_text: false,
         }
+    }
+
+    /// With when it was forgotten.
+    pub(crate) fn with_forgotten(mut self, at: Option<Timestamp>) -> Self {
+        self.forgotten = at;
+        self
     }
 
     /// With its `s-<n>`.
@@ -1979,6 +1990,7 @@ impl FoundPayload {
                         Kin::of(&record.id, sessions.children, sessions.titles),
                     )
                     .with_number(sessions.numbers.get(&record.id).copied())
+                    .with_forgotten(sessions.forgotten.get(&record.id).copied())
                     .with_log(&record.log),
                 ),
                 task: None,
@@ -2004,6 +2016,7 @@ pub(crate) struct SessionsContext<'a> {
     pub(crate) children: &'a BTreeMap<SessionId, Vec<Child>>,
     pub(crate) titles: &'a BTreeMap<SessionId, String>,
     pub(crate) numbers: &'a BTreeMap<SessionId, std::num::NonZeroU64>,
+    pub(crate) forgotten: &'a BTreeMap<SessionId, Timestamp>,
 }
 
 /// What `question ask` and the `scribe.ask` tool return (2_design.md §6.1):

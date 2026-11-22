@@ -295,6 +295,7 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
             Kin::of(&r.id, &found.children, &found.titles),
         )
         .with_number(found.numbers.get(&r.id).copied())
+        .with_forgotten(found.forgotten.get(&r.id).copied())
     };
     let items = &found.listing.items;
     let active_column = args.include_inactive;
@@ -354,7 +355,8 @@ fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
             titles: &view.linked_titles,
         },
     )
-    .with_number(view.number);
+    .with_number(view.number)
+    .with_forgotten(view.forgotten);
     let mut payload = match segment {
         Some(n) => {
             let one = record

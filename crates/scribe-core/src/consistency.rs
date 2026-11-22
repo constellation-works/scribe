@@ -474,6 +474,11 @@ pub enum Settle {
     Retire(EntryId),
     /// Blank an entry's text for good; its id, cite and status stay.
     Forget(EntryId),
+    /// Erase a session's words for good (`s-<n>` or its provider id): its
+    /// messages and log text go, its row stays as forgotten (2_design.md
+    /// §15.7). The store applies it ([`crate::Store::settle`]); it touches
+    /// no proposal or entry.
+    ForgetSession(SessionId),
 }
 
 impl Settle {
@@ -483,6 +488,7 @@ impl Settle {
         match self {
             Self::Approve(id) | Self::Reject(id) => id.to_string(),
             Self::Retire(id) | Self::Forget(id) => id.to_string(),
+            Self::ForgetSession(id) => id.to_string(),
         }
     }
 }
@@ -582,6 +588,8 @@ pub enum Settled {
         /// The active entry that covers the statement.
         by: EntryId,
     },
+    /// A session's words were erased; its row stays as forgotten.
+    SessionForgotten(crate::SessionForget),
     /// It was already so (a replayed instruction): nothing changed.
     Already(String),
     /// It was refused: nothing changed.
@@ -654,6 +662,11 @@ pub fn settle(
             }
         }
         Settle::Forget(id) => forget(id, proposals, entries, now),
+        // Sessions live in the store's database, not in these lists:
+        // `Store::settle` applies it before it loads them.
+        Settle::ForgetSession(id) => Settled::Already(format!(
+            "{id} is a session; the store forgets it, not the proposal lists"
+        )),
     }
 }
 

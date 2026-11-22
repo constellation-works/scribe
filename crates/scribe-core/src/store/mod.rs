@@ -62,7 +62,7 @@ mod redact;
 mod sessions;
 mod tags;
 pub use rebuild::RebuildGuard;
-pub use sessions::{ExportFormat, Exported, LOCKS_DIR, SessionsMoved};
+pub use sessions::{ExportFormat, Exported, LOCKS_DIR, SessionForget, SessionsMoved};
 
 pub use agent::{check_agent_author, check_content, check_reason};
 pub use audit::{AUDIT_FILE, AuditEvent, AuditStatus, IssueAudit};
@@ -153,6 +153,8 @@ pub struct SessionList {
     pub skipped_sessions: Vec<SessionId>,
     /// Every session's `s-<n>`.
     pub numbers: BTreeMap<SessionId, NonZeroU64>,
+    /// When each forgotten session was forgotten.
+    pub forgotten: BTreeMap<SessionId, time::OffsetDateTime>,
 }
 
 /// One session record with its switch.
@@ -168,6 +170,8 @@ pub struct SessionView {
     pub linked_titles: BTreeMap<SessionId, String>,
     /// Its `s-<n>`.
     pub number: Option<NonZeroU64>,
+    /// When `#scribe forget` erased it, if it did.
+    pub forgotten: Option<time::OffsetDateTime>,
 }
 
 /// What [`Store::list_tags`] found.
@@ -328,6 +332,7 @@ impl Store {
             .collect();
         let skipped: Vec<Skipped> = loaded.skipped.into_iter().map(|(_, s)| s).collect();
         let numbers = loaded.numbers;
+        let forgotten = loaded.forgotten;
         let inactive_hidden = if filter.include_inactive {
             0
         } else {
@@ -352,6 +357,7 @@ impl Store {
             skipped,
             skipped_sessions,
             numbers,
+            forgotten,
         })
     }
 
@@ -371,6 +377,7 @@ impl Store {
         };
         let control = loaded.control;
         let number = loaded.numbers.get(id).copied();
+        let forgotten = loaded.forgotten.get(id).copied();
         let mut others = loaded.records;
         let linked_titles = others
             .iter()
@@ -387,6 +394,7 @@ impl Store {
             children,
             linked_titles,
             number,
+            forgotten,
         })
     }
 
@@ -1122,6 +1130,12 @@ impl Store {
     ) -> Result<Settled> {
         self.prepare_dir(&self.root)?;
         let _lock = self.lock("settle")?;
+        if let Settle::ForgetSession(id) = action {
+            return Ok(match self.forget_session_locked(id, now)? {
+                Some(forgot) => Settled::SessionForgotten(forgot),
+                None => Settled::Already(format!("{id} is already forgotten")),
+            });
+        }
         let mut proposals = self.proposals()?;
         let (mut entries, _) = self.load_entries()?;
         let before_proposals = proposals.clone();

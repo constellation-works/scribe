@@ -410,6 +410,9 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
         }
         (OutputMode::Plain, Record::Session(session)) => {
             writeln!(out, "{}", plain_line(&session_row(session, false)))?;
+            if let Some(at) = session.forgotten {
+                writeln!(out, "forgotten\t{}", timestamp(at))?;
+            }
             for segment in session.log.iter().flatten() {
                 writeln!(
                     out,
@@ -1040,6 +1043,9 @@ fn session_detail(out: &mut dyn Write, sink: &Sink, s: &SessionPayload) -> io::R
     }
     field(out, "title", or_dash(&s.title))?;
     field(out, "status", s.status)?;
+    if let Some(at) = s.forgotten {
+        field(out, "forgotten", &timestamp(at))?;
+    }
     field(out, "active", yes_no(s.active))?;
     field(out, "keep active", yes_no(s.keep_active))?;
     let change = s.active_change.as_ref().map_or_else(

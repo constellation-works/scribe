@@ -17,14 +17,21 @@
 //! - **Header-only rows.** A session switched on but never passed has a row
 //!   with `has_record = 0`; a cataloged one never switched on has
 //!   `has_switch = 0`.
+//! - **Forgotten rows** (schema 4). `#scribe forget s-<n>` ([`forget`])
+//!   deletes the session's messages and its words, and stamps `forgotten`.
+//!   The row stays, so `s-<n>` is never reused, and no write fills it
+//!   again: a record write or switching it on is refused
+//!   `session_forgotten`.
 //!
 //! The functions take a connection or a transaction the caller opened; the
 //! store holds its lock around every write.
 
 use super::memory::read;
 use super::{DB_FILE, Fallible, db_error, stamp};
+use crate::WriteRefusal;
 use crate::error::{Error, Result};
 use crate::session::{ControlState, SessionControl, SessionId, SessionRecord, check_log};
+use crate::store::agent::refusal;
 use rusqlite::types::Value as Sql;
 use rusqlite::{Connection, OptionalExtension, params_from_iter};
 use serde_json::{Map, Value};
@@ -181,6 +188,8 @@ pub(in crate::store) struct Sessions {
     pub numbers: BTreeMap<SessionId, NonZeroU64>,
     /// Every switch and Codex cursor.
     pub control: ControlState,
+    /// When each forgotten session was forgotten.
+    pub forgotten: BTreeMap<SessionId, OffsetDateTime>,
 }
 
 /// Whether the sessions live in the database: schema 3 or newer and a
@@ -368,7 +377,138 @@ pub(in crate::store) fn load(conn: &Connection, db: &Path) -> Result<Sessions> {
         });
     }
     out.control = control(conn, db)?;
+    out.forgotten = forgotten(conn, db)?;
     Ok(out)
+}
+
+/// When each forgotten session was forgotten; none before schema 4, which
+/// a reader of a database no writer has migrated yet still sees.
+fn forgotten(conn: &Connection, db: &Path) -> Result<BTreeMap<SessionId, OffsetDateTime>> {
+    let err = |e| db_error("read sessions from", db, e);
+    let version: u32 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(err)?;
+    let mut out = BTreeMap::new();
+    if version < 4 {
+        return Ok(out);
+    }
+    let mut select = conn
+        .prepare(
+            "SELECT id, provider_session, forgotten FROM sessions
+             WHERE forgotten IS NOT NULL ORDER BY id",
+        )
+        .map_err(err)?;
+    let mut rows = select.query([]).map_err(err)?;
+    while let Some(row) = rows.next().map_err(err)? {
+        let n: i64 = row.get(0).map_err(err)?;
+        let id: String = row.get(1).map_err(err)?;
+        let at: String = row.get(2).map_err(err)?;
+        let id: SessionId = id.parse().map_err(|e| Error::corrupt(row_path(db, n), e))?;
+        let at = OffsetDateTime::parse(&at, &time::format_description::well_known::Rfc3339)
+            .map_err(|e| Error::corrupt(row_path(db, n), format!("forgotten: {e}")))?;
+        out.insert(id, at);
+    }
+    Ok(out)
+}
+
+/// Whether `id` has a forgotten row.
+fn is_forgotten(conn: &Connection, id: &SessionId) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM sessions
+         WHERE provider_session = ?1 AND forgotten IS NOT NULL)",
+        [id.as_str()],
+        |row| row.get(0),
+    )
+}
+
+fn forgotten_refusal(id: &SessionId, what: &str) -> Error {
+    refusal(
+        WriteRefusal::SessionForgotten,
+        format!("session {id} was forgotten (#scribe forget); {what}"),
+    )
+}
+
+/// What [`forget`] erased.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::store) struct Erased {
+    /// Its `messages` rows deleted.
+    pub messages: usize,
+    /// Its segments whose text was blanked.
+    pub segments: usize,
+    /// Whether it was switched on, and is now off.
+    pub was_on: bool,
+}
+
+/// Forget the session `id` (§15.7): delete its `messages`, its pending
+/// `now` candidates, its terms (the user's words) and its rebuild
+/// checkpoint; blank its segments' text and its summary, goals and next;
+/// switch it off; stamp `forgotten`. The row, its id, title, headings,
+/// topics and links stay, so cites to it resolve to a forgotten session.
+/// The FTS5 index is optimized when a message went, so no term of one
+/// stays in it; the caller checkpoints the WAL after the commit. `None`
+/// when `id` has no row; `Some(None)` when it is already forgotten.
+pub(in crate::store) fn forget(
+    conn: &Connection,
+    db: &Path,
+    id: &SessionId,
+    now: OffsetDateTime,
+) -> Result<Option<Option<Erased>>> {
+    let err = |e| db_error("forget a session in", db, e);
+    let row: Option<(i64, bool, bool)> = conn
+        .query_row(
+            "SELECT id, forgotten IS NOT NULL, coalesce(sw_on, 0) FROM sessions
+             WHERE provider_session = ?1",
+            [id.as_str()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(err)?;
+    let Some((n, already, was_on)) = row else {
+        return Ok(None);
+    };
+    if already {
+        return Ok(Some(None));
+    }
+    let messages = conn
+        .execute("DELETE FROM messages WHERE session = ?1", [id.as_str()])
+        .map_err(err)?;
+    conn.execute("DELETE FROM now_pending WHERE session = ?1", [id.as_str()])
+        .map_err(err)?;
+    for table in ["session_terms", "rebuild_checkpoints"] {
+        conn.execute(&format!("DELETE FROM {table} WHERE session = ?1"), [n])
+            .map_err(err)?;
+    }
+    let segments = conn
+        .execute(
+            "UPDATE segments SET text = '' WHERE session = ?1 AND text <> ''",
+            [n],
+        )
+        .map_err(err)?;
+    conn.execute(
+        "UPDATE sessions SET
+             forgotten = ?2,
+             summary = CASE WHEN has_record = 1 THEN '' END,
+             goals = CASE WHEN has_record = 1 THEN '' END,
+             next = CASE WHEN has_record = 1 THEN '' END,
+             next_open = CASE WHEN has_record = 1 THEN 0 END,
+             sw_on = CASE WHEN has_switch = 1 THEN 0 END,
+             sw_due = CASE WHEN has_switch = 1 THEN 0 END
+         WHERE id = ?1",
+        (n, stamp(now)),
+    )
+    .map_err(err)?;
+    if messages > 0 {
+        conn.execute(
+            "INSERT INTO messages_fts (messages_fts) VALUES ('optimize')",
+            [],
+        )
+        .map_err(err)?;
+    }
+    Ok(Some(Some(Erased {
+        messages,
+        segments,
+        was_on,
+    })))
 }
 
 /// Every segment, by row: its metadata object and its text, in order.
@@ -475,6 +615,9 @@ pub(in crate::store) fn put_record(
 ) -> Result<i64> {
     let corrupt = |e: String| Error::corrupt(db, format!("session {}: {e}", record.id));
     let err = |e| db_error("write a session to", db, e);
+    if is_forgotten(conn, &record.id).map_err(err)? {
+        return Err(forgotten_refusal(&record.id, "nothing is written to it"));
+    }
     let obj = object(record).map_err(corrupt)?;
     let mut values = vec![Sql::Text(record.id.as_str().to_owned())];
     values.extend(columns(&obj, RECORD).map_err(corrupt)?);
@@ -589,6 +732,9 @@ pub(in crate::store) fn put_control(
             continue;
         }
         let corrupt = |e: String| Error::corrupt(db, format!("switch {id}: {e}"));
+        if switch.on && is_forgotten(conn, id).map_err(err)? {
+            return Err(forgotten_refusal(id, "it cannot be switched on again"));
+        }
         let obj = object(switch).map_err(corrupt)?;
         let mut values = vec![Sql::Text(id.as_str().to_owned())];
         values.extend(columns(&obj, SWITCH).map_err(corrupt)?);
@@ -813,6 +959,15 @@ impl<'c> SessionTx<'c> {
         now: OffsetDateTime,
     ) -> Result<(Option<super::Journal>, usize)> {
         super::memory::stage(&self.tx, &self.path, self.started, commit, now)
+    }
+
+    /// Forget a session ([`forget`]).
+    pub(in crate::store) fn forget(
+        &self,
+        id: &SessionId,
+        now: OffsetDateTime,
+    ) -> Result<Option<Option<Erased>>> {
+        forget(&self.tx, &self.path, id, now)
     }
 
     /// Commit.
