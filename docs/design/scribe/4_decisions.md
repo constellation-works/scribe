@@ -1,17 +1,17 @@
 ---
 title: scribe — Decisions
 owner: claude
-last_updated: 2026-11-21
+last_updated: 2026-11-22
 last_validated: 2026-11-02
 status: Draft
 feature: scribe
 doc_role: decisions
 type: design
-summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, why action tags are config-marked with a capped window, a cancel window, pickups, a stuck line, a CLI quote check and SSH reads from the owner host, why scribe keeps a descriptive memory the session pass writes without approval, why that memory has a personal base fed by every typed session (with people, recurring dates and light catalog entries) and a work layer fed only by /scribe on sessions, why scribe reads Claude Code and Codex sessions only (no hosted server, app connector or ChatGPT import), why the personal base, people, recurring dates and light catalog entries are parked, why the session pass writes Daniel's ideas itself with their outcome, why #scribe becomes an annotation anywhere in a typed turn cataloged at the end of the turn with a statement and his verbatim quote (proposed), plus the engineering decisions carried over from the Rust CLI template.
+summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, why action tags are config-marked with a capped window, a cancel window, pickups, a stuck line, a CLI quote check and SSH reads from the owner host, why scribe keeps a descriptive memory the session pass writes without approval, why that memory has a personal base fed by every typed session (with people, recurring dates and light catalog entries) and a work layer fed only by /scribe on sessions, why scribe reads Claude Code and Codex sessions only (no hosted server, app connector or ChatGPT import), why the personal base, people, recurring dates and light catalog entries are parked, why the session pass writes Daniel's ideas itself with their outcome, why #scribe becomes an annotation anywhere in a typed turn cataloged at the end of the turn with a statement and his verbatim quote (proposed), why tags become configurable catchers, memory a fixed three-part synthesis and the rest one SQLite database, with approved entries in SQLite, issues kept apart from catchers, only cited assistant turns stored, and the meaning landing before the storage (proposed), plus the engineering decisions carried over from the Rust CLI template.
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640]
 ---
 
 # scribe — Decisions
@@ -2115,6 +2115,8 @@ show` prints `rebuilt_by` only in `--json`.
   Stop recovery decide coverage as of the turn.
 - [ORB-26360] — entry `inactive_since` (format 12), whole-second Stop
   coverage, and the coverage check for resolved referents.
+- [ORB-26640] — proposed tags as catchers, the fixed three-part memory and
+  one SQLite store, with the four decisions of the accepted proposal.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
 
@@ -3877,3 +3879,230 @@ rewritten.
 - Cost: an unquoted mention spends a call and may still write an entry he
   did not mean; the content he sees is no longer his own sentence; and the
   turn ends up to 30 s later when it holds a marker.
+
+## Tags are catchers, memory is a fixed synthesis, and the rest lives in one SQLite database (proposed)
+
+**Recorded:** 2026-11-22 · [ORB-26640] · **Daniel's choice** ("your proposal sounds good", 2026-11-22). He confirms it when he approves the design.
+**Would supersede, once approved:** [One Markdown file per record, metadata in YAML frontmatter](#one-markdown-file-per-record-metadata-in-yaml-frontmatter), [ask ranks in memory with no persisted index](#ask-ranks-in-memory-with-no-persisted-index) for messages, and the five sections and switches of [scribe keeps a descriptive memory the pass writes without approval](#scribe-keeps-a-descriptive-memory-the-pass-writes-without-approval). The task that lands each phase adds the `**Superseded by:**` line.
+**Code anchors:** `crates/scribe-core/src/tag.rs::CaptureRules`, `::SHIPPED_CAPTURE`, `crates/scribe-core/src/models.rs::SessionRequest::memory_prompt`, `crates/scribe-core/src/memory/mod.rs::Section`, `crates/scribe-core/src/store/format.rs::UPGRADES`, `crates/scribe-core/src/store/fsio.rs::LockGuard`
+**Paths:** `docs/design/scribe/2_design.md` §15
+
+### Context
+
+Daniel, chief's chat, 2026-11-22, after the pass wrote three memory items
+that were not memory (`m-3`, a one-off "Run the requeue", kept as
+`working`):
+
+- "we need to keep things generic, without personalizing around me";
+- "We need to draw a clearer distinction between tag entries and memory
+  entries";
+- "memory: no on/off and no customization for now. everyone gets the same
+  shape";
+- "just memory as files, and the rest (tags & session & audit log) in
+  sqlite?"
+
+Other facts behind the decision:
+
+- Shipped code names him 494 times.
+- `store/format.rs` holds 21 upgrade steps in 2,654 lines.
+- The audit log has 1,296 lines.
+
+### Decision
+
+The full design is in [2_design.md §15](./2_design.md#15-catchers-claims-with-context-one-memory-shape-and-a-sqlite-store-proposed).
+
+**Three record kinds.**
+
+- A tag entry is a remark caught from a session, citing one quote. It lives
+  in SQLite.
+- Memory is a synthesis written as prose: `memory/profile.md`, `now/` and
+  `milestones/` Markdown files. It has one fixed shape with no switches.
+  `profile.md` is rebuilt by a weekly `scribe memory refresh` on a stronger
+  model.
+- A session is what happened, with its user turns. It lives in SQLite.
+
+**Catchers and claims.**
+
+- A tag is a catcher in `config.toml`: triggers, criteria and `not`, `from
+  = user | assistant | both`, `route = propose | write`, and `max_open`.
+- `preference` and `standard` ship.
+- What scribe infers under a `propose` catcher is a claim. A claim carries
+  a context paragraph and the verbatim quote.
+- `scribe brief` prints the last sessions and the open claims. The
+  `SessionStart` hook injects it.
+
+**Generic text.** Shipped text says "the user", with an optional `[user]
+name`. The output contract stays fixed in code.
+
+### Alternatives
+
+- **Keep the Markdown store and add a messages index beside it.**
+  - Cost: two persistence disciplines. That is the reason the store
+    rejected SQLite in 2026-11, and it applies with more force once
+    messages are stored. The lock, atomic-rewrite and upgrade code also
+    stay.
+- **Keep the five memory sections and fix only the `working` definition.**
+  - Cost: `working` and `preferences` would still overlap.
+  - The items would still be single quotes rather than a synthesis.
+  - Daniel asked for no switches, and the switches would remain.
+- **A new `approval` field on tags,** as the chief's proposal had.
+  - Cost: it duplicates `route`, and allows combinations that mean nothing
+    (2_design.md §15.10, item 1).
+
+### Consequences
+
+- The store stops being greppable and diffable, except for memory.
+  - Cost: inspection goes through `scribe export` and the CLI.
+- One new dependency, `rusqlite` with SQLite bundled.
+  - Cost: a C build in CI, and a larger binary.
+- A write and its audit row commit together, which closes the approval gap
+  that `reapply_approved` repairs.
+- Storing every typed turn of a switched-on session is new data.
+  - Cost: it is redacted on write, owner-only, and deleted by forget, but it
+    is still more of the user's words at rest than today.
+- The profile job spends one stronger-model call a week.
+  - Cost: about 120 s of `sonnet` per run, bounded by its input caps.
+
+## Approved entries live in SQLite with a Markdown export (proposed)
+
+**Recorded:** 2026-11-22 · [ORB-26640] · **Daniel's choice** (decision 1 of the accepted proposal)
+**Code anchors:** `crates/scribe-core/src/store/mod.rs::load_entries`, `::entry_path`
+
+### Context
+
+Approved preferences are the records a user is most likely to want to read
+and edit by hand. Today each one is a file, `entries/preferences/<id>.md`.
+
+### Decision
+
+**Option chosen:** entries live in the `entries` table, like every other
+kind but memory. The read-only `scribe export --format markdown` writes
+them in today's file shape. An entry is corrected through the CLI
+(`entry update`, `retire`, `forget`), as today.
+
+### Alternatives
+
+- **Approved preferences stay as hand-editable Markdown files,** and only
+  claims move to SQLite.
+  - Cost: approval would then write a file and a row, which are two stores
+    with no transaction across them. That is the gap that `reapply_approved`
+    repairs today.
+  - The lock and `write_atomic` code would stay alive for one kind.
+  - A hand edit would bypass the audit trail.
+
+### Consequences
+
+- One transaction for approval, entry and audit.
+- Cost: a user cannot open a preference in an editor. They read it with
+  `entry show` or an export.
+
+## Issues and agent notes are agent-written kinds, not catchers (proposed)
+
+**Recorded:** 2026-11-22 · [ORB-26640] · **Daniel's choice** (decision 2 of the accepted proposal)
+**Code anchors:** `crates/scribe-core/src/tag.rs::TagTable::issue_capture`, `crates/scribe-core/src/issue_trigger.rs`
+
+### Context
+
+`issue` is a reserved tag whose capture rules use route `agent`. The prompt
+hook tells the agent to write an issue, and the pass catches nothing.
+Findings were agent-written too.
+
+### Decision
+
+**Option chosen:** issues and findings are not catchers. They are outside
+the redesign of catchers and out of the shipped defaults. `issue`'s
+triggers move from `[tags.issue.capture]` to `[issues.capture]`, and route
+`agent` leaves the tag schema. Issue records still move into SQLite with
+the other kinds (2_design.md §15.10, item 2).
+
+### Alternatives
+
+- **Make issues a catcher** with `route = "agent"` kept.
+  - Cost: a tag schema with a route whose catch is written by someone other
+    than scribe.
+  - Every catcher rule would need an exception for it.
+
+### Consequences
+
+- The catcher schema has two routes, both written by scribe.
+- Cost: a config that sets `[tags.issue.capture]` loads with a warning for
+  the 30-day window and then is refused.
+
+## The store keeps only the assistant turns a claim cites (proposed)
+
+**Recorded:** 2026-11-22 · [ORB-26640] · **Daniel's choice** (decision 3 of the accepted proposal)
+**Code anchors:** `crates/scribe-core/src/pass/candidates.rs` (the `Speaker::User` filter), `crates/scribe-core/src/proposal.rs::EntryCandidate::role`
+
+### Context
+
+The `messages` table stores the user's typed turns of switched-on sessions.
+A catcher with `from = "assistant"` cites an assistant turn, and that quote
+must stay checkable after the provider transcript is gone.
+
+### Decision
+
+**Option chosen:** the only assistant turns stored are those a claim or a
+collected entry cites (`role = assistant`). No other assistant message is
+stored.
+
+### Alternatives
+
+- **Store every assistant message** of a switched-on session.
+  - Cost: several times the volume of user text (assistant turns are
+    longer), all of it model output, which is not the user's words.
+  - More to redact and to forget.
+  - Nothing yet reads it.
+
+### Consequences
+
+- `ask` and search cover the user's words and the cited assistant turns
+  only.
+- Cost: an answer that needs what the assistant said elsewhere in the
+  session reads the segment summaries, or the transcript while it exists.
+
+## The meaning lands before the storage, and the messages table opens the storage (proposed)
+
+**Recorded:** 2026-11-22 · [ORB-26640] · **Daniel's choice** (decision 4 of the accepted proposal), refined by the design
+**Paths:** `docs/design/scribe/2_design.md` §15.9
+
+### Context
+
+The accepted order put all of the meaning first (tags, claims, the brief,
+the memory shape, de-personalising), then the storage, starting with the
+new messages table. Three parts of the memory shape need tables:
+
+- pending undated `now` candidates;
+- removed `now` history;
+- profile revisions, and the verbatim messages the profile job reads.
+
+### Decision
+
+**Option chosen:** the meaning that needs no storage goes first:
+
+1. stop writing `working` memory;
+2. generic prompts and catchers;
+3. claims with context and the brief.
+
+Then comes the SQLite foundation, with the messages table first. The memory
+shape and the profile job come next, then sessions, then the remaining
+kinds. Last, the file store is removed after the compatibility window.
+This is the order of the accepted decision, with one move: the memory
+shape goes after the SQLite foundation, because building its tables on the
+file store first would mean building them twice.
+
+### Alternatives
+
+- **The memory shape before any SQLite,** as accepted.
+  - Cost: pending candidates, history and revisions would need file
+    documents and format steps, which phase 7 would then throw away.
+  - The profile job would read verbatim turns from provider transcripts,
+    which may have been removed.
+- **Storage first.**
+  - Cost: the observed failure (`m-3`) and the claims nobody can settle
+    would wait behind the largest change.
+
+### Consequences
+
+- The `m-3` class of item stops in phase 1, a small change.
+- Cost: memory keeps its current shape, minus `working` and `projects`,
+  until phase 5.
