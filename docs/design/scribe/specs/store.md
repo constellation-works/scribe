@@ -407,7 +407,8 @@ line has the session's `s-<n>` as its target.
   `control.json`, `proposals.json`, `tags.json`, `marks.json`,
   `pickups.json`, `audit.jsonl`), which a build reads as a store and moves
   in again unchanged; `--as jsonl` as one `<table>.jsonl` per table, which
-  needs every kind moved.
+  needs every kind with records moved (a phase-6 store with no live
+  record files exports its session tables).
 
 ## Record files
 

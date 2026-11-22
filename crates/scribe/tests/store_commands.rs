@@ -110,3 +110,98 @@ fn export_writes_every_session_and_writes_nothing_to_the_store() {
     let err: Value = serde_json::from_slice(&out.stderr).unwrap();
     assert_eq!(err["code"], "export_target_exists", "{err}");
 }
+
+#[test]
+fn jsonl_export_reads_phase_six_database_with_no_live_files() {
+    let fx = Fixture::new();
+    fx.seed();
+    std::fs::remove_dir_all(fx.root().join("entries")).unwrap();
+    std::fs::remove_file(fx.root().join("proposals.json")).unwrap();
+    let control = fx.root().join("control.json");
+    let text_now = std::fs::read_to_string(&control).unwrap();
+    std::fs::write(
+        &control,
+        text_now.replace(
+            r#"{"on": true, "since": "2026-11-02T18:55:00Z", "due": true"#,
+            r#"{"on": false, "since": "2026-11-02T18:55:00Z", "due": false"#,
+        ),
+    )
+    .unwrap();
+    make_private(&control);
+
+    fx.ok(&["store", "migrate", "--json"]);
+    {
+        let conn = rusqlite::Connection::open(fx.root().join("scribe.db")).unwrap();
+        let mut persist = 1;
+        conn.file_control(
+            rusqlite::DEFAULT_NAME,
+            rusqlite::FileControl::PersistWal(&mut persist),
+        )
+        .unwrap();
+        conn.execute_batch(
+            "DROP TABLE entries;
+             DROP TABLE claims;
+             DROP TABLE agent_tags;
+             DROP TABLE marks;
+             DROP TABLE pickups;
+             DROP TABLE audit;
+             DELETE FROM record_kinds WHERE kind <> 'sessions';
+             CREATE TABLE record_kinds_v3 (
+                 kind TEXT NOT NULL PRIMARY KEY CHECK (kind IN ('sessions')),
+                 moved_at TEXT NOT NULL,
+                 moved_to TEXT
+             ) STRICT;
+             INSERT INTO record_kinds_v3 (kind, moved_at, moved_to)
+                 SELECT kind, moved_at, moved_to FROM record_kinds;
+             DROP TABLE record_kinds;
+             ALTER TABLE record_kinds_v3 RENAME TO record_kinds;
+             PRAGMA user_version = 4;",
+        )
+        .unwrap();
+    }
+    for stamp in ["proposals.json", "tags.json", "marks.json", "pickups.json"] {
+        let _ = std::fs::remove_file(fx.root().join(stamp));
+    }
+    std::fs::write(
+        &control,
+        r#"{"format": 26, "sessions": {}, "codex_cursors": {}}"#,
+    )
+    .unwrap();
+    make_private(&control);
+
+    let before = support::snapshot(&fx.root());
+    let jsonl = fx.elsewhere("jsonl");
+    let out = json(&fx.ok(&["export", "--as", "jsonl", jsonl.to_str().unwrap(), "--json"]));
+    assert_eq!(out["sessions"], 3, "{out}");
+    assert_eq!(out["entries"], 0, "{out}");
+    assert_eq!(out["claims"], 0, "{out}");
+    assert_eq!(out["audit_lines"], 0, "{out}");
+    assert_eq!(
+        support::snapshot(&fx.root()),
+        before,
+        "export writes nothing"
+    );
+    let sessions = std::fs::read_to_string(jsonl.join("sessions.jsonl")).unwrap();
+    assert_eq!(sessions.lines().count(), 3, "{sessions}");
+
+    // A live document file beside the phase-six DB still requires migration.
+    let audit = fx.root().join("audit.jsonl");
+    std::fs::write(
+        &audit,
+        "{\"format\":5,\"at\":\"2026-11-21T09:00:00Z\",\"command\":\"entry add\",\"status\":\"success\",\"target\":null,\"error_code\":null,\"duration_ms\":1}\n",
+    )
+    .unwrap();
+    make_private(&audit);
+    let blocked = fx.elsewhere("blocked");
+    let out = fx.run(&[
+        "export",
+        "--as",
+        "jsonl",
+        blocked.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    let err: Value = serde_json::from_slice(&out.stderr).unwrap();
+    assert_eq!(err["code"], "export_needs_migrate", "{err}");
+    assert!(!blocked.exists());
+}

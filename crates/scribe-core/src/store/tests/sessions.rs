@@ -229,6 +229,65 @@ fn jsonl_export_writes_one_line_per_row_and_needs_moved_sessions() {
     assert_eq!(row["provider_session"], "s-1");
 }
 
+#[test]
+fn jsonl_export_reads_phase_six_sessions_when_no_live_files_remain() {
+    let (dir, store) = file_store();
+    store.migrate_store(T0).unwrap();
+    let root = store.root();
+    let conn = rusqlite::Connection::open(root.join(db::DB_FILE)).unwrap();
+    conn.execute_batch(
+        "DROP TABLE entries;
+         DROP TABLE claims;
+         DROP TABLE agent_tags;
+         DROP TABLE marks;
+         DROP TABLE pickups;
+         DROP TABLE audit;
+         DELETE FROM record_kinds WHERE kind <> 'sessions';
+         CREATE TABLE record_kinds_v3 (
+             kind TEXT NOT NULL PRIMARY KEY CHECK (kind IN ('sessions')),
+             moved_at TEXT NOT NULL,
+             moved_to TEXT
+         ) STRICT;
+         INSERT INTO record_kinds_v3 (kind, moved_at, moved_to)
+             SELECT kind, moved_at, moved_to FROM record_kinds;
+         DROP TABLE record_kinds;
+         ALTER TABLE record_kinds_v3 RENAME TO record_kinds;
+         PRAGMA user_version = 4;",
+    )
+    .unwrap();
+    drop(conn);
+    for stamp in ["proposals.json", "tags.json", "marks.json", "pickups.json"] {
+        let _ = fs::remove_file(root.join(stamp));
+    }
+    put(
+        root,
+        "control.json",
+        r#"{"format": 26, "sessions": {}, "codex_cursors": {}}"#,
+    );
+
+    let target = dir.path().join("export");
+    let out = store.export(&target, ExportFormat::Jsonl).unwrap();
+    assert_eq!(out.sessions, 1, "{out:?}");
+    assert_eq!(out.entries, 0);
+    assert_eq!(out.claims, 0);
+    assert_eq!(out.audit_lines, 0);
+    let sessions = fs::read_to_string(target.join("sessions.jsonl")).unwrap();
+    assert_eq!(sessions.lines().count(), 1, "{sessions}");
+    let row: serde_json::Value = serde_json::from_str(sessions.lines().next().unwrap()).unwrap();
+    assert_eq!(row["provider_session"], "s-1");
+
+    // A live document file beside the phase-six DB still requires migration.
+    put(
+        root,
+        "entries/preferences/preferences-1.md",
+        &super::entry_text(""),
+    );
+    let blocked = dir.path().join("blocked");
+    let err = store.export(&blocked, ExportFormat::Jsonl).unwrap_err();
+    assert_eq!(code(&err), "export_needs_migrate", "{err}");
+    assert!(!blocked.exists());
+}
+
 fn draft(title: &str) -> Draft {
     const TURN: &str = "My sister's wedding is on december 12 and I'm still on the seating.";
     let day = date!(2026 - 12 - 12);

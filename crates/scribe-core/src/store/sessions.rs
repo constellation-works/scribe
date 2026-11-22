@@ -370,26 +370,17 @@ impl Store {
         let rows = match as_format {
             ExportFormat::Markdown => None,
             ExportFormat::Jsonl if !self.root_exists()? => Some(Vec::new()),
-            ExportFormat::Jsonl => match db::docs::read(&self.root, |conn, path| {
-                let sessions = rows::moved(conn).map_err(|e| db::db_error("read", path, e))?;
-                sessions
-                    .then(|| rows::export_rows(conn, path, EXPORT_TABLES))
-                    .transpose()
-            })?
-            .flatten()
-            {
-                Some(rows) => {
-                    self.check_stamp()?;
-                    Some(rows)
-                }
-                None if !self.has_files_to_move_aside()? => Some(Vec::new()),
-                None => {
+            ExportFormat::Jsonl => {
+                let db = db::read_export(&self.root, SESSION_EXPORT_TABLES, DOC_EXPORT_TABLES)?;
+                if (!db.sessions_moved || !db.docs_moved) && self.has_files_to_move_aside()? {
                     return Err(refusal(
                         WriteRefusal::ExportNeedsMigrate,
                         "JSONL export reads scribe.db, and this store's records are still files; run `scribe store migrate`, or export --as markdown",
                     ));
                 }
-            },
+                self.check_stamp()?;
+                Some(db.rows)
+            }
         };
         prepare_target(target)?;
         let mut files = Vec::new();
@@ -553,14 +544,20 @@ impl Store {
     }
 }
 
-/// Every table `scribe export --as jsonl` writes, with its row order.
-const EXPORT_TABLES: &[(&str, &str)] = &[
+/// Every session table `scribe export --as jsonl` writes (phase 6), with
+/// its row order.
+const SESSION_EXPORT_TABLES: &[(&str, &str)] = &[
     ("sessions", "id"),
     ("segments", "session, n"),
     ("session_links", "session, position"),
     ("session_terms", "session, position"),
     ("codex_cursors", "session"),
     ("rebuild_checkpoints", "session"),
+];
+
+/// Every document table `scribe export --as jsonl` writes (phase 7), with
+/// its row order.
+const DOC_EXPORT_TABLES: &[(&str, &str)] = &[
     ("entries", "tag, n"),
     ("claims", "n"),
     ("agent_tags", "name"),
