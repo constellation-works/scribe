@@ -454,6 +454,69 @@ fn migrate_and_its_audit_line_commit_or_roll_back_together() {
     assert_eq!(migrate_lines(&store), 1);
 }
 
+/// Every `record_kinds` row a store holds, as (kind, moved_to), by kind.
+fn archived_kinds(root: &Path) -> Vec<(String, Option<String>)> {
+    let conn = rusqlite::Connection::open(root.join(db::DB_FILE)).unwrap();
+    conn.prepare("SELECT kind, moved_to FROM record_kinds ORDER BY kind")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap()
+}
+
+fn archived(kind: &str, to: Option<&str>) -> (String, Option<String>) {
+    (kind.to_owned(), to.map(str::to_owned))
+}
+
+#[test]
+fn migrate_records_the_archive_directory_for_each_kind_that_had_files() {
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+    file_store(&root);
+    let moved = Store::open(&root).migrate_store(NOW).unwrap();
+    assert_eq!(moved.moved_to.as_deref(), Some("pre-sqlite-2026-11-02"));
+    let archive = "pre-sqlite-2026-11-02";
+    assert_eq!(
+        archived_kinds(&root),
+        [
+            archived("agent_tags", Some(archive)),
+            archived("audit", Some(archive)),
+            archived("claims", Some(archive)),
+            archived("entries", Some(archive)),
+            archived("marks", Some(archive)),
+            archived("pickups", Some(archive)),
+            archived("sessions", Some(archive)),
+        ],
+    );
+}
+
+#[test]
+fn migrate_records_no_archive_directory_for_a_kind_with_no_files() {
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+    let kept = entry("preferences-1", 0, "the release train leaves on Tuesdays");
+    let rel = "entries/preferences/preferences-1.md";
+    put(
+        &root,
+        rel,
+        &format::encode_entry(&root.join(rel), &kept).unwrap(),
+    );
+    Store::open(&root).migrate_store(NOW).unwrap();
+    assert_eq!(
+        archived_kinds(&root),
+        [
+            archived("agent_tags", None),
+            archived("audit", None),
+            archived("claims", None),
+            archived("entries", Some("pre-sqlite-2026-11-02")),
+            archived("marks", None),
+            archived("pickups", None),
+            archived("sessions", None),
+        ],
+    );
+}
+
 fn candidate_proposal(
     id: &str,
     entry_id: &str,

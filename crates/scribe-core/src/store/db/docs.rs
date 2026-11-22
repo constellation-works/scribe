@@ -260,17 +260,19 @@ pub(in crate::store) fn moved(conn: &Connection) -> rusqlite::Result<bool> {
     Ok(usize::try_from(n).is_ok_and(|n| n == KINDS.len()))
 }
 
-/// Record that the documents moved in, and where their files went.
+/// Record that the documents moved in: a row for every kind, with the
+/// `pre-sqlite-<date>` directory its files went to, or `None` when it had
+/// none. A kind already marked keeps its row.
 pub(in crate::store) fn mark_moved(
     conn: &Connection,
     now: OffsetDateTime,
-    moved_to: Option<&str>,
+    moved_to: impl Fn(&str) -> Option<String>,
 ) -> rusqlite::Result<()> {
     for kind in KINDS {
         conn.execute(
             "INSERT INTO record_kinds (kind, moved_at, moved_to) VALUES (?1, ?2, ?3)
              ON CONFLICT (kind) DO NOTHING",
-            (kind, stamp(now), moved_to),
+            (kind, stamp(now), moved_to(kind)),
         )?;
     }
     Ok(())
