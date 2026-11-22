@@ -107,6 +107,13 @@ ban "$CORE/store/fsio.rs"   'crate::(entry|tag|session|proposal|record|config|ve
 ban "$CORE/store/format.rs" 'std::fs|super::fsio'                "store/format.rs converts bytes; it must not do I/O"
 ban "$CORE/store/redact.rs" 'std::fs|super::fsio'                "store/redact.rs masks text it is handed; it must not do I/O"
 ban "$CORE/store/audit.rs"  'std::fs|super::fsio'                "store/audit.rs is a record shape; it must not do I/O"
+# SQLite is one store module's mechanism (2_design.md §15.7): every other
+# module, in either crate, reaches scribe.db through the Store.
+for path in "$CORE"/* "$CORE"/store/*; do
+  case "$(basename "$path")" in store | tests | db.rs) continue ;; esac
+  ban "$path" 'rusqlite' "core/${path#"$CORE"/} must not use rusqlite: scribe.db belongs to store/db.rs"
+done
+ban "$CLI" 'rusqlite' "the CLI must not use rusqlite: scribe.db is reached through scribe_core::Store"
 # The domain receives resolved roots and configuration (R3).
 ban "$CORE"          'std::env::|home_dir|current_dir'           "the core crate must not read the environment or discover paths"
 # Composition does not know about parsing, dispatch or rendering (R2).

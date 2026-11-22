@@ -1,6 +1,6 @@
 ---
 type: design
-summary: "Spec: store — layout, record files with YAML frontmatter (format 24: a claim's context paragraph; format 23: the user author channel; format 22: marks.json and the annotation entry; format 21: a working item's preference_proposal; format 20: memory consolidation and promotion; format 19: memory items; format 18: entry removal_instruction apart from the approval instruction; format 17: issue records; format 16: entry outcome on a pass-written idea; format 15: instructed approval said and closed_reason covered; format 14: candidate statement and subject, entry stated_by; format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
+summary: "Spec: store — layout, scribe.db (phase 4: messages with FTS5, the memory tables, WAL, read-only copies), record files with YAML frontmatter (format 24: a claim's context paragraph; format 23: the user author channel; format 22: marks.json and the annotation entry; format 21: a working item's preference_proposal; format 20: memory consolidation and promotion; format 19: memory items; format 18: entry removal_instruction apart from the approval instruction; format 17: issue records; format 16: entry outcome on a pass-written idea; format 15: instructed approval said and closed_reason covered; format 14: candidate statement and subject, entry stated_by; format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
 last_validated: 2026-11-21
 ---
 
@@ -107,6 +107,8 @@ user's file could pass for one of Daniel's records.
 ├── pickups.json                         0600, optional (introduced at format 8)
 ├── memory/m-<n>.md                      0600, one file per memory item (introduced at format 19)
 ├── marks.json                           0600, optional (introduced at format 22)
+├── scribe.db                            0600, SQLite in WAL mode, created by the first pass that keeps a message (phase 4)
+├── scribe.db-wal, scribe.db-shm         0600, kept after the last connection (PERSIST_WAL)
 ├── audit.jsonl                          0600, created by the first audited command
 └── .lock                                0600, created by the first writer, never deleted
 ```
@@ -117,6 +119,85 @@ Names starting with `.` are never records (a writer's temp file, an
 editor's swap file, a rebuild checkpoint `.<id>.rebuild.md`), nor is a file without the `.md` extension; under
 `sessions/`, only four-digit year and two-digit month directories are
 walked.
+
+## scribe.db (phase 4)
+
+The SQLite database of [2_design.md §15.7](../2_design.md#157-storage),
+built with `rusqlite`'s `bundled` feature (SQLite compiled in, FTS5 on).
+Only `store/db.rs` opens it. Phase 4 keeps the session pass's messages in
+it and creates the memory tables phase 5 fills; every other record stays a
+file.
+
+- **Privacy.** `scribe.db`, `scribe.db-wal` and `scribe.db-shm` are checked
+  like any store file on every open, read or write: a link, another user's
+  file or any group or other mode bit is refused (`store_symlink`,
+  `store_foreign_owner`, `store_permissions`). The database is created
+  `0600` before SQLite opens it, and SQLite gives the `-wal` and `-shm`
+  files the database's mode.
+- **Writers** open read-write and set `busy_timeout` to the lock wait
+  (10 seconds), `SQLITE_FCNTL_PERSIST_WAL`, `journal_mode = WAL`,
+  `synchronous = FULL` and `secure_delete = ON`. SQLite does not call the
+  busy handler for the journal-mode change, so a writer racing another on
+  a new database retries it every 20 ms within the same wait. Every write
+  is one `BEGIN IMMEDIATE` transaction; a busy database past the wait is
+  `store_locked` (holder `another scribe.db writer`). Writers do not take
+  `.lock`.
+- **Readers** take no lock and write nothing: they open
+  `SQLITE_OPEN_READ_ONLY`. A missing database matches nothing. When SQLite
+  cannot open the WAL read-only (`SQLITE_CANTOPEN` or `SQLITE_READONLY`:
+  the `-wal` or `-shm` file is missing and the directory is not writable,
+  as in a copied or mounted store), the reader opens `file:<path>?immutable=1`
+  and the output says `read-only copy`.
+- **Schema.** `PRAGMA user_version` is the schema version; migrations are a
+  numbered list, each run in its own `BEGIN IMMEDIATE` transaction that
+  re-reads the version, so racing writers run each step once. A version
+  above this build's is `store_too_new` for readers and writers. Version 1
+  is phase 4's. Every table is `STRICT`; times are RFC 3339 UTC text.
+- **Errors.** A file SQLite cannot read as a database is `store_corrupt`;
+  any other SQLite failure is `store_database`.
+
+### Tables (version 1)
+
+| Table | Columns (type, constraint) | Written by |
+|---|---|---|
+| `meta` | `id INTEGER PRIMARY KEY CHECK (id = 1)`; `store_id TEXT NOT NULL`, 32 hex characters; `created TEXT NOT NULL` | the first migration; one row |
+| `messages` | `id INTEGER PRIMARY KEY`; `session TEXT NOT NULL`, 1–128 characters (the session record's id); `message TEXT NOT NULL`, non-empty (the provider's message id); `role TEXT NOT NULL CHECK (role IN ('user', 'assistant'))`; `at TEXT NOT NULL`; `text TEXT NOT NULL`, redacted; `sha256 TEXT NOT NULL`, 64 hex characters of the redacted text; `UNIQUE (session, message)` | the session pass |
+| `messages_fts` | FTS5 over `messages.text`, external content (`content = 'messages'`, `content_rowid = 'id'`), `tokenize = 'unicode61 remove_diacritics 2'`; kept by `AFTER INSERT`, `AFTER DELETE` and `AFTER UPDATE OF text` triggers | the triggers |
+| `now_pending` | `id INTEGER PRIMARY KEY`; `session TEXT NOT NULL`, 1–128 characters; `message TEXT NOT NULL`, non-empty; `subject TEXT NOT NULL`, non-empty; `text TEXT NOT NULL`; `created TEXT NOT NULL`; `UNIQUE (session, subject)`; a `BEFORE INSERT` trigger aborts a sixth row for one session | phase 5 |
+| `memory_history` | `id INTEGER PRIMARY KEY`; `item TEXT NOT NULL`, non-empty (the removed item's id or file stem); `kind TEXT NOT NULL`, non-empty; `text TEXT NOT NULL`; `sources TEXT NOT NULL`, a JSON array; `removed_at TEXT NOT NULL` | phase 5 |
+| `profile_revisions` | `n INTEGER PRIMARY KEY AUTOINCREMENT` (the revision); `created TEXT NOT NULL`; `content TEXT NOT NULL`; `file_sha256 TEXT`, `NULL` until the journal closes, else 64 hex characters | phase 5 |
+| `profile_cursor` | `id INTEGER PRIMARY KEY CHECK (id = 1)`; `through_at TEXT NOT NULL`; `through_session TEXT NOT NULL`, 1–128 characters | phase 5; one row |
+
+### Messages
+
+- **What is kept.** For each pass window, the user's turns with their own
+  typed words (pasted blocks out, as today), less fenced code (a line
+  opening with three or more backticks or tildes, through its closing
+  line or the end); a turn left empty is not kept. The only assistant
+  turns kept are those a claim or collected entry of the window cites,
+  whole. Every text passes the `Redactor` before it is written.
+- **Not kept.** A turn holding one of the memory gate's finance words or
+  sensitive-event words (loss, health, relationship; `memory::finance_word`,
+  `memory::sensitive_word`). A memory item may not hold them outside `now`
+  and `milestones`, and the profile job is the reader these messages are
+  for. A session that is off keeps nothing.
+- **When.** Until phase 6, the pass upserts a window's messages on
+  (`session`, `message`) in one transaction, then writes the session
+  record through `write_atomic` as before. The record's `scribed_through`
+  stays the cursor: a crash between the two reruns the window, which writes
+  the same rows (a row changes only when its text, role or time does).
+- **Forget.** `#scribe forget <entry-id>` (and `entry forget`) deletes the
+  messages the entry and its candidate proposals cite; `memory forget`
+  deletes those of the occurrences it blanks (every occurrence of the item
+  and its linked items, or the one occurrence named). The rows go before
+  the files are written; `secure_delete` overwrites their pages, an FTS5
+  `optimize` rebuilds the index without their terms, and a `TRUNCATE`
+  checkpoint empties the WAL. A forget on a store without a database
+  creates none.
+- **Search.** `scribe search --kind message` matches each search token as
+  a word prefix (`"<token>"*`, any of them) and orders by `bm25()`, then
+  time. Messages are filtered through their session's record; one whose
+  session has no record is not shown.
 
 ## Record files
 

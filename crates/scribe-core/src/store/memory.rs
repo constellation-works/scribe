@@ -377,12 +377,23 @@ impl Store {
         let _lock = self.lock("memory forget")?;
         let mut item = self.resolve_memory(id)?;
         let by = Author::agent(author);
+        // The stored messages of the forgotten words go first (2_design.md
+        // §15.7); deleting them again is a no-op.
+        let key = |o: &crate::memory::Occurrence| (o.session.clone(), o.message.clone());
         let changed = match occurrence {
             None => {
                 // The items holding the same words go with it: those merged
                 // into it, however deep, and the rest of a promotion.
                 let (mut items, _) = self.memory_items()?;
-                for index in memory::linked(&items, &item.id) {
+                let linked = memory::linked(&items, &item.id);
+                let keys: Vec<_> = item
+                    .occurrences
+                    .iter()
+                    .chain(linked.iter().flat_map(|i| &items[*i].occurrences))
+                    .map(key)
+                    .collect();
+                self.forget_messages(&keys)?;
+                for index in linked {
                     let linked = &mut items[index];
                     if memory::forget(linked, by.clone(), now) {
                         self.write_memory(linked)?;
@@ -390,15 +401,24 @@ impl Store {
                 }
                 memory::forget(&mut item, by, now)
             }
-            Some(n) => memory::forget_occurrence(&mut item, n, by, now).ok_or_else(|| {
-                refusal(
-                    WriteRefusal::MemoryNotFound,
-                    format!(
-                        "{} has no occurrence {n}; run 'scribe memory show {}'",
-                        item.id, item.id
-                    ),
-                )
-            })?,
+            Some(n) => {
+                let keys: Vec<_> = item
+                    .occurrences
+                    .iter()
+                    .filter(|o| o.n == n)
+                    .map(key)
+                    .collect();
+                self.forget_messages(&keys)?;
+                memory::forget_occurrence(&mut item, n, by, now).ok_or_else(|| {
+                    refusal(
+                        WriteRefusal::MemoryNotFound,
+                        format!(
+                            "{} has no occurrence {n}; run 'scribe memory show {}'",
+                            item.id, item.id
+                        ),
+                    )
+                })?
+            }
         };
         if changed {
             self.write_memory(&item)?;

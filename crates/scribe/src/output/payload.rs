@@ -1010,14 +1010,17 @@ impl Records {
 /// One `scribe search` hit (docs/design/scribe/specs/output-contract.md).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct HitPayload {
-    /// `entry` or `session`.
+    /// `entry`, `session` or `message`.
     pub(crate) kind: &'static str,
-    /// What `ask` would cite: an entry id, `session:<id>` or `session:<id>#<n>`.
+    /// What `ask` would cite: an entry id, `session:<id>` or `session:<id>#<n>`
+    /// (a message cites its session).
     pub(crate) cite: String,
     /// The entry's or the session's id.
     pub(crate) id: String,
     /// The segment's number, or `null` for an entry or a session header.
     pub(crate) segment: Option<u32>,
+    /// A stored message's provider id; `null` for any other kind.
+    pub(crate) message: Option<String>,
     /// The BM25 score times the unit's weight, to three decimals.
     pub(crate) score: serde_json::Number,
     pub(crate) title: String,
@@ -1047,6 +1050,7 @@ impl From<&scribe_core::search::Hit> for HitPayload {
             cite: hit.cite.clone(),
             id: hit.id.clone(),
             segment: hit.segment,
+            message: hit.message.clone(),
             score: serde_json::Number::from_f64(hit.score)
                 .unwrap_or_else(|| serde_json::Number::from(0)),
             title: hit.title.clone(),

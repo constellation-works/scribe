@@ -10,9 +10,9 @@ Arguments:
 
 Options:
       --kind <KIND>
-          Only this kind of record [default: every kind]
+          Only this kind of record [default: entries and sessions]
           
-          [possible values: entry, session]
+          [possible values: entry, session, message]
 
       --project <PROJECT>
           Only records of this project (a repository slug, or global) [default: any]
@@ -59,8 +59,13 @@ entries weigh 1.5 times. The CITE column is what question ask would cite:
 pass it to entry show or session show. Superseded and retired entries and
 inactive sessions are left out unless --include-hidden.
 
+--kind message searches the user's stored turns of switched-on sessions
+instead (and the assistant turns a claim cites), ranked by SQLite FTS5's
+BM25; a message cites its session.
+
 Examples:
   scribe search "merge queue"
   scribe search release --kind session --since 2026-11-01
+  scribe search "merge queue" --kind message
   scribe search "store format" --project scribe --topic store --limit 5
   scribe search "api" --json | jq -r '.hits[].cite'

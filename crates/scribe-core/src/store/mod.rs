@@ -10,6 +10,8 @@
 //! - `format`: the persisted documents, their format versions and upgrades;
 //! - `audit`: the audit log's record shape;
 //! - `redact`: the one redactor every persisted free-text field passes;
+//! - `db`: `scribe.db`, the SQLite database of messages and the memory
+//!   tables (2_design.md §15.7), the only user of `rusqlite`;
 //! - `fsio`: durable writes, appends, locking and private-state checks,
 //!   mechanism only.
 //!
@@ -23,6 +25,7 @@
 //! <root>/proposals.json                     the consistency proposals
 //! <root>/pre-issue-<date>/<id>.md           issue records moved aside once converted
 //! <root>/memory/<id>.md                     one memory item per file (format 18)
+//! <root>/scribe.db                          messages and memory tables (SQLite, WAL)
 //! <root>/audit.jsonl                        one line per mutating command
 //! <root>/.lock
 //! ```
@@ -39,6 +42,8 @@
 mod agent;
 mod audit;
 mod candidates;
+mod db;
+pub use db::DB_FILE;
 mod format;
 mod fsio;
 mod ids;
@@ -1075,6 +1080,13 @@ impl Store {
         let before_proposals = proposals.clone();
         let before_entries = entries.clone();
         let mut settled = consistency::settle(action, &mut proposals, &mut entries, cite, now);
+        if let (Settle::Forget(id), Settled::Forgotten(_)) = (action, &settled)
+            && let Some(entry) = before_entries.iter().find(|e| &e.id == id)
+        {
+            // The stored messages first (2_design.md §15.7): they hold the
+            // words the forget removes, and deleting them again is a no-op.
+            self.forget_cited_messages(entry, &before_proposals)?;
+        }
         if proposals != before_proposals {
             self.write_proposals(&proposals)?;
         }
@@ -1140,6 +1152,70 @@ impl Store {
             ));
         }
         fsio::write_atomic(&path, &format::encode_entry(&path, entry)?)
+    }
+
+    /// Keep a pass window's messages in `scribe.db` (2_design.md §15.7),
+    /// each text redacted first, upserted on (session, message id) in one
+    /// `BEGIN IMMEDIATE` transaction. The pass calls this before it writes
+    /// the session file, whose cursor stays the truth: a window written
+    /// again rewrites the same rows. Returns how many rows changed.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Locked`] when another writer holds the database past the
+    /// lock wait; the privacy errors when the root or the database is a
+    /// link, another user's or open to others; [`Error::NewerFormat`] for a
+    /// database a newer build wrote.
+    pub fn write_messages(
+        &self,
+        messages: &[crate::message::NewMessage],
+        redactor: &Redactor,
+    ) -> Result<usize> {
+        if messages.is_empty() {
+            return Ok(0);
+        }
+        self.prepare_dir(&self.root)?;
+        db::upsert_messages(&self.root, self.lock_wait, messages, redactor)
+    }
+
+    /// Delete stored messages by (session, message id), for a forget,
+    /// leaving no trace of their text in the database or its WAL. A missing
+    /// database deletes nothing.
+    fn forget_messages(&self, keys: &[(SessionId, String)]) -> Result<usize> {
+        db::delete_messages(&self.root, self.lock_wait, keys)
+    }
+
+    /// Delete the stored messages a forgotten `entry` rests on: the turn it
+    /// cites and the turns its candidate proposals cite.
+    fn forget_cited_messages(&self, entry: &Entry, proposals: &[Proposal]) -> Result<usize> {
+        let keys: Vec<_> = entry
+            .cite
+            .iter()
+            .chain(
+                proposals
+                    .iter()
+                    .filter(|p| p.older == entry.id)
+                    .filter_map(|p| p.candidate.as_ref().map(|c| &c.cite)),
+            )
+            .filter_map(|c| c.message.clone().map(|m| (c.session.clone(), m)))
+            .collect();
+        self.forget_messages(&keys)
+    }
+
+    /// The stored messages matching any of `tokens` (ranking tokens, as
+    /// [`crate::ask::tokens`] gives them) as a word prefix, best FTS5
+    /// `bm25()` first. Read-only: no lock, no write (STD-01 R31). A missing
+    /// root or database matches nothing.
+    ///
+    /// # Errors
+    ///
+    /// The privacy errors for the root or the database, [`Error::NewerFormat`]
+    /// and [`Error::Database`].
+    pub fn search_messages(&self, tokens: &[String]) -> Result<crate::message::MessageSearch> {
+        if !self.root_exists()? {
+            return Ok(crate::message::MessageSearch::default());
+        }
+        db::search_messages(&self.root, tokens)
     }
 
     fn prepare_dir(&self, dir: &Path) -> Result<()> {

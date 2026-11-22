@@ -16,6 +16,7 @@ mod entry;
 mod error;
 mod instruction;
 mod memory;
+mod message;
 mod pass;
 mod proposal;
 mod record;

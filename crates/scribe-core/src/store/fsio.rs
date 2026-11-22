@@ -82,6 +82,20 @@ pub(super) fn append_private(path: &Path, bytes: &[u8]) -> Result<()> {
     }
 }
 
+/// Create `path` empty and `0600` when it is missing, and sync its directory
+/// entry. An existing file is left as it is; the caller has inspected it.
+pub(super) fn create_private_file(path: &Path) -> Result<()> {
+    let mut options = OpenOptions::new();
+    options.create(true).truncate(false).write(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, PRIVATE_FILE_MODE);
+    let file = options
+        .open(path)
+        .map_err(|e| Error::io("create", path, e))?;
+    file.sync_all().map_err(|e| Error::io("sync", path, e))?;
+    sync_dir(parent_dir(path))
+}
+
 /// `fsync` a directory so a rename inside it survives a crash. Windows cannot
 /// open a directory as a file, and NTFS journals the rename itself.
 #[cfg(unix)]

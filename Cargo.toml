@@ -23,6 +23,11 @@ scribe-core = { path = "crates/scribe-core" }
 # output sink is the only place allowed to do that (STD-01 R17). Help is plain
 # text everywhere, which also keeps the help goldens byte-stable.
 clap = { version = "4", default-features = false, features = ["std", "derive", "help", "usage", "error-context", "suggestions"] }
+# scribe.db (docs/design/scribe/2_design.md §15.7). `bundled` compiles
+# SQLite from source with FTS5 on, so every platform gets the same engine and
+# the BM25 message search, with no system library. Used by
+# scribe-core::store::db only (scripts/check-dependency-direction.sh).
+rusqlite = { version = "0.41", default-features = false, features = ["bundled"] }
 # Unix only: the process's effective uid, for the store ownership check
 # (STD-05 R9). std has no safe `geteuid`; tempfile already builds rustix.
 rustix = { version = "1", default-features = false, features = ["std", "process"] }
