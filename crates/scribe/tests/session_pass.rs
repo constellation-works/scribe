@@ -5828,3 +5828,161 @@ fn max_open_caps_one_tags_open_claims_and_leaves_the_others_theirs() {
     assert_eq!(tags, ["preferences", "standard"], "{open}");
     assert_eq!(open["proposals"][0]["candidate"]["quote"], quotes[0].1);
 }
+
+#[test]
+fn approved_assistant_claim_shows_statement_and_assistant_words_in_ask_and_search() {
+    let s = Setup::new();
+    s.config(
+        "[tags.notes]\n\
+         description = \"Noteworthy assistant observations.\"\n\n\
+         [tags.notes.capture]\n\
+         from = \"assistant\"\n\
+         route = \"propose\"\n\
+         triggers = [\"root cause\"]\n",
+    );
+    let quote = "The root cause is that parallel drains share a single auth token.";
+    let context = "The user and the agent investigated repeated drain stalls. The agent reported that parallel drains share one auth token and collide on refresh.";
+    s.write(
+        ON,
+        &[
+            line("user", "u-1", "Why does the drain stall?"),
+            line("assistant", "a-1", quote),
+        ],
+    );
+    let mut pass_body = answer();
+    pass_body["candidates"] = json!([{
+        "quote": quote,
+        "message": "a-1",
+        "tag": "notes",
+        "context": context,
+        "subject": "shared drain auth token"
+    }]);
+    s.answer(&pass_body);
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+
+    let open = proposals(&s);
+    assert_eq!(open["total"], 1, "{open}");
+    assert_eq!(open["proposals"][0]["candidate"]["role"], "assistant");
+    let id = open["proposals"][0]["id"].as_str().unwrap().to_owned();
+    type_settlement(&s, &format!("#scribe approve {id}"));
+
+    let shown: Value =
+        serde_json::from_slice(&s.fx.ok(&["entry", "show", "notes-1", "--json"]).stdout).unwrap();
+    assert_eq!(shown["author"]["kind"], "agent");
+    assert_eq!(shown["author"]["name"], "assistant");
+    assert_eq!(shown["content"], context);
+    assert_eq!(shown["quote"], quote);
+    assert_eq!(
+        shown["stated_by"],
+        json!({"kind": "scribe", "name": "session-pass"})
+    );
+
+    let table = text(
+        &s.fx
+            .ok(&["entry", "show", "notes-1", "--format", "table"])
+            .stdout,
+    );
+    assert!(
+        table.contains("scribe's statement of the assistant's turn"),
+        "{table}"
+    );
+    assert!(!table.contains("the user's turn"), "{table}");
+
+    // `scribe search` labels it as scribe's statement of the assistant's turn
+    // with the assistant's quote, never as an agent note or the user's words.
+    let found: Value = serde_json::from_slice(
+        &s.fx
+            .ok(&[
+                "search",
+                "parallel drains share",
+                "--kind",
+                "entry",
+                "--json",
+            ])
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(found["total"], 1, "{found}");
+    let snippet = found["hits"][0]["snippet"].as_str().unwrap();
+    assert!(
+        snippet.contains("scribe's statement of the assistant's turn:"),
+        "{snippet}"
+    );
+    assert!(
+        snippet.contains(&format!("The assistant's words: \"{quote}\"")),
+        "{snippet}"
+    );
+    assert!(!snippet.contains("agent note"), "{snippet}");
+    assert!(!snippet.contains("The user's words"), "{snippet}");
+    assert!(!snippet.contains("the user's turn"), "{snippet}");
+
+    // `question ask` sends the evidence labelled as scribe's statement of the
+    // assistant's turn with `The assistant's words: "<quote>"`, and attributes
+    // claims from the context and from the quote without ever calling them
+    // an agent note or the user's words.
+    s.answer(&json!({
+        "status": "answered",
+        "answer": "Parallel drains share a token.",
+        "claims": [
+            {
+                "text": "from context",
+                "quote": "parallel drains share one auth token",
+                "cite": "notes-1"
+            },
+            {
+                "text": "from assistant quote",
+                "quote": "parallel drains share a single auth token",
+                "cite": "notes-1"
+            }
+        ],
+        "conflicts": []
+    }));
+    let ask_out = s.run(
+        &[
+            "question",
+            "ask",
+            "why do parallel drains stall?",
+            "--tag",
+            "notes",
+            "--json",
+        ],
+        b"",
+    );
+    let asked: Value = serde_json::from_slice(&ask_out.stdout).unwrap();
+    let ask_prompt = s.prompts().pop().unwrap();
+    let evidence_item = ask_prompt
+        .split("<evidence ")
+        .find(|part| part.contains("cite=\"notes-1\""))
+        .unwrap_or_else(|| panic!("{ask_prompt}"));
+    assert!(
+        evidence_item.contains("words=\"scribe's statement of the assistant's turn\""),
+        "{evidence_item}"
+    );
+    assert!(
+        evidence_item.contains(&format!("The assistant's words: \"{quote}\"")),
+        "{evidence_item}"
+    );
+    assert!(!evidence_item.contains("agent note ("), "{evidence_item}");
+    assert!(
+        !evidence_item.contains("The user's words"),
+        "{evidence_item}"
+    );
+    assert!(
+        !evidence_item.contains("scribe's statement of the user's turn"),
+        "{evidence_item}"
+    );
+
+    assert_eq!(asked["claims"].as_array().unwrap().len(), 2, "{asked}");
+    assert_eq!(
+        asked["claims"][0]["text"],
+        "scribe's statement of the assistant's turn"
+    );
+    assert_eq!(
+        asked["claims"][1]["text"],
+        "assistant (recorded by the user)"
+    );
+    let ans = asked["answer"].as_str().unwrap();
+    assert!(!ans.contains("agent note"), "{ans}");
+    assert!(!ans.contains("The user:"), "{ans}");
+}
