@@ -186,3 +186,32 @@ fn a_snippet_is_bounded_and_starts_near_the_first_match() {
     let snip = search::snippet(&at_end, &wanted);
     assert!(snip.ends_with("needle") && snip.chars().count() <= SNIPPET_CHARS);
 }
+
+#[test]
+fn approved_assistant_context_entry_snippet_labels_statement_and_assistant_words() {
+    let context =
+        "The user and the agent investigated drain stalls. The agent reported a token collision.";
+    let quote = "The root cause is that parallel drains share a single auth token.";
+    let mut e = noted("notes-1", context);
+    e.author = Author::assistant();
+    e.said = String::from("#scribe approve p-1");
+    e.content_from = crate::entry::ContentFrom::Message {
+        role: crate::entry::Speaker::Assistant,
+        message: String::from("a-1"),
+        at: T0,
+    };
+    e.quote = Some(quote.to_owned());
+    e.stated_by = Some(Author::session_pass());
+
+    // A query matching only the assistant's quote still ranks the entry
+    // and renders the statement + assistant's words snippet.
+    let found = run(&query("single auth token"), &[e], &[]);
+    assert_eq!(cites(&found), ["notes-1"]);
+    let snip = &found.hits[0].snippet;
+    assert_eq!(
+        snip,
+        &format!(
+            "scribe's statement of the assistant's turn: {context} | The assistant's words: \"{quote}\""
+        )
+    );
+}

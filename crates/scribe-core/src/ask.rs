@@ -589,10 +589,10 @@ pub fn check(
     }
 }
 
-/// Whose words a checked claim's quote is (§6.4, §11.1): the cited item's
-/// `whose`, except that a quote from an entry holding scribe's statement of
-/// the user's turn is the user's only when it lies within their quoted
-/// words; anywhere else in that item it is scribe's statement.
+/// Whose words a checked claim's quote is (§6.4, §11.1, §15.3): the cited
+/// item's `whose`, except that a quote from an entry holding scribe's
+/// statement of a turn is that speaker's words only when it lies within
+/// `quote`; anywhere else in that item it is scribe's statement.
 fn attribution(claim: &Claim, evidence: &[EvidenceItem], user: &UserName) -> String {
     match evidence.iter().find(|e| e.cite == claim.cite) {
         None => String::from("record"),
@@ -605,6 +605,8 @@ fn attribution(claim: &Claim, evidence: &[EvidenceItem], user: &UserName) -> Str
                 captured_user(user, Speaker::User)
             } else if *whose == captured_whose(user, Speaker::Assistant) {
                 captured_user(user, Speaker::Assistant)
+            } else if *whose == stated_whose_for(user, Speaker::Assistant) {
+                format!("assistant (recorded by {})", user.noun())
             } else {
                 user.title().to_owned()
             }
@@ -1453,6 +1455,17 @@ pub fn stated_whose(user: &UserName) -> String {
     format!("scribe's statement of {}'s turn", user.noun())
 }
 
+/// Whose words an approved pass statement of `speaker`'s turn is, in
+/// `ask` evidence, `scribe search` snippets and `entry show`
+/// (2_design.md §11.1, §15.3).
+#[must_use]
+pub fn stated_whose_for(user: &UserName, speaker: Speaker) -> String {
+    match speaker {
+        Speaker::User => stated_whose(user),
+        Speaker::Assistant => String::from("scribe's statement of the assistant's turn"),
+    }
+}
+
 /// The label before the user's own words beside such a statement.
 #[must_use]
 pub fn stated_quote_label(user: &UserName) -> String {
@@ -1505,15 +1518,33 @@ pub fn captured_user(user: &UserName, speaker: Speaker) -> String {
     }
 }
 
-/// The user's verbatim words beside an entry whose content is scribe's
-/// statement of their turn: one they approved, or an idea the pass captured;
-/// `None` for every other entry.
+/// The speaker's verbatim words beside an entry whose content is scribe's
+/// statement of their turn: one the user approved, or one the pass
+/// captured; `None` for every other entry.
 pub(crate) fn stated_quote(entry: &Entry) -> Option<&str> {
     entry
         .stated_by
         .as_ref()
         .and(entry.quote.as_deref())
-        .filter(|_| entry.author.kind == crate::AuthorKind::User || is_pass_captured(entry))
+        .filter(|_| {
+            entry.author.kind == crate::AuthorKind::User
+                || is_pass_captured(entry)
+                || is_stated_assistant(entry)
+        })
+}
+
+/// Whether `entry` is an approved non-finding assistant claim whose
+/// content is scribe's context of the assistant's turn (2_design.md §15.3).
+fn is_stated_assistant(entry: &Entry) -> bool {
+    entry.author.kind == crate::AuthorKind::Agent
+        && !entry.is_finding()
+        && matches!(
+            entry.content_from,
+            ContentFrom::Message {
+                role: Speaker::Assistant,
+                ..
+            }
+        )
 }
 
 /// Whether the session pass wrote `entry` itself (an idea under a `write`
@@ -1620,11 +1651,6 @@ fn entry_item(entry: &Entry, user: &UserName) -> EvidenceItem {
             ),
             format!("{}\nEvidence: {}", entry.content, evidence),
         )
-    } else if entry.author.kind == crate::AuthorKind::Agent {
-        (
-            format!("agent note ({})", entry.author.name),
-            entry.content.clone(),
-        )
     } else if let (Some(quote), Some(outcome)) = (stated_quote(entry), &entry.outcome) {
         // An entry the pass captured: scribe's statement, the turn's own
         // words, and where it stands (2_design.md §11.6).
@@ -1638,15 +1664,21 @@ fn entry_item(entry: &Entry, user: &UserName) -> EvidenceItem {
             ),
         )
     } else if let Some(quote) = stated_quote(entry) {
-        // Scribe's statement of the user's turn, then their own words,
-        // labelled as theirs (2_design.md §11.1).
+        // Scribe's statement of the turn, then the speaker's own words,
+        // labelled as theirs (2_design.md §11.1, §15.3).
+        let speaker = speaker_of(entry);
         (
-            stated_whose(user),
+            stated_whose_for(user, speaker),
             format!(
                 "{}\n{} \"{quote}\"",
                 entry.content,
-                stated_quote_label(user)
+                words_label(user, speaker)
             ),
+        )
+    } else if entry.author.kind == crate::AuthorKind::Agent {
+        (
+            format!("agent note ({})", entry.author.name),
+            entry.content.clone(),
         )
     } else {
         (whose, entry.content.clone())

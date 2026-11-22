@@ -1143,6 +1143,9 @@ impl AskRequest {
              {noun}'s own words.\n\
              - An item whose words are \"{stated}\" holds scribe's summary \
              first and then {noun}'s own words after \"{label}\"; only those are {noun}'s.\n\
+             - An item whose words are \"{stated_assistant}\" holds scribe's summary \
+             first and then the assistant's own words after \"{assistant_label}\"; its quoted \
+             words are the assistant's, never {noun}'s.\n\
              - An item whose words say it was \"captured by the session pass\" is something scribe \
              noticed in a turn; {noun} did not type it as a record. Say so when you use it. When \
              it says \"the assistant's turn\", its quoted words are the assistant's, never {noun}'s.\n\
@@ -1154,6 +1157,8 @@ impl AskRequest {
             noun = user.noun(),
             stated = crate::ask::stated_whose(user),
             label = crate::ask::stated_quote_label(user),
+            stated_assistant = crate::ask::stated_whose_for(user, crate::Speaker::Assistant),
+            assistant_label = crate::ask::words_label(user, crate::Speaker::Assistant),
         );
         for (n, item) in self.evidence.iter().enumerate() {
             // The approved-by line sits after the text, inside the item: it

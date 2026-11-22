@@ -279,7 +279,9 @@ or for an entry `<id> (<tag>)`), `snippet` (up to 240 characters on one
 line, starting a little before the first matching word, with `…` where it
 was cut; format 14: for an entry with `stated_by`, `scribe's statement of
 Daniel's turn: <statement> | Daniel's words: "<quote>"`, each part cut to
-240 characters; format 16: for an idea the pass wrote itself, `scribe's
+240 characters, and format 24 for an approved assistant claim with
+context: `scribe's statement of the assistant's turn: <context> | The
+assistant's words: "<quote>"`; format 16: for an idea the pass wrote itself, `scribe's
 statement of Daniel's turn, captured by the session pass (not typed by
 Daniel): <statement> | Daniel's words: "<quote>" | outcome: <outcome>`,
 and (phase 2) for one the pass caught from an assistant turn, `scribe's

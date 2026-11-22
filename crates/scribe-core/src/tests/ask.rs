@@ -964,3 +964,77 @@ fn a_claim_is_daniels_only_when_its_quote_is_in_his_words_never_in_the_statement
          The user: \"keep the whole history in an append-only log then\" [preferences-1]"
     );
 }
+
+#[test]
+fn an_approved_assistant_context_entry_is_scribes_statement_with_the_assistants_words() {
+    let context = "The user and the agent checked the drain stall. The agent found parallel drains share one auth token.";
+    let assistant_words = "The root cause is that parallel drains share a single auth token.";
+    let mut e = decision("notes-1", 0, context);
+    e.author = crate::Author::assistant();
+    e.said = String::from("#scribe approve p-1");
+    e.content_from = ContentFrom::Message {
+        role: Speaker::Assistant,
+        message: String::from("a-1"),
+        at: T0,
+    };
+    e.quote = Some(assistant_words.to_owned());
+    e.stated_by = Some(crate::Author::session_pass());
+
+    // Pre-format-24 approved assistant entry without context/stated_by stays an agent note.
+    let mut legacy = decision("notes-2", 0, "parallel drains fail under concurrency");
+    legacy.author = crate::Author::assistant();
+    legacy.said = String::from("#scribe approve p-2");
+    legacy.content_from = ContentFrom::Message {
+        role: Speaker::Assistant,
+        message: String::from("a-2"),
+        at: T0,
+    };
+
+    let mut reply = answered(vec![
+        claim(
+            "Daniel found the token issue",
+            "parallel drains share one auth token",
+            "notes-1",
+        ),
+        claim(
+            "Daniel said the root cause",
+            "parallel drains share a single auth token",
+            "notes-1",
+        ),
+    ]);
+    reply.answer = String::from("Daniel found the root cause.");
+    let models = FakeModels::answering(reply);
+    let result = run(
+        &question("why do parallel drains stall?"),
+        &[e, legacy],
+        &[],
+        &models,
+        &NoTasks,
+    );
+
+    let evidence = &models.calls.borrow()[0].evidence;
+    let item = evidence.iter().find(|i| i.cite == "notes-1").unwrap();
+    assert_eq!(item.whose, "scribe's statement of the assistant's turn");
+    assert_eq!(
+        item.text,
+        format!("{context}\nThe assistant's words: \"{assistant_words}\"")
+    );
+    assert_eq!(item.quote.as_deref(), Some(assistant_words));
+    let legacy_item = evidence.iter().find(|i| i.cite == "notes-2").unwrap();
+    assert_eq!(legacy_item.whose, "agent note (assistant)");
+
+    assert_eq!(result.claims.len(), 2);
+    assert_eq!(
+        result.claims[0].text,
+        "scribe's statement of the assistant's turn"
+    );
+    assert_eq!(result.claims[1].text, "assistant (recorded by the user)");
+    assert!(!result.answer.contains("Daniel found"), "{}", result.answer);
+    assert!(!result.answer.contains("The user:"), "{}", result.answer);
+    assert!(!result.answer.contains("agent note"), "{}", result.answer);
+    assert_eq!(
+        result.answer,
+        "scribe's statement of the assistant's turn: \"parallel drains share one auth token\" [notes-1]\n\
+         assistant (recorded by the user): \"parallel drains share a single auth token\" [notes-1]"
+    );
+}
