@@ -866,3 +866,300 @@ fn post_move_audit_jsonl_still_imports_new_events() {
     want.push(late_event);
     assert_eq!(store.audit_events().unwrap(), (want, 0));
 }
+
+#[derive(Default)]
+struct InterleaveState {
+    first_read: bool,
+    second_entered: bool,
+    second_read: bool,
+    first_done: bool,
+}
+
+fn run_interleaved_forgets(target_step: crate::store::documents::ForgetMovedStep) {
+    use crate::store::documents::{ForgetMovedStep, install_forget_moved_hook};
+    use std::sync::{Arc, Condvar, Mutex};
+    use std::time::Duration;
+
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+
+    let quote_1 = "first forgotten entry verbatim quote";
+    let context_1 = "first forgotten entry context paragraph";
+    let reason_1 = "candidate reason for preferences-1";
+    let quote_2 = "second forgotten entry verbatim quote";
+    let context_2 = "second forgotten entry context paragraph";
+    let reason_2 = "candidate reason for preferences-2";
+    let kept_quote = "unrelated third entry quote stays intact";
+    let kept_detail = "unrelated audit free text stays intact";
+
+    let make_entry = |id: &str, days: i64, context: &str, quote: &str, proposal_id: &str| {
+        let mut e = entry(id, days, context);
+        e.content_from = ContentFrom::Message {
+            role: Speaker::User,
+            message: String::from("m-9"),
+            at: T0,
+        };
+        e.said = format!("scribe proposal settle {proposal_id} --approve --author opus");
+        e.quote = Some(quote.to_owned());
+        e.stated_by = Some(Author::session_pass());
+        e.approved_by = Some(Author::agent("opus".parse().unwrap()));
+        e.instruction = Some(Instruction {
+            session: "s-9".parse().unwrap(),
+            message: String::from("m-9"),
+            at: NOW,
+            quote: Some(format!("approve {proposal_id}: {quote}")),
+        });
+        e
+    };
+    let e1 = make_entry("preferences-1", 0, context_1, quote_1, "p-1");
+    let e2 = make_entry("preferences-2", 1, context_2, quote_2, "p-2");
+    let e3 = entry("preferences-3", 2, kept_quote);
+    for e in [&e1, &e2, &e3] {
+        let rel = format!("entries/preferences/{}.md", e.id);
+        put(
+            &root,
+            &rel,
+            &format::encode_entry(&root.join(&rel), e).unwrap(),
+        );
+    }
+
+    let p1 = candidate_proposal(
+        "p-1",
+        "preferences-1",
+        ProposalState::Approved,
+        quote_1,
+        context_1,
+        reason_1,
+        None,
+    );
+    let p2 = candidate_proposal(
+        "p-2",
+        "preferences-2",
+        ProposalState::Approved,
+        quote_2,
+        context_2,
+        reason_2,
+        None,
+    );
+    let p3 = candidate_proposal(
+        "p-3",
+        "preferences-3",
+        ProposalState::Open,
+        kept_quote,
+        "unrelated third entry context stays",
+        "unrelated third entry reason stays",
+        None,
+    );
+    put(
+        &root,
+        "proposals.json",
+        &format::encode_proposals(&root.join("proposals.json"), &[p1, p2, p3]).unwrap(),
+    );
+
+    let audit = format!(
+        "{AUDIT_FIXTURE}\n\
+{{\"format\":5,\"at\":\"2026-10-20T11:59:00Z\",\"command\":\"entry retire\",\"status\":\"failure\",\"target\":\"preferences-2\",\"error_code\":\"entry_not_found\",\"author\":\"opus\",\"duration_ms\":1}}\n\
+{{\"format\":5,\"at\":\"2026-10-20T12:00:00Z\",\"command\":\"hook stop\",\"status\":\"success\",\"target\":\"preferences-1\",\"detail\":\"{context_1}\",\"duration_ms\":1}}\n\
+{{\"format\":5,\"at\":\"2026-10-20T12:01:00Z\",\"command\":\"hook stop\",\"status\":\"success\",\"target\":\"preferences-2\",\"detail\":\"{context_2}\",\"duration_ms\":1}}\n\
+{{\"format\":5,\"at\":\"2026-10-20T12:02:00Z\",\"command\":\"hook stop\",\"status\":\"success\",\"target\":\"preferences-3\",\"detail\":\"{kept_detail}\",\"duration_ms\":1}}\n"
+    );
+    put(&root, "audit.jsonl", audit.as_bytes());
+
+    let store = Store::open(&root);
+    let moved = store.migrate_store(NOW).unwrap();
+    assert_eq!(moved.moved_to.as_deref(), Some("pre-sqlite-2026-11-02"));
+
+    let gate = Arc::new((Mutex::new(InterleaveState::default()), Condvar::new()));
+    let overlapped = Arc::new(Mutex::new(false));
+    let deadline = Duration::from_secs(5);
+    let overlap_probe = Duration::from_millis(200);
+
+    std::thread::scope(|s| {
+        let store1 = store.clone();
+        let gate1 = Arc::clone(&gate);
+        let overlapped1 = Arc::clone(&overlapped);
+        let t1 = s.spawn(move || {
+            let _hook = install_forget_moved_hook({
+                let gate = Arc::clone(&gate1);
+                let overlapped = Arc::clone(&overlapped1);
+                move |step| {
+                    if step != target_step {
+                        return;
+                    }
+                    let (lock, cv) = &*gate;
+                    let mut st = lock.lock().unwrap();
+                    st.first_read = true;
+                    cv.notify_all();
+                    let (st, _) = cv
+                        .wait_timeout_while(st, deadline, |st| !st.second_entered)
+                        .unwrap();
+                    assert!(
+                        st.second_entered,
+                        "second forget did not commit and enter forget_moved_entry in time"
+                    );
+                    let (st, _) = cv
+                        .wait_timeout_while(st, overlap_probe, |st| !st.second_read)
+                        .unwrap();
+                    *overlapped.lock().unwrap() = st.second_read;
+                }
+            });
+            let instructed = Instructed {
+                session: "s-9".parse().unwrap(),
+                message: String::from("m-10"),
+                at: NOW,
+                quote: String::from("forget preferences-1 for good"),
+                prompt_sha256: "b".repeat(64),
+                line: 1,
+            };
+            let result =
+                store1.forget_entry("preferences-1", &instructed, "opus".parse().unwrap(), NOW);
+            let (lock, cv) = &*gate1;
+            let mut st = lock.lock().unwrap();
+            st.first_done = true;
+            cv.notify_all();
+            result
+        });
+
+        let store2 = store.clone();
+        let gate2 = Arc::clone(&gate);
+        let t2 = s.spawn(move || {
+            {
+                let (lock, cv) = &*gate2;
+                let st = lock.lock().unwrap();
+                let (st, _) = cv
+                    .wait_timeout_while(st, deadline, |st| !st.first_read)
+                    .unwrap();
+                assert!(
+                    st.first_read,
+                    "first forget did not reach {target_step:?} in time"
+                );
+            }
+            let _hook = install_forget_moved_hook({
+                let gate = Arc::clone(&gate2);
+                move |step| {
+                    let (lock, cv) = &*gate;
+                    if step == ForgetMovedStep::BeforeLock {
+                        let mut st = lock.lock().unwrap();
+                        st.second_entered = true;
+                        cv.notify_all();
+                    } else if step == target_step {
+                        let mut st = lock.lock().unwrap();
+                        st.second_read = true;
+                        cv.notify_all();
+                        let (st, _) = cv
+                            .wait_timeout_while(st, deadline, |st| !st.first_done)
+                            .unwrap();
+                        assert!(st.first_done, "first forget did not finish in time");
+                    }
+                }
+            });
+            store2.settle(
+                &Settle::Forget("preferences-2".parse().unwrap()),
+                &cite(),
+                NOW,
+            )
+        });
+
+        let (forgotten1, changed1) = t1.join().unwrap().unwrap();
+        assert!(changed1);
+        assert_eq!(forgotten1.status, EntryStatus::Forgotten);
+        let settled2 = t2.join().unwrap().unwrap();
+        assert_eq!(
+            settled2,
+            Settled::Forgotten("preferences-2".parse().unwrap())
+        );
+    });
+
+    for gone in [quote_1, context_1, reason_1, quote_2, context_2, reason_2] {
+        assert!(!on_disk(&root, gone), "{gone:?} was restored on disk");
+    }
+
+    assert!(
+        !*overlapped.lock().unwrap(),
+        "second forget read the archived file while the first forget's read-modify-write was in flight"
+    );
+
+    let moved_proposals = root.join("pre-sqlite-2026-11-02/proposals.json");
+    let moved_claims =
+        format::decode_proposals(&moved_proposals, &fs::read(&moved_proposals).unwrap()).unwrap();
+    assert_eq!(moved_claims, store.proposals().unwrap());
+    assert!(on_disk(&root, kept_quote));
+
+    let moved_audit = fs::read_to_string(root.join("pre-sqlite-2026-11-02/audit.jsonl")).unwrap();
+    assert!(!moved_audit.contains(context_1));
+    assert!(!moved_audit.contains(context_2));
+    assert!(moved_audit.contains(kept_detail));
+    assert!(moved_audit.contains(r#""target":"preferences-1""#));
+    assert!(moved_audit.contains(r#""target":"preferences-2""#));
+}
+
+#[test]
+fn concurrent_forgets_keep_both_erasures_in_archived_proposals() {
+    run_interleaved_forgets(crate::store::documents::ForgetMovedStep::AfterProposalsRead);
+}
+
+#[test]
+fn concurrent_forgets_keep_both_erasures_in_archived_audit() {
+    run_interleaved_forgets(crate::store::documents::ForgetMovedStep::AfterAuditRead);
+}
+
+#[test]
+fn forget_refuses_when_archive_forget_lock_is_held_past_lock_wait() {
+    use crate::store::documents::ARCHIVE_FORGET_LOCK;
+    use crate::store::{LOCKS_DIR, fsio};
+    use std::time::Duration;
+
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+    file_store(&root);
+    let store = Store::open(&root).with_lock_wait(Duration::from_millis(60));
+    store.migrate_store(NOW).unwrap();
+
+    let lock_path = store.lock_path(ARCHIVE_FORGET_LOCK).unwrap();
+    let _held =
+        fsio::LockGuard::acquire(&lock_path, "other forget", Duration::from_secs(1)).unwrap();
+
+    let instructed = Instructed {
+        session: "s-9".parse().unwrap(),
+        message: String::from("m-10"),
+        at: NOW,
+        quote: String::from("forget preferences-1"),
+        prompt_sha256: "b".repeat(64),
+        line: 1,
+    };
+    let err = store
+        .forget_entry("preferences-1", &instructed, "opus".parse().unwrap(), NOW)
+        .unwrap_err();
+    let Error::Locked { path, holder, .. } = err else {
+        panic!("expected Error::Locked, got {err:?}");
+    };
+    assert_eq!(path, root.join(LOCKS_DIR).join(ARCHIVE_FORGET_LOCK));
+    assert!(holder.contains("other forget"), "{holder}");
+}
+
+#[test]
+fn forget_without_moved_archive_does_not_create_archive_lock() {
+    use crate::store::LOCKS_DIR;
+    use crate::store::documents::ARCHIVE_FORGET_LOCK;
+
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+    let store = Store::open(&root);
+    let e = entry("preferences-1", 0, "fresh sqlite entry");
+    store.write(|| store.write_entry(&e, true)).unwrap();
+
+    let instructed = Instructed {
+        session: "s-9".parse().unwrap(),
+        message: String::from("m-10"),
+        at: NOW,
+        quote: String::from("forget preferences-1"),
+        prompt_sha256: "b".repeat(64),
+        line: 1,
+    };
+    let (forgotten, changed) = store
+        .forget_entry("preferences-1", &instructed, "opus".parse().unwrap(), NOW)
+        .unwrap();
+    assert!(changed);
+    assert_eq!(forgotten.status, EntryStatus::Forgotten);
+    assert!(!root.join(LOCKS_DIR).join(ARCHIVE_FORGET_LOCK).exists());
+}

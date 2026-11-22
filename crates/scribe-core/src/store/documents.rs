@@ -36,6 +36,71 @@ use time::OffsetDateTime;
 /// The store tags' file, before the move.
 pub(super) const TAGS_FILE: &str = "tags.json";
 
+/// Advisory lock under `locks/` serializing post-commit read-modify-writes of
+/// archived `pre-sqlite-*` proposal and audit files during entry forget
+/// (STD-03 R6).
+pub(super) const ARCHIVE_FORGET_LOCK: &str = "archive-forget.lock";
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ForgetMovedStep {
+    /// At entry to `forget_moved_entry`, after the SQLite transaction commits
+    /// and before taking the archive-forget lock.
+    BeforeLock,
+    /// Inside `forget_moved_proposals`, after reading the archived file and
+    /// before writing the updated file.
+    AfterProposalsRead,
+    /// Inside `forget_moved_audit`, after reading the archived file and before
+    /// writing the updated file.
+    AfterAuditRead,
+}
+
+#[cfg(test)]
+type ForgetMovedHook = Box<dyn FnMut(ForgetMovedStep)>;
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: observe or pause steps inside `forget_moved_entry` to drive a
+    /// deterministic interleaving between two independently committed forgets.
+    static FORGET_MOVED_HOOK: std::cell::RefCell<Option<ForgetMovedHook>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(super) struct ForgetMovedHookGuard;
+
+#[cfg(test)]
+impl Drop for ForgetMovedHookGuard {
+    fn drop(&mut self) {
+        FORGET_MOVED_HOOK.with(|h| {
+            h.borrow_mut().take();
+        });
+    }
+}
+
+#[cfg(test)]
+pub(super) fn install_forget_moved_hook(
+    hook: impl FnMut(ForgetMovedStep) + 'static,
+) -> ForgetMovedHookGuard {
+    FORGET_MOVED_HOOK.with(|h| {
+        *h.borrow_mut() = Some(Box::new(hook));
+    });
+    ForgetMovedHookGuard
+}
+
+#[cfg(test)]
+fn notify_forget_moved(step: ForgetMovedStep) {
+    let mut hook = FORGET_MOVED_HOOK.with(|h| h.borrow_mut().take());
+    if let Some(f) = hook.as_mut() {
+        f(step);
+    }
+    FORGET_MOVED_HOOK.with(|h| {
+        if h.borrow().is_none() {
+            *h.borrow_mut() = hook;
+        }
+    });
+}
+
 /// What `scribe store migrate`, or a write's own move, moved into
 /// `scribe.db`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -661,10 +726,24 @@ impl Store {
     /// Delete `id`'s moved-aside entry file, rewrite or drop matching
     /// proposals in `proposals.json*`, and drop `audit.jsonl*` lines carrying
     /// `texts` across every `pre-sqlite-*` directory.
+    ///
+    /// Serialized under `locks/archive-forget.lock` across the entire
+    /// read-modify-write so concurrent forgets cannot restore one another's
+    /// erased text (STD-03 R6).
     pub(super) fn forget_moved_entry(&self, id: &EntryId, texts: &[String]) -> Result<()> {
         if !self.root_exists()? {
             return Ok(());
         }
+        let has_moved = fsio::list_dir(&self.root)?
+            .into_iter()
+            .any(|name| name.starts_with(super::sessions::MOVED_PREFIX));
+        if !has_moved {
+            return Ok(());
+        }
+        #[cfg(test)]
+        notify_forget_moved(ForgetMovedStep::BeforeLock);
+        let lock_path = self.lock_path(ARCHIVE_FORGET_LOCK)?;
+        let lock = fsio::LockGuard::acquire(&lock_path, "forget moved entry", self.lock_wait)?;
         let entry_file = format!("{id}{RECORD_EXT}");
         for moved_name in fsio::list_dir(&self.root)? {
             if !moved_name.starts_with(super::sessions::MOVED_PREFIX) {
@@ -689,7 +768,7 @@ impl Store {
             for name in names.iter().filter(|n| is_moved_variant(n, PROPOSALS_FILE)) {
                 let path = moved.join(name);
                 if fsio::inspect_file(&path)? {
-                    forget_moved_proposals(id, &path, &mut all_texts)?;
+                    forget_moved_proposals(id, &path, &mut all_texts, &lock)?;
                 }
             }
             all_texts.sort();
@@ -697,7 +776,7 @@ impl Store {
             for name in names.iter().filter(|n| is_moved_variant(n, AUDIT_FILE)) {
                 let path = moved.join(name);
                 if fsio::inspect_file(&path)? {
-                    forget_moved_audit(&path, &all_texts)?;
+                    forget_moved_audit(&path, &all_texts, &lock)?;
                 }
             }
         }
@@ -713,8 +792,15 @@ fn is_moved_variant(name: &str, base: &str) -> bool {
             .is_some_and(|suffix| !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()))
 }
 
-fn forget_moved_proposals(id: &EntryId, path: &Path, texts: &mut Vec<String>) -> Result<()> {
+fn forget_moved_proposals(
+    id: &EntryId,
+    path: &Path,
+    texts: &mut Vec<String>,
+    _lock: &fsio::LockGuard,
+) -> Result<()> {
     let mut proposals = format::decode_proposals(path, &fsio::read(path)?)?;
+    #[cfg(test)]
+    notify_forget_moved(ForgetMovedStep::AfterProposalsRead);
     collect_proposal_texts(id, &proposals, texts);
     let mut changed = crate::consistency::forget_proposals(id, &mut proposals);
     // An open pre-move candidate approved later cannot keep an empty quote
@@ -735,11 +821,13 @@ fn forget_moved_proposals(id: &EntryId, path: &Path, texts: &mut Vec<String>) ->
     Ok(())
 }
 
-fn forget_moved_audit(path: &Path, texts: &[String]) -> Result<()> {
+fn forget_moved_audit(path: &Path, texts: &[String], _lock: &fsio::LockGuard) -> Result<()> {
     if texts.is_empty() {
         return Ok(());
     }
     let bytes = fsio::read(path)?;
+    #[cfg(test)]
+    notify_forget_moved(ForgetMovedStep::AfterAuditRead);
     let mut kept = Vec::with_capacity(bytes.len());
     let mut dropped = false;
     for raw_with_nl in bytes.split_inclusive(|&b| b == b'\n') {
