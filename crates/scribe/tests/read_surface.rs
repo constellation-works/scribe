@@ -1,5 +1,5 @@
 //! End-to-end tests of S11's read surface through the built binary
-//! (docs/design/scribe/2_design.md §1.1, §6.8, §10 S11): `record search`
+//! (docs/design/scribe/2_design.md §1.1, §6.8, §10 S11): `scribe search`
 //! ranks without a model or an Orbit call and hides hidden records unless
 //! asked; `entry list`, `session list` and `proposal list` take the new
 //! filters, and a bad date is a usage error; every command taking an id
@@ -91,7 +91,7 @@ fn search_ranks_the_store_reads_only_and_calls_nothing() {
     let fx = Fixture::new();
     fx.seed();
     let before = snapshot(&fx.root());
-    let found = ok_json(&fx, &["record", "search", "merge agent PRs"]);
+    let found = ok_json(&fx, &["search", "merge agent PRs"]);
     assert_eq!(snapshot(&fx.root()), before, "search wrote to the store");
     assert!(!fx.root().join("audit.jsonl").exists());
     let hits = found["hits"].as_array().unwrap();
@@ -133,15 +133,12 @@ fn search_ranks_the_store_reads_only_and_calls_nothing() {
 fn hidden_entries_and_inactive_sessions_appear_only_on_request() {
     let fx = Fixture::new();
     fx.seed();
-    let out = ok(&fx, &["record", "search", "merge commit", "--json"]);
+    let out = ok(&fx, &["search", "merge commit", "--json"]);
     let cites = ids(&json(&out.stdout), "hits", "cite");
     assert!(!cites.contains(&String::from("decisions-1")), "{cites:?}");
     assert!(!cites.iter().any(|c| c.contains(INACTIVE)), "{cites:?}");
     assert!(text(&out.stderr).contains("--include-hidden"));
-    let all = ok_json(
-        &fx,
-        &["record", "search", "merge commit", "--include-hidden"],
-    );
+    let all = ok_json(&fx, &["search", "merge commit", "--include-hidden"]);
     let hidden: Vec<&Value> = all["hits"]
         .as_array()
         .unwrap()
@@ -161,22 +158,18 @@ fn search_filters_narrow_and_the_limit_cuts() {
     let fx = Fixture::new();
     fx.seed();
     let kinds = |args: &[&str]| -> Vec<String> { ids(&ok_json(&fx, args), "hits", "kind") };
-    let entries = kinds(&["record", "search", "merge", "--kind", "entry"]);
+    let entries = kinds(&["search", "merge", "--kind", "entry"]);
     assert!(!entries.is_empty() && entries.iter().all(|k| k == "entry"));
-    let sessions = kinds(&["record", "search", "merge", "--kind", "session"]);
+    let sessions = kinds(&["search", "merge", "--kind", "session"]);
     assert!(!sessions.is_empty() && sessions.iter().all(|k| k == "session"));
     // The store-layout session ran in October.
-    let october = ok_json(&fx, &["record", "search", "store layout"]);
+    let october = ok_json(&fx, &["search", "store layout"]);
     assert!(ids(&october, "hits", "id").contains(&String::from(LEGACY)));
-    let november = ok_json(
-        &fx,
-        &["record", "search", "store layout", "--since", "2026-11-01"],
-    );
+    let november = ok_json(&fx, &["search", "store layout", "--since", "2026-11-01"]);
     assert!(!ids(&november, "hits", "id").contains(&String::from(LEGACY)));
     let topic = ok_json(
         &fx,
         &[
-            "record",
             "search",
             "merge",
             "--topic",
@@ -186,10 +179,10 @@ fn search_filters_narrow_and_the_limit_cuts() {
         ],
     );
     assert_eq!(ids(&topic, "hits", "cite")[0], "decisions-2");
-    let none = ok(&fx, &["record", "search", "merge", "--project", "orbit"]);
+    let none = ok(&fx, &["search", "merge", "--project", "orbit"]);
     assert!(none.stdout.is_empty());
     assert!(text(&none.stderr).contains("no records match"));
-    let cut = ok_json(&fx, &["record", "search", "merge", "--limit", "1"]);
+    let cut = ok_json(&fx, &["search", "merge", "--limit", "1"]);
     assert_eq!(cut["hits"].as_array().unwrap().len(), 1);
     assert_eq!(cut["truncated"], true);
     assert!(cut["total"].as_u64().unwrap() > 1);
@@ -200,12 +193,12 @@ fn search_refuses_terms_with_no_searchable_word_and_bad_dates() {
     let fx = Fixture::new();
     fx.seed();
     assert_eq!(
-        usage_error(&fx, &["record", "search", "the of"])["code"],
+        usage_error(&fx, &["search", "the of"])["code"],
         "usage_error"
     );
     for args in [
-        &["record", "search", "merge", "--since", "2026-13-01"][..],
-        &["record", "search", "merge", "--until", "yesterday"],
+        &["search", "merge", "--since", "2026-13-01"][..],
+        &["search", "merge", "--until", "yesterday"],
         &["entry", "list", "--since", "2026/11/01"],
         &["session", "list", "--until", "11-01-2026"],
         &["proposal", "list", "--since", "soon"],
@@ -455,4 +448,21 @@ fn session_writes_take_a_prefix_and_audit_the_full_id() {
     assert_eq!(err["code"], "id_ambiguous");
     let pass = usage_error(&fx, &["session", "pass", "--session", "7c2b"]);
     assert_eq!(pass["code"], "id_ambiguous");
+}
+
+#[test]
+fn the_record_noun_is_gone_and_search_is_a_top_level_verb() {
+    // `scribe search` replaced `record search` with no alias.
+    let fx = Fixture::new();
+    fx.seed();
+    for args in [&["record", "search", "merge"][..], &["record"]] {
+        let out = run(&fx, args);
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{args:?}: {}",
+            text(&out.stderr)
+        );
+    }
+    ok(&fx, &["search", "merge agent PRs"]);
 }

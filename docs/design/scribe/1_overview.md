@@ -158,7 +158,7 @@ Two things the principle asks for that no task covers yet:
 | `/scribe on` | Catalogs that session into one session record (summary, goals, outcome, next), refreshed on cadence and at session end. Writes no tag entries. No backfill of other sessions. `/scribe on --from <id>` or `/scribe link <id>` links it to the session it was spawned from or continues ([§5.4](./2_design.md#54-session-links)); its pass reads that session's summary as context. | Haiku |
 | `ask` | The one MCP tool exposed to main agents. Retrieval is model-free (lexical ranking over entries, session records and Orbit tasks); a decision model answers only from the retrieved evidence, every quote is verbatim-checked, it says "no record" rather than infer, and reports conflicts instead of picking a side. | Decision model (Sonnet by default) |
 | Consistency routine | Flags contradictions and stale entries and proposes "B supersedes A" or "retire A". Daniel approves with `#scribe approve <id>`. A superseded entry stays on disk, is marked, and is hidden from answers by default. From S10 it also deactivates sessions whose feature a later entry Daniel wrote says was removed (only Daniel-authored entries count as removal evidence), and sessions past a generous age limit unless pinned. | Haiku, on model-free candidate pairs |
-| CLI agent surface (S11–S13) | Agents on the Mac search (`scribe record search`, BM25), filter lists by date, status, topic and task, and add or update entries, tags and proposals with `--author`; one `scribe` skill teaches it. Agent writes are marked `author.kind: agent`, never quoted as Daniel's words, and never settle an entry Daniel wrote. | None |
+| CLI agent surface (S11–S13) | Agents on the Mac search (`scribe search`, BM25), filter lists by date, status, topic and task, and add or update entries, tags and proposals with `--author`; one `scribe` skill teaches it. Agent writes are marked `author.kind: agent`, never quoted as Daniel's words, and never settle an entry Daniel wrote. | None |
 | tmux popup (S13) | `scribe tmux` lists sessions, entries, proposals and backfill candidates in fzf, with session logs and full entry detail in the preview. | None |
 | Backfill by name (S14) | `scribe transcript list --since 2026-10-01` lists long uncataloged sessions; Daniel picks and runs `scribe session catalog <id>`. | Haiku (the session pass) |
 
@@ -214,7 +214,7 @@ can override.
 | Store format 4: session header and log, `active`, authors (the tags store is S12) | `crates/scribe-core/src/{session,record,activity}.rs`, `store/` | S8 |
 | Segment-writing passes, `session rebuild` | `crates/scribe-core/src/pass.rs`, `commands/session/rebuild.rs` | S9 |
 | Deactivation routes | `crates/scribe-core/src/{activity,consistency}.rs`, `commands/session/activate.rs` | S10 |
-| `record search`, list filters, id prefixes | `crates/scribe-core/src/search.rs`, `commands/record.rs` | S11 |
+| `scribe search`, list filters, id prefixes | `crates/scribe-core/src/search.rs`, `commands/search.rs` | S11 |
 | Agent write verbs and the author guard | `commands/{entry,tag,proposal}.rs` | S12 |
 | The `scribe` skill, the tmux popup | `plugin/claude-code/skills/scribe/`, `crates/scribe/src/popup.rs` (`scribe tmux`) | S13 |
 | `session catalog`, `transcript list/show` | `commands/session/catalog.rs`, `commands/transcript.rs` | S14 |

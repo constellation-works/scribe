@@ -1648,7 +1648,7 @@ fn entries_under_decisions_in_a_store_without_that_tag_stay_readable_and_settlea
             .contains("squash-merge agent PRs"),
         "{shown}"
     );
-    let found = fx.ok(&["record", "search", "squash", "--json"]);
+    let found = fx.ok(&["search", "squash", "--json"]);
     assert!(
         text(&found.stdout).contains("decisions-2"),
         "search finds it: {}",

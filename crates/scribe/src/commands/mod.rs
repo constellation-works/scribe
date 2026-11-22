@@ -19,7 +19,7 @@ pub(in crate::commands) mod memory;
 mod plugin;
 mod proposal;
 mod question;
-mod record;
+mod search;
 mod session;
 mod tag;
 mod tmux;
@@ -40,7 +40,6 @@ pub(crate) use memory::MemoryCommand;
 pub(crate) use plugin::PluginCommand;
 pub(crate) use proposal::ProposalCommand;
 pub(crate) use question::QuestionCommand;
-pub(crate) use record::RecordCommand;
 pub(crate) use session::SessionCommand;
 pub(crate) use tag::TagCommand;
 pub(crate) use tmux::TmuxArgs;
@@ -73,9 +72,9 @@ pub(crate) enum Command {
     Memory(MemoryCommand),
     /// Search every stored record by words, with no model call
     ///
-    /// Searches every stored record for words, ranked as question ask ranks them, with no model call.
-    #[command(subcommand, after_help = record::RECORD_EXAMPLES)]
-    Record(RecordCommand),
+    /// Ranks entries, session headers, segments and issues for words, best first, as question ask ranks them, with no model call.
+    #[command(after_help = search::SEARCH_EXAMPLES)]
+    Search(search::SearchArgs),
     /// Propose superseding or retiring entries via scan
     ///
     /// Proposes superseding or retiring entries a later one replaced or that are due for review, and deactivates stale or removed-feature sessions via scan.
@@ -121,7 +120,7 @@ impl Command {
             Self::Memory(command) => command.subject(ctx),
             Self::Init(_)
             | Self::Transcript(_)
-            | Self::Record(_)
+            | Self::Search(_)
             | Self::Consistency(_)
             | Self::Tag(_)
             | Self::Hook(_)
@@ -144,7 +143,7 @@ impl Command {
             Self::Transcript(command) => command.audit(),
             Self::Proposal(command) => command.audit(),
             Self::Memory(command) => command.audit(),
-            Self::Record(command) => command.audit(),
+            Self::Search(args) => search::audit(args),
             Self::Consistency(command) => command.audit(),
             Self::Tag(command) => command.audit(),
             Self::Issue(command) => command.audit(),
@@ -176,7 +175,7 @@ pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
         Command::Transcript(command) => transcript::run(command, ctx),
         Command::Proposal(command) => proposal::run(command, ctx),
         Command::Memory(command) => memory::run(command, ctx),
-        Command::Record(command) => record::run(command, ctx),
+        Command::Search(args) => search::run(args, ctx),
         Command::Consistency(command) => consistency::run(command, ctx),
         Command::Tag(command) => tag::run(command, ctx),
         Command::Issue(command) => issue::run(command, ctx),

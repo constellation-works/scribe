@@ -1510,7 +1510,7 @@ fn day(at: OffsetDateTime) -> String {
 }
 
 /// Whose words an approved pass statement is, in `ask` evidence and in
-/// `record search` snippets (2_design.md §11.1).
+/// `scribe search` snippets (2_design.md §11.1).
 #[must_use]
 pub fn stated_whose(user: &UserName) -> String {
     format!("scribe's statement of {}'s turn", user.noun())
@@ -1737,7 +1737,7 @@ fn segment_item(record: &SessionRecord, segment: &Segment) -> EvidenceItem {
     }
 }
 
-/// Whose words an issue is in `ask` evidence and `record search` snippets
+/// Whose words an issue is in `ask` evidence and `scribe search` snippets
 /// (2_design.md §11.4): the agent's account, with the user's quoted request.
 #[must_use]
 pub fn issue_whose(issue: &Issue) -> String {

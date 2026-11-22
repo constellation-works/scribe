@@ -15,7 +15,7 @@ Records:
 
 Find:
   question     Answer a question from the records with verbatim quotes
-  record       Search every stored record by words, with no model call
+  search       Search every stored record by words, with no model call
   transcript   List uncataloged provider transcripts and show one, writing nothing
   tmux         Browse sessions, entries and proposals in an fzf popup
 
@@ -43,7 +43,7 @@ Examples:
   scribe proposal list
   scribe consistency scan --json
   scribe tag list
-  scribe record search "merge policy" --kind session --since 2026-11-01
+  scribe search "merge policy" --kind session --since 2026-11-01
   scribe question ask "how do we merge agent PRs?"
   scribe entry list | cut -f1,6
 

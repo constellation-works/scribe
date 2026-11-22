@@ -62,8 +62,7 @@ const HELP: &[(&str, &[&str])] = &[
     ("tag-show", &["tag", "show", "--help"]),
     ("question", &["question", "--help"]),
     ("question-ask", &["question", "ask", "--help"]),
-    ("record", &["record", "--help"]),
-    ("record-search", &["record", "search", "--help"]),
+    ("search", &["search", "--help"]),
     ("transcript", &["transcript", "--help"]),
     ("transcript-list", &["transcript", "list", "--help"]),
     ("transcript-show", &["transcript", "show", "--help"]),
@@ -128,7 +127,7 @@ const OUTPUT: &[(&str, &[&str])] = &[
     ),
     ("proposal-list", &["proposal", "list"]),
     // Ranked with no model call: entries, session headers and segments.
-    ("record-search", &["record", "search", "merge agent PRs"]),
+    ("search", &["search", "merge agent PRs"]),
     ("tag-list", &["tag", "list"]),
     // Capture rules, each field with its origin: all shipped here.
     ("tag-show", &["tag", "show", "preferences"]),
@@ -793,10 +792,7 @@ fn stated_claims_match_goldens() {
     let commands: &[(&str, &[&str])] = &[
         ("entry-show-stated", &["entry", "show", "preferences-2"]),
         ("proposal-list-stated", &["proposal", "list"]),
-        (
-            "record-search-stated",
-            &["record", "search", "append-only log history"],
-        ),
+        ("search-stated", &["search", "append-only log history"]),
         (
             "question-ask-stated",
             &[
@@ -884,10 +880,7 @@ fn instructed_approvals_match_goldens() {
     let commands: &[(&str, &[&str])] = &[
         ("entry-show-instructed", &["entry", "show", "preferences-2"]),
         ("proposal-list-instructed", &["proposal", "list"]),
-        (
-            "record-search-instructed",
-            &["record", "search", "append-only log history"],
-        ),
+        ("search-instructed", &["search", "append-only log history"]),
     ];
     let mut failures = Vec::new();
     for (name, args) in commands {
@@ -918,10 +911,7 @@ fn only_an_instructed_approval_carries_the_approved_by_line() {
             assert_eq!(out.contains(&line), instructed, "{out}");
             assert_eq!(out.contains("approved by"), instructed, "{out}");
         }
-        let search = text(
-            &fx.ok(&["record", "search", "append-only log history"])
-                .stdout,
-        );
+        let search = text(&fx.ok(&["search", "append-only log history"]).stdout);
         assert_eq!(search.contains(&line), instructed, "{search}");
         let proposals = text(&fx.ok(&["proposal", "list", "--state", "approved"]).stdout);
         assert_eq!(proposals.contains(&line), instructed, "{proposals}");
@@ -1106,10 +1096,7 @@ fn captured_ideas_match_goldens() {
     let commands: &[(&str, &[&str])] = &[
         ("entry-show-captured", &["entry", "show", "idea-1"]),
         ("entry-show-typed-idea", &["entry", "show", "idea-2"]),
-        (
-            "record-search-captured",
-            &["record", "search", "routing table per host"],
-        ),
+        ("search-captured", &["search", "routing table per host"]),
         (
             "question-ask-captured",
             &[

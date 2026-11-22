@@ -16,7 +16,7 @@ For a question that needs a synthesized answer, substitute that provider:
 scribe --provider <provider> question ask "<question>" --json
 ```
 
-For focused lookup, use `scribe record search "<words>" --json`,
+For focused lookup, use `scribe search "<words>" --json`,
 `scribe entry list --json`, `scribe session list --json`, and
 `scribe proposal list --json`. Read full evidence with `entry show <id> --json` or
 `session show <id> --log --json`; a citation `session:<id>#<n>` names one segment.
@@ -185,7 +185,7 @@ about them; `question ask` skips them unless its scope names their tag.
   When they say in plain words to drop it, retire it yourself:
   `scribe entry retire <id> --author <name> --reason '<their words>'`.
 - **When the human floats an idea**, first run one search over earlier
-  ideas: `scribe record search '<the idea's words>' --json`, keeping only
+  ideas: `scribe search '<the idea's words>' --json`, keeping only
   hits whose title ends in `(idea)`. Show at most 3 of them. When one
   matches, name it in one line with its date (the hit's `updated`) and
   outcome (in the snippet of a pass-captured idea; a typed one has none,
@@ -232,7 +232,7 @@ not an entry: `issue` is a reserved tag, so `entry add --tag issue` and
   failure, and always when scribe's prompt hook adds `scribe: this turn
   asks for a root cause` to the turn (an `issue` trigger fired on their
   words, in any interactive session, on or off): `scribe issue search
-  '<symptoms or error text>' --json` (also `record search --kind issue`).
+  '<symptoms or error text>' --json` (also `scribe search --kind issue`).
   Read a match with `issue show <id> --json` and say what it found before
   diagnosing again.
 - **Write the result when you answer, in the session they typed in**: a new
@@ -323,7 +323,7 @@ or delete. Every act follows the same order.
 
 1. **List before acting.** Find the targets with `scribe proposal list --state
    open --json` (claims), `scribe entry list --status active --json` (narrow
-   it with `--tag` or `--project`), `scribe record search "<words>" --json`
+   it with `--tag` or `--project`), `scribe search "<words>" --json`
    or `scribe session list --json`. Act only on ids the output shows.
 2. **Name every id in your reply, then wait.** Before the human answers, your
    reply names each id you may act on, one per line, with the act you would

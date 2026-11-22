@@ -43,7 +43,7 @@ STD-01 grammar:
 |---|---|---|
 | `scribe hook <event>` | Claude Code hooks (the `plugin/claude-code/` package) | Reads the hook's JSON on stdin; captures `#scribe` instructions, switches cataloging on and off, marks session passes due. The only path that writes Daniel's entries (`author.kind: daniel`) and settles proposals about them. |
 | `scribe plugin call` | Orbit's exec backend (`plugin/.orbit-plugin/`) | Reads the Orbit tool request on stdin, writes the `{"ok", …}` envelope on stdout. Serves `scribe.ask` and the routines' tools. |
-| `scribe <noun> <verb>` | Daniel at a terminal, scripts, and agents through a shell (from S11) | Read-only `entry list/show`, `session list/show`, `proposal list`, `tag list`, `question ask`, plus `session pass` (Daniel runs it by hand) and `consistency scan` (its routine's job). From S8–S14: `record search`, list filters, the agent write verbs ([§1.1](#11-the-cli-agent-surface)), `session rebuild`, `session activate/deactivate`, `session catalog`, `transcript list/show` and `tmux` (the tmux popup, [§1.2](#12-the-tmux-popup)). |
+| `scribe <noun> <verb>` | Daniel at a terminal, scripts, and agents through a shell (from S11) | Read-only `entry list/show`, `session list/show`, `proposal list`, `tag list`, `question ask`, plus `session pass` (Daniel runs it by hand) and `consistency scan` (its routine's job). From S8–S14: `scribe search`, list filters, the agent write verbs ([§1.1](#11-the-cli-agent-surface)), `session rebuild`, `session activate/deactivate`, `session catalog`, `transcript list/show` and `tmux` (the tmux popup, [§1.2](#12-the-tmux-popup)). |
 
 **The Orbit plugin tree** is `plugin/.orbit-plugin/`: `plugin.yaml`
 (`schemaVersion: 2`, `kind: Plugin`, `metadata.name: scribe`), `bin/scribe`
@@ -173,7 +173,7 @@ tool. Agents with a shell use the CLI, and one skill teaches it
 
 | Want | Command | Model |
 |---|---|---|
-| Words to look for | `scribe record search "<terms>" [--kind entry\|session\|discussion] [--project <p>] [--topic <t>]… [--since <date>] [--until <date>] [--include-hidden] [--limit <n>]` | none ([§6.8](#68-record-search)) |
+| Words to look for | `scribe search "<terms>" [--kind entry\|session\|discussion] [--project <p>] [--topic <t>]… [--since <date>] [--until <date>] [--include-hidden] [--limit <n>]` | none ([§6.8](#68-scribe-search)) |
 | Records by metadata | `entry list` and `session list` with `--since <date>`, `--until <date>`, `--status <status>`, repeated `--topic <t>` (every one must match) and repeated `--related <kind:target>` (any may match); `entry list` also `--author <name>` and `--author-kind daniel\|agent`; `session list` also `--include-inactive`; `proposal list` with `--state`, `--since`, `--until`, `--entry <id>` and `--author-kind daniel\|agent\|scribe` | none |
 | One record | `entry show <id>`, `session show <id> [--log] [--segment <n>]`; `session show session:<id>#<n>` shows one segment | none |
 | An answer in prose | `scribe question ask "<question>"`, or the `scribe.ask` MCP tool | decision model |
@@ -239,10 +239,11 @@ Rules every verb keeps:
   changed` and writes no audit line.
 - **Output.** Each write prints the record it wrote in the `show` shape
   (`--json`: the record object), so an agent can read back the id.
-- **Grammar.** Names follow STD-01 R1–R2: the search is `record search`
-  (`record` is any stored record) rather than a bare `scribe search`,
-  which would mix verb-first and noun-first orders; backfill candidates
-  are `transcript list` and `transcript show`. `session rebuild` replaces
+- **Grammar.** Names follow STD-01 R1–R2, with one recorded deviation:
+  the search is the top-level verb `scribe search`, since it spans every
+  kind of stored record (Daniel, 2026-11-21; it replaced `scribe search`
+  with no alias; [4_decisions.md](./4_decisions.md#search-is-a-top-level-verb)).
+  Backfill candidates are `transcript list` and `transcript show`. `session rebuild` replaces
   a record's text, so it refuses without `--confirm` (STD-01 R5).
 
 Division of work (Daniel confirmed 2026-11-10): scribe's own job is
@@ -372,7 +373,7 @@ removed-feature candidate pairing; `ask` exposes its tokenizer and BM25
 ranking to `search` (new, no I/O), which ranks without a model; `tag`
 merges config tags with the store's `tags.json`; `transcript` gains the
 model-free statistics `transcript list` reports (Daniel's turns, size,
-path-mention counts). The CLI gains `commands/record.rs` (`record search`),
+path-mention counts). The CLI gains `commands/search.rs` (`scribe search`),
 `commands/transcript.rs`, the write verbs in `commands/{entry,tag,proposal}.rs`
 and `commands/session/{rebuild,activate,catalog}.rs`, and an id-prefix
 resolver shared by every command that takes an id. The tmux script and the
@@ -1113,7 +1114,7 @@ them:
 **Reading one.** `ask` evidence labels a finding `agent claim (<author>)
 as of <date>; evidence: <pointer>`, and the deterministic attribution
 check copies that label into each surviving claim, so an answer can
-never present it as Daniel's words (§6.4). `record search` returns the
+never present it as Daniel's words (§6.4). `scribe search` returns the
 same marking in the snippet plus the hit's `evidence` and `as_of`
 fields; `entry show`/`list` carry both fields too.
 
@@ -1606,7 +1607,7 @@ store) should be deactivated."
 says whether its content still describes something current. A final
 session about a feature that still exists stays active; an open session can
 be deactivated. An inactive session is hidden, not removed, as superseded
-entries are: `session list`, `record search` and `ask` leave it out by
+entries are: `session list`, `scribe search` and `ask` leave it out by
 default and show it with `--include-inactive` (lists), `--include-hidden`
 (search) or `include_hidden` (`ask`); `session show` always shows it, with
 its `active_change`; `ask` counts hidden matches and says one exists, as
@@ -1901,9 +1902,9 @@ are built in S12.
   as Daniel's words. A `conflict` between a Daniel entry and an agent entry
   is reported as such, with both labels.
 
-### 6.8 `record search`
+### 6.8 `scribe search`
 
-Designed for S11. `scribe record search "<terms>" [--kind
+Designed for S11. `scribe search "<terms>" [--kind
 entry|session|discussion] [--project <p>] [--topic <t>]… [--since <date>]
 [--until <date>] [--include-hidden] [--limit <n>]` runs §6.2's filtering,
 tokenizing and BM25 ranking with the §6.7 units and weights, and stops
@@ -2564,7 +2565,7 @@ As built (S10):
 
 **S11 — CLI read surface.** Depends on S8.
 
-- `scribe record search "<terms>"` returns hits ranked as `ask` ranks
+- `scribe search "<terms>"` returns hits ranked as `ask` ranks
   them, with no model call and no Orbit call, in table, plain and `--json`
   (envelope key `hits`); `--kind`, `--project`, `--topic`, `--since`,
   `--until`, `--include-hidden` and `--limit` narrow it; hidden entries
@@ -2578,8 +2579,8 @@ As built (S10):
   characters; an exact id wins; an ambiguous prefix exits 2 with
   `id_ambiguous` listing the candidates.
 
-**As built (S11).** `record search` is `commands/record.rs` over
-`scribe_core::search` ([§6.8](#68-record-search)). `EntryFilter`,
+**As built (S11).** `scribe search` is `commands/search.rs` over
+`scribe_core::search` ([§6.8](#68-scribe-search)). `EntryFilter`,
 `SessionFilter` and the new `ProposalFilter` hold the filters, with the
 dates as `record::DateRange` (both days included): an entry's day is its
 `created`, a proposal's its `opened_at`, and a session matches when any
@@ -2797,7 +2798,7 @@ field `stated_by` records whose words the content is: `{kind: scribe,
 name: session-pass}` for an approved statement, `null` (the content is the
 author's own words) for every other entry.
 
-**Reading it.** `ask` evidence and `record search` snippets show an entry
+**Reading it.** `ask` evidence and `scribe search` snippets show an entry
 with `stated_by` set as "scribe's statement of Daniel's turn" followed by
 his quote, labelled as his words. The deterministic attribution check of
 §6.4 accepts a claim attributed to Daniel only when the cited span is in
@@ -2832,7 +2833,7 @@ mode puts the quote on a row under the statement; plain mode joins them with
 ` | `. The stored `reason` is unchanged. In `ask`, a claim whose quote lies in
 a stated entry's quote is labelled `Daniel`, one whose quote lies only in the
 statement is labelled scribe's statement, and the answer is built from those
-labels as it is for agent evidence. A stated entry's `record search` snippet
+labels as it is for agent evidence. A stated entry's `scribe search` snippet
 is the statement and the quote, each cut to the snippet bound. The
 statement and subject bounds count the model's words before redaction, so a
 mask that lengthens a value keeps it. A `#scribe` line that matches a stated
@@ -3096,7 +3097,7 @@ parked 2026-11-21, so the hint stays as stated here.)
 
 1. Before diagnosing, it searches existing issues: `scribe issue search
    '<symptoms or error text>'` (model-free, over titles, signatures and
-   occurrences; also `record search --kind issue`).
+   occurrences; also `scribe search --kind issue`).
 2. When it answers, it writes the result: `scribe issue add` for a new
    issue, or `scribe issue occur <issue-id>` for an occurrence on the
    matching one, each with `--author <crew> --related session:<id>
@@ -3123,7 +3124,7 @@ the lock, as every record is.
 **No approval.** An issue is an agent entry of cited facts, append-only.
 Daniel does not settle it; he forgets an occurrence or an issue that is
 wrong. Issues are not in the `SessionStart` brief or line; `ask` and
-`record search` return them, labelled as the agent's account with his
+`scribe search` return them, labelled as the agent's account with his
 quoted request. `issue` is a reserved tag name: `entry add --tag issue`
 and `#scribe issue:` are refused, naming the `issue` commands, so the
 capture rules live under `[tags.issue.capture]` like every tag's.
@@ -3254,7 +3255,7 @@ preference, a question of fact, an idea the session goes on to carry out).
   the statement, `quote` the span, `author` and `stated_by` are
   `{kind: scribe, name: session-pass}`, `content_from` is his message, and
   `said` is empty. It is never listed under `--author-kind daniel` (it is
-  `--author-kind scribe`), and `ask`, `record search` and `entry show`
+  `--author-kind scribe`), and `ask`, `scribe search` and `entry show`
   label it "captured by the session pass", apart from a typed
   `#scribe idea:` entry. Assistant turns never fire a trigger (`from =
   "daniel"`), so an assistant's idea is never written.
@@ -3424,7 +3425,7 @@ refuses it as stale, mismatched or not interactive; `null` only when no
 typed turn held the instruction or that turn has no message id), audit
 format 3.
 
-**Built (task 5 of 6, ORB-26246).** Reading it (§12.3): `entry show` prints `approved by <aide> on your instruction "<quote>" (<session>, <date>)` under the cite for an entry an agent approved on his instruction, and nothing for one he approved by typing. `record search` ends such an entry's snippet with the same line, and `proposal list` adds `approved by` or `rejected by …` to an instructed candidate's reason. `ask` keeps the entry as his words with his 1.5× weight and adds the line to its evidence item as `<approval>approved by <aide> on Daniel's instruction …</approval>`, after the item's text: the model reads it, so it names him in the third person, and no claim can quote it as the entry's words. A prompt rule tells the model to say an agent approved it when it uses the item. `--json` is unchanged: `approved_by` and `instruction` were already on entries and proposals.
+**Built (task 5 of 6, ORB-26246).** Reading it (§12.3): `entry show` prints `approved by <aide> on your instruction "<quote>" (<session>, <date>)` under the cite for an entry an agent approved on his instruction, and nothing for one he approved by typing. `scribe search` ends such an entry's snippet with the same line, and `proposal list` adds `approved by` or `rejected by …` to an instructed candidate's reason. `ask` keeps the entry as his words with his 1.5× weight and adds the line to its evidence item as `<approval>approved by <aide> on Daniel's instruction …</approval>`, after the item's text: the model reads it, so it names him in the third person, and no claim can quote it as the entry's words. A prompt rule tells the model to say an agent approved it when it uses the item. `--json` is unchanged: `approved_by` and `instruction` were already on entries and proposals.
 
 **Fixed (ORB-26503, store format 18).** Review ORB-26500 of task 3 found
 five defects, now fixed: a format-14 entry decodes again through typed
@@ -3460,7 +3461,7 @@ about 4 once §11.3's cleanup closes the retired-tag ones.
 ### 12.1 The route
 
 The aide lists what Daniel asks about (`proposal list`, `entry list`,
-`record search`), names the ids in its reply, and on his answer runs one
+`scribe search`), names the ids in its reply, and on his answer runs one
 command per target with his words attached:
 
 | Daniel says | The aide runs |
@@ -3582,7 +3583,7 @@ in the suppression set, recording the same fields.
 
 **Reading it.** `entry show` prints `approved by <aide> on your
 instruction "<quote>" (<session>, <date>)` under the cite. `ask` and
-`record search` treat the entry as his words, with his 1.5× weight, and
+`scribe search` treat the entry as his words, with his 1.5× weight, and
 add the same line to the evidence, so an answer can say that an agent
 approved it (as built, `ask`'s line names "Daniel's instruction" and sits
 outside the item's quotable text). `proposal list --state approved|rejected` shows the
@@ -3823,7 +3824,7 @@ personal base and work layer of the parked §13.12.)
 
 | Layer | What it holds | Lifetime | How an agent reads it |
 |---|---|---|---|
-| Sessions ([§5](#5-scribe-on)) | the dump of history | permanent | the last 5 on the page; the rest through `record search` and `ask` |
+| Sessions ([§5](#5-scribe-on)) | the dump of history | permanent | the last 5 on the page; the rest through `scribe search` and `ask` |
 | `memory` | a sense of the user | by section, below | the session-start page; `scribe memory show`; `ask` |
 | `preferences` (an entry tag) | rules that bind agents | until retired | as today; Daniel approves each |
 
@@ -4213,7 +4214,7 @@ quote; `--page` prints exactly what the hook would inject. `--json` gives
 the list envelope `{items, total, truncated, warnings}`; field names are a
 contract from the first release.
 
-**`ask` and `record search`** treat items as records: `record search
+**`ask` and `scribe search`** treat items as records: `scribe search
 --kind memory` and `ask` retrieval include them; evidence shows "scribe's
 statement" followed by his quoted words with their session and date. The
 attribution check of §6.4 accepts a claim attributed to Daniel only when
@@ -4702,7 +4703,7 @@ rewrites the header (it is the rewritable part of §5.5).
 - **Reading**: `session list` shows both, with a `depth` field (an added
   `--json` field; the envelope is unchanged) and `--depth full|light`;
   `session show` on a light entry prints its header and says it was not
-  switched on; `record search --kind session` and `ask` include light
+  switched on; `scribe search --kind session` and `ask` include light
   entries as session summaries, labelled light, at the weight of a
   session record (never Daniel's words).
 - **Correction**: a light entry is deactivated like any session (§5.7);
@@ -4952,7 +4953,7 @@ typed line:
 | `window` | under an action tag, the §4.6 window, model-free, as today |
 | `project` | the cwd's project, or `global` for `#scribe/global` |
 
-`ask`, `record search` and `entry show` read it as §11.1 reads a stated
+`ask`, `scribe search` and `entry show` read it as §11.1 reads a stated
 entry: his words are the `quote`, and the statement is labelled scribe's
 statement of his marked turn. The attribution check of §6.4 credits him
 only for a span inside `quote`.
@@ -5394,7 +5395,7 @@ name any tag in the table, catcher or not.
   `store/issue_file.rs` and `commands/issue.rs`.
   - Its CLI goes too: the `scribe issue` noun (`add`, `occur`, `update`,
     `move`, `search`, `show`, `list`, `stats`), `#scribe forget
-    <issue-id>[#<n>]` (`hook/issue_command.rs`) and `record search --kind
+    <issue-id>[#<n>]` (`hook/issue_command.rs`) and `scribe search --kind
     issue`.
   - So do `ask`'s issue evidence, occurrences, and the resolved and
     reopened (`recurred`) states.
@@ -5650,7 +5651,7 @@ The user is joining a hackathon; the submission deadline is Tuesday 2026-12-01.
   date (fixed), so an agent can still ask how it went. After that, the
   weekly job (§15.6) either promotes it to a milestone, if it qualifies, or
   removes the file. A removed item's text and sources go to the
-  `memory_history` table, so `ask` and `record search` still recall it.
+  `memory_history` table, so `ask` and `scribe search` still recall it.
 
 **`milestones`**: a dated event that changed a fact in the profile, or one
 the user called a milestone. The file shape is that of `now` without
@@ -5857,7 +5858,7 @@ with phase 4):
 - **Forget.** `#scribe forget s-<n>` deletes the session's messages and
   segments' text, and keeps the row as `forgotten`. It replaces today's
   forget of a record file.
-- **Search.** BM25 over messages is FTS5's `bm25()`. `record search --kind
+- **Search.** BM25 over messages is FTS5's `bm25()`. `scribe search --kind
   message` and `ask` retrieval use it. Embeddings are not built until a
   miss is seen that BM25 cannot fix.
 
@@ -6019,7 +6020,7 @@ goldens. Each line gives what the phase does, then what it proves.
    - Does: "the user" everywhere shipped; `[user] name`; `[instructions]`;
      `from = user|assistant|both`; `max_open`; route `agent` and the issue
      record kind removed, with the `scribe issue` noun, `issue stats`, the
-     hook's root-cause line, `#scribe forget <issue-id>` and `record search
+     hook's root-cause line, `#scribe forget <issue-id>` and `scribe search
      --kind issue`; any stored issues converted to `issue` entries
      (§15.11); the shipped set is `preference` and `standard`; `idea` and
      `issue` become examples; author kind `user`. Format 23.
@@ -6038,7 +6039,7 @@ goldens. Each line gives what the phase does, then what it proves.
      `profile_cursor`; the pass commits a window's messages (upserted on
      session and message id), then writes the session file with its cursor
      as today, the file's cursor staying the truth until phase 6 (§15.7);
-     `record search --kind message`.
+     `scribe search --kind message`.
    - Proves: `bundled` builds with FTS5 on both CI operating systems. WAL
      and `busy_timeout` hold under concurrent hook processes in a harness
      (never synthetic load on a real host). Redaction happens on write.
@@ -6084,7 +6085,7 @@ approves this design; each carries the `scribe` tag):
 | 3 | scribe: catchers — `from`, `max_open`, the shipped set; `issue` becomes a tag | `config.rs`, `tag.rs`, `trigger.rs`, `pass/candidates.rs`; removes `issue.rs`, `issue_trigger.rs`, `store/issues.rs`, `store/issue_file.rs`, `commands/issue.rs`, `hook/issue_command.rs`, the `ask` and search issue paths; issue-to-entry conversion; `specs/catchers.md`; breaking CLI change |
 | 4 | scribe: claims carry a context paragraph | `SESSION_SCHEMA`, annotation schema, `proposal.rs`, `store/candidates.rs`, outputs, popup |
 | 5 | scribe: `scribe brief` as the session-start page ([ORB-26642], filed before this design's approval on Daniel's "Yes, three lieutenants") | new read-only command with Recent sessions and Open claims, today's page as the memory block, hook, skill, goldens |
-| 6 | scribe: SQLite foundation and the messages table | dependency, `ARCHITECTURE.md`, dependency script, `scribe.db`, `meta`, `messages` + FTS5, memory support tables, `record search --kind message` |
+| 6 | scribe: SQLite foundation and the messages table | dependency, `ARCHITECTURE.md`, dependency script, `scribe.db`, `meta`, `messages` + FTS5, memory support tables, `scribe search --kind message` |
 | 7 | scribe: memory as profile, now and milestones, with `memory refresh` | `memory/`, `store/memory.rs`, `ProfileRequest`, `memory show` with no id and the brief's memory block, the routine seed, migration of `m-<n>` |
 | 8 | scribe: sessions in SQLite with `s-<n>` ids, and `scribe export` | `session.rs`, `store/` session code, `control.json` fields, `store migrate`, `export` |
 | 9 | scribe: entries, claims, state and audit in SQLite | remaining kinds; lock and `UPGRADES` retired |

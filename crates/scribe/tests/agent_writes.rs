@@ -1270,7 +1270,7 @@ fn a_finding_records_its_pointer_as_of_date_and_agent_author() {
     // Search returns it as that agent's claim as of its date, with the
     // pointer — never as Daniel's words.
     let found = json(
-        &fx.ok(&["record", "search", "reviewer mix predicts gap", "--json"])
+        &fx.ok(&["search", "reviewer mix predicts gap", "--json"])
             .stdout,
     );
     let hit = &found["hits"][0];
@@ -1395,16 +1395,10 @@ fn stored_remind_and_finding_entries_stay_readable_searchable_and_asked_without_
         let shown = json(&fx.ok(&["entry", "show", id, "--json"]).stdout);
         assert_eq!(shown["id"], id);
     }
-    let finding_hit = json(
-        &fx.ok(&["record", "search", "reviewer mix", "--json"])
-            .stdout,
-    );
+    let finding_hit = json(&fx.ok(&["search", "reviewer mix", "--json"]).stdout);
     assert_eq!(finding_hit["hits"][0]["id"], "finding-1");
     assert_eq!(finding_hit["hits"][0]["evidence"], "exp-99");
-    let remind_hit = json(
-        &fx.ok(&["record", "search", "widget cache warmup", "--json"])
-            .stdout,
-    );
+    let remind_hit = json(&fx.ok(&["search", "widget cache warmup", "--json"]).stdout);
     assert_eq!(remind_hit["hits"][0]["id"], "remind-1");
 
     let claude = "#!/bin/sh\n\
