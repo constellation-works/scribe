@@ -466,30 +466,39 @@ struct LineMeta {
     uuid: Option<serde_json::Value>,
     #[serde(default)]
     entrypoint: Option<serde_json::Value>,
-    #[serde(default, deserialize_with = "present_value")]
+    #[serde(default, deserialize_with = "capture::present_value")]
     source: Option<serde_json::Value>,
-    #[serde(default, rename = "promptSource", deserialize_with = "present_value")]
+    #[serde(
+        default,
+        rename = "promptSource",
+        deserialize_with = "capture::present_value"
+    )]
     prompt_source_camel: Option<serde_json::Value>,
-    #[serde(default, deserialize_with = "present_value")]
+    #[serde(default, deserialize_with = "capture::present_value")]
     prompt_source: Option<serde_json::Value>,
-    #[serde(default, deserialize_with = "present_value")]
+    #[serde(default, deserialize_with = "capture::present_value")]
     origin: Option<serde_json::Value>,
-    #[serde(default, rename = "promptOrigin", deserialize_with = "present_value")]
+    #[serde(
+        default,
+        rename = "promptOrigin",
+        deserialize_with = "capture::present_value"
+    )]
     prompt_origin_camel: Option<serde_json::Value>,
-    #[serde(default, deserialize_with = "present_value")]
+    #[serde(default, deserialize_with = "capture::present_value")]
     prompt_origin: Option<serde_json::Value>,
-}
-
-fn present_value<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<serde_json::Value>, D::Error> {
-    serde_json::Value::deserialize(deserializer).map(Some)
+    #[serde(
+        default,
+        rename = "turnOrigin",
+        deserialize_with = "capture::present_value"
+    )]
+    turn_origin_camel: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "capture::present_value")]
+    turn_origin: Option<serde_json::Value>,
 }
 
 struct Claims {
-    invalid_origin: bool,
+    origin_blocked: bool,
     entrypoint: Option<String>,
-    origins: Vec<String>,
 }
 
 fn string(value: Option<&serde_json::Value>) -> Option<String> {
@@ -499,7 +508,7 @@ fn string(value: Option<&serde_json::Value>) -> Option<String> {
 /// A Claude Code transcript as the check reads it: the conversation
 /// ([`transcript::parse`]), each user turn marked as Daniel's when
 /// [`transcript::user_turn`] keeps it and §4.1's origin guard
-/// ([`capture::agent_originated`]) passes its line's origin fields and
+/// ([`capture::OriginClaims`]) passes its line's origin fields and
 /// text, and each message's `entrypoint` checked against
 /// [`INTERACTIVE_ENTRYPOINTS`]. A replayed line keeps its first copy's
 /// fields, as the conversation keeps its first copy.
@@ -516,29 +525,20 @@ pub fn claude_conversation(bytes: &[u8]) -> Vec<Spoken> {
         let Some(uuid) = string(meta.uuid.as_ref()) else {
             continue;
         };
-        claims.entry(uuid).or_insert_with(|| Claims {
-            invalid_origin: [
-                &meta.source,
-                &meta.prompt_source_camel,
-                &meta.prompt_source,
-                &meta.origin,
-                &meta.prompt_origin_camel,
-                &meta.prompt_origin,
-            ]
-            .into_iter()
-            .any(|v| v.as_ref().is_some_and(|v| !v.is_string())),
-            entrypoint: string(meta.entrypoint.as_ref()),
-            origins: [
-                &meta.source,
-                &meta.prompt_source_camel,
-                &meta.prompt_source,
-                &meta.origin,
-                &meta.prompt_origin_camel,
-                &meta.prompt_origin,
-            ]
-            .into_iter()
-            .filter_map(|v| string(v.as_ref()))
-            .collect(),
+        claims.entry(uuid).or_insert_with(|| {
+            let mut origin = capture::OriginClaims::default();
+            origin.push_claim(meta.source.as_ref());
+            origin.push_prompt_source(meta.prompt_source_camel.as_ref());
+            origin.push_prompt_source(meta.prompt_source.as_ref());
+            origin.push_origin(meta.origin.as_ref());
+            origin.push_claim(meta.prompt_origin_camel.as_ref());
+            origin.push_claim(meta.prompt_origin.as_ref());
+            origin.push_turn_origin(meta.turn_origin_camel.as_ref());
+            origin.push_turn_origin(meta.turn_origin.as_ref());
+            Claims {
+                origin_blocked: origin.claims_agent_originated(),
+                entrypoint: string(meta.entrypoint.as_ref()),
+            }
         });
     }
     transcript::parse(bytes)
@@ -546,13 +546,10 @@ pub fn claude_conversation(bytes: &[u8]) -> Vec<Spoken> {
         .map(|message| {
             let claim = claims.get(&message.uuid);
             let entrypoint = claim.and_then(|c| c.entrypoint.clone());
-            let origins: Vec<&str> = claim
-                .map(|c| c.origins.iter().map(String::as_str).collect())
-                .unwrap_or_default();
             let typed = transcript::user_turn(&message)
                 .filter(|_| {
-                    claim.is_some_and(|c| !c.invalid_origin)
-                        && !capture::agent_originated(&origins, &message.text())
+                    claim.is_some_and(|c| !c.origin_blocked)
+                        && !capture::agent_originated(&[], &message.text())
                 })
                 .map(|turn| own_words(&turn.own))
                 .filter(|own| !own.trim().is_empty());

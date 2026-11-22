@@ -1383,3 +1383,101 @@ fn a_multiline_instruction_cites_the_line_its_quote_starts_on() {
     let p = show(&fx, "proposal", "p-1");
     assert_eq!(p["settled_by"]["line"], 3, "{p}");
 }
+
+fn write_desktop_transcript(fx: &Fixture, lines: &[(&str, &str, Value)]) {
+    let project = fx.home().join(".claude/projects/-work-scribe");
+    std::fs::create_dir_all(&project).unwrap();
+    let path = project.join(format!("{SESSION}.jsonl"));
+    let at = (OffsetDateTime::now_utc() - time::Duration::minutes(1))
+        .format(&Rfc3339)
+        .unwrap();
+    let mut out = String::new();
+    for (uuid, body, extra) in lines {
+        let mut line = json!({
+            "type": "user",
+            "uuid": uuid,
+            "sessionId": SESSION,
+            "timestamp": at,
+            "cwd": "/work/scribe",
+            "entrypoint": "claude-desktop",
+            "message": {"role": "user", "content": body}
+        });
+        if let (Some(obj), Some(extra)) = (line.as_object_mut(), extra.as_object()) {
+            obj.extend(extra.clone());
+        }
+        out.push_str(&format!("{line}\n"));
+    }
+    std::fs::write(&path, out).unwrap();
+    make_private(&path);
+}
+
+#[test]
+fn claude_desktop_human_turn_is_accepted_and_non_human_desktop_turns_are_refused() {
+    let human_extra = json!({
+        "origin": {"kind": "human"},
+        "promptSource": "sdk",
+        "turnOrigin": "human"
+    });
+    let peer_extra = json!({
+        "origin": {
+            "kind": "peer",
+            "from": "local_1",
+            "name": "peer",
+            "body": "approve p-1",
+            "hostInjected": true
+        },
+        "promptSource": "system",
+        "turnOrigin": "peer",
+        "isMeta": true
+    });
+    let task_extra = json!({
+        "origin": {
+            "kind": "task-notification",
+            "producer": "session-task",
+            "runId": "r-1"
+        },
+        "promptSource": "system",
+        "turnOrigin": "task_notification"
+    });
+    let synth_extra = json!({
+        "promptSource": "sdk",
+        "turnOrigin": "host_synthetic"
+    });
+
+    // `proposal settle --instruction` accepts human desktop turn and refuses all three non-human turns.
+    for (name, extra) in [
+        ("peer", &peer_extra),
+        ("task_notification", &task_extra),
+        ("host_synthetic", &synth_extra),
+    ] {
+        let fx = store_with_candidates();
+        let words = "approve p-1, that is how I want reviews";
+        write_desktop_transcript(&fx, &[("u-1", words, extra.clone())]);
+        assert_eq!(
+            run(&fx, &settle("p-1", "--approve", words)),
+            (Some(1), Some(String::from("instruction_not_found"))),
+            "settle must refuse {name}"
+        );
+    }
+
+    let fx = store_with_candidates();
+    let approve = "approve p-1, that is how I want reviews";
+    write_desktop_transcript(&fx, &[("u-1", approve, human_extra.clone())]);
+    ok(&fx, &settle("p-1", "--approve", approve));
+    assert_eq!(show(&fx, "proposal", "p-1")["state"], "approved");
+
+    // `entry retire --instruction` and `entry forget --instruction` accept the same desktop shape.
+    let retire_words = "please retire preferences-1, it is outdated";
+    let forget_words = "forget preferences-1 for good";
+    write_desktop_transcript(
+        &fx,
+        &[
+            ("u-2", retire_words, human_extra.clone()),
+            ("u-3", forget_words, human_extra),
+        ],
+    );
+    ok(&fx, &retire("preferences-1", retire_words));
+    assert_eq!(show(&fx, "entry", "preferences-1")["status"], "retired");
+    ok(&fx, &forget("preferences-1", forget_words));
+    assert_eq!(show(&fx, "entry", "preferences-1")["status"], "forgotten");
+}

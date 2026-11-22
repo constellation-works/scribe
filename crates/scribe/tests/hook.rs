@@ -2184,3 +2184,123 @@ fn session_start_gives_an_interactive_agent_the_brief() {
         "session-start wrote the store"
     );
 }
+
+#[test]
+fn claude_desktop_origin_shapes_match_cli_verdicts_in_hooks() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+
+    // Human desktop payload on `user-prompt-submit` echoes `#scribe` markers.
+    let mut human = claude.payload("user-prompt-submit.json");
+    human["prompt"] = json!("always prefer explicit dates #scribe preferences");
+    human["origin"] = json!({"kind": "human"});
+    human["promptSource"] = json!("sdk");
+    human["turnOrigin"] = json!("human");
+    let out = hook_ok(&fx, "user-prompt-submit", &human);
+    assert_eq!(
+        reply(&out)["systemMessage"],
+        "scribe: marked — cataloged after the reply"
+    );
+
+    // Peer, task-notification, and host-synthetic payloads are skipped silently.
+    for (name, extra) in [
+        (
+            "peer",
+            json!({
+                "origin": {"kind": "peer", "from": "local_1", "name": "peer", "body": "#scribe preferences: no", "hostInjected": true},
+                "promptSource": "system",
+                "turnOrigin": "peer",
+                "isMeta": true
+            }),
+        ),
+        (
+            "task-notification",
+            json!({
+                "origin": {"kind": "task-notification", "producer": "session-task", "runId": "r-1"},
+                "promptSource": "system",
+                "turnOrigin": "task_notification"
+            }),
+        ),
+        (
+            "host-synthetic",
+            json!({
+                "promptSource": "sdk",
+                "turnOrigin": "host_synthetic"
+            }),
+        ),
+    ] {
+        let mut payload = claude.payload("user-prompt-submit.json");
+        payload["prompt"] = json!("#scribe preferences: agent wrote this");
+        if let (Some(obj), Some(extra)) = (payload.as_object_mut(), extra.as_object()) {
+            obj.extend(extra.clone());
+        }
+        let out = hook_ok(&fx, "user-prompt-submit", &payload);
+        assert!(
+            out.stdout.is_empty(),
+            "{name} should be silent: {}",
+            text(&out.stdout)
+        );
+    }
+
+    // `hook stop` annotation cataloging accepts the human desktop transcript line
+    // and skips the three non-human desktop transcript lines.
+    let typed = "always prefer explicit dates #scribe preferences";
+    let at = now_rfc3339();
+    let make_line = |uuid: &str, text: &str, extra: Value| {
+        let mut line = json!({
+            "type": "user",
+            "uuid": uuid,
+            "sessionId": SESSION,
+            "timestamp": at,
+            "cwd": claude.cwd,
+            "entrypoint": "claude-desktop",
+            "message": {"role": "user", "content": text}
+        });
+        if let (Some(obj), Some(extra)) = (line.as_object_mut(), extra.as_object()) {
+            obj.extend(extra.clone());
+        }
+        format!("{line}\n")
+    };
+    let transcript = [
+        make_line(
+            "u-human",
+            typed,
+            json!({"origin": {"kind": "human"}, "promptSource": "sdk", "turnOrigin": "human"}),
+        ),
+        make_line(
+            "u-peer",
+            "#scribe preferences: peer",
+            json!({"origin": {"kind": "peer"}, "promptSource": "system", "turnOrigin": "peer", "isMeta": true}),
+        ),
+        make_line(
+            "u-task",
+            "#scribe preferences: task",
+            json!({"origin": {"kind": "task-notification"}, "promptSource": "system", "turnOrigin": "task_notification"}),
+        ),
+        make_line(
+            "u-synth",
+            "#scribe preferences: synth",
+            json!({"promptSource": "sdk", "turnOrigin": "host_synthetic"}),
+        ),
+    ]
+    .concat();
+    std::fs::write(&claude.transcript, transcript).unwrap();
+    let path = annotating_claude(
+        &fx,
+        &json!([{
+            "marker": 1,
+            "kind": "entry",
+            "tag": "preferences",
+            "statement": "Daniel prefers explicit dates.",
+            "subject": "dates",
+            "quote": "always prefer explicit dates",
+            "message": "u-human",
+            "reason": ""
+        }]),
+    );
+    let out = hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
+    let msg = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
+    assert!(msg.starts_with("scribe: added preferences-1"), "{msg}");
+    assert_eq!(claude_calls(&fx).len(), 1, "only u-human sent to model");
+    assert_eq!(entries(&fx).len(), 1);
+}
