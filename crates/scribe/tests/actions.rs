@@ -1448,3 +1448,140 @@ fn spoken_instruction_entry_remains_editable_for_content_and_metadata() {
     assert_eq!(tagged["topics"], json!(["communication"]));
     assert_eq!(entry(&fx, "preferences-1", &[]), tagged);
 }
+
+#[test]
+fn spoken_statement_author_survives_other_agents_and_settling_commands() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let quotes = [
+        "always keep progress updates short during long runs",
+        "summarize test failures before proposing fixes",
+    ];
+    let instruction = "please forget preferences-1 completely";
+    let now = time::OffsetDateTime::now_utc()
+        .replace_nanosecond(0)
+        .unwrap();
+    let mut transcript = String::new();
+    for (index, text) in [quotes[0], quotes[1], instruction].iter().enumerate() {
+        let at = (now - time::Duration::minutes(i64::try_from(3 - index).unwrap()))
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
+        transcript.push_str(&format!(
+            "{}\n",
+            json!({
+                "type": "user", "uuid": format!("u-{index}"), "sessionId": SESSION,
+                "timestamp": at, "cwd": claude.cwd, "entrypoint": "cli",
+                "message": {"role": "user", "content": text}
+            })
+        ));
+    }
+    std::fs::write(&claude.transcript, transcript).unwrap();
+    make_private(&claude.transcript);
+    let session = format!("session:{SESSION}");
+    for (index, quote) in quotes.iter().enumerate() {
+        fx.ok(&[
+            "entry",
+            "add",
+            "--tag",
+            "preferences",
+            "--author",
+            "opus",
+            "--project",
+            "scribe",
+            "--related",
+            &session,
+            "--quote",
+            quote,
+            "--spoken",
+            if index == 0 {
+                "Keep updates short."
+            } else {
+                "Summarize failures first."
+            },
+        ]);
+        let id = format!("preferences-{}", index + 1);
+        fx.ok(&[
+            "entry",
+            "update",
+            &id,
+            "--author",
+            "sonnet",
+            "--content",
+            if index == 0 {
+                "Keep progress updates concise."
+            } else {
+                "Summarize failures before fixes."
+            },
+        ]);
+    }
+    let check = |id: &str, status: &str| {
+        let shown = entry(&fx, id, &[]);
+        assert_eq!(shown["status"], status);
+        assert_eq!(shown["stated_by"], json!({"kind":"agent", "name":"sonnet"}));
+        let listed = json_of(&fx.ok(&[
+            "entry",
+            "list",
+            "--tag",
+            "preferences",
+            "--status",
+            status,
+            "--json",
+        ]));
+        assert_eq!(listed["warnings"], json!([]));
+        assert!(
+            listed["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["id"] == id && e["stated_by"] == shown["stated_by"])
+        );
+    };
+    for (agent, topic) in [("haiku", "communication"), ("opus", "progress")] {
+        fx.ok(&[
+            "entry",
+            "update",
+            "preferences-1",
+            "--author",
+            agent,
+            "--add-topic",
+            topic,
+        ]);
+        check("preferences-1", "active");
+    }
+    fx.ok(&[
+        "entry",
+        "retire",
+        "preferences-1",
+        "--author",
+        "delta",
+        "--reason",
+        "changed",
+    ]);
+    check("preferences-1", "retired");
+    fx.ok(&[
+        "entry",
+        "forget",
+        "preferences-1",
+        "--author",
+        "echo",
+        "--session",
+        SESSION,
+        "--instruction",
+        instruction,
+        "--confirm",
+    ]);
+    check("preferences-1", "forgotten");
+    assert_eq!(entry(&fx, "preferences-1", &[])["quote"], Value::Null);
+    assert!(
+        claude
+            .prompt(&fx, "#scribe retire preferences-2")
+            .contains("retired preferences-2")
+    );
+    check("preferences-2", "retired");
+    assert!(
+        claude
+            .prompt(&fx, "#scribe forget preferences-2")
+            .contains("forgot preferences-2")
+    );
+    check("preferences-2", "forgotten");
+}

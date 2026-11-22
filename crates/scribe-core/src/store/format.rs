@@ -1834,6 +1834,20 @@ pub(super) fn checked_entry(
     expected: &str,
     tag_dir: &str,
 ) -> Result<Entry> {
+    validate_entry(path, &entry, from, body, expected, tag_dir)?;
+    body.clone_into(&mut entry.content);
+    Ok(entry)
+}
+
+/// Validate the same entry invariants for both reads and writes.
+pub(super) fn validate_entry(
+    path: &Path,
+    entry: &Entry,
+    from: u32,
+    body: &str,
+    expected: &str,
+    tag_dir: &str,
+) -> Result<()> {
     if entry.id.to_string() != expected
         || entry.tag.as_str() != tag_dir
         || entry.id.tag() != &entry.tag
@@ -1947,7 +1961,11 @@ pub(super) fn checked_entry(
             // the assistant's words in `quote` until it is forgotten.
             let spoken_stated = entry.stated_by.as_ref().is_some_and(|by| {
                 by.kind == crate::AuthorKind::Agent
-                    && (by == &entry.author || entry.updated_by.is_some())
+                    && (by == &entry.author
+                        || entry
+                            .updated_by
+                            .as_ref()
+                            .is_some_and(|updater| updater.kind == crate::AuthorKind::Agent))
             }) && entry.evidence.is_none()
                 && match entry.status {
                     crate::EntryStatus::Forgotten => entry.quote.is_none(),
@@ -2051,8 +2069,7 @@ pub(super) fn checked_entry(
             return Err(shape(path, format!("entry {key} quote must not be empty")));
         }
     }
-    body.clone_into(&mut entry.content);
-    Ok(entry)
+    Ok(())
 }
 
 /// The frontmatter as written: `format` and `kind` first, then the

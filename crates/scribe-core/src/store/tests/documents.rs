@@ -1853,3 +1853,27 @@ fn jsonl_export_includes_pending_spooled_audit_once_and_skips_drained_spool() {
         .unwrap_err();
     assert_eq!(err.code(), "export_needs_migrate");
 }
+
+#[test]
+fn put_entry_refuses_unreadable_spoken_entry_without_writing() {
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+    let store = Store::open(&root);
+    store.migrate_store(NOW).unwrap();
+    let mut invalid = crate::tests::entry("preferences-1", T0);
+    invalid.author = Author::agent("opus".parse().unwrap());
+    invalid.content_from = ContentFrom::Agent;
+    invalid.cite = None;
+    invalid.said.clear();
+    invalid.quote = Some(String::from("short updates please"));
+    invalid.stated_by = Some(Author::agent("sonnet".parse().unwrap()));
+    invalid.updated_by = None;
+    let conn = db::open_writer(&root, store.lock_wait).unwrap();
+    let db_path = root.join("scribe.db");
+    let result = db::docs::put_entry(&conn, &db_path, &invalid, true, |e| {
+        db::db_error("write", &db_path, e)
+    });
+    assert!(matches!(result, Err(Error::Corrupt { .. })), "{result:?}");
+    let (entries, skipped) = store.load_entries().unwrap();
+    assert!(entries.is_empty() && skipped.is_empty());
+}
