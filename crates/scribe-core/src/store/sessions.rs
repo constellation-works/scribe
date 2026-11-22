@@ -35,7 +35,7 @@ use time::OffsetDateTime;
 pub const LOCKS_DIR: &str = "locks";
 
 /// What the moved-aside files directory is called: `pre-sqlite-<date>`.
-const MOVED_PREFIX: &str = "pre-sqlite-";
+pub(super) const MOVED_PREFIX: &str = "pre-sqlite-";
 
 /// Every session scribe knows, from wherever they live.
 #[derive(Debug, Default)]

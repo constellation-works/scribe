@@ -115,7 +115,7 @@ user's file could pass for one of Daniel's records.
 ├── pre-issue-<yyyy-mm-dd>/issue-<n>.md   0600, an issue file after its conversion (phase 2)
 ├── sessions/<yyyy>/<mm>/<session-id>.md 0600, one file per session record, until the move (formats 1–25)
 ├── control.json                         0600, optional; after the move only the format stamp, `{"format": 27, "sessions": {}, "codex_cursors": {}}`
-├── pre-sqlite-<yyyy-mm-dd>/             0700, the files the move took in (`sessions/`, `entries/`, the JSON documents, `audit.jsonl`, `.codex-<id>.lock`), never deleted but for a forgotten session's own files
+├── pre-sqlite-<yyyy-mm-dd>/             0700, the files the move took in (`sessions/`, `entries/`, the JSON documents, `audit.jsonl`, `.codex-<id>.lock`), kept except when a forget erases a session or an entry from them
 ├── locks/codex-<id>.lock                0600, the Codex ingestion lock of a session (phase 6)
 ├── locks/rebuild-<id>.lock              0600, the rebuild lock of a session (phase 6)
 ├── proposals.json                       0600, optional until the move (formats 1–26); after it an empty format stamp
@@ -380,8 +380,13 @@ session's `s-<n>` as its target.
   reads the memory files with the open journals laid over them.
 - **Forget and redaction.** A write that changes or deletes an entry or a
   claim row ends with a `TRUNCATE` checkpoint, so with `secure_delete` no
-  old text is left in the WAL or a free page. The files in
-  `pre-sqlite-<date>/` are the user's and are never rewritten.
+  old text is left in the WAL or a free page. Forgetting an entry also
+  deletes its moved-aside entry file from every
+  `pre-sqlite-<date>/entries*/`, drops or rewrites the matching proposals in
+  `pre-sqlite-<date>/proposals.json*` atomically (keeping every claim the
+  database keeps), and drops any `pre-sqlite-<date>/audit.jsonl*` lines
+  carrying the entry's text. Other files in `pre-sqlite-<date>/` are the
+  user's and are never rewritten.
 - **Format 27.** `FORMAT` is 27 and the upgrade registry is closed: its
   last step (`documents_sqlite`) changes no document, and later schema
   changes are SQL migrations. The steps stay so the move can read a store
@@ -1253,7 +1258,10 @@ exits 0.
   `#scribe forget` (`consistency::forget`) under the lock, writing
   `proposals.json` first and then the entry, sets `updated_by` to the agent
   and `removal_instruction` to the instruction's `session`, `message` and
-  `at` with `quote: null`; no file is removed, and an entry already forgotten writes
+  `at` with `quote: null`; no database entry row is removed (while its
+  moved-aside entry file under `pre-sqlite-<date>/` is deleted, matching
+  proposals in `proposals.json*` are rewritten or dropped, and audit lines
+  carrying its text are dropped), and an entry already forgotten writes
   nothing. `proposal settle --session --instruction` (2_design.md §12.3) settles
   an open candidate under the lock (every instructed write first refuses
   `instruction_not_found`, before writing anything, an instruction whose

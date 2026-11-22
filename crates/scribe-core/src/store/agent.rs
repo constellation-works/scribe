@@ -559,8 +559,9 @@ impl Store {
                 quote: None,
             });
             // The cited turns' stored messages go first: they hold the words
-            // the forget removes, and deleting them again is a no-op.
-            self.forget_cited_messages(&target, &before)?;
+            // the forget removes, and deleting them again is a no-op; moved
+            // `pre-sqlite-*` copies follow the commit.
+            self.forget_entry_residue(&target, &before)?;
             if proposals != before {
                 self.write_proposals(&proposals)?;
             }

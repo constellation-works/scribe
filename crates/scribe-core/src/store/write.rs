@@ -17,15 +17,16 @@
 //!   into the database in its own transaction ([`Store::import_at_write`]),
 //!   checking the row count of each kind. A write that refuses rolls the
 //!   move back with it. After the commit the files go to
-//!   `pre-sqlite-<date>/`, which scribe never deletes, and each JSON
+//!   `pre-sqlite-<date>/`, which scribe never deletes except for a forgotten
+//!   session's or entry's own records, and each JSON
 //!   document a format-26 build reads is left as an empty stamp at the
 //!   current format, so that build refuses the store instead of writing
 //!   files beside the database (STD-03 R10).
 //! - **After the commit.** File work that must follow the commit runs
 //!   there: moving files aside, the memory journal's files (§15.6), issue
-//!   files moved aside, spooled audit lines removed, and the WAL emptied
-//!   after a forget. A crash before it leaves work the next write finds
-//!   and finishes.
+//!   files moved aside, spooled audit lines removed, the WAL emptied
+//!   after a forget, and moved-aside files cleaned for a forgotten entry.
+//!   A crash before it leaves work the next write finds and finishes.
 //! - **Audit lines that cannot wait.** A line written outside a write's
 //!   transaction is inserted without waiting. When another writer holds the
 //!   database, or the store is still files, it is spooled to one file of
@@ -51,6 +52,14 @@ pub(super) type Spooled = (String, u32, AuditEvent);
 /// Spooled audit lines, one file each, under the root.
 pub(super) const AUDIT_SPOOL_DIR: &str = "audit-spool";
 
+/// A forgotten entry whose set-aside files under `pre-sqlite-*` must be
+/// cleaned after the transaction commits.
+#[derive(Debug)]
+pub(super) struct ForgetEntryCleanup {
+    pub(super) id: crate::EntryId,
+    pub(super) texts: Vec<String>,
+}
+
 /// What a write leaves to do once it commits.
 #[derive(Debug, Default)]
 pub(super) struct After {
@@ -64,6 +73,8 @@ pub(super) struct After {
     pub(super) stamp: bool,
     /// Spool files drained into the table.
     pub(super) spooled: Vec<PathBuf>,
+    /// Forgotten entries to erase from `pre-sqlite-*` after WAL truncation.
+    pub(super) forget_entries: Vec<ForgetEntryCleanup>,
 }
 
 /// Which move a write makes: its own, or `store migrate`'s.
@@ -329,6 +340,9 @@ impl Store {
             let path = self.root.join(DB_FILE);
             let conn = db::open_new_writer(&self.root, self.lock_wait)?;
             db::truncate_wal(&conn, &path, std::time::Instant::now())?;
+        }
+        for forgotten in &after.forget_entries {
+            self.forget_moved_entry(&forgotten.id, &forgotten.texts)?;
         }
         Ok(())
     }

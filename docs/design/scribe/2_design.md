@@ -5968,9 +5968,11 @@ so no kind is ever unreadable outside the binary.
 - `scribe store migrate` reads a format-22 (or older) file store with
   today's decoders and writes `scribe.db` in one transaction. It checks the
   row count per kind against the files, then moves the old files to
-  `~/.scribe/pre-sqlite-<date>/`. They are kept, never deleted by scribe.
-  Finder metadata files (`.DS_Store` and `._*`) are ignored by the import
-  and retained with the legacy files; they are never read as records.
+  `~/.scribe/pre-sqlite-<date>/`. They are kept, never deleted by scribe
+  except when `#scribe forget` or `entry forget` erases a session or entry
+  from them. Finder metadata files (`.DS_Store` and `._*`) are ignored by
+  the import and retained with the legacy files; they are never read as
+  records.
 - It is refused while any session is switched on, and while any rebuild
   checkpoint `.<id>.rebuild.md` exists: the user resumes the rebuild
   (`session rebuild`) or discards it first, so no partial record is
