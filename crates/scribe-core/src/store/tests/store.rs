@@ -1383,4 +1383,27 @@ mod marks {
         let again = record(&store, vec![(key(1), MarkChange::Failed)]);
         assert!(matches!(again[0], MarkResult::Already(_)));
     }
+
+    #[test]
+    fn record_marks_refuses_handoff_drafts_without_persisting_an_entry() {
+        let dir = private_tempdir();
+        let store = Store::open(dir.path().join("root"));
+        let mut draft = annotation(1, "The user asked for a handoff.");
+        draft.tag = "handoff".parse().unwrap();
+        let results = record(&store, vec![(key(1), MarkChange::Write(Box::new(draft)))]);
+        assert_eq!(results[0], MarkResult::Refused("unknown_tag"));
+        assert!(
+            store
+                .list_entries(&Default::default())
+                .unwrap()
+                .listing
+                .items
+                .is_empty(),
+            "handoff draft must not persist an entry"
+        );
+        let marks = store.marks(&"s-9".parse().unwrap()).unwrap();
+        assert_eq!(marks.len(), 1);
+        assert_eq!(marks[0].outcome, MarkState::Refused);
+        assert_eq!(marks[0].code.as_deref(), Some("unknown_tag"));
+    }
 }

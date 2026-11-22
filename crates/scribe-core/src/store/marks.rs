@@ -164,7 +164,13 @@ impl Store {
                     MarkChange::Write(draft) => {
                         let spent = attempts.saturating_add(1);
                         let quote = draft.quote.clone().unwrap_or_default();
-                        if let Some(found) = entries
+                        if draft.tag.as_str() == crate::handoff::HANDOFF_TAG {
+                            let code = crate::annotation::CheckRefusal::WrongTag.code();
+                            (
+                                record(MarkState::Refused, None, Some(code), spent),
+                                MarkResult::Refused(code),
+                            )
+                        } else if let Some(found) = entries
                             .iter()
                             .find(|e| written_before(e, &draft.cite, &redactor.mask(&quote)))
                         {
