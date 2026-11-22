@@ -448,6 +448,9 @@ the message lists up to ten candidates, sorted, and how many more), `user_only`,
 `session_forgotten` (a record write to a forgotten session, or switching it
 on), `handoff_shape` and `handoff_too_long` (a `handoff` entry whose body
 violates the six fixed headings in order or exceeds 3,000 characters),
+`handoff_session` (a `handoff` entry with an invalid or multiple distinct
+`session:` references, or an `entry update` that adds, removes or replaces
+a handoff's `session:` reference),
 `not_memory_tag` (`entry add --spoken` on an action tag, `handoff`, or a
 `require_evidence` tag), `needs_redaction` (a spoken-instruction `--quote`
 or annotation quote containing text redaction would alter), `not_agent_note`

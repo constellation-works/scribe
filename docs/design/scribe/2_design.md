@@ -6323,13 +6323,20 @@ session.
   marker capture excludes it from `annotation::request` and refuses it in
   `annotation::check` and `Store::record_marks` (`unknown_tag`), so a
   `#scribe` marker can never create a user-authored or unvalidated handoff.
-- **Quote check.** Because `handoff` ships with `require_quote`, the store
-  refuses an entry with no `--quote` or no `--related session:<id>`
-  (`quote_required`), and the CLI refuses a quote that is not a verbatim
-  span (at least `verbatim::MIN_QUOTE_CHARS` = 8 characters after
-  normalization) of one of the user's typed turns in that session's
-  transcript (`quote_not_found`). Assistant turns, pasted blocks and
-  synthetic harness lines do not count.
+- **Quote and session-reference checks.** Because `handoff` ships with
+  `require_quote`, the store refuses an entry with no `--quote` or no
+  `--related session:<id>` (`quote_required`). A handoff belongs to
+  exactly one distinct valid `session:<id>` reference: passing multiple
+  distinct `session:` references or an invalid session id on `entry add` is
+  refused (`handoff_session`), `verify_quote` checks every `session:`
+  reference of a handoff against its transcript (refusing a quote that is
+  not a verbatim span of at least `verbatim::MIN_QUOTE_CHARS` = 8
+  characters after normalization of one of the user's typed turns in that
+  session's transcript, `quote_not_found`; assistant turns, pasted blocks
+  and synthetic harness lines do not count), and `entry update` refuses
+  adding, removing or replacing a handoff's `session:` reference
+  (`handoff_session`) while still allowing edits to body, topics and
+  non-session `related` references (`task:`, `pr:`, `repo:`).
 - **Works in off sessions.** `verify_quote` locates the transcript on disk
   without requiring a session record or a `control.json` switch, and
   `add_agent_entry` writes only the entry (and its audit line). Writing a

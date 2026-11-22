@@ -77,7 +77,7 @@ pub use entry::{
     WindowTurn,
 };
 pub use error::{Error, Result, WriteRefusal};
-pub use handoff::{HANDOFF_TAG, HandoffError};
+pub use handoff::{HANDOFF_TAG, HandoffError, HandoffSessionError};
 pub use models::Models;
 pub use proposal::{
     Admitted, CONTEXT_CHARS, CONTEXT_SENTENCES, ClosedReason, EntryCandidate, Proposal,
@@ -102,8 +102,8 @@ pub use store::{
     NEEDS_REDACTION, NOW_DIR, PROFILE_FILE, PROPOSALS_FILE, PassMemory, PassWrite, PassWritten,
     ProfileInputs, ProfileRevision, REDACTED_FIELDS, RebuildGuard, Redactor, RefreshWritten,
     SESSIONS_DIR, SessionForget, SessionList, SessionView, Skipped, Store, TagList,
-    check_agent_author, check_content, check_description, check_reason, init_project,
-    integration_hooks, resolve_prefix, unresolved_redact_env,
+    check_agent_author, check_content, check_description, check_handoff_related, check_reason,
+    init_project, integration_hooks, resolve_prefix, unresolved_redact_env,
 };
 pub use tag::{
     ActionTag, CAPTURE_TEXT_CHARS, CaptureFrom, CaptureRoute, CaptureRules, FINDING_TAG,

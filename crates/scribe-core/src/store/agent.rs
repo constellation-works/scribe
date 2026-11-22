@@ -167,6 +167,52 @@ fn check_handoff(tag: &TagName, content: &str) -> Result<()> {
     })
 }
 
+/// Refuse a new `handoff` entry whose `related` references do not name
+/// exactly one distinct valid `session:<id>` (2_design.md §16.1).
+///
+/// # Errors
+///
+/// [`WriteRefusal::QuoteRequired`] when no `session:` reference is present, or
+/// [`WriteRefusal::HandoffSession`] when a `session:` target is invalid or
+/// more than one distinct session is named.
+pub fn check_handoff_related(tag: &TagName, related: &[crate::Related]) -> Result<()> {
+    if tag.as_str() != crate::handoff::HANDOFF_TAG {
+        return Ok(());
+    }
+    crate::handoff::check_related(related)
+        .map(|_| ())
+        .map_err(|err| {
+            let kind = match err {
+                crate::HandoffSessionError::Missing => WriteRefusal::QuoteRequired,
+                crate::HandoffSessionError::Invalid { .. }
+                | crate::HandoffSessionError::Multiple { .. } => WriteRefusal::HandoffSession,
+            };
+            refusal(kind, err.to_string())
+        })
+}
+
+/// Refuse an `entry update` patch that would add, remove, or replace a
+/// `handoff` entry's `session:` reference, which would attach the handoff to
+/// an unverified session or orphan it (2_design.md §16.1).
+fn check_handoff_related_update(
+    entry: &Entry,
+    add_related: &[crate::Related],
+    remove_related: &[crate::Related],
+) -> Result<()> {
+    if entry.tag.as_str() != crate::handoff::HANDOFF_TAG {
+        return Ok(());
+    }
+    let mut patched = entry.related.clone();
+    patch(&mut patched, add_related, remove_related);
+    if crate::handoff::session_refs_changed(&entry.related, &patched) {
+        return Err(refusal(
+            WriteRefusal::HandoffSession,
+            "a handoff's session reference cannot be added, removed or replaced; retire this handoff and add a new one for the target session instead",
+        ));
+    }
+    Ok(())
+}
+
 /// An evidence pointer belongs on a `require_evidence` (finding) entry,
 /// and such a tag gets one: a result with nothing to check it against is
 /// just an agent's memory of itself.
@@ -395,6 +441,7 @@ impl Store {
         if let Some(content) = &patching.content {
             check_handoff(&entry.tag, content)?;
         }
+        check_handoff_related_update(&entry, &patching.add_related, &patching.remove_related)?;
         let mut topics = entry.topics.as_slice().to_vec();
         patch(&mut topics, &patching.add_topics, &patching.remove_topics);
         Topics::try_from(topics)
@@ -438,14 +485,7 @@ impl Store {
             }
         } else {
             check_quote(tag, draft.quote.as_deref())?;
-            if tag.name.as_str() == crate::handoff::HANDOFF_TAG
-                && draft_session(&draft.related).is_none()
-            {
-                return Err(refusal(
-                    WriteRefusal::QuoteRequired,
-                    "handoff requires the session it belongs to: pass --related session:<id>",
-                ));
-            }
+            check_handoff_related(&tag.name, &draft.related)?;
         }
         check_evidence(tag, draft.evidence.as_deref())?;
         check_handoff(&tag.name, &draft.content)?;
@@ -576,6 +616,7 @@ impl Store {
             patch(&mut topics, &patching.add_topics, &patching.remove_topics);
             entry.topics = Topics::try_from(topics)
                 .map_err(|e| refusal(WriteRefusal::InvalidTopics, e.to_string()))?;
+            check_handoff_related_update(&entry, &patching.add_related, &patching.remove_related)?;
             patch(
                 &mut entry.related,
                 &patching.add_related,

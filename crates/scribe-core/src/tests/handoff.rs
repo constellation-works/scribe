@@ -3,8 +3,8 @@
 
 use super::{T0, entry};
 use crate::entry::EntryStatus;
-use crate::handoff::{self, HandoffError, MAX_CHARS};
-use crate::record::Author;
+use crate::handoff::{self, HandoffError, HandoffSessionError, MAX_CHARS};
+use crate::record::{Author, Related};
 use time::Duration;
 
 fn valid_body() -> String {
@@ -155,4 +155,65 @@ fn for_session_returns_only_active_handoffs_for_that_session_newest_first() {
     let found = handoff::for_session(&entries, &s1);
     let ids: Vec<String> = found.iter().map(|e| e.id.to_string()).collect();
     assert_eq!(ids, ["handoff-2", "handoff-1"]);
+}
+
+#[test]
+fn check_related_requires_exactly_one_valid_session_ref() {
+    let rel = |s: &str| -> Related { s.parse().unwrap() };
+
+    assert_eq!(
+        handoff::check_related(&[]).unwrap_err(),
+        HandoffSessionError::Missing
+    );
+    assert_eq!(
+        handoff::check_related(&[rel("task:ORB-1")]).unwrap_err(),
+        HandoffSessionError::Missing
+    );
+    assert!(matches!(
+        handoff::check_related(&[rel("session:../bad")]).unwrap_err(),
+        HandoffSessionError::Invalid { ref reference, .. } if reference == "session:../bad"
+    ));
+    assert!(matches!(
+        handoff::check_related(&[rel("session:s-1"), rel("session:../bad")]).unwrap_err(),
+        HandoffSessionError::Invalid { ref reference, .. } if reference == "session:../bad"
+    ));
+    assert_eq!(
+        handoff::check_related(&[rel("session:s-1"), rel("session:s-2")]).unwrap_err(),
+        HandoffSessionError::Multiple { count: 2 }
+    );
+
+    // Single valid session (even repeated or alongside non-session references) succeeds.
+    assert_eq!(
+        handoff::check_related(&[rel("session:s-1"), rel("task:ORB-1")])
+            .unwrap()
+            .as_str(),
+        "s-1"
+    );
+    assert_eq!(
+        handoff::check_related(&[rel("session:s-1"), rel("session:s-1")])
+            .unwrap()
+            .as_str(),
+        "s-1"
+    );
+}
+
+#[test]
+fn session_refs_changed_detects_any_session_ref_addition_removal_or_swap() {
+    let rel = |s: &str| -> Related { s.parse().unwrap() };
+    let base = [rel("session:s-1"), rel("task:ORB-1")];
+
+    assert!(!handoff::session_refs_changed(
+        &base,
+        &[rel("session:s-1"), rel("repo:scribe")]
+    ));
+    assert!(!handoff::session_refs_changed(&base, &[rel("session:s-1")]));
+    assert!(handoff::session_refs_changed(&base, &[rel("task:ORB-1")]));
+    assert!(handoff::session_refs_changed(
+        &base,
+        &[rel("session:s-1"), rel("session:s-2")]
+    ));
+    assert!(handoff::session_refs_changed(
+        &base,
+        &[rel("session:s-2"), rel("task:ORB-1")]
+    ));
 }
