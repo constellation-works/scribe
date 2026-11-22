@@ -308,6 +308,8 @@ pub(crate) fn preview(out: &mut dyn Write, record: &Record) -> io::Result<()> {
         | Record::MemoryBlock(_)
         | Record::MemoryRevision(_)
         | Record::MemoryRefresh(_)
+        | Record::StoreMigrate(_)
+        | Record::Export(_)
         | Record::MemoryRules(_)
         | Record::Brief(_) => Ok(()),
     }

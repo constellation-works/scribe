@@ -24,6 +24,13 @@ fn event(command: &str) -> AuditEvent {
     }
 }
 
+/// A session record as stored, in the file format, so a test can tell a
+/// write changed nothing.
+fn stored(store: &Store, id: &crate::session::SessionId) -> Vec<u8> {
+    let record = store.session(id).unwrap().record;
+    crate::store::format::encode_session(Path::new("record"), &record).unwrap()
+}
+
 /// Write `text` at `rel` under `root`, creating owner-only directories.
 fn put(root: &Path, rel: &str, text: &str) {
     let path = root.join(rel);
@@ -466,7 +473,11 @@ fn settle_pass_writes_the_record_and_clears_due_in_one_call() {
         .unwrap()
         .unwrap();
     assert_eq!(written.summary, "the token is [redacted:TOKEN] here");
-    assert!(root.join("sessions/2026/11/s-1.md").is_file());
+    assert!(root.join("scribe.db").is_file());
+    assert!(
+        !root.join("sessions").exists(),
+        "a record is a row, not a file"
+    );
     let view = store.session(&s).unwrap();
     assert_eq!(view.record, written);
     assert!(!view.control.unwrap().due);
@@ -563,7 +574,7 @@ fn a_link_is_kept_on_the_switch_until_the_first_record_then_on_the_record() {
     assert_eq!(written.links, vec![spawned, continues]);
 
     // A refused link writes nothing.
-    let before = fs::read(root.join("control.json")).unwrap();
+    let before = (store.control().unwrap(), stored(&store, &child));
     let cycle = SessionLink {
         kind: LinkType::Continues,
         session: child.clone(),
@@ -572,7 +583,7 @@ fn a_link_is_kept_on_the_switch_until_the_first_record_then_on_the_record() {
         .link_session(&parent, &cycle, false, later)
         .unwrap_err();
     assert_eq!(err.code(), "link_cycle");
-    assert_eq!(fs::read(root.join("control.json")).unwrap(), before);
+    assert_eq!((store.control().unwrap(), stored(&store, &child)), before);
 }
 
 #[test]
@@ -589,8 +600,7 @@ fn ordinary_writes_refuse_any_change_to_a_sealed_segment() {
         .settle_pass(&id, Some(record), false, None, &redactor)
         .unwrap()
         .unwrap();
-    let path = store.session_path(&original);
-    let before = fs::read(&path).unwrap();
+    let before = stored(&store, &id);
     let mut variants = Vec::new();
     let mut changed = original.clone();
     changed.log[0].text.push_str(" edited");
@@ -622,7 +632,7 @@ fn ordinary_writes_refuse_any_change_to_a_sealed_segment() {
                 .code(),
             "sealed_segment_changed"
         );
-        assert_eq!(fs::read(&path).unwrap(), before);
+        assert_eq!(stored(&store, &id), before);
     }
     let mut changed = original.clone();
     changed.summary = String::from("Updated header");
@@ -655,7 +665,6 @@ fn set_active_writes_only_the_activity_fields_and_only_on_a_change() {
             &none,
         )
         .unwrap();
-    let path = root.join("sessions/2026/11/s-1.md");
     let before = store.session(&s).unwrap().record;
 
     let redactor =
@@ -681,10 +690,10 @@ fn set_active_writes_only_the_activity_fields_and_only_on_a_change() {
     expected.active_change.clone_from(&record.active_change);
     assert_eq!(on_disk, expected, "nothing else changes, updated included");
 
-    let bytes = fs::read(&path).unwrap();
+    let bytes = stored(&store, &s);
     let (_, again) = store.set_active(&s, &off, later, &redactor).unwrap();
     assert_eq!(again, ActiveOutcome::Unchanged);
-    assert_eq!(fs::read(&path).unwrap(), bytes, "a repeat writes nothing");
+    assert_eq!(stored(&store, &s), bytes, "a repeat writes nothing");
 
     let err = store
         .set_active(&"s-2".parse().unwrap(), &off, later, &redactor)
@@ -703,7 +712,7 @@ fn set_active_many_isolates_a_corrupt_record_and_continues() {
     let store = Store::open(&root);
     let now = time::macros::datetime!(2026-11-10 10:00 UTC);
     let redactor = crate::store::Redactor::new([]);
-    for id in ["s-1", "s-3"] {
+    for id in ["s-1", "s-2", "s-3"] {
         let id: SessionId = id.parse().unwrap();
         store
             .settle_pass(
@@ -715,7 +724,12 @@ fn set_active_many_isolates_a_corrupt_record_and_continues() {
             )
             .unwrap();
     }
-    put(&root, "sessions/2026/11/s-2.md", "not a session record");
+    // A row that no longer decodes: its project is not a label.
+    crate::store::db::execute(
+        &root,
+        "UPDATE sessions SET project = '' WHERE provider_session = 's-2'",
+    )
+    .unwrap();
 
     let change = SetActive::Deactivate {
         by: Author::consistency(),
@@ -784,8 +798,7 @@ fn a_pass_write_refuses_when_the_record_changed_since_it_was_loaded() {
         .finish_rebuild(rebuilt, stale.updated, &redactor)
         .unwrap()
         .unwrap();
-    let path = store.session_path(&rebuilt);
-    let rebuilt_bytes = fs::read(&path).unwrap();
+    let rebuilt_bytes = stored(&store, &id);
     store
         .update_control(|state| control::fail(state, &id, t0))
         .unwrap();
@@ -808,7 +821,7 @@ fn a_pass_write_refuses_when_the_record_changed_since_it_was_loaded() {
             .code(),
         "record_changed"
     );
-    assert_eq!(fs::read(&path).unwrap(), rebuilt_bytes);
+    assert_eq!(stored(&store, &id), rebuilt_bytes);
     assert!(
         store.control().unwrap().get(&id).unwrap().due,
         "a refused settle keeps the session due"

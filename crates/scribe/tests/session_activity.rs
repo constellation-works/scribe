@@ -12,7 +12,6 @@
 mod support;
 
 use serde_json::Value;
-use std::path::PathBuf;
 use support::{Fixture, text};
 
 const SESSION: &str = "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02";
@@ -49,8 +48,11 @@ fn audit(fx: &Fixture) -> Vec<Value> {
         .collect()
 }
 
-fn record_path(fx: &Fixture) -> PathBuf {
-    fx.root().join(format!("sessions/2026/11/{SESSION}.md"))
+/// The record as its file reads (`scribe export`).
+fn record_bytes(fx: &Fixture) -> Vec<u8> {
+    support::record_text(&fx.root(), SESSION)
+        .expect("the record")
+        .into_bytes()
 }
 
 #[test]
@@ -107,7 +109,7 @@ fn deactivate_hides_the_session_records_why_and_audits_once() {
     );
 
     // A repeat: the record unchanged, `nothing changed`, no audit line.
-    let bytes = std::fs::read(record_path(&fx)).unwrap();
+    let bytes = record_bytes(&fx);
     let out = ok(
         &fx,
         &[
@@ -126,7 +128,7 @@ fn deactivate_hides_the_session_records_why_and_audits_once() {
         text(&out.stderr)
     );
     assert!(!out.stdout.is_empty(), "the record is still printed");
-    assert_eq!(std::fs::read(record_path(&fx)).unwrap(), bytes);
+    assert_eq!(record_bytes(&fx), bytes);
     assert_eq!(audit(&fx).len(), 1, "a repeat writes no audit line");
 }
 
@@ -196,7 +198,7 @@ fn activate_pins_and_a_pinned_session_deactivated_by_hand_is_unpinned() {
 fn bad_arguments_are_usage_errors_and_an_unknown_session_is_not_found() {
     let fx = Fixture::new();
     fx.seed();
-    let bytes = std::fs::read(record_path(&fx)).unwrap();
+    let bytes = record_bytes(&fx);
     let segment = format!("session:{SESSION}#1");
     let long = "x".repeat(301);
     for args in [
@@ -266,7 +268,7 @@ fn bad_arguments_are_usage_errors_and_an_unknown_session_is_not_found() {
         );
         assert_eq!(json(&out.stderr)["code"], "usage_error", "{args:?}");
     }
-    assert_eq!(std::fs::read(record_path(&fx)).unwrap(), bytes);
+    assert_eq!(record_bytes(&fx), bytes);
 
     let out = run(
         &fx,

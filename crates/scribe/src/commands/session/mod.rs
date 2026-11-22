@@ -294,6 +294,7 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
             found.control.get(&r.id),
             Kin::of(&r.id, &found.children, &found.titles),
         )
+        .with_number(found.numbers.get(&r.id).copied())
     };
     let items = &found.listing.items;
     let active_column = args.include_inactive;
@@ -352,7 +353,8 @@ fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
             children: &view.children,
             titles: &view.linked_titles,
         },
-    );
+    )
+    .with_number(view.number);
     let mut payload = match segment {
         Some(n) => {
             let one = record

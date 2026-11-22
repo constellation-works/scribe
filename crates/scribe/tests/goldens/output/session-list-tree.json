@@ -2,6 +2,7 @@
   "sessions": [
     {
       "id": "0f8e7a52-3c1d-4b6e-9a2f-5d4c3b2a1e01",
+      "short_id": "s-1",
       "status": "final",
       "project": "constellation-works/scribe",
       "topics": [
@@ -44,6 +45,7 @@
     },
     {
       "id": "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02",
+      "short_id": "s-3",
       "status": "open",
       "project": "constellation-works/scribe",
       "topics": [

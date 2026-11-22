@@ -979,28 +979,26 @@ impl Setup {
     }
 
     fn control(&self) -> Value {
-        let text = std::fs::read_to_string(self.fx.root().join("control.json")).unwrap();
-        serde_json::from_str::<Value>(&text).unwrap()["sessions"][ON].clone()
+        support::control(&self.fx.root())["sessions"][ON].clone()
     }
 
     fn expire_retry(&self) {
-        let file = self.fx.root().join("control.json");
-        let mut state: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
-        state["sessions"][ON]["retry_after"] = json!("2026-01-01T00:00:00Z");
-        std::fs::write(&file, state.to_string()).unwrap();
+        support::set_switch(&self.fx.root(), ON, "retry_after", "'2026-01-01T00:00:00Z'");
     }
 
+    /// The switches and cursors, serialized: equal bytes mean no change.
     fn control_bytes(&self) -> Vec<u8> {
-        std::fs::read(self.fx.root().join("control.json")).unwrap()
+        support::control(&self.fx.root()).to_string().into_bytes()
+    }
+
+    /// The `ON` record as its file read (`scribe export`).
+    fn record_text(&self) -> String {
+        support::record_text(&self.fx.root(), ON).expect("the ON record")
     }
 
     fn record(&self, session: &str) -> Option<Value> {
         let out = self.fx.run(&["session", "show", session, "--json"]);
         (out.status.code() == Some(0)).then(|| serde_json::from_slice(&out.stdout).unwrap())
-    }
-
-    fn record_file(&self) -> PathBuf {
-        self.fx.root().join(format!("sessions/2026/11/{ON}.md"))
     }
 
     fn audit_lines(&self) -> usize {
@@ -1491,11 +1489,7 @@ fn segment_text_repairs_keep_new_segments_and_redact_before_writing() {
     assert_eq!(record["log"][1]["first_message"], "u-2");
     assert_eq!(record["log"][2]["text"], "Keep third.");
     assert_eq!(record["log"][2]["state"], "open");
-    assert!(
-        !std::fs::read_to_string(setup.record_file())
-            .unwrap()
-            .contains("sensitive-value-123")
-    );
+    assert!(!setup.record_text().contains("sensitive-value-123"));
 }
 
 #[test]
@@ -1590,7 +1584,7 @@ fn header_length_retries_cover_every_prose_field_and_recheck_the_result() {
         let setup = Setup::new();
         setup.scribe("/scribe on");
         setup.pass();
-        let before = std::fs::read(setup.record_file()).unwrap();
+        let before = setup.record_text().into_bytes();
         setup.append(ON, &[line("user", "u-2", "A new turn.")]);
         setup.hook("session-end", &setup.payload("SessionEnd"));
         let mut over = answer();
@@ -1620,7 +1614,7 @@ fn header_length_retries_cover_every_prose_field_and_recheck_the_result() {
         assert!(error.contains("Summary has 1201 characters"), "{error}");
         assert!(error.contains(reason), "{error}");
         assert_eq!(setup.prompts().len(), 3, "only one retry");
-        assert_eq!(std::fs::read(setup.record_file()).unwrap(), before);
+        assert_eq!(setup.record_text().into_bytes(), before);
         assert_eq!(setup.control()["due"], true);
     }
 }
@@ -1864,18 +1858,25 @@ fn legacy_control_is_read_without_writes_and_new_retry_state_is_strict() {
     );
     setup.pass();
     let current: Value = serde_json::from_slice(&setup.control_bytes()).unwrap();
-    assert_eq!(current["format"], 25);
+    assert_eq!(current["format"], 26);
     assert_eq!(current["sessions"][ON]["consecutive_failures"], 0);
     assert_eq!(current["sessions"][ON]["retry_after"], Value::Null);
     assert_eq!(current["sessions"][ON]["pending_links"], json!([]));
+    // A current-format file that has not moved into `scribe.db` yet is read
+    // strictly; once moved, the table's CHECKs hold these fields.
     for missing in ["consecutive_failures", "retry_after", "pending_links"] {
+        let fresh = Setup::new();
+        fresh.config("");
         let mut broken = current.clone();
+        broken["format"] = json!(25);
         broken["sessions"][ON]
             .as_object_mut()
             .unwrap()
             .remove(missing);
+        let file = fresh.fx.root().join("control.json");
         std::fs::write(&file, broken.to_string()).unwrap();
-        let out = setup.run_any(&["session", "list", "--json"], b"");
+        make_private(&file);
+        let out = fresh.run_any(&["session", "list", "--json"], b"");
         assert_eq!(out.status.code(), Some(1), "{missing}");
         let error: Value = serde_json::from_slice(&out.stderr).unwrap();
         assert_eq!(error["code"], "store_corrupt");
@@ -1887,7 +1888,7 @@ fn scribe_on_off_and_status_switch_the_session_and_block_the_prompt() {
     let setup = Setup::new();
     let reason = setup.scribe("/scribe status");
     assert!(reason.contains("never switched on"), "{reason}");
-    assert!(!setup.fx.root().join("control.json").exists());
+    assert!(!support::has_control(&setup.fx.root()));
 
     let reason = setup.scribe("/scribe on");
     assert!(reason.starts_with("scribe: on"), "{reason}");
@@ -1939,7 +1940,7 @@ fn a_failed_session_catalog_writes_one_failure_audit_line() {
     let out = setup.run_any(&["session", "catalog", NEVER, "--author", "opus"], b"");
     assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
     // The switch was written and stays due, yet the command is one outcome.
-    assert!(setup.fx.root().join("control.json").exists());
+    assert!(support::has_control(&setup.fx.root()));
     let audit = audit_log(&setup);
     assert_eq!(audit.len(), 1, "{audit:?}");
     assert_eq!(audit[0]["command"], "session catalog");
@@ -1967,7 +1968,7 @@ fn scribe_catalog_in_a_typed_prompt_catalogs_a_past_session_as_daniel() {
         reason.starts_with("scribe: /scribe catalog 0a1b2c3d-0000-4000-8000-00000000dead refused"),
         "{reason}"
     );
-    assert!(!setup.fx.root().join("control.json").exists());
+    assert!(!support::has_control(&setup.fx.root()));
 
     // Typed by Daniel in another session: the switch is written as his,
     // and no window runs in the hook.
@@ -1976,8 +1977,7 @@ fn scribe_catalog_in_a_typed_prompt_catalogs_a_past_session_as_daniel() {
         reason.starts_with(&format!("scribe: cataloging {NEVER} as yours")),
         "{reason}"
     );
-    let text = std::fs::read_to_string(setup.fx.root().join("control.json")).unwrap();
-    let switch = serde_json::from_str::<Value>(&text).unwrap()["sessions"][NEVER].clone();
+    let switch = support::control(&setup.fx.root())["sessions"][NEVER].clone();
     assert_eq!(switch["on"], true);
     assert_eq!(switch["due"], true);
     assert_eq!(switch["cataloged_by"]["by"]["kind"], "user");
@@ -2000,8 +2000,7 @@ fn scribe_catalog_in_a_typed_prompt_catalogs_a_past_session_as_daniel() {
     let record = setup.record(NEVER).unwrap();
     assert_eq!(record["status"], "final", "{record}");
     assert_eq!(record["cataloged_by"]["by"]["kind"], "user", "{record}");
-    let text = std::fs::read_to_string(setup.fx.root().join("control.json")).unwrap();
-    let switch = serde_json::from_str::<Value>(&text).unwrap()["sessions"][NEVER].clone();
+    let switch = support::control(&setup.fx.root())["sessions"][NEVER].clone();
     assert_eq!(switch["on"], false);
 }
 
@@ -2102,7 +2101,7 @@ fn a_pass_writes_one_record_of_daniels_terms_and_never_reads_a_session_never_swi
     setup.hook("stop", &never);
     never["hook_event_name"] = json!("SessionEnd");
     setup.hook("session-end", &never);
-    assert!(!setup.fx.root().join("control.json").exists());
+    assert!(!support::has_control(&setup.fx.root()));
 
     setup.scribe("/scribe on");
     let report = setup.pass();
@@ -2122,8 +2121,8 @@ fn a_pass_writes_one_record_of_daniels_terms_and_never_reads_a_session_never_swi
     assert!(!setup.fx.root().join("entries").exists(), "no entries");
     // The record is written at format 23: a header and one open segment
     // holding this pass's segment text.
-    let file = std::fs::read_to_string(setup.record_file()).unwrap();
-    assert!(file.starts_with("---\nformat: 25\n"), "{file}");
+    let file = setup.record_text();
+    assert!(file.starts_with("---\nformat: 26\n"), "{file}");
     assert!(file.contains("\n## Log\n### 1. "), "{file}");
     assert!(!file.contains("## Outcome"), "{file}");
     assert_eq!(record["active"], true);
@@ -2143,7 +2142,7 @@ fn a_pass_writes_one_record_of_daniels_terms_and_never_reads_a_session_never_swi
     );
 
     // An invalid answer keeps the previous record and leaves the pass due.
-    let before = std::fs::read(setup.record_file()).unwrap();
+    let before = setup.record_text().into_bytes();
     setup.append(ON, &[line("user", "u-2", "More on levels.")]);
     setup.scribe("/scribe off");
     setup.scribe("/scribe on");
@@ -2155,7 +2154,7 @@ fn a_pass_writes_one_record_of_daniels_terms_and_never_reads_a_session_never_swi
     let report: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(report["passes"][0]["result"], "failed");
     assert_eq!(report["passes"][0]["error_code"], "session_answer_invalid");
-    assert_eq!(std::fs::read(setup.record_file()).unwrap(), before);
+    assert_eq!(setup.record_text().into_bytes(), before);
     assert_eq!(setup.control()["due"], true);
 }
 
@@ -2393,8 +2392,7 @@ impl Setup {
     }
 
     fn switch_of(&self, session: &str) -> Value {
-        let text = std::fs::read_to_string(self.fx.root().join("control.json")).unwrap();
-        serde_json::from_str::<Value>(&text).unwrap()["sessions"][session].clone()
+        support::control(&self.fx.root())["sessions"][session].clone()
     }
 }
 
@@ -2545,27 +2543,6 @@ fn a_pass_refuses_when_the_record_changed_since_it_was_loaded() {
     let setup = Setup::new();
     setup.scribe("/scribe on");
     setup.pass();
-    // A rebuilt record, as `finish_rebuild` would publish it: same record
-    // with a new `updated` revision and a rebuilt summary.
-    let original = std::fs::read_to_string(setup.record_file()).unwrap();
-    let rebuilt_text: String = original
-        .lines()
-        .map(|line| {
-            if line.starts_with("updated: ") {
-                "updated: 2030-01-01T00:00:00Z".to_owned()
-            } else if line == "Daniel defined what level 4 means for crews." {
-                "Rebuilt summary.".to_owned()
-            } else {
-                line.to_owned()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n";
-    assert_ne!(rebuilt_text, original);
-    let rebuilt_file = setup.fx.home().join("rebuilt.md");
-    std::fs::write(&rebuilt_file, &rebuilt_text).unwrap();
-    make_private(&rebuilt_file);
     setup.append(
         ON,
         &[
@@ -2573,20 +2550,27 @@ fn a_pass_refuses_when_the_record_changed_since_it_was_loaded() {
             line("assistant", "a-2", "Done."),
         ],
     );
-    // The fake model deterministically publishes the rebuilt record before
-    // returning its answer for the pass's first window, as a rebuild that
-    // finished while the pass was running would. No timing race is involved.
-    let quote = |path: PathBuf| format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"));
-    let record = quote(setup.record_file());
-    let rebuilt = quote(rebuilt_file);
+    // The fake model waits while the test publishes a rebuilt record (a
+    // new `updated` revision and summary), as a rebuild that finished
+    // while the pass was running would. No timing race is involved.
+    let root = setup.fx.root();
+    let hold = support::Hold::new(&setup.fx.home(), move || {
+        support::sql(
+            &root,
+            &format!(
+                "UPDATE sessions SET updated = '2030-01-01T00:00:00Z',
+                 summary = 'Rebuilt summary.' WHERE provider_session = '{ON}'"
+            ),
+        );
+    });
     let script = format!(
-        "#!/bin/sh\nn=$(ls \"$HOME\" | grep -c '^claude-stdin')\ncat > \"$HOME/claude-stdin-$n\"\nif [ \"$n\" = 1 ]; then\n  cp {} {}\nfi\n{}",
-        rebuilt,
-        record,
+        "#!/bin/sh\nn=$(ls \"$HOME\" | grep -c '^claude-stdin')\ncat > \"$HOME/claude-stdin-$n\"\nif [ \"$n\" = 1 ]; then\n{}fi\n{}",
+        hold.script(),
         response(&answer())
     );
     setup.fx.fake_program("claude", &script);
     let out = setup.run_any(&["session", "pass", "--session", ON, "--json"], b"");
+    hold.join();
     assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
     let report: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(report["passes"][0]["result"], "failed");
@@ -2599,11 +2583,13 @@ fn a_pass_refuses_when_the_record_changed_since_it_was_loaded() {
         "{}",
         report["passes"][0]["error"]
     );
+    let record = setup.record(ON).unwrap();
     assert_eq!(
-        std::fs::read(setup.record_file()).unwrap(),
-        rebuilt_text.as_bytes(),
-        "the rebuilt record is left byte-identical"
+        record["updated"], "2030-01-01T00:00:00Z",
+        "the rebuilt record is kept"
     );
+    assert_eq!(record["summary"], "Rebuilt summary.");
+    assert_eq!(record["scribed_through"], "a-1", "{record}");
     assert_eq!(setup.control()["due"], true, "the session stays due");
 }
 
@@ -2620,7 +2606,7 @@ fn rebuild_refusals_are_audited_and_leave_the_record_unchanged() {
     let setup = Setup::new();
     setup.scribe("/scribe on");
     setup.pass();
-    let before = std::fs::read(setup.record_file()).unwrap();
+    let before = setup.record_text().into_bytes();
     let out = setup.run_any(&rebuild_args(false), b"");
     assert_eq!(out.status.code(), Some(1));
     let error: Value = serde_json::from_slice(&out.stderr).unwrap();
@@ -2645,7 +2631,7 @@ fn rebuild_refusals_are_audited_and_leave_the_record_unchanged() {
         serde_json::from_slice::<Value>(&out.stderr).unwrap()["code"],
         "transcript_missing"
     );
-    assert_eq!(std::fs::read(setup.record_file()).unwrap(), before);
+    assert_eq!(setup.record_text().into_bytes(), before);
     assert_eq!(setup.prompts().len(), 1, "no model calls for refusals");
     let audit = std::fs::read_to_string(setup.fx.root().join("audit.jsonl")).unwrap();
     let rebuilds: Vec<Value> = audit
@@ -2706,33 +2692,21 @@ fn a_pass_that_fails_after_persisting_closures_still_audits_each_one() {
     .unwrap();
     make_private(&proposals);
 
-    // The month directory is readable, so listing sessions succeeds, and not
-    // writable, so the record write after the closure fails.
-    let month = setup.fx.root().join("sessions/2026/11");
-    std::fs::create_dir_all(&month).unwrap();
-    for dir in [
-        setup.fx.root().join("sessions"),
-        setup.fx.root().join("sessions/2026"),
-        month.clone(),
-    ] {
-        make_private(&dir);
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&month, std::fs::Permissions::from_mode(0o500)).unwrap();
-    }
-
+    // A trigger refuses the record's row, so the pass's transaction fails
+    // after the closure was persisted in proposals.json.
+    support::sql(
+        &setup.fx.root(),
+        "CREATE TRIGGER staged_failure BEFORE UPDATE ON sessions WHEN NEW.has_record = 1
+         BEGIN SELECT RAISE(ABORT, 'staged failure'); END;",
+    );
     let out = setup.run_any(&["session", "pass", "--session", ON, "--json"], b"");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&month, std::fs::Permissions::from_mode(0o700)).unwrap();
-    }
     assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
     let report: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(report["passes"][0]["result"], "failed");
-    assert_eq!(report["passes"][0]["error_code"], "io_error", "{report}");
+    assert_eq!(
+        report["passes"][0]["error_code"], "store_database",
+        "{report}"
+    );
 
     let stored: Value =
         serde_json::from_str(&std::fs::read_to_string(&proposals).unwrap()).unwrap();
@@ -2752,7 +2726,7 @@ fn a_pass_that_fails_after_persisting_closures_still_audits_each_one() {
     assert_eq!(closures.len(), 1, "{pass_lines:?}");
     let failures: Vec<&Value> = pass_lines
         .iter()
-        .filter(|line| line["status"] == "failure" && line["error_code"] == "io_error")
+        .filter(|line| line["status"] == "failure" && line["error_code"] == "store_database")
         .collect();
     assert_eq!(failures.len(), 1, "{pass_lines:?}");
 }
@@ -2803,7 +2777,7 @@ fn rebuild_resumes_hidden_checkpoints_and_preserves_identity_links_and_activity(
             &Redactor::new([]),
         )
         .unwrap();
-    let before = std::fs::read(setup.record_file()).unwrap();
+    let before = setup.record_text().into_bytes();
     setup.config("[catalog]\nwindow_messages = 2\nsegment_windows = 2\n");
     setup.append(
         ON,
@@ -2819,11 +2793,8 @@ fn rebuild_resumes_hidden_checkpoints_and_preserves_identity_links_and_activity(
     let report: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(report["passes"][0]["windows"], 1);
     assert_eq!(report["passes"][0]["error_code"], "model_failed");
-    let checkpoint = setup
-        .record_file()
-        .with_file_name(format!(".{ON}.rebuild.md"));
-    assert!(checkpoint.is_file());
-    assert_eq!(std::fs::read(setup.record_file()).unwrap(), before);
+    assert!(support::has_checkpoint(&setup.fx.root(), ON));
+    assert_eq!(setup.record_text().into_bytes(), before);
     assert_eq!(
         store
             .list_sessions(&scribe_core::SessionFilter {
@@ -2875,7 +2846,7 @@ fn rebuild_resumes_hidden_checkpoints_and_preserves_identity_links_and_activity(
             .all(|s| s.origin == scribe_core::SegmentOrigin::Rebuild
                 && s.state == scribe_core::SegmentState::Sealed)
     );
-    assert!(!checkpoint.exists());
+    assert!(!support::has_checkpoint(&setup.fx.root(), ON));
     let prompts = setup.prompts();
     assert!(
         !prompts[3].contains("--- user · u-1 ---"),
@@ -2894,32 +2865,40 @@ fn rebuild_folds_newer_transcript_messages_after_a_visible_revision_changes() {
     setup.scribe("/scribe on");
     setup.pass();
     let extra = line("user", "u-later", "Work arriving during the rebuild.");
-    let extra_file = setup.fx.home().join("later.jsonl");
-    std::fs::write(&extra_file, format!("{extra}\n")).unwrap();
-    // The fake model deterministically performs the competing writer's
-    // publication before returning its first rebuild answer. No timing race,
-    // sleeps or concurrent test load is involved.
-    let quote = |path: PathBuf| format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"));
-    let record = quote(setup.record_file());
-    let transcript = quote(setup.transcript(ON));
-    let extra_file = quote(extra_file);
+    // The fake model waits while the test performs the competing writer's
+    // publication before its first rebuild answer is returned. No timing
+    // race, sleeps or concurrent test load is involved.
+    let root = setup.fx.root();
+    let transcript = setup.transcript(ON);
+    let hold = support::Hold::new(&setup.fx.home(), move || {
+        support::sql(
+            &root,
+            &format!(
+                "UPDATE sessions SET updated = '2030-01-01T00:00:00Z'
+                 WHERE provider_session = '{ON}'"
+            ),
+        );
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&transcript)
+            .unwrap();
+        writeln!(file, "{extra}").unwrap();
+    });
     let script = format!(
         r#"#!/bin/sh
 n=$(ls "$HOME" | grep -c '^claude-stdin')
 cat > "$HOME/claude-stdin-$n"
 if [ "$n" = 1 ]; then
-  sed 's/^updated: .*/updated: 2030-01-01T00:00:00Z/' {record} > "$HOME/revised.md"
-  chmod 600 "$HOME/revised.md"
-  mv "$HOME/revised.md" {record}
-  cat {extra_file} >> {transcript}
-fi
+{hold}fi
 {response}
 "#,
+        hold = hold.script(),
         response = response(&answer())
     );
     setup.fx.fake_program("claude", &script);
     let control_before = setup.control_bytes();
     let out = setup.run(&rebuild_args(true), b"");
+    hold.join();
     let report: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(report["passes"][0]["windows"], 2);
     let record = setup.record(ON).unwrap();
@@ -2971,12 +2950,7 @@ fn rebuild_repairs_a_repeated_third_window_budget_miss_and_reports_its_window() 
     assert_eq!(record["next"], "- Keep this bullet");
     assert_eq!(record["scribed_through"], "u-3");
     assert_eq!(record["log"][0]["text"], "Level 4 is defined.");
-    assert!(
-        !setup
-            .record_file()
-            .with_file_name(format!(".{ON}.rebuild.md"))
-            .exists()
-    );
+    assert!(!support::has_checkpoint(&setup.fx.root(), ON));
 }
 
 #[test]
@@ -3026,12 +3000,7 @@ fn rebuild_compresses_an_overlong_third_window_header_even_when_open_is_omitted(
     assert_eq!(record["log"][0]["windows"], 3);
     assert_eq!(record["log"][0]["state"], "sealed");
     assert_eq!(record["log"][0]["origin"], "rebuild");
-    assert!(
-        !setup
-            .record_file()
-            .with_file_name(format!(".{ON}.rebuild.md"))
-            .exists()
-    );
+    assert!(!support::has_checkpoint(&setup.fx.root(), ON));
 }
 
 fn candidate_answer(quote: &str, message: &str, tag: &str) -> Value {
@@ -4390,7 +4359,7 @@ fn a_format_23_claim_reads_with_no_context_shows_its_statement_as_an_older_claim
     s.run(&["session", "pass", "--session", ON], b"");
     let path = s.fx.root().join("proposals.json");
     let mut doc: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert_eq!(doc["format"], 25);
+    assert_eq!(doc["format"], 26);
     doc["format"] = json!(23);
     let candidate = doc["proposals"][0]["candidate"].as_object_mut().unwrap();
     assert!(candidate.remove("context").is_some_and(|c| c.is_string()));
@@ -4433,7 +4402,7 @@ fn a_format_23_claim_reads_with_no_context_shows_its_statement_as_an_older_claim
         json!({"kind": "scribe", "name": "session-pass"})
     );
     let doc: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert_eq!(doc["format"], 25);
+    assert_eq!(doc["format"], 26);
     assert_eq!(doc["proposals"][0]["candidate"]["context"], Value::Null);
     assert_eq!(doc["proposals"][0]["candidate"]["statement"], statement);
 }
@@ -5151,9 +5120,8 @@ fn a_pass_writes_a_dated_now_item_as_its_file_and_keeps_an_undated_one_pending()
     assert_eq!(shown["date"], "2026-12-12");
     assert_eq!(shown["sources"], json!([ON]));
     // The memory write stamps control.json at the memory format.
-    let control: Value =
-        serde_json::from_slice(&std::fs::read(s.fx.root().join("control.json")).unwrap()).unwrap();
-    assert_eq!(control["format"], 25);
+    let control: Value = support::control(&s.fx.root());
+    assert_eq!(control["format"], 26);
 
     // The same window again writes nothing new.
     let before = std::fs::read(&file).unwrap();
@@ -5385,7 +5353,7 @@ fn a_newer_store_is_refused_and_memory_settings_are_deprecated() {
     let text_now = std::fs::read_to_string(&control).unwrap();
     std::fs::write(
         &control,
-        text_now.replacen("\"format\": 25", "\"format\": 26", 1),
+        text_now.replacen("\"format\": 26", "\"format\": 27", 1),
     )
     .unwrap();
     let newer = s.run_any(&["memory", "refresh", "--json"], b"");

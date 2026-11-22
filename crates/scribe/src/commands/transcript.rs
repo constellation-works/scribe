@@ -331,10 +331,8 @@ fn cataloged(ctx: &Context) -> Result<BTreeSet<String>, CliError> {
     for record in &found.listing.items {
         ids.insert(record.id.to_string());
     }
-    for skipped in &found.skipped {
-        if let Some(stem) = skipped.path.file_stem().and_then(|stem| stem.to_str()) {
-            ids.insert(stem.to_owned());
-        }
+    for id in &found.skipped_sessions {
+        ids.insert(id.to_string());
     }
     for id in ctx.store().control()?.sessions.keys() {
         ids.insert(id.to_string());

@@ -187,10 +187,15 @@ impl Setup {
         report.passes
     }
 
-    fn record_file(&self) -> PathBuf {
-        self.dir
-            .path()
-            .join(format!("root/sessions/2026/11/{ON}.md"))
+    /// The `ON` record as its file reads (`scribe export`).
+    fn record_text(&self) -> String {
+        let target = tempfile::tempdir().unwrap();
+        let dir = target.path().join("export");
+        self.ctx
+            .store()
+            .export_sessions(&dir, scribe_core::ExportFormat::Markdown)
+            .unwrap();
+        std::fs::read_to_string(dir.join(format!("sessions/2026/11/{ON}.md"))).unwrap()
     }
 
     fn due(&self) -> bool {
@@ -296,7 +301,7 @@ fn an_invalid_answer_keeps_the_previous_record_and_the_pass_due() {
     let setup = Setup::new();
     setup.switch_on();
     setup.run(&fake(Ok(answer())));
-    let before = std::fs::read(setup.record_file()).unwrap();
+    let before = setup.record_text();
     setup.append(&[line("user", "u-2", "More on levels.")]);
     setup.mark_due();
 
@@ -322,7 +327,7 @@ fn an_invalid_answer_keeps_the_previous_record_and_the_pass_due() {
         let passes = setup.run(&fake(bad));
         assert_eq!(passes[0].result, "failed");
         assert!(passes[0].error_code.is_some());
-        assert_eq!(std::fs::read(setup.record_file()).unwrap(), before);
+        assert_eq!(setup.record_text(), before);
         assert!(setup.due(), "left due for the next run");
     }
 }
@@ -616,7 +621,7 @@ fn invalid_segment_answers_retry_once_with_the_refusal_and_preserve_the_record()
     let setup = Setup::new();
     setup.switch_on();
     setup.run(&fake(Ok(answer())));
-    let before = std::fs::read(setup.record_file()).unwrap();
+    let before = setup.record_text();
     setup.append(&[
         line("user", "u-2", "New thread."),
         line("assistant", "a-2", "Another message."),
@@ -698,7 +703,7 @@ fn invalid_segment_answers_retry_once_with_the_refusal_and_preserve_the_record()
             |request| request.correction.as_str(),
         );
         assert!(correction.contains(reason), "{correction}");
-        assert_eq!(std::fs::read(setup.record_file()).unwrap(), before);
+        assert_eq!(setup.record_text(), before);
         assert!(setup.due());
     }
 }
@@ -756,7 +761,7 @@ fn new_segments_derive_ranges_and_sealed_text_is_absent_from_later_requests() {
         record.log[0].to,
         time::macros::datetime!(2026-11-03 06:01 UTC)
     );
-    let file_before = std::fs::read_to_string(setup.record_file()).unwrap();
+    let file_before = setup.record_text();
     let sealed_body = file_before
         .split("## Log\n")
         .nth(1)
@@ -775,7 +780,7 @@ fn new_segments_derive_ranges_and_sealed_text_is_absent_from_later_requests() {
     assert!(!asked[0].prompt().contains("UNIQUE SEALED FIRST TEXT"));
     assert!(!asked[0].prompt().contains("Body a-2"));
     assert!(asked[0].prompt().contains("First thread"));
-    let after = std::fs::read_to_string(setup.record_file()).unwrap();
+    let after = setup.record_text();
     assert_eq!(
         after
             .split("## Log\n")

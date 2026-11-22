@@ -63,6 +63,9 @@ const HELP: &[(&str, &[&str])] = &[
     ("tmux", &["tmux", "--help"]),
     ("consistency", &["consistency", "--help"]),
     ("consistency-scan", &["consistency", "scan", "--help"]),
+    ("store", &["store", "--help"]),
+    ("store-migrate", &["store", "migrate", "--help"]),
+    ("export", &["export", "--help"]),
     ("hook", &["hook", "--help"]),
     ("hook-session-start", &["hook", "session-start", "--help"]),
     (
@@ -1368,5 +1371,90 @@ fn memory_matches_goldens() {
             &text(&out.stdout),
         ));
     }
+    report(&failures);
+}
+
+/// Every session of the fixture store as `session show --json` reads it,
+/// in `session list` order.
+fn every_session_shown(fx: &Fixture) -> Value {
+    let list: Value = serde_json::from_slice(
+        &fx.ok(&["session", "list", "--include-inactive", "--json"])
+            .stdout,
+    )
+    .unwrap();
+    let shown: Vec<Value> = list["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| {
+            let id = s["id"].as_str().unwrap();
+            serde_json::from_slice(&fx.ok(&["session", "show", id, "--json"]).stdout).unwrap()
+        })
+        .collect();
+    json!({"list": list, "shown": shown})
+}
+
+#[test]
+fn every_session_reads_the_same_after_the_move_into_scribe_db() {
+    const NEW: &str = "9a8b7c6d-0000-4000-8000-000000000001";
+    let fx = Fixture::new();
+    fx.seed();
+    let before = every_session_shown(&fx);
+    let pretty = format!("{}\n", serde_json::to_string_pretty(&before).unwrap());
+    let mut failures: Vec<String> =
+        check("output/sessions-before-and-after-the-move.json", &pretty)
+            .into_iter()
+            .collect();
+
+    // The first session write moves the files: here a switch for a session
+    // the fixture never had.
+    let store = scribe_core::Store::open(fx.root());
+    let new: scribe_core::SessionId = NEW.parse().unwrap();
+    store
+        .update_control(|state| {
+            scribe_core::control::switch(
+                state,
+                &new,
+                &scribe_core::control::Switch::On,
+                time::macros::datetime!(2026-11-21 00:00 UTC),
+            );
+        })
+        .unwrap();
+    assert!(
+        !fx.root().join("sessions").exists(),
+        "the files moved aside"
+    );
+    assert!(fx.root().join("scribe.db").exists());
+    let after = every_session_shown(&fx);
+    if after != before {
+        failures.push(format!(
+            "session show changed across the move\n--- before\n{pretty}\n--- after\n{}",
+            serde_json::to_string_pretty(&after).unwrap()
+        ));
+    }
+
+    // Old cites resolve; every record keeps its `s-<n>`, and the new
+    // session numbers after them.
+    for cite in [
+        "session:7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02",
+        "session:7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02#1",
+        "7c2b9d14",
+        "s-3",
+    ] {
+        let shown: Value =
+            serde_json::from_slice(&fx.ok(&["session", "show", cite, "--json"]).stdout).unwrap();
+        assert_eq!(
+            shown["id"], "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02",
+            "{cite}"
+        );
+        assert_eq!(shown["short_id"], "s-3", "{cite}");
+    }
+    let numbers = store.session_numbers().unwrap();
+    assert_eq!(numbers.len(), 4, "{numbers:?}");
+    assert_eq!(
+        numbers[&new].get(),
+        4,
+        "a new session numbers after the moved ones"
+    );
     report(&failures);
 }

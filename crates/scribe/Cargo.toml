@@ -29,6 +29,8 @@ unicode-width = { workspace = true }
 rustix = { workspace = true, features = ["fs", "system"] }
 
 [dev-dependencies]
+# Tests edit `scribe.db` by hand to stage states no command writes.
+rusqlite = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
 yaml_serde = { workspace = true }

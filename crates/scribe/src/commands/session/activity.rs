@@ -176,6 +176,7 @@ fn write(ctx: &Context, id: &SessionId, request: &SetActive) -> Result<Output, C
             titles: &view.linked_titles,
         },
     )
+    .with_number(view.number)
     .with_log(&view.record.log);
     Ok(Output::Written {
         record: Record::Session(Box::new(payload)),

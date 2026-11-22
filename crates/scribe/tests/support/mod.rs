@@ -201,6 +201,9 @@ pub fn snapshot(root: &Path) -> Vec<(PathBuf, Vec<u8>, u32)> {
             if meta.is_dir() {
                 out.push((path.clone(), Vec::new(), mode));
                 stack.push(path);
+            } else if path.ends_with("scribe.db-shm") {
+                // SQLite's shared-memory index: every WAL reader sets its
+                // read marks there, so a read changes it; not store content.
             } else {
                 out.push((path.clone(), std::fs::read(&path).expect("read file"), mode));
             }
@@ -208,6 +211,135 @@ pub fn snapshot(root: &Path) -> Vec<(PathBuf, Vec<u8>, u32)> {
     }
     out.sort();
     out
+}
+
+/// The switches and Codex cursors in the shape `control.json` held them
+/// before the sessions moved into `scribe.db`: `{format, sessions,
+/// codex_cursors}`, `format` read from the stamp file (`null` without one).
+pub fn control(root: &Path) -> serde_json::Value {
+    let state = scribe_core::Store::open(root)
+        .control()
+        .expect("read the switches");
+    let format = std::fs::read(root.join("control.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        .and_then(|v| v.get("format").cloned())
+        .unwrap_or(serde_json::Value::Null);
+    serde_json::json!({
+        "format": format,
+        "sessions": state.sessions,
+        "codex_cursors": state.codex_cursors,
+    })
+}
+
+/// Runs SQL against the store's `scribe.db`, to stage a state no command
+/// writes (an expired retry, a damaged row).
+pub fn sql(root: &Path, statement: &str) {
+    let conn = rusqlite::Connection::open(root.join("scribe.db")).expect("open scribe.db");
+    conn.execute_batch(statement).expect("run SQL");
+}
+
+/// Whether `session` has a rebuild checkpoint.
+pub fn has_checkpoint(root: &Path, session: &str) -> bool {
+    let Ok(conn) = rusqlite::Connection::open_with_flags(
+        root.join("scribe.db"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    ) else {
+        return false;
+    };
+    conn.query_row(
+        "SELECT count(*) FROM rebuild_checkpoints c JOIN sessions s ON s.id = c.session
+         WHERE s.provider_session = ?1",
+        [session],
+        |row| row.get::<_, i64>(0),
+    )
+    .expect("count checkpoints")
+        > 0
+}
+
+/// Sets one switch field of `session` (the `sw_<field>` column) to `value`
+/// as SQL text, `'…'` quoted or `NULL`.
+pub fn set_switch(root: &Path, session: &str, field: &str, value: &str) {
+    sql(
+        root,
+        &format!("UPDATE sessions SET sw_{field} = {value} WHERE provider_session = '{session}'"),
+    );
+}
+
+/// A competing write made while a fake program waits: the program runs
+/// [`Hold::script`], which blocks it until `change` has run in the test
+/// process. Deterministic, with no sleeps: two FIFOs order the steps.
+pub struct Hold {
+    script: String,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Hold {
+    pub fn new(dir: &Path, change: impl FnOnce() + Send + 'static) -> Self {
+        let hold = dir.join("hold.fifo");
+        let go = dir.join("go.fifo");
+        for fifo in [&hold, &go] {
+            let made = std::process::Command::new("mkfifo")
+                .arg(fifo)
+                .status()
+                .expect("run mkfifo");
+            assert!(made.success(), "mkfifo {}", fifo.display());
+        }
+        let quote = |p: &Path| format!("'{}'", p.to_string_lossy().replace('\'', "'\\''"));
+        let script = format!("echo held > {}\nread _ < {}\n", quote(&hold), quote(&go));
+        let thread = std::thread::spawn(move || {
+            std::fs::read(&hold).expect("wait for the program");
+            change();
+            std::fs::write(&go, "go\n").expect("release the program");
+        });
+        Self {
+            script,
+            thread: Some(thread),
+        }
+    }
+
+    /// The shell lines that wait for the change.
+    pub fn script(&self) -> &str {
+        &self.script
+    }
+
+    /// Waits for the change to have run.
+    pub fn join(mut self) {
+        if let Some(thread) = self.thread.take() {
+            thread.join().expect("the change ran");
+        }
+    }
+}
+
+/// Whether any session has a switch or a Codex cursor.
+pub fn has_control(root: &Path) -> bool {
+    let state = scribe_core::Store::open(root)
+        .control()
+        .expect("read the switches");
+    !state.sessions.is_empty() || !state.codex_cursors.is_empty()
+}
+
+/// A session record in the shape its file had (`scribe export`), or `None`
+/// when the session has none.
+pub fn record_text(root: &Path, id: &str) -> Option<String> {
+    let store = scribe_core::Store::open(root);
+    let session: scribe_core::SessionId = id.parse().expect("a session id");
+    let record = match store.session(&session) {
+        Ok(view) => view.record,
+        Err(scribe_core::Error::SessionNotFound { .. }) => return None,
+        Err(err) => panic!("read session {id}: {err}"),
+    };
+    let dir = tempfile::tempdir().expect("export dir");
+    let target = dir.path().join("export");
+    store
+        .export_sessions(&target, scribe_core::ExportFormat::Markdown)
+        .expect("export");
+    let rel = format!(
+        "sessions/{:04}/{:02}/{id}.md",
+        record.started.year(),
+        u8::from(record.started.month())
+    );
+    Some(std::fs::read_to_string(target.join(rel)).expect("exported record"))
 }
 
 pub fn text(bytes: &[u8]) -> String {

@@ -337,6 +337,8 @@ fn target_of(output: &Output) -> Option<String> {
                 | Record::MemoryRevision(_)
                 | Record::MemoryRefresh(_)
                 | Record::MemoryRules(_)
+                | Record::StoreMigrate(_)
+                | Record::Export(_)
                 | Record::Brief(_),
         }
         | Output::List { .. } => None,
@@ -356,6 +358,8 @@ fn record_target(record: &Record) -> Option<String> {
     Some(match record {
         Record::Memory(m) => format!("memory:{}", m.id),
         Record::MemoryRefresh(_) => String::from("memory:profile"),
+        Record::StoreMigrate(_) => String::from("store:sessions"),
+        Record::Export(_) => return None,
         Record::MemoryBlock(_)
         | Record::MemoryRevision(_)
         | Record::MemoryRules(_)

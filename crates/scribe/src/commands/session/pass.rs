@@ -750,26 +750,21 @@ impl Job<'_> {
                     .map(|(s, t)| (t, s)),
                 final_pass: record.status == scribe_core::SessionStatus::Final,
             };
-            // The window's messages go to scribe.db first (2_design.md
-            // §15.7, phases 4-5): the session file written next keeps the
-            // cursor, so a crash between the two reruns this window and
-            // rewrites the same rows.
+            // The window's messages commit in the transaction that
+            // advances the record's cursor (2_design.md §15.7, phase 6).
             let kept = scribe_core::message::window(
                 &record.id,
                 &conversation[offset..end],
                 &messages,
                 &candidates,
             );
-            self.ctx
-                .store()
-                .write_messages(&kept, self.redactor)
-                .map_err(|err| PassError::new(err.code(), err.to_string()))?;
             let written = match self.ctx.store().write_pass_window(
                 record,
                 expected,
                 mode,
                 &candidates,
                 Some(&pass_memory),
+                &kept,
                 self.redactor,
             ) {
                 Ok(written) => written,

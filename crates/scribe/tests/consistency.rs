@@ -659,20 +659,33 @@ Ship it.
 
     /// A fake `claude` that corrupts one removal target after the scan has
     /// loaded its sessions, so the next target must still be processed.
-    fn answer_both_corrupting(&self, removal: &Value, path: &Path) {
+    /// Answers both model calls; the removal call waits while the test
+    /// damages `session`'s row, so its deactivation fails on a record that
+    /// no longer reads. Join the returned hold after the scan.
+    fn answer_both_corrupting(&self, removal: &Value, session: &'static str) -> support::Hold {
         let envelope = |body: &Value| {
             json!({"type": "result", "subtype": "success", "is_error": false,
                    "result": "", "structured_output": body})
         };
+        // The sessions move into scribe.db first, so the row exists to damage.
+        self.fx.ok(&["store", "migrate"]);
+        let root = self.fx.root();
+        let hold = support::Hold::new(&self.fx.home(), move || {
+            support::sql(
+                &root,
+                &format!("UPDATE sessions SET project = '' WHERE provider_session = '{session}'"),
+            );
+        });
         self.fx.fake_program(
             "claude",
             &format!(
-                "#!/bin/sh\necho call >> \"$HOME/claude-calls\"\ncat > \"$HOME/claude-prompt\"\nif grep -q 'cataloged work sessions' \"$HOME/claude-prompt\"; then printf 'corrupt\\n' > '{path}'; echo '{}'; else echo '{}'; fi\n",
+                "#!/bin/sh\necho call >> \"$HOME/claude-calls\"\ncat > \"$HOME/claude-prompt\"\nif grep -q 'cataloged work sessions' \"$HOME/claude-prompt\"; then\n{hold}echo '{}'; else echo '{}'; fi\n",
                 envelope(removal),
                 envelope(&contradicts()),
-                path = path.display(),
+                hold = hold.script(),
             ),
         );
+        hold
     }
 }
 
@@ -835,22 +848,16 @@ fn a_failed_removal_deactivation_is_reported_and_other_sessions_continue() {
         s.session(file);
     }
     removal_entry(&s);
-    let started = days_ago(20);
-    let path =
-        s.fx.root()
-            .join("sessions")
-            .join(format!("{:04}", started.year()))
-            .join(format!("{:02}", u8::from(started.month())))
-            .join("s-a-digest.md");
     let removal = json!({"judgements": [
         {"pair": "1", "label": "removed", "feature": "the digest",
          "reason": "The weekly report replaced the digest.", "quote": "ripped out and replaced"},
         {"pair": "2", "label": "removed", "feature": "the digest",
          "reason": "The weekly report replaced the digest.", "quote": "ripped out and replaced"},
     ]});
-    s.answer_both_corrupting(&removal, &path);
+    let hold = s.answer_both_corrupting(&removal, "s-a-digest");
 
     let report = s.scan();
+    hold.join();
 
     assert_eq!(
         report["failed_deactivations"],
@@ -1435,32 +1442,28 @@ fn a_scan_that_fails_after_age_deactivation_still_audits_the_deactivated_session
         json!({"type": "result", "subtype": "success", "is_error": false,
                "result": "", "structured_output": body})
     };
-    let bad_link = s.fx.root().join("sessions/2026/11/bad.md");
-    let bad_dir = bad_link.parent().unwrap().to_path_buf();
-    std::fs::create_dir_all(&bad_dir).unwrap();
-    for dir in [
-        s.fx.root().join("sessions"),
-        s.fx.root().join("sessions/2026"),
-        bad_dir,
-    ] {
-        make_private(&dir);
-    }
     // On the removal call (after age deactivation has persisted `s-quiet`),
-    // plant a symlink so the subsequent removal `set_active_many` fails.
+    // the segments table is renamed away, so the removal `set_active_many`
+    // cannot read the sessions and the scan fails.
+    let root = s.fx.root();
+    let hold = support::Hold::new(&s.fx.home(), move || {
+        support::sql(&root, "ALTER TABLE segments RENAME TO segments_gone;");
+    });
     s.fx.fake_program(
         "claude",
         &format!(
-            "#!/bin/sh\necho call >> \"$HOME/claude-calls\"\ncat > \"$HOME/claude-prompt\"\nif grep -q 'cataloged work sessions' \"$HOME/claude-prompt\"; then ln -sf /dev/null '{link}'; echo '{}'; else echo '{}'; fi\n",
+            "#!/bin/sh\necho call >> \"$HOME/claude-calls\"\ncat > \"$HOME/claude-prompt\"\nif grep -q 'cataloged work sessions' \"$HOME/claude-prompt\"; then\n{hold}echo '{}'; else echo '{}'; fi\n",
             envelope(&removal),
             envelope(&contradicts()),
-            link = bad_link.display(),
+            hold = hold.script(),
         ),
     );
 
     let out = s.run(&["consistency", "scan", "--json"], b"");
+    hold.join();
     assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
     let err: Value = serde_json::from_slice(&out.stderr).unwrap();
-    assert_eq!(err["code"], "store_symlink", "{err}");
+    assert_eq!(err["code"], "store_database", "{err}");
 
     let scan_lines: Vec<Value> = s
         .audit()
@@ -1478,7 +1481,7 @@ fn a_scan_that_fails_after_age_deactivation_still_audits_the_deactivated_session
     assert_eq!(
         scan_lines
             .iter()
-            .filter(|line| line["status"] == "failure" && line["error_code"] == "store_symlink")
+            .filter(|line| line["status"] == "failure" && line["error_code"] == "store_database")
             .count(),
         1,
         "{scan_lines:?}"

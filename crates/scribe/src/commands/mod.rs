@@ -5,13 +5,14 @@
 //! (STD-02 R24): today the audit log, through [`crate::audit_middleware`].
 //! Each noun lives in its own module with its subcommands, flags, help and
 //! handlers (`entry.rs`, `session/`, `proposal.rs`, `record.rs`, `tag.rs`, `question.rs`,
-//! `brief.rs`, `plugin.rs`, `tmux.rs`); a noun that
+//! `brief.rs`, `store.rs`, `export.rs`, `plugin.rs`, `tmux.rs`); a noun that
 //! outgrows one file becomes a directory, `<noun>/mod.rs` plus one file per
 //! verb, as `hook/` is (STD-02 R18: split along responsibilities, not by length alone).
 
 pub(in crate::commands) mod brief;
 mod consistency;
 mod entry;
+mod export;
 mod hook;
 mod init;
 mod instruction;
@@ -21,6 +22,7 @@ mod proposal;
 mod question;
 mod search;
 mod session;
+mod store;
 mod tag;
 mod tmux;
 mod transcript;
@@ -41,6 +43,7 @@ pub(crate) use plugin::PluginCommand;
 pub(crate) use proposal::ProposalCommand;
 pub(crate) use question::QuestionCommand;
 pub(crate) use session::SessionCommand;
+pub(crate) use store::StoreCommand;
 pub(crate) use tag::TagCommand;
 pub(crate) use tmux::TmuxArgs;
 
@@ -80,6 +83,16 @@ pub(crate) enum Command {
     /// Proposes superseding or retiring entries a later one replaced or that are due for review, and deactivates stale or removed-feature sessions via scan.
     #[command(subcommand, after_help = consistency::CONSISTENCY_EXAMPLES)]
     Consistency(ConsistencyCommand),
+    /// Move the store's session files into scribe.db
+    ///
+    /// Moves the session files into scribe.db now; every write does it on its own, keeping the old files aside.
+    #[command(subcommand, after_help = store::EXAMPLES)]
+    Store(StoreCommand),
+    /// Write every session to a directory as Markdown or JSONL
+    ///
+    /// Writes every session to a directory you name, as Markdown in the old record files' shape or as JSONL, one line per row; the backup and the way out, writing nothing to the store.
+    #[command(after_help = export::EXAMPLES)]
+    Export(export::ExportArgs),
     /// List tags and manage agent-created store tags
     #[command(subcommand, after_help = tag::TAG_EXAMPLES)]
     Tag(TagCommand),
@@ -125,6 +138,8 @@ impl Command {
             | Self::Hook(_)
             | Self::Question(_)
             | Self::Brief(_)
+            | Self::Store(_)
+            | Self::Export(_)
             | Self::Tmux(_)
             | Self::Plugin(_) => AuditSubject::default(),
         }
@@ -145,12 +160,13 @@ impl Command {
             Self::Memory(command) => command.audit(),
             Self::Search(args) => search::audit(args),
             Self::Consistency(command) => command.audit(),
+            Self::Store(command) => command.audit(),
             Self::Tag(command) => command.audit(),
             Self::Hook(command) => command.audit(),
             Self::Question(command) => command.audit(),
-            // Read-only: the popup only lists and shows, and the brief only
-            // reads (STD-01 R31).
-            Self::Tmux(_) | Self::Brief(_) => None,
+            // Read-only: the popup only lists and shows, the brief only
+            // reads, and an export writes nothing to the store (STD-01 R31).
+            Self::Tmux(_) | Self::Brief(_) | Self::Export(_) => None,
             Self::Plugin(command) => command.audit(),
         }
     }
@@ -177,6 +193,8 @@ pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
         Command::Memory(command) => memory::run(command, ctx),
         Command::Search(args) => search::run(args, ctx),
         Command::Consistency(command) => consistency::run(command, ctx),
+        Command::Store(command) => store::run(command, ctx),
+        Command::Export(args) => export::run(&args, ctx),
         Command::Tag(command) => tag::run(command, ctx),
         Command::Hook(command) => hook::run(command, ctx),
         Command::Question(command) => question::run(command, ctx),

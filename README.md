@@ -104,9 +104,13 @@ scribe question ask "can you fetch me last session summary?" --json   # a lookup
 
 The store is a directory: `--root <dir>`, else `$SCRIBE_ROOT`, else
 `~/.scribe`. Entries are Markdown files with YAML frontmatter under
-`entries/<tag>/<tag>-<n>.md`; session records are
-`sessions/<yyyy>/<mm>/<session-id>.md`; `control.json` holds which sessions
-are being cataloged, `proposals.json` holds routine and agent proposals,
+`entries/<tag>/<tag>-<n>.md`; session records, which sessions are being
+cataloged and the transcript messages are rows in `scribe.db` (SQLite), each
+session also named `s-<n>`. A store from before that keeps
+`sessions/<yyyy>/<mm>/<session-id>.md` and `control.json` until its first
+session write, or `scribe store migrate`, moves them in and keeps the files
+in `pre-sqlite-<date>/`; `scribe export <dir>` writes every session back out
+as Markdown (or `--as jsonl`). `proposals.json` holds routine and agent proposals,
 `tags.json` holds agent-created tags, `pickups.json` holds consumers' pickups of action entries, and `config.toml` holds configured tags,
 models, catalog cadence, session age limit and redaction settings. Config names and aliases
 take precedence over store tags; `tag list` shows each source. The
