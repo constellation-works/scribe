@@ -627,8 +627,9 @@ pub(in crate::store) fn put_pickups(
 }
 
 /// Add one audit line at `format`; `spool` names the spooled file it came
-/// from, and a line already drained from it is not added again. Returns
-/// whether it was added.
+/// from (or the `audit.jsonl:<offset>:<sha256>` key of an imported log
+/// line), and a line already recorded under that key is not added again.
+/// Returns whether it was added.
 pub(in crate::store) fn put_audit(
     conn: &Connection,
     db: &Path,
@@ -692,11 +693,12 @@ pub(in crate::store) fn count(conn: &Connection, table: &str) -> rusqlite::Resul
     Ok(usize::try_from(n).unwrap_or(usize::MAX))
 }
 
-/// The spool files already drained into `audit`, by name.
+/// The spool files already drained into `audit`, by name (excluding
+/// `audit.jsonl:<offset>:<sha256>` idempotency keys).
 pub(in crate::store) fn spooled_names(conn: &Connection, db: &Path) -> Result<Vec<String>> {
     let err = |e| db_error("read", db, e);
     let mut select = conn
-        .prepare("SELECT spool FROM audit WHERE spool IS NOT NULL")
+        .prepare("SELECT spool FROM audit WHERE spool IS NOT NULL AND spool LIKE '%.json'")
         .map_err(err)?;
     let rows = select.query_map([], |row| row.get(0)).map_err(err)?;
     rows.collect::<rusqlite::Result<Vec<String>>>().map_err(err)

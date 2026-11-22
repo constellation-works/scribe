@@ -60,6 +60,13 @@ pub(super) struct ForgetEntryCleanup {
     pub(super) texts: Vec<String>,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Tests: fail the next write after its transaction commits and before
+    /// `move_files_aside` runs, as an interruption there would.
+    pub(super) static CRASH_BEFORE_ASIDE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// What a write leaves to do once it commits.
 #[derive(Debug, Default)]
 pub(super) struct After {
@@ -326,6 +333,14 @@ impl Store {
             fsio::rename(from, to)?;
         }
         if after.aside {
+            #[cfg(test)]
+            if CRASH_BEFORE_ASIDE.with(|c| c.replace(false)) {
+                return Err(Error::io(
+                    "move",
+                    self.root.join(super::AUDIT_FILE),
+                    std::io::Error::other("a crash injected by a test before move_files_aside"),
+                ));
+            }
             self.move_files_aside(now)?;
         } else if after.stamp {
             self.stamp_format()?;
