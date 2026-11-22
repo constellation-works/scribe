@@ -9,6 +9,7 @@
 mod color;
 mod payload;
 mod popup;
+mod printable;
 mod render;
 mod sink;
 mod table;
@@ -134,6 +135,12 @@ fn usage_message(rendered: &str) -> String {
     joined.strip_prefix("error: ").unwrap_or(&joined).to_owned()
 }
 
+/// Stderr for notices and warnings, which can quote stored text: control
+/// characters print as U+FFFD (STD-01 R9).
+fn stderr() -> printable::Printable<io::StderrLock<'static>> {
+    printable::Printable::new(io::stderr().lock(), false)
+}
+
 fn emit(sink: &Sink, output: &Output) -> io::Result<()> {
     if let Output::List {
         warnings, notices, ..
@@ -141,7 +148,7 @@ fn emit(sink: &Sink, output: &Output) -> io::Result<()> {
     {
         // Fail open (STD-02 R31): a notice that cannot reach stderr never
         // fails a command whose payload is fine.
-        let mut err = io::stderr().lock();
+        let mut err = stderr();
         for warning in warnings {
             let _ = writeln!(err, "warning: skipped {}", warning.error);
         }
@@ -150,13 +157,13 @@ fn emit(sink: &Sink, output: &Output) -> io::Result<()> {
         }
     }
     if let Output::Ask(payload) = output {
-        let mut err = io::stderr().lock();
+        let mut err = stderr();
         for warning in &payload.warnings {
             let _ = writeln!(err, "warning: skipped {}", warning.error);
         }
     }
     if let Output::Pass(report) = output {
-        let mut err = io::stderr().lock();
+        let mut err = stderr();
         for pass in &report.passes {
             for warning in &pass.warnings {
                 let _ = writeln!(err, "warning: session {}: {warning}", pass.session);
@@ -167,7 +174,7 @@ fn emit(sink: &Sink, output: &Output) -> io::Result<()> {
         }
     }
     if let Output::Scan(report) = output {
-        let mut err = io::stderr().lock();
+        let mut err = stderr();
         for notice in &report.notices {
             let _ = writeln!(err, "{notice}");
         }
@@ -176,7 +183,7 @@ fn emit(sink: &Sink, output: &Output) -> io::Result<()> {
         record: Record::MemoryBlock(block),
     } = output
     {
-        let mut err = io::stderr().lock();
+        let mut err = stderr();
         for warning in &block.warnings {
             let _ = writeln!(err, "{warning}");
         }
@@ -185,18 +192,39 @@ fn emit(sink: &Sink, output: &Output) -> io::Result<()> {
         record: Record::Brief(brief),
     } = output
     {
-        let mut err = io::stderr().lock();
+        let mut err = stderr();
         for warning in &brief.warnings {
             let _ = writeln!(err, "{warning}");
         }
     }
     if let Output::Written { notices, .. } = output {
-        let mut err = io::stderr().lock();
+        let mut err = stderr();
         for notice in notices {
             let _ = writeln!(err, "{notice}");
         }
     }
-    let mut out = io::stdout().lock();
+    let stdout = io::stdout().lock();
+    let color = match output {
+        // Machine output: the encoder escapes control characters itself,
+        // and quotes stay verbatim.
+        Output::Hook(_) | Output::Plugin(_) => None,
+        Output::PopupRows(rows) => Some(rows.color),
+        Output::Init(_)
+        | Output::List { .. }
+        | Output::Show { .. }
+        | Output::Written { .. }
+        | Output::Pass(_)
+        | Output::Scan(_)
+        | Output::Ask(_)
+        | Output::Popup
+        | Output::PopupPreview(_) => Some(sink.color),
+    };
+    let mut out: Box<dyn Write> = match color {
+        Some(color) if sink.mode != sink::OutputMode::Json => {
+            Box::new(printable::Printable::new(stdout, color))
+        }
+        Some(_) | None => Box::new(stdout),
+    };
     match output {
         Output::Init(report) => render::init(&mut out, sink, report)?,
         Output::List {
@@ -255,7 +283,7 @@ fn write_json_error(message: &str, code: &str) {
         error: message,
         code,
     };
-    let mut err = io::stderr().lock();
+    let mut err = stderr();
     if serde_json::to_writer(&mut err, &payload).is_ok() {
         let _ = writeln!(err);
     }

@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# scripts/check-dependency-direction.sh — STD-02 R1–R6, R16, R17 for this workspace.
+# scripts/check-dependency-direction.sh [root] — STD-02 R1–R6, R16, R17 for this workspace.
+#
+# `root` defaults to the repository; scripts/tests/check-gates.sh points it at
+# fixture trees.
 #
 # Two layers of checks, both from source files alone (no build, no network,
 # no jq), so the gate runs in `make ci-fast`:
@@ -13,7 +16,7 @@
 # The layer order is written down in ARCHITECTURE.md; change it and this
 # script in the same commit (STD-02 R6).
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "${1:-$(dirname "$0")/..}"
 
 PREFIX="scribe"
 fail=0
@@ -88,6 +91,29 @@ ban() {
   fi
 }
 
+# ban_std <path> <modules> <message>: fail if a non-test Rust source under
+# <path> names std::<module> for one of the |-separated <modules>, either as a
+# path (`std::fs::write`, `use std::fs;`) or inside a grouped import that may
+# span lines (`use std::{fmt, fs};`, `use std::{io, fs::File}`), which a
+# line grep for `std::fs` misses.
+ban_std() {
+  ban "$1" "std::($2)" "$3"
+  local hits
+  hits=$(find "$1" -name '*.rs' -not -path '*/tests/*' -print0 2>/dev/null \
+    | xargs -0 perl -0777 -ne '
+        while (/^[ \t]*(?:pub(?:\([a-z]+\))?[ \t]+)?use[ \t]+(?:::)?std::\{([^;]*)\};/mg) {
+          my ($stmt, $group, $at) = ($&, $1, $-[0]);
+          next unless $group =~ /(?<![A-Za-z0-9_:])(?:'"$2"')(?![A-Za-z0-9_])/;
+          my $line = 1 + (substr($_, 0, $at) =~ tr/\n//);
+          $stmt =~ s/\s+/ /g;
+          print "$ARGV:$line:$stmt\n";
+        }' 2>/dev/null || true)
+  if [[ -n "$hits" ]]; then
+    echo "$hits" >&2
+    err "$3"
+  fi
+}
+
 CORE=crates/scribe-core/src
 CLI=crates/scribe/src
 
@@ -97,16 +123,19 @@ CLI=crates/scribe/src
 for path in "$CORE"/*; do
   name=$(basename "$path")
   case "$name" in store | tests) continue ;; esac
-  ban "$path" 'std::(fs|net|process)|tempfile::|rustix::' "core/$name is business logic: file and process access belong in store/"
+  ban_std "$path" 'fs|net|process' "core/$name is business logic: file and process access belong in store/"
+  ban "$path" 'tempfile::|rustix::' "core/$name is business logic: file and process access belong in store/"
   ban "$path" 'crate::store'                              "core/$name is business logic: it must not depend on persistence"
 done
 # Inside store/: fsio is mechanism with no knowledge of records, and the
 # format, redaction and audit record shapes do no I/O of their own (R4, R5).
 ban "$CORE/store/fsio.rs"   'crate::(entry|tag|session|proposal|record|config|verbatim|store)|super::' \
                                                                  "store/fsio.rs is mechanism only; it must not know records or the store"
-ban "$CORE/store/format.rs" 'std::fs|super::fsio'                "store/format.rs converts bytes; it must not do I/O"
-ban "$CORE/store/redact.rs" 'std::fs|super::fsio'                "store/redact.rs masks text it is handed; it must not do I/O"
-ban "$CORE/store/audit.rs"  'std::fs|super::fsio'                "store/audit.rs is a record shape; it must not do I/O"
+for shape in format:"converts bytes" redact:"masks text it is handed" audit:"is a record shape"; do
+  file="$CORE/store/${shape%%:*}.rs"
+  ban_std "$file" 'fs' "store/${shape%%:*}.rs ${shape#*:}; it must not do I/O"
+  ban "$file" 'super::fsio' "store/${shape%%:*}.rs ${shape#*:}; it must not do I/O"
+done
 # SQLite is one store module's mechanism (2_design.md §15.7): every other
 # module, in either crate, reaches scribe.db through the Store.
 for path in "$CORE"/* "$CORE"/store/*; do

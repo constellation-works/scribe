@@ -44,6 +44,10 @@ time = { version = "0.3", features = ["formatting", "macros", "parsing", "serde"
 toml = { version = "1", default-features = false, features = ["std", "parse", "serde"] }
 # NFC for the verbatim check (docs/design/scribe/2_design.md §6.4).
 unicode-normalization = "0.1"
+# Display columns for table alignment and truncation (STD-01 R14, R15): a
+# wide CJK character or emoji takes two, a combining mark none. MIT or
+# Apache-2.0, no dependencies.
+unicode-width = { version = "0.2", default-features = false }
 # Entry and session frontmatter. The YAML organization's maintained
 # continuation of serde_yaml; why this one: docs/design/scribe/4_decisions.md
 # ("Frontmatter is parsed by yaml_serde").

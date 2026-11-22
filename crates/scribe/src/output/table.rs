@@ -5,8 +5,15 @@
 //! shrinks and an overlong cell ends in a single `…`; with no width (a pipe,
 //! a file) nothing is ever cut. Width is a parameter, never read here, so
 //! tests pin it.
+//!
+//! Widths are display columns, not characters: a wide CJK character or
+//! emoji takes two, a combining mark none, so columns line up whatever the
+//! text. A control character in a cell is shown as U+FFFD before it is
+//! measured or painted, so stored text never moves the cursor or recolors
+//! a row.
 
 use super::color::{Role, paint};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// The narrowest a truncatable column shrinks to.
 const MIN_TRUNCATED_WIDTH: usize = 8;
@@ -58,18 +65,37 @@ pub(crate) fn render(
     width: Option<usize>,
     color: bool,
 ) -> String {
-    let widths = fit(columns, &natural_widths(columns, rows), width);
+    let rows: Vec<Vec<Cell>> = rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|cell| Cell {
+                    text: printable(&cell.text),
+                    role: cell.role,
+                })
+                .collect()
+        })
+        .collect();
+    let widths = fit(columns, &natural_widths(columns, &rows), width);
     let mut out = String::new();
     let header: Vec<Cell> = columns.iter().map(|c| Cell::plain(c.header)).collect();
     push_line(&mut out, columns, &widths, &header, false);
-    for row in rows {
+    for row in &rows {
         push_line(&mut out, columns, &widths, row, color);
     }
     out
 }
 
+/// `text` with each control character shown as U+FFFD.
+fn printable(text: &str) -> String {
+    text.chars()
+        .map(|c| if c.is_control() { '\u{FFFD}' } else { c })
+        .collect()
+}
+
+/// The display columns `s` takes on a terminal.
 fn char_len(s: &str) -> usize {
-    s.chars().count()
+    UnicodeWidthStr::width(s)
 }
 
 fn natural_widths(columns: &[Column], rows: &[Vec<Cell>]) -> Vec<usize> {
@@ -140,13 +166,24 @@ fn push_line(out: &mut String, columns: &[Column], widths: &[usize], cells: &[Ce
     out.push('\n');
 }
 
-/// Cut `text` to `width` characters, ending in one `…` when anything was cut.
+/// Cut `text` to `width` display columns, ending in one `…` when anything
+/// was cut. A wide character that would straddle the edge is dropped whole,
+/// so the cut text may be a column short; padding makes up the rest.
 pub(crate) fn truncate(text: &str, width: usize) -> String {
     if char_len(text) <= width {
         return text.to_owned();
     }
     let keep = width.saturating_sub(1);
-    let mut cut: String = text.chars().take(keep).collect();
+    let mut used = 0;
+    let mut cut = String::new();
+    for c in text.chars() {
+        let w = c.width().unwrap_or(0);
+        if used + w > keep {
+            break;
+        }
+        used += w;
+        cut.push(c);
+    }
     cut.push('…');
     cut
 }

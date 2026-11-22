@@ -50,13 +50,15 @@ fmt-check:
 	$(CARGO) fmt --all -- --check
 
 # Source-only structure checks: dependency direction (STD-02 R1-R6), unit-test
-# module reachability (STD-02 R19), terminal/stream ownership (STD-01 R17).
+# module reachability (STD-02 R19), terminal/stream ownership (STD-01 R17),
+# and the cases that test those gates themselves (STD-04 R2, R12).
 structure:
 	python3 scripts/sync-skills.py --check
 	python3 scripts/sync-orbit-packages.py --check
 	./scripts/check-dependency-direction.sh
 	./scripts/check-test-modules.sh
 	./scripts/check-terminal-guard.sh
+	./scripts/tests/check-gates.sh
 
 clippy:
 	$(CARGO) clippy --workspace --all-targets $(LOCKED) -- -D warnings
