@@ -30,7 +30,10 @@ use crate::error::{Error, Result};
 use crate::proposal::Proposal;
 use crate::session::ControlState;
 use crate::tag::StoreTag;
-use std::path::Path;
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
+use std::fmt::Write as _;
+use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 
 /// The store tags' file, before the move.
@@ -440,6 +443,10 @@ impl Store {
         if self.has_files_to_move_aside()? {
             self.after(|a| a.aside = true);
         }
+        if docs::has_pending_archive_forgets(&conn).map_err(fail)? {
+            self.after(|a| a.archive_forgets = true);
+            db::scope::Scope::truncate_later(&self.root);
+        }
         let spooled = self.spooled_audit()?.0.len();
         self.drain_spool(&conn, &path)?;
         moved.audit_lines += spooled;
@@ -716,47 +723,109 @@ impl Store {
         Ok(())
     }
 
-    /// Delete the stored messages cited by `entry` and schedule cleanup of
-    /// its moved-aside `pre-sqlite-*` files once the transaction commits.
-    pub(super) fn forget_entry_residue(&self, entry: &Entry, proposals: &[Proposal]) -> Result<()> {
+    /// Whether any `pre-sqlite-*` moved-aside archive directory exists under
+    /// the store root.
+    fn has_moved_archives(&self) -> Result<bool> {
+        if !self.root_exists()? {
+            return Ok(false);
+        }
+        Ok(fsio::list_dir(&self.root)?
+            .into_iter()
+            .any(|name| name.starts_with(super::sessions::MOVED_PREFIX)))
+    }
+
+    /// Delete the stored messages cited by `entry` and durably record the
+    /// archive-erasure obligation inside the forget's transaction so
+    /// post-commit cleanup (or a restarted write after a crash) finishes
+    /// erasing `pre-sqlite-*` files without persisting cleartext (STD-03 R8).
+    pub(super) fn forget_entry_residue(
+        &self,
+        entry: &Entry,
+        proposals: &[Proposal],
+        now: OffsetDateTime,
+    ) -> Result<()> {
         // The cited turns' stored messages go first: they hold the words
         // the forget removes, and deleting them again is a no-op.
         self.forget_cited_messages(entry, proposals)?;
+        if !self.has_moved_archives()? && !self.aside_pending() {
+            return Ok(());
+        }
         let texts = erased_texts(entry, proposals);
-        let id = entry.id.clone();
+        let salt = forget_salt(&entry.id, &self.root);
+        let digests = digest_texts(&salt, &texts);
+        self.with_conn(|conn, path| {
+            docs::put_pending_archive_forget(conn, path, &entry.id, &salt, &digests, now, |e| {
+                db::db_error("record pending archive forget in", path, e)
+            })
+        })?;
         let queued = self.after(|after| {
-            after.forget_entries.push(super::write::ForgetEntryCleanup {
-                id: id.clone(),
-                texts: texts.clone(),
-            });
+            after.archive_forgets = true;
         });
         if !queued {
-            self.forget_moved_entry(&id, &texts)?;
+            self.apply_pending_archive_forgets()?;
         }
         Ok(())
     }
 
-    /// Delete `id`'s moved-aside entry file, rewrite or drop matching
-    /// proposals in `proposals.json*`, and drop `audit.jsonl*` lines carrying
-    /// `texts` across every `pre-sqlite-*` directory.
-    ///
-    /// Serialized under `locks/archive-forget.lock` across the entire
-    /// read-modify-write so concurrent forgets cannot restore one another's
-    /// erased text (STD-03 R6).
-    pub(super) fn forget_moved_entry(&self, id: &EntryId, texts: &[String]) -> Result<()> {
+    /// Drain every committed entry-forget archive erasure from
+    /// `pending_archive_forgets` (STD-03 R8–R9). Runs after the transaction
+    /// commits, serialized across processes by `locks/archive-forget.lock`,
+    /// and deletes the obligation rows only after every `pre-sqlite-*` archive
+    /// is cleaned. Never holds the archive lock and a SQLite write transaction
+    /// at the same time (STD-03 R3).
+    pub(super) fn apply_pending_archive_forgets(&self) -> Result<()> {
+        #[cfg(test)]
+        if super::write::CRASH_BEFORE_ARCHIVE_FORGET.with(|c| c.replace(false)) {
+            return Err(Error::io(
+                "clean moved archive in",
+                self.root.join(DB_FILE),
+                std::io::Error::other(
+                    "a crash injected by a test before apply_pending_archive_forgets",
+                ),
+            ));
+        }
         if !self.root_exists()? {
             return Ok(());
         }
-        let has_moved = fsio::list_dir(&self.root)?
-            .into_iter()
-            .any(|name| name.starts_with(super::sessions::MOVED_PREFIX));
-        if !has_moved {
+        let path = self.root.join(DB_FILE);
+        let conn = db::open_new_writer(&self.root, self.lock_wait)?;
+        let pending = docs::pending_archive_forgets(&conn, &path)?;
+        if pending.is_empty() {
             return Ok(());
         }
-        #[cfg(test)]
-        notify_forget_moved(ForgetMovedStep::BeforeLock);
-        let lock_path = self.lock_path(ARCHIVE_FORGET_LOCK)?;
-        let lock = fsio::LockGuard::acquire(&lock_path, "forget moved entry", self.lock_wait)?;
+        if self.has_moved_archives()? {
+            #[cfg(test)]
+            notify_forget_moved(ForgetMovedStep::BeforeLock);
+            let lock_path = self.lock_path(ARCHIVE_FORGET_LOCK)?;
+            let lock = fsio::LockGuard::acquire(&lock_path, "forget moved entry", self.lock_wait)?;
+            for item in &pending {
+                self.forget_moved_entry(item, &lock)?;
+            }
+            drop(lock);
+        }
+        let ids: Vec<i64> = pending.iter().map(|p| p.id).collect();
+        let tx = db::scope::Tx::begin(&conn, &path, "clear pending archive forgets in")?;
+        docs::delete_pending_archive_forgets(&tx, &ids, |e| tx.fail(e))?;
+        tx.commit()
+    }
+
+    /// Drop `audit.jsonl*` lines matching `item`'s digests (plus any extra
+    /// pre-move proposal texts read from `proposals.json*`), rewrite or drop
+    /// matching proposals in `proposals.json*`, and delete `item.entry`'s
+    /// moved-aside entry file across every `pre-sqlite-*` directory.
+    ///
+    /// Runs under `locks/archive-forget.lock` (`_lock` witness) so concurrent
+    /// forgets cannot restore one another's erased text (STD-03 R6). Cleaning
+    /// `audit.jsonl*` before rewriting `proposals.json*` ensures a crash
+    /// between the two cannot drop a pre-move-only proposal's text from audit
+    /// scrubbing.
+    pub(super) fn forget_moved_entry(
+        &self,
+        item: &docs::PendingArchiveForget,
+        lock: &fsio::LockGuard,
+    ) -> Result<()> {
+        let id = &item.entry;
+        let db_path = self.root.join(DB_FILE);
         let entry_file = format!("{id}{RECORD_EXT}");
         for moved_name in fsio::list_dir(&self.root)? {
             if !moved_name.starts_with(super::sessions::MOVED_PREFIX) {
@@ -766,8 +835,31 @@ impl Store {
             if !fsio::inspect_subdir(&moved)? {
                 continue;
             }
-            let mut all_texts = texts.to_vec();
             let names = fsio::list_dir(&moved)?;
+            let mut extra_texts = Vec::new();
+            let mut decoded_proposals: Vec<(PathBuf, Vec<Proposal>)> = Vec::new();
+            for name in names.iter().filter(|n| is_moved_variant(n, PROPOSALS_FILE)) {
+                let path = moved.join(name);
+                if fsio::inspect_file(&path)? {
+                    let proposals = format::decode_proposals(&path, &fsio::read(&path)?)?;
+                    #[cfg(test)]
+                    notify_forget_moved(ForgetMovedStep::AfterProposalsRead);
+                    collect_proposal_texts(id, &proposals, &mut extra_texts);
+                    decoded_proposals.push((path, proposals));
+                }
+            }
+            extra_texts.sort();
+            extra_texts.dedup();
+            let matcher = AuditMatcher::new(&item.salt, &item.digests, &extra_texts, &db_path)?;
+            for name in names.iter().filter(|n| is_moved_variant(n, AUDIT_FILE)) {
+                let path = moved.join(name);
+                if fsio::inspect_file(&path)? {
+                    forget_moved_audit(&path, &matcher, lock)?;
+                }
+            }
+            for (path, proposals) in decoded_proposals {
+                rewrite_moved_proposals(id, &path, proposals, lock)?;
+            }
             for name in names.iter().filter(|n| is_moved_variant(n, ENTRIES_DIR)) {
                 let entries_dir = moved.join(name);
                 if !fsio::inspect_subdir(&entries_dir)? {
@@ -776,20 +868,6 @@ impl Store {
                 let tag_dir = entries_dir.join(id.tag().as_str());
                 if fsio::inspect_subdir(&tag_dir)? {
                     fsio::remove_private(&tag_dir.join(&entry_file))?;
-                }
-            }
-            for name in names.iter().filter(|n| is_moved_variant(n, PROPOSALS_FILE)) {
-                let path = moved.join(name);
-                if fsio::inspect_file(&path)? {
-                    forget_moved_proposals(id, &path, &mut all_texts, &lock)?;
-                }
-            }
-            all_texts.sort();
-            all_texts.dedup();
-            for name in names.iter().filter(|n| is_moved_variant(n, AUDIT_FILE)) {
-                let path = moved.join(name);
-                if fsio::inspect_file(&path)? {
-                    forget_moved_audit(&path, &all_texts, &lock)?;
                 }
             }
         }
@@ -805,16 +883,12 @@ fn is_moved_variant(name: &str, base: &str) -> bool {
             .is_some_and(|suffix| !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()))
 }
 
-fn forget_moved_proposals(
+fn rewrite_moved_proposals(
     id: &EntryId,
     path: &Path,
-    texts: &mut Vec<String>,
+    mut proposals: Vec<Proposal>,
     _lock: &fsio::LockGuard,
 ) -> Result<()> {
-    let mut proposals = format::decode_proposals(path, &fsio::read(path)?)?;
-    #[cfg(test)]
-    notify_forget_moved(ForgetMovedStep::AfterProposalsRead);
-    collect_proposal_texts(id, &proposals, texts);
     let mut changed = crate::consistency::forget_proposals(id, &mut proposals);
     // An open pre-move candidate approved later cannot keep an empty quote
     // under `check_proposals`; drop it so `proposals.json` stays valid.
@@ -834,8 +908,12 @@ fn forget_moved_proposals(
     Ok(())
 }
 
-fn forget_moved_audit(path: &Path, texts: &[String], _lock: &fsio::LockGuard) -> Result<()> {
-    if texts.is_empty() {
+fn forget_moved_audit(
+    path: &Path,
+    matcher: &AuditMatcher<'_>,
+    _lock: &fsio::LockGuard,
+) -> Result<()> {
+    if matcher.is_empty() {
         return Ok(());
     }
     let bytes = fsio::read(path)?;
@@ -846,7 +924,7 @@ fn forget_moved_audit(path: &Path, texts: &[String], _lock: &fsio::LockGuard) ->
     for raw_with_nl in bytes.split_inclusive(|&b| b == b'\n') {
         let raw = raw_with_nl.strip_suffix(b"\n").unwrap_or(raw_with_nl);
         let raw = raw.strip_suffix(b"\r").unwrap_or(raw);
-        if !raw.iter().all(u8::is_ascii_whitespace) && audit_line_carries_text(raw, texts) {
+        if !raw.iter().all(u8::is_ascii_whitespace) && audit_line_carries_text(raw, matcher) {
             dropped = true;
             continue;
         }
@@ -856,6 +934,148 @@ fn forget_moved_audit(path: &Path, texts: &[String], _lock: &fsio::LockGuard) ->
         fsio::write_atomic(path, &kept)?;
     }
     Ok(())
+}
+
+/// Domain separation prefix for salted SHA-256 digests stored in
+/// `pending_archive_forgets`.
+const ARCHIVE_FORGET_DOMAIN: &[u8] = b"scribe-archive-forget-v1\0";
+
+fn forget_salt(id: &EntryId, root: &Path) -> String {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seed = format!(
+        "archive-forget|{id}|{}|{}|{}|{}",
+        std::process::id(),
+        OffsetDateTime::now_utc().unix_timestamp_nanos(),
+        SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        root.display(),
+    );
+    crate::capture::prompt_sha256(&seed)
+}
+
+fn salted_prefix(salt: &str) -> Sha256 {
+    let mut hasher = Sha256::new();
+    hasher.update(ARCHIVE_FORGET_DOMAIN);
+    hasher.update(salt.as_bytes());
+    hasher.update(b"\0");
+    hasher
+}
+
+fn digest_texts(salt: &str, texts: &[String]) -> Vec<docs::TextDigest> {
+    let prefix = salted_prefix(salt);
+    let mut out: Vec<docs::TextDigest> = texts
+        .iter()
+        .filter(|t| !t.is_empty())
+        .map(|text| {
+            let mut hasher = prefix.clone();
+            hasher.update(text.as_bytes());
+            let digest: [u8; 32] = hasher.finalize().into();
+            docs::TextDigest {
+                len: text.len(),
+                sha256: encode_hex_32(&digest),
+            }
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn encode_hex_32(bytes: &[u8; 32]) -> String {
+    let mut out = String::with_capacity(64);
+    for byte in bytes {
+        let _ = write!(&mut out, "{byte:02x}");
+    }
+    out
+}
+
+fn decode_hex_32(hex: &str) -> Option<[u8; 32]> {
+    if hex.len() != 64 {
+        return None;
+    }
+    let nibble = |b: u8| match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        _ => None,
+    };
+    let mut out = [0u8; 32];
+    for (slot, pair) in out.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
+        let hi = nibble(pair[0])?;
+        let lo = nibble(pair[1])?;
+        *slot = (hi << 4) | lo;
+    }
+    Some(out)
+}
+
+/// Matches free-text values in archived `audit.jsonl*` lines against durable
+/// salted SHA-256 digests (without cleartext) plus any extra proposal texts
+/// freshly read from `proposals.json*` before it is rewritten.
+struct AuditMatcher<'a> {
+    prefix: Sha256,
+    digests_by_len: BTreeMap<usize, Vec<[u8; 32]>>,
+    extra_texts: &'a [String],
+}
+
+impl<'a> AuditMatcher<'a> {
+    fn new(
+        salt: &str,
+        digests: &[docs::TextDigest],
+        extra_texts: &'a [String],
+        db_path: &Path,
+    ) -> Result<Self> {
+        let mut digests_by_len: BTreeMap<usize, Vec<[u8; 32]>> = BTreeMap::new();
+        for d in digests {
+            let bytes = decode_hex_32(&d.sha256).ok_or_else(|| {
+                Error::corrupt(db_path, "pending archive forget digest is not 64 hex chars")
+            })?;
+            digests_by_len.entry(d.len).or_default().push(bytes);
+        }
+        for group in digests_by_len.values_mut() {
+            group.sort();
+            group.dedup();
+        }
+        Ok(Self {
+            prefix: salted_prefix(salt),
+            digests_by_len,
+            extra_texts,
+        })
+    }
+
+    fn is_empty(&self) -> bool {
+        self.digests_by_len.is_empty() && self.extra_texts.is_empty()
+    }
+
+    fn matches_str(&self, haystack: &str) -> bool {
+        if self
+            .extra_texts
+            .iter()
+            .any(|t| haystack.contains(t.as_str()))
+        {
+            return true;
+        }
+        for (&len, targets) in &self.digests_by_len {
+            if len == 0 || haystack.len() < len {
+                continue;
+            }
+            for (start, _) in haystack.char_indices() {
+                let Some(end) = start.checked_add(len) else {
+                    break;
+                };
+                if end > haystack.len() {
+                    break;
+                }
+                if !haystack.is_char_boundary(end) {
+                    continue;
+                }
+                let mut hasher = self.prefix.clone();
+                hasher.update(&haystack.as_bytes()[start..end]);
+                let digest: [u8; 32] = hasher.finalize().into();
+                if targets.binary_search(&digest).is_ok() {
+                    return true;
+                }
+            }
+        }
+        false
+    }
 }
 
 /// The keys of an audit line's structural fields (`AuditEvent`): timestamps,
@@ -878,28 +1098,28 @@ const AUDIT_STANDARD_KEYS: &[&str] = &[
     "duration_ms",
 ];
 
-fn audit_line_carries_text(raw: &[u8], texts: &[String]) -> bool {
+fn audit_line_carries_text(raw: &[u8], matcher: &AuditMatcher<'_>) -> bool {
     match serde_json::from_slice::<serde_json::Value>(raw) {
         Ok(serde_json::Value::Object(map)) => map.iter().any(|(k, v)| {
-            !AUDIT_STANDARD_KEYS.contains(&k.as_str()) && value_carries_text(v, texts)
+            !AUDIT_STANDARD_KEYS.contains(&k.as_str()) && value_carries_text(v, matcher)
         }),
-        Ok(other) => value_carries_text(&other, texts),
+        Ok(other) => value_carries_text(&other, matcher),
         // A torn or hand-edited line has no structure to read, and the reader
         // skips it, so any copy of the words in it is erased.
         Err(_) => {
             let line = String::from_utf8_lossy(raw);
-            texts.iter().any(|t| line.contains(t.as_str()))
+            matcher.matches_str(&line)
         }
     }
 }
 
 /// Whether a free-text value (a key outside `AUDIT_STANDARD_KEYS`, or any
-/// unrecognised line shape) contains one of `texts`.
-fn value_carries_text(value: &serde_json::Value, texts: &[String]) -> bool {
+/// unrecognised line shape) contains one of the erased texts.
+fn value_carries_text(value: &serde_json::Value, matcher: &AuditMatcher<'_>) -> bool {
     match value {
-        serde_json::Value::String(s) => texts.iter().any(|t| s.contains(t.as_str())),
-        serde_json::Value::Array(items) => items.iter().any(|v| value_carries_text(v, texts)),
-        serde_json::Value::Object(map) => map.values().any(|v| value_carries_text(v, texts)),
+        serde_json::Value::String(s) => matcher.matches_str(s),
+        serde_json::Value::Array(items) => items.iter().any(|v| value_carries_text(v, matcher)),
+        serde_json::Value::Object(map) => map.values().any(|v| value_carries_text(v, matcher)),
         serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {
             false
         }

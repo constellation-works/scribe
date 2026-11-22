@@ -1120,8 +1120,9 @@ impl Store {
             {
                 // The stored messages first (2_design.md §15.7): they hold the
                 // words the forget removes, and deleting them again is a no-op;
-                // moved `pre-sqlite-*` copies follow the commit.
-                self.forget_entry_residue(entry, &before_proposals)?;
+                // moved `pre-sqlite-*` copies follow the commit via a durable
+                // obligation.
+                self.forget_entry_residue(entry, &before_proposals, now)?;
             }
             if proposals != before_proposals {
                 self.write_proposals(&proposals)?;

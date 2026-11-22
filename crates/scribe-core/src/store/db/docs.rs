@@ -703,3 +703,120 @@ pub(in crate::store) fn spooled_names(conn: &Connection, db: &Path) -> Result<Ve
     let rows = select.query_map([], |row| row.get(0)).map_err(err)?;
     rows.collect::<rusqlite::Result<Vec<String>>>().map_err(err)
 }
+
+/// A non-cleartext digest of one erased text: its UTF-8 byte length and its
+/// salted SHA-256 digest (64 lowercase hex characters), keyed with its
+/// obligation's salt.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(in crate::store) struct TextDigest {
+    pub len: usize,
+    pub sha256: String,
+}
+
+/// One committed entry-forget archive erasure waiting for post-commit
+/// completion across `pre-sqlite-*` directories.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::store) struct PendingArchiveForget {
+    pub id: i64,
+    pub entry: EntryId,
+    pub salt: String,
+    pub digests: Vec<TextDigest>,
+}
+
+fn is_hex64(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// Whether any committed entry forget still waits for post-commit archive
+/// cleanup.
+pub(in crate::store) fn has_pending_archive_forgets(conn: &Connection) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM pending_archive_forgets)",
+        [],
+        |row| row.get(0),
+    )
+}
+
+/// Record one durable archive-erasure obligation inside the forget's own
+/// transaction (STD-03 R8). Stores only `entry`, `salt` and salted SHA-256
+/// `digests` — never cleartext.
+pub(in crate::store) fn put_pending_archive_forget(
+    conn: &Connection,
+    db: &Path,
+    entry: &EntryId,
+    salt: &str,
+    digests: &[TextDigest],
+    now: OffsetDateTime,
+    fail: impl Fn(rusqlite::Error) -> Error,
+) -> Result<()> {
+    let encoded = serde_json::to_string(digests)
+        .map_err(|e| Error::corrupt(db, format!("pending archive forget digests: {e}")))?;
+    conn.execute(
+        "INSERT INTO pending_archive_forgets (entry, salt, digests, created)
+         VALUES (?1, ?2, ?3, ?4)",
+        (entry.to_string(), salt, &encoded, stamp(now)),
+    )
+    .map_err(fail)?;
+    Ok(())
+}
+
+/// Every pending archive-erasure obligation, oldest first.
+pub(in crate::store) fn pending_archive_forgets(
+    conn: &Connection,
+    db: &Path,
+) -> Result<Vec<PendingArchiveForget>> {
+    let err = |e| db_error("read", db, e);
+    let mut select = conn
+        .prepare("SELECT id, entry, salt, digests FROM pending_archive_forgets ORDER BY id")
+        .map_err(err)?;
+    let rows = select
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(err)?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (id, entry_str, salt, digests_json) = row.map_err(err)?;
+        let path = row_path(db, "pending_archive_forgets", &id.to_string());
+        let entry: EntryId = entry_str.parse().map_err(|e| Error::corrupt(&path, e))?;
+        if !is_hex64(&salt) {
+            return Err(Error::corrupt(&path, "salt must be 64 lowercase hex chars"));
+        }
+        let digests: Vec<TextDigest> =
+            serde_json::from_str(&digests_json).map_err(|e| Error::corrupt(&path, e))?;
+        for digest in &digests {
+            if digest.len == 0 || !is_hex64(&digest.sha256) {
+                return Err(Error::corrupt(
+                    &path,
+                    "digest must have positive length and 64 lowercase hex chars",
+                ));
+            }
+        }
+        out.push(PendingArchiveForget {
+            id,
+            entry,
+            salt,
+            digests,
+        });
+    }
+    Ok(out)
+}
+
+/// Remove completed archive-erasure obligations by row id.
+pub(in crate::store) fn delete_pending_archive_forgets(
+    conn: &Connection,
+    ids: &[i64],
+    fail: impl Fn(rusqlite::Error) -> Error,
+) -> Result<()> {
+    for &id in ids {
+        conn.execute("DELETE FROM pending_archive_forgets WHERE id = ?1", [id])
+            .map_err(&fail)?;
+    }
+    Ok(())
+}

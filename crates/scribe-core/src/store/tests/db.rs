@@ -54,7 +54,7 @@ fn the_first_write_creates_an_owner_only_wal_database_at_the_current_schema() {
         .unwrap();
     assert_eq!(written, 1);
     let (version, store_id) = db::meta(dir.path()).unwrap().unwrap();
-    assert_eq!(version, 5);
+    assert_eq!(version, 6);
     assert_eq!(store_id.len(), 32);
     // PERSIST_WAL: both companions outlive the last connection.
     for name in [DB_FILE, "scribe.db-wal", "scribe.db-shm"] {
@@ -253,6 +253,9 @@ fn the_memory_tables_hold_their_constraints() {
         "INSERT INTO profile_cursor (id, through_at, through_session) VALUES (2, 'x', 's-1')",
         "INSERT INTO messages (session, message, role, at, text, sha256) VALUES ('s-1', 'm-9', 'system', 'x', 't', 'x')",
         "INSERT INTO meta (id, store_id, created) VALUES (2, 'x', 'x')",
+        "INSERT INTO pending_archive_forgets (entry, salt, digests, created) VALUES ('ab', '0000000000000000000000000000000000000000000000000000000000000000', '[]', '2026-11-01T10:00:00Z')",
+        "INSERT INTO pending_archive_forgets (entry, salt, digests, created) VALUES ('preferences-1', 'short', '[]', '2026-11-01T10:00:00Z')",
+        "INSERT INTO pending_archive_forgets (entry, salt, digests, created) VALUES ('preferences-1', '0000000000000000000000000000000000000000000000000000000000000000', '{}', '2026-11-01T10:00:00Z')",
     ] {
         assert!(db::execute(dir.path(), bad).is_err(), "accepted: {bad}");
     }
@@ -398,7 +401,7 @@ fn concurrent_writer_processes_all_commit_under_wal_and_busy_timeout() {
         .search_messages(&tokens("merge"))
         .unwrap();
     assert_eq!(found.matches.len(), WRITERS * WINDOWS * 3);
-    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 5);
+    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 6);
 }
 
 #[test]

@@ -185,11 +185,13 @@ Only `config.toml` and `memory/`'s files remain as primary data files outside th
   `codex_cursors`, `rebuild_checkpoints` and `record_kinds`; version 4 adds
   `sessions.forgotten`; version 5 (phase 7) adds `entries`, `claims`,
   `agent_tags`, `marks`, `pickups` and `audit`, and rebuilds `record_kinds`
-  to accept their kinds. Every table is `STRICT`; times are RFC 3339 UTC text.
+  to accept their kinds; version 6 adds `pending_archive_forgets` for
+  durable post-commit replay of entry-forget archive erasure. Every table is
+  `STRICT`; times are RFC 3339 UTC text.
 - **Errors.** A file SQLite cannot read as a database is `store_corrupt`;
   any other SQLite failure is `store_database`.
 
-### Tables (version 5)
+### Tables (version 6)
 
 | Table | Columns (type, constraint) | Written by |
 |---|---|---|
@@ -216,6 +218,7 @@ Only `config.toml` and `memory/`'s files remain as primary data files outside th
 | `marks` | `position INTEGER PRIMARY KEY`; the fields of one `marks.json` record | the `Stop` hook's marker outcomes (version 5) |
 | `pickups` | `position INTEGER PRIMARY KEY`; the fields of one `pickups.json` record | `entry pickup` (version 5) |
 | `audit` | `id INTEGER PRIMARY KEY`; `format INTEGER NOT NULL`, the line's own format (1–5); the event's fields (`issue` as JSON text, `NULL` for none); `spool TEXT UNIQUE`, the spool file a line was drained from or the `audit.jsonl:<offset>:<sha256>` key of an imported log line, else `NULL` | every audited command; the move; the spool drain (version 5) |
+| `pending_archive_forgets` | `id INTEGER PRIMARY KEY`; `entry TEXT NOT NULL` (`<tag>-<n>`); `salt TEXT NOT NULL`, 64 hex characters; `digests TEXT NOT NULL`, JSON array of `{len, sha256}` salted SHA-256 digests of erased texts (never cleartext); `created TEXT NOT NULL` | committed in the entry forget's transaction when `pre-sqlite-*` archives exist or are pending move-aside; drained after commit by that write or any restarted write (version 6) |
 
 ### Messages
 
@@ -395,11 +398,20 @@ line has the session's `s-<n>` as its target.
   `pre-sqlite-<date>/entries*/`, drops or rewrites the matching proposals in
   `pre-sqlite-<date>/proposals.json*` atomically (keeping every claim the
   database keeps), and drops any `pre-sqlite-<date>/audit.jsonl*` lines
-  carrying the entry's text in a free-text value. These post-commit
-  `pre-sqlite-*` rewrites run under `locks/archive-forget.lock` (`flock` /
-  `LockFileEx`, bounded by the lock wait) so concurrent forgets serialize
-  their read-modify-writes and cannot restore one another's erased text. An
-  audit line's structural
+  carrying the entry's text in a free-text value. The archive-erasure
+  obligation commits in `pending_archive_forgets` inside the forget's own
+  SQLite transaction (storing only the entry id, a per-obligation salt, and
+  salted SHA-256 `{len, sha256}` digests — never the entry's cleartext), and
+  is removed only after every `pre-sqlite-*` archive has been cleaned
+  (audit lines first, then proposals, then entry files). A crash or I/O
+  failure after commit leaves the obligation in `pending_archive_forgets`,
+  and the next write (a retry of `entry forget` or `#scribe forget`, or any
+  subsequent write) replays WAL truncation and archive erasure idempotently
+  without needing the original entry contents in cleartext (STD-03 R8–R9).
+  These post-commit `pre-sqlite-*` rewrites run under
+  `locks/archive-forget.lock` (`flock` / `LockFileEx`, bounded by the lock
+  wait) so concurrent forgets serialize their read-modify-writes and cannot
+  restore one another's erased text. An audit line's structural
   fields (ids, command, status, author, codes, counts) never match, so an
   entry whose body is a common word such as `success` removes no unrelated
   event. A torn line, which the reader skips, is dropped if it contains the
