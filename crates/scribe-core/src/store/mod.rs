@@ -350,6 +350,23 @@ impl Store {
         })
     }
 
+    /// Refuse `id` when `#scribe forget` erased it, before any model call or
+    /// write on its behalf: a forgotten session takes no write (`session_forgotten`).
+    /// Reads only.
+    ///
+    /// # Errors
+    ///
+    /// `session_forgotten` for a forgotten session, or a store read error.
+    pub fn refuse_forgotten(&self, id: &SessionId) -> Result<()> {
+        if self.load_sessions()?.forgotten.contains_key(id) {
+            return Err(db::sessions::forgotten_refusal(
+                id,
+                "nothing is written to it",
+            ));
+        }
+        Ok(())
+    }
+
     /// The session record with this id, its switch, the sessions that link
     /// to it and the titles of those it links to. Other records that do not
     /// parse are left out of the children.

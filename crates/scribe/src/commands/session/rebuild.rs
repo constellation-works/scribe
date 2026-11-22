@@ -47,6 +47,8 @@ pub(in crate::commands) fn run_with<M: Models>(
     scribe_core::check_agent_author(&args.author)?;
     let store = ctx.store();
     let id = store.resolve_session(&args.id)?;
+    // Refused before the confirm check, the transcript and any model call.
+    store.refuse_forgotten(&id)?;
     let mut original = store.session(&id)?.record;
     let scoped = ctx.with_provider(
         original

@@ -272,9 +272,10 @@ session's record and checkpoint files are deleted from every
 scribe otherwise never deletes from.
 
 A forgotten session takes no write. Writing its record (a pass, a rebuild,
-a catalog) and switching it on are refused with `session_forgotten`.
-Forgetting it again changes nothing. The hook's audit line has the
-session's `s-<n>` as its target.
+a catalog) and switching it on are refused with `session_forgotten`. A
+rebuild or a catalog of one is refused before any model call, and keeps no
+rebuild checkpoint. Forgetting it again changes nothing. The hook's audit
+line has the session's `s-<n>` as its target.
 
 ### Sessions in scribe.db (phase 6)
 
