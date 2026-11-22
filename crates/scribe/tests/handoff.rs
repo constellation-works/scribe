@@ -721,6 +721,8 @@ fn search_and_ask_treat_handoff_as_agent_note_never_users_words() {
         "scribe",
         "--related",
         &rel,
+        "--mode",
+        "new",
         "--quote",
         request,
         &body,
@@ -734,6 +736,12 @@ fn search_and_ask_treat_handoff_as_agent_note_never_users_words() {
     assert_eq!(hits[0]["id"], "handoff-1");
     assert_eq!(hits[0]["author"]["kind"], "agent");
     assert_eq!(hits[0]["author"]["name"], "opus");
+    assert!(
+        hits[0]["snippet"]
+            .as_str()
+            .unwrap()
+            .contains("handoff mode: new")
+    );
 
     // `scribe question ask` includes `handoff` by default (non-action tag) and attributes it as an agent note.
     let answer = json!({
@@ -765,24 +773,30 @@ fn search_and_ask_treat_handoff_as_agent_note_never_users_words() {
     let asked = json_of(&out);
     assert_eq!(asked["status"], "answered", "{asked}");
     assert_eq!(asked["claims"][0]["cite"], "handoff-1");
-    assert_eq!(asked["claims"][0]["text"], "agent note (opus)");
+    assert_eq!(
+        asked["claims"][0]["text"],
+        "agent note (opus) [handoff mode: new]"
+    );
     assert!(
         asked["answer"]
             .as_str()
             .unwrap()
-            .starts_with("agent note (opus): "),
+            .starts_with("agent note (opus) [handoff mode: new]: "),
         "{asked}"
     );
     let ask_prompt = std::fs::read_to_string(fx.home().join("ask-stdin")).unwrap();
     assert!(
-        ask_prompt.contains("words=\"agent note (opus)\""),
+        ask_prompt.contains("words=\"agent note (opus) [handoff mode: new]\""),
         "{ask_prompt}"
     );
     // Plain rendering also marks it as an agent note, never the user's words.
     let mut plain_cmd = fx.cmd(&["question", "ask", "what is the state of widget migration?"]);
     plain_cmd.env("PATH", &claude);
     let plain = text(&plain_cmd.output().unwrap().stdout);
-    assert!(plain.contains("agent note (opus)"), "{plain}");
+    assert!(
+        plain.contains("agent note (opus) [handoff mode: new]"),
+        "{plain}"
+    );
 }
 
 #[test]
@@ -1394,4 +1408,110 @@ fn session_show_reports_actual_switch_state_for_switched_on_handoff_only_session
     assert_eq!(shown_off["on"], false);
     assert_eq!(shown_off["due"], false);
     assert_eq!(shown_off["handoffs"][0]["id"], "handoff-1");
+}
+
+#[test]
+fn self_refresh_records_mode_and_requires_current_interactive_session() {
+    let fx = Fixture::new();
+    let tr = Transcript::new(&fx, OFF_SESSION);
+    tr.write(&[("u-1", "user", "Continue working on the widget.")]);
+    let body = valid_handoff("Widget ready.", "Continue widget work.");
+    let related = format!("session:{OFF_SESSION}");
+    let args = [
+        "entry",
+        "add",
+        "--tag",
+        "handoff",
+        "--author",
+        "opus",
+        "--related",
+        &related,
+        "--mode",
+        "continue",
+        "--json",
+        &body,
+    ];
+    let out = fx
+        .cmd(&args)
+        .env("CLAUDE_CODE_SESSION_ID", OFF_SESSION)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(json_of(&out)["handoff_mode"], "continue");
+    let shown = json_of(&fx.ok(&["session", "show", OFF_SESSION, "--json"]));
+    assert_eq!(shown["handoffs"][0]["handoff_mode"], "continue");
+    let brief = json_of(&fx.ok(&["brief", "--json"]));
+    assert!(brief.to_string().contains("continue"));
+    let search = json_of(&fx.ok(&["search", "widget", "--json"]));
+    assert!(search.to_string().contains("handoff mode: continue"));
+    let other = fx
+        .cmd(&args)
+        .env("CLAUDE_CODE_SESSION_ID", ON_SESSION)
+        .output()
+        .unwrap();
+    assert_eq!(other.status.code(), Some(1));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&other.stderr).unwrap()["code"],
+        "quote_required"
+    );
+    tr.write(&[("a-1", "assistant", "No user turn.")]);
+    let empty = fx
+        .cmd(&args)
+        .env("CLAUDE_CODE_SESSION_ID", OFF_SESSION)
+        .output()
+        .unwrap();
+    assert_eq!(empty.status.code(), Some(1));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&empty.stderr).unwrap()["code"],
+        "quote_not_found"
+    );
+}
+
+#[test]
+fn legacy_database_reads_without_migrating_and_upgrades_on_write() {
+    let fx = Fixture::new();
+    let tr = Transcript::new(&fx, OFF_SESSION);
+    let request = "Please write this session handoff.";
+    tr.write(&[("u-1", "user", request)]);
+    let rel = format!("session:{OFF_SESSION}");
+    let body = valid_handoff("Legacy state.", "Next task.");
+    fx.ok(&[
+        "entry",
+        "add",
+        "--tag",
+        "handoff",
+        "--author",
+        "opus",
+        "--related",
+        &rel,
+        "--quote",
+        request,
+        &body,
+    ]);
+    support::sql(
+        &fx.root(),
+        "ALTER TABLE entries DROP COLUMN handoff_mode; PRAGMA user_version = 6;",
+    );
+    let shown = json_of(&fx.ok(&["session", "show", OFF_SESSION, "--json"]));
+    assert_eq!(shown["handoffs"][0]["handoff_mode"], Value::Null);
+    let out = fx
+        .cmd(&[
+            "entry",
+            "add",
+            "--tag",
+            "handoff",
+            "--author",
+            "opus",
+            "--related",
+            &rel,
+            "--mode",
+            "new",
+            "--json",
+            &valid_handoff("New state.", "Next task."),
+        ])
+        .env("CLAUDE_CODE_SESSION_ID", OFF_SESSION)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(json_of(&out)["handoff_mode"], "new");
 }

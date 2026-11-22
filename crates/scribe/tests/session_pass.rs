@@ -2071,7 +2071,7 @@ fn legacy_control_is_read_without_writes_and_new_retry_state_is_strict() {
     );
     setup.pass();
     let current = support::control(&setup.fx.root());
-    assert_eq!(current["format"], 27);
+    assert_eq!(current["format"], 28);
     assert_eq!(current["sessions"][ON]["consecutive_failures"], 0);
     assert_eq!(current["sessions"][ON]["retry_after"], Value::Null);
     assert_eq!(current["sessions"][ON]["pending_links"], json!([]));
@@ -2335,7 +2335,7 @@ fn a_pass_writes_one_record_of_daniels_terms_and_never_reads_a_session_never_swi
     // The record is written at format 23: a header and one open segment
     // holding this pass's segment text.
     let file = setup.record_text();
-    assert!(file.starts_with("---\nformat: 27\n"), "{file}");
+    assert!(file.starts_with("---\nformat: 28\n"), "{file}");
     assert!(file.contains("\n## Log\n### 1. "), "{file}");
     assert!(!file.contains("## Outcome"), "{file}");
     assert_eq!(record["active"], true);
@@ -4569,7 +4569,7 @@ fn a_format_23_claim_reads_with_no_context_shows_its_statement_as_an_older_claim
     s.scribe("/scribe on");
     s.run(&["session", "pass", "--session", ON], b"");
     let doc = support::proposals_doc(&s.fx.root());
-    assert_eq!(doc["format"], 27);
+    assert_eq!(doc["format"], 28);
     assert!(doc["proposals"][0]["candidate"]["context"].is_string());
     let conn = rusqlite::Connection::open(s.fx.root().join("scribe.db")).unwrap();
     conn.execute(
@@ -4614,7 +4614,7 @@ fn a_format_23_claim_reads_with_no_context_shows_its_statement_as_an_older_claim
         json!({"kind": "scribe", "name": "session-pass"})
     );
     let doc = support::proposals_doc(&s.fx.root());
-    assert_eq!(doc["format"], 27);
+    assert_eq!(doc["format"], 28);
     assert_eq!(doc["proposals"][0]["candidate"]["context"], Value::Null);
     assert_eq!(doc["proposals"][0]["candidate"]["statement"], statement);
 }
@@ -5324,7 +5324,7 @@ fn a_pass_writes_a_dated_now_item_as_its_file_and_keeps_an_undated_one_pending()
     assert_eq!(shown["sources"], json!([ON]));
     // The memory write stamps control.json at the memory format.
     let control: Value = support::control(&s.fx.root());
-    assert_eq!(control["format"], 27);
+    assert_eq!(control["format"], 28);
 
     // The same window again writes nothing new.
     let before = std::fs::read(&file).unwrap();
@@ -5555,8 +5555,8 @@ fn a_newer_store_is_refused_and_memory_settings_are_deprecated() {
     let control = s.fx.root().join("control.json");
     let text_now = std::fs::read_to_string(&control).unwrap();
     let mut newer_stamp: Value = serde_json::from_str(&text_now).unwrap();
-    assert_eq!(newer_stamp["format"], 27, "{text_now}");
-    newer_stamp["format"] = json!(28);
+    assert_eq!(newer_stamp["format"], 28, "{text_now}");
+    newer_stamp["format"] = json!(29);
     std::fs::write(&control, newer_stamp.to_string()).unwrap();
     let newer = s.run_any(&["memory", "refresh", "--json"], b"");
     assert_ne!(newer.status.code(), Some(0));

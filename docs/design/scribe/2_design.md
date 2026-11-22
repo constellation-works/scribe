@@ -6316,16 +6316,26 @@ session.
     --related session:<id> --quote '<the user's request>' '<body...>'
   ```
 
-  No new write verb or store format bump is needed: a handoff is a regular
+  A handoff is a regular
   agent-authored entry (`author.kind: agent`, `content_from: agent`,
   `cite: null`) whose `related` carries `session:<id>` and whose `quote`
-  carries the user's request. Because `handoff` is an agent-written note,
+  carries the user's request when supplied. Format 28 and SQLite schema 7 add
+  optional `handoff_mode` (`continue` or `new`); absent means a legacy
+  handoff. `--mode` is accepted only for handoffs. `continue` starts the next
+  context from this account; `new` starts it clean, with `(none)` in headings
+  that have nothing to say. Because `handoff` is an agent-written note,
   marker capture excludes it from `annotation::request` and refuses it in
   `annotation::check` and `Store::record_marks` (`unknown_tag`), so a
   `#scribe` marker can never create a user-authored or unvalidated handoff.
 - **Quote and session-reference checks.** Because `handoff` ships with
-  `require_quote`, the store refuses an entry with no `--quote` or no
-  `--related session:<id>` (`quote_required`). A handoff belongs to
+  `require_quote`, a quoted handoff still requires `--related session:<id>`
+  and the existing verbatim check. A quote-less handoff requires `--mode`,
+  and `CLAUDE_CODE_SESSION_ID` must equal the one related session; the CLI
+  locates and verifies that session's transcript and requires a nonempty
+  human-typed turn. It passes that verification to the store, which refuses
+  a quote-less handoff without it (`quote_required`); a missing or noninteractive
+  transcript is refused (`quote_not_found`). This shell variable was measured
+  in Claude desktop on 2026-11-22 and changes on clear. A handoff belongs to
   exactly one distinct valid `session:<id>` reference: passing multiple
   distinct `session:` references or an invalid session id on `entry add` is
   refused (`handoff_session`), `verify_quote` checks every `session:`
@@ -6377,7 +6387,7 @@ by `scribe_core::handoff::check`:
   with its id, author and timestamp, beside scribe's header (`## Handoffs`
   before `## Summary` in table mode; `handoff\t<id>\t<author>\t<time>\t<line>`
   in plain mode; `handoffs: [{id, author, created, project, quote, content}]`
-  in JSON). When `<id>` has active handoff(s) and no session record,
+  in JSON, including `handoff_mode`). When `<id>` has active handoff(s) and no session record,
   `session show <id>` resolves it (`resolve_session_or_handoff`) and
   prints its handoffs with `has_record: false`, `on` and `due` from its
   switch (`false` when it has none), and empty `summary`/`goals`/`next` —
@@ -6388,7 +6398,8 @@ by `scribe_core::handoff::check`:
   - An active recorded session with a handoff is marked `[handoff: <id>]`
     (naming its newest active handoff) and its activity timestamp is the
     newer of its record activity and its newest handoff; JSON adds
-    `has_record: true`, `handoff: "<id>"` and `handoffs: <n>`.
+    `has_record: true`, `handoff: "<id>"`, `handoffs: <n>` and
+    `handoff_mode`; text includes the mode when present.
   - An off session with no session record at all (neither active nor
     deactivated) appears in `## Recent sessions` only through its active
     handoff, labelled `no session record [handoff: <id>]`, with
@@ -6396,10 +6407,11 @@ by `scribe_core::handoff::check`:
 - **`ask` and `search`.** Both treat a `handoff` entry as an ordinary
   agent note (`author.kind: agent`, weight 1.0, `whose`: `agent note
   (<author>)`, `stated_quote: None`): always attributed as the agent's
-  account, never the user's words.
+  account, never the user's words. Both include the mode in their text and
+  JSON when it is present.
 - **The skill.** `skills/scribe/SKILL.md` teaches agents to write a handoff
-  only when explicitly asked (never unasked, never from routines, Orbit
-  runs or subagents), and at the start of a session to read the last
+  on explicit request, with the self-refresh exception above, and at the
+  start of a session to read the last
   session's newest handoff first (`handoffs[0]`) and then scribe's
   `summary`, `goals` and `next`, presenting **State**, **Next** and
   **Waiting on you** with the handoff entry id.
@@ -6421,31 +6433,18 @@ The session pass never reads handoffs:
   quote against the user's own transcript words, so no memory item can come
   from a handoff.
 
-### 16.5 Risks: what counts as a request
+### 16.5 Self-refresh and request checks
 
-Phase 1 gates writes on `require_quote`: a verbatim span of at least 8
-characters (`verbatim::MIN_QUOTE_CHARS`) in a single human-typed turn of
-that session's transcript. Two edge cases matter in practice:
-
-- **A request spread over two turns.** For example, the user says in turn 1
-  *"let's wrap up this work"* and the agent offers *"want me to write a
-  handoff?"*, to which the user replies in turn 2 *"yes"* or *"do it"*.
-  Because `verbatim::contains` refuses spans shorter than 8 characters and
-  never joins text across turns, *"yes"* or *"do it"* is refused
-  (`quote_not_found`). What counts: a single typed turn of at least 8
-  characters that asks for or confirms the handoff (e.g. turn 1 *"write a
-  handoff for this session"*, or turn 2 *"yes, write the handoff"*). When
-  the user replies with only *"yes"*, the agent must either quote an
-  earlier turn in the session that explicitly requested the handoff or ask
-  the user to confirm in a short phrase (e.g. *"yes, save a handoff"*).
-- **A request given by a button or UI action.** A client button or slash
-  shortcut that sends a synthetic harness message (`<command-name>`,
-  `<command-message>`, `<user-prompt-submit-hook>`, etc.) or invokes a tool
-  without a plain user turn is dropped by `transcript::user_turn`, so
-  `verify_quote` refuses it (`quote_not_found`). A button counts as a
-  request in Phase 1 only when the client records it in the transcript as a
-  plain user turn of at least 8 characters (not wrapped in a synthetic
-  harness tag). Non-typed UI triggers remain outside the transcript check.
+Daniel answered on 2026-11-22 that handoffs may be written without his typed
+request: “yes”, because requiring approval for session handoff is “meaningless
+beurocracy”. This reverses settled item 3 of the agent-handoff scope. The
+exception is limited to a refresh of the current interactive session, checked
+as in §16.1; the shell session id is the chosen identity signal, not a claim
+of cryptographic identity. For handoffs with a quote, the existing verbatim
+check remains: the quote must be at least eight characters from one typed
+turn, so a bare “yes” or a synthetic UI event alone does not pass it. The
+transcript check also excludes synthetic or assistant-only sessions from the
+quote-less path.
 
 ### 16.6 Entries on a spoken instruction
 

@@ -59,5 +59,6 @@
     "name": "session-pass"
   },
   "outcome": null,
+  "handoff_mode": null,
   "removal_instruction": null
 }

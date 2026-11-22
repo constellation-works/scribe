@@ -11,7 +11,8 @@ Options:
       --project <PROJECT>   Project slug [default: global]
       --topic <TOPIC>       Topic, repeatable (at most five)
       --related <RELATED>   Related reference, repeatable; under an action tag, name the session you write in (session:<id>)
-      --quote <QUOTE>       The user's correction that prompted the entry, verbatim from one of the user's typed turns in the session named by --related; required under a tag that requires a quote
+      --quote <QUOTE>       The user's words, verbatim from a typed turn in the related session; required by quote tags except a verified self-refresh handoff
+      --mode <MODE>         Handoff refresh mode: continue or new
       --evidence <POINTER>  Evidence pointer (a path, task, run, experiment or commit); required under a require_evidence tag, refused under any other tag
       --as-of <DATE>        The date a require_evidence entry's result was true, as YYYY-MM-DD [default: today]
       --spoken              Record on the user's spoken instruction: sets stated_by to --author; requires --quote, --related session:<id>, and a non-action memory tag (not handoff or require_evidence)

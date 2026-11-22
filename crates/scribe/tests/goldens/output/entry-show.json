@@ -49,5 +49,6 @@
   "instruction": null,
   "stated_by": null,
   "outcome": null,
+  "handoff_mode": null,
   "removal_instruction": null
 }

@@ -74,6 +74,7 @@ const ENTRY: &[(&str, Col)] = &[
     ("removal_instruction", Col::Json),
     ("stated_by", Col::Json),
     ("outcome", Col::Json),
+    ("handoff_mode", Col::Text),
 ];
 
 /// A proposal's fields, as columns of `claims` (`id` is `n`, the
@@ -312,7 +313,16 @@ pub(in crate::store) fn entries(
 ) -> Result<Vec<std::result::Result<Entry, BadEntry>>> {
     let extra = [("content", Col::Text)];
     let mut out = Vec::new();
-    for mut obj in objects(conn, db, "entries", &extra, ENTRY, "tag, n")? {
+    // Reads do not migrate: schema 5 and 6 have no mode column yet.
+    let version: u32 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(|e| db_error("read", db, e))?;
+    let fields = if version < 7 {
+        &ENTRY[..ENTRY.len() - 1]
+    } else {
+        ENTRY
+    };
+    for mut obj in objects(conn, db, "entries", &extra, fields, "tag, n")? {
         let id = obj
             .get("id")
             .and_then(Value::as_str)

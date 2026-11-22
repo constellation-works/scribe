@@ -57,7 +57,7 @@ pub const DB_FILE: &str = "scribe.db";
 /// The schema, one step per `user_version`: step `n` (1-based) moves the
 /// database from version `n - 1` to `n`. Append only; never edit a shipped
 /// step.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7];
 
 /// Version 1 (phase 4): `meta`, `messages` and its FTS5 index, and the
 /// memory tables phase 5 uses.
@@ -424,6 +424,9 @@ CREATE TABLE pending_archive_forgets (
     created TEXT    NOT NULL
 ) STRICT;
 ";
+
+/// Version 7: optional handoff refresh mode.
+const V7: &str = "ALTER TABLE entries ADD COLUMN handoff_mode TEXT CHECK (handoff_mode IS NULL OR handoff_mode IN ('continue', 'new'));";
 
 /// The newest schema version this build reads and writes.
 /// Refuse, for a reader as for a writer, a database a newer build migrated

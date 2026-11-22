@@ -70,6 +70,8 @@ pub struct BriefSession {
     pub handoff: Option<EntryId>,
     /// How many active `handoff` entries this session has.
     pub handoffs: usize,
+    /// Refresh mode of the newest handoff.
+    pub handoff_mode: Option<crate::handoff::Mode>,
 }
 
 /// The open claims under one tag.
@@ -140,19 +142,23 @@ impl Brief {
                     one_line(&s.title)
                 )),
                 (true, Some(handoff)) => out.push_str(&format!(
-                    "- {} · {} · {} · {} [handoff: {}]\n",
+                    "- {} · {} · {} · {} [handoff: {}{}]\n",
                     s.id,
                     stamp(s.at),
                     s.project,
                     one_line(&s.title),
-                    handoff
+                    handoff,
+                    s.handoff_mode
+                        .map_or(String::new(), |m| format!(", mode: {}", m.as_str()))
                 )),
                 (false, Some(handoff)) => out.push_str(&format!(
-                    "- {} · {} · {} · no session record [handoff: {}]\n",
+                    "- {} · {} · {} · no session record [handoff: {}{}]\n",
                     s.id,
                     stamp(s.at),
                     s.project,
-                    handoff
+                    handoff,
+                    s.handoff_mode
+                        .map_or(String::new(), |m| format!(", mode: {}", m.as_str()))
                 )),
                 (false, None) => out.push_str(&format!(
                     "- {} · {} · {} · no session record\n",
@@ -232,6 +238,7 @@ pub fn build(
                 has_record: true,
                 handoff: newest.map(|h| h.id.clone()),
                 handoffs: handoffs.map_or(0, Vec::len),
+                handoff_mode: newest.and_then(|h| h.handoff_mode),
             }
         })
         .collect();
@@ -250,6 +257,7 @@ pub fn build(
             has_record: false,
             handoff: Some(newest.id.clone()),
             handoffs: list.len(),
+            handoff_mode: newest.handoff_mode,
         });
     }
     let elsewhere = |s: &BriefSession| project.is_some_and(|p| &s.project != p);

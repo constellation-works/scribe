@@ -421,7 +421,13 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
                     handoff.id,
                     author(&handoff.author),
                     timestamp(handoff.created),
-                    one_line(&handoff.content)
+                    format_args!(
+                        "{}{}",
+                        handoff
+                            .handoff_mode
+                            .map_or(String::new(), |m| format!("mode: {} ", m.as_str())),
+                        one_line(&handoff.content)
+                    )
                 )?;
             }
             for segment in session.log.iter().flatten() {
@@ -457,7 +463,13 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
                     handoff.id,
                     author(&handoff.author),
                     timestamp(handoff.created),
-                    one_line(&handoff.content)
+                    format_args!(
+                        "{}{}",
+                        handoff
+                            .handoff_mode
+                            .map_or(String::new(), |m| format!("mode: {} ", m.as_str())),
+                        one_line(&handoff.content)
+                    )
                 )?;
             }
             Ok(())
@@ -1214,6 +1226,9 @@ fn session_handoffs(out: &mut dyn Write, handoffs: &[HandoffPayload]) -> io::Res
             author(&h.author),
             timestamp(h.created)
         )?;
+        if let Some(mode) = h.handoff_mode {
+            writeln!(out, "mode: {}", mode.as_str())?;
+        }
         writeln!(out, "{}", h.content.trim_end())?;
     }
     Ok(())

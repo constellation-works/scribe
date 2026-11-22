@@ -378,6 +378,9 @@ pub struct Entry {
     /// (format 8); `null` otherwise.
     #[serde(deserialize_with = "nullable")]
     pub quote: Option<String>,
+    /// Refresh mode for a handoff, or null for older and other entries.
+    #[serde(default)]
+    pub handoff_mode: Option<crate::handoff::Mode>,
     /// The chat leading up to a typed `#scribe` line under an action tag
     /// (format 8); `null` for every other entry.
     #[serde(deserialize_with = "nullable")]
@@ -662,6 +665,7 @@ impl NewEntry {
             instruction: None,
             removal_instruction: None,
             stated_by: self.stated_by,
+            handoff_mode: None,
             outcome: None,
             content: self.content,
         }
@@ -724,6 +728,10 @@ pub struct AgentEntry {
     pub evidence: Option<String>,
     /// The date the finding was true; `None` takes the write's date.
     pub as_of: Option<Date>,
+    /// Refresh mode, valid only for handoffs.
+    pub handoff_mode: Option<crate::handoff::Mode>,
+    /// The caller verified the named session is the writer and has a typed turn.
+    pub self_refresh_verified: bool,
     /// Whether this entry records the user's spoken instruction (2_design.md
     /// §16.6): `content` is the agent's statement, `quote` is the user's
     /// verbatim words, and `stated_by` is set to the writing agent.
