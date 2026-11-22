@@ -209,7 +209,7 @@ pub struct AnnotationAnswer {
 /// The JSON schema of a session-pass answer.
 /// The `memory` property the session schema gains when memory is
 /// requested (2_design.md §13.3).
-const MEMORY_PROPERTY: &str = r#""memory":{"type":"array","maxItems":3,"items":{"type":"object","properties":{"section":{"type":"string","enum":["profile","projects","working","now","milestones"]},"statement":{"type":"string","maxLength":200,"description":"what the user said or did, third person, standing alone"},"quote":{"type":"string","minLength":8,"maxLength":400},"message":{"type":"string","maxLength":128},"event_date":{"type":["string","null"],"maxLength":10,"description":"YYYY-MM-DD for now and milestones, else null"},"same_as":{"type":["string","null"],"maxLength":16,"description":"the id of a listed memory item this repeats, else null"},"sensitive_kind":{"type":["string","null"],"enum":["loss","health","relationship","family",null]},"personal":{"type":"boolean"},"promote":{"type":["string","null"],"maxLength":160,"description":"for now and milestones: the new profile statement when the event changes a profile fact, else null"}},"required":["section","statement","quote","message","event_date","same_as","sensitive_kind","personal","promote"],"additionalProperties":false}}"#;
+const MEMORY_PROPERTY: &str = r#""memory":{"type":"array","maxItems":3,"items":{"type":"object","properties":{"section":{"type":"string","enum":["profile","now","milestones"]},"statement":{"type":"string","maxLength":200,"description":"what the user said or did, third person, standing alone"},"quote":{"type":"string","minLength":8,"maxLength":400},"message":{"type":"string","maxLength":128},"event_date":{"type":["string","null"],"maxLength":10,"description":"YYYY-MM-DD for now and milestones, else null"},"same_as":{"type":["string","null"],"maxLength":16,"description":"the id of a listed memory item this repeats, else null"},"sensitive_kind":{"type":["string","null"],"enum":["loss","health","relationship","family",null]},"personal":{"type":"boolean"},"promote":{"type":["string","null"],"maxLength":160,"description":"for now and milestones: the new profile statement when the event changes a profile fact, else null"}},"required":["section","statement","quote","message","event_date","same_as","sensitive_kind","personal","promote"],"additionalProperties":false}}"#;
 
 /// The session answer's schema with the `memory` property: sent only when
 /// a request asks for memory, so a request that asks for none (a rebuild,
@@ -495,31 +495,52 @@ impl SessionRequest {
             return;
         }
         let user = self.voice.user.noun();
+        // Only the sections asked for are defined: since 2_design.md §15.9
+        // phase 1 the pass asks for none of `projects` or `working`.
+        let personal = self.memory_personal;
+        let definitions: Vec<String> = self
+            .memory_sections
+            .iter()
+            .filter_map(|section| {
+                let definition = match *section {
+                    "profile" => format!(
+                        "their role, skills, hosts and environment{}",
+                        if personal {
+                            ", and household facts as they state them"
+                        } else {
+                            ""
+                        }
+                    ),
+                    "now" => format!(
+                        "something upcoming or happening (a release under way, a host down{})",
+                        if personal {
+                            ", a wedding next month, a loss"
+                        } else {
+                            ""
+                        }
+                    ),
+                    "milestones" => format!(
+                        "a big dated event (a project decommissioned{})",
+                        if personal {
+                            ", married, a child, moved city"
+                        } else {
+                            ""
+                        }
+                    ),
+                    _ => return None,
+                };
+                Some(format!("{section}: {definition}"))
+            })
+            .collect();
         let _ = writeln!(
             out,
             "\nReturn memory: at most {} elements in this window, each one thing {user} said about \
              themselves, their work or their life in their own turns, under one of these sections: {}. \
-             profile: their role, skills, hosts and environment{}; projects: a project's purpose, \
-             status and current focus (never its tasks); working: how they steer agents, as \
-             observed; now: something upcoming or happening (a release under way, a host down{}); \
-             milestones: a big dated event (a project decommissioned{}).",
+             {}. Never return a section not listed: a standing habit or a rule is not memory, and \
+             a project's decisions belong on its tasks.",
             self.memory_limit,
             self.memory_sections.join(", "),
-            if self.memory_personal {
-                ", and household facts as they state them"
-            } else {
-                ""
-            },
-            if self.memory_personal {
-                ", a wedding next month, a loss"
-            } else {
-                ""
-            },
-            if self.memory_personal {
-                ", married, a child, moved city"
-            } else {
-                ""
-            },
+            definitions.join("; "),
         );
         let _ = writeln!(
             out,

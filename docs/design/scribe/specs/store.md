@@ -335,7 +335,7 @@ promotion: null             # {rule, to, profile_from, profile_to}: on the miles
 merged_into: null           # merged: the item holding its occurrences
 superseded_by: null         # superseded: the item that replaced it
 unrelated_to: []            # newer items the scan judged unrelated to this one
-preference_proposal: null   # working: the preferences candidate it opened (§13.7)
+preference_proposal: null   # working: the preferences candidate it opened (§13.7, no longer opened)
 author: {kind: scribe, name: session-pass}
 updated_by: {kind: scribe, name: session-pass}
 created: 2026-11-21T18:00:00Z
@@ -357,8 +357,8 @@ with `promotion`) may have no occurrence, and a `merged`, `superseded` or
 `promoted` item names the item it went to.
 A pass writes memory under the same lock as its record, after its
 candidates and before the record: each draft is checked again under the
-lock (its quote a verbatim span of the user's own turn, its section on in
-the config on disk, its text unchanged by the redactor), then folded in —
+lock (its quote a verbatim span of the user's own turn, its section one the
+pass still writes and on in the config on disk, its text unchanged by the redactor), then folded in —
 a repeat of an item (`same_as`, or a near-duplicate statement in the same
 section) becomes a new occurrence; a turn already on the item appends
 nothing, so a replayed window writes nothing. A `now` element may also
@@ -382,22 +382,13 @@ promoted. A replayed turn promotes nothing. Changed files are written
 gainers first (a new item, a milestone with its journal, a merge's
 target), so a crash leaves words on both items rather than on neither.
 
-**From `working` to `preferences`** (§13.7, `Store::open_memory_candidates`)
-runs last, under the same lock. A `working` item that a draft created or
-added to, still active, with no `preference_proposal`, whose occurrences
-now come from `promote_working_sessions` distinct sessions (0 switches it
-off) opens one candidate proposal under `preferences`: role `user`, the
-item's statement as its statement, the draft's quote and cite (the turn
-that crossed the count) as the claim's, subject `how he works with
-agents`, and `admitted: {trigger: "memory:recurs", matched: "<m-id>",
-criteria}`. It is checked as a pass candidate is: within the 20-open cap
-(at the cap it is not opened, and is tried again at the item's next
-occurrence), its quote unchanged by the redactor, and no prior candidate
-and no active `preferences` entry already saying it. `proposals.json` is
-written first, then the item with `preference_proposal`; a candidate
-already admitted for the item (a crash between the two) is linked, not
-opened again. Approval or rejection is a candidate's (§5.3, §12): approval
-writes Daniel's entry with `stated_by`, and the item stays as it is.
+**No `working` or `projects` writes** ([2_design.md §15.9](../2_design.md#159-phases),
+phase 1). The pass asks for `profile`, `now` and `milestones` only, and the
+check under the lock refuses an element naming `working` or `projects` as
+`memory_section_not_written`. The §13.7 proposal of a recurring `working`
+item as a `preferences` candidate is removed. Stored items of both sections
+still load, print and decay as before, and a format-21 item's
+`preference_proposal` still reads; no format changes.
 
 **Consolidation** (§13.5, `memory/consolidate.rs`,
 `Store::consolidate_memory`) runs in the consistency scan under the lock,
@@ -555,7 +546,7 @@ now_undated_days = 7             # an undated now item leaves the page after thi
 now_after_days = 14              # a dated now item leaves the page this long after its date
 page_chars = 2400                # the session-start page budget, 600-10000
 recent_sessions = 5              # sessions listed on the page, 0-20
-promote_working_sessions = 3     # a working item in this many sessions is proposed as a preference, 0-100; 0 switches it off
+promote_working_sessions = 3     # unused since 2_design.md §15.9 phase 1; loads with a warning, then remove it
 
 [memory.sections]                # each section on by default
 profile = true

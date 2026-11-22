@@ -30,9 +30,6 @@ pub struct MemoryWritten {
     pub refused: Vec<Refusal>,
     /// The promotions the drafts caused (§13.4).
     pub promoted: Vec<Promoted>,
-    /// `preferences` candidates opened for recurring `working` items
-    /// (§13.7), with the item each was opened for.
-    pub proposed: Vec<(crate::ProposalId, MemoryId)>,
 }
 
 /// What the scan's memory steps changed (§13.5).
@@ -154,11 +151,15 @@ impl Store {
             return Err(bad.error);
         }
         let before = items.clone();
-        let mut due: Vec<(MemoryId, &Draft)> = Vec::new();
         for draft in &pass.drafts {
             let element = &draft.checked;
             if !crate::pass::own_span(&draft.turn, &element.quote) {
                 written.refused.push(Refusal::Unverified);
+                continue;
+            }
+            // Checked again under the lock, as every element check is.
+            if !element.section.written() {
+                written.refused.push(Refusal::NotWritten);
                 continue;
             }
             if !config.memory.section_on(element.section) {
@@ -179,9 +180,6 @@ impl Store {
             }
             match promote::write(&mut items, draft, &pass.provenance, &config.memory, now) {
                 Ok(done) => {
-                    if let Applied::Created(id) | Applied::Appended(id) = &done.applied {
-                        due.push((id.clone(), draft));
-                    }
                     written.applied.push(done.applied);
                     written.promoted.extend(done.promoted);
                 }
@@ -189,39 +187,6 @@ impl Store {
             }
         }
         self.write_changed(&before, &items)?;
-        // §13.7: a `working` item whose new occurrence brings it to the
-        // count opens one `preferences` candidate, cited to that turn. The
-        // proposal is written first, then the item records it, so a crash
-        // between them is found again by the candidate's admission.
-        let mut candidates: Vec<(MemoryId, crate::EntryCandidate)> = Vec::new();
-        for (id, draft) in due {
-            let Some(item) = items.iter().find(|i| i.id == id) else {
-                continue;
-            };
-            if candidates.iter().any(|(c, _)| *c == id)
-                || !memory::proposes_preference(item, &config.memory)
-            {
-                continue;
-            }
-            if let Some(candidate) = memory::preference_candidate(item, draft, record, &config.tags)
-            {
-                candidates.push((id, candidate));
-            }
-        }
-        if candidates.is_empty() {
-            return Ok(written);
-        }
-        let linked = self.open_memory_candidates(&candidates, redactor, now)?;
-        for (proposal, id, opened) in linked {
-            if let Some(item) = items.iter_mut().find(|i| i.id == id) {
-                item.preference_proposal = Some(proposal);
-                item.updated = now;
-                self.write_memory(item)?;
-            }
-            if opened {
-                written.proposed.push((proposal, id));
-            }
-        }
         Ok(written)
     }
 

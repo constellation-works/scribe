@@ -264,7 +264,7 @@ impl Config {
         // `models.referent` named the form-3 referent call, removed with
         // §14 step 2 (2_design.md §14.6). A config that sets it still loads
         // for the 30-day compatibility window.
-        let warnings: Vec<String> = [
+        let mut warnings: Vec<String> = [
             (raw.models.referent.is_some(), "models.referent"),
             (raw.codex.models.referent.is_some(), "codex.models.referent"),
         ]
@@ -274,6 +274,15 @@ impl Config {
             format!("config key {key} is unused: #scribe lines are cataloged by models.annotation; remove it")
         })
         .collect();
+        // `memory.promote_working_sessions` counted the sessions before a
+        // `working` item was proposed as a preference (§13.7); the pass no
+        // longer writes `working` items (2_design.md §15.9 phase 1). A
+        // config that sets it still loads for the 30-day compatibility window.
+        if raw.memory.promote_working_sessions.is_some() {
+            warnings.push(String::from(
+                "config key memory.promote_working_sessions is unused: scribe no longer writes working memory; remove it",
+            ));
+        }
         let models = raw.models.resolve(ModelIds::default());
         let codex_models = raw.codex.models.resolve(ModelIds::codex());
         for name in models
@@ -459,6 +468,8 @@ struct RawMemory {
     sections: RawMemorySections,
     #[serde(default)]
     promote: RawPromote,
+    /// Deprecated: the working-to-preference proposal (§13.7) is removed
+    /// (2_design.md §15.9 phase 1). Read only to warn that it is unused.
     #[serde(default)]
     promote_working_sessions: Option<toml::Spanned<u32>>,
 }
@@ -494,7 +505,7 @@ struct RawMemorySections {
 impl RawMemory {
     /// The configured values over the defaults, each with its origin.
     /// `page_chars` takes 600 to 10,000, `recent_sessions` at most 20, and
-    /// `recurs_in_sessions` and `promote_working_sessions` at most 100;
+    /// `recurs_in_sessions` at most 100;
     /// each `user_says` phrase is checked as a capture trigger.
     fn resolve(self, text: &str) -> Result<crate::memory::MemoryConfig, ConfigError> {
         use crate::tag::{Rule, RuleOrigin};
@@ -579,23 +590,6 @@ impl RawMemory {
                 origin: origin(span),
             };
         }
-        let mut promote_working_sessions = base.promote_working_sessions;
-        if let Some(v) = self.promote_working_sessions {
-            let span = v.span();
-            let value = v.into_inner();
-            if value > 100 {
-                return Err(ConfigError {
-                    line: at(span),
-                    message: format!(
-                        "memory.promote_working_sessions = {value} is out of range; give 0 to 100"
-                    ),
-                });
-            }
-            promote_working_sessions = Rule {
-                value,
-                origin: origin(span),
-            };
-        }
         let s = self.sections;
         let d = base.sections;
         Ok(crate::memory::MemoryConfig {
@@ -615,7 +609,6 @@ impl RawMemory {
             },
             promote,
             windows,
-            promote_working_sessions,
         })
     }
 }

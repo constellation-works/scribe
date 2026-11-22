@@ -14,8 +14,11 @@
 //! Items carry no `layer`, `person` or `recurs` field: only the parked
 //! parts of §13.12-13.14 read them. Slice (b) adds the routine's merges and
 //! supersedes ([`consolidate`]) and the promotion of `now` items to
-//! `milestones` ([`promote`]); slice (c) proposes a recurring `working`
-//! item as a `preferences` candidate ([`proposes_preference`], §13.7).
+//! `milestones` ([`promote`]). Slice (c), which proposed a recurring
+//! `working` item as a `preferences` candidate (§13.7), is removed: since
+//! phase 1 of §15.9 the pass writes no `working` or `projects` item
+//! ([`Section::written`]), and stored ones stay readable until phase 5
+//! migrates them.
 //!
 //! No I/O (STD-02 R5): the store reads and writes the files, the CLI reads
 //! the transcript and the clock.
@@ -60,15 +63,6 @@ pub const PAGE_CHARS: usize = 2400;
 /// `memory_page_over_budget`.
 pub const MILESTONES_WARN_CHARS: usize = 600;
 
-/// The distinct sessions a `working` item's occurrences span before it is
-/// proposed as a `preferences` candidate, as shipped (§13.7).
-pub const PROMOTE_WORKING_SESSIONS: u32 = 3;
-/// The subject a recurring `working` item's candidate carries: what every
-/// `working` item is about (§13.1).
-pub const WORKING_SUBJECT: &str = "how he works with agents";
-/// The trigger a recurring `working` item's candidate is admitted by.
-pub const RECURS_TRIGGER: &str = "memory:recurs";
-
 /// The five sections, in page order (§13.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -76,9 +70,11 @@ pub enum Section {
     /// Role, skills, hosts and environment; with `personal` on, household
     /// facts as he states them. Global, no decay.
     Profile,
-    /// A project's purpose, status and focus, with an as-of date.
+    /// A project's purpose, status and focus, with an as-of date. No
+    /// longer written (§15.9 phase 1); stored items stay readable.
     Projects,
-    /// How he steers agents, as observed. Describes, never binds.
+    /// How the user steers agents, as observed. No longer written (§15.9
+    /// phase 1): a standing habit is a preference claim, not memory.
     Working,
     /// Upcoming things and recent happenings.
     Now,
@@ -112,6 +108,18 @@ impl Section {
     #[must_use]
     pub fn holds_sensitive(self) -> bool {
         matches!(self, Self::Now | Self::Milestones)
+    }
+
+    /// Whether the session pass may write an item of this section. Since
+    /// phase 1 of 2_design.md §15.9 it writes no `projects` or `working`
+    /// item: a project decision belongs on its task and a working habit is
+    /// a preference claim. Stored items of both still load and print.
+    #[must_use]
+    pub fn written(self) -> bool {
+        match self {
+            Self::Profile | Self::Now | Self::Milestones => true,
+            Self::Projects | Self::Working => false,
+        }
     }
 
     /// Whether an item of this section keeps an event date.
@@ -463,10 +471,6 @@ pub struct MemoryConfig {
     /// Where `decay_days`, `now_undated_days` and `now_after_days` came
     /// from, for `memory rules`.
     pub windows: WindowOrigins,
-    /// How many distinct sessions a `working` item's occurrences span
-    /// before it is proposed as a `preferences` candidate (§13.7); 0
-    /// switches the proposal off.
-    pub promote_working_sessions: crate::tag::Rule<u32>,
 }
 
 /// Where each page window's value came from.
@@ -503,10 +507,6 @@ impl Default for MemoryConfig {
             sections: SectionSwitches::default(),
             promote: PromoteRules::default(),
             windows: WindowOrigins::default(),
-            promote_working_sessions: crate::tag::Rule {
-                value: PROMOTE_WORKING_SESSIONS,
-                origin: crate::tag::RuleOrigin::Shipped,
-            },
         }
     }
 }
@@ -525,6 +525,16 @@ impl MemoryConfig {
         Section::ALL
             .into_iter()
             .filter(|s| self.section_on(*s))
+            .collect()
+    }
+
+    /// The sections the session pass asks for and writes: those switched
+    /// on that are still [`Section::written`], in page order.
+    #[must_use]
+    pub fn sections_written(&self) -> Vec<Section> {
+        self.sections_on()
+            .into_iter()
+            .filter(|s| s.written())
             .collect()
     }
 }
@@ -586,6 +596,9 @@ pub enum Refusal {
     Unverified,
     /// `memory_section_off`: the section is switched off.
     SectionOff,
+    /// `memory_section_not_written`: the pass no longer writes this
+    /// section (`projects` or `working`, 2_design.md §15.9 phase 1).
+    NotWritten,
     /// `memory_sensitive`: a credential or anything the redactor changes, a
     /// listed finance word, or a sensitive event outside `now` and
     /// `milestones`.
@@ -606,6 +619,7 @@ impl Refusal {
             Self::Invalid => "memory_invalid",
             Self::Unverified => "memory_unverified",
             Self::SectionOff => "memory_section_off",
+            Self::NotWritten => "memory_section_not_written",
             Self::Sensitive => "memory_sensitive",
             Self::PersonalOff => "memory_personal_off",
             Self::Inferred => "memory_inferred",
@@ -813,6 +827,9 @@ fn check_one(
     });
     if !own {
         return Err(Refusal::Unverified);
+    }
+    if !section.written() {
+        return Err(Refusal::NotWritten);
     }
     if !config.section_on(section) {
         return Err(Refusal::SectionOff);
@@ -1084,59 +1101,6 @@ pub fn apply(
     Applied::Created(id)
 }
 
-/// Whether `item` is due a `preferences` candidate (§13.7): an active
-/// `working` item with none opened yet, whose occurrences span at least
-/// `promote_working_sessions` distinct sessions (0 switches it off).
-#[must_use]
-pub fn proposes_preference(item: &MemoryItem, config: &MemoryConfig) -> bool {
-    let n = config.promote_working_sessions.value;
-    n > 0
-        && item.section == Section::Working
-        && item.status == MemoryStatus::Active
-        && item.preference_proposal.is_none()
-        && item.sessions() >= usize::try_from(n).unwrap_or(usize::MAX)
-}
-
-/// The `preferences` candidate a recurring `working` item opens (§13.7):
-/// the item's statement as the claim's statement, the turn of `draft` (the
-/// occurrence that crossed the count, or a later one) as its quote and
-/// cite, admitted by [`RECURS_TRIGGER`] with the item's id as the matched
-/// words and the tag's criteria. `None` when the tag is not in the table.
-#[must_use]
-pub fn preference_candidate(
-    item: &MemoryItem,
-    draft: &Draft,
-    record: &crate::SessionRecord,
-    tags: &crate::TagTable,
-) -> Option<crate::EntryCandidate> {
-    let tag: crate::TagName = "preferences".parse().ok()?;
-    let def = tags.get(&tag)?;
-    Some(crate::EntryCandidate {
-        tag,
-        role: Speaker::User,
-        quote: draft.checked.quote.clone(),
-        statement: Some(item.statement.clone()),
-        subject: Some(WORKING_SUBJECT.to_owned()),
-        evidence: None,
-        cite: crate::Cite {
-            session: record.id.clone(),
-            message: Some(draft.checked.message.clone()),
-            at: draft.at,
-            prompt_sha256: draft.prompt_sha256.clone(),
-            line: draft.line,
-            cwd: record.cwd.clone(),
-        },
-        project: record.project.clone(),
-        provider: record.provider.clone(),
-        host: record.host.clone(),
-        admitted: Some(crate::Admitted {
-            trigger: RECURS_TRIGGER.to_owned(),
-            matched: item.id.to_string(),
-            criteria: def.capture.criteria.as_ref().map(|c| c.value.clone()),
-        }),
-    })
-}
-
 /// Whether an element of `section` may join an item of `item`: its own
 /// section, or, for a `now` element, a milestone, which holds the
 /// occurrences of the `now` item promoted to it (§13.4).
@@ -1180,7 +1144,8 @@ fn near_duplicate(a: &BTreeSet<String>, b: &BTreeSet<String>) -> bool {
 }
 
 /// The active items a pass request lists so the model can name a repeat:
-/// those of the sections switched on, best word overlap with the window's
+/// those of the sections switched on that the pass still writes
+/// ([`Section::written`]), best word overlap with the window's
 /// user turns first, then newest, at most [`MAX_CONTEXT_ITEMS`].
 #[must_use]
 pub fn context(
@@ -1195,7 +1160,9 @@ pub fn context(
         .collect();
     let mut active: Vec<(usize, &MemoryItem)> = items
         .iter()
-        .filter(|i| i.status == MemoryStatus::Active && config.section_on(i.section))
+        .filter(|i| {
+            i.status == MemoryStatus::Active && config.section_on(i.section) && i.section.written()
+        })
         .map(|i| (token_set(&i.statement).intersection(&window).count(), i))
         .collect();
     active.sort_by(|(a, x), (b, y)| b.cmp(a).then(y.latest().cmp(&x.latest())));
