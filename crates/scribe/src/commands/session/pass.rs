@@ -768,14 +768,9 @@ impl Job<'_> {
                 self.redactor,
             ) {
                 Ok(written) => written,
-                Err(err) => {
-                    // `code` and the message are the later failure's. The
-                    // ids are copied first so `Job::failed` still audits them.
-                    if let scribe_core::Error::AfterPersist(after) = &err {
-                        self.persisted_targets.extend(after.closed.iter().cloned());
-                    }
-                    return Err(PassError::new(err.code(), err.to_string()));
-                }
+                // The window's closures and entries commit with it, so a
+                // failure leaves none of them to audit.
+                Err(err) => return Err(PassError::new(err.code(), err.to_string())),
             };
             self.write_slots = self
                 .write_slots

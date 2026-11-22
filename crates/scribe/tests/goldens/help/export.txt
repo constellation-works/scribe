@@ -13,7 +13,7 @@ Options:
           markdown or jsonl [default: markdown]
 
           Possible values:
-          - markdown: One file per session, sessions/<yyyy>/<mm>/<id>.md, and control.json
+          - markdown: The old store's files: sessions/, entries/, control.json, proposals.json, tags.json, marks.json, pickups.json, audit.jsonl
           - jsonl:    One line per row, <table>.jsonl per table
 
   -h, --help

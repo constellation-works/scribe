@@ -1,8 +1,7 @@
 use super::{SESSION_BODY, entry_text, private_tempdir, session_text};
 use crate::entry::{EntryFilter, EntryStatus};
-use crate::error::Error;
 use crate::session::SessionFilter;
-use crate::store::fsio::LockGuard;
+use crate::store::db;
 use crate::store::{AuditEvent, AuditStatus, Store};
 use std::fs;
 use std::path::Path;
@@ -173,7 +172,7 @@ fn a_linked_tag_directory_is_refused_not_followed() {
 }
 
 #[test]
-fn record_audit_appends_one_line_per_event_and_creates_the_directory() {
+fn record_audit_keeps_one_line_per_event_and_creates_the_directory() {
     let dir = private_tempdir();
     let root = dir.path().join("data");
     let store = Store::open(&root);
@@ -183,24 +182,61 @@ fn record_audit_appends_one_line_per_event_and_creates_the_directory() {
     store
         .record_audit(&event("hook user-prompt-submit"))
         .unwrap();
-    let text = fs::read_to_string(store.audit_path()).unwrap();
-    assert_eq!(text.lines().count(), 2, "got {text:?}");
-    assert!(text.ends_with('\n'));
+    let (events, torn) = store.audit_events().unwrap();
+    assert_eq!(events.len(), 2, "got {events:?}");
+    assert_eq!(torn, 0);
 }
 
+/// Template defect 1: a locked write waited twice, once for the write and
+/// again for its audit line, and the line was lost with a warning. A line
+/// recorded while another writer holds `scribe.db` now waits for nothing:
+/// it is spooled, every read sees it, and the next write drains it.
 #[test]
-fn record_audit_waits_for_the_store_lock() {
-    // Events and record writes share one lock, so a log line is never
-    // written while another command is mid-write.
+fn record_audit_never_waits_for_a_writer_and_the_next_write_drains_the_spool() {
     let dir = private_tempdir();
-    let store = Store::open(dir.path()).with_lock_wait(Duration::from_millis(60));
-    let _held =
-        LockGuard::acquire(&dir.path().join(".lock"), "test", Duration::from_secs(1)).unwrap();
-    let err = store
+    let store = Store::open(dir.path()).with_lock_wait(Duration::from_secs(5));
+    let on = |store: &Store, id: &str| {
+        store
+            .update_control(|state| {
+                crate::control::switch(
+                    state,
+                    &id.parse().unwrap(),
+                    &crate::control::Switch::On,
+                    time::macros::datetime!(2026-11-01 10:00 UTC),
+                )
+            })
+            .unwrap();
+    };
+    on(&store, "s-1");
+    store
         .record_audit(&event("hook user-prompt-submit"))
-        .unwrap_err();
-    assert!(matches!(err, Error::Locked { .. }), "got {err:?}");
-    assert!(!store.audit_path().exists());
+        .unwrap();
+    let holder = db::open_new_writer(dir.path(), Duration::from_secs(1)).unwrap();
+    holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let started = std::time::Instant::now();
+    store.record_audit(&event("entry add")).unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "the line waited {:?}",
+        started.elapsed()
+    );
+    let spool = dir.path().join(super::super::write::AUDIT_SPOOL_DIR);
+    assert_eq!(fs::read_dir(&spool).unwrap().count(), 1);
+    let (events, _) = store.audit_events().unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .map(|e| e.command.as_str())
+            .collect::<Vec<_>>(),
+        ["hook user-prompt-submit", "entry add"]
+    );
+    holder.execute_batch("ROLLBACK").unwrap();
+    drop(holder);
+    store.record_audit(&event("entry update")).unwrap();
+    on(&store, "s-2");
+    assert_eq!(fs::read_dir(&spool).unwrap().count(), 0, "drained");
+    let (events, _) = store.audit_events().unwrap();
+    assert_eq!(events.len(), 3, "each line once: {events:?}");
 }
 
 mod cites {
@@ -421,12 +457,12 @@ fn update_control_writes_only_a_change() {
     let s: crate::session::SessionId = "s-1".parse().unwrap();
     let t0 = time::macros::datetime!(2026-11-01 10:00 UTC);
 
-    // Nothing changed: no control.json is written.
+    // Nothing changed: no switch is written.
     let off = store
         .update_control(|state| control::switch(state, &s, &Switch::Off, t0))
         .unwrap();
     assert!(!off.changed());
-    assert!(!root.join("control.json").exists());
+    assert!(store.control().unwrap().get(&s).is_none());
 
     store
         .update_control(|state| control::switch(state, &s, &Switch::On, t0))
@@ -1181,10 +1217,8 @@ I prefer secret phrase XYZ123
     assert_eq!(p_inst.message, "m-9");
     assert_eq!(p_inst.quote, None);
 
-    let raw_entry = fs::read_to_string(store.entry_path(&entry.id)).unwrap();
-    assert!(!raw_entry.contains("XYZ123"), "{raw_entry}");
-    let raw_proposals = fs::read_to_string(dir.path().join("proposals.json")).unwrap();
-    assert!(!raw_proposals.contains("XYZ123"), "{raw_proposals}");
+    // Neither the rows nor a WAL frame or free page keeps the quote.
+    assert!(!super::on_disk(dir.path(), "XYZ123"));
 }
 
 mod marks {

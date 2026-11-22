@@ -75,7 +75,7 @@ pub use entry::{
     EntryStatus, Instruction, NewEntry, Outcome, OutcomeState, Speaker, TagName, Window,
     WindowTurn,
 };
-pub use error::{AfterPersistError, Error, Result, WriteRefusal};
+pub use error::{Error, Result, WriteRefusal};
 pub use models::Models;
 pub use proposal::{
     Admitted, CONTEXT_CHARS, CONTEXT_SENTENCES, ClosedReason, EntryCandidate, Proposal,
@@ -96,10 +96,10 @@ pub use store::{
     AUDIT_FILE, AuditEvent, AuditStatus, CONFIG_FILE, CONTROL_FILE, COVERED, DB_FILE,
     DEFAULT_LOCK_WAIT, ENTRIES_DIR, EntryList, ExportFormat, Exported, InitFile, InitReport,
     IssueAudit, LOCKS_DIR, MARKS_FILE, MEMORY_DIR, MILESTONES_DIR, MIN_SECRET_CHARS, MODEL_FAILED,
-    MarkChange, MarkKey, MarkResult, MemoryShown, MemoryView, MemoryWritten, NEEDS_REDACTION,
-    NOW_DIR, PROFILE_FILE, PROPOSALS_FILE, PassMemory, PassWrite, PassWritten, ProfileInputs,
-    ProfileRevision, REDACTED_FIELDS, RebuildGuard, Redactor, RefreshWritten, SESSIONS_DIR,
-    SessionForget, SessionList, SessionView, SessionsMoved, Skipped, Store, TagList,
+    MarkChange, MarkKey, MarkResult, MemoryShown, MemoryView, MemoryWritten, Moved,
+    NEEDS_REDACTION, NOW_DIR, PROFILE_FILE, PROPOSALS_FILE, PassMemory, PassWrite, PassWritten,
+    ProfileInputs, ProfileRevision, REDACTED_FIELDS, RebuildGuard, Redactor, RefreshWritten,
+    SESSIONS_DIR, SessionForget, SessionList, SessionView, Skipped, Store, TagList,
     check_agent_author, check_content, check_description, check_reason, init_project,
     integration_hooks, resolve_prefix, unresolved_redact_env,
 };

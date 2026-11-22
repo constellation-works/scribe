@@ -40,12 +40,7 @@ fn pass_candidate_waits_for_typed_approval_and_keeps_original_user_cite() {
     assert_eq!(p["kind"], "candidate");
     assert_eq!(p["candidate"]["quote"], quote);
     assert_eq!(p["candidate"]["cite"]["message"], "preference-turn");
-    assert!(
-        !s.fx
-            .root()
-            .join("entries/preferences/preferences-1.md")
-            .exists()
-    );
+    assert!(support::exported(&s.fx.root(), "entries/preferences/preferences-1.md").is_none());
     let id = p["id"].as_str().unwrap();
     let prompt = format!("#scribe approve {id}");
     let mut payload = s.payload("UserPromptSubmit");
@@ -129,7 +124,102 @@ fn pass_candidate_waits_for_typed_approval_and_keeps_original_user_cite() {
     assert_eq!(shown["admitted"], Value::Null);
 }
 
+/// Marks claim `n` approved by Daniel without writing its entry: the
+/// journal an approval leaves durable before the entry is written.
+fn approve_claim_in_db(root: &std::path::Path, n: i64) {
+    support::sql(
+        root,
+        &format!(
+            "UPDATE claims SET state = 'approved', settled_at = '2026-11-15T23:00:00Z',
+                 settled_author = '{{\"kind\":\"daniel\",\"name\":\"daniel\"}}',
+                 settled_by = c_cite WHERE n = {n};"
+        ),
+    );
+}
+
+/// Stages claims in the shape `proposals.json` held them (`id: "p-N"`,
+/// `candidate: {..}`) as rows of `claims`. The store must already have had
+/// a write: a `proposals.json` seeded after that is ignored, the documents
+/// having moved into `scribe.db`. Before the db exists, the claims are
+/// seeded as the `proposals.json` the first write then imports.
+fn seed_claims(root: &std::path::Path, proposals: &[Value]) {
+    if !root.join("scribe.db").exists() {
+        if !root.exists() {
+            std::fs::create_dir(root).unwrap();
+            make_private(root);
+        }
+        let file = root.join("proposals.json");
+        std::fs::write(
+            &file,
+            json!({"format": 11, "proposals": proposals}).to_string(),
+        )
+        .unwrap();
+        make_private(&file);
+        return;
+    }
+    let conn = rusqlite::Connection::open(root.join("scribe.db")).expect("open scribe.db");
+    let json_text = |v: &Value| -> Option<String> { (!v.is_null()).then(|| v.to_string()) };
+    let plain = |v: &Value| -> Option<String> { v.as_str().map(str::to_owned) };
+    for p in proposals {
+        let n: i64 = p["id"]
+            .as_str()
+            .unwrap()
+            .trim_start_matches("p-")
+            .parse()
+            .unwrap();
+        let c = &p["candidate"];
+        let has = i64::from(c.is_object());
+        conn.execute(
+            "INSERT INTO claims (n, kind, older, newer, reason, quotes, state, opened_at,
+                 settled_at, settled_by, author, updated_by, settled_author, closed_reason,
+                 instruction, has_candidate, c_tag, c_role, c_quote, c_context, c_statement,
+                 c_subject, c_evidence, c_cite, c_project, c_provider, c_host, c_admitted)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+                 ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)",
+            rusqlite::params![
+                n,
+                plain(&p["kind"]),
+                plain(&p["older"]),
+                plain(&p["newer"]),
+                plain(&p["reason"]),
+                p.get("quotes")
+                    .map_or_else(|| "[]".to_owned(), Value::to_string),
+                plain(&p["state"]),
+                plain(&p["opened_at"]),
+                plain(&p["settled_at"]),
+                json_text(&p["settled_by"]),
+                p["author"].to_string(),
+                json_text(&p["updated_by"]),
+                json_text(&p["settled_author"]),
+                plain(&p["closed_reason"]),
+                json_text(&p["instruction"]),
+                has,
+                plain(&c["tag"]),
+                plain(&c["role"]),
+                plain(&c["quote"]),
+                plain(&c["context"]),
+                plain(&c["statement"]),
+                plain(&c["subject"]),
+                plain(&c["evidence"]),
+                json_text(&c["cite"]),
+                plain(&c["project"]),
+                plain(&c["provider"]),
+                plain(&c["host"]),
+                json_text(&c["admitted"]),
+            ],
+        )
+        .expect("insert claim");
+    }
+}
+
 fn setup_stored_assistant_finding_candidate(quote: &str) -> Setup {
+    setup_stored_assistant_finding_candidate_with(quote, "exp-5342a4d6")
+}
+
+/// The pass has run; the stored claim is then a row of `claims` (a
+/// `proposals.json` seeded now would be ignored, the documents having moved
+/// into `scribe.db`).
+fn setup_stored_assistant_finding_candidate_with(quote: &str, evidence: &str) -> Setup {
     let s = Setup::new();
     s.write(
         ON,
@@ -143,23 +233,21 @@ fn setup_stored_assistant_finding_candidate(quote: &str) -> Setup {
     s.run(&["session", "pass", "--session", ON, "--json"], b"");
     let cite = json!({"session": ON, "message": "a-find", "at": "2026-11-03T06:00:00Z",
         "prompt_sha256": "0".repeat(64), "line": 1, "cwd": "/nonexistent/work/scribe"});
-    let proposal = json!({
-        "id": "p-1", "kind": "candidate", "older": "finding-1", "newer": null,
-        "candidate": {"tag": "finding", "role": "assistant", "quote": quote,
-            "evidence": "exp-5342a4d6", "cite": cite, "project": "scribe",
-            "provider": "claude-code", "host": "host"},
-        "reason": "Assistant finding statement", "quotes": [], "state": "open",
-        "opened_at": "2026-11-03T06:01:00Z", "settled_at": null, "settled_by": null,
-        "author": {"kind": "scribe", "name": "session-pass"}, "updated_by": null,
-        "settled_author": null
-    });
-    let path = s.fx.root().join("proposals.json");
-    std::fs::write(
-        &path,
-        json!({"format": 10, "proposals": [proposal]}).to_string(),
+    let conn = rusqlite::Connection::open(s.fx.root().join("scribe.db")).unwrap();
+    conn.execute(
+        "INSERT INTO claims (n, kind, older, newer, reason, quotes, state, opened_at, author,
+             has_candidate, c_tag, c_role, c_quote, c_evidence, c_cite, c_project, c_provider, c_host)
+         VALUES (1, 'candidate', 'finding-1', NULL, 'Assistant finding statement', '[]', 'open',
+             '2026-11-03T06:01:00Z', ?1, 1, 'finding', 'assistant', ?2, ?3, ?4, 'scribe',
+             'claude-code', 'host')",
+        rusqlite::params![
+            json!({"kind": "scribe", "name": "session-pass"}).to_string(),
+            quote,
+            evidence,
+            cite.to_string()
+        ],
     )
     .unwrap();
-    make_private(&path);
     s
 }
 
@@ -200,12 +288,8 @@ fn a_stored_assistant_finding_candidate_still_approves_into_one_agent_entry() {
 #[test]
 fn forgetting_an_assistant_derived_entry_keeps_it_readable_with_blank_content() {
     let quote = "Measured: the reviewer mix alone predicts a 7-point first-pass gap.";
-    let s = setup_stored_assistant_finding_candidate(quote);
     // Format 10 allowed free-form evidence, including the finding itself.
-    let path = s.fx.root().join("proposals.json");
-    let mut fixture: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    fixture["proposals"][0]["candidate"]["evidence"] = json!(quote);
-    std::fs::write(&path, fixture.to_string()).unwrap();
+    let s = setup_stored_assistant_finding_candidate_with(quote, quote);
     let approved = type_settlement(&s, "#scribe approve p-1");
     assert!(
         text(&approved.stdout).contains("recorded finding-1 as the agent's entry"),
@@ -253,8 +337,8 @@ fn forgetting_an_assistant_derived_entry_keeps_it_readable_with_blank_content() 
     let plain_show = text(&s.fx.ok(&["entry", "show", "finding-1"]).stdout);
     assert!(plain_show.contains("forgotten"), "{plain_show}");
 
-    let stored = std::fs::read_to_string(s.fx.root().join("proposals.json")).unwrap()
-        + &std::fs::read_to_string(s.fx.root().join("entries/finding/finding-1.md")).unwrap();
+    let stored = support::exported(&s.fx.root(), "proposals.json").unwrap()
+        + &support::exported(&s.fx.root(), "entries/finding/finding-1.md").unwrap();
     assert!(
         !stored.contains(quote),
         "forgotten words must leave the entry and proposals"
@@ -278,35 +362,35 @@ fn forgetting_an_assistant_derived_entry_keeps_it_readable_with_blank_content() 
 #[test]
 fn entry_show_refuses_inconsistent_assistant_entry_shapes() {
     let s = setup_stored_assistant_finding_candidate("Measured result.");
+    let root = s.fx.root();
     type_settlement(&s, "#scribe approve p-1");
-    let path = s.fx.root().join("entries/finding/finding-1.md");
-    let active = std::fs::read_to_string(&path).unwrap();
+    // The entry is a row of `scribe.db` now: keep its active and forgotten
+    // rows, and stage each malformed shape by replacing the row.
+    support::sql(
+        &root,
+        "CREATE TABLE snap_active AS SELECT * FROM entries WHERE id = 'finding-1';",
+    );
     type_settlement(&s, "#scribe forget finding-1");
-    let forgotten = std::fs::read_to_string(&path).unwrap();
-    let replace_said = |source: &str, value: &str| -> String {
-        source
-            .lines()
-            .map(|line| {
-                if line.starts_with("said:") {
-                    format!("said: {value}\n")
-                } else {
-                    format!("{line}\n")
-                }
-            })
-            .collect()
-    };
-    let mut bad_body = forgotten.clone();
-    bad_body.push_str("leaked words\n");
-    for malformed in [
-        replace_said(&active, "''"),
-        replace_said(&forgotten, "'#scribe approve p-1'"),
-        bad_body,
+    support::sql(
+        &root,
+        "CREATE TABLE snap_forgotten AS SELECT * FROM entries WHERE id = 'finding-1';",
+    );
+    for stage in [
+        "DELETE FROM entries WHERE id = 'finding-1';
+         INSERT INTO entries SELECT * FROM snap_active;
+         UPDATE entries SET said = '' WHERE id = 'finding-1';",
+        "DELETE FROM entries WHERE id = 'finding-1';
+         INSERT INTO entries SELECT * FROM snap_forgotten;
+         UPDATE entries SET said = '#scribe approve p-1' WHERE id = 'finding-1';",
+        "DELETE FROM entries WHERE id = 'finding-1';
+         INSERT INTO entries SELECT * FROM snap_forgotten;
+         UPDATE entries SET content = content || 'leaked words' WHERE id = 'finding-1';",
     ] {
-        std::fs::write(&path, malformed).unwrap();
+        support::sql(&root, stage);
         let out = s.fx.run(&["entry", "show", "finding-1", "--json"]);
-        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(out.status.code(), Some(1), "{stage}");
         let error: Value = serde_json::from_slice(&out.stderr).unwrap();
-        assert_eq!(error["code"], "store_corrupt");
+        assert_eq!(error["code"], "store_corrupt", "{stage}");
     }
 }
 
@@ -422,7 +506,7 @@ fn pass_asks_for_standing_preferences_only_and_never_proposes_a_decision() {
         "A standing rule from the user that applies beyond the work at hand."
     );
     // Stored text never keeps the prompt placeholder (2_design.md §15.8).
-    let stored = std::fs::read_to_string(s.fx.root().join("proposals.json")).unwrap();
+    let stored = support::exported(&s.fx.root(), "proposals.json").unwrap();
     assert!(
         !stored.contains("{user}") && !stored.contains("{User}"),
         "{stored}"
@@ -1110,8 +1194,18 @@ impl Setup {
         (out.status.code() == Some(0)).then(|| serde_json::from_slice(&out.stdout).unwrap())
     }
 
+    /// How many entries `scribe.db` holds (`0` before the db exists).
+    fn entry_count(&self) -> i64 {
+        rusqlite::Connection::open_with_flags(
+            self.fx.root().join("scribe.db"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .and_then(|c| c.query_row("SELECT count(*) FROM entries", [], |r| r.get(0)))
+        .unwrap_or(0)
+    }
+
     fn audit_lines(&self) -> usize {
-        std::fs::read_to_string(self.fx.root().join("audit.jsonl")).map_or(0, |t| t.lines().count())
+        support::audit_lines(&self.fx.root()).len()
     }
 
     fn config(&self, toml: &str) {
@@ -1966,8 +2060,8 @@ fn legacy_control_is_read_without_writes_and_new_retry_state_is_strict() {
         "migration on read is in memory only"
     );
     setup.pass();
-    let current: Value = serde_json::from_slice(&setup.control_bytes()).unwrap();
-    assert_eq!(current["format"], 26);
+    let current = support::control(&setup.fx.root());
+    assert_eq!(current["format"], 27);
     assert_eq!(current["sessions"][ON]["consecutive_failures"], 0);
     assert_eq!(current["sessions"][ON]["retry_after"], Value::Null);
     assert_eq!(current["sessions"][ON]["pending_links"], json!([]));
@@ -2035,11 +2129,7 @@ fn scribe_on_off_and_status_switch_the_session_and_block_the_prompt() {
 
 /// The audit log's lines, oldest first.
 fn audit_log(setup: &Setup) -> Vec<Value> {
-    std::fs::read_to_string(setup.fx.root().join("audit.jsonl"))
-        .unwrap()
-        .lines()
-        .map(|l| serde_json::from_str(l).unwrap())
-        .collect()
+    support::audit_lines(&setup.fx.root())
 }
 
 #[test]
@@ -2227,11 +2317,15 @@ fn a_pass_writes_one_record_of_daniels_terms_and_never_reads_a_session_never_swi
         record["terms"],
         json!([{"term": "graduate to level 4", "said": DEFINED, "message": "u-1"}])
     );
-    assert!(!setup.fx.root().join("entries").exists(), "no entries");
+    assert!(
+        support::exported(&setup.fx.root(), "entries/preferences/preferences-1.md").is_none()
+            && setup.entry_count() == 0,
+        "no entries"
+    );
     // The record is written at format 23: a header and one open segment
     // holding this pass's segment text.
     let file = setup.record_text();
-    assert!(file.starts_with("---\nformat: 26\n"), "{file}");
+    assert!(file.starts_with("---\nformat: 27\n"), "{file}");
     assert!(file.contains("\n## Log\n### 1. "), "{file}");
     assert!(!file.contains("## Outcome"), "{file}");
     assert_eq!(record["active"], true);
@@ -2315,7 +2409,7 @@ fn a_failed_pass_stays_due_exits_1_naming_it_and_the_next_run_retries_it() {
         "{}",
         error["error"]
     );
-    let audit = std::fs::read_to_string(setup.fx.root().join("audit.jsonl")).unwrap();
+    let audit = support::audit_text(&setup.fx.root());
     assert!(
         !audit.contains(reason),
         "audit exposed the failure reason: {audit}"
@@ -2493,10 +2587,9 @@ impl Setup {
 
     /// The `error_code` of every audit line, oldest first.
     fn audit_codes(&self) -> Vec<Value> {
-        std::fs::read_to_string(self.fx.root().join("audit.jsonl"))
-            .unwrap_or_default()
-            .lines()
-            .map(|l| serde_json::from_str::<Value>(l).unwrap()["error_code"].clone())
+        support::audit_lines(&self.fx.root())
+            .iter()
+            .map(|l| l["error_code"].clone())
             .collect()
     }
 
@@ -2742,10 +2835,8 @@ fn rebuild_refusals_are_audited_and_leave_the_record_unchanged() {
     );
     assert_eq!(setup.record_text().into_bytes(), before);
     assert_eq!(setup.prompts().len(), 1, "no model calls for refusals");
-    let audit = std::fs::read_to_string(setup.fx.root().join("audit.jsonl")).unwrap();
-    let rebuilds: Vec<Value> = audit
-        .lines()
-        .map(|l| serde_json::from_str::<Value>(l).unwrap())
+    let rebuilds: Vec<Value> = support::audit_lines(&setup.fx.root())
+        .into_iter()
         .filter(|l| l["command"] == "session rebuild")
         .collect();
     assert_eq!(rebuilds.len(), 3);
@@ -2756,7 +2847,7 @@ fn rebuild_refusals_are_audited_and_leave_the_record_unchanged() {
 }
 
 #[test]
-fn a_pass_that_fails_after_persisting_closures_still_audits_each_one() {
+fn a_pass_window_that_fails_rolls_its_closures_back_and_audits_none() {
     let setup = Setup::new();
     setup.scribe("/scribe on");
     let proposal = json!({
@@ -2793,16 +2884,11 @@ fn a_pass_that_fails_after_persisting_closures_still_audits_each_one() {
         "settled_author": null,
         "closed_reason": null
     });
-    let proposals = setup.fx.root().join("proposals.json");
-    std::fs::write(
-        &proposals,
-        json!({"format": 11, "proposals": [proposal]}).to_string(),
-    )
-    .unwrap();
-    make_private(&proposals);
+    seed_claims(&setup.fx.root(), &[proposal]);
 
-    // A trigger refuses the record's row, so the pass's transaction fails
-    // after the closure was persisted in proposals.json.
+    // A trigger refuses the record's row, so the window's transaction fails
+    // after it closed the claim (phase 7: the closure and the record commit
+    // together, so nothing persisted is left to audit).
     support::sql(
         &setup.fx.root(),
         "CREATE TRIGGER staged_failure BEFORE UPDATE ON sessions WHEN NEW.has_record = 1
@@ -2817,22 +2903,19 @@ fn a_pass_that_fails_after_persisting_closures_still_audits_each_one() {
         "{report}"
     );
 
-    let stored: Value =
-        serde_json::from_str(&std::fs::read_to_string(&proposals).unwrap()).unwrap();
-    assert_eq!(stored["proposals"][0]["state"], "rejected");
-    assert_eq!(stored["proposals"][0]["closed_reason"], "tag_retired");
+    let stored = support::proposals_doc(&setup.fx.root());
+    assert_eq!(stored["proposals"][0]["state"], "open");
+    assert_eq!(stored["proposals"][0]["closed_reason"], Value::Null);
 
-    let audit = std::fs::read_to_string(setup.fx.root().join("audit.jsonl")).unwrap();
-    let pass_lines: Vec<Value> = audit
-        .lines()
-        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+    let pass_lines: Vec<Value> = support::audit_lines(&setup.fx.root())
+        .into_iter()
         .filter(|line| line["command"] == "session pass")
         .collect();
     let closures: Vec<&Value> = pass_lines
         .iter()
         .filter(|line| line["status"] == "success" && line["target"] == "p-1")
         .collect();
-    assert_eq!(closures.len(), 1, "{pass_lines:?}");
+    assert!(closures.is_empty(), "{pass_lines:?}");
     let failures: Vec<&Value> = pass_lines
         .iter()
         .filter(|line| line["status"] == "failure" && line["error_code"] == "store_database")
@@ -2929,10 +3012,8 @@ fn rebuild_resumes_hidden_checkpoints_and_preserves_identity_links_and_activity(
         shown["rebuilt_by"],
         json!({"kind": "agent", "name": "test-agent"})
     );
-    let rebuild_line = std::fs::read_to_string(store.audit_path())
-        .unwrap()
-        .lines()
-        .map(|l| serde_json::from_str::<Value>(l).unwrap())
+    let rebuild_line = support::audit_lines(&setup.fx.root())
+        .into_iter()
         .rfind(|l| l["command"] == "session rebuild")
         .unwrap();
     assert_eq!(rebuild_line["status"], "success");
@@ -3322,9 +3403,9 @@ fn candidate_open_cap_is_enforced_even_when_the_model_ignores_it() {
             p
         })
         .collect();
-    let path = s.fx.root().join("proposals.json");
-    std::fs::write(&path, json!({"format":14, "proposals":full}).to_string()).unwrap();
-    make_private(&path);
+    // The stored claims replace the pass's own: p-1 .. p-19.
+    support::sql(&s.fx.root(), "DELETE FROM claims;");
+    seed_claims(&s.fx.root(), &full);
     let quotes = [
         "I prefer faster incremental compilation.",
         "I always choose a blue interface.",
@@ -3395,7 +3476,7 @@ fn an_instructed_rejection_keeps_the_claim_from_being_proposed_again() {
     .unwrap();
     assert_eq!(rejected["state"], "rejected");
     assert_eq!(rejected["closed_reason"], "instructed");
-    assert!(!s.fx.root().join("entries").exists(), "no entry is written");
+    assert_eq!(s.entry_count(), 0, "no entry is written");
     // He says it again; the next pass finds the claim and proposes nothing.
     s.append(ON, &[line("user", "u-2", quote)]);
     s.answer(&candidate_answer(quote, "u-2", "preferences"));
@@ -3455,11 +3536,7 @@ fn candidate_ids_are_reserved_for_approval_and_agent_settlement_is_refused() {
         "A separate decision Daniel explicitly marks.",
     );
     assert!(said.starts_with("scribe: added preferences-3 "), "{said}");
-    assert!(
-        s.fx.root()
-            .join("entries/preferences/preferences-3.md")
-            .exists()
-    );
+    assert!(support::exported(&s.fx.root(), "entries/preferences/preferences-3.md").is_some());
     type_settlement(&s, "#scribe approve p-1");
     let entry: Value = serde_json::from_slice(
         &s.fx
@@ -3490,14 +3567,7 @@ fn interrupted_candidate_approval_is_replayed_once_from_the_durable_proposal() {
     s.scribe("/scribe on");
     s.run(&["session", "pass", "--session", ON], b"");
     // Approved journal durable; entry file not yet written at the crash point.
-    let path = s.fx.root().join("proposals.json");
-    let mut doc: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    let p = &mut doc["proposals"][0];
-    p["state"] = json!("approved");
-    p["settled_at"] = json!("2026-11-15T23:00:00Z");
-    p["settled_author"] = json!({"kind":"daniel", "name":"daniel"});
-    p["settled_by"] = p["candidate"]["cite"].clone();
-    std::fs::write(&path, doc.to_string()).unwrap();
+    approve_claim_in_db(&s.fx.root(), 1);
     s.run(&["consistency", "scan", "--json"], b"");
     s.run(&["consistency", "scan", "--json"], b"");
     let es: Value = serde_json::from_slice(&s.fx.ok(&["entry", "list", "--json"]).stdout).unwrap();
@@ -3545,12 +3615,7 @@ fn approving_a_candidate_covered_by_a_later_entry_writes_no_second_entry() {
         reply["systemMessage"],
         "scribe: approved p-1 — already covered by preferences-2; no new entry"
     );
-    assert!(
-        !s.fx
-            .root()
-            .join("entries/preferences/preferences-1.md")
-            .exists()
-    );
+    assert!(support::exported(&s.fx.root(), "entries/preferences/preferences-1.md").is_none());
     let listed: Value =
         serde_json::from_slice(&s.fx.ok(&["entry", "list", "--json"]).stdout).unwrap();
     assert_eq!(listed["total"], 1);
@@ -3611,32 +3676,20 @@ fn consistency_scan_reports_an_approved_candidate_closed_as_covered() {
     )
     .unwrap();
     assert_eq!(added["id"], "preferences-2");
-    let path = s.fx.root().join("proposals.json");
-    let mut doc: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    let proposal = &mut doc["proposals"][0];
-    proposal["state"] = json!("approved");
-    proposal["settled_at"] = json!("2026-11-15T23:00:00Z");
-    proposal["settled_author"] = json!({"kind": "daniel", "name": "daniel"});
-    proposal["settled_by"] = proposal["candidate"]["cite"].clone();
-    std::fs::write(&path, doc.to_string()).unwrap();
+    approve_claim_in_db(&s.fx.root(), 1);
     let first = s.run(&["consistency", "scan", "--json"], b"");
     let report: Value = serde_json::from_slice(&first.stdout).unwrap();
     assert_eq!(report["covered"][0]["proposal"], "p-1");
     assert_eq!(report["covered"][0]["by"], "preferences-2");
     assert!(report["reapplied"].as_array().unwrap().is_empty());
-    assert!(
-        !s.fx
-            .root()
-            .join("entries/preferences/preferences-1.md")
-            .exists()
-    );
+    assert!(support::exported(&s.fx.root(), "entries/preferences/preferences-1.md").is_none());
     let settled = &proposals(&s)["proposals"][0];
     assert_eq!(settled["state"], "rejected");
     assert!(settled["newer"].is_null());
     let listed: Value =
         serde_json::from_slice(&s.fx.ok(&["entry", "list", "--json"]).stdout).unwrap();
     assert_eq!(listed["total"], 1);
-    let audit = std::fs::read_to_string(s.fx.root().join("audit.jsonl")).unwrap();
+    let audit = support::audit_text(&s.fx.root());
     let covered_lines = audit
         .lines()
         .filter(|line| {
@@ -3647,7 +3700,7 @@ fn consistency_scan_reports_an_approved_candidate_closed_as_covered() {
         .count();
     assert_eq!(covered_lines, 1, "{audit}");
     s.run(&["consistency", "scan", "--json"], b"");
-    let again = std::fs::read_to_string(s.fx.root().join("audit.jsonl")).unwrap();
+    let again = support::audit_text(&s.fx.root());
     let covered_again = again
         .lines()
         .filter(|line| {
@@ -3731,13 +3784,7 @@ fn pass_closes_retired_tag_candidates_before_cap_and_suppresses_their_quotes() {
     }
     assert_eq!(initial.len(), 20);
     assert_eq!(retired_counts.values().sum::<usize>(), 16);
-    let proposals_path = s.fx.root().join("proposals.json");
-    std::fs::write(
-        &proposals_path,
-        json!({"format": 11, "proposals": initial}).to_string(),
-    )
-    .unwrap();
-    make_private(&proposals_path);
+    seed_claims(&s.fx.root(), &initial);
 
     let new_quote = "I prefer concise summaries in every session pass.";
     s.write(ON, &[line("user", "u-new", new_quote)]);
@@ -3768,16 +3815,11 @@ fn pass_closes_retired_tag_candidates_before_cap_and_suppresses_their_quotes() {
     assert_eq!(list[20]["older"], "preferences-3");
     assert_eq!(list[20]["state"], "open");
     assert_eq!(list[20]["candidate"]["quote"], new_quote);
-    assert!(
-        !s.fx.root().join("entries").exists(),
-        "pass writes no entries"
-    );
+    assert_eq!(s.entry_count(), 0, "pass writes no entries");
 
-    let audit_text = std::fs::read_to_string(s.fx.root().join("audit.jsonl")).unwrap();
-    let new_audit: Vec<Value> = audit_text
-        .lines()
+    let new_audit: Vec<Value> = support::audit_lines(&s.fx.root())
+        .into_iter()
         .skip(audit_before)
-        .map(|l| serde_json::from_str(l).unwrap())
         .collect();
     let closed_audit_targets: Vec<&str> = new_audit
         .iter()
@@ -3805,11 +3847,9 @@ fn pass_closes_retired_tag_candidates_before_cap_and_suppresses_their_quotes() {
         21,
         "closed candidate quote is still suppressed"
     );
-    let second_audit: Vec<Value> = std::fs::read_to_string(s.fx.root().join("audit.jsonl"))
-        .unwrap()
-        .lines()
+    let second_audit: Vec<Value> = support::audit_lines(&s.fx.root())
+        .into_iter()
         .skip(audit_before_second)
-        .map(|l| serde_json::from_str(l).unwrap())
         .collect();
     assert_eq!(second_audit.len(), 1, "only the session pass line");
     assert_eq!(second_audit[0]["target"], format!("session:{ON}"));
@@ -3886,13 +3926,7 @@ fn pass_with_custom_tag_config_keeps_open_preferences_candidates() {
         "settled_author": null,
         "closed_reason": null
     });
-    let proposals_path = s.fx.root().join("proposals.json");
-    std::fs::write(
-        &proposals_path,
-        json!({"format": 11, "proposals": [open_pref]}).to_string(),
-    )
-    .unwrap();
-    make_private(&proposals_path);
+    seed_claims(&s.fx.root(), &[open_pref]);
 
     let new_quote = "I prefer concise summaries in every session pass.";
     s.write(ON, &[line("user", "u-new", new_quote)]);
@@ -4081,11 +4115,13 @@ fn forget_clears_quote_window_retirement_reason_and_admitted_matched_through_cli
             }
         }
     }
-    let disk = std::fs::read_to_string(s.fx.root().join("proposals.json")).unwrap()
-        + &std::fs::read_to_string(s.fx.root().join("entries/preferences/preferences-1.md"))
-            .unwrap()
-        + &std::fs::read_to_string(s.fx.root().join("entries/standard/standard-1.md")).unwrap()
-        + &std::fs::read_to_string(s.fx.root().join("entries/standard/standard-2.md")).unwrap();
+    // The export, the old files' shapes: the move into `pre-sqlite-*` keeps
+    // the user's originals by design, so the store's own content is checked.
+    let root = s.fx.root();
+    let disk = support::exported(&root, "proposals.json").unwrap()
+        + &support::exported(&root, "entries/preferences/preferences-1.md").unwrap()
+        + &support::exported(&root, "entries/standard/standard-1.md").unwrap()
+        + &support::exported(&root, "entries/standard/standard-2.md").unwrap();
     for secret in [
         "secret-matched-word",
         "secret-window-context",
@@ -4104,7 +4140,6 @@ fn forget_clears_quote_window_retirement_reason_and_admitted_matched_through_cli
 #[test]
 fn pass_and_catalog_audit_persisted_closures_when_marking_failure_aborts() {
     let seed_retired_candidate = |s: &Setup, session: &str| {
-        let proposals_path = s.fx.root().join("proposals.json");
         let proposal = json!({
             "id": "p-1",
             "kind": "candidate",
@@ -4139,12 +4174,7 @@ fn pass_and_catalog_audit_persisted_closures_when_marking_failure_aborts() {
             "settled_author": null,
             "closed_reason": null
         });
-        std::fs::write(
-            &proposals_path,
-            json!({"format": 11, "proposals": [proposal]}).to_string(),
-        )
-        .unwrap();
-        make_private(&proposals_path);
+        seed_claims(&s.fx.root(), &[proposal]);
     };
 
     // (a) `session pass`: window 1 persists the retired-tag closure of `p-1`;
@@ -4182,18 +4212,15 @@ fn pass_and_catalog_audit_persisted_closures_when_marking_failure_aborts() {
         let err: Value = serde_json::from_str(stderr.lines().last().unwrap()).expect(&stderr);
         assert_eq!(err["code"], "store_symlink", "{err}");
 
-        let stored: Value = serde_json::from_str(
-            &std::fs::read_to_string(s.fx.root().join("proposals.json")).unwrap(),
-        )
-        .unwrap();
+        // The export refuses the staged symlink; the symlink did its job.
+        std::fs::remove_file(&control_path).unwrap();
+        let stored = support::proposals_doc(&s.fx.root());
         assert_eq!(stored["proposals"][0]["state"], "rejected");
         assert_eq!(stored["proposals"][0]["closed_reason"], "tag_retired");
 
-        let new_audit: Vec<Value> = std::fs::read_to_string(s.fx.root().join("audit.jsonl"))
-            .unwrap()
-            .lines()
+        let new_audit: Vec<Value> = support::audit_lines(&s.fx.root())
+            .into_iter()
             .skip(audit_before)
-            .map(|l| serde_json::from_str(l).unwrap())
             .collect();
         assert_eq!(
             new_audit
@@ -4255,18 +4282,15 @@ fn pass_and_catalog_audit_persisted_closures_when_marking_failure_aborts() {
         let err: Value = serde_json::from_str(stderr.lines().last().unwrap()).expect(&stderr);
         assert_eq!(err["code"], "store_symlink", "{err}");
 
-        let stored: Value = serde_json::from_str(
-            &std::fs::read_to_string(s.fx.root().join("proposals.json")).unwrap(),
-        )
-        .unwrap();
+        // The export refuses the staged symlink; the symlink did its job.
+        std::fs::remove_file(&control_path).unwrap();
+        let stored = support::proposals_doc(&s.fx.root());
         assert_eq!(stored["proposals"][0]["state"], "rejected");
         assert_eq!(stored["proposals"][0]["closed_reason"], "tag_retired");
 
-        let new_audit: Vec<Value> = std::fs::read_to_string(s.fx.root().join("audit.jsonl"))
-            .unwrap()
-            .lines()
+        let new_audit: Vec<Value> = support::audit_lines(&s.fx.root())
+            .into_iter()
             .skip(audit_before)
-            .map(|l| serde_json::from_str(l).unwrap())
             .collect();
         assert_eq!(
             new_audit
@@ -4427,15 +4451,10 @@ fn a_candidate_from_before_statements_approves_with_its_quote_as_content() {
     s.scribe("/scribe on");
     s.run(&["session", "pass", "--session", ON], b"");
     // Rewrite it as a format-13 store holds it: no statement, no subject.
-    let path = s.fx.root().join("proposals.json");
-    let mut doc: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    doc["format"] = json!(13);
-    let candidate = doc["proposals"][0]["candidate"].as_object_mut().unwrap();
-    candidate.remove("context");
-    candidate.remove("statement");
-    candidate.remove("subject");
-    std::fs::write(&path, doc.to_string()).unwrap();
-    make_private(&path);
+    support::sql(
+        &s.fx.root(),
+        "UPDATE claims SET c_context = NULL, c_statement = NULL, c_subject = NULL WHERE n = 1;",
+    );
     assert_eq!(
         proposals(&s)["proposals"][0]["candidate"]["statement"],
         Value::Null
@@ -4466,15 +4485,16 @@ fn a_format_23_claim_reads_with_no_context_shows_its_statement_as_an_older_claim
     s.answer(&candidate_answer(quote, "u-1", "preferences"));
     s.scribe("/scribe on");
     s.run(&["session", "pass", "--session", ON], b"");
-    let path = s.fx.root().join("proposals.json");
-    let mut doc: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert_eq!(doc["format"], 26);
-    doc["format"] = json!(23);
-    let candidate = doc["proposals"][0]["candidate"].as_object_mut().unwrap();
-    assert!(candidate.remove("context").is_some_and(|c| c.is_string()));
-    candidate.insert(String::from("statement"), json!(statement));
-    std::fs::write(&path, doc.to_string()).unwrap();
-    make_private(&path);
+    let doc = support::proposals_doc(&s.fx.root());
+    assert_eq!(doc["format"], 27);
+    assert!(doc["proposals"][0]["candidate"]["context"].is_string());
+    let conn = rusqlite::Connection::open(s.fx.root().join("scribe.db")).unwrap();
+    conn.execute(
+        "UPDATE claims SET c_context = NULL, c_statement = ?1 WHERE n = 1",
+        [statement],
+    )
+    .unwrap();
+    drop(conn);
 
     let shown: Value =
         serde_json::from_slice(&s.fx.ok(&["proposal", "show", "p-1", "--json"]).stdout).unwrap();
@@ -4510,8 +4530,8 @@ fn a_format_23_claim_reads_with_no_context_shows_its_statement_as_an_older_claim
         entry["stated_by"],
         json!({"kind": "scribe", "name": "session-pass"})
     );
-    let doc: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert_eq!(doc["format"], 26);
+    let doc = support::proposals_doc(&s.fx.root());
+    assert_eq!(doc["format"], 27);
     assert_eq!(doc["proposals"][0]["candidate"]["context"], Value::Null);
     assert_eq!(doc["proposals"][0]["candidate"]["statement"], statement);
 }
@@ -4556,7 +4576,7 @@ fn a_context_needing_redaction_is_kept_redacted_and_a_quote_needing_it_is_omitte
         candidate["subject"],
         "the deploy job's [redacted:TEST_SECRET]"
     );
-    let stored = std::fs::read_to_string(s.fx.root().join("proposals.json")).unwrap();
+    let stored = support::exported(&s.fx.root(), "proposals.json").unwrap();
     assert!(!stored.contains("sensitive-value-123"), "{stored}");
 }
 
@@ -4597,7 +4617,7 @@ fn a_context_and_subject_at_their_caps_stay_when_redaction_lengthens_them() {
     assert!(masked_subject.chars().count() > 80);
     assert_eq!(candidate["context"], masked_context.as_str());
     assert_eq!(candidate["subject"], masked_subject.as_str());
-    let stored = std::fs::read_to_string(s.fx.root().join("proposals.json")).unwrap();
+    let stored = support::exported(&s.fx.root(), "proposals.json").unwrap();
     assert!(!stored.contains(SECRET), "{stored}");
 
     // The longer, masked context still approves and reads back.
@@ -5091,19 +5111,10 @@ fn the_session_start_stuck_line_does_not_count_pass_captured_ideas() {
     s.scribe("/scribe on");
     s.run(&["session", "pass", "--session", ON, "--json"], b"");
     // Older than the stuck threshold, and nobody picked it up.
-    let path = s.fx.root().join("entries/idea/idea-1.md");
-    let file = std::fs::read_to_string(&path).unwrap();
-    let file: String = file
-        .lines()
-        .map(|l| {
-            if l.starts_with("created: ") {
-                String::from("created: 2026-01-01T00:00:00Z\n")
-            } else {
-                format!("{l}\n")
-            }
-        })
-        .collect();
-    std::fs::write(&path, file).unwrap();
+    support::sql(
+        &s.fx.root(),
+        "UPDATE entries SET created = '2026-01-01T00:00:00Z' WHERE id = 'idea-1';",
+    );
     let mut payload = s.payload("SessionStart");
     payload["source"] = json!("startup");
     let out = s.hook("session-start", &payload);
@@ -5230,7 +5241,7 @@ fn a_pass_writes_a_dated_now_item_as_its_file_and_keeps_an_undated_one_pending()
     assert_eq!(shown["sources"], json!([ON]));
     // The memory write stamps control.json at the memory format.
     let control: Value = support::control(&s.fx.root());
-    assert_eq!(control["format"], 26);
+    assert_eq!(control["format"], 27);
 
     // The same window again writes nothing new.
     let before = std::fs::read(&file).unwrap();
@@ -5460,11 +5471,10 @@ fn a_newer_store_is_refused_and_memory_settings_are_deprecated() {
     pass_on(&s);
     let control = s.fx.root().join("control.json");
     let text_now = std::fs::read_to_string(&control).unwrap();
-    std::fs::write(
-        &control,
-        text_now.replacen("\"format\": 26", "\"format\": 27", 1),
-    )
-    .unwrap();
+    let mut newer_stamp: Value = serde_json::from_str(&text_now).unwrap();
+    assert_eq!(newer_stamp["format"], 27, "{text_now}");
+    newer_stamp["format"] = json!(28);
+    std::fs::write(&control, newer_stamp.to_string()).unwrap();
     let newer = s.run_any(&["memory", "refresh", "--json"], b"");
     assert_ne!(newer.status.code(), Some(0));
     assert!(

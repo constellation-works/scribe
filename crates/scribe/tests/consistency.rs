@@ -249,14 +249,26 @@ impl Setup {
     }
 }
 
+/// Moves the seeded files into `scribe.db`, then renames its `segments`
+/// table away so any later read of the sessions fails (`store_database`).
+/// [`mend_sessions`] puts it back so the records can be read.
+fn break_sessions(s: &Setup) {
+    s.fx.ok(&["store", "migrate"]);
+    support::sql(
+        &s.fx.root(),
+        "ALTER TABLE segments RENAME TO segments_gone;",
+    );
+}
+
+fn mend_sessions(s: &Setup) {
+    support::sql(
+        &s.fx.root(),
+        "ALTER TABLE segments_gone RENAME TO segments;",
+    );
+}
+
 fn audit_in(root: &Path) -> Vec<Value> {
-    std::fs::read_to_string(root.join("audit.jsonl"))
-        .map(|t| {
-            t.lines()
-                .map(|l| serde_json::from_str(l).unwrap())
-                .collect()
-        })
-        .unwrap_or_default()
+    support::audit_lines(root)
 }
 
 fn ids(list: &Value) -> Vec<String> {
@@ -394,8 +406,8 @@ fn settling_from_a_prompt_approves_rejects_retires_and_forgets() {
     let p2 = s.proposal("p-2");
     assert_eq!(p2["reason"], "");
     assert_eq!(p2["quotes"][0]["text"], "");
-    let store = std::fs::read_to_string(s.fx.root().join("proposals.json")).unwrap()
-        + &std::fs::read_to_string(s.fx.root().join("entries/rituals/rituals-1.md")).unwrap();
+    let store = support::exported(&s.fx.root(), "proposals.json").unwrap()
+        + &support::exported(&s.fx.root(), "entries/rituals/rituals-1.md").unwrap();
     assert!(
         !store.contains(RITUAL),
         "the forgotten words left the store"
@@ -1124,27 +1136,19 @@ fn a_scan_that_fails_after_persisting_closures_still_audits_each_one() {
     .unwrap();
     make_private(&proposals_file);
 
-    // A session-file symlink is invisible to the close (that reads proposals
-    // only) and fails list_sessions afterwards, deterministically.
-    let month = s.fx.root().join("sessions/2026/11");
-    std::fs::create_dir_all(&month).unwrap();
-    for dir in [
-        s.fx.root().join("sessions"),
-        s.fx.root().join("sessions/2026"),
-        month.clone(),
-    ] {
-        make_private(&dir);
-    }
-    std::os::unix::fs::symlink("/dev/null", month.join("bad.md")).unwrap();
+    // The seeded files move into scribe.db first, then a missing sessions
+    // table is invisible to the close (that reads proposals only) and fails
+    // list_sessions afterwards, deterministically.
+    break_sessions(&s);
 
     let out = s.run(&["consistency", "scan", "--json"], b"");
     assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
     let err: Value = serde_json::from_slice(&out.stderr).unwrap();
-    assert_eq!(err["code"], "store_symlink", "{err}");
+    assert_eq!(err["code"], "store_database", "{err}");
     assert_eq!(s.calls(), 0, "the failure is before any model call");
 
-    let stored: Value =
-        serde_json::from_str(&std::fs::read_to_string(&proposals_file).unwrap()).unwrap();
+    mend_sessions(&s);
+    let stored = support::proposals_doc(&s.fx.root());
     assert_eq!(stored["proposals"][0]["state"], "rejected");
     assert_eq!(stored["proposals"][0]["closed_reason"], "tag_retired");
 
@@ -1160,7 +1164,7 @@ fn a_scan_that_fails_after_persisting_closures_still_audits_each_one() {
     assert_eq!(closures, 1, "{scan_lines:?}");
     let failures = scan_lines
         .iter()
-        .filter(|line| line["status"] == "failure" && line["error_code"] == "store_symlink")
+        .filter(|line| line["status"] == "failure" && line["error_code"] == "store_database")
         .count();
     assert_eq!(failures, 1, "{scan_lines:?}");
 }
@@ -1379,28 +1383,21 @@ fn a_scan_that_fails_after_reapply_and_open_still_audits_each_write() {
     std::fs::write(&proposals_file, doc.to_string()).unwrap();
     make_private(&proposals_file);
 
-    // Symlink in sessions/ fails deactivate_sessions AFTER reapply_approved,
-    // close_retired_candidates, and open_proposals have all persisted.
-    let month = s.fx.root().join("sessions/2026/11");
-    std::fs::create_dir_all(&month).unwrap();
-    for dir in [
-        s.fx.root().join("sessions"),
-        s.fx.root().join("sessions/2026"),
-        month.clone(),
-    ] {
-        make_private(&dir);
-    }
-    std::os::unix::fs::symlink("/dev/null", month.join("bad.md")).unwrap();
+    // A missing segments table fails deactivate_sessions AFTER
+    // reapply_approved, close_retired_candidates, and open_proposals have all
+    // persisted.
+    break_sessions(&s);
 
     let out = s.run(&["consistency", "scan", "--json"], b"");
     assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
     let err: Value = serde_json::from_slice(&out.stderr).unwrap();
-    assert_eq!(err["code"], "store_symlink", "{err}");
+    assert_eq!(err["code"], "store_database", "{err}");
     assert_eq!(
         s.calls(),
         0,
         "stale-only open_proposals needs no model call"
     );
+    mend_sessions(&s);
 
     let scan_lines: Vec<Value> = s
         .audit()
@@ -1420,7 +1417,7 @@ fn a_scan_that_fails_after_reapply_and_open_still_audits_each_write() {
     assert_eq!(
         scan_lines
             .iter()
-            .filter(|line| line["status"] == "failure" && line["error_code"] == "store_symlink")
+            .filter(|line| line["status"] == "failure" && line["error_code"] == "store_database")
             .count(),
         1,
         "{scan_lines:?}"
@@ -1464,6 +1461,10 @@ fn a_scan_that_fails_after_age_deactivation_still_audits_the_deactivated_session
     assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
     let err: Value = serde_json::from_slice(&out.stderr).unwrap();
     assert_eq!(err["code"], "store_database", "{err}");
+    support::sql(
+        &s.fx.root(),
+        "ALTER TABLE segments_gone RENAME TO segments;",
+    );
 
     let scan_lines: Vec<Value> = s
         .audit()

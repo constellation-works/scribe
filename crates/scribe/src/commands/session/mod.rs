@@ -224,18 +224,23 @@ impl SessionCommand {
             Self::List(_) | Self::Show(_) => None,
             Self::Rebuild(_) => Some(AuditMeta {
                 command: rebuild::COMMAND,
+                stepwise: true,
             }),
             Self::Pass(_) => Some(AuditMeta {
                 command: pass::COMMAND,
+                stepwise: true,
             }),
             Self::Deactivate(_) => Some(AuditMeta {
                 command: activity::DEACTIVATE_COMMAND,
+                stepwise: false,
             }),
             Self::Activate(_) => Some(AuditMeta {
                 command: activity::ACTIVATE_COMMAND,
+                stepwise: false,
             }),
             Self::Catalog(_) => Some(AuditMeta {
                 command: catalog::COMMAND,
+                stepwise: true,
             }),
         }
     }

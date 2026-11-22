@@ -1,24 +1,14 @@
 //! `pickups.json`: consumers' notes on action entries, and the reads an
 //! intake and the session-start hook make over them
 //! (docs/design/scribe/2_design.md §4.6).
+use super::Store;
 use super::agent::{check_agent_author, refusal};
-use super::{PICKUPS_FILE, Store, format, fsio};
 use crate::action::{self, Pickup};
 use crate::{Author, AuthorName, EntryStatus, Related, Result, TagName, WriteRefusal};
 use std::collections::BTreeMap;
 use time::OffsetDateTime;
 
 impl Store {
-    /// Every pickup, oldest first; none for a missing file or store. Reads
-    /// only.
-    pub fn pickups(&self) -> Result<Vec<Pickup>> {
-        let path = self.root.join(PICKUPS_FILE);
-        if !self.root_exists()? || !fsio::inspect_file(&path)? {
-            return Ok(Vec::new());
-        }
-        format::decode_pickups(&path, &fsio::read(&path)?)
-    }
-
     /// Active action entries older than [`action::STUCK_AFTER`] at `now`
     /// with no pickup, counted per tag. Reads only.
     pub fn stuck_actions(&self, now: OffsetDateTime) -> Result<BTreeMap<TagName, usize>> {
@@ -52,7 +42,7 @@ impl Store {
     ) -> Result<(Pickup, bool)> {
         check_agent_author(&author)?;
         self.prepare_dir(&self.root)?;
-        let _lock = self.lock("entry pickup")?;
+        self.write(|| {
         let entry = self.resolve_entry(id)?;
         let config = self.config()?;
         if config.tags.action(&entry.tag).is_none() {
@@ -107,8 +97,8 @@ impl Store {
             rejected,
         };
         pickups.push(pickup.clone());
-        let path = self.root.join(PICKUPS_FILE);
-        fsio::write_atomic(&path, &format::encode_pickups(&path, &pickups)?)?;
+        self.write_pickups(&pickups)?;
         Ok((pickup, true))
+            })
     }
 }

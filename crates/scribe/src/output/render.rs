@@ -502,16 +502,31 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
         (OutputMode::Json, Record::StoreMigrate(r)) => write_json(out, r.as_ref()),
         (OutputMode::Plain, Record::StoreMigrate(r)) => writeln!(
             out,
-            "{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             r.sessions,
             r.switches,
             r.cursors,
-            r.moved_to.as_deref().unwrap_or("-")
+            r.moved_to.as_deref().unwrap_or("-"),
+            r.entries,
+            r.claims,
+            r.tags,
+            r.marks,
+            r.pickups,
+            r.audit_lines
         ),
         (OutputMode::Table, Record::StoreMigrate(r)) => {
             field(out, "sessions", &r.sessions.to_string())?;
             field(out, "switches", &r.switches.to_string())?;
             field(out, "cursors", &r.cursors.to_string())?;
+            field(out, "entries", &r.entries.to_string())?;
+            field(out, "claims", &r.claims.to_string())?;
+            field(out, "tags", &r.tags.to_string())?;
+            field(out, "marks", &r.marks.to_string())?;
+            field(out, "pickups", &r.pickups.to_string())?;
+            field(out, "audit lines", &r.audit_lines.to_string())?;
+            if r.audit_torn > 0 {
+                field(out, "audit torn", &r.audit_torn.to_string())?;
+            }
             field(out, "moved to", r.moved_to.as_deref().unwrap_or("-"))
         }
         (OutputMode::Json, Record::Export(r)) => write_json(out, r.as_ref()),
@@ -525,6 +540,9 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
             field(out, "dir", &r.dir)?;
             field(out, "format", r.format)?;
             field(out, "sessions", &r.sessions.to_string())?;
+            field(out, "entries", &r.entries.to_string())?;
+            field(out, "claims", &r.claims.to_string())?;
+            field(out, "audit lines", &r.audit_lines.to_string())?;
             field(out, "files", &r.files.len().to_string())?;
             field(out, "skipped", &or_none(&r.skipped))
         }

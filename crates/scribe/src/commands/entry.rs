@@ -226,18 +226,23 @@ impl EntryCommand {
             Self::List(_) | Self::Show(_) => None,
             Self::Add(_) => Some(AuditMeta {
                 command: "entry add",
+                stepwise: false,
             }),
             Self::Update(_) => Some(AuditMeta {
                 command: "entry update",
+                stepwise: false,
             }),
             Self::Retire(_) => Some(AuditMeta {
                 command: "entry retire",
+                stepwise: false,
             }),
             Self::Forget(_) => Some(AuditMeta {
                 command: "entry forget",
+                stepwise: false,
             }),
             Self::Pickup(_) => Some(AuditMeta {
                 command: "entry pickup",
+                stepwise: false,
             }),
         }
     }

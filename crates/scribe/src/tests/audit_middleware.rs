@@ -7,6 +7,7 @@ use time::macros::datetime;
 
 const ADD: AuditMeta = AuditMeta {
     command: "hook user-prompt-submit",
+    stepwise: false,
 };
 
 /// An owner-only temporary directory, as a store directory must be.
@@ -21,10 +22,11 @@ fn private_tempdir() -> tempfile::TempDir {
 }
 
 fn lines(store: &Store) -> Vec<serde_json::Value> {
-    std::fs::read_to_string(store.audit_path())
-        .unwrap()
-        .lines()
-        .map(|l| serde_json::from_str(l).unwrap())
+    let (events, torn) = store.audit_events().unwrap();
+    assert_eq!(torn, 0);
+    events
+        .iter()
+        .map(|e| serde_json::to_value(e).unwrap())
         .collect()
 }
 
@@ -104,7 +106,7 @@ fn a_success_records_the_record_it_acted_on_and_nothing_it_contained() {
     assert_eq!(lines[0]["target"], "preferences-1");
     assert_eq!(lines[0]["at"], "2026-09-26T12:00:00Z");
     // STD-05 R13: no argument values in the log.
-    let text = std::fs::read_to_string(store.audit_path()).unwrap();
+    let text = serde_json::Value::Array(lines.clone()).to_string();
     assert!(!text.contains("secret content"), "got {text}");
 }
 
@@ -121,7 +123,7 @@ fn a_failure_records_the_stable_code_never_the_message() {
     assert_eq!(lines[0]["status"], "failure");
     assert_eq!(lines[0]["error_code"], "entry_not_found");
     assert_eq!(lines[0]["target"], serde_json::Value::Null);
-    let text = std::fs::read_to_string(store.audit_path()).unwrap();
+    let text = serde_json::Value::Array(lines.clone()).to_string();
     assert!(!text.contains(&message), "the message names a path: {text}");
 }
 
@@ -175,7 +177,7 @@ fn a_hook_writes_one_line_per_write_or_refusal_with_ids_and_codes_only() {
     assert_eq!(lines[1]["status"], "failure");
     assert_eq!(lines[1]["target"], "session:s-1");
     assert_eq!(lines[1]["error_code"], "unknown_tag");
-    let text = std::fs::read_to_string(store.audit_path()).unwrap();
+    let text = serde_json::Value::Array(lines.clone()).to_string();
     assert!(!text.contains("secret content"), "got {text}");
 }
 

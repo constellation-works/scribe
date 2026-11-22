@@ -24,7 +24,12 @@
 //!   A database newer than this build is refused (STD-03 R10).
 //!   `specs/store.md` gives every table's types and constraints.
 
+pub(super) mod docs;
+
+/// A `scribe.db` connection, as the store's writers hold it.
+pub(in crate::store) type Conn = Connection;
 mod memory;
+pub(super) mod scope;
 pub(super) mod sessions;
 
 pub(super) use memory::{
@@ -39,7 +44,9 @@ use crate::error::{Error, Result};
 use crate::message::{MessageMatch, MessageSearch, NewMessage};
 use crate::session::SessionId;
 use rusqlite::{Connection, ErrorCode, OpenFlags, TransactionBehavior};
+use scope::Tx;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
@@ -50,7 +57,7 @@ pub const DB_FILE: &str = "scribe.db";
 /// The schema, one step per `user_version`: step `n` (1-based) moves the
 /// database from version `n - 1` to `n`. Append only; never edit a shipped
 /// step.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5];
 
 /// Version 1 (phase 4): `meta`, `messages` and its FTS5 index, and the
 /// memory tables phase 5 uses.
@@ -267,7 +274,160 @@ const V4: &str = "
 ALTER TABLE sessions ADD COLUMN forgotten TEXT;
 ";
 
+/// Version 5 (phase 7): entries, claims, agent tags, marks, pickups and
+/// the audit log, which leave their files; `record_kinds` takes their
+/// kinds. A list field is its JSON text; a time its RFC 3339 text.
+const V5: &str = "
+CREATE TABLE entries (
+    id                  TEXT    NOT NULL PRIMARY KEY CHECK (length(id) >= 3),
+    tag                 TEXT    NOT NULL CHECK (length(tag) >= 1),
+    n                   INTEGER NOT NULL CHECK (n >= 1),
+    status              TEXT    NOT NULL
+                                CHECK (status IN ('active', 'superseded', 'retired', 'forgotten')),
+    project             TEXT    NOT NULL,
+    topics              TEXT    NOT NULL CHECK (json_valid(topics) AND json_type(topics) = 'array'),
+    related             TEXT    NOT NULL CHECK (json_valid(related) AND json_type(related) = 'array'),
+    provider            TEXT    NOT NULL,
+    host                TEXT    NOT NULL,
+    author              TEXT    NOT NULL CHECK (json_valid(author)),
+    updated_by          TEXT    CHECK (updated_by IS NULL OR json_valid(updated_by)),
+    created             TEXT    NOT NULL,
+    updated             TEXT    NOT NULL,
+    inactive_since      TEXT,
+    said                TEXT    NOT NULL,
+    content_from        TEXT    NOT NULL CHECK (json_valid(content_from)),
+    cite                TEXT    CHECK (cite IS NULL OR json_valid(cite)),
+    retirement_reason   TEXT,
+    superseded_by       TEXT,
+    review_after        TEXT,
+    quote               TEXT,
+    \"window\"            TEXT    CHECK (\"window\" IS NULL OR json_valid(\"window\")),
+    evidence            TEXT,
+    as_of               TEXT,
+    approved_by         TEXT    CHECK (approved_by IS NULL OR json_valid(approved_by)),
+    instruction         TEXT    CHECK (instruction IS NULL OR json_valid(instruction)),
+    removal_instruction TEXT    CHECK (removal_instruction IS NULL OR json_valid(removal_instruction)),
+    stated_by           TEXT    CHECK (stated_by IS NULL OR json_valid(stated_by)),
+    outcome             TEXT    CHECK (outcome IS NULL OR json_valid(outcome)),
+    content             TEXT    NOT NULL,
+    UNIQUE (tag, n)
+) STRICT;
+
+CREATE TABLE claims (
+    n              INTEGER NOT NULL PRIMARY KEY CHECK (n >= 1),
+    kind           TEXT    NOT NULL CHECK (kind IN ('supersedes', 'stale', 'candidate')),
+    older          TEXT    NOT NULL,
+    newer          TEXT,
+    reason         TEXT    NOT NULL,
+    quotes         TEXT    NOT NULL CHECK (json_valid(quotes) AND json_type(quotes) = 'array'),
+    state          TEXT    NOT NULL CHECK (state IN ('open', 'approved', 'rejected')),
+    opened_at      TEXT    NOT NULL,
+    settled_at     TEXT,
+    settled_by     TEXT    CHECK (settled_by IS NULL OR json_valid(settled_by)),
+    author         TEXT    NOT NULL CHECK (json_valid(author)),
+    updated_by     TEXT    CHECK (updated_by IS NULL OR json_valid(updated_by)),
+    settled_author TEXT    CHECK (settled_author IS NULL OR json_valid(settled_author)),
+    closed_reason  TEXT    CHECK (closed_reason IS NULL
+                                  OR closed_reason IN ('tag_retired', 'instructed', 'covered')),
+    instruction    TEXT    CHECK (instruction IS NULL OR json_valid(instruction)),
+    has_candidate  INTEGER NOT NULL CHECK (has_candidate IN (0, 1)),
+    c_tag          TEXT,
+    c_role         TEXT    CHECK (c_role IS NULL OR c_role IN ('user', 'assistant')),
+    c_quote        TEXT,
+    c_context      TEXT,
+    c_statement    TEXT,
+    c_subject      TEXT,
+    c_evidence     TEXT,
+    c_cite         TEXT    CHECK (c_cite IS NULL OR json_valid(c_cite)),
+    c_project      TEXT,
+    c_provider     TEXT,
+    c_host         TEXT,
+    c_admitted     TEXT    CHECK (c_admitted IS NULL OR json_valid(c_admitted)),
+    CHECK (has_candidate = 0 OR (c_tag IS NOT NULL AND c_role IS NOT NULL
+        AND c_quote IS NOT NULL AND c_cite IS NOT NULL AND c_project IS NOT NULL
+        AND c_provider IS NOT NULL AND c_host IS NOT NULL))
+) STRICT;
+
+CREATE TABLE agent_tags (
+    name             TEXT    NOT NULL PRIMARY KEY CHECK (length(name) >= 1),
+    aliases          TEXT    NOT NULL CHECK (json_valid(aliases) AND json_type(aliases) = 'array'),
+    description      TEXT    NOT NULL,
+    stale_after_days INTEGER CHECK (stale_after_days IS NULL OR stale_after_days >= 1),
+    author           TEXT    NOT NULL CHECK (json_valid(author)),
+    updated_by       TEXT    CHECK (updated_by IS NULL OR json_valid(updated_by)),
+    created          TEXT    NOT NULL,
+    updated          TEXT    NOT NULL
+) STRICT;
+
+CREATE TABLE marks (
+    position      INTEGER NOT NULL PRIMARY KEY CHECK (position >= 0),
+    session       TEXT    NOT NULL CHECK (length(session) BETWEEN 1 AND 128),
+    message       TEXT    NOT NULL,
+    prompt_sha256 TEXT    NOT NULL,
+    marker        INTEGER NOT NULL CHECK (marker >= 0),
+    outcome       TEXT    NOT NULL CHECK (outcome IN ('entry', 'none', 'refused', 'pending')),
+    entry         TEXT,
+    code          TEXT,
+    attempts      INTEGER NOT NULL CHECK (attempts >= 0),
+    at            TEXT    NOT NULL
+) STRICT;
+
+CREATE TABLE pickups (
+    position INTEGER NOT NULL PRIMARY KEY CHECK (position >= 0),
+    entry    TEXT    NOT NULL,
+    author   TEXT    NOT NULL CHECK (json_valid(author)),
+    at       TEXT    NOT NULL,
+    result   TEXT,
+    rejected INTEGER NOT NULL CHECK (rejected IN (0, 1))
+) STRICT;
+
+CREATE TABLE audit (
+    id                  INTEGER PRIMARY KEY,
+    format              INTEGER NOT NULL CHECK (format >= 1),
+    at                  TEXT    NOT NULL,
+    command             TEXT    NOT NULL,
+    status              TEXT    NOT NULL CHECK (status IN ('success', 'failure')),
+    target              TEXT,
+    error_code          TEXT,
+    author              TEXT,
+    instruction_session TEXT,
+    instruction_message TEXT,
+    issue               TEXT    CHECK (issue IS NULL OR json_valid(issue)),
+    duration_ms         INTEGER NOT NULL CHECK (duration_ms >= 0),
+    spool               TEXT    UNIQUE
+) STRICT;
+
+CREATE TABLE record_kinds_v5 (
+    kind     TEXT NOT NULL PRIMARY KEY
+             CHECK (kind IN ('sessions', 'entries', 'claims', 'agent_tags', 'marks',
+                             'pickups', 'audit')),
+    moved_at TEXT NOT NULL,
+    moved_to TEXT
+) STRICT;
+INSERT INTO record_kinds_v5 (kind, moved_at, moved_to)
+    SELECT kind, moved_at, moved_to FROM record_kinds;
+DROP TABLE record_kinds;
+ALTER TABLE record_kinds_v5 RENAME TO record_kinds;
+";
+
 /// The newest schema version this build reads and writes.
+/// Refuse, for a reader as for a writer, a database a newer build migrated
+/// past this build's schema: `store_too_new`, never a read of tables whose
+/// shape this build does not know.
+fn refuse_newer(conn: &Connection, path: &Path) -> Result<(), Fallible> {
+    let version: u32 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(|e| Fallible::from_sqlite("read", path, e))?;
+    if version > schema() {
+        return Err(Fallible::Failed(Error::NewerFormat {
+            path: path.to_path_buf(),
+            found: version,
+            supported: schema(),
+        }));
+    }
+    Ok(())
+}
+
 fn schema() -> u32 {
     u32::try_from(MIGRATIONS.len()).unwrap_or(u32::MAX)
 }
@@ -294,8 +454,18 @@ fn inspect(root: &Path) -> Result<bool> {
 
 /// A read-write connection: the database created owner-only if missing,
 /// WAL with a persistent WAL, `busy_timeout = wait`, migrated to
-/// [`schema`]. The caller has prepared the root.
-pub(super) fn open_writer(root: &Path, wait: Duration) -> Result<Connection> {
+/// [`schema`]. The caller has prepared the root. Inside a store write on
+/// this thread ([`scope::Scope`]) it is that write's connection, so the
+/// caller joins its transaction.
+pub(super) fn open_writer(root: &Path, wait: Duration) -> Result<Rc<Connection>> {
+    if let Some(conn) = scope::active(root) {
+        return Ok(conn);
+    }
+    open_new_writer(root, wait).map(Rc::new)
+}
+
+/// [`open_writer`] on a connection of its own.
+pub(super) fn open_new_writer(root: &Path, wait: Duration) -> Result<Connection> {
     let path = root.join(DB_FILE);
     if !inspect(root)? {
         fsio::create_private_file(&path)?;
@@ -417,14 +587,10 @@ pub(super) fn upsert_messages(
     redactor: &Redactor,
 ) -> Result<usize> {
     let path = root.join(DB_FILE);
-    let mut conn = open_writer(root, wait)?;
-    let started = Instant::now();
-    let tx = conn
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|e| write_error("write messages to", &path, started, e))?;
-    let changed = upsert_in(&tx, &path, started, messages, redactor)?;
-    tx.commit()
-        .map_err(|e| write_error("write messages to", &path, started, e))?;
+    let conn = open_writer(root, wait)?;
+    let tx = Tx::begin(&conn, &path, "write messages to")?;
+    let changed = upsert_in(&tx, &path, tx.started(), messages, redactor)?;
+    tx.commit()?;
     Ok(changed)
 }
 
@@ -471,6 +637,11 @@ pub(super) fn upsert_in(
 /// `busy_timeout`; one still reading keeps its frames until the next
 /// checkpoint, so a busy result is reported, not failed.
 pub(super) fn truncate_wal(conn: &Connection, path: &Path, started: Instant) -> Result<()> {
+    if let Some(root) = path.parent()
+        && scope::Scope::truncate_later(root)
+    {
+        return Ok(());
+    }
     let busy: i64 = conn
         .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))
         .map_err(|e| write_error("checkpoint", path, started, e))?;
@@ -502,11 +673,9 @@ pub(super) fn delete_messages(
     if keys.is_empty() || !inspect(root)? {
         return Ok(0);
     }
-    let mut conn = open_writer(root, wait)?;
-    let started = Instant::now();
-    let tx = conn
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|e| write_error("forget messages in", &path, started, e))?;
+    let conn = open_writer(root, wait)?;
+    let tx = Tx::begin(&conn, &path, "forget messages in")?;
+    let started = tx.started();
     let mut deleted = 0;
     {
         let mut delete = tx
@@ -525,8 +694,7 @@ pub(super) fn delete_messages(
         )
         .map_err(|e| write_error("forget messages in", &path, started, e))?;
     }
-    tx.commit()
-        .map_err(|e| write_error("forget messages in", &path, started, e))?;
+    tx.commit()?;
     if deleted > 0 {
         truncate_wal(&conn, &path, started)?;
     }
@@ -713,7 +881,12 @@ fn now() -> String {
 }
 
 /// A write failure: `SQLITE_BUSY` past `busy_timeout` is [`Error::Locked`].
-fn write_error(action: &'static str, path: &Path, started: Instant, e: rusqlite::Error) -> Error {
+pub(super) fn write_error(
+    action: &'static str,
+    path: &Path,
+    started: Instant,
+    e: rusqlite::Error,
+) -> Error {
     if is_busy(&e) {
         Error::Locked {
             path: path.to_path_buf(),
@@ -725,7 +898,7 @@ fn write_error(action: &'static str, path: &Path, started: Instant, e: rusqlite:
     }
 }
 
-fn db_error(action: &'static str, path: &Path, e: rusqlite::Error) -> Error {
+pub(super) fn db_error(action: &'static str, path: &Path, e: rusqlite::Error) -> Error {
     match e.sqlite_error_code() {
         Some(ErrorCode::NotADatabase | ErrorCode::DatabaseCorrupt) => Error::corrupt(path, e),
         Some(_) | None => Error::Database {

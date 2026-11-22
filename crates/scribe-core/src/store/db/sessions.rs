@@ -42,7 +42,7 @@ use time::OffsetDateTime;
 
 /// How a field is stored.
 #[derive(Clone, Copy, Debug)]
-enum Col {
+pub(super) enum Col {
     /// A string, as TEXT.
     Text,
     /// A bool, as 0 or 1.
@@ -110,11 +110,15 @@ const SEGMENT: &[(&str, Col)] = &[
 /// The body sections, after the [`RECORD`] columns.
 const BODY: [&str; 3] = ["summary", "goals", "next"];
 
-fn quoted(name: &str) -> String {
+pub(super) fn quoted(name: &str) -> String {
     format!("\"{name}\"")
 }
 
-fn to_sql(field: &str, value: Option<&Value>, col: Col) -> std::result::Result<Sql, String> {
+pub(super) fn to_sql(
+    field: &str,
+    value: Option<&Value>,
+    col: Col,
+) -> std::result::Result<Sql, String> {
     Ok(match (value.unwrap_or(&Value::Null), col) {
         (Value::Null, _) => Sql::Null,
         (Value::String(s), Col::Text) => Sql::Text(s.clone()),
@@ -128,7 +132,7 @@ fn to_sql(field: &str, value: Option<&Value>, col: Col) -> std::result::Result<S
     })
 }
 
-fn from_sql(field: &str, value: Sql, col: Col) -> std::result::Result<Value, String> {
+pub(super) fn from_sql(field: &str, value: Sql, col: Col) -> std::result::Result<Value, String> {
     Ok(match (value, col) {
         (Sql::Null, _) => Value::Null,
         (Sql::Text(s), Col::Text) => Value::String(s),
@@ -142,7 +146,9 @@ fn from_sql(field: &str, value: Sql, col: Col) -> std::result::Result<Value, Str
 }
 
 /// The JSON object a value serializes to.
-fn object<T: serde::Serialize>(value: &T) -> std::result::Result<Map<String, Value>, String> {
+pub(super) fn object<T: serde::Serialize>(
+    value: &T,
+) -> std::result::Result<Map<String, Value>, String> {
     match serde_json::to_value(value).map_err(|e| e.to_string())? {
         Value::Object(map) => Ok(map),
         other @ (Value::Null
@@ -153,7 +159,7 @@ fn object<T: serde::Serialize>(value: &T) -> std::result::Result<Map<String, Val
     }
 }
 
-fn columns(
+pub(super) fn columns(
     obj: &Map<String, Value>,
     spec: &[(&str, Col)],
 ) -> std::result::Result<Vec<Sql>, String> {
@@ -224,6 +230,7 @@ pub(in crate::store) fn mark_moved(
 /// they are still files (or there is no database).
 pub(in crate::store) fn read_sessions(root: &Path) -> Result<Option<Sessions>> {
     let (found, _) = read(root, |conn, path| {
+        super::refuse_newer(conn, path)?;
         if !moved(conn).map_err(|e| Fallible::from_sqlite("read", path, e))? {
             return Ok(None);
         }
@@ -236,6 +243,7 @@ pub(in crate::store) fn read_sessions(root: &Path) -> Result<Option<Sessions>> {
 /// database; `None` when they are still files.
 pub(in crate::store) fn read_control(root: &Path) -> Result<Option<ControlState>> {
     let (found, _) = read(root, |conn, path| {
+        super::refuse_newer(conn, path)?;
         if !moved(conn).map_err(|e| Fallible::from_sqlite("read", path, e))? {
             return Ok(None);
         }
@@ -248,22 +256,11 @@ pub(in crate::store) fn read_control(root: &Path) -> Result<Option<ControlState>
 /// still files or there is none.
 pub(in crate::store) fn read_checkpoint(root: &Path, id: &SessionId) -> Result<Option<String>> {
     let (found, _) = read(root, |conn, path| {
+        super::refuse_newer(conn, path)?;
         if !moved(conn).map_err(|e| Fallible::from_sqlite("read", path, e))? {
             return Ok(None);
         }
         checkpoint(conn, id).map_err(|e| Fallible::from_sqlite("read", path, e))
-    })?;
-    Ok(found)
-}
-
-/// Every session table's rows, read-only; `None` when the sessions are
-/// still files.
-pub(in crate::store) fn read_export(root: &Path) -> Result<Option<Vec<(&'static str, Value)>>> {
-    let (found, _) = read(root, |conn, path| {
-        if !moved(conn).map_err(|e| Fallible::from_sqlite("read", path, e))? {
-            return Ok(None);
-        }
-        export_rows(conn, path).map(Some).map_err(Fallible::Failed)
     })?;
     Ok(found)
 }
@@ -824,17 +821,11 @@ pub(in crate::store) fn db_path(root: &Path) -> PathBuf {
 pub(in crate::store) fn export_rows(
     conn: &Connection,
     db: &Path,
+    tables: &[(&'static str, &str)],
 ) -> Result<Vec<(&'static str, Value)>> {
     let err = |e| db_error("export", db, e);
     let mut out = Vec::new();
-    for (table, order) in [
-        ("sessions", "id"),
-        ("segments", "session, n"),
-        ("session_links", "session, position"),
-        ("session_terms", "session, position"),
-        ("codex_cursors", "session"),
-        ("rebuild_checkpoints", "session"),
-    ] {
+    for &(table, order) in tables {
         let mut select = conn
             .prepare(&format!("SELECT * FROM {table} ORDER BY {order}"))
             .map_err(err)?;
@@ -864,19 +855,18 @@ pub(in crate::store) fn export_rows(
 /// store's write paths need no SQLite types. Dropped without
 /// [`SessionTx::commit`], it rolls back.
 pub(in crate::store) struct SessionTx<'c> {
-    tx: rusqlite::Transaction<'c>,
+    tx: super::scope::Tx<'c>,
     path: PathBuf,
     started: std::time::Instant,
 }
 
 impl<'c> SessionTx<'c> {
-    /// Begin on a writer connection for the database under `root`.
-    pub(in crate::store) fn begin(conn: &'c mut Connection, root: &Path) -> Result<Self> {
+    /// Begin on a writer connection for the database under `root`: inside a
+    /// store write, a savepoint of its transaction.
+    pub(in crate::store) fn begin(conn: &'c Connection, root: &Path) -> Result<Self> {
         let path = db_path(root);
-        let started = std::time::Instant::now();
-        let tx = conn
-            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-            .map_err(|e| super::write_error("write sessions to", &path, started, e))?;
+        let tx = super::scope::Tx::begin(conn, &path, "write sessions to")?;
+        let started = tx.started();
         Ok(Self { tx, path, started })
     }
 
@@ -972,9 +962,6 @@ impl<'c> SessionTx<'c> {
 
     /// Commit.
     pub(in crate::store) fn commit(self) -> Result<()> {
-        let (path, started) = (self.path, self.started);
-        self.tx
-            .commit()
-            .map_err(|e| super::write_error("write sessions to", &path, started, e))
+        self.tx.commit()
     }
 }

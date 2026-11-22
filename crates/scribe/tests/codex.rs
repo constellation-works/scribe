@@ -716,12 +716,12 @@ fn none_for(markers: std::ops::RangeInclusive<u32>) -> Value {
 }
 
 fn marks_json(f: &Fixture) -> Vec<Value> {
-    match std::fs::read(f.root().join("marks.json")) {
-        Ok(bytes) => serde_json::from_slice::<Value>(&bytes).unwrap()["marks"]
+    match support::exported(&f.root(), "marks.json") {
+        Some(doc) => serde_json::from_str::<Value>(&doc).unwrap()["marks"]
             .as_array()
             .unwrap()
             .clone(),
-        Err(_) => Vec::new(),
+        None => Vec::new(),
     }
 }
 
@@ -759,10 +759,7 @@ fn a_codex_marker_is_echoed_once_verified_and_cataloged_at_stop_as_daniels_entry
         .unwrap();
     assert!(context.contains("do not record it yourself"), "{context}");
     assert_eq!(model_calls(&f), 0, "no model call at submit");
-    assert!(
-        !f.root().join("marks.json").exists(),
-        "nothing written at submit"
-    );
+    assert!(marks_json(&f).is_empty(), "nothing written at submit");
 
     c.reply("a-1", "Noted.");
     c.write();
@@ -787,7 +784,14 @@ fn a_codex_marker_is_echoed_once_verified_and_cataloged_at_stop_as_daniels_entry
     );
     assert_eq!(e[0]["provider"], "codex");
     assert_eq!(e[0]["cite"]["message"], "m-1");
-    assert!(!f.root().join("proposals.json").exists(), "no proposal");
+    assert!(
+        support::exported(&f.root(), "proposals.json").is_none_or(|doc| {
+            serde_json::from_str::<Value>(&doc).unwrap()["proposals"]
+                .as_array()
+                .is_none_or(Vec::is_empty)
+        }),
+        "no proposal"
+    );
     let marks = marks_json(&f);
     assert_eq!(marks.len(), 1);
     assert_eq!(marks[0]["outcome"], "entry");
@@ -816,8 +820,8 @@ fn a_codex_mention_in_quotes_or_code_is_neither_echoed_nor_cataloged() {
     );
     c.hook_with(&f, "Stop", "t-1", "", &path);
     assert_eq!(model_calls(&f), 0);
-    assert!(!f.root().join("marks.json").exists());
-    assert!(!f.root().join("entries").exists() || entries(&f).is_empty());
+    assert!(marks_json(&f).is_empty());
+    assert!(entries(&f).is_empty());
 }
 
 #[test]
@@ -859,7 +863,7 @@ fn codex_markers_keep_the_bounds_a_fourth_refused_and_a_failing_call_retried_thr
         assert_eq!(open["code"], "model_failed");
         assert_eq!(open["attempts"], 3);
     }
-    assert!(!f.root().join("entries").exists() || entries(&f).is_empty());
+    assert!(entries(&f).is_empty());
 }
 
 #[test]

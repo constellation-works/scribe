@@ -49,21 +49,22 @@ impl Store {
         mut record: SessionRecord,
         redactor: &Redactor,
     ) -> Result<SessionRecord> {
-        let _lock = self.lock("rebuild checkpoint")?;
-        self.refuse_busy(&record.id)?;
-        self.session(&record.id)?;
-        redactor.session(&mut record);
-        let text = encode_checkpoint(&self.root, &record)?;
-        let id = record.id.clone();
-        let kept =
-            self.sessions_tx(|tx| tx.put_checkpoint(&id, &text, OffsetDateTime::now_utc()))?;
-        if !kept {
-            return Err(Error::SessionNotFound {
-                id,
-                path: self.root.join(super::DB_FILE),
-            });
-        }
-        Ok(record)
+        self.write(|| {
+            self.refuse_busy(&record.id)?;
+            self.session(&record.id)?;
+            redactor.session(&mut record);
+            let text = encode_checkpoint(&self.root, &record)?;
+            let id = record.id.clone();
+            let kept =
+                self.sessions_tx(|tx| tx.put_checkpoint(&id, &text, OffsetDateTime::now_utc()))?;
+            if !kept {
+                return Err(Error::SessionNotFound {
+                    id,
+                    path: self.root.join(super::DB_FILE),
+                });
+            }
+            Ok(record)
+        })
     }
 
     /// Compare and replace under the store lock. `None` means the visible
@@ -75,28 +76,29 @@ impl Store {
         expected: OffsetDateTime,
         redactor: &Redactor,
     ) -> Result<Option<SessionRecord>> {
-        let _lock = self.lock("finish rebuild")?;
-        self.refuse_busy(&record.id)?;
-        let current = self.session(&record.id)?.record;
-        if current.updated != expected {
-            return Ok(None);
-        }
-        record.started = current.started;
-        record.created = current.created;
-        record.links = current.links;
-        record.active = current.active;
-        record.keep_active = current.keep_active;
-        record.active_change = None;
-        record.cataloged_by = current.cataloged_by;
-        redactor.session(&mut record);
-        // Activity attribution belongs to the latest visible record, not this rebuild.
-        record.active_change = current.active_change;
-        // The record and the end of its checkpoint commit together.
-        self.sessions_tx(|tx| {
-            tx.put_record(&record)?;
-            tx.drop_checkpoint(&record.id)
-        })?;
-        Ok(Some(record))
+        self.write(|| {
+            self.refuse_busy(&record.id)?;
+            let current = self.session(&record.id)?.record;
+            if current.updated != expected {
+                return Ok(None);
+            }
+            record.started = current.started;
+            record.created = current.created;
+            record.links = current.links;
+            record.active = current.active;
+            record.keep_active = current.keep_active;
+            record.active_change = None;
+            record.cataloged_by = current.cataloged_by;
+            redactor.session(&mut record);
+            // Activity attribution belongs to the latest visible record, not this rebuild.
+            record.active_change = current.active_change;
+            // The record and the end of its checkpoint commit together.
+            self.sessions_tx(|tx| {
+                tx.put_record(&record)?;
+                tx.drop_checkpoint(&record.id)
+            })?;
+            Ok(Some(record))
+        })
     }
 
     fn refuse_busy(&self, id: &SessionId) -> Result<()> {

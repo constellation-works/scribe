@@ -1,6 +1,6 @@
 //! Store tags and their config-first routing table.
 use super::agent::{check_agent_author, refusal};
-use super::{Redactor, Store, format, fsio};
+use super::{Redactor, Store};
 use crate::WriteRefusal;
 use crate::record::patch;
 use crate::{
@@ -24,15 +24,6 @@ pub fn check_description(description: &str) -> Result<()> {
 }
 
 impl Store {
-    /// Load the optional agent tag document without writing or locking.
-    pub fn store_tags(&self) -> Result<Vec<StoreTag>> {
-        let path = self.root.join("tags.json");
-        if !self.root_exists()? || !fsio::inspect_file(&path)? {
-            return Ok(Vec::new());
-        }
-        format::decode_tags(&path, &fsio::read(&path)?)
-    }
-
     /// The tag a word names (its name or an alias, as `#scribe` resolves
     /// it) with its effective definition, capture rules included, and where
     /// it is defined: `config` (config.toml or the shipped defaults) or
@@ -119,15 +110,16 @@ impl Store {
     pub fn add_agent_tag(&self, mut tag: StoreTag, redactor: &Redactor) -> Result<StoreTag> {
         check_agent_author(&tag.author.name)?;
         self.prepare_dir(&self.root)?;
-        let _lock = self.lock("tag add")?;
-        self.check_new_tag(&tag)?;
-        tag.author.kind = AuthorKind::Agent;
-        tag.updated_by = None;
-        let mut tags = self.store_tags()?;
-        redactor.tag(&mut tag);
-        tags.push(tag.clone());
-        self.write_tags(&tags)?;
-        Ok(tag)
+        self.write(|| {
+            self.check_new_tag(&tag)?;
+            tag.author.kind = AuthorKind::Agent;
+            tag.updated_by = None;
+            let mut tags = self.store_tags()?;
+            redactor.tag(&mut tag);
+            tags.push(tag.clone());
+            self.write_tags(&tags)?;
+            Ok(tag)
+        })
     }
 
     /// Check a tag update without locking or writing, so the CLI can report
@@ -186,59 +178,55 @@ impl Store {
     ) -> Result<(StoreTag, bool)> {
         check_agent_author(&author)?;
         self.prepare_dir(&self.root)?;
-        let _lock = self.lock("tag update")?;
-        let configured = self.config_only()?.tags;
-        if configured.resolve(name.as_str()).is_some() {
-            return Err(refusal(
-                WriteRefusal::TagConfigured,
-                "edit config.toml to change a configured tag",
-            ));
-        }
-        let mut tags = self.store_tags()?;
-        let i = tags
-            .iter()
-            .position(|t| &t.name == name)
-            .ok_or_else(|| refusal(WriteRefusal::TagNotFound, "no store tag with that name"))?;
-        let before = tags[i].clone();
-        let tag = &mut tags[i];
-        tag.aliases
-            .retain(|a| configured.resolve(a.as_str()).is_none());
-        if let Some(description) = patching.description {
-            check_description(&description)?;
-            tag.description = redactor.mask(&description);
-        }
-        patch(
-            &mut tag.aliases,
-            &patching.add_aliases,
-            &patching.remove_aliases,
-        );
-        if let Some(days) = patching.stale_after_days {
-            tag.stale_after_days = Some(days);
-        }
-        let changed = *tag != before;
-        if changed {
-            tag.updated = now;
-            tag.updated_by = Some(Author::agent(author));
-        }
-        let result = tag.clone();
-        let mut defs = self
-            .merge_tags(&configured)?
-            .0
-            .tags()
-            .iter()
-            .filter(|t| t.name != result.name)
-            .cloned()
-            .collect::<Vec<_>>();
-        defs.push(result.definition());
-        TagTable::new(defs).map_err(|e| refusal(WriteRefusal::TagConflict, e.to_string()))?;
-        if changed {
-            self.write_tags(&tags)?;
-        }
-        Ok((result, changed))
-    }
-
-    fn write_tags(&self, tags: &[StoreTag]) -> Result<()> {
-        let path = self.root.join("tags.json");
-        fsio::write_atomic(&path, &format::encode_tags(&path, tags)?)
+        self.write(|| {
+            let configured = self.config_only()?.tags;
+            if configured.resolve(name.as_str()).is_some() {
+                return Err(refusal(
+                    WriteRefusal::TagConfigured,
+                    "edit config.toml to change a configured tag",
+                ));
+            }
+            let mut tags = self.store_tags()?;
+            let i = tags
+                .iter()
+                .position(|t| &t.name == name)
+                .ok_or_else(|| refusal(WriteRefusal::TagNotFound, "no store tag with that name"))?;
+            let before = tags[i].clone();
+            let tag = &mut tags[i];
+            tag.aliases
+                .retain(|a| configured.resolve(a.as_str()).is_none());
+            if let Some(description) = patching.description {
+                check_description(&description)?;
+                tag.description = redactor.mask(&description);
+            }
+            patch(
+                &mut tag.aliases,
+                &patching.add_aliases,
+                &patching.remove_aliases,
+            );
+            if let Some(days) = patching.stale_after_days {
+                tag.stale_after_days = Some(days);
+            }
+            let changed = *tag != before;
+            if changed {
+                tag.updated = now;
+                tag.updated_by = Some(Author::agent(author));
+            }
+            let result = tag.clone();
+            let mut defs = self
+                .merge_tags(&configured)?
+                .0
+                .tags()
+                .iter()
+                .filter(|t| t.name != result.name)
+                .cloned()
+                .collect::<Vec<_>>();
+            defs.push(result.definition());
+            TagTable::new(defs).map_err(|e| refusal(WriteRefusal::TagConflict, e.to_string()))?;
+            if changed {
+                self.write_tags(&tags)?;
+            }
+            Ok((result, changed))
+        })
     }
 }

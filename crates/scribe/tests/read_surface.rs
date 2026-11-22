@@ -118,7 +118,7 @@ fn brief_reads_only_and_calls_no_model() {
     let out = cmd.env("PATH", &path).output().unwrap();
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     assert_eq!(snapshot(&fx.root()), before, "brief wrote to the store");
-    assert!(!fx.root().join("audit.jsonl").exists());
+    assert!(support::audit_lines(&fx.root()).is_empty());
     assert!(!called.exists(), "brief ran the model CLI");
     let brief = json(&out.stdout);
     let sessions = brief["sessions"].as_array().unwrap();
@@ -156,7 +156,7 @@ fn search_ranks_the_store_reads_only_and_calls_nothing() {
     let before = snapshot(&fx.root());
     let found = ok_json(&fx, &["search", "merge agent PRs"]);
     assert_eq!(snapshot(&fx.root()), before, "search wrote to the store");
-    assert!(!fx.root().join("audit.jsonl").exists());
+    assert!(support::audit_lines(&fx.root()).is_empty());
     let hits = found["hits"].as_array().unwrap();
     assert!(!hits.is_empty());
     let scores: Vec<f64> = hits.iter().map(|h| h["score"].as_f64().unwrap()).collect();
@@ -492,8 +492,8 @@ fn session_writes_take_a_prefix_and_audit_the_full_id() {
     );
     let shown = ok_json(&fx, &["session", "show", SESSION]);
     assert_eq!(shown["active"], false);
-    let audit = std::fs::read_to_string(fx.root().join("audit.jsonl")).unwrap();
-    let line: Value = serde_json::from_str(audit.lines().last().unwrap()).unwrap();
+    let lines = support::audit_lines(&fx.root());
+    let line = lines.last().unwrap();
     assert_eq!(line["target"], format!("session:{SESSION}"));
     ok(&fx, &["session", "activate", "7c2b", "--author", "opus"]);
     assert_eq!(ok_json(&fx, &["session", "show", SESSION])["active"], true);

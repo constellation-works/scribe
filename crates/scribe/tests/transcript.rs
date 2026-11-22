@@ -83,7 +83,7 @@ fn list_and_show_read_a_read_only_root_and_a_missing_catalog_is_not_found() {
         "a missing transcript is not switched on"
     );
     assert!(!root.join("sessions").exists());
-    let audit = std::fs::read_to_string(root.join("audit.jsonl")).unwrap();
+    let audit = support::audit_text(&root);
     assert!(audit.contains("session catalog"), "{audit}");
     assert!(audit.contains("transcript_not_found"), "{audit}");
 }

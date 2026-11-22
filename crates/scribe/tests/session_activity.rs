@@ -41,11 +41,7 @@ fn json(bytes: &[u8]) -> Value {
 }
 
 fn audit(fx: &Fixture) -> Vec<Value> {
-    std::fs::read_to_string(fx.root().join("audit.jsonl"))
-        .unwrap_or_default()
-        .lines()
-        .map(|l| serde_json::from_str(l).unwrap())
-        .collect()
+    support::audit_lines(&fx.root())
 }
 
 /// The record as its file reads (`scribe export`).
@@ -95,7 +91,7 @@ fn deactivate_hides_the_session_records_why_and_audits_once() {
     assert_eq!(lines[0]["command"], "session deactivate");
     assert_eq!(lines[0]["status"], "success");
     assert_eq!(lines[0]["target"], format!("session:{SESSION}"));
-    let raw = std::fs::read_to_string(fx.root().join("audit.jsonl")).unwrap();
+    let raw = support::audit_text(&fx.root());
     assert!(!raw.contains("merge policy"), "no argument values: {raw}");
 
     let listed = json(&ok(&fx, &["session", "list", "--json"]).stdout);

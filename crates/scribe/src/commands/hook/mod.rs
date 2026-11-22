@@ -146,12 +146,15 @@ impl HookCommand {
             Self::SessionStart(_) => None,
             Self::UserPromptSubmit(_) => Some(AuditMeta {
                 command: "hook user-prompt-submit",
+                stepwise: false,
             }),
             Self::Stop(_) => Some(AuditMeta {
                 command: "hook stop",
+                stepwise: true,
             }),
             Self::SessionEnd(_) => Some(AuditMeta {
                 command: "hook session-end",
+                stepwise: false,
             }),
         }
     }

@@ -68,9 +68,13 @@ impl TagCommand {
     pub(super) fn audit(&self) -> Option<AuditMeta> {
         match self {
             Self::List(_) | Self::Show(_) => None,
-            Self::Add(_) => Some(AuditMeta { command: "tag add" }),
+            Self::Add(_) => Some(AuditMeta {
+                command: "tag add",
+                stepwise: false,
+            }),
             Self::Update(_) => Some(AuditMeta {
                 command: "tag update",
+                stepwise: false,
             }),
         }
     }

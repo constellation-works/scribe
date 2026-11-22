@@ -48,5 +48,5 @@ Reviewers check every change against the adopted standards and report violations
 - Default to `pub(crate)`; workspace dependencies via `.workspace = true`.
 - Unit tests live in a sibling `tests/` directory mirroring source file names, declared in its `mod.rs`; crate-root `tests/` is integration only.
 - Never put internal task, friction or record ids in help, examples or messages; use placeholders such as `<id>`.
-- Store writes go through `store::fsio::write_atomic` (the audit log through `append_private`) under the store lock. Never rewrite a durable file in place. Reads never write or lock. Store state is owner-only and checked on every load.
+- Store writes go through `Store::write` (or `Store::transaction` for a whole command): one `scribe.db` transaction, with the audit line committed in it; audit lines outside a write go through `Store::record_audit`, which never waits. The memory files go through `store::fsio::write_atomic` after the commit, by the journal. Never rewrite a durable file in place. Reads never write or lock. Store state is owner-only and checked on every load.
 - Report commands and outcomes at handoff — passed, failed, not run — never "tested".

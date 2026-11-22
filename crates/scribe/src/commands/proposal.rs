@@ -131,12 +131,15 @@ impl ProposalCommand {
             Self::List(_) | Self::Show(_) => None,
             Self::Add(_) => Some(AuditMeta {
                 command: "proposal add",
+                stepwise: false,
             }),
             Self::Update(_) => Some(AuditMeta {
                 command: "proposal update",
+                stepwise: false,
             }),
             Self::Settle(_) => Some(AuditMeta {
                 command: "proposal settle",
+                stepwise: false,
             }),
         }
     }

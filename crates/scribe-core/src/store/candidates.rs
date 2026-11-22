@@ -191,8 +191,7 @@ impl Store {
                     .and_then(|tag| tag.review_after(record.updated.date()));
                 let mut entry = pass_entry(id, draft, outcome, record.updated, review_after);
                 redactor.entry(&mut entry);
-                self.write_entry(&entry, true)
-                    .map_err(|err| after_entries(&written, err))?;
+                self.write_entry(&entry, true)?;
                 written.push(entry.id.clone());
                 entries.push(entry);
                 continue;
@@ -238,8 +237,7 @@ impl Store {
             changed = true;
         }
         if !closed.is_empty() || changed {
-            self.write_proposals(&proposals)
-                .map_err(|err| after_entries(&written, err))?;
+            self.write_proposals(&proposals)?;
         }
         Ok(ClaimsWritten { closed, written })
     }
@@ -400,15 +398,16 @@ impl Store {
         if crate::proposal::close_retired_tag_candidates(&mut probe, &config.tags, now).is_empty() {
             return Ok(Vec::new());
         }
-        let _lock = self.lock("consistency scan")?;
-        let config = self.config()?;
-        let mut proposals = self.proposals()?;
-        let closed =
-            crate::proposal::close_retired_tag_candidates(&mut proposals, &config.tags, now);
-        if !closed.is_empty() {
-            self.write_proposals(&proposals)?;
-        }
-        Ok(closed)
+        self.write(|| {
+            let config = self.config()?;
+            let mut proposals = self.proposals()?;
+            let closed =
+                crate::proposal::close_retired_tag_candidates(&mut proposals, &config.tags, now);
+            if !closed.is_empty() {
+                self.write_proposals(&proposals)?;
+            }
+            Ok(closed)
+        })
     }
 
     /// Caller holds the lock. What happened to the reserved entry file.
@@ -476,40 +475,42 @@ impl Store {
         {
             return Ok(ReapplyReport::default());
         }
-        let _lock = self.lock("consistency scan")?;
-        let mut proposals = self.proposals()?;
-        let mut report = ReapplyReport::default();
-        let mut changed = false;
-        for proposal in &mut proposals {
-            if proposal.kind != ProposalKind::Candidate || proposal.state != ProposalState::Approved
-            {
-                continue;
-            }
-            let snapshot = proposal.clone();
-            match self.write_candidate_entry(&snapshot)? {
-                CandidateWrite::Created => report.applied.push(Reapplied {
-                    proposal: snapshot.id,
-                    entry: snapshot.older.clone(),
-                    status: EntryStatus::Active,
-                }),
-                CandidateWrite::Present => {}
-                CandidateWrite::Covered { by } => {
-                    // The approval and its instruction stay; the close says
-                    // why, so it never reads as a rejection (format 15).
-                    proposal.state = ProposalState::Rejected;
-                    proposal.closed_reason = Some(crate::ClosedReason::Covered);
-                    report.covered.push(CoveredCandidate {
+        self.write(|| {
+            let mut proposals = self.proposals()?;
+            let mut report = ReapplyReport::default();
+            let mut changed = false;
+            for proposal in &mut proposals {
+                if proposal.kind != ProposalKind::Candidate
+                    || proposal.state != ProposalState::Approved
+                {
+                    continue;
+                }
+                let snapshot = proposal.clone();
+                match self.write_candidate_entry(&snapshot)? {
+                    CandidateWrite::Created => report.applied.push(Reapplied {
                         proposal: snapshot.id,
-                        by,
-                    });
-                    changed = true;
+                        entry: snapshot.older.clone(),
+                        status: EntryStatus::Active,
+                    }),
+                    CandidateWrite::Present => {}
+                    CandidateWrite::Covered { by } => {
+                        // The approval and its instruction stay; the close says
+                        // why, so it never reads as a rejection (format 15).
+                        proposal.state = ProposalState::Rejected;
+                        proposal.closed_reason = Some(crate::ClosedReason::Covered);
+                        report.covered.push(CoveredCandidate {
+                            proposal: snapshot.id,
+                            by,
+                        });
+                        changed = true;
+                    }
                 }
             }
-        }
-        if changed {
-            self.write_proposals(&proposals)?;
-        }
-        Ok(report)
+            if changed {
+                self.write_proposals(&proposals)?;
+            }
+            Ok(report)
+        })
     }
 }
 
@@ -541,19 +542,6 @@ fn has_context_and_subject(candidate: &crate::EntryCandidate) -> bool {
         && candidate.subject.as_deref().is_some_and(|text| {
             !text.trim().is_empty() && text.chars().count() <= crate::SUBJECT_CHARS
         })
-}
-
-/// Attach the ids of entries already written to `err`, so the command
-/// still audits them; an empty list leaves `err` as it is.
-fn after_entries(written: &[EntryId], err: Error) -> Error {
-    if written.is_empty() {
-        err
-    } else {
-        Error::AfterPersist(Box::new(crate::AfterPersistError {
-            closed: written.iter().map(ToString::to_string).collect(),
-            source: err,
-        }))
-    }
 }
 
 /// Whether the pass already wrote `draft`'s claim as `entry`: the same tag

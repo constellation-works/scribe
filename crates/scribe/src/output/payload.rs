@@ -1413,6 +1413,20 @@ pub(crate) struct MigratePayload {
     /// Where the files went, under the data directory; `null` when there
     /// were none.
     pub(crate) moved_to: Option<String>,
+    /// Entries imported.
+    pub(crate) entries: usize,
+    /// Claims imported.
+    pub(crate) claims: usize,
+    /// Agent tags imported.
+    pub(crate) tags: usize,
+    /// Annotation marks imported.
+    pub(crate) marks: usize,
+    /// Pickups imported.
+    pub(crate) pickups: usize,
+    /// Audit lines imported.
+    pub(crate) audit_lines: usize,
+    /// Audit lines that did not parse, so stay only in the moved file.
+    pub(crate) audit_torn: usize,
 }
 
 /// `export`: the files written. Field names are a contract.
@@ -1424,6 +1438,12 @@ pub(crate) struct ExportPayload {
     pub(crate) format: &'static str,
     /// Sessions written.
     pub(crate) sessions: usize,
+    /// Entries written.
+    pub(crate) entries: usize,
+    /// Claims written.
+    pub(crate) claims: usize,
+    /// Audit lines written.
+    pub(crate) audit_lines: usize,
     /// Every file written, relative to `dir`, in order.
     pub(crate) files: Vec<String>,
     /// Records that did not read, so were not written.

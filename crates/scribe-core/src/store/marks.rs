@@ -2,7 +2,7 @@
 //! locked write that records annotation entries with them
 //! (docs/design/scribe/2_design.md §14.4, §14.5).
 
-use super::{MARKS_FILE, Redactor, Store, format, fsio};
+use super::{Redactor, Store};
 use crate::annotation::{MAX_ATTEMPTS, MarkRecord, MarkState};
 use crate::entry::{Cite, Entry, EntryId, NewEntry};
 use crate::pass::covering_entry;
@@ -81,15 +81,7 @@ impl Store {
             .collect())
     }
 
-    fn all_marks(&self) -> Result<Vec<MarkRecord>> {
-        let path = self.root.join(MARKS_FILE);
-        if !self.root_exists()? || !fsio::inspect_file(&path)? {
-            return Ok(Vec::new());
-        }
-        format::decode_marks(&path, &fsio::read(&path)?)
-    }
-
-    /// Record each marker's outcome under the store lock, writing the
+    /// Record each marker's outcome in one write, writing the
     /// checked annotation entries first (2_design.md §14.4, §14.5).
     ///
     /// A marker already settled in `marks.json` changes nothing and comes
@@ -110,115 +102,116 @@ impl Store {
             return Ok(Vec::new());
         }
         self.prepare_dir(&self.root)?;
-        let _lock = self.lock("annotate")?;
-        let mut marks = self.all_marks()?;
-        let (mut entries, skipped) = self.load_entries()?;
-        let mut ids: Vec<EntryId> = entries.iter().map(|e| e.id.clone()).collect();
-        ids.extend(
-            skipped
-                .iter()
-                .filter_map(|s| s.path.file_stem()?.to_str()?.parse().ok()),
-        );
-        ids.extend(self.candidate_reserved_ids()?);
-        let mut out = Vec::with_capacity(updates.len());
-        let mut changed = false;
-        for (key, change) in updates {
-            let at = marks
-                .iter()
-                .position(|m| m.session == key.session && m.is(&key.message, key.marker));
-            if let Some(found) = at.map(|i| &marks[i])
-                && found.outcome.is_final()
-            {
-                out.push(MarkResult::Already(found.clone()));
-                continue;
-            }
-            let attempts = at.map_or(0, |i| marks[i].attempts);
-            let record = |outcome, entry, code: Option<&str>, attempts| MarkRecord {
-                session: key.session.clone(),
-                message: key.message.clone(),
-                prompt_sha256: key.prompt_sha256.clone(),
-                marker: key.marker,
-                outcome,
-                entry,
-                code: code.map(str::to_owned),
-                attempts,
-                at: now,
-            };
-            let (next, result) = match change {
-                MarkChange::Nothing => (
-                    record(MarkState::None, None, None, attempts),
-                    MarkResult::Nothing,
-                ),
-                MarkChange::Refused(code) => (
-                    record(MarkState::Refused, None, Some(code), attempts),
-                    MarkResult::Refused(code),
-                ),
-                MarkChange::Failed => {
-                    let spent = attempts.saturating_add(1);
-                    let gave_up = spent >= MAX_ATTEMPTS;
-                    let next = if gave_up {
-                        record(MarkState::Refused, None, Some(MODEL_FAILED), spent)
-                    } else {
-                        record(MarkState::Pending, None, None, spent)
-                    };
-                    (
-                        next,
-                        MarkResult::Failed {
-                            attempts: spent,
-                            gave_up,
-                        },
-                    )
+        self.write(|| {
+            let mut marks = self.all_marks()?;
+            let (mut entries, skipped) = self.load_entries()?;
+            let mut ids: Vec<EntryId> = entries.iter().map(|e| e.id.clone()).collect();
+            ids.extend(
+                skipped
+                    .iter()
+                    .filter_map(|s| s.path.file_stem()?.to_str()?.parse().ok()),
+            );
+            ids.extend(self.candidate_reserved_ids()?);
+            let mut out = Vec::with_capacity(updates.len());
+            let mut changed = false;
+            for (key, change) in updates {
+                let at = marks
+                    .iter()
+                    .position(|m| m.session == key.session && m.is(&key.message, key.marker));
+                if let Some(found) = at.map(|i| &marks[i])
+                    && found.outcome.is_final()
+                {
+                    out.push(MarkResult::Already(found.clone()));
+                    continue;
                 }
-                MarkChange::Write(draft) => {
-                    let spent = attempts.saturating_add(1);
-                    let quote = draft.quote.clone().unwrap_or_default();
-                    if let Some(found) = entries
-                        .iter()
-                        .find(|e| written_before(e, &draft.cite, &redactor.mask(&quote)))
-                    {
-                        let next = record(MarkState::Entry, Some(found.id.clone()), None, spent);
-                        (next.clone(), MarkResult::Already(next))
-                    } else if redactor.mask(&quote) != quote {
+                let attempts = at.map_or(0, |i| marks[i].attempts);
+                let record = |outcome, entry, code: Option<&str>, attempts| MarkRecord {
+                    session: key.session.clone(),
+                    message: key.message.clone(),
+                    prompt_sha256: key.prompt_sha256.clone(),
+                    marker: key.marker,
+                    outcome,
+                    entry,
+                    code: code.map(str::to_owned),
+                    attempts,
+                    at: now,
+                };
+                let (next, result) = match change {
+                    MarkChange::Nothing => (
+                        record(MarkState::None, None, None, attempts),
+                        MarkResult::Nothing,
+                    ),
+                    MarkChange::Refused(code) => (
+                        record(MarkState::Refused, None, Some(code), attempts),
+                        MarkResult::Refused(code),
+                    ),
+                    MarkChange::Failed => {
+                        let spent = attempts.saturating_add(1);
+                        let gave_up = spent >= MAX_ATTEMPTS;
+                        let next = if gave_up {
+                            record(MarkState::Refused, None, Some(MODEL_FAILED), spent)
+                        } else {
+                            record(MarkState::Pending, None, None, spent)
+                        };
                         (
-                            record(MarkState::Refused, None, Some(NEEDS_REDACTION), spent),
-                            MarkResult::NeedsRedaction,
-                        )
-                    } else if let Some(cover) = covering_entry(
-                        &entries,
-                        &redactor.mask(&draft.content),
-                        &draft.tag,
-                        &draft.project,
-                    ) {
-                        (
-                            record(MarkState::Refused, None, Some(COVERED), spent),
-                            MarkResult::Covered(cover.clone()),
-                        )
-                    } else {
-                        let id = EntryId::next_in(&draft.tag, &ids);
-                        let mut entry = draft.into_entry(id.clone());
-                        redactor.entry(&mut entry);
-                        self.write_entry(&entry, true)?;
-                        ids.push(id.clone());
-                        entries.push(entry.clone());
-                        (
-                            record(MarkState::Entry, Some(id), None, spent),
-                            MarkResult::Added(entry),
+                            next,
+                            MarkResult::Failed {
+                                attempts: spent,
+                                gave_up,
+                            },
                         )
                     }
+                    MarkChange::Write(draft) => {
+                        let spent = attempts.saturating_add(1);
+                        let quote = draft.quote.clone().unwrap_or_default();
+                        if let Some(found) = entries
+                            .iter()
+                            .find(|e| written_before(e, &draft.cite, &redactor.mask(&quote)))
+                        {
+                            let next =
+                                record(MarkState::Entry, Some(found.id.clone()), None, spent);
+                            (next.clone(), MarkResult::Already(next))
+                        } else if redactor.mask(&quote) != quote {
+                            (
+                                record(MarkState::Refused, None, Some(NEEDS_REDACTION), spent),
+                                MarkResult::NeedsRedaction,
+                            )
+                        } else if let Some(cover) = covering_entry(
+                            &entries,
+                            &redactor.mask(&draft.content),
+                            &draft.tag,
+                            &draft.project,
+                        ) {
+                            (
+                                record(MarkState::Refused, None, Some(COVERED), spent),
+                                MarkResult::Covered(cover.clone()),
+                            )
+                        } else {
+                            let id = EntryId::next_in(&draft.tag, &ids);
+                            let mut entry = draft.into_entry(id.clone());
+                            redactor.entry(&mut entry);
+                            self.write_entry(&entry, true)?;
+                            ids.push(id.clone());
+                            entries.push(entry.clone());
+                            (
+                                record(MarkState::Entry, Some(id), None, spent),
+                                MarkResult::Added(entry),
+                            )
+                        }
+                    }
+                };
+                match at {
+                    Some(i) => marks[i] = next,
+                    None => marks.push(next),
                 }
-            };
-            match at {
-                Some(i) => marks[i] = next,
-                None => marks.push(next),
+                changed = true;
+                out.push(result);
             }
-            changed = true;
-            out.push(result);
-        }
-        if changed {
-            let path = self.root.join(MARKS_FILE);
-            fsio::write_atomic(&path, &format::encode_marks(&path, &marks)?)?;
-        }
-        Ok(out)
+            if changed {
+                self.write_marks(&marks)?;
+            }
+            Ok(out)
+        })
     }
 }
 

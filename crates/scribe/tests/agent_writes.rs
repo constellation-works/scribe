@@ -2,6 +2,38 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 mod support;
 use support::{Fixture, text};
+/// Files (relative to `root`) whose bytes or mode differ between two snapshots.
+fn changed(
+    before: &[(std::path::PathBuf, Vec<u8>, u32)],
+    after: &[(std::path::PathBuf, Vec<u8>, u32)],
+) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    for (p, b, m) in before {
+        if !after.iter().any(|(q, c, n)| q == p && c == b && n == m) {
+            out.push(p.clone());
+        }
+    }
+    for (p, _, _) in after {
+        if !before.iter().any(|(q, _, _)| q == p) {
+            out.push(p.clone());
+        }
+    }
+    out
+}
+/// Every exported record document, for "no record changed" checks that
+/// tolerate scribe.db and its WAL moving bytes.
+fn records(root: &std::path::Path) -> Vec<Option<String>> {
+    [
+        "entries/preferences/preferences-1.md",
+        "proposals.json",
+        "tags.json",
+        "marks.json",
+        "pickups.json",
+    ]
+    .iter()
+    .map(|rel| support::exported(root, rel))
+    .collect()
+}
 fn json(bytes: &[u8]) -> serde_json::Value {
     serde_json::from_slice(bytes).unwrap()
 }
@@ -47,11 +79,11 @@ fn agent_entry_verbs_record_authors_redact_and_audit_only_changes() {
     let updated = json(&fx.ok(&update).stdout);
     assert_eq!(updated["author"], added["author"]);
     assert_eq!(updated["updated_by"]["name"], "opus");
-    let audit = std::fs::read(fx.root().join("audit.jsonl")).unwrap();
+    let audit = support::audit_text(&fx.root());
     let noop = fx.ok(&update);
     assert_eq!(json(&noop.stdout), updated);
     assert_eq!(text(&noop.stderr).trim(), "nothing changed");
-    assert_eq!(std::fs::read(fx.root().join("audit.jsonl")).unwrap(), audit);
+    assert_eq!(support::audit_text(&fx.root()), audit);
     let retired = json(
         &fx.ok(&[
             "entry",
@@ -67,7 +99,7 @@ fn agent_entry_verbs_record_authors_redact_and_audit_only_changes() {
     );
     assert_eq!(retired["status"], "retired");
     assert_eq!(retired["retirement_reason"], "obsolete");
-    let lines = std::fs::read_to_string(fx.root().join("audit.jsonl")).unwrap();
+    let lines = support::audit_text(&fx.root());
     assert_eq!(lines.lines().count(), 3);
     assert!(!lines.contains("obsolete"));
     assert!(!lines.contains("new content"));
@@ -115,7 +147,7 @@ fn entry_add_refuses_a_statement_an_active_entry_already_covers() {
         err["error"],
         "already covered by preferences-1; nothing written"
     );
-    let audit = std::fs::read_to_string(fx.root().join("audit.jsonl")).unwrap();
+    let audit = support::audit_text(&fx.root());
     let refusal = audit.lines().last().unwrap();
     assert!(refusal.contains("already_covered"), "{refusal}");
     assert!(
@@ -181,7 +213,7 @@ fn daniel_guards_preserve_records_but_allow_metadata_and_open_proposals() {
         .unwrap()
         .replace("env = [\"GITHUB_TOKEN\"]", "env = []");
     std::fs::write(config, text).unwrap();
-    let before = std::fs::read(fx.root().join("entries/decisions/decisions-2.md")).unwrap();
+    let before = support::exported(&fx.root(), "entries/decisions/decisions-2.md").unwrap();
     for args in [
         vec![
             "entry",
@@ -208,7 +240,7 @@ fn daniel_guards_preserve_records_but_allow_metadata_and_open_proposals() {
         assert_eq!(out.status.code(), Some(1));
         assert_eq!(json(&out.stderr)["code"], "user_only");
         assert_eq!(
-            std::fs::read(fx.root().join("entries/decisions/decisions-2.md")).unwrap(),
+            support::exported(&fx.root(), "entries/decisions/decisions-2.md").unwrap(),
             before
         );
     }
@@ -230,13 +262,13 @@ fn daniel_guards_preserve_records_but_allow_metadata_and_open_proposals() {
     );
     let id = p["id"].as_str().unwrap();
     for action in ["--approve", "--reject"] {
-        let before = std::fs::read(fx.root().join("proposals.json")).unwrap();
+        let before = support::exported(&fx.root(), "proposals.json").unwrap();
         let out = fx.run(&[
             "proposal", "settle", id, action, "--author", "opus", "--json",
         ]);
         assert_eq!(json(&out.stderr)["code"], "user_only");
         assert_eq!(
-            std::fs::read(fx.root().join("proposals.json")).unwrap(),
+            support::exported(&fx.root(), "proposals.json").unwrap(),
             before
         );
     }
@@ -367,7 +399,11 @@ fn store_tags_merge_and_config_wins_without_writing_on_reads() {
         .stdout,
     );
     assert_eq!(tag["author"]["kind"], "agent");
-    assert!(fx.root().join("tags.json").is_file());
+    assert!(
+        support::exported(&fx.root(), "tags.json")
+            .unwrap()
+            .contains("notes")
+    );
     fx.ok(&[
         "tag",
         "update",
@@ -506,8 +542,6 @@ fn interrupted_agent_approval_reapplies_with_its_author() {
         "opus",
         "old note",
     ]);
-    let path = fx.root().join("entries/preferences/preferences-1.md");
-    let before = std::fs::read(&path).unwrap();
     fx.ok(&[
         "proposal",
         "add",
@@ -529,7 +563,11 @@ fn interrupted_agent_approval_reapplies_with_its_author() {
         "astra",
     ]);
     // Deterministic crash boundary: proposal committed, entry still old.
-    std::fs::write(&path, before).unwrap();
+    support::sql(
+        &fx.root(),
+        "UPDATE entries SET status = 'active', retirement_reason = NULL, \
+         inactive_since = NULL, updated_by = NULL WHERE id = 'preferences-1'",
+    );
     let store = scribe_core::Store::open(fx.root());
     let reapplied = store
         .reapply_approved(time::OffsetDateTime::now_utc())
@@ -560,15 +598,29 @@ fn mismatched_provenance_and_newer_tag_documents_fail_closed_without_writes() {
         "opus",
         "agent note",
     ]);
-    let path = fx.root().join("entries/preferences/preferences-1.md");
-    let original = std::fs::read_to_string(&path).unwrap();
     // A null cite cannot masquerade as Daniel's typed words.
-    std::fs::write(&path, original.replace("kind: agent", "kind: daniel")).unwrap();
+    support::sql(
+        &fx.root(),
+        "UPDATE entries SET author = '{\"kind\":\"daniel\"}' WHERE id = 'preferences-1'",
+    );
     let before = support::snapshot(&fx.root());
+    let kept = records(&fx.root());
     let out = fx.run(&["entry", "show", "preferences-1", "--json"]);
     assert_eq!(json(&out.stderr)["code"], "store_corrupt");
-    assert_eq!(support::snapshot(&fx.root()), before);
-    std::fs::write(&path, original).unwrap();
+    // The refused read may leave bytes in the db's WAL; no record changes.
+    let after = support::snapshot(&fx.root());
+    let moved = changed(&before, &after);
+    assert!(
+        moved
+            .iter()
+            .all(|p| p.to_string_lossy().contains("scribe.db")),
+        "{moved:?}"
+    );
+    assert_eq!(records(&fx.root()), kept);
+    support::sql(
+        &fx.root(),
+        "UPDATE entries SET author = '{\"kind\":\"agent\",\"name\":\"opus\"}' WHERE id = 'preferences-1'",
+    );
     fx.ok(&[
         "tag",
         "add",
@@ -578,15 +630,20 @@ fn mismatched_provenance_and_newer_tag_documents_fail_closed_without_writes() {
         "--description",
         "notes",
     ]);
-    let path = fx.root().join("tags.json");
-    let mut tags: serde_json::Value = json(&std::fs::read(&path).unwrap());
-    tags["format"] = serde_json::json!(999);
-    std::fs::write(&path, serde_json::to_vec(&tags).unwrap()).unwrap();
+    // A database written by a newer scribe: the tags in it cannot be read
+    // or changed by this one.
+    support::sql(&fx.root(), "PRAGMA user_version = 999");
     let before = support::snapshot(&fx.root());
     let out = fx.run(&["tag", "list", "--json"]);
     assert_eq!(json(&out.stderr)["code"], "store_too_new");
-    assert_eq!(support::snapshot(&fx.root()), before);
-    let before = std::fs::read(&path).unwrap();
+    let moved = changed(&before, &support::snapshot(&fx.root()));
+    assert!(
+        moved
+            .iter()
+            .all(|p| p.to_string_lossy().contains("scribe.db")),
+        "{moved:?}"
+    );
+    let before = support::snapshot(&fx.root());
     let out = fx.run(&[
         "tag",
         "update",
@@ -598,7 +655,7 @@ fn mismatched_provenance_and_newer_tag_documents_fail_closed_without_writes() {
         "--json",
     ]);
     assert_eq!(json(&out.stderr)["code"], "store_too_new");
-    assert_eq!(std::fs::read(path).unwrap(), before);
+    assert_eq!(support::snapshot(&fx.root()), before);
 }
 
 #[test]
@@ -627,7 +684,14 @@ fn invalid_or_settled_proposals_never_silently_drop_changed_inputs() {
         "--json",
     ]);
     assert_eq!(json(&out.stderr)["code"], "proposal_invalid");
-    assert!(!fx.root().join("proposals.json").exists());
+    // A refused proposal leaves no claim behind.
+    assert!(
+        support::exported(&fx.root(), "proposals.json").is_none_or(|p| {
+            json(p.as_bytes())["proposals"]
+                .as_array()
+                .is_none_or(Vec::is_empty)
+        })
+    );
     fx.ok(&[
         "proposal",
         "add",
@@ -641,7 +705,7 @@ fn invalid_or_settled_proposals_never_silently_drop_changed_inputs() {
         "review",
     ]);
     fx.ok(&["proposal", "settle", "p-1", "--reject", "--author", "astra"]);
-    let before = std::fs::read(fx.root().join("proposals.json")).unwrap();
+    let before = support::exported(&fx.root(), "proposals.json").unwrap();
     for args in [
         vec![
             "proposal", "update", "p-1", "--author", "opus", "--reason", "new", "--json",
@@ -654,13 +718,13 @@ fn invalid_or_settled_proposals_never_silently_drop_changed_inputs() {
         let out = fx.run(&args);
         assert_eq!(json(&out.stderr)["code"], "proposal_settled");
         assert_eq!(
-            std::fs::read(fx.root().join("proposals.json")).unwrap(),
+            support::exported(&fx.root(), "proposals.json").unwrap(),
             before
         );
     }
     let entry = json(&fx.ok(&["entry", "show", "preferences-1", "--json"]).stdout);
     assert_eq!(entry["status"], "active");
-    let log = std::fs::read_to_string(fx.root().join("audit.jsonl")).unwrap();
+    let log = support::audit_text(&fx.root());
     assert_eq!(
         log.lines().count(),
         6,
@@ -682,8 +746,11 @@ fn corrupt_entries_still_count_when_resolving_prefixes() {
             content,
         ]);
     }
-    let path = fx.root().join("entries/preferences/preferences-2.md");
-    std::fs::write(&path, "not a record").unwrap();
+    // A row that does not decode.
+    support::sql(
+        &fx.root(),
+        "UPDATE entries SET author = '[]' WHERE id = 'preferences-2'",
+    );
     let out = fx.run(&[
         "entry",
         "update",
@@ -776,7 +843,7 @@ fn refused_writes_audit_the_target_and_author_but_never_the_arguments() {
         let out = fx.run(args);
         assert_eq!(json(&out.stderr)["code"], "user_only");
     }
-    let audit = std::fs::read_to_string(fx.root().join("audit.jsonl")).unwrap();
+    let audit = support::audit_text(&fx.root());
     let lines: Vec<serde_json::Value> = audit
         .lines()
         .map(|l| serde_json::from_str(l).unwrap())
@@ -811,7 +878,7 @@ fn a_session_id_that_resolves_to_no_record_leaves_the_audit_target_null() {
         "--json",
     ]);
     assert!(!out.status.success());
-    let audit = std::fs::read_to_string(fx.root().join("audit.jsonl")).unwrap();
+    let audit = support::audit_text(&fx.root());
     let line: serde_json::Value = serde_json::from_str(audit.lines().last().unwrap()).unwrap();
     assert_eq!(line["command"], "session rebuild");
     assert_eq!(line["status"], "failure");
@@ -1131,11 +1198,10 @@ fn settling_a_scribe_proposal_cannot_replace_its_reason() {
         "opus",
     ]);
     // Make it a routine-opened (scribe) proposal, as `consistency scan` writes.
-    let path = fx.root().join("proposals.json");
-    let mut doc: serde_json::Value = json(&std::fs::read(&path).unwrap());
-    doc["proposals"][0]["author"] = serde_json::json!({"kind": "scribe", "name": "consistency"});
-    std::fs::write(&path, serde_json::to_vec(&doc).unwrap()).unwrap();
-    support::make_private(&path);
+    support::sql(
+        &fx.root(),
+        "UPDATE claims SET author = '{\"kind\":\"scribe\",\"name\":\"consistency\"}' WHERE n = 1",
+    );
 
     let out = fx.run(&[
         "proposal",

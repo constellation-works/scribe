@@ -62,7 +62,7 @@ fn s1() -> SessionId {
 fn migrate_moves_the_files_aside_and_the_records_read_the_same() {
     let (_dir, store) = file_store();
     let before = store.session(&s1()).unwrap().record;
-    let moved = store.migrate_sessions(T0).unwrap();
+    let moved = store.migrate_store(T0).unwrap();
     assert_eq!(moved.sessions, 1);
     assert_eq!(moved.moved_to.as_deref(), Some("pre-sqlite-2026-11-01"));
     let root = store.root();
@@ -73,7 +73,7 @@ fn migrate_moves_the_files_aside_and_the_records_read_the_same() {
     );
     assert_eq!(store.session(&s1()).unwrap().record, before);
     // Once moved, a second migrate is refused and changes nothing.
-    let err = store.migrate_sessions(T0).unwrap_err();
+    let err = store.migrate_store(T0).unwrap_err();
     assert_eq!(code(&err), "migrate_blocked", "{err}");
 }
 
@@ -92,7 +92,7 @@ fn migrate_is_refused_while_a_session_is_on() {
         r#"{"format": 1, "sessions": {"s-1": {"on": true, "since": "2026-11-01T09:00:00Z", "due": true, "final": false}}}"#,
     );
     let store = Store::open(&root);
-    let err = store.migrate_sessions(T0).unwrap_err();
+    let err = store.migrate_store(T0).unwrap_err();
     assert_eq!(code(&err), "migrate_blocked", "{err}");
     assert!(root.join("sessions/2026/11/s-1.md").is_file());
     assert_eq!(store.session(&s1()).unwrap().record.title, "a session");
@@ -107,7 +107,7 @@ fn migrate_is_refused_while_a_rebuild_checkpoint_exists() {
         "sessions/2026/11/.s-1.rebuild.md",
         &session_text("", SESSION_BODY),
     );
-    let err = store.migrate_sessions(T0).unwrap_err();
+    let err = store.migrate_store(T0).unwrap_err();
     assert_eq!(code(&err), "migrate_blocked", "{err}");
     assert!(err.to_string().contains("checkpoint"), "{err}");
     assert!(root.join("sessions/2026/11/s-1.md").is_file());
@@ -150,7 +150,7 @@ fn a_record_that_does_not_read_refuses_the_move() {
     let (_dir, store) = file_store();
     let root = store.root().to_path_buf();
     put(&root, "sessions/2026/11/s-9.md", "not a session\n");
-    let err = store.migrate_sessions(T0).unwrap_err();
+    let err = store.migrate_store(T0).unwrap_err();
     assert_eq!(code(&err), "store_corrupt", "{err}");
     assert!(root.join("sessions/2026/11/s-1.md").is_file());
 }
@@ -160,7 +160,7 @@ fn records_number_by_creation_and_a_new_session_numbers_after_them() {
     let (_dir, store) = file_store();
     let before = store.session_numbers().unwrap();
     assert_eq!(before[&s1()].get(), 1);
-    store.migrate_sessions(T0).unwrap();
+    store.migrate_store(T0).unwrap();
     assert_eq!(store.session_numbers().unwrap(), before);
     let new: SessionId = "0b8ef4a6-0c6a-4d77-9c41-000000000001".parse().unwrap();
     store
@@ -197,12 +197,10 @@ fn records_number_by_creation_and_a_new_session_numbers_after_them() {
 #[test]
 fn markdown_export_writes_every_session_in_its_file_shape() {
     let (dir, store) = file_store();
-    store.migrate_sessions(T0).unwrap();
+    store.migrate_store(T0).unwrap();
     let record = store.session(&s1()).unwrap().record;
     let target = dir.path().join("export");
-    let out = store
-        .export_sessions(&target, ExportFormat::Markdown)
-        .unwrap();
+    let out = store.export(&target, ExportFormat::Markdown).unwrap();
     assert_eq!(out.sessions, 1);
     assert_eq!(
         fs::read(target.join("sessions/2026/11/s-1.md")).unwrap(),
@@ -210,9 +208,7 @@ fn markdown_export_writes_every_session_in_its_file_shape() {
     );
     assert!(target.join("control.json").is_file());
     // A directory with anything in it is refused.
-    let err = store
-        .export_sessions(&target, ExportFormat::Markdown)
-        .unwrap_err();
+    let err = store.export(&target, ExportFormat::Markdown).unwrap_err();
     assert_eq!(code(&err), "export_target_exists", "{err}");
 }
 
@@ -220,12 +216,12 @@ fn markdown_export_writes_every_session_in_its_file_shape() {
 fn jsonl_export_writes_one_line_per_row_and_needs_moved_sessions() {
     let (dir, store) = file_store();
     let err = store
-        .export_sessions(&dir.path().join("early"), ExportFormat::Jsonl)
+        .export(&dir.path().join("early"), ExportFormat::Jsonl)
         .unwrap_err();
     assert_eq!(code(&err), "export_needs_migrate", "{err}");
-    store.migrate_sessions(T0).unwrap();
+    store.migrate_store(T0).unwrap();
     let target = dir.path().join("export");
-    let out = store.export_sessions(&target, ExportFormat::Jsonl).unwrap();
+    let out = store.export(&target, ExportFormat::Jsonl).unwrap();
     assert_eq!(out.sessions, 1);
     let sessions = fs::read_to_string(target.join("sessions.jsonl")).unwrap();
     assert_eq!(sessions.lines().count(), 1, "{sessions}");

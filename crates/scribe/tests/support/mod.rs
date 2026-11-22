@@ -332,7 +332,7 @@ pub fn record_text(root: &Path, id: &str) -> Option<String> {
     let dir = tempfile::tempdir().expect("export dir");
     let target = dir.path().join("export");
     store
-        .export_sessions(&target, scribe_core::ExportFormat::Markdown)
+        .export(&target, scribe_core::ExportFormat::Markdown)
         .expect("export");
     let rel = format!(
         "sessions/{:04}/{:02}/{id}.md",
@@ -340,6 +340,41 @@ pub fn record_text(root: &Path, id: &str) -> Option<String> {
         u8::from(record.started.month())
     );
     Some(std::fs::read_to_string(target.join(rel)).expect("exported record"))
+}
+
+/// A record file in the shape the file store held it, from `scribe
+/// export --as markdown`: `entries/<tag>/<id>.md`, `proposals.json`,
+/// `tags.json`, `marks.json`, `pickups.json` or `audit.jsonl`. `None` when
+/// the export has no such file (no entry of that id). Read-only, as the
+/// export is.
+pub fn exported(root: &Path, rel: &str) -> Option<String> {
+    let dir = tempfile::tempdir().expect("export dir");
+    let target = dir.path().join("export");
+    scribe_core::Store::open(root)
+        .export(&target, scribe_core::ExportFormat::Markdown)
+        .expect("export");
+    std::fs::read_to_string(target.join(rel)).ok()
+}
+
+/// `proposals.json` as the file store held it (`{format, proposals}`).
+pub fn proposals_doc(root: &Path) -> serde_json::Value {
+    serde_json::from_str(&exported(root, "proposals.json").expect("exported proposals"))
+        .expect("proposals JSON")
+}
+
+/// Every audit line, oldest first, as `audit.jsonl` held them.
+pub fn audit_lines(root: &Path) -> Vec<serde_json::Value> {
+    exported(root, "audit.jsonl")
+        .unwrap_or_default()
+        .lines()
+        .map(|l| serde_json::from_str(l).expect("audit line JSON"))
+        .collect()
+}
+
+/// [`audit_lines`] as the text `audit.jsonl` held, for checks that the log
+/// holds nothing it must not.
+pub fn audit_text(root: &Path) -> String {
+    exported(root, "audit.jsonl").unwrap_or_default()
 }
 
 pub fn text(bytes: &[u8]) -> String {

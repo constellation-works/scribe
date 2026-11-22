@@ -183,38 +183,6 @@ pub enum Error {
         /// The owner-only mode to set: `700` for a directory, `600` for a file.
         fix: &'static str,
     },
-    /// Proposals were already persisted, then a later step failed.
-    /// [`AfterPersistError::closed`] names those proposals so the command can
-    /// still audit them. The message, cause chain and [`Error::code`] are the
-    /// later failure's (STD-02 R31).
-    #[error(transparent)]
-    AfterPersist(Box<AfterPersistError>),
-}
-
-/// A store failure that occurred after proposals were already persisted.
-///
-/// Transparent to [`std::fmt::Display`] and [`std::error::Error::source`]:
-/// both delegate directly to `source`, so error formatters walking the cause
-/// chain never repeat the inner error's message.
-#[derive(Debug)]
-pub struct AfterPersistError {
-    /// Ids already written: proposals closed and entries the session pass
-    /// wrote itself.
-    pub closed: Vec<String>,
-    /// The step that failed afterwards.
-    pub source: Error,
-}
-
-impl std::fmt::Display for AfterPersistError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(&self.source, f)
-    }
-}
-
-impl std::error::Error for AfterPersistError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        std::error::Error::source(&self.source)
-    }
 }
 
 impl Error {
@@ -240,7 +208,6 @@ impl Error {
             Self::Symlink { .. } => "store_symlink",
             Self::ForeignOwner { .. } => "store_foreign_owner",
             Self::Permissions { .. } => "store_permissions",
-            Self::AfterPersist(after) => after.source.code(),
         }
     }
 

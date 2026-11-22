@@ -41,7 +41,7 @@ use time::OffsetDateTime;
 
 /// The newest store format: this build reads formats 1 to `FORMAT` of every
 /// document and would write `FORMAT`.
-pub(super) const FORMAT: u32 = 26;
+pub(super) const FORMAT: u32 = 27;
 
 /// Which document an upgrade step is applied to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,6 +68,12 @@ pub(super) type Upgrade = fn(Document, serde_json::Value) -> serde_json::Result<
 /// (STD-02 R16, STD-03 R10). A shipped step is never edited, reordered or
 /// removed. Reads upgrade in memory only; the next write persists the
 /// current format. The template's `notes.json` is not carried over.
+///
+/// Closed at format 27 (phase 7): every record kind now lives in
+/// `scribe.db`, whose schema changes are SQL migrations (`db::MIGRATIONS`).
+/// The steps stay so the move can read a store left at any older format
+/// for the support window (§15.7, §15.11); phase 8 removes them with the
+/// file decoders. No step is appended after `documents_sqlite`.
 pub(super) const UPGRADES: &[Upgrade] = &[
     retry_state,
     session_links,
@@ -94,7 +100,22 @@ pub(super) const UPGRADES: &[Upgrade] = &[
     claim_context,
     memory_files,
     sessions_sqlite,
+    documents_sqlite,
 ];
+
+/// Format 26 -> 27 (2_design.md §15.7, §15.11, phase 7) changes no stored
+/// document. Entries, claims, agent tags, marks, pickups and the audit log
+/// move into `scribe.db` (schema 5): the first write imports them with the
+/// sessions and moves their files to `pre-sqlite-<date>/`. `control.json`,
+/// `proposals.json`, `tags.json`, `marks.json` and `pickups.json` stay as
+/// empty format stamps, so a format-26 build refuses the store instead of
+/// writing files beside the database.
+fn documents_sqlite(
+    _document: Document,
+    value: serde_json::Value,
+) -> serde_json::Result<serde_json::Value> {
+    Ok(value)
+}
 
 /// Format 25 -> 26 (2_design.md §15.7, §15.11, phase 6) changes no stored
 /// document. The sessions move into `scribe.db` (schema 3): the first write
@@ -1771,7 +1792,7 @@ pub(super) fn decode_entry(
 ) -> Result<Entry> {
     let (front, body) = split_frontmatter(path, bytes)?;
     let (from, value) = parse_frontmatter(path, front, ENTRY_KIND)?;
-    let mut entry: Entry = if from == FORMAT {
+    let entry: Entry = if from == FORMAT {
         yaml_serde::from_value(value).map_err(|e| Error::corrupt(path, e))?
     } else if (10..=12).contains(&from) {
         let has_inactive_since = value
@@ -1798,6 +1819,21 @@ pub(super) fn decode_entry(
         let json = serde_json::to_value(&value).map_err(|e| Error::corrupt(path, e))?;
         upgrade(path, Document::Entry, from, json)?
     };
+    checked_entry(path, entry, from, body, expected, tag_dir)
+}
+
+/// An entry decoded at format `from` with its content `body`, checked: its
+/// id and tag match `expected` and `tag_dir` (a file's stem and directory,
+/// a row's id and tag), and its fields agree with each other. A
+/// `scribe.db` row is checked as a current-format file is.
+pub(super) fn checked_entry(
+    path: &Path,
+    mut entry: Entry,
+    from: u32,
+    body: &str,
+    expected: &str,
+    tag_dir: &str,
+) -> Result<Entry> {
     if entry.id.to_string() != expected
         || entry.tag.as_str() != tag_dir
         || entry.id.tag() != &entry.tag
@@ -2461,7 +2497,14 @@ pub(super) fn encode_control(path: &Path, state: &ControlState) -> Result<Vec<u8
 /// Parse `proposals.json`.
 pub(super) fn decode_proposals(path: &Path, bytes: &[u8]) -> Result<Vec<Proposal>> {
     let doc: ProposalsDocument = decode_json(path, bytes, Document::Proposals)?;
-    for proposal in &doc.proposals {
+    check_proposals(path, &doc.proposals)?;
+    Ok(doc.proposals)
+}
+
+/// Refuse proposals whose fields disagree, as `proposals.json` is read: a
+/// file's and a `scribe.db` row's alike.
+pub(super) fn check_proposals(path: &Path, proposals: &[Proposal]) -> Result<()> {
+    for proposal in proposals {
         // A context (format 24) is scribe's paragraph of either speaker's
         // turn; a statement (formats 14 to 23) its line of the user's turn.
         // A claim carries at most one of them, with its subject beside it.
@@ -2556,7 +2599,7 @@ pub(super) fn decode_proposals(path: &Path, bytes: &[u8]) -> Result<Vec<Proposal
             (ProposalKind::Supersedes | ProposalKind::Stale, None) => {}
         }
     }
-    Ok(doc.proposals)
+    Ok(())
 }
 
 fn has_matching_instruction(proposal: &Proposal, inst: &crate::Instruction) -> bool {
@@ -2607,9 +2650,16 @@ pub(super) fn decode_tags(path: &Path, bytes: &[u8]) -> Result<Vec<crate::StoreT
         serde_json::from_slice(bytes).map_err(|e| Error::corrupt(path, e)),
     )?;
     let doc: TagsDocument = serde_json::from_slice(bytes).map_err(|e| Error::corrupt(path, e))?;
-    crate::TagTable::new(doc.tags.iter().map(crate::StoreTag::definition).collect())
+    check_tags(path, &doc.tags)?;
+    Ok(doc.tags)
+}
+
+/// Refuse store tags that clash or lack agent authors: a file's and a
+/// `scribe.db` row's alike.
+pub(super) fn check_tags(path: &Path, tags: &[crate::StoreTag]) -> Result<()> {
+    crate::TagTable::new(tags.iter().map(crate::StoreTag::definition).collect())
         .map_err(|e| Error::corrupt(path, e))?;
-    if doc.tags.iter().any(|t| {
+    if tags.iter().any(|t| {
         t.author.kind != crate::AuthorKind::Agent
             || t.updated_by
                 .as_ref()
@@ -2617,7 +2667,7 @@ pub(super) fn decode_tags(path: &Path, bytes: &[u8]) -> Result<Vec<crate::StoreT
     }) {
         return Err(shape(path, "store tags must have agent authors"));
     }
-    Ok(doc.tags)
+    Ok(())
 }
 
 pub(super) fn encode_tags(path: &Path, tags: &[crate::StoreTag]) -> Result<Vec<u8>> {
@@ -2647,14 +2697,19 @@ pub(super) fn decode_pickups(path: &Path, bytes: &[u8]) -> Result<Vec<crate::act
     )?;
     let doc: PickupsDocument =
         serde_json::from_slice(bytes).map_err(|e| Error::corrupt(path, e))?;
-    if doc
-        .pickups
+    check_pickups(path, &doc.pickups)?;
+    Ok(doc.pickups)
+}
+
+/// Refuse a pickup without an agent author: a file's and a row's alike.
+pub(super) fn check_pickups(path: &Path, pickups: &[crate::action::Pickup]) -> Result<()> {
+    if pickups
         .iter()
         .any(|p| p.author.kind != crate::AuthorKind::Agent)
     {
         return Err(shape(path, "pickups must have agent authors"));
     }
-    Ok(doc.pickups)
+    Ok(())
 }
 
 /// `pickups.json`'s bytes at the current format, oldest first.
@@ -2694,7 +2749,14 @@ pub(super) fn decode_marks(
         ));
     }
     let doc: MarksDocument = serde_json::from_slice(bytes).map_err(|e| Error::corrupt(path, e))?;
-    if let Some(bad) = doc.marks.iter().find(|m| !m.is_consistent()) {
+    check_marks(path, &doc.marks)?;
+    Ok(doc.marks)
+}
+
+/// Refuse a mark whose fields disagree with its outcome: a file's and a
+/// row's alike.
+pub(super) fn check_marks(path: &Path, marks: &[crate::annotation::MarkRecord]) -> Result<()> {
+    if let Some(bad) = marks.iter().find(|m| !m.is_consistent()) {
         return Err(shape(
             path,
             format!(
@@ -2705,7 +2767,7 @@ pub(super) fn decode_marks(
             ),
         ));
     }
-    Ok(doc.marks)
+    Ok(())
 }
 
 /// `marks.json`'s bytes at the current format, oldest first.
