@@ -1021,8 +1021,10 @@ exits 0.
   record file or a document owned by another user (`store_foreign_owner`) or
   open to group or others, any group or other mode bit read included
   (`store_permissions`, naming the `chmod 700` or `chmod 600` that fixes it).
-  Nothing is repaired automatically. On non-unix platforms these checks are
-  no-ops.
+  Nothing is repaired automatically. Finder metadata files named `.DS_Store`
+  or `._*` are ignored by store walks, including during the legacy import;
+  they remain alongside the archived legacy files. On non-unix platforms
+  these checks are no-ops.
 - **Links.** A subdirectory, record file, document, config or lock file that
   is a symbolic link is `store_symlink` and is not followed. The root itself
   may be a link.
