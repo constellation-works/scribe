@@ -534,7 +534,7 @@ fn said(uuid: &str, role: Speaker, text: &str) -> PassMessage {
 
 #[test]
 fn only_daniels_own_lines_that_fire_a_trigger_are_named() {
-    let tags = crate::tag::TagTable::defaults();
+    let tags = crate::tests::tags_with_idea();
     let messages = vec![
         said("m-1", Speaker::User, "Let's look at the build."),
         said("m-2", Speaker::Assistant, "I always run the tests first."),
@@ -577,11 +577,13 @@ fn only_daniels_own_lines_that_fire_a_trigger_are_named() {
 }
 
 #[test]
-fn admission_recomputes_the_trigger_for_the_claimed_tag() {
+fn admission_recomputes_the_trigger_for_the_claimed_tag_and_speaker() {
+    use crate::entry::Speaker;
     let tags = crate::tag::TagTable::defaults();
     let preferences: crate::entry::TagName = "preferences".parse().unwrap();
     let idea: crate::entry::TagName = "idea".parse().unwrap();
-    let admitted = pass::admission(&tags, &preferences, "I prefer short names.").unwrap();
+    let admitted =
+        pass::admission(&tags, &preferences, Speaker::User, "I prefer short names.").unwrap();
     assert_eq!(admitted.trigger, "I prefer");
     assert_eq!(admitted.matched, "I prefer");
     assert_eq!(
@@ -594,8 +596,20 @@ fn admission_recomputes_the_trigger_for_the_claimed_tag() {
             // Stored and shown, so `{user}` reads "the user".
             .map(|c| crate::voice::UserName::default().fill(&c.value))
     );
-    assert!(pass::admission(&tags, &idea, "I prefer short names.").is_none());
-    assert!(pass::admission(&tags, &"standard".parse().unwrap(), "always").is_none());
+    // `preferences` reads the user's turns only (`from = "user"`).
+    assert!(
+        pass::admission(
+            &tags,
+            &preferences,
+            Speaker::Assistant,
+            "I prefer short names."
+        )
+        .is_none()
+    );
+    assert!(pass::admission(&tags, &idea, Speaker::User, "I prefer short names.").is_none());
+    assert!(
+        pass::admission(&tags, &"standard".parse().unwrap(), Speaker::User, "always").is_none()
+    );
 }
 
 #[test]

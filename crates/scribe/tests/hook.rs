@@ -933,6 +933,7 @@ fn propose_stale(fx: &Fixture) {
 #[test]
 fn a_line_start_form_gives_the_model_its_tag_as_the_hint_through_a_safe_mode_claude() {
     let fx = Fixture::new();
+    fx.config(support::IDEA_CATCHER);
     let claude = Claude::new(&fx);
     let typed =
         "#scribe idea: a dry-run flag for prune\n#scribe add this to preferences #merge-policy";
@@ -2049,6 +2050,7 @@ fn a_mention_or_an_agent_turn_is_never_cataloged() {
 #[test]
 fn an_annotation_under_an_action_tag_keeps_its_window() {
     let fx = Fixture::new();
+    fx.config(support::IDEA_CATCHER);
     let claude = Claude::new(&fx);
     let typed = "so here is what I am thinking: scribe could read annotations #scribe idea";
     marked_turns(&claude, &[("u-0", "an earlier turn"), ("u-1", typed)]);

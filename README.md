@@ -12,7 +12,7 @@ hint the model must follow. `#scribe/global` instead of `#scribe` stores
 `project: global`, for every repository; without it the entry keeps the
 working directory's project. Codex desktop threads work the same way once the typed turn is verified. `/scribe on` in a session catalogs it: `scribe session pass`
 writes one record per session whose pass is due and proposes unmarked preferences
-from the user's own turns (up to three per session pass, twenty open
+and standards from the user's own turns (up to three per session pass, twenty open
 candidates store-wide). `scribe proposal list --state open --json` shows their
 quotes and source turns. `#scribe approve <id>` creates the entry as the user's,
 with the original turn's cite; `#scribe reject <id>` closes it for good. The CLI reads the store and accepts authored agent notes,
@@ -31,21 +31,19 @@ session deactivate <id> --author <name> --reason <text>`, and `scribe
 session activate <id> --author <name> [--pin|--unpin]` shows one again or
 exempts it from the scan.
 
-Issues (`scribe issue add|occur|update|move|search|show|list`) are the
-memory of incidents that recur across projects and what fixed them. When
-one of the user's typed turns fires an `issue` trigger ("can you
-investigate", "root cause", …; `[tags.issue.capture]`), the prompt hook
-tells the agent the turn asks for a root cause. The agent searches issues
-first and, when it answers, writes the result with the user's request quoted word
-for word; it needs no approval, and the user removes a wrong one with
-`#scribe forget issue-<n>` or `#scribe forget issue-<n>#<m>`. Every fire
-and write is counted in the audit log; `scribe issue stats [--since
-<date>]` reports fires, writes and withdrawals with proxy ratios for
-precision and trigger yield.
+Catchers decide what the pass catches. Each tag's `[tags.<tag>.capture]`
+table names whose turns it reads (`from = "user"`, `"assistant"` or
+`"both"`), the trigger phrases that let a turn through, what counts and
+what does not, whether a catch is proposed for approval or written at once
+(`route = "propose"` or `"write"`), and how many claims may wait open
+(`max_open`, default 10). `preferences` and `standard` ship; a new catcher
+is config only, and [specs/catchers.md](docs/design/scribe/specs/catchers.md)
+gives examples (`idea`, `issue`, a `todo` collector of the assistant's
+promises).
 
 Action tags hold work items for consumers outside scribe instead of
-the user's memory: `standard`, `remind` and `idea` ship, and config marks
-any other tag `action = true`. A `#scribe` line under one also keeps the
+the user's memory: `standard` ships, and config marks any other tag
+`action = true`. A `#scribe` line under one also keeps the
 transcript turns since the previous `#scribe` line (at most 40 turns and
 12,000 characters, cut from the oldest). Agents write them with `entry add`
 in an interactive session, subject to a five-minute cancel window and,
@@ -94,8 +92,7 @@ scribe session activate <id> --author opus --pin
 scribe proposal list --state open --entry <id>
 scribe brief   # session-start page: memory, last sessions, open claims by tag; no model call
 scribe search "merge policy" --kind session --since 2026-11-01   # BM25, no model call
-scribe issue search 'HTTP 429 secondary rate limit' --json
-scribe issue occur <id> --author opus --related session:<id> --request '<their words>' --summary 'The drain failed again' --fix 'Paused the drain'
+scribe search 'HTTP 429 secondary rate limit' --kind entry --json
 scribe consistency scan --json
 scribe tag list
 scribe tag list --json | jq '.tags[] | select(.configured | not)'
@@ -105,7 +102,7 @@ scribe question ask "can you fetch me last session summary?" --json   # a lookup
 
 The store is a directory: `--root <dir>`, else `$SCRIBE_ROOT`, else
 `~/.scribe`. Entries are Markdown files with YAML frontmatter under
-`entries/<tag>/<tag>-<n>.md`; issues are `issues/issue-<n>.md`; session records are
+`entries/<tag>/<tag>-<n>.md`; session records are
 `sessions/<yyyy>/<mm>/<session-id>.md`; `control.json` holds which sessions
 are being cataloged, `proposals.json` holds routine and agent proposals,
 `tags.json` holds agent-created tags, `pickups.json` holds consumers' pickups of action entries, and `config.toml` holds configured tags,

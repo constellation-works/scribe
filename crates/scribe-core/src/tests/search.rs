@@ -37,7 +37,6 @@ fn run(q: &SearchQuery, entries: &[Entry], sessions: &[SessionRecord]) -> search
         Corpus {
             entries,
             sessions,
-            issues: &[],
             tags: &tags,
             user: &crate::voice::UserName::default(),
         },
@@ -159,7 +158,6 @@ fn terms_with_no_searchable_word_are_refused() {
         Corpus {
             entries: &[],
             sessions: &[],
-            issues: &[],
             tags: &tags,
             user: &crate::voice::UserName::default(),
         },
@@ -187,39 +185,4 @@ fn a_snippet_is_bounded_and_starts_near_the_first_match() {
     let at_end = format!("{} needle", "word ".repeat(200));
     let snip = search::snippet(&at_end, &wanted);
     assert!(snip.ends_with("needle") && snip.chars().count() <= SNIPPET_CHARS);
-}
-
-#[test]
-fn an_issue_hit_names_whoever_asked_as_the_corpus_names_the_user() {
-    let issues = [crate::tests::sample_issue()];
-    let tags = TagTable::defaults();
-    for (user, asked) in [
-        (
-            crate::voice::UserName::default(),
-            "the user asked: \"why does the drain fail\"",
-        ),
-        (
-            crate::voice::UserName::named("Sam").unwrap(),
-            "Sam asked: \"why does the drain fail\"",
-        ),
-    ] {
-        let found = search::search(
-            &query("rate limit"),
-            Corpus {
-                entries: &[],
-                sessions: &[],
-                issues: &issues,
-                tags: &tags,
-                user: &user,
-            },
-        )
-        .unwrap();
-        let hit = &found.hits[0];
-        assert_eq!(hit.kind, RecordKind::Issue);
-        assert!(
-            hit.snippet.ends_with(&format!("; {asked}]")),
-            "{}",
-            hit.snippet
-        );
-    }
 }

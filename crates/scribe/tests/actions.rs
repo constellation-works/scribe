@@ -330,6 +330,7 @@ fn an_action_line_keeps_the_turns_since_the_last_scribe_line_and_a_memory_line_n
 #[test]
 fn a_window_over_the_cap_is_cut_from_the_oldest_turn_and_says_so() {
     let fx = Fixture::new();
+    fx.config(support::IDEA_CATCHER);
     let claude = Claude::new(&fx);
     let names: Vec<(String, String)> = (0..50)
         .map(|n| (format!("a-{n}"), format!("turn {n}")))
@@ -566,7 +567,7 @@ fn task_friction_remind_and_finding_are_unknown_tags_without_config_and_not_in_t
         .filter(|t| t["action"].is_object())
         .map(|t| t["name"].as_str().unwrap())
         .collect();
-    assert_eq!(action, ["idea", "standard"]);
+    assert_eq!(action, ["standard"]);
 }
 
 #[test]
@@ -611,6 +612,7 @@ fn entries_under_a_tag_config_no_longer_defines_are_still_listed_shown_and_retir
 #[test]
 fn an_agent_entry_waits_out_its_cancel_window_and_retiring_it_cancels_it() {
     let fx = Fixture::new();
+    fx.config(support::IDEA_CATCHER);
     let claude = Claude::new(&fx);
     claude.write(&[]);
     fx.ok(&[
@@ -651,6 +653,7 @@ fn an_agent_entry_waits_out_its_cancel_window_and_retiring_it_cancels_it() {
 #[test]
 fn pickups_are_recorded_once_refused_off_action_tags_and_count_rejections() {
     let fx = Fixture::new();
+    fx.config(support::IDEA_CATCHER);
     let claude = Claude::new(&fx);
     claude.write(&[
         ("u-1", "user", "#scribe preferences: ship on fridays"),
@@ -900,6 +903,7 @@ fn a_quote_is_required_and_checked_against_daniels_typed_turns() {
 #[test]
 fn session_start_counts_action_entries_waiting_with_no_pickup() {
     let fx = Fixture::new();
+    fx.config(support::IDEA_CATCHER);
     let claude = Claude::new(&fx);
     claude.write(&[]);
     assert_eq!(

@@ -8,17 +8,6 @@
 //! payload origin field; see `payload::agent_originated`) is skipped at
 //! once: it echoes nothing, settles nothing and does not run `/scribe`.
 //!
-//! Every such turn is also matched, without a model, against the `issue`
-//! tag's triggers (2_design.md §11.4, `scribe_core::issue_trigger::fire`),
-//! in the user's own words only (pasted, fenced, indented, quoted and
-//! `#scribe` lines left out), whether or not the session is on. On a match
-//! that passes the transcript check the agent gets one more
-//! `additionalContext` line (asking for a root cause: search issues first,
-//! record the answer with `issue add` or `issue occur`), the user sees
-//! nothing, and the fire is one audit line: the session, the trigger
-//! phrase and the prompt's sha256, never its words. A config that does not
-//! load gives no hint.
-//!
 //! Every `#scribe` the user typed, inside a sentence or opening a line
 //! (`#scribe idea: …`, `#scribe add this to preferences`), is a marker
 //! (§14.6): this hook writes nothing and calls no model for it, it only
@@ -49,7 +38,6 @@ use crate::app::Context;
 use crate::error::CliError;
 use crate::output::{HookOutcome, HookReply, Output};
 use scribe_core::capture::{self, Parsed, Turn};
-use scribe_core::trigger::Fired;
 use scribe_core::{Label, Provider, SessionId, annotation};
 
 /// The hook event this replies to.
@@ -132,9 +120,6 @@ fn capture_prompt(payload: &PromptPayload, ctx: &Context) -> Result<Output, CliE
     if let Some(switch) = scribe_core::control::parse(&payload.prompt) {
         return Ok(super::scribe_command::run(&switch, payload, &session, ctx));
     }
-    let fired = ctx.config().ok().and_then(|config| {
-        scribe_core::issue_trigger::fire(&config.tags.issue_capture(), &payload.prompt)
-    });
     // Markers (§14.6): echoed here, written nothing; the Stop of this turn
     // catalogs them. Under Codex the adapter echoes them once the typed
     // turn is verified (`codex.rs`, [`mark_echoes`]), since its Stop replays
@@ -146,13 +131,7 @@ fn capture_prompt(payload: &PromptPayload, ctx: &Context) -> Result<Output, CliE
     };
     let parsed = capture::scan(&payload.prompt);
     if parsed.is_empty() {
-        let output = reply(mark_echoes, Vec::new());
-        return Ok(match fired {
-            Some(fired) if payload::check(ctx, &payload.transcript_path, &session).is_ok() => {
-                with_hint(output, &fired, &session, &payload.prompt)
-            }
-            _ => output,
-        });
+        return Ok(reply(mark_echoes, Vec::new()));
     }
 
     // A missing transcript passes: the first prompt of a session can
@@ -200,56 +179,18 @@ fn capture_prompt(payload: &PromptPayload, ctx: &Context) -> Result<Output, CliE
                 echoes.push(Echo::settled(reply.echo, reply.outcome.as_ref()));
                 outcomes.extend(reply.outcome);
             }
-            Parsed::ForgetIssue(forget) => {
-                let reply = super::issue_command::run(&forget, &turn, ctx);
-                echoes.push(Echo::settled(reply.echo, reply.outcome.as_ref()));
-                outcomes.extend(reply.outcome);
-            }
         }
     }
     echoes.extend(mark_echoes);
-    // The transcript check passed above; a failed one returned before.
-    let output = reply(echoes, outcomes);
-    Ok(match fired {
-        Some(fired) => with_hint(output, &fired, &session, &payload.prompt),
-        None => output,
-    })
+    Ok(reply(echoes, outcomes))
 }
 
 /// The line a parsed settling command came from, as typed.
 fn said_of(item: &Parsed) -> &str {
     match item {
         Parsed::Settle(settling) => &settling.said,
-        Parsed::ForgetIssue(forget) => &forget.said,
         Parsed::Refused(refused) => &refused.said,
     }
-}
-
-/// `output` with the issue trigger's hint for the agent after its echoes,
-/// and the fire as one more audit outcome. The user's message is unchanged.
-fn with_hint(output: Output, fired: &Fired, session: &SessionId, prompt: &str) -> Output {
-    let Output::Hook(mut reply) = output else {
-        return output;
-    };
-    let session = session.to_string();
-    let hint = scribe_core::issue_trigger::hint(fired, &session);
-    reply.context = Some(match reply.context.take() {
-        Some(context) => format!("{context}\n{hint}"),
-        None => hint,
-    });
-    reply.outcomes.push(HookOutcome {
-        target: Some(format!("session:{session}")),
-        error_code: None,
-        // Ids, the configured phrase and the prompt's hash: never its words.
-        issue: Some(scribe_core::IssueAudit {
-            verb: String::from(scribe_core::issue_trigger::FIRE_VERB),
-            session: Some(session.clone()),
-            trigger: Some(fired.trigger.clone()),
-            request_sha256: vec![capture::prompt_sha256(prompt)],
-            ..scribe_core::IssueAudit::default()
-        }),
-    });
-    Output::Hook(reply)
 }
 
 /// The echoes of `prompt`'s annotation markers, as the user's text and the
@@ -295,7 +236,6 @@ fn refusal(session: &SessionId, code: &'static str) -> HookOutcome {
     HookOutcome {
         target: Some(format!("session:{session}")),
         error_code: Some(code),
-        issue: None,
     }
 }
 

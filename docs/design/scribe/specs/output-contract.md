@@ -1,6 +1,6 @@
 ---
 type: design
-summary: "Spec: output contract — streams, modes, plain columns, the JSON list envelope and record fields (segments, activity, agent authors and direct writes, search hits, issues; future transcripts), warnings, errors and exit codes"
+summary: "Spec: output contract — streams, modes, plain columns, the JSON list envelope and record fields (segments, activity, agent authors and direct writes, search hits; future transcripts), warnings, errors and exit codes"
 last_validated: 2026-11-21
 ---
 
@@ -56,12 +56,9 @@ is `-`, lists are comma-joined, and timestamps are RFC 3339.
 | `session list --include-inactive` | `id status active due project topics updated title` (`active` is `yes` or `no`); without the flag the columns are unchanged, inactive sessions are left out, and when any matched the notice `<n> inactive session(s) also match and are hidden; --include-inactive lists them` goes to stderr. With `--tree` too, `active` follows `status` |
 | `proposal list` | `id kind state older newer opened_at reason admitted closed_reason` (format 11: `admitted` is `trigger "<phrase>" matched "<words>"; criteria: <criteria or ->` for a candidate a capture rule admitted, else `-`; `closed_reason` is `tag_retired` when scribe closed it without Daniel, `instructed` when an agent rejected it on Daniel's checked instruction (format 13), `covered` when an approved candidate's entry was missing and an active entry covers it (format 15), else `-`; format 14: for a candidate with a statement, `reason` is the statement, and the table prints `Daniel's words: "<quote>"` on a row under it in the same column, while plain joins them as `<statement> \| Daniel's words: "<quote>"`; the single-proposal detail a proposal write prints (`proposal add`, `update`, `settle`; there is no `proposal show`) adds `statement` and `subject` fields before `quote` in the table, and its JSON carries both on `candidate`; (ORB-26246) a candidate an agent settled on Daniel's instruction adds `<approved\|rejected> by <agent> on your instruction "<quote>" (<session>, <date>)`: plain joins it after the reason with ` \| `, the table prints it on a row under, in the same column, and a proposal write's detail adds it as an `instruction` field) |
 | `tag list` | `name entries stale_after_days aliases description`, (S12) `source` (`config` or `store`), then `action` (`free` or `ask-first`, with `,quote` when the tag requires a quote), `retired` and `rejected` (counts of agent entries); the last three are `-` for a tag that is not an action tag; (format 11) then `route` (the tag's capture route, `propose`, `write` or `agent`, or `-` when it has no capture rules) |
-| `tag show <tag>` (format 11) | one `<field>\t<value>\t<origin>` line each for `tag`, `source`, `aliases`, `description`, `stale_after_days`, `action` (`free`/`ask-first`, with `,quote`, or `-`), then the capture rules `from`, `route`, `triggers` (quoted, comma separated), `criteria` and `not`; `origin` is `shipped`, `config <file>:<line>` or `none` (an unset rule's value is `-`), and `-` for the first six. The table prints `<field> <value>  (<origin>)` |
+| `tag show <tag>` (format 11) | one `<field>\t<value>\t<origin>` line each for `tag`, `source`, `aliases`, `description`, `stale_after_days`, `action` (`free`/`ask-first`, with `,quote`, or `-`), then the capture rules `from`, `route`, `triggers` (quoted, comma separated), `criteria`, `not` and (phase 2) `max_open`; `origin` is `shipped`, `config <file>:<line>` or `none` (an unset rule's value is `-`), and `-` for the first six. The table prints `<field> <value>  (<origin>)` |
 | `scribe search` (S11) | `cite kind score updated title snippet` (`score` to three decimals; the table cuts `title` to 40 characters and fits `snippet` to the width; (ORB-26246) an entry an agent approved on Daniel's instruction ends its snippet, in every mode, with ` \| approved by <agent> on your instruction "<quote>" (<session>, <date>)`) |
-| `issue list`, `issue add\|occur\|update\|move` (format 17) | `id status occurrences projects hosts updated author title` (`author` is `agent:<name>`). `issue show` and every issue write print that row, then `signature\t<a \| b>`, `cause\t<cause>` and `fix\t<fix>`, and for each occurrence, newest first, `occurrence\t<n>\t<date>\t<host>\t<project>\t<session>\t<note>\t<summary>` (`note` is `recurred after fix`, `moved from issue-<n>#<m>`, both joined by `; `, or `-`), `user_asked\t<n>\t<request>`, one `agent_evidence\t<n>\t<error line>` per error line, `occurrence_cause\t<n>\t<cause>` and `occurrence_fix\t<n>\t<fix>`. The table detail prints the same as fields, the error lines under `agent_evidence` |
-| `issue search` (format 17) | as `scribe search`, every hit of kind `issue` |
 | `memory show` (format 19) | `id section status page seen latest statement` (`page` is `on` or why the item is off it: `merged`, `superseded`, `promoted` (format 20), `retired`, `forgotten`, `section_off`, `decayed`, `past_window`; `seen` counts occurrences; `latest` is the newest occurrence's date; a forgotten statement is `-`). Sorted by section in page order (`now`, `milestones`, `profile`, `projects`, `working`), then id. `memory show <id>`, `ack`, `retire` and `forget` print the row, then one `occurrence\t<n>\t<date>\t<session>\t<message>\t<quote>` line each, newest first (`-` for a forgotten quote); the table prints the item's fields one per line |
-| `issue stats` (audit format 5) | `count value means`: one row each for `fires`, `fires_with_write`, `writes`, `writes_without_fire`, `writes_forgotten`, `writes_moved` and `writes_withdrawn`, then `precision` and `trigger_yield` as `<numerator>/<denominator> (<value to 3 places>)` (`-` with nothing to divide) with `means` `proxy: <what it divides>`. `--json` is `{since, fires, fires_with_write, writes, writes_without_fire, writes_forgotten, writes_moved, writes_withdrawn, precision_proxy, trigger_yield_proxy, skipped_lines}`, each proxy `{numerator, denominator, value, means}` or `null`. Lines of the audit log that did not parse are a stderr warning |
 | `transcript list` *(S14)* | `session project user_turns bytes started ended first_prompt` |
 
 Search hits are best first; on a tie entries come before sessions, then
@@ -78,8 +75,8 @@ indent, and the `parent` column carries the nesting.
 Every list is
 `{"<key>": [<record>, ...], "total": <integer>, "truncated": <boolean>,
 "warnings": [<warning>, ...]}`, with `<key>` `entries`, `sessions`,
-`proposals` or `tags`, (S11) `hits` for `scribe search` and (format 17)
-`issue search`, `issues` for `issue list`, (format 19) `items` for `memory show`, and *(S14)*
+`proposals` or `tags`, (S11) `hits` for `scribe search`, (format 19)
+`items` for `memory show`, and *(S14)*
 `transcripts` for `transcript list`. `total` counts the records that matched the filters;
 `truncated` is true when `--limit` returned fewer. No matches is the same
 envelope with an empty array. A warning is `{"path", "code", "error"}` for a
@@ -240,8 +237,12 @@ candidate opened before format 14 or forgotten.
 **Tag rules** (`tag show <tag> --json`, format 11): `tag`, `source`
 (`config` or `store`), `aliases`, `description` (or `null`),
 `stale_after_days` (or `null`), `action` (`{mode, require_quote}` or
-`null`) and `capture` (`{from, route, triggers, criteria, not, origin}`).
-Each capture field is `null` when the tag has no such rule; `origin` has
+`null`) and `capture` (`{from, route, triggers, criteria, not, max_open,
+origin}`). Each capture field is `null` when the tag has no such rule;
+`from` is `user`, `assistant` or `both`, `route` `propose` or `write`, and
+(phase 2) `max_open` the most open claims the tag may hold: its config
+value, else 10 (origin `shipped`) for a tag with a route, else `null`
+(docs/design/scribe/specs/catchers.md); `origin` has
 one `{source, file, line}` per field, `source` `shipped`, `config` or
 `none`, and `file` and `line` set only for `config` (the config file and
 the 1-based line of the key). The lookup takes a name or alias and is
@@ -260,8 +261,8 @@ consumer recorded as rejected). A shipped action tag reports `source`
 tag has no capture rules). `configured` is true only
 for config tags, even though a store tag is also routable.
 
-**Hit** (S11, `hits[]`): `kind` (`entry`, `session` or (format 17)
-`issue`; *(S7)* `discussion`), `cite` (an entry id or issue id, `session:<id>` for a header,
+**Hit** (S11, `hits[]`): `kind` (`entry` or `session`; *(S7)*
+`discussion`), `cite` (an entry id, `session:<id>` for a header,
 `session:<id>#<n>` for a segment; *(S7)* a discussion slug), `id` (the
 entry's or session's id), `segment` (integer or `null`), `score` (a
 number, three decimals), `title` (a session's title, a segment's heading,
@@ -271,10 +272,11 @@ was cut; format 14: for an entry with `stated_by`, `scribe's statement of
 Daniel's turn: <statement> | Daniel's words: "<quote>"`, each part cut to
 240 characters; format 16: for an idea the pass wrote itself, `scribe's
 statement of Daniel's turn, captured by the session pass (not typed by
-Daniel): <statement> | Daniel's words: "<quote>" | outcome: <outcome>`;
-format 17: an issue's ends `[agent account (<author>); the user asked:
-"<newest request>"]`, and its `title` is the issue's title, its `project`
-the newest occurrence's, its `status` the issue's and its `active` `null`),
+Daniel): <statement> | Daniel's words: "<quote>" | outcome: <outcome>`,
+and (phase 2) for one the pass caught from an assistant turn, `scribe's
+statement of the assistant's turn, captured by the session pass (not the
+user's words): <statement> | The assistant's words: "<quote>" | outcome:
+<outcome>`),
 `project`, `topics` (a segment's are its session's plus its
 own), `author` (an entry's `{kind, name}`, `null` for a session), `active`
 (a session's flag; `null` for an entry), `updated` (an entry's or
@@ -282,31 +284,12 @@ session's `updated`, a segment's `to`), and `status` (added beside the
 designed fields: an entry's `active`, `superseded` or `retired`, a
 session's `open` or `final`).
 
-**Issue** (format 17, `issues[]`, `issue show` and every issue write):
-`id` (`issue-<n>`), `title`, `status` (`open`, `mitigated`, `resolved` or
-`forgotten`), `signature` (strings), `projects`, `hosts`, `topics`,
-`related` (every occurrence's session and links, `kind:target`), `author`
-and `updated_by` (`{kind: "agent", name}`; `updated_by` may be `null`, and
-is `{kind: "user"}` after their `#scribe forget` of the issue or an
-occurrence),
-`created`, `updated`, `cause` and `fix` (`cause not found` / `fix not
-found` until known; empty once forgotten), `occurrences` (newest first) and
-`gone`. An occurrence is `{n, date, host, project, session,
-request_message, recurred, moved_from, author, summary, request,
-error_lines, cause, fix, links}`: `request` is Daniel's words, checked
-verbatim against his typed turns of `session`, and `request_message` the
-uuid of that turn; `error_lines` are the agent's evidence, never checked;
-`recurred` is true for an occurrence written while the issue was
-`resolved` (which reopened it); `moved_from` is `issue-<n>#<m>` or `null`;
-`links` are the occurrence's links besides its session. `gone` is `[{n,
-reason, to}]`, `reason` `moved` or `forgotten` and `to` a move's
-`issue-<n>#<m>` or `null`. A write that reopened the issue adds the notice
-`<id> recurred after its fix: reopened` on stderr, a write that changed
-nothing `nothing changed`, and `issue add` and `issue occur` a line
-naming how to cancel: `#scribe forget <id>` or `#scribe forget <id>#<n>`.
-A missing `--request` is `quote_required` and one not found in Daniel's
-typed turns `quote_not_found` (exit 1); `entry add --tag issue` is
-`reserved_tag` (exit 1), naming the issue commands.
+**Issue** (format 17) is removed in phase 2 (2_design.md §15.9) with the
+`issue` noun: `issue list|show|add|occur|update|move|search|stats` exit 2
+as unknown commands, `scribe search --kind issue` exits 2, and the codes
+`issue_not_found`, `occurrence_not_found`, `issue_forgotten` and
+`reserved_tag` are no longer emitted. Stored issues become `issue` entries
+(specs/catchers.md).
 
 **Transcript** *(S14, `transcripts[]`, `transcript show`)*: `session`,
 `project` (the attributed slug), `project_mentions` (`{"<slug>":
@@ -393,8 +376,7 @@ the message lists up to ten candidates, sorted, and how many more), `user_only`,
 `instruction_mismatch` (including negation or exception markers in the instruction or answered reply), `not_interactive`, `already_covered`,
 `proposal_invalid`, `proposal_not_agent`,
 `session_cataloged`, `transcript_not_found`, (format 19) `memory_not_found`,
-`memory_not_active`, `memory_not_now`, (format 17) `issue_not_found`,
-`occurrence_not_found`, `issue_forgotten`, `reserved_tag`, for `tmux` `fzf_missing` and
+`memory_not_active`, `memory_not_now`, for `tmux` `fzf_missing` and
 `tmux_failed` (exit 1; `tmux` renders no payload, its popup owns the
 terminal), for `session pass`
 `session_pass_failed` and `session_not_on`, and for `question
@@ -404,8 +386,7 @@ are not errors and appear only in its reply and audit lines:
 `unknown_tag`, `unparsed_instruction`, `too_many_marks`,
 `quote_not_verbatim`, `annotation_out_of_bounds`, `covered`,
 `needs_redaction`, `model_failed`, `provenance_failed`,
-`unknown_scribe_command`, and (format 17) `issue_not_found` or
-`occurrence_not_found` for a `#scribe forget` of an issue. A session
+and `unknown_scribe_command`. A session
 pass's failures appear in its report and audit lines, and the run's
 `session_pass_failed` error names each with its code:
 `provenance_failed`, `io_error`, `session_answer_invalid` (budgets or
@@ -819,10 +800,7 @@ return the same object (2_design.md §6.1, §6.6):
 }
 ```
 
-`cite` is an entry id, an issue id (format 17: the issue's header and its
-newest occurrences, read as the agent's account — `whose` is `agent
-account (<author>)` — with Daniel's quoted requests as the item's quote, so
-a claim quoting his request is his and any other is the agent's), `session:<id>` (a session's header: title,
+`cite` is an entry id, `session:<id>` (a session's header: title,
 summary, goals and next), `session:<id>#<n>` (one log segment: heading and
 text) or `task:<id>`; every `quote` was found verbatim in the item it
 cites. Inactive sessions are left out of evidence and lookups unless
@@ -838,7 +816,9 @@ lies only in the statement has `text` `scribe's statement of Daniel's turn`
 (format 16: for an idea the pass wrote itself, `Daniel (captured by the
 session pass)` and `scribe's statement of Daniel's turn, captured by the
 session pass (not typed by Daniel)`, and the item the model reads also
-carries its outcome), and the answer is built from those labels as it is with agent evidence); `hidden_matches` counts superseded or
+carries its outcome; phase 2: for one caught from an assistant turn,
+`assistant (captured by the session pass)` and `scribe's statement of the
+assistant's turn, captured by the session pass (not the user's words)`), and the answer is built from those labels as it is with agent evidence); `hidden_matches` counts superseded or
 retired entries that matched and were left out (0 with `include_hidden`).
 `lookup` is `null` when retrieval ran, else `last_session`,
 `named_session`, `next_steps`, `tag_period`, `term` or

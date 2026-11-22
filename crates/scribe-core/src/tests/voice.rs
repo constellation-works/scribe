@@ -286,11 +286,11 @@ fn config_refuses_a_bad_name_or_instruction() {
     }
 }
 
-/// The session prompt with the shipped `preferences` and `idea` criteria
-/// and exclusions as its candidate rules, voiced with `voice`.
+/// The session prompt with the shipped `preferences` and `standard`
+/// criteria and exclusions as its candidate rules, voiced with `voice`.
 fn session_with_shipped_rules(voice: Voice) -> String {
     let tags = TagTable::defaults();
-    let rules = ["preferences", "idea"].map(|tag| {
+    let rules = ["preferences", "standard"].map(|tag| {
         let def = tags
             .get(&crate::entry::TagName::try_from(tag.to_owned()).unwrap())
             .unwrap();
@@ -329,22 +329,29 @@ fn session_with_shipped_rules(voice: Voice) -> String {
 #[test]
 fn shipped_tag_descriptions_and_criteria_name_the_configured_user_in_prompts() {
     let annotation = |voice| prompt(ModelUse::Annotation, voice, true);
-    for (voice, title) in [(Voice::default(), "The user"), (named("Sam"), "Sam")] {
-        for prompt in [annotation(voice.clone()), session_with_shipped_rules(voice)] {
+    for (voice, noun) in [(Voice::default(), "the user"), (named("Sam"), "Sam")] {
+        for prompt in [
+            annotation(voice.clone()),
+            session_with_shipped_rules(voice.clone()),
+        ] {
             assert!(
                 !prompt.contains("{user}") && !prompt.contains("{User}"),
                 "{prompt}"
             );
             assert!(
-                prompt.contains(&format!("{title} proposes something that could be built")),
+                prompt.contains(&format!("A standing rule from {noun} that applies")),
+                "{prompt}"
+            );
+            assert!(
+                prompt.contains(&format!("written across {noun}'s projects")),
                 "{prompt}"
             );
         }
-    }
-    for (voice, noun) in [(Voice::default(), "the user"), (named("Sam"), "Sam")] {
         let annotation = annotation(voice);
         assert!(
-            annotation.contains(&format!("preferences: how {noun} likes things done")),
+            annotation.contains(&format!(
+                "preferences: A standing rule {noun} wants agents to follow."
+            )),
             "{annotation}"
         );
         assert!(

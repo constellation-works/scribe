@@ -459,7 +459,7 @@ fn a_window_where_no_daniel_turn_fires_a_trigger_requests_no_claims() {
 fn a_firing_turn_is_named_with_its_tag_and_trigger_and_idea_configured_to_propose_proposes() {
     let s = Setup::new();
     // Config can put `idea` back on the candidate route.
-    s.config("[tags.idea.capture]\nroute = \"propose\"\n");
+    s.config(&support::idea_catcher_on("propose"));
     let idea = "What if we cached the routing table per host?";
     s.write(
         ON,
@@ -474,7 +474,7 @@ fn a_firing_turn_is_named_with_its_tag_and_trigger_and_idea_configured_to_propos
     let prompt = &s.prompts()[0];
     assert!(
         prompt.contains(
-            "- message u-idea: tag idea (proposed; trigger \"what if we\", matched \"What if we\")"
+            "- message u-idea (the user's turn): tag idea (proposed; trigger \"what if we\", matched \"What if we\")"
         ),
         "{prompt}"
     );
@@ -500,6 +500,7 @@ fn a_marked_turn_supplies_no_written_idea_and_an_unmarked_one_is_written() {
     // line that opens with it) is cataloged at Stop, so the pass skips the
     // whole turn, even its unmarked lines. His unmarked turn is captured.
     let s = Setup::new();
+    s.config(support::IDEA_CATCHER);
     let inline = "What if we sharded the audit log by month? #scribe";
     let opened = "What if we dropped the popup preview?";
     let opened_turn = format!("{opened}\n#scribe idea: drop the popup preview");
@@ -534,7 +535,10 @@ fn a_marked_turn_supplies_no_written_idea_and_an_unmarked_one_is_written() {
     s.scribe("/scribe on");
     s.run(&["session", "pass", "--session", ON, "--json"], b"");
     let prompt = &s.prompts()[0];
-    assert!(prompt.contains("- message u-plain: tag idea"), "{prompt}");
+    assert!(
+        prompt.contains("- message u-plain (the user's turn): tag idea"),
+        "{prompt}"
+    );
     assert!(!prompt.contains("- message u-inline:"), "{prompt}");
     assert!(!prompt.contains("- message u-opened:"), "{prompt}");
     let listed = entries_json(&s, &["--tag", "idea"]);
@@ -545,7 +549,7 @@ fn a_marked_turn_supplies_no_written_idea_and_an_unmarked_one_is_written() {
 #[test]
 fn a_marked_turn_supplies_no_candidate_and_an_unmarked_one_proposes() {
     let s = Setup::new();
-    s.config("[tags.idea.capture]\nroute = \"propose\"\n");
+    s.config(&support::idea_catcher_on("propose"));
     let marked = "What if we sharded the audit log by month? #scribe/global";
     let plain = "What if we cached the routing table per host?";
     s.write(
@@ -599,7 +603,7 @@ fn the_trigger_is_checked_again_under_the_lock_against_the_config_then() {
     script.push_str(&response(&candidate_answer(quote, "u-1", "preferences")));
     s.fx.fake_program("claude", &script);
     s.run(&["session", "pass", "--session", ON, "--json"], b"");
-    assert!(s.prompts()[0].contains("message u-1: tag preferences"));
+    assert!(s.prompts()[0].contains("message u-1 (the user's turn): tag preferences"));
     assert!(config.exists(), "the fake model rewrote the config");
     assert_eq!(proposals(&s)["total"], 0);
     assert_eq!(s.record(ON).unwrap()["scribed_through"], "u-1");
@@ -3083,6 +3087,8 @@ fn candidates_share_a_three_slot_budget_across_windows_and_keep_cataloging() {
 #[test]
 fn candidate_open_cap_is_enforced_even_when_the_model_ignores_it() {
     let s = Setup::new();
+    // The store-wide cap, not the per-tag one.
+    s.config("[tags.preferences.capture]\nmax_open = 20\n");
     s.write(ON, &[line("user", "u-1", "I always choose option zero.")]);
     s.answer(&candidate_answer(
         "I always choose option zero.",
@@ -3463,7 +3469,7 @@ fn pass_closes_retired_tag_candidates_before_cap_and_suppresses_their_quotes() {
         ("task", 7),
         ("finding", 2),
         ("preferences", 2),
-        ("idea", 2),
+        ("standard", 2),
     ];
     let mut n = 0usize;
     let mut retired_counts: std::collections::BTreeMap<&str, usize> =
@@ -3476,7 +3482,7 @@ fn pass_closes_retired_tag_candidates_before_cap_and_suppresses_their_quotes() {
             } else {
                 format!("I always keep {tag} item {i} in the store.")
             };
-            let is_active = matches!(tag, "preferences" | "idea");
+            let is_active = matches!(tag, "preferences" | "standard");
             if !is_active {
                 *retired_counts.entry(tag).or_default() += 1;
             }
@@ -4359,6 +4365,7 @@ fn entries_json(s: &Setup, args: &[&str]) -> Value {
 #[test]
 fn the_pass_writes_daniels_idea_itself_as_an_entry_it_authors_with_no_proposal() {
     let s = Setup::new();
+    s.config(support::IDEA_CATCHER);
     let idea = "What if we cached the routing table per host so lookups stay local?";
     let statement = "Daniel suggests caching the routing table per host so lookups stay local.";
     s.write(
@@ -4379,7 +4386,7 @@ fn the_pass_writes_daniels_idea_itself_as_an_entry_it_authors_with_no_proposal()
     let prompt = &s.prompts()[0];
     assert!(
         prompt.contains(
-            "- message u-idea: tag idea (written; trigger \"what if we\", matched \"What if we\")"
+            "- message u-idea (the user's turn): tag idea (written; trigger \"what if we\", matched \"What if we\")"
         ),
         "{prompt}"
     );
@@ -4467,6 +4474,7 @@ fn an_ordinary_word_or_part_of_an_id_named_as_the_task_writes_the_idea_open() {
     // is a task id the session wrote: `task` is an ordinary word, and
     // `ORB-42` is only part of `ORB-4242`. Both ideas are written open.
     let s = Setup::new();
+    s.config(support::IDEA_CATCHER);
     let word = "What if we made the stale-session sweep a task for the box?";
     let part = "What if we split the pass prompt? I filed ORB-4242 for that.";
     s.write(ON, &[line("user", "u-1", word), line("user", "u-2", part)]);
@@ -4496,6 +4504,7 @@ fn an_ordinary_word_or_part_of_an_id_named_as_the_task_writes_the_idea_open() {
 #[test]
 fn a_parked_idea_keeps_daniels_words_and_one_that_became_a_task_writes_nothing() {
     let s = Setup::new();
+    s.config(support::IDEA_CATCHER);
     let sharding = "What if we sharded the audit log by month?";
     let dry_run = "Here's an idea: a dry-run flag for the session pass.";
     let popup = "What if we dropped the popup preview entirely?";
@@ -4591,7 +4600,10 @@ fn an_assistant_turn_never_produces_an_idea_entry() {
     s.scribe("/scribe on");
     s.run(&["session", "pass", "--session", ON, "--json"], b"");
     let prompt = &s.prompts()[0];
-    assert!(!prompt.contains("message a-1: tag"), "{prompt}");
+    assert!(
+        !prompt.contains("message a-1 (the user's turn): tag"),
+        "{prompt}"
+    );
     assert_eq!(entries_json(&s, &["--tag", "idea"])["total"], 0);
     assert_eq!(proposals(&s)["total"], 0);
 }
@@ -4599,6 +4611,7 @@ fn an_assistant_turn_never_produces_an_idea_entry() {
 #[test]
 fn a_fourth_idea_in_one_pass_is_not_written_and_proposals_keep_their_own_slots() {
     let s = Setup::new();
+    s.config(support::IDEA_CATCHER);
     let ideas = [
         "What if we cached the routing table per host?",
         "What if we sharded the audit log by month?",
@@ -4699,7 +4712,10 @@ fn ideas_an_earlier_window_drafted_but_did_not_write_leave_later_windows_their_s
     answers.push(Some(last));
     s.answers(&answers);
     s.scribe("/scribe on");
-    s.config("[catalog]\nwindow_messages = 1\n");
+    s.config(&format!(
+        "[catalog]\nwindow_messages = 1\n{}",
+        support::IDEA_CATCHER
+    ));
     s.run(&["session", "pass", "--session", ON, "--json"], b"");
     let prompts = s.prompts();
     assert_eq!(prompts.len(), 4);
@@ -4716,6 +4732,7 @@ fn ideas_an_earlier_window_drafted_but_did_not_write_leave_later_windows_their_s
 #[test]
 fn an_idea_an_active_entry_already_covers_is_not_written_and_ideas_are_sent_as_exclusions() {
     let s = Setup::new();
+    s.config(support::IDEA_CATCHER);
     let idea = "What if we cached the routing table per host so lookups stay local?";
     let statement = "Daniel suggests caching the routing table per host so lookups stay local.";
     s.write(ON, &[line("user", "u-1", idea)]);
@@ -4764,6 +4781,7 @@ fn an_idea_an_active_entry_already_covers_is_not_written_and_ideas_are_sent_as_e
 #[test]
 fn the_session_start_stuck_line_does_not_count_pass_captured_ideas() {
     let s = Setup::new();
+    s.config(support::IDEA_CATCHER);
     let idea = "What if we cached the routing table per host so lookups stay local?";
     s.write(ON, &[line("user", "u-1", idea)]);
     let mut body = answer();
@@ -5599,4 +5617,211 @@ fn a_stored_working_item_still_loads_and_prints_and_the_retired_setting_warns() 
         "{}",
         text(&out.stderr)
     );
+}
+
+/// The ```toml block of specs/catchers.md that declares `[tags.<name>]`.
+fn catcher_example(name: &str) -> String {
+    let spec = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../docs/design/scribe/specs/catchers.md"
+    );
+    let spec = std::fs::read_to_string(spec).unwrap();
+    let header = format!("[tags.{name}]\n");
+    spec.split("```toml\n")
+        .skip(1)
+        .filter_map(|block| block.split_once("```").map(|(toml, _)| toml))
+        .find(|toml| toml.contains(&header))
+        .unwrap_or_else(|| panic!("no example declares [tags.{name}]"))
+        .to_owned()
+}
+
+fn written_claim(quote: &str, message: &str, tag: &str, statement: &str) -> Value {
+    json!({"quote": quote, "message": message, "tag": tag,
+           "statement": statement, "subject": tag, "outcome": "open"})
+}
+
+#[test]
+fn config_only_catchers_from_the_spec_catch_from_their_speakers_with_no_code_change() {
+    // The orbit collector reads the user, the todo catcher the assistant
+    // and the issue example both, on an incident turn; each is only the
+    // config block specs/catchers.md documents.
+    let s = Setup::new();
+    s.config(&format!(
+        "{}\n{}\n{}",
+        catcher_example("orbit"),
+        catcher_example("todo"),
+        catcher_example("issue")
+    ));
+    let orbit = "The orbit drain keeps stalling on big backlogs.";
+    let todo = "You need to approve the GitHub app install yourself, since it needs your login.";
+    let asked = "can you investigate why the drain keeps failing with HTTP 429";
+    let found =
+        "The root cause was parallel drains sharing one token; fixed by serialising pushes.";
+    s.write(
+        ON,
+        &[
+            line("user", "u-orbit", orbit),
+            line("assistant", "a-todo", todo),
+            line("user", "u-asked", asked),
+            line("assistant", "a-found", found),
+            line("user", "u-plain", "Thanks, that is all."),
+        ],
+    );
+    let mut body = answer();
+    body["candidates"] = json!([
+        written_claim(
+            orbit,
+            "u-orbit",
+            "orbit",
+            "The user says the Orbit drain stalls on big backlogs."
+        ),
+        written_claim(
+            todo,
+            "a-todo",
+            "todo",
+            "The user must approve the GitHub app install."
+        ),
+        written_claim(
+            asked,
+            "u-asked",
+            "issue",
+            "The user asked why the drain fails with HTTP 429."
+        ),
+        written_claim(
+            found,
+            "a-found",
+            "issue",
+            "Parallel drains shared one token; serialising pushes fixed it."
+        ),
+    ]);
+    s.answer(&body);
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+
+    let prompt = &s.prompts()[0];
+    for listed in [
+        "- message u-orbit (the user's turn): tag orbit (written; trigger \"orbit\", matched \"orbit\")",
+        "- message a-todo (the assistant's turn): tag todo (written; trigger \"you need to\", matched \"You need to\")",
+        "- message u-asked (the user's turn): tag issue (written; trigger \"can you investigate\", matched \"can you investigate\")",
+        "- message a-found (the assistant's turn): tag issue (written; trigger \"root cause\", matched \"root cause\")",
+    ] {
+        assert!(prompt.contains(listed), "{listed}\n{prompt}");
+    }
+    assert!(!prompt.contains("message u-plain"), "{prompt}");
+    // `todo` reads only the assistant: the user's turns never reach it.
+    assert!(!prompt.contains("(the user's turn): tag todo"), "{prompt}");
+
+    assert_eq!(proposals(&s)["total"], 0, "write catchers open no claims");
+    for (tag, quotes) in [
+        ("orbit", vec![(orbit, "user")]),
+        ("todo", vec![(todo, "assistant")]),
+        ("issue", vec![(asked, "user"), (found, "assistant")]),
+    ] {
+        let listed = entries_json(&s, &["--tag", tag]);
+        assert_eq!(listed["total"], quotes.len(), "{tag}: {listed}");
+        for (quote, role) in quotes {
+            let entry = listed["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|e| e["quote"] == quote)
+                .unwrap_or_else(|| panic!("{tag}: {quote}: {listed}"));
+            assert_eq!(entry["content_from"]["role"], role, "{entry}");
+            assert_eq!(entry["author"]["name"], "session-pass", "{entry}");
+        }
+    }
+    // Readers never give the assistant's words to the user.
+    let found: Value = serde_json::from_slice(
+        &s.fx
+            .ok(&[
+                "search",
+                "approve GitHub app install",
+                "--kind",
+                "entry",
+                "--json",
+            ])
+            .stdout,
+    )
+    .unwrap();
+    let hit = found.to_string();
+    assert!(hit.contains("the assistant's turn"), "{hit}");
+    assert!(hit.contains("The assistant's words:"), "{hit}");
+    assert!(!hit.contains("The user's words:"), "{hit}");
+}
+
+#[test]
+fn an_assistant_quote_under_a_user_catcher_is_refused() {
+    // `orbit` reads the user only: a claim quoting the assistant's turn is
+    // not one of the listed turns, and the store writes nothing.
+    let s = Setup::new();
+    s.config(&catcher_example("orbit"));
+    let said = "I restarted the orbit drain on the box.";
+    s.write(
+        ON,
+        &[
+            line("user", "u-1", "Please restart it."),
+            line("assistant", "a-1", said),
+        ],
+    );
+    let mut body = answer();
+    body["candidates"] = json!([written_claim(
+        said,
+        "a-1",
+        "orbit",
+        "The drain was restarted."
+    )]);
+    s.answer(&body);
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    assert!(
+        s.prompts()[0].contains("Return candidates: [] (none are requested in this window)."),
+        "{}",
+        s.prompts()[0]
+    );
+    assert_eq!(entries_json(&s, &["--tag", "orbit"])["total"], 0);
+}
+
+#[test]
+fn max_open_caps_one_tags_open_claims_and_leaves_the_others_theirs() {
+    let s = Setup::new();
+    s.config("[tags.preferences.capture]\nmax_open = 1\n");
+    let quotes = [
+        ("u-1", "I always want short commit subjects.", "preferences"),
+        (
+            "u-2",
+            "I prefer tabs to spaces in Makefiles.",
+            "preferences",
+        ),
+        (
+            "u-3",
+            "As a standard every repo keeps a CHANGELOG.",
+            "standard",
+        ),
+    ];
+    s.write(
+        ON,
+        &quotes
+            .iter()
+            .map(|(id, quote, _)| line("user", id, quote))
+            .collect::<Vec<_>>(),
+    );
+    let mut body = answer();
+    body["candidates"] = json!(
+        quotes
+            .iter()
+            .map(|(id, quote, tag)| json!({"quote": quote, "message": id, "tag": tag}))
+            .collect::<Vec<_>>()
+    );
+    s.answer(&body);
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let open = proposals(&s);
+    let tags: Vec<&str> = open["proposals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["candidate"]["tag"].as_str().unwrap())
+        .collect();
+    assert_eq!(tags, ["preferences", "standard"], "{open}");
+    assert_eq!(open["proposals"][0]["candidate"]["quote"], quotes[0].1);
 }

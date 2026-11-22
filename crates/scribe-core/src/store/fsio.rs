@@ -153,6 +153,11 @@ pub(super) fn list_dir(dir: &Path) -> Result<Vec<String>> {
     Ok(names)
 }
 
+/// Move a store file to `to`, on the same filesystem.
+pub(super) fn rename(from: &Path, to: &Path) -> Result<()> {
+    fs::rename(from, to).map_err(|e| Error::io("move", from, e))
+}
+
 /// Read a store file that [`inspect_file`] found.
 pub(super) fn read(path: &Path) -> Result<Vec<u8>> {
     fs::read(path).map_err(|e| Error::io("read", path, e))

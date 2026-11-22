@@ -21,7 +21,7 @@
 //! <root>/sessions/<yyyy>/<mm>/<id>.md       one session record per file
 //! <root>/control.json                       the on/off state
 //! <root>/proposals.json                     the consistency proposals
-//! <root>/issues/<id>.md                     one issue record per file
+//! <root>/pre-issue-<date>/<id>.md           issue records moved aside once converted
 //! <root>/memory/<id>.md                     one memory item per file (format 18)
 //! <root>/audit.jsonl                        one line per mutating command
 //! <root>/.lock
@@ -43,9 +43,7 @@ mod format;
 mod fsio;
 mod ids;
 mod init;
-mod issue_file;
-mod issues;
-pub use issues::{ISSUES_DIR, IssueList, MoveTo, Moved};
+mod issue_import;
 mod memory;
 pub use memory::{MEMORY_DIR, MemoryWritten, PassMemory};
 mod marks;
@@ -57,7 +55,7 @@ mod tags;
 pub use rebuild::RebuildGuard;
 
 pub use agent::{check_agent_author, check_content, check_reason};
-pub use audit::{AUDIT_FILE, AuditEvent, AuditStatus, IssueAudit, IssueStats};
+pub use audit::{AUDIT_FILE, AuditEvent, AuditStatus, IssueAudit};
 pub use ids::resolve_prefix;
 pub use marks::{COVERED, MODEL_FAILED, MarkChange, MarkKey, MarkResult, NEEDS_REDACTION};
 pub use redact::{MIN_SECRET_CHARS, REDACTED_FIELDS, Redactor, unresolved_redact_env};
@@ -1188,20 +1186,14 @@ impl Store {
         audit::decode_lines(&path, &fsio::read(&path)?)
     }
 
-    /// `issue stats` (2_design.md §11.4): the audit log's trigger fires,
-    /// issue writes and withdrawals, fires and writes from `since` on.
-    /// Reads only, as [`Store::audit_events`].
-    ///
-    /// # Errors
-    ///
-    /// As [`Store::audit_events`].
-    pub fn issue_stats(&self, since: Option<time::Date>) -> Result<IssueStats> {
-        let (events, skipped) = self.audit_events()?;
-        Ok(audit::issue_stats(&events, since, skipped))
-    }
-
+    /// The store's write lock. Taking it first converts any issue records
+    /// left by an older build into `issue` entries (2_design.md §15.11), so
+    /// the write that follows sees them; a store with no `issues/` pays one
+    /// directory check.
     fn lock(&self, label: &str) -> Result<LockGuard> {
-        LockGuard::acquire(&self.root.join(LOCK_FILE), label, self.lock_wait)
+        let guard = LockGuard::acquire(&self.root.join(LOCK_FILE), label, self.lock_wait)?;
+        self.convert_issues(time::OffsetDateTime::now_utc())?;
+        Ok(guard)
     }
 
     fn root_exists(&self) -> Result<bool> {

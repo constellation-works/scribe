@@ -6,13 +6,12 @@ use crate::proposal::ProposalId;
 use crate::transcript::Message;
 
 /// `(line, code)` of each settling line of `prompt`: `settle`,
-/// `forget_issue` or the refusal's code.
+/// or the refusal's code.
 fn parse(prompt: &str) -> Vec<(u32, &'static str)> {
     capture::scan(prompt)
         .into_iter()
         .map(|p| match p {
             Parsed::Settle(s) => (s.line, "settle"),
-            Parsed::ForgetIssue(f) => (f.line, "forget_issue"),
             Parsed::Refused(r) => (r.line, r.reason.code()),
         })
         .collect()
@@ -84,7 +83,7 @@ fn settles(prompt: &str) -> Vec<Settle> {
         .into_iter()
         .filter_map(|p| match p {
             Parsed::Settle(s) => Some(s.action),
-            Parsed::ForgetIssue(_) | Parsed::Refused(_) => None,
+            Parsed::Refused(_) => None,
         })
         .collect()
 }
@@ -246,23 +245,17 @@ fn an_action_window_over_the_cap_drops_its_oldest_turns_and_says_so() {
 }
 
 #[test]
-fn forget_takes_an_issue_or_one_occurrence_and_other_verbs_do_not() {
-    let forgets: Vec<(u32, String)> =
-        capture::scan("#scribe forget issue-3\n#scribe forget issue-3#2.\n#scribe forget issue-0")
-            .into_iter()
-            .map(|p| {
-                if let Parsed::ForgetIssue(f) = &p {
-                    (f.line, f.target.to_string())
-                } else {
-                    (p.line(), format!("{p:?}"))
-                }
-            })
-            .collect();
-    assert_eq!(forgets[0], (1, String::from("issue-3")));
-    assert_eq!(forgets[1], (2, String::from("issue-3#2")));
-    assert!(forgets[2].1.contains("Refused"), "{:?}", forgets[2]);
+fn forget_issue_n_names_the_entry_an_issue_became_and_an_occurrence_is_refused() {
+    // Issue records are `issue` entries since 2_design.md §15.9 phase 2,
+    // so `issue-3` is an entry id and `#<n>` an occurrence no longer.
     assert_eq!(
-        parse("#scribe retire issue-3#2"),
-        [(1, "unparsed_instruction")]
+        settles("#scribe forget issue-3"),
+        [Settle::Forget(
+            EntryId::try_from(String::from("issue-3")).unwrap()
+        )]
+    );
+    assert_eq!(
+        parse("#scribe forget issue-3#2\n#scribe retire issue-3#2"),
+        [(1, "unparsed_instruction"), (2, "unparsed_instruction")]
     );
 }

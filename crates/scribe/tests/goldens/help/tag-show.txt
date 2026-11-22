@@ -17,10 +17,11 @@ Global options:
 
 Each capture field shows its origin: shipped (scribe's default), config
 (config.toml, with its line) or none. Set fields under
-[tags.<name>.capture] in config.toml: from, route, triggers, criteria and
-not; each overrides its shipped default alone, and triggers replaces the
-whole list. The session pass proposes a claim under a tag only from a turn
-of the user's where one of its triggers occurs.
+[tags.<name>.capture] in config.toml: from, route, triggers, criteria,
+not and max_open; each overrides its shipped default alone, and triggers
+replaces the whole list. The session pass catches a claim under a tag only
+from a turn of the speaker its from names (user, assistant or both) where
+one of its triggers occurs (docs/design/scribe/specs/catchers.md).
 
 Examples:
   scribe tag show preferences

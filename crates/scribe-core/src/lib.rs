@@ -21,8 +21,7 @@
 //!   [`consistency`]; reading a Claude Code transcript in [`transcript`]; the
 //!   quote check in [`verbatim`]; the check of an instruction Daniel typed
 //!   for an agent's write (word lists, freshness, interactive entry points)
-//!   in [`instruction`]; issue records (ids, bounds, the reopen on a
-//!   recurrence, moves and forgetting) in [`issue`]; and the [`Models`] port, every model call
+//!   in [`instruction`]; and the [`Models`] port, every model call
 //!   as a typed request, in [`models`];
 //! - persistence in `store`: the file-backed [`Store`], its formats, the
 //!   audit log ([`AuditEvent`]), the [`Redactor`] and the filesystem
@@ -53,8 +52,6 @@ pub mod control;
 mod entry;
 mod error;
 pub mod instruction;
-pub mod issue;
-pub mod issue_trigger;
 pub mod memory;
 pub mod models;
 pub mod pass;
@@ -96,12 +93,12 @@ pub use session::{
 };
 pub use store::{
     AUDIT_FILE, AuditEvent, AuditStatus, CONFIG_FILE, CONTROL_FILE, COVERED, DEFAULT_LOCK_WAIT,
-    ENTRIES_DIR, EntryList, ISSUES_DIR, InitFile, InitReport, IssueAudit, IssueList, IssueStats,
-    MARKS_FILE, MEMORY_DIR, MIN_SECRET_CHARS, MODEL_FAILED, MarkChange, MarkKey, MarkResult,
-    MemoryWritten, MoveTo, Moved, NEEDS_REDACTION, PROPOSALS_FILE, PassMemory, PassWrite,
-    PassWritten, REDACTED_FIELDS, RebuildGuard, Redactor, SESSIONS_DIR, SessionList, SessionView,
-    Skipped, Store, TagList, check_agent_author, check_content, check_description, check_reason,
-    init_project, integration_hooks, resolve_prefix, unresolved_redact_env,
+    ENTRIES_DIR, EntryList, InitFile, InitReport, IssueAudit, MARKS_FILE, MEMORY_DIR,
+    MIN_SECRET_CHARS, MODEL_FAILED, MarkChange, MarkKey, MarkResult, MemoryWritten,
+    NEEDS_REDACTION, PROPOSALS_FILE, PassMemory, PassWrite, PassWritten, REDACTED_FIELDS,
+    RebuildGuard, Redactor, SESSIONS_DIR, SessionList, SessionView, Skipped, Store, TagList,
+    check_agent_author, check_content, check_description, check_reason, init_project,
+    integration_hooks, resolve_prefix, unresolved_redact_env,
 };
 pub use tag::{
     ActionTag, CAPTURE_TEXT_CHARS, CaptureFrom, CaptureRoute, CaptureRules, FINDING_TAG,

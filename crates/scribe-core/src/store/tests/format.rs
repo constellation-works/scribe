@@ -2550,19 +2550,3 @@ fn a_format_22_store_reads_the_daniel_author_as_the_user_and_writes_user() {
         .is_err()
     );
 }
-
-#[test]
-fn an_issue_file_writes_the_generic_request_line_and_still_reads_the_old_one() {
-    let path = Path::new("issues/issue-1.md");
-    let issue = crate::tests::sample_issue();
-    let bytes = crate::store::issue_file::encode_issue(path, &issue).unwrap();
-    let text = String::from_utf8(bytes).unwrap();
-    let line = "**The user asked:** \"why does the drain fail\"";
-    assert!(text.lines().any(|l| l == line), "{text}");
-    let before_23 = text.replace("**The user asked:**", "**Daniel asked:**");
-    for text in [&text, &before_23] {
-        let read =
-            crate::store::issue_file::decode_issue(path, text.as_bytes(), "issue-1").unwrap();
-        assert_eq!(read, issue);
-    }
-}

@@ -270,7 +270,6 @@ fn ingest(event: &'static str, input: &[u8], ctx: &Context) -> Result<Output, Cl
             outcomes.push(HookOutcome {
                 target: Some(format!("session:{id}")),
                 error_code: None,
-                issue: None,
             });
         }
     }
@@ -314,7 +313,6 @@ fn refused(event: &'static str, reason: &str) -> Output {
         outcomes: vec![HookOutcome {
             target: None,
             error_code: Some("provenance_failed"),
-            issue: None,
         }],
     })
 }

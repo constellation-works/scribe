@@ -46,15 +46,6 @@ const HELP: &[(&str, &[&str])] = &[
     ("memory-ack", &["memory", "ack", "--help"]),
     ("memory-retire", &["memory", "retire", "--help"]),
     ("memory-forget", &["memory", "forget", "--help"]),
-    ("issue", &["issue", "--help"]),
-    ("issue-add", &["issue", "add", "--help"]),
-    ("issue-occur", &["issue", "occur", "--help"]),
-    ("issue-update", &["issue", "update", "--help"]),
-    ("issue-move", &["issue", "move", "--help"]),
-    ("issue-search", &["issue", "search", "--help"]),
-    ("issue-show", &["issue", "show", "--help"]),
-    ("issue-list", &["issue", "list", "--help"]),
-    ("issue-stats", &["issue", "stats", "--help"]),
     ("tag", &["tag", "--help"]),
     ("tag-add", &["tag", "add", "--help"]),
     ("tag-update", &["tag", "update", "--help"]),
@@ -1073,6 +1064,10 @@ outcome: {outcome}
 fn captured_fixture() -> Fixture {
     let fx = Fixture::new();
     fx.seed();
+    // `idea` is a config example now (specs/catchers.md): declare it.
+    let config = fx.root().join("config.toml");
+    let seeded = std::fs::read_to_string(&config).unwrap_or_default();
+    fx.config(&format!("{seeded}\n{}", support::IDEA_CATCHER));
     let dir = fx.root().join("entries/idea");
     std::fs::create_dir(&dir).unwrap();
     support::make_private(&dir);
@@ -1221,94 +1216,6 @@ fn without_age(out: &str) -> String {
     joined
 }
 
-#[test]
-fn issue_shapes_match_goldens() {
-    use scribe_core::issue::{IssuePatch, IssueStatus, NewIssue, NewOccurrence};
-    use scribe_core::{Author, Label, Project, Redactor, Store, Topics};
-    let fx = Fixture::new();
-    let store = Store::open(fx.root());
-    let at = |h| time::macros::datetime!(2026-11-21 09:00 UTC) + time::Duration::hours(h);
-    let opus = || Author::agent("opus".parse().unwrap());
-    let redactor = Redactor::default();
-    let occurrence = |request: &str, project: &str, error_lines: Vec<String>| NewOccurrence {
-        date: at(0).date(),
-        host: Label::sanitized("dk-server-1", "host"),
-        project: Project::sanitized(project),
-        session: "7e2d4c1a-9b3f-4e8d-a6c5-1f0e2d3c4b5a".parse().unwrap(),
-        request_message: String::from("u-1"),
-        request: request.to_owned(),
-        summary: String::from("The drain stopped when the GitHub API refused pushes."),
-        error_lines,
-        cause: None,
-        fix: Some(String::from("Paused the drain for an hour")),
-        links: vec!["task:ORB-1".parse().unwrap()],
-    };
-    store
-        .add_issue(
-            &NewIssue {
-                title: String::from("GitHub API secondary rate limit during drains"),
-                signature: vec![
-                    String::from("HTTP 429"),
-                    String::from("secondary rate limit"),
-                ],
-                topics: Topics::try_from(vec!["github".parse().unwrap()]).unwrap(),
-                cause: None,
-                fix: None,
-            },
-            occurrence(
-                "can you investigate why the drain keeps failing",
-                "orbit",
-                vec![String::from(
-                    "HTTP 429: You have exceeded a secondary rate limit",
-                )],
-            ),
-            opus(),
-            at(0),
-            &redactor,
-        )
-        .unwrap();
-    store
-        .update_issue(
-            "issue-1",
-            &IssuePatch {
-                cause: Some(String::from("Parallel pushes from one token")),
-                fix: Some(String::from("Serialize pushes per token")),
-                status: Some(IssueStatus::Resolved),
-            },
-            opus(),
-            at(1),
-            &redactor,
-        )
-        .unwrap();
-    store
-        .occur_issue(
-            "issue-1",
-            occurrence(
-                "the drain is failing again, look into it",
-                "scribe",
-                Vec::new(),
-            ),
-            opus(),
-            at(2),
-            &redactor,
-        )
-        .unwrap();
-    let mut failures = Vec::new();
-    for (name, args) in [
-        ("issue-list", vec!["issue", "list"]),
-        ("issue-show", vec!["issue", "show", "issue-1"]),
-        ("issue-search", vec!["issue", "search", "rate limit"]),
-    ] {
-        for (suffix, mode) in MODES {
-            let out = fx.ok(&[args.as_slice(), *mode].concat());
-            failures.extend(check(
-                &format!("output/{name}.{suffix}"),
-                &text(&out.stdout),
-            ));
-        }
-    }
-    report(&failures);
-}
 /// The memory list and show, unchanged writes on them, and the page,
 /// against the memory fixture (`tests/fixtures/memory`), whose items keep
 /// their place on or off the page whatever the day.
@@ -1381,73 +1288,5 @@ fn memory_matches_goldens() {
         "memory-page",
         &["memory", "show", "--page", "--project", "scribe"],
     );
-    report(&failures);
-}
-
-#[test]
-fn issue_stats_matches_goldens() {
-    use scribe_core::{AuditEvent, AuditStatus, IssueAudit, Store};
-    let fx = Fixture::new();
-    let store = Store::open(fx.root());
-    let at = |h| time::macros::datetime!(2026-11-21 09:00 UTC) + time::Duration::hours(h);
-    let session = "7e2d4c1a-9b3f-4e8d-a6c5-1f0e2d3c4b5a";
-    let line = |h, command: &str, issue: IssueAudit| AuditEvent {
-        at: at(h),
-        command: command.to_owned(),
-        status: AuditStatus::Success,
-        target: None,
-        error_code: None,
-        author: None,
-        instruction_session: None,
-        instruction_message: None,
-        issue: Some(issue),
-        duration_ms: 3,
-    };
-    let sha = |c: char| c.to_string().repeat(64);
-    let fire = |c| IssueAudit {
-        verb: String::from("fire"),
-        session: Some(session.to_owned()),
-        trigger: Some(String::from("can you investigate")),
-        request_sha256: vec![sha(c)],
-        ..IssueAudit::default()
-    };
-    let write = |verb: &str, id: &str, n, c| IssueAudit {
-        verb: verb.to_owned(),
-        id: Some(id.to_owned()),
-        occurrence: Some(n),
-        session: Some(session.to_owned()),
-        request_message: Some(format!("u-{c}")),
-        request_sha256: vec![sha(c)],
-        ..IssueAudit::default()
-    };
-    let withdraw = |verb: &str, id: &str, n| IssueAudit {
-        verb: verb.to_owned(),
-        id: Some(id.to_owned()),
-        occurrence: Some(n),
-        ..IssueAudit::default()
-    };
-    for event in [
-        line(0, "hook user-prompt-submit", fire('a')),
-        line(1, "issue add", write("add", "issue-1", 1, 'a')),
-        line(2, "hook user-prompt-submit", fire('b')),
-        line(3, "issue occur", write("occur", "issue-1", 2, 'c')),
-        line(
-            4,
-            "hook user-prompt-submit",
-            withdraw("forget", "issue-1", 2),
-        ),
-        line(5, "issue add", write("add", "issue-2", 1, 'd')),
-        line(6, "issue move", withdraw("move", "issue-2", 1)),
-    ] {
-        store.record_audit(&event).unwrap();
-    }
-    let mut failures = Vec::new();
-    for (suffix, mode) in MODES {
-        let out = fx.ok(&[&["issue", "stats"][..], *mode].concat());
-        failures.extend(check(
-            &format!("output/issue-stats.{suffix}"),
-            &text(&out.stdout),
-        ));
-    }
     report(&failures);
 }

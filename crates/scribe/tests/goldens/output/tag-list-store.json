@@ -1,23 +1,6 @@
 {
   "tags": [
     {
-      "author": null,
-      "source": "config",
-      "name": "idea",
-      "aliases": [],
-      "description": "a future consideration worth revisiting",
-      "stale_after_days": null,
-      "configured": true,
-      "entries": 0,
-      "action": {
-        "mode": "free",
-        "require_quote": false,
-        "retired": 0,
-        "rejected": 0
-      },
-      "route": "write"
-    },
-    {
       "author": {
         "kind": "agent",
         "name": "opus"
@@ -42,7 +25,7 @@
         "preference",
         "pref"
       ],
-      "description": "how the user likes things done",
+      "description": "A standing rule the user wants agents to follow.",
       "stale_after_days": 180,
       "configured": true,
       "entries": 0,
@@ -54,7 +37,7 @@
       "source": "config",
       "name": "standard",
       "aliases": [],
-      "description": "a rule change for the constellation standards, in the user's words",
+      "description": "A rule for how code or docs are written across the user's projects, in the user's words.",
       "stale_after_days": null,
       "configured": true,
       "entries": 0,
@@ -64,10 +47,10 @@
         "retired": 0,
         "rejected": 0
       },
-      "route": null
+      "route": "propose"
     }
   ],
-  "total": 4,
+  "total": 3,
   "truncated": false,
   "warnings": []
 }

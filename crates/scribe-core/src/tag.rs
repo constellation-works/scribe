@@ -2,11 +2,11 @@
 //! each stays fresh.
 //!
 //! Tags come from `config.toml` (`[tags.<name>]`), merged over the shipped
-//! defaults (`preferences`, `idea`, `standard`) and agent-created
-//! `tags.json`; config claims take precedence. Without a config the shipped
-//! defaults apply: `preferences` (docs/design/scribe/4_decisions.md,
-//! "Decisions are recorded on their Orbit task, not in a shipped tag"), plus
-//! the shipped action tags `standard` and `idea`. Declaring `[tags.<name>]`
+//! defaults (`preferences` and `standard`) and agent-created `tags.json`;
+//! config claims take precedence. Without a config the shipped defaults
+//! apply: `preferences` (docs/design/scribe/4_decisions.md, "Decisions are
+//! recorded on their Orbit task, not in a shipped tag") and the shipped
+//! action tag `standard`. Declaring `[tags.<name>]`
 //! adds a new tag and overrides only the fields set on a shipped tag. A
 //! config word that collides with a shipped name or alias wins: that shipped
 //! tag loses the word, and `tag list` warns ("Config tags merge with the
@@ -16,11 +16,13 @@
 //! `require_evidence = true` (such as `finding` when configured) records an
 //! agent's measured or verified result with an evidence pointer: no consumer,
 //! no transcript window, found again only through `ask` or search.
-//! A tag's capture rules (2_design.md §11.2: `from`, `route`, `triggers`,
-//! `criteria`, `not`) decide which of Daniel's turns the session pass may
-//! claim under it; `preferences` and `idea` ship rules, the shipped values
-//! below, and config overrides them field by field. Pure values and no I/O
-//! (STD-02 R5).
+//! A tag's capture rules make it a catcher (2_design.md §15.2: `from`,
+//! `route`, `triggers`, `criteria`, `not`, `max_open`): they decide which
+//! turns, the user's, the assistant's or both, the session pass may claim
+//! under it, and what a claim becomes. `preferences` and `standard` ship
+//! rules, the shipped values below, and config overrides them field by
+//! field; any other catcher is config alone (specs/catchers.md). Pure values
+//! and no I/O (STD-02 R5).
 
 use crate::entry::{Entry, TagName};
 use std::collections::BTreeMap;
@@ -70,12 +72,16 @@ pub struct TagDef {
     pub capture: CaptureRules,
 }
 
-/// Whose turns a tag's capture rules read (`from`). Only the user's typed
-/// turns are accepted for now; `assistant` is refused in config.
+/// Whose turns a tag's capture rules read (`from`, 2_design.md §15.2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CaptureFrom {
     /// The user's typed turns, with the pass's exclusions.
     User,
+    /// The assistant's turns. A claim from one records the speaker, and is
+    /// never presented as the user's words.
+    Assistant,
+    /// Both.
+    Both,
 }
 
 impl CaptureFrom {
@@ -84,6 +90,31 @@ impl CaptureFrom {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::User => "user",
+            Self::Assistant => "assistant",
+            Self::Both => "both",
+        }
+    }
+
+    /// Parse the config token; `daniel`, the pre-format-23 spelling, reads
+    /// as `user`.
+    #[must_use]
+    pub fn parse(token: &str) -> Option<Self> {
+        match token {
+            "user" | "daniel" => Some(Self::User),
+            "assistant" => Some(Self::Assistant),
+            "both" => Some(Self::Both),
+            _ => None,
+        }
+    }
+
+    /// Whether a turn by `speaker` is read.
+    #[must_use]
+    pub fn reads(self, speaker: crate::entry::Speaker) -> bool {
+        use crate::entry::Speaker;
+        match (self, speaker) {
+            (Self::User | Self::Both, Speaker::User)
+            | (Self::Assistant | Self::Both, Speaker::Assistant) => true,
+            (Self::User, Speaker::Assistant) | (Self::Assistant, Speaker::User) => false,
         }
     }
 }
@@ -91,13 +122,11 @@ impl CaptureFrom {
 /// What a claim under the tag becomes (`route`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CaptureRoute {
-    /// A candidate proposal Daniel settles (§5.3).
+    /// A claim the user settles (§5.3).
     Propose,
-    /// The pass writes the entry itself, with no proposal, and records the
-    /// idea's outcome (§11.6).
+    /// The pass writes the entry itself, with no claim: a collector
+    /// (§11.6, §15.2).
     Write,
-    /// The prompt hook tells the agent; the pass captures nothing.
-    Agent,
 }
 
 impl CaptureRoute {
@@ -107,7 +136,6 @@ impl CaptureRoute {
         match self {
             Self::Propose => "propose",
             Self::Write => "write",
-            Self::Agent => "agent",
         }
     }
 
@@ -117,7 +145,6 @@ impl CaptureRoute {
         match token {
             "propose" => Some(Self::Propose),
             "write" => Some(Self::Write),
-            "agent" => Some(Self::Agent),
             _ => None,
         }
     }
@@ -179,30 +206,22 @@ pub struct CaptureRules {
     pub criteria: Option<Rule<String>>,
     /// What does not, given beside `criteria`.
     pub not: Option<Rule<String>>,
+    /// The most open claims the tag may hold ([`DEFAULT_MAX_OPEN`] when
+    /// unset), under the store-wide cap.
+    pub max_open: Option<Rule<NonZeroU32>>,
 }
 
 /// The longest `criteria` or `not` text, in characters.
 pub const CAPTURE_TEXT_CHARS: usize = 300;
 
+/// A catcher's open-claim cap when `max_open` is unset (2_design.md §15.2).
+pub const DEFAULT_MAX_OPEN: u32 = 10;
+
 /// The shipped capture rules: `(tag, route, triggers, criteria, not)`
-/// (2_design.md §11.2). The pass writes `idea` entries itself (§11.6);
-/// `standard` ships none. `issue` is not a tag in the table (its records are
-/// issues, §11.4): its rules drive the prompt hook's hint, read through
-/// [`TagTable::issue_capture`].
-const SHIPPED_CAPTURE: [(&str, CaptureRoute, &[&str], &str, &str); 3] = [
-    (
-        "idea",
-        CaptureRoute::Write,
-        &[
-            "have * an idea",
-            "had an idea",
-            "here's an idea",
-            "what do you think about * idea",
-            "what if we",
-        ],
-        "{User} proposes something that could be built, changed or tried, and the session does not carry it out.",
-        "A direction to act now; a preference; a question of fact; an idea the session goes on to carry out.",
-    ),
+/// (2_design.md §15.2), every one reading the user's turns. Any other
+/// catcher, such as the `idea` and `issue` examples of specs/catchers.md,
+/// is config alone.
+const SHIPPED_CAPTURE: [(&str, CaptureRoute, &[&str], &str, &str); 2] = [
     (
         "preferences",
         CaptureRoute::Propose,
@@ -215,20 +234,22 @@ const SHIPPED_CAPTURE: [(&str, CaptureRoute, &[&str], &str, &str); 3] = [
             "by default",
         ],
         "A standing rule from {user} that applies beyond the work at hand.",
-        "A choice about one page or task (it goes on its Orbit task or the feature's 4_decisions.md); an acknowledgement.",
+        "A choice about one page or task; an acknowledgement; a one-off command.",
     ),
     (
-        crate::issue::ISSUE_TAG,
-        CaptureRoute::Agent,
+        "standard",
+        CaptureRoute::Propose,
         &[
-            "can you investigate",
-            "look into why",
-            "rca",
-            "root cause",
-            "find root cause",
+            "as a standard",
+            "our standard",
+            "every repo",
+            "all repos",
+            "across repos",
+            "house style",
+            "convention",
         ],
-        "{User} asks for the cause of something that went wrong.",
-        "How something works; a feature request.",
+        "A rule for how code or docs are written across {user}'s projects.",
+        "A rule for one repository or one change; a preference about how agents talk or work.",
     ),
 ];
 
@@ -247,23 +268,32 @@ impl CaptureRules {
                 )),
                 criteria: Some(Rule::shipped((*criteria).to_owned())),
                 not: Some(Rule::shipped((*not).to_owned())),
+                max_open: None,
             })
             .unwrap_or_default()
     }
 
-    /// The triggers the session pass matches for the tag: only for Daniel's
-    /// turns under the `propose` or `write` route; `None` otherwise (no
-    /// rules, or the `agent` route, which the pass does not take).
+    /// The triggers the session pass matches for the tag; `None` for a tag
+    /// that is no catcher (no `from`, `route` or `triggers`).
     #[must_use]
     pub fn pass_triggers(&self) -> Option<&[String]> {
-        let from = self.from.as_ref()?.value;
-        let route = self.route.as_ref()?.value;
-        match (from, route) {
-            (CaptureFrom::User, CaptureRoute::Propose | CaptureRoute::Write) => {
-                self.triggers.as_ref().map(|t| t.value.as_slice())
-            }
-            (CaptureFrom::User, CaptureRoute::Agent) => None,
-        }
+        self.from.as_ref()?;
+        self.route.as_ref()?;
+        self.triggers.as_ref().map(|t| t.value.as_slice())
+    }
+
+    /// Whose turns the catcher reads, if it is one.
+    #[must_use]
+    pub fn from(&self) -> Option<CaptureFrom> {
+        self.from.as_ref().map(|r| r.value)
+    }
+
+    /// The most open claims the tag may hold.
+    #[must_use]
+    pub fn max_open(&self) -> u32 {
+        self.max_open
+            .as_ref()
+            .map_or(DEFAULT_MAX_OPEN, |r| r.value.get())
     }
 
     /// Whether the pass writes a checked claim under the tag as an entry
@@ -302,14 +332,11 @@ impl ActionTag {
 }
 
 /// The action tags scribe ships: `(name, description, require_quote)`.
-pub const SHIPPED_ACTION_TAGS: [(&str, &str, bool); 2] = [
-    ("idea", "a future consideration worth revisiting", false),
-    (
-        "standard",
-        "a rule change for the constellation standards, in {user}'s words",
-        true,
-    ),
-];
+pub const SHIPPED_ACTION_TAGS: [(&str, &str, bool); 1] = [(
+    "standard",
+    "A rule for how code or docs are written across {user}'s projects, in {user}'s words.",
+    true,
+)];
 
 /// Historical name of the `finding` tag (no longer shipped by default; kept
 /// for approving stored format-10 assistant candidates).
@@ -383,7 +410,7 @@ impl TagTable {
     }
 
     /// The tags scribe ships: `preferences` (aliases `preference`, `pref`;
-    /// stale after 180 days) and the action tags `idea` and `standard`.
+    /// stale after 180 days) and the action tag `standard`.
     #[must_use]
     pub fn defaults() -> Self {
         let mut tags: Vec<TagDef> = Self::shipped_preferences().into_iter().collect();
@@ -396,7 +423,7 @@ impl TagTable {
         Self { tags }
     }
 
-    /// The shipped tag named `name` (`preferences`, `idea`, or `standard`).
+    /// The shipped tag named `name` (`preferences` or `standard`).
     /// A partial `[tags.<name>]` table inherits the fields it omits from this.
     #[must_use]
     pub fn shipped(name: &str) -> Option<TagDef> {
@@ -416,7 +443,9 @@ impl TagTable {
             Ok::<_, crate::entry::EntryError>(TagDef {
                 name: name("preferences")?,
                 aliases: vec![name("preference")?, name("pref")?],
-                description: Some(String::from("how {user} likes things done")),
+                description: Some(String::from(
+                    "A standing rule {user} wants agents to follow.",
+                )),
                 stale_after_days: NonZeroU32::new(180),
                 action: None,
                 require_evidence: false,
@@ -472,21 +501,6 @@ impl TagTable {
     #[must_use]
     pub fn get(&self, name: &TagName) -> Option<&TagDef> {
         self.tags.iter().find(|t| &t.name == name)
-    }
-
-    /// The `issue` capture rules in force: those of a configured `issue`
-    /// tag (`[tags.issue.capture]`, inheriting the shipped fields it does not
-    /// set), else the shipped ones. The prompt hook matches their triggers
-    /// (2_design.md §11.4).
-    #[must_use]
-    pub fn issue_capture(&self) -> CaptureRules {
-        self.tags
-            .iter()
-            .find(|t| t.name.as_str() == crate::issue::ISSUE_TAG)
-            .map_or_else(
-                || CaptureRules::shipped(crate::issue::ISSUE_TAG),
-                |t| t.capture.clone(),
-            )
     }
 
     /// The tag a word in a `#scribe` line names: its name or an alias,

@@ -105,7 +105,7 @@ fn a_mention_writes_nothing() {
 #[test]
 fn a_line_start_capture_form_is_a_marker_with_its_tag_as_the_hint() {
     // Forms 1-3 folded into the marker (2_design.md §14.6).
-    let tags = TagTable::defaults();
+    let tags = crate::tests::tags_with_idea();
     let hint = |text: &str| {
         let marks = annotation::marks(text);
         assert_eq!(marks.len(), 1, "{text}: {marks:?}");
@@ -255,7 +255,7 @@ fn a_verbatim_quote_of_his_own_words_checks_into_an_entry() {
 #[test]
 fn a_quote_may_come_from_a_line_start_marker_but_not_a_settling_line() {
     // A folded form's words are Daniel's own (2_design.md §14.6).
-    let tags = TagTable::defaults();
+    let tags = crate::tests::tags_with_idea();
     let typed = "#scribe idea: tidy the sizes\n#scribe retire idea-12";
     let turn = message("u-1", Speaker::User, typed);
     let mark = &annotation::marks(typed)[0];

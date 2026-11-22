@@ -280,139 +280,6 @@ pub(crate) struct EntryPayload {
     pub(crate) removal_instruction: Option<InstructionPayload>,
 }
 
-/// One issue as every output mode sees it (docs/design/scribe/2_design.md
-/// §11.4). Every word in it is the agent's account, but `request`, which is
-/// the user's typed request word for word; `error_lines` are the agent's
-/// evidence, not checked against the transcript.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct IssuePayload {
-    /// `issue-<n>`.
-    pub(crate) id: String,
-    pub(crate) title: String,
-    /// `open`, `mitigated`, `resolved` or `forgotten`.
-    pub(crate) status: &'static str,
-    /// The symptom or error strings a later search matches.
-    pub(crate) signature: Vec<String>,
-    /// Every project an occurrence was in.
-    pub(crate) projects: Vec<String>,
-    /// Every host an occurrence was on.
-    pub(crate) hosts: Vec<String>,
-    pub(crate) topics: Vec<String>,
-    /// Every occurrence's session and links.
-    pub(crate) related: Vec<String>,
-    pub(crate) author: AuthorPayload,
-    pub(crate) updated_by: Option<AuthorPayload>,
-    #[serde(with = "time::serde::rfc3339")]
-    pub(crate) created: Timestamp,
-    #[serde(with = "time::serde::rfc3339")]
-    pub(crate) updated: Timestamp,
-    /// The best-known cause, or `cause not found`.
-    pub(crate) cause: String,
-    /// The current best fix, or `fix not found`.
-    pub(crate) fix: String,
-    /// Newest first.
-    pub(crate) occurrences: Vec<OccurrencePayload>,
-    /// Occurrence numbers no longer here: moved to another issue or
-    /// forgotten. Never given again.
-    pub(crate) gone: Vec<GonePayload>,
-}
-
-/// One occurrence of an issue.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct OccurrencePayload {
-    pub(crate) n: u32,
-    /// `YYYY-MM-DD`.
-    pub(crate) date: String,
-    pub(crate) host: String,
-    pub(crate) project: String,
-    /// The session the user's request was typed in.
-    pub(crate) session: String,
-    /// The uuid of their typed turn holding `request`.
-    pub(crate) request_message: String,
-    /// Written while the issue was `resolved`: it recurred after the fix.
-    pub(crate) recurred: bool,
-    /// `issue-<n>#<m>` when it was moved here; `null` otherwise.
-    pub(crate) moved_from: Option<String>,
-    pub(crate) author: AuthorPayload,
-    /// The agent's context summary.
-    pub(crate) summary: String,
-    /// The user's request, word for word from their typed turn.
-    pub(crate) request: String,
-    /// Key error lines: the agent's evidence.
-    pub(crate) error_lines: Vec<String>,
-    pub(crate) cause: String,
-    pub(crate) fix: String,
-    /// Tasks, PRs, repositories and sessions it links, besides `session`.
-    pub(crate) links: Vec<String>,
-}
-
-/// An occurrence number that left an issue.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct GonePayload {
-    pub(crate) n: u32,
-    /// `moved` or `forgotten`.
-    pub(crate) reason: &'static str,
-    /// Where a moved occurrence went (`issue-<n>#<m>`); `null` otherwise.
-    pub(crate) to: Option<String>,
-}
-
-impl From<&scribe_core::issue::Issue> for IssuePayload {
-    fn from(issue: &scribe_core::issue::Issue) -> Self {
-        Self {
-            id: issue.id.to_string(),
-            title: issue.title.clone(),
-            status: issue.status.as_str(),
-            signature: issue.signature.clone(),
-            projects: issue.projects.iter().map(ToString::to_string).collect(),
-            hosts: issue.hosts.iter().map(ToString::to_string).collect(),
-            topics: strings(issue.topics.as_slice()),
-            related: issue.related.iter().map(ToString::to_string).collect(),
-            author: AuthorPayload::from(&issue.author),
-            updated_by: issue.updated_by.as_ref().map(AuthorPayload::from),
-            created: issue.created,
-            updated: issue.updated,
-            cause: issue.cause.clone(),
-            fix: issue.fix.clone(),
-            occurrences: issue
-                .occurrences
-                .iter()
-                .map(OccurrencePayload::from)
-                .collect(),
-            gone: issue
-                .gone
-                .iter()
-                .map(|g| GonePayload {
-                    n: g.n.get(),
-                    reason: g.reason.as_str(),
-                    to: g.to.clone(),
-                })
-                .collect(),
-        }
-    }
-}
-
-impl From<&scribe_core::issue::Occurrence> for OccurrencePayload {
-    fn from(o: &scribe_core::issue::Occurrence) -> Self {
-        Self {
-            n: o.n.get(),
-            date: scribe_core::DateRange::day(o.date),
-            host: o.host.to_string(),
-            project: o.project.to_string(),
-            session: o.session.to_string(),
-            request_message: o.request_message.clone(),
-            recurred: o.recurred,
-            moved_from: o.moved_from.clone(),
-            author: AuthorPayload::from(&o.author),
-            summary: o.summary.clone(),
-            request: o.request.clone(),
-            error_lines: o.error_lines.clone(),
-            cause: o.cause.clone(),
-            fix: o.fix.clone(),
-            links: o.links.iter().map(ToString::to_string).collect(),
-        }
-    }
-}
-
 /// An action entry's transcript window (docs/design/scribe/2_design.md §4.6).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct WindowPayload {
@@ -960,6 +827,10 @@ pub(crate) struct CapturePayload {
     pub(crate) triggers: Option<Vec<String>>,
     pub(crate) criteria: Option<String>,
     pub(crate) not: Option<String>,
+    /// The most open claims the tag may hold: the config's value, else
+    /// the default 10 for a tag with a route; `null` for a tag that
+    /// catches nothing.
+    pub(crate) max_open: Option<u32>,
     pub(crate) origin: CaptureOriginPayload,
 }
 
@@ -971,6 +842,7 @@ pub(crate) struct CaptureOriginPayload {
     pub(crate) triggers: OriginPayload,
     pub(crate) criteria: OriginPayload,
     pub(crate) not: OriginPayload,
+    pub(crate) max_open: OriginPayload,
 }
 
 /// One field's origin: `shipped`, `config` (with the file and line) or
@@ -985,6 +857,13 @@ pub(crate) struct OriginPayload {
 }
 
 impl OriginPayload {
+    /// A default scribe ships.
+    const SHIPPED: Self = Self {
+        source: "shipped",
+        file: None,
+        line: None,
+    };
+
     fn of<T>(rule: Option<&scribe_core::Rule<T>>, file: &str) -> Self {
         match rule.map(|r| r.origin) {
             None => Self {
@@ -1027,12 +906,18 @@ impl TagShowPayload {
                 triggers: c.triggers.as_ref().map(|r| r.value.clone()),
                 criteria: c.criteria.as_ref().map(|r| shown(&r.value)),
                 not: c.not.as_ref().map(|r| shown(&r.value)),
+                max_open: (c.max_open.is_some() || c.route.is_some()).then(|| c.max_open()),
                 origin: CaptureOriginPayload {
                     from: OriginPayload::of(c.from.as_ref(), config_file),
                     route: OriginPayload::of(c.route.as_ref(), config_file),
                     triggers: OriginPayload::of(c.triggers.as_ref(), config_file),
                     criteria: OriginPayload::of(c.criteria.as_ref(), config_file),
                     not: OriginPayload::of(c.not.as_ref(), config_file),
+                    max_open: match (&c.max_open, &c.route) {
+                        (Some(rule), _) => OriginPayload::of(Some(rule), config_file),
+                        (None, Some(_)) => OriginPayload::SHIPPED,
+                        (None, None) => OriginPayload::of::<()>(None, config_file),
+                    },
                 },
             },
         }
@@ -1088,8 +973,6 @@ pub(crate) enum Records {
     Hits(Vec<HitPayload>),
     /// `transcript list`.
     Transcripts(Vec<TranscriptPayload>),
-    /// `issue list`, most recently updated first.
-    Issues(Vec<IssuePayload>),
     /// `memory show`, in page order.
     Memory(Vec<MemoryPayload>),
 }
@@ -1104,7 +987,6 @@ impl Records {
             Self::Tags(v) => v.len(),
             Self::Hits(v) => v.len(),
             Self::Transcripts(v) => v.len(),
-            Self::Issues(v) => v.len(),
             Self::Memory(v) => v.len(),
         }
     }
@@ -1189,7 +1071,6 @@ pub(crate) enum Record {
     Entry(Box<EntryPayload>),
     Session(Box<SessionPayload>),
     Transcript(Box<TranscriptPayload>),
-    Issue(Box<IssuePayload>),
     /// One memory item, with every occurrence.
     Memory(Box<MemoryPayload>),
     /// `memory show --page`.
@@ -1562,9 +1443,6 @@ pub(crate) struct HookOutcome {
     pub(crate) target: Option<String>,
     /// The stable code of a refusal; `None` for a write.
     pub(crate) error_code: Option<&'static str>,
-    /// What an issue forget counts against (2_design.md §11.4); `None` for
-    /// every other outcome.
-    pub(crate) issue: Option<scribe_core::IssueAudit>,
 }
 
 /// The JSON a hook prints (Claude Code's hook output).
@@ -2148,81 +2026,4 @@ pub(crate) enum Output {
     PopupRows(PopupRows),
     /// The popup's preview of one record (the hidden `tmux preview`).
     PopupPreview(Record),
-    /// `issue stats`: the counts behind the issue trigger's recall and
-    /// precision.
-    IssueStats(IssueStatsPayload),
-}
-
-/// `issue stats` (2_design.md §11.4): counts from the audit log, and the
-/// two ratios, each named as the proxy it is.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct IssueStatsPayload(pub(crate) scribe_core::IssueStats);
-
-/// What each ratio of `issue stats` divides, as it is shown.
-pub(crate) const PRECISION_MEANS: &str = "writes neither forgotten nor moved / writes";
-/// See [`PRECISION_MEANS`].
-pub(crate) const TRIGGER_YIELD_MEANS: &str = "fires that led to a write / fires";
-
-/// One ratio: its parts, its value to three places and what it divides.
-#[derive(Serialize)]
-struct RatioJson {
-    numerator: u64,
-    denominator: u64,
-    value: f64,
-    means: &'static str,
-}
-
-impl RatioJson {
-    fn new(parts: Option<(u64, u64)>, means: &'static str) -> Option<Self> {
-        parts.map(|(numerator, denominator)| Self {
-            numerator,
-            denominator,
-            value: ratio(numerator, denominator),
-            means,
-        })
-    }
-}
-
-/// `numerator / denominator` to three decimal places (counts past
-/// `u32::MAX` saturate, far beyond any audit log).
-pub(crate) fn ratio(numerator: u64, denominator: u64) -> f64 {
-    let wide = |n: u64| f64::from(u32::try_from(n).unwrap_or(u32::MAX));
-    if denominator == 0 {
-        return 0.0;
-    }
-    ((wide(numerator) / wide(denominator)) * 1000.0).round() / 1000.0
-}
-
-impl Serialize for IssueStatsPayload {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        #[derive(Serialize)]
-        struct Json {
-            since: Option<String>,
-            fires: u64,
-            fires_with_write: u64,
-            writes: u64,
-            writes_without_fire: u64,
-            writes_forgotten: u64,
-            writes_moved: u64,
-            writes_withdrawn: u64,
-            precision_proxy: Option<RatioJson>,
-            trigger_yield_proxy: Option<RatioJson>,
-            skipped_lines: usize,
-        }
-        let s = &self.0;
-        Json {
-            since: s.since.map(scribe_core::DateRange::day),
-            fires: s.fires,
-            fires_with_write: s.fires_with_write,
-            writes: s.writes,
-            writes_without_fire: s.writes_without_fire,
-            writes_forgotten: s.writes_forgotten,
-            writes_moved: s.writes_moved,
-            writes_withdrawn: s.writes_withdrawn,
-            precision_proxy: RatioJson::new(s.precision(), PRECISION_MEANS),
-            trigger_yield_proxy: RatioJson::new(s.trigger_yield(), TRIGGER_YIELD_MEANS),
-            skipped_lines: s.skipped_lines,
-        }
-        .serialize(serializer)
-    }
 }

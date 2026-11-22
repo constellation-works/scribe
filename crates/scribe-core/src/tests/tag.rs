@@ -9,14 +9,17 @@ fn name(s: &str) -> TagName {
 }
 
 #[test]
-fn the_defaults_are_preferences_and_the_shipped_action_tags() {
+fn the_defaults_are_preferences_and_the_shipped_action_tag_standard() {
     let table = TagTable::defaults();
     let names: Vec<&str> = table.tags().iter().map(|t| t.name.as_str()).collect();
-    assert_eq!(names, ["idea", "preferences", "standard"]);
+    assert_eq!(names, ["preferences", "standard"]);
     assert!(table.action(&name("preferences")).is_none());
     let standard = table.action(&name("standard")).unwrap();
     assert!(standard.require_quote && !standard.ask_first);
-    assert!(!table.action(&name("idea")).unwrap().require_quote);
+    assert!(
+        table.action(&name("idea")).is_none(),
+        "idea is a config example"
+    );
     assert!(table.action(&name("task")).is_none());
     assert!(table.action(&name("friction")).is_none());
     for word in ["decisions", "decision", "dec", "remind", "finding"] {
@@ -91,7 +94,6 @@ fn a_summary_counts_entries_per_tag_and_keeps_unconfigured_ones() {
     assert_eq!(
         view,
         [
-            ("idea", 0, true),
             ("preferences", 2, true),
             ("rituals", 1, false),
             ("standard", 0, true)
@@ -100,54 +102,51 @@ fn a_summary_counts_entries_per_tag_and_keeps_unconfigured_ones() {
 }
 
 #[test]
-fn preferences_ships_propose_idea_ships_write_issue_ships_agent_and_standard_ships_none() {
-    use crate::tag::{CaptureRoute, CaptureRules};
-    for (tag, route) in [
-        ("preferences", CaptureRoute::Propose),
-        ("idea", CaptureRoute::Write),
-    ] {
+fn the_shipped_catchers_are_exactly_preference_and_standard() {
+    use crate::tag::{CaptureFrom, CaptureRoute, CaptureRules, DEFAULT_MAX_OPEN};
+    let table = TagTable::defaults();
+    let names: Vec<&str> = table.tags().iter().map(|t| t.name.as_str()).collect();
+    assert_eq!(names, ["preferences", "standard"]);
+    assert_eq!(
+        table.resolve("preference").map(|t| t.name.as_str()),
+        Some("preferences")
+    );
+    for tag in ["preferences", "standard"] {
         let rules = CaptureRules::shipped(tag);
-        assert_eq!(rules.route(), Some(route), "{tag}");
-        assert_eq!(rules.writes(), route == CaptureRoute::Write, "{tag}");
+        assert_eq!(rules.from(), Some(CaptureFrom::User), "{tag}");
+        assert_eq!(rules.route(), Some(CaptureRoute::Propose), "{tag}");
+        assert!(!rules.writes(), "{tag}");
         assert!(
             rules.pass_triggers().is_some_and(|t| !t.is_empty()),
             "{tag}"
         );
         assert!(rules.criteria.is_some() && rules.not.is_some(), "{tag}");
+        assert_eq!(rules.max_open(), DEFAULT_MAX_OPEN, "{tag}");
     }
-    for tag in ["standard", "remind", "finding"] {
-        assert_eq!(CaptureRules::shipped(tag), CaptureRules::default(), "{tag}");
-    }
-    // `issue` ships the prompt hook's rules (2_design.md §11.4), which the
-    // pass never takes, and no tag in the table.
-    let issue = CaptureRules::shipped("issue");
-    assert_eq!(issue.route(), Some(CaptureRoute::Agent));
-    assert!(issue.pass_triggers().is_none());
     assert!(
-        issue
-            .triggers
-            .as_ref()
-            .is_some_and(|t| t.value.contains(&String::from("root cause")))
+        table
+            .resolve("standard")
+            .and_then(|t| t.action)
+            .is_some_and(|a| a.require_quote),
+        "standard keeps its window and quote check"
     );
-    let table = TagTable::defaults();
-    assert!(table.resolve("issue").is_none(), "no issue tag ships");
-    assert_eq!(table.issue_capture(), issue);
+    // `idea` and `issue` are config examples now (specs/catchers.md).
+    for tag in ["idea", "issue", "remind", "finding"] {
+        assert_eq!(CaptureRules::shipped(tag), CaptureRules::default(), "{tag}");
+        assert!(table.resolve(tag).is_none(), "{tag}");
+    }
 }
 
 #[test]
-fn the_propose_and_write_routes_give_the_pass_triggers_and_agent_does_not() {
+fn both_routes_give_the_pass_triggers_and_only_write_collects() {
     use crate::tag::{CaptureRoute, CaptureRules, Rule, RuleOrigin};
     let mut rules = CaptureRules::shipped("preferences");
-    for (route, read, writes) in [
-        (CaptureRoute::Propose, true, false),
-        (CaptureRoute::Write, true, true),
-        (CaptureRoute::Agent, false, false),
-    ] {
+    for (route, writes) in [(CaptureRoute::Propose, false), (CaptureRoute::Write, true)] {
         rules.route = Some(Rule {
             value: route,
             origin: RuleOrigin::Config { line: None },
         });
-        assert_eq!(rules.pass_triggers().is_some(), read, "{route:?}");
+        assert!(rules.pass_triggers().is_some(), "{route:?}");
         assert_eq!(rules.writes(), writes, "{route:?}");
     }
 }

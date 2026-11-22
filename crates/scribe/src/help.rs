@@ -36,7 +36,7 @@ pub(crate) const ROOT_GROUPS: &[Group] = &[
     },
     Group {
         heading: "Records",
-        commands: &["entry", "session", "proposal", "memory", "issue", "tag"],
+        commands: &["entry", "session", "proposal", "memory", "tag"],
     },
     Group {
         heading: "Find",

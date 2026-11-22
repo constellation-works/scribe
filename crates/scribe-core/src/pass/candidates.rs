@@ -14,10 +14,10 @@ use std::collections::BTreeSet;
 pub const MAX_CANDIDATES: usize = 3;
 /// Maximum open candidate proposals across the whole store.
 pub const MAX_OPEN_CANDIDATES: usize = 20;
-/// Maximum ideas the pass writes itself (claims under `write` tags,
-/// 2_design.md §11.6) per session in one pass invocation, across all
-/// windows, apart from [`MAX_CANDIDATES`].
-pub const MAX_IDEAS: usize = 3;
+/// Maximum entries the pass collects itself under one `write` tag
+/// (2_design.md §11.6, §15.2) per session in one pass invocation, across
+/// all windows, apart from [`MAX_CANDIDATES`].
+pub const MAX_COLLECTED: usize = 3;
 /// Longest parking words an idea's outcome keeps, in characters.
 pub const OUTCOME_REASON_CHARS: usize = 300;
 /// Longest task id an idea's outcome names, in characters.
@@ -27,10 +27,10 @@ const OUTCOME_TASK_CHARS: usize = 64;
 const WRITE_EXCLUSIONS: usize = 10;
 const WRITE_EXCLUSION_CHARS: usize = 400;
 
-/// The capture tags' firing turns in a window and their criteria
-/// (2_design.md §11.2): every Daniel turn of `messages` matched against
-/// every tag's triggers, model-free. Empty when none fires, and the caller
-/// then requests zero claims.
+/// The catchers' firing turns in a window and their criteria
+/// (2_design.md §11.2, §15.2): every turn of `messages` matched against the
+/// triggers of every catcher whose `from` reads its speaker, model-free.
+/// Empty when none fires, and the caller then requests zero claims.
 #[must_use]
 pub fn capture_request(
     tags: &TagTable,
@@ -38,8 +38,11 @@ pub fn capture_request(
 ) -> (Vec<FiringTurn>, Vec<TagCriteria>) {
     let mut turns = Vec::new();
     let mut rules: Vec<TagCriteria> = Vec::new();
-    for message in messages.iter().filter(|m| m.role == Speaker::User) {
+    for message in messages {
         for tag in tags.tags() {
+            if !reads(tag, message.role) {
+                continue;
+            }
             let Some(fired) = fire(tag, &message.text) else {
                 continue;
             };
@@ -62,7 +65,12 @@ pub fn capture_request(
     (turns, rules)
 }
 
-/// The first trigger of `tag` that fires in Daniel's own words `own`
+/// Whether `tag` is a catcher whose `from` reads turns by `speaker`.
+pub(crate) fn reads(tag: &TagDef, speaker: Speaker) -> bool {
+    tag.capture.from().is_some_and(|from| from.reads(speaker))
+}
+
+/// The first trigger of `tag` that fires in a turn's own words `own`
 /// (fenced, indented, quoted and `#scribe` lines left out). A marked turn
 /// fires nothing ([`is_marked`]), so it supplies no candidate and no
 /// written idea, here and under the store lock.
@@ -90,13 +98,22 @@ pub(crate) fn is_marked(own: &str) -> bool {
         })
 }
 
-/// What admits a claim under `tag` from Daniel's own words `own`: the
-/// first trigger of the tag that fires there, with its matched words and
-/// the tag's `criteria` in force; `None` when the tag has no pass triggers
-/// or none fires. The store calls it again under its lock.
+/// What admits a claim under `tag` from the own words `own` of a turn by
+/// `speaker`: the first trigger of the tag that fires there, with its
+/// matched words and the tag's `criteria` in force; `None` when the tag is
+/// no catcher, does not read that speaker, or none fires. The store calls
+/// it again under its lock.
 #[must_use]
-pub(crate) fn admission(tags: &TagTable, tag: &TagName, own: &str) -> Option<Admitted> {
+pub(crate) fn admission(
+    tags: &TagTable,
+    tag: &TagName,
+    speaker: Speaker,
+    own: &str,
+) -> Option<Admitted> {
     let def = tags.get(tag)?;
+    if !reads(def, speaker) {
+        return None;
+    }
     let fired = fire(def, own)?;
     Some(Admitted {
         trigger: fired.trigger,
@@ -121,29 +138,33 @@ pub(super) fn check(
             .any(|rule| rule.tag == tag && rule.writes)
     };
     let mut checked: Vec<EntryCandidateAnswer> = Vec::new();
-    let (mut proposed, mut written) = (0_usize, 0_usize);
+    let mut proposed = 0_usize;
+    let mut written: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     for answer in answers {
-        // Proposals and written ideas have separate slots (§11.6).
+        // Proposals and collected entries have separate slots (§11.6), the
+        // collected ones per tag (§15.2).
         let write = writes(&answer.tag);
         let (taken, limit) = if write {
-            (written, request.write_limit.min(MAX_IDEAS))
+            (
+                written.get(&answer.tag).copied().unwrap_or(0),
+                request.write_limit.min(MAX_COLLECTED),
+            )
         } else {
             (proposed, request.candidate_limit.min(MAX_CANDIDATES))
         };
         if taken >= limit {
             continue;
         }
-        // Only a turn the request named, under the tag named for it, and
-        // only Daniel's own span of it (the fenced/quoted exclusion kept).
+        // Only a turn the request named, under the tag named for it (so a
+        // turn by a speaker the tag's `from` reads), and only the turn's
+        // own span (the fenced/quoted exclusion kept).
         let named = request
             .candidate_turns
             .iter()
             .any(|turn| turn.message == answer.message && turn.tag == answer.tag);
         let fits = named
             && request.messages.iter().any(|message| {
-                message.uuid == answer.message
-                    && message.role == Speaker::User
-                    && own_span(&message.text, &answer.quote)
+                message.uuid == answer.message && own_span(&message.text, &answer.quote)
             });
         // A claim names what it is about and states it so it stands
         // alone (2_design.md §11.1): an empty subject or statement, or one
@@ -170,9 +191,10 @@ pub(super) fn check(
         let mut answer = answer;
         answer.statement = statement;
         answer.subject = subject;
+        let tag = answer.tag.clone();
         checked.push(answer);
         if write {
-            written += 1;
+            *written.entry(tag).or_default() += 1;
         } else {
             proposed += 1;
         }
@@ -347,8 +369,9 @@ fn names_task_id(text: &str, task: &str) -> bool {
 }
 
 /// Derive durable provenance from the original transcript, never model
-/// metadata: only Daniel's turns, and only when a trigger of the claim's tag
-/// fires in that turn's original text.
+/// metadata: only turns by a speaker the claim's tag reads, and only when a
+/// trigger of the tag fires in that turn's own text. An assistant claim
+/// keeps its speaker (`role`), so it is never presented as the user's.
 #[must_use]
 pub fn candidate_drafts(
     checked: &[EntryCandidateAnswer],
@@ -360,21 +383,21 @@ pub fn candidate_drafts(
         .iter()
         .filter_map(|answer| {
             let message = messages.iter().find(|m| m.uuid == answer.message)?;
-            if message.role != Speaker::User {
-                return None;
-            }
             let raw = message.text();
             // The original text check also rejects a span joined across pasted data
             // or a window's truncation marker.
-            let turn = transcript::user_turn(message)?;
-            if !own_span(&turn.own, &answer.quote) || !raw.contains(&answer.quote) {
+            let own = match message.role {
+                Speaker::User => transcript::user_turn(message)?.own,
+                Speaker::Assistant => raw.trim().to_owned(),
+            };
+            if !own_span(&own, &answer.quote) || !raw.contains(&answer.quote) {
                 return None;
             }
             if answer.statement.trim().is_empty() || answer.subject.trim().is_empty() {
                 return None;
             }
             let tag: TagName = answer.tag.parse().ok()?;
-            let admitted = admission(tags, &tag, &turn.own)?;
+            let admitted = admission(tags, &tag, message.role, &own)?;
             let (outcome, outcome_turn) = if tags.get(&tag)?.capture.writes() {
                 let (outcome, outcome_turn) = checked_outcome(answer, messages)?;
                 (Some(outcome), outcome_turn)
@@ -387,7 +410,7 @@ pub fn candidate_drafts(
             Some(PassClaim {
                 candidate: EntryCandidate {
                     tag,
-                    role: Speaker::User,
+                    role: message.role,
                     quote: answer.quote.clone(),
                     statement: Some(answer.statement.trim().to_owned())
                         .filter(|text| !text.is_empty()),
@@ -406,7 +429,7 @@ pub fn candidate_drafts(
                     host: record.host.clone(),
                     admitted: Some(admitted),
                 },
-                turn: turn.own,
+                turn: own,
                 outcome,
                 outcome_turn,
             })
@@ -707,7 +730,12 @@ pub fn write_exclusions(
         })
         .map(|entry| {
             let text = match crate::ask::stated_quote(entry) {
-                Some(quote) => format!("{} (the user's words: {quote:?})", entry.content),
+                Some(quote) => match crate::ask::speaker_of(entry) {
+                    Speaker::User => format!("{} (the user's words: {quote:?})", entry.content),
+                    Speaker::Assistant => {
+                        format!("{} (the assistant's words: {quote:?})", entry.content)
+                    }
+                },
                 None => entry.content.clone(),
             };
             (words(&text).intersection(&query).count(), entry, text)

@@ -14,10 +14,9 @@
 //! parsed here, a whole line, model-free:
 //!
 //! 4. `#scribe approve|reject <p-id>` · `#scribe retire|forget <entry-id>`
-//!    · `#scribe forget <issue-id>[#<n>]`
 //!
-//! It parses to a [`Settling`] ([`crate::consistency::settle`] applies it) or
-//! a [`ForgetIssue`]. A settling verb with the wrong kind of id is refused,
+//! It parses to a [`Settling`] ([`crate::consistency::settle`] applies it).
+//! A settling verb with the wrong kind of id is refused,
 //! never read as a marker, and so is [`GLOBAL_OPENER`] on a settling line.
 //!
 //! An entry under an action tag also keeps an [`action_window`]: the turns
@@ -125,25 +124,11 @@ pub struct Settling {
     pub action: Settle,
 }
 
-/// A `#scribe forget issue-<n>[#<m>]` line.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ForgetIssue {
-    /// The line's number within the prompt, from 1.
-    pub line: u32,
-    /// The whole line exactly as typed.
-    pub said: String,
-    /// The issue, and the occurrence when one is named.
-    pub target: crate::issue::IssueRef,
-}
-
 /// The result for one settling line.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Parsed {
     /// It settles a proposal or changes an entry's status (form 4).
     Settle(Settling),
-    /// `#scribe forget issue-<n>` or `issue-<n>#<m>`: blank an issue or
-    /// remove one occurrence (2_design.md §11.4).
-    ForgetIssue(ForgetIssue),
     /// It was refused.
     Refused(Refused),
 }
@@ -154,7 +139,6 @@ impl Parsed {
     pub fn line(&self) -> u32 {
         match self {
             Self::Settle(s) => s.line,
-            Self::ForgetIssue(f) => f.line,
             Self::Refused(r) => r.line,
         }
     }
@@ -351,15 +335,6 @@ fn parse(line: u32, said: &str) -> Option<Parsed> {
         [_, id] => id.trim_end_matches(['.', '!', ',', ';']),
         _ => "",
     };
-    if verb == "forget"
-        && let Ok(target) = id.parse::<crate::issue::IssueRef>()
-    {
-        return Some(Parsed::ForgetIssue(ForgetIssue {
-            line,
-            said: said.to_owned(),
-            target,
-        }));
-    }
     let action = match verb.as_str() {
         "approve" | "reject" => id.parse::<ProposalId>().ok().map(|p| {
             if verb == "approve" {
