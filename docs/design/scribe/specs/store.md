@@ -133,7 +133,7 @@ user's file could pass for one of Daniel's records.
 ├── scribe.db-wal, scribe.db-shm         0600, kept after the last connection (PERSIST_WAL)
 ├── audit-spool/<nanos>-<pid>-<n>.json   0600, one audit line a busy database could not take yet (phase 7), drained by the next write
 ├── audit.jsonl                          0600, the audit log until the move (formats 1–26)
-└── .lock                                0600, the store lock until phase 7; no longer taken, moved aside by the move
+└── .lock                                0600, the store lock before phase 7; an existing file stays at the root (the move neither archives nor removes it)
 ```
 
 The root is `--root` > `SCRIBE_ROOT` > `~/.scribe`. A missing root, a
@@ -152,7 +152,7 @@ messages (phase 4) and memory's rows (phase 5): the pending `now`
 candidates, removed items' history, the profile revisions and cursor, the
 memory journal and each pass window's signal; the sessions (phase 6); and
 entries, claims, agent tags, marks, pickups and the audit log (phase 7).
-Only `config.toml` and `memory/`'s files stay files.
+Only `config.toml` and `memory/`'s files remain as primary data files outside the database.
 
 - **Privacy.** `scribe.db`, `scribe.db-wal` and `scribe.db-shm` are checked
   like any store file on every open, read or write: a link, another user's
@@ -167,7 +167,7 @@ Only `config.toml` and `memory/`'s files stay files.
   a new database retries it every 20 ms within the same wait. Every write
   is one `BEGIN IMMEDIATE` transaction; a busy database past the wait is
   `store_locked` (holder `another scribe.db writer`). Writers do not take
-  `.lock` (phase 7 retires it).
+  `.lock` (phase 7 retires the lock protocol).
 - **Readers** take no lock and write nothing: they open
   `SQLITE_OPEN_READ_ONLY`. A missing database matches nothing. When SQLite
   cannot open the WAL read-only (`SQLITE_CANTOPEN` or `SQLITE_READONLY`:
