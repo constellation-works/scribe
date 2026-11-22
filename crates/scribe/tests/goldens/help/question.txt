@@ -1,20 +1,34 @@
-Answer a question from the records, citing a verbatim quote for every claim
+Answer a question from the records with verbatim quotes
+
+Answers a question from the records, citing a verbatim quote for every claim.
 
 Usage: scribe question [OPTIONS] <COMMAND>
 
 Commands:
-  ask   Answer a question from the recorded entries, session records and Orbit tasks, citing each quote
+  ask   Answer a question from stored records and Orbit tasks
   help  Print this message or the help of the given subcommand(s)
 
 Options:
-  -h, --help     Print help
-  -V, --version  Print version
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
 
 Global options:
-      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
-      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
-      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
-      --json                 Shorthand for --format json
+      --provider <PROVIDER>
+          Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+
+      --root <DIR>
+          Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+
+      --format <FORMAT>
+          Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto]
+          
+          [possible values: auto, table, json]
+
+      --json
+          Shorthand for --format json
 
 Examples:
   scribe question ask "how do we merge agent PRs?"

@@ -69,13 +69,19 @@ pub(crate) enum EntryCommand {
     /// Add an agent note (never attributed to Daniel)
     #[command(after_help = ADD_EXAMPLES)]
     Add(AddArgs),
-    /// Update content or metadata; Daniel's entries allow metadata only
+    /// Update an entry's content or metadata
+    ///
+    /// Updates content or metadata; Daniel's entries allow metadata only.
     #[command(after_help = "Examples:\n  scribe entry update <id> --author opus --add-topic api")]
     Update(UpdateArgs),
-    /// Retire an entry with a reason: an agent note, or Daniel's on his instruction
+    /// Retire an entry with a reason
+    ///
+    /// Retires an agent note, or Daniel's entry on his instruction.
     #[command(after_help = RETIRE_EXAMPLES)]
     Retire(RetireArgs),
-    /// Forget an entry for good on Daniel's instruction: blank its text, keep its id
+    /// Forget an entry for good on Daniel's instruction
+    ///
+    /// Blanks the entry's text and keeps its id.
     #[command(after_help = FORGET_EXAMPLES)]
     Forget(ForgetArgs),
     /// List entries, oldest first
@@ -84,7 +90,9 @@ pub(crate) enum EntryCommand {
     /// Show one entry in full: what was said, its content and its cite
     #[command(after_help = SHOW_EXAMPLES)]
     Show(ShowArgs),
-    /// Record that a consumer picked up an action entry, or that its result was rejected
+    /// Record pickup or rejection of an action entry
+    ///
+    /// Records that a consumer picked up an action entry, or that its result was rejected.
     #[command(after_help = PICKUP_EXAMPLES)]
     Pickup(PickupArgs),
 }

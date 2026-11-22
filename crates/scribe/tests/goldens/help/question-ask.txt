@@ -1,4 +1,6 @@
-Answer a question from the recorded entries, session records and Orbit tasks, citing each quote
+Answer a question from stored records and Orbit tasks
+
+Answers a question from the recorded entries, session records, issues and Orbit tasks, citing each quote.
 
 Usage: scribe question ask [OPTIONS] <QUESTION>
 

@@ -1,21 +1,40 @@
-Replace a session record with a log rebuilt from its transcript, resuming interrupted windows
+Rebuild a session record from its full transcript
+
+Replaces a session record with a log rebuilt from its transcript, resuming interrupted windows.
 
 Usage: scribe session rebuild [OPTIONS] --author <NAME> <ID>
 
 Arguments:
-  <ID>  Session record to replace: its id or a unique prefix of it (at least four characters)
+  <ID>
+          Session record to replace: its id or a unique prefix of it (at least four characters)
 
 Options:
-      --author <NAME>  Name of the agent requesting the rebuild (lowercase letters, digits, '.', '_' or '-')
-      --confirm        Confirm replacing the current header and log
-  -h, --help           Print help
-  -V, --version        Print version
+      --author <NAME>
+          Name of the agent requesting the rebuild (lowercase letters, digits, '.', '_' or '-')
+
+      --confirm
+          Confirm replacing the current header and log
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
 
 Global options:
-      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
-      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
-      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
-      --json                 Shorthand for --format json
+      --provider <PROVIDER>
+          Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+
+      --root <DIR>
+          Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+
+      --format <FORMAT>
+          Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto]
+          
+          [possible values: auto, table, json]
+
+      --json
+          Shorthand for --format json
 
 Replaces the header and log only after every transcript window succeeds.
 Interrupted runs resume their private checkpoint; --confirm is required.

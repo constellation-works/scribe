@@ -39,7 +39,9 @@ Examples:
 /// Verbs on the `record` noun.
 #[derive(Debug, Subcommand)]
 pub(crate) enum RecordCommand {
-    /// Rank entries, session headers, segments and issues for words, best first, with no model call
+    /// Rank stored records for words with no model call
+    ///
+    /// Ranks entries, session headers, segments and issues for words, best first, with no model call.
     #[command(after_help = SEARCH_EXAMPLES)]
     Search(SearchArgs),
 }

@@ -1,23 +1,37 @@
-Run a provider hook: record #scribe lines and settle proposals, switch /scribe on and off, mark session passes due, report open proposals
+Run a provider hook for session and prompt events
+
+Runs a provider hook to record #scribe lines and settle proposals, switch /scribe on and off, mark session passes due, and report open proposals.
 
 Usage: scribe hook [OPTIONS] <COMMAND>
 
 Commands:
-  session-start       Tell Daniel how many proposals are open, which action entries are unpicked, and when this session may continue a recorded one, from the SessionStart hook's JSON on stdin
-  user-prompt-submit  Echo each #scribe marker of a typed prompt, or settle the proposal or entry a settling line names, from the UserPromptSubmit hook's JSON on stdin
-  stop                Catalog #scribe markers, fill in message ids and mark a session pass due, from the Stop hook's JSON on stdin
-  session-end         Mark the final session pass due for a session that is on, from the SessionEnd hook's JSON on stdin
+  session-start       Handle the SessionStart hook JSON from stdin
+  user-prompt-submit  Handle the UserPromptSubmit hook JSON from stdin
+  stop                Handle the Stop hook JSON from stdin
+  session-end         Handle the SessionEnd hook JSON from stdin
   help                Print this message or the help of the given subcommand(s)
 
 Options:
-  -h, --help     Print help
-  -V, --version  Print version
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
 
 Global options:
-      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
-      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
-      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
-      --json                 Shorthand for --format json
+      --provider <PROVIDER>
+          Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+
+      --root <DIR>
+          Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+
+      --format <FORMAT>
+          Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto]
+          
+          [possible values: auto, table, json]
+
+      --json
+          Shorthand for --format json
 
 These run from provider packages or scribe init hooks, not by hand.
 Use --provider codex for Codex; the default is claude-code.

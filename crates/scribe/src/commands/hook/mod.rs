@@ -114,16 +114,24 @@ Examples:
 /// Verbs on the `hook` noun: one per Claude Code hook event.
 #[derive(Debug, Subcommand)]
 pub(crate) enum HookCommand {
-    /// Tell Daniel how many proposals are open, which action entries are unpicked, and when this session may continue a recorded one, from the SessionStart hook's JSON on stdin
+    /// Handle the SessionStart hook JSON from stdin
+    ///
+    /// Tells Daniel how many proposals are open, which action entries are unpicked, and when this session may continue a recorded one, from the SessionStart hook's JSON on stdin.
     #[command(after_help = SESSION_START_EXAMPLES)]
     SessionStart(HookArgs),
-    /// Echo each #scribe marker of a typed prompt, or settle the proposal or entry a settling line names, from the UserPromptSubmit hook's JSON on stdin
+    /// Handle the UserPromptSubmit hook JSON from stdin
+    ///
+    /// Echoes each #scribe marker of a typed prompt, or settles the proposal or entry a settling line names, from the UserPromptSubmit hook's JSON on stdin.
     #[command(after_help = PROMPT_EXAMPLES)]
     UserPromptSubmit(HookArgs),
-    /// Catalog #scribe markers, fill in message ids and mark a session pass due, from the Stop hook's JSON on stdin
+    /// Handle the Stop hook JSON from stdin
+    ///
+    /// Catalogs #scribe markers, fills in message ids and marks a session pass due, from the Stop hook's JSON on stdin.
     #[command(after_help = STOP_EXAMPLES)]
     Stop(HookArgs),
-    /// Mark the final session pass due for a session that is on, from the SessionEnd hook's JSON on stdin
+    /// Handle the SessionEnd hook JSON from stdin
+    ///
+    /// Marks the final session pass due for a session that is on, from the SessionEnd hook's JSON on stdin.
     #[command(after_help = SESSION_END_EXAMPLES)]
     SessionEnd(HookArgs),
 }

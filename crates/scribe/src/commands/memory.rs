@@ -77,19 +77,27 @@ Examples:
 /// Verbs on the `memory` noun.
 #[derive(Debug, Subcommand)]
 pub(crate) enum MemoryCommand {
-    /// Show memory items on the session-start page, one item in full, or the page itself
+    /// Show session memory items, one item, or the page
+    ///
+    /// Shows memory items on the session-start page, one item in full, or the page itself.
     #[command(after_help = SHOW_EXAMPLES)]
     Show(ShowArgs),
-    /// Show the promotion rules and page windows in effect, each with its origin
+    /// Show active memory promotion rules and windows
+    ///
+    /// Shows the promotion rules and page windows in effect, each with its origin.
     #[command(after_help = RULES_EXAMPLES)]
     Rules(RulesArgs),
-    /// Mark a now item as raised in this session, so it is not raised again unprompted
+    /// Mark a now item as raised in this session
+    ///
+    /// Marks a now item as raised in this session, so it is not raised again unprompted.
     #[command(after_help = ACK_EXAMPLES)]
     Ack(AckArgs),
     /// Retire an item with a reason: off the page, lists and ask, text kept
     #[command(after_help = RETIRE_EXAMPLES)]
     Retire(RetireArgs),
-    /// Forget an item, or one occurrence, for good: blank its words, keep its id
+    /// Forget a memory item or occurrence for good
+    ///
+    /// Forgets an item, or one occurrence, for good: blanks its words and keeps its id.
     #[command(after_help = FORGET_EXAMPLES)]
     Forget(ForgetArgs),
 }

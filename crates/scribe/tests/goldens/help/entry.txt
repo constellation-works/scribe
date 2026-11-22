@@ -4,12 +4,12 @@ Usage: scribe entry [OPTIONS] <COMMAND>
 
 Commands:
   add     Add an agent note (never attributed to Daniel)
-  update  Update content or metadata; Daniel's entries allow metadata only
-  retire  Retire an entry with a reason: an agent note, or Daniel's on his instruction
-  forget  Forget an entry for good on Daniel's instruction: blank its text, keep its id
+  update  Update an entry's content or metadata
+  retire  Retire an entry with a reason
+  forget  Forget an entry for good on Daniel's instruction
   list    List entries, oldest first
   show    Show one entry in full: what was said, its content and its cite
-  pickup  Record that a consumer picked up an action entry, or that its result was rejected
+  pickup  Record pickup or rejection of an action entry
   help    Print this message or the help of the given subcommand(s)
 
 Options:

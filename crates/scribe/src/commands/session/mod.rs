@@ -56,25 +56,39 @@ Examples:
 /// Verbs on the `session` noun.
 #[derive(Debug, Subcommand)]
 pub(crate) enum SessionCommand {
-    /// List session records, oldest first, with whether a pass is due; inactive sessions only with --include-inactive
+    /// List session records, oldest first
+    ///
+    /// Lists session records, oldest first, with whether a pass is due; inactive sessions are included only with --include-inactive.
     #[command(after_help = LIST_EXAMPLES)]
     List(ListArgs),
-    /// Show one session record: its metadata, links, children, header and the log's table of contents
+    /// Show one session record
+    ///
+    /// Shows one session record: its metadata, links, children, header and the log's table of contents.
     #[command(after_help = SHOW_EXAMPLES)]
     Show(ShowArgs),
-    /// Write the record of each session whose pass is due, or of the sessions named, with the session model
+    /// Write session records for due or named sessions
+    ///
+    /// Writes the record of each session whose pass is due, or of the sessions named, with the session model.
     #[command(after_help = pass::PASS_EXAMPLES)]
     Pass(pass::PassArgs),
-    /// Replace a session record with a log rebuilt from its transcript, resuming interrupted windows
+    /// Rebuild a session record from its full transcript
+    ///
+    /// Replaces a session record with a log rebuilt from its transcript, resuming interrupted windows.
     #[command(after_help = rebuild::EXAMPLES)]
     Rebuild(rebuild::RebuildArgs),
-    /// Hide a session whose content no longer describes something current, with a reason
+    /// Hide an outdated session with a reason
+    ///
+    /// Hides a session whose content no longer describes something current, with a reason.
     #[command(after_help = activity::DEACTIVATE_EXAMPLES)]
     Deactivate(activity::DeactivateArgs),
-    /// Show an inactive session again, or pin or unpin it against automatic deactivation
+    /// Show an inactive session or pin it against hiding
+    ///
+    /// Shows an inactive session again, or pins or unpins it against automatic deactivation.
     #[command(after_help = activity::ACTIVATE_EXAMPLES)]
     Activate(activity::ActivateArgs),
-    /// Switch a past session on by name and catalog every window of its transcript
+    /// Switch a past session on and catalog its transcript
+    ///
+    /// Switches a past session on by name and catalogs every window of its transcript.
     #[command(after_help = catalog::EXAMPLES)]
     Catalog(catalog::CatalogArgs),
 }

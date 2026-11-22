@@ -1,21 +1,40 @@
-Switch a past session on by name and catalog every window of its transcript
+Switch a past session on and catalog its transcript
+
+Switches a past session on by name and catalogs every window of its transcript.
 
 Usage: scribe session catalog [OPTIONS] --author <NAME> <ID>
 
 Arguments:
-  <ID>  The transcript's id, or a unique prefix of it (at least four characters)
+  <ID>
+          The transcript's id, or a unique prefix of it (at least four characters)
 
 Options:
-      --author <NAME>      Who is asking: lowercase letters, digits, '.', '_' or '-', 1-40 characters
-      --project <PROJECT>  Record this project instead of the transcript's attribution [default: the attribution transcript list would use]
-  -h, --help               Print help
-  -V, --version            Print version
+      --author <NAME>
+          Who is asking: lowercase letters, digits, '.', '_' or '-', 1-40 characters
+
+      --project <PROJECT>
+          Record this project instead of the transcript's attribution [default: the attribution transcript list would use]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
 
 Global options:
-      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
-      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
-      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
-      --json                 Shorthand for --format json
+      --provider <PROVIDER>
+          Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+
+      --root <DIR>
+          Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+
+      --format <FORMAT>
+          Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto]
+          
+          [possible values: auto, table, json]
+
+      --json
+          Shorthand for --format json
 
 Switches one past session on with cataloged_by and runs every window, with
 no deadline. Refuses a session that already has a record or a /scribe on

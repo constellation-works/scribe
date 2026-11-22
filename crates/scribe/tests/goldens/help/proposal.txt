@@ -5,7 +5,7 @@ Usage: scribe proposal [OPTIONS] <COMMAND>
 Commands:
   add     Open a proposal, including against a Daniel entry
   update  Update the reason of an open agent proposal
-  settle  Approve or reject a proposal about an agent entry, or a claim on Daniel's instruction
+  settle  Approve or reject a proposal or candidate
   list    List every proposal by id and its settlement state
   help    Print this message or the help of the given subcommand(s)
 

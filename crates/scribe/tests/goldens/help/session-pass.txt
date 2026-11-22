@@ -1,17 +1,33 @@
-Write the record of each session whose pass is due, or of the sessions named, with the session model
+Write session records for due or named sessions
+
+Writes the record of each session whose pass is due, or of the sessions named, with the session model.
 
 Usage: scribe session pass [OPTIONS]
 
 Options:
-      --session <ID>  Pass this session (its id or a unique prefix of at least four characters) now, ignoring retry backoff and whether a pass is due (it must be switched on); repeat for several [default: every due session, at most five]
-  -h, --help          Print help
-  -V, --version       Print version
+      --session <ID>
+          Pass this session (its id or a unique prefix of at least four characters) now, ignoring retry backoff and whether a pass is due (it must be switched on); repeat for several [default: every due session, at most five]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
 
 Global options:
-      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
-      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
-      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
-      --json                 Shorthand for --format json
+      --provider <PROVIDER>
+          Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+
+      --root <DIR>
+          Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+
+      --format <FORMAT>
+          Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto]
+          
+          [possible values: auto, table, json]
+
+      --json
+          Shorthand for --format json
 
 The plugin routine ships disabled; once enabled on a host it runs every
 5 minutes. Also run this command by hand where each configured provider CLI

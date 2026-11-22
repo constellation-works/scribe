@@ -1,25 +1,52 @@
-Approve or reject a proposal about an agent entry, or a claim on Daniel's instruction
+Approve or reject a proposal or candidate
+
+Approves or rejects a proposal about an agent entry, or a claim on Daniel's instruction.
 
 Usage: scribe proposal settle [OPTIONS] --author <AUTHOR> <ID>
 
 Arguments:
-  <ID>  Proposal id or unique prefix
+  <ID>
+          Proposal id or unique prefix
 
 Options:
-      --author <AUTHOR>      Agent name
-      --approve              Apply the proposal
-      --reject               Close without applying
-      --reason <REASON>      Replacement explanation for the settlement
-      --session <ID>         The session you run in, whose transcript holds Daniel's instruction; requires --instruction
-      --instruction <WORDS>  Daniel's instruction, word for word from one of his last three typed turns of --session within 30 minutes, naming the id (or answering your reply that names it) and the act; requires --session
-  -h, --help                 Print help
-  -V, --version              Print version
+      --author <AUTHOR>
+          Agent name
+
+      --approve
+          Apply the proposal
+
+      --reject
+          Close without applying
+
+      --reason <REASON>
+          Replacement explanation for the settlement
+
+      --session <ID>
+          The session you run in, whose transcript holds Daniel's instruction; requires --instruction
+
+      --instruction <WORDS>
+          Daniel's instruction, word for word from one of his last three typed turns of --session within 30 minutes, naming the id (or answering your reply that names it) and the act; requires --session
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
 
 Global options:
-      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
-      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
-      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
-      --json                 Shorthand for --format json
+      --provider <PROVIDER>
+          Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+
+      --root <DIR>
+          Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+
+      --format <FORMAT>
+          Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto]
+          
+          [possible values: auto, table, json]
+
+      --json
+          Shorthand for --format json
 
 Examples:
   scribe proposal settle <id> --approve --author opus

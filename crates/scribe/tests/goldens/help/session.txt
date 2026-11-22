@@ -1,26 +1,40 @@
-List and show the records of sessions cataloged with /scribe on, and write them (pass, catalog)
+List, show and write session records cataloged with /scribe on
+
+Lists and shows cataloged session records, and writes them with pass and catalog.
 
 Usage: scribe session [OPTIONS] <COMMAND>
 
 Commands:
-  list        List session records, oldest first, with whether a pass is due; inactive sessions only with --include-inactive
-  show        Show one session record: its metadata, links, children, header and the log's table of contents
-  pass        Write the record of each session whose pass is due, or of the sessions named, with the session model
-  rebuild     Replace a session record with a log rebuilt from its transcript, resuming interrupted windows
-  deactivate  Hide a session whose content no longer describes something current, with a reason
-  activate    Show an inactive session again, or pin or unpin it against automatic deactivation
-  catalog     Switch a past session on by name and catalog every window of its transcript
+  list        List session records, oldest first
+  show        Show one session record
+  pass        Write session records for due or named sessions
+  rebuild     Rebuild a session record from its full transcript
+  deactivate  Hide an outdated session with a reason
+  activate    Show an inactive session or pin it against hiding
+  catalog     Switch a past session on and catalog its transcript
   help        Print this message or the help of the given subcommand(s)
 
 Options:
-  -h, --help     Print help
-  -V, --version  Print version
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
 
 Global options:
-      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
-      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
-      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
-      --json                 Shorthand for --format json
+      --provider <PROVIDER>
+          Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+
+      --root <DIR>
+          Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+
+      --format <FORMAT>
+          Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto]
+          
+          [possible values: auto, table, json]
+
+      --json
+          Shorthand for --format json
 
 Examples:
   scribe session list --project scribe

@@ -1,23 +1,46 @@
-Show memory items on the session-start page, one item in full, or the page itself
+Show session memory items, one item, or the page
+
+Shows memory items on the session-start page, one item in full, or the page itself.
 
 Usage: scribe memory show [OPTIONS] [ID]
 
 Arguments:
-  [ID]  Show this item with every occurrence (its id or a unique prefix of at least four characters) [default: list the items]
+  [ID]
+          Show this item with every occurrence (its id or a unique prefix of at least four characters) [default: list the items]
 
 Options:
-      --section <SECTION>  Only items of this section: profile, projects, working, now or milestones [default: every section]
-      --project <PROJECT>  Only projects items of this project, and the page's project part for it [default: any project; for --page, the current directory's]
-      --include-off-page   Also list items off the page (decayed, past their window, retired, forgotten, section off), labelled with why [default: on-page items only]
-      --page               Print exactly the page the session-start hook injects into an interactive session
-  -h, --help               Print help
-  -V, --version            Print version
+      --section <SECTION>
+          Only items of this section: profile, projects, working, now or milestones [default: every section]
+
+      --project <PROJECT>
+          Only projects items of this project, and the page's project part for it [default: any project; for --page, the current directory's]
+
+      --include-off-page
+          Also list items off the page (decayed, past their window, retired, forgotten, section off), labelled with why [default: on-page items only]
+
+      --page
+          Print exactly the page the session-start hook injects into an interactive session
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
 
 Global options:
-      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
-      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
-      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
-      --json                 Shorthand for --format json
+      --provider <PROVIDER>
+          Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+
+      --root <DIR>
+          Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+
+      --format <FORMAT>
+          Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto]
+          
+          [possible values: auto, table, json]
+
+      --json
+          Shorthand for --format json
 
 Lists the items on the session-start page, by section; --include-off-page
 adds decayed, past-window, retired and forgotten items, each labelled with

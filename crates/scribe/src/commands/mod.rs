@@ -48,12 +48,16 @@ pub(crate) use tmux::TmuxArgs;
 /// Top-level nouns.
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
-    /// Scaffold the embedded skill and selected provider hooks; requires --provider, preserves existing edits, never trusts hooks
+    /// Scaffold the embedded skill and selected provider hooks
+    ///
+    /// Requires --provider, preserves existing edits, and never trusts hooks.
     Init(init::InitArgs),
     /// Read entries and write agent notes
     #[command(subcommand, after_help = entry::ENTRY_EXAMPLES)]
     Entry(EntryCommand),
-    /// List and show the records of sessions cataloged with /scribe on, and write them (pass, catalog)
+    /// List, show and write session records cataloged with /scribe on
+    ///
+    /// Lists and shows cataloged session records, and writes them with pass and catalog.
     #[command(subcommand, after_help = session::SESSION_EXAMPLES)]
     Session(SessionCommand),
     /// List uncataloged provider transcripts and show one, writing nothing
@@ -62,28 +66,42 @@ pub(crate) enum Command {
     /// Read, open, update and settle proposals
     #[command(subcommand, after_help = proposal::PROPOSAL_EXAMPLES)]
     Proposal(ProposalCommand),
-    /// Show what scribe has noticed about Daniel from switched-on sessions, and acknowledge, retire or forget an item
+    /// Show what scribe noticed about Daniel and manage memory items
+    ///
+    /// Shows what scribe has noticed about Daniel from switched-on sessions, and lets you acknowledge, retire or forget an item.
     #[command(subcommand, after_help = memory::MEMORY_EXAMPLES)]
     Memory(MemoryCommand),
-    /// Search every stored record for words, ranked as question ask ranks them, with no model call
+    /// Search every stored record by words, with no model call
+    ///
+    /// Searches every stored record for words, ranked as question ask ranks them, with no model call.
     #[command(subcommand, after_help = record::RECORD_EXAMPLES)]
     Record(RecordCommand),
-    /// Propose superseding or retiring entries a later one replaced or that are due for review (scan)
+    /// Propose superseding or retiring entries via scan
+    ///
+    /// Proposes superseding or retiring entries a later one replaced or that are due for review, and deactivates stale or removed-feature sessions via scan.
     #[command(subcommand, after_help = consistency::CONSISTENCY_EXAMPLES)]
     Consistency(ConsistencyCommand),
     /// List tags and manage agent-created store tags
     #[command(subcommand, after_help = tag::TAG_EXAMPLES)]
     Tag(TagCommand),
-    /// Record and search issues: incidents that recur across projects, and what fixed them
+    /// Record and search recurring incidents across projects
+    ///
+    /// Records and searches issues: incidents that recur across projects, and what fixed them.
     #[command(subcommand, after_help = issue::ISSUE_EXAMPLES)]
     Issue(issue::IssueCommand),
-    /// Answer a question from the records, citing a verbatim quote for every claim
+    /// Answer a question from the records with verbatim quotes
+    ///
+    /// Answers a question from the records, citing a verbatim quote for every claim.
     #[command(subcommand, after_help = question::QUESTION_EXAMPLES)]
     Question(QuestionCommand),
-    /// Run a provider hook: record #scribe lines and settle proposals, switch /scribe on and off, mark session passes due, report open proposals
+    /// Run a provider hook for session and prompt events
+    ///
+    /// Runs a provider hook to record #scribe lines and settle proposals, switch /scribe on and off, mark session passes due, and report open proposals.
     #[command(subcommand, after_help = hook::HOOK_EXAMPLES)]
     Hook(HookCommand),
-    /// Browse sessions, entries, proposals and backfill candidates in an fzf popup, writing nothing
+    /// Browse sessions, entries and proposals in an fzf popup
+    ///
+    /// Browses sessions, entries, proposals and backfill candidates in an fzf popup, writing nothing.
     #[command(after_help = tmux::EXAMPLES)]
     Tmux(TmuxArgs),
     /// Serve the Orbit plugin's tools (the plugin backend runs this)
