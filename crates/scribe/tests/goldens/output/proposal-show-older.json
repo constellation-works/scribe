@@ -1,0 +1,45 @@
+{
+  "candidate": {
+    "tag": "preferences",
+    "role": "user",
+    "quote": "yeah, for the popup just show the newest five, nothing older.",
+    "context": null,
+    "statement": "The user prefers that the scribe tmux popup lists only the five newest records.",
+    "subject": "the scribe tmux popup",
+    "evidence": null,
+    "cite": {
+      "session": "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02",
+      "message": "user-popup",
+      "at": "2026-11-15T00:00:00Z",
+      "prompt_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "line": 1,
+      "cwd": "/home/user/workspace/scribe"
+    },
+    "project": "constellation-works/scribe",
+    "provider": "claude-code",
+    "host": "dk-server-1",
+    "admitted": {
+      "trigger": "let's keep",
+      "matched": "let's keep",
+      "criteria": "A standing rule from the user that applies beyond the work at hand."
+    }
+  },
+  "id": "p-6",
+  "kind": "candidate",
+  "older": "preferences-3",
+  "newer": null,
+  "reason": "Unmarked preferences statement: yeah, for the popup just show the newest five, nothing older.",
+  "quotes": [],
+  "state": "open",
+  "opened_at": "2026-11-15T00:06:00Z",
+  "settled_at": null,
+  "settled_by": null,
+  "author": {
+    "kind": "scribe",
+    "name": "session-pass"
+  },
+  "settled_author": null,
+  "updated_by": null,
+  "closed_reason": null,
+  "instruction": null
+}

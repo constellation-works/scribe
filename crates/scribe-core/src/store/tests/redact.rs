@@ -42,6 +42,7 @@ fn proposal() -> Proposal {
             tag: "preferences".parse().unwrap(),
             role: crate::Speaker::User,
             quote: String::new(),
+            context: Some(String::new()),
             statement: Some(String::new()),
             subject: Some(String::new()),
             evidence: Some(String::new()),

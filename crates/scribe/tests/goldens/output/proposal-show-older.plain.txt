@@ -1,0 +1,1 @@
+p-6	candidate	open	preferences-3	-	2026-11-15T00:06:00Z	older claim: The user prefers that the scribe tmux popup lists only the five newest records. | The user's words: "yeah, for the popup just show the newest five, nothing older."	trigger "let's keep" matched "let's keep"; criteria: A standing rule from the user that applies beyond the work at hand.	-

@@ -40,6 +40,7 @@ const HELP: &[(&str, &[&str])] = &[
     ("proposal-update", &["proposal", "update", "--help"]),
     ("proposal-settle", &["proposal", "settle", "--help"]),
     ("proposal-list", &["proposal", "list", "--help"]),
+    ("proposal-show", &["proposal", "show", "--help"]),
     ("memory", &["memory", "--help"]),
     ("memory-show", &["memory", "show", "--help"]),
     ("memory-rules", &["memory", "rules", "--help"]),
@@ -765,6 +766,69 @@ stated_by: {{kind: scribe, name: session-pass}}
     .unwrap();
     support::make_private(&path);
     fx
+}
+
+/// The context paragraph of [`context_fixture`]'s open claim `p-7`
+/// (2_design.md §15.3): what was being discussed and what the turn settles.
+const CONTEXT: &str = "The user and the agent were choosing how scribe stores session records. The user rejected a single 2,500-character outcome because rewrites lose the session's start, and asked for an append-only log.";
+/// The user's words `p-7` cites.
+const CONTEXT_QUOTE: &str =
+    "no, keep every window as its own segment so the start of the session is never rewritten.";
+
+/// [`stated_fixture`] at format 24: its claims `p-5` and `p-6` kept as
+/// older claims (a statement, no context), and an open claim `p-7` with a
+/// context paragraph.
+fn context_fixture() -> Fixture {
+    let fx = stated_fixture();
+    let path = fx.root().join("proposals.json");
+    let mut doc: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    doc["format"] = json!(24);
+    let proposals = doc["proposals"].as_array_mut().unwrap();
+    for p in proposals.iter_mut() {
+        p["candidate"]["context"] = Value::Null;
+    }
+    let mut claim = proposals[1].clone();
+    claim["id"] = json!("p-7");
+    claim["older"] = json!("preferences-4");
+    claim["opened_at"] = json!("2026-11-15T00:08:00Z");
+    claim["reason"] = json!(format!("Unmarked preferences statement: {CONTEXT_QUOTE}"));
+    claim["candidate"]["quote"] = json!(CONTEXT_QUOTE);
+    claim["candidate"]["context"] = json!(CONTEXT);
+    claim["candidate"]["statement"] = Value::Null;
+    claim["candidate"]["subject"] = json!("session records");
+    claim["candidate"]["cite"]["message"] = json!("user-segments");
+    proposals.push(claim);
+    std::fs::write(&path, doc.to_string()).unwrap();
+    support::make_private(&path);
+    fx
+}
+
+/// `proposal show` of a claim with context (`p-7`) and of an older claim
+/// (`p-6`, its statement in the context's place): each open claim can be
+/// settled from it without opening its session (2_design.md §15.3).
+#[test]
+fn proposal_show_matches_goldens() {
+    let fx = context_fixture();
+    let cases: &[(&str, &str)] = &[
+        ("proposal-show-context", "p-7"),
+        ("proposal-show-older", "p-6"),
+    ];
+    let mut failures = Vec::new();
+    for (name, id) in cases {
+        for (suffix, mode) in MODES {
+            let out = fx.ok(&[&["proposal", "show", id][..], *mode].concat());
+            failures.extend(check(
+                &format!("output/{name}.{suffix}"),
+                &text(&out.stdout),
+            ));
+        }
+    }
+    let out = fx.ok(&["proposal", "list", "--state", "open"]);
+    failures.extend(check(
+        "output/proposal-list-context.plain.txt",
+        &text(&out.stdout),
+    ));
+    report(&failures);
 }
 
 /// `scribe brief` with an open pass claim (the stated fixture's `p-6`, under

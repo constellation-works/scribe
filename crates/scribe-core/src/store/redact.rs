@@ -47,6 +47,7 @@ pub const REDACTED_FIELDS: &[&str] = &[
     "proposal.instruction.quote",
     "proposal.quotes.text",
     "proposal.candidate.quote",
+    "proposal.candidate.context",
     "proposal.candidate.statement",
     "proposal.candidate.subject",
     "proposal.candidate.evidence",
@@ -382,6 +383,9 @@ pub(super) fn proposal_fields(proposal: &mut Proposal) -> Vec<(&'static str, &mu
     );
     if let Some(candidate) = &mut proposal.candidate {
         fields.push(("proposal.candidate.quote", &mut candidate.quote));
+        if let Some(context) = &mut candidate.context {
+            fields.push(("proposal.candidate.context", context));
+        }
         if let Some(statement) = &mut candidate.statement {
             fields.push(("proposal.candidate.statement", statement));
         }

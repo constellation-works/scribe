@@ -194,8 +194,8 @@ fn each_scribe_line_of_the_fixture_prompt_is_a_marker_cataloged_at_stop() {
     let out = hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
     assert_eq!(
         reply(&out)["systemMessage"],
-        "scribe: added preferences-1 to preferences — \"Daniel squash-merges agent PRs and keeps merge commits for releases.\" · your words: \"squash-merge agent PRs; keep merge commits for releases\"\n\
-         scribe: added preferences-2 to preferences — \"Daniel wants short commit subjects.\" · your words: \"short commit subjects\""
+        "scribe: added preferences-1 to preferences — \"Daniel squash-merges agent PRs and keeps merge commits for releases. The user and the agent discussed it in this session.\" · your words: \"squash-merge agent PRs; keep merge commits for releases\"\n\
+         scribe: added preferences-2 to preferences — \"Daniel wants short commit subjects. The user and the agent discussed it in this session.\" · your words: \"short commit subjects\""
     );
     assert_eq!(claude_calls(&fx).len(), 1, "one call for the turn");
     let asked = claude_stdin(&fx, 0);
@@ -389,7 +389,7 @@ fn an_unknown_tag_the_model_chooses_is_refused_at_stop_and_audited_by_code() {
     assert_eq!(
         reply(&out)["systemMessage"],
         "scribe: nothing recorded for #scribe in your message — the model chose a tag that is not configured or not the one you named\n\
-         scribe: added rituals-1 to rituals — \"Daniel holds stand-up at nine.\" · your words: \"stand-up at nine\""
+         scribe: added rituals-1 to rituals — \"Daniel holds stand-up at nine. The user and the agent discussed it in this session.\" · your words: \"stand-up at nine\""
     );
     let asked = claude_stdin(&fx, 0);
     assert!(asked.contains("- rituals:"), "the configured tags: {asked}");
@@ -961,8 +961,8 @@ fn a_line_start_form_gives_the_model_its_tag_as_the_hint_through_a_safe_mode_cla
     );
     assert_eq!(
         reply(&out)["systemMessage"],
-        "scribe: added idea-1 to idea — \"Prune could take a dry-run flag.\" · your words: \"a dry-run flag for prune\"\n\
-         scribe: added preferences-1 to preferences — \"Daniel squash-merges agent PRs.\" · your words: \"We should squash-merge agent PRs\""
+        "scribe: added idea-1 to idea — \"Prune could take a dry-run flag. The user and the agent discussed it in this session.\" · your words: \"a dry-run flag for prune\"\n\
+         scribe: added preferences-1 to preferences — \"Daniel squash-merges agent PRs. The user and the agent discussed it in this session.\" · your words: \"We should squash-merge agent PRs\""
     );
     let asked = claude_stdin(&fx, 0);
     assert!(
@@ -1566,8 +1566,8 @@ fn a_config_that_declares_decisions_makes_it_work_like_any_config_tag() {
     let out = hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
     assert_eq!(
         reply(&out)["systemMessage"],
-        "scribe: added decisions-1 to decisions — \"Daniel squash-merges agent PRs.\" · your words: \"squash-merge agent PRs\"\n\
-         scribe: added decisions-2 to decisions — \"Releases keep merge commits.\" · your words: \"keep merge commits for releases\""
+        "scribe: added decisions-1 to decisions — \"Daniel squash-merges agent PRs. The user and the agent discussed it in this session.\" · your words: \"squash-merge agent PRs\"\n\
+         scribe: added decisions-2 to decisions — \"Releases keep merge commits. The user and the agent discussed it in this session.\" · your words: \"keep merge commits for releases\""
     );
     assert_eq!(
         claude_stdin(&fx, 0)
@@ -1758,7 +1758,7 @@ fn hook_path_env(
 /// A fake `claude` answering every call with `marks`.
 fn annotating_claude(fx: &Fixture, marks: &Value) -> std::ffi::OsString {
     let answer = json!({"type": "result", "subtype": "success", "is_error": false,
-                        "result": "", "structured_output": {"marks": marks}});
+                        "result": "", "structured_output": {"marks": support::with_mark_contexts(marks)}});
     fake_claude(fx, &format!("echo '{answer}'"))
 }
 
@@ -1858,7 +1858,7 @@ fn a_marker_after_a_stray_quote_or_ending_a_global_sentence_is_echoed_and_catalo
 }
 
 #[test]
-fn stop_catalogs_a_marked_turn_as_daniels_entry_with_scribes_statement_once() {
+fn stop_catalogs_a_marked_turn_as_daniels_entry_with_scribes_context_once() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
     marked_turns(&claude, &[("u-1", MARKED)]);
@@ -1871,7 +1871,7 @@ fn stop_catalogs_a_marked_turn_as_daniels_entry_with_scribes_statement_once() {
     let out = hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
     assert_eq!(
         reply(&out)["systemMessage"],
-        "scribe: added preferences-1 to preferences — \"Daniel wants short status updates.\" · your words: \"I always want short status updates\""
+        "scribe: added preferences-1 to preferences — \"Daniel wants short status updates. The user and the agent discussed it in this session.\" · your words: \"I always want short status updates\""
     );
     let calls = claude_calls(&fx);
     assert_eq!(calls.len(), 1);
@@ -1883,7 +1883,10 @@ fn stop_catalogs_a_marked_turn_as_daniels_entry_with_scribes_statement_once() {
     let stored = entries(&fx);
     assert_eq!(stored.len(), 1);
     let entry = &stored[0];
-    assert_eq!(entry["content"], "Daniel wants short status updates.");
+    assert_eq!(
+        entry["content"],
+        support::context_of("Daniel wants short status updates.")
+    );
     assert_eq!(entry["quote"], "I always want short status updates");
     assert_eq!(entry["author"]["kind"], "user");
     assert_eq!(

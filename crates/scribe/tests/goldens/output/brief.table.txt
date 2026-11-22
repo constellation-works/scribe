@@ -10,4 +10,4 @@ More: scribe memory show · scribe session show <id> · scribe question ask
 
 ## Open claims
 - p-1 · 2026-11-02 20:00Z · decisions · "merge agent PRs with a merge commit"
-Settle a claim by typing #scribe approve <id> or #scribe reject <id>; scribe proposal list --state open shows each in full.
+Settle a claim by typing #scribe approve <id> or #scribe reject <id>; scribe proposal show <id> shows one in full.

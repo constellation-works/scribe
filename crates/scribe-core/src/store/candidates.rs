@@ -141,15 +141,15 @@ impl Store {
             };
             // The bounds hold the model's words as given; masking a secret
             // may lengthen them, and the masked value is kept.
-            if !has_statement_and_subject(&claim.candidate) {
+            if !has_context_and_subject(&claim.candidate) {
                 continue;
             }
             let mut draft = claim.candidate.clone();
             draft.admitted = Some(admitted);
-            // The statement and subject are the model's words: kept
+            // The context and subject are the model's words: kept
             // redacted when redaction changes them. Only the quote must be
-            // Daniel's words unchanged (2_design.md §11.1, §5.3).
-            draft.statement = draft.statement.as_deref().map(|text| redactor.mask(text));
+            // the speaker's words unchanged (2_design.md §15.3, §5.3).
+            draft.context = draft.context.as_deref().map(|text| redactor.mask(text));
             draft.subject = draft.subject.as_deref().map(|text| redactor.mask(text));
             let draft = &draft;
             let says = candidate_says(draft);
@@ -381,15 +381,19 @@ pub(super) enum CandidateWrite {
     },
 }
 
-/// Whether a new pass claim carries what 2_design.md §11.1 requires: a
-/// non-empty statement and subject within their bounds, checked on the
-/// unmasked text. An empty subject opens no claim.
-fn has_statement_and_subject(candidate: &crate::EntryCandidate) -> bool {
-    let within = |text: Option<&str>, max: usize| {
-        text.is_some_and(|text| !text.trim().is_empty() && text.chars().count() <= max)
-    };
-    within(candidate.statement.as_deref(), crate::STATEMENT_CHARS)
-        && within(candidate.subject.as_deref(), crate::SUBJECT_CHARS)
+/// Whether a new pass claim carries what 2_design.md §15.3 requires: a
+/// context paragraph that stands alone and a non-empty subject, each within
+/// its bound, checked on the unmasked text, and no one-line statement. An
+/// empty subject opens no claim.
+fn has_context_and_subject(candidate: &crate::EntryCandidate) -> bool {
+    candidate.statement.is_none()
+        && candidate
+            .context
+            .as_deref()
+            .is_some_and(crate::context_stands_alone)
+        && candidate.subject.as_deref().is_some_and(|text| {
+            !text.trim().is_empty() && text.chars().count() <= crate::SUBJECT_CHARS
+        })
 }
 
 /// Attach the ids of entries already written to `err`, so the command
@@ -438,7 +442,7 @@ fn checked_outcome(claim: &crate::pass::PassClaim, redactor: &Redactor) -> Optio
 }
 
 /// The active entry the pass writes for a checked claim under a `write`
-/// tag: scribe's statement as content, Daniel's span as `quote`, authored
+/// tag: scribe's context as content, the turn's span as `quote`, authored
 /// and stated by the session pass, nothing typed (`said` empty).
 fn pass_entry(
     id: EntryId,
@@ -480,7 +484,7 @@ fn pass_entry(
         removal_instruction: None,
         stated_by: Some(Author::session_pass()),
         outcome: Some(outcome),
-        content: draft.statement.clone().unwrap_or_default(),
+        content: draft.context.clone().unwrap_or_default(),
     }
 }
 

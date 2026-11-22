@@ -77,9 +77,9 @@ pub use entry::{
 pub use error::{AfterPersistError, Error, Result, WriteRefusal};
 pub use models::Models;
 pub use proposal::{
-    Admitted, ClosedReason, EntryCandidate, Proposal, ProposalChange, ProposalError,
-    ProposalFilter, ProposalId, ProposalKind, ProposalState, Quote, STATEMENT_CHARS, SUBJECT_CHARS,
-    close_retired_tag_candidates,
+    Admitted, CONTEXT_CHARS, CONTEXT_SENTENCES, ClosedReason, EntryCandidate, Proposal,
+    ProposalChange, ProposalError, ProposalFilter, ProposalId, ProposalKind, ProposalState, Quote,
+    SUBJECT_CHARS, close_retired_tag_candidates, context_stands_alone,
 };
 pub use record::{
     Author, AuthorKind, AuthorName, DateRange, Label, Listing, Project, RecordError, Related,

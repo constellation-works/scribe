@@ -1,6 +1,6 @@
 ---
 type: design
-summary: "Spec: store — layout, record files with YAML frontmatter (format 22: marks.json and the annotation entry; format 21: a working item's preference_proposal; format 20: memory consolidation and promotion; format 19: memory items; format 18: entry removal_instruction apart from the approval instruction; format 17: issue records; format 16: entry outcome on a pass-written idea; format 15: instructed approval said and closed_reason covered; format 14: candidate statement and subject, entry stated_by; format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
+summary: "Spec: store — layout, record files with YAML frontmatter (format 24: a claim's context paragraph; format 23: the user author channel; format 22: marks.json and the annotation entry; format 21: a working item's preference_proposal; format 20: memory consolidation and promotion; format 19: memory items; format 18: entry removal_instruction apart from the approval instruction; format 17: issue records; format 16: entry outcome on a pass-written idea; format 15: instructed approval said and closed_reason covered; format 14: candidate statement and subject, entry stated_by; format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
 last_validated: 2026-11-21
 ---
 
@@ -10,7 +10,19 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-The code writes format 23 and reads formats 1–23. Format 23 renames the
+The code writes format 24 and reads formats 1–24. Format 24 adds
+`context` to each proposal candidate
+([2_design.md §15.3](../2_design.md#153-claims-with-context)): scribe's
+paragraph of two to four sentences, at most 600 characters before
+redaction, saying what was being discussed and what the turn settles, so a
+claim is settled without opening its session. A new claim carries it in
+place of the one-line `statement`, which stays readable and is no longer
+written; a format-23 candidate reads with `context: null` and, when it has
+a statement, is an older claim. Approval writes the context as the entry's
+content, the turn's words as `quote` and `stated_by: {kind: scribe, name:
+session-pass}`, for an assistant claim too (author `{kind: agent, name:
+assistant}`), which a format-23 build refuses. A collected entry and an
+annotation take their content from the context the same way. Format 23 renames the
 user's author channel ([2_design.md §15.8](../2_design.md#158-generic-and-configurable)):
 the value stored before it, `{kind: daniel, name: daniel}`, reads as
 `{kind: user, name: user}` in every document (entries, sessions,
@@ -483,7 +495,16 @@ stays. `memory forget m-<n>#<k>` blanks one occurrence's quote.
   non-`user` candidate, is `store_corrupt`. The pass opens nothing for a
   claim with an empty or over-long statement or subject, and its duplicate
   check compares both the quote and the statement against what active
-  entries and earlier candidates say.
+  entries and earlier candidates say. Format 24 adds, on each `candidate`,
+  `context` (scribe's paragraph of the claim in third person, at least two
+  sentences and 1–600 characters before redaction, then redacted), `null`
+  on a candidate opened before format 24 and cleared by forgetting; a new
+  claim carries `context` and `subject` and a `null` `statement`. A
+  candidate with both a context and a statement, or either without its
+  subject, is `store_corrupt`. The pass opens nothing for a claim with an
+  empty subject or a context under two sentences or past its bound, and the
+  duplicate check compares the quote and the context (an older claim's
+  statement) as it compared statements.
 - `cataloged_by` on a `control.json` switch is `null` or `{at, by}`;
   `/scribe on` keeps it. *(S14)* `session catalog` sets it and the pass
   copies it onto the record.
@@ -921,6 +942,15 @@ exits 0.
   format-15 to -21 `proposals.json` decode at the current shape. It admits
   `marks.json`, read only at 22 or later, and the annotation `stated_by`
   on an entry, refused below 22.
+- **Format 23** (the user author channel, 2_design.md §15.8). Append-only
+  step 22→23 (`user_author`) changes no stored value; every `Author` read
+  maps `{kind: daniel, name: daniel}` to `{kind: user, name: user}`.
+- **Format 24** (claims with context, 2_design.md §15.3). Append-only step
+  23→24 (`claim_context`) adds null `context` to every proposal candidate;
+  a format-14 to -23 `proposals.json` is checked at the frozen format-23
+  shape first, so one carrying `context` is refused. From 24 an approved
+  assistant entry may carry `stated_by` the session pass and the
+  assistant's words in `quote`, refused below 24.
 - **Agent writes** (S12). Each write verb takes the lock, checks the
   author guards (a reserved `--author` name — `user`, `daniel`, `scribe`,
   `consistency`, `session-pass`, `tag-retired` — is refused `reserved_author`; a Daniel entry's content,
@@ -995,6 +1025,7 @@ exits 0.
   `proposal.candidate.admitted.criteria`; (format 13) also
   `entry.instruction.quote` and `proposal.instruction.quote`; (format 14) also
   `proposal.candidate.statement` and `proposal.candidate.subject`; (format
+  24) also `proposal.candidate.context`; (format
   16) also `entry.outcome.reason` and `entry.outcome.task`; (format 17) also
   `issue.title`, `issue.signature`, `issue.cause`, `issue.fix`,
   `issue.occurrences.summary`, `issue.occurrences.request`,

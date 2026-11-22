@@ -224,7 +224,10 @@ fn entry_answer(quote: &str, tag: &str) -> MarkAnswer {
         marker: 1,
         kind: String::from("entry"),
         tag: tag.to_owned(),
-        statement: String::from("Daniel wants short status updates."),
+        context: String::from(
+            "The user and the agent were agreeing how the agent reports progress. The user \
+             wants short status updates.",
+        ),
         subject: String::from("status updates"),
         quote: quote.to_owned(),
         message: String::from("u-1"),
@@ -342,7 +345,7 @@ fn a_none_answer_keeps_its_reason() {
 }
 
 #[test]
-fn a_draft_is_daniels_with_scribes_statement_and_his_quote() {
+fn a_draft_is_daniels_with_scribes_context_and_his_quote() {
     let tags = TagTable::defaults();
     let turn_message = message("u-1", Speaker::User, TYPED);
     let mark = &annotation::marks(TYPED)[0];
@@ -364,7 +367,11 @@ fn a_draft_is_daniels_with_scribes_statement_and_his_quote() {
         host: crate::Label::sanitized("mac", "mac"),
     };
     let draft = annotation::draft(mark, annotated, &turn, "u-1", &tags);
-    assert_eq!(draft.content, "Daniel wants short status updates.");
+    assert_eq!(
+        draft.content,
+        "The user and the agent were agreeing how the agent reports progress. The user wants \
+         short status updates."
+    );
     assert_eq!(
         draft.quote.as_deref(),
         Some("I always want short status updates")

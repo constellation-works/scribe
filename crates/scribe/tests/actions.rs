@@ -181,7 +181,7 @@ fn backdate(fx: &Fixture, tag: &str, id: &str) {
 /// with `marks` (2_design.md §14.3).
 fn annotating(fx: &Fixture, marks: &Value) -> OsString {
     let answer = json!({"type": "result", "subtype": "success", "is_error": false,
-                        "result": "", "structured_output": {"marks": marks}});
+                        "result": "", "structured_output": {"marks": support::with_mark_contexts(marks)}});
     fx.fake_program(
         "claude",
         &format!("#!/bin/sh\ncat > /dev/null\necho '{answer}'\n"),
@@ -268,8 +268,8 @@ fn an_action_line_keeps_the_turns_since_the_last_scribe_line_and_a_memory_line_n
     );
     assert_eq!(
         echo,
-        "scribe: added standard-1 to standard — \"Every size names its unit.\" · your words: \"name the unit in every size\"\n\
-         scribe: added preferences-1 to preferences — \"Daniel wants sizes in bytes.\" · your words: \"bytes for sizes\""
+        "scribe: added standard-1 to standard — \"Every size names its unit. The user and the agent discussed it in this session.\" · your words: \"name the unit in every size\"\n\
+         scribe: added preferences-1 to preferences — \"Daniel wants sizes in bytes. The user and the agent discussed it in this session.\" · your words: \"bytes for sizes\""
     );
 
     let decision = entry(&fx, "preferences-1", &["--window"]);
@@ -600,7 +600,7 @@ fn entries_under_a_tag_config_no_longer_defines_are_still_listed_shown_and_retir
     assert_eq!(list["total"], 1, "{list}");
     assert_eq!(list["entries"][0]["id"], "task-1");
     let shown = entry(&fx, "task-1", &[]);
-    assert_eq!(shown["content"], statement);
+    assert_eq!(shown["content"], support::context_of(statement));
     assert_eq!(shown["quote"], "profile the sync");
     assert_eq!(shown["status"], "active");
 

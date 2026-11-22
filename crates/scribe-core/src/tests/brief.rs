@@ -17,6 +17,7 @@ fn candidate(n: u64, tag: &str, state: ProposalState, statement: Option<&str>) -
             tag: tag.parse().unwrap(),
             role: Speaker::User,
             quote: format!("quote {n}"),
+            context: None,
             statement: statement.map(str::to_owned),
             subject: statement.map(|_| format!("subject {n}")),
             evidence: None,
@@ -194,6 +195,6 @@ fn the_text_puts_the_memory_block_first_then_dated_sessions_and_claims() {
          ## Open claims\n\
          - p-2 · 2026-11-01 10:00Z · decisions · \"squash-merge agent PRs\"\n\
          - p-1 · 2026-11-01 10:00Z · preferences · \"quote 1\"\n\
-         Settle a claim by typing #scribe approve <id> or #scribe reject <id>; scribe proposal list --state open shows each in full.\n"
+         Settle a claim by typing #scribe approve <id> or #scribe reject <id>; scribe proposal show <id> shows one in full.\n"
     );
 }

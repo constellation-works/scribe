@@ -221,10 +221,55 @@ pub struct Admitted {
     pub criteria: Option<String>,
 }
 
-/// The longest statement a pass claim carries, in characters (2_design.md §11.1).
-pub const STATEMENT_CHARS: usize = 300;
+/// The longest context paragraph a pass claim carries, in characters
+/// (2_design.md §15.3).
+pub const CONTEXT_CHARS: usize = 600;
+/// The fewest sentences a context paragraph has; a shorter one does not
+/// stand alone and opens nothing (2_design.md §15.3).
+pub const CONTEXT_SENTENCES: usize = 2;
 /// The longest subject a pass claim carries, in characters (2_design.md §11.1).
 pub const SUBJECT_CHARS: usize = 80;
+
+/// Whether `context` is a paragraph that can stand alone: non-empty, at
+/// most [`CONTEXT_CHARS`] characters and at least [`CONTEXT_SENTENCES`]
+/// sentences (2_design.md §15.3). Counted on the model's words, before
+/// redaction.
+#[must_use]
+pub fn context_stands_alone(context: &str) -> bool {
+    let context = context.trim();
+    !context.is_empty()
+        && context.chars().count() <= CONTEXT_CHARS
+        && sentences(context) >= CONTEXT_SENTENCES
+}
+
+/// How many sentences `text` has: runs of `.`, `!` or `?` (closing quotes
+/// and brackets after them allowed) that end the text or come before
+/// whitespace.
+fn sentences(text: &str) -> usize {
+    let chars: Vec<char> = text.chars().collect();
+    let mut count = 0;
+    let mut i = 0;
+    while i < chars.len() {
+        if matches!(chars[i], '.' | '!' | '?') {
+            let mut end = i;
+            while end + 1 < chars.len()
+                && matches!(
+                    chars[end + 1],
+                    '.' | '!' | '?' | '"' | '\'' | ')' | '”' | '’'
+                )
+            {
+                end += 1;
+            }
+            if chars.get(end + 1).is_none_or(|c| c.is_whitespace()) {
+                count += 1;
+            }
+            i = end + 1;
+        } else {
+            i += 1;
+        }
+    }
+    count
+}
 
 /// Checked words offered by a session pass: Daniel's unmarked statement, or
 /// an assistant turn's measured result or open item (format 10). Metadata
@@ -242,18 +287,25 @@ pub struct EntryCandidate {
     pub role: Speaker,
     /// Exact span of that turn, at most 400 characters.
     pub quote: String,
-    /// The pass's statement of the claim (format 14, 2_design.md §11.1):
-    /// one or two sentences of at most [`STATEMENT_CHARS`] characters
-    /// (counted before redaction, which may lengthen it) that stand alone, naming the subject and stating the rule or idea, in
-    /// the session model's words, redacted. Approval makes it the entry's
-    /// content and `quote` the entry's `quote`. `null` for a candidate
-    /// opened before statements, which approves with the quote as content.
+    /// The pass's paragraph of context (format 24, 2_design.md §15.3): two
+    /// to four sentences of at most [`CONTEXT_CHARS`] characters (counted
+    /// before redaction, which may lengthen it) saying what was being
+    /// discussed and what the turn settles, standing alone, in the session
+    /// model's third-person words, redacted. Approval makes it the entry's
+    /// content and `quote` the entry's `quote`. `null` for a claim opened
+    /// before format 24.
+    #[serde(deserialize_with = "nullable")]
+    pub context: Option<String>,
+    /// The pass's one-line statement of a claim opened at formats 14 to 23
+    /// (2_design.md §11.1): read, shown in the context's place as an older
+    /// claim, and approved as content as before; never written from format
+    /// 24 on. `null` for a claim opened before statements, which approves
+    /// with the quote as content, and for every claim with a `context`.
     #[serde(deserialize_with = "nullable")]
     pub statement: Option<String>,
-    /// What the statement is about, as a short noun phrase of at most
+    /// What the claim is about, as a short noun phrase of at most
     /// [`SUBJECT_CHARS`] characters before redaction (format 14),
-    /// redacted; `null` beside a
-    /// `null` statement.
+    /// redacted; `null` beside a `null` context and statement.
     #[serde(deserialize_with = "nullable")]
     pub subject: Option<String>,
     /// A finding candidate's evidence pointer, copied to the approved
@@ -275,6 +327,20 @@ pub struct EntryCandidate {
 }
 
 impl EntryCandidate {
+    /// What scribe says the claim is: its context or, for an older claim,
+    /// its statement; `None` for a claim opened before statements.
+    #[must_use]
+    pub fn stated(&self) -> Option<&str> {
+        self.context.as_deref().or(self.statement.as_deref())
+    }
+
+    /// Whether it is an older claim: a one-line statement and no context
+    /// (2_design.md §15.3), shown labelled `older claim`.
+    #[must_use]
+    pub fn is_older_claim(&self) -> bool {
+        self.context.is_none() && self.statement.is_some()
+    }
+
     /// Provenance fields a pass derives from the host transcript.
     pub(crate) fn has_valid_provenance(&self) -> bool {
         self.cite
@@ -321,14 +387,17 @@ impl Proposal {
             stated_by: None,
         }
         .into_entry(self.older.clone());
-        if candidate.role == Speaker::User
-            && let Some(statement) = &candidate.statement
-        {
-            // Scribe's statement of Daniel's turn is the content; his
-            // verbatim words stay in `quote`, and the entry stays his
-            // (2_design.md §11.1).
+        // Scribe's context of the turn (or, for an older user claim, its
+        // statement) is the content; the verbatim words stay in `quote`,
+        // and the entry stays the speaker's (2_design.md §11.1, §15.3). An
+        // older assistant claim keeps the assistant's words as content.
+        let stated = match candidate.role {
+            Speaker::User => candidate.stated(),
+            Speaker::Assistant => candidate.context.as_deref(),
+        };
+        if let Some(stated) = stated {
             entry.quote = Some(candidate.quote.clone());
-            entry.content.clone_from(statement);
+            entry.content = stated.to_owned();
             entry.stated_by = Some(Author::session_pass());
         }
         if candidate.role == Speaker::Assistant {

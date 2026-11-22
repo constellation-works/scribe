@@ -5,6 +5,7 @@
         "tag": "preferences",
         "role": "user",
         "quote": "I prefer concise progress updates.",
+        "context": null,
         "statement": null,
         "subject": null,
         "evidence": null,

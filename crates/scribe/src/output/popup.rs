@@ -217,7 +217,8 @@ fn proposed(p: &ProposalPayload) -> String {
         ("supersedes", None) => format!("supersede {}", p.older),
         _ => format!("retire {} as stale", p.older),
     };
-    let reason = first_line(said(p));
+    let said = said(p);
+    let reason = first_line(&said);
     if reason.is_empty() {
         what
     } else {
@@ -225,14 +226,14 @@ fn proposed(p: &ProposalPayload) -> String {
     }
 }
 
-/// A proposal's words: scribe's statement for a candidate carrying one
-/// (2_design.md §11.1), else its reason, which for a pass candidate is
-/// the user's raw quote.
-fn said(p: &ProposalPayload) -> &str {
+/// A proposal's words: scribe's context for a candidate carrying one (an
+/// older claim's statement, labelled; 2_design.md §15.3), else its reason,
+/// which for a pass candidate is the user's raw quote.
+fn said(p: &ProposalPayload) -> String {
     p.candidate
         .as_ref()
-        .and_then(|c| c.statement.as_deref())
-        .unwrap_or(&p.reason)
+        .and_then(super::payload::claim_context)
+        .unwrap_or_else(|| p.reason.clone())
 }
 
 fn proposals(items: &[ProposalPayload], year: i32) -> Vec<Row> {
@@ -364,8 +365,8 @@ fn entry_preview(out: &mut dyn Write, e: &EntryPayload) -> io::Result<()> {
 
 fn proposal_preview(out: &mut dyn Write, p: &ProposalPayload) -> io::Result<()> {
     writeln!(out, "{}", proposed(p))?;
-    let stated = p.candidate.as_ref().is_some_and(|c| c.statement.is_some());
-    section(out, if stated { "Statement" } else { "Reason" }, said(p))?;
+    let stated = p.candidate.as_ref().is_some_and(|c| c.stated().is_some());
+    section(out, if stated { "Context" } else { "Reason" }, &said(p))?;
     writeln!(out, "\n## Details")?;
     detail(out, "id", &p.id)?;
     detail(out, "kind", p.kind)?;
@@ -373,8 +374,7 @@ fn proposal_preview(out: &mut dyn Write, p: &ProposalPayload) -> io::Result<()> 
     detail(out, "older", &p.older)?;
     if let Some(candidate) = &p.candidate {
         detail(out, "tag", candidate.tag.as_str())?;
-        if let Some(statement) = &candidate.statement {
-            detail(out, "statement", statement)?;
+        if candidate.stated().is_some() {
             detail(out, "subject", candidate.subject.as_deref().unwrap_or(""))?;
         }
         detail(out, "quote", &candidate.quote)?;

@@ -727,8 +727,11 @@ fn enter_and_ctrl_y_on_a_notice_row_do_nothing_and_its_preview_says_so() {
 /// Daniel's raw words behind the stated candidate.
 const STATED_QUOTE: &str = "yeah, for the popup just show the newest five, nothing older.";
 
+/// Scribe's context paragraph of the candidate (2_design.md §15.3).
+const CONTEXT: &str = "The user and the agent were trimming the scribe tmux popup. The user wants it to list only the five newest records.";
+
 /// Replace the fixture's proposals with one open pass candidate carrying
-/// scribe's statement beside Daniel's raw quote (format 14).
+/// scribe's context beside Daniel's raw quote (format 24).
 fn seed_stated_candidate(fx: &Fixture) {
     let path = fx.root().join("proposals.json");
     let cite = serde_json::json!({"session":"7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02",
@@ -739,7 +742,7 @@ fn seed_stated_candidate(fx: &Fixture) {
         "id":"p-6", "kind":"candidate", "older":"preferences-3", "newer":null,
         "candidate": {
             "tag":"preferences", "role":"user", "quote":quote,
-            "statement":"Daniel prefers that the scribe tmux popup lists only the five newest records.",
+            "context":CONTEXT, "statement":null,
             "subject":"the scribe tmux popup", "evidence":null, "cite":cite,
             "project":"constellation-works/scribe", "provider":"claude-code",
             "host":"dk-server-1", "admitted":null
@@ -751,14 +754,14 @@ fn seed_stated_candidate(fx: &Fixture) {
     });
     std::fs::write(
         &path,
-        serde_json::json!({"format":14, "proposals":[proposal]}).to_string(),
+        serde_json::json!({"format":24, "proposals":[proposal]}).to_string(),
     )
     .unwrap();
     support::make_private(&path);
 }
 
 #[test]
-fn a_stated_candidate_shows_scribes_statement_in_its_row_and_preview() {
+fn a_candidate_shows_scribes_context_in_its_row_and_preview() {
     let fx = Fixture::new();
     fx.seed();
     seed_stated_candidate(&fx);
@@ -766,8 +769,8 @@ fn a_stated_candidate_shows_scribes_statement_in_its_row_and_preview() {
     assert_eq!(proposals[0].1, "p-6");
     let shown = visible(&proposals[0].2);
     assert!(
-        shown.ends_with(
-            "record preferences-3 after approval: Daniel prefers that the scribe tmux popup lists only the five newest records."
+        shown.contains(
+            "record preferences-3 after approval: The user and the agent were trimming the scribe tmux popup."
         ),
         "{shown}"
     );
@@ -788,7 +791,7 @@ fn a_stated_candidate_shows_scribes_statement_in_its_row_and_preview() {
     let preview = read(&cap, "preview.txt");
     let head = preview.split("## Details").next().unwrap_or_default();
     assert!(
-        head.contains("## Statement\nDaniel prefers that the scribe tmux popup lists only the five newest records."),
+        head.contains(&format!("## Context\n{CONTEXT}")),
         "{preview}"
     );
     assert!(

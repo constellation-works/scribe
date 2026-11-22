@@ -719,6 +719,21 @@ impl From<&Proposal> for ProposalPayload {
     }
 }
 
+/// The label an older claim's statement carries where a context would be
+/// (2_design.md §15.3).
+pub(crate) const OLDER_CLAIM: &str = "older claim";
+
+/// What a claim says, for the outputs and the popup (2_design.md §15.3):
+/// its context paragraph, or an older claim's one-line statement labelled
+/// [`OLDER_CLAIM`]; `None` for a claim opened before statements.
+pub(crate) fn claim_context(candidate: &scribe_core::EntryCandidate) -> Option<String> {
+    match (&candidate.context, &candidate.statement) {
+        (Some(context), _) => Some(context.clone()),
+        (None, Some(statement)) => Some(format!("{OLDER_CLAIM}: {statement}")),
+        (None, None) => None,
+    }
+}
+
 /// One tag as every output mode sees it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct TagPayload {

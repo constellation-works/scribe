@@ -84,8 +84,8 @@ pub struct Claim {
     /// quoted span of an entry (its reason when it quotes none), on one
     /// line and cut at [`QUOTE_CHARS`].
     pub quote: String,
-    /// What it claims: a candidate's statement (its quote when it has
-    /// none), or a consistency proposal's reason.
+    /// What it claims: a candidate's context (an older claim's statement,
+    /// else its quote), or a consistency proposal's reason.
     pub statement: String,
     /// A candidate's subject, when it has one.
     pub subject: Option<String>,
@@ -147,7 +147,7 @@ impl Brief {
             }
         }
         out.push_str(
-            "Settle a claim by typing #scribe approve <id> or #scribe reject <id>; scribe proposal list --state open shows each in full.\n",
+            "Settle a claim by typing #scribe approve <id> or #scribe reject <id>; scribe proposal show <id> shows one in full.\n",
         );
         out
     }
@@ -216,7 +216,7 @@ fn claim(p: &Proposal) -> (TagName, Claim) {
                 id: p.id,
                 kind: p.kind,
                 quote: cut(&c.quote),
-                statement: c.statement.clone().unwrap_or_else(|| c.quote.clone()),
+                statement: c.stated().unwrap_or(&c.quote).to_owned(),
                 subject: c.subject.clone().filter(|s| !s.trim().is_empty()),
                 older: None,
                 newer: None,

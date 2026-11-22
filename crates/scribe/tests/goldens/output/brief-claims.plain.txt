@@ -10,4 +10,4 @@ More: scribe memory show · scribe session show <id> · scribe question ask
 
 ## Open claims
 - p-6 · 2026-11-15 00:06Z · preferences · "yeah, for the popup just show the newest five, nothing older."
-Settle a claim by typing #scribe approve <id> or #scribe reject <id>; scribe proposal list --state open shows each in full.
+Settle a claim by typing #scribe approve <id> or #scribe reject <id>; scribe proposal show <id> shows one in full.
