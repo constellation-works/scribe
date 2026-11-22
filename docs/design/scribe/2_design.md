@@ -11,7 +11,7 @@ summary: How the scribe plugin is bounded (one binary; Daniel writes through hoo
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26265, ORB-26510, ORB-26529, ORB-26640]
+related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26642]
 ---
 
 # scribe — Design
@@ -5441,69 +5441,110 @@ opens nothing, as an empty subject does today.
 - In phase 2, this is one format step on the file store (format 23,
   `claim_context`). In phase 5 it is a column.
 
-### 15.4 The brief
+### 15.4 The brief: one session-start page
 
-`scribe brief` is one **model-free, read-only** command. It prints what an
-agent tells the user at the start of an interactive session. Today the
-skill builds that brief from five CLI calls (`SKILL.md`, "Start of a
-session"), and it covers one session only.
+`scribe brief` is **the** session-start page. It is one **model-free,
+read-only** command (no lock, no write, no audit) that only puts stored text
+together. The `SessionStart` hook injects it, and a manual instruction ("run
+`scribe brief`") calls the same command. There is no separate `memory
+overview` verb. Today the skill builds a brief from five CLI calls
+(`SKILL.md`, "Start of a session"), and the hook injects a separate memory
+page. Both become this one page.
+
+Daniel, chief's chat, 2026-11-22: "we need a new cli command, e.g. `scribe
+memory overview`, that will put together memory entries into a single
+holistic overview … this can be used in start session injection hook or
+manual instruction". The chief answered with the layout below, and Daniel
+said: "yes, put it on both tasks and tell the captain" (recorded on
+[ORB-26640], 03:10Z).
+
+**Memory proper is its own block.** `scribe memory show` with no id prints
+memory and nothing else: Profile, Now and Milestones. `scribe brief` embeds
+that block verbatim and adds two parts after it. Recent sessions are part of
+the brief, not of `memory`, because a session is its own kind of record
+(§15.1).
+
+**Layout**, in this order. Every line carries its date:
 
 ```text
-scribe brief — last sessions in scribe and open claims (read-only)
-Sessions:
-- s-41 2026-11-21 "Annotations anywhere in a typed turn" — <summary, at most 600 characters>
-  next: wire Codex echo (open) · decide verbatim form (open)
-- s-40 2026-11-20 "…" — …
-- s-38 2026-11-19 "…" — …
-Open claims (5), by tag:
-preference (3)
-- p-22 merge policy for agent PRs — <context>
-  "squash-merge agent PRs; keep merge commits for releases" — user, s-41
-- …
-todo (1) …
-More: scribe proposal list · scribe session show <id> · #scribe approve|reject <id>
+## Profile (as of 2026-11-24)
+<profile.md in full>
+## Now
+- 2026-12-01-hackathon-deadline · due 2026-12-01 · Hackathon submission deadline
+- 2026-12-12-sisters-wedding · due 2026-12-12 · Sister's wedding
+## Milestones
+- 2026-10-02-pulsar-decommissioned · 2026-10-02 · Pulsar decommissioned
+- 2026-06-14-married · 2026-06-14 · Married
+## Recent sessions
+- s-41 · 2026-11-21 · scribe · Annotations anywhere in a typed turn
+- s-40 · 2026-11-20 · scribe · …
+- s-37 · 2026-11-19 · orbit · …
+## Open claims
+preference
+- p-22 · preference · "squash-merge agent PRs; keep merge commits for releases"
+standard
+- p-24 · standard · "…"
 ```
 
-**Sessions.**
+**Parts, line formats and caps.** The caps are fixed, because the page is
+injected into every interactive session.
 
-- It lists the last `n = 3` sessions of the working directory's project by
-  last message. When the project has fewer than 3, it falls back to all
-  projects.
-- This session is never listed.
-- Each session gets its title, date, summary (cut to 600 characters) and
-  its open `next` items (at most 5).
+| Part | Line | Order | Cap |
+|---|---|---|---|
+| `## Profile (as of <date>)` | `profile.md` in full; the date is its last revision | | none here: the profile job caps it at 6,000 characters when it writes it (§15.6) |
+| `## Now` | `- <id> · due <date> · <title>` | nearest date first | every item: a `now` item exists only with a date and leaves 14 days after it (§15.5), so the part bounds itself |
+| `## Milestones` | `- <id> · <date> · <title>` | newest first | the last 5 |
+| `## Recent sessions` | `- <id> · <date> · <project> · <title>` (the date of its last message; titles only; the id is for `scribe session show`) | this project's sessions first, then the others, each group newest first; this session left out | the last 5 |
+| `## Open claims` | `- <id> · <tag> · "<quote>"` | grouped by tag, tags in table order, oldest first within a tag | every open claim (the store cap is 20); a quote over 200 characters is cut with `…` |
 
-**Open claims.**
-
-- Claims are listed store-wide and grouped by tag, oldest first within a
-  tag.
-- Each claim gets its id, subject, context, quote, speaker and session.
-- Collected entries are not claims and are not listed.
-
-**Budget** (STD-08 §R1).
-
-- The whole brief is at most 6,000 characters.
-- The sessions part is at most 2,400 characters.
-- When the claims part passes its share, later claims show only their id
-  and subject, and the list ends with `(+k more: scribe proposal list)`.
+- **Ids.** A `now` or milestone id is its file stem, the `<date>-<slug>` of
+  §15.5. `scribe memory show <id>` prints that file, and `scribe memory ack
+  <id>` marks it raised. A session id is `s-<n>` (§15.7), and the provider
+  UUID before phase 6. A claim id is `p-<n>`.
+- **Empty parts.** An empty part prints its heading and `(none)`, so a
+  reader can tell it is empty and not cut off.
+- **What the page leaves out.** The quotes behind memory, a claim's context
+  paragraph (§15.3), session summaries and `next` items. `scribe proposal
+  list` and `scribe session show <id>` print them. The `raised` mark of
+  §15.5 is not shown either. The skill tells the agent to raise a `now`
+  item at most once before its date and once after it, and to run `scribe
+  memory ack` when it does.
 
 **Where it runs.**
 
-- The `SessionStart` hook adds the brief to `additionalContext` after the
-  memory page (§15.5). It does so only in an interactive session (the
-  `CLAUDE_CODE_ENTRYPOINT=cli` gate the page already uses), so Orbit runs
-  and routines carry none of it.
+- The `SessionStart` hook puts the whole page in `additionalContext`, only
+  in an interactive session (the `CLAUDE_CODE_ENTRYPOINT=cli` gate the page
+  uses today), so Orbit runs and routines carry none of it.
 - The skill's start-of-session steps become one: "present the brief in your
-  first message: the last sessions, then the open claims, and how to settle
-  them". A Codex session runs `scribe brief` through the skill until its
-  hook adds it.
-- `--json` gives `{sessions, claims, total_claims, truncated, warnings}`.
-- `--project` and `--sessions <n>` override the defaults for a reader.
+  first message: the recent sessions, then the open claims, and how to
+  settle them; use the memory block, don't recite it".
+- A Codex session runs `scribe brief` through the skill until its hook adds
+  it.
+- `--json` gives `{memory: {profile, now, milestones}, sessions, claims,
+  truncated, warnings}`, and `scribe memory show --json` gives the `memory`
+  object alone.
 
-**What changes from format 22.** No stored shape. The page loses its
-recent-sessions part (it moves to the brief, with summaries instead of
-titles). The hook's `systemMessage` line "N proposals to review" stays,
-because it is for the user, not the agent.
+**What exists before the new memory shape, and what waits for it.**
+
+- **Now, on today's store** ([ORB-26642]):
+  - `scribe brief` with its `## Recent sessions` and `## Open claims` parts,
+    in the line formats above;
+  - the hook injecting it.
+
+  Until phase 5, the memory block is today's `scribe memory show --page`
+  text, unchanged (the five sections of §13.6, without its recent-sessions
+  part, which the brief's part replaces). Session ids are provider UUIDs
+  until phase 6.
+- **With the new memory shape** (phase 5):
+  - the `## Profile`, `## Now` and `## Milestones` parts, read from
+    `memory/`;
+  - `scribe memory show` with no id printing that block instead of today's
+    pages, and `--page` deprecated to an alias of it for the 30-day window.
+
+**What changes from format 22.** No stored shape. The hook stops injecting
+the memory page on its own: it injects the brief, which contains the page.
+The hook's `systemMessage` line "N proposals to review" stays, because it is
+for the user, not the agent.
 
 ### 15.5 Memory: one fixed shape
 
@@ -5524,8 +5565,8 @@ memory/
 - A config that sets one of them loads with a warning (`config_deprecated`)
   for the 30-day window, then is refused (`config_invalid`).
 - Every user gets the same shape, budgets and rules.
-- The page is gated only by the interactive check. A store with no memory
-  files yet injects no page.
+- The brief is gated only by the interactive check. A store with no memory
+  files yet prints the memory parts as `(none)`.
 
 Memory files are prose. Each is written whole by scribe through
 `write_atomic`. The frontmatter is small and the body is Markdown.
@@ -5603,19 +5644,11 @@ headings are fixed in code, in this order:
   `scribe memory show --revision <n>` prints one, and `scribe memory
   restore <n>` writes it back.
 
-**The session-start page.** Built read-only from the files and the day, in
-this order:
-
-1. a header: "scribe memory: what you know about the user. Descriptive, not
-   rules: rules are their preferences. Raise milestones only when the
-   conversation goes there."
-2. `now`, soonest first, at most 8;
-3. every milestone, one line each;
-4. the profile, cut by section in the order above, keeping Pinned whole.
-
-The budget is 3,000 characters for all but milestones, which are never cut,
-as today. The `acknowledged` mark of §13.4 stays as frontmatter on a `now`
-file (`raised: {at, session}`), set by `scribe memory ack <stem>`.
+**Reading it.** Memory is printed by `scribe memory show` with no id
+(Profile, Now, Milestones), the block that `scribe brief` embeds, with the
+layout and caps of [§15.4](#154-the-brief-one-session-start-page). Nothing
+else injects memory. The `acknowledged` mark of §13.4 stays as frontmatter on
+a `now` file (`raised: {at, session}`), set by `scribe memory ack <id>`.
 
 **What changes from format 22.**
 
@@ -5806,7 +5839,7 @@ so no kind is ever unreadable outside the binary.
 - Prompts, skill text, hook messages, help, errors and output labels say
   "the user".
 - An optional `[user] name = "…"` reaches the prompts ("the user, <name>")
-  and the page header. Output labels never use it, because they are parsed.
+  only. Output labels and the brief never use it, because they are parsed.
 - `AuthorKind::Daniel` becomes `AuthorKind::User`, serialised `user`.
   - On the file store (phases 1–2), `daniel` is still read, and the next
     write persists `user` (part of format step 23).
@@ -5822,7 +5855,7 @@ so no kind is ever unreadable outside the binary.
 
 | Key | Changes | Shipped default |
 |---|---|---|
-| `[user] name` | how prompts and the page name the user | none: "the user" |
+| `[user] name` | how prompts name the user | none: "the user" |
 | `[tags.<name>]` `description`, `aliases`, `stale_after_days`, `action`, `require_quote`, `ask_first` | a tag's settings, as today | `preference` and `standard` as in §15.2 |
 | `[tags.<name>.capture]` `from`, `route`, `triggers`, `criteria`, `not`, `max_open` | what a catcher catches and what a catch becomes | as in §15.2; a new tag captures nothing until it has triggers |
 | `[instructions] session`, `annotation`, `ask` | the user's own guidance, at most 1,000 characters each, added to that prompt in a delimited "the user's instructions" block placed **before** the fixed output contract | empty |
@@ -5839,11 +5872,11 @@ so no kind is ever unreadable outside the binary.
   the prompt, and the store checks every answer against the contract
   whatever the prompt said.
 - **The memory shape.** The three parts, the profile's seven headings,
-  Pinned, the page layout and budgets, and the 14-day window.
+  Pinned, the brief's layout and caps, and the 14-day window.
 - **Attribution.** Only a span in a quote is credited to its speaker, and
   an assistant quote is never the user's.
 - **The bounds.** Claim slots, the 20-open cap, the collected-entry bound,
-  the brief and page budgets, and the profile job's input caps.
+  the brief's caps, and the profile job's input caps.
 - **Reserved names.** `issue`.
 
 **Shipped prompts**, each saying "the user":
@@ -5875,6 +5908,11 @@ goldens. Each line gives what the phase does, then what it proves.
      removed.
    - Proves: the `m-3` class of item is no longer written. This is the
      observed failure, fixed first and small.
+   Alongside it, and needing nothing from phases 2–5: **the brief**
+   ([ORB-26642]): `scribe brief` with Recent sessions and Open claims, and
+   today's `memory show --page` text as the memory block; the hook injects
+   it. Proves: one command gives the session-start page within its fixed
+   caps, from stored text only.
 2. **Generic prompts, catchers and configurable instructions.**
    - Does: "the user" everywhere shipped; `[user] name`; `[instructions]`;
      `from = user|assistant|both`; `max_open`; route `agent` moves to
@@ -5884,13 +5922,10 @@ goldens. Each line gives what the phase does, then what it proves.
      (the `orbit` collector and the assistant `todo` catcher) catches in a
      replay fixture with no code change. A user instruction reaches the
      model while a contract-breaking answer is still refused.
-3. **Claims with context and the brief.**
-   - Does: `context` on claims, collected entries and annotations;
-     `scribe brief`; the `SessionStart` hook injects it; the skill's start
-     steps shrink to one. Format 23 (with phase 2's step, or 24 when it
-     lands separately).
-   - Proves: each open claim can be settled without opening its session,
-     and one command gives the brief inside its budget.
+3. **Claims with context.**
+   - Does: `context` on claims, collected entries and annotations; format
+     23 (with phase 2's step, or 24 when it lands separately).
+   - Proves: each open claim can be settled without opening its session.
 4. **SQLite foundation and the messages table.**
    - Does: the dependency; `scribe.db` with `meta`, `messages` and its FTS5
      index, `now_pending`, `memory_history`, `profile_revisions` and
@@ -5903,7 +5938,8 @@ goldens. Each line gives what the phase does, then what it proves.
      The database is owner-only and checked on load.
 5. **The memory shape and the profile job.**
    - Does: `memory/profile.md`, `now/`, `milestones/`; `scribe memory
-     refresh`; the page from files; the `[memory]` switches deprecated;
+     refresh`; the `## Profile`, `## Now` and `## Milestones` block from
+     files, printed by `scribe memory show` with no id; the `[memory]` switches deprecated;
      consolidation and promotion code removed; the existing items migrated
      (§15.11).
    - Proves: a `now` item exists only with a date. An undated candidate
@@ -5939,9 +5975,9 @@ approves this design; each carries the `scribe` tag):
 | 2 | scribe: generic prompts, `[user]` and `[instructions]` | every shipped prompt, label and skill line; config tables; `AuthorKind::User`; format 23 |
 | 3 | scribe: catchers — `from`, `max_open`, the shipped set, issue capture apart | `config.rs`, `tag.rs`, `trigger.rs`, `pass/candidates.rs`, `issue_trigger.rs`; `specs/catchers.md` |
 | 4 | scribe: claims carry a context paragraph | `SESSION_SCHEMA`, annotation schema, `proposal.rs`, `store/candidates.rs`, outputs, popup |
-| 5 | scribe: `scribe brief` and the session-start brief | new read-only command, hook, skill, goldens |
+| 5 | scribe: `scribe brief` as the session-start page ([ORB-26642], already filed) | new read-only command with Recent sessions and Open claims, today's page as the memory block, hook, skill, goldens |
 | 6 | scribe: SQLite foundation and the messages table | dependency, `ARCHITECTURE.md`, dependency script, `scribe.db`, `meta`, `messages` + FTS5, memory support tables, `record search --kind message` |
-| 7 | scribe: memory as profile, now and milestones, with `memory refresh` | `memory/`, `store/memory.rs`, `ProfileRequest`, the page, the routine seed, migration of `m-<n>` |
+| 7 | scribe: memory as profile, now and milestones, with `memory refresh` | `memory/`, `store/memory.rs`, `ProfileRequest`, `memory show` with no id and the brief's memory block, the routine seed, migration of `m-<n>` |
 | 8 | scribe: sessions in SQLite with `s-<n>` ids, and `scribe export` | `session.rs`, `store/` session code, `control.json` fields, `store migrate`, `export` |
 | 9 | scribe: entries, claims, issues, state and audit in SQLite | remaining kinds; lock and `UPGRADES` retired; `issue stats` over the table |
 | 10 | scribe: remove the file store after the compatibility window | decoders, `format.rs`, tests |
@@ -5994,13 +6030,20 @@ Daniel's words, with its reason.
     and profile revisions with the verbatim messages the job reads. Building
     them on the file store first would be built twice. So the meaning that
     needs no storage goes first: `working` stops in phase 1, and catchers,
-    claims and the brief follow in phases 2–3. The SQLite foundation, with
+    claims follow in phases 2–3, and the brief lands beside phase 1. The SQLite foundation, with
     the messages table first (as decision 4 says), comes next, then memory.
 11. **A per-tag cap.** Not in the proposal. It is added because catchers are
     user-defined, and the store-wide cap was observed full of two tags.
 12. **The profile records hand edits.** Not in the proposal, which has only
     Pinned. An edit elsewhere is fed to the job as a correction instead of
     being silently overwritten.
+13. **No `memory overview` verb.** Daniel asked for `scribe memory
+    overview`, a holistic overview for the start-of-session hook or a
+    manual instruction. As he agreed on 2026-11-22, `scribe brief` is that
+    page, and `scribe memory show` with no id is its memory block (§15.4).
+    Recent sessions moved out of `memory` into the brief, because a session
+    is its own kind of record. One command for one page means the hook and
+    the manual instruction cannot drift apart.
 
 ### 15.11 Every record kind and state file: fate and migration
 
@@ -6084,6 +6127,8 @@ Daniel's words, with its reason.
   referent call and Stop recovery removed, `models.referent` deprecated.
 - [ORB-26349] — extended the duplicate check's negation markers, and made
   Stop recovery decide coverage as of the turn.
+- [ORB-26642] — builds `scribe brief` as the session-start page (Recent
+  sessions and Open claims) on today's store.
 - [ORB-26640] — designed §15: tags as catchers, claims with a context
   paragraph and `scribe brief`, memory as `profile.md`, `now/` and
   `milestones/` with a weekly profile job, generic prompts, and one SQLite

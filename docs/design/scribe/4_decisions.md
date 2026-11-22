@@ -3928,8 +3928,12 @@ The full design is in [2_design.md §15](./2_design.md#15-catchers-claims-with-c
 - `preference` and `standard` ship.
 - What scribe infers under a `propose` catcher is a claim. A claim carries
   a context paragraph and the verbatim quote.
-- `scribe brief` prints the last sessions and the open claims. The
-  `SessionStart` hook injects it.
+- `scribe brief` is the one session-start page: the memory block that
+  `scribe memory show` prints (Profile, Now, Milestones), then recent
+  sessions, then open claims, with fixed caps and no model call. The
+  `SessionStart` hook injects it, and a manual instruction runs it. There
+  is no `memory overview` verb (Daniel, 2026-11-22: "yes, put it on both
+  tasks").
 
 **Generic text.** Shipped text says "the user", with an optional `[user]
 name`. The output contract stays fixed in code.
