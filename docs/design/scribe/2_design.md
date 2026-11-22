@@ -5709,8 +5709,10 @@ a `now` file (`raised: {at, session}`), set by `scribe memory ack <id>`.
 
 `scribe memory refresh` rebuilds `profile.md` and settles passed `now`
 items. Any scheduler can call it: the seeded Orbit routine, cron, or a
-user's own launchd job. It has no dependency on Orbit, takes the store lock
-(phase 4: a write transaction), is audited, and is idempotent: a second run
+user's own launchd job. It has no dependency on Orbit, built in phase 5,
+when the database exists. It writes through a SQLite write transaction and
+the journal of §15.6, and holds the store lock as well until phase 7
+retires it. It is audited, and is idempotent: a second run
 with nothing new writes nothing.
 
 **Input** (bounded, STD-08 §R1):
@@ -5809,11 +5811,11 @@ every active session (the backlog rule above) and today's `profile` and
 **The dependency.** `rusqlite` with its `bundled` feature (SQLite compiled
 in, FTS5 enabled), in `scribe-core::store` only. `ARCHITECTURE.md` and
 `scripts/check-dependency-direction.sh` change in the same task, per the
-repo rule. Phase 3 confirms that `bundled` builds FTS5 on both CI operating
+repo rule. Phase 4 confirms that `bundled` builds FTS5 on both CI operating
 systems before any table depends on it.
 
 **Tables** (columns abridged; types and constraints go in `specs/store.md`
-with phase 3):
+with phase 4):
 
 | Table | Holds | Replaces |
 |---|---|---|
@@ -6030,9 +6032,10 @@ goldens. Each line gives what the phase does, then what it proves.
 4. **SQLite foundation and the messages table.**
    - Does: the dependency; `scribe.db` with `meta`, `messages` and its FTS5
      index, `now_pending`, `memory_history`, `profile_revisions` and
-     `profile_cursor`; the pass writes messages in the transaction that
-     advances its cursor (the session record is still a file); `record
-     search --kind message`.
+     `profile_cursor`; the pass commits a window's messages (upserted on
+     session and message id), then writes the session file with its cursor
+     as today, the file's cursor staying the truth until phase 6 (§15.7);
+     `record search --kind message`.
    - Proves: `bundled` builds with FTS5 on both CI operating systems. WAL
      and `busy_timeout` hold under concurrent hook processes in a harness
      (never synthetic load on a real host). Redaction happens on write.
