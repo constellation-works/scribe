@@ -3,10 +3,10 @@
 
 use super::color::{self, Role};
 use super::payload::{
-    AskPayload, EntryPayload, FoundPayload, HitPayload, HookJson, HookReply, HookSpecificJson,
-    OriginPayload, PassPayload, PassReport, PluginReply, ProposalPayload, Record, Records,
-    ScanReport, SessionPayload, TagPayload, TagShowPayload, TaskPayload, TranscriptPayload,
-    TreeRow, WarningPayload,
+    AskPayload, EntryPayload, FoundPayload, HandoffPayload, HitPayload, HookJson, HookReply,
+    HookSpecificJson, OriginPayload, PassPayload, PassReport, PluginReply, ProposalPayload, Record,
+    Records, ScanReport, SessionHandoffsPayload, SessionPayload, TagPayload, TagShowPayload,
+    TaskPayload, TranscriptPayload, TreeRow, WarningPayload,
 };
 use super::sink::{OutputMode, Sink};
 use super::table::{self, Align, Cell, Column};
@@ -370,6 +370,7 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
         }
         (OutputMode::Json, Record::Entry(entry)) => write_json(out, entry),
         (OutputMode::Json, Record::Session(session)) => write_json(out, session),
+        (OutputMode::Json, Record::SessionHandoffs(session)) => write_json(out, session),
         (OutputMode::Plain, Record::Entry(entry)) => {
             writeln!(out, "{}", plain_line(&entry_row(entry)))?;
             // Scribe's statement is the row's content; Daniel's own words
@@ -413,6 +414,16 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
             if let Some(at) = session.forgotten {
                 writeln!(out, "forgotten\t{}", timestamp(at))?;
             }
+            for handoff in session.handoffs.iter().flatten() {
+                writeln!(
+                    out,
+                    "handoff\t{}\t{}\t{}\t{}",
+                    handoff.id,
+                    author(&handoff.author),
+                    timestamp(handoff.created),
+                    one_line(&handoff.content)
+                )?;
+            }
             for segment in session.log.iter().flatten() {
                 writeln!(
                     out,
@@ -426,8 +437,33 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
             }
             Ok(())
         }
+        (OutputMode::Plain, Record::SessionHandoffs(session)) => {
+            let latest = session
+                .handoffs
+                .first()
+                .map_or_else(|| String::from("-"), |h| timestamp(h.created));
+            writeln!(
+                out,
+                "{}\thandoff-only\tno\t{}\t-\t{}\tno session record",
+                session.id, session.project, latest
+            )?;
+            for handoff in &session.handoffs {
+                writeln!(
+                    out,
+                    "handoff\t{}\t{}\t{}\t{}",
+                    handoff.id,
+                    author(&handoff.author),
+                    timestamp(handoff.created),
+                    one_line(&handoff.content)
+                )?;
+            }
+            Ok(())
+        }
         (OutputMode::Table, Record::Entry(entry)) => entry_detail(out, sink, entry),
         (OutputMode::Table, Record::Session(session)) => session_detail(out, sink, session),
+        (OutputMode::Table, Record::SessionHandoffs(session)) => {
+            session_handoffs_detail(out, session)
+        }
         (OutputMode::Json, Record::Transcript(transcript)) => write_json(out, transcript),
         (OutputMode::Plain, Record::Transcript(transcript)) => {
             writeln!(out, "{}", plain_line(&transcript_row(transcript)))?;
@@ -1124,6 +1160,9 @@ fn session_detail(out: &mut dyn Write, sink: &Sink, s: &SessionPayload) -> io::R
         .map(|t| format!("{}: \"{}\" (message {})", t.term, t.said, t.message))
         .collect();
     field(out, "terms", &joined_lines(&terms))?;
+    if let Some(handoffs) = s.handoffs.as_deref().filter(|h| !h.is_empty()) {
+        session_handoffs(out, handoffs)?;
+    }
     for (name, text) in [
         ("Summary", &s.summary),
         ("Goals", &s.goals),
@@ -1134,6 +1173,35 @@ fn session_detail(out: &mut dyn Write, sink: &Sink, s: &SessionPayload) -> io::R
         writeln!(out, "{}", or_dash(text))?;
     }
     session_log(out, s)
+}
+
+fn session_handoffs_detail(out: &mut dyn Write, s: &SessionHandoffsPayload) -> io::Result<()> {
+    field(out, "id", &s.id)?;
+    field(
+        out,
+        "record",
+        "none (handoff only; session was not switched on)",
+    )?;
+    field(out, "on", yes_no(s.on))?;
+    field(out, "project", &s.project)?;
+    session_handoffs(out, &s.handoffs)
+}
+
+fn session_handoffs(out: &mut dyn Write, handoffs: &[HandoffPayload]) -> io::Result<()> {
+    writeln!(out)?;
+    writeln!(out, "## Handoffs")?;
+    for h in handoffs {
+        writeln!(out)?;
+        writeln!(
+            out,
+            "### {} · {} · {}",
+            h.id,
+            author(&h.author),
+            timestamp(h.created)
+        )?;
+        writeln!(out, "{}", h.content.trim_end())?;
+    }
+    Ok(())
 }
 
 pub(super) fn session_log(out: &mut dyn Write, s: &SessionPayload) -> io::Result<()> {

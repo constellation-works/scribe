@@ -17,11 +17,12 @@
 //! proposals, and [`build`] only selects, orders and groups them;
 //! [`Brief::text`] renders the one text both the command and the hook print.
 
-use crate::entry::{EntryId, TagName};
+use crate::entry::{Entry, EntryId, EntryStatus, TagName};
+use crate::handoff;
 use crate::proposal::{Proposal, ProposalId, ProposalKind, ProposalState};
 use crate::record::Project;
 use crate::session::{SessionId, SessionRecord};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use time::{OffsetDateTime, UtcOffset};
 
 /// How many sessions a brief shows when the caller does not say.
@@ -56,11 +57,19 @@ pub struct BriefSession {
     pub id: SessionId,
     /// Its project.
     pub project: Project,
-    /// Its one-line title.
+    /// Its one-line title; empty when the session has a handoff and no
+    /// session record.
     pub title: String,
-    /// Its last recorded activity: the end of its last segment, else the
-    /// record's last update.
+    /// Its last recorded activity: the newest of its last segment end (or
+    /// record update) and its newest active handoff.
     pub at: OffsetDateTime,
+    /// Whether scribe holds a session record for this session; `false` when
+    /// it was not switched on and appears only through its handoff.
+    pub has_record: bool,
+    /// The newest active `handoff` entry for this session, when it has one.
+    pub handoff: Option<EntryId>,
+    /// How many active `handoff` entries this session has.
+    pub handoffs: usize,
 }
 
 /// The open claims under one tag.
@@ -122,13 +131,36 @@ impl Brief {
             out.push_str("(none)\n");
         }
         for s in &self.sessions {
-            out.push_str(&format!(
-                "- {} · {} · {} · {}\n",
-                s.id,
-                stamp(s.at),
-                s.project,
-                one_line(&s.title)
-            ));
+            match (s.has_record, &s.handoff) {
+                (true, None) => out.push_str(&format!(
+                    "- {} · {} · {} · {}\n",
+                    s.id,
+                    stamp(s.at),
+                    s.project,
+                    one_line(&s.title)
+                )),
+                (true, Some(handoff)) => out.push_str(&format!(
+                    "- {} · {} · {} · {} [handoff: {}]\n",
+                    s.id,
+                    stamp(s.at),
+                    s.project,
+                    one_line(&s.title),
+                    handoff
+                )),
+                (false, Some(handoff)) => out.push_str(&format!(
+                    "- {} · {} · {} · no session record [handoff: {}]\n",
+                    s.id,
+                    stamp(s.at),
+                    s.project,
+                    handoff
+                )),
+                (false, None) => out.push_str(&format!(
+                    "- {} · {} · {} · no session record\n",
+                    s.id,
+                    stamp(s.at),
+                    s.project
+                )),
+            }
         }
         out.push_str("\n## Open claims\n");
         if self.claims.is_empty() {
@@ -153,32 +185,73 @@ impl Brief {
     }
 }
 
-/// Build the brief from every session record and proposal.
+/// Build the brief from every session record, entry and proposal.
 ///
 /// Sessions: the active records other than `exclude` (the session being
-/// started), those in `project` first, each part newest activity first, at
-/// most `sessions`. Claims: every open proposal, in any project,
-/// under its candidate's tag or, for a consistency proposal, the tag of the
-/// entry it would change.
+/// started), plus any unrecorded session (never switched on, no record at
+/// all) that has an active `handoff` entry, those in `project` first, each
+/// part newest activity first, at most `sessions`. Claims: every open
+/// proposal, in any project, under its candidate's tag or, for a consistency
+/// proposal, the tag of the entry it would change.
 #[must_use]
 pub fn build(
     records: &[SessionRecord],
+    entries: &[Entry],
     proposals: &[Proposal],
     project: Option<&Project>,
     exclude: Option<&SessionId>,
     sessions: usize,
 ) -> Brief {
+    let mut by_session: BTreeMap<SessionId, Vec<&Entry>> = BTreeMap::new();
+    for entry in entries
+        .iter()
+        .filter(|e| e.status == EntryStatus::Active && e.tag.as_str() == handoff::HANDOFF_TAG)
+    {
+        for sid in handoff::session_ids(entry) {
+            by_session.entry(sid).or_default().push(entry);
+        }
+    }
+    for list in by_session.values_mut() {
+        list.sort_by(|a, b| b.created.cmp(&a.created).then_with(|| b.id.cmp(&a.id)));
+    }
+    let recorded_ids: BTreeSet<&SessionId> = records.iter().map(|r| &r.id).collect();
+
     let mut recent: Vec<BriefSession> = records
         .iter()
         .filter(|r| r.active)
         .filter(|r| exclude.is_none_or(|s| &r.id != s))
-        .map(|r| BriefSession {
-            id: r.id.clone(),
-            project: r.project.clone(),
-            title: r.title.clone(),
-            at: r.log.last().map_or(r.updated, |s| s.to),
+        .map(|r| {
+            let handoffs = by_session.get(&r.id);
+            let newest = handoffs.and_then(|v| v.first().copied());
+            let record_at = r.log.last().map_or(r.updated, |s| s.to);
+            BriefSession {
+                id: r.id.clone(),
+                project: r.project.clone(),
+                title: r.title.clone(),
+                at: newest.map_or(record_at, |h| record_at.max(h.created)),
+                has_record: true,
+                handoff: newest.map(|h| h.id.clone()),
+                handoffs: handoffs.map_or(0, Vec::len),
+            }
         })
         .collect();
+    for (sid, list) in &by_session {
+        if recorded_ids.contains(sid) || exclude.is_some_and(|e| e == sid) {
+            continue;
+        }
+        let Some(newest) = list.first() else {
+            continue;
+        };
+        recent.push(BriefSession {
+            id: sid.clone(),
+            project: newest.project.clone(),
+            title: String::new(),
+            at: newest.created,
+            has_record: false,
+            handoff: Some(newest.id.clone()),
+            handoffs: list.len(),
+        });
+    }
     let elsewhere = |s: &BriefSession| project.is_some_and(|p| &s.project != p);
     recent.sort_by(|a, b| {
         elsewhere(a)

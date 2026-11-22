@@ -11,7 +11,7 @@ summary: How the scribe plugin is bounded (one binary; Daniel writes through hoo
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26642]
+related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26642, ORB-26826]
 ---
 
 # scribe — Design
@@ -6273,6 +6273,160 @@ Daniel's words, with its reason.
   assistant turn; per-user memory sections or memory switches; a hosted or
   synced store; a configurable profile layout.
 
+## 16. Agent-written session handoffs
+
+Built in [ORB-26826] (Phase 1 of 2; scope `docs/design/agent-handoff/1_scope.md`).
+Daniel, 2026-11-22: *"for explicit session handoff requested by user, the
+current agent should provide a much better session handoff. So, I think it
+should be able to go either way, either by the agent or the scribe. we can
+have 2 session summaries of the same session, as they serve different
+purpose."*
+
+scribe's own session pass summarizes what happened in a switched-on session
+from the transcript, after the fact; its `title`, `summary`, `goals`,
+`next` and `log` do not change. When the user explicitly asks the agent in
+a session for a handoff, that agent writes one into scribe under its own
+`--author` beside scribe's record. Both summaries can coexist for the same
+session.
+
+### 16.1 The shipped `handoff` tag and write path
+
+- **Tag.** `handoff` ships as a default non-action memory tag (`action:
+  None`, `require_quote: true`, `stale_after_days: None`, no capture rules;
+  config may still override fields under `[tags.handoff]`, and
+  `require_quote` is accepted on non-action tags in `config.toml`). It is
+  not an action tag, so `ask` includes handoffs by default, `SessionStart`
+  never flags them as stuck unpicked work items, and `entry pickup` refuses
+  them (`not_action_tag`).
+- **Write path.** Agents write through the existing CLI verb:
+
+  ```sh
+  scribe entry add --tag handoff --author <name> --project <project> \
+    --related session:<id> --quote '<the user's request>' '<body...>'
+  ```
+
+  No new write verb or store format bump is needed: a handoff is a regular
+  agent-authored entry (`author.kind: agent`, `content_from: agent`,
+  `cite: null`) whose `related` carries `session:<id>` and whose `quote`
+  carries the user's request.
+- **Quote check.** Because `handoff` ships with `require_quote`, the store
+  refuses an entry with no `--quote` or no `--related session:<id>`
+  (`quote_required`), and the CLI refuses a quote that is not a verbatim
+  span (at least `verbatim::MIN_QUOTE_CHARS` = 8 characters after
+  normalization) of one of the user's typed turns in that session's
+  transcript (`quote_not_found`). Assistant turns, pasted blocks and
+  synthetic harness lines do not count.
+- **Works in off sessions.** `verify_quote` locates the transcript on disk
+  without requiring a session record or a `control.json` switch, and
+  `add_agent_entry` writes only the entry (and its audit line). Writing a
+  handoff for an off session creates no session record, writes no switch,
+  and never causes `session pass` to read that session.
+- **Multiple handoffs and removal.** Each handoff is a new entry
+  (`handoff-<n>`). `#scribe retire <id>` (or `entry retire`) hides one,
+  removing it from `session show` and `brief`.
+
+### 16.2 Fixed shape and size limit
+
+Checked on every `handoff` write (`entry add` and `entry update --content`)
+by `scribe_core::handoff::check`:
+
+- **Size limit.** At most **3,000 characters** (`handoff::MAX_CHARS =
+  3000`, about 40 lines at 75 columns) so a handoff fits on one screen.
+  Longer bodies are refused with code `handoff_too_long`, naming the
+  submitted character count and the 3,000-character limit.
+- **Fixed headings, in order.** The body must start with `## State` (no
+  preamble before the first heading) and contain exactly six level-2
+  Markdown headings in order (lines inside fenced code blocks are ignored):
+  1. `## State`
+  2. `## In flight`
+  3. `## Next`
+  4. `## Waiting on you`
+  5. `## Do not touch`
+  6. `## Pointers`
+
+  A missing heading, duplicate heading, unknown heading, preamble before
+  `## State`, or out-of-order headings is refused with code `handoff_shape`
+  naming the exact fault. Empty sections are allowed (the skill recommends
+  `(none)` when nothing applies).
+
+### 16.3 Reading handoffs: `session show`, `brief`, `ask`, `search` and the skill
+
+- **`scribe session show <id>`.** Lists active handoffs referencing
+  `session:<id>` newest first (by `created`, then highest entry id), each
+  with its id, author and timestamp, beside scribe's header (`## Handoffs`
+  before `## Summary` in table mode; `handoff\t<id>\t<author>\t<time>\t<line>`
+  in plain mode; `handoffs: [{id, author, created, project, quote, content}]`
+  in JSON). When `<id>` has active handoff(s) and no session record (an off
+  session), `session show <id>` resolves it (`resolve_session_or_handoff`)
+  and prints its handoffs with `has_record: false`, `on: false`, `due:
+  false` and empty `summary`/`goals`/`next` — never fabricating record
+  timestamps (STD-02 R16). Asking for `--segment <n>` on a handoff-only
+  session returns `segment_not_found` (0 segments).
+- **`scribe brief` and `SessionStart`.** `brief::build` reads active
+  `handoff` entries beside all session records:
+  - An active recorded session with a handoff is marked `[handoff: <id>]`
+    (naming its newest active handoff) and its activity timestamp is the
+    newer of its record activity and its newest handoff; JSON adds
+    `has_record: true`, `handoff: "<id>"` and `handoffs: <n>`.
+  - An off session with no session record at all (neither active nor
+    deactivated) appears in `## Recent sessions` only through its active
+    handoff, labelled `no session record [handoff: <id>]`, with
+    `has_record: false` in JSON. An inactive session record stays hidden.
+- **`ask` and `search`.** Both treat a `handoff` entry as an ordinary
+  agent note (`author.kind: agent`, weight 1.0, `whose`: `agent note
+  (<author>)`, `stated_quote: None`): always attributed as the agent's
+  account, never the user's words.
+- **The skill.** `skills/scribe/SKILL.md` teaches agents to write a handoff
+  only when explicitly asked (never unasked, never from routines, Orbit
+  runs or subagents), and at the start of a session to read the last
+  session's newest handoff first (`handoffs[0]`) and then scribe's
+  `summary`, `goals` and `next`, presenting **State**, **Next** and
+  **Waiting on you** with the handoff entry id.
+
+### 16.4 Isolation from the session pass
+
+The session pass never reads handoffs:
+
+- `handoff` has no capture rules, so the pass never opens claims or
+  collects entries under it.
+- `pass::candidate_exclusions` and `store::open_pass_candidates` skip
+  `handoff` entries, so stored handoff text never enters `SessionRequest`
+  and never masks a real claim from the user's turns.
+- `pass::capture_request` and `pass::admission` skip any assistant turn
+  shaped like a handoff (`handoff::is_handoff`), so even a user-configured
+  `from = "assistant"` or `from = "both"` catcher never fires on an echoed
+  handoff.
+- Memory extraction reads only `Speaker::User` turns and verifies every
+  quote against the user's own transcript words, so no memory item can come
+  from a handoff.
+
+### 16.5 Risks: what counts as a request
+
+Phase 1 gates writes on `require_quote`: a verbatim span of at least 8
+characters (`verbatim::MIN_QUOTE_CHARS`) in a single human-typed turn of
+that session's transcript. Two edge cases matter in practice:
+
+- **A request spread over two turns.** For example, the user says in turn 1
+  *"let's wrap up this work"* and the agent offers *"want me to write a
+  handoff?"*, to which the user replies in turn 2 *"yes"* or *"do it"*.
+  Because `verbatim::contains` refuses spans shorter than 8 characters and
+  never joins text across turns, *"yes"* or *"do it"* is refused
+  (`quote_not_found`). What counts: a single typed turn of at least 8
+  characters that asks for or confirms the handoff (e.g. turn 1 *"write a
+  handoff for this session"*, or turn 2 *"yes, write the handoff"*). When
+  the user replies with only *"yes"*, the agent must either quote an
+  earlier turn in the session that explicitly requested the handoff or ask
+  the user to confirm in a short phrase (e.g. *"yes, save a handoff"*).
+- **A request given by a button or UI action.** A client button or slash
+  shortcut that sends a synthetic harness message (`<command-name>`,
+  `<command-message>`, `<user-prompt-submit-hook>`, etc.) or invokes a tool
+  without a plain user turn is dropped by `transcript::user_turn`, so
+  `verify_quote` refuses it (`quote_not_found`). A button counts as a
+  request in Phase 1 only when the client records it in the transcript as a
+  plain user turn of at least 8 characters (not wrapped in a synthetic
+  harness tag). Spoken instructions and non-typed triggers are out of scope
+  for Phase 1 and deferred to Phase 2.
+
 ## Task References
 
 - [ORB-21747] — designed the standalone scribe plugin.
@@ -6322,6 +6476,10 @@ Daniel's words, with its reason.
   paragraph and `scribe brief`, memory as `profile.md`, `now/` and
   `milestones/` with a weekly profile job, generic prompts, and one SQLite
   store, with `issue` a tag rather than a record kind (proposed, not built).
+- [ORB-26826] — §16 (phase 1): agent-written session handoffs — shipped
+  `handoff` tag (`require_quote`, fixed six headings, 3,000-char limit),
+  `session show` handoffs (including off sessions with no record), `brief`
+  handoff markers, session-pass isolation and skill updates.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
 

@@ -39,6 +39,11 @@ pub fn capture_request(
     let mut turns = Vec::new();
     let mut rules: Vec<TagCriteria> = Vec::new();
     for message in messages {
+        // The pass never reads handoff text into claims, even under an
+        // assistant or both catcher (2_design.md §16).
+        if message.role == Speaker::Assistant && crate::handoff::is_handoff(&message.text) {
+            continue;
+        }
         for tag in tags.tags() {
             if !reads(tag, message.role) {
                 continue;
@@ -110,6 +115,9 @@ pub(crate) fn admission(
     speaker: Speaker,
     own: &str,
 ) -> Option<Admitted> {
+    if speaker == Speaker::Assistant && crate::handoff::is_handoff(own) {
+        return None;
+    }
     let def = tags.get(tag)?;
     if !reads(def, speaker) {
         return None;
@@ -667,12 +675,16 @@ pub fn candidate_exclusions(
             .collect::<Vec<_>>()
             .join(" "),
     );
-    let statements = entries.iter().map(|e| e.content.as_str()).chain(
-        proposals
-            .iter()
-            .filter_map(|p| p.candidate.as_ref())
-            .map(|c| c.stated().unwrap_or(&c.quote)),
-    );
+    let statements = entries
+        .iter()
+        .filter(|e| e.tag.as_str() != crate::handoff::HANDOFF_TAG)
+        .map(|e| e.content.as_str())
+        .chain(
+            proposals
+                .iter()
+                .filter_map(|p| p.candidate.as_ref())
+                .map(|c| c.stated().unwrap_or(&c.quote)),
+        );
     let mut ranked: Vec<_> = statements
         .map(|text| (words(text).intersection(&query).count(), text))
         .filter(|(score, _)| *score > 0)

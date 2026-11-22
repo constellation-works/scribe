@@ -63,29 +63,82 @@ right after.
    In Codex, or when it is missing, run
    `scribe brief --project <project> --json`. It holds the memory block
    (below), `## Recent sessions` (the last five, this project's first and
-   without this session's own, each a dated title with its id) and
-   `## Open claims` (every open claim grouped by tag, each dated with its
-   id `p-<n>` and the words it rests on).
+   without this session's own, each a dated title with its id; a session
+   with a handoff is marked `[handoff: <entry-id>]`, and a session that was
+   not switched on appears there only through its handoff as `no session
+   record`) and `## Open claims` (every open claim grouped by tag, each
+   dated with its id `p-<n>` and the words it rests on).
 4. For the last session in this project, run `scribe session show <id>
-   --json` and read `summary`, `goals` and `next`;
+   --json`. Read its newest handoff first (`handoffs[0]`, if present), then
+   scribe's `summary`, `goals` and `next` (a session that was not switched
+   on has `has_record: false` and holds only `handoffs`);
    `scribe session show <id> --segment <n> --json` gives a segment's context.
 
 Present the brief as a short message of its own:
 
 - The last sessions: when each was and what it was about; for the last one
-  in this project, what got done, with its citation `session:<id>`. With
-  none, say so in one line.
-- Every pending, unresolved or parked item from that session's summary and
-  `next`, one line each.
+  in this project, if it has a handoff, give its **State**, **Next** and
+  **Waiting on you**, naming the handoff entry's id (`handoff-<n>`) and
+  noting it is the previous agent's account; alongside it (or when there is
+  no handoff), summarize what got done from scribe's summary with its
+  citation `session:<id>`. With none, say so in one line.
+- Every pending, unresolved or parked item from that session's handoff and
+  scribe's summary and `next`, one line each.
 - Every open claim, grouped by tag, one line each with its id and the
   quoted words. Tell the human they settle one by typing
   `#scribe approve <id>` or `#scribe reject <id>`. With none, say so in one
   line.
 
-The record is a model-written summary from the time it was written, so an
-item may be done since. Say so, and check an item's current state (its
-task, PR or file) before acting on it or calling it open. Don't act on an
-item unless the human asks.
+Both an agent handoff and scribe's record are accounts from the time they
+were written, so an item may be done since. Say so, and check an item's
+current state (its task, PR or file) before acting on it or calling it open.
+Don't act on an item unless the human asks.
+
+## Session handoffs: writing one on request
+
+Write a handoff **only** when the human explicitly asks for one in this
+session — never unasked, never at the end of a session by default, and never
+from routines, scheduled or background jobs, Orbit runs or subagents.
+
+When they ask for a handoff, write it under your own `--author` with the
+shipped `handoff` tag, naming this session in `--related` and quoting their
+request word for word from one of their typed turns in this session:
+
+```sh
+scribe entry add --tag handoff --author <name> --project <project> \
+  --related session:<this session id> --quote '<their request>' \
+  '## State
+...
+## In flight
+...
+## Next
+...
+## Waiting on you
+...
+## Do not touch
+...
+## Pointers
+...'
+```
+
+- **Quote check.** `handoff` ships with `require_quote`: scribe refuses the
+  entry unless `--quote` is a verbatim span (at least 8 characters) of one
+  of the human's typed turns in that session's transcript.
+- **Works when the session is off.** Writing a handoff needs no session
+  record and does not switch the session on; no session pass reads an off
+  session, and even in an on session the pass never reads handoffs.
+- **Fixed headings and size limit.** The body must start with `## State`,
+  carry all six `## ` headings in exact order (`State`, `In flight`,
+  `Next`, `Waiting on you`, `Do not touch`, `Pointers`), and fit within
+  3,000 characters (one screen). Write `(none)` under a heading that has
+  nothing to report. Scribe refuses a missing heading, wrong order, extra
+  heading or oversized body (`handoff_shape`, `handoff_too_long`).
+- **Multiple handoffs and removal.** Each handoff is a new entry (`handoff-<n>`),
+  and `scribe session show <id>` lists them newest first beside scribe's
+  header. After writing one, echo its id and how to drop it:
+  `scribe: wrote <id> (drop: #scribe retire <id>)`.
+- **Attribution.** A handoff is an agent note, never the human's words;
+  `ask` and `search` treat it as your account.
 
 ## Memory: what scribe has noticed about the human
 

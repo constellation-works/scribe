@@ -1416,7 +1416,7 @@ fn stored_remind_and_finding_entries_stay_readable_searchable_and_asked_without_
         .iter()
         .map(|t| t["name"].as_str().unwrap())
         .collect();
-    assert_eq!(tag_names, ["preferences", "standard"]);
+    assert_eq!(tag_names, ["handoff", "preferences", "standard"]);
 
     // Seed entries under `finding` and `remind` via a temporary config, then
     // remove config.toml so neither tag is configured.

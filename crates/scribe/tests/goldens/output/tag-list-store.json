@@ -1,6 +1,18 @@
 {
   "tags": [
     {
+      "author": null,
+      "source": "config",
+      "name": "handoff",
+      "aliases": [],
+      "description": "An agent-written session handoff, recorded on the user's request.",
+      "stale_after_days": null,
+      "configured": true,
+      "entries": 0,
+      "action": null,
+      "route": null
+    },
+    {
       "author": {
         "kind": "agent",
         "name": "opus"
@@ -50,7 +62,7 @@
       "route": "propose"
     }
   ],
-  "total": 3,
+  "total": 4,
   "truncated": false,
   "warnings": []
 }

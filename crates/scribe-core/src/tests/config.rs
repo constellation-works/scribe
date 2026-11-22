@@ -43,7 +43,7 @@ env = ["GITHUB_TOKEN", "ANTHROPIC_API_KEY"]
     let names: Vec<&str> = config.tags.tags().iter().map(|t| t.name.as_str()).collect();
     assert_eq!(
         names,
-        ["preferences", "rituals", "standard"],
+        ["handoff", "preferences", "rituals", "standard"],
         "a [tags] table merges with the shipped tags"
     );
     assert_eq!(
@@ -230,8 +230,19 @@ fn action_tags_come_from_config_and_shipped_ones_can_be_retuned() {
     );
     assert!(action("notes").is_none());
 
-    let err = Config::parse("[tags.notes]\nrequire_quote = true\n").unwrap_err();
+    let err = Config::parse("[tags.notes]\nask_first = true\n").unwrap_err();
     assert!(err.to_string().contains("add action = true"), "{err}");
+
+    let quoted_note = Config::parse("[tags.notes]\nrequire_quote = true\n").unwrap();
+    let notes = quoted_note.tags.resolve("notes").unwrap();
+    assert!(notes.action.is_none());
+    assert!(notes.requires_quote());
+
+    let handoff = Config::parse("[tags.handoff]\nstale_after_days = 14\n").unwrap();
+    let handoff = handoff.tags.resolve("handoff").unwrap();
+    assert!(handoff.action.is_none());
+    assert!(handoff.requires_quote());
+    assert_eq!(handoff.stale_after_days, std::num::NonZeroU32::new(14));
 }
 
 #[test]
@@ -317,7 +328,7 @@ fn a_partial_preferences_table_keeps_shipped_aliases_description_and_stale_days(
 
     let remind = Config::parse("[tags.remind]\naction = true\n").unwrap();
     let names: Vec<&str> = remind.tags.tags().iter().map(|t| t.name.as_str()).collect();
-    assert_eq!(names, ["preferences", "remind", "standard"]);
+    assert_eq!(names, ["handoff", "preferences", "remind", "standard"]);
     assert_eq!(remind.tags.resolve("preferences"), Some(&shipped));
     assert!(remind.tag_warnings.is_empty());
     assert!(
@@ -419,7 +430,7 @@ fn a_shipped_word_yields_to_config_and_two_config_entries_do_not() {
     .unwrap();
     assert!(mac.tag_warnings.is_empty(), "{:?}", mac.tag_warnings);
     let names: Vec<&str> = mac.tags.tags().iter().map(|t| t.name.as_str()).collect();
-    assert_eq!(names, ["preferences", "remind", "standard"]);
+    assert_eq!(names, ["handoff", "preferences", "remind", "standard"]);
     let shipped = TagTable::shipped_preferences().unwrap();
     let prefs = mac.tags.resolve("preferences").unwrap();
     assert_eq!(prefs.aliases, shipped.aliases);

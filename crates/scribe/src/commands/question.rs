@@ -181,6 +181,7 @@ fn answer_with_config<M: Models, T: Tasks + ?Sized>(
         titles: &sessions.titles,
         numbers: &sessions.numbers,
         forgotten: &sessions.forgotten,
+        entries: &entries.listing.items,
     };
     Ok(AskPayload::new(&answer, &context, &skipped))
 }

@@ -341,6 +341,12 @@ pub enum WriteRefusal {
     /// `session_forgotten`: a write to a session `#scribe forget` erased
     /// (its record, or switching it on); a forgotten session takes none.
     SessionForgotten,
+    /// `handoff_shape`: a handoff body lacks one of the six fixed headings,
+    /// has them out of order, repeats or invents a heading, or has text
+    /// before `## State`.
+    HandoffShape,
+    /// `handoff_too_long`: a handoff body exceeds [`crate::handoff::MAX_CHARS`].
+    HandoffTooLong,
 }
 impl WriteRefusal {
     /// Stable machine-readable code.
@@ -387,6 +393,8 @@ impl WriteRefusal {
             Self::ExportTargetExists => "export_target_exists",
             Self::ExportNeedsMigrate => "export_needs_migrate",
             Self::SessionForgotten => "session_forgotten",
+            Self::HandoffShape => "handoff_shape",
+            Self::HandoffTooLong => "handoff_too_long",
         }
     }
 }

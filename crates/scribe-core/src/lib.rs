@@ -51,6 +51,7 @@ pub mod consistency;
 pub mod control;
 mod entry;
 mod error;
+pub mod handoff;
 pub mod instruction;
 pub mod memory;
 pub mod message;
@@ -76,6 +77,7 @@ pub use entry::{
     WindowTurn,
 };
 pub use error::{Error, Result, WriteRefusal};
+pub use handoff::{HANDOFF_TAG, HandoffError};
 pub use models::Models;
 pub use proposal::{
     Admitted, CONTEXT_CHARS, CONTEXT_SENTENCES, ClosedReason, EntryCandidate, Proposal,

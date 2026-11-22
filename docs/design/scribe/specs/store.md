@@ -896,8 +896,10 @@ instruction that is empty, longer than 4000 characters or holds a control
 character other than a newline or tab, are `config_invalid`. Neither key
 changes a stored record.
 
-The shipped tags are `preferences` (aliases `preference`, `pref`; stale after
-180 days) and the action tag `standard` (`require_quote`), both catchers
+The shipped tags are `handoff` (non-action, `require_quote`, no capture
+rules; 2_design.md §16), `preferences` (aliases `preference`, `pref`; stale
+after 180 days) and the action tag `standard` (`require_quote`); `preferences`
+and `standard` are catchers
 ([specs/catchers.md](catchers.md)); `idea` stopped shipping in phase 2. A
 `[tags]` table merges with that set: declaring a tag that is not shipped adds
 it, and declaring a shipped tag overrides only the fields it sets (`aliases`,
@@ -918,10 +920,11 @@ readable (`tag list`, `entry list` and `scribe search` still run). Omitting
 entries claim is `config_invalid`. An entry under a tag no config or
 `tags.json` names (such as a `decisions`, `remind` or `finding` entry from
 before that tag stopped shipping) stays listed, shown, searched, cited by
-`ask` and settled. `require_quote` or `ask_first` on a tag whose effective
+`ask` and settled. `ask_first` on a tag whose effective
 action status is false is `config_invalid`; that status comes from configured
 `action`, or from the shipped tag when `action` is unset (so `[tags.standard]`
-inherits `action = true`). `require_evidence = true` on a tag whose effective
+inherits `action = true`). `require_quote` is accepted on any tag (action or
+memory), and `[tags.handoff]` inherits `require_quote = true`. `require_evidence = true` on a tag whose effective
 action status is true is also `config_invalid`. A tag name must already be
 lowercase kebab-case, since it is a
 directory; aliases are matched case-insensitively. An unknown key, a zero
