@@ -1307,3 +1307,91 @@ fn handoff_update_cannot_move_attach_or_orphan_session_reference_but_allows_othe
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0]["id"], OFF_SESSION);
 }
+
+#[test]
+fn session_show_reports_actual_switch_state_for_switched_on_handoff_only_session_before_first_pass()
+{
+    let fx = Fixture::new();
+    let tr = Transcript::new(&fx, ON_SESSION);
+    let request = "Please save a handoff before our first pass runs.";
+    tr.write(&[("u-1", "user", request)]);
+
+    // Switch the session on, without running a session pass (no catalog record yet).
+    tr.prompt(&fx, "/scribe on");
+    assert!(
+        support::record_text(&fx.root(), ON_SESSION).is_none(),
+        "no catalog record exists before the first pass"
+    );
+
+    // Add an active handoff for the switched-on, unrecorded session.
+    let rel = format!("session:{ON_SESSION}");
+    let added = json_of(&fx.ok(&[
+        "entry",
+        "add",
+        "--tag",
+        "handoff",
+        "--author",
+        "opus",
+        "--project",
+        "scribe",
+        "--related",
+        &rel,
+        "--quote",
+        request,
+        &valid_handoff("Switched on, no pass yet.", "Run first pass or resume."),
+        "--json",
+    ]));
+    assert_eq!(added["id"], "handoff-1");
+
+    // `session show` must report the actual switch state while keeping `has_record: false` and the handoff.
+    let shown = json_of(&fx.ok(&["session", "show", ON_SESSION, "--json"]));
+    assert_eq!(shown["id"], ON_SESSION);
+    assert_eq!(shown["has_record"], false);
+    assert_eq!(shown["on"], true);
+    assert_eq!(shown["due"], true);
+    assert_eq!(shown["handoffs"].as_array().unwrap().len(), 1);
+    assert_eq!(shown["handoffs"][0]["id"], "handoff-1");
+
+    // Prefix and short id (`s-1`) resolve the same way.
+    let shown_short = json_of(&fx.ok(&["session", "show", "s-1", "--json"]));
+    assert_eq!(shown_short, shown);
+
+    // Table and plain rendering reflect `on: yes` / `due: yes` and avoid saying it was not switched on.
+    let table = text(
+        &fx.ok(&["session", "show", ON_SESSION, "--format", "table"])
+            .stdout,
+    );
+    assert!(table.contains("handoff-1"), "{table}");
+    assert!(
+        !table.contains("not switched on"),
+        "switched-on session must not claim it was not switched on:\n{table}"
+    );
+    assert!(
+        table
+            .lines()
+            .any(|l| l.starts_with("on ") && l.contains("yes")),
+        "table must report on=yes:\n{table}"
+    );
+    assert!(
+        table
+            .lines()
+            .any(|l| l.starts_with("due ") && l.contains("yes")),
+        "table must report due=yes:\n{table}"
+    );
+
+    let plain = text(&fx.ok(&["session", "show", ON_SESSION]).stdout);
+    let first_line = plain.lines().next().unwrap();
+    assert_eq!(
+        first_line.split('\t').nth(2),
+        Some("yes"),
+        "plain row due column must be yes:\n{plain}"
+    );
+
+    // Switching off before any pass still has no record, and now reports `on: false`, `due: false`.
+    tr.prompt(&fx, "/scribe off");
+    let shown_off = json_of(&fx.ok(&["session", "show", ON_SESSION, "--json"]));
+    assert_eq!(shown_off["has_record"], false);
+    assert_eq!(shown_off["on"], false);
+    assert_eq!(shown_off["due"], false);
+    assert_eq!(shown_off["handoffs"][0]["id"], "handoff-1");
+}

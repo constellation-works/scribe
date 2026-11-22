@@ -560,9 +560,9 @@ impl From<&Entry> for HandoffPayload {
     }
 }
 
-/// `session show <id>` for a session that was never switched on and has no
-/// session record, only agent-written handoffs (2_design.md §16). Never
-/// fabricates record timestamps.
+/// `session show <id>` for a session with no session record, only
+/// agent-written handoffs (2_design.md §16). Carries its switch state when
+/// switched on before its first pass, and never fabricates record timestamps.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct SessionHandoffsPayload {
     pub(crate) id: String,
@@ -577,7 +577,11 @@ pub(crate) struct SessionHandoffsPayload {
 }
 
 impl SessionHandoffsPayload {
-    pub(crate) fn new(id: &SessionId, handoffs: &[Entry]) -> Self {
+    pub(crate) fn new(
+        id: &SessionId,
+        control: Option<&SessionControl>,
+        handoffs: &[Entry],
+    ) -> Self {
         let project = handoffs
             .first()
             .map_or_else(|| String::from("global"), |e| e.project.to_string());
@@ -585,8 +589,8 @@ impl SessionHandoffsPayload {
             id: id.to_string(),
             has_record: false,
             project,
-            on: false,
-            due: false,
+            on: control.is_some_and(|c| c.on),
+            due: control.is_some_and(|c| c.due),
             summary: String::new(),
             goals: String::new(),
             next: String::new(),

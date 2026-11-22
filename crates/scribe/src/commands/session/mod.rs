@@ -363,9 +363,12 @@ fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
                     count: 0,
                 });
             }
+            let control = ctx.store().control()?;
             return Ok(Output::Show {
                 record: Record::SessionHandoffs(Box::new(SessionHandoffsPayload::new(
-                    &id, &handoffs,
+                    &id,
+                    control.get(&id),
+                    &handoffs,
                 ))),
             });
         }

@@ -1,6 +1,6 @@
 use crate::output::payload::{
-    AuthorPayload, CitePayload, ContentFromPayload, EntryPayload, Record, Records, TagPayload,
-    WarningPayload,
+    AuthorPayload, CitePayload, ContentFromPayload, EntryPayload, HandoffPayload, Record, Records,
+    SessionHandoffsPayload, TagPayload, WarningPayload,
 };
 use crate::output::render::{list, show};
 use crate::output::sink::{OutputMode, Sink};
@@ -202,4 +202,92 @@ fn a_single_record_list_is_still_a_table_and_counts_align_right() {
     assert!(lines[0].starts_with("NAME"));
     let entries_col = lines[0].find("ENTRIES").unwrap() + "ENTRIES".len();
     assert_eq!(&lines[1][entries_col - 1..entries_col], "7", "{text}");
+}
+
+#[test]
+fn handoff_only_session_renders_switch_state_in_every_mode() {
+    let at = datetime!(2026-11-22 10:00:00 UTC);
+    let mut payload = SessionHandoffsPayload {
+        id: String::from("s-on"),
+        has_record: false,
+        project: String::from("scribe"),
+        on: true,
+        due: true,
+        summary: String::new(),
+        goals: String::new(),
+        next: String::new(),
+        handoffs: vec![HandoffPayload {
+            id: String::from("handoff-1"),
+            author: AuthorPayload {
+                kind: "agent",
+                name: String::from("opus"),
+            },
+            created: at,
+            project: String::from("scribe"),
+            quote: Some(String::from("write a handoff")),
+            content: String::from("## State\nReady."),
+        }],
+    };
+
+    let mut json_buf = Vec::new();
+    show(
+        &mut json_buf,
+        &sink(OutputMode::Json),
+        &Record::SessionHandoffs(Box::new(payload.clone())),
+    )
+    .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&json_buf).unwrap();
+    assert_eq!(json["has_record"], false);
+    assert_eq!(json["on"], true);
+    assert_eq!(json["due"], true);
+
+    let mut plain_buf = Vec::new();
+    show(
+        &mut plain_buf,
+        &sink(OutputMode::Plain),
+        &Record::SessionHandoffs(Box::new(payload.clone())),
+    )
+    .unwrap();
+    let plain = String::from_utf8(plain_buf).unwrap();
+    assert!(
+        plain.starts_with("s-on\thandoff-only\tyes\tscribe\t-\t2026-11-22T10:00:00Z\t"),
+        "{plain}"
+    );
+
+    let mut table_buf = Vec::new();
+    show(
+        &mut table_buf,
+        &sink(OutputMode::Table),
+        &Record::SessionHandoffs(Box::new(payload.clone())),
+    )
+    .unwrap();
+    let table = String::from_utf8(table_buf).unwrap();
+    assert!(table.contains("no catalog record yet"), "{table}");
+    assert!(
+        table
+            .lines()
+            .any(|l| l.starts_with("on ") && l.contains("yes")),
+        "{table}"
+    );
+    assert!(
+        table
+            .lines()
+            .any(|l| l.starts_with("due ") && l.contains("yes")),
+        "{table}"
+    );
+
+    payload.on = false;
+    payload.due = false;
+    let mut off_buf = Vec::new();
+    show(
+        &mut off_buf,
+        &sink(OutputMode::Table),
+        &Record::SessionHandoffs(Box::new(payload)),
+    )
+    .unwrap();
+    let off_table = String::from_utf8(off_buf).unwrap();
+    assert!(
+        off_table.contains("session was not switched on"),
+        "{off_table}"
+    );
 }

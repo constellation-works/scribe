@@ -220,11 +220,13 @@ author, created, project, quote, content}`; a `session list` row has no
 prints `## Handoffs` (each as `### <id> · <author> · <created>` followed by
 its body) before `## Summary`, and plain prints one
 `handoff\t<id>\t<author>\t<created>\t<content>` line per handoff before the
-segments. For an off session with active handoff(s) and no session record,
-`session show <id>` prints `{id, has_record: false, project, on: false,
-due: false, summary: "", goals: "", next: "", handoffs}` in JSON, `record:
-none (handoff only; session was not switched on)` with `## Handoffs` in
-table mode, and `<id>\thandoff-only\tno\t<project>\t-\t<created>\tno
+segments. For a session with active handoff(s) and no session record,
+`session show <id>` prints `{id, has_record: false, project, on, due,
+summary: "", goals: "", next: "", handoffs}` in JSON (with `on` and `due`
+from its switch, or `false` when it has none), `record: none (handoff
+only; session was not switched on)` (or `none (handoff only; no catalog
+record yet)` when switched on/due), `on`, `due` and `## Handoffs` in
+table mode, and `<id>\thandoff-only\t<yes|no>\t<project>\t-\t<created>\tno
 session record` followed by the `handoff\t...` lines in plain mode. `outcome` stays and
 is `""` for every format-4 record; what it held is in `log`. `--segment
 <n>` and `session show session:<id>#<n>` print the record with `log`

@@ -6377,12 +6377,12 @@ by `scribe_core::handoff::check`:
   with its id, author and timestamp, beside scribe's header (`## Handoffs`
   before `## Summary` in table mode; `handoff\t<id>\t<author>\t<time>\t<line>`
   in plain mode; `handoffs: [{id, author, created, project, quote, content}]`
-  in JSON). When `<id>` has active handoff(s) and no session record (an off
-  session), `session show <id>` resolves it (`resolve_session_or_handoff`)
-  and prints its handoffs with `has_record: false`, `on: false`, `due:
-  false` and empty `summary`/`goals`/`next` — never fabricating record
-  timestamps (STD-02 R16). Asking for `--segment <n>` on a handoff-only
-  session returns `segment_not_found` (0 segments).
+  in JSON). When `<id>` has active handoff(s) and no session record,
+  `session show <id>` resolves it (`resolve_session_or_handoff`) and
+  prints its handoffs with `has_record: false`, `on` and `due` from its
+  switch (`false` when it has none), and empty `summary`/`goals`/`next` —
+  never fabricating record timestamps (STD-02 R16). Asking for `--segment
+  <n>` on a handoff-only session returns `segment_not_found` (0 segments).
 - **`scribe brief` and `SessionStart`.** `brief::build` reads active
   `handoff` entries beside all session records:
   - An active recorded session with a handoff is marked `[handoff: <id>]`
