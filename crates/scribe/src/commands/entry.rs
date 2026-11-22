@@ -72,7 +72,7 @@ pub(crate) enum EntryCommand {
     Add(AddArgs),
     /// Update an entry's content or metadata
     ///
-    /// Updates content or metadata; the user's entries allow metadata only.
+    /// Updates content or metadata; user entries and approved claims allow metadata only.
     #[command(after_help = "Examples:\n  scribe entry update <id> --author opus --add-topic api")]
     Update(UpdateArgs),
     /// Retire an entry with a reason

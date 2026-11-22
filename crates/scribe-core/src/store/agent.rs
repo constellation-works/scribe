@@ -552,6 +552,12 @@ impl Store {
                         "The user's content changes only through #scribe",
                     ));
                 }
+                if entry.content_from != ContentFrom::Agent {
+                    return Err(refusal(
+                        WriteRefusal::NotAgentNote,
+                        "only direct agent notes can change content; approved claims allow metadata updates only (retire this entry and add a new note instead)",
+                    ));
+                }
                 required(&content)?;
                 check_handoff(&entry.tag, &content)?;
                 if entry.status == EntryStatus::Forgotten {

@@ -354,6 +354,10 @@ pub enum WriteRefusal {
     /// `needs_redaction`: a spoken-instruction quote contains text redaction
     /// would alter, so storing it verbatim would leak or change the quote.
     NeedsRedaction,
+    /// `not_agent_note`: `entry update --content` targeted an entry whose
+    /// content did not come from a direct agent write (such as an approved
+    /// assistant claim).
+    NotAgentNote,
 }
 impl WriteRefusal {
     /// Stable machine-readable code.
@@ -404,6 +408,7 @@ impl WriteRefusal {
             Self::HandoffTooLong => "handoff_too_long",
             Self::NotMemoryTag => "not_memory_tag",
             Self::NeedsRedaction => "needs_redaction",
+            Self::NotAgentNote => "not_agent_note",
         }
     }
 }

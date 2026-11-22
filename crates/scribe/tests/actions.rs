@@ -1371,3 +1371,80 @@ fn spoken_instruction_accepts_claude_desktop_human_turn() {
     assert_eq!(added["quote"], quote);
     assert_eq!(added["content"], statement);
 }
+
+#[test]
+fn spoken_instruction_entry_remains_editable_for_content_and_metadata() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let quote = "always keep progress updates short during long runs";
+    claude.write(&[(
+        "u-1",
+        "user",
+        "Add that to my preferences: always keep progress updates short during long runs.",
+    )]);
+    let added = json_of(&fx.ok(&[
+        "entry",
+        "add",
+        "--tag",
+        "preferences",
+        "--author",
+        "opus",
+        "--project",
+        "scribe",
+        "--related",
+        &format!("session:{SESSION}"),
+        "--quote",
+        quote,
+        "--spoken",
+        "The user prefers short progress updates.",
+        "--json",
+    ]));
+    assert_eq!(added["id"], "preferences-1");
+    assert_eq!(added["stated_by"], json!({"kind": "agent", "name": "opus"}));
+
+    // Another agent can rewrite the statement; `stated_by` and `updated_by`
+    // move to the editing agent while `author` and `quote` stay.
+    let edited = json_of(&fx.ok(&[
+        "entry",
+        "update",
+        "preferences-1",
+        "--author",
+        "sonnet",
+        "--content",
+        "The user prefers concise progress updates during long runs.",
+        "--json",
+    ]));
+    assert_eq!(edited["author"], json!({"kind": "agent", "name": "opus"}));
+    assert_eq!(
+        edited["stated_by"],
+        json!({"kind": "agent", "name": "sonnet"})
+    );
+    assert_eq!(
+        edited["updated_by"],
+        json!({"kind": "agent", "name": "sonnet"})
+    );
+    assert_eq!(edited["quote"], quote);
+
+    // A later metadata-only update by a third agent keeps the record readable
+    // and preserves `stated_by`.
+    let tagged = json_of(&fx.ok(&[
+        "entry",
+        "update",
+        "preferences-1",
+        "--author",
+        "haiku",
+        "--add-topic",
+        "communication",
+        "--json",
+    ]));
+    assert_eq!(
+        tagged["stated_by"],
+        json!({"kind": "agent", "name": "sonnet"})
+    );
+    assert_eq!(
+        tagged["updated_by"],
+        json!({"kind": "agent", "name": "haiku"})
+    );
+    assert_eq!(tagged["topics"], json!(["communication"]));
+    assert_eq!(entry(&fx, "preferences-1", &[]), tagged);
+}

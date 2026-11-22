@@ -1947,7 +1947,7 @@ pub(super) fn checked_entry(
             // the assistant's words in `quote` until it is forgotten.
             let spoken_stated = entry.stated_by.as_ref().is_some_and(|by| {
                 by.kind == crate::AuthorKind::Agent
-                    && (by == &entry.author || entry.updated_by.as_ref() == Some(by))
+                    && (by == &entry.author || entry.updated_by.is_some())
             }) && entry.evidence.is_none()
                 && match entry.status {
                     crate::EntryStatus::Forgotten => entry.quote.is_none(),

@@ -6069,3 +6069,128 @@ fn approved_assistant_claim_shows_statement_and_assistant_words_in_ask_and_searc
     assert!(!ans.contains("agent note"), "{ans}");
     assert!(!ans.contains("The user:"), "{ans}");
 }
+
+#[test]
+fn approved_assistant_claim_refuses_content_update_and_stays_readable() {
+    let s = Setup::new();
+    s.config(
+        "[tags.notes]\n\
+         description = \"Noteworthy assistant observations.\"\n\n\
+         [tags.notes.capture]\n\
+         from = \"assistant\"\n\
+         route = \"propose\"\n\
+         triggers = [\"root cause\"]\n",
+    );
+    let quote = "The root cause is that parallel drains share a single auth token.";
+    let context = "The user and the agent investigated repeated drain stalls. The agent reported that parallel drains share one auth token and collide on refresh.";
+    s.write(
+        ON,
+        &[
+            line("user", "u-1", "Why does the drain stall?"),
+            line("assistant", "a-1", quote),
+        ],
+    );
+    let mut pass_body = answer();
+    pass_body["candidates"] = json!([{
+        "quote": quote,
+        "message": "a-1",
+        "tag": "notes",
+        "context": context,
+        "subject": "shared drain auth token"
+    }]);
+    s.answer(&pass_body);
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+
+    let open = proposals(&s);
+    let id = open["proposals"][0]["id"].as_str().unwrap().to_owned();
+    type_settlement(&s, &format!("#scribe approve {id}"));
+
+    let before: Value =
+        serde_json::from_slice(&s.fx.ok(&["entry", "show", "notes-1", "--json"]).stdout).unwrap();
+
+    // Content edits (even alongside metadata flags) must be refused before
+    // changing the approved assistant-context entry, keeping it readable.
+    let out = s.fx.run(&[
+        "entry",
+        "update",
+        "notes-1",
+        "--author",
+        "opus",
+        "--content",
+        "Rewritten by opus.",
+        "--add-topic",
+        "drains",
+        "--json",
+    ]);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
+    let err: Value = serde_json::from_slice(&out.stderr).unwrap();
+    assert_eq!(err["code"], "not_agent_note", "{err}");
+
+    let after_refusal: Value =
+        serde_json::from_slice(&s.fx.ok(&["entry", "show", "notes-1", "--json"]).stdout).unwrap();
+    assert_eq!(after_refusal, before);
+
+    // Metadata-only updates remain allowed and keep `stated_by` intact.
+    let patched: Value = serde_json::from_slice(
+        &s.fx
+            .ok(&[
+                "entry",
+                "update",
+                "notes-1",
+                "--author",
+                "opus",
+                "--add-topic",
+                "drains",
+                "--add-related",
+                "repo:scribe",
+                "--json",
+            ])
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(patched["content"], context);
+    assert_eq!(
+        patched["stated_by"],
+        json!({"kind": "scribe", "name": "session-pass"})
+    );
+    assert_eq!(patched["topics"], json!(["drains"]));
+    assert_eq!(patched["related"], json!(["repo:scribe"]));
+    let reread: Value =
+        serde_json::from_slice(&s.fx.ok(&["entry", "show", "notes-1", "--json"]).stdout).unwrap();
+    assert_eq!(reread["content"], context);
+    assert_eq!(
+        reread["stated_by"],
+        json!({"kind": "scribe", "name": "session-pass"})
+    );
+    assert_eq!(reread["topics"], json!(["drains"]));
+    assert_eq!(reread["related"], json!(["repo:scribe"]));
+    assert_eq!(reread["admitted"], before["admitted"]);
+}
+
+#[test]
+fn older_approved_assistant_finding_refuses_content_update() {
+    let quote = "Measured: the reviewer mix alone predicts a 7-point first-pass gap.";
+    let s = setup_stored_assistant_finding_candidate(quote);
+    type_settlement(&s, "#scribe approve p-1");
+    let before: Value =
+        serde_json::from_slice(&s.fx.ok(&["entry", "show", "finding-1", "--json"]).stdout).unwrap();
+
+    let out = s.fx.run(&[
+        "entry",
+        "update",
+        "finding-1",
+        "--author",
+        "opus",
+        "--content",
+        "Rewritten finding.",
+        "--json",
+    ]);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
+    let err: Value = serde_json::from_slice(&out.stderr).unwrap();
+    assert_eq!(err["code"], "not_agent_note", "{err}");
+
+    let after: Value =
+        serde_json::from_slice(&s.fx.ok(&["entry", "show", "finding-1", "--json"]).stdout).unwrap();
+    assert_eq!(after, before);
+}
