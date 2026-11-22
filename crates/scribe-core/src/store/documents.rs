@@ -848,10 +848,10 @@ impl Store {
         tx.commit()
     }
 
-    /// Drop `audit.jsonl*` lines matching `item`'s digests (plus any extra
-    /// pre-move proposal texts read from `proposals.json*`), rewrite or drop
-    /// matching proposals in `proposals.json*`, and delete `item.entry`'s
-    /// moved-aside entry file across every `pre-sqlite-*` directory.
+    /// Drop `audit.jsonl*` lines matching `item`'s digests (plus extra
+    /// pre-move proposal texts and the moved entry's archived text), rewrite
+    /// or drop matching proposals in `proposals.json*`, and delete
+    /// `item.entry`'s moved-aside entry file across every `pre-sqlite-*` dir.
     ///
     /// Runs under `locks/archive-forget.lock` (`_lock` witness) so concurrent
     /// forgets cannot restore one another's erased text (STD-03 R6). Cleaning
@@ -885,6 +885,26 @@ impl Store {
                     notify_forget_moved(ForgetMovedStep::AfterProposalsRead);
                     collect_proposal_texts(id, &proposals, &mut extra_texts);
                     decoded_proposals.push((path, proposals));
+                }
+            }
+            for name in names.iter().filter(|n| is_moved_variant(n, ENTRIES_DIR)) {
+                let entries_dir = moved.join(name);
+                if !fsio::inspect_subdir(&entries_dir)? {
+                    continue;
+                }
+                let tag_dir = entries_dir.join(id.tag().as_str());
+                if !fsio::inspect_subdir(&tag_dir)? {
+                    continue;
+                }
+                let path = tag_dir.join(&entry_file);
+                if fsio::inspect_file(&path)? {
+                    let archived = format::decode_entry(
+                        &path,
+                        &fsio::read(&path)?,
+                        &id.to_string(),
+                        id.tag().as_str(),
+                    )?;
+                    extra_texts.extend(erased_texts(&archived, &[]));
                 }
             }
             extra_texts.sort();

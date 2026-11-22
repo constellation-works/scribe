@@ -754,6 +754,58 @@ fn forget_removes_entry_and_claim_words_from_moved_files() {
 }
 
 #[test]
+fn forget_erases_archived_audit_text_from_pre_edit_entry_body() {
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+    let old_body = "entry body before migration edit";
+    let new_body = "entry body after migration edit";
+    let original = entry("preferences-1", 0, old_body);
+    let rel = "entries/preferences/preferences-1.md";
+    put(
+        &root,
+        rel,
+        &format::encode_entry(&root.join(rel), &original).unwrap(),
+    );
+    let audit = format!(
+        "{AUDIT_FIXTURE}\n{{\"format\":5,\"at\":\"2026-10-22T12:00:00Z\",\"command\":\"hook stop\",\"status\":\"success\",\"target\":\"session:s-1\",\"error_code\":null,\"author\":null,\"detail\":\"{old_body}\",\"duration_ms\":1}}\n"
+    );
+    put(&root, "audit.jsonl", audit.as_bytes());
+
+    let store = Store::open(&root);
+    let moved = store.migrate_store(NOW).unwrap();
+    assert_eq!(moved.moved_to.as_deref(), Some("pre-sqlite-2026-11-02"));
+
+    let mut edited = store.entry(&"preferences-1".parse().unwrap()).unwrap();
+    edited.content = new_body.to_owned();
+    edited.said = format!("#scribe {}: {new_body}", edited.tag);
+    store.write(|| store.write_entry(&edited, false)).unwrap();
+
+    let instructed = Instructed {
+        session: "s-1".parse().unwrap(),
+        message: String::from("m-2"),
+        at: NOW,
+        quote: String::from("forget preferences-1 for good"),
+        prompt_sha256: "b".repeat(64),
+        line: 1,
+    };
+    let (forgotten, changed) = store
+        .forget_entry("preferences-1", &instructed, "opus".parse().unwrap(), NOW)
+        .unwrap();
+    assert!(changed);
+    assert_eq!(forgotten.status, EntryStatus::Forgotten);
+
+    let moved_audit = fs::read_to_string(root.join("pre-sqlite-2026-11-02/audit.jsonl")).unwrap();
+    assert!(
+        !moved_audit.contains(old_body),
+        "the pre-edit body remained in archived audit text"
+    );
+    assert!(
+        !on_disk(&root, old_body),
+        "the pre-edit body remained on disk"
+    );
+}
+
+#[test]
 fn forget_keeps_structural_audit_lines_that_share_a_common_word() {
     let dir = private_tempdir();
     let root = dir.path().join("store");
