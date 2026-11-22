@@ -581,19 +581,17 @@ fn audit_lines(fx: &Fixture, command: &str) -> Vec<Value> {
         .collect()
 }
 
-/// Every file under the store root, and every exported record, whose bytes
-/// hold `needle`. The user's originals in `pre-sqlite-*/` stay by design and
-/// are not counted.
+/// Every file under the store root (`pre-sqlite-*/` included), and every
+/// exported record, whose bytes hold `needle`.
 fn files_holding(fx: &Fixture, needle: &str) -> Vec<PathBuf> {
     let dir = tempfile::tempdir().unwrap();
     let target = dir.path().join("export");
     scribe_core::Store::open(fx.root())
         .export(&target, scribe_core::ExportFormat::Markdown)
         .unwrap();
-    let kept = snapshot(&fx.root())
+    snapshot(&fx.root())
         .into_iter()
-        .filter(|(path, _, _)| !path.to_string_lossy().contains("pre-sqlite-"));
-    kept.chain(snapshot(dir.path()))
+        .chain(snapshot(dir.path()))
         .filter(|(_, bytes, _)| {
             bytes
                 .windows(needle.len())

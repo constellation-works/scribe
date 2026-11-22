@@ -2,15 +2,17 @@
 //! (2_design.md §15.7, §15.11, phase 7): the move, `export`, and a write
 //! and its audit line as one transaction.
 
-use super::{SESSION_BODY, private_tempdir, session_text};
+use super::{SESSION_BODY, on_disk, private_tempdir, session_text};
 use crate::annotation::{MarkRecord, MarkState};
 use crate::consistency::{Draft, ReapplyReport, Settle, Settled};
-use crate::entry::{Cite, Entry, EntryStatus};
+use crate::entry::{Cite, ContentFrom, Entry, EntryStatus};
 use crate::error::Error;
-use crate::proposal::{Proposal, ProposalKind, ProposalState, Quote};
+use crate::instruction::Instructed;
+use crate::proposal::{EntryCandidate, Proposal, ProposalKind, ProposalState, Quote};
+use crate::record::{Label, Project};
 use crate::store::audit::{self, AuditEvent, AuditStatus};
 use crate::store::{ExportFormat, Store, db, format};
-use crate::{Author, StoreTag};
+use crate::{Author, Instruction, Speaker, StoreTag};
 use std::fs;
 use std::path::Path;
 use time::OffsetDateTime;
@@ -377,5 +379,307 @@ fn an_approval_and_its_audit_line_commit_together() {
         store.reapply_approved(NOW).unwrap(),
         ReapplyReport::default(),
         "nothing to repair"
+    );
+}
+
+fn candidate_proposal(
+    id: &str,
+    entry_id: &str,
+    state: ProposalState,
+    quote: &str,
+    context: &str,
+    reason: &str,
+    inst_quote: Option<&str>,
+) -> Proposal {
+    let inst = inst_quote.map(|q| Instruction {
+        session: "s-9".parse().unwrap(),
+        message: String::from("m-9"),
+        at: NOW,
+        quote: Some(q.to_owned()),
+    });
+    let approved = state == ProposalState::Approved;
+    Proposal {
+        id: id.parse().unwrap(),
+        kind: ProposalKind::Candidate,
+        older: entry_id.parse().unwrap(),
+        newer: None,
+        reason: reason.to_owned(),
+        quotes: Vec::new(),
+        state,
+        opened_at: T0,
+        settled_at: if approved || state == ProposalState::Rejected {
+            Some(T0)
+        } else {
+            None
+        },
+        settled_by: inst.as_ref().map(|_| cite()),
+        author: Author::session_pass(),
+        updated_by: None,
+        settled_author: inst
+            .as_ref()
+            .map(|_| Author::agent("opus".parse().unwrap())),
+        closed_reason: None,
+        instruction: inst,
+        candidate: Some(EntryCandidate {
+            tag: "preferences".parse().unwrap(),
+            role: Speaker::User,
+            quote: quote.to_owned(),
+            context: Some(context.to_owned()),
+            statement: None,
+            subject: Some(format!("subject of {entry_id}")),
+            evidence: None,
+            cite: cite(),
+            project: Project::sanitized("scribe"),
+            provider: Label::sanitized("claude-code", "claude-code"),
+            host: Label::sanitized("host", "host"),
+            admitted: None,
+        }),
+    }
+}
+
+#[test]
+fn forget_removes_entry_and_claim_words_from_moved_files() {
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+
+    let entry_quote = "Tuesday release train verbatim quote";
+    let entry_context = "Tuesday release train context paragraph";
+    let cand_reason = "candidate reason for preferences-1";
+    let inst_quote = "approve p-1, Tuesday release train instruction";
+    let supers_reason = "Thursday replaces Tuesday in release train";
+    let kept_rejected_quote = "rejected claim quote stays for suppression";
+    let kept_open_quote = "open claim quote stays untouched";
+    let kept_supers_reason = "unrelated supersedes reason stays";
+
+    let mut e1 = entry("preferences-1", 0, entry_context);
+    e1.content_from = ContentFrom::Message {
+        role: Speaker::User,
+        message: String::from("m-9"),
+        at: T0,
+    };
+    e1.said = String::from("scribe proposal settle p-1 --approve --author opus");
+    e1.quote = Some(entry_quote.to_owned());
+    e1.stated_by = Some(Author::session_pass());
+    e1.approved_by = Some(Author::agent("opus".parse().unwrap()));
+    e1.instruction = Some(Instruction {
+        session: "s-9".parse().unwrap(),
+        message: String::from("m-9"),
+        at: NOW,
+        quote: Some(inst_quote.to_owned()),
+    });
+    let e2 = entry("preferences-2", 1, "the release train leaves on Thursdays");
+
+    for e in [&e1, &e2] {
+        let rel = format!("entries/preferences/{}.md", e.id);
+        put(
+            &root,
+            &rel,
+            &format::encode_entry(&root.join(&rel), e).unwrap(),
+        );
+    }
+
+    let p1 = candidate_proposal(
+        "p-1",
+        "preferences-1",
+        ProposalState::Approved,
+        entry_quote,
+        entry_context,
+        cand_reason,
+        Some(inst_quote),
+    );
+    let mut p2 = supersedes();
+    p2.id = "p-2".parse().unwrap();
+    p2.reason = supers_reason.to_owned();
+    let p3 = candidate_proposal(
+        "p-3",
+        "preferences-3",
+        ProposalState::Rejected,
+        kept_rejected_quote,
+        "rejected claim context stays",
+        "rejected claim reason stays",
+        None,
+    );
+    let p4 = candidate_proposal(
+        "p-4",
+        "preferences-4",
+        ProposalState::Open,
+        kept_open_quote,
+        "open claim context stays",
+        "open claim reason stays",
+        None,
+    );
+    let p5 = Draft {
+        kind: ProposalKind::Supersedes,
+        older: "preferences-2".parse().unwrap(),
+        newer: Some("preferences-5".parse().unwrap()),
+        reason: kept_supers_reason.to_owned(),
+        quotes: vec![Quote {
+            entry: "preferences-2".parse().unwrap(),
+            text: String::from("the release train leaves on Thursdays"),
+        }],
+    }
+    .into_proposal("p-5".parse().unwrap(), T0);
+
+    let proposals_bytes =
+        format::encode_proposals(&root.join("proposals.json"), &[p1, p2, p3, p4, p5]).unwrap();
+    put(&root, "proposals.json", &proposals_bytes);
+
+    let audit_with_text = format!(
+        "{AUDIT_FIXTURE}\n{}\n{}\n",
+        r#"{"format":5,"at":"2026-10-20T12:00:00Z","command":"hook stop","status":"success","target":"preferences-1","detail":"Tuesday release train context paragraph","duration_ms":1}"#,
+        r#"{"format":5,"at":"2026-10-20T12:01:00Z","command":"hook stop","status":"success","target":"p-1","detail":"Tuesday release train verbatim quote","duration_ms":1}"#,
+    );
+    put(&root, "audit.jsonl", audit_with_text.as_bytes());
+    // Also place a second pre-sqlite-* directory to verify all set-aside dirs are cleaned.
+    put(
+        &root,
+        "pre-sqlite-2026-10-15/entries.2/preferences/preferences-1.md",
+        &format::encode_entry(&root.join("preferences-1.md"), &e1).unwrap(),
+    );
+    put(
+        &root,
+        "pre-sqlite-2026-10-15/proposals.json.2",
+        &proposals_bytes,
+    );
+
+    let store = Store::open(&root);
+    let moved = store.migrate_store(NOW).unwrap();
+    assert_eq!(moved.moved_to.as_deref(), Some("pre-sqlite-2026-11-02"));
+
+    let instructed = Instructed {
+        session: "s-9".parse().unwrap(),
+        message: String::from("m-10"),
+        at: NOW,
+        quote: String::from("forget preferences-1 for good"),
+        prompt_sha256: "b".repeat(64),
+        line: 1,
+    };
+    let (forgotten, changed) = store
+        .forget_entry("preferences-1", &instructed, "opus".parse().unwrap(), NOW)
+        .unwrap();
+    assert!(changed);
+    assert_eq!(forgotten.status, EntryStatus::Forgotten);
+
+    // Entry files for preferences-1 are deleted across every pre-sqlite-* dir,
+    // while unrelated entries stay.
+    assert!(
+        !root
+            .join("pre-sqlite-2026-11-02/entries/preferences/preferences-1.md")
+            .exists()
+    );
+    assert!(
+        !root
+            .join("pre-sqlite-2026-10-15/entries.2/preferences/preferences-1.md")
+            .exists()
+    );
+    assert!(
+        root.join("pre-sqlite-2026-11-02/entries/preferences/preferences-2.md")
+            .is_file()
+    );
+
+    // None of the forgotten entry's content, quote, or claim text remains anywhere on disk.
+    for gone in [
+        entry_quote,
+        entry_context,
+        cand_reason,
+        inst_quote,
+        supers_reason,
+        "the release train leaves on Tuesdays",
+    ] {
+        assert!(!on_disk(&root, gone), "{gone:?} remained on disk");
+    }
+
+    // Proposals in pre-sqlite-*/proposals.json match scribe.db: matching claims
+    // rewritten identically, unrelated claims kept intact.
+    let db_claims = store.proposals().unwrap();
+    for rel in [
+        "pre-sqlite-2026-11-02/proposals.json",
+        "pre-sqlite-2026-10-15/proposals.json.2",
+    ] {
+        let moved_claims =
+            format::decode_proposals(&root.join(rel), &fs::read(root.join(rel)).unwrap()).unwrap();
+        assert_eq!(moved_claims, db_claims, "{rel}");
+    }
+    for kept in [
+        kept_rejected_quote,
+        kept_open_quote,
+        kept_supers_reason,
+        "the release train leaves on Thursdays",
+    ] {
+        assert!(on_disk(&root, kept), "{kept:?} should stay");
+    }
+
+    // Audit lines carrying the entry's text were dropped; normal lines (including
+    // target: preferences-1 and the torn line) stay.
+    let moved_audit = fs::read_to_string(root.join("pre-sqlite-2026-11-02/audit.jsonl")).unwrap();
+    assert!(moved_audit.contains(r#""target":"preferences-1""#));
+    assert!(moved_audit.contains(r#"{"format":5,"at":"2026-11-21T09:"#));
+    assert!(!moved_audit.contains(entry_context));
+    assert!(!moved_audit.contains(entry_quote));
+}
+
+#[test]
+fn settle_forget_cleans_moved_files_and_drops_pre_move_open_candidate() {
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+    let open_quote = "pre-move open candidate quote";
+    let open_context = "pre-move open candidate context";
+    let kept_quote = "other rejected claim quote";
+
+    let open = candidate_proposal(
+        "p-1",
+        "preferences-1",
+        ProposalState::Open,
+        open_quote,
+        open_context,
+        "open candidate reason",
+        None,
+    );
+    let kept = candidate_proposal(
+        "p-2",
+        "preferences-2",
+        ProposalState::Rejected,
+        kept_quote,
+        "other rejected context",
+        "other rejected reason",
+        None,
+    );
+    put(
+        &root,
+        "proposals.json",
+        &format::encode_proposals(&root.join("proposals.json"), &[open, kept]).unwrap(),
+    );
+
+    let store = Store::open(&root);
+    store.migrate_store(NOW).unwrap();
+
+    // Approve p-1 after the move so preferences-1 exists in scribe.db while
+    // pre-sqlite-*/proposals.json still holds p-1 as open, then forget via #scribe forget.
+    let settled = store
+        .settle(&Settle::Approve("p-1".parse().unwrap()), &cite(), NOW)
+        .unwrap();
+    assert!(matches!(settled, Settled::Recorded { .. }), "{settled:?}");
+    assert!(on_disk(&root, open_quote));
+
+    let forgot = store
+        .settle(
+            &Settle::Forget("preferences-1".parse().unwrap()),
+            &cite(),
+            NOW,
+        )
+        .unwrap();
+    assert_eq!(forgot, Settled::Forgotten("preferences-1".parse().unwrap()));
+
+    assert!(!on_disk(&root, open_quote));
+    assert!(!on_disk(&root, open_context));
+
+    let moved_path = root.join("pre-sqlite-2026-11-02/proposals.json");
+    let moved_claims =
+        format::decode_proposals(&moved_path, &fs::read(&moved_path).unwrap()).unwrap();
+    assert_eq!(moved_claims.len(), 1);
+    assert_eq!(moved_claims[0].id.to_string(), "p-2");
+    assert_eq!(
+        moved_claims[0].candidate.as_ref().unwrap().quote,
+        kept_quote
     );
 }

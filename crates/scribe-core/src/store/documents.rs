@@ -617,6 +617,239 @@ impl Store {
         out.audit_lines = events.len();
         Ok(())
     }
+
+    /// Delete the stored messages cited by `entry` and schedule cleanup of
+    /// its moved-aside `pre-sqlite-*` files once the transaction commits.
+    pub(super) fn forget_entry_residue(&self, entry: &Entry, proposals: &[Proposal]) -> Result<()> {
+        // The cited turns' stored messages go first: they hold the words
+        // the forget removes, and deleting them again is a no-op.
+        self.forget_cited_messages(entry, proposals)?;
+        let texts = erased_texts(entry, proposals);
+        let id = entry.id.clone();
+        let queued = self.after(|after| {
+            after.forget_entries.push(super::write::ForgetEntryCleanup {
+                id: id.clone(),
+                texts: texts.clone(),
+            });
+        });
+        if !queued {
+            self.forget_moved_entry(&id, &texts)?;
+        }
+        Ok(())
+    }
+
+    /// Delete `id`'s moved-aside entry file, rewrite or drop matching
+    /// proposals in `proposals.json*`, and drop `audit.jsonl*` lines carrying
+    /// `texts` across every `pre-sqlite-*` directory.
+    pub(super) fn forget_moved_entry(&self, id: &EntryId, texts: &[String]) -> Result<()> {
+        if !self.root_exists()? {
+            return Ok(());
+        }
+        let entry_file = format!("{id}{RECORD_EXT}");
+        for moved_name in fsio::list_dir(&self.root)? {
+            if !moved_name.starts_with(super::sessions::MOVED_PREFIX) {
+                continue;
+            }
+            let moved = self.root.join(&moved_name);
+            if !fsio::inspect_subdir(&moved)? {
+                continue;
+            }
+            let mut all_texts = texts.to_vec();
+            let names = fsio::list_dir(&moved)?;
+            for name in names.iter().filter(|n| is_moved_variant(n, ENTRIES_DIR)) {
+                let entries_dir = moved.join(name);
+                if !fsio::inspect_subdir(&entries_dir)? {
+                    continue;
+                }
+                let tag_dir = entries_dir.join(id.tag().as_str());
+                if fsio::inspect_subdir(&tag_dir)? {
+                    fsio::remove_private(&tag_dir.join(&entry_file))?;
+                }
+            }
+            for name in names.iter().filter(|n| is_moved_variant(n, PROPOSALS_FILE)) {
+                let path = moved.join(name);
+                if fsio::inspect_file(&path)? {
+                    forget_moved_proposals(id, &path, &mut all_texts)?;
+                }
+            }
+            all_texts.sort();
+            all_texts.dedup();
+            for name in names.iter().filter(|n| is_moved_variant(n, AUDIT_FILE)) {
+                let path = moved.join(name);
+                if fsio::inspect_file(&path)? {
+                    forget_moved_audit(&path, &all_texts)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn is_moved_variant(name: &str, base: &str) -> bool {
+    name == base
+        || name
+            .strip_prefix(base)
+            .and_then(|rest| rest.strip_prefix('.'))
+            .is_some_and(|suffix| !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()))
+}
+
+fn forget_moved_proposals(id: &EntryId, path: &Path, texts: &mut Vec<String>) -> Result<()> {
+    let mut proposals = format::decode_proposals(path, &fsio::read(path)?)?;
+    collect_proposal_texts(id, &proposals, texts);
+    let mut changed = crate::consistency::forget_proposals(id, &mut proposals);
+    // An open pre-move candidate approved later cannot keep an empty quote
+    // under `check_proposals`; drop it so `proposals.json` stays valid.
+    let before_len = proposals.len();
+    proposals.retain(|p| {
+        !(p.kind == crate::ProposalKind::Candidate
+            && p.state != crate::ProposalState::Approved
+            && p.older == *id)
+    });
+    if proposals.len() != before_len {
+        changed = true;
+    }
+    if changed {
+        let encoded = format::encode_proposals(path, &proposals)?;
+        fsio::write_atomic(path, &encoded)?;
+    }
+    Ok(())
+}
+
+fn forget_moved_audit(path: &Path, texts: &[String]) -> Result<()> {
+    if texts.is_empty() {
+        return Ok(());
+    }
+    let bytes = fsio::read(path)?;
+    let mut kept = Vec::with_capacity(bytes.len());
+    let mut dropped = false;
+    for raw_with_nl in bytes.split_inclusive(|&b| b == b'\n') {
+        let raw = raw_with_nl.strip_suffix(b"\n").unwrap_or(raw_with_nl);
+        let raw = raw.strip_suffix(b"\r").unwrap_or(raw);
+        if !raw.iter().all(u8::is_ascii_whitespace) && audit_line_carries_text(raw, texts) {
+            dropped = true;
+            continue;
+        }
+        kept.extend_from_slice(raw_with_nl);
+    }
+    if dropped {
+        fsio::write_atomic(path, &kept)?;
+    }
+    Ok(())
+}
+
+const AUDIT_STANDARD_KEYS: &[&str] = &[
+    "format",
+    "at",
+    "command",
+    "status",
+    "target",
+    "error_code",
+    "author",
+    "instruction_session",
+    "instruction_message",
+    "issue",
+    "duration_ms",
+];
+
+fn audit_line_carries_text(raw: &[u8], texts: &[String]) -> bool {
+    match serde_json::from_slice::<serde_json::Value>(raw) {
+        Ok(serde_json::Value::Object(map)) => map.iter().any(|(k, v)| {
+            let strict = AUDIT_STANDARD_KEYS.contains(&k.as_str());
+            value_carries_text(v, texts, strict)
+        }),
+        Ok(other) => value_carries_text(&other, texts, false),
+        Err(_) => {
+            let line = String::from_utf8_lossy(raw);
+            texts.iter().any(|t| line.contains(t.as_str()))
+        }
+    }
+}
+
+fn value_carries_text(value: &serde_json::Value, texts: &[String], strict: bool) -> bool {
+    match value {
+        serde_json::Value::String(s) => texts.iter().any(|t| {
+            if strict {
+                s == t || (t.contains(char::is_whitespace) && s.contains(t.as_str()))
+            } else {
+                s.contains(t.as_str())
+            }
+        }),
+        serde_json::Value::Array(items) => {
+            items.iter().any(|v| value_carries_text(v, texts, strict))
+        }
+        serde_json::Value::Object(map) => {
+            map.values().any(|v| value_carries_text(v, texts, strict))
+        }
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {
+            false
+        }
+    }
+}
+
+fn push_non_empty(out: &mut Vec<String>, text: &str) {
+    if !text.trim().is_empty() {
+        out.push(text.to_owned());
+    }
+}
+
+fn collect_proposal_texts(id: &EntryId, proposals: &[Proposal], out: &mut Vec<String>) {
+    for p in proposals {
+        if p.older == *id || p.newer.as_ref() == Some(id) {
+            push_non_empty(out, &p.reason);
+            if let Some(c) = &p.candidate {
+                push_non_empty(out, &c.quote);
+                for opt in [
+                    c.context.as_deref(),
+                    c.statement.as_deref(),
+                    c.subject.as_deref(),
+                    c.evidence.as_deref(),
+                    c.admitted.as_ref().map(|a| a.matched.as_str()),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    push_non_empty(out, opt);
+                }
+            }
+            if let Some(quote) = p.instruction.as_ref().and_then(|i| i.quote.as_deref()) {
+                push_non_empty(out, quote);
+            }
+        }
+        for q in p.quotes.iter().filter(|q| q.entry == *id) {
+            push_non_empty(out, &q.text);
+        }
+    }
+}
+
+fn erased_texts(entry: &Entry, proposals: &[Proposal]) -> Vec<String> {
+    let mut out = Vec::new();
+    push_non_empty(&mut out, &entry.content);
+    push_non_empty(&mut out, &entry.said);
+    for opt in [
+        entry.quote.as_deref(),
+        entry.evidence.as_deref(),
+        entry.retirement_reason.as_deref(),
+        entry.instruction.as_ref().and_then(|i| i.quote.as_deref()),
+        entry
+            .removal_instruction
+            .as_ref()
+            .and_then(|i| i.quote.as_deref()),
+        entry.outcome.as_ref().and_then(|o| o.reason.as_deref()),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        push_non_empty(&mut out, opt);
+    }
+    if let Some(window) = &entry.window {
+        for turn in &window.turns {
+            push_non_empty(&mut out, &turn.text);
+        }
+    }
+    collect_proposal_texts(&entry.id, proposals, &mut out);
+    out.sort();
+    out.dedup();
+    out
 }
 
 fn is_empty(value: &serde_json::Value) -> bool {

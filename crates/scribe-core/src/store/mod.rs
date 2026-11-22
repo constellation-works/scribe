@@ -28,7 +28,7 @@
 //! <root>/audit-spool/<time>-<pid>-<n>.json  audit lines a busy database could not take yet
 //! <root>/control.json, proposals.json,      empty format stamps, so an older
 //!   tags.json, marks.json, pickups.json       build refuses the store
-//! <root>/pre-sqlite-<date>/                 the files the move took in, never deleted
+//! <root>/pre-sqlite-<date>/                 the files the move took in, kept except on forget
 //! <root>/pre-issue-<date>/<id>.md           issue records moved aside once converted
 //! <root>/locks/                             per-session locks (Codex catalog, rebuild)
 //! ```
@@ -1092,8 +1092,9 @@ impl Store {
                 && let Some(entry) = before_entries.iter().find(|e| &e.id == id)
             {
                 // The stored messages first (2_design.md §15.7): they hold the
-                // words the forget removes, and deleting them again is a no-op.
-                self.forget_cited_messages(entry, &before_proposals)?;
+                // words the forget removes, and deleting them again is a no-op;
+                // moved `pre-sqlite-*` copies follow the commit.
+                self.forget_entry_residue(entry, &before_proposals)?;
             }
             if proposals != before_proposals {
                 self.write_proposals(&proposals)?;

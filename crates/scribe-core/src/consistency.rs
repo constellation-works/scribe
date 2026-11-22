@@ -713,7 +713,16 @@ pub fn forget(
     // Forgetting keeps the time a retired or superseded entry left
     // `active`; an active one leaves it now.
     entry.inactive_since.get_or_insert(now);
+    forget_proposals(id, proposals);
+    Settled::Forgotten(id.clone())
+}
+
+/// Blank every proposal quote, candidate payload, instruction quote and reason
+/// about `id`. Returns whether any proposal changed.
+pub(crate) fn forget_proposals(id: &EntryId, proposals: &mut [Proposal]) -> bool {
+    let mut changed = false;
     for proposal in proposals.iter_mut() {
+        let before = proposal.clone();
         let about = proposal.older == *id || proposal.newer.as_ref() == Some(id);
         if about {
             proposal.reason.clear();
@@ -734,8 +743,11 @@ pub fn forget(
         for quote in proposal.quotes.iter_mut().filter(|q| q.entry == *id) {
             quote.text.clear();
         }
+        if *proposal != before {
+            changed = true;
+        }
     }
-    Settled::Forgotten(id.clone())
+    changed
 }
 
 fn approve(

@@ -25,22 +25,15 @@ fn private_tempdir() -> tempfile::TempDir {
     dir
 }
 
-/// Whether any file under `root` (`scribe.db` and its WAL included) holds
-/// `needle`: what a forget or a redaction must leave nowhere. The
-/// `pre-sqlite-<date>/` copy of the files the move took in is left out: it
-/// is the user's, and scribe never rewrites or deletes it (§15.7).
+/// Whether any file under `root` (`scribe.db`, its WAL, and `pre-sqlite-*`
+/// included) holds `needle`: what a forget or a redaction must leave nowhere.
 fn on_disk(root: &std::path::Path, needle: &str) -> bool {
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         for item in std::fs::read_dir(&dir).unwrap() {
             let path = item.unwrap().path();
             if path.is_dir() {
-                if !path
-                    .file_name()
-                    .is_some_and(|n| n.to_string_lossy().starts_with("pre-sqlite-"))
-                {
-                    stack.push(path);
-                }
+                stack.push(path);
             } else if std::fs::read(&path)
                 .unwrap()
                 .windows(needle.len())
