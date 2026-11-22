@@ -1,7 +1,7 @@
 ---
 type: design
 summary: "Spec: output contract — streams, modes, plain columns, the JSON list envelope and record fields (segments, activity, agent authors and direct writes, search hits; future transcripts), warnings, errors and exit codes"
-last_validated: 2026-11-21
+last_validated: 2026-11-22
 ---
 
 # Spec: Output contract
@@ -197,8 +197,10 @@ child's link type), `terms` (`[{term, said,
 message}]`, Daniel's own words), `provider`, `host`, `created`,
 `updated`, `title`, `cwd`, `started`, `on_since`, `scribed_through` (a
 message id or `null`), `passes`, `next_open`, `summary`, `goals`,
-`outcome`, `next`, and from `control.json` `on` and `due` (both `false`
-when the session has no switch). The four text fields are model-written.
+`outcome`, `next`, and from its switch `on` and `due` (both `false` when the
+session has no switch; the switch is read from `scribe.db` once the sessions
+have moved, from `control.json` before). The four text fields are
+model-written.
 `links` and `children` were added with session links (store format 3);
 every other field is unchanged.
 
@@ -411,7 +413,8 @@ four characters. An exact id wins over a prefix; several matches are
 four characters is `usage_error` (exit 2); none is the noun's not-found
 (`entry_not_found`, `proposal_not_found`, `session_not_found`, exit 1),
 whose message names the id and the store path searched. A session's prefix is
-matched against its record and its switch in `control.json`, and the
+matched against its record and its switch (in `scribe.db` once the sessions
+have moved, in `control.json` before), and the
 audit line of a write names the full id; a write that takes `--author` also
 names that author in `author`, and a refused write names both its resolved
 target and its author. A write given `--session` and `--instruction`
