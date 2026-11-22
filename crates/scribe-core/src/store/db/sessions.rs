@@ -418,7 +418,7 @@ fn is_forgotten(conn: &Connection, id: &SessionId) -> rusqlite::Result<bool> {
     )
 }
 
-fn forgotten_refusal(id: &SessionId, what: &str) -> Error {
+pub(in crate::store) fn forgotten_refusal(id: &SessionId, what: &str) -> Error {
     refusal(
         WriteRefusal::SessionForgotten,
         format!("session {id} was forgotten (#scribe forget); {what}"),
@@ -903,13 +903,17 @@ impl<'c> SessionTx<'c> {
         put_control(&self.tx, &self.path, before, after)
     }
 
-    /// Keep a rebuild checkpoint; `false` when `id` has no row.
+    /// Keep a rebuild checkpoint; `false` when `id` has no row. A forgotten
+    /// session keeps none: its words were erased, so nothing re-persists them.
     pub(in crate::store) fn put_checkpoint(
         &self,
         id: &SessionId,
         text: &str,
         now: OffsetDateTime,
     ) -> Result<bool> {
+        if is_forgotten(&self.tx, id).map_err(|e| self.fail(e))? {
+            return Err(forgotten_refusal(id, "nothing is written to it"));
+        }
         Ok(put_checkpoint(&self.tx, id, text, now).map_err(|e| self.fail(e))? > 0)
     }
 

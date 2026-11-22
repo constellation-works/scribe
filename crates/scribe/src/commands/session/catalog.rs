@@ -2,8 +2,10 @@
 //! run every window (docs/design/scribe/2_design.md §5.8).
 //!
 //! A session that already has a record or a `/scribe on` switch is refused
-//! `session_cataloged`. A catalog that failed stays due, and the next run
-//! resumes it without resetting `since` or `cataloged_by`. The transcript's
+//! `session_cataloged`; one `#scribe forget` erased is refused
+//! `session_forgotten` first, before any model call. A catalog that failed
+//! stays due, and the next run resumes it without resetting `since` or
+//! `cataloged_by`. The transcript's
 //! age is its last message, not the file's mtime: a day old, the last window
 //! marks the record final and the switch off; newer, the switch stays on
 //! and due. No entries are written.
@@ -126,6 +128,9 @@ pub(in crate::commands) fn begin(
     by: Author,
 ) -> Result<Begun, CliError> {
     let id = super::super::transcript::resolve_transcript(ctx, input)?;
+    // A forgotten session is refused `session_forgotten` before its transcript
+    // is read, the switch is gated, or any model runs.
+    ctx.store().refuse_forgotten(&id)?;
     let dir = ctx
         .transcripts()
         .map(PathBuf::from)

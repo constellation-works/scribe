@@ -1204,6 +1204,16 @@ impl Setup {
         .unwrap_or(0)
     }
 
+    /// How many rebuild checkpoints `scribe.db` holds.
+    fn checkpoint_count(&self) -> i64 {
+        rusqlite::Connection::open_with_flags(
+            self.fx.root().join("scribe.db"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .and_then(|c| c.query_row("SELECT count(*) FROM rebuild_checkpoints", [], |r| r.get(0)))
+        .expect("the store's scribe.db")
+    }
+
     fn audit_lines(&self) -> usize {
         support::audit_lines(&self.fx.root()).len()
     }
@@ -2844,6 +2854,79 @@ fn rebuild_refusals_are_audited_and_leave_the_record_unchanged() {
         assert_eq!(line["target"], format!("session:{ON}"));
         assert_eq!(line["status"], "failure");
     }
+}
+
+#[test]
+fn a_rebuild_of_a_forgotten_session_is_refused_before_any_model_call_or_checkpoint() {
+    let s = Setup::new();
+    s.scribe("/scribe on");
+    s.pass();
+    let forgot = text(&type_settlement(&s, "#scribe forget s-1").stdout);
+    assert!(forgot.contains("scribe: forgot s-1"), "{forgot}");
+    // The transcript is still on disk, so only the refusal stands between
+    // the rebuild and the model.
+    assert!(s.transcript(ON).exists());
+    let calls = s.prompts().len();
+    let out = s.run_any(&rebuild_args(true), b"");
+    assert_eq!(out.status.code(), Some(1));
+    let error: Value = serde_json::from_slice(&out.stderr).unwrap();
+    assert_eq!(error["code"], "session_forgotten", "{error}");
+    assert_eq!(
+        s.prompts().len(),
+        calls,
+        "a forgotten session takes no model call"
+    );
+    assert_eq!(s.checkpoint_count(), 0, "and keeps no rebuild checkpoint");
+}
+
+#[test]
+fn a_catalog_of_a_forgotten_session_with_a_record_is_refused_before_any_model_call() {
+    let s = Setup::new();
+    s.scribe("/scribe on");
+    s.pass();
+    let forgot = text(&type_settlement(&s, "#scribe forget s-1").stdout);
+    assert!(forgot.contains("scribe: forgot s-1"), "{forgot}");
+    let calls = s.prompts().len();
+    let out = s.run_any(
+        &["session", "catalog", ON, "--author", "opus", "--json"],
+        b"",
+    );
+    assert_eq!(out.status.code(), Some(1));
+    let error: Value = serde_json::from_slice(&out.stderr).unwrap();
+    assert_eq!(error["code"], "session_forgotten", "{error}");
+    assert_eq!(
+        s.prompts().len(),
+        calls,
+        "a forgotten session takes no model call"
+    );
+    assert_eq!(s.checkpoint_count(), 0);
+}
+
+#[test]
+fn a_catalog_of_a_forgotten_session_never_passed_is_refused_before_any_model_call() {
+    let s = Setup::new();
+    // Switched on, never passed: a switch row with no record.
+    let mut payload = s.payload("UserPromptSubmit");
+    payload["session_id"] = json!(NEVER);
+    payload["transcript_path"] = json!(s.transcript(NEVER));
+    payload["prompt"] = json!("/scribe on");
+    s.hook("user-prompt-submit", &payload);
+    let forgot = text(&type_settlement(&s, &format!("#scribe forget {NEVER}")).stdout);
+    assert!(forgot.contains("scribe: forgot s-"), "{forgot}");
+    let calls = s.prompts().len();
+    let out = s.run_any(
+        &["session", "catalog", NEVER, "--author", "opus", "--json"],
+        b"",
+    );
+    assert_eq!(out.status.code(), Some(1));
+    let error: Value = serde_json::from_slice(&out.stderr).unwrap();
+    assert_eq!(error["code"], "session_forgotten", "{error}");
+    assert_eq!(
+        s.prompts().len(),
+        calls,
+        "a forgotten session takes no model call"
+    );
+    assert_eq!(s.checkpoint_count(), 0);
 }
 
 #[test]

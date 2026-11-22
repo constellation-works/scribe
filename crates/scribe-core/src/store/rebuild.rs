@@ -29,7 +29,13 @@ impl Store {
 
     /// Acquire the session's rebuild lock, with the store's bounded wait.
     pub fn lock_rebuild(&self, record: &SessionRecord) -> Result<RebuildGuard> {
-        self.session(&record.id)?;
+        let view = self.session(&record.id)?;
+        if view.forgotten.is_some() {
+            return Err(super::db::sessions::forgotten_refusal(
+                &record.id,
+                "nothing is written to it",
+            ));
+        }
         let path = self.lock_path(&format!("rebuild-{}.lock", record.id))?;
         Ok(RebuildGuard {
             _lock: fsio::LockGuard::acquire(&path, "session rebuild", self.lock_wait)?,
