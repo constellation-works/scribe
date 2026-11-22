@@ -506,11 +506,9 @@ impl Store {
         Ok(!state.sessions.is_empty() || !state.codex_cursors.is_empty())
     }
 
-    /// Move every file that now lives in the database to
-    /// `pre-sqlite-<date>/` (sessions, entries, the JSON documents, the
-    /// audit log, the root's Codex lock files), then write the stamps.
-    /// Moves nothing that is not there, so it finishes an interrupted move.
-    pub(super) fn move_files_aside(&self, now: OffsetDateTime) -> Result<Option<String>> {
+    /// Files and directories under the root that `move_files_aside` will
+    /// rename into `pre-sqlite-<date>/`.
+    fn files_to_move_aside(&self) -> Result<Vec<String>> {
         let mut moves: Vec<String> = Vec::new();
         for dir in [SESSIONS_DIR, ENTRIES_DIR] {
             if fsio::inspect_subdir(&self.root.join(dir))? {
@@ -533,6 +531,21 @@ impl Store {
                 .into_iter()
                 .filter(|n| n.starts_with(".codex-") && n.ends_with(".lock")),
         );
+        Ok(moves)
+    }
+
+    /// Whether the pending write will create `pre-sqlite-<date>/` when its
+    /// post-commit cleanup runs.
+    pub(super) fn will_move_aside(&self) -> Result<bool> {
+        Ok(self.aside_pending() && !self.files_to_move_aside()?.is_empty())
+    }
+
+    /// Move every file that now lives in the database to
+    /// `pre-sqlite-<date>/` (sessions, entries, the JSON documents, the
+    /// audit log, the root's Codex lock files), then write the stamps.
+    /// Moves nothing that is not there, so it finishes an interrupted move.
+    pub(super) fn move_files_aside(&self, now: OffsetDateTime) -> Result<Option<String>> {
+        let moves = self.files_to_move_aside()?;
         let mut moved_to = None;
         if !moves.is_empty() {
             let name = super::sessions::moved_dir_name(now);

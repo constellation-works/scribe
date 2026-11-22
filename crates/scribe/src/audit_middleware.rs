@@ -56,9 +56,8 @@ pub(crate) struct AuditMeta {
     /// The command path, such as `hook user-prompt-submit`.
     pub(crate) command: &'static str,
     /// Whether the command commits its own steps: one that may call a
-    /// model, because no transaction may be held across a model call, and
-    /// `store migrate`, whose move is a transaction of its own. Any other
-    /// runs as one transaction with its audit lines (`commands::run`,
+    /// model, because no transaction may be held across a model call. Any
+    /// other runs as one transaction with its audit lines (`commands::run`,
     /// 2_design.md §15.7).
     pub(crate) stepwise: bool,
 }

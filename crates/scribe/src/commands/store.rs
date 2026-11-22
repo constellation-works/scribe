@@ -35,12 +35,13 @@ pub(crate) enum StoreCommand {
 pub(crate) struct MigrateArgs {}
 
 impl StoreCommand {
-    /// `store migrate` writes the store, so it is audited.
+    /// `store migrate` writes the store and calls no model, so it runs as
+    /// one transaction with its audit line.
     pub(super) fn audit(&self) -> Option<AuditMeta> {
         match self {
             Self::Migrate(_) => Some(AuditMeta {
                 command: "store migrate",
-                stepwise: true,
+                stepwise: false,
             }),
         }
     }

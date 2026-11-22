@@ -266,7 +266,11 @@ impl Store {
     pub fn migrate_store(&self, now: OffsetDateTime) -> Result<Moved> {
         let mut moved = self.transaction_as(Move::ByHand, now, || {
             self.with_conn(|_, _| Ok(()))?;
-            Ok::<_, Error>(self.moved_now().unwrap_or_default())
+            let mut moved = self.moved_now().unwrap_or_default();
+            if self.will_move_aside()? {
+                moved.moved_to = Some(moved_dir_name(now));
+            }
+            Ok::<_, Error>(moved)
         })?;
         let aside = moved_dir_name(now);
         if fsio::inspect_subdir(&self.root.join(&aside))? {
