@@ -554,6 +554,9 @@ impl Store {
             at: instruction.at,
             quote: None,
         });
+        // The cited turns' stored messages go first: they hold the words
+        // the forget removes, and deleting them again is a no-op.
+        self.forget_cited_messages(&target, &before)?;
         if proposals != before {
             self.write_proposals(&proposals)?;
         }

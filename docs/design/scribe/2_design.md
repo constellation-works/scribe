@@ -5877,7 +5877,10 @@ with phase 4):
   with §5.3's exclusions (pasted blocks, fenced code, synthetic and meta
   turns). The text passes the redactor before it is written (STD-05). The
   only assistant turns stored are those a claim or a collected entry cites
-  (decision 3), with `role = assistant`.
+  (decision 3), with `role = assistant`. (Phase 4) A turn holding one of
+  the memory gate's finance or sensitive-event words is not stored: no
+  memory item may hold them outside `now` and `milestones`, and the
+  profile job is the reader these messages serve.
 - **When.**
   - **From phase 6,** when the session row and its `scribed_through` are in
     the database, the pass writes a window's turns in the transaction that
@@ -5892,7 +5895,10 @@ with phase 4):
 - **Not stored.** A session that is off stores nothing, as today.
 - **Forget.** `#scribe forget s-<n>` deletes the session's messages and
   segments' text, and keeps the row as `forgotten`. It replaces today's
-  forget of a record file.
+  forget of a record file. (Phase 4) Forgetting an entry or a memory item
+  deletes the messages it cites, so a forget still leaves no trace of the
+  words in the store (`secure_delete`, an FTS5 `optimize` and a `TRUNCATE`
+  checkpoint).
 - **Search.** BM25 over messages is FTS5's `bm25()`. `scribe search --kind
   message` and `ask` retrieval use it. Embeddings are not built until a
   miss is seen that BM25 cannot fix.

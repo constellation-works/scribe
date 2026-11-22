@@ -5,6 +5,7 @@
       "cite": "preferences-2",
       "id": "preferences-2",
       "segment": null,
+      "message": null,
       "score": 9.671,
       "title": "preferences-2 (preferences)",
       "snippet": "scribe's statement of the user's turn: The user prefers that session records keep the whole session's history in an append-only log rather than one rewritten outcome. | The user's words: \"ok that makes sense. then let's keep the whole history in an append-only log, not one rewritten outcome.\"",

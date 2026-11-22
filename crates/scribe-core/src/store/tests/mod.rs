@@ -3,6 +3,7 @@
 //! outside `store` can.
 
 mod audit;
+mod db;
 mod format;
 mod fsio;
 mod rebuild;

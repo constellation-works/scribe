@@ -9,10 +9,17 @@
 //! sessions are ranked either way and kept only when asked for, so the
 //! caller can say how many it left out. Forgotten entries never match.
 //!
+//! [`messages`] ranks nothing itself: the store's FTS5 `bm25()` already
+//! ordered the stored messages (2_design.md §15.7), and it applies the same
+//! filters through each message's session record. Message scores are not
+//! comparable with the other kinds', so messages are searched only as
+//! `--kind message`.
+//!
 //! No I/O (STD-02 R5).
 
 use crate::ask::{self, Corpus, Doc, Origin, RecordKind};
 use crate::entry::Entry;
+use crate::message::MessageSearch;
 use crate::record::{Author, DateRange, Project, Topic};
 use crate::session::{Segment, SessionRecord};
 use std::collections::BTreeSet;
@@ -69,6 +76,8 @@ pub struct Hit {
     pub id: String,
     /// The segment's number, for a segment.
     pub segment: Option<u32>,
+    /// The provider's message id, for a stored message.
+    pub message: Option<String>,
     /// The BM25 score times the unit's weight, to three decimals.
     pub score: f64,
     /// The session's title, the segment's heading, or for an entry its id
@@ -136,6 +145,73 @@ pub fn search(query: &SearchQuery, corpus: Corpus<'_>) -> Result<Found, SearchEr
         .iter()
         .take(query.limit.get())
         .filter_map(|(score, doc)| hit(*score, doc, corpus, &wanted))
+        .collect();
+    Ok(Found {
+        hits,
+        total,
+        hidden_matches,
+    })
+}
+
+/// The stored messages of `found` that `query`'s filters keep, as hits,
+/// best first. A message is filtered through its session's record: the
+/// record's project and topics, and the message's own time for the dates.
+/// A message whose session has no record is left out, since the session
+/// file is the truth until the sessions move into the database; an inactive
+/// session's messages are hidden unless `include_hidden`.
+///
+/// # Errors
+///
+/// [`SearchError::NoTerms`] when the terms hold no word ranking can use.
+pub fn messages(
+    query: &SearchQuery,
+    found: &MessageSearch,
+    sessions: &[SessionRecord],
+) -> Result<Found, SearchError> {
+    let wanted: BTreeSet<String> = ask::tokens(&query.terms).into_iter().collect();
+    if wanted.is_empty() {
+        return Err(SearchError::NoTerms(query.terms.clone()));
+    }
+    let mut kept = Vec::new();
+    let mut hidden_matches = 0;
+    for m in &found.matches {
+        let Some(record) = sessions.iter().find(|r| r.id == m.session) else {
+            continue;
+        };
+        let keeps = query.project.as_ref().is_none_or(|p| &record.project == p)
+            && query.topics.iter().all(|t| record.topics.contains(t))
+            && query.dates.contains(m.at);
+        if !keeps {
+            continue;
+        }
+        if !record.active && !query.include_hidden {
+            hidden_matches += 1;
+            continue;
+        }
+        kept.push((m, record));
+    }
+    let total = kept.len();
+    let hits = kept
+        .into_iter()
+        .take(query.limit.get())
+        .map(|(m, r)| Hit {
+            kind: RecordKind::Message,
+            cite: format!("session:{}", r.id),
+            id: r.id.to_string(),
+            segment: None,
+            message: Some(m.message.clone()),
+            score: (m.score * 1000.0).round() / 1000.0,
+            title: format!("{} ({})", r.title, m.role.as_str()),
+            snippet: snippet(&m.text, &wanted),
+            project: r.project.clone(),
+            topics: r.topics.as_slice().to_vec(),
+            author: None,
+            active: Some(r.active),
+            status: r.status.as_str(),
+            updated: m.at,
+            evidence: None,
+            as_of: None,
+        })
         .collect();
     Ok(Found {
         hits,
@@ -229,6 +305,7 @@ fn hit(score: f64, doc: &Doc, corpus: Corpus<'_>, wanted: &BTreeSet<String>) -> 
                 cite,
                 id: e.id.to_string(),
                 segment: None,
+                message: None,
                 score,
                 title: format!("{} ({})", e.id, e.tag),
                 snippet,
@@ -250,6 +327,7 @@ fn hit(score: f64, doc: &Doc, corpus: Corpus<'_>, wanted: &BTreeSet<String>) -> 
                 cite,
                 id: r.id.to_string(),
                 segment: None,
+                message: None,
                 score,
                 title: r.title.clone(),
                 snippet: snippet(&text, wanted),
@@ -277,6 +355,7 @@ fn hit(score: f64, doc: &Doc, corpus: Corpus<'_>, wanted: &BTreeSet<String>) -> 
                 cite,
                 id: r.id.to_string(),
                 segment: Some(s.n.get()),
+                message: None,
                 score,
                 title: s.heading.clone(),
                 snippet: snippet(&s.text, wanted),

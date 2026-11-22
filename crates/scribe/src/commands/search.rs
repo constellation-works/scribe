@@ -2,6 +2,8 @@
 //! words as `question ask` ranks them, with no model and no Orbit call
 //! (docs/design/scribe/2_design.md §6.8). It reads only: no lock, no audit
 //! line (STD-01 R31), and one load of the entries and the sessions.
+//! `--kind message` searches the messages in `scribe.db` instead, ranked by
+//! FTS5's `bm25()` (§15.7).
 
 use super::{DateArgs, ListNotice, list_output};
 use crate::app::Context;
@@ -21,9 +23,14 @@ entries weigh 1.5 times. The CITE column is what question ask would cite:
 pass it to entry show or session show. Superseded and retired entries and
 inactive sessions are left out unless --include-hidden.
 
+--kind message searches the user's stored turns of switched-on sessions
+instead (and the assistant turns a claim cites), ranked by SQLite FTS5's
+BM25; a message cites its session.
+
 Examples:
   scribe search \"merge queue\"
   scribe search release --kind session --since 2026-11-01
+  scribe search \"merge queue\" --kind message
   scribe search \"store format\" --project scribe --topic store --limit 5
   scribe search \"api\" --json | jq -r '.hits[].cite'";
 
@@ -34,6 +41,8 @@ pub(crate) enum KindArg {
     Entry,
     // Session headers and segments only.
     Session,
+    // Stored messages only.
+    Message,
 }
 
 /// Arguments to `search`.
@@ -43,7 +52,7 @@ pub(crate) struct SearchArgs {
     #[arg(value_name = "TERMS")]
     pub(crate) terms: String,
 
-    /// Only this kind of record [default: every kind]
+    /// Only this kind of record [default: entries and sessions]
     #[arg(long, value_name = "KIND", value_enum)]
     pub(crate) kind: Option<KindArg>,
 
@@ -84,6 +93,7 @@ pub(super) fn run(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
         kind: args.kind.map(|k| match k {
             KindArg::Entry => RecordKind::Entry,
             KindArg::Session => RecordKind::Session,
+            KindArg::Message => RecordKind::Message,
         }),
         project: args.project,
         topics: args.topic,
@@ -98,13 +108,21 @@ pub(super) fn run(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
         include_inactive: true,
         ..SessionFilter::default()
     })?;
-    let corpus = Corpus {
-        entries: &entries.listing.items,
-        sessions: &sessions.listing.items,
-        tags: &config.tags,
-        user: &config.user,
-    };
-    let found = search::search(&query, corpus).map_err(|e| match e {
+    let mut read_only_copy = false;
+    let found = if query.kind == Some(RecordKind::Message) {
+        let stored = store.search_messages(&scribe_core::ask::tokens(&query.terms))?;
+        read_only_copy = stored.read_only_copy;
+        search::messages(&query, &stored, &sessions.listing.items)
+    } else {
+        let corpus = Corpus {
+            entries: &entries.listing.items,
+            sessions: &sessions.listing.items,
+            tags: &config.tags,
+            user: &config.user,
+        };
+        search::search(&query, corpus)
+    }
+    .map_err(|e| match e {
         SearchError::NoTerms(_) => CliError::Usage(e.to_string()),
     })?;
     let mut skipped = entries.skipped;
@@ -137,6 +155,12 @@ pub(super) fn run(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
         notices.push(format!(
             "{} hidden record(s) also match: superseded or retired entries, or inactive sessions; --include-hidden shows them",
             found.hidden_matches
+        ));
+    }
+    if read_only_copy && let Output::List { notices, .. } = &mut output {
+        notices.push(format!(
+            "read-only copy: {} has no -wal or -shm file and its directory is read-only, so it was opened immutable; messages a live writer has not checkpointed are not shown",
+            store.root().join(scribe_core::DB_FILE).display()
         ));
     }
     Ok(output)

@@ -53,6 +53,7 @@ mod entry;
 mod error;
 pub mod instruction;
 pub mod memory;
+pub mod message;
 pub mod models;
 pub mod pass;
 mod proposal;
@@ -92,9 +93,9 @@ pub use session::{
     check_log, children, tree_order, tree_parent,
 };
 pub use store::{
-    AUDIT_FILE, AuditEvent, AuditStatus, CONFIG_FILE, CONTROL_FILE, COVERED, DEFAULT_LOCK_WAIT,
-    ENTRIES_DIR, EntryList, InitFile, InitReport, IssueAudit, MARKS_FILE, MEMORY_DIR,
-    MIN_SECRET_CHARS, MODEL_FAILED, MarkChange, MarkKey, MarkResult, MemoryWritten,
+    AUDIT_FILE, AuditEvent, AuditStatus, CONFIG_FILE, CONTROL_FILE, COVERED, DB_FILE,
+    DEFAULT_LOCK_WAIT, ENTRIES_DIR, EntryList, InitFile, InitReport, IssueAudit, MARKS_FILE,
+    MEMORY_DIR, MIN_SECRET_CHARS, MODEL_FAILED, MarkChange, MarkKey, MarkResult, MemoryWritten,
     NEEDS_REDACTION, PROPOSALS_FILE, PassMemory, PassWrite, PassWritten, REDACTED_FIELDS,
     RebuildGuard, Redactor, SESSIONS_DIR, SessionList, SessionView, Skipped, Store, TagList,
     check_agent_author, check_content, check_description, check_reason, init_project,

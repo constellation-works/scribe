@@ -20,6 +20,8 @@ For focused lookup, use `scribe search "<words>" --json`,
 `scribe entry list --json`, `scribe session list --json`, and
 `scribe proposal list --json`. Read full evidence with `entry show <id> --json` or
 `session show <id> --log --json`; a citation `session:<id>#<n>` names one segment.
+`scribe search "<words>" --kind message --json` searches the user's own
+stored turns of switched-on sessions instead (each hit cites its session).
 Preserve verbatim quotes and their citations. An empty or failed lookup is
 not evidence of a preference. Use `--help` for filters and write arguments.
 

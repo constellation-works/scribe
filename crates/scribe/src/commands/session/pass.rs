@@ -756,6 +756,20 @@ impl Job<'_> {
                     project: record.project.clone(),
                 },
             };
+            // The window's messages go to scribe.db first (2_design.md
+            // §15.7, phases 4-5): the session file written next keeps the
+            // cursor, so a crash between the two reruns this window and
+            // rewrites the same rows.
+            let kept = scribe_core::message::window(
+                &record.id,
+                &conversation[offset..end],
+                &messages,
+                &candidates,
+            );
+            self.ctx
+                .store()
+                .write_messages(&kept, self.redactor)
+                .map_err(|err| PassError::new(err.code(), err.to_string()))?;
             let written = match self.ctx.store().write_pass_window(
                 record,
                 expected,

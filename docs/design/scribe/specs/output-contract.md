@@ -265,10 +265,12 @@ consumer recorded as rejected). A shipped action tag reports `source`
 tag has no capture rules). `configured` is true only
 for config tags, even though a store tag is also routable.
 
-**Hit** (S11, `hits[]`): `kind` (`entry` or `session`; *(S7)*
-`discussion`), `cite` (an entry id, `session:<id>` for a header,
-`session:<id>#<n>` for a segment; *(S7)* a discussion slug), `id` (the
-entry's or session's id), `segment` (integer or `null`), `score` (a
+**Hit** (S11, `hits[]`): `kind` (`entry` or `session`; (phase 4)
+`message`; *(S7)* `discussion`), `cite` (an entry id, `session:<id>` for a
+header or a message, `session:<id>#<n>` for a segment; *(S7)* a discussion
+slug), `id` (the entry's or session's id), `segment` (integer or `null`),
+(phase 4) `message` (a stored message's provider id, `null` for any other
+kind), `score` (a
 number, three decimals), `title` (a session's title, a segment's heading,
 or for an entry `<id> (<tag>)`), `snippet` (up to 240 characters on one
 line, starting a little before the first matching word, with `…` where it
@@ -284,9 +286,23 @@ user's words): <statement> | The assistant's words: "<quote>" | outcome:
 `project`, `topics` (a segment's are its session's plus its
 own), `author` (an entry's `{kind, name}`, `null` for a session), `active`
 (a session's flag; `null` for an entry), `updated` (an entry's or
-session's `updated`, a segment's `to`), and `status` (added beside the
-designed fields: an entry's `active`, `superseded` or `retired`, a
-session's `open` or `final`).
+session's `updated`, a segment's `to`, a message's time), and `status`
+(added beside the designed fields: an entry's `active`, `superseded` or
+`retired`, a session's `open` or `final`, which a message takes from its
+session).
+
+(Phase 4, 2_design.md §15.7) `scribe search --kind message` searches the
+messages in `scribe.db` instead of the entries and sessions: ranked by
+SQLite FTS5's `bm25()` (`score` is its negation, so higher is better),
+each search token matched as a word prefix. A message's `title` is its
+session's title and its role (`<title> (user)`), and it is filtered
+through its session's record: `--project` and `--topic` are the
+session's, the dates are the message's, an inactive session's messages are
+hidden, and a message whose session has no record is left out. Without
+`--kind`, a search ranks entries and sessions only: the two scores are not
+comparable. A store whose database had to be opened as a read-only copy
+adds the notice `read-only copy: <path> has no -wal or -shm file and its
+directory is read-only, so it was opened immutable; …` on stderr.
 
 **Issue** (format 17) is removed in phase 2 (2_design.md §15.9) with the
 `issue` noun: `issue list|show|add|occur|update|move|search|stats` exit 2
@@ -368,6 +384,7 @@ instruction, or the turn holding it has no message id.
 
 Stable codes: `entry_not_found`, `session_not_found`, `io_error`,
 `store_corrupt`, `config_invalid`, `store_too_new`, `store_locked`,
+(phase 4) `store_database`,
 `store_symlink`, `store_foreign_owner`, `store_permissions`, `no_data_dir`,
 `output_error`, `usage_error`, `hook_payload_invalid`,
 `segment_not_found`, `sealed_segment_changed`, `confirm_required`,

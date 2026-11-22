@@ -430,6 +430,133 @@ fn pass_asks_for_standing_preferences_only_and_never_proposes_a_decision() {
 }
 
 #[test]
+fn a_pass_keeps_the_windows_typed_turns_for_search_kind_message() {
+    let s = Setup::new();
+    let quote = "Let us keep the merge queue for agent pull requests.";
+    s.write(
+        ON,
+        &[
+            line("user", "u-1", quote),
+            // An assistant turn no claim cites is not kept.
+            line("assistant", "a-1", "Noted: the merge queue stays."),
+            // Fenced code is not the user's typed words.
+            line(
+                "user",
+                "u-2",
+                "Here is the old helper:\n```\nfn merge_all() {}\n```\nIt can go.",
+            ),
+        ],
+    );
+    s.answer(&candidate_answer(quote, "u-1", "preferences"));
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let db = s.fx.root().join("scribe.db");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&db).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+    let search = |terms: &str| -> Value {
+        serde_json::from_slice(
+            &s.fx
+                .ok(&["search", terms, "--kind", "message", "--json"])
+                .stdout,
+        )
+        .unwrap()
+    };
+    let found = search("merge");
+    assert_eq!(found["total"], 1, "{found}");
+    let hit = &found["hits"][0];
+    assert_eq!(hit["kind"], "message");
+    assert_eq!(hit["message"], "u-1");
+    assert_eq!(hit["cite"], format!("session:{ON}"));
+    assert_eq!(hit["snippet"], quote);
+    assert_eq!(hit["project"], "scribe");
+    assert_eq!(
+        search("helper")["hits"][0]["snippet"],
+        "Here is the old helper: It can go."
+    );
+    // The default kinds are entries and sessions: no message hit.
+    let default: Value =
+        serde_json::from_slice(&s.fx.ok(&["search", "merge", "--json"]).stdout).unwrap();
+    assert!(
+        default["hits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|h| h["kind"] != "message"),
+        "{default}"
+    );
+    let plain = text(&s.fx.ok(&["search", "merge", "--kind", "message"]).stdout);
+    assert!(plain.contains("u-1") || plain.contains(ON), "{plain}");
+
+    // A read-only copy of the store, without the -wal and -shm files, is
+    // opened immutable and says so.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let copy = s.fx.elsewhere("copy");
+        let copied = std::process::Command::new("cp")
+            .arg("-Rp")
+            .arg(s.fx.root())
+            .arg(&copy)
+            .status()
+            .unwrap();
+        assert!(copied.success());
+        std::fs::remove_file(copy.join("scribe.db-wal")).unwrap();
+        std::fs::remove_file(copy.join("scribe.db-shm")).unwrap();
+        std::fs::set_permissions(&copy, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let copy_arg = copy.display().to_string();
+        let out =
+            s.fx.ok(&["--root", &copy_arg, "search", "merge", "--kind", "message"]);
+        std::fs::set_permissions(&copy, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+        assert!(
+            stderr.contains("read-only copy") || stdout.contains("read-only copy"),
+            "{stdout}{stderr}"
+        );
+        assert!(stdout.contains("merge queue"), "{stdout}");
+    }
+}
+
+#[test]
+fn forgetting_an_entry_deletes_the_stored_message_it_cites() {
+    let s = Setup::new();
+    let quote = "I prefer short explanations beside each changed behavior.";
+    s.write(
+        ON,
+        &[
+            line("user", "u-1", quote),
+            line("user", "u-2", "Short explanations help reviewers too."),
+        ],
+    );
+    s.answer(&candidate_answer(quote, "u-1", "preferences"));
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let messages = |terms: &str| -> Vec<String> {
+        let found: Value = serde_json::from_slice(
+            &s.fx
+                .ok(&["search", terms, "--kind", "message", "--json"])
+                .stdout,
+        )
+        .unwrap();
+        let mut ids: Vec<String> = found["hits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|h| h["message"].as_str().unwrap().to_owned())
+            .collect();
+        ids.sort();
+        ids
+    };
+    assert_eq!(messages("explanations"), ["u-1", "u-2"]);
+    type_settlement(&s, "#scribe approve p-1");
+    type_settlement(&s, "#scribe forget preferences-1");
+    assert_eq!(messages("explanations"), ["u-2"]);
+}
+
+#[test]
 fn a_window_where_no_daniel_turn_fires_a_trigger_requests_no_claims() {
     let s = Setup::new();
     let quote = "Let us use the blue-green rollout for this migration.";

@@ -94,6 +94,9 @@ pub enum RecordKind {
     Entry,
     /// Session records only.
     Session,
+    /// Stored messages only (`scribe.db`, 2_design.md §15.7). `ask` does not
+    /// retrieve them yet, so a scope of this kind holds no entry or session.
+    Message,
 }
 
 impl RecordKind {
@@ -103,6 +106,7 @@ impl RecordKind {
         match self {
             Self::Entry => "entry",
             Self::Session => "session",
+            Self::Message => "message",
         }
     }
 }

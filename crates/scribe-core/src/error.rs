@@ -107,6 +107,18 @@ pub enum Error {
         #[source]
         source: ConfigError,
     },
+    /// `scribe.db` refused an operation that is not a lock timeout or a
+    /// damaged file (2_design.md §15.7).
+    #[error("cannot {action} {}", path.display())]
+    Database {
+        /// What was being attempted, as a verb phrase.
+        action: &'static str,
+        /// The database file.
+        path: PathBuf,
+        /// SQLite's error.
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
     /// The store was written by a newer build (STD-03 R10: refuse, never
     /// rewrite or reinterpret newer state).
     #[error(
@@ -222,6 +234,7 @@ impl Error {
             Self::Io { .. } => "io_error",
             Self::Corrupt { .. } => "store_corrupt",
             Self::Config { .. } => "config_invalid",
+            Self::Database { .. } => "store_database",
             Self::NewerFormat { .. } => "store_too_new",
             Self::Locked { .. } => "store_locked",
             Self::Symlink { .. } => "store_symlink",
