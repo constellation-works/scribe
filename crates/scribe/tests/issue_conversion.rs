@@ -96,9 +96,13 @@ fn a_stored_issue_becomes_an_issue_entry_model_free_and_its_file_moves_aside() {
     assert_eq!(kept, ISSUE, "the file is moved, not rewritten");
 
     // Running again is a no-op: no second entry, nothing moved.
-    let before = support::snapshot(&fx.root().join("entries/issue"));
+    let before = support::exported(&fx.root(), "entries/issue/issue-1.md");
+    assert!(before.is_some(), "the issue entry exists");
     a_write(&fx, "Prefer small pull requests.");
-    assert_eq!(support::snapshot(&fx.root().join("entries/issue")), before);
+    assert_eq!(
+        support::exported(&fx.root(), "entries/issue/issue-1.md"),
+        before
+    );
     assert_eq!(moved_aside(&fx), aside);
 
     // A crash between the write and the move leaves the file: the next
@@ -107,7 +111,10 @@ fn a_stored_issue_becomes_an_issue_entry_model_free_and_its_file_moves_aside() {
     a_write(&fx, "Name the units in sizes.");
     let listed = json(&fx.ok(&["entry", "list", "--tag", "issue", "--json"]).stdout);
     assert_eq!(listed["total"], 1, "{listed}");
-    assert_eq!(support::snapshot(&fx.root().join("entries/issue")), before);
+    assert_eq!(
+        support::exported(&fx.root(), "entries/issue/issue-1.md"),
+        before
+    );
 }
 
 #[test]

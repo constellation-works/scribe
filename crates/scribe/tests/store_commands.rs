@@ -42,10 +42,21 @@ fn migrate_refuses_while_a_session_is_on_then_moves_every_session() {
     let moved = json(&fx.ok(&["store", "migrate", "--json"]));
     assert_eq!(moved["sessions"], 3, "{moved}");
     assert_eq!(moved["switches"], 2, "{moved}");
+    assert_eq!(moved["entries"], 4, "{moved}");
+    assert_eq!(moved["claims"], 2, "{moved}");
+    assert_eq!(moved["tags"], 0, "{moved}");
+    assert_eq!(moved["marks"], 0, "{moved}");
+    assert_eq!(moved["pickups"], 0, "{moved}");
+    // The refused migrate's line, spooled while the store was files.
+    assert_eq!(moved["audit_lines"], 1, "{moved}");
+    assert_eq!(moved["audit_torn"], 0, "{moved}");
     let aside = moved["moved_to"].as_str().unwrap();
     assert!(aside.starts_with("pre-sqlite-"), "{aside}");
     assert!(fx.root().join(aside).join("control.json").is_file());
     assert!(!fx.root().join("sessions").exists());
+    assert!(!fx.root().join("entries").exists());
+    assert!(fx.root().join(aside).join("entries").is_dir());
+    assert!(fx.root().join(aside).join("proposals.json").is_file());
     assert_eq!(
         json(&fx.ok(&["session", "list", "--include-inactive", "--json"])),
         before
@@ -76,9 +87,17 @@ fn export_writes_every_session_and_writes_nothing_to_the_store() {
     ] {
         let exported =
             std::fs::read_to_string(target.join(format!("sessions/{month}/{id}.md"))).unwrap();
-        assert!(exported.starts_with("---\nformat: 26\n"), "{exported}");
+        assert!(exported.starts_with("---\nformat: 27\n"), "{exported}");
         assert!(exported.contains(&format!("\nid: {id}\n")), "{exported}");
     }
+    for rel in [
+        "entries/decisions/decisions-1.md",
+        "entries/preferences/preferences-1.md",
+        "proposals.json",
+    ] {
+        assert!(target.join(rel).is_file(), "{rel} exported");
+    }
+    assert!(out["entries"] == 4 && out["claims"] == 2, "{out}");
     // JSONL needs the sessions in scribe.db.
     let jsonl = fx.elsewhere("jsonl");
     let out = fx.run(&["export", "--as", "jsonl", jsonl.to_str().unwrap(), "--json"]);

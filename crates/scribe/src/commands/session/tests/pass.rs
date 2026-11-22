@@ -193,7 +193,7 @@ impl Setup {
         let dir = target.path().join("export");
         self.ctx
             .store()
-            .export_sessions(&dir, scribe_core::ExportFormat::Markdown)
+            .export(&dir, scribe_core::ExportFormat::Markdown)
             .unwrap();
         std::fs::read_to_string(dir.join(format!("sessions/2026/11/{ON}.md"))).unwrap()
     }

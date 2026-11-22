@@ -152,7 +152,10 @@ impl Command {
     /// compile without deciding (STD-02 R27).
     pub(crate) fn audit(&self) -> Option<AuditMeta> {
         match self {
-            Self::Init(_) => Some(AuditMeta { command: "init" }),
+            Self::Init(_) => Some(AuditMeta {
+                command: "init",
+                stepwise: false,
+            }),
             Self::Entry(command) => command.audit(),
             Self::Session(command) => command.audit(),
             Self::Transcript(command) => command.audit(),
@@ -175,16 +178,48 @@ impl Command {
 /// Run one command, auditing it if it is audited.
 ///
 /// The guard exists before dispatch and records when it is dropped, so a
-/// command that returns early or panics is still logged, as a failure.
+/// command that returns early or panics is still logged, as a failure. An
+/// audited command that calls no model runs as one store transaction with
+/// its audit lines ([`AuditMeta::stepwise`]): they commit together, and a
+/// refusal rolls back every write it made before refusing.
 pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
-    let mut audit = command
-        .audit()
-        .map(|meta| AuditGuard::start(ctx.store(), meta, ctx.now()));
+    let meta = command.audit();
+    let mut audit = meta.map(|meta| AuditGuard::start(ctx.store(), meta, ctx.now()));
     let subject = command.subject(ctx);
     if let Some(audit) = audit.as_mut() {
         subject.apply(audit);
     }
-    let result = match command {
+    let finish = |audit: &mut Option<AuditGuard<'_>>, result: &Result<Output, CliError>| {
+        if let Some(audit) = audit.as_mut() {
+            audit.mark_result(result);
+            subject.apply(audit);
+            audit.set_instruction(ctx.instruction_note());
+        }
+    };
+    if meta.is_none_or(|meta| meta.stepwise) {
+        let result = dispatch(command, ctx);
+        finish(&mut audit, &result);
+        return result;
+    }
+    let result = ctx.store().transaction(|| {
+        let result = dispatch(command, ctx);
+        finish(&mut audit, &result);
+        let output = result?;
+        if let Some(audit) = audit.as_mut() {
+            audit.flush()?;
+        }
+        Ok(output)
+    });
+    if result.is_err() {
+        // The lines flushed inside rolled back with the transaction: the
+        // guard writes the failure after it.
+        finish(&mut audit, &result);
+    }
+    result
+}
+
+fn dispatch(command: Command, ctx: &Context) -> Result<Output, CliError> {
+    match command {
         Command::Init(args) => init::run(args, ctx),
         Command::Entry(command) => entry::run(command, ctx),
         Command::Session(command) => session::run(command, ctx),
@@ -201,13 +236,7 @@ pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
         Command::Brief(args) => brief::run(&args, ctx),
         Command::Tmux(args) => tmux::run(args, ctx),
         Command::Plugin(command) => plugin::run(command, ctx),
-    };
-    if let Some(audit) = audit.as_mut() {
-        audit.mark_result(&result);
-        subject.apply(audit);
-        audit.set_instruction(ctx.instruction_note());
     }
-    result
 }
 
 /// How much one run of a routine command may do: at most `max` units

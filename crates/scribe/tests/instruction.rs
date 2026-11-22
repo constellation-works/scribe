@@ -152,13 +152,62 @@ fn store_with_agent_entry() -> Fixture {
     fx
 }
 
-/// The store's files, but the audit log and the lock file, which every
-/// audited refusal appends to or rewrites.
-fn state(fx: &Fixture) -> Vec<(PathBuf, Vec<u8>, u32)> {
-    snapshot(&fx.root())
+/// What a refusal must leave alone: the store's files, but the database,
+/// its WAL and the audit spool (every audited refusal inserts its line
+/// there), and every exported record but the audit log, which stands for the
+/// rows inside the database.
+fn state(fx: &Fixture) -> State {
+    let files = snapshot(&fx.root())
         .into_iter()
-        .filter(|(path, _, _)| !path.ends_with("audit.jsonl") && !path.ends_with(".lock"))
-        .collect()
+        .filter(|(path, _, _)| {
+            let name = path.to_string_lossy();
+            !name.contains("scribe.db") && !name.contains("audit-spool")
+        })
+        .collect();
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("export");
+    scribe_core::Store::open(fx.root())
+        .export(&target, scribe_core::ExportFormat::Markdown)
+        .unwrap();
+    let records = snapshot(dir.path())
+        .into_iter()
+        .filter(|(path, _, _)| !path.ends_with("audit.jsonl"))
+        .map(|(path, bytes, mode)| {
+            (
+                path.strip_prefix(dir.path()).unwrap().to_path_buf(),
+                bytes,
+                mode,
+            )
+        })
+        .collect();
+    State { files, records }
+}
+
+/// [`state`]'s result; a mismatch prints the files' names and sizes, not
+/// their bytes.
+#[derive(PartialEq)]
+struct State {
+    files: Vec<(PathBuf, Vec<u8>, u32)>,
+    records: Vec<(PathBuf, Vec<u8>, u32)>,
+}
+
+impl std::fmt::Debug for State {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (kind, set) in [("file", &self.files), ("record", &self.records)] {
+            for (path, bytes, mode) in set {
+                let name = path.components().rev().take(3).collect::<Vec<_>>();
+                let sum = bytes
+                    .iter()
+                    .fold(0u64, |a, b| a.wrapping_mul(31).wrapping_add(u64::from(*b)));
+                writeln!(
+                    f,
+                    "{kind} {name:?} {} bytes sum {sum} mode {mode:o}",
+                    bytes.len()
+                )?;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[test]
@@ -283,7 +332,7 @@ fn each_check_refuses_with_its_code_and_changes_nothing() {
         (Some(1), Some(String::from("instruction_stale")))
     );
     assert_eq!(state(&fx), before, "every refusal changes nothing");
-    let audit = std::fs::read_to_string(fx.root().join("audit.jsonl")).unwrap();
+    let audit = support::audit_text(&fx.root());
     for code in [
         "instruction_not_found",
         "instruction_stale",
@@ -525,18 +574,26 @@ fn forget<'a>(id: &'a str, instruction: &'a str) -> Vec<&'a str> {
 
 /// The audit log's lines for `command`.
 fn audit_lines(fx: &Fixture, command: &str) -> Vec<Value> {
-    std::fs::read_to_string(fx.root().join("audit.jsonl"))
-        .unwrap_or_default()
+    support::audit_text(&fx.root())
         .lines()
         .map(|l| serde_json::from_str::<Value>(l).unwrap())
         .filter(|l| l["command"] == command)
         .collect()
 }
 
-/// Every file under the store root whose bytes hold `needle`.
+/// Every file under the store root, and every exported record, whose bytes
+/// hold `needle`. The user's originals in `pre-sqlite-*/` stay by design and
+/// are not counted.
 fn files_holding(fx: &Fixture, needle: &str) -> Vec<PathBuf> {
-    snapshot(&fx.root())
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("export");
+    scribe_core::Store::open(fx.root())
+        .export(&target, scribe_core::ExportFormat::Markdown)
+        .unwrap();
+    let kept = snapshot(&fx.root())
         .into_iter()
+        .filter(|(path, _, _)| !path.to_string_lossy().contains("pre-sqlite-"));
+    kept.chain(snapshot(dir.path()))
         .filter(|(_, bytes, _)| {
             bytes
                 .windows(needle.len())
@@ -622,7 +679,7 @@ fn instructed_retire_hides_daniels_entry_and_keeps_its_text() {
     assert_eq!(lines[0]["error_code"], "user_only");
     assert_eq!(lines[1]["status"], "success");
     assert_eq!(lines[1]["target"], "preferences-1");
-    let audit = std::fs::read_to_string(fx.root().join("audit.jsonl")).unwrap();
+    let audit = support::audit_text(&fx.root());
     assert!(
         !audit.contains(words),
         "the instruction's words are not audited"
@@ -683,7 +740,7 @@ fn forget_without_confirm_or_an_instruction_is_refused_and_changes_nothing() {
         assert_eq!(line["error_code"], *code, "{line}");
         assert_eq!(line["target"], "decisions-1", "{line}");
     }
-    let audit = std::fs::read_to_string(fx.root().join("audit.jsonl")).unwrap();
+    let audit = support::audit_text(&fx.root());
     assert!(
         !audit.contains(words),
         "the instruction's words are not audited"
@@ -744,12 +801,8 @@ fn forget_leaves_no_store_file_holding_the_entry_its_quotes_or_the_instruction()
     ] {
         assert_eq!(files_holding(&fx, gone), Vec::<PathBuf>::new(), "{gone}");
     }
-    assert!(
-        fx.root()
-            .join("entries/preferences/preferences-1.md")
-            .exists()
-    );
-    assert!(fx.root().join("entries/decisions/decisions-1.md").exists());
+    assert!(support::exported(&fx.root(), "entries/preferences/preferences-1.md").is_some());
+    assert!(support::exported(&fx.root(), "entries/decisions/decisions-1.md").is_some());
     // Another entry's quote on the same proposal stays.
     assert!(!files_holding(&fx, "squash-merge agent PRs").is_empty());
 
@@ -966,7 +1019,7 @@ fn an_instructed_approval_writes_daniels_reserved_entry_with_the_agent_as_approv
     assert_eq!(lines[1]["instruction_session"], SESSION);
     assert_eq!(lines[1]["instruction_message"], "u-1");
     assert_eq!(lines[2]["instruction_session"], SESSION);
-    let audit = std::fs::read_to_string(fx.root().join("audit.jsonl")).unwrap();
+    let audit = support::audit_text(&fx.root());
     assert!(!audit.contains("how I want reviews"), "{audit}");
 }
 
@@ -1066,10 +1119,10 @@ fn a_scan_replays_an_interrupted_instructed_approval_with_its_attribution() {
     let words = "approve p-1";
     claude(&fx, Some("cli"), &[("u-1", "user", words, 1)]);
     ok(&fx, &settle("p-1", "--approve", words));
-    let entry = fx.root().join("entries/preferences/preferences-1.md");
-    let written = std::fs::read(&entry).unwrap();
-    // A crash between proposals.json and the entry leaves the approval.
-    std::fs::remove_file(&entry).unwrap();
+    let entry = "entries/preferences/preferences-1.md";
+    let written = support::exported(&fx.root(), entry).unwrap();
+    // A crash between the claim and the entry leaves the approval.
+    support::sql(&fx.root(), "DELETE FROM entries WHERE id = 'preferences-1'");
     let out = ok(&fx, &["consistency", "scan", "--json"]);
     let report: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(report["reapplied"][0]["entry"], "preferences-1", "{report}");
@@ -1083,7 +1136,11 @@ fn a_scan_replays_an_interrupted_instructed_approval_with_its_attribution() {
             .starts_with("scribe proposal settle p-1 --approve"),
         "never a typed #scribe approve: {e}"
     );
-    assert_eq!(std::fs::read(&entry).unwrap(), written, "the same entry");
+    assert_eq!(
+        support::exported(&fx.root(), entry).unwrap(),
+        written,
+        "the same entry"
+    );
     // A typed repeat changes nothing either.
     let p = show(&fx, "proposal", "p-1");
     assert_eq!(p["state"], "approved");
@@ -1095,7 +1152,7 @@ fn a_scan_closes_an_instructed_approval_covered_since_as_covered_not_rejected() 
     let words = "approve p-1";
     claude(&fx, Some("cli"), &[("u-1", "user", words, 1)]);
     ok(&fx, &settle("p-1", "--approve", words));
-    std::fs::remove_file(fx.root().join("entries/preferences/preferences-1.md")).unwrap();
+    support::sql(&fx.root(), "DELETE FROM entries WHERE id = 'preferences-1'");
     // An active entry now says the same.
     let added: Value = serde_json::from_slice(
         &ok(
@@ -1127,11 +1184,7 @@ fn a_scan_closes_an_instructed_approval_covered_since_as_covered_not_rejected() 
     assert_eq!(p["settled_author"]["name"], "opus");
     assert_eq!(p["instruction"]["message"], "u-1");
     assert_eq!(p["instruction"]["quote"], words);
-    assert!(
-        !fx.root()
-            .join("entries/preferences/preferences-1.md")
-            .exists()
-    );
+    assert!(support::exported(&fx.root(), "entries/preferences/preferences-1.md").is_none());
     // The same instruction again is done; nothing changes.
     let again = ok(&fx, &settle("p-1", "--approve", words));
     assert!(

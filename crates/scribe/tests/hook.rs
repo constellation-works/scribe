@@ -132,17 +132,12 @@ fn entries(fx: &Fixture) -> Vec<Value> {
 }
 
 fn audit(fx: &Fixture) -> Vec<Value> {
-    match std::fs::read_to_string(fx.root().join("audit.jsonl")) {
-        Ok(text) => text
-            .lines()
-            .map(|l| serde_json::from_str(l).unwrap())
-            .collect(),
-        Err(_) => Vec::new(),
-    }
+    support::audit_lines(&fx.root())
 }
 
-fn entries_snapshot(fx: &Fixture) -> Vec<(PathBuf, Vec<u8>, u32)> {
-    snapshot(&fx.root().join("entries"))
+/// Every stored entry, in full (entries live in `scribe.db`).
+fn entries_snapshot(fx: &Fixture) -> Vec<Value> {
+    entries(fx)
 }
 
 #[test]
@@ -523,7 +518,7 @@ fn the_audit_log_holds_ids_and_codes_never_what_was_said() {
                  "quote": "the secret phrase is marmalade", "message": "u-1", "reason": ""}]),
     );
     hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
-    let log = std::fs::read_to_string(fx.root().join("audit.jsonl")).unwrap();
+    let log = support::audit_text(&fx.root());
     for needle in [
         "marmalade",
         "secret phrase",
@@ -576,7 +571,7 @@ fn a_transcript_outside_claudes_projects_fails_the_provenance_check() {
         "{message}"
     );
     assert!(message.contains("transcript check"), "{message}");
-    assert!(!fx.root().join("entries").exists(), "nothing written");
+    assert!(entries(&fx).is_empty(), "nothing written");
     let codes: Vec<Value> = audit(&fx).iter().map(|l| l["error_code"].clone()).collect();
     assert_eq!(
         codes,
@@ -611,7 +606,7 @@ fn a_transcript_outside_claudes_projects_fails_the_provenance_check() {
         audit(&fx).last().unwrap()["error_code"],
         "provenance_failed"
     );
-    assert!(!fx.root().join("entries").exists());
+    assert!(entries(&fx).is_empty());
 }
 
 #[cfg(unix)]
@@ -640,7 +635,7 @@ fn a_linked_transcript_fails_the_provenance_check() {
             .unwrap()
             .contains("not a regular file")
     );
-    assert!(!fx.root().join("entries").exists());
+    assert!(entries(&fx).is_empty());
 }
 
 #[test]
@@ -658,7 +653,18 @@ fn a_bad_config_is_reported_in_the_reply_and_nothing_is_written() {
         "{message}"
     );
     assert!(claude_calls(&fx).is_empty());
-    assert!(!fx.root().join("entries").exists());
+    // A bad config fails `entry list` itself, so look at the export.
+    let export = tempfile::tempdir().unwrap();
+    scribe_core::Store::open(fx.root())
+        .export(
+            &export.path().join("x"),
+            scribe_core::ExportFormat::Markdown,
+        )
+        .unwrap();
+    assert!(
+        std::fs::read_dir(export.path().join("x/entries")).map_or(true, |mut d| d.next().is_none()),
+        "no entry written"
+    );
     assert!(marks_json(&fx).is_empty(), "the marker stays unsettled");
     let codes: Vec<Value> = audit(&fx).iter().map(|l| l["error_code"].clone()).collect();
     assert_eq!(codes, [json!("config_invalid")]);
@@ -1071,7 +1077,7 @@ fn listed(fx: &Fixture, project: &str) -> Vec<Value> {
 fn frontmatter(fx: &Fixture, entry: &Value) -> String {
     let id = entry["id"].as_str().unwrap();
     let tag = entry["tag"].as_str().unwrap();
-    std::fs::read_to_string(fx.root().join("entries").join(tag).join(format!("{id}.md"))).unwrap()
+    support::exported(&fx.root(), &format!("entries/{tag}/{id}.md")).unwrap()
 }
 
 fn by_said<'a>(entries: &'a [Value], said: &str) -> &'a Value {
@@ -1485,6 +1491,8 @@ fn session_start_prints_no_reminder_when_the_sessions_cannot_be_read() {
         message, "scribe: 1 proposal to review — scribe proposal list",
         "an unreadable session store adds no continuation, and the hook still starts"
     );
+    // The export reads `sessions/` too, so make it readable first.
+    drop(_restore);
     assert!(audit(&fx).is_empty(), "a failed read is not audited");
 }
 
@@ -1527,10 +1535,7 @@ fn decisions_and_its_old_aliases_are_unknown_tags_without_config() {
     assert!(!claude_stdin(&fx, 0).contains("hint:"), "no hint names it");
     let codes: Vec<Value> = audit(&fx).iter().map(|l| l["error_code"].clone()).collect();
     assert_eq!(codes, vec![json!("unknown_tag"); 3]);
-    assert!(
-        !fx.root().join("entries").exists(),
-        "a refused marker writes no entry"
-    );
+    assert!(entries(&fx).is_empty(), "a refused marker writes no entry");
 }
 
 #[test]
@@ -1789,12 +1794,12 @@ fn marked_turns(claude: &Claude, turns: &[(&str, &str)]) {
 }
 
 fn marks_json(fx: &Fixture) -> Vec<Value> {
-    match std::fs::read(fx.root().join("marks.json")) {
-        Ok(bytes) => serde_json::from_slice::<Value>(&bytes).unwrap()["marks"]
+    match support::exported(&fx.root(), "marks.json") {
+        Some(doc) => serde_json::from_str::<Value>(&doc).unwrap()["marks"]
             .as_array()
             .unwrap()
             .clone(),
-        Err(_) => Vec::new(),
+        None => Vec::new(),
     }
 }
 
@@ -1895,7 +1900,14 @@ fn stop_catalogs_a_marked_turn_as_daniels_entry_with_scribes_context_once() {
     );
     assert_eq!(entry["said"], MARKED);
     assert_eq!(entry["cite"]["message"], "u-1");
-    assert!(!fx.root().join("proposals.json").exists(), "no proposal");
+    assert!(
+        support::exported(&fx.root(), "proposals.json").is_none_or(|doc| {
+            serde_json::from_str::<Value>(&doc).unwrap()["proposals"]
+                .as_array()
+                .is_none_or(Vec::is_empty)
+        }),
+        "no proposal"
+    );
     let marks = marks_json(&fx);
     assert_eq!(marks.len(), 1);
     assert_eq!(marks[0]["outcome"], "entry");
@@ -1929,7 +1941,7 @@ fn a_none_answer_is_echoed_recorded_and_never_asked_again() {
     assert_eq!(marks_json(&fx)[0]["outcome"], "none");
     hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
     assert_eq!(claude_calls(&fx).len(), 1);
-    assert!(!fx.root().join("entries").exists() || entries(&fx).is_empty());
+    assert!(entries(&fx).is_empty());
 }
 
 #[test]
@@ -1960,7 +1972,7 @@ fn a_failing_model_stays_pending_for_three_attempts_then_refuses_model_failed() 
     assert_eq!(marks[0]["attempts"], 3);
     hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
     assert_eq!(claude_calls(&fx).len(), 3, "never a fourth call");
-    assert!(!fx.root().join("entries").exists() || entries(&fx).is_empty());
+    assert!(entries(&fx).is_empty());
     assert!(audit(&fx).iter().any(|l| l["error_code"] == "model_failed"));
 }
 
@@ -2047,7 +2059,7 @@ fn a_mention_or_an_agent_turn_is_never_cataloged() {
     let out = hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
     assert!(out.stdout.is_empty(), "{}", text(&out.stdout));
     assert!(claude_calls(&fx).is_empty());
-    assert!(!fx.root().join("marks.json").exists());
+    assert!(marks_json(&fx).is_empty());
 }
 
 #[test]

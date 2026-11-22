@@ -46,13 +46,34 @@ fn dropping_the_guard_releases_the_lock() {
     assert!(again.is_ok(), "lock should be free after drop: {again:?}");
 }
 
+/// Template defect 2: a released guard left its holder record behind, so a
+/// later timeout named a process that had already finished.
+#[test]
+fn a_released_guard_leaves_no_holder_for_a_later_timeout_to_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(".lock");
+    drop(LockGuard::acquire(&path, "first writer", Duration::from_secs(1)).unwrap());
+    assert_eq!(std::fs::read(&path).unwrap(), b"", "the record is cleared");
+    // A holder that has not written its record yet.
+    let other = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+    other.try_lock().unwrap();
+    let err = LockGuard::acquire(&path, "second writer", Duration::from_millis(60)).unwrap_err();
+    let Error::Locked { holder, .. } = err else {
+        panic!("expected Locked, got {err:?}");
+    };
+    assert!(
+        !holder.contains("first writer"),
+        "names a finished holder: {holder:?}"
+    );
+}
+
 #[cfg(unix)]
 mod private_state {
     //! STD-05 R7–R9: owner-only creation, and refusal of links, foreign
     //! owners and loose modes on load.
     use crate::error::Error;
     use crate::store::fsio::{
-        LockGuard, append_private, create_private_dir, inspect_dir, inspect_file, write_atomic,
+        LockGuard, create_private_dir, inspect_dir, inspect_file, write_atomic,
     };
     use std::fs::{self, Permissions};
     use std::os::unix::fs::{PermissionsExt, symlink};
@@ -173,28 +194,6 @@ mod private_state {
         let lock = dir.path().join(".lock");
         symlink(&target, &lock).unwrap();
         let err = LockGuard::acquire(&lock, "t", Duration::from_secs(1)).unwrap_err();
-        assert!(matches!(err, Error::Symlink { .. }), "got {err:?}");
-        assert_eq!(fs::read(&target).unwrap(), b"precious");
-    }
-
-    #[test]
-    fn append_private_creates_the_log_owner_only_and_appends_in_order() {
-        let dir = crate::store::tests::private_tempdir();
-        let log = dir.path().join("audit.jsonl");
-        append_private(&log, b"one\n").unwrap();
-        append_private(&log, b"two\n").unwrap();
-        assert_eq!(fs::read(&log).unwrap(), b"one\ntwo\n");
-        assert_eq!(mode(&log), 0o600);
-    }
-
-    #[test]
-    fn append_private_never_follows_a_link() {
-        let dir = crate::store::tests::private_tempdir();
-        let target = dir.path().join("elsewhere");
-        fs::write(&target, b"precious").unwrap();
-        let link = dir.path().join("audit.jsonl");
-        symlink(&target, &link).unwrap();
-        let err = append_private(&link, b"x\n").unwrap_err();
         assert!(matches!(err, Error::Symlink { .. }), "got {err:?}");
         assert_eq!(fs::read(&target).unwrap(), b"precious");
     }

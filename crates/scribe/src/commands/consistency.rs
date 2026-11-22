@@ -102,7 +102,10 @@ impl ConsistencyCommand {
     /// session records.
     pub(super) fn audit(&self) -> Option<AuditMeta> {
         match self {
-            Self::Scan(_) => Some(AuditMeta { command: COMMAND }),
+            Self::Scan(_) => Some(AuditMeta {
+                command: COMMAND,
+                stepwise: true,
+            }),
         }
     }
 }

@@ -1,6 +1,6 @@
-Move session files into scribe.db now, keeping the old files aside
+Move the store's files into scribe.db now, keeping the old files aside
 
-Imports sessions/ and control.json's switches and Codex cursors into scribe.db in one transaction that checks the record count, then moves the files to pre-sqlite-<date>/ in the data directory, which scribe never deletes. Every write makes this move on its own. Refused while a session is switched on, while a rebuild checkpoint waits, and once the sessions moved.
+Imports sessions/, entries/, control.json's switches and Codex cursors, proposals.json, tags.json, marks.json, pickups.json and audit.jsonl into scribe.db in one transaction that checks the record count of each kind, then moves the files to pre-sqlite-<date>/ in the data directory, which scribe never deletes. Every write makes this move on its own. Refused while a session is switched on, while a rebuild checkpoint waits, and once every kind moved.
 
 Usage: scribe store migrate [OPTIONS]
 

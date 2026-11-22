@@ -210,7 +210,10 @@ impl MemoryCommand {
             Self::Restore(_) => "memory restore",
             Self::Refresh(_) => "memory refresh",
         };
-        Some(AuditMeta { command })
+        Some(AuditMeta {
+            command,
+            stepwise: matches!(self, Self::Refresh(_)),
+        })
     }
 }
 

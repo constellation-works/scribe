@@ -54,7 +54,7 @@ fn the_first_write_creates_an_owner_only_wal_database_at_the_current_schema() {
         .unwrap();
     assert_eq!(written, 1);
     let (version, store_id) = db::meta(dir.path()).unwrap().unwrap();
-    assert_eq!(version, 4);
+    assert_eq!(version, 5);
     assert_eq!(store_id.len(), 32);
     // PERSIST_WAL: both companions outlive the last connection.
     for name in [DB_FILE, "scribe.db-wal", "scribe.db-shm"] {
@@ -312,7 +312,7 @@ fn a_writer_held_past_the_lock_wait_is_locked() {
     store
         .write_messages(&[message("s-1", "m-1", "merge")], &Redactor::default())
         .unwrap();
-    let mut holder = db::open_writer(dir.path(), Duration::from_secs(5)).unwrap();
+    let mut holder = db::open_new_writer(dir.path(), Duration::from_secs(5)).unwrap();
     let tx = holder
         .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .unwrap();
@@ -398,7 +398,7 @@ fn concurrent_writer_processes_all_commit_under_wal_and_busy_timeout() {
         .search_messages(&tokens("merge"))
         .unwrap();
     assert_eq!(found.matches.len(), WRITERS * WINDOWS * 3);
-    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 4);
+    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 5);
 }
 
 #[test]
@@ -444,4 +444,23 @@ fn a_forget_deletes_its_messages_and_leaves_no_trace_in_the_database_or_its_wal(
     let empty = private_tempdir();
     assert_eq!(Store::open(empty.path()).forget_messages(&keys).unwrap(), 0);
     assert!(!empty.path().join(DB_FILE).exists());
+}
+
+/// Template defect 3: an audit line that did not encode was reported as an
+/// I/O error on `audit.jsonl`. Every value scribe encodes for a row is
+/// checked through one function, and its failure is `store_corrupt` naming
+/// the database, never `io_error`.
+#[test]
+fn a_value_that_does_not_encode_is_corrupt_not_io() {
+    let dir = private_tempdir();
+    let db_path = dir.path().join(DB_FILE);
+    // A map with non-string keys has no JSON object form.
+    let bad: std::collections::BTreeMap<(u8, u8), u8> = [((1, 2), 3)].into_iter().collect();
+    let err = db::docs::serialized(&db_path, "an audit line", &bad).unwrap_err();
+    assert_eq!(err.code(), "store_corrupt", "{err:?}");
+    let crate::Error::Corrupt { path, source } = err else {
+        unreachable!()
+    };
+    assert_eq!(path, db_path);
+    assert!(source.to_string().contains("an audit line"), "{source}");
 }

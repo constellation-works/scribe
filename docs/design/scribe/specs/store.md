@@ -110,26 +110,27 @@ user's file could pass for one of Daniel's records.
 ```
 <root>/                                  0700
 ├── config.toml                          0600, optional
-├── entries/<tag>/<tag>-<n>.md           0600, one file per entry
+├── entries/<tag>/<tag>-<n>.md           0600, one file per entry, until the move (formats 1–26)
 ├── issues/issue-<n>.md                  0600, one file per issue (formats 17–23; phase 2 converts each to an entry)
 ├── pre-issue-<yyyy-mm-dd>/issue-<n>.md   0600, an issue file after its conversion (phase 2)
 ├── sessions/<yyyy>/<mm>/<session-id>.md 0600, one file per session record, until the move (formats 1–25)
-├── control.json                         0600, optional; after the move only the format stamp, `{"format": 26, "sessions": {}, "codex_cursors": {}}`
-├── pre-sqlite-<yyyy-mm-dd>/             0700, `sessions/`, `control.json` and `.codex-<id>.lock` files after the move (phase 6), never deleted but for a forgotten session's own files
+├── control.json                         0600, optional; after the move only the format stamp, `{"format": 27, "sessions": {}, "codex_cursors": {}}`
+├── pre-sqlite-<yyyy-mm-dd>/             0700, the files the move took in (`sessions/`, `entries/`, the JSON documents, `audit.jsonl`, `.codex-<id>.lock`), never deleted but for a forgotten session's own files
 ├── locks/codex-<id>.lock                0600, the Codex ingestion lock of a session (phase 6)
 ├── locks/rebuild-<id>.lock              0600, the rebuild lock of a session (phase 6)
-├── proposals.json                       0600, optional
-├── tags.json                            0600, optional (introduced at format 5, S12)
-├── pickups.json                         0600, optional (introduced at format 8)
+├── proposals.json                       0600, optional until the move (formats 1–26); after it an empty format stamp
+├── tags.json                            0600, optional (introduced at format 5, S12); after the move an empty format stamp
+├── pickups.json                         0600, optional (introduced at format 8); after the move an empty format stamp
 ├── memory/profile.md                     0600, the profile, rebuilt by `memory refresh` (format 25)
 ├── memory/now/<date>-<slug>.md          0600, one file per now item (format 25)
 ├── memory/milestones/<date>-<slug>.md   0600, one file per milestone (format 25)
 ├── memory/m-<n>.md                      0600, a memory item (formats 19–24), migrated and removed by the first memory write
-├── marks.json                           0600, optional (introduced at format 22)
+├── marks.json                           0600, optional (introduced at format 22); after the move an empty format stamp
 ├── scribe.db                            0600, SQLite in WAL mode, created by the first write that needs it (phase 4)
 ├── scribe.db-wal, scribe.db-shm         0600, kept after the last connection (PERSIST_WAL)
-├── audit.jsonl                          0600, created by the first audited command
-└── .lock                                0600, created by the first writer, never deleted
+├── audit-spool/<nanos>-<pid>-<n>.json   0600, one audit line a busy database could not take yet (phase 7), drained by the next write
+├── audit.jsonl                          0600, the audit log until the move (formats 1–26)
+└── .lock                                0600, the store lock until phase 7; no longer taken, moved aside by the move
 ```
 
 The root is `--root` > `SCRIBE_ROOT` > `~/.scribe`. A missing root, a
@@ -146,8 +147,9 @@ built with `rusqlite`'s `bundled` feature (SQLite compiled in, FTS5 on).
 Only `store/db.rs` and `store/db/` open it. It holds the session pass's
 messages (phase 4) and memory's rows (phase 5): the pending `now`
 candidates, removed items' history, the profile revisions and cursor, the
-memory journal and each pass window's signal. Every other record stays a
-file.
+memory journal and each pass window's signal; the sessions (phase 6); and
+entries, claims, agent tags, marks, pickups and the audit log (phase 7).
+Only `config.toml` and `memory/`'s files stay files.
 
 - **Privacy.** `scribe.db`, `scribe.db-wal` and `scribe.db-shm` are checked
   like any store file on every open, read or write: a link, another user's
@@ -162,7 +164,7 @@ file.
   a new database retries it every 20 ms within the same wait. Every write
   is one `BEGIN IMMEDIATE` transaction; a busy database past the wait is
   `store_locked` (holder `another scribe.db writer`). Writers do not take
-  `.lock`.
+  `.lock` (phase 7 retires it).
 - **Readers** take no lock and write nothing: they open
   `SQLITE_OPEN_READ_ONLY`. A missing database matches nothing. When SQLite
   cannot open the WAL read-only (`SQLITE_CANTOPEN` or `SQLITE_READONLY`:
@@ -177,11 +179,13 @@ file.
   `memory_messages` and `pass_signals`; version 3 (phase 6) adds
   `sessions`, `segments`, `session_links`, `session_terms`,
   `codex_cursors`, `rebuild_checkpoints` and `record_kinds`; version 4 adds
-  `sessions.forgotten`. Every table is `STRICT`; times are RFC 3339 UTC text.
+  `sessions.forgotten`; version 5 (phase 7) adds `entries`, `claims`,
+  `agent_tags`, `marks`, `pickups` and `audit`, and rebuilds `record_kinds`
+  to accept their kinds. Every table is `STRICT`; times are RFC 3339 UTC text.
 - **Errors.** A file SQLite cannot read as a database is `store_corrupt`;
   any other SQLite failure is `store_database`.
 
-### Tables (version 4)
+### Tables (version 5)
 
 | Table | Columns (type, constraint) | Written by |
 |---|---|---|
@@ -201,7 +205,13 @@ file.
 | `session_terms` | `session INTEGER NOT NULL`; `position INTEGER NOT NULL`; `term`, `said`, `message`; `PRIMARY KEY (session, position)` | the record's writer (version 3) |
 | `codex_cursors` | `session TEXT PRIMARY KEY`, 1–128 characters; `message TEXT NOT NULL` | Codex ingestion (version 3) |
 | `rebuild_checkpoints` | `session INTEGER NOT NULL PRIMARY KEY` (`sessions.id`); `record TEXT NOT NULL`, the checkpoint as a record file's text; `created TEXT NOT NULL` | `session rebuild`; dropped in the transaction that writes the rebuilt record (version 3) |
-| `record_kinds` | `kind TEXT PRIMARY KEY CHECK (kind IN ('sessions'))`; `moved_at TEXT NOT NULL`; `moved_to TEXT`, the `pre-sqlite-<date>` directory, `NULL` when there were no files | the move; its row says the sessions are rows (version 3) |
+| `record_kinds` | `kind TEXT PRIMARY KEY CHECK (kind IN ('sessions', 'entries', 'claims', 'agent_tags', 'marks', 'pickups', 'audit'))`; `moved_at TEXT NOT NULL`; `moved_to TEXT`, the `pre-sqlite-<date>` directory, `NULL` when there were no files | the move; a row says that kind is rows (version 3; the kinds past `sessions` version 5) |
+| `entries` | `id TEXT PRIMARY KEY` (`<tag>-<n>`); `tag TEXT NOT NULL`; `n INTEGER NOT NULL`, `UNIQUE (tag, n)`; every frontmatter field of an entry as a column (`"window"` quoted; lists, cites, authors and other objects as JSON text); `content TEXT NOT NULL`, the body | every entry write (version 5) |
+| `claims` | `n INTEGER PRIMARY KEY` (`p-<n>`); every field of a proposal as a column, objects as JSON text; `has_candidate` `0` or `1` and the candidate's fields as `c_<field>` columns | every claim write: only the claims a write changed (version 5) |
+| `agent_tags` | `name TEXT PRIMARY KEY`; the fields `tags.json` held | `tag add`, `tag update` (version 5) |
+| `marks` | `position INTEGER PRIMARY KEY`; the fields of one `marks.json` record | the `Stop` hook's marker outcomes (version 5) |
+| `pickups` | `position INTEGER PRIMARY KEY`; the fields of one `pickups.json` record | `entry pickup` (version 5) |
+| `audit` | `id INTEGER PRIMARY KEY`; `format INTEGER NOT NULL`, the line's own format (1–5); the event's fields (`issue` as JSON text, `NULL` for none); `spool TEXT UNIQUE`, the spool file a line was drained from, else `NULL` | every audited command; the move; the spool drain (version 5) |
 
 ### Messages
 
@@ -274,7 +284,7 @@ session's `s-<n>` as its target.
   `control.json` as before. `control.json`'s format is checked either way,
   so a store stamped by a newer build is `store_too_new`.
 - **The move.** The first session write (a switch, a pass, a rebuild, an
-  activity change, a link) moves the files in under `.lock` before it
+  activity change, a link) moves the files in in its write's transaction before it
   writes: in one transaction it reads every record (one that does not read
   refuses the move with `store_corrupt`, naming the file, and nothing
   moves), inserts them ordered by `created` then id, inserts every switch
@@ -287,7 +297,7 @@ session's `s-<n>` as its target.
   write that refuses, or one that touches no session (an entry, a tag, an
   audit line), leaves the files where they are. A store with no session
   files is marked moved by its first session write.
-- **`scribe store migrate`** makes the move now, under `.lock`. It is
+- **`scribe store migrate`** makes the move now, in its write's transaction. It is
   refused with `migrate_blocked` while any session is switched on, while
   any rebuild checkpoint waits, and once the sessions moved; the write's
   own move is never refused for these, since it imports switches and
@@ -319,6 +329,70 @@ session's `s-<n>` as its target.
   `export_target_exists`; JSONL of a store whose sessions are still files
   is `export_needs_migrate`. A record that does not read is left out and
   reported under `skipped`.
+
+### Documents in scribe.db (phase 7)
+
+- **Where they are read from.** With `record_kinds` rows for every kind,
+  entries, claims, agent tags, marks, pickups and the audit log are
+  queries, and `entries/`, `proposals.json`, `tags.json`, `marks.json`,
+  `pickups.json` and `audit.jsonl` are not read; without them the store has
+  not moved and reads the files as before. A row is checked as its file was
+  (an entry's id and tag agree, a claim's fields agree with its state), and
+  one that does not read is skipped and reported as a file was.
+- **One write, one transaction.** The store lock is retired. Every store
+  write is one `BEGIN IMMEDIATE` transaction whose reads see what it wrote
+  so far; a write that refuses rolls back, so it changes nothing. A step
+  inside a larger write is a savepoint. A busy database past the lock wait
+  (10 seconds) is `store_locked`, waited for once.
+- **One command, one transaction.** A command that calls no model (the
+  direct write verbs, `#scribe` in the prompt hook, `session-end`, `init`,
+  `store migrate`) runs whole as one transaction with its audit lines, so a
+  write and its line commit together: an approval writes its claim, its
+  entry and its line or none of them, and `reapply_approved` is left with
+  nothing to repair. A command that calls a model (`session pass`,
+  `catalog`, `rebuild`, `consistency scan`, the `Stop` hook,
+  `memory refresh`, the routine tools) holds no transaction across the
+  call, and commits each step with its own lines.
+- **Audit lines that cannot wait.** A line recorded outside a write is
+  inserted without waiting. When another writer holds the database, or the
+  store has not moved, it is written to `audit-spool/` as one file of its
+  own, created `0600` under a name no other line has; every read merges the
+  spool, and the next write drains it into `audit` (a drained file's name
+  is kept in `spool`, so a crash before its removal never counts a line
+  twice) and removes the files after the commit. A refused command
+  therefore waits once and loses no line, and writes no warning before its
+  error.
+- **The move.** The first write moves every kind still in files in its own
+  transaction, sessions first: every record must read (one that does not
+  refuses the move with `store_corrupt` and nothing moves); each kind's row
+  count is checked against the files read; audit lines keep their own
+  format, and a torn line is counted and left in the moved file. After the
+  commit the files go to `pre-sqlite-<yyyy-mm-dd>/`, and `control.json`,
+  `proposals.json`, `tags.json`, `marks.json` and `pickups.json` are
+  written as empty stamps at format 27, so a format-26 build refuses the
+  store instead of writing files beside the database. A write that refuses
+  rolls the move back with it; a move cut off after the commit finishes at
+  the next write. `scribe store migrate` makes the move now, refused as in
+  phase 6.
+- **The memory journal** is staged in the write's transaction and applied
+  after its commit, in a write of its own, so a rollback leaves no memory
+  file the database does not record. A later step of the same command
+  reads the memory files with the open journals laid over them.
+- **Forget and redaction.** A write that changes or deletes an entry or a
+  claim row ends with a `TRUNCATE` checkpoint, so with `secure_delete` no
+  old text is left in the WAL or a free page. The files in
+  `pre-sqlite-<date>/` are the user's and are never rewritten.
+- **Format 27.** `FORMAT` is 27 and the upgrade registry is closed: its
+  last step (`documents_sqlite`) changes no document, and later schema
+  changes are SQL migrations. The steps stay so the move can read a store
+  left at any older format for the support window; phase 8 removes them
+  with the file decoders.
+- **`scribe export <dir>`** writes every kind: `--as markdown` as the
+  file store's files at format 27 (`sessions/`, `entries/<tag>/<id>.md`,
+  `control.json`, `proposals.json`, `tags.json`, `marks.json`,
+  `pickups.json`, `audit.jsonl`), which a build reads as a store and moves
+  in again unchanged; `--as jsonl` as one `<table>.jsonl` per table, which
+  needs every kind moved.
 
 ## Record files
 
@@ -485,7 +559,7 @@ the current header and log (see **Format 4** below); later steps then apply.
 
 ## Issue files
 
-Phase 2 (2_design.md §15.9) removed issue records. Under the store lock,
+Phase 2 (2_design.md §15.9) removed issue records. In a write's transaction,
 the first write converts each `issues/issue-<n>.md` to one entry under the
 tag `issue` with no model call and moves the file to
 `pre-issue-<yyyy-mm-dd>/`; a file that does not parse stays and is tried
@@ -576,14 +650,15 @@ The user said their sister's wedding is on 2026-12-12.
 A file that does not parse, or whose stem is not a valid one, is skipped
 with a warning and never served; an unknown key is `store_corrupt`.
 
-**The journal.** Every memory write takes the store lock and opens a
-`scribe.db` writer, then, in order: replays every open journal row (applies
-its file operations through `write_atomic` or removes the file, then closes
-it); migrates any `m-<n>` items (below); computes its change; commits the
-rows and one journal row holding the file operations in one transaction;
-applies the operations; closes the row (`done = 1`, and the profile
-revision's `file_sha256`); and rewrites `control.json` at format 25. A
-crash between the commit and the files is completed by the next write.
+**The journal.** Every memory write runs in its write's transaction
+(phase 7; the store lock before it), in order: reads the memory files with
+every open journal row's operations laid over them; migrates any `m-<n>`
+items (below); computes its change; and stages its rows and one journal row
+holding the file operations. After the transaction commits, a write of its
+own applies every open row's operations (through `write_atomic`, or removes
+the file) and closes the row (`done = 1`, and the profile revision's
+`file_sha256`). A rollback writes no file; a crash between the commit and
+the files is completed by the next write.
 Reads take no lock and never replay: with an open journal row they print
 the latest committed profile revision and warn `memory_pending`. A file
 operation's path must stay under `memory/`.
@@ -865,7 +940,7 @@ exits 0.
 - **Reads write nothing.** Read-only commands take no lock, create no
   directory or audit line, and work on a read-only root.
 - **Capture** (S2). `Store::capture` takes the drafts of one prompt, and
-  under `.lock` finds an entry with the same `cite` session,
+  in its write's transaction finds an entry with the same `cite` session,
   `prompt_sha256` and `line` before writing; a match is returned as it is
   and nothing is written. A new entry gets the next number of its tag:
   one more than the largest number among the tag's parsed entries and the
@@ -873,12 +948,12 @@ exits 0.
   exists. The root and `entries/<tag>/` are created `0700` when absent and
   a new file is `0600`; writing over an existing entry file is refused.
 - **Cite fill** (S2). `Store::has_unfilled_cites` reads only.
-  `Store::fill_cite_messages` rewrites, under `.lock`, each entry of the
+  `Store::fill_cite_messages` rewrites, in its write's transaction, each entry of the
   session whose `cite.message` is `null` and for which the caller finds a
   message, setting `cite.message` and `updated`; it does nothing when the
   root does not exist.
 - **Control** (S4). `Store::update_control` changes the switches (rows
-  since phase 6, `control.json` before) under `.lock` and writes only when
+  since phase 6, `control.json` before) in its write's transaction and writes only when
   the change reports one, so `/scribe on`
   twice, `off` for a session that is not on, and a `Stop` or `SessionEnd`
   for a session never switched on write nothing. A session never switched
@@ -916,20 +991,20 @@ exits 0.
   With no record `settle_pass` only settles. A failure is recorded through
   `update_control` under the lock. A pass never writes an entry.
 - **Proposals** (S6). `Store::open_proposals` numbers new proposals
-  `p-<max+1>` under `.lock`, skipping any whose pair or stale entry already
+  `p-<max+1>` in its write's transaction, skipping any whose pair or stale entry already
   has a proposal in any state or whose entries are no longer all `active`,
   redacts them, and replaces `proposals.json` only when one opened.
-  `Store::settle` applies one `#scribe approve|reject|retire|forget` under
-  `.lock`, writing `proposals.json` first and then each entry it changed,
-  so a crash between them leaves an approved proposal whose older entry is
-  still `active`; `Store::reapply_approved` (the scan's first step)
-  finishes it. A forget blanks the entry's `said` and body and, in
+  `Store::settle` applies one `#scribe approve|reject|retire|forget` in
+  one transaction with the claim, each entry it changed and the command's
+  audit line (phase 7), so an approved claim never leaves its older entry
+  `active`; `Store::reapply_approved` (the scan's first step) still repairs
+  a store a format-26 build left that way. A forget blanks the entry's `said` and body and, in
   `proposals.json`, the `text` of its quotes and the `reason` of every
   proposal about it, and clears `instruction.quote` and
   `removal_instruction.quote` to `null` on the entry and `instruction.quote`
   on every proposal about it while keeping each instruction's `session`,
   `message` and `at`. Nothing is written when nothing changed.
-- **Retired-tag cleanup** (format 11, 2_design.md §11.3). Under `.lock`
+- **Retired-tag cleanup** (format 11, 2_design.md §11.3). In a write's transaction
   in the candidate write path (`open_pass_candidates` in `write_pass_window`,
   before counting the 20-open cap) and in `consistency scan`
   (`close_retired_candidates`), any open `candidate` proposal whose tag is
@@ -1013,7 +1088,7 @@ exits 0.
   `updated` pins that visible revision rather than the checkpoint write time.
   No new persisted field or store version is needed. Each rebuilt segment
   has `origin: rebuild`. A per-session `locks/rebuild-<id>.lock` serializes
-  rebuilders without holding the store lock over model calls. The lock file
+  rebuilders without holding a write transaction over model calls. The lock file
   remains after release; ordinary reads skip it. A changed visible revision
   causes rebuild to read the transcript again and fold in newer messages
   before retrying replacement. A successful replacement removes its
@@ -1201,14 +1276,14 @@ exits 0.
   is parsed: a kebab-case slug and at least one non-empty path. `session
   catalog` sets `cataloged_by` on the switch and copies it onto the record.
 - **Links** (§5.4). A link is written only by `/scribe on --from` or
-  `/scribe link`, under the store lock: onto the child's record when it has
+  `/scribe link`, in one write's transaction: onto the child's record when it has
   one (no other field, `updated` included, changes), else onto its switch's
   `pending_links`. Every pass write merges the record's links on disk and
   the pending ones into the record it writes, so a link added while the
   model ran is never lost.
 - **Writes** (S2). Every file except `audit.jsonl` is replaced whole by
   `fsio::write_atomic`: a temp file in the same directory, `fsync`, rename,
-  `fsync` of the directory, under `.lock`. Lock acquisition gives up after
+  `fsync` of the directory, in its write's transaction. Lock acquisition gives up after
   10 seconds with `store_locked`, naming the holder.
 - **Redaction** (S2). Before a write, `Redactor` replaces each live
   value of the variables in `[redact] env` and `[models] credentials` with
@@ -1238,7 +1313,7 @@ exits 0.
   name with no value in the writer's environment refuses the write
   (`redact_env_unset`) before anything is stored; already-stored records
   are not rewritten.
-- **Audit.** Lines are appended in one write under `.lock` and `fsync`ed;
+- **Audit.** Lines are appended in one write in its write's transaction and `fsync`ed;
   never rewritten. A line is `{"format": 5, "at", "command", "status",
   "target", "error_code", "author", "instruction_session",
   "instruction_message", "issue", "duration_ms"}`: ids and codes, no argument
@@ -1288,9 +1363,9 @@ exits 0.
 `control.json` has `codex_cursors: {"<session-id>": "<host-message-id>"}`
 (the `codex_cursors` table since phase 6).
 Each session switch also stores `provider: claude-code|codex`. Provider stamping
-and switch mutation share one locked atomic control write. The Codex ingestion
-lock `locks/codex-<session-id>.lock` (`.codex-<session-id>.lock` before phase 6) serializes lifecycle events independently of the
-store lock; actual records and cursors still use the store lock and atomic writes.
+and switch mutation share one write transaction. The Codex ingestion
+lock `locks/codex-<session-id>.lock` (`.codex-<session-id>.lock` before phase 6) serializes lifecycle events independently of
+the write transactions the records and cursors are written in.
 The cursor advances only after effects, so an interruption can replay an
 idempotent capture/settlement/control; it cannot silently lose a pending write.
 Only ids are queued, never raw prompt text. A missing cursor in a rewritten

@@ -313,7 +313,7 @@ impl Store {
         check_agent_author(&author)?;
         required(&draft.content)?;
         self.prepare_dir(&self.root)?;
-        let _lock = self.lock("entry add")?;
+        self.write(|| {
         let config = self.config()?;
         let tag = config
             .tags
@@ -391,6 +391,7 @@ impl Store {
         }
         self.write_entry(&entry, true)?;
         Ok(entry)
+            })
     }
 
     /// Apply a patch atomically; return whether the record changed.
@@ -404,50 +405,51 @@ impl Store {
     ) -> Result<(Entry, bool)> {
         check_agent_author(&author)?;
         self.prepare_dir(&self.root)?;
-        let _lock = self.lock("entry update")?;
-        let mut entry = self.resolve_entry(id)?;
-        let before = entry.clone();
-        // Any agent may edit an agent note while it is active (author names
-        // are attribution, not ownership); a Daniel entry keeps the
-        // metadata-only rule below.
-        if entry.author.kind == AuthorKind::Agent && entry.status != EntryStatus::Active {
-            return Err(refusal(
-                WriteRefusal::EntryNotActive,
-                "only an active entry can be updated",
-            ));
-        }
-        if let Some(content) = patching.content {
-            if entry.author.kind != AuthorKind::Agent {
-                return Err(refusal(
-                    WriteRefusal::UserOnly,
-                    "The user's content changes only through #scribe",
-                ));
-            }
-            required(&content)?;
-            if entry.status == EntryStatus::Forgotten {
+        self.write(|| {
+            let mut entry = self.resolve_entry(id)?;
+            let before = entry.clone();
+            // Any agent may edit an agent note while it is active (author names
+            // are attribution, not ownership); a Daniel entry keeps the
+            // metadata-only rule below.
+            if entry.author.kind == AuthorKind::Agent && entry.status != EntryStatus::Active {
                 return Err(refusal(
                     WriteRefusal::EntryNotActive,
-                    "a forgotten entry cannot regain content",
+                    "only an active entry can be updated",
                 ));
             }
-            entry.content = redactor.mask(&content);
-        }
-        let mut topics = entry.topics.as_slice().to_vec();
-        patch(&mut topics, &patching.add_topics, &patching.remove_topics);
-        entry.topics = Topics::try_from(topics)
-            .map_err(|e| refusal(WriteRefusal::InvalidTopics, e.to_string()))?;
-        patch(
-            &mut entry.related,
-            &patching.add_related,
-            &patching.remove_related,
-        );
-        let changed = entry != before;
-        if changed {
-            entry.updated = now;
-            entry.updated_by = Some(Author::agent(author));
-            self.write_entry(&entry, false)?;
-        }
-        Ok((entry, changed))
+            if let Some(content) = patching.content {
+                if entry.author.kind != AuthorKind::Agent {
+                    return Err(refusal(
+                        WriteRefusal::UserOnly,
+                        "The user's content changes only through #scribe",
+                    ));
+                }
+                required(&content)?;
+                if entry.status == EntryStatus::Forgotten {
+                    return Err(refusal(
+                        WriteRefusal::EntryNotActive,
+                        "a forgotten entry cannot regain content",
+                    ));
+                }
+                entry.content = redactor.mask(&content);
+            }
+            let mut topics = entry.topics.as_slice().to_vec();
+            patch(&mut topics, &patching.add_topics, &patching.remove_topics);
+            entry.topics = Topics::try_from(topics)
+                .map_err(|e| refusal(WriteRefusal::InvalidTopics, e.to_string()))?;
+            patch(
+                &mut entry.related,
+                &patching.add_related,
+                &patching.remove_related,
+            );
+            let changed = entry != before;
+            if changed {
+                entry.updated = now;
+                entry.updated_by = Some(Author::agent(author));
+                self.write_entry(&entry, false)?;
+            }
+            Ok((entry, changed))
+        })
     }
 
     /// Retire an entry, preserving the reason and author. An agent's note
@@ -472,7 +474,7 @@ impl Store {
         check_agent_author(&author)?;
         required_reason(reason)?;
         self.prepare_dir(&self.root)?;
-        let _lock = self.lock("entry retire")?;
+        self.write(|| {
         let mut entry = self.resolve_entry(id)?;
         if entry.author.kind != AuthorKind::Agent && instruction.is_none() {
             return Err(refusal(
@@ -507,6 +509,7 @@ impl Store {
         }
         self.write_entry(&entry, false)?;
         Ok((entry, true))
+            })
     }
 
     /// Forget an entry for good on Daniel's checked `instruction`
@@ -528,40 +531,42 @@ impl Store {
         check_agent_author(&author)?;
         required_message(instruction)?;
         self.prepare_dir(&self.root)?;
-        let _lock = self.lock("entry forget")?;
-        let target = self.resolve_entry(id)?;
-        if target.status == EntryStatus::Forgotten {
-            return Ok((target, false));
-        }
-        let mut proposals = self.proposals()?;
-        let (mut entries, _) = self.load_entries()?;
-        let before = proposals.clone();
-        let forgotten = crate::consistency::forget(&target.id, &mut proposals, &mut entries, now);
-        let entry = entries.into_iter().find(|e| e.id == target.id);
-        let (crate::consistency::Settled::Forgotten(_), Some(mut entry)) = (forgotten, entry)
-        else {
-            // Resolved above and not forgotten, but not in the listing: a
-            // file that does not parse is never rewritten.
-            return Err(refusal(
-                WriteRefusal::EntryNotFound,
-                format!("cannot forget {}: its file does not parse", target.id),
-            ));
-        };
-        entry.updated_by = Some(Author::agent(author));
-        entry.removal_instruction = Some(crate::Instruction {
-            session: instruction.session.clone(),
-            message: instruction.message.clone(),
-            at: instruction.at,
-            quote: None,
-        });
-        // The cited turns' stored messages go first: they hold the words
-        // the forget removes, and deleting them again is a no-op.
-        self.forget_cited_messages(&target, &before)?;
-        if proposals != before {
-            self.write_proposals(&proposals)?;
-        }
-        self.write_entry(&entry, false)?;
-        Ok((entry, true))
+        self.write(|| {
+            let target = self.resolve_entry(id)?;
+            if target.status == EntryStatus::Forgotten {
+                return Ok((target, false));
+            }
+            let mut proposals = self.proposals()?;
+            let (mut entries, _) = self.load_entries()?;
+            let before = proposals.clone();
+            let forgotten =
+                crate::consistency::forget(&target.id, &mut proposals, &mut entries, now);
+            let entry = entries.into_iter().find(|e| e.id == target.id);
+            let (crate::consistency::Settled::Forgotten(_), Some(mut entry)) = (forgotten, entry)
+            else {
+                // Resolved above and not forgotten, but not in the listing: a
+                // file that does not parse is never rewritten.
+                return Err(refusal(
+                    WriteRefusal::EntryNotFound,
+                    format!("cannot forget {}: its file does not parse", target.id),
+                ));
+            };
+            entry.updated_by = Some(Author::agent(author));
+            entry.removal_instruction = Some(crate::Instruction {
+                session: instruction.session.clone(),
+                message: instruction.message.clone(),
+                at: instruction.at,
+                quote: None,
+            });
+            // The cited turns' stored messages go first: they hold the words
+            // the forget removes, and deleting them again is a no-op.
+            self.forget_cited_messages(&target, &before)?;
+            if proposals != before {
+                self.write_proposals(&proposals)?;
+            }
+            self.write_entry(&entry, false)?;
+            Ok((entry, true))
+        })
     }
 
     /// Open an agent proposal against either author's active entry.
@@ -582,7 +587,7 @@ impl Store {
         check_agent_author(&author)?;
         required_reason(reason)?;
         self.prepare_dir(&self.root)?;
-        let _lock = self.lock("proposal add")?;
+        self.write(|| {
         let older = self.resolve_entry(older)?;
         let newer = newer.map(|id| self.resolve_entry(id)).transpose()?;
         if kind == ProposalKind::Candidate || (kind == ProposalKind::Supersedes) != newer.is_some()
@@ -658,6 +663,7 @@ impl Store {
         proposals.push(proposal.clone());
         self.write_proposals(&proposals)?;
         Ok((proposal, true))
+            })
     }
 
     /// Change an open agent proposal's reason or settle an agent entry's
@@ -684,7 +690,7 @@ impl Store {
             required_reason(reason)?;
         }
         self.prepare_dir(&self.root)?;
-        let _lock = self.lock("proposal change")?;
+        self.write(|| {
         let mut proposals = self.proposals()?;
         let ids: Vec<String> = proposals.iter().map(|p| p.id.to_string()).collect();
         let i = self.proposal_index(id, &ids)?;
@@ -799,6 +805,7 @@ impl Store {
             self.write_entry(&entry, false)?;
         }
         Ok((result, changed))
+            })
     }
 
     /// Settle candidate `proposals[i]` on Daniel's checked `instructed`

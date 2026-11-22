@@ -283,7 +283,10 @@ fn audited(
 ) -> PluginReply {
     let mut audit = AuditGuard::start(
         routine_ctx.store(),
-        AuditMeta { command },
+        AuditMeta {
+            command,
+            stepwise: true,
+        },
         routine_ctx.now(),
     );
     let result = run(routine_ctx);

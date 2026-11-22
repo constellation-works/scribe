@@ -5,7 +5,7 @@
 //! The issue record kind was removed in §15.9 phase 2: an incident is now an
 //! ordinary `issue` entry (a catcher's collected entry, or an agent's). This
 //! module only reads `issues/<id>.md` at the shape formats 17 to 23 wrote,
-//! once, under the store lock: each issue that kept its text becomes one
+//! once, inside a write's transaction: each issue that kept its text becomes one
 //! entry, written by the agent that wrote the issue:
 //!
 //! - content: the title, then the best-known cause and fix;
@@ -87,8 +87,8 @@ struct Converted {
 
 impl Store {
     /// Convert every issue record in `issues/` to an `issue` entry and move
-    /// its file to `pre-issue-<date>/`, `now` dating both. The caller holds
-    /// the lock. A no-op when `issues/` is absent or empty.
+    /// its file to `pre-issue-<date>/` after the write commits, `now` dating
+    /// both. Runs inside the write's transaction. A no-op when `issues/` is absent or empty.
     ///
     /// # Errors
     ///
@@ -159,8 +159,14 @@ impl Store {
                     entries.push(entry);
                 }
             }
-            self.prepare_subdir(&aside)?;
-            fsio::rename(&path, &aside.join(&name))?;
+            // The file moves once the entry commits; a failed commit leaves
+            // it in `issues/` for the next write.
+            let to = aside.join(&name);
+            let from = path.clone();
+            if !self.after(|after| after.renames.push((from, to.clone()))) {
+                self.prepare_subdir(&aside)?;
+                fsio::rename(&path, &to)?;
+            }
         }
         Ok(())
     }

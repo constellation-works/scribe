@@ -32,7 +32,7 @@ exists today and is reshaped by slice S1.
 | **Decision model** | The model `ask` answers with (`models.ask`, Sonnet by default). |
 | **Data directory** | Where the store lives: `--root`, else `SCRIBE_ROOT`, else `~/.scribe`. |
 | **Store format** | The integer `format` in each persisted document; a newer one is refused, an older one is upgraded through `UPGRADES`. See [specs/store.md](../specs/store.md). |
-| **Audit log** | `<root>/audit.jsonl`: one line per mutating command (what ran, on which record, how it ended), identifiers only. |
+| **Audit log** | the `audit` table of `scribe.db` (`<root>/audit.jsonl` before phase 7): one line per mutating command (what ran, on which record, how it ended), identifiers only. |
 | **Payload** *(template)* | The typed record every output mode renders from; its JSON form is the contract. See [specs/output-contract.md](../specs/output-contract.md). |
 | **Sink** *(template)* | The per-invocation resolution of output mode, color and width. |
 | **List envelope** | The `--json` shape of every list: `{"<records>", "total", "truncated", "warnings"}`, with `<records>` one of `entries`, `sessions`, `proposals`, `tags`, and from S11/S14 `hits` and `transcripts`. |

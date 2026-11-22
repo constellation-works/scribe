@@ -5,12 +5,14 @@
 //! - **Reads** take no lock and write nothing. With a journal left open by a
 //!   crash they print the profile's committed revision from the database
 //!   instead of the file and warn `memory_pending`.
-//! - **Writes** hold the store lock and follow one order: replay any open
-//!   journal; migrate format-24 `m-<n>` items on the first write (§15.11);
-//!   commit the rows and a journal listing every file operation with its
-//!   content; apply the operations; close the journal. `control.json` is
-//!   then rewritten at the current format, so an older build refuses the
-//!   store instead of reading it without its memory.
+//! - **Writes** run inside a store write's transaction and follow one
+//!   order: read the files as the open journals leave them; migrate
+//!   format-24 `m-<n>` items on the first write (§15.11); stage the rows
+//!   and a journal listing every file operation with its content. Once the
+//!   transaction commits, every open journal's operations are applied and
+//!   the journal closed, in a write of its own. A rollback leaves no file
+//!   written; a crash after the commit leaves an open journal the next
+//!   write applies.
 
 use super::agent::{check_agent_author, refusal};
 use super::db::{self, FileOp, HistoryRow, Journal, MemoryCommit, PendingRow, Writer};
@@ -212,7 +214,7 @@ pub struct RefreshWritten {
     pub backlog: usize,
 }
 
-/// The memory files a write reads under the lock.
+/// The memory files a write reads inside its transaction.
 #[derive(Clone, Debug, Default)]
 struct Files {
     now: Vec<NowItem>,
@@ -377,23 +379,54 @@ impl Store {
         Ok(journal)
     }
 
-    /// Apply a committed journal's file operations, then close it.
+    /// Apply a committed journal's file operations, then close it: after
+    /// the write's commit when one is under way, so a rollback never leaves
+    /// files the database does not record.
     pub(super) fn finish_journal(
         &self,
         writer: &mut Writer<'_>,
         journal: Option<&Journal>,
     ) -> Result<()> {
+        let Some(journal) = journal else {
+            return Ok(());
+        };
+        if self.defer_journals() {
+            return Ok(());
+        }
+        Self::crash_after_commit(&self.memory_dir())?;
+        let sha = self.apply_ops(&journal.ops)?;
+        writer.close(journal, sha.as_deref())
+    }
+
+    /// Ask the pending write to apply the open journals after it commits;
+    /// `false` when no write is under way.
+    pub(super) fn defer_journals(&self) -> bool {
+        self.after(|after| after.journals = true)
+    }
+
+    /// After a commit: apply and close every open journal, in a write of
+    /// its own so two processes never replay one at once.
+    pub(super) fn apply_open_journals(&self) -> Result<()> {
+        Self::crash_after_commit(&self.memory_dir())?;
+        self.write(|| {
+            self.prepare_subdir(&self.memory_dir())?;
+            let conn = db::open_writer(&self.root, self.lock_wait)?;
+            let mut writer = Writer::new(&conn, &self.root);
+            self.replay(&mut writer)?;
+            Ok(())
+        })
+    }
+
+    /// Tests: the crash [`CRASH_AFTER_COMMIT`] injects, once.
+    #[allow(clippy::unnecessary_wraps, unused_variables)]
+    fn crash_after_commit(dir: &Path) -> Result<()> {
         #[cfg(test)]
-        if journal.is_some() && CRASH_AFTER_COMMIT.with(|c| c.replace(false)) {
+        if CRASH_AFTER_COMMIT.with(|c| c.replace(false)) {
             return Err(Error::io(
                 "apply the memory journal in",
-                self.memory_dir(),
+                dir.to_path_buf(),
                 std::io::Error::other("a crash injected by a test"),
             ));
-        }
-        if let Some(journal) = journal {
-            let sha = self.apply_ops(&journal.ops)?;
-            writer.close(journal, sha.as_deref())?;
         }
         Ok(())
     }
@@ -615,9 +648,9 @@ impl Store {
         ))
     }
 
-    /// One memory write under the store lock the caller holds: replay any
-    /// open journal, migrate `m-<n>` items, then `f`'s commit, applied and
-    /// closed, and `control.json` stamped at the current format.
+    /// One memory write inside the write the caller runs: replay any open
+    /// journal, migrate `m-<n>` items, then `f`'s commit, its files applied
+    /// and its journal closed once the write commits.
     fn memory_write<T>(
         &self,
         redactor: &Redactor,
@@ -625,8 +658,8 @@ impl Store {
         f: impl FnOnce(&mut Writer<'_>, &Files) -> Result<(MemoryCommit, T)>,
     ) -> Result<(T, Option<Journal>)> {
         self.prepare_subdir(&self.memory_dir())?;
-        let mut conn = db::open_writer(&self.root, self.lock_wait)?;
-        let mut writer = Writer::new(&mut conn, &self.root);
+        let conn = db::open_writer(&self.root, self.lock_wait)?;
+        let mut writer = Writer::new(&conn, &self.root);
         let files = self.prepare_memory(&mut writer, redactor, now)?;
         let (commit, out) = f(&mut writer, &files)?;
         let journal = self.commit_memory(&mut writer, &commit, now)?;
@@ -636,8 +669,9 @@ impl Store {
         Ok((out, journal))
     }
 
-    /// The start of every memory write, under the lock the caller holds:
-    /// replay any open journal and migrate `m-<n>` items, then read the
+    /// The start of every memory write, inside the caller's write: replay
+    /// any open journal (one an earlier step of the same command left is
+    /// applied here, so this step reads the files it wrote) and migrate `m-<n>` items, then read the
     /// files as they now stand.
     fn prepare_memory(
         &self,
@@ -646,13 +680,65 @@ impl Store {
         now: OffsetDateTime,
     ) -> Result<Files> {
         self.prepare_subdir(&self.memory_dir())?;
-        self.replay(writer)?;
-        let mut files = self.files_for_write()?;
+        let mut files = self.files_after_journals(writer)?;
         if !files.legacy.is_empty() {
             self.migrate_memory(writer, &files, redactor, now)?;
-            files = self.files_for_write()?;
+            files = self.files_after_journals(writer)?;
         }
         Ok(files)
+    }
+
+    /// The memory files as the open journals leave them: inside a write,
+    /// the files on disk with every open journal's operations laid over
+    /// them in order, and the journals applied once the write commits, so
+    /// a rollback never leaves a file the database does not record. With no
+    /// write under way, the journals are replayed now.
+    fn files_after_journals(&self, writer: &mut Writer<'_>) -> Result<Files> {
+        let open = writer.open_journals()?;
+        if open.is_empty() || !self.defer_journals() {
+            self.replay(writer)?;
+            return self.files_for_write();
+        }
+        let mut files = self.files_for_write()?;
+        for op in open.iter().flat_map(|j| &j.ops) {
+            self.overlay(&mut files, op)?;
+        }
+        Ok(files)
+    }
+
+    /// Lay one journal operation over `files`, as applying it would.
+    fn overlay(&self, files: &mut Files, op: &FileOp) -> Result<()> {
+        let path = self.op_path(&op.path)?;
+        if op.path == PROFILE_FILE {
+            files.profile.clone_from(&op.content);
+            return Ok(());
+        }
+        let stem = op.path.strip_suffix(RECORD_EXT).unwrap_or(&op.path);
+        if let Some(stem) = stem.strip_prefix("now/") {
+            files.now.retain(|n| n.stem.as_str() != stem);
+            if let Some(content) = &op.content {
+                files
+                    .now
+                    .push(format::decode_now(&path, content.as_bytes(), stem)?);
+                files
+                    .now
+                    .sort_by(|a, b| a.stem.as_str().cmp(b.stem.as_str()));
+            }
+        } else if let Some(stem) = stem.strip_prefix("milestones/") {
+            files.milestones.retain(|m| m.stem.as_str() != stem);
+            if let Some(content) = &op.content {
+                files
+                    .milestones
+                    .push(format::decode_milestone(&path, content.as_bytes(), stem)?);
+                files
+                    .milestones
+                    .sort_by(|a, b| a.stem.as_str().cmp(b.stem.as_str()));
+            }
+        } else {
+            // A format-24 `m-<n>.md`: a journal only removes one.
+            files.legacy.retain(|i| i.id.as_str() != stem);
+        }
+        Ok(())
     }
 
     /// Migrate format-24 items (§15.11) through one journal: `now` and
@@ -719,7 +805,7 @@ impl Store {
         if pass.drafts.is_empty() && pass.signal.is_none() && !pass.final_pass {
             // Nothing to plan, but a journal a crash left open is still
             // applied: every pass window is a write.
-            if !writer.open_journals()?.is_empty() {
+            if !writer.open_journals()?.is_empty() && !self.defer_journals() {
                 self.prepare_subdir(&self.memory_dir())?;
                 self.replay(writer)?;
             }
@@ -812,8 +898,8 @@ impl Store {
     ) -> Result<MemoryWritten> {
         self.prepare_dir(&self.root)?;
         self.prepare_subdir(&self.memory_dir())?;
-        let mut conn = db::open_writer(&self.root, self.lock_wait)?;
-        let mut writer = Writer::new(&mut conn, &self.root);
+        let conn = db::open_writer(&self.root, self.lock_wait)?;
+        let mut writer = Writer::new(&conn, &self.root);
         let (commit, written) = self.plan_pass_memory(&mut writer, pass, redactor, record)?;
         self.commit_memory(&mut writer, &commit, record.updated)?;
         drop(writer);
@@ -840,33 +926,35 @@ impl Store {
     ) -> Result<(NowItem, bool)> {
         check_agent_author(&author)?;
         self.prepare_dir(&self.root)?;
-        let _lock = self.lock("memory ack")?;
-        let path = self.memory_dir();
-        let stem = bare(id).to_owned();
-        let ((item, changed), _) = self.memory_write(redactor, now, |_, files| {
-            let Some(mut item) = files.now.iter().find(|n| n.stem.as_str() == stem).cloned() else {
-                if files.milestones.iter().any(|m| m.stem.as_str() == stem) {
-                    return Err(refusal(
-                        WriteRefusal::MemoryNotNow,
-                        format!("{stem} is a milestone; only now items are acknowledged"),
-                    ));
+        self.write(|| {
+            let path = self.memory_dir();
+            let stem = bare(id).to_owned();
+            let ((item, changed), _) = self.memory_write(redactor, now, |_, files| {
+                let Some(mut item) = files.now.iter().find(|n| n.stem.as_str() == stem).cloned()
+                else {
+                    if files.milestones.iter().any(|m| m.stem.as_str() == stem) {
+                        return Err(refusal(
+                            WriteRefusal::MemoryNotNow,
+                            format!("{stem} is a milestone; only now items are acknowledged"),
+                        ));
+                    }
+                    return Err(not_found(id, &self.root));
+                };
+                if item.raised.as_ref().is_some_and(|r| r.session == session) {
+                    return Ok((MemoryCommit::default(), (item, false)));
                 }
-                return Err(not_found(id, &self.root));
-            };
-            if item.raised.as_ref().is_some_and(|r| r.session == session) {
-                return Ok((MemoryCommit::default(), (item, false)));
-            }
-            item.raised = Some(memory::Raised {
-                at: now,
-                session: session.clone(),
-            });
-            let commit = MemoryCommit {
-                ops: vec![now_op(&path, &item)?],
-                ..MemoryCommit::default()
-            };
-            Ok((commit, (item, true)))
-        })?;
-        Ok((item, changed))
+                item.raised = Some(memory::Raised {
+                    at: now,
+                    session: session.clone(),
+                });
+                let commit = MemoryCommit {
+                    ops: vec![now_op(&path, &item)?],
+                    ..MemoryCommit::default()
+                };
+                Ok((commit, (item, true)))
+            })?;
+            Ok((item, changed))
+        })
     }
 
     /// Forget a `now` item or milestone for good for the agent `author`
@@ -892,32 +980,35 @@ impl Store {
             ));
         }
         self.prepare_dir(&self.root)?;
-        let _lock = self.lock("memory forget")?;
-        let stem = bare(id).to_owned();
-        let (shown, _) = self.memory_write(redactor, now, |_, files| {
-            let (shown, op) = if let Some(item) = files.now.iter().find(|n| n.stem.as_str() == stem)
-            {
-                (
-                    MemoryShown::Now(item.clone()),
-                    remove_op(NOW_DIR, &item.stem),
-                )
-            } else if let Some(item) = files.milestones.iter().find(|m| m.stem.as_str() == stem) {
-                (
-                    MemoryShown::Milestone(item.clone()),
-                    remove_op(MILESTONES_DIR, &item.stem),
-                )
-            } else {
-                return Err(not_found(id, &self.root));
-            };
-            let commit = MemoryCommit {
-                ops: vec![op],
-                forget_history: vec![stem.clone()],
-                forget_messages: vec![stem.clone()],
-                ..MemoryCommit::default()
-            };
-            Ok((commit, shown))
-        })?;
-        Ok(shown)
+        self.write(|| {
+            let stem = bare(id).to_owned();
+            let (shown, _) = self.memory_write(redactor, now, |_, files| {
+                let (shown, op) = if let Some(item) =
+                    files.now.iter().find(|n| n.stem.as_str() == stem)
+                {
+                    (
+                        MemoryShown::Now(item.clone()),
+                        remove_op(NOW_DIR, &item.stem),
+                    )
+                } else if let Some(item) = files.milestones.iter().find(|m| m.stem.as_str() == stem)
+                {
+                    (
+                        MemoryShown::Milestone(item.clone()),
+                        remove_op(MILESTONES_DIR, &item.stem),
+                    )
+                } else {
+                    return Err(not_found(id, &self.root));
+                };
+                let commit = MemoryCommit {
+                    ops: vec![op],
+                    forget_history: vec![stem.clone()],
+                    forget_messages: vec![stem.clone()],
+                    ..MemoryCommit::default()
+                };
+                Ok((commit, shown))
+            })?;
+            Ok(shown)
+        })
     }
 
     /// Write profile revision `n` back as a new revision (`memory
@@ -934,31 +1025,32 @@ impl Store {
         now: OffsetDateTime,
     ) -> Result<Option<i64>> {
         self.prepare_dir(&self.root)?;
-        let _lock = self.lock("memory restore")?;
-        let (_, journal) = self.memory_write(redactor, now, |writer, files| {
-            let revision = writer.revision(n)?.ok_or_else(|| {
-                refusal(
-                    WriteRefusal::RevisionNotFound,
-                    format!("no profile revision {n}; the first is 1"),
-                )
+        self.write(|| {
+            let (_, journal) = self.memory_write(redactor, now, |writer, files| {
+                let revision = writer.revision(n)?.ok_or_else(|| {
+                    refusal(
+                        WriteRefusal::RevisionNotFound,
+                        format!("no profile revision {n}; the first is 1"),
+                    )
+                })?;
+                let (latest, _) = writer.revisions()?;
+                let same = latest.is_some_and(|l| l.content == revision.content)
+                    && files.profile.as_deref() == Some(revision.content.as_str());
+                if same {
+                    return Ok((MemoryCommit::default(), ()));
+                }
+                let commit = MemoryCommit {
+                    ops: vec![FileOp {
+                        path: PROFILE_FILE.to_owned(),
+                        content: Some(revision.content.clone()),
+                    }],
+                    revision: Some(revision.content),
+                    ..MemoryCommit::default()
+                };
+                Ok((commit, ()))
             })?;
-            let (latest, _) = writer.revisions()?;
-            let same = latest.is_some_and(|l| l.content == revision.content)
-                && files.profile.as_deref() == Some(revision.content.as_str());
-            if same {
-                return Ok((MemoryCommit::default(), ()));
-            }
-            let commit = MemoryCommit {
-                ops: vec![FileOp {
-                    path: PROFILE_FILE.to_owned(),
-                    content: Some(revision.content.clone()),
-                }],
-                revision: Some(revision.content),
-                ..MemoryCommit::default()
-            };
-            Ok((commit, ()))
-        })?;
-        Ok(journal.and_then(|j| j.revision))
+            Ok(journal.and_then(|j| j.revision))
+        })
     }
 
     /// What `memory refresh` sends the model (§15.6), read under the lock
@@ -973,136 +1065,137 @@ impl Store {
         now: OffsetDateTime,
     ) -> Result<ProfileInputs> {
         self.prepare_dir(&self.root)?;
-        let _lock = self.lock("memory refresh")?;
-        let config = self.config()?;
-        let (entries, skipped) = self.load_entries()?;
-        if let Some(bad) = skipped.into_iter().next() {
-            return Err(bad.error);
-        }
-        let mut loaded = self.load_sessions()?;
-        if let Some((_, bad)) = loaded.skipped.pop() {
-            return Err(bad.error);
-        }
-        let records = loaded.records;
-        let today = now.date();
-        let (inputs, _) = self.memory_write(redactor, now, |writer, files| {
-            let (latest, closed) = writer.revisions()?;
-            let cursor = writer.cursor()?;
-            let file_sha = files.profile.as_deref().map(sha256);
-            let current = files
-                .profile
-                .clone()
-                .or_else(|| latest.as_ref().map(|r| r.content.clone()))
-                .unwrap_or_else(profile::template);
-            let corrections = match (&files.profile, &closed) {
-                (Some(file), Some(closed))
-                    if closed.file_sha256.as_deref() != file_sha.as_deref() =>
-                {
-                    let d = profile::diff(&closed.content, file);
-                    (!d.is_empty()).then_some(d)
-                }
-                _ => None,
-            };
-            let pinned = profile::pinned(&current)
-                .or_else(|| closed.as_ref().and_then(|c| profile::pinned(&c.content)))
-                .unwrap_or_default()
-                .to_owned();
-            let hints = if latest.is_none() {
-                writer
-                    .history(&["profile", "projects"])?
-                    .into_iter()
-                    .map(|h| {
-                        let first = h.text.lines().next().unwrap_or_default().to_owned();
-                        format!("{} ({}): {first}", h.kind, h.item)
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
-            let after = |r: &crate::SessionRecord| {
-                cursor
-                    .as_ref()
-                    .is_none_or(|(at, id)| (r.updated, r.id.as_str()) > (*at, id.as_str()))
-            };
-            let mut due: Vec<&crate::SessionRecord> =
-                records.iter().filter(|r| r.active && after(r)).collect();
-            due.sort_by(|a, b| (a.updated, a.id.as_str()).cmp(&(b.updated, b.id.as_str())));
-            let backlog = due.len().saturating_sub(REFRESH_SESSIONS);
-            due.truncate(REFRESH_SESSIONS);
-            let signals = writer.signals()?;
-            let mut texts = Vec::new();
-            for r in &due {
-                texts.push(writer.user_text(r.id.as_str())?);
+        self.write(|| {
+            let config = self.config()?;
+            let (entries, skipped) = self.load_entries()?;
+            if let Some(bad) = skipped.into_iter().next() {
+                return Err(bad.error);
             }
-            let mut ranked: Vec<usize> = (0..due.len()).collect();
-            ranked.sort_by(|&a, &b| {
-                let sa = signals.get(due[a].id.as_str()).copied().unwrap_or(0);
-                let sb = signals.get(due[b].id.as_str()).copied().unwrap_or(0);
-                sb.cmp(&sa)
-                    .then_with(|| texts[b].chars().count().cmp(&texts[a].chars().count()))
-            });
-            let verbatim: BTreeSet<usize> = ranked
-                .into_iter()
-                .filter(|&i| !texts[i].is_empty())
-                .take(REFRESH_VERBATIM_SESSIONS)
-                .collect();
-            let sessions = due
-                .iter()
-                .enumerate()
-                .map(|(i, r)| ProfileSession {
-                    id: r.id.to_string(),
-                    project: r.project.to_string(),
-                    date: crate::record::nullable_date::format(r.updated.date()),
-                    title: r.title.clone(),
-                    summary: cut(
-                        &format!("{}\nGoals: {}", r.summary.trim(), r.goals.trim()),
-                        REFRESH_SUMMARY_CHARS,
-                    ),
-                    verbatim: verbatim
-                        .contains(&i)
-                        .then(|| cut(&texts[i], REFRESH_VERBATIM_CHARS)),
-                })
-                .collect();
-            let cursor_to = due.last().map(|r| (r.updated, r.id.clone()));
-            let (passed, ahead): (Vec<NowItem>, Vec<NowItem>) = files
-                .now
-                .iter()
-                .cloned()
-                .partition(|n| memory::expired(n.date, today));
-            let preferences = entries
-                .iter()
-                .filter(|e| e.status == EntryStatus::Active && e.tag.as_str() == "preferences")
-                .map(|e| (e.id.to_string(), cut(&one_line(&e.said), 160)))
-                .collect();
-            let inputs = ProfileInputs {
-                profile: current,
-                pinned,
-                corrections,
-                hints,
-                sessions,
-                backlog,
-                now: ahead,
-                passed,
-                milestones: files.milestones.clone(),
-                preferences,
-                tags: config
-                    .tags
-                    .tags()
+            let mut loaded = self.load_sessions()?;
+            if let Some((_, bad)) = loaded.skipped.pop() {
+                return Err(bad.error);
+            }
+            let records = loaded.records;
+            let today = now.date();
+            let (inputs, _) = self.memory_write(redactor, now, |writer, files| {
+                let (latest, closed) = writer.revisions()?;
+                let cursor = writer.cursor()?;
+                let file_sha = files.profile.as_deref().map(sha256);
+                let current = files
+                    .profile
+                    .clone()
+                    .or_else(|| latest.as_ref().map(|r| r.content.clone()))
+                    .unwrap_or_else(profile::template);
+                let corrections = match (&files.profile, &closed) {
+                    (Some(file), Some(closed))
+                        if closed.file_sha256.as_deref() != file_sha.as_deref() =>
+                    {
+                        let d = profile::diff(&closed.content, file);
+                        (!d.is_empty()).then_some(d)
+                    }
+                    _ => None,
+                };
+                let pinned = profile::pinned(&current)
+                    .or_else(|| closed.as_ref().and_then(|c| profile::pinned(&c.content)))
+                    .unwrap_or_default()
+                    .to_owned();
+                let hints = if latest.is_none() {
+                    writer
+                        .history(&["profile", "projects"])?
+                        .into_iter()
+                        .map(|h| {
+                            let first = h.text.lines().next().unwrap_or_default().to_owned();
+                            format!("{} ({}): {first}", h.kind, h.item)
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                let after = |r: &crate::SessionRecord| {
+                    cursor
+                        .as_ref()
+                        .is_none_or(|(at, id)| (r.updated, r.id.as_str()) > (*at, id.as_str()))
+                };
+                let mut due: Vec<&crate::SessionRecord> =
+                    records.iter().filter(|r| r.active && after(r)).collect();
+                due.sort_by(|a, b| (a.updated, a.id.as_str()).cmp(&(b.updated, b.id.as_str())));
+                let backlog = due.len().saturating_sub(REFRESH_SESSIONS);
+                due.truncate(REFRESH_SESSIONS);
+                let signals = writer.signals()?;
+                let mut texts = Vec::new();
+                for r in &due {
+                    texts.push(writer.user_text(r.id.as_str())?);
+                }
+                let mut ranked: Vec<usize> = (0..due.len()).collect();
+                ranked.sort_by(|&a, &b| {
+                    let sa = signals.get(due[a].id.as_str()).copied().unwrap_or(0);
+                    let sb = signals.get(due[b].id.as_str()).copied().unwrap_or(0);
+                    sb.cmp(&sa)
+                        .then_with(|| texts[b].chars().count().cmp(&texts[a].chars().count()))
+                });
+                let verbatim: BTreeSet<usize> = ranked
+                    .into_iter()
+                    .filter(|&i| !texts[i].is_empty())
+                    .take(REFRESH_VERBATIM_SESSIONS)
+                    .collect();
+                let sessions = due
                     .iter()
-                    .map(|t| t.name.to_string())
-                    .collect(),
-                known: entries.iter().map(|e| e.id.to_string()).collect(),
-                cursor_to,
-                basis: Basis {
-                    latest: latest.map(|r| r.n),
-                    file: file_sha,
-                    cursor,
-                    now: files.now.iter().map(|n| n.stem.clone()).collect(),
-                },
-            };
-            Ok((MemoryCommit::default(), inputs))
-        })?;
-        Ok(inputs)
+                    .enumerate()
+                    .map(|(i, r)| ProfileSession {
+                        id: r.id.to_string(),
+                        project: r.project.to_string(),
+                        date: crate::record::nullable_date::format(r.updated.date()),
+                        title: r.title.clone(),
+                        summary: cut(
+                            &format!("{}\nGoals: {}", r.summary.trim(), r.goals.trim()),
+                            REFRESH_SUMMARY_CHARS,
+                        ),
+                        verbatim: verbatim
+                            .contains(&i)
+                            .then(|| cut(&texts[i], REFRESH_VERBATIM_CHARS)),
+                    })
+                    .collect();
+                let cursor_to = due.last().map(|r| (r.updated, r.id.clone()));
+                let (passed, ahead): (Vec<NowItem>, Vec<NowItem>) = files
+                    .now
+                    .iter()
+                    .cloned()
+                    .partition(|n| memory::expired(n.date, today));
+                let preferences = entries
+                    .iter()
+                    .filter(|e| e.status == EntryStatus::Active && e.tag.as_str() == "preferences")
+                    .map(|e| (e.id.to_string(), cut(&one_line(&e.said), 160)))
+                    .collect();
+                let inputs = ProfileInputs {
+                    profile: current,
+                    pinned,
+                    corrections,
+                    hints,
+                    sessions,
+                    backlog,
+                    now: ahead,
+                    passed,
+                    milestones: files.milestones.clone(),
+                    preferences,
+                    tags: config
+                        .tags
+                        .tags()
+                        .iter()
+                        .map(|t| t.name.to_string())
+                        .collect(),
+                    known: entries.iter().map(|e| e.id.to_string()).collect(),
+                    cursor_to,
+                    basis: Basis {
+                        latest: latest.map(|r| r.n),
+                        file: file_sha,
+                        cursor,
+                        now: files.now.iter().map(|n| n.stem.clone()).collect(),
+                    },
+                };
+                Ok((MemoryCommit::default(), inputs))
+            })?;
+            Ok(inputs)
+        })
     }
 
     /// Check the model's `answer` to `inputs` and write it (§15.6): the
@@ -1123,7 +1216,7 @@ impl Store {
         now: OffsetDateTime,
     ) -> Result<RefreshWritten> {
         self.prepare_dir(&self.root)?;
-        let _lock = self.lock("memory refresh")?;
+        self.write(|| {
         let path = self.memory_dir();
         let masks = |text: &str| redactor.mask(text) != text;
         let (written, journal) = self.memory_write(redactor, now, |writer, files| {
@@ -1260,6 +1353,7 @@ impl Store {
         let mut written = written;
         written.revision = journal.and_then(|j| j.revision);
         Ok(written)
+            })
     }
 
     /// Open the `preferences` claims migrated `working` items earn

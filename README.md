@@ -103,15 +103,17 @@ scribe question ask "can you fetch me last session summary?" --json   # a lookup
 ```
 
 The store is a directory: `--root <dir>`, else `$SCRIBE_ROOT`, else
-`~/.scribe`. Entries are Markdown files with YAML frontmatter under
-`entries/<tag>/<tag>-<n>.md`; session records, which sessions are being
-cataloged and the transcript messages are rows in `scribe.db` (SQLite), each
-session also named `s-<n>`. A store from before that keeps
-`sessions/<yyyy>/<mm>/<session-id>.md` and `control.json` until its first
-session write, or `scribe store migrate`, moves them in and keeps the files
-in `pre-sqlite-<date>/`; `scribe export <dir>` writes every session back out
-as Markdown (or `--as jsonl`). `proposals.json` holds routine and agent proposals,
-`tags.json` holds agent-created tags, `pickups.json` holds consumers' pickups of action entries, and `config.toml` holds configured tags,
+`~/.scribe`. Entries, claims (routine and agent proposals), agent-created
+tags, consumers' pickups of action entries, annotation marks, the audit log,
+session records, which sessions are being cataloged and the transcript
+messages are rows in `scribe.db` (SQLite), each session also named `s-<n>`.
+A store from before that keeps them as files (`entries/<tag>/<tag>-<n>.md`,
+`sessions/<yyyy>/<mm>/<session-id>.md`, `control.json`, `proposals.json`,
+`tags.json`, `marks.json`, `pickups.json`, `audit.jsonl`) until its first
+write, or `scribe store migrate`, moves them in and keeps the files in
+`pre-sqlite-<date>/`; `scribe export <dir>` writes every record back out in
+that file shape (or `--as jsonl`, one file per table). Memory stays files
+under `memory/`, and `config.toml` holds configured tags,
 models, catalog cadence, session age limit and redaction settings. Config names and aliases
 take precedence over store tags; `tag list` shows each source. The
 layout and every key are in
@@ -277,7 +279,7 @@ link this session to the one it was spawned from (or continues), refusing
 an unknown id, a self-link or a cycle. Claude Code's hook input and
 transcripts name no parent session, so links are only ever typed. No hook calls a
 model except Stop's annotation call; the pass does. Each
-write and refusal leaves one line in `audit.jsonl` with ids, the `--author`
+write and refusal leaves one audit line in `scribe.db` with ids, the `--author`
 name and error codes only. Install it from this checkout after `make install`:
 
 ```sh

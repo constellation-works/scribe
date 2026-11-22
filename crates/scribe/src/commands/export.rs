@@ -1,6 +1,7 @@
-//! `scribe export`: write every session to a directory the user names,
-//! as Markdown in the shape of the old record files or as JSONL, one line
-//! per row and one file per table (docs/design/scribe/2_design.md §15.7).
+//! `scribe export`: write every record kind to a directory the user
+//! names, as Markdown and JSON in the shape of the old record files or as
+//! JSONL, one line per row and one file per table
+//! (docs/design/scribe/2_design.md §15.7).
 //! It is the backup, the review copy and the way out of scribe. It reads
 //! the store only: no lock, no store write, no audit line (STD-01 R31).
 
@@ -20,7 +21,7 @@ Examples:
 /// The export's format.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub(crate) enum ExportAs {
-    /// One file per session, sessions/<yyyy>/<mm>/<id>.md, and control.json
+    /// The old store's files: sessions/, entries/, control.json, proposals.json, tags.json, marks.json, pickups.json, audit.jsonl
     Markdown,
     /// One line per row, <table>.jsonl per table
     Jsonl,
@@ -44,12 +45,15 @@ pub(super) fn run(args: &ExportArgs, ctx: &Context) -> Result<Output, CliError> 
         ExportAs::Markdown => (ExportFormat::Markdown, "markdown"),
         ExportAs::Jsonl => (ExportFormat::Jsonl, "jsonl"),
     };
-    let exported = ctx.store().export_sessions(&args.dir, format)?;
+    let exported = ctx.store().export(&args.dir, format)?;
     Ok(Output::Show {
         record: Record::Export(Box::new(ExportPayload {
             dir: args.dir.display().to_string(),
             format: name,
             sessions: exported.sessions,
+            entries: exported.entries,
+            claims: exported.claims,
+            audit_lines: exported.audit_lines,
             files: exported.files,
             skipped: exported
                 .skipped

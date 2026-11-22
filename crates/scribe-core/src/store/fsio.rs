@@ -11,9 +11,11 @@
 //!   on Windows, via `std::fs::File::try_lock`). The kernel releases it if the
 //!   holder dies, so a crash cannot wedge the store the way a create-if-absent
 //!   lock file would. Rust opens files close-on-exec, so a child process never
-//!   inherits it. Acquisition has a deadline, and a timeout names the holder.
-//! - [`append_private`] adds one record to a log in a single `write` and
-//!   `fsync`s it; the caller holds the lock, so records never interleave.
+//!   inherits it. Acquisition has a deadline, and a timeout names the holder;
+//!   the holder clears its record on release, so a later timeout never names
+//!   a process that already finished.
+//! - [`create_new_private`] writes a new `0600` file under a name no other
+//!   file has, or fails: one spooled audit line each.
 //! - [`create_private_dir`], [`inspect_dir`] and [`inspect_file`] keep store
 //!   state owner-only: created `0700`/`0600` explicitly, and refused on load
 //!   when it is a symbolic link, another user's, or open to any group or other
@@ -44,7 +46,9 @@ const PRIVATE_FILE_MODE: u32 = 0o600;
 
 /// Replace `path` with `bytes` atomically and durably. The file is `0600`.
 ///
-/// Every store write except the audit log's goes through here.
+/// Since `scribe.db` holds every record (2_design.md §15.7, phase 7), only
+/// the memory files, the format stamps and `scribe export`'s files are
+/// written this way.
 pub(super) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = parent_dir(path);
     // Same directory as the target, so the rename cannot cross filesystems.
@@ -61,25 +65,20 @@ pub(super) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     sync_dir(parent)
 }
 
-/// Append `bytes` to `path` in one write and `fsync` it, creating the file
-/// `0600` if it is missing. An existing file is checked like any store file
-/// first, so a link is refused, not followed (STD-05 R7), and a new file's
-/// directory entry is synced too.
-pub(super) fn append_private(path: &Path, bytes: &[u8]) -> Result<()> {
-    let existed = inspect_file(path)?;
-    let mut options = OpenOptions::new();
-    options.create(true).append(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, PRIVATE_FILE_MODE);
-    let mut file = options.open(path).map_err(|e| Error::io("open", path, e))?;
-    file.write_all(bytes)
-        .and_then(|()| file.sync_data())
-        .map_err(|e| Error::io("append to", path, e))?;
-    if existed {
-        Ok(())
-    } else {
-        sync_dir(parent_dir(path))
-    }
+/// Create `path` with `bytes`, durably, refusing one that exists: a spool
+/// file's name is unique, so it never replaces another line.
+pub(super) fn create_new_private(path: &Path, bytes: &[u8]) -> Result<()> {
+    let parent = parent_dir(path);
+    let mut staged = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|e| Error::io("create a temporary file in", parent, e))?;
+    staged
+        .write_all(bytes)
+        .and_then(|()| staged.as_file().sync_all())
+        .map_err(|e| Error::io("write", staged.path().to_path_buf(), e))?;
+    staged
+        .persist_noclobber(path)
+        .map_err(|e| Error::io("create", path, e.error))?;
+    sync_dir(parent)
 }
 
 /// Create `path` empty and `0600` when it is missing, and sync its directory
@@ -377,6 +376,12 @@ impl LockGuard {
 
 impl Drop for LockGuard {
     fn drop(&mut self) {
+        // Clear the holder record first, so a later timeout never names a
+        // process that has finished; a holder that died without dropping
+        // left its lock to the kernel, and the next holder overwrites it.
+        if let Err(e) = self.file.set_len(0) {
+            tracing::warn!(path = %self.path.display(), error = %e, "could not clear the lock holder");
+        }
         // Fail open, and never panic in a destructor (STD-03 R4): closing the
         // file releases the lock anyway; unlocking first just makes it prompt.
         if let Err(e) = self.file.unlock() {

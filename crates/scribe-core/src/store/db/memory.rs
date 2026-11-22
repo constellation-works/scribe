@@ -13,7 +13,7 @@ use super::{DB_FILE, Fallible, db_error, inspect, open_reader, schema, stamp, wr
 use crate::error::{Error, Result};
 use crate::memory::Pending;
 use crate::session::SessionId;
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
+use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -229,6 +229,10 @@ pub(super) fn read<T: Default>(
     f: impl Fn(&Connection, &Path) -> Result<T, Fallible>,
 ) -> Result<(T, bool)> {
     let path = root.join(DB_FILE);
+    // Inside a store write on this thread, read what it has written so far.
+    if let Some(conn) = super::scope::active(root) {
+        return Ok((f(&conn, &path).map_err(Fallible::into_error)?, false));
+    }
     if !inspect(root)? {
         return Ok((T::default(), false));
     }
@@ -303,13 +307,13 @@ fn pending_rows(conn: &Connection, session: &SessionId) -> rusqlite::Result<Vec<
 
 /// The writer's view of the memory tables, on an open writer connection.
 pub(in crate::store) struct Writer<'a> {
-    conn: &'a mut Connection,
+    conn: &'a Connection,
     path: std::path::PathBuf,
 }
 
 impl<'a> Writer<'a> {
     /// Wrap a writer connection for the database under `root`.
-    pub(in crate::store) fn new(conn: &'a mut Connection, root: &Path) -> Self {
+    pub(in crate::store) fn new(conn: &'a Connection, root: &Path) -> Self {
         Self {
             conn,
             path: root.join(DB_FILE),
@@ -356,14 +360,10 @@ impl<'a> Writer<'a> {
         now: OffsetDateTime,
     ) -> Result<Option<Journal>> {
         let path = self.path.clone();
-        let started = Instant::now();
-        let fail = |e| write_error("write memory to", &path, started, e);
-        let tx = self
-            .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(fail)?;
+        let tx = super::scope::Tx::begin(self.conn, &path, "write memory to")?;
+        let started = tx.started();
         let (journal, erased) = stage(&tx, &path, started, commit, now)?;
-        tx.commit().map_err(fail)?;
+        tx.commit()?;
         if erased > 0 {
             super::truncate_wal(self.conn, &path, started)?;
         }
@@ -378,12 +378,8 @@ impl<'a> Writer<'a> {
         file_sha256: Option<&str>,
     ) -> Result<()> {
         let path = self.path.clone();
-        let started = Instant::now();
-        let fail = |e| write_error("close the memory journal in", &path, started, e);
-        let tx = self
-            .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(fail)?;
+        let tx = super::scope::Tx::begin(self.conn, &path, "close the memory journal in")?;
+        let fail = |e| tx.fail(e);
         tx.execute(
             "UPDATE memory_journal SET done = 1 WHERE id = ?1",
             [journal.id],
@@ -396,7 +392,7 @@ impl<'a> Writer<'a> {
             )
             .map_err(fail)?;
         }
-        tx.commit().map_err(fail)
+        tx.commit()
     }
 
     /// The pending candidates of `session`, oldest first.

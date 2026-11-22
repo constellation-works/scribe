@@ -218,5 +218,5 @@ fn a_call_is_not_audited() {
         json!({"question": "can you fetch me last session summary?"}),
         s.root_config(),
     );
-    assert!(!s.fx.root().join("audit.jsonl").exists());
+    assert!(support::audit_lines(&s.fx.root()).is_empty());
 }

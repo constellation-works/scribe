@@ -1,8 +1,9 @@
 //! The audit log's record shape: one JSON line per mutating command.
 //!
-//! `<root>/audit.jsonl` answers "what changed this store, when, and did it
-//! work". The CLI's audit middleware builds each [`AuditEvent`] and
-//! [`crate::Store::record_audit`] appends it. Read-only commands are never
+//! The `audit` table of `scribe.db` (`<root>/audit.jsonl` before
+//! 2_design.md §15.9 phase 7) answers "what changed this store, when, and
+//! did it work". The CLI's audit middleware builds each [`AuditEvent`] and
+//! [`crate::Store::record_audit`] records it. Read-only commands are never
 //! audited: they must not write (STD-01 R31).
 //!
 //! An event holds stable identifiers only: the command path, the record it
@@ -14,7 +15,8 @@
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
-/// The audit log's name under the data directory.
+/// The audit log's file under the data directory, before it moved into
+/// `scribe.db`.
 pub const AUDIT_FILE: &str = "audit.jsonl";
 
 /// The newest audit line format. Bump it, and keep reading the old one, when
@@ -129,14 +131,15 @@ pub(super) struct AuditLine {
     pub(super) event: AuditEvent,
 }
 
-/// The events of an audit log, oldest first. A line that does not parse
-/// (a torn last line, a hand edit) is skipped and counted; a line of a newer
-/// format refuses the whole read, so no count is made from a log this build
-/// cannot read.
-pub(super) fn decode_lines(
+/// The events of an audit log, oldest first, each with its own format,
+/// which a move into `scribe.db` keeps. A line that does not parse (a torn
+/// last line, a hand edit) is skipped and counted; a line of a newer format
+/// refuses the whole read, so no count is made from a log this build cannot
+/// read.
+pub(super) fn decode_formatted(
     path: &std::path::Path,
     bytes: &[u8],
-) -> crate::Result<(Vec<AuditEvent>, usize)> {
+) -> crate::Result<(Vec<(u32, AuditEvent)>, usize)> {
     let mut events = Vec::new();
     let mut skipped = 0usize;
     for raw in bytes.split(|b| *b == b'\n') {
@@ -154,7 +157,7 @@ pub(super) fn decode_lines(
                 supported: AUDIT_FORMAT,
             });
         }
-        events.push(line.event);
+        events.push((line.format, line.event));
     }
     Ok((events, skipped))
 }

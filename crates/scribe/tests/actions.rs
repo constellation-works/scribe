@@ -160,21 +160,11 @@ fn entry(fx: &Fixture, id: &str, extra: &[&str]) -> Value {
 
 /// Move entry `id`'s creation back to a fixed past instant, as if it had
 /// been written long ago.
-fn backdate(fx: &Fixture, tag: &str, id: &str) {
-    let path = fx.root().join("entries").join(tag).join(format!("{id}.md"));
-    let body = std::fs::read_to_string(&path).unwrap();
-    let body: String = body
-        .lines()
-        .map(|l| {
-            if l.starts_with("created: ") {
-                String::from("created: 2026-01-01T00:00:00Z")
-            } else {
-                l.to_owned()
-            }
-        })
-        .map(|l| l + "\n")
-        .collect();
-    std::fs::write(&path, body).unwrap();
+fn backdate(fx: &Fixture, _tag: &str, id: &str) {
+    support::sql(
+        &fx.root(),
+        &format!("UPDATE entries SET created = '2026-01-01T00:00:00Z' WHERE id = '{id}'"),
+    );
 }
 
 /// A fake `claude` on `PATH` answering every `models.annotation` call
@@ -200,10 +190,24 @@ fn nothing(marker: u32) -> Value {
            "quote": "", "message": "", "reason": "only a passing remark"})
 }
 
+/// Whether the store holds any entry of `tag`, in any status.
+fn entries_of_tag(fx: &Fixture, tag: &str) -> bool {
+    let conn = rusqlite::Connection::open_with_flags(
+        fx.root().join("scribe.db"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    );
+    let Ok(conn) = conn else { return false };
+    conn.query_row("SELECT count(*) FROM entries WHERE tag = ?1", [tag], |r| {
+        r.get::<_, i64>(0)
+    })
+    .unwrap_or(0)
+        > 0
+}
+
 /// `marks.json`'s records.
 fn marks_json(fx: &Fixture) -> Vec<Value> {
-    let bytes = std::fs::read(fx.root().join("marks.json")).unwrap();
-    serde_json::from_slice::<Value>(&bytes).unwrap()["marks"]
+    let text = support::exported(&fx.root(), "marks.json").expect("exported marks");
+    serde_json::from_str::<Value>(&text).unwrap()["marks"]
         .as_array()
         .unwrap()
         .clone()
@@ -436,7 +440,7 @@ fn a_config_marked_action_tag_captures_with_a_window_and_is_read_and_picked_up()
         .unwrap();
     assert_eq!(friction["outcome"], "refused");
     assert_eq!(friction["code"], "unknown_tag");
-    assert!(!fx.root().join("entries/friction").exists());
+    assert!(!entries_of_tag(&fx, "friction"));
     for id in ["task-1", "idea-1"] {
         let e = entry(&fx, id, &[]);
         assert_eq!(
@@ -557,7 +561,7 @@ fn task_friction_remind_and_finding_are_unknown_tags_without_config_and_not_in_t
             .unwrap();
         assert_eq!(mark["outcome"], "refused", "{tag}");
         assert_eq!(mark["code"], "unknown_tag", "{tag}");
-        assert!(!fx.root().join("entries").join(tag).exists());
+        assert!(!entries_of_tag(&fx, tag));
     }
     let tags = json_of(&fx.ok(&["tag", "list", "--json"]));
     let action: Vec<&str> = tags["tags"]
@@ -706,17 +710,15 @@ fn pickups_are_recorded_once_refused_off_action_tags_and_count_rejections() {
     let args: Vec<String> = args.iter().map(|a| a.replace("<id>", "T-9")).collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     fx.ok(&args);
-    let before = std::fs::read(fx.root().join("pickups.json")).unwrap();
+    let before = support::exported(&fx.root(), "pickups.json").unwrap();
     fx.ok(&args);
     assert_eq!(
-        std::fs::read(fx.root().join("pickups.json")).unwrap(),
+        support::exported(&fx.root(), "pickups.json").unwrap(),
         before,
         "the same pickup again changes nothing"
     );
-    let audit = std::fs::read_to_string(fx.root().join("audit.jsonl")).unwrap();
-    let pickups: Vec<Value> = audit
-        .lines()
-        .map(|l| serde_json::from_str::<Value>(l).unwrap())
+    let pickups: Vec<Value> = support::audit_lines(&fx.root())
+        .into_iter()
         .filter(|l| l["command"] == "entry pickup")
         .map(|l| json!([l["status"], l["target"], l["error_code"], l["author"]]))
         .collect();
@@ -866,10 +868,7 @@ fn a_quote_is_required_and_checked_against_daniels_typed_turns() {
         ]),
         "quote_not_found"
     );
-    assert!(
-        !fx.root().join("entries/standard").exists(),
-        "nothing written"
-    );
+    assert!(!entries_of_tag(&fx, "standard"), "nothing written");
 
     let args = with(&[
         "--related",

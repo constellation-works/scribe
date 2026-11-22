@@ -28,6 +28,13 @@
 //! every reply and usually has nothing to do, and a prompt with no
 //! `#scribe` line is not a mutation.
 //!
+//! A command that calls no model runs, with its lines, as one `scribe.db`
+//! transaction: [`AuditGuard::flush`] writes them inside it, so a write and
+//! its line commit together or not at all. A refused or failed command's
+//! transaction rolls back, and its failure line is written after, without
+//! waiting: spooled to a file of its own when another writer holds the
+//! database, so a locked store costs one wait and loses no line.
+//!
 //! The audit log is a side channel, so it fails open (STD-02 R31): a line that
 //! cannot be written never fails the command that already ran, and is reported
 //! as a warning on stderr. `scripts/check-dependency-direction.sh` rejects
@@ -40,13 +47,20 @@ use scribe_core::{AuditEvent, AuditStatus, Store};
 use std::time::Instant;
 use time::OffsetDateTime;
 
-/// How a command appears in the audit log. Declared by the commands that
-/// write: the hooks, `session pass` and `consistency scan` (also when the
-/// plugin's routine tools run them).
+/// How a command appears in the audit log, and how it commits. Declared by
+/// the commands that write: the hooks, `session pass` and `consistency
+/// scan` (also when the plugin's routine tools run them), and the direct
+/// write verbs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct AuditMeta {
     /// The command path, such as `hook user-prompt-submit`.
     pub(crate) command: &'static str,
+    /// Whether the command commits its own steps: one that may call a
+    /// model, because no transaction may be held across a model call, and
+    /// `store migrate`, whose move is a transaction of its own. Any other
+    /// runs as one transaction with its audit lines (`commands::run`,
+    /// 2_design.md §15.7).
+    pub(crate) stepwise: bool,
 }
 
 /// One line the guard will write: how it ended, the record, the code.
@@ -266,6 +280,21 @@ impl<'a> AuditGuard<'a> {
         self.instruction = note;
     }
 
+    /// Write the lines now, inside the command's transaction, so they commit
+    /// with its writes; the guard then writes nothing when dropped unless
+    /// [`AuditGuard::mark_result`] is called again (the commit failed).
+    ///
+    /// # Errors
+    ///
+    /// A store error writing a line, which fails the transaction.
+    pub(crate) fn flush(&mut self) -> Result<(), scribe_core::Error> {
+        for event in self.events() {
+            self.store.record_audit(&event)?;
+        }
+        self.lines.clear();
+        Ok(())
+    }
+
     /// The lines this guard will write, in order.
     pub(crate) fn events(&self) -> Vec<AuditEvent> {
         let duration_ms = u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
@@ -294,7 +323,6 @@ impl Drop for AuditGuard<'_> {
             if let Err(err) = self.store.record_audit(&event) {
                 tracing::warn!(
                     command = self.meta.command,
-                    path = %self.store.audit_path().display(),
                     error = %err,
                     "could not write the audit log"
                 );
@@ -358,7 +386,7 @@ fn record_target(record: &Record) -> Option<String> {
     Some(match record {
         Record::Memory(m) => format!("memory:{}", m.id),
         Record::MemoryRefresh(_) => String::from("memory:profile"),
-        Record::StoreMigrate(_) => String::from("store:sessions"),
+        Record::StoreMigrate(_) => String::from("store:records"),
         Record::Export(_) => return None,
         Record::MemoryBlock(_)
         | Record::MemoryRevision(_)
