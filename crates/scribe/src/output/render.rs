@@ -444,8 +444,11 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
                 .map_or_else(|| String::from("-"), |h| timestamp(h.created));
             writeln!(
                 out,
-                "{}\thandoff-only\tno\t{}\t-\t{}\tno session record",
-                session.id, session.project, latest
+                "{}\thandoff-only\t{}\t{}\t-\t{}\tno session record",
+                session.id,
+                yes_no(session.due),
+                session.project,
+                latest
             )?;
             for handoff in &session.handoffs {
                 writeln!(
@@ -462,7 +465,7 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
         (OutputMode::Table, Record::Entry(entry)) => entry_detail(out, sink, entry),
         (OutputMode::Table, Record::Session(session)) => session_detail(out, sink, session),
         (OutputMode::Table, Record::SessionHandoffs(session)) => {
-            session_handoffs_detail(out, session)
+            session_handoffs_detail(out, sink, session)
         }
         (OutputMode::Json, Record::Transcript(transcript)) => write_json(out, transcript),
         (OutputMode::Plain, Record::Transcript(transcript)) => {
@@ -1177,14 +1180,24 @@ fn session_detail(out: &mut dyn Write, sink: &Sink, s: &SessionPayload) -> io::R
     session_log(out, s)
 }
 
-fn session_handoffs_detail(out: &mut dyn Write, s: &SessionHandoffsPayload) -> io::Result<()> {
+fn session_handoffs_detail(
+    out: &mut dyn Write,
+    sink: &Sink,
+    s: &SessionHandoffsPayload,
+) -> io::Result<()> {
+    let due = color::paint(yes_no(s.due), due_role(s.due), sink.color);
     field(out, "id", &s.id)?;
     field(
         out,
         "record",
-        "none (handoff only; session was not switched on)",
+        if s.on || s.due {
+            "none (handoff only; no catalog record yet)"
+        } else {
+            "none (handoff only; session was not switched on)"
+        },
     )?;
     field(out, "on", yes_no(s.on))?;
+    field(out, "due", &due)?;
     field(out, "project", &s.project)?;
     session_handoffs(out, &s.handoffs)
 }
