@@ -1328,3 +1328,46 @@ fn spoken_instruction_entry_labels_statement_as_agents_and_ask_cites_like_marked
         "{prompt}"
     );
 }
+
+#[test]
+fn spoken_instruction_accepts_claude_desktop_human_turn() {
+    let fx = Fixture::new();
+    let project = fx.home().join(".claude/projects/-work-scribe");
+    std::fs::create_dir_all(&project).unwrap();
+    let transcript = project.join(format!("{SESSION}.jsonl"));
+    let quote = "always keep progress updates short during long runs";
+    let line = json!({
+        "type": "user",
+        "uuid": "u-desktop",
+        "sessionId": SESSION,
+        "timestamp": "2026-11-22T21:52:43Z",
+        "cwd": "/work/scribe",
+        "entrypoint": "claude-desktop",
+        "origin": {"kind": "human"},
+        "promptSource": "sdk",
+        "turnOrigin": "human",
+        "message": {"role": "user", "content": quote}
+    });
+    std::fs::write(&transcript, format!("{line}\n")).unwrap();
+    support::make_private(&transcript);
+
+    let statement = "The user prefers short progress updates during long runs.";
+    let added = json_of(&fx.ok(&[
+        "entry",
+        "add",
+        "--tag",
+        "preferences",
+        "--author",
+        "opus",
+        "--related",
+        &format!("session:{SESSION}"),
+        "--quote",
+        quote,
+        "--spoken",
+        statement,
+        "--json",
+    ]));
+    assert_eq!(added["id"], "preferences-1");
+    assert_eq!(added["quote"], quote);
+    assert_eq!(added["content"], statement);
+}

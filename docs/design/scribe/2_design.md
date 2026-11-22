@@ -735,10 +735,16 @@ Only Daniel writes scribe: a user-role turn that is not plainly typed by
 him records nothing, settles nothing and does not run `/scribe`. The hook
 skips a turn whose prompt carries an agent or harness wrapper
 (`<agent-message>`, `<task-notification>`, `<side-sessions-event>`, a
-scheduled/loop wrapper, or any prompt opening with a markup tag), or whose
-payload origin field (`source`, `prompt_source`, `origin`,
-`prompt_origin`, where the harness provides one) is not a plain typed
-value. The reply is empty and nothing is audited. This is an accident
+scheduled/loop wrapper, or any prompt opening with a markup tag), whose
+line is `isMeta: true`, or whose payload origin field (`source`,
+`prompt_source`/`promptSource`, `origin` — a string, or an object with a
+non-empty string `kind` — `prompt_origin`/`promptOrigin`,
+`turn_origin`/`turnOrigin`, where the harness provides one) is not a
+plain typed value (`promptSource: "sdk"` is plain only when `turnOrigin`
+or `origin.kind` is present and plain such as `"human"`; `peer`,
+`task-notification`/`task_notification`, `host_synthetic`, `system`,
+bare `sdk`, and any other non-string origin shape are refused). The
+reply is empty and nothing is audited. This is an accident
 guard like the provenance check below (STD-05 R5), not a security
 boundary: a process running as Daniel can forge a plain payload.
 

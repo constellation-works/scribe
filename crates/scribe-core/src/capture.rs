@@ -249,21 +249,143 @@ const AGENT_WRAPPERS: &[&str] = &[
     "<cross-session",
 ];
 
+fn normalize_origin(source: &str) -> String {
+    source.trim().to_lowercase().replace(['_', ' '], "-")
+}
+
+fn is_explicitly_plain(source: &str) -> bool {
+    let normalized = normalize_origin(source);
+    !normalized.is_empty() && PLAIN_SOURCES.contains(&normalized.as_str())
+}
+
+fn is_plain_or_empty(source: &str) -> bool {
+    let normalized = normalize_origin(source);
+    normalized.is_empty() || PLAIN_SOURCES.contains(&normalized.as_str())
+}
+
+/// Serde helper that distinguishes an explicit `null` from an omitted field,
+/// so fail-closed origin checks refuse `"origin": null` as an unexpected shape.
+///
+/// # Errors
+///
+/// Propagates deserialization errors from the underlying JSON value.
+pub fn present_value<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<serde_json::Value>, D::Error> {
+    serde::Deserialize::deserialize(deserializer).map(Some)
+}
+
+/// Origin claims read from a Claude Code transcript line or hook payload
+/// (docs/design/scribe/2_design.md §4.1).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OriginClaims {
+    invalid: bool,
+    prompt_sources: Vec<String>,
+    origin_kind: Option<String>,
+    turn_origins: Vec<String>,
+    other: Vec<String>,
+}
+
+impl OriginClaims {
+    /// Record an origin claim (`source`, `promptOrigin`/`prompt_origin`) that
+    /// must be a string when present.
+    pub fn push_claim(&mut self, value: Option<&serde_json::Value>) {
+        let Some(value) = value else { return };
+        match value.as_str() {
+            Some(s) => self.other.push(s.to_owned()),
+            None => self.invalid = true,
+        }
+    }
+
+    /// Record `promptSource`/`prompt_source`, which must be a string when
+    /// present; `"sdk"` is treated as plain only alongside a plain `turnOrigin`
+    /// or `origin.kind`.
+    pub fn push_prompt_source(&mut self, value: Option<&serde_json::Value>) {
+        let Some(value) = value else { return };
+        match value.as_str() {
+            Some(s) => self.prompt_sources.push(s.to_owned()),
+            None => self.invalid = true,
+        }
+    }
+
+    /// Record `origin`, which may be a string or an object with a non-empty
+    /// string `kind`.
+    pub fn push_origin(&mut self, value: Option<&serde_json::Value>) {
+        let Some(value) = value else { return };
+        match value {
+            serde_json::Value::String(s) => self.other.push(s.clone()),
+            serde_json::Value::Object(map) => {
+                match map.get("kind").and_then(serde_json::Value::as_str) {
+                    Some(kind) if !kind.trim().is_empty() => {
+                        self.origin_kind = Some(kind.to_owned());
+                    }
+                    _ => self.invalid = true,
+                }
+            }
+            serde_json::Value::Null
+            | serde_json::Value::Bool(_)
+            | serde_json::Value::Number(_)
+            | serde_json::Value::Array(_) => self.invalid = true,
+        }
+    }
+
+    /// Record `turnOrigin`/`turn_origin`, which must be a string when present.
+    pub fn push_turn_origin(&mut self, value: Option<&serde_json::Value>) {
+        let Some(value) = value else { return };
+        match value.as_str() {
+            Some(s) => self.turn_origins.push(s.to_owned()),
+            None => self.invalid = true,
+        }
+    }
+
+    /// Whether the origin claims alone refuse the turn (unexpected shape,
+    /// non-plain origin value, or `promptSource: sdk` without a plain
+    /// `turnOrigin` or `origin.kind`).
+    #[must_use]
+    pub fn claims_agent_originated(&self) -> bool {
+        if self.invalid {
+            return true;
+        }
+        let desktop_plain = self.origin_kind.as_deref().is_some_and(is_explicitly_plain)
+            || self.turn_origins.iter().any(|s| is_explicitly_plain(s));
+        if self.other.iter().any(|s| !is_plain_or_empty(s))
+            || self.turn_origins.iter().any(|s| !is_plain_or_empty(s))
+            || self
+                .origin_kind
+                .as_deref()
+                .is_some_and(|k| !is_explicitly_plain(k))
+        {
+            return true;
+        }
+        self.prompt_sources.iter().any(|s| {
+            let norm = normalize_origin(s);
+            if norm == "sdk" {
+                !desktop_plain
+            } else {
+                !norm.is_empty() && !PLAIN_SOURCES.contains(&norm.as_str())
+            }
+        })
+    }
+
+    /// Whether the claims or `prompt` text mark the turn as agent-originated.
+    #[must_use]
+    pub fn is_agent_originated(&self, prompt: &str) -> bool {
+        self.claims_agent_originated() || agent_originated(&[], prompt)
+    }
+}
+
 /// The origin guard (docs/design/scribe/2_design.md §4.1): whether a user
 /// turn was written by an agent or the harness, not plainly typed by
 /// Daniel. `origins` are the turn's origin claims where the harness gives
-/// them (`source`, `prompt_source`, `origin`, `prompt_origin`); `prompt` is
-/// its text. A non-plain origin value, an agent wrapper anywhere in the
-/// prompt, or a prompt opening with a markup tag (a plainly typed prompt
+/// them (`source`, `prompt_source`, `origin`, `prompt_origin`, `turn_origin`);
+/// `prompt` is its text. A non-plain origin value, an agent wrapper anywhere in
+/// the prompt, or a prompt opening with a markup tag (a plainly typed prompt
 /// does not open that way) is not his. An accident guard (STD-05 R5): a
 /// process running as Daniel can still forge a plain turn.
 #[must_use]
 pub fn agent_originated(origins: &[&str], prompt: &str) -> bool {
-    for source in origins {
-        let normalized = source.trim().to_lowercase().replace(['_', ' '], "-");
-        if !normalized.is_empty() && !PLAIN_SOURCES.contains(&normalized.as_str()) {
-            return true;
-        }
+    if origins.iter().any(|source| !is_plain_or_empty(source)) {
+        return true;
     }
     // Underscores and hyphens spell the same wrapper (`<agent_message>`).
     let lower = prompt.to_lowercase().replace('_', "-");
