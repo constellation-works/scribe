@@ -734,10 +734,11 @@ pub struct Pending {
 /// One change a pass window's memory makes (§15.5).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PassChange {
-    /// Write a `now` file whole.
-    Now(NowItem),
-    /// Write a milestone file whole.
-    Milestone(Milestone),
+    /// Write a `now` file whole; the messages it cites (session, message
+    /// id), kept so a forget deletes them.
+    Now(NowItem, Vec<(SessionId, String)>),
+    /// Write a milestone file whole, and the messages it cites.
+    Milestone(Milestone, Vec<(SessionId, String)>),
     /// Keep an undated candidate.
     AddPending {
         /// The turn.
@@ -825,7 +826,10 @@ pub fn plan(
                         m
                     }
                 };
-                changes.push(PassChange::Milestone(item));
+                changes.push(PassChange::Milestone(
+                    item,
+                    vec![(session.clone(), element.message.clone())],
+                ));
             }
             (ElementKind::Now, None) => {
                 if element.update.is_some() || element.completes.is_some() {
@@ -854,6 +858,7 @@ pub fn plan(
             }
             (ElementKind::Now, Some(date)) => {
                 let mut sources = Vec::new();
+                let mut cites = vec![(session.clone(), element.message.clone())];
                 if let Some(id) = element.completes {
                     let Some(at) = pending.iter().position(|p| p.id == id && p.id != 0) else {
                         refused.push(Refusal::Unknown);
@@ -861,6 +866,7 @@ pub fn plan(
                     };
                     let done = pending.remove(at);
                     add_source(&mut sources, &done.session);
+                    cites.push((done.session.clone(), done.message.clone()));
                     changes.push(PassChange::DropPending(id));
                 }
                 add_source(&mut sources, session);
@@ -905,7 +911,7 @@ pub fn plan(
                         n
                     }
                 };
-                changes.push(PassChange::Now(item));
+                changes.push(PassChange::Now(item, cites));
             }
         }
     }

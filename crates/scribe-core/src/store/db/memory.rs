@@ -74,6 +74,15 @@ pub(in crate::store) struct MemoryCommit {
     pub history: Vec<HistoryRow>,
     /// The items whose history rows a forget deletes.
     pub forget_history: Vec<String>,
+    /// Messages an item cites: item (file stem or `m-<n>`), session and
+    /// message id.
+    pub links: Vec<(String, String, String)>,
+    /// Links to copy from one item to another (a `now` item promoted to a
+    /// milestone): from, to.
+    pub link_copies: Vec<(String, String)>,
+    /// Items a forget erases: the messages they cite are deleted, with the
+    /// links, leaving no trace of their text (§15.7).
+    pub forget_messages: Vec<String>,
     /// A new profile revision's content; its file op is in `ops`.
     pub revision: Option<String>,
     /// The profile job's new cursor: the last session read, by its last
@@ -96,6 +105,9 @@ impl MemoryCommit {
         self.ops.is_empty()
             && self.history.is_empty()
             && self.forget_history.is_empty()
+            && self.links.is_empty()
+            && self.link_copies.is_empty()
+            && self.forget_messages.is_empty()
             && self.revision.is_none()
             && self.cursor.is_none()
             && self.pending_add.is_empty()
@@ -374,6 +386,43 @@ impl<'a> Writer<'a> {
             tx.execute("DELETE FROM memory_history WHERE item = ?1", [item])
                 .map_err(fail)?;
         }
+        for (item, session, message) in &commit.links {
+            tx.execute(
+                "INSERT INTO memory_messages (item, session, message) VALUES (?1, ?2, ?3)
+                 ON CONFLICT DO NOTHING",
+                (item, session, message),
+            )
+            .map_err(fail)?;
+        }
+        for (from, to) in &commit.link_copies {
+            tx.execute(
+                "INSERT INTO memory_messages (item, session, message)
+                 SELECT ?2, session, message FROM memory_messages WHERE item = ?1
+                 ON CONFLICT DO NOTHING",
+                (from, to),
+            )
+            .map_err(fail)?;
+        }
+        let mut erased = 0;
+        for item in &commit.forget_messages {
+            erased += tx
+                .execute(
+                    "DELETE FROM messages WHERE EXISTS (SELECT 1 FROM memory_messages l
+                         WHERE l.item = ?1 AND l.session = messages.session
+                         AND l.message = messages.message)",
+                    [item],
+                )
+                .map_err(fail)?;
+            tx.execute("DELETE FROM memory_messages WHERE item = ?1", [item])
+                .map_err(fail)?;
+        }
+        if erased > 0 {
+            tx.execute(
+                "INSERT INTO messages_fts (messages_fts) VALUES ('optimize')",
+                [],
+            )
+            .map_err(fail)?;
+        }
         for row in &commit.history {
             let sources =
                 serde_json::to_string(&row.sources).map_err(|e| Error::corrupt(&path, e))?;
@@ -441,6 +490,18 @@ impl<'a> Writer<'a> {
             })
         };
         tx.commit().map_err(fail)?;
+        if erased > 0 {
+            // As a phase-4 forget: the checkpoint empties the WAL that held
+            // the deleted pages; a reader still holding them leaves them
+            // until the next checkpoint, so a busy result is reported.
+            let busy: i64 = self
+                .conn
+                .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))
+                .map_err(fail)?;
+            if busy != 0 {
+                tracing::warn!(path = %path.display(), "a reader kept forgotten messages' old pages in the WAL until the next checkpoint");
+            }
+        }
         Ok(journal)
     }
 

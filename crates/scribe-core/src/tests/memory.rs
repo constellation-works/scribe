@@ -144,9 +144,10 @@ fn a_dated_now_element_writes_a_file_by_stem_and_an_undated_one_is_kept_pending(
     let undated = draft(ElementKind::Now, "Book the venue", None, TURN);
     let (changes, refused) = memory::plan(&[dated, undated.clone()], &[], &[], &[], &s);
     assert!(refused.is_empty());
-    let PassChange::Now(item) = &changes[0] else {
+    let PassChange::Now(item, cites) = &changes[0] else {
         panic!("a now file first, got {changes:?}")
     };
+    assert_eq!(cites, &[(s.clone(), String::from("u-1"))]);
     assert_eq!(item.stem.as_str(), "2026-12-12-sister-s-wedding");
     assert_eq!(item.sources, std::slice::from_ref(&s));
     assert!(
@@ -188,7 +189,12 @@ fn a_dated_completion_drops_its_candidate_and_names_its_session() {
     let (changes, refused) = memory::plan(&[done], &[], &[], &pending, &first);
     assert!(refused.is_empty());
     assert_eq!(changes[0], PassChange::DropPending(4));
-    assert!(matches!(&changes[1], PassChange::Now(n) if n.sources == [first.clone()]));
+    let PassChange::Now(n, cites) = &changes[1] else {
+        panic!("a now file, got {changes:?}")
+    };
+    assert_eq!(n.sources, std::slice::from_ref(&first));
+    // It cites the dating turn and the candidate's own turn.
+    assert_eq!(cites.len(), 2);
     let mut undated = draft(ElementKind::Now, "Book the venue", None, TURN);
     undated.checked.completes = Some(4);
     assert_eq!(
@@ -253,7 +259,7 @@ fn a_milestone_needs_a_date_and_a_turn_that_calls_it_one() {
     );
     assert!(refused.is_empty());
     assert!(
-        matches!(&changes[0], PassChange::Milestone(m) if m.stem.as_str() == "2026-11-20-release-shipped")
+        matches!(&changes[0], PassChange::Milestone(m, _) if m.stem.as_str() == "2026-11-20-release-shipped")
     );
 }
 
@@ -280,7 +286,7 @@ fn an_update_rewrites_the_listed_item_in_place_and_an_unlisted_one_is_unknown() 
         &s,
     );
     assert!(refused.is_empty());
-    let PassChange::Now(item) = &changes[0] else {
+    let PassChange::Now(item, _) = &changes[0] else {
         panic!()
     };
     assert_eq!(item.stem, listed.stem);

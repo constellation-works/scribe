@@ -5256,6 +5256,13 @@ fn ack_marks_a_now_item_raised_once_per_session_and_forget_removes_it() {
         "the same session changes nothing"
     );
 
+    let before: Value = serde_json::from_slice(
+        &s.fx
+            .ok(&["search", "wedding", "--kind", "message", "--json"])
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(before["total"], 1, "{before}");
     let unconfirmed = s.run_any(&["memory", "forget", WEDDING_STEM, "--author", "opus"], b"");
     assert_ne!(unconfirmed.status.code(), Some(0));
     assert!(file.exists());
@@ -5290,6 +5297,26 @@ fn ack_marks_a_now_item_raised_once_per_session_and_forget_removes_it() {
     );
     assert!(!file.exists());
     assert!(!memory_text(&s).contains("Sister's wedding"));
+    // The quoted turn is gone from the messages too (§15.7), and the other
+    // turn stays.
+    let search = |terms: &str| -> Value {
+        serde_json::from_slice(
+            &s.fx
+                .ok(&["search", terms, "--kind", "message", "--json"])
+                .stdout,
+        )
+        .unwrap()
+    };
+    assert_eq!(search("wedding")["total"], 0, "{}", search("wedding"));
+    assert_eq!(search("venue")["total"], 1, "{}", search("venue"));
+    let db = std::fs::read(s.fx.root().join("scribe.db")).unwrap();
+    let wal = std::fs::read(s.fx.root().join("scribe.db-wal")).unwrap_or_default();
+    for bytes in [&db, &wal] {
+        assert!(
+            !String::from_utf8_lossy(bytes).contains("still on the seating"),
+            "the forgotten turn's words are left in the database"
+        );
+    }
     let missing = s.run_any(&["memory", "show", WEDDING_STEM, "--json"], b"");
     assert!(
         text(&missing.stderr).contains("memory_not_found"),
