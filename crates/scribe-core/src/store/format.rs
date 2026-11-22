@@ -1834,6 +1834,22 @@ pub(super) fn checked_entry(
     expected: &str,
     tag_dir: &str,
 ) -> Result<Entry> {
+    validate_entry(path, &entry, from, body, expected, tag_dir)?;
+    body.clone_into(&mut entry.content);
+    Ok(entry)
+}
+
+/// Check an entry's id, tag, and provenance/status invariants against `from`
+/// and `body`. Shared by read-time decoding ([`checked_entry`]) and write-time
+/// persistence (`db::docs::put_entry`).
+pub(super) fn validate_entry(
+    path: &Path,
+    entry: &Entry,
+    from: u32,
+    body: &str,
+    expected: &str,
+    tag_dir: &str,
+) -> Result<()> {
     if entry.id.to_string() != expected
         || entry.tag.as_str() != tag_dir
         || entry.id.tag() != &entry.tag
@@ -1941,13 +1957,20 @@ pub(super) fn checked_entry(
             // A direct note may carry a quote. A spoken-instruction entry
             // records the agent's statement in content, the user's words in
             // `quote` (until forgotten), and `stated_by` as the writing
-            // (or content-updating) agent. An approved assistant turn
-            // keeps the assistant's words as content, no quote; or (format 24,
-            // 2_design.md §15.3) scribe's context of the turn as content,
-            // the assistant's words in `quote` until it is forgotten.
+            // (or last content-updating) agent; later metadata updates,
+            // retirement, or forget move `updated_by` to another agent while
+            // leaving `stated_by` on the statement author. An approved
+            // assistant turn keeps the assistant's words as content, no quote;
+            // or (format 24, 2_design.md §15.3) scribe's context of the turn
+            // as content, the assistant's words in `quote` until it is
+            // forgotten.
             let spoken_stated = entry.stated_by.as_ref().is_some_and(|by| {
                 by.kind == crate::AuthorKind::Agent
-                    && (by == &entry.author || entry.updated_by.is_some())
+                    && (by == &entry.author
+                        || entry
+                            .updated_by
+                            .as_ref()
+                            .is_some_and(|u| u.kind == crate::AuthorKind::Agent))
             }) && entry.evidence.is_none()
                 && match entry.status {
                     crate::EntryStatus::Forgotten => entry.quote.is_none(),
@@ -2051,8 +2074,7 @@ pub(super) fn checked_entry(
             return Err(shape(path, format!("entry {key} quote must not be empty")));
         }
     }
-    body.clone_into(&mut entry.content);
-    Ok(entry)
+    Ok(())
 }
 
 /// The frontmatter as written: `format` and `kind` first, then the

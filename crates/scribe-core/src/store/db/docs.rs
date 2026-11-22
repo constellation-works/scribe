@@ -355,6 +355,16 @@ pub(in crate::store) fn put_entry(
     new: bool,
     fail: impl Fn(rusqlite::Error) -> Error,
 ) -> Result<()> {
+    let id = entry.id.to_string();
+    let path = row_path(db, "entries", &id);
+    format::validate_entry(
+        &path,
+        entry,
+        format::FORMAT,
+        &entry.content,
+        &id,
+        entry.tag.as_str(),
+    )?;
     let obj = serialized(db, "an entry", entry)?;
     let mut values = row(db, "an entry", &obj, ENTRY, &[])?;
     values.push(Sql::Text(entry.content.clone()));

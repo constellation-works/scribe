@@ -1448,3 +1448,301 @@ fn spoken_instruction_entry_remains_editable_for_content_and_metadata() {
     assert_eq!(tagged["topics"], json!(["communication"]));
     assert_eq!(entry(&fx, "preferences-1", &[]), tagged);
 }
+
+#[test]
+fn spoken_instruction_entry_stays_readable_across_metadata_retire_and_forget_by_distinct_agents() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let quote_one = "always keep progress updates short during long runs";
+    let quote_two = "prefer rebase-free merge commits on integration branches";
+    let quote_three = "summarize test failures before proposing fixes";
+    let forget_words = "please forget preferences-1 completely";
+    let now = time::OffsetDateTime::now_utc()
+        .replace_nanosecond(0)
+        .unwrap();
+    let mut lines = String::new();
+    for (n, (uuid, text)) in [
+        ("u-1", quote_one),
+        ("u-2", quote_two),
+        ("u-3", quote_three),
+        ("u-4", forget_words),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let ago = i64::try_from(4 - n).unwrap();
+        let at = (now - time::Duration::minutes(ago))
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
+        let line = json!({
+            "type": "user",
+            "uuid": uuid,
+            "sessionId": SESSION,
+            "timestamp": at,
+            "cwd": claude.cwd,
+            "entrypoint": "cli",
+            "message": {"role": "user", "content": text}
+        });
+        lines.push_str(&format!("{line}\n"));
+    }
+    std::fs::write(&claude.transcript, lines).unwrap();
+    make_private(&claude.transcript);
+
+    let session_ref = format!("session:{SESSION}");
+
+    // 1. A (opus) creates a spoken entry, B (sonnet) rewrites its statement.
+    fx.ok(&[
+        "entry",
+        "add",
+        "--tag",
+        "preferences",
+        "--author",
+        "opus",
+        "--project",
+        "scribe",
+        "--related",
+        &session_ref,
+        "--quote",
+        quote_one,
+        "--spoken",
+        "The user prefers short progress updates.",
+    ]);
+    fx.ok(&[
+        "entry",
+        "update",
+        "preferences-1",
+        "--author",
+        "sonnet",
+        "--content",
+        "The user prefers concise progress updates during long runs.",
+    ]);
+
+    // 2. Metadata updates by C (haiku) and then by A (opus) leave `stated_by`
+    //    on B (sonnet) and keep both `entry show` and `entry list` clean.
+    let by_c = json_of(&fx.ok(&[
+        "entry",
+        "update",
+        "preferences-1",
+        "--author",
+        "haiku",
+        "--add-topic",
+        "communication",
+        "--json",
+    ]));
+    assert_eq!(
+        by_c["stated_by"],
+        json!({"kind": "agent", "name": "sonnet"})
+    );
+    assert_eq!(
+        by_c["updated_by"],
+        json!({"kind": "agent", "name": "haiku"})
+    );
+    assert_eq!(entry(&fx, "preferences-1", &[]), by_c);
+
+    let by_a = json_of(&fx.ok(&[
+        "entry",
+        "update",
+        "preferences-1",
+        "--author",
+        "opus",
+        "--add-related",
+        "repo:scribe",
+        "--json",
+    ]));
+    assert_eq!(
+        by_a["stated_by"],
+        json!({"kind": "agent", "name": "sonnet"})
+    );
+    assert_eq!(by_a["updated_by"], json!({"kind": "agent", "name": "opus"}));
+    assert_eq!(entry(&fx, "preferences-1", &[]), by_a);
+    let listed_active = json_of(&fx.ok(&["entry", "list", "--tag", "preferences", "--json"]));
+    assert_eq!(listed_active["total"], 1);
+    assert_eq!(listed_active["warnings"], json!([]));
+    assert_eq!(
+        listed_active["entries"][0]["stated_by"],
+        json!({"kind": "agent", "name": "sonnet"})
+    );
+
+    // 3. Retirement by D (delta) keeps the entry readable with `stated_by` B.
+    let retired = json_of(&fx.ok(&[
+        "entry",
+        "retire",
+        "preferences-1",
+        "--author",
+        "delta",
+        "--reason",
+        "superseded by newer workflow",
+        "--json",
+    ]));
+    assert_eq!(retired["status"], "retired");
+    assert_eq!(
+        retired["stated_by"],
+        json!({"kind": "agent", "name": "sonnet"})
+    );
+    assert_eq!(
+        retired["updated_by"],
+        json!({"kind": "agent", "name": "delta"})
+    );
+    assert_eq!(retired["quote"], quote_one);
+    assert_eq!(entry(&fx, "preferences-1", &[]), retired);
+    let listed_retired = json_of(&fx.ok(&[
+        "entry",
+        "list",
+        "--tag",
+        "preferences",
+        "--status",
+        "retired",
+        "--json",
+    ]));
+    assert_eq!(listed_retired["total"], 1);
+    assert_eq!(listed_retired["warnings"], json!([]));
+    assert_eq!(
+        listed_retired["entries"][0]["stated_by"],
+        json!({"kind": "agent", "name": "sonnet"})
+    );
+
+    // 4. Forget by E (echo) on Daniel's instruction blanks content and quote,
+    //    moves `updated_by` to E, preserves `stated_by` B, and stays readable.
+    let forgotten = json_of(&fx.ok(&[
+        "entry",
+        "forget",
+        "preferences-1",
+        "--author",
+        "echo",
+        "--session",
+        SESSION,
+        "--instruction",
+        forget_words,
+        "--confirm",
+        "--json",
+    ]));
+    assert_eq!(forgotten["status"], "forgotten");
+    assert_eq!(
+        forgotten["stated_by"],
+        json!({"kind": "agent", "name": "sonnet"})
+    );
+    assert_eq!(
+        forgotten["updated_by"],
+        json!({"kind": "agent", "name": "echo"})
+    );
+    assert_eq!(forgotten["quote"], Value::Null);
+    assert_eq!(forgotten["content"], "");
+    assert_eq!(entry(&fx, "preferences-1", &[]), forgotten);
+    let listed_forgotten = json_of(&fx.ok(&[
+        "entry",
+        "list",
+        "--tag",
+        "preferences",
+        "--status",
+        "forgotten",
+        "--json",
+    ]));
+    assert_eq!(listed_forgotten["total"], 1);
+    assert_eq!(listed_forgotten["warnings"], json!([]));
+    assert_eq!(
+        listed_forgotten["entries"][0]["stated_by"],
+        json!({"kind": "agent", "name": "sonnet"})
+    );
+
+    // 5. Retirement by A (opus) after B (sonnet) edited content also keeps the
+    //    entry readable and retains B as `stated_by`.
+    fx.ok(&[
+        "entry",
+        "add",
+        "--tag",
+        "preferences",
+        "--author",
+        "opus",
+        "--project",
+        "scribe",
+        "--related",
+        &session_ref,
+        "--quote",
+        quote_two,
+        "--spoken",
+        "The user prefers merge commits on integration branches.",
+    ]);
+    fx.ok(&[
+        "entry",
+        "update",
+        "preferences-2",
+        "--author",
+        "sonnet",
+        "--content",
+        "The user prefers rebase-free merge commits on integration branches.",
+    ]);
+    let retired_by_a = json_of(&fx.ok(&[
+        "entry",
+        "retire",
+        "preferences-2",
+        "--author",
+        "opus",
+        "--reason",
+        "no longer applies",
+        "--json",
+    ]));
+    assert_eq!(retired_by_a["status"], "retired");
+    assert_eq!(
+        retired_by_a["stated_by"],
+        json!({"kind": "agent", "name": "sonnet"})
+    );
+    assert_eq!(
+        retired_by_a["updated_by"],
+        json!({"kind": "agent", "name": "opus"})
+    );
+    assert_eq!(entry(&fx, "preferences-2", &[]), retired_by_a);
+
+    // 6. Human `#scribe retire` and `#scribe forget` on an edited spoken entry
+    //    keep the entry readable and preserve B as `stated_by`.
+    fx.ok(&[
+        "entry",
+        "add",
+        "--tag",
+        "preferences",
+        "--author",
+        "opus",
+        "--project",
+        "scribe",
+        "--related",
+        &session_ref,
+        "--quote",
+        quote_three,
+        "--spoken",
+        "The user wants test failure summaries first.",
+    ]);
+    fx.ok(&[
+        "entry",
+        "update",
+        "preferences-3",
+        "--author",
+        "sonnet",
+        "--content",
+        "The user wants test failures summarized before fixes are proposed.",
+    ]);
+    let retire_echo = claude.prompt(&fx, "#scribe retire preferences-3");
+    assert!(
+        retire_echo.contains("retired preferences-3"),
+        "{retire_echo}"
+    );
+    let human_retired = entry(&fx, "preferences-3", &[]);
+    assert_eq!(human_retired["status"], "retired");
+    assert_eq!(
+        human_retired["stated_by"],
+        json!({"kind": "agent", "name": "sonnet"})
+    );
+    assert_eq!(human_retired["quote"], quote_three);
+
+    let forget_echo = claude.prompt(&fx, "#scribe forget preferences-3");
+    assert!(
+        forget_echo.contains("forgot preferences-3"),
+        "{forget_echo}"
+    );
+    let human_forgotten = entry(&fx, "preferences-3", &[]);
+    assert_eq!(human_forgotten["status"], "forgotten");
+    assert_eq!(
+        human_forgotten["stated_by"],
+        json!({"kind": "agent", "name": "sonnet"})
+    );
+    assert_eq!(human_forgotten["quote"], Value::Null);
+    assert_eq!(human_forgotten["content"], "");
+}

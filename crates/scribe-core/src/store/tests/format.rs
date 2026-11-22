@@ -2761,8 +2761,9 @@ fn a_spoken_instruction_agent_entry_reads_with_agent_stated_by_and_quote() {
         .replace(statement, "");
     assert_eq!(entry(&forgotten).unwrap().quote, None);
 
-    // A subsequent metadata-only edit by a third agent after another agent
-    // rewrote the statement keeps the entry readable.
+    // A subsequent metadata-only edit, retirement, or forget by a third agent
+    // (or the original author) after another agent rewrote the statement keeps
+    // the entry readable and preserves the statement author.
     let re_edited = raw
         .replace("updated_by: null", "updated_by: {kind: agent, name: haiku}")
         .replace(
@@ -2778,8 +2779,50 @@ fn a_spoken_instruction_agent_entry_reads_with_agent_stated_by_and_quote() {
         re_decoded.updated_by,
         Some(crate::Author::agent("haiku".parse().unwrap()))
     );
+    let retired_by_author = re_edited
+        .replace("status: active", "status: retired")
+        .replace(
+            "inactive_since: null",
+            "inactive_since: 2026-11-02T10:00:00Z",
+        )
+        .replace(
+            "updated_by: {kind: agent, name: haiku}",
+            &format!("updated_by: {agent}"),
+        );
+    let retired_decoded = entry(&retired_by_author).unwrap();
+    assert_eq!(
+        retired_decoded.stated_by,
+        Some(crate::Author::agent("sonnet".parse().unwrap()))
+    );
+    assert_eq!(
+        retired_decoded.updated_by,
+        Some(crate::Author::agent("opus".parse().unwrap()))
+    );
+    let forgotten_by_fourth = re_edited
+        .replace("status: active", "status: forgotten")
+        .replace(
+            "inactive_since: null",
+            "inactive_since: 2026-11-02T10:00:00Z",
+        )
+        .replace("quote: \"short updates please\"", "quote: null")
+        .replace(
+            "updated_by: {kind: agent, name: haiku}",
+            "updated_by: {kind: agent, name: delta}",
+        )
+        .replace(statement, "");
+    let forgotten_decoded = entry(&forgotten_by_fourth).unwrap();
+    assert_eq!(
+        forgotten_decoded.stated_by,
+        Some(crate::Author::agent("sonnet".parse().unwrap()))
+    );
+    assert_eq!(
+        forgotten_decoded.updated_by,
+        Some(crate::Author::agent("delta".parse().unwrap()))
+    );
+    assert_eq!(forgotten_decoded.quote, None);
 
-    // Active without quote, or mismatched/scribe stated_by, is refused.
+    // Active without quote, or mismatched/scribe stated_by, or a non-agent
+    // updated_by with mismatched stated_by, is refused.
     corrupt_message(
         &entry(&raw.replace("quote: \"short updates please\"", "quote: null")).unwrap_err(),
     );
@@ -2787,6 +2830,13 @@ fn a_spoken_instruction_agent_entry_reads_with_agent_stated_by_and_quote() {
         &entry(&raw.replace(
             &format!("stated_by: {agent}"),
             "stated_by: {kind: agent, name: other}",
+        ))
+        .unwrap_err(),
+    );
+    corrupt_message(
+        &entry(&re_edited.replace(
+            "updated_by: {kind: agent, name: haiku}",
+            "updated_by: {kind: scribe, name: consistency}",
         ))
         .unwrap_err(),
     );

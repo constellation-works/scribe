@@ -754,3 +754,33 @@ fn settle_forget_cleans_moved_files_and_drops_pre_move_open_candidate() {
         kept_quote
     );
 }
+
+#[test]
+fn put_entry_rejects_an_entry_that_fails_read_validation_without_committing() {
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+    let store = Store::open(&root);
+    store.migrate_store(NOW).unwrap();
+
+    let mut invalid = crate::tests::entry("preferences-1", T0);
+    invalid.author = Author::agent("opus".parse().unwrap());
+    invalid.content_from = ContentFrom::Agent;
+    invalid.cite = None;
+    invalid.said.clear();
+    invalid.quote = Some(String::from("short updates please"));
+    // Divergent spoken stated_by with no updated_by violates checked_entry.
+    invalid.stated_by = Some(Author::agent("sonnet".parse().unwrap()));
+    invalid.updated_by = None;
+
+    let conn = db::open_writer(&root, store.lock_wait).unwrap();
+    let db_path = root.join("scribe.db");
+    let err = db::docs::put_entry(&conn, &db_path, &invalid, true, |e| {
+        db::db_error("write", &db_path, e)
+    })
+    .unwrap_err();
+    assert!(matches!(err, Error::Corrupt { .. }), "{err:?}");
+
+    let (entries, skipped) = store.load_entries().unwrap();
+    assert!(entries.is_empty(), "{entries:?}");
+    assert!(skipped.is_empty(), "{skipped:?}");
+}
