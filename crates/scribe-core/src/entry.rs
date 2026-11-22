@@ -407,10 +407,12 @@ pub struct Entry {
     /// one retired or forgotten without his instruction.
     #[serde(deserialize_with = "nullable")]
     pub removal_instruction: Option<Instruction>,
-    /// Whose words `content` is when they are not the author's own
-    /// (format 14): `{kind: scribe, name: session-pass}` for an approved
-    /// pass claim whose content is scribe's statement of Daniel's turn,
-    /// with his verbatim words in `quote`; `null` for every other entry.
+    /// Whose words `content` is when it is a statement of a quoted turn:
+    /// `{kind: scribe, name: session-pass}` for a session-pass claim,
+    /// `{kind: scribe, name: annotation}` for a `#scribe` annotation, or
+    /// `{kind: agent, name: <author>}` for an agent entry written on the
+    /// user's spoken instruction (with their verbatim words in `quote`);
+    /// `null` for every other entry.
     #[serde(deserialize_with = "nullable")]
     pub stated_by: Option<Author>,
     /// Where an idea the session pass captured stands (format 16): `open`,
@@ -722,6 +724,10 @@ pub struct AgentEntry {
     pub evidence: Option<String>,
     /// The date the finding was true; `None` takes the write's date.
     pub as_of: Option<Date>,
+    /// Whether this entry records the user's spoken instruction (2_design.md
+    /// §16.6): `content` is the agent's statement, `quote` is the user's
+    /// verbatim words, and `stated_by` is set to the writing agent.
+    pub spoken: bool,
 }
 
 /// A metadata/content patch. Removals apply before additions.

@@ -485,9 +485,14 @@ statement holds scribe's statement as its content, Daniel's verbatim turn in
 daniel}`; its `content_from` is his user turn, its `said` the `#scribe
 approve p-<n>` line and its `window` `null`. Forgetting it blanks the content
 and clears the quote; `stated_by` stays. A Daniel entry with a quote but no
-`stated_by`, `stated_by` on an agent entry, or any other author or source is
-`store_corrupt`. An entry approved from an older candidate (no statement)
-keeps the quote as its content with `stated_by: null`.
+`stated_by`, a `scribe` `stated_by` on a direct agent entry, or any other
+author or source is `store_corrupt`. (2_design.md §16.6: a direct agent
+entry written with `--spoken` carries `author: {kind: agent, name}`,
+`stated_by: {kind: agent, name}`, `content_from: {kind: agent}`, `cite: null`,
+`said: ""`, and the user's verbatim `quote` until forgotten; `stated_by`
+updates if `entry update --content` rewrites the statement.) An entry
+approved from an older candidate (no statement) keeps the quote as its
+content with `stated_by: null`.
 
 Format 22 admits `stated_by: {kind: scribe, name: annotation}`: an entry
 Stop wrote for a `#scribe` marker inside a sentence of a turn Daniel typed

@@ -868,6 +868,8 @@ pub(super) fn entry_metadata(out: &mut dyn Write, e: &EntryPayload, color: bool)
         };
         let whose = if e.outcome.is_some() {
             scribe_core::ask::captured_whose(&user, speaker)
+        } else if by.kind == "agent" {
+            scribe_core::ask::agent_stated_whose(&user, &by.name)
         } else {
             scribe_core::ask::stated_whose_for(&user, speaker)
         };

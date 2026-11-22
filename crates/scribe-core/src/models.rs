@@ -1143,6 +1143,9 @@ impl AskRequest {
              {noun}'s own words.\n\
              - An item whose words are \"{stated}\" holds scribe's summary \
              first and then {noun}'s own words after \"{label}\"; only those are {noun}'s.\n\
+             - An item whose words are \"agent (<name>)'s statement of {noun}'s turn\" holds an \
+             agent's summary first and then {noun}'s own words after \"{label}\"; only those are \
+             {noun}'s.\n\
              - An item whose words are \"{stated_assistant}\" holds scribe's summary \
              first and then the assistant's own words after \"{assistant_label}\"; its quoted \
              words are the assistant's, never {noun}'s.\n\

@@ -38,6 +38,7 @@ Examples:
 const ADD_EXAMPLES: &str = "\
 Examples:
   scribe entry add --tag preferences --author opus 'Use the stable API'
+  scribe entry add --tag preferences --author opus --related session:<id> --quote '<their words>' --spoken 'The user prefers short updates.'
   scribe entry add --tag idea --author opus --related session:<id> 'Cache the manifest between runs'
   scribe entry add --tag standard --author opus --related session:<id> --quote '<quoted words>' 'Name the unit in every size'";
 
@@ -267,11 +268,12 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
             // an unset [redact] env name.
             let topics = scribe_core::Topics::try_from(args.topic)
                 .map_err(|e| CliError::Usage(e.to_string()))?;
-            ctx.store().check_new_entry_with_evidence(
+            ctx.store().check_new_entry_full(
                 &args.tag,
                 &args.content,
                 args.quote.as_deref(),
                 args.evidence.as_deref(),
+                args.spoken,
             )?;
             if let Some(quote) = &args.quote {
                 verify_quote(ctx, &args.related, quote)?;
@@ -288,6 +290,7 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
                     quote: args.quote,
                     evidence: args.evidence,
                     as_of: args.as_of,
+                    spoken: args.spoken,
                 },
                 args.author,
                 ctx.now(),
@@ -597,6 +600,9 @@ pub(crate) struct AddArgs {
     /// The date a require_evidence entry's result was true, as YYYY-MM-DD [default: today]
     #[arg(long, value_name = "DATE", value_parser = scribe_core::parse_day)]
     as_of: Option<time::Date>,
+    /// Record on the user's spoken instruction: sets stated_by to --author; requires --quote, --related session:<id>, and a non-action memory tag (not handoff or require_evidence)
+    #[arg(long)]
+    spoken: bool,
 }
 
 #[derive(Debug, Args)]

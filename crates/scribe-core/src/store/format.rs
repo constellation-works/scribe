@@ -1938,15 +1938,29 @@ pub(super) fn checked_entry(
                     }
                 )
                 && entry.window.is_none();
-            // A direct note may carry a quote. An approved assistant turn
+            // A direct note may carry a quote. A spoken-instruction entry
+            // records the agent's statement in content, the user's words in
+            // `quote` (until forgotten), and `stated_by` as the writing
+            // (or content-updating) agent. An approved assistant turn
             // keeps the assistant's words as content, no quote; or (format 24,
             // 2_design.md §15.3) scribe's context of the turn as content,
             // the assistant's words in `quote` until it is forgotten.
+            let spoken_stated = entry.stated_by.as_ref().is_some_and(|by| {
+                by.kind == crate::AuthorKind::Agent
+                    && (by == &entry.author || entry.updated_by.as_ref() == Some(by))
+            }) && entry.evidence.is_none()
+                && match entry.status {
+                    crate::EntryStatus::Forgotten => entry.quote.is_none(),
+                    crate::EntryStatus::Active
+                    | crate::EntryStatus::Superseded
+                    | crate::EntryStatus::Retired => entry.quote.is_some(),
+                };
             let words = entry.stated_by.is_none() && entry.quote.is_none();
             let context = from >= CONTEXT_SINCE
                 && entry.stated_by.as_ref() == Some(&Author::session_pass())
                 && (entry.status == crate::EntryStatus::Forgotten) == entry.quote.is_none();
-            (direct && entry.stated_by.is_none()) || (approved_assistant && (words || context))
+            (direct && (entry.stated_by.is_none() || spoken_stated))
+                || (approved_assistant && (words || context))
         }
         // An entry a write-route catcher had the session pass write itself
         // (format 16, 2_design.md §15.2): scribe's statement of one turn as

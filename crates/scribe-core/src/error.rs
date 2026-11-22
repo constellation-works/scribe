@@ -347,6 +347,13 @@ pub enum WriteRefusal {
     HandoffShape,
     /// `handoff_too_long`: a handoff body exceeds [`crate::handoff::MAX_CHARS`].
     HandoffTooLong,
+    /// `not_memory_tag`: `--spoken` was used on a tag that is not an
+    /// eligible non-action memory tag (such as an action tag, `handoff`, or
+    /// a `require_evidence` tag).
+    NotMemoryTag,
+    /// `needs_redaction`: a spoken-instruction quote contains text redaction
+    /// would alter, so storing it verbatim would leak or change the quote.
+    NeedsRedaction,
 }
 impl WriteRefusal {
     /// Stable machine-readable code.
@@ -395,6 +402,8 @@ impl WriteRefusal {
             Self::SessionForgotten => "session_forgotten",
             Self::HandoffShape => "handoff_shape",
             Self::HandoffTooLong => "handoff_too_long",
+            Self::NotMemoryTag => "not_memory_tag",
+            Self::NeedsRedaction => "needs_redaction",
         }
     }
 }

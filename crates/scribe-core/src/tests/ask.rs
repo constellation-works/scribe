@@ -1038,3 +1038,94 @@ fn an_approved_assistant_context_entry_is_scribes_statement_with_the_assistants_
          assistant (recorded by the user): \"parallel drains share a single auth token\" [notes-1]"
     );
 }
+
+#[test]
+fn a_spoken_instruction_entry_labels_the_agents_statement_and_cites_users_words_in_ask() {
+    let statement = "The user prefers concise progress updates during long tasks.";
+    let his_words = "keep your progress updates concise while working on long tasks";
+    let mut spoken = decision("preferences-1", 0, statement);
+    spoken.author = crate::Author::agent("opus".parse().unwrap());
+    spoken.said.clear();
+    spoken.content_from = ContentFrom::Agent;
+    spoken.cite = None;
+    spoken.quote = Some(his_words.to_owned());
+    spoken.stated_by = Some(crate::Author::agent("opus".parse().unwrap()));
+
+    // A standard/handoff agent note with a quote but no stated_by stays an agent note.
+    let mut note = decision("standard-1", 0, "Name the unit in every size.");
+    note.author = crate::Author::agent("opus".parse().unwrap());
+    note.said.clear();
+    note.content_from = ContentFrom::Agent;
+    note.cite = None;
+    note.quote = Some(String::from("every size needs its unit"));
+
+    let mut reply = answered(vec![
+        claim(
+            "The user wants concise updates",
+            "concise progress updates during long tasks",
+            "preferences-1",
+        ),
+        claim(
+            "The user said it",
+            "keep your progress updates concise",
+            "preferences-1",
+        ),
+        claim(
+            "The user set a standard",
+            "Name the unit in every size.",
+            "standard-1",
+        ),
+    ]);
+    reply.answer = String::from("The user wants concise updates.");
+    let models = FakeModels::answering(reply);
+    let result = run(
+        &question("how should progress updates look?"),
+        &[spoken, note],
+        &[],
+        &models,
+        &NoTasks,
+    );
+
+    let evidence = &models.calls.borrow()[0].evidence;
+    let item = evidence.iter().find(|i| i.cite == "preferences-1").unwrap();
+    assert_eq!(item.whose, "agent (opus)'s statement of the user's turn");
+    assert_eq!(
+        item.text,
+        format!("{statement}\nThe user's words: \"{his_words}\"")
+    );
+    assert_eq!(item.quote.as_deref(), Some(his_words));
+
+    assert_eq!(
+        result.claims.len(),
+        2,
+        "standard is an action tag so skipped unless named"
+    );
+    assert_eq!(
+        result.claims[0].text,
+        "agent (opus)'s statement of the user's turn"
+    );
+    assert_eq!(result.claims[1].text, "The user");
+    assert_eq!(
+        result.answer,
+        "agent (opus)'s statement of the user's turn: \"concise progress updates during long tasks\" [preferences-1]\n\
+         The user: \"keep your progress updates concise\" [preferences-1]"
+    );
+
+    // Asking with `--tag standard` still treats `standard-1` as an ordinary agent note.
+    let mut q_std = question("how should sizes be formatted?");
+    q_std.scope.tags.push("standard".parse().unwrap());
+    let models_std = FakeModels::answering(answered(vec![claim(
+        "Unit rule",
+        "Name the unit in every size.",
+        "standard-1",
+    )]));
+    let std_entry = decision("standard-1", 0, "Name the unit in every size.");
+    let mut std_agent = std_entry;
+    std_agent.author = crate::Author::agent("opus".parse().unwrap());
+    std_agent.said.clear();
+    std_agent.content_from = ContentFrom::Agent;
+    std_agent.cite = None;
+    std_agent.quote = Some(String::from("every size needs its unit"));
+    let res_std = run(&q_std, &[std_agent], &[], &models_std, &NoTasks);
+    assert_eq!(res_std.claims[0].text, "agent note (opus)");
+}

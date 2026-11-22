@@ -194,12 +194,38 @@ and grouped, never as a gate on the work:
   already covers that claim, approval writes nothing and names the
   existing entry. No entry exists before approval. Action tags
   you write yourself follow their separate rules below.
-  When the session is off or its state is unknown, and the human states a
-  standing preference or rule worth keeping, suggest they mark it: a
-  `#scribe <tag>` after their sentence (or `#scribe/global <tag>` when it
-  applies in every repository). Only their typed marker records their words,
-  so never write it for them.
-  Something you established yourself can become an agent entry under your
+  **On the human's explicit instruction without `#scribe`:** when the human
+  explicitly tells you to record something under a memory tag (for example,
+  *"add that to my preferences"* or *"remember this in my preferences"*)
+  without typing `#scribe`, write it under your own `--author` with
+  `--spoken`, naming this session in `--related session:<id>`, quoting their
+  exact words from one of their typed turns in this session (`--quote`), and
+  giving your one-sentence statement as the content (`--project global` for
+  every repository, or `--project <project>` for this one):
+
+  ```sh
+  scribe entry add --tag preferences --author <name> --project <project> \
+    --related session:<this session id> --quote '<their exact words>' \
+    --spoken '<your one-sentence statement>'
+  ```
+
+  Use this route **only** on the human's explicit instruction — **never**
+  write a preference or memory entry unprompted because you noticed one
+  (unprompted capture stays with scribe's pass and its proposals). It works
+  only for non-action memory tags (`preferences`, or configured or store
+  memory tags; never `handoff`, `require_evidence` tags, or action tags),
+  works in off sessions too without switching them on, refuses any quote
+  that is not a verbatim span of at least 8 characters of one of their
+  typed turns in that session (`quote_required`, `quote_not_found`), keeps
+  their words as `quote` and labels the statement as yours (`stated_by:
+  agent:<name>`), and echoes the id and drop line:
+  `scribe: wrote <id> (drop: #scribe retire <id>)`.
+  When the session is off or its state is unknown and the human states a
+  preference without asking you to record it, offer to record it for them
+  (writing with `--spoken` once they confirm in a phrase of at least 8
+  characters) or mention `/scribe on` for automatic pass proposals — do not
+  ask them to retype it with `#scribe`.
+  Something you established yourself can become an agent note under your
   own `--author`, once they agree.
   Don't offer a line for a choice about a piece of work. Record a decision
   on its Orbit task with the human's words quoted, or in the feature's
@@ -280,10 +306,11 @@ about them; `question ask` skips them unless its scope names their tag.
   the entry; file the problem in Orbit with `orbit.friction`.
 - **An `ask-first` tag**: ask the human before writing, and write only on
   their yes.
-- **Their preferences stay theirs.** In an on session, let
-  the pass propose them for typed approval. In an off session or when its
-  state is unknown, suggest they mark their sentence with `#scribe <tag>`.
-  Never write their entry yourself.
+- **Their preferences are recorded only when they ask.** Unprompted capture
+  stays with the session pass and its proposals (in an on session). Never
+  write a preference or memory entry unprompted; record one with
+  `--spoken`, `--quote` and `--related session:<id>` only when the human
+  explicitly tells you to, and do not ask them to retype with `#scribe`.
 
 ## Catchers, and incidents
 
@@ -408,9 +435,9 @@ or delete. Every act follows the same order.
    - **Approve**: the entry it wrote is retired if the approval was wrong. An
      entry from an assistant's claim retires under your own `--author`; the
      human's entry retires on their instruction. Its text is kept.
-   - **Retire**: repaired by adding the text again as a new entry, which the
-     human marks with `#scribe <tag>`, because you never write their
-     entry. `scribe entry show <e-id>` still shows the text.
+   - **Retire**: repaired by adding a new entry on their explicit instruction
+     (through `entry add --spoken` with their quote), rather than unprompted;
+     `scribe entry show <e-id>` still shows the text.
    - **Reject**: irreversible. The claim closes and stays out of future
      proposals.
    - **Forget**: irreversible. The entry's text and the proposal quotes of it

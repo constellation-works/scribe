@@ -215,3 +215,25 @@ fn approved_assistant_context_entry_snippet_labels_statement_and_assistant_words
         )
     );
 }
+
+#[test]
+fn spoken_instruction_entry_snippet_labels_agents_statement_and_users_words() {
+    let statement = "The user prefers concise progress updates.";
+    let quote = "please keep your progress updates concise";
+    let mut e = noted("preferences-1", statement);
+    e.author = Author::agent("opus".parse().unwrap());
+    e.said.clear();
+    e.content_from = crate::entry::ContentFrom::Agent;
+    e.cite = None;
+    e.quote = Some(quote.to_owned());
+    e.stated_by = Some(Author::agent("opus".parse().unwrap()));
+
+    let found = run(&query("progress updates concise"), &[e], &[]);
+    assert_eq!(cites(&found), ["preferences-1"]);
+    assert_eq!(
+        found.hits[0].snippet,
+        format!(
+            "agent (opus)'s statement of the user's turn: {statement} | The user's words: \"{quote}\""
+        )
+    );
+}

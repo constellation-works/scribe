@@ -541,6 +541,7 @@ fn agent_write_shapes_match_goldens() {
                 quote: None,
                 evidence: None,
                 as_of: None,
+                spoken: false,
             },
             author(),
             now,

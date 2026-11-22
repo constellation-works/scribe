@@ -106,6 +106,48 @@ fn check_quote(def: &crate::TagDef, quote: Option<&str>) -> Result<()> {
     }
 }
 
+fn check_spoken_tag(def: &crate::TagDef) -> Result<()> {
+    if def.name.as_str() == crate::handoff::HANDOFF_TAG {
+        return Err(refusal(
+            WriteRefusal::NotMemoryTag,
+            "handoff is an agent handoff note, not a spoken-instruction statement; omit --spoken",
+        ));
+    }
+    if def.action.is_some() {
+        return Err(refusal(
+            WriteRefusal::NotMemoryTag,
+            format!(
+                "{} is an action tag; --spoken writes only non-action memory tags (such as preferences)",
+                def.name
+            ),
+        ));
+    }
+    if def.require_evidence {
+        return Err(refusal(
+            WriteRefusal::NotMemoryTag,
+            format!(
+                "{} requires evidence; --spoken writes only non-action memory tags",
+                def.name
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn check_spoken_quote(quote: Option<&str>) -> Result<()> {
+    match quote {
+        None => Err(refusal(
+            WriteRefusal::QuoteRequired,
+            "--spoken requires the user's words: pass --quote '<their words>' and --related session:<id>",
+        )),
+        Some(q) if q.trim().is_empty() => Err(refusal(
+            WriteRefusal::QuoteRequired,
+            "--quote must not be empty",
+        )),
+        Some(_) => Ok(()),
+    }
+}
+
 /// A handoff entry's body must carry the six fixed headings in order and fit
 /// within [`crate::handoff::MAX_CHARS`] (2_design.md §16).
 fn check_handoff(tag: &TagName, content: &str) -> Result<()> {
@@ -311,6 +353,19 @@ impl Store {
         quote: Option<&str>,
         evidence: Option<&str>,
     ) -> Result<crate::TagDef> {
+        self.check_new_entry_full(tag, content, quote, evidence, false)
+    }
+
+    /// [`Store::check_new_entry_with_evidence`] with `spoken`, checking an
+    /// entry written on the user's spoken instruction (2_design.md §16.6).
+    pub fn check_new_entry_full(
+        &self,
+        tag: &TagName,
+        content: &str,
+        quote: Option<&str>,
+        evidence: Option<&str>,
+        spoken: bool,
+    ) -> Result<crate::TagDef> {
         required(content)?;
         let def = self
             .config()?
@@ -318,7 +373,12 @@ impl Store {
             .resolve(tag.as_str())
             .cloned()
             .ok_or_else(unknown_tag)?;
-        check_quote(&def, quote)?;
+        if spoken {
+            check_spoken_tag(&def)?;
+            check_spoken_quote(quote)?;
+        } else {
+            check_quote(&def, quote)?;
+        }
         check_evidence(&def, evidence)?;
         check_handoff(&def.name, content)?;
         Ok(def)
@@ -359,17 +419,36 @@ impl Store {
             .tags
             .resolve(draft.tag.as_str())
             .ok_or_else(unknown_tag)?;
-        check_quote(tag, draft.quote.as_deref())?;
+        if draft.spoken {
+            check_spoken_tag(tag)?;
+            check_spoken_quote(draft.quote.as_deref())?;
+            if draft_session(&draft.related).is_none() {
+                return Err(refusal(
+                    WriteRefusal::QuoteRequired,
+                    "a spoken-instruction quote is checked against the session it was typed in: pass --related session:<id>",
+                ));
+            }
+            if let Some(quote) = &draft.quote
+                && redactor.mask(quote) != *quote
+            {
+                return Err(refusal(
+                    WriteRefusal::NeedsRedaction,
+                    "the quoted text contains a secret that redaction would alter; nothing written",
+                ));
+            }
+        } else {
+            check_quote(tag, draft.quote.as_deref())?;
+            if tag.name.as_str() == crate::handoff::HANDOFF_TAG
+                && draft_session(&draft.related).is_none()
+            {
+                return Err(refusal(
+                    WriteRefusal::QuoteRequired,
+                    "handoff requires the session it belongs to: pass --related session:<id>",
+                ));
+            }
+        }
         check_evidence(tag, draft.evidence.as_deref())?;
         check_handoff(&tag.name, &draft.content)?;
-        if tag.name.as_str() == crate::handoff::HANDOFF_TAG
-            && draft_session(&draft.related).is_none()
-        {
-            return Err(refusal(
-                WriteRefusal::QuoteRequired,
-                "handoff requires the session it belongs to: pass --related session:<id>",
-            ));
-        }
         let (entries, skipped) = self.load_entries()?;
         if tag.require_evidence {
             let session = draft_session(&draft.related);
@@ -404,7 +483,7 @@ impl Store {
             related: draft.related,
             provider: Label::sanitized("cli", "cli"),
             host: draft.host,
-            author: Author::agent(author),
+            author: Author::agent(author.clone()),
             updated_by: None,
             created: now,
             updated: now,
@@ -425,7 +504,7 @@ impl Store {
             approved_by: None,
             instruction: None,
             removal_instruction: None,
-            stated_by: None,
+            stated_by: draft.spoken.then(|| Author::agent(author)),
             outcome: None,
             content: draft.content,
         };
@@ -481,7 +560,11 @@ impl Store {
                         "a forgotten entry cannot regain content",
                     ));
                 }
-                entry.content = redactor.mask(&content);
+                let masked = redactor.mask(&content);
+                if masked != entry.content && entry.stated_by.is_some() {
+                    entry.stated_by = Some(Author::agent(author.clone()));
+                }
+                entry.content = masked;
             }
             let mut topics = entry.topics.as_slice().to_vec();
             patch(&mut topics, &patching.add_topics, &patching.remove_topics);
