@@ -347,6 +347,10 @@ pub enum WriteRefusal {
     HandoffShape,
     /// `handoff_too_long`: a handoff body exceeds [`crate::handoff::MAX_CHARS`].
     HandoffTooLong,
+    /// `handoff_session`: a handoff names more than one distinct session or an
+    /// invalid session reference, or `entry update` attempted to add, remove,
+    /// or replace a handoff's `session:` reference.
+    HandoffSession,
     /// `not_memory_tag`: `--spoken` was used on a tag that is not an
     /// eligible non-action memory tag (such as an action tag, `handoff`, or
     /// a `require_evidence` tag).
@@ -406,6 +410,7 @@ impl WriteRefusal {
             Self::SessionForgotten => "session_forgotten",
             Self::HandoffShape => "handoff_shape",
             Self::HandoffTooLong => "handoff_too_long",
+            Self::HandoffSession => "handoff_session",
             Self::NotMemoryTag => "not_memory_tag",
             Self::NeedsRedaction => "needs_redaction",
             Self::NotAgentNote => "not_agent_note",

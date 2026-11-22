@@ -8,8 +8,9 @@
 //! (STD-02 R5).
 
 use crate::entry::{Entry, EntryStatus};
-use crate::record::RelatedKind;
+use crate::record::{Related, RelatedKind};
 use crate::session::SessionId;
+use std::collections::BTreeSet;
 
 /// The shipped tag name for agent-written session handoffs.
 pub const HANDOFF_TAG: &str = "handoff";
@@ -68,6 +69,73 @@ pub enum HandoffError {
         expected = HEADINGS.join(", ")
     )]
     OutOfOrder(Vec<String>),
+}
+
+/// Why a `handoff` entry's `session:` reference set was refused.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum HandoffSessionError {
+    /// No `session:<id>` reference was supplied.
+    #[error("handoff requires the session it belongs to: pass --related session:<id>")]
+    Missing,
+    /// A `session:` reference target did not parse as a [`SessionId`].
+    #[error("invalid handoff session reference '{reference}': {reason}")]
+    Invalid {
+        /// The rejected `related` reference.
+        reference: String,
+        /// Why its target is not a valid session id.
+        reason: String,
+    },
+    /// More than one distinct `session:<id>` reference was supplied.
+    #[error("a handoff belongs to one session; pass a single --related session:<id> (got {count})")]
+    Multiple {
+        /// How many distinct sessions were named.
+        count: usize,
+    },
+}
+
+/// Check a new `handoff` entry's `related` references: it must carry exactly
+/// one distinct valid `session:<id>` reference, and every `session:` reference
+/// must parse as a [`SessionId`]. Non-session references (`task:`, `pr:`,
+/// `repo:`) are unaffected.
+///
+/// # Errors
+///
+/// [`HandoffSessionError::Missing`] when no `session:` reference is present,
+/// [`HandoffSessionError::Invalid`] when a `session:` target is not a valid
+/// [`SessionId`], or [`HandoffSessionError::Multiple`] when more than one
+/// distinct session is named.
+pub fn check_related(related: &[Related]) -> Result<SessionId, HandoffSessionError> {
+    let mut sessions: Vec<SessionId> = Vec::new();
+    for rel in related.iter().filter(|r| r.kind() == RelatedKind::Session) {
+        let id = rel
+            .target()
+            .parse::<SessionId>()
+            .map_err(|err| HandoffSessionError::Invalid {
+                reference: rel.to_string(),
+                reason: err.to_string(),
+            })?;
+        if !sessions.contains(&id) {
+            sessions.push(id);
+        }
+    }
+    match sessions.len() {
+        0 => Err(HandoffSessionError::Missing),
+        1 => Ok(sessions.remove(0)),
+        count => Err(HandoffSessionError::Multiple { count }),
+    }
+}
+
+/// Whether updating `before` to `after` changes a `handoff` entry's `session:`
+/// reference set (adding, removing, or replacing any `session:` reference).
+#[must_use]
+pub fn session_refs_changed(before: &[Related], after: &[Related]) -> bool {
+    fn targets(list: &[Related]) -> BTreeSet<&str> {
+        list.iter()
+            .filter(|r| r.kind() == RelatedKind::Session)
+            .map(Related::target)
+            .collect()
+    }
+    targets(before) != targets(after)
 }
 
 /// Check a handoff body: at most [`MAX_CHARS`] characters, no text before

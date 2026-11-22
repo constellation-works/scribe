@@ -268,15 +268,21 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
             // an unset [redact] env name.
             let topics = scribe_core::Topics::try_from(args.topic)
                 .map_err(|e| CliError::Usage(e.to_string()))?;
-            ctx.store().check_new_entry_full(
+            let def = ctx.store().check_new_entry_full(
                 &args.tag,
                 &args.content,
                 args.quote.as_deref(),
                 args.evidence.as_deref(),
                 args.spoken,
             )?;
+            scribe_core::check_handoff_related(&def.name, &args.related)?;
             if let Some(quote) = &args.quote {
-                verify_quote(ctx, &args.related, quote)?;
+                verify_quote(
+                    ctx,
+                    &args.related,
+                    quote,
+                    def.name.as_str() == scribe_core::HANDOFF_TAG,
+                )?;
             }
             let redactor = ctx.redactor(&ctx.store().config()?)?;
             let entry = ctx.store().add_agent_entry(
@@ -523,17 +529,44 @@ impl Actions {
 
 /// Refuse a quote that is not verbatim in the user's typed turns of a session
 /// the entry names (`--related session:<id>`), or whose transcript cannot be
-/// read on this host (docs/design/scribe/2_design.md §4.6).
-fn verify_quote(ctx: &Context, related: &[Related], quote: &str) -> Result<(), CliError> {
+/// read on this host (docs/design/scribe/2_design.md §4.6). When
+/// `require_all_sessions` is true (used for `handoff`, §16.1), every
+/// `session:` reference in `related` must parse as a `SessionId` and verify
+/// the quote against its transcript.
+fn verify_quote(
+    ctx: &Context,
+    related: &[Related],
+    quote: &str,
+    require_all_sessions: bool,
+) -> Result<(), CliError> {
     use super::hook::payload;
     let refuse = |kind, message: String| -> CliError {
         scribe_core::Error::AgentWrite { kind, message }.into()
     };
-    let sessions: Vec<scribe_core::SessionId> = related
+    let session_refs: Vec<&Related> = related
         .iter()
         .filter(|r| r.kind() == scribe_core::RelatedKind::Session)
-        .filter_map(|r| r.target().parse().ok())
         .collect();
+    let sessions: Vec<scribe_core::SessionId> = if require_all_sessions {
+        let mut parsed = Vec::with_capacity(session_refs.len());
+        for rel in &session_refs {
+            let Ok(id) = rel.target().parse::<scribe_core::SessionId>() else {
+                return Err(refuse(
+                    scribe_core::WriteRefusal::QuoteNotFound,
+                    format!("cannot verify quote for invalid session reference '{rel}'"),
+                ));
+            };
+            if !parsed.contains(&id) {
+                parsed.push(id);
+            }
+        }
+        parsed
+    } else {
+        session_refs
+            .iter()
+            .filter_map(|r| r.target().parse().ok())
+            .collect()
+    };
     if sessions.is_empty() {
         return Err(refuse(
             scribe_core::WriteRefusal::QuoteRequired,
@@ -542,34 +575,49 @@ fn verify_quote(ctx: &Context, related: &[Related], quote: &str) -> Result<(), C
             ),
         ));
     }
-    for id in &sessions {
+    let check_one = |id: &scribe_core::SessionId| -> Result<bool, CliError> {
         let Some(path) = payload::locate(ctx, id)? else {
-            continue;
+            return Ok(false);
         };
         if !matches!(
             payload::check(ctx, &path, id),
             Ok(payload::Transcript::Present)
         ) {
-            continue;
+            return Ok(false);
         }
         match payload::read_for(ctx, &path) {
             Ok(bytes) => {
                 let messages = scribe_core::transcript::parse(&bytes);
-                if scribe_core::action::quote_found(&messages, quote) {
-                    return Ok(());
-                }
+                Ok(scribe_core::action::quote_found(&messages, quote))
             }
             Err(err) => {
                 tracing::warn!(path = %path.display(), %err, "cannot read the transcript");
+                Ok(false)
             }
         }
+    };
+    let not_found = || {
+        refuse(
+            scribe_core::WriteRefusal::QuoteNotFound,
+            String::from(
+                "the quote is not word for word in the user's typed turns of the session named, or its transcript is not readable on this host; quote the user's own words exactly, or file a friction instead",
+            ),
+        )
+    };
+    if require_all_sessions {
+        for id in &sessions {
+            if !check_one(id)? {
+                return Err(not_found());
+            }
+        }
+        return Ok(());
     }
-    Err(refuse(
-        scribe_core::WriteRefusal::QuoteNotFound,
-        String::from(
-            "the quote is not word for word in the user's typed turns of the session named, or its transcript is not readable on this host; quote the user's own words exactly, or file a friction instead",
-        ),
-    ))
+    for id in &sessions {
+        if check_one(id)? {
+            return Ok(());
+        }
+    }
+    Err(not_found())
 }
 
 #[derive(Debug, Args)]

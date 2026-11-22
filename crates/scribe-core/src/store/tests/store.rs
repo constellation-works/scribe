@@ -1406,4 +1406,112 @@ mod marks {
         assert_eq!(marks[0].outcome, MarkState::Refused);
         assert_eq!(marks[0].code.as_deref(), Some("unknown_tag"));
     }
+
+    #[test]
+    fn store_agent_writes_enforce_single_immutable_handoff_session_ref() {
+        let dir = private_tempdir();
+        let store = Store::open(dir.path().join("root"));
+        let redactor = crate::Redactor::new(std::iter::empty());
+        let author: crate::AuthorName = "opus".parse().unwrap();
+        let now = time::OffsetDateTime::UNIX_EPOCH + time::Duration::days(100);
+        let valid_body = "\
+## State
+Done.
+
+## In flight
+None.
+
+## Next
+Ship.
+
+## Waiting on you
+None.
+
+## Do not touch
+None.
+
+## Pointers
+None.
+";
+        let draft = |related: &[&str]| crate::AgentEntry {
+            tag: "handoff".parse().unwrap(),
+            content: valid_body.to_owned(),
+            project: "scribe".parse().unwrap(),
+            topics: crate::Topics::default(),
+            related: related.iter().map(|s| s.parse().unwrap()).collect(),
+            host: crate::Label::sanitized("test", "test"),
+            quote: Some(String::from("Please write a handoff for this session.")),
+            evidence: None,
+            as_of: None,
+            spoken: false,
+        };
+
+        // Direct API call refuses multiple sessions and invalid session refs.
+        let err = store
+            .add_agent_entry(
+                draft(&["session:s-1", "session:s-2"]),
+                author.clone(),
+                now,
+                &redactor,
+            )
+            .unwrap_err();
+        assert_eq!(err.code(), "handoff_session");
+        let err = store
+            .add_agent_entry(draft(&["session:../bad"]), author.clone(), now, &redactor)
+            .unwrap_err();
+        assert_eq!(err.code(), "handoff_session");
+
+        // Single valid session succeeds.
+        let added = store
+            .add_agent_entry(
+                draft(&["session:s-1", "task:ORB-1"]),
+                author.clone(),
+                now,
+                &redactor,
+            )
+            .unwrap();
+        let id = added.id.to_string();
+
+        // Direct API update refuses removing, adding, or replacing a session ref.
+        for patch in [
+            crate::EntryPatch {
+                remove_related: vec!["session:s-1".parse().unwrap()],
+                ..Default::default()
+            },
+            crate::EntryPatch {
+                add_related: vec!["session:s-2".parse().unwrap()],
+                ..Default::default()
+            },
+            crate::EntryPatch {
+                remove_related: vec!["session:s-1".parse().unwrap()],
+                add_related: vec!["session:s-2".parse().unwrap()],
+                ..Default::default()
+            },
+        ] {
+            let err = store.check_agent_entry_update(&id, &patch).unwrap_err();
+            assert_eq!(err.code(), "handoff_session");
+            let err = store
+                .update_agent_entry(&id, patch, author.clone(), now, &redactor)
+                .unwrap_err();
+            assert_eq!(err.code(), "handoff_session");
+        }
+
+        // Non-session related edits still succeed and preserve session:s-1.
+        let ok_patch = crate::EntryPatch {
+            remove_related: vec!["task:ORB-1".parse().unwrap()],
+            add_related: vec!["repo:scribe".parse().unwrap()],
+            ..Default::default()
+        };
+        let (updated, changed) = store
+            .update_agent_entry(&id, ok_patch, author, now, &redactor)
+            .unwrap();
+        assert!(changed);
+        assert_eq!(
+            updated.related,
+            vec![
+                "session:s-1".parse().unwrap(),
+                "repo:scribe".parse().unwrap()
+            ]
+        );
+    }
 }

@@ -1036,3 +1036,274 @@ fn marker_capture_cannot_create_or_attribute_a_handoff_to_the_user() {
     assert_eq!(added["id"], "handoff-1");
     assert_eq!(added["author"]["kind"], "agent");
 }
+
+#[test]
+fn handoff_add_refuses_multiple_or_invalid_session_refs_so_unverified_sessions_never_display_it() {
+    let fx = Fixture::new();
+    let tr_a = Transcript::new(&fx, OFF_SESSION);
+    let tr_b = Transcript::new(&fx, ON_SESSION);
+    let third = "8a4f3e01-5c7d-4f62-9b94-3d2e1f0a9b82";
+    let tr_c = Transcript::new(&fx, third);
+
+    let request = "Please write a handoff for this session before stopping.";
+    tr_a.write(&[("u-1", "user", request)]);
+    tr_b.write(&[("u-1", "user", "Unrelated discussion in another session.")]);
+    tr_c.write(&[("u-1", "user", request)]);
+
+    let body = valid_handoff(
+        "Work paused cleanly.",
+        "Resume from the next checklist item.",
+    );
+    let rel_a = format!("session:{OFF_SESSION}");
+    let rel_b = format!("session:{ON_SESSION}");
+    let rel_c = format!("session:{third}");
+
+    // Refused: verified session A paired with unverified session B.
+    let (code, _) = refused(
+        &fx,
+        &[
+            "entry",
+            "add",
+            "--tag",
+            "handoff",
+            "--author",
+            "opus",
+            "--project",
+            "scribe",
+            "--related",
+            &rel_a,
+            "--related",
+            &rel_b,
+            "--quote",
+            request,
+            &body,
+        ],
+    );
+    assert_eq!(code, "handoff_session");
+
+    // Refused: even when both transcripts contain the same generic phrase, a handoff belongs to one session.
+    let (code, _) = refused(
+        &fx,
+        &[
+            "entry",
+            "add",
+            "--tag",
+            "handoff",
+            "--author",
+            "opus",
+            "--project",
+            "scribe",
+            "--related",
+            &rel_a,
+            "--related",
+            &rel_c,
+            "--quote",
+            request,
+            &body,
+        ],
+    );
+    assert_eq!(code, "handoff_session");
+
+    // Refused: invalid session id syntax alongside a valid session (or alone).
+    let (code, _) = refused(
+        &fx,
+        &[
+            "entry",
+            "add",
+            "--tag",
+            "handoff",
+            "--author",
+            "opus",
+            "--project",
+            "scribe",
+            "--related",
+            &rel_a,
+            "--related",
+            "session:../bad",
+            "--quote",
+            request,
+            &body,
+        ],
+    );
+    assert_eq!(code, "handoff_session");
+
+    // Neither unverified session displays a handoff, and no entry was written.
+    let (code, _) = refused(&fx, &["session", "show", ON_SESSION]);
+    assert_eq!(code, "session_not_found");
+    let listed = json_of(&fx.ok(&["entry", "list", "--json"]));
+    assert!(listed["entries"].as_array().unwrap().is_empty());
+
+    // Accepted: single verified session plus non-session related refs (and duplicate identical session ref).
+    let added = json_of(&fx.ok(&[
+        "entry",
+        "add",
+        "--tag",
+        "handoff",
+        "--author",
+        "opus",
+        "--project",
+        "scribe",
+        "--related",
+        &rel_a,
+        "--related",
+        &rel_a,
+        "--related",
+        "task:ORB-1",
+        "--related",
+        "repo:scribe",
+        "--quote",
+        request,
+        &body,
+        "--json",
+    ]));
+    assert_eq!(added["id"], "handoff-1");
+
+    // Only OFF_SESSION displays the handoff in session show and brief.
+    let shown_a = json_of(&fx.ok(&["session", "show", OFF_SESSION, "--json"]));
+    assert_eq!(shown_a["handoffs"].as_array().unwrap().len(), 1);
+    assert_eq!(shown_a["handoffs"][0]["id"], "handoff-1");
+    let (code, _) = refused(&fx, &["session", "show", ON_SESSION]);
+    assert_eq!(code, "session_not_found");
+    let brief = json_of(&fx.ok(&["brief", "--project", "scribe", "--json"]));
+    let sessions = brief["sessions"].as_array().unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0]["id"], OFF_SESSION);
+}
+
+#[test]
+fn handoff_update_cannot_move_attach_or_orphan_session_reference_but_allows_other_metadata() {
+    let fx = Fixture::new();
+    let tr_a = Transcript::new(&fx, OFF_SESSION);
+    let tr_b = Transcript::new(&fx, ON_SESSION);
+    let request = "Please save a handoff before ending this session.";
+    tr_a.write(&[("u-1", "user", request)]);
+    tr_b.write(&[("u-1", "user", "Different session without that request.")]);
+
+    let rel_a = format!("session:{OFF_SESSION}");
+    let rel_b = format!("session:{ON_SESSION}");
+    let added = json_of(&fx.ok(&[
+        "entry",
+        "add",
+        "--tag",
+        "handoff",
+        "--author",
+        "opus",
+        "--project",
+        "scribe",
+        "--related",
+        &rel_a,
+        "--related",
+        "task:ORB-1",
+        "--quote",
+        request,
+        &valid_handoff("Initial state.", "Initial next."),
+        "--json",
+    ]));
+    assert_eq!(added["id"], "handoff-1");
+
+    // Refused: removing the verified session would orphan the handoff.
+    let (code, _) = refused(
+        &fx,
+        &[
+            "entry",
+            "update",
+            "handoff-1",
+            "--author",
+            "opus",
+            "--remove-related",
+            &rel_a,
+        ],
+    );
+    assert_eq!(code, "handoff_session");
+
+    // Refused: adding another session would display the handoff on an unverified session.
+    let (code, _) = refused(
+        &fx,
+        &[
+            "entry",
+            "update",
+            "handoff-1",
+            "--author",
+            "opus",
+            "--add-related",
+            &rel_b,
+        ],
+    );
+    assert_eq!(code, "handoff_session");
+
+    // Refused: replacing the verified session with another session.
+    let (code, _) = refused(
+        &fx,
+        &[
+            "entry",
+            "update",
+            "handoff-1",
+            "--author",
+            "opus",
+            "--remove-related",
+            &rel_a,
+            "--add-related",
+            &rel_b,
+        ],
+    );
+    assert_eq!(code, "handoff_session");
+
+    // Allowed: editing content, topics, and non-session related references preserves the session ref.
+    let updated_body = valid_handoff("Updated state.", "Updated next.");
+    let updated = json_of(&fx.ok(&[
+        "entry",
+        "update",
+        "handoff-1",
+        "--author",
+        "opus",
+        "--content",
+        &updated_body,
+        "--add-topic",
+        "release",
+        "--remove-related",
+        "task:ORB-1",
+        "--add-related",
+        "pr:constellation/scribe#42",
+        "--json",
+    ]));
+    assert_eq!(
+        updated["related"],
+        json!([rel_a, "pr:constellation/scribe#42"])
+    );
+    assert_eq!(updated["topics"], json!(["release"]));
+
+    // Allowed no-ops: re-adding the existing session or removing an absent session changes nothing.
+    let noop_add = fx.ok(&[
+        "entry",
+        "update",
+        "handoff-1",
+        "--author",
+        "opus",
+        "--add-related",
+        &rel_a,
+        "--json",
+    ]);
+    assert_eq!(text(&noop_add.stderr).trim(), "nothing changed");
+    let noop_remove = fx.ok(&[
+        "entry",
+        "update",
+        "handoff-1",
+        "--author",
+        "opus",
+        "--remove-related",
+        &rel_b,
+        "--json",
+    ]);
+    assert_eq!(text(&noop_remove.stderr).trim(), "nothing changed");
+
+    // Only OFF_SESSION displays handoff-1; ON_SESSION still does not.
+    let shown_a = json_of(&fx.ok(&["session", "show", OFF_SESSION, "--json"]));
+    assert_eq!(shown_a["handoffs"].as_array().unwrap().len(), 1);
+    assert_eq!(shown_a["handoffs"][0]["id"], "handoff-1");
+    let (code, _) = refused(&fx, &["session", "show", ON_SESSION]);
+    assert_eq!(code, "session_not_found");
+    let brief = json_of(&fx.ok(&["brief", "--project", "scribe", "--json"]));
+    let sessions = brief["sessions"].as_array().unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0]["id"], OFF_SESSION);
+}

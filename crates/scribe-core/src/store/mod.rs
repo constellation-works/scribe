@@ -69,7 +69,7 @@ mod write;
 pub use rebuild::RebuildGuard;
 pub use sessions::{ExportFormat, Exported, LOCKS_DIR, SessionForget};
 
-pub use agent::{check_agent_author, check_content, check_reason};
+pub use agent::{check_agent_author, check_content, check_handoff_related, check_reason};
 pub use audit::{AUDIT_FILE, AuditEvent, AuditStatus, IssueAudit};
 pub use ids::resolve_prefix;
 pub use marks::{COVERED, MODEL_FAILED, MarkChange, MarkKey, MarkResult, NEEDS_REDACTION};
