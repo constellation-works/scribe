@@ -428,7 +428,10 @@ line has the session's `s-<n>` as its target.
   `pickups.json`, `audit.jsonl`), which a build reads as a store and moves
   in again unchanged; `--as jsonl` as one `<table>.jsonl` per table, which
   needs every kind with records moved (a phase-6 store with no live
-  record files exports its session tables).
+  record files exports its session tables), and on a moved store merges any
+  pending `audit-spool/` events not yet drained into `audit.jsonl` (with
+  `id: null` and `spool` set to the spool filename), skipping spool files
+  already present in the `audit` table's `spool` column.
 
 ## Record files
 

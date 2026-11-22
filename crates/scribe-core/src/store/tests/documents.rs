@@ -1706,3 +1706,150 @@ fn corrupt_pending_archive_forget_row_fails_closed_without_dropping() {
         .unwrap();
     assert_eq!(remaining, 1, "corrupt obligation must not be dropped");
 }
+
+#[test]
+fn jsonl_export_includes_pending_spooled_audit_once_and_skips_drained_spool() {
+    use crate::store::audit::IssueAudit;
+    use std::time::Duration;
+
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+    file_store(&root);
+    let store = Store::open(&root);
+    store.migrate_store(NOW).unwrap();
+
+    // Hold a write lock so record_audit spools a pending event instead of
+    // writing to scribe.db.
+    let holder = db::open_new_writer(&root, Duration::from_secs(1)).unwrap();
+    holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let pending = AuditEvent {
+        at: NOW,
+        command: String::from("entry retire"),
+        status: AuditStatus::Failure,
+        target: Some(String::from("preferences-1")),
+        error_code: Some(String::from("not_interactive")),
+        author: Some(String::from("opus")),
+        instruction_session: Some(String::from("s-9")),
+        instruction_message: Some(String::from("m-10")),
+        issue: Some(IssueAudit {
+            verb: String::from("add"),
+            id: Some(String::from("issue-1")),
+            occurrence: Some(1),
+            session: Some(String::from("s-9")),
+            request_message: Some(String::from("m-10")),
+            moved_to: None,
+            trigger: None,
+            request_sha256: vec![String::from("cd")],
+        }),
+        duration_ms: 9,
+    };
+    store.record_audit(&pending).unwrap();
+    holder.execute_batch("ROLLBACK").unwrap();
+    drop(holder);
+
+    let spool_dir = root.join(crate::store::write::AUDIT_SPOOL_DIR);
+    let spool_files: Vec<String> = fs::read_dir(&spool_dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(spool_files.len(), 1, "{spool_files:?}");
+    let pending_name = spool_files[0].clone();
+    let pending_bytes = fs::read(spool_dir.join(&pending_name)).unwrap();
+
+    // Before the next write, JSONL export merges the pending spooled event
+    // into audit.jsonl and counts it in audit_lines.
+    let jsonl_pending = dir.path().join("jsonl-pending");
+    let exported = store.export(&jsonl_pending, ExportFormat::Jsonl).unwrap();
+    assert_eq!(exported.audit_lines, 6);
+    let rows: Vec<serde_json::Value> = fs::read_to_string(jsonl_pending.join("audit.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(rows.len(), 6);
+    let spooled_row = &rows[5];
+    assert_eq!(spooled_row["id"], serde_json::Value::Null);
+    assert_eq!(spooled_row["format"], 5);
+    assert_eq!(spooled_row["command"], "entry retire");
+    assert_eq!(spooled_row["status"], "failure");
+    assert_eq!(spooled_row["target"], "preferences-1");
+    assert_eq!(spooled_row["error_code"], "not_interactive");
+    assert_eq!(spooled_row["author"], "opus");
+    assert_eq!(spooled_row["instruction_session"], "s-9");
+    assert_eq!(spooled_row["instruction_message"], "m-10");
+    assert_eq!(spooled_row["duration_ms"], 9);
+    assert_eq!(spooled_row["spool"], pending_name);
+    let decoded_issue: IssueAudit =
+        serde_json::from_str(spooled_row["issue"].as_str().unwrap()).unwrap();
+    assert_eq!(decoded_issue, pending.issue.clone().unwrap());
+
+    // Drain the spool via a write, then put the already-drained spool file
+    // back on disk (simulating a crash before spool file removal) alongside a
+    // second still-pending spool file.
+    store
+        .update_control(|s| control::switch(s, &"s-2".parse().unwrap(), &Switch::On, NOW))
+        .unwrap();
+    assert!(!spool_dir.join(&pending_name).exists());
+    put(
+        &root,
+        &format!("{}/{pending_name}", crate::store::write::AUDIT_SPOOL_DIR),
+        &pending_bytes,
+    );
+
+    let holder = db::open_new_writer(&root, Duration::from_secs(1)).unwrap();
+    holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let second = AuditEvent {
+        at: NOW,
+        command: String::from("entry add"),
+        status: AuditStatus::Failure,
+        target: None,
+        error_code: Some(String::from("reserved_author")),
+        author: Some(String::from("user")),
+        instruction_session: None,
+        instruction_message: None,
+        issue: None,
+        duration_ms: 4,
+    };
+    store.record_audit(&second).unwrap();
+    holder.execute_batch("ROLLBACK").unwrap();
+    drop(holder);
+
+    let jsonl_mixed = dir.path().join("jsonl-mixed");
+    let exported = store.export(&jsonl_mixed, ExportFormat::Jsonl).unwrap();
+    assert_eq!(exported.audit_lines, 7);
+    let rows: Vec<serde_json::Value> = fs::read_to_string(jsonl_mixed.join("audit.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(rows.len(), 7);
+    let matching_drained: Vec<&serde_json::Value> = rows
+        .iter()
+        .filter(|r| r["spool"].as_str() == Some(pending_name.as_str()))
+        .collect();
+    assert_eq!(
+        matching_drained.len(),
+        1,
+        "already-drained spool file must not be duplicated: {matching_drained:?}"
+    );
+    assert!(
+        matching_drained[0]["id"].is_i64(),
+        "drained row carries its SQLite row id: {:?}",
+        matching_drained[0]
+    );
+    assert_eq!(matching_drained[0]["issue"], spooled_row["issue"]);
+    assert_eq!(rows[6]["id"], serde_json::Value::Null);
+    assert_eq!(rows[6]["command"], "entry add");
+    assert_eq!(rows[6]["error_code"], "reserved_author");
+    assert!(rows[6]["spool"].as_str().is_some());
+
+    // An unmoved store with only a spooled audit file still requires migration.
+    let unmoved_dir = private_tempdir();
+    let unmoved_root = unmoved_dir.path().join("store");
+    let unmoved = Store::open(&unmoved_root);
+    unmoved.record_audit(&second).unwrap();
+    let err = unmoved
+        .export(&unmoved_dir.path().join("jsonl"), ExportFormat::Jsonl)
+        .unwrap_err();
+    assert_eq!(err.code(), "export_needs_migrate");
+}

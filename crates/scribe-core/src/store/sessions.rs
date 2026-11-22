@@ -26,7 +26,7 @@ use super::{
 use crate::WriteRefusal;
 use crate::error::{Error, Result};
 use crate::session::{ControlState, SessionId, SessionRecord};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
@@ -376,14 +376,41 @@ impl Store {
             ExportFormat::Jsonl if !self.root_exists()? => Some(Vec::new()),
             ExportFormat::Jsonl => {
                 let db = db::read_export(&self.root, SESSION_EXPORT_TABLES, DOC_EXPORT_TABLES)?;
-                if (!db.sessions_moved || !db.docs_moved) && self.has_files_to_move_aside()? {
+                let (spooled, _) = self.spooled_audit()?;
+                if (!db.sessions_moved || !db.docs_moved)
+                    && (self.has_files_to_move_aside()? || !spooled.is_empty())
+                {
                     return Err(refusal(
                         WriteRefusal::ExportNeedsMigrate,
                         "JSONL export reads scribe.db, and this store's records are still files; run `scribe store migrate`, or export --as markdown",
                     ));
                 }
                 self.check_stamp()?;
-                Some(db.rows)
+                let mut rows = db.rows;
+                if db.docs_moved && !spooled.is_empty() {
+                    let drained: BTreeSet<&str> = rows
+                        .iter()
+                        .filter(|(table, _)| *table == "audit")
+                        .filter_map(|(_, row)| row.get("spool").and_then(serde_json::Value::as_str))
+                        .collect();
+                    let spool_dir = self.root.join(super::write::AUDIT_SPOOL_DIR);
+                    let mut pending = Vec::with_capacity(spooled.len());
+                    for (name, format, event) in &spooled {
+                        if !drained.contains(name.as_str()) {
+                            pending.push((
+                                "audit",
+                                super::db::docs::audit_export_row(
+                                    &spool_dir.join(name),
+                                    *format,
+                                    event,
+                                    name,
+                                )?,
+                            ));
+                        }
+                    }
+                    rows.extend(pending);
+                }
+                Some(rows)
             }
         };
         prepare_target(target)?;
