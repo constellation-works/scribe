@@ -19,7 +19,9 @@ then become available through `orbit config set`. Use the actual provider state
 directory; do not point runtime writes at its parent, auth file or configuration:
 
 ```sh
-orbit plugin upgrade scribe plugin/orbit-codex/.orbit-plugin
+CODEX_SRC="$(mktemp -d)/.orbit-plugin"   # a copy outside the repository, same name
+cp -R plugin/orbit-codex/.orbit-plugin "$CODEX_SRC"
+orbit plugin upgrade scribe "$CODEX_SRC"
 orbit config set plugins.scribe.codex_home /home/<user>/.codex
 orbit config set plugins.scribe.codex_runtime_tmp /home/<user>/.codex/tmp
 orbit config set plugins.scribe.codex_installation_id /home/<user>/.codex/installation_id
@@ -27,10 +29,12 @@ orbit plugin validate plugin/orbit-codex/.orbit-plugin --render
 orbit plugin enable scribe --grant fs,network,env_pass,orbit_tools
 ```
 
-On a fresh setup use `orbit plugin add plugin/orbit-codex/.orbit-plugin` without
-`--enable`, configure these paths plus the store root and Claude transcripts,
-then validate and enable as above. The default package's settings API does not
-declare the two new runtime keys, so configure them only after registration.
+On a fresh setup, copy the tree as above and run `orbit plugin add "$CODEX_SRC"`
+without `--enable`. Orbit refuses a source inside the repository, and a copied
+tree must keep the `.orbit-plugin` directory name. Then configure these paths
+plus the store root and Claude transcripts, then validate and enable as above.
+The default package's settings API does not declare the two new runtime keys,
+so configure them only after registration.
 Inspect and accept the rendered filesystem grants:
 Codex's state root is read-only except for its `tmp` subtree and the exact
 `installation_id` file. Its auth, configuration and transcripts receive no write
@@ -47,7 +51,9 @@ Claude-only package, which loads with nothing configured and keeps routines and
 settings:
 
 ```sh
-orbit plugin upgrade scribe plugin/.orbit-plugin --grant fs,network,env_pass,orbit_tools
+SCRIBE_SRC="$(mktemp -d)/.orbit-plugin"   # a copy outside the repository, same name
+cp -R plugin/.orbit-plugin "$SCRIBE_SRC"
+orbit plugin upgrade scribe "$SCRIBE_SRC" --grant fs,network,env_pass,orbit_tools
 ```
 
 Existing routine enablement, pause state and schedules are preserved during an
