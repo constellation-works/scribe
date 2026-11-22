@@ -21,7 +21,7 @@ pub(crate) use payload::{
     ReappliedPayload, Record, Records, ScanReport, SessionPayload, SessionsContext,
     SupersededPayload, TagPayload, TagShowPayload, TranscriptPayload, TreeRow, WarningPayload,
 };
-pub(crate) use sink::{FORMAT_ENV, FormatArg, Sink};
+pub(crate) use sink::{FORMAT_ENV, FormatArg, Sink, help_width};
 
 use crate::error::CliError;
 use serde::Serialize;

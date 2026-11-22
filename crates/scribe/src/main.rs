@@ -16,6 +16,7 @@ mod audit_middleware;
 mod cli;
 mod commands;
 mod error;
+mod help;
 mod models;
 mod output;
 mod popup;

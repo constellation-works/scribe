@@ -35,9 +35,6 @@ const HELP: &[(&str, &[&str])] = &[
     ("session-deactivate", &["session", "deactivate", "--help"]),
     ("session-activate", &["session", "activate", "--help"]),
     ("session-catalog", &["session", "catalog", "--help"]),
-    ("transcript", &["transcript", "--help"]),
-    ("transcript-list", &["transcript", "list", "--help"]),
-    ("transcript-show", &["transcript", "show", "--help"]),
     ("proposal", &["proposal", "--help"]),
     ("proposal-add", &["proposal", "add", "--help"]),
     ("proposal-update", &["proposal", "update", "--help"]),
@@ -49,15 +46,6 @@ const HELP: &[(&str, &[&str])] = &[
     ("memory-ack", &["memory", "ack", "--help"]),
     ("memory-retire", &["memory", "retire", "--help"]),
     ("memory-forget", &["memory", "forget", "--help"]),
-    ("record", &["record", "--help"]),
-    ("record-search", &["record", "search", "--help"]),
-    ("consistency", &["consistency", "--help"]),
-    ("consistency-scan", &["consistency", "scan", "--help"]),
-    ("tag", &["tag", "--help"]),
-    ("tag-add", &["tag", "add", "--help"]),
-    ("tag-update", &["tag", "update", "--help"]),
-    ("tag-list", &["tag", "list", "--help"]),
-    ("tag-show", &["tag", "show", "--help"]),
     ("issue", &["issue", "--help"]),
     ("issue-add", &["issue", "add", "--help"]),
     ("issue-occur", &["issue", "occur", "--help"]),
@@ -67,8 +55,21 @@ const HELP: &[(&str, &[&str])] = &[
     ("issue-show", &["issue", "show", "--help"]),
     ("issue-list", &["issue", "list", "--help"]),
     ("issue-stats", &["issue", "stats", "--help"]),
+    ("tag", &["tag", "--help"]),
+    ("tag-add", &["tag", "add", "--help"]),
+    ("tag-update", &["tag", "update", "--help"]),
+    ("tag-list", &["tag", "list", "--help"]),
+    ("tag-show", &["tag", "show", "--help"]),
     ("question", &["question", "--help"]),
     ("question-ask", &["question", "ask", "--help"]),
+    ("record", &["record", "--help"]),
+    ("record-search", &["record", "search", "--help"]),
+    ("transcript", &["transcript", "--help"]),
+    ("transcript-list", &["transcript", "list", "--help"]),
+    ("transcript-show", &["transcript", "show", "--help"]),
+    ("tmux", &["tmux", "--help"]),
+    ("consistency", &["consistency", "--help"]),
+    ("consistency-scan", &["consistency", "scan", "--help"]),
     ("hook", &["hook", "--help"]),
     ("hook-session-start", &["hook", "session-start", "--help"]),
     (
@@ -77,7 +78,6 @@ const HELP: &[(&str, &[&str])] = &[
     ),
     ("hook-stop", &["hook", "stop", "--help"]),
     ("hook-session-end", &["hook", "session-end", "--help"]),
-    ("tmux", &["tmux", "--help"]),
     ("plugin", &["plugin", "--help"]),
     ("plugin-call", &["plugin", "call", "--help"]),
 ];
@@ -216,7 +216,10 @@ fn every_help_page_has_a_golden() {
     assert_eq!(pages, pinned);
 }
 
-/// The subcommand names in a help page's `Commands:` section, less `help`.
+/// The subcommand names on a help page, less clap's built-in `help`.
+///
+/// A noun's page lists them under `Commands:`. The root page lists them under
+/// group headings and has no `Commands:` line.
 fn commands_in(help: &str) -> Vec<String> {
     command_rows_in(help)
         .into_iter()
@@ -225,25 +228,53 @@ fn commands_in(help: &str) -> Vec<String> {
         .collect()
 }
 
-/// `(name, summary)` for every subcommand row in a help page's `Commands:` section.
+/// `(name, summary)` for every subcommand row on a help page.
 fn command_rows_in(help: &str) -> Vec<(String, String)> {
-    help.split("Commands:")
-        .nth(1)
-        .unwrap_or_default()
-        .lines()
-        .skip(1)
-        .take_while(|l| l.starts_with("  "))
-        .filter_map(|l| {
-            let trimmed = l.trim();
-            if trimmed.is_empty() {
-                return None;
+    if help.contains("\nCommands:\n") || help.starts_with("Commands:\n") {
+        return help
+            .split("Commands:")
+            .nth(1)
+            .unwrap_or_default()
+            .lines()
+            .skip(1)
+            .take_while(|line| line.starts_with("  "))
+            .filter_map(command_row)
+            .collect();
+    }
+    // Grouped root help has no `Commands:` line. Rows sit under headings such
+    // as `Setup:`, and stop at clap's own flag headings. A leaf page's
+    // `<ID>` argument, and the examples, are not commands.
+    let mut rows = Vec::new();
+    let mut in_group = false;
+    for line in help.lines() {
+        if !line.starts_with(' ') && line.ends_with(':') {
+            if matches!(
+                line,
+                "Options:" | "Global options:" | "Arguments:" | "Usage:"
+            ) {
+                break;
             }
-            Some(match trimmed.split_once(char::is_whitespace) {
-                Some((name, rest)) => (name.to_owned(), rest.trim().to_owned()),
-                None => (trimmed.to_owned(), String::new()),
-            })
-        })
-        .collect()
+            in_group = true;
+            continue;
+        }
+        if in_group {
+            rows.extend(command_row(line));
+        }
+    }
+    rows
+}
+
+/// One command row: two spaces, a name, then its summary. A wrapped
+/// continuation is indented further and is not a new command.
+fn command_row(line: &str) -> Option<(String, String)> {
+    let rest = line.strip_prefix("  ")?;
+    if rest.is_empty() || rest.starts_with(' ') {
+        return None;
+    }
+    Some(match rest.split_once(char::is_whitespace) {
+        Some((name, summary)) => (name.to_owned(), summary.trim().to_owned()),
+        None => (rest.to_owned(), String::new()),
+    })
 }
 
 #[test]

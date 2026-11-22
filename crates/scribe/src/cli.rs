@@ -2,12 +2,13 @@
 //! parse entry point. Each noun's subcommands, flags and help live beside its
 //! handlers in `commands/` (STD-01 R25: declared once). `--help` is rendered
 //! from these doc comments, so they are user-facing text: placeholders like
-//! `<id>`, never real ids or tracker numbers (STD-01 R23).
+//! `<id>`, never real ids or tracker numbers (STD-01 R23). The root page
+//! lists those nouns under headings (`help`).
 
 use crate::commands::Command;
 use crate::output::FormatArg;
 use clap::error::ErrorKind;
-use clap::{Args, CommandFactory, Parser};
+use clap::{Args, CommandFactory, FromArgMatches, Parser};
 use std::ffi::OsString;
 use std::path::PathBuf;
 
@@ -72,7 +73,9 @@ impl Cli {
     /// `--json`/`--format` conflict is checked here and reported as the same
     /// usage error (exit 2) clap would have produced.
     pub(crate) fn parse_args(args: &[OsString]) -> Result<Self, clap::Error> {
-        let cli = Self::try_parse_from(args)?;
+        let cmd = crate::help::install_root_help(Self::command(), crate::output::help_width());
+        let matches = cmd.try_get_matches_from(args)?;
+        let cli = Self::from_arg_matches(&matches)?;
         if cli.global.json && cli.global.format.is_some_and(|f| f != FormatArg::Json) {
             return Err(Self::command().error(
                 ErrorKind::ArgumentConflict,
