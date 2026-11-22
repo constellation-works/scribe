@@ -4939,9 +4939,9 @@ fn the_sensitive_gate_keeps_credentials_finance_words_and_standing_sensitive_ite
     );
     let mut body = answer();
     body["memory"] = json!([
-        memory_element("working", "Deploys with a personal token.", token, "u-t"),
+        memory_element("profile", "Deploys with a personal token.", token, "u-t"),
         memory_element("profile", "Got a raise this year.", salary, "u-f"),
-        memory_element("working", "Works slower since a family death.", loss, "u-l"),
+        memory_element("profile", "Works slower since a family death.", loss, "u-l"),
     ]);
     s.answer(&body);
     s.scribe("/scribe on");
@@ -5454,12 +5454,15 @@ fn memory_rules_prints_each_rule_with_its_origin() {
     assert_eq!(rule("decay_days")["value"], 60);
     assert_eq!(rule("decay_days")["origin"]["line"], 2);
     assert_eq!(rule("now_after_days")["value"], 14);
-    assert_eq!(rule("promote_working_sessions")["value"], 3);
-    assert_eq!(
-        rule("promote_working_sessions")["origin"]["source"],
-        "shipped"
+    assert_eq!(out["rules"].as_array().unwrap().len(), 6);
+    assert!(
+        out["rules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["rule"] != "promote_working_sessions"),
+        "{out}"
     );
-    assert_eq!(out["rules"].as_array().unwrap().len(), 7);
 
     // A bad phrase or count is refused with its line.
     s.config("[memory.promote]\nrecurs_in_sessions = 1000\n");
@@ -5467,127 +5470,124 @@ fn memory_rules_prints_each_rule_with_its_origin() {
     assert_ne!(bad.status.code(), Some(0));
 }
 
-// --- memory (c): a recurring `working` item (2_design.md §13.7) -----------
+// --- no working or projects memory (2_design.md §15.9 phase 1) -----------
 
-/// A third session id for the recurrence tests.
-const THIRD: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e63";
 const AGENT_MAIN: &str = "Open every pull request against agent-main, please.";
 const AGENT_MAIN_QUOTE: &str = "Open every pull request against agent-main";
-const AGENT_MAIN_SAYS: &str = "Wants every pull request opened against agent-main.";
+const CREW_MEMORY: &str = "Keep the crew-memory machinery internal for later tests.";
+const CREW_MEMORY_QUOTE: &str = "Keep the crew-memory machinery internal";
 
-impl Setup {
-    /// One pass over `session`, switched on, whose turn `w-<session>` says
-    /// [`AGENT_MAIN`] and whose answer names it as a `working` element
-    /// (joining `m-1` after the first): the pass report.
-    fn working_pass(&self, session: &str, first: bool) -> Value {
-        // Turn ids are unique across sessions, as Claude Code's are.
-        let turn = format!("w-{session}");
-        self.write(
-            session,
-            &[
-                line("user", "u-1", &format!("Crews. {DEFINED}.")),
-                line(
-                    "assistant",
-                    "a-1",
-                    "Level 4 crews merge their own pull requests after green CI.",
-                ),
-                line("user", &turn, AGENT_MAIN),
-            ],
-        );
-        let mut element = memory_element("working", AGENT_MAIN_SAYS, AGENT_MAIN_QUOTE, &turn);
-        if !first {
-            element["same_as"] = json!("m-1");
-        }
-        let mut body = answer();
-        body["memory"] = json!([element]);
-        self.answer(&body);
-        self.scribe_in(session, "/scribe on");
-        let report: Value = serde_json::from_slice(
-            &self
-                .run(&["session", "pass", "--session", session, "--json"], b"")
-                .stdout,
-        )
-        .unwrap();
-        assert_eq!(report["passes"][0]["result"], "written", "{report}");
-        report
-    }
-}
-
-/// The open `preferences` candidates admitted for a recurring memory item.
-fn recurs_candidates(s: &Setup) -> Vec<Value> {
-    proposals(s)["proposals"]
+#[test]
+fn a_pass_whose_answer_carries_working_and_projects_items_writes_none_of_them() {
+    let s = Setup::new();
+    s.append(
+        ON,
+        &[
+            line("user", "u-w", AGENT_MAIN),
+            line("user", "u-p", CREW_MEMORY),
+            line("user", "u-s", SHORT),
+        ],
+    );
+    let mut body = answer();
+    let projects = memory_element(
+        "projects",
+        "Wants the crew-memory machinery kept internal.",
+        CREW_MEMORY_QUOTE,
+        "u-p",
+    );
+    body["memory"] = json!([
+        memory_element(
+            "working",
+            "Wants every pull request opened against agent-main.",
+            AGENT_MAIN_QUOTE,
+            "u-w"
+        ),
+        projects,
+        memory_element(
+            "profile",
+            "Likes short answers before explanations.",
+            SHORT,
+            "u-s"
+        ),
+    ]);
+    s.answer(&body);
+    s.scribe("/scribe on");
+    let report: Value = serde_json::from_slice(
+        &s.run(&["session", "pass", "--session", ON, "--json"], b"")
+            .stdout,
+    )
+    .unwrap();
+    let pass = &report["passes"][0];
+    assert_eq!(pass["result"], "written", "{report}");
+    assert_eq!(pass["memory_written"], 1, "{report}");
+    assert_eq!(
+        pass["memory_refused"],
+        json!({"memory_section_not_written": 2}),
+        "{report}"
+    );
+    assert_eq!(pass["memory_proposed"], 0, "{report}");
+    let items = memory_items(&s, &["--include-off-page"]);
+    let sections: Vec<&str> = items["items"]
         .as_array()
         .unwrap()
         .iter()
-        .filter(|p| p["candidate"]["admitted"]["trigger"] == "memory:recurs")
-        .cloned()
-        .collect()
-}
-
-#[test]
-fn a_working_item_raised_in_three_sessions_opens_one_preferences_candidate_and_two_open_none() {
-    let s = Setup::new();
-    s.working_pass(ON, true);
-    let second = s.working_pass(CHILD, false);
-    assert_eq!(second["passes"][0]["memory_proposed"], 0, "{second}");
-    assert!(recurs_candidates(&s).is_empty(), "two sessions: none");
-    assert!(memory_items(&s, &[])["items"][0]["preference_proposal"].is_null());
-
-    let third = s.working_pass(THIRD, false);
-    assert_eq!(third["passes"][0]["memory_proposed"], 1, "{third}");
-    let opened = recurs_candidates(&s);
-    assert_eq!(opened.len(), 1, "{opened:?}");
-    let p = &opened[0];
-    assert_eq!(p["kind"], "candidate");
-    assert_eq!(p["state"], "open");
-    let candidate = &p["candidate"];
-    assert_eq!(candidate["tag"], "preferences");
-    assert_eq!(candidate["role"], "user");
-    assert_eq!(candidate["statement"], AGENT_MAIN_SAYS);
-    assert_eq!(candidate["quote"], AGENT_MAIN_QUOTE);
-    assert_eq!(candidate["cite"]["session"], THIRD);
-    assert_eq!(candidate["cite"]["message"], format!("w-{THIRD}"));
-    assert_eq!(candidate["admitted"]["matched"], "m-1");
-
-    // The item records it; no entry is written before Daniel approves.
-    let item = &memory_items(&s, &[])["items"][0];
-    assert_eq!(item["preference_proposal"], p["id"], "{item}");
-    assert_eq!(item["sessions"], 3);
+        .map(|i| i["section"].as_str().unwrap())
+        .collect();
+    assert_eq!(sections, vec!["profile"], "{items}");
+    // No `preferences` candidate is opened from memory either.
     assert!(
-        !s.fx
-            .root()
-            .join("entries/preferences/preferences-1.md")
-            .exists()
+        proposals(&s)["proposals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|p| p["candidate"]["admitted"]["trigger"] != "memory:recurs"),
     );
-    let audit = std::fs::read_to_string(s.fx.root().join("audit.jsonl")).unwrap();
-    let id = p["id"].as_str().unwrap();
-    assert!(audit.contains(&format!("\"{id}\"")), "{audit}");
-
-    // A fourth session's occurrence opens no second candidate.
-    const FOURTH: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e64";
-    let fourth = s.working_pass(FOURTH, false);
-    assert_eq!(fourth["passes"][0]["memory_proposed"], 0, "{fourth}");
-    assert_eq!(recurs_candidates(&s).len(), 1);
+    // The model is asked for neither section.
+    let prompts = s.prompts();
+    let prompt = prompts.last().unwrap();
+    assert!(prompt.contains("profile: their role"), "{prompt}");
+    assert!(!prompt.contains("working:"), "{prompt}");
+    assert!(!prompt.contains("projects:"), "{prompt}");
 }
 
 #[test]
-fn a_recurring_working_item_an_active_preference_already_says_opens_no_candidate() {
+fn a_stored_working_item_still_loads_and_prints_and_the_retired_setting_warns() {
     let s = Setup::new();
-    s.fx.ok(&[
-        "entry",
-        "add",
-        "--tag",
-        "preferences",
-        "--author",
-        "opus",
-        AGENT_MAIN_SAYS,
-    ]);
-    s.working_pass(ON, true);
-    s.working_pass(CHILD, false);
-    let third = s.working_pass(THIRD, false);
-    assert_eq!(third["passes"][0]["memory_proposed"], 0, "{third}");
-    assert!(recurs_candidates(&s).is_empty());
-    let item = &memory_items(&s, &[])["items"][0];
-    assert_eq!(item["sessions"], 3);
-    assert!(item["preference_proposal"].is_null(), "{item}");
+    let dir = s.fx.root().join("memory");
+    s.fx.create_private_dir_all(&dir);
+    let path = dir.join("m-1.md");
+    std::fs::write(
+        &path,
+        format!(
+            "---\nformat: 22\nkind: memory\nid: m-1\nsection: working\nstatus: active\n\
+             statement: Wants every pull request opened against agent-main.\nproject: null\n\
+             event_date: null\nsensitive: false\nsensitive_kind: null\nacknowledged: null\n\
+             retirement_reason: null\npromoted_from: null\npromotion: null\nmerged_into: null\n\
+             superseded_by: null\nunrelated_to: []\npreference_proposal: null\n\
+             author:\n  kind: scribe\n  name: session-pass\nupdated_by:\n  kind: scribe\n  name: session-pass\n\
+             created: 2026-11-21T08:30:00Z\nupdated: 2026-11-21T08:30:00Z\noccurrences:\n\
+             - n: 1\n  date: 2026-11-21T08:28:45Z\n  session: {ON}\n  message: u-w\n  host: host\n  project: scribe\n\
+             \x20 quote: {AGENT_MAIN_QUOTE}\n  author:\n    kind: scribe\n    name: session-pass\n---\n"
+        ),
+    )
+    .unwrap();
+    make_private(&path);
+    let shown = memory_items(&s, &["m-1"]);
+    assert_eq!(shown["section"], "working", "{shown}");
+    assert_eq!(
+        shown["occurrences"][0]["quote"], AGENT_MAIN_QUOTE,
+        "{shown}"
+    );
+    let listed = memory_items(&s, &["--section", "working", "--include-off-page"]);
+    assert_eq!(listed["items"][0]["id"], "m-1", "{listed}");
+
+    // The removed proposal's setting still loads, with a warning.
+    s.config("[memory]\npromote_working_sessions = 3\n");
+    let out = s.run(&["memory", "rules", "--json"], b"");
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stderr).contains("memory.promote_working_sessions is unused"),
+        "{}",
+        text(&out.stderr)
+    );
 }

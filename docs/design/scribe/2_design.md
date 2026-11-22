@@ -3959,6 +3959,10 @@ occurrences:
 
 ### 13.3 Writing: the session pass
 
+Since [§15.9](#159-phases) phase 1 the pass asks for and writes `profile`,
+`now` and `milestones` only; a `working` or `projects` element is refused
+`memory_section_not_written`.
+
 Writing is implicit: no `#scribe` line, no proposal, no approval. In an
 on session's ordinary pass (including the windows of a session Daniel
 names with `session catalog`, §5.8), the same `session` model call that
@@ -4243,6 +4247,11 @@ weighs 1.0 in `ask`, not the 1.5 of his own entries. Retired and forgotten
 items are left out; off-page items are included, labelled.
 
 ### 13.7 From `working` to `preferences`
+
+**Removed in [§15.9](#159-phases) phase 1.** The pass no longer writes
+`working` or `projects` items, so nothing below runs; stored items load and
+print as before, and `promote_working_sessions` loads with a warning. The
+text is kept as the record of what was built.
 
 When a `working` item's occurrences span **three or more distinct
 sessions** (the same count as rule (b), its own config key
