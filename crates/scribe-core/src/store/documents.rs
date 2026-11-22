@@ -737,6 +737,12 @@ fn forget_moved_audit(path: &Path, texts: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// The keys of an audit line's structural fields (`AuditEvent`): timestamps,
+/// command paths, statuses, record ids, codes, agent names, counts and the
+/// `issue` record's ids, config trigger and hash. They never hold free text,
+/// so no entry's words are matched under them, however common the word: an
+/// entry whose body is `success`, an agent's name or `hook stop` leaves every
+/// unrelated line alone.
 const AUDIT_STANDARD_KEYS: &[&str] = &[
     "format",
     "at",
@@ -754,10 +760,11 @@ const AUDIT_STANDARD_KEYS: &[&str] = &[
 fn audit_line_carries_text(raw: &[u8], texts: &[String]) -> bool {
     match serde_json::from_slice::<serde_json::Value>(raw) {
         Ok(serde_json::Value::Object(map)) => map.iter().any(|(k, v)| {
-            let strict = AUDIT_STANDARD_KEYS.contains(&k.as_str());
-            value_carries_text(v, texts, strict)
+            !AUDIT_STANDARD_KEYS.contains(&k.as_str()) && value_carries_text(v, texts)
         }),
-        Ok(other) => value_carries_text(&other, texts, false),
+        Ok(other) => value_carries_text(&other, texts),
+        // A torn or hand-edited line has no structure to read, and the reader
+        // skips it, so any copy of the words in it is erased.
         Err(_) => {
             let line = String::from_utf8_lossy(raw);
             texts.iter().any(|t| line.contains(t.as_str()))
@@ -765,21 +772,13 @@ fn audit_line_carries_text(raw: &[u8], texts: &[String]) -> bool {
     }
 }
 
-fn value_carries_text(value: &serde_json::Value, texts: &[String], strict: bool) -> bool {
+/// Whether a free-text value (a key outside `AUDIT_STANDARD_KEYS`, or any
+/// unrecognised line shape) contains one of `texts`.
+fn value_carries_text(value: &serde_json::Value, texts: &[String]) -> bool {
     match value {
-        serde_json::Value::String(s) => texts.iter().any(|t| {
-            if strict {
-                s == t || (t.contains(char::is_whitespace) && s.contains(t.as_str()))
-            } else {
-                s.contains(t.as_str())
-            }
-        }),
-        serde_json::Value::Array(items) => {
-            items.iter().any(|v| value_carries_text(v, texts, strict))
-        }
-        serde_json::Value::Object(map) => {
-            map.values().any(|v| value_carries_text(v, texts, strict))
-        }
+        serde_json::Value::String(s) => texts.iter().any(|t| s.contains(t.as_str())),
+        serde_json::Value::Array(items) => items.iter().any(|v| value_carries_text(v, texts)),
+        serde_json::Value::Object(map) => map.values().any(|v| value_carries_text(v, texts)),
         serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {
             false
         }

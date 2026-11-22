@@ -391,8 +391,12 @@ line has the session's `s-<n>` as its target.
   `pre-sqlite-<date>/entries*/`, drops or rewrites the matching proposals in
   `pre-sqlite-<date>/proposals.json*` atomically (keeping every claim the
   database keeps), and drops any `pre-sqlite-<date>/audit.jsonl*` lines
-  carrying the entry's text. Other files in `pre-sqlite-<date>/` are the
-  user's and are never rewritten.
+  carrying the entry's text in a free-text value. An audit line's structural
+  fields (ids, command, status, author, codes, counts) never match, so an
+  entry whose body is a common word such as `success` removes no unrelated
+  event. A torn line, which the reader skips, is dropped if it contains the
+  text. Other files in `pre-sqlite-<date>/` are the user's and are never
+  rewritten.
 - **Format 27.** `FORMAT` is 27 and the upgrade registry is closed: its
   last step (`documents_sqlite`) changes no document, and later schema
   changes are SQL migrations. The steps stay so the move can read a store
