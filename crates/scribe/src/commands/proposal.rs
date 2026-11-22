@@ -33,7 +33,9 @@ pub(crate) enum ProposalCommand {
         after_help = "Examples:\n  scribe proposal update <id> --author opus --reason 'New evidence'"
     )]
     Update(UpdateArgs),
-    /// Approve or reject a proposal about an agent entry, or a claim on Daniel's instruction
+    /// Approve or reject a proposal or candidate
+    ///
+    /// Approves or rejects a proposal about an agent entry, or a claim on Daniel's instruction.
     #[command(
         after_help = "Examples:\n  scribe proposal settle <id> --approve --author opus\n  scribe proposal settle <id> --reject --author opus --session <id> --instruction '<his words>'"
     )]

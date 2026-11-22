@@ -1,21 +1,40 @@
-Mark a now item as raised in this session, so it is not raised again unprompted
+Mark a now item as raised in this session
+
+Marks a now item as raised in this session, so it is not raised again unprompted.
 
 Usage: scribe memory ack [OPTIONS] --session <ID> --author <NAME> <ID>
 
 Arguments:
-  <ID>  The now item (its id or a unique prefix of at least four characters)
+  <ID>
+          The now item (its id or a unique prefix of at least four characters)
 
 Options:
-      --session <ID>   The session the item was raised in
-      --author <NAME>  Your crew or model name
-  -h, --help           Print help
-  -V, --version        Print version
+      --session <ID>
+          The session the item was raised in
+
+      --author <NAME>
+          Your crew or model name
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
 
 Global options:
-      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
-      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
-      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
-      --json                 Shorthand for --format json
+      --provider <PROVIDER>
+          Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+
+      --root <DIR>
+          Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+
+      --format <FORMAT>
+          Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto]
+          
+          [possible values: auto, table, json]
+
+      --json
+          Shorthand for --format json
 
 Run it after raising a now item the user did not bring up himself, so the
 next session does not raise it again unprompted.

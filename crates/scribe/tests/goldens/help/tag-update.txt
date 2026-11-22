@@ -1,24 +1,49 @@
-Update a store tag; configured tags remain in config.toml
+Update an agent-owned store tag
+
+Updates a store tag; configured tags remain in config.toml.
 
 Usage: scribe tag update [OPTIONS] --author <AUTHOR> <NAME>
 
 Arguments:
-  <NAME>  Canonical store tag name
+  <NAME>
+          Canonical store tag name
 
 Options:
-      --author <AUTHOR>                      Agent name
-      --description <DESCRIPTION>            Replacement description
-      --add-alias <ADD_ALIAS>                Alias to add, repeatable
-      --remove-alias <REMOVE_ALIAS>          Alias to remove, repeatable
-      --stale-after-days <STALE_AFTER_DAYS>  Replacement review interval in days (positive)
-  -h, --help                                 Print help
-  -V, --version                              Print version
+      --author <AUTHOR>
+          Agent name
+
+      --description <DESCRIPTION>
+          Replacement description
+
+      --add-alias <ADD_ALIAS>
+          Alias to add, repeatable
+
+      --remove-alias <REMOVE_ALIAS>
+          Alias to remove, repeatable
+
+      --stale-after-days <STALE_AFTER_DAYS>
+          Replacement review interval in days (positive)
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
 
 Global options:
-      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
-      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
-      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
-      --json                 Shorthand for --format json
+      --provider <PROVIDER>
+          Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+
+      --root <DIR>
+          Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+
+      --format <FORMAT>
+          Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto]
+          
+          [possible values: auto, table, json]
+
+      --json
+          Shorthand for --format json
 
 Examples:
   scribe tag update notes --author opus --add-alias note

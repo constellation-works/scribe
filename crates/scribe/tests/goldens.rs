@@ -218,16 +218,64 @@ fn every_help_page_has_a_golden() {
 
 /// The subcommand names in a help page's `Commands:` section, less `help`.
 fn commands_in(help: &str) -> Vec<String> {
+    command_rows_in(help)
+        .into_iter()
+        .map(|(name, _)| name)
+        .filter(|name| name != "help")
+        .collect()
+}
+
+/// `(name, summary)` for every subcommand row in a help page's `Commands:` section.
+fn command_rows_in(help: &str) -> Vec<(String, String)> {
     help.split("Commands:")
         .nth(1)
         .unwrap_or_default()
         .lines()
         .skip(1)
         .take_while(|l| l.starts_with("  "))
-        .filter_map(|l| l.split_whitespace().next())
-        .filter(|name| *name != "help")
-        .map(str::to_owned)
+        .filter_map(|l| {
+            let trimmed = l.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            Some(match trimmed.split_once(char::is_whitespace) {
+                Some((name, rest)) => (name.to_owned(), rest.trim().to_owned()),
+                None => (trimmed.to_owned(), String::new()),
+            })
+        })
         .collect()
+}
+
+#[test]
+fn command_summaries_are_at_most_70_chars() {
+    const MAX_SUMMARY_CHARS: usize = 70;
+    let fx = Fixture::new();
+    let mut queue: Vec<Vec<String>> = vec![Vec::new()];
+    let mut violations = Vec::new();
+    while let Some(prefix) = queue.pop() {
+        let mut args: Vec<&str> = prefix.iter().map(String::as_str).collect();
+        args.push("--help");
+        let help = text(&fx.ok(&args).stdout);
+        for (name, summary) in command_rows_in(&help) {
+            let path = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{} {name}", prefix.join(" "))
+            };
+            let len = summary.chars().count();
+            if summary.is_empty() || len > MAX_SUMMARY_CHARS {
+                violations.push(format!(
+                    "`scribe {path}` summary is {len} chars (expected 1..={MAX_SUMMARY_CHARS}): {summary}"
+                ));
+            }
+            if name != "help" {
+                let mut child = prefix.clone();
+                child.push(name);
+                queue.push(child);
+            }
+        }
+    }
+    assert!(violations.is_empty(), "{}", violations.join("\n"));
 }
 
 #[test]

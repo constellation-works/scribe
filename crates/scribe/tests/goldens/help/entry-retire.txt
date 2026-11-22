@@ -1,23 +1,46 @@
-Retire an entry with a reason: an agent note, or Daniel's on his instruction
+Retire an entry with a reason
+
+Retires an agent note, or Daniel's entry on his instruction.
 
 Usage: scribe entry retire [OPTIONS] --author <AUTHOR> --reason <REASON> <ID>
 
 Arguments:
-  <ID>  Entry id or unique prefix
+  <ID>
+          Entry id or unique prefix
 
 Options:
-      --author <AUTHOR>      Agent name
-      --reason <REASON>      Why the note no longer applies
-      --session <ID>         The session you run in, whose transcript holds Daniel's instruction; requires --instruction
-      --instruction <WORDS>  Daniel's instruction, word for word from one of his last three typed turns of --session within 30 minutes, naming the id (or answering your reply that names it) and the act; requires --session
-  -h, --help                 Print help
-  -V, --version              Print version
+      --author <AUTHOR>
+          Agent name
+
+      --reason <REASON>
+          Why the note no longer applies
+
+      --session <ID>
+          The session you run in, whose transcript holds Daniel's instruction; requires --instruction
+
+      --instruction <WORDS>
+          Daniel's instruction, word for word from one of his last three typed turns of --session within 30 minutes, naming the id (or answering your reply that names it) and the act; requires --session
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
 
 Global options:
-      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
-      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
-      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
-      --json                 Shorthand for --format json
+      --provider <PROVIDER>
+          Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+
+      --root <DIR>
+          Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+
+      --format <FORMAT>
+          Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto]
+          
+          [possible values: auto, table, json]
+
+      --json
+          Shorthand for --format json
 
 Daniel's entry retires only on his instruction: --session and --instruction.
 

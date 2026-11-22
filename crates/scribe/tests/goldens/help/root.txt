@@ -3,19 +3,19 @@ Read Daniel's recorded preferences, and the records of the sessions he cataloged
 Usage: scribe [OPTIONS] <COMMAND>
 
 Commands:
-  init         Scaffold the embedded skill and selected provider hooks; requires --provider, preserves existing edits, never trusts hooks
+  init         Scaffold the embedded skill and selected provider hooks
   entry        Read entries and write agent notes
-  session      List and show the records of sessions cataloged with /scribe on, and write them (pass, catalog)
+  session      List, show and write session records cataloged with /scribe on
   transcript   List uncataloged provider transcripts and show one, writing nothing
   proposal     Read, open, update and settle proposals
-  memory       Show what scribe has noticed about Daniel from switched-on sessions, and acknowledge, retire or forget an item
-  record       Search every stored record for words, ranked as question ask ranks them, with no model call
-  consistency  Propose superseding or retiring entries a later one replaced or that are due for review (scan)
+  memory       Show what scribe noticed about Daniel and manage memory items
+  record       Search every stored record by words, with no model call
+  consistency  Propose superseding or retiring entries via scan
   tag          List tags and manage agent-created store tags
-  issue        Record and search issues: incidents that recur across projects, and what fixed them
-  question     Answer a question from the records, citing a verbatim quote for every claim
-  hook         Run a provider hook: record #scribe lines and settle proposals, switch /scribe on and off, mark session passes due, report open proposals
-  tmux         Browse sessions, entries, proposals and backfill candidates in an fzf popup, writing nothing
+  issue        Record and search recurring incidents across projects
+  question     Answer a question from the records with verbatim quotes
+  hook         Run a provider hook for session and prompt events
+  tmux         Browse sessions, entries and proposals in an fzf popup
   plugin       Serve the Orbit plugin's tools (the plugin backend runs this)
   help         Print this message or the help of the given subcommand(s)
 

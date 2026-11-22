@@ -3,7 +3,7 @@ Serve the Orbit plugin's tools (the plugin backend runs this)
 Usage: scribe plugin [OPTIONS] <COMMAND>
 
 Commands:
-  call  Run one Orbit plugin tool call: an exec envelope on stdin, one reply envelope on stdout
+  call  Run one Orbit plugin tool call from stdin
   help  Print this message or the help of the given subcommand(s)
 
 Options:

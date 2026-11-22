@@ -88,7 +88,9 @@ Examples:
 /// Verbs on the `consistency` noun.
 #[derive(Debug, Subcommand)]
 pub(crate) enum ConsistencyCommand {
-    /// Propose superseding entries a later one replaced and retiring entries due for review, and deactivate stale or removed-feature sessions, with the consistency model
+    /// Propose entry updates and deactivate stale sessions
+    ///
+    /// Uses the consistency model to propose superseding entries a later one replaced and retiring entries due for review, and deactivates stale or removed-feature sessions.
     #[command(after_help = SCAN_EXAMPLES)]
     Scan(ScanArgs),
 }

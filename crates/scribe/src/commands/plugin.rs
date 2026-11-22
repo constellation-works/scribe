@@ -80,7 +80,9 @@ const SCHEMA_VERSION: u64 = 1;
 /// Verbs on the `plugin` noun.
 #[derive(Debug, Subcommand)]
 pub(crate) enum PluginCommand {
-    /// Run one Orbit plugin tool call: an exec envelope on stdin, one reply envelope on stdout
+    /// Run one Orbit plugin tool call from stdin
+    ///
+    /// Reads an exec envelope on stdin and writes one reply envelope on stdout.
     #[command(after_help = CALL_EXAMPLES)]
     Call(CallArgs),
 }

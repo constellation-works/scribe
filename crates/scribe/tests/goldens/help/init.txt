@@ -1,14 +1,30 @@
-Scaffold the embedded skill and selected provider hooks; requires --provider, preserves existing edits, never trusts hooks
+Scaffold the embedded skill and selected provider hooks
+
+Requires --provider, preserves existing edits, and never trusts hooks.
 
 Usage: scribe init [OPTIONS] --target <DIR>
 
 Options:
-      --target <DIR>  Existing project directory to initialize; unrelated configuration is preserved
-  -h, --help          Print help
-  -V, --version       Print version
+      --target <DIR>
+          Existing project directory to initialize; unrelated configuration is preserved
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
 
 Global options:
-      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
-      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
-      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
-      --json                 Shorthand for --format json
+      --provider <PROVIDER>
+          Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+
+      --root <DIR>
+          Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+
+      --format <FORMAT>
+          Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto]
+          
+          [possible values: auto, table, json]
+
+      --json
+          Shorthand for --format json

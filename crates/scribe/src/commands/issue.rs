@@ -104,10 +104,14 @@ Examples:
 /// Verbs on the `issue` noun.
 #[derive(Debug, Subcommand)]
 pub(crate) enum IssueCommand {
-    /// Record a new issue with its first occurrence (no approval; Daniel forgets what is wrong)
+    /// Record a new issue with its first occurrence
+    ///
+    /// Writes without approval; Daniel forgets what is wrong with #scribe forget <issue-id>.
     #[command(after_help = ADD_EXAMPLES)]
     Add(AddArgs),
-    /// Add an occurrence to an issue; one on a resolved issue reopens it
+    /// Add an occurrence to an existing issue
+    ///
+    /// Adding an occurrence to a resolved issue reopens it.
     #[command(after_help = OCCUR_EXAMPLES)]
     Occur(OccurArgs),
     /// Change an issue's cause, fix or status
@@ -125,7 +129,9 @@ pub(crate) enum IssueCommand {
     /// List issues, most recently updated first
     #[command(after_help = LIST_EXAMPLES)]
     List(ListArgs),
-    /// Count trigger fires, issue writes and withdrawals, for recall and precision
+    /// Count issue trigger fires, writes and withdrawals
+    ///
+    /// Counts trigger fires, issue writes and withdrawals for recall and precision.
     #[command(after_help = STATS_EXAMPLES)]
     Stats(StatsArgs),
 }

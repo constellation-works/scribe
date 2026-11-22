@@ -39,7 +39,9 @@ Examples:
 /// Verbs on the `question` noun.
 #[derive(Debug, Subcommand)]
 pub(crate) enum QuestionCommand {
-    /// Answer a question from the recorded entries, session records and Orbit tasks, citing each quote
+    /// Answer a question from stored records and Orbit tasks
+    ///
+    /// Answers a question from the recorded entries, session records, issues and Orbit tasks, citing each quote.
     #[command(after_help = ASK_EXAMPLES)]
     Ask(AskArgs),
 }

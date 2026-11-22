@@ -1,25 +1,59 @@
-List session records, oldest first, with whether a pass is due; inactive sessions only with --include-inactive
+List session records, oldest first
+
+Lists session records, oldest first, with whether a pass is due; inactive sessions are included only with --include-inactive.
 
 Usage: scribe session list [OPTIONS]
 
 Options:
-      --project <PROJECT>  Only sessions that ran in this project (a repository slug) [default: any]
-      --topic <TOPIC>      Only sessions carrying this topic; repeat it to require every one [default: any]
-      --related <REF>      Only sessions mentioning this reference (task:<id>, pr:<owner>/<repo>#<n>, repo:<slug> or session:<id>); repeat it to accept any of them [default: any]
-      --status <STATUS>    Only sessions with this status: open (more passes may update it) or final [default: any] [possible values: open, final]
-      --since <DATE>       Only records on or after this day, YYYY-MM-DD [default: no lower bound]
-      --until <DATE>       Only records on or before this day, YYYY-MM-DD [default: no upper bound]
-      --limit <N>          Show at most this many of the matching sessions, 1 or more; --json reports the total and whether the list was cut [default: all]
-      --tree               Order the sessions as a tree: each one under the session it was spawned from (else the one it continues), with a PARENT column; --json keeps the envelope, in tree order
-      --include-inactive   Include inactive sessions (hidden by default), with an ACTIVE column
-  -h, --help               Print help
-  -V, --version            Print version
+      --project <PROJECT>
+          Only sessions that ran in this project (a repository slug) [default: any]
+
+      --topic <TOPIC>
+          Only sessions carrying this topic; repeat it to require every one [default: any]
+
+      --related <REF>
+          Only sessions mentioning this reference (task:<id>, pr:<owner>/<repo>#<n>, repo:<slug> or session:<id>); repeat it to accept any of them [default: any]
+
+      --status <STATUS>
+          Only sessions with this status: open (more passes may update it) or final [default: any]
+          
+          [possible values: open, final]
+
+      --since <DATE>
+          Only records on or after this day, YYYY-MM-DD [default: no lower bound]
+
+      --until <DATE>
+          Only records on or before this day, YYYY-MM-DD [default: no upper bound]
+
+      --limit <N>
+          Show at most this many of the matching sessions, 1 or more; --json reports the total and whether the list was cut [default: all]
+
+      --tree
+          Order the sessions as a tree: each one under the session it was spawned from (else the one it continues), with a PARENT column; --json keeps the envelope, in tree order
+
+      --include-inactive
+          Include inactive sessions (hidden by default), with an ACTIVE column
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
 
 Global options:
-      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
-      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
-      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
-      --json                 Shorthand for --format json
+      --provider <PROVIDER>
+          Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+
+      --root <DIR>
+          Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+
+      --format <FORMAT>
+          Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto]
+          
+          [possible values: auto, table, json]
+
+      --json
+          Shorthand for --format json
 
 Examples:
   scribe session list

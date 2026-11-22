@@ -1,22 +1,43 @@
-Record that a consumer picked up an action entry, or that its result was rejected
+Record pickup or rejection of an action entry
+
+Records that a consumer picked up an action entry, or that its result was rejected.
 
 Usage: scribe entry pickup [OPTIONS] --author <AUTHOR> <ID>
 
 Arguments:
-  <ID>  The action entry's id or a unique prefix (at least four characters)
+  <ID>
+          The action entry's id or a unique prefix (at least four characters)
 
 Options:
-      --author <AUTHOR>  The consumer's name
-      --result <REF>     What the consumer made of it (task:<id>, pr:<owner>/<repo>#<n>, repo:<slug> or session:<id>)
-      --rejected         Daniel rejected the result
-  -h, --help             Print help
-  -V, --version          Print version
+      --author <AUTHOR>
+          The consumer's name
+
+      --result <REF>
+          What the consumer made of it (task:<id>, pr:<owner>/<repo>#<n>, repo:<slug> or session:<id>)
+
+      --rejected
+          Daniel rejected the result
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
 
 Global options:
-      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
-      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
-      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
-      --json                 Shorthand for --format json
+      --provider <PROVIDER>
+          Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+
+      --root <DIR>
+          Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+
+      --format <FORMAT>
+          Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto]
+          
+          [possible values: auto, table, json]
+
+      --json
+          Shorthand for --format json
 
 Examples:
   scribe entry pickup <id> --author standards-intake --result task:<id>

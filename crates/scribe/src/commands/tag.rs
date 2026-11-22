@@ -38,7 +38,9 @@ pub(crate) enum TagCommand {
         after_help = "Examples:\n  scribe tag add notes --author opus --description 'Agent notes'"
     )]
     Add(AddArgs),
-    /// Update a store tag; configured tags remain in config.toml
+    /// Update an agent-owned store tag
+    ///
+    /// Updates a store tag; configured tags remain in config.toml.
     #[command(after_help = "Examples:\n  scribe tag update notes --author opus --add-alias note")]
     Update(UpdateArgs),
     /// List config and store tags, their aliases, sources and entry counts
