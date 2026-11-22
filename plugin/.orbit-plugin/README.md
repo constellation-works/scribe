@@ -27,22 +27,35 @@ proposal: that is `#scribe approve|reject` in a typed prompt.
 ## Install (operator)
 
 From a checkout of this repository, on the host whose `~/.scribe` holds the
-store:
+store. Orbit refuses a plugin source inside the repository its runtime resolves
+(this checkout, or the workspace repository that contains it), so the add and
+upgrade commands below install from a copy made outside it. The copy keeps
+the `.orbit-plugin` directory name: Orbit reads a plugin only from a directory
+named `.orbit-plugin`, and refuses a copy under any other name. Orbit copies
+the installed tree into its global root, so the temporary copy can be removed
+after the command.
 
 ```sh
 make install                      # puts scribe on PATH
 scribe question ask "can you fetch me last session summary?"   # the CLI works first
 orbit plugin validate plugin/.orbit-plugin --render
-orbit plugin add plugin/.orbit-plugin
+PLUGIN_SRC="$(mktemp -d)/.orbit-plugin"   # outside the repository, same name
+cp -R plugin/.orbit-plugin "$PLUGIN_SRC"
+orbit plugin add "$PLUGIN_SRC"
 orbit plugin enable scribe --grant fs,network,env_pass,orbit_tools
 ```
+
+`orbit plugin enable` also seeds the routines into the workspace repository's
+`.orbit/routines/`, even when `HOME` is a scratch directory.
 
 An install after a plugin change runs:
 
 ```sh
 claude plugin marketplace update scribe-local
 claude plugin update scribe@scribe-local
-orbit plugin upgrade scribe plugin/.orbit-plugin --grant fs,network,env_pass,orbit_tools
+PLUGIN_SRC="$(mktemp -d)/.orbit-plugin"   # a fresh copy of the current tree
+cp -R plugin/.orbit-plugin "$PLUGIN_SRC"
+orbit plugin upgrade scribe "$PLUGIN_SRC" --grant fs,network,env_pass,orbit_tools
 ```
 
 `claude plugin update` applies on the next Claude Code restart.
@@ -87,7 +100,9 @@ After a plugin change, refresh the package and upgrade the plugin:
 ```sh
 claude plugin marketplace update scribe-local
 claude plugin update scribe@scribe-local
-orbit plugin upgrade scribe plugin/.orbit-plugin --grant fs,network,env_pass,orbit_tools
+PLUGIN_SRC="$(mktemp -d)/.orbit-plugin"   # a fresh copy of the current tree
+cp -R plugin/.orbit-plugin "$PLUGIN_SRC"
+orbit plugin upgrade scribe "$PLUGIN_SRC" --grant fs,network,env_pass,orbit_tools
 ```
 
 `claude plugin update` applies on the next Claude Code restart. On a fresh

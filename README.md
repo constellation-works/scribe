@@ -276,8 +276,14 @@ An install after a plugin change runs:
 ```sh
 claude plugin marketplace update scribe-local
 claude plugin update scribe@scribe-local
-orbit plugin upgrade scribe plugin/.orbit-plugin --grant fs,network,env_pass,orbit_tools
+PLUGIN_SRC="$(mktemp -d)/.orbit-plugin"   # a copy outside the repository, same name
+cp -R plugin/.orbit-plugin "$PLUGIN_SRC"
+orbit plugin upgrade scribe "$PLUGIN_SRC" --grant fs,network,env_pass,orbit_tools
 ```
+
+Orbit refuses an upgrade source inside the repository, so the command copies the
+tree first; [the plugin README](plugin/.orbit-plugin/README.md#install-operator)
+says why.
 
 `claude plugin update` applies on the next Claude Code restart.
 
