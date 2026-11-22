@@ -7,7 +7,7 @@ status: Draft
 feature: scribe
 doc_role: design
 type: design
-summary: How the scribe plugin is bounded (one binary; Daniel writes through hooks, agents read and write through the CLI taught by one skill, and the MCP surface stays ask), how #scribe entries, /scribe on session records (a rewritable header over an append-only log of segments), active and inactive sessions, ask and search, the consistency routine, backfill by name and the tmux popup work, where everything is stored, which model does what, and the slice plan that builds it; §11–§13 are proposed designs (claims and issues, settling on instruction, and the descriptive memory written from /scribe on sessions; its personal base for sessions that are off, people, recurring dates and light catalog entries are designed but parked 2026-11-21, and scribe reads Claude Code and Codex sessions only); §14 (approved 2026-11-21; step 1 built, store format 22) catalogs `#scribe` as an annotation anywhere in a typed turn, at the end of the turn, with a statement and a verbatim quote; §15 (proposed 2026-11-22, not built) makes tags configurable catchers whose inferred catches are claims with a context paragraph and a verbatim quote, adds `scribe brief`, fixes memory to `profile.md`, `now/` and `milestones/` with a weekly profile job, removes every personal name from shipped text, and moves sessions, entries, claims, issues, state and audit into one SQLite database.
+summary: How the scribe plugin is bounded (one binary; Daniel writes through hooks, agents read and write through the CLI taught by one skill, and the MCP surface stays ask), how #scribe entries, /scribe on session records (a rewritable header over an append-only log of segments), active and inactive sessions, ask and search, the consistency routine, backfill by name and the tmux popup work, where everything is stored, which model does what, and the slice plan that builds it; §11–§13 are proposed designs (claims and issues, settling on instruction, and the descriptive memory written from /scribe on sessions; its personal base for sessions that are off, people, recurring dates and light catalog entries are designed but parked 2026-11-21, and scribe reads Claude Code and Codex sessions only); §14 (approved 2026-11-21; step 1 built, store format 22) catalogs `#scribe` as an annotation anywhere in a typed turn, at the end of the turn, with a statement and a verbatim quote; §15 (proposed 2026-11-22, not built) makes tags configurable catchers whose inferred catches are claims with a context paragraph and a verbatim quote, adds `scribe brief`, fixes memory to `profile.md`, `now/` and `milestones/` with a weekly profile job, removes every personal name from shipped text, makes `issue` a catcher tag instead of a record kind, and moves sessions, entries, claims, state and audit into one SQLite database.
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
@@ -5164,6 +5164,7 @@ here once the phase that changes it lands:
 - §3, the Markdown store;
 - §5.3, the pass's claims;
 - §11.1–§11.2, statements and capture rules;
+- §11.4, issues, which stop being a record kind;
 - §13, memory;
 - §14.4, an annotation's content.
 
@@ -5222,9 +5223,13 @@ it keeps the quote. A sentence that summarises many moments is memory, and
 it cites the sessions it came from. A rule that binds agents is always an
 entry (a `preference` or a `standard`), never memory.
 
-Agent-written records stay outside this rule and keep their own commands:
-issues (§11.4) and agent notes (`scribe entry add`). See
-[§15.10](#1510-differences-from-the-proposal), item 2.
+Agent notes (`scribe entry add`) stay outside this rule and keep their
+command. **Issues stop being a record kind** (§11.4 is removed). An incident
+is caught by a catcher tag like any other remark, and `issue` is an example
+catcher, not a default. See
+[§15.10](#1510-differences-from-the-proposal), item 2. Daniel, chief's chat,
+2026-11-22, reading `scribe --help`: "we are getting rid of "issue"
+correct? not sure why it shows up as command. it should be a tag".
 
 **What changes from format 22.**
 
@@ -5284,8 +5289,10 @@ max_open = 10                     # open claims this tag may hold
     shipped `idea` does today (§11.6), so the code path, its per-run bound
     (`MAX_IDEAS`, renamed `MAX_COLLECTED` and applied per tag) and its
     exclusions already exist.
-  - `agent` leaves the tag schema. It served only `issue`, whose triggers
-    move to `[issues.capture]` (§15.7).
+  - `agent` goes. It served only `issue`, whose route-`agent` rules had the
+    prompt hook add a root-cause line to the agent's context. That line
+    goes with it, and `issue` becomes an ordinary catcher (the example
+    below).
 - **`triggers`, `criteria`, `not`.** Unchanged in meaning and matching
   (`trigger.rs`). `criteria` and `not` are the catcher's **instruction**:
   what qualifies and what does not, at most 300 characters each, given to
@@ -5345,6 +5352,16 @@ triggers = ["you need to", "you'll need to", "you will need to", "left for you",
 criteria = "The assistant names a step only the user can take (a login, an approval, a purchase, a decision)."
 not = "A step the assistant will take itself; an option the user may take."
 
+# Incidents: what went wrong, its cause and its fix, from either side.
+[tags.issue]
+description = "Something that went wrong, with its cause and fix when known."
+[tags.issue.capture]
+from = "both"
+route = "write"
+triggers = ["root cause", "rca", "look into why", "can you investigate", "the cause was", "caused by", "fixed by"]
+criteria = "A failure in the user's tools or work, with what caused it or what fixed it, or the user asking for that cause."
+not = "How something works; a feature request; a failure the turn only names in passing."
+
 # Ideas, as today's shipped tag.
 [tags.idea]
 action = true
@@ -5366,8 +5383,19 @@ name any tag in the table, catcher or not.
 - `CaptureFrom` gains `User`, `Assistant` and `Both`. `Daniel` reads as
   `User`.
 - `CaptureRules` gains `max_open`.
-- `CaptureRoute::Agent` and `TagTable::issue_capture` move to the issue
-  config.
+- `CaptureRoute::Agent`, `TagTable::issue_capture`, `issue_trigger.rs` and
+  the prompt hook's issue line go.
+- The issue record kind goes: `issue.rs`, `store/issues.rs`,
+  `store/issue_file.rs` and `commands/issue.rs`.
+  - Its CLI goes too: the `scribe issue` noun (`add`, `occur`, `update`,
+    `move`, `search`, `show`, `list`, `stats`), `#scribe forget
+    <issue-id>[#<n>]` (`hook/issue_command.rs`) and `record search --kind
+    issue`.
+  - So do `ask`'s issue evidence, occurrences, and the resolved and
+    reopened (`recurred`) states.
+  - `issue` stops being a reserved tag name.
+- This is a breaking CLI change. It lands in phase 2 with the approved
+  design, never before.
 - `SHIPPED_CAPTURE` holds `preference` and `standard`.
 - `SHIPPED_ACTION_TAGS` loses `idea`. `standard` keeps `action = true`,
   because its window and quote check stay.
@@ -5754,7 +5782,6 @@ with phase 3):
 | `messages` | session, provider message id, role, at, text (redacted on write), sha256; with an FTS5 index | nothing (new) |
 | `entries` | tag, n (`<tag>-<n>` kept), every field of today's entry, `context` | `entries/<tag>/<id>.md` |
 | `claims` | every field of today's proposal (`p-<n>` kept) and candidate, `context` | `proposals.json` |
-| `issues`, `issue_occurrences` | today's issue and its occurrences | `issues/issue-<n>.md` |
 | `agent_tags` | today's store tags | `tags.json` |
 | `marks`, `pickups` | today's documents, row per item | `marks.json`, `pickups.json` |
 | `codex_cursors` | per rollout | `control.json`'s `codex_cursors` |
@@ -5781,7 +5808,7 @@ with phase 3):
 
 **Ids.**
 
-- A session is `s-<n>`, matching `p-<n>`, `issue-<n>` and `<tag>-<n>`.
+- A session is `s-<n>`, matching `p-<n>` and `<tag>-<n>`.
 - The provider UUID is a column. Every command that takes a session id
   accepts either form, and a unique UUID prefix still resolves (S11).
 - Cites written before the move (`session:<uuid>`) resolve through the
@@ -5813,7 +5840,7 @@ with phase 3):
 
 **The cost, and its remedy.** The store is no longer greppable, diffable or
 openable in an editor, except for memory. `scribe export` is read-only, and
-writes the store as Markdown (one file per entry, session and issue, the
+writes the store as Markdown (one file per entry and session, the
 shapes of today's files) or as JSONL (one line per row, per table) into a
 directory the user names. It is the backup, the review copy and the way out
 of scribe. It is built in the first storage phase that moves a record kind,
@@ -5859,7 +5886,6 @@ so no kind is ever unreadable outside the binary.
 | `[tags.<name>]` `description`, `aliases`, `stale_after_days`, `action`, `require_quote`, `ask_first` | a tag's settings, as today | `preference` and `standard` as in §15.2 |
 | `[tags.<name>.capture]` `from`, `route`, `triggers`, `criteria`, `not`, `max_open` | what a catcher catches and what a catch becomes | as in §15.2; a new tag captures nothing until it has triggers |
 | `[instructions] session`, `annotation`, `ask` | the user's own guidance, at most 1,000 characters each, added to that prompt in a delimited "the user's instructions" block placed **before** the fixed output contract | empty |
-| `[issues.capture]` `triggers` | when the prompt hook asks for a root cause | today's `issue` triggers |
 | `[models] session`, `annotation`, `ask`, `consistency`, `profile` | which model and timeout each call uses | today's; `profile` is `sonnet`, 120 s |
 | `[sessions] inactive_after_days`, cadence keys | as today | as today |
 
@@ -5877,7 +5903,6 @@ so no kind is ever unreadable outside the binary.
   an assistant quote is never the user's.
 - **The bounds.** Claim slots, the 20-open cap, the collected-entry bound,
   the brief's caps, and the profile job's input caps.
-- **Reserved names.** `issue`.
 
 **Shipped prompts**, each saying "the user":
 
@@ -5915,12 +5940,16 @@ goldens. Each line gives what the phase does, then what it proves.
    caps, from stored text only.
 2. **Generic prompts, catchers and configurable instructions.**
    - Does: "the user" everywhere shipped; `[user] name`; `[instructions]`;
-     `from = user|assistant|both`; `max_open`; route `agent` moves to
-     `[issues.capture]`; the shipped set is `preference` and `standard`;
-     `idea` becomes an example; author kind `user`. Format 23.
+     `from = user|assistant|both`; `max_open`; route `agent` and the issue
+     record kind removed, with the `scribe issue` noun, `issue stats`, the
+     hook's root-cause line, `#scribe forget <issue-id>` and `record search
+     --kind issue`; any stored issues converted to `issue` entries
+     (§15.11); the shipped set is `preference` and `standard`; `idea` and
+     `issue` become examples; author kind `user`. Format 23.
    - Proves: a grep of shipped text finds no name. A config-only catcher
      (the `orbit` collector and the assistant `todo` catcher) catches in a
-     replay fixture with no code change. A user instruction reaches the
+     replay fixture with no code change, and so does the `issue` example on
+     an incident turn. A user instruction reaches the
      model while a contract-breaking answer is still refused.
 3. **Claims with context.**
    - Does: `context` on claims, collected entries and annotations; format
@@ -5954,14 +5983,14 @@ goldens. Each line gives what the phase does, then what it proves.
    - Proves: every session reads back the same through `session show
      --json` before and after (golden). Old `session:<uuid>` cites resolve.
      A pass is one transaction.
-7. **Entries, claims, issues, state and audit into SQLite.**
-   - Does: `entries`, `claims`, `issues`, `agent_tags`, `marks`, `pickups`
+7. **Entries, claims, state and audit into SQLite.**
+   - Does: `entries`, `claims`, `agent_tags`, `marks`, `pickups`
      and `audit`; the store lock, `write_atomic` for documents and
      `UPGRADES` retired (`write_atomic` stays for memory files); export for
      every kind.
    - Proves: an approval and its audit row commit together, and
-     `reapply_approved` has nothing to repair. `issue stats` gives the same
-     counts from the table as from `audit.jsonl`.
+     `reapply_approved` has nothing to repair. Every `audit.jsonl` line
+     reads back from the table, the issue fields of formats 4–5 included.
 8. **Remove the file store** after the 30-day window.
    - Does: the decoders, `format.rs` and the file-store tests.
    - Proves: nothing reads a format-22 file.
@@ -5973,13 +6002,13 @@ approves this design; each carries the `scribe` tag):
 |---|---|---|
 | 1 | scribe: stop writing working and projects memory | `memory_prompt`, `Section` writes, `memory/promote.rs` working path, skill; no format change |
 | 2 | scribe: generic prompts, `[user]` and `[instructions]` | every shipped prompt, label and skill line; config tables; `AuthorKind::User`; format 23 |
-| 3 | scribe: catchers — `from`, `max_open`, the shipped set, issue capture apart | `config.rs`, `tag.rs`, `trigger.rs`, `pass/candidates.rs`, `issue_trigger.rs`; `specs/catchers.md` |
+| 3 | scribe: catchers — `from`, `max_open`, the shipped set; `issue` becomes a tag | `config.rs`, `tag.rs`, `trigger.rs`, `pass/candidates.rs`; removes `issue.rs`, `issue_trigger.rs`, `store/issues.rs`, `store/issue_file.rs`, `commands/issue.rs`, `hook/issue_command.rs`, the `ask` and search issue paths; issue-to-entry conversion; `specs/catchers.md`; breaking CLI change |
 | 4 | scribe: claims carry a context paragraph | `SESSION_SCHEMA`, annotation schema, `proposal.rs`, `store/candidates.rs`, outputs, popup |
 | 5 | scribe: `scribe brief` as the session-start page ([ORB-26642], already filed) | new read-only command with Recent sessions and Open claims, today's page as the memory block, hook, skill, goldens |
 | 6 | scribe: SQLite foundation and the messages table | dependency, `ARCHITECTURE.md`, dependency script, `scribe.db`, `meta`, `messages` + FTS5, memory support tables, `record search --kind message` |
 | 7 | scribe: memory as profile, now and milestones, with `memory refresh` | `memory/`, `store/memory.rs`, `ProfileRequest`, `memory show` with no id and the brief's memory block, the routine seed, migration of `m-<n>` |
 | 8 | scribe: sessions in SQLite with `s-<n>` ids, and `scribe export` | `session.rs`, `store/` session code, `control.json` fields, `store migrate`, `export` |
-| 9 | scribe: entries, claims, issues, state and audit in SQLite | remaining kinds; lock and `UPGRADES` retired; `issue stats` over the table |
+| 9 | scribe: entries, claims, state and audit in SQLite | remaining kinds; lock and `UPGRADES` retired |
 | 10 | scribe: remove the file store after the compatibility window | decoders, `format.rs`, tests |
 
 ### 15.10 Differences from the proposal
@@ -5992,11 +6021,17 @@ Daniel's words, with its reason.
    write` (`tag::CaptureRoute`), with a built and checked direct-write path
    (§11.6). A second field would allow `route = write, approval = required`,
    which means nothing. One field, two values.
-2. **Issues leave the tag schema, but not the store move.** Decision 2 keeps
-   issues out of catchers and out of the shipped defaults. The design also
-   moves issue records into SQLite (phase 7). If they stayed files, the
-   lock, `write_atomic` and the upgrade machinery would all stay alive for
-   one kind.
+2. **`issue` is a tag, not a record kind** (Daniel, 2026-11-22, replacing
+   decision 2 of the proposal, which kept issue records outside the
+   redesign). The design removes the record kind and its CLI, and ships
+   `issue` as an example catcher, not a default. Daniel named only
+   `preference` and `standard` as defaults, and the Mac store holds no
+   issue record. As a `write` catcher reading both sides, it keeps the
+   incident's context and verbatim quote, which is most of what an issue
+   held. What it loses: occurrences across sessions, the resolved and
+   reopened states, and `issue stats`. Those parts never had data to
+   justify them: no issue record was ever written, and the audit log holds
+   one trigger fire.
 3. **The instruction is `criteria` and `not`.** The proposal names "an
    instruction" per tag. The code already gives the model a positive and a
    negative test per tag, recorded in each claim's `admitted.criteria`, a
@@ -6058,13 +6093,14 @@ Daniel's words, with its reason.
 | `m-1` (working: merge right after each task) | dropped from memory; offered as a `preference` claim with its quote | phase 5 opens the claim, since it is a standing rule; Daniel settles it |
 | `m-2` (projects: keep the crew-memory machinery internally) | a hint to the first profile refresh, under Projects | phase 5 |
 | `m-3` (working: run the requeue) | dropped; kept only in `memory_history` | phase 5 |
-| `issues/issue-<n>.md` | `issues`, `issue_occurrences` rows; ids kept | phase 7 |
+| `issues/issue-<n>.md` (0 on the Mac) | removed as a kind; each becomes one entry under the `issue` tag | phase 2, model-free: the content is the issue's title, cause and fix, joined; the `quote` is its verified request; the cite is the request's session and message; the author is the agent that wrote it; each occurrence's session becomes a `related` `session:<id>`. The files move to `pre-issue-<date>/`. A store with no `[tags.issue]` gets the example table added to the effective tag table only for reading those entries, never as a catcher |
+| issue fields on audit lines (formats 4–5; 1 trigger fire on the Mac) | kept as history; nothing reads them | phase 7 imports them as written; `issue stats` is gone from phase 2 |
 | `tags.json` | `agent_tags` rows | phase 7 |
 | `marks.json` | `marks` rows | phase 7 |
 | `pickups.json` | `pickups` rows | phase 7 |
 | `audit.jsonl` (1,296 lines) | `audit` rows | phase 7: every line imported with its format; torn lines counted and reported, as `audit_events` does |
 | `.lock` | removed | phase 7; SQLite's locking replaces it (memory files are written inside a write transaction) |
-| `config.toml` | stays the user's file | phase 2 adds `[user]`, `[instructions]`, `[issues.capture]`; phase 5 deprecates `[memory]` keys; `from = "daniel"` read as `user` |
+| `config.toml` | stays the user's file | phase 2 adds `[user]`, `[instructions]`, and warns on `[tags.issue.capture]` route `agent` for 30 days, then refuses it; phase 5 deprecates `[memory]` keys; `from = "daniel"` read as `user` |
 | `store/format.rs::UPGRADES` | replaced by SQL migrations on `user_version` | phase 8 removes it after the window |
 
 ### 15.12 Limits and what is not built until seen
@@ -6080,6 +6116,9 @@ Daniel's words, with its reason.
 - **The database is one file on one host.** Reading from another host stays
   the owner-host SSH read of today. A corrupt database is restored from the
   user's own backup or `scribe export`. scribe takes no backups of its own.
+- **An incident is caught like any remark.** Without occurrences, the same
+  failure seen twice is two `issue` entries. `record search --tag issue`
+  finds both.
 - **Not built until seen:** embeddings over messages; storing every
   assistant turn; per-user memory sections or memory switches; a hosted or
   synced store; a configurable profile layout.
@@ -6132,7 +6171,7 @@ Daniel's words, with its reason.
 - [ORB-26640] — designed §15: tags as catchers, claims with a context
   paragraph and `scribe brief`, memory as `profile.md`, `now/` and
   `milestones/` with a weekly profile job, generic prompts, and one SQLite
-  store (proposed, not built).
+  store, with `issue` a tag rather than a record kind (proposed, not built).
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
 

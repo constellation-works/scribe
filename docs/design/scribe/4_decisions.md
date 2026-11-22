@@ -7,7 +7,7 @@ status: Draft
 feature: scribe
 doc_role: decisions
 type: design
-summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, why action tags are config-marked with a capped window, a cancel window, pickups, a stuck line, a CLI quote check and SSH reads from the owner host, why scribe keeps a descriptive memory the session pass writes without approval, why that memory has a personal base fed by every typed session (with people, recurring dates and light catalog entries) and a work layer fed only by /scribe on sessions, why scribe reads Claude Code and Codex sessions only (no hosted server, app connector or ChatGPT import), why the personal base, people, recurring dates and light catalog entries are parked, why the session pass writes Daniel's ideas itself with their outcome, why #scribe becomes an annotation anywhere in a typed turn cataloged at the end of the turn with a statement and his verbatim quote (proposed), why tags become configurable catchers, memory a fixed three-part synthesis and the rest one SQLite database, with approved entries in SQLite, issues kept apart from catchers, only cited assistant turns stored, and the meaning landing before the storage (proposed), plus the engineering decisions carried over from the Rust CLI template.
+summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, why action tags are config-marked with a capped window, a cancel window, pickups, a stuck line, a CLI quote check and SSH reads from the owner host, why scribe keeps a descriptive memory the session pass writes without approval, why that memory has a personal base fed by every typed session (with people, recurring dates and light catalog entries) and a work layer fed only by /scribe on sessions, why scribe reads Claude Code and Codex sessions only (no hosted server, app connector or ChatGPT import), why the personal base, people, recurring dates and light catalog entries are parked, why the session pass writes Daniel's ideas itself with their outcome, why #scribe becomes an annotation anywhere in a typed turn cataloged at the end of the turn with a statement and his verbatim quote (proposed), why tags become configurable catchers, memory a fixed three-part synthesis and the rest one SQLite database, with approved entries in SQLite, `issue` a catcher tag rather than a record kind, only cited assistant turns stored, and the meaning landing before the storage (proposed), plus the engineering decisions carried over from the Rust CLI template.
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
@@ -4000,37 +4000,68 @@ them in today's file shape. An entry is corrected through the CLI
 - Cost: a user cannot open a preference in an editor. They read it with
   `entry show` or an export.
 
-## Issues and agent notes are agent-written kinds, not catchers (proposed)
+## `issue` is a catcher tag, not a record kind (proposed)
 
-**Recorded:** 2026-11-22 · [ORB-26640] · **Daniel's choice** (decision 2 of the accepted proposal)
-**Code anchors:** `crates/scribe-core/src/tag.rs::TagTable::issue_capture`, `crates/scribe-core/src/issue_trigger.rs`
+**Recorded:** 2026-11-22 · [ORB-26640] · **Daniel's choice**. It replaces decision 2 of the accepted proposal ("issue records and findings are agent-written kinds, not catchers: outside this redesign").
+**Code anchors:** `crates/scribe-core/src/issue.rs`, `crates/scribe-core/src/store/issues.rs`, `crates/scribe-core/src/issue_trigger.rs`, `crates/scribe-core/src/tag.rs::TagTable::issue_capture`, `crates/scribe/src/commands/issue.rs`
+**Would supersede, once approved:** [Claims carry a statement, tags carry capture rules, and issues are their own record](#claims-carry-a-statement-tags-carry-capture-rules-and-issues-are-their-own-record), for issues only
 
 ### Context
 
-`issue` is a reserved tag whose capture rules use route `agent`. The prompt
-hook tells the agent to write an issue, and the pass catches nothing.
-Findings were agent-written too.
+Store format 17 made issues a record kind of their own:
+
+- `scribe issue add|occur|update|move|search|show|list|stats`;
+- occurrences, and resolved and reopened states;
+- a reserved `issue` tag whose route-`agent` triggers have the prompt hook
+  ask the agent for a root cause.
+
+Daniel, chief's chat, 2026-11-22, reading the `Records:` group of `scribe
+--help`: "we are getting rid of "issue" correct? not sure why it shows up
+as command. it should be a tag".
+
+Measured on the Mac store the same day: no issue record exists, and the
+audit log holds one issue trigger fire.
 
 ### Decision
 
-**Option chosen:** issues and findings are not catchers. They are outside
-the redesign of catchers and out of the shipped defaults. `issue`'s
-triggers move from `[tags.issue.capture]` to `[issues.capture]`, and route
-`agent` leaves the tag schema. Issue records still move into SQLite with
-the other kinds (2_design.md §15.10, item 2).
+**Option chosen:** `issue` is a tag.
+
+- The record kind, its CLI, `issue stats`, the hook's root-cause line,
+  `#scribe forget <issue-id>` and `record search --kind issue` are removed.
+- An incident is caught by a catcher like any other remark.
+- `issue` ships as an **example** catcher (`from = "both"`, `route =
+  "write"`, [2_design.md §15.2](./2_design.md#152-tags-are-catchers)), not
+  as a default. The defaults stay `preference` and `standard`, as Daniel
+  named them.
+- Any stored issue becomes one `issue` entry, model-free (2_design.md
+  §15.11).
+- It is a breaking CLI change, so it lands in phase 2 with the approved
+  design, never before.
+- Agent notes (`scribe entry add`) and stored `finding` entries are
+  unchanged: `finding` is already a tag.
 
 ### Alternatives
 
-- **Make issues a catcher** with `route = "agent"` kept.
-  - Cost: a tag schema with a route whose catch is written by someone other
-    than scribe.
-  - Every catcher rule would need an exception for it.
+- **Keep issue records outside the redesign,** as the accepted proposal
+  had.
+  - Cost: a second capture path (route `agent`), a reserved name, eight
+    verbs and a record kind with its own file format and audit fields, all
+    kept for zero records.
+- **Ship `issue` as a third default catcher.**
+  - Cost: it goes against the defaults Daniel named.
+  - An assistant-reading collector fires on every debugging session of
+    every user.
 
 ### Consequences
 
-- The catcher schema has two routes, both written by scribe.
-- Cost: a config that sets `[tags.issue.capture]` loads with a warning for
-  the 30-day window and then is refused.
+- The catcher schema has two routes, both written by scribe, and no
+  reserved tag.
+- Cost: the same failure seen twice is two entries, not one issue with two
+  occurrences.
+- Cost: an issue has no resolved or reopened state.
+- Cost: there are no precision statistics for the trigger.
+- Cost: a config that sets `[tags.issue.capture]` with route `agent` loads
+  with a warning for the 30-day window, and is then refused.
 
 ## The store keeps only the assistant turns a claim cites (proposed)
 
