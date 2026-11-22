@@ -57,7 +57,7 @@ pub const DB_FILE: &str = "scribe.db";
 /// The schema, one step per `user_version`: step `n` (1-based) moves the
 /// database from version `n - 1` to `n`. Append only; never edit a shipped
 /// step.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6];
 
 /// Version 1 (phase 4): `meta`, `messages` and its FTS5 index, and the
 /// memory tables phase 5 uses.
@@ -408,6 +408,21 @@ INSERT INTO record_kinds_v5 (kind, moved_at, moved_to)
     SELECT kind, moved_at, moved_to FROM record_kinds;
 DROP TABLE record_kinds;
 ALTER TABLE record_kinds_v5 RENAME TO record_kinds;
+";
+
+/// Version 6: durable post-commit archive-erasure obligations for forgotten
+/// entries (STD-03 R8–R9). Holds only the entry id, a per-obligation salt
+/// and salted SHA-256 digests (`{len, sha256}`) of erased texts — never the
+/// entry's cleartext — so a restarted write after a crash finishes cleaning
+/// `pre-sqlite-*` archives without keeping the forgotten text in cleartext.
+const V6: &str = "
+CREATE TABLE pending_archive_forgets (
+    id      INTEGER PRIMARY KEY,
+    entry   TEXT    NOT NULL CHECK (length(entry) >= 3),
+    salt    TEXT    NOT NULL CHECK (length(salt) = 64),
+    digests TEXT    NOT NULL CHECK (json_valid(digests) AND json_type(digests) = 'array'),
+    created TEXT    NOT NULL
+) STRICT;
 ";
 
 /// The newest schema version this build reads and writes.

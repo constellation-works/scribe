@@ -52,19 +52,14 @@ pub(super) type Spooled = (String, u32, AuditEvent);
 /// Spooled audit lines, one file each, under the root.
 pub(super) const AUDIT_SPOOL_DIR: &str = "audit-spool";
 
-/// A forgotten entry whose set-aside files under `pre-sqlite-*` must be
-/// cleaned after the transaction commits.
-#[derive(Debug)]
-pub(super) struct ForgetEntryCleanup {
-    pub(super) id: crate::EntryId,
-    pub(super) texts: Vec<String>,
-}
-
 #[cfg(test)]
 thread_local! {
     /// Tests: fail the next write after its transaction commits and before
     /// `move_files_aside` runs, as an interruption there would.
     pub(super) static CRASH_BEFORE_ASIDE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Tests: fail the next write after its transaction commits and before
+    /// `apply_pending_archive_forgets` runs, as an interruption there would.
+    pub(super) static CRASH_BEFORE_ARCHIVE_FORGET: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// What a write leaves to do once it commits.
@@ -80,8 +75,9 @@ pub(super) struct After {
     pub(super) stamp: bool,
     /// Spool files drained into the table.
     pub(super) spooled: Vec<PathBuf>,
-    /// Forgotten entries to erase from `pre-sqlite-*` after WAL truncation.
-    pub(super) forget_entries: Vec<ForgetEntryCleanup>,
+    /// Drain committed entry-forget archive erasures from
+    /// `pending_archive_forgets` after WAL truncation.
+    pub(super) archive_forgets: bool,
 }
 
 /// Which move a write makes: its own, or `store migrate`'s.
@@ -380,8 +376,8 @@ impl Store {
             let conn = db::open_new_writer(&self.root, self.lock_wait)?;
             db::truncate_wal(&conn, &path, std::time::Instant::now())?;
         }
-        for forgotten in &after.forget_entries {
-            self.forget_moved_entry(&forgotten.id, &forgotten.texts)?;
+        if after.archive_forgets {
+            self.apply_pending_archive_forgets()?;
         }
         Ok(())
     }

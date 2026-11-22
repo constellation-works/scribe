@@ -1234,3 +1234,475 @@ fn forget_without_moved_archive_does_not_create_archive_lock() {
     assert_eq!(forgotten.status, EntryStatus::Forgotten);
     assert!(!root.join(LOCKS_DIR).join(ARCHIVE_FORGET_LOCK).exists());
 }
+
+#[test]
+fn interrupted_forget_entry_finishes_archive_erasure_on_retry() {
+    use crate::store::documents::ARCHIVE_FORGET_LOCK;
+    use crate::store::fsio;
+    use std::time::Duration;
+
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+
+    let entry_quote = "Tuesday release train verbatim quote";
+    let entry_context = "Tuesday release train context paragraph";
+    let cand_reason = "candidate reason for preferences-1";
+    let inst_quote = "approve p-1, Tuesday release train instruction";
+    let supers_reason = "Thursday replaces Tuesday in release train";
+    let kept_quote = "unrelated entry quote stays intact";
+
+    let mut e1 = entry("preferences-1", 0, entry_context);
+    e1.content_from = ContentFrom::Message {
+        role: Speaker::User,
+        message: String::from("m-9"),
+        at: T0,
+    };
+    e1.said = String::from("scribe proposal settle p-1 --approve --author opus");
+    e1.quote = Some(entry_quote.to_owned());
+    e1.stated_by = Some(Author::session_pass());
+    e1.approved_by = Some(Author::agent("opus".parse().unwrap()));
+    e1.instruction = Some(Instruction {
+        session: "s-9".parse().unwrap(),
+        message: String::from("m-9"),
+        at: NOW,
+        quote: Some(inst_quote.to_owned()),
+    });
+    let e2 = entry("preferences-2", 1, kept_quote);
+    for e in [&e1, &e2] {
+        let rel = format!("entries/preferences/{}.md", e.id);
+        put(
+            &root,
+            &rel,
+            &format::encode_entry(&root.join(&rel), e).unwrap(),
+        );
+    }
+
+    let p1 = candidate_proposal(
+        "p-1",
+        "preferences-1",
+        ProposalState::Approved,
+        entry_quote,
+        entry_context,
+        cand_reason,
+        Some(inst_quote),
+    );
+    let mut p2 = supersedes();
+    p2.id = "p-2".parse().unwrap();
+    p2.reason = supers_reason.to_owned();
+    let p3 = candidate_proposal(
+        "p-3",
+        "preferences-3",
+        ProposalState::Open,
+        kept_quote,
+        "unrelated open context stays",
+        "unrelated open reason stays",
+        None,
+    );
+    put(
+        &root,
+        "proposals.json",
+        &format::encode_proposals(&root.join("proposals.json"), &[p1, p2, p3]).unwrap(),
+    );
+    let audit = format!(
+        "{AUDIT_FIXTURE}\n\
+{{\"format\":5,\"at\":\"2026-10-20T12:00:00Z\",\"command\":\"hook stop\",\"status\":\"success\",\"target\":\"preferences-1\",\"detail\":\"prefix {entry_context} suffix\",\"duration_ms\":1}}\n\
+{{\"format\":5,\"at\":\"2026-10-20T12:01:00Z\",\"command\":\"hook stop\",\"status\":\"success\",\"target\":\"p-1\",\"detail\":\"{entry_quote}\",\"duration_ms\":1}}\n\
+{{\"format\":5,\"at\":\"2026-10-20T12:02:00Z\",\"detail\":\"torn line {cand_reason}\n"
+    );
+    put(&root, "audit.jsonl", audit.as_bytes());
+
+    let store = Store::open(&root).with_lock_wait(Duration::from_millis(60));
+    let moved = store.migrate_store(NOW).unwrap();
+    assert_eq!(moved.moved_to.as_deref(), Some("pre-sqlite-2026-11-02"));
+
+    // Interrupt post-commit archive cleanup by holding archive-forget.lock.
+    let lock_path = store.lock_path(ARCHIVE_FORGET_LOCK).unwrap();
+    let held =
+        fsio::LockGuard::acquire(&lock_path, "other forget", Duration::from_secs(1)).unwrap();
+    let instructed = Instructed {
+        session: "s-9".parse().unwrap(),
+        message: String::from("m-10"),
+        at: NOW,
+        quote: String::from("forget preferences-1 for good"),
+        prompt_sha256: "b".repeat(64),
+        line: 1,
+    };
+    let err = store
+        .forget_entry("preferences-1", &instructed, "opus".parse().unwrap(), NOW)
+        .unwrap_err();
+    assert!(matches!(err, Error::Locked { .. }), "{err:?}");
+    drop(held);
+
+    // SQLite forget already committed, while the archive was left untouched.
+    assert_eq!(
+        store
+            .entry(&"preferences-1".parse().unwrap())
+            .unwrap()
+            .status,
+        EntryStatus::Forgotten
+    );
+    assert!(
+        root.join("pre-sqlite-2026-11-02/entries/preferences/preferences-1.md")
+            .is_file()
+    );
+    // Neither scribe.db nor its WAL holds the erased words in cleartext while
+    // the archive-erasure obligation is pending.
+    for gone in [
+        entry_quote,
+        entry_context,
+        cand_reason,
+        inst_quote,
+        supers_reason,
+        "the release train leaves on Tuesdays",
+    ] {
+        for db_file in [db::DB_FILE, "scribe.db-wal"] {
+            let bytes = fs::read(root.join(db_file)).unwrap();
+            assert!(
+                !bytes.windows(gone.len()).any(|w| w == gone.as_bytes()),
+                "{db_file} held cleartext {gone:?} while archive forget was pending"
+            );
+        }
+    }
+    let pending_count = |root: &Path| -> i64 {
+        let conn = rusqlite::Connection::open(root.join(db::DB_FILE)).unwrap();
+        conn.query_row("SELECT count(*) FROM pending_archive_forgets", [], |row| {
+            row.get(0)
+        })
+        .unwrap()
+    };
+    assert_eq!(pending_count(&root), 1);
+
+    // Reopen and retry the forget: archive erasure must complete.
+    let reopened = Store::open(&root);
+    let (forgotten, changed) = reopened
+        .forget_entry("preferences-1", &instructed, "opus".parse().unwrap(), NOW)
+        .unwrap();
+    assert!(!changed);
+    assert_eq!(forgotten.status, EntryStatus::Forgotten);
+    assert_eq!(pending_count(&root), 0);
+
+    assert!(
+        !root
+            .join("pre-sqlite-2026-11-02/entries/preferences/preferences-1.md")
+            .exists()
+    );
+    for gone in [
+        entry_quote,
+        entry_context,
+        cand_reason,
+        inst_quote,
+        supers_reason,
+        "the release train leaves on Tuesdays",
+    ] {
+        assert!(
+            !on_disk(&root, gone),
+            "{gone:?} remained on disk after retry"
+        );
+    }
+    let moved_proposals = root.join("pre-sqlite-2026-11-02/proposals.json");
+    let moved_claims =
+        format::decode_proposals(&moved_proposals, &fs::read(&moved_proposals).unwrap()).unwrap();
+    assert_eq!(moved_claims, reopened.proposals().unwrap());
+    let moved_audit = fs::read_to_string(root.join("pre-sqlite-2026-11-02/audit.jsonl")).unwrap();
+    assert!(moved_audit.contains(r#""target":"preferences-1""#));
+    assert!(moved_audit.contains(r#"{"format":5,"at":"2026-11-21T09:"#));
+    assert!(on_disk(&root, kept_quote));
+}
+
+#[test]
+fn interrupted_settle_forget_finishes_archive_erasure_on_retry() {
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+
+    let open_quote = "pre-move open candidate quote";
+    let open_context = "pre-move open candidate context";
+    let kept_quote = "other rejected claim quote";
+
+    let open = candidate_proposal(
+        "p-1",
+        "preferences-1",
+        ProposalState::Open,
+        open_quote,
+        open_context,
+        "open candidate reason",
+        None,
+    );
+    let kept = candidate_proposal(
+        "p-2",
+        "preferences-2",
+        ProposalState::Rejected,
+        kept_quote,
+        "other rejected context",
+        "other rejected reason",
+        None,
+    );
+    put(
+        &root,
+        "proposals.json",
+        &format::encode_proposals(&root.join("proposals.json"), &[open, kept]).unwrap(),
+    );
+    let audit = format!(
+        "{AUDIT_FIXTURE}\n\
+{{\"format\":5,\"at\":\"2026-10-20T12:00:00Z\",\"command\":\"hook stop\",\"status\":\"success\",\"target\":\"preferences-1\",\"detail\":\"{open_quote}\",\"duration_ms\":1}}\n"
+    );
+    put(&root, "audit.jsonl", audit.as_bytes());
+
+    let store = Store::open(&root);
+    store.migrate_store(NOW).unwrap();
+    let settled = store
+        .settle(&Settle::Approve("p-1".parse().unwrap()), &cite(), NOW)
+        .unwrap();
+    assert!(matches!(settled, Settled::Recorded { .. }), "{settled:?}");
+
+    crate::store::write::CRASH_BEFORE_ARCHIVE_FORGET.with(|c| c.set(true));
+    let err = store
+        .settle(
+            &Settle::Forget("preferences-1".parse().unwrap()),
+            &cite(),
+            NOW,
+        )
+        .unwrap_err();
+    assert!(matches!(err, Error::Io { .. }), "{err:?}");
+    // Archive still holds the pre-move candidate and audit text, while scribe.db
+    // has neither in cleartext.
+    assert!(on_disk(&root, open_quote));
+    for db_file in [db::DB_FILE, "scribe.db-wal"] {
+        let bytes = fs::read(root.join(db_file)).unwrap();
+        assert!(
+            !bytes
+                .windows(open_quote.len())
+                .any(|w| w == open_quote.as_bytes())
+        );
+    }
+
+    // Reopen and retry `#scribe forget`: returns Already and completes archive erasure.
+    let reopened = Store::open(&root);
+    let retry = reopened
+        .settle(
+            &Settle::Forget("preferences-1".parse().unwrap()),
+            &cite(),
+            NOW,
+        )
+        .unwrap();
+    assert!(matches!(retry, Settled::Already(_)), "{retry:?}");
+    assert!(!on_disk(&root, open_quote));
+    assert!(!on_disk(&root, open_context));
+    assert!(on_disk(&root, kept_quote));
+    let moved_audit = fs::read_to_string(root.join("pre-sqlite-2026-11-02/audit.jsonl")).unwrap();
+    assert!(!moved_audit.contains(open_quote));
+    assert!(moved_audit.contains(r#""target":"preferences-1""#));
+}
+
+#[test]
+fn interrupted_forget_finishes_on_unrelated_write_without_original_entry_cleartext() {
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+
+    let entry_body = "café résumé — naïve Tuesday release train";
+    let entry_quote = "verbatim café quote to erase";
+    let kept_body = "Thursday release train stays";
+
+    let mut e1 = entry("preferences-1", 0, entry_body);
+    e1.content_from = ContentFrom::Message {
+        role: Speaker::User,
+        message: String::from("m-9"),
+        at: T0,
+    };
+    e1.said = String::from("scribe proposal settle p-1 --approve --author opus");
+    e1.quote = Some(entry_quote.to_owned());
+    e1.stated_by = Some(Author::session_pass());
+    e1.approved_by = Some(Author::agent("opus".parse().unwrap()));
+    e1.instruction = Some(Instruction {
+        session: "s-9".parse().unwrap(),
+        message: String::from("m-9"),
+        at: NOW,
+        quote: Some(format!("approve p-1: {entry_quote}")),
+    });
+    let e2 = entry("preferences-2", 1, kept_body);
+    for e in [&e1, &e2] {
+        let rel = format!("entries/preferences/{}.md", e.id);
+        put(
+            &root,
+            &rel,
+            &format::encode_entry(&root.join(&rel), e).unwrap(),
+        );
+    }
+    let p1 = candidate_proposal(
+        "p-1",
+        "preferences-1",
+        ProposalState::Approved,
+        entry_quote,
+        entry_body,
+        "candidate reason for café entry",
+        None,
+    );
+    put(
+        &root,
+        "proposals.json",
+        &format::encode_proposals(&root.join("proposals.json"), &[p1]).unwrap(),
+    );
+    let audit = format!(
+        "{AUDIT_FIXTURE}\n\
+{{\"format\":5,\"at\":\"2026-10-20T12:00:00Z\",\"command\":\"hook stop\",\"status\":\"success\",\"target\":\"preferences-1\",\"detail\":\"résumé prefix: {entry_body} — suffix\",\"duration_ms\":1}}\n\
+{{\"format\":5,\"at\":\"2026-10-20T12:01:00Z\",\"command\":\"hook stop\",\"status\":\"success\",\"target\":\"preferences-2\",\"detail\":\"{kept_body}\",\"duration_ms\":1}}\n\
+{{\"format\":5,\"detail\":\"torn {entry_quote}\n"
+    );
+    put(&root, "audit.jsonl", audit.as_bytes());
+
+    let store = Store::open(&root);
+    store.migrate_store(NOW).unwrap();
+
+    let instructed = Instructed {
+        session: "s-9".parse().unwrap(),
+        message: String::from("m-10"),
+        at: NOW,
+        quote: String::from("forget preferences-1 for good"),
+        prompt_sha256: "b".repeat(64),
+        line: 1,
+    };
+    crate::store::write::CRASH_BEFORE_ARCHIVE_FORGET.with(|c| c.set(true));
+    let err = store
+        .forget_entry("preferences-1", &instructed, "opus".parse().unwrap(), NOW)
+        .unwrap_err();
+    assert!(matches!(err, Error::Io { .. }), "{err:?}");
+
+    // Remove the moved entry file before recovery to prove replay finishes
+    // cited-claim and audit erasure without the original entry file in cleartext.
+    fs::remove_file(root.join("pre-sqlite-2026-11-02/entries/preferences/preferences-1.md"))
+        .unwrap();
+    for gone in [entry_body, entry_quote] {
+        for db_file in [db::DB_FILE, "scribe.db-wal"] {
+            let bytes = fs::read(root.join(db_file)).unwrap();
+            assert!(!bytes.windows(gone.len()).any(|w| w == gone.as_bytes()));
+        }
+    }
+
+    // Any restarted write replays and completes the archive erasure.
+    let reopened = Store::open(&root);
+    reopened
+        .update_control(|s| control::switch(s, &"s-7".parse().unwrap(), &Switch::On, NOW))
+        .unwrap();
+
+    for gone in [entry_body, entry_quote, "candidate reason for café entry"] {
+        assert!(!on_disk(&root, gone), "{gone:?} remained on disk");
+    }
+    let moved_proposals = root.join("pre-sqlite-2026-11-02/proposals.json");
+    let moved_claims =
+        format::decode_proposals(&moved_proposals, &fs::read(&moved_proposals).unwrap()).unwrap();
+    assert_eq!(moved_claims, reopened.proposals().unwrap());
+    let moved_audit = fs::read_to_string(root.join("pre-sqlite-2026-11-02/audit.jsonl")).unwrap();
+    assert!(moved_audit.contains(kept_body));
+    assert!(moved_audit.contains(r#""target":"preferences-1""#));
+    assert!(!moved_audit.contains(entry_body));
+    assert!(!moved_audit.contains(entry_quote));
+
+    let conn = rusqlite::Connection::open(root.join(db::DB_FILE)).unwrap();
+    let remaining: i64 = conn
+        .query_row("SELECT count(*) FROM pending_archive_forgets", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(remaining, 0);
+}
+
+#[test]
+fn interrupted_first_write_forget_before_move_aside_finishes_archive_erasure() {
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+
+    let secret_body = "first write forget secret body";
+    let kept_body = "unrelated second entry stays";
+    let e1 = entry("preferences-1", 0, secret_body);
+    let e2 = entry("preferences-2", 1, kept_body);
+    for e in [&e1, &e2] {
+        let rel = format!("entries/preferences/{}.md", e.id);
+        put(
+            &root,
+            &rel,
+            &format::encode_entry(&root.join(&rel), e).unwrap(),
+        );
+    }
+    let audit = format!(
+        "{AUDIT_FIXTURE}\n\
+{{\"format\":5,\"at\":\"2026-10-20T12:00:00Z\",\"command\":\"hook stop\",\"status\":\"success\",\"target\":\"preferences-1\",\"detail\":\"{secret_body}\",\"duration_ms\":1}}\n"
+    );
+    put(&root, "audit.jsonl", audit.as_bytes());
+
+    let store = Store::open(&root);
+    let instructed = Instructed {
+        session: "s-9".parse().unwrap(),
+        message: String::from("m-10"),
+        at: NOW,
+        quote: String::from("forget preferences-1 for good"),
+        prompt_sha256: "b".repeat(64),
+        line: 1,
+    };
+
+    // Crash after committing both the automatic migration and the forget,
+    // before `move_files_aside` creates `pre-sqlite-*`.
+    crate::store::write::CRASH_BEFORE_ASIDE.with(|c| c.set(true));
+    let err = store
+        .forget_entry("preferences-1", &instructed, "opus".parse().unwrap(), NOW)
+        .unwrap_err();
+    assert!(matches!(err, Error::Io { .. }), "{err:?}");
+    assert!(root.join("entries/preferences/preferences-1.md").is_file());
+
+    // A restarted write moves the files aside and immediately finishes erasing
+    // preferences-1 from the newly created `pre-sqlite-*` archive.
+    let reopened = Store::open(&root);
+    reopened
+        .update_control(|s| control::switch(s, &"s-8".parse().unwrap(), &Switch::On, NOW))
+        .unwrap();
+
+    assert!(!root.join("entries").exists());
+    assert!(!on_disk(&root, secret_body));
+    assert!(on_disk(&root, kept_body));
+    let moved_dir = fs::read_dir(&root)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .find(|e| e.file_name().to_string_lossy().starts_with("pre-sqlite-"))
+        .expect("pre-sqlite-* created")
+        .path();
+    assert!(
+        !moved_dir
+            .join("entries/preferences/preferences-1.md")
+            .exists()
+    );
+    assert!(
+        moved_dir
+            .join("entries/preferences/preferences-2.md")
+            .is_file()
+    );
+    let moved_audit = fs::read_to_string(moved_dir.join("audit.jsonl")).unwrap();
+    assert!(!moved_audit.contains(secret_body));
+}
+
+#[test]
+fn corrupt_pending_archive_forget_row_fails_closed_without_dropping() {
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+    file_store(&root);
+    let store = Store::open(&root);
+    store.migrate_store(NOW).unwrap();
+
+    db::execute(
+        &root,
+        "INSERT INTO pending_archive_forgets (entry, salt, digests, created)
+         VALUES ('preferences-1', '0000000000000000000000000000000000000000000000000000000000000000',
+                 '[{\"len\":4,\"sha256\":\"not-hex\"}]', '2026-11-02T06:00:00Z')",
+    )
+    .unwrap();
+
+    let err = store
+        .update_control(|s| control::switch(s, &"s-9".parse().unwrap(), &Switch::On, NOW))
+        .unwrap_err();
+    assert_eq!(err.code(), "store_corrupt", "{err:?}");
+
+    let conn = rusqlite::Connection::open(root.join(db::DB_FILE)).unwrap();
+    let remaining: i64 = conn
+        .query_row("SELECT count(*) FROM pending_archive_forgets", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(remaining, 1, "corrupt obligation must not be dropped");
+}

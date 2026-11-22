@@ -242,6 +242,7 @@ fn jsonl_export_reads_phase_six_sessions_when_no_live_files_remain() {
          DROP TABLE marks;
          DROP TABLE pickups;
          DROP TABLE audit;
+         DROP TABLE pending_archive_forgets;
          DELETE FROM record_kinds WHERE kind <> 'sessions';
          CREATE TABLE record_kinds_v3 (
              kind TEXT NOT NULL PRIMARY KEY CHECK (kind IN ('sessions')),
