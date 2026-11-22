@@ -39,6 +39,7 @@ fn run(q: &SearchQuery, entries: &[Entry], sessions: &[SessionRecord]) -> search
             sessions,
             issues: &[],
             tags: &tags,
+            user: &crate::voice::UserName::default(),
         },
     )
     .unwrap()
@@ -160,6 +161,7 @@ fn terms_with_no_searchable_word_are_refused() {
             sessions: &[],
             issues: &[],
             tags: &tags,
+            user: &crate::voice::UserName::default(),
         },
     )
     .unwrap_err();

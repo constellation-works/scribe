@@ -1,4 +1,4 @@
-Forget an entry for good on Daniel's instruction
+Forget an entry for good on the user's instruction
 
 Blanks the entry's text and keeps its id.
 
@@ -16,10 +16,10 @@ Options:
           Confirm blanking the entry's text for good; it cannot be undone
 
       --session <ID>
-          The session you run in, whose transcript holds Daniel's instruction; requires --instruction
+          The session you run in, whose transcript holds the user's instruction; requires --instruction
 
       --instruction <WORDS>
-          Daniel's instruction, word for word from one of his last three typed turns of --session within 30 minutes, naming the id (or answering your reply that names it) and the act; requires --session
+          The user's instruction, word for word from one of their last three typed turns of --session within 30 minutes, naming the id (or answering your reply that names it) and the act; requires --session
 
   -h, --help
           Print help (see a summary with '-h')
@@ -44,9 +44,9 @@ Global options:
 
 Blanks the entry's text, evidence and reason for good, with every proposal
 quote of it and every reason about it; the id, tag, dates and author stay,
-and no file is removed. It cannot be undone, so it runs only on Daniel's
-instruction (his own turn says forget, erase, purge, permanently or for good)
+and no file is removed. It cannot be undone, so it runs only on the user's
+instruction (their own turn says forget, erase, purge, permanently or for good)
 and with --confirm.
 
 Examples:
-  scribe entry forget <id> --author opus --session <id> --instruction '<his words>' --confirm
+  scribe entry forget <id> --author opus --session <id> --instruction '<their words>' --confirm

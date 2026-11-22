@@ -24,7 +24,7 @@ Examples:
 
 const ASK_EXAMPLES: &str = "\
 Lookups (the newest session, a named session, open next steps, a tag's
-entries today or this week, month or year, a term Daniel defined, the last
+entries today or this week, month or year, a term the user defined, the last
 on-call session for a workspace) return the stored records with no model
 call. Anything else is answered by the configured ask model from the
 records that match, and every quote it gives is checked verbatim against
@@ -166,9 +166,18 @@ fn answer_with_config<M: Models, T: Tasks + ?Sized>(
         sessions: &sessions.listing.items,
         issues: &issues,
         tags: &config.tags,
+        user: &config.user,
     };
     let adapter = models(config);
-    let answer = ask::answer(&question, corpus, &adapter, tasks, &config.models.ask, now)?;
+    let answer = ask::answer(
+        &question,
+        corpus,
+        &adapter,
+        tasks,
+        &config.models.ask,
+        &config.voice(scribe_core::voice::ModelUse::Ask),
+        now,
+    )?;
     let mut skipped = entries.skipped;
     skipped.extend(sessions.skipped);
     skipped.extend(issues_skipped);

@@ -7,7 +7,7 @@
       "segment": null,
       "score": 10.167,
       "title": "idea-1 (idea)",
-      "snippet": "scribe's statement of Daniel's turn, captured by the session pass (not typed by Daniel): Daniel suggests caching the routing table per host so lookups stay local. | Daniel's words: \"what if we cached the routing table per host? not now though, let's park it until the drains are quiet.\" | outcome: parked, in Daniel's words: \"let's park it until the drains are quiet\"",
+      "snippet": "scribe's statement of the user's turn, captured by the session pass (not typed by the user): Daniel suggests caching the routing table per host so lookups stay local. | The user's words: \"what if we cached the routing table per host? not now though, let's park it until the drains are quiet.\" | outcome: parked, in the user's words: \"let's park it until the drains are quiet\"",
       "project": "constellation-works/scribe",
       "topics": [],
       "author": {

@@ -22,7 +22,7 @@
         "admitted": {
           "trigger": "I prefer",
           "matched": "I prefer",
-          "criteria": "A standing rule from Daniel that applies beyond the work at hand."
+          "criteria": "A standing rule from the user that applies beyond the work at hand."
         }
       },
       "id": "p-3",

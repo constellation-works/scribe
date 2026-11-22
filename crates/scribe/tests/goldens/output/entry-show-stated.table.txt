@@ -15,7 +15,7 @@ cite        session 7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02, line 1, message user-h
 cwd         /home/daniel/workspace/scribe
 said        #scribe approve p-5
 author      daniel
-stated_by   scribe:session-pass (content is scribe's statement of Daniel's turn)
+stated_by   scribe:session-pass (content is scribe's statement of the user's turn)
 quote       ok that makes sense. then let's keep the whole history in an append-only log, not one rewritten outcome.
-admitted    trigger "let's keep" matched "let's keep"; criteria: A standing rule from Daniel that applies beyond the work at hand.
+admitted    trigger "let's keep" matched "let's keep"; criteria: A standing rule from the user that applies beyond the work at hand.
 content     Daniel prefers that session records keep the whole session's history in an append-only log rather than one rewritten outcome.

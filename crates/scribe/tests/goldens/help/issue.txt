@@ -41,4 +41,4 @@ Examples:
   scribe issue search 'HTTP 429 secondary rate limit'
   scribe issue list --status open
   scribe issue show <issue-id>
-  scribe issue occur <issue-id> --author opus --related session:<id> --request '<his words>' --summary '<what happened>'
+  scribe issue occur <issue-id> --author opus --related session:<id> --request '<their words>' --summary '<what happened>'

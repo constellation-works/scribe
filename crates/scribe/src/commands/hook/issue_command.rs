@@ -1,5 +1,5 @@
 //! `#scribe forget <issue-id>` and `#scribe forget <issue-id>#<n>` in a
-//! typed prompt (docs/design/scribe/2_design.md §11.4): Daniel removes an
+//! typed prompt (docs/design/scribe/2_design.md §11.4): the user removes an
 //! issue an agent recorded, or one occurrence of it.
 //!
 //! `user_prompt_submit.rs` hands each such line here after the transcript
@@ -16,7 +16,7 @@ use scribe_core::{Author, IssueAudit};
 
 /// The echo and the audit outcome of one forget line.
 pub(super) struct Reply {
-    /// The line shown to Daniel and the agent.
+    /// The line shown to the user and the agent.
     pub(super) echo: String,
     /// What the audit log records; `None` when nothing changed.
     pub(super) outcome: Option<HookOutcome>,

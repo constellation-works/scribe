@@ -2,7 +2,7 @@
 //! (docs/design/scribe/2_design.md §7).
 //!
 //! The `scribe-consistency` routine runs it weekly through the plugin's
-//! `scribe.consistency-scan` tool; Daniel can run it too. One scan:
+//! `scribe.consistency-scan` tool; the user can run it too. One scan:
 //!
 //! 1. applies again every approved proposal whose older entry is still
 //!    `active` (an approval writes two files; a crash between them leaves
@@ -24,13 +24,13 @@
 //!    is older than `[sessions] inactive_after_days` (route `age`);
 //! 7. (S10) asks the model about removed-feature pairs
 //!    ([`consistency::removal_candidates`]: an active, unpinned session and
-//!    a later entry Daniel wrote with a removal cue, at most
+//!    a later entry the user wrote with a removal cue, at most
 //!    [`consistency::MAX_REMOVAL_PAIRS`]) and deactivates each session a
 //!    `removed` label with a verbatim quote names (route `removed`, citing
 //!    the later entry). Model-written session text and agent-written
 //!    entries are never offered as removal evidence.
 //!
-//! A scan never changes an entry except in step 1: Daniel settles every
+//! A scan never changes an entry except in step 1: the user settles every
 //! proposal with `#scribe approve` or `#scribe reject` in a typed turn. A
 //! failed batch is reported and its pairs are offered again next scan.
 //! A scan deactivates sessions directly rather than proposing: an inactive
@@ -75,7 +75,7 @@ for review. It changes an entry only to finish an approval that was cut
 short; settle a proposal with #scribe approve or #scribe reject in a
 prompt. It also deactivates sessions with no messages for [sessions]
 inactive_after_days (120) and, after asking the model about at most 20
-pairs, sessions a later entry Daniel wrote says were removed or replaced; pinned
+pairs, sessions a later entry the user wrote says were removed or replaced; pinned
 sessions are left alone, and scribe session activate reverses either.
 --json reports what the scan did.
 
@@ -201,7 +201,11 @@ pub(in crate::commands) fn scan<M: Models>(
             continue;
         }
         calls = calls.saturating_add(1);
-        let request = consistency::request(&config.models.consistency, batch);
+        let request = consistency::request(
+            &config.models.consistency,
+            batch,
+            config.voice(scribe_core::voice::ModelUse::Consistency),
+        );
         match adapter.consistency(&request) {
             Ok(answer) => {
                 let judged = consistency::judge(answer, batch);
@@ -334,7 +338,11 @@ fn consolidate_memory<M: Models>(
                 continue;
             }
             calls = calls.saturating_add(1);
-            let request = consolidate::request(&config.models.consistency, batch);
+            let request = consolidate::request(
+                &config.models.consistency,
+                batch,
+                config.voice(scribe_core::voice::ModelUse::MemoryPairs),
+            );
             match adapter.memory_pairs(&request) {
                 Ok(answer) => {
                     let judged = consolidate::judge(answer, batch);
@@ -391,7 +399,7 @@ fn consolidate_memory<M: Models>(
 /// sessions: deactivate every session whose last message is older than
 /// `[sessions] inactive_after_days` (route `age`), then ask the model about
 /// the removed-feature pairs and deactivate each session a later entry
-/// Daniel wrote says was removed or replaced, with a verbatim quote (route `removed`).
+/// the user wrote says was removed or replaced, with a verbatim quote (route `removed`).
 /// `calls` is how many model calls the scan has made so far: after the
 /// first, a batch starts only within the call's time.
 fn deactivate_sessions<M: Models>(
@@ -463,7 +471,11 @@ fn deactivate_sessions<M: Models>(
             continue;
         }
         calls = calls.saturating_add(1);
-        let request = consistency::removal_request(&config.models.consistency, batch);
+        let request = consistency::removal_request(
+            &config.models.consistency,
+            batch,
+            config.voice(scribe_core::voice::ModelUse::Removal),
+        );
         match adapter.removal(&request) {
             Ok(answer) => {
                 let judged = consistency::judge_removals(answer, batch);

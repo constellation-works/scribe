@@ -84,7 +84,7 @@ pub(crate) struct Context {
     issue: Arc<Mutex<Option<IssueAudit>>>,
 }
 
-/// The ids of Daniel's instruction a write ran on (2_design.md §12.4): the
+/// The ids of the user's instruction a write ran on (2_design.md §12.4): the
 /// session from `--session`, and the turn's message once the check found it.
 /// Ids only; the instruction's words never reach the audit log.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

@@ -167,7 +167,7 @@ fn judgement(pair: &str, label: &str, older: &str, newer: &str) -> JudgementAnsw
 #[test]
 fn judge_keeps_a_contradiction_only_with_both_quotes_verbatim() {
     let pairs = consistency::candidates(&store(), &[], date!(2026 - 11 - 02), 40).pairs;
-    let request = consistency::request("a-model", &pairs);
+    let request = consistency::request("a-model", &pairs, crate::voice::Voice::default());
     assert_eq!(request.pairs[0].pair, "1");
     assert_eq!(request.pairs[0].older.id, "preferences-1");
 

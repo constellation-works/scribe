@@ -2,7 +2,7 @@
 //! prompt and apply its settling commands (docs/design/scribe/2_design.md
 //! §4.4, §14).
 //!
-//! A turn that is not plainly typed by Daniel (an agent or harness wrapper
+//! A turn that is not plainly typed by the user (an agent or harness wrapper
 //! such as `<agent-message>`, `<task-notification>`,
 //! `<side-sessions-event>` or a scheduled/loop wrapper, or a non-plain
 //! payload origin field; see `payload::agent_originated`) is skipped at
@@ -10,16 +10,16 @@
 //!
 //! Every such turn is also matched, without a model, against the `issue`
 //! tag's triggers (2_design.md §11.4, `scribe_core::issue_trigger::fire`),
-//! in Daniel's own words only (pasted, fenced, indented, quoted and
+//! in the user's own words only (pasted, fenced, indented, quoted and
 //! `#scribe` lines left out), whether or not the session is on. On a match
 //! that passes the transcript check the agent gets one more
 //! `additionalContext` line (asking for a root cause: search issues first,
-//! record the answer with `issue add` or `issue occur`), Daniel sees
+//! record the answer with `issue add` or `issue occur`), the user sees
 //! nothing, and the fire is one audit line: the session, the trigger
 //! phrase and the prompt's sha256, never its words. A config that does not
 //! load gives no hint.
 //!
-//! Every `#scribe` Daniel typed, inside a sentence or opening a line
+//! Every `#scribe` the user typed, inside a sentence or opening a line
 //! (`#scribe idea: …`, `#scribe add this to preferences`), is a marker
 //! (§14.6): this hook writes nothing and calls no model for it, it only
 //! echoes that the marker is noted; the Stop of this turn catalogs it
@@ -35,10 +35,10 @@
 //! `/scribe status` is not a turn: `scribe_command.rs` switches the session
 //! and blocks it (§5.1), and its `#scribe` lines, if any, are not read.
 //!
-//! The reply tells Daniel (`systemMessage`) one echo per settling line and
+//! The reply tells the user (`systemMessage`) one echo per settling line and
 //! one for the markers. The main agent (`additionalContext`) gets the same
 //! echoes, each with a note: applied lines say no action is needed,
-//! refused or failed lines say they must be relayed to Daniel, and markers
+//! refused or failed lines say they must be relayed to the user, and markers
 //! say scribe catalogs them after the reply. The hook never blocks the
 //! prompt: a refusal or a store failure is a reply, not an error exit, so
 //! the rest of the prompt still reaches the agent.
@@ -61,7 +61,7 @@ const ECHO_CHARS: usize = 200;
 const AGENT_NOTE: &str = "(recorded by scribe; no action needed)";
 /// What the agent is told after a refused or failed echo: nothing was
 /// applied, so the line must not be silently lost.
-const AGENT_RELAY_NOTE: &str = "(not recorded by scribe; relay this to Daniel)";
+const AGENT_RELAY_NOTE: &str = "(not recorded by scribe; relay this to the user)";
 /// What the agent is told after a marked echo: Stop catalogs the marker
 /// after the reply, so the agent must not record it as well.
 const AGENT_MARKED_NOTE: &str =
@@ -226,7 +226,7 @@ fn said_of(item: &Parsed) -> &str {
 }
 
 /// `output` with the issue trigger's hint for the agent after its echoes,
-/// and the fire as one more audit outcome. Daniel's message is unchanged.
+/// and the fire as one more audit outcome. The user's message is unchanged.
 fn with_hint(output: Output, fired: &Fired, session: &SessionId, prompt: &str) -> Output {
     let Output::Hook(mut reply) = output else {
         return output;
@@ -252,7 +252,7 @@ fn with_hint(output: Output, fired: &Fired, session: &SessionId, prompt: &str) -
     Output::Hook(reply)
 }
 
-/// The echoes of `prompt`'s annotation markers, as Daniel's text and the
+/// The echoes of `prompt`'s annotation markers, as the user's text and the
 /// agent's context with its note, for the Codex adapter.
 pub(super) fn mark_echoes(prompt: &str) -> Vec<(String, String)> {
     marked(prompt)
@@ -299,7 +299,7 @@ fn refusal(session: &SessionId, code: &'static str) -> HookOutcome {
     }
 }
 
-/// The reply: nothing at all when there is nothing to echo. Daniel sees
+/// The reply: nothing at all when there is nothing to echo. The user sees
 /// the plain echoes; the agent sees each echo with its own note, so a
 /// recorded line never lends its "no action needed" to a refused one.
 fn reply(echoes: Vec<Echo>, outcomes: Vec<HookOutcome>) -> Output {

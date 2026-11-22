@@ -421,7 +421,7 @@ fn a_refused_line_tells_the_agent_to_relay_it_to_daniel_not_that_no_action_is_ne
         .unwrap();
     assert_eq!(
         context,
-        format!("{message} (not recorded by scribe; relay this to Daniel)")
+        format!("{message} (not recorded by scribe; relay this to the user)")
     );
     assert!(!context.contains("no action needed"), "{context}");
 }
@@ -443,7 +443,7 @@ fn a_failed_line_tells_the_agent_to_relay_it_to_daniel_not_that_no_action_is_nee
         .unwrap();
     assert_eq!(
         context,
-        format!("{message} (not recorded by scribe; relay this to Daniel)")
+        format!("{message} (not recorded by scribe; relay this to the user)")
     );
     assert!(!context.contains("no action needed"), "{context}");
 }
@@ -463,7 +463,7 @@ fn a_refused_approve_tells_the_agent_to_relay_it_to_daniel() {
         .unwrap();
     assert_eq!(
         context,
-        format!("{message} (not recorded by scribe; relay this to Daniel)")
+        format!("{message} (not recorded by scribe; relay this to the user)")
     );
     assert!(!context.contains("no action needed"), "{context}");
 }
@@ -498,7 +498,7 @@ fn a_mixed_prompt_notes_each_line_by_whether_it_was_recorded() {
     );
     assert!(
         lines[1].starts_with("scribe: refused")
-            && lines[1].ends_with("(not recorded by scribe; relay this to Daniel)"),
+            && lines[1].ends_with("(not recorded by scribe; relay this to the user)"),
         "{context}"
     );
     assert_eq!(

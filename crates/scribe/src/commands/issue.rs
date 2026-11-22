@@ -1,13 +1,13 @@
 //! The `issue` noun (docs/design/scribe/2_design.md §11.4): the memory of an
 //! incident that recurs across projects, and what fixed it.
 //!
-//! The agent that answers Daniel's investigation request writes it: `add`
+//! The agent that answers the user's investigation request writes it: `add`
 //! for a new issue, `occur` for another occurrence of one, `update` for the
 //! header's cause, fix and status, and `move` for an occurrence filed under
-//! the wrong issue. `add` and `occur` carry Daniel's request word for word
-//! (`--request`), checked against his typed turns in the session named by
+//! the wrong issue. `add` and `occur` carry the user's request word for word
+//! (`--request`), checked against their typed turns in the session named by
 //! `--related session:<id>`; error lines are the agent's evidence and are
-//! not checked. No write waits for approval: Daniel removes what is wrong
+//! not checked. No write waits for approval: the user removes what is wrong
 //! with `#scribe forget <issue-id>` or `<issue-id>#<n>`. `search`, `show` and
 //! `list` read only.
 //!
@@ -35,31 +35,31 @@ Examples:
   scribe issue search 'HTTP 429 secondary rate limit'
   scribe issue list --status open
   scribe issue show <issue-id>
-  scribe issue occur <issue-id> --author opus --related session:<id> --request '<his words>' --summary '<what happened>'";
+  scribe issue occur <issue-id> --author opus --related session:<id> --request '<their words>' --summary '<what happened>'";
 
 const ADD_EXAMPLES: &str = "\
 Search first (scribe issue search); add only when no issue matches, else
-occur. --request is Daniel's request word for word from one of his typed
+occur. --request is the user's request word for word from one of their typed
 turns in the session --related session:<id> names. Error lines are your
 evidence and are shown as such. Without a known cause, leave --cause out:
-it reads \"cause not found\". Daniel cancels with #scribe forget <issue-id>.
+it reads \"cause not found\". The user cancels with #scribe forget <issue-id>.
 
 Examples:
-  scribe issue add --author opus --related session:<id> --request '<his words>' --title '<title>' --signature 'HTTP 429' --summary '<what happened>'
-  scribe issue add --author opus --related session:<id> --related task:<id> --request '<his words>' --title '<title>' --signature 'HTTP 429' --signature 'secondary rate limit' --summary '<what happened>' --error-line '<a key error line>' --cause '<the cause>' --fix '<the fix>' --project orbit";
+  scribe issue add --author opus --related session:<id> --request '<their words>' --title '<title>' --signature 'HTTP 429' --summary '<what happened>'
+  scribe issue add --author opus --related session:<id> --related task:<id> --request '<their words>' --title '<title>' --signature 'HTTP 429' --signature 'secondary rate limit' --summary '<what happened>' --error-line '<a key error line>' --cause '<the cause>' --fix '<the fix>' --project orbit";
 
 const OCCUR_EXAMPLES: &str = "\
 An occurrence on a resolved issue reopens it and is marked \"recurred after
-fix\". Daniel cancels with #scribe forget <issue-id>#<n>.
+fix\". The user cancels with #scribe forget <issue-id>#<n>.
 
 Examples:
-  scribe issue occur <issue-id> --author opus --related session:<id> --request '<his words>' --summary '<what happened>'
-  scribe issue occur <issue-id> --author opus --related session:<id> --request '<his words>' --summary '<what happened>' --error-line '<a key error line>' --fix '<what fixed it>'";
+  scribe issue occur <issue-id> --author opus --related session:<id> --request '<their words>' --summary '<what happened>'
+  scribe issue occur <issue-id> --author opus --related session:<id> --request '<their words>' --summary '<what happened>' --error-line '<a key error line>' --fix '<what fixed it>'";
 
 const UPDATE_EXAMPLES: &str = "\
 Examples:
   scribe issue update <issue-id> --author opus --cause '<the cause found>' --fix '<the fix>' --status resolved
-  scribe issue update <issue-id> --author opus --status mitigated --related session:<id> --request '<his words>'";
+  scribe issue update <issue-id> --author opus --status mitigated --related session:<id> --request '<their words>'";
 
 const MOVE_EXAMPLES: &str = "\
 Moves a wrongly matched occurrence; it keeps where it came from (moved_from).
@@ -106,7 +106,7 @@ Examples:
 pub(crate) enum IssueCommand {
     /// Record a new issue with its first occurrence
     ///
-    /// Writes without approval; Daniel forgets what is wrong with #scribe forget <issue-id>.
+    /// Writes without approval; the user forgets what is wrong with #scribe forget <issue-id>.
     #[command(after_help = ADD_EXAMPLES)]
     Add(AddArgs),
     /// Add an occurrence to an existing issue
@@ -143,13 +143,13 @@ pub(crate) struct StatsArgs {
     since: Option<time::Date>,
 }
 
-/// Daniel's request and the session it was typed in.
+/// The user's request and the session it was typed in.
 #[derive(Debug, Args)]
 pub(crate) struct RequestArgs {
-    /// Reference, repeatable: session:<id> names the session Daniel's request was typed in; task:<id>, pr:<owner>/<repo>#<n> and repo:<slug> are linked
+    /// Reference, repeatable: session:<id> names the session the user's request was typed in; task:<id>, pr:<owner>/<repo>#<n> and repo:<slug> are linked
     #[arg(long, value_name = "REF")]
     related: Vec<Related>,
-    /// Daniel's request, word for word from one of his typed turns in the session --related names
+    /// The user's request, word for word from one of their typed turns in the session --related names
     #[arg(long, value_name = "WORDS")]
     request: Option<String>,
 }
@@ -223,7 +223,7 @@ pub(crate) struct UpdateArgs {
     /// The new status
     #[arg(long, value_name = "STATUS", value_parser = clap::builder::PossibleValuesParser::new(IssueStatus::SETTABLE))]
     status: Option<String>,
-    /// The request this update answers, if Daniel made one: checked as for add
+    /// The request this update answers, if the user made one: checked as for add
     #[command(flatten)]
     request: RequestArgs,
 }
@@ -251,7 +251,7 @@ pub(crate) struct MoveArgs {
     /// The new issue's topics, repeatable
     #[arg(long, requires = "new")]
     topic: Vec<Topic>,
-    /// The request this move answers, if Daniel made one: checked as for add
+    /// The request this move answers, if the user made one: checked as for add
     #[command(flatten)]
     request: RequestArgs,
 }
@@ -381,7 +381,7 @@ fn refuse(kind: WriteRefusal, message: impl Into<String>) -> CliError {
 }
 
 /// The request a write carries, once checked: its session, the uuid of
-/// Daniel's typed turn that holds it, and the words. The turn's hashes go
+/// the user's typed turn that holds it, and the words. The turn's hashes go
 /// to the audit line, where `issue stats` matches them to a trigger fire.
 struct Request {
     session: SessionId,
@@ -389,7 +389,7 @@ struct Request {
     words: String,
 }
 
-/// Check `args`' request: word for word in one of Daniel's typed turns of a
+/// Check `args`' request: word for word in one of the user's typed turns of a
 /// session `--related` names, in that session's transcript on this host
 /// (§4.6's quote check). The session and the turn are noted for the audit
 /// line as each is known.
@@ -411,7 +411,7 @@ fn check_request(ctx: &Context, verb: &str, args: &RequestArgs) -> Result<Reques
     let Some(words) = args.request.as_deref().filter(|w| !w.trim().is_empty()) else {
         return Err(refuse(
             WriteRefusal::QuoteRequired,
-            "an issue write carries Daniel's request word for word; pass --request '<his words>' with --related session:<id>",
+            "an issue write carries the user's request word for word; pass --request '<their words>' with --related session:<id>",
         ));
     };
     if sessions.is_empty() {
@@ -436,11 +436,11 @@ fn check_request(ctx: &Context, verb: &str, args: &RequestArgs) -> Result<Reques
     }
     Err(refuse(
         WriteRefusal::QuoteNotFound,
-        "the request is not word for word in Daniel's typed turns of the session named, or its transcript is not readable on this host; quote his own words exactly",
+        "the request is not word for word in the user's typed turns of the session named, or its transcript is not readable on this host; quote their own words exactly",
     ))
 }
 
-/// The uuid and text hashes of Daniel's typed turn in session `id` whose
+/// The uuid and text hashes of the user's typed turn in session `id` whose
 /// own words hold `words`, or `None` when its transcript is missing, fails
 /// the provenance check or holds no such turn.
 fn find_request(
@@ -659,10 +659,10 @@ fn written(issue: &scribe_core::issue::Issue, changed: bool, notes: Vec<String>)
     output
 }
 
-/// The line an added occurrence prints: how Daniel cancels it.
+/// The line an added occurrence prints: how the user cancels it.
 fn cancel_line(issue: &scribe_core::issue::Issue, n: std::num::NonZeroU32) -> String {
     format!(
-        "recorded {}#{n}; Daniel cancels with #scribe forget {}#{n}, or #scribe forget {} for the whole issue",
+        "recorded {}#{n}; the user cancels with #scribe forget {}#{n}, or #scribe forget {} for the whole issue",
         issue.id, issue.id, issue.id
     )
 }
@@ -689,6 +689,7 @@ fn search(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
         sessions: &[],
         issues: &issues,
         tags: &config.tags,
+        user: &config.user,
     };
     let found = search::search(&query, corpus).map_err(|e| match e {
         SearchError::NoTerms(_) => CliError::Usage(e.to_string()),

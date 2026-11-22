@@ -11,7 +11,7 @@
 //! `commands::Command::audit`; read-only commands are not, because they must
 //! not write (STD-01 R31). The line holds the command path, the record acted
 //! on, the outcome, the stable error code, for a command that takes an
-//! `--author`, that name (STD-05 R2), and for a write run on Daniel's
+//! `--author`, that name (STD-05 R2), and for a write run on the user's
 //! instruction its session and turn ids: never argument values or error text,
 //! which can carry entry contents or paths (STD-05 R13).
 //!

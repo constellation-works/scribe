@@ -207,24 +207,24 @@ fn hit(score: f64, doc: &Doc, corpus: Corpus<'_>, wanted: &BTreeSet<String>) -> 
                     e.evidence.as_deref().unwrap_or_default()
                 )
             } else if let (Some(quote), Some(outcome)) = (ask::stated_quote(e), &e.outcome) {
-                // An idea the pass captured: scribe's statement, Daniel's
-                // own words and where it stands (2_design.md §11.6).
+                // An idea the pass captured: scribe's statement, the
+                // user's own words and where it stands (2_design.md §11.6).
                 format!(
                     "{}: {} | {} \"{}\" | outcome: {}",
-                    ask::CAPTURED_WHOSE,
+                    ask::captured_whose(corpus.user),
                     snippet(text, wanted),
-                    ask::STATED_QUOTE_LABEL,
+                    ask::stated_quote_label(corpus.user),
                     snippet(quote, wanted),
-                    ask::outcome_text(outcome)
+                    ask::outcome_text(outcome, corpus.user)
                 )
             } else if let Some(quote) = ask::stated_quote(e) {
-                // Scribe's statement of Daniel's turn, then his own words,
-                // labelled as his (2_design.md §11.1).
+                // Scribe's statement of the user's turn, then their own
+                // words, labelled as theirs (2_design.md §11.1).
                 format!(
                     "{}: {} | {} \"{}\"",
-                    ask::STATED_WHOSE,
+                    ask::stated_whose(corpus.user),
                     snippet(text, wanted),
-                    ask::STATED_QUOTE_LABEL,
+                    ask::stated_quote_label(corpus.user),
                     snippet(quote, wanted)
                 )
             } else {
@@ -320,7 +320,7 @@ fn hit(score: f64, doc: &Doc, corpus: Corpus<'_>, wanted: &BTreeSet<String>) -> 
             // word, in every output mode (2_design.md §11.4).
             let snippet = match issue.occurrences.first() {
                 Some(o) => format!(
-                    "{} [{}; Daniel asked: \"{}\"]",
+                    "{} [{}; the user asked: \"{}\"]",
                     snippet(&text, wanted),
                     ask::issue_whose(issue),
                     flatten(&o.request)

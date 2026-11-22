@@ -27,6 +27,7 @@ mod tag;
 mod transcript;
 mod trigger;
 mod verbatim;
+mod voice;
 
 use crate::entry::{Cite, ContentFrom, Entry, EntryStatus};
 use crate::session::{Segment, SegmentOrigin, SegmentState, SessionRecord, SessionStatus};

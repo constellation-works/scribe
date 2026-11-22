@@ -30,7 +30,7 @@ pub fn check_agent_author(author: &AuthorName) -> Result<()> {
         return Err(refusal(
             WriteRefusal::ReservedAuthor,
             format!(
-                "'{author}' is reserved for Daniel's and scribe's own channels; pass your own crew or model name as --author"
+                "'{author}' is reserved for the user's and scribe's own channels; pass your own crew or model name as --author"
             ),
         ));
     }
@@ -83,7 +83,7 @@ fn check_quote(def: &crate::TagDef, quote: Option<&str>) -> Result<()> {
         (Some(action), None) if action.require_quote => Err(refusal(
             WriteRefusal::QuoteRequired,
             format!(
-                "{} requires Daniel's words: pass --quote with Daniel's correction and --related session:<id>; without a quote, file a friction instead",
+                "{} requires the user's words: pass --quote with the user's correction and --related session:<id>; without a quote, file a friction instead",
                 def.name
             ),
         )),
@@ -438,7 +438,7 @@ impl Store {
             if entry.author.kind != AuthorKind::Agent {
                 return Err(refusal(
                     WriteRefusal::DanielOnly,
-                    "Daniel's content changes only through #scribe",
+                    "The user's content changes only through #scribe",
                 ));
             }
             required(&content)?;
@@ -495,7 +495,7 @@ impl Store {
         if entry.author.kind != AuthorKind::Agent && instruction.is_none() {
             return Err(refusal(
                 WriteRefusal::DanielOnly,
-                "Daniel retires his entries through #scribe retire, or on his instruction with --session and --instruction",
+                "The user retires their entries through #scribe retire, or on their instruction with --session and --instruction",
             ));
         }
         if entry.status == EntryStatus::Retired
@@ -711,9 +711,9 @@ impl Store {
                 return Err(refusal(
                     WriteRefusal::DanielOnly,
                     if instruction.is_some() {
-                        "Daniel settles candidate proposals through #scribe approve or reject; their reason is scribe's"
+                        "The user settles candidate proposals through #scribe approve or reject; their reason is scribe's"
                     } else {
-                        "Daniel settles candidate proposals through #scribe approve or reject"
+                        "The user settles candidate proposals through #scribe approve or reject"
                     },
                 ));
             };
@@ -731,7 +731,7 @@ impl Store {
             if older.author.kind != AuthorKind::Agent {
                 return Err(refusal(
                     WriteRefusal::DanielOnly,
-                    "Daniel settles proposals about his entries through #scribe approve or reject",
+                    "The user settles proposals about their entries through #scribe approve or reject",
                 ));
             }
             let state = if approve {
@@ -878,7 +878,7 @@ impl Store {
             return Err(refusal(
                 WriteRefusal::InstructionStale,
                 format!(
-                    "the instruction was typed before {} opened; ask Daniel again",
+                    "the instruction was typed before {} opened; ask the user again",
                     p.id
                 ),
             ));
@@ -920,7 +920,7 @@ fn required_message(instructed: &crate::instruction::Instructed) -> Result<()> {
     if instructed.message.trim().is_empty() {
         return Err(refusal(
             WriteRefusal::InstructionNotFound,
-            "the instruction's turn has no message id; ask Daniel again",
+            "the instruction's turn has no message id; ask the user again",
         ));
     }
     Ok(())

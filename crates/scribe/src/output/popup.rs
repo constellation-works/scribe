@@ -229,7 +229,7 @@ fn proposed(p: &ProposalPayload) -> String {
 
 /// A proposal's words: scribe's statement for a candidate carrying one
 /// (2_design.md §11.1), else its reason, which for a pass candidate is
-/// Daniel's raw quote.
+/// the user's raw quote.
 fn said(p: &ProposalPayload) -> &str {
     p.candidate
         .as_ref()

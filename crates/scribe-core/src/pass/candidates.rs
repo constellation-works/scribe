@@ -702,7 +702,7 @@ pub fn write_exclusions(
         })
         .map(|entry| {
             let text = match crate::ask::stated_quote(entry) {
-                Some(quote) => format!("{} (Daniel's words: {quote:?})", entry.content),
+                Some(quote) => format!("{} (the user's words: {quote:?})", entry.content),
                 None => entry.content.clone(),
             };
             (words(&text).intersection(&query).count(), entry, text)

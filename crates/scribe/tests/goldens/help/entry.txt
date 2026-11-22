@@ -3,10 +3,10 @@ Read entries and write agent notes
 Usage: scribe entry [OPTIONS] <COMMAND>
 
 Commands:
-  add     Add an agent note (never attributed to Daniel)
+  add     Add an agent note (never attributed to the user)
   update  Update an entry's content or metadata
   retire  Retire an entry with a reason
-  forget  Forget an entry for good on Daniel's instruction
+  forget  Forget an entry for good on the user's instruction
   list    List entries, oldest first
   show    Show one entry in full: what was said, its content and its cite
   pickup  Record pickup or rejection of an action entry

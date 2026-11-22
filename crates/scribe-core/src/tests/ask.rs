@@ -133,6 +133,7 @@ fn run<T: Tasks>(
         sessions,
         issues: &[],
         tags: &tags,
+        user: &crate::voice::UserName::default(),
     };
     ask::answer(
         q,
@@ -140,6 +141,7 @@ fn run<T: Tasks>(
         models,
         tasks,
         "claude-sonnet-5-5",
+        &crate::voice::Voice::default(),
         T0 + Duration::days(30),
     )
     .unwrap()
@@ -361,9 +363,9 @@ fn evidence_is_newest_first_and_labels_whose_words_they_are() {
     let evidence = &calls[0].evidence;
     let cites: Vec<&str> = evidence.iter().map(|e| e.cite.as_str()).collect();
     assert_eq!(cites, vec!["preferences-2", "session:s-1", "preferences-1"]);
-    assert_eq!(evidence[0].whose, "assistant (recorded by Daniel)");
+    assert_eq!(evidence[0].whose, "assistant (recorded by the user)");
     assert_eq!(evidence[1].whose, "session summary");
-    assert_eq!(evidence[2].whose, "Daniel");
+    assert_eq!(evidence[2].whose, "The user");
     assert!(
         calls[0]
             .prompt()
@@ -869,7 +871,11 @@ fn mixed_author_conflicts_keep_both_labels_and_a_nonempty_safe_answer() {
         &NoTasks,
     );
     assert_eq!(result.status, Status::Conflict);
-    assert!(result.conflicts[0].note.contains("Daniel [preferences-1]"));
+    assert!(
+        result.conflicts[0]
+            .note
+            .contains("The user [preferences-1]")
+    );
     assert!(
         result.conflicts[0]
             .note
@@ -912,10 +918,10 @@ fn a_stated_entry_is_scribes_statement_followed_by_daniels_labelled_words() {
         &NoTasks,
     );
     let item = &models.calls.borrow()[0].evidence[0];
-    assert_eq!(item.whose, "scribe's statement of Daniel's turn");
+    assert_eq!(item.whose, "scribe's statement of the user's turn");
     assert_eq!(
         item.text,
-        format!("{STATEMENT}\nDaniel's words: \"{HIS_WORDS}\"")
+        format!("{STATEMENT}\nThe user's words: \"{HIS_WORDS}\"")
     );
     assert_eq!(item.quote.as_deref(), Some(HIS_WORDS));
 }
@@ -945,14 +951,17 @@ fn a_claim_is_daniels_only_when_its_quote_is_in_his_words_never_in_the_statement
     );
     assert_eq!(result.claims.len(), 2, "both quotes are in the item");
     // The span only in scribe's statement is never attributed to Daniel.
-    assert_eq!(result.claims[0].text, "scribe's statement of Daniel's turn");
+    assert_eq!(
+        result.claims[0].text,
+        "scribe's statement of the user's turn"
+    );
     // The span in his quoted words is his.
-    assert_eq!(result.claims[1].text, "Daniel");
+    assert_eq!(result.claims[1].text, "The user");
     // The answer is built from those labels, not the model's prose.
     assert!(!result.answer.contains("Daniel said"), "{}", result.answer);
     assert_eq!(
         result.answer,
-        "scribe's statement of Daniel's turn: \"Daniel prefers that session records keep the whole history\" [preferences-1]\n\
-         Daniel: \"keep the whole history in an append-only log then\" [preferences-1]"
+        "scribe's statement of the user's turn: \"Daniel prefers that session records keep the whole history\" [preferences-1]\n\
+         The user: \"keep the whole history in an append-only log then\" [preferences-1]"
     );
 }

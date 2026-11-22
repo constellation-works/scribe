@@ -1,6 +1,6 @@
 Record a new issue with its first occurrence
 
-Writes without approval; Daniel forgets what is wrong with #scribe forget <issue-id>.
+Writes without approval; the user forgets what is wrong with #scribe forget <issue-id>.
 
 Usage: scribe issue add [OPTIONS] --author <AUTHOR> --title <TITLE> --signature <TEXT> --summary <SUMMARY>
 
@@ -18,10 +18,10 @@ Options:
           Topic, repeatable (at most five)
 
       --related <REF>
-          Reference, repeatable: session:<id> names the session Daniel's request was typed in; task:<id>, pr:<owner>/<repo>#<n> and repo:<slug> are linked
+          Reference, repeatable: session:<id> names the session the user's request was typed in; task:<id>, pr:<owner>/<repo>#<n> and repo:<slug> are linked
 
       --request <WORDS>
-          Daniel's request, word for word from one of his typed turns in the session --related names
+          The user's request, word for word from one of their typed turns in the session --related names
 
       --summary <SUMMARY>
           What happened, in your words (at most 1200 characters)
@@ -62,11 +62,11 @@ Global options:
           Shorthand for --format json
 
 Search first (scribe issue search); add only when no issue matches, else
-occur. --request is Daniel's request word for word from one of his typed
+occur. --request is the user's request word for word from one of their typed
 turns in the session --related session:<id> names. Error lines are your
 evidence and are shown as such. Without a known cause, leave --cause out:
-it reads "cause not found". Daniel cancels with #scribe forget <issue-id>.
+it reads "cause not found". The user cancels with #scribe forget <issue-id>.
 
 Examples:
-  scribe issue add --author opus --related session:<id> --request '<his words>' --title '<title>' --signature 'HTTP 429' --summary '<what happened>'
-  scribe issue add --author opus --related session:<id> --related task:<id> --request '<his words>' --title '<title>' --signature 'HTTP 429' --signature 'secondary rate limit' --summary '<what happened>' --error-line '<a key error line>' --cause '<the cause>' --fix '<the fix>' --project orbit
+  scribe issue add --author opus --related session:<id> --request '<their words>' --title '<title>' --signature 'HTTP 429' --summary '<what happened>'
+  scribe issue add --author opus --related session:<id> --related task:<id> --request '<their words>' --title '<title>' --signature 'HTTP 429' --signature 'secondary rate limit' --summary '<what happened>' --error-line '<a key error line>' --cause '<the cause>' --fix '<the fix>' --project orbit

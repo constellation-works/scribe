@@ -28,7 +28,7 @@ use scribe_core::{EntryStatus, SessionId};
 
 /// The echo and the audit outcome of one settling line.
 pub(super) struct Reply {
-    /// The line shown to Daniel and the agent.
+    /// The line shown to the user and the agent.
     pub(super) echo: String,
     /// What the audit log records; `None` when nothing changed.
     pub(super) outcome: Option<HookOutcome>,
@@ -71,7 +71,7 @@ pub(super) fn run(settling: &Settling, turn: &Turn, ctx: &Context) -> Reply {
                 )
             } else {
                 format!(
-                    "scribe: approved {proposal} — recorded {entry} as Daniel's words with the original turn's cite"
+                    "scribe: approved {proposal} — recorded {entry} as the user's words with the original turn's cite"
                 )
             },
         ),

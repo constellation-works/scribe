@@ -42,6 +42,7 @@ fn request() -> AnnotationRequest {
         marks: Vec::new(),
         messages: Vec::new(),
         tags: Vec::new(),
+        voice: scribe_core::voice::Voice::default(),
     }
 }
 fn answer(value: serde_json::Value) -> String {
@@ -75,6 +76,7 @@ fn codex_validates_port_schemas_with_null_populated_and_omitted_open() {
             Vec::new(),
             Vec::new(),
             false,
+            scribe_core::voice::Voice::default(),
         );
         req.budget = Duration::from_secs(5);
         assert!(fake.model().session(&req).is_ok());

@@ -6,7 +6,7 @@ Options:
       --since <DATE>       Only transcripts whose span, from the first message to the last, overlaps this day, YYYY-MM-DD
       --until <DATE>       Only transcripts on or before this day, YYYY-MM-DD [default: no upper bound]
       --project <PROJECT>  Only transcripts attributed to this project; repeat to accept any of them [default: any]
-      --min-turns <N>      Only transcripts with at least this many of Daniel's turns [default: 20]
+      --min-turns <N>      Only transcripts with at least this many of the user's turns [default: 20]
       --limit <N>          Show at most this many transcripts, 1 or more; --json reports the total and whether the list was cut [default: all]
   -h, --help               Print help
   -V, --version            Print version

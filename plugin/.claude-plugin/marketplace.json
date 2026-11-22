@@ -8,7 +8,7 @@
     {
       "name": "scribe",
       "source": "./claude-code",
-      "description": "Records the #scribe lines Daniel types as preferences, through the scribe binary on PATH.",
+      "description": "Records the #scribe lines the user types as preferences, through the scribe binary on PATH.",
       "version": "0.3.0"
     }
   ]

@@ -16,6 +16,6 @@ cwd         /home/daniel/workspace/scribe
 said        #scribe idea: a dry-run flag for the session pass
 author      daniel
 age         <age>
-cancel      none (Daniel's own line)
+cancel      none (the user's own line)
 pickups     -
 content     a dry-run flag for the session pass

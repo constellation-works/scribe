@@ -42,7 +42,7 @@
   "admitted": {
     "trigger": "let's keep",
     "matched": "let's keep",
-    "criteria": "A standing rule from Daniel that applies beyond the work at hand."
+    "criteria": "A standing rule from the user that applies beyond the work at hand."
   },
   "approved_by": {
     "kind": "agent",

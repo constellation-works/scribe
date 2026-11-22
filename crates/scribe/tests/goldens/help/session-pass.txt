@@ -38,13 +38,13 @@ window_chars). Each window rewrites the header and open segment, appends
 new segments and checkpoints the record. Sealed segments stay unchanged;
 [catalog] segment_windows (default 3) bounds how long a segment stays open.
 --json reports windows, segments, seals and how many due sessions remain.
-Also proposes up to 3 claims per session per run, only from Daniel's turns
+Also proposes up to 3 claims per session per run, only from the user's turns
 that fire a trigger of a tag's capture rules (see scribe tag show <tag>),
 until 20 candidate proposals are open. Review with scribe proposal list;
 only a typed #scribe approve <id> writes an entry; #scribe reject <id> drops it.
 Under a tag whose route is write (idea ships so), the pass writes up to 3
 ideas per session per run itself, with their outcome (open, or parked in
-Daniel's words); an idea that became a task in the session is not written.
+the user's words); an idea that became a task in the session is not written.
 List them with scribe entry list --tag idea --author-kind scribe; cancel one
 with #scribe retire <id> or #scribe forget <id>.
 A failed pass stays due with automatic retry delays of 5, 10, 20, 40,

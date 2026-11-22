@@ -1,10 +1,10 @@
 status      answered
-answer      Daniel (captured by the session pass): "what if we cached the routing table per host?" [idea-1]
-            scribe's statement of Daniel's turn, captured by the session pass (not typed by Daniel): "caching the routing table per host" [idea-1]
-            Daniel: "a dry-run flag for the session pass" [idea-2]
+answer      The user (captured by the session pass): "what if we cached the routing table per host?" [idea-1]
+            scribe's statement of the user's turn, captured by the session pass (not typed by the user): "caching the routing table per host" [idea-1]
+            The user: "a dry-run flag for the session pass" [idea-2]
 lookup      -
 evidence    2 considered, 0 quotes dropped, 0 hidden matches
-claims      Daniel (captured by the session pass) "what if we cached the routing table per host?" [idea-1]
-            scribe's statement of Daniel's turn, captured by the session pass (not typed by Daniel) "caching the routing table per host" [idea-1]
-            Daniel "a dry-run flag for the session pass" [idea-2]
+claims      The user (captured by the session pass) "what if we cached the routing table per host?" [idea-1]
+            scribe's statement of the user's turn, captured by the session pass (not typed by the user) "caching the routing table per host" [idea-1]
+            The user "a dry-run flag for the session pass" [idea-2]
 conflicts   -

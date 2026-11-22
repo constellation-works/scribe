@@ -1,6 +1,6 @@
 Update an entry's content or metadata
 
-Updates content or metadata; Daniel's entries allow metadata only.
+Updates content or metadata; the user's entries allow metadata only.
 
 Usage: scribe entry update [OPTIONS] --author <AUTHOR> <ID>
 

@@ -148,7 +148,7 @@ and grouped, never as a gate on the work:
   `--author` once they agree.
 - **Capture rules.** `scribe tag show <tag>` prints a tag's capture rules
   with where each comes from (`shipped`, or `config` with its file and
-  line). The session pass proposes a claim only from Daniel's own turn
+  line). The session pass proposes a claim only from the user's own turn
   that fires one of the tag's triggers; a candidate's `admitted` names the
   trigger, the matched words and the criteria. To change what is caught,
   suggest a `[tags.<tag>.capture]` edit in config; never edit the store.

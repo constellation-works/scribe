@@ -1,11 +1,11 @@
-//! `scribe hook session-start`: tell Daniel how many proposals wait for him
+//! `scribe hook session-start`: tell the user how many proposals wait for them
 //! (docs/design/scribe/2_design.md §7), how many action entries no consumer
 //! has picked up (§4.6), and, when this session may continue a recorded
 //! one, the command that keeps recording it (§5.4, §7).
 //!
 //! Read-only and model-free: it reads `proposals.json` and, when any
 //! proposal (including a session-pass candidate) is open, prints one
-//! `systemMessage` line for Daniel, `scribe: 3 proposals to review —
+//! `systemMessage` line for the user, `scribe: 3 proposals to review —
 //! scribe proposal list`. It then counts the active entries under action
 //! tags older than `action::STUCK_AFTER` with no pickup in `pickups.json`
 //! and, when there are any, adds one line, `scribe: 2 action entries not
@@ -14,7 +14,7 @@
 //! session in the same project was recorded within the last day, it adds
 //! `scribe: this may continue <id> (recorded) — type /scribe on --from <id>
 //! to keep recording`, naming the one updated most recently. The agent is
-//! not told: settling is Daniel's, in a typed turn, and so is the link.
+//! not told: settling is the user's, in a typed turn, and so is the link.
 //! Nothing to report, no store yet, or a store that cannot be read
 //! (logged) prints nothing, so a session always starts. It writes nothing
 //! and is not audited.

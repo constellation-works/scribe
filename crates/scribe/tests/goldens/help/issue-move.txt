@@ -12,8 +12,8 @@ Options:
       --title <TITLE>     The new issue's title
       --signature <TEXT>  The new issue's signature, repeatable
       --topic <TOPIC>     The new issue's topics, repeatable
-      --related <REF>     Reference, repeatable: session:<id> names the session Daniel's request was typed in; task:<id>, pr:<owner>/<repo>#<n> and repo:<slug> are linked
-      --request <WORDS>   Daniel's request, word for word from one of his typed turns in the session --related names
+      --related <REF>     Reference, repeatable: session:<id> names the session the user's request was typed in; task:<id>, pr:<owner>/<repo>#<n> and repo:<slug> are linked
+      --request <WORDS>   The user's request, word for word from one of their typed turns in the session --related names
   -h, --help              Print help
   -V, --version           Print version
 

@@ -190,8 +190,15 @@ pub(in crate::commands) fn run_with<M: Models>(
                 topics.into_iter().take(200).collect(),
                 terms.into_iter().take(200).collect(),
                 final_window,
+                config.voice(scribe_core::voice::ModelUse::Session),
             );
-            let answer = match distill(&id, request, &conversation[..end], &adapter) {
+            let answer = match distill(
+                &id,
+                request,
+                &conversation[..end],
+                &adapter,
+                config.voice(scribe_core::voice::ModelUse::SessionHeader),
+            ) {
                 Ok(answer) => answer,
                 Err(error) => {
                     report.result = "failed";

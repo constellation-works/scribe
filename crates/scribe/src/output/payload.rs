@@ -135,7 +135,7 @@ pub(crate) struct SegmentPayload {
     pub(crate) origin: &'static str,
     pub(crate) topics: Vec<String>,
     pub(crate) related: Vec<String>,
-    /// Model-written, never Daniel's words.
+    /// Model-written, never the user's words.
     pub(crate) text: String,
 }
 
@@ -183,7 +183,7 @@ impl From<&Cite> for CitePayload {
     }
 }
 
-/// Daniel's checked instruction that authorized an agent write (format 13).
+/// The user's checked instruction that authorized an agent write (format 13).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct InstructionPayload {
     pub(crate) session: String,
@@ -234,7 +234,7 @@ pub(crate) struct EntryPayload {
     /// Who last updated or retired it through a CLI verb.
     pub(crate) updated_by: Option<AuthorPayload>,
     pub(crate) retirement_reason: Option<String>,
-    /// An agent entry's quote of Daniel's correction, or Daniel's verbatim
+    /// An agent entry's quote of the user's correction, or the user's verbatim
     /// words beside scribe's statement of them (`stated_by` set); `null`
     /// otherwise.
     pub(crate) quote: Option<String>,
@@ -255,28 +255,28 @@ pub(crate) struct EntryPayload {
     /// (`entry show` only); `null` for any other entry and in other
     /// commands' output.
     pub(crate) admitted: Option<scribe_core::Admitted>,
-    /// The agent that approved this candidate on Daniel's instruction; `null` otherwise.
+    /// The agent that approved this candidate on the user's instruction; `null` otherwise.
     pub(crate) approved_by: Option<AuthorPayload>,
-    /// Daniel's checked instruction `approved_by` approved this candidate
+    /// The user's checked instruction `approved_by` approved this candidate
     /// on; `null` otherwise. A later retirement or forgetting never
     /// replaces it.
     pub(crate) instruction: Option<InstructionPayload>,
     /// Whose words `content` is when not the author's: `{kind: scribe,
-    /// name: session-pass}` when it is scribe's statement of Daniel's turn
-    /// (his words are then in `quote`); `null` otherwise.
+    /// name: session-pass}` when it is scribe's statement of the user's turn
+    /// (their words are then in `quote`); `null` otherwise.
     pub(crate) stated_by: Option<AuthorPayload>,
     /// Where an idea the session pass captured itself stands: `{state:
-    /// open|parked|task, reason, task}`, `reason` Daniel's own words
+    /// open|parked|task, reason, task}`, `reason` the user's own words
     /// parking it; `null` for every other entry.
     pub(crate) outcome: Option<scribe_core::Outcome>,
-    /// Daniel's checked instruction that retired or forgot this entry;
+    /// The user's checked instruction that retired or forgot this entry;
     /// `null` otherwise.
     pub(crate) removal_instruction: Option<InstructionPayload>,
 }
 
 /// One issue as every output mode sees it (docs/design/scribe/2_design.md
 /// §11.4). Every word in it is the agent's account, but `request`, which is
-/// Daniel's typed request word for word; `error_lines` are the agent's
+/// the user's typed request word for word; `error_lines` are the agent's
 /// evidence, not checked against the transcript.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct IssuePayload {
@@ -319,9 +319,9 @@ pub(crate) struct OccurrencePayload {
     pub(crate) date: String,
     pub(crate) host: String,
     pub(crate) project: String,
-    /// The session Daniel's request was typed in.
+    /// The session the user's request was typed in.
     pub(crate) session: String,
-    /// The uuid of his typed turn holding `request`.
+    /// The uuid of their typed turn holding `request`.
     pub(crate) request_message: String,
     /// Written while the issue was `resolved`: it recurred after the fix.
     pub(crate) recurred: bool,
@@ -330,7 +330,7 @@ pub(crate) struct OccurrencePayload {
     pub(crate) author: AuthorPayload,
     /// The agent's context summary.
     pub(crate) summary: String,
-    /// Daniel's request, word for word from his typed turn.
+    /// The user's request, word for word from their typed turn.
     pub(crate) request: String,
     /// Key error lines: the agent's evidence.
     pub(crate) error_lines: Vec<String>,
@@ -458,14 +458,14 @@ pub(crate) struct ActionPayload {
     /// Seconds since it was created.
     pub(crate) age_seconds: i64,
     /// When an agent-written entry's cancel window ends; `null` for
-    /// Daniel's, which have none.
+    /// the user's, which have none.
     #[serde(with = "time::serde::rfc3339::option")]
     pub(crate) cancel_window_ends: Option<Timestamp>,
     /// Whether an intake may take it now.
     pub(crate) past_cancel_window: bool,
     /// Whether a consumer recorded a pickup.
     pub(crate) picked_up: bool,
-    /// Whether a consumer recorded that Daniel rejected its result.
+    /// Whether a consumer recorded that the user rejected its result.
     pub(crate) rejected: bool,
     pub(crate) pickups: Vec<PickupPayload>,
 }
@@ -583,11 +583,11 @@ impl From<&Entry> for EntryPayload {
     }
 }
 
-/// A phrase Daniel coined or defined, with his defining words.
+/// A phrase the user coined or defined, with their defining words.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct TermPayload {
     pub(crate) term: String,
-    /// Verbatim from Daniel's turn.
+    /// Verbatim from the user's turn.
     pub(crate) said: String,
     /// The uuid of that turn's message.
     pub(crate) message: String,
@@ -672,7 +672,7 @@ pub(crate) struct SessionPayload {
     pub(crate) links: Vec<LinkPayload>,
     /// The sessions that link to this one, derived at read time.
     pub(crate) children: Vec<ChildPayload>,
-    /// Daniel's own words, unlike the four model-written sections.
+    /// The user's own words, unlike the four model-written sections.
     pub(crate) terms: Vec<TermPayload>,
     pub(crate) provider: String,
     pub(crate) host: String,
@@ -689,7 +689,7 @@ pub(crate) struct SessionPayload {
     pub(crate) scribed_through: Option<String>,
     pub(crate) passes: u32,
     pub(crate) next_open: u32,
-    /// Model-written, never Daniel's words.
+    /// Model-written, never the user's words.
     pub(crate) summary: String,
     pub(crate) goals: String,
     /// Always `""` from store format 4: what it held is in `log`. Kept so
@@ -817,9 +817,9 @@ pub(crate) struct ProposalPayload {
     /// Who settled it; `null` while open.
     pub(crate) settled_author: Option<AuthorPayload>,
     pub(crate) updated_by: Option<AuthorPayload>,
-    /// Why scribe closed it without Daniel (`tag_retired`, `instructed`); `null` otherwise.
+    /// Why scribe closed it without the user (`tag_retired`, `instructed`); `null` otherwise.
     pub(crate) closed_reason: Option<&'static str>,
-    /// Daniel's checked instruction that settled this candidate; `null` otherwise.
+    /// The user's checked instruction that settled this candidate; `null` otherwise.
     pub(crate) instruction: Option<InstructionPayload>,
 }
 
@@ -861,7 +861,7 @@ pub(crate) struct TagPayload {
     pub(crate) configured: bool,
     /// Entries in it, any status.
     pub(crate) entries: usize,
-    /// For an action tag, how agents use it and how often Daniel undid
+    /// For an action tag, how agents use it and how often the user undid
     /// their entries; `null` for a memory tag.
     pub(crate) action: Option<TagActionPayload>,
     /// The capture route (`propose`, `write` or `agent`); `null` for a tag
@@ -869,12 +869,12 @@ pub(crate) struct TagPayload {
     pub(crate) route: Option<&'static str>,
 }
 
-/// An action tag's switch and counts, where Daniel decides to flip it.
+/// An action tag's switch and counts, where the user decides to flip it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct TagActionPayload {
     /// `free` (agents write unasked) or `ask-first`.
     pub(crate) mode: &'static str,
-    /// Whether an agent's entry must quote Daniel's correction.
+    /// Whether an agent's entry must quote the user's correction.
     pub(crate) require_quote: bool,
     /// Agent-written entries under it that were retired or forgotten.
     pub(crate) retired: usize,
@@ -1422,9 +1422,9 @@ pub(crate) struct TranscriptPayload {
     pub(crate) ended: Option<Timestamp>,
     /// The file's length.
     pub(crate) bytes: u64,
-    /// Daniel's turns, by the pass's rule.
+    /// The user's turns, by the pass's rule.
     pub(crate) daniel_turns: u32,
-    /// His first turn, cut to 300 characters. Empty when he has none.
+    /// Their first turn, cut to 300 characters. Empty when they have none.
     pub(crate) first_prompt: String,
     /// His first five turns, each cut to 300 characters. Present on
     /// `transcript show` only.
@@ -1432,7 +1432,7 @@ pub(crate) struct TranscriptPayload {
     pub(crate) daniel_first_turns: Option<Vec<String>>,
 }
 
-/// The reply a Claude Code hook prints: text for Daniel
+/// The reply a Claude Code hook prints: text for the user
 /// (`systemMessage`) and for the main agent (`additionalContext`), plus what
 /// the audit log records for the run. Its JSON shape is Claude Code's hook
 /// protocol, so it is the same in every output mode.
@@ -1440,11 +1440,11 @@ pub(crate) struct TranscriptPayload {
 pub(crate) struct HookReply {
     /// The hook event, such as `UserPromptSubmit`.
     pub(crate) event: &'static str,
-    /// Shown to Daniel; `None` prints no reply at all.
+    /// Shown to the user; `None` prints no reply at all.
     pub(crate) message: Option<String>,
     /// Shown to the main agent beside the prompt.
     pub(crate) context: Option<String>,
-    /// Block the prompt with this reason, shown to Daniel: a `/scribe`
+    /// Block the prompt with this reason, shown to the user: a `/scribe`
     /// command is answered here and never reaches the model.
     pub(crate) block: Option<String>,
     /// One per record written or refused, for the audit log; empty when the
@@ -1500,7 +1500,7 @@ pub(crate) struct PassPayload {
     /// The record's pass count after this pass; `null` when there is no
     /// record.
     pub(crate) passes: Option<u32>,
-    /// Terms the model offered that were not verbatim from Daniel's turns.
+    /// Terms the model offered that were not verbatim from the user's turns.
     pub(crate) dropped_terms: usize,
     /// Successfully persisted model windows for this session in this run.
     pub(crate) windows: usize,
@@ -1814,7 +1814,7 @@ pub(crate) struct FoundPayload {
     /// The same shape `session show --json` prints.
     pub(crate) session: Option<SessionPayload>,
     pub(crate) task: Option<TaskPayload>,
-    /// For a term lookup, the session's terms that matched, with Daniel's
+    /// For a term lookup, the session's terms that matched, with the user's
     /// defining words; empty otherwise.
     pub(crate) terms: Vec<TermPayload>,
 }

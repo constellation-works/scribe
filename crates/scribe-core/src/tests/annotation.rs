@@ -204,7 +204,13 @@ fn the_window_holds_eight_before_the_turn_and_its_reply_within_forty_thousand_ch
 fn a_call_is_bounded_at_thirty_seconds() {
     assert_eq!(annotation::budget(), Duration::from_secs(30));
     let marks = annotation::marks("short updates #scribe preferences");
-    let request = annotation::request(&[&marks[0]], Vec::new(), &TagTable::defaults(), "m");
+    let request = annotation::request(
+        &[&marks[0]],
+        Vec::new(),
+        &TagTable::defaults(),
+        "m",
+        crate::voice::Voice::default(),
+    );
     assert_eq!(request.budget, Duration::from_secs(30));
     assert_eq!(request.marks[0].hint.as_deref(), Some("preferences"));
 }

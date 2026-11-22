@@ -1,4 +1,4 @@
-fires	2	issue trigger fires on Daniel's typed turns
+fires	2	issue trigger fires on the user's typed turns
 fires_with_write	1	fires followed by an issue write on the same turn
 writes	3	issue add and occur writes
 writes_without_fire	2	writes whose request turn no fire matched

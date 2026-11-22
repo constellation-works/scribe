@@ -36,7 +36,7 @@ Global options:
       --json
           Shorthand for --format json
 
-Run it after raising a now item the user did not bring up himself, so the
+Run it after raising a now item the user did not bring up themselves, so the
 next session does not raise it again unprompted.
 
 Examples:

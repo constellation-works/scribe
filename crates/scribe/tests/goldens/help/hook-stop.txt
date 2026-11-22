@@ -30,8 +30,8 @@ Reads the Stop payload (session_id, transcript_path, optional cwd) on stdin.
 Each typed turn with a #scribe marker that marks.json has not settled gets
 one models.annotation call (30 s; at most 2 turns per Stop and 3 markers
 per turn; a failed call is retried at the next reply, 3 attempts in all),
-and its checked answer is recorded as Daniel's entry with scribe's statement
-and his quoted words. A tag named after the marker, or at the end of a line
+and its checked answer is recorded as the user's entry with scribe's statement
+and their quoted words. A tag named after the marker, or at the end of a line
 it opens, is a hint the model must follow. #scribe/global in place of
 #scribe records the entry with project global, for every repository; the
 working directory's project stays the default. Under an action tag

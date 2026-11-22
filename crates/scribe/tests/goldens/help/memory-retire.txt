@@ -18,7 +18,7 @@ Global options:
       --json                 Shorthand for --format json
 
 Hides an item from the page, lists and ask; its text is kept. Run it when
-Daniel says an item is wrong; the next time he says it, a fresh item opens.
+the user says an item is wrong; the next time they say it, a fresh item opens.
 
 Examples:
-  scribe memory retire <id> --author opus --reason 'Daniel says this is wrong'
+  scribe memory retire <id> --author opus --reason 'The user says this is wrong'

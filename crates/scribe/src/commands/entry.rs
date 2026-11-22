@@ -42,21 +42,21 @@ Examples:
   scribe entry add --tag standard --author opus --related session:<id> --quote '<quoted words>' 'Name the unit in every size'";
 
 const RETIRE_EXAMPLES: &str = "\
-Daniel's entry retires only on his instruction: --session and --instruction.
+The user's entry retires only on their instruction: --session and --instruction.
 
 Examples:
   scribe entry retire <id> --author opus --reason 'No longer applies'
-  scribe entry retire <id> --author opus --reason 'Daniel asked' --session <id> --instruction '<his words>'";
+  scribe entry retire <id> --author opus --reason 'The user asked' --session <id> --instruction '<their words>'";
 
 const FORGET_EXAMPLES: &str = "\
 Blanks the entry's text, evidence and reason for good, with every proposal
 quote of it and every reason about it; the id, tag, dates and author stay,
-and no file is removed. It cannot be undone, so it runs only on Daniel's
-instruction (his own turn says forget, erase, purge, permanently or for good)
+and no file is removed. It cannot be undone, so it runs only on the user's
+instruction (their own turn says forget, erase, purge, permanently or for good)
 and with --confirm.
 
 Examples:
-  scribe entry forget <id> --author opus --session <id> --instruction '<his words>' --confirm";
+  scribe entry forget <id> --author opus --session <id> --instruction '<their words>' --confirm";
 
 const PICKUP_EXAMPLES: &str = "\
 Examples:
@@ -66,20 +66,20 @@ Examples:
 /// Verbs on the `entry` noun.
 #[derive(Debug, Subcommand)]
 pub(crate) enum EntryCommand {
-    /// Add an agent note (never attributed to Daniel)
+    /// Add an agent note (never attributed to the user)
     #[command(after_help = ADD_EXAMPLES)]
     Add(AddArgs),
     /// Update an entry's content or metadata
     ///
-    /// Updates content or metadata; Daniel's entries allow metadata only.
+    /// Updates content or metadata; the user's entries allow metadata only.
     #[command(after_help = "Examples:\n  scribe entry update <id> --author opus --add-topic api")]
     Update(UpdateArgs),
     /// Retire an entry with a reason
     ///
-    /// Retires an agent note, or Daniel's entry on his instruction.
+    /// Retires an agent note, or the user's entry on their instruction.
     #[command(after_help = RETIRE_EXAMPLES)]
     Retire(RetireArgs),
-    /// Forget an entry for good on Daniel's instruction
+    /// Forget an entry for good on the user's instruction
     ///
     /// Blanks the entry's text and keeps its id.
     #[command(after_help = FORGET_EXAMPLES)]
@@ -358,7 +358,7 @@ fn forget(args: &ForgetArgs, ctx: &Context) -> Result<Output, CliError> {
     let target = ctx.store().resolve_entry(&args.id)?;
     let uninstructed = || {
         CliError::Usage(String::from(
-            "entry forget runs only on Daniel's instruction: pass --session <id> and --instruction '<his words>'",
+            "entry forget runs only on the user's instruction: pass --session <id> and --instruction '<their words>'",
         ))
     };
     if args.instruction.session.is_none() || args.instruction.instruction.is_none() {
@@ -512,7 +512,7 @@ impl Actions {
     }
 }
 
-/// Refuse a quote that is not verbatim in Daniel's typed turns of a session
+/// Refuse a quote that is not verbatim in the user's typed turns of a session
 /// the entry names (`--related session:<id>`), or whose transcript cannot be
 /// read on this host (docs/design/scribe/2_design.md §4.6).
 fn verify_quote(ctx: &Context, related: &[Related], quote: &str) -> Result<(), CliError> {
@@ -558,7 +558,7 @@ fn verify_quote(ctx: &Context, related: &[Related], quote: &str) -> Result<(), C
     Err(refuse(
         scribe_core::WriteRefusal::QuoteNotFound,
         String::from(
-            "the quote is not word for word in Daniel's typed turns of the session named, or its transcript is not readable on this host; quote Daniel's own words exactly, or file a friction instead",
+            "the quote is not word for word in the user's typed turns of the session named, or its transcript is not readable on this host; quote the user's own words exactly, or file a friction instead",
         ),
     ))
 }
@@ -582,7 +582,7 @@ pub(crate) struct AddArgs {
     /// Related reference, repeatable; under an action tag, name the session you write in (session:<id>)
     #[arg(long)]
     related: Vec<scribe_core::Related>,
-    /// Daniel's correction that prompted the entry, verbatim from one of Daniel's typed turns in the session named by --related; required under a tag that requires a quote
+    /// The user's correction that prompted the entry, verbatim from one of the user's typed turns in the session named by --related; required under a tag that requires a quote
     #[arg(long)]
     quote: Option<String>,
     /// Evidence pointer (a path, task, run, experiment or commit); required under a require_evidence tag, refused under any other tag
@@ -603,7 +603,7 @@ pub(crate) struct PickupArgs {
     /// What the consumer made of it (task:<id>, pr:<owner>/<repo>#<n>, repo:<slug> or session:<id>)
     #[arg(long, value_name = "REF")]
     result: Option<scribe_core::Related>,
-    /// Daniel rejected the result
+    /// The user rejected the result
     #[arg(long)]
     rejected: bool,
 }

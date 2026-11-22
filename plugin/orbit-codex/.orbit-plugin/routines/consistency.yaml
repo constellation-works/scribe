@@ -2,10 +2,10 @@
 # 06:00 it runs the scribe-consistency job, which calls
 # scribe.consistency-scan: proposals to supersede entries a later one
 # replaced and to retire entries due for review. It changes no entry;
-# Daniel settles each proposal with #scribe approve or #scribe reject.
+# The user settles each proposal with #scribe approve or #scribe reject.
 schemaVersion: 1
 name: consistency
-description: Propose superseding or retiring scribe entries; Daniel settles each.
+description: Propose superseding or retiring scribe entries; the user settles each.
 enabled: false
 trigger:
   cron: "0 6 * * 1"

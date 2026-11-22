@@ -2,7 +2,7 @@
 //! (§4.1), catalog the turn's `#scribe` markers, and mark a switched-on
 //! session's pass due (§5.2).
 //!
-//! The `#scribe` markers Daniel typed are cataloged (`annotation.rs`, §14):
+//! The `#scribe` markers the user typed are cataloged (`annotation.rs`, §14):
 //! the only model call this hook makes, one per marked turn, bounded. A
 //! transcript that fails the provenance check is echoed once and stops the
 //! hook: nothing is filled, cataloged or marked due.
@@ -18,7 +18,7 @@
 //! Then the cadence: for a session that is on and not already due, the pass
 //! is due once `[catalog] every_minutes` have passed since the last pass
 //! (the record's `updated`, else when the session was switched on) or
-//! `every_turns` of Daniel's turns have arrived since the record's
+//! `every_turns` of the user's turns have arrived since the record's
 //! `scribed_through`. Minutes are checked first, so the transcript is read
 //! only to count turns for cadence. Markers are cataloged also for a session
 //! that is off or was never switched on.

@@ -263,8 +263,10 @@ pub fn linked_context(links: &[SessionLink], records: &[SessionRecord]) -> Vec<L
 }
 
 /// The session-model request for one pass. `linked` is the context of the
-/// sessions this one links to ([`linked_context`]).
+/// sessions this one links to ([`linked_context`]); `voice` names the user
+/// and carries `[instructions] session`.
 #[must_use]
+#[allow(clippy::too_many_arguments)]
 pub fn request(
     model: &str,
     previous: Option<&SessionRecord>,
@@ -273,8 +275,10 @@ pub fn request(
     topics: Vec<String>,
     terms: Vec<String>,
     final_pass: bool,
+    voice: crate::voice::Voice,
 ) -> SessionRequest {
     SessionRequest {
+        voice,
         model: model.to_owned(),
         budget: SESSION_BUDGET,
         previous: previous.map(|r| PreviousRecord {
@@ -407,12 +411,14 @@ pub fn check(
 
 /// A header-only retry, only when every non-length check already passes.
 /// The caller keeps the original answer and replaces only its prose header,
-/// then checks the entire answer again with [`check`].
+/// then checks the entire answer again with [`check`]. `voice` names the
+/// user and carries `[instructions] session_header`.
 #[must_use]
 pub fn compression_request(
     answer: &SessionAnswer,
     conversation: &[PassMessage],
     request: &SessionRequest,
+    voice: crate::voice::Voice,
 ) -> Option<SessionHeaderRequest> {
     let refusal = check(answer.clone(), conversation, request).err()?;
     if !matches!(
@@ -449,6 +455,7 @@ pub fn compression_request(
         },
         budgets: BUDGETS,
         correction: refusal.to_string(),
+        voice,
     })
 }
 

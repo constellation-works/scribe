@@ -3,7 +3,7 @@ Read, open, update and settle proposals
 Usage: scribe proposal [OPTIONS] <COMMAND>
 
 Commands:
-  add     Open a proposal, including against a Daniel entry
+  add     Open a proposal, including against an entry of the user's
   update  Update the reason of an open agent proposal
   settle  Approve or reject a proposal or candidate
   list    List every proposal by id and its settlement state

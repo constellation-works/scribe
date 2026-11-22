@@ -1,5 +1,5 @@
-//! `scribe`: Daniel's recorded preferences, and the records of
-//! the sessions he cataloged.
+//! `scribe`: the user's recorded preferences, and the records of
+//! the sessions they cataloged.
 //!
 //! `main` is wiring only: parse, resolve the output sink once, resolve the
 //! context, run the command (audited in `commands::run`), render. See

@@ -44,7 +44,7 @@ fn with_no_capture_config_tag_show_prints_the_shipped_defaults() {
             "from": "daniel",
             "route": "propose",
             "triggers": SHIPPED_TRIGGERS,
-            "criteria": "A standing rule from Daniel that applies beyond the work at hand.",
+            "criteria": "A standing rule from the user that applies beyond the work at hand.",
             "not": "A choice about one page or task (it goes on its Orbit task or the feature's 4_decisions.md); an acknowledgement.",
             "origin": {"from": shipped, "route": shipped, "triggers": shipped,
                        "criteria": shipped, "not": shipped}
@@ -81,7 +81,7 @@ fn overriding_one_field_changes_only_that_field_with_its_file_and_line() {
     let before = show(&fx, "preferences");
     let file = config(
         &fx,
-        "[tags.preferences]\naliases = [\"preference\", \"pref\"]\ndescription = \"how Daniel likes things done\"\nstale_after_days = 180\n\n[tags.preferences.capture]\ncriteria = \"A rule Daniel states for every project.\"\n",
+        "[tags.preferences]\naliases = [\"preference\", \"pref\"]\ndescription = \"how the user likes things done\"\nstale_after_days = 180\n\n[tags.preferences.capture]\ncriteria = \"A rule Daniel states for every project.\"\n",
     );
     let after = show(&fx, "preferences");
     assert_eq!(
@@ -121,7 +121,7 @@ fn overriding_one_field_changes_only_that_field_with_its_file_and_line() {
         json!(["preference", "pref"]),
         "omitted aliases stay the shipped ones"
     );
-    assert_eq!(replaced["description"], "how Daniel likes things done");
+    assert_eq!(replaced["description"], "how the user likes things done");
     assert_eq!(replaced["stale_after_days"], 180);
 }
 
@@ -229,7 +229,7 @@ fn declaring_a_new_tag_keeps_all_shipped_tags_and_their_defaults() {
     let prefs = tags.iter().find(|t| t["name"] == "preferences").unwrap();
     assert_eq!(prefs["stale_after_days"], 180);
     assert_eq!(prefs["aliases"], json!(["preference", "pref"]));
-    assert_eq!(prefs["description"], "how Daniel likes things done");
+    assert_eq!(prefs["description"], "how the user likes things done");
     assert_eq!(prefs["configured"], true);
     assert_eq!(prefs["source"], "config");
     assert_eq!(prefs["route"], "propose");
@@ -262,7 +262,7 @@ fn partial_preferences_overrides_only_set_fields_and_reports_origins() {
     let shown = show(&fx, "preferences");
     assert_eq!(shown["stale_after_days"], 90);
     assert_eq!(shown["aliases"], json!(["preference", "pref"]));
-    assert_eq!(shown["description"], "how Daniel likes things done");
+    assert_eq!(shown["description"], "how the user likes things done");
     assert_eq!(shown["capture"]["triggers"], json!(SHIPPED_TRIGGERS));
     let shipped = json!({"source": "shipped", "file": null, "line": null});
     for field in ["from", "route", "triggers", "criteria", "not"] {
@@ -276,7 +276,7 @@ fn partial_preferences_overrides_only_set_fields_and_reports_origins() {
     let updated = show(&fx, "preferences");
     assert_eq!(updated["stale_after_days"], 90);
     assert_eq!(updated["aliases"], json!(["preference", "pref"]));
-    assert_eq!(updated["description"], "how Daniel likes things done");
+    assert_eq!(updated["description"], "how the user likes things done");
     assert_eq!(
         updated["capture"]["criteria"],
         "A standing rule across projects."
@@ -360,7 +360,7 @@ fn the_mac_preferences_and_remind_config_reads_as_the_shipped_preferences_tag() 
         .unwrap();
     assert_eq!(prefs["aliases"], json!(["preference", "pref"]));
     assert_eq!(prefs["stale_after_days"], 180);
-    assert_eq!(prefs["description"], "how Daniel likes things done");
+    assert_eq!(prefs["description"], "how the user likes things done");
     assert_eq!(prefs["route"], "propose");
     let shown = show(&fx, "preferences");
     let shipped = json!({"source": "shipped", "file": null, "line": null});

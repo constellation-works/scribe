@@ -790,10 +790,12 @@ pub(super) fn entry_metadata(out: &mut dyn Write, e: &EntryPayload, color: bool)
     }
     field(out, "author", &author(&e.author))?;
     if let Some(by) = &e.stated_by {
+        // Output carries no config, so it names the user generically.
+        let user = scribe_core::voice::UserName::default();
         let whose = if e.outcome.is_some() {
-            scribe_core::ask::CAPTURED_WHOSE
+            scribe_core::ask::captured_whose(&user)
         } else {
-            scribe_core::ask::STATED_WHOSE
+            scribe_core::ask::stated_whose(&user)
         };
         field(
             out,
@@ -805,7 +807,11 @@ pub(super) fn entry_metadata(out: &mut dyn Write, e: &EntryPayload, color: bool)
         field(out, "quote", quote)?;
     }
     if let Some(outcome) = &e.outcome {
-        field(out, "outcome", &scribe_core::ask::outcome_text(outcome))?;
+        field(
+            out,
+            "outcome",
+            &scribe_core::ask::outcome_text(outcome, &scribe_core::voice::UserName::default()),
+        )?;
     }
     if let Some(a) = &e.admitted {
         field(out, "admitted", &admitted(a))?;
@@ -815,7 +821,7 @@ pub(super) fn entry_metadata(out: &mut dyn Write, e: &EntryPayload, color: bool)
             (None, _) if e.author.kind == "scribe" => {
                 String::from("none (written by scribe, not an agent)")
             }
-            (None, _) => String::from("none (Daniel's own line)"),
+            (None, _) => String::from("none (the user's own line)"),
             (Some(ends), true) => format!("ended {}", timestamp(ends)),
             (Some(ends), false) => format!("open until {}", timestamp(ends)),
         };
@@ -1380,7 +1386,7 @@ pub(crate) fn issue_stats(
         count(
             "fires",
             s.fires,
-            "issue trigger fires on Daniel's typed turns",
+            "issue trigger fires on the user's typed turns",
         ),
         count(
             "fires_with_write",
@@ -1483,8 +1489,8 @@ fn session_row(s: &SessionPayload, active: bool) -> Vec<Cell> {
 }
 
 /// `approved by <aide> on your instruction "<quote>" (<session>, <date>)`
-/// for an entry an agent approved on Daniel's checked instruction
-/// (2_design.md §12.3); `None` when he typed the approval.
+/// for an entry an agent approved on the user's checked instruction
+/// (2_design.md §12.3); `None` when they typed the approval.
 fn approved_line(e: &EntryPayload) -> Option<String> {
     let by = e.approved_by.as_ref()?;
     let inst = e.instruction.as_ref()?;
@@ -1498,9 +1504,9 @@ fn approved_line(e: &EntryPayload) -> Option<String> {
     ))
 }
 
-/// How a candidate settled on Daniel's checked instruction reads:
+/// How a candidate settled on the user's checked instruction reads:
 /// `approved by <aide> on your instruction "<quote>" (<session>, <date>)`,
-/// or `rejected by …`; `None` for one he settled by typing, or still open.
+/// or `rejected by …`; `None` for one they settled by typing, or still open.
 fn settled_line(p: &ProposalPayload) -> Option<String> {
     let inst = p.instruction.as_ref()?;
     let by = p.settled_author.as_ref()?;
@@ -1515,7 +1521,7 @@ fn settled_line(p: &ProposalPayload) -> Option<String> {
 }
 
 /// A proposal's rows: one, and for a candidate carrying scribe's
-/// statement, in the table, a second under it holding Daniel's quote in
+/// statement, in the table, a second under it holding the user's quote in
 /// the `REASON` column (2_design.md §11.1).
 fn proposal_rows(p: &ProposalPayload, mode: OutputMode) -> Vec<Vec<Cell>> {
     let mut rows = vec![proposal_row(p, mode)];
@@ -1555,19 +1561,19 @@ fn proposal_rows(p: &ProposalPayload, mode: OutputMode) -> Vec<Vec<Cell>> {
 /// Where `REASON` sits in [`PROPOSAL_COLUMNS`].
 const PROPOSAL_REASON_COLUMN: usize = 6;
 
-/// `Daniel's words: "<quote>"` for a candidate carrying scribe's statement.
+/// `The user's words: "<quote>"` for a candidate carrying scribe's statement.
 fn stated_candidate_quote(p: &ProposalPayload) -> Option<String> {
     let candidate = p.candidate.as_ref()?;
     candidate.statement.as_ref()?;
     Some(format!(
         "{} \"{}\"",
-        scribe_core::ask::STATED_QUOTE_LABEL,
+        scribe_core::ask::stated_quote_label(&scribe_core::voice::UserName::default()),
         one_line(&candidate.quote)
     ))
 }
 
 /// A proposal's line. A candidate carrying scribe's statement shows the
-/// statement as its reason; the plain line adds Daniel's quote after it,
+/// statement as its reason; the plain line adds the user's quote after it,
 /// where the table puts it on the row under.
 fn proposal_row(p: &ProposalPayload, mode: OutputMode) -> Vec<Cell> {
     let reason = match (

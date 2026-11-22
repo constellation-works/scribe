@@ -29,7 +29,7 @@ Examples:
 
 Exit status: 0 on success, 1 when a command fails, 2 on a usage error.";
 
-/// Read Daniel's recorded preferences, and the records of the sessions he cataloged.
+/// Read the user's recorded preferences, and the records of the sessions they cataloged.
 #[derive(Debug, Parser)]
 #[command(
     name = "scribe",

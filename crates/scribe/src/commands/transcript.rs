@@ -3,7 +3,7 @@
 //! (docs/design/scribe/2_design.md §5.8).
 //!
 //! Both read transcripts and the store and write nothing: no lock, no audit
-//! line, and they work on a read-only root. `list` is how Daniel picks a
+//! line, and they work on a read-only root. `list` is how the user picks a
 //! past session to catalog; `show` is the preview.
 
 use super::hook::payload;
@@ -26,7 +26,7 @@ Lists provider transcripts that have no session record and no switch,
 selected with --provider codex or claude-code (the default),
 newest first, and writes nothing. --min-turns defaults to 20. project is
 the configured [projects.<slug>] path with the most mentions, else the
-cwd's project. show prints one transcript with Daniel's first five turns.
+cwd's project. show prints one transcript with the user's first five turns.
 
 Examples:
   scribe transcript list --since 2026-10-01 --project scribe
@@ -52,7 +52,7 @@ pub(crate) enum TranscriptCommand {
     /// List uncataloged transcripts, newest first, writing nothing
     #[command(after_help = LIST_EXAMPLES)]
     List(ListArgs),
-    /// Show one transcript and Daniel's first five turns, writing nothing
+    /// Show one transcript and the user's first five turns, writing nothing
     #[command(after_help = SHOW_EXAMPLES)]
     Show(ShowArgs),
 }
@@ -72,7 +72,7 @@ pub(crate) struct ListArgs {
     #[arg(long, value_name = "PROJECT")]
     pub(crate) project: Vec<Project>,
 
-    /// Only transcripts with at least this many of Daniel's turns
+    /// Only transcripts with at least this many of the user's turns
     #[arg(long, value_name = "N", default_value_t = DEFAULT_MIN_TURNS)]
     pub(crate) min_turns: u32,
 

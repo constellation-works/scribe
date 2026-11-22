@@ -1160,7 +1160,7 @@ fn without_an_instruction_a_claim_is_refused_with_the_wording_it_always_had() {
         assert_eq!(code, Some(1), "{act}");
         assert_eq!(err["code"], "daniel_only", "{act}");
         assert_eq!(
-            err["error"], "Daniel settles candidate proposals through #scribe approve or reject",
+            err["error"], "The user settles candidate proposals through #scribe approve or reject",
             "{act}"
         );
     }

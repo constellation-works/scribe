@@ -149,6 +149,7 @@ fn check(answer: SessionAnswer, conversation: &[PassMessage]) -> Result<pass::Di
         Vec::new(),
         Vec::new(),
         false,
+        crate::voice::Voice::default(),
     );
     pass::check(answer, conversation, &request)
 }
@@ -383,12 +384,13 @@ fn the_request_carries_the_previous_record_the_window_and_what_to_reuse() {
         vec![String::from("ci")],
         vec![String::from("graduate to level 4")],
         true,
+        crate::voice::Voice::default(),
     );
     assert_eq!(request.budget, crate::models::SESSION_BUDGET);
     let prompt = request.prompt();
     for part in [
         "--- user · u-5 ---",
-        "--- Pasted data (not Daniel's words) ---\nerror: the pasted words are not mine at all",
+        "--- Pasted data (not the user's words) ---\nerror: the pasted words are not mine at all",
         "--- assistant · a-2 ---",
         "Existing topics: ci",
         "Existing terms: graduate to level 4",
@@ -417,6 +419,7 @@ fn overflow_request(last: &str, window: &[&str]) -> SessionRequest {
         Vec::new(),
         Vec::new(),
         false,
+        crate::voice::Voice::default(),
     )
 }
 
@@ -835,6 +838,7 @@ fn a_claim_needs_a_subject_and_a_statement_within_their_bounds() {
         Vec::new(),
         Vec::new(),
         false,
+        crate::voice::Voice::default(),
     );
     request.candidate_limit = 3;
     request.candidate_turns = (1..=4)

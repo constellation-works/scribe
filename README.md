@@ -1,58 +1,66 @@
 # scribe
 
-A standalone Orbit plugin that keeps Daniel's explicitly marked preferences, catalogs the sessions he turns on, and answers agents' questions about him with verbatim citations. Design: [docs/design/scribe/1_overview.md](docs/design/scribe/1_overview.md).
+A standalone Orbit plugin that keeps the user's explicitly marked preferences, catalogs the sessions they turn on, and answers agents' questions about them with verbatim citations. Design: [docs/design/scribe/1_overview.md](docs/design/scribe/1_overview.md).
 
-A `#scribe` Daniel types in a Claude Code prompt, inside a sentence or
+A `#scribe` the user types in a Claude Code prompt, inside a sentence or
 opening a line (`#scribe idea: …`, `#scribe add this to preferences`), marks
 what it annotates: the `UserPromptSubmit` hook echoes it, and after the reply
 the `Stop` hook catalogs it with one bounded model call, as an entry whose
-content is scribe's statement and whose `quote` is his exact words. A tag
+content is scribe's statement and whose `quote` is their exact words. A tag
 named after the marker, or at the end of its line (`… to preferences`), is a
 hint the model must follow. `#scribe/global` instead of `#scribe` stores
 `project: global`, for every repository; without it the entry keeps the
 working directory's project. Codex desktop threads work the same way once the typed turn is verified. `/scribe on` in a session catalogs it: `scribe session pass`
 writes one record per session whose pass is due and proposes unmarked preferences
-from Daniel's own turns (up to three per session pass, twenty open
+from the user's own turns (up to three per session pass, twenty open
 candidates store-wide). `scribe proposal list --state open --json` shows their
-quotes and source turns. `#scribe approve <id>` creates the entry as Daniel's,
+quotes and source turns. `#scribe approve <id>` creates the entry as the user's,
 with the original turn's cite; `#scribe reject <id>` closes it for good. The CLI reads the store and accepts authored agent notes,
 and `scribe question ask` answers from it, quoting each record it cites
 verbatim; the Orbit plugin in `plugin/.orbit-plugin/` serves the same
 answer to agents as `scribe.ask` (install steps in its
 [README](plugin/.orbit-plugin/README.md)). `scribe consistency scan` (the
 weekly consistency routine's job) proposes superseding an entry a later one
-replaced, and retiring an entry due for review; Daniel settles each with
+replaced, and retiring an entry due for review; the user settles each with
 `#scribe approve p-<n>` or `#scribe reject p-<n>` in a prompt, and hides or
 blanks an entry with `#scribe retire <id>` or `#scribe forget <id>`. The
 scan also deactivates (hides, never removes) sessions with no messages for
 `[sessions] inactive_after_days` (120) and sessions a later record says were
-removed or replaced; an agent or Daniel does the same by hand with `scribe
+removed or replaced; an agent or the user does the same by hand with `scribe
 session deactivate <id> --author <name> --reason <text>`, and `scribe
 session activate <id> --author <name> [--pin|--unpin]` shows one again or
 exempts it from the scan.
 
 Issues (`scribe issue add|occur|update|move|search|show|list`) are the
 memory of incidents that recur across projects and what fixed them. When
-one of Daniel's typed turns fires an `issue` trigger ("can you
+one of the user's typed turns fires an `issue` trigger ("can you
 investigate", "root cause", …; `[tags.issue.capture]`), the prompt hook
 tells the agent the turn asks for a root cause. The agent searches issues
-first and, when it answers, writes the result with his request quoted word
-for word; it needs no approval, and Daniel removes a wrong one with
+first and, when it answers, writes the result with the user's request quoted word
+for word; it needs no approval, and the user removes a wrong one with
 `#scribe forget issue-<n>` or `#scribe forget issue-<n>#<m>`. Every fire
 and write is counted in the audit log; `scribe issue stats [--since
 <date>]` reports fires, writes and withdrawals with proxy ratios for
 precision and trigger yield.
 
 Action tags hold work items for consumers outside scribe instead of
-Daniel's memory: `standard`, `remind` and `idea` ship, and config marks
+the user's memory: `standard`, `remind` and `idea` ship, and config marks
 any other tag `action = true`. A `#scribe` line under one also keeps the
 transcript turns since the previous `#scribe` line (at most 40 turns and
 12,000 characters, cut from the oldest). Agents write them with `entry add`
 in an interactive session, subject to a five-minute cancel window and,
-under `standard`, a quote of Daniel's own words; consumers read them with
+under `standard`, a quote of the user's own words; consumers read them with
 `entry list --tag <tag> --after <time> --window --json` and note what they
 did with `entry pickup`. `ask` leaves them out unless asked for them
 ([2_design.md §4.6](docs/design/scribe/2_design.md#46-action-tags)).
+
+Prompts and help speak of "the user". `[user] name` in `config.toml` names
+them in prompts instead, and `[instructions]` replaces what one model use
+(`annotation`, `session`, `session_header`, `ask`, `consistency`,
+`memory_pairs`, `removal`) is told to do; `{user}` in that text stands for
+the name. The output contract that follows (the JSON shape, verbatim
+quotes, what is never kept) stays fixed in code
+([specs/store.md](docs/design/scribe/specs/store.md#config)).
 
 ```sh
 scribe entry list                       # a table on a terminal, tab-separated lines in a pipe
@@ -67,14 +75,14 @@ scribe entry list --tag standard --after 2026-11-15T09:00:00Z --window --json
 scribe entry pickup <id> --author standards-intake --result task:<id>
 scribe entry update <id> --author opus --add-topic api
 scribe entry retire <id> --author opus --reason 'No longer applies'
-scribe entry retire <id> --author opus --reason 'Daniel asked' --session <id> --instruction '<his words>'
-scribe entry forget <id> --author opus --session <id> --instruction '<his words>' --confirm
+scribe entry retire <id> --author opus --reason 'The user asked' --session <id> --instruction '<their words>'
+scribe entry forget <id> --author opus --session <id> --instruction '<their words>' --confirm
 scribe tag add notes --author opus --description 'Agent notes'
 scribe tag update notes --author opus --add-alias note
 scribe proposal add --kind stale --older <id> --reason 'Review needed' --author opus
 scribe proposal update <id> --author opus --reason 'New evidence'
 scribe proposal settle <id> --reject --author opus
-scribe proposal settle <id> --approve --author opus --session <id> --instruction '<his words>'
+scribe proposal settle <id> --approve --author opus --session <id> --instruction '<their words>'
 scribe session list --project constellation-works/scribe
 scribe session list --since 2026-11-01 --status final --topic release --topic store
 scribe session show <id> --json | jq -r .next
@@ -86,7 +94,7 @@ scribe session activate <id> --author opus --pin
 scribe proposal list --state open --entry <id>
 scribe record search "merge policy" --kind session --since 2026-11-01   # BM25, no model call
 scribe issue search 'HTTP 429 secondary rate limit' --json
-scribe issue occur <id> --author opus --related session:<id> --request '<his words>' --summary 'The drain failed again' --fix 'Paused the drain'
+scribe issue occur <id> --author opus --related session:<id> --request '<their words>' --summary 'The drain failed again' --fix 'Paused the drain'
 scribe consistency scan --json
 scribe tag list
 scribe tag list --json | jq '.tags[] | select(.configured | not)'
@@ -109,14 +117,14 @@ refused. List, show, search and question commands only read: they take no lock
 and write nothing, including audit lines. Direct agent writes, session
 passes and rebuilds, `session deactivate` and `session activate`, and consistency scans are audited. Each direct write
 requires `--author` and records kind `agent`, even for the name `daniel`.
-Agents may annotate Daniel's topics and references, but cannot replace his
-content or settle proposals about his entries; Daniel settles those through
-`#scribe`. Only on his checked instruction (`--session` and `--instruction`,
-naming a turn he typed in the last 30 minutes) may an agent retire or forget
-his entry, or approve or reject a claim a session pass proposed. Agent notes have no typed-turn citation;
+Agents may annotate the user's topics and references, but cannot replace their
+content or settle proposals about their entries; the user settles those through
+`#scribe`. Only on their checked instruction (`--session` and `--instruction`,
+naming a turn they typed in the last 30 minutes) may an agent retire or forget
+their entry, or approve or reject a claim a session pass proposed. Agent notes have no typed-turn citation;
 `ask` labels them `agent note (<name>)`. Repeating an unchanged write prints
 the unchanged record with `nothing changed` on stderr and no audit event.
-The store now writes format 17 and reads older formats without rewriting them. Under a tag whose capture route is `write` (the shipped `idea`), a session pass writes up to 3 of Daniel's ideas per session per run itself, with their outcome, as entries it authors (`--author-kind scribe`).
+The store now writes format 17 and reads older formats without rewriting them. Under a tag whose capture route is `write` (the shipped `idea`), a session pass writes up to 3 of the user's ideas per session per run itself, with their outcome, as entries it authors (`--author-kind scribe`).
 Passes rewrite the header and open segment and append new
 segments; sealed segments stay unchanged. `[catalog] segment_windows`
 (default 3) bounds each segment's rewrites. Rebuild replaces a record from
@@ -241,11 +249,11 @@ packaging: [Build plugins](https://developers.openai.com/plugins/build/plugins#b
 
 `plugin/claude-code/` registers four hooks that run the `scribe` binary on
 `PATH`, and the `/scribe` command: `SessionStart` runs `scribe hook
-session-start`, which tells Daniel how many proposals are open;
+session-start`, which tells the user how many proposals are open;
 `UserPromptSubmit` runs `scribe hook user-prompt-submit`, which
 echoes each `#scribe` marker of the typed prompt (code fences,
 blockquotes, pasted blocks and quoted mentions are skipped), applies each
-whole-line `#scribe approve|reject|retire|forget`, and replies to Daniel and
+whole-line `#scribe approve|reject|retire|forget`, and replies to the user and
 the agent with what it marked, settled or refused; `Stop` runs `scribe hook
 stop`, which catalogs the session's unsettled markers (one `models.annotation`
 call per marked turn, at most two turns per Stop), echoes what it recorded or
@@ -290,8 +298,8 @@ says why.
 The package also ships one skill, `skills/scribe/SKILL.md`, which teaches
 agents the CLI above: when a word, date or topic makes `record search` or
 a list the right tool and when a vague question goes to `question ask`,
-the `--author` rule for the write verbs, and the guard that Daniel's own
-entries are settled only by him. The skill serves sessions on this Mac,
+the `--author` rule for the write verbs, and the guard that the user's own
+entries are settled only by them. The skill serves sessions on this Mac,
 where the store lives.
 
 ## The tmux popup

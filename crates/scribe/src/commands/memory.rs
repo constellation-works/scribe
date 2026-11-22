@@ -1,9 +1,9 @@
-//! `scribe memory`: read what scribe has noticed about Daniel, and the
+//! `scribe memory`: read what scribe has noticed about the user, and the
 //! agent writes on it (docs/design/scribe/2_design.md §13.4, §13.6, §13.9).
 //!
 //! `show` and `rules` read only: no lock, no audit. `ack`, `retire` and `forget` are
 //! audited agent writes. Items are scribe-authored, so an agent retires or
-//! forgets one without Daniel's instruction check, as it may an agent note.
+//! forgets one without the user's instruction check, as it may an agent note.
 
 use super::{ListNotice, list_output};
 use crate::app::Context;
@@ -18,8 +18,8 @@ use scribe_core::{AuthorName, Project, SessionFilter, SessionId};
 
 pub(super) const MEMORY_EXAMPLES: &str = "\
 Memory is written by the session pass of a session switched on with
-/scribe on, from Daniel's own turns; nothing else writes it. It describes,
-it never binds: rules are his preferences entries.
+/scribe on, from the user's own turns; nothing else writes it. It describes,
+it never binds: rules are their preferences entries.
 
 Examples:
   scribe memory show
@@ -52,7 +52,7 @@ Examples:
   scribe memory rules --json | jq '.rules[] | {rule, value}'";
 
 const ACK_EXAMPLES: &str = "\
-Run it after raising a now item the user did not bring up himself, so the
+Run it after raising a now item the user did not bring up themselves, so the
 next session does not raise it again unprompted.
 
 Examples:
@@ -60,10 +60,10 @@ Examples:
 
 const RETIRE_EXAMPLES: &str = "\
 Hides an item from the page, lists and ask; its text is kept. Run it when
-Daniel says an item is wrong; the next time he says it, a fresh item opens.
+the user says an item is wrong; the next time they say it, a fresh item opens.
 
 Examples:
-  scribe memory retire <id> --author opus --reason 'Daniel says this is wrong'";
+  scribe memory retire <id> --author opus --reason 'The user says this is wrong'";
 
 const FORGET_EXAMPLES: &str = "\
 Blanks the item's statement and every quote for good (or one occurrence's
