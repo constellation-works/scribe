@@ -619,6 +619,77 @@ fn forget_removes_entry_and_claim_words_from_moved_files() {
 }
 
 #[test]
+fn forget_keeps_structural_audit_lines_that_share_a_common_word() {
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+
+    // Each body is a word the audit log also holds as a structural value: a
+    // status, an author and a command. Forgetting it must keep the unrelated
+    // structural lines, and still erase a free-text copy of the same word.
+    for (id, days, body) in [
+        ("preferences-1", 0, "success"),
+        ("preferences-2", 1, "opus"),
+        ("preferences-3", 2, "hook stop"),
+    ] {
+        let e = entry(id, days, body);
+        let rel = format!("entries/preferences/{}.md", e.id);
+        put(
+            &root,
+            &rel,
+            &format::encode_entry(&root.join(&rel), &e).unwrap(),
+        );
+    }
+
+    let structural = [
+        r#"{"format":5,"at":"2026-10-20T12:00:00Z","command":"hook stop","status":"success","target":"session:s-9","error_code":null,"author":null,"duration_ms":1}"#,
+        r#"{"format":5,"at":"2026-10-20T12:01:00Z","command":"proposal settle","status":"success","target":"p-1","error_code":null,"author":"opus","duration_ms":1}"#,
+        r#"{"format":5,"at":"2026-10-20T12:02:00Z","command":"entry retire","status":"failure","target":"preferences-3","error_code":"entry_not_found","author":"opus","duration_ms":1}"#,
+    ];
+    let free_text = [
+        r#"{"format":5,"at":"2026-10-20T12:03:00Z","command":"hook stop","status":"success","target":"session:s-9","error_code":null,"author":null,"detail":"success","duration_ms":1}"#,
+        r#"{"format":5,"at":"2026-10-20T12:04:00Z","command":"hook stop","status":"success","target":"session:s-9","error_code":null,"author":null,"detail":"hook stop","duration_ms":1}"#,
+    ];
+    let audit: String = structural
+        .iter()
+        .chain(&free_text)
+        .map(|line| format!("{line}\n"))
+        .collect();
+    put(&root, "audit.jsonl", audit.as_bytes());
+
+    let store = Store::open(&root);
+    let moved = store.migrate_store(NOW).unwrap();
+    assert_eq!(moved.moved_to.as_deref(), Some("pre-sqlite-2026-11-02"));
+
+    let instructed = Instructed {
+        session: "s-9".parse().unwrap(),
+        message: String::from("m-10"),
+        at: NOW,
+        quote: String::from("forget these for good"),
+        prompt_sha256: "b".repeat(64),
+        line: 1,
+    };
+    for id in ["preferences-1", "preferences-2", "preferences-3"] {
+        let (forgotten, changed) = store
+            .forget_entry(id, &instructed, "opus".parse().unwrap(), NOW)
+            .unwrap();
+        assert!(changed, "{id}");
+        assert_eq!(forgotten.status, EntryStatus::Forgotten);
+    }
+
+    let moved_audit = fs::read_to_string(root.join("pre-sqlite-2026-11-02/audit.jsonl")).unwrap();
+    let kept: Vec<&str> = moved_audit.lines().collect();
+    for line in structural {
+        assert!(
+            kept.contains(&line),
+            "an unrelated structural line was dropped: {line}"
+        );
+    }
+    for line in free_text {
+        assert!(!kept.contains(&line), "a free-text copy survived: {line}");
+    }
+}
+
+#[test]
 fn settle_forget_cleans_moved_files_and_drops_pre_move_open_candidate() {
     let dir = private_tempdir();
     let root = dir.path().join("store");
