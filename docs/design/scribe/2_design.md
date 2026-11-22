@@ -11,7 +11,7 @@ summary: How the scribe plugin is bounded (one binary; Daniel writes through hoo
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26642, ORB-26826]
+related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26642, ORB-26826, ORB-26827]
 ---
 
 # scribe — Design
@@ -1042,6 +1042,9 @@ tag it asks first. Three guards sit in the CLI and store:
   session's transcript on this host and refuses the entry unless the quote
   is a verbatim span (§6.4's check) of one of the human's typed turns
   (`quote_required`, `quote_not_found`). The quote is stored on the entry.
+  On non-action memory tags, `--quote` without `--spoken` is still refused
+  (`not_action_tag`), unless the tag sets `require_quote = true`; see
+  [§16.6](#166-entries-on-a-spoken-instruction) for the `--spoken` route.
 - **Ask-first** is a switch the skill obeys and `tag list` shows; the CLI
   does not enforce it, since it cannot tell whether the human said yes.
 
@@ -6424,8 +6427,74 @@ that session's transcript. Two edge cases matter in practice:
   `verify_quote` refuses it (`quote_not_found`). A button counts as a
   request in Phase 1 only when the client records it in the transcript as a
   plain user turn of at least 8 characters (not wrapped in a synthetic
-  harness tag). Spoken instructions and non-typed triggers are out of scope
-  for Phase 1 and deferred to Phase 2.
+  harness tag). Non-typed UI triggers remain outside the transcript check.
+
+### 16.6 Entries on a spoken instruction
+
+Built in [ORB-26827] (Phase 2 of 2; scope `docs/design/agent-handoff/1_scope.md`,
+Shape 6). When the user tells a session to record something (for example,
+*"add that to my preferences"*) without typing `#scribe`, the agent writes
+the entry itself with its own one-sentence statement and the user's exact
+words as `--quote`:
+
+```sh
+scribe entry add --tag <tag> --author <name> --project <project> \
+  --related session:<id> --quote '<the user's words>' --spoken '<statement>'
+```
+
+- **Eligible tags (`--spoken`).** `--spoken` writes only **non-action memory
+  tags** (`preferences`, user-configured memory tags, or agent-created store
+  tags in `tags.json`), excluding `handoff` and `require_evidence` tags. Passing
+  `--spoken` with an action tag (`standard`, `idea`), `handoff`, or a
+  `require_evidence` tag (`finding`) is refused (`not_memory_tag`):
+  - `handoff` stays an agent note with its six fixed headings (§16.1–§16.3).
+  - `require_evidence` tags stay agent findings backed by `--evidence` (§4.7).
+  - Action tags (`standard`, `idea`) stay on their own §4.6 agent-entry
+    route (with their 5-minute cancel window and consumer pickups).
+  Passing `--quote` on a non-`require_quote` memory tag without `--spoken`
+  keeps its existing `not_action_tag` refusal so existing CLI contracts do
+  not shift.
+- **Quote and redaction checks.** Reuses the same `verify_quote` check as
+  `handoff` and `standard` (§4.6, §16.1): `--quote` and `--related
+  session:<id>` are both required (`quote_required`), and `--quote` must be
+  a verbatim span (at least `verbatim::MIN_QUOTE_CHARS` = 8 normalized
+  characters) of one of the user's plainly typed turns in that session's
+  transcript (`quote_not_found`; pasted blocks, synthetic harness lines and
+  assistant turns do not count). Works in off sessions without creating a
+  session record or switching the session on. A quote that `Redactor::mask`
+  would alter is refused (`needs_redaction`) so stored quotes remain both
+  unredacted secrets-free text and verbatim. The shared `covering_entry`
+  duplicate check (`already_covered`) still runs under the lock.
+- **How the entry differs from an agent note.** An ordinary agent note
+  (`entry add` without `--spoken`, including `standard` and `handoff`)
+  sets `stated_by: null`, so `ask` and `search` treat the whole entry as
+  `agent note (<author>)` and never cite `quote` as the user's words. A
+  spoken-instruction entry sets:
+  - `author`: `{kind: agent, name: <author>}` (the writing agent; CLI
+    writes never mint `kind: user`),
+  - `content`: the agent's one-sentence statement (redacted),
+  - `quote`: the user's verbatim words,
+  - `stated_by`: `{kind: agent, name: <author>}` (updated to the editing
+    agent if `entry update --content` changes the statement),
+  - `content_from`: `{kind: agent}`, `cite: null`, `said: ""`.
+- **Reading back (`entry show`, `search`, `ask`) and pass isolation.**
+  Because `stated_by` is set to the agent, `entry show`, `scribe search`
+  and `question ask` read the entry like a marked or pass-stated entry
+  (§11.1, §14.4), labelling the statement as the agent's (`agent
+  (<author>)'s statement of <user>'s turn`) rather than `scribe`'s, with
+  the user's words in `quote` (`The user's words: "<quote>"`). In `ask`,
+  a claim whose quote lies inside `quote` is attributed to the user (`The
+  user` / `[user] name`), while a claim quoting only the agent's
+  statement is attributed to `agent (<author>)'s statement of <user>'s
+  turn`; agent-authored entries keep the 1.0× retrieval weight of §6.7.
+  Because `entry_says` includes both `content` and `quote` whenever
+  `stated_by` is set, a subsequent session pass on a switched-on session
+  sees the spoken-instruction entry and does not open a duplicate
+  candidate proposal.
+- **Skill discipline.** Unprompted capture stays with scribe's session pass
+  and its proposals. `skills/scribe/SKILL.md` directs agents to use
+  `--spoken` only on the human's explicit instruction (never unprompted)
+  and replaces the old instruction to ask the human to retype with `#scribe`.
 
 ## Task References
 
@@ -6480,6 +6549,11 @@ that session's transcript. Two edge cases matter in practice:
   `handoff` tag (`require_quote`, fixed six headings, 3,000-char limit),
   `session show` handoffs (including off sessions with no record), `brief`
   handoff markers, session-pass isolation and skill updates.
+- [ORB-26827] — §16.6 (phase 2): agent-written entries on a spoken
+  instruction (`entry add --spoken`, `stated_by: {kind: agent, name}`,
+  eligible non-action memory tags, verbatim typed-turn quote check,
+  agent-statement/user-quote attribution in `entry show`, `search` and
+  `ask`, and skill updates).
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
 

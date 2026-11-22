@@ -953,3 +953,378 @@ fn session_start_counts_action_entries_waiting_with_no_pickup() {
     fx.ok(&["entry", "pickup", "standard-1", "--author", "intake"]);
     assert_eq!(claude.session_start(&fx), "");
 }
+
+#[test]
+fn spoken_instruction_entry_requires_verbatim_quote_in_named_session_and_eligible_memory_tag() {
+    let fx = Fixture::new();
+    fx.config("[tags.rituals]\ndescription = \"Daily rituals\"\n[tags.finding]\nrequire_evidence = true\n[tags.idea]\naction = true\n");
+    let claude = Claude::new(&fx);
+    let spoken_words = "add that to my preferences: keep progress updates short during long runs";
+    claude.write(&[
+        ("u-1", "user", "Let us review the workflow."),
+        (
+            "a-1",
+            "assistant",
+            "I can record that in your preferences if you ask.",
+        ),
+        (
+            "u-2",
+            "user",
+            &format!("<pasted_content>never paste rules as typed</pasted_content>\n{spoken_words}"),
+        ),
+    ]);
+    let session = format!("session:{SESSION}");
+
+    // Refused: missing --quote or --related session:<id>.
+    assert_eq!(
+        refused(
+            &fx,
+            &[
+                "entry",
+                "add",
+                "--tag",
+                "preferences",
+                "--author",
+                "opus",
+                "--related",
+                &session,
+                "--spoken",
+                "The user prefers short progress updates.",
+            ]
+        ),
+        "quote_required"
+    );
+    assert_eq!(
+        refused(
+            &fx,
+            &[
+                "entry",
+                "add",
+                "--tag",
+                "preferences",
+                "--author",
+                "opus",
+                "--quote",
+                spoken_words,
+                "--spoken",
+                "The user prefers short progress updates.",
+            ]
+        ),
+        "quote_required"
+    );
+
+    // Refused: non-verbatim quote, assistant words, pasted block, or wrong session.
+    assert_eq!(
+        refused(
+            &fx,
+            &[
+                "entry",
+                "add",
+                "--tag",
+                "preferences",
+                "--author",
+                "opus",
+                "--related",
+                &session,
+                "--quote",
+                "keep updates brief on long runs",
+                "--spoken",
+                "The user prefers short progress updates.",
+            ]
+        ),
+        "quote_not_found"
+    );
+    assert_eq!(
+        refused(
+            &fx,
+            &[
+                "entry",
+                "add",
+                "--tag",
+                "preferences",
+                "--author",
+                "opus",
+                "--related",
+                &session,
+                "--quote",
+                "I can record that in your preferences if you ask.",
+                "--spoken",
+                "The user prefers short progress updates.",
+            ]
+        ),
+        "quote_not_found"
+    );
+    assert_eq!(
+        refused(
+            &fx,
+            &[
+                "entry",
+                "add",
+                "--tag",
+                "preferences",
+                "--author",
+                "opus",
+                "--related",
+                &session,
+                "--quote",
+                "never paste rules as typed",
+                "--spoken",
+                "The user prefers short progress updates.",
+            ]
+        ),
+        "quote_not_found"
+    );
+    assert_eq!(
+        refused(
+            &fx,
+            &[
+                "entry",
+                "add",
+                "--tag",
+                "preferences",
+                "--author",
+                "opus",
+                "--related",
+                "session:00000000-0000-4000-8000-000000000000",
+                "--quote",
+                spoken_words,
+                "--spoken",
+                "The user prefers short progress updates.",
+            ]
+        ),
+        "quote_not_found"
+    );
+
+    // Refused: ineligible tags (action tags, handoff, require_evidence).
+    for bad_tag in ["standard", "idea", "handoff", "finding"] {
+        assert_eq!(
+            refused(
+                &fx,
+                &[
+                    "entry",
+                    "add",
+                    "--tag",
+                    bad_tag,
+                    "--author",
+                    "opus",
+                    "--related",
+                    &session,
+                    "--quote",
+                    spoken_words,
+                    "--spoken",
+                    "The user prefers short progress updates.",
+                ]
+            ),
+            "not_memory_tag",
+            "{bad_tag}"
+        );
+    }
+
+    // Refused: quote containing a secret that redaction would alter.
+    let secret_quote = "keep ghp_abcdefghij123456 out of logs";
+    claude.write(&[("u-1", "user", secret_quote)]);
+    assert_eq!(
+        refused(
+            &fx,
+            &[
+                "entry",
+                "add",
+                "--tag",
+                "preferences",
+                "--author",
+                "opus",
+                "--related",
+                &session,
+                "--quote",
+                secret_quote,
+                "--spoken",
+                "The user wants tokens kept out of logs.",
+            ]
+        ),
+        "needs_redaction"
+    );
+    assert!(
+        !entries_of_tag(&fx, "preferences"),
+        "nothing written on refusals"
+    );
+
+    // Accepted on preferences (and configured memory tag) in an off/unrecorded session.
+    claude.write(&[("u-1", "user", spoken_words)]);
+    let statement = "The user prefers short progress updates during long runs.";
+    let added = json_of(&fx.ok(&[
+        "entry",
+        "add",
+        "--tag",
+        "preferences",
+        "--author",
+        "opus",
+        "--project",
+        "scribe",
+        "--related",
+        &session,
+        "--quote",
+        "keep progress updates short during long runs",
+        "--spoken",
+        statement,
+        "--json",
+    ]));
+    assert_eq!(added["id"], "preferences-1");
+    assert_eq!(added["author"], json!({"kind": "agent", "name": "opus"}));
+    assert_eq!(added["stated_by"], json!({"kind": "agent", "name": "opus"}));
+    assert_eq!(
+        added["quote"],
+        "keep progress updates short during long runs"
+    );
+    assert_eq!(added["content"], statement);
+    assert_eq!(added["content_from"]["kind"], "agent");
+    assert_eq!(added["cite"], Value::Null);
+    assert_eq!(added["said"], "");
+
+    // Does not create a session record or switch the off session on.
+    let sessions = json_of(&fx.ok(&["session", "list", "--include-inactive", "--json"]));
+    assert_eq!(sessions["total"], 0);
+
+    // Works on a user-configured non-action memory tag too.
+    let ritual = json_of(&fx.ok(&[
+        "entry",
+        "add",
+        "--tag",
+        "rituals",
+        "--author",
+        "opus",
+        "--related",
+        &session,
+        "--quote",
+        "add that to my preferences",
+        "--spoken",
+        "The user starts reviews with a clean status check.",
+        "--json",
+    ]));
+    assert_eq!(ritual["id"], "rituals-1");
+    assert_eq!(
+        ritual["stated_by"],
+        json!({"kind": "agent", "name": "opus"})
+    );
+}
+
+#[test]
+fn spoken_instruction_entry_labels_statement_as_agents_and_ask_cites_like_marked_entries() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let quote = "always keep progress updates short during long runs";
+    claude.write(&[(
+        "u-1",
+        "user",
+        "Add that to my preferences: always keep progress updates short during long runs.",
+    )]);
+    let statement = "The user prefers concise progress updates during long runs.";
+    fx.ok(&[
+        "entry",
+        "add",
+        "--tag",
+        "preferences",
+        "--author",
+        "opus",
+        "--project",
+        "scribe",
+        "--related",
+        &format!("session:{SESSION}"),
+        "--quote",
+        quote,
+        "--spoken",
+        statement,
+    ]);
+
+    // `entry show` shows the user's words as `quote` and labels the statement as the agent's.
+    let table = text(
+        &fx.ok(&["entry", "show", "preferences-1", "--format", "table"])
+            .stdout,
+    );
+    assert!(
+        table.contains(
+            "stated_by   agent:opus (content is agent (opus)'s statement of the user's turn)"
+        ),
+        "{table}"
+    );
+    assert!(table.contains(&format!("quote       {quote}")), "{table}");
+    assert!(
+        table.contains(&format!("content     {statement}")),
+        "{table}"
+    );
+
+    let plain = text(&fx.ok(&["entry", "show", "preferences-1"]).stdout);
+    assert!(
+        plain.contains(&format!("stated_by\tagent:opus\t{quote}")),
+        "{plain}"
+    );
+
+    // `scribe search` renders the agent's statement label and the user's words.
+    let found = json_of(&fx.ok(&["search", "progress updates concise", "--json"]));
+    assert_eq!(found["total"], 1, "{found}");
+    let snippet = found["hits"][0]["snippet"].as_str().unwrap();
+    assert!(
+        snippet.contains("agent (opus)'s statement of the user's turn:"),
+        "{snippet}"
+    );
+    assert!(
+        snippet.contains(&format!("The user's words: \"{quote}\"")),
+        "{snippet}"
+    );
+
+    // `question ask` sends the evidence labelled like marked entries and attributes
+    // quotes from `quote` to the user and quotes from `content` to the agent's statement.
+    let reply = json!({
+        "status": "answered",
+        "answer": "The user wants short progress updates.",
+        "claims": [
+            {
+                "text": "agent statement",
+                "quote": "concise progress updates during long runs",
+                "cite": "preferences-1"
+            },
+            {
+                "text": "user words",
+                "quote": "always keep progress updates short during long runs",
+                "cite": "preferences-1"
+            }
+        ],
+        "conflicts": []
+    });
+    let fake_claude = fx.fake_program(
+        "claude",
+        &format!(
+            "#!/bin/sh\ncat > \"$HOME/ask-stdin\"\nprintf '{{\"type\":\"result\",\"is_error\":false,\"result\":\"\",\"structured_output\":%s}}\\n' '{}'\n",
+            reply
+        ),
+    );
+    let mut cmd = fx.cmd(&[
+        "question",
+        "ask",
+        "how should progress updates look during long runs?",
+        "--json",
+    ]);
+    cmd.env("PATH", &fake_claude);
+    let out = cmd.output().unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let asked = json_of(&out);
+    assert_eq!(asked["status"], "answered", "{asked}");
+    assert_eq!(
+        asked["claims"][0]["text"],
+        "agent (opus)'s statement of the user's turn"
+    );
+    assert_eq!(asked["claims"][1]["text"], "The user");
+    assert_eq!(
+        asked["answer"],
+        "agent (opus)'s statement of the user's turn: \"concise progress updates during long runs\" [preferences-1]\n\
+         The user: \"always keep progress updates short during long runs\" [preferences-1]"
+    );
+    let prompt = std::fs::read_to_string(fx.home().join("ask-stdin")).unwrap();
+    assert!(
+        prompt.contains("words=\"agent (opus)'s statement of the user's turn\""),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains(&format!("The user's words: \"{quote}\"")),
+        "{prompt}"
+    );
+}

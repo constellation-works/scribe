@@ -282,12 +282,13 @@ fn hit(score: f64, doc: &Doc, corpus: Corpus<'_>, wanted: &BTreeSet<String>) -> 
                     ask::outcome_text(outcome, corpus.user)
                 )
             } else if let Some(quote) = ask::stated_quote(e) {
-                // Scribe's statement of the turn, then the speaker's own
-                // words, labelled as theirs (2_design.md §11.1, §15.3).
+                // Scribe's or an agent's statement of the turn, then the
+                // speaker's own words, labelled as theirs
+                // (2_design.md §11.1, §15.3, §16.6).
                 let speaker = ask::speaker_of(e);
                 format!(
                     "{}: {} | {} \"{}\"",
-                    ask::stated_whose_for(corpus.user, speaker),
+                    ask::stated_whose_of(corpus.user, e),
                     snippet(text, wanted),
                     ask::words_label(corpus.user, speaker),
                     snippet(quote, wanted)

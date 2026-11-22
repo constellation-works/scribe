@@ -14,6 +14,7 @@ Options:
       --quote <QUOTE>       The user's correction that prompted the entry, verbatim from one of the user's typed turns in the session named by --related; required under a tag that requires a quote
       --evidence <POINTER>  Evidence pointer (a path, task, run, experiment or commit); required under a require_evidence tag, refused under any other tag
       --as-of <DATE>        The date a require_evidence entry's result was true, as YYYY-MM-DD [default: today]
+      --spoken              Record on the user's spoken instruction: sets stated_by to --author; requires --quote, --related session:<id>, and a non-action memory tag (not handoff or require_evidence)
   -h, --help                Print help
   -V, --version             Print version
 
@@ -25,5 +26,6 @@ Global options:
 
 Examples:
   scribe entry add --tag preferences --author opus 'Use the stable API'
+  scribe entry add --tag preferences --author opus --related session:<id> --quote '<their words>' --spoken 'The user prefers short updates.'
   scribe entry add --tag idea --author opus --related session:<id> 'Cache the manifest between runs'
   scribe entry add --tag standard --author opus --related session:<id> --quote '<quoted words>' 'Name the unit in every size'

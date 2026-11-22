@@ -267,9 +267,11 @@ pub(crate) struct EntryPayload {
     /// on; `null` otherwise. A later retirement or forgetting never
     /// replaces it.
     pub(crate) instruction: Option<InstructionPayload>,
-    /// Whose words `content` is when not the author's: `{kind: scribe,
-    /// name: session-pass}` when it is scribe's statement of the user's turn
-    /// (their words are then in `quote`); `null` otherwise.
+    /// Whose words `content` is when it is a statement of a quoted turn:
+    /// `{kind: scribe, name: session-pass}` or `{kind: scribe, name: annotation}`
+    /// when scribe wrote it, or `{kind: agent, name: <author>}` when an agent
+    /// wrote it on the user's spoken instruction (their words are then in
+    /// `quote`); `null` otherwise.
     pub(crate) stated_by: Option<AuthorPayload>,
     /// Where an idea the session pass captured itself stands: `{state:
     /// open|parked|task, reason, task}`, `reason` the user's own words

@@ -170,6 +170,17 @@ wrote for a `#scribe` marker inside a sentence of a turn Daniel typed
 stated entry: the table detail's `stated_by` reads `scribe:annotation
 (content is scribe's statement of Daniel's turn)` before `quote`, and plain
 prints `stated_by\tscribe:annotation\t<quote>`.
+`entry add --spoken` (2_design.md §16.6) writes a spoken-instruction entry
+under an eligible non-action memory tag with `author: {kind: "agent", name}`,
+`stated_by: {kind: "agent", name}`, `content_from: {kind: "agent"}`, `cite: null`,
+`said: ""`, the agent's statement as `content`, and the user's verbatim turn
+span in `quote`. It prints as a stated entry with the statement labelled as
+the agent's: table detail's `stated_by` reads `agent:<name> (content is agent
+(<name>)'s statement of the user's turn)` before `quote`, plain prints
+`stated_by\tagent:<name>\t<quote>`, `search` snippets open with `agent
+(<name>)'s statement of the user's turn: <statement> | The user's words:
+"<quote>"`, and `ask` attributes quotes inside `quote` to the user and quotes
+in `content` to `agent (<name>)'s statement of the user's turn`.
 
 **Session** (`sessions[]`, `session show`): `id` (the provider's session
 id), (phase 6) `short_id` (`s-<n>`, or `null` for a session with no number;
@@ -433,7 +444,10 @@ the message lists up to ten candidates, sorted, and how many more), `user_only`,
 `migrate_blocked`, `export_target_exists`, `export_needs_migrate`,
 `session_forgotten` (a record write to a forgotten session, or switching it
 on), `handoff_shape` and `handoff_too_long` (a `handoff` entry whose body
-violates the six fixed headings in order or exceeds 3,000 characters), for `tmux` `fzf_missing` and
+violates the six fixed headings in order or exceeds 3,000 characters),
+`not_memory_tag` (`entry add --spoken` on an action tag, `handoff`, or a
+`require_evidence` tag), `needs_redaction` (a spoken-instruction `--quote`
+or annotation quote containing text redaction would alter), for `tmux` `fzf_missing` and
 `tmux_failed` (exit 1; `tmux` renders no payload, its popup owns the
 terminal), for `session pass`
 `session_pass_failed` and `session_not_on`, and for `question

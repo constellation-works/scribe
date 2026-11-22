@@ -2722,3 +2722,61 @@ fn an_approved_context_claim_writes_the_context_as_content_and_needs_format_24()
         }
     }
 }
+
+#[test]
+fn a_spoken_instruction_agent_entry_reads_with_agent_stated_by_and_quote() {
+    let statement = "The user prefers short progress updates.";
+    let agent = "{kind: agent, name: opus}";
+    let raw = stated_entry("active", "\"short updates please\"", "", agent, statement)
+        .replace("author: {kind: daniel, name: daniel}", &format!("author: {agent}"))
+        .replace(
+            "content_from: {kind: message, role: user, message: m-1, at: 2026-11-01T09:59:00Z}",
+            "content_from: {kind: agent}",
+        )
+        .replace(
+            &format!(
+                "cite: {{session: s-1, message: m-1, at: 2026-11-01T09:59:00Z, prompt_sha256: \"{}\", line: 1, cwd: /work}}",
+                "0".repeat(64)
+            ),
+            "cite: null",
+        );
+    let e = entry(&raw).unwrap();
+    assert_eq!(e.author, crate::Author::agent("opus".parse().unwrap()));
+    assert_eq!(
+        e.stated_by,
+        Some(crate::Author::agent("opus".parse().unwrap()))
+    );
+    assert_eq!(e.quote.as_deref(), Some("short updates please"));
+    let encoded = crate::store::format::encode_entry(Path::new(ENTRY), &e).unwrap();
+    assert_eq!(entry(std::str::from_utf8(&encoded).unwrap()).unwrap(), e);
+
+    // Forgotten keeps stated_by and clears quote and body.
+    let forgotten = raw
+        .replace("status: active", "status: forgotten")
+        .replace(
+            "inactive_since: null",
+            "inactive_since: 2026-11-02T10:00:00Z",
+        )
+        .replace("quote: \"short updates please\"", "quote: null")
+        .replace(statement, "");
+    assert_eq!(entry(&forgotten).unwrap().quote, None);
+
+    // Active without quote, or mismatched/scribe stated_by, is refused.
+    corrupt_message(
+        &entry(&raw.replace("quote: \"short updates please\"", "quote: null")).unwrap_err(),
+    );
+    corrupt_message(
+        &entry(&raw.replace(
+            &format!("stated_by: {agent}"),
+            "stated_by: {kind: agent, name: other}",
+        ))
+        .unwrap_err(),
+    );
+    corrupt_message(
+        &entry(&raw.replace(
+            &format!("stated_by: {agent}"),
+            "stated_by: {kind: scribe, name: session-pass}",
+        ))
+        .unwrap_err(),
+    );
+}
