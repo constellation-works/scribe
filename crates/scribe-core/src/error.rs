@@ -371,6 +371,9 @@ pub enum WriteRefusal {
     /// `export_needs_migrate`: `export --as jsonl` of a store whose sessions
     /// are still files.
     ExportNeedsMigrate,
+    /// `session_forgotten`: a write to a session `#scribe forget` erased
+    /// (its record, or switching it on); a forgotten session takes none.
+    SessionForgotten,
 }
 impl WriteRefusal {
     /// Stable machine-readable code.
@@ -416,6 +419,7 @@ impl WriteRefusal {
             Self::MigrateBlocked => "migrate_blocked",
             Self::ExportTargetExists => "export_target_exists",
             Self::ExportNeedsMigrate => "export_needs_migrate",
+            Self::SessionForgotten => "session_forgotten",
         }
     }
 }

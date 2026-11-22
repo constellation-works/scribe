@@ -47,6 +47,8 @@ pub(super) struct Loaded {
     pub numbers: BTreeMap<SessionId, NonZeroU64>,
     /// Every switch and Codex cursor.
     pub control: ControlState,
+    /// When each forgotten session was forgotten.
+    pub forgotten: BTreeMap<SessionId, OffsetDateTime>,
 }
 
 impl Loaded {
@@ -78,6 +80,24 @@ pub struct SessionsMoved {
     /// Where the files went, relative to the root; `None` when there were
     /// none.
     pub moved_to: Option<String>,
+}
+
+/// What `#scribe forget s-<n>` did ([`Store::settle`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionForget {
+    /// The provider's session id.
+    pub id: SessionId,
+    /// Its `s-<n>`.
+    pub number: Option<NonZeroU64>,
+    /// Stored messages deleted.
+    pub messages: usize,
+    /// Segments whose text was blanked.
+    pub segments: usize,
+    /// Moved-aside record and checkpoint files under `pre-sqlite-<date>/`
+    /// deleted.
+    pub files: usize,
+    /// Whether it was switched on, and is now off.
+    pub was_on: bool,
 }
 
 /// Which move: a write's own, or `store migrate`.
@@ -126,6 +146,7 @@ impl Store {
         let mut loaded = Loaded {
             numbers: found.numbers,
             control: found.control,
+            forgotten: found.forgotten,
             ..Loaded::default()
         };
         for row in found.records {
@@ -541,6 +562,92 @@ impl Store {
             }
         }
         Ok(out)
+    }
+
+    /// Forget the session `input` names (`s-<n>` or its provider id) for
+    /// good, under the store lock the caller holds (2_design.md §15.7):
+    /// [`rows::forget`] in one session transaction, then a `TRUNCATE`
+    /// checkpoint so the deleted pages leave the WAL, then its moved-aside
+    /// files deleted, the one exception to `pre-sqlite-<date>/` being kept.
+    /// A session that is on is switched off in the same transaction, and
+    /// stays off. `Ok(None)` when it is already forgotten.
+    pub(super) fn forget_session_locked(
+        &self,
+        input: &SessionId,
+        now: OffsetDateTime,
+    ) -> Result<Option<SessionForget>> {
+        let id = self.resolve_session(input)?;
+        let number = self.load_sessions()?.numbers.get(&id).copied();
+        let erased = self.sessions_tx(|tx| tx.forget(&id, now))?;
+        let erased = match erased {
+            Some(Some(erased)) => erased,
+            Some(None) => return Ok(None),
+            None => {
+                return Err(Error::SessionNotFound {
+                    id: id.clone(),
+                    path: rows::db_path(&self.root),
+                });
+            }
+        };
+        db::truncate_wal_of(&self.root, self.lock_wait)?;
+        let files = self.forget_moved_files(&id)?;
+        Ok(Some(SessionForget {
+            id,
+            number,
+            messages: erased.messages,
+            segments: erased.segments,
+            files,
+            was_on: erased.was_on,
+        }))
+    }
+
+    /// Delete `id`'s record and rebuild checkpoint files from every
+    /// `pre-sqlite-<date>/sessions*/<yyyy>/<mm>/`. Returns how many went.
+    fn forget_moved_files(&self, id: &SessionId) -> Result<usize> {
+        let names = [format!("{id}{RECORD_EXT}"), format!(".{id}.rebuild.md")];
+        let mut removed = 0;
+        for moved in fsio::list_dir(&self.root)? {
+            let moved = self.root.join(&moved);
+            if !moved
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with(MOVED_PREFIX))
+                || !fsio::inspect_subdir(&moved)?
+            {
+                continue;
+            }
+            for sessions in fsio::list_dir(&moved)? {
+                let sessions = moved.join(&sessions);
+                if !sessions
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with(SESSIONS_DIR))
+                    || !fsio::inspect_subdir(&sessions)?
+                {
+                    continue;
+                }
+                for year in fsio::list_dir(&sessions)? {
+                    let year = sessions.join(year);
+                    if !fsio::inspect_subdir(&year)? {
+                        continue;
+                    }
+                    for month in fsio::list_dir(&year)? {
+                        let month = year.join(month);
+                        if !fsio::inspect_subdir(&month)? {
+                            continue;
+                        }
+                        for name in &names {
+                            let path = month.join(name);
+                            if fsio::inspect_file(&path)? {
+                                fsio::remove_private(&path)?;
+                                removed += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(removed)
     }
 
     /// The `s-<n>` of every session, read-only.

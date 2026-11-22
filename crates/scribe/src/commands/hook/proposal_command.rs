@@ -1,6 +1,7 @@
 //! The settling verbs of a typed prompt (form 4; docs/design/scribe/2_design.md
 //! §3, §4.2, §7): `#scribe approve <p-id>`, `#scribe reject <p-id>`,
-//! `#scribe retire <entry-id>` and `#scribe forget <entry-id>`.
+//! `#scribe retire <entry-id>`, `#scribe forget <entry-id>` and `#scribe
+//! forget <session-id>`.
 //!
 //! `user_prompt_submit.rs` hands each such line here after the transcript
 //! check, in prompt order. One locked store call per line applies it
@@ -12,7 +13,11 @@
 //!   again;
 //! - retire: the entry is hidden from answers and stays on disk;
 //! - forget: entry text and evidence, proposal quotes of it, and related
-//!   candidate quotes, evidence and reasons are cleared; session records stay.
+//!   candidate quotes, evidence and reasons are cleared; session records stay;
+//! - forget a session (`s-<n>` or its provider id; 2_design.md §15.7): its
+//!   stored messages, log text, summary, goals, next and terms are erased,
+//!   it is switched off for good, and its row stays as forgotten; entries,
+//!   memory and claims citing it keep their own text.
 //!
 //! A change is one audit line whose target is the proposal or entry; a
 //! refusal is one line with its code; an instruction already applied (a
@@ -111,6 +116,23 @@ pub(super) fn run(settling: &Settling, turn: &Turn, ctx: &Context) -> Reply {
                 "scribe: forgot {entry} — entry text and evidence, proposal quotes of it, and related candidate quotes, evidence and reasons are cleared; session records stay"
             ),
         ),
+        Settled::SessionForgotten(forgot) => {
+            let name = forgot
+                .number
+                .map_or_else(|| forgot.id.to_string(), |n| format!("s-{n}"));
+            let off = if forgot.was_on {
+                "; it is switched off for good"
+            } else {
+                ""
+            };
+            done(
+                name.clone(),
+                format!(
+                    "scribe: forgot {name} — {} stored messages and its log text are erased{off}; its id stays as forgotten, and entries, memory and claims citing it keep their own text",
+                    forgot.messages
+                ),
+            )
+        }
         Settled::Already(what) => Reply {
             echo: format!("scribe: {what} — nothing changed"),
             outcome: None,

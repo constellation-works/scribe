@@ -115,7 +115,7 @@ user's file could pass for one of Daniel's records.
 ├── pre-issue-<yyyy-mm-dd>/issue-<n>.md   0600, an issue file after its conversion (phase 2)
 ├── sessions/<yyyy>/<mm>/<session-id>.md 0600, one file per session record, until the move (formats 1–25)
 ├── control.json                         0600, optional; after the move only the format stamp, `{"format": 26, "sessions": {}, "codex_cursors": {}}`
-├── pre-sqlite-<yyyy-mm-dd>/             0700, `sessions/`, `control.json` and `.codex-<id>.lock` files after the move (phase 6), never deleted
+├── pre-sqlite-<yyyy-mm-dd>/             0700, `sessions/`, `control.json` and `.codex-<id>.lock` files after the move (phase 6), never deleted but for a forgotten session's own files
 ├── locks/codex-<id>.lock                0600, the Codex ingestion lock of a session (phase 6)
 ├── locks/rebuild-<id>.lock              0600, the rebuild lock of a session (phase 6)
 ├── proposals.json                       0600, optional
@@ -176,11 +176,12 @@ file.
   is phase 4's; version 2 (phase 5) adds `memory_journal`,
   `memory_messages` and `pass_signals`; version 3 (phase 6) adds
   `sessions`, `segments`, `session_links`, `session_terms`,
-  `codex_cursors`, `rebuild_checkpoints` and `record_kinds`. Every table is `STRICT`; times are RFC 3339 UTC text.
+  `codex_cursors`, `rebuild_checkpoints` and `record_kinds`; version 4 adds
+  `sessions.forgotten`. Every table is `STRICT`; times are RFC 3339 UTC text.
 - **Errors.** A file SQLite cannot read as a database is `store_corrupt`;
   any other SQLite failure is `store_database`.
 
-### Tables (version 3)
+### Tables (version 4)
 
 | Table | Columns (type, constraint) | Written by |
 |---|---|---|
@@ -194,7 +195,7 @@ file.
 | `memory_journal` | `id INTEGER PRIMARY KEY`; `created TEXT NOT NULL`; `ops TEXT NOT NULL`, a JSON array of `{path, content}` (content `null` removes the file); `done INTEGER NOT NULL CHECK (done IN (0, 1))`; `revision INTEGER REFERENCES profile_revisions(n)`; a partial index on the open rows | every memory write (version 2) |
 | `memory_messages` | `item TEXT NOT NULL`, non-empty (a `now` or milestone stem, or a migrated `m-<n>`); `session TEXT NOT NULL`, 1–128 characters; `message TEXT NOT NULL`, non-empty; `PRIMARY KEY (item, session, message)` | the session pass (the turn an element quotes, and a completed candidate's turn), the migration (each occurrence's turn), `memory refresh` (a promoted `now` item's links copied to its milestone); `memory forget` deletes an item's rows (version 2) |
 | `pass_signals` | `session TEXT NOT NULL`, 1–128 characters; `through TEXT NOT NULL`, non-empty (the window's last message); `signal INTEGER NOT NULL CHECK (signal BETWEEN 0 AND 3)`; `PRIMARY KEY (session, through)` | the session pass (version 2) |
-| `sessions` | `id INTEGER PRIMARY KEY AUTOINCREMENT`, shown as `s-<id>`; `provider_session TEXT NOT NULL UNIQUE`, 1–128 characters (the provider's session id, the key cites and messages use); `has_record` and `has_switch`, each `0` or `1`; the record's header as columns (`status` `open` or `final`, `active`, `keep_active`, `project`, `provider`, `host`, `created`, `updated`, `title`, `cwd`, `started`, `on_since`, `scribed_through`, `passes`, `next_open`; `active_change`, `cataloged_by`, `rebuilt_by`, `topics` and `related` as JSON text) and its `summary`, `goals` and `next`; the switch as `sw_provider`, `sw_on`, `sw_since`, `sw_due`, `sw_final`, `sw_consecutive_failures`, `sw_retry_after`, `sw_pending_links` (JSON) and `sw_cataloged_by` (JSON). A row with `has_record = 1` has every header column; one with `has_switch = 1` every switch column the switch requires | every session write (version 3) |
+| `sessions` | `id INTEGER PRIMARY KEY AUTOINCREMENT`, shown as `s-<id>`; `provider_session TEXT NOT NULL UNIQUE`, 1–128 characters (the provider's session id, the key cites and messages use); `has_record` and `has_switch`, each `0` or `1`; the record's header as columns (`status` `open` or `final`, `active`, `keep_active`, `project`, `provider`, `host`, `created`, `updated`, `title`, `cwd`, `started`, `on_since`, `scribed_through`, `passes`, `next_open`; `active_change`, `cataloged_by`, `rebuilt_by`, `topics` and `related` as JSON text) and its `summary`, `goals` and `next`; the switch as `sw_provider`, `sw_on`, `sw_since`, `sw_due`, `sw_final`, `sw_consecutive_failures`, `sw_retry_after`, `sw_pending_links` (JSON) and `sw_cataloged_by` (JSON); `forgotten TEXT`, when `#scribe forget` erased the session, else `NULL` (version 4). A row with `has_record = 1` has every header column; one with `has_switch = 1` every switch column the switch requires | every session write (version 3) |
 | `segments` | `session INTEGER NOT NULL` (`sessions.id`); `n INTEGER NOT NULL CHECK (n >= 1)`; `heading`, `first_message`, `last_message`, `"from"`, `"to"`, `state` (`open` or `sealed`), `windows`, `origin`, `topics` and `related` (JSON), `text`; `PRIMARY KEY (session, n)` | the record's writer, replacing the session's rows (version 3) |
 | `session_links` | `session INTEGER NOT NULL`; `position INTEGER NOT NULL`; `type TEXT NOT NULL CHECK (type IN ('spawned_from', 'continues'))`; `target TEXT NOT NULL` (a provider session id); `PRIMARY KEY (session, position)` | the record's writer (version 3) |
 | `session_terms` | `session INTEGER NOT NULL`; `position INTEGER NOT NULL`; `term`, `said`, `message`; `PRIMARY KEY (session, position)` | the record's writer (version 3) |
@@ -229,11 +230,41 @@ file.
   the files are written; `secure_delete` overwrites their pages, an FTS5
   `optimize` rebuilds the index without their terms, and a `TRUNCATE`
   checkpoint empties the WAL. A forget on a store without a database
-  creates none.
+  creates none. `#scribe forget s-<n>` erases a whole session; see
+  [Forgetting a session](#forgetting-a-session).
 - **Search.** `scribe search --kind message` matches each search token as
   a word prefix (`"<token>"*`, any of them) and orders by `bm25()`, then
   time. Messages are filtered through their session's record; one whose
   session has no record is not shown.
+
+### Forgetting a session
+
+`#scribe forget s-<n>`, or the provider's session id in full, typed as a
+whole line (2_design.md §15.7). No CLI verb forgets a session. Under `.lock`,
+in one session transaction:
+
+- **Deleted:** the session's `messages` rows and their FTS5 terms
+  (`optimize`), its `now_pending` candidates, its `session_terms` (the
+  user's words) and its rebuild checkpoint.
+- **Blanked:** every segment's `text`, and the record's `summary`, `goals`
+  and `next` (`next_open` 0).
+- **Switched off for good:** `sw_on` and `sw_due` become 0 when the session
+  is on; it is not refused for being on.
+- **Kept:** the row with its `id`, provider id, title, segment headings,
+  topics, related and links, now stamped `forgotten`. An `AUTOINCREMENT`
+  id is never reused, so `s-<n>` names this row for good. Entries, memory
+  items and claims that cite the session keep their own text, and their
+  cites resolve to a forgotten session.
+
+After the commit, a `TRUNCATE` checkpoint empties the WAL, and the
+session's record and checkpoint files are deleted from every
+`pre-sqlite-<date>/sessions*/`. That is the one deletion in a directory
+scribe otherwise never deletes from.
+
+A forgotten session takes no write. Writing its record (a pass, a rebuild,
+a catalog) and switching it on are refused with `session_forgotten`.
+Forgetting it again changes nothing. The hook's audit line has the
+session's `s-<n>` as its target.
 
 ### Sessions in scribe.db (phase 6)
 

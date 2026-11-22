@@ -50,7 +50,7 @@ pub const DB_FILE: &str = "scribe.db";
 /// The schema, one step per `user_version`: step `n` (1-based) moves the
 /// database from version `n - 1` to `n`. Append only; never edit a shipped
 /// step.
-const MIGRATIONS: &[&str] = &[V1, V2, V3];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4];
 
 /// Version 1 (phase 4): `meta`, `messages` and its FTS5 index, and the
 /// memory tables phase 5 uses.
@@ -259,6 +259,12 @@ CREATE TABLE record_kinds (
     moved_at TEXT NOT NULL,
     moved_to TEXT
 ) STRICT;
+";
+
+/// Version 4: when `#scribe forget s-<n>` erased a session (§15.7). The
+/// row stays, so its id is never reused; NULL for every other session.
+const V4: &str = "
+ALTER TABLE sessions ADD COLUMN forgotten TEXT;
 ";
 
 /// The newest schema version this build reads and writes.
@@ -472,6 +478,14 @@ pub(super) fn truncate_wal(conn: &Connection, path: &Path, started: Instant) -> 
         tracing::warn!(path = %path.display(), "a reader kept forgotten messages' old pages in the WAL until the next checkpoint");
     }
     Ok(())
+}
+
+/// [`truncate_wal`] on a new writer connection, after a forget committed
+/// in a transaction whose connection is gone.
+pub(super) fn truncate_wal_of(root: &Path, wait: Duration) -> Result<()> {
+    let path = root.join(DB_FILE);
+    let conn = open_writer(root, wait)?;
+    truncate_wal(&conn, &path, Instant::now())
 }
 
 /// Delete the messages keyed by `keys` (session, message id) for a forget,

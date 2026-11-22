@@ -174,7 +174,9 @@ prints `stated_by\tscribe:annotation\t<quote>`.
 **Session** (`sessions[]`, `session show`): `id` (the provider's session
 id), (phase 6) `short_id` (`s-<n>`, or `null` for a session with no number;
 the table detail prints it as a `short id` field under `id`), `status` (`open`,
-`final`), `project`, `topics`, `related` (unchanged: model-extracted
+`final`), `forgotten` (when `#scribe forget s-<n>` erased the session, else
+`null`; the table detail prints a `forgotten` field under `status`, and plain
+a `forgotten<TAB><time>` line after the row, only when set), `project`, `topics`, `related` (unchanged: model-extracted
 `kind:target` strings), `links` (`[{type, session, title}]`: the links the
 record stores, `type` `spawned_from` or `continues`, `title` the linked
 session's record title or `null` when it has none), `children`
@@ -413,7 +415,9 @@ the message lists up to ten candidates, sorted, and how many more), `user_only`,
 `memory_not_now`, (format 25) `memory_changed`, `revision_not_found`,
 `profile_shape`, `profile_pinned`, `profile_too_long`,
 `profile_unknown_link`, `profile_sensitive`, `profile_milestone`, (phase 6)
-`migrate_blocked`, `export_target_exists`, `export_needs_migrate`, for `tmux` `fzf_missing` and
+`migrate_blocked`, `export_target_exists`, `export_needs_migrate`,
+`session_forgotten` (a record write to a forgotten session, or switching it
+on), for `tmux` `fzf_missing` and
 `tmux_failed` (exit 1; `tmux` renders no payload, its popup owns the
 terminal), for `session pass`
 `session_pass_failed` and `session_not_on`, and for `question
@@ -476,11 +480,16 @@ entry is missing, format 15 also keeps its settlement and sets
 proposed again`, `scribe: retired <id> — ask leaves it out of answers;
 scribe entry show <id> still has it`, `scribe: forgot <id> — entry text and
 evidence, proposal quotes of it, and related candidate quotes, evidence and
-reasons are cleared; session records stay`, `scribe: <id> is already <state>
+reasons are cleared; session records stay`, `scribe: forgot s-<n> — <k> stored
+messages and its log text are erased[; it is switched off for good]; its id
+stays as forgotten, and entries, memory and claims citing it keep their own
+text` (`#scribe forget s-<n>` or the provider's session id in full; specs/store.md,
+"Forgetting a session"), `scribe: <id> is already <state>
 — nothing changed`, `scribe: refused "<line>" — <reason>` (codes
 `proposal_not_found`, `entry_not_found`, `proposal_settled`,
 `entry_not_active`) or `scribe: could not apply "<line>" — <error>`. A
-change writes one audit line whose `target` is the proposal or entry id; a
+change writes one audit line whose `target` is the proposal or entry id (a
+session forget's is `s-<n>`); a
 refusal one line with `target` `session:<id>` and its code; a repeat or an
 already-covered approval none. A covered approval is a change: one audit
 line, target the proposal id, and no error code. Replaying it is a refusal.
