@@ -833,9 +833,9 @@ fn a_stated_entry_covers_a_line_matching_its_quote() {
 }
 
 #[test]
-fn a_claim_needs_a_subject_and_a_statement_within_their_bounds() {
+fn a_claim_needs_a_subject_and_a_context_within_their_bounds() {
     use crate::models::{EntryCandidateAnswer, FiringTurn};
-    let turns: Vec<Message> = (1..=4)
+    let turns: Vec<Message> = (1..=5)
         .map(|n| {
             message(
                 &format!("u-{n}"),
@@ -856,7 +856,7 @@ fn a_claim_needs_a_subject_and_a_statement_within_their_bounds() {
         crate::voice::Voice::default(),
     );
     request.candidate_limit = 3;
-    request.candidate_turns = (1..=4)
+    request.candidate_turns = (1..=5)
         .map(|n| FiringTurn {
             message: format!("u-{n}"),
             tag: String::from("preferences"),
@@ -864,36 +864,91 @@ fn a_claim_needs_a_subject_and_a_statement_within_their_bounds() {
             matched: String::from("I prefer"),
         })
         .collect();
-    let claim = |n: usize, statement: String, subject: String| EntryCandidateAnswer {
+    let claim = |n: usize, context: String, subject: String| EntryCandidateAnswer {
         quote: format!("I prefer option number {n} for every build we run."),
         message: format!("u-{n}"),
         tag: String::from("preferences"),
-        statement,
+        context,
         subject,
         ..Default::default()
     };
+    let two = "The build was slow. The user prefers option 1.";
+    // Two sentences of exactly 600 characters.
+    let longest = format!("{}. {}.", "s".repeat(299), "s".repeat(298));
+    assert_eq!(longest.chars().count(), crate::CONTEXT_CHARS);
     let mut a = answer();
     a.candidates = vec![
         // At the bounds, padded: kept, trimmed.
-        claim(
-            1,
-            format!(" {} ", "s".repeat(300)),
-            format!(" {} ", "t".repeat(80)),
-        ),
-        // A statement past 300 characters.
-        claim(2, "s".repeat(301), String::from("the build")),
+        claim(1, format!(" {longest} "), format!(" {} ", "t".repeat(80))),
+        // A context past 600 characters.
+        claim(2, format!("{longest}s"), String::from("the build")),
         // No subject: the window does not name what the turn is about.
-        claim(
-            3,
-            String::from("Daniel prefers option 3."),
-            String::from("  "),
-        ),
+        claim(3, two.to_owned(), String::from("  ")),
         // A subject past 80 characters.
-        claim(4, String::from("Daniel prefers option 4."), "t".repeat(81)),
+        claim(4, two.to_owned(), "t".repeat(81)),
+        // A single line: it does not stand alone.
+        claim(
+            5,
+            String::from("The user prefers option 5."),
+            String::from("the build"),
+        ),
     ];
     let distilled = pass::check(a, &conversation, &request).unwrap();
     assert_eq!(distilled.candidates.len(), 1, "{:?}", distilled.candidates);
     assert_eq!(distilled.candidates[0].message, "u-1");
-    assert_eq!(distilled.candidates[0].statement, "s".repeat(300));
+    assert_eq!(distilled.candidates[0].context, longest);
     assert_eq!(distilled.candidates[0].subject, "t".repeat(80));
+}
+
+#[test]
+fn the_session_schema_bounds_claims_to_six_of_680_characters_and_4080_per_answer() {
+    // 2_design.md §15.3: at most 6 candidates, each a context of at most
+    // 600 characters and a subject of at most 80, so the two add at most
+    // 4,080 value characters to one answer; the annotation schema asks
+    // for the same context.
+    let schema: serde_json::Value = serde_json::from_str(crate::models::SESSION_SCHEMA).unwrap();
+    let candidates = &schema["properties"]["candidates"];
+    let fields = &candidates["items"]["properties"];
+    let max = |v: &serde_json::Value| usize::try_from(v.as_u64().unwrap()).unwrap();
+    let count = max(&candidates["maxItems"]);
+    let context = max(&fields["context"]["maxLength"]);
+    let subject = max(&fields["subject"]["maxLength"]);
+    assert_eq!(
+        (count, context, subject),
+        (6, crate::CONTEXT_CHARS, crate::SUBJECT_CHARS)
+    );
+    assert_eq!(count * (context + subject), 4_080);
+    assert!(fields.get("statement").is_none(), "{fields}");
+    let required = candidates["items"]["required"].as_array().unwrap();
+    assert!(
+        required.contains(&serde_json::json!("context")),
+        "{required:?}"
+    );
+
+    let marks: serde_json::Value = serde_json::from_str(crate::models::ANNOTATION_SCHEMA).unwrap();
+    let mark = &marks["properties"]["marks"]["items"]["properties"];
+    assert_eq!(max(&mark["context"]["maxLength"]), crate::CONTEXT_CHARS);
+    assert_eq!(max(&mark["subject"]["maxLength"]), crate::SUBJECT_CHARS);
+    assert!(mark.get("statement").is_none(), "{mark}");
+}
+
+#[test]
+fn a_context_stands_alone_from_two_sentences_up_to_600_characters() {
+    assert!(crate::context_stands_alone(
+        "The user and the agent chose a store. The user asked for a log."
+    ));
+    assert!(crate::context_stands_alone(
+        "They weighed it (twice). The user said \"keep the log.\""
+    ));
+    for line in [
+        "",
+        "The user prefers a log.",
+        "The user prefers a log, e.g. one per session",
+        "v1.2 is out and the user prefers it",
+    ] {
+        assert!(!crate::context_stands_alone(line), "{line}");
+    }
+    let long = format!("{}. {}.", "a".repeat(299), "b".repeat(299));
+    assert_eq!(long.chars().count(), 601);
+    assert!(!crate::context_stands_alone(&long));
 }

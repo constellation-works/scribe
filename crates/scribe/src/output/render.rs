@@ -327,9 +327,9 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
             field(out, "state", p.state)?;
             field(out, "older", &p.older)?;
             if let Some(candidate) = &p.candidate {
-                if let Some(statement) = &candidate.statement {
-                    field(out, "statement", statement)?;
+                if let Some(context) = super::payload::claim_context(candidate) {
                     field(out, "subject", candidate.subject.as_deref().unwrap_or("-"))?;
+                    field(out, "context", &context)?;
                 }
                 field(out, "quote", &candidate.quote)?;
                 field(out, "tag", candidate.tag.as_str())?;
@@ -339,6 +339,15 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
                     "message",
                     candidate.cite.message.as_deref().unwrap_or("-"),
                 )?;
+                // An open claim says how to settle it, so it is settled
+                // from here without opening its session (2_design.md §15.3).
+                if p.state == "open" {
+                    field(
+                        out,
+                        "settle",
+                        &format!("#scribe approve {0} or #scribe reject {0}", p.id),
+                    )?;
+                }
             }
             field(out, "newer", p.newer.as_deref().unwrap_or("-"))?;
             field(out, "reason", &p.reason)?;
@@ -1435,7 +1444,7 @@ fn settled_line(p: &ProposalPayload) -> Option<String> {
 }
 
 /// A proposal's rows: one, and for a candidate carrying scribe's
-/// statement, in the table, a second under it holding the user's quote in
+/// context (or an older claim's statement), in the table, a second under it holding the user's quote in
 /// the `REASON` column (2_design.md §11.1).
 fn proposal_rows(p: &ProposalPayload, mode: OutputMode) -> Vec<Vec<Cell>> {
     let mut rows = vec![proposal_row(p, mode)];
@@ -1476,10 +1485,10 @@ fn proposal_rows(p: &ProposalPayload, mode: OutputMode) -> Vec<Vec<Cell>> {
 const PROPOSAL_REASON_COLUMN: usize = 6;
 
 /// `The user's words: "<quote>"` (or the assistant's) for a candidate
-/// carrying scribe's statement.
+/// carrying scribe's context or an older claim's statement.
 fn stated_candidate_quote(p: &ProposalPayload) -> Option<String> {
     let candidate = p.candidate.as_ref()?;
-    candidate.statement.as_ref()?;
+    candidate.stated()?;
     Some(format!(
         "{} \"{}\"",
         scribe_core::ask::words_label(&scribe_core::voice::UserName::default(), candidate.role),
@@ -1487,18 +1496,19 @@ fn stated_candidate_quote(p: &ProposalPayload) -> Option<String> {
     ))
 }
 
-/// A proposal's line. A candidate carrying scribe's statement shows the
-/// statement as its reason; the plain line adds the user's quote after it,
-/// where the table puts it on the row under.
+/// A proposal's line. A candidate carrying scribe's context shows the
+/// context (an older claim its labelled statement) as its reason; the plain
+/// line adds the speaker's quote after it, where the table puts it on the
+/// row under.
 fn proposal_row(p: &ProposalPayload, mode: OutputMode) -> Vec<Cell> {
     let reason = match (
-        p.candidate.as_ref().and_then(|c| c.statement.as_deref()),
+        p.candidate.as_ref().and_then(super::payload::claim_context),
         stated_candidate_quote(p),
     ) {
-        (Some(statement), Some(quote)) if mode != OutputMode::Table => {
-            format!("{} | {quote}", one_line(statement))
+        (Some(context), Some(quote)) if mode != OutputMode::Table => {
+            format!("{} | {quote}", one_line(&context))
         }
-        (Some(statement), _) => one_line(statement),
+        (Some(context), _) => one_line(&context),
         (None, _) => one_line(&p.reason),
     };
     // The plain line carries the instruction after the reason, where the

@@ -680,7 +680,7 @@ impl Codex {
 /// A fake `codex` answering every annotation call with `marks`, logging
 /// each call to `model-calls.jsonl`.
 fn annotating_codex(f: &Fixture, marks: &Value) -> std::ffi::OsString {
-    let answer = json!({"marks": marks}).to_string();
+    let answer = json!({"marks": support::with_mark_contexts(marks)}).to_string();
     f.fake_program(
         "codex",
         &format!(
@@ -777,13 +777,16 @@ fn a_codex_marker_is_echoed_once_verified_and_cataloged_at_stop_as_daniels_entry
     let stopped = hook_reply(&c.hook_with(&f, "Stop", "t-1", "", &path));
     assert_eq!(
         stopped["systemMessage"],
-        "scribe: added preferences-1 to preferences — \"Daniel wants short status updates.\" · your words: \"I always want short status updates\"",
+        "scribe: added preferences-1 to preferences — \"Daniel wants short status updates. The user and the agent discussed it in this session.\" · your words: \"I always want short status updates\"",
         "{stopped}"
     );
     assert_eq!(model_calls(&f), 1);
     let e = entries(&f);
     assert_eq!(e.len(), 1);
-    assert_eq!(e[0]["content"], "Daniel wants short status updates.");
+    assert_eq!(
+        e[0]["content"],
+        support::context_of("Daniel wants short status updates.")
+    );
     assert_eq!(e[0]["quote"], "I always want short status updates");
     assert_eq!(e[0]["author"]["kind"], "user");
     assert_eq!(

@@ -16,7 +16,7 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Output, Stdio};
-use support::{Fixture, make_private, text};
+use support::{Fixture, context_of, make_private, text};
 
 const ON: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f";
 const NEVER: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e60";
@@ -70,7 +70,8 @@ fn pass_candidate_waits_for_typed_approval_and_keeps_original_user_cite() {
             .stdout,
     )
     .unwrap();
-    assert_eq!(entry["content"], quote);
+    assert_eq!(entry["content"], context_of(quote));
+    assert_eq!(entry["quote"], quote);
     assert_eq!(entry["author"]["kind"], "user");
     assert_eq!(entry["cite"]["message"], "preference-turn");
     assert_eq!(entry["content_from"]["role"], "user");
@@ -896,15 +897,20 @@ impl Setup {
 /// the generic fixture rewrites an open segment or starts a new one at the
 /// first message when scribe has sealed the preceding one.
 /// A session answer as the current schema returns it: a candidate a test
-/// wrote without `statement` or `subject` gets its quote as the statement
-/// and a fixed subject, so only a test that sets them (or sets one empty)
-/// exercises them.
-fn with_claim_statements(body: &Value) -> Value {
+/// wrote without `context` gets one, [`context_of`] its `statement` (a
+/// test's short form for the claim) or else of its quote, and a fixed
+/// subject when it has none, so only a test that sets them (or sets one
+/// empty) exercises them.
+fn with_claim_contexts(body: &Value) -> Value {
     let mut body = body.clone();
     if let Some(candidates) = body.get_mut("candidates").and_then(Value::as_array_mut) {
         for candidate in candidates.iter_mut().filter_map(Value::as_object_mut) {
-            let quote = candidate.get("quote").cloned().unwrap_or(Value::Null);
-            candidate.entry("statement").or_insert(quote);
+            let said = candidate
+                .remove("statement")
+                .or_else(|| candidate.get("quote").cloned())
+                .and_then(|v| v.as_str().map(context_of))
+                .unwrap_or_default();
+            candidate.entry("context").or_insert(json!(said));
             candidate
                 .entry("subject")
                 .or_insert(json!("the work at hand"));
@@ -914,7 +920,7 @@ fn with_claim_statements(body: &Value) -> Value {
 }
 
 fn response(body: &Value) -> String {
-    let body = &with_claim_statements(body);
+    let body = &with_claim_contexts(body);
     let envelope = |body: &Value| {
         // Single-quoted in the fake's shell script: an apostrophe closes
         // the quote, escapes itself and reopens it.
@@ -1731,7 +1737,7 @@ fn legacy_control_is_read_without_writes_and_new_retry_state_is_strict() {
     );
     setup.pass();
     let current: Value = serde_json::from_slice(&setup.control_bytes()).unwrap();
-    assert_eq!(current["format"], 23);
+    assert_eq!(current["format"], 24);
     assert_eq!(current["sessions"][ON]["consecutive_failures"], 0);
     assert_eq!(current["sessions"][ON]["retry_after"], Value::Null);
     assert_eq!(current["sessions"][ON]["pending_links"], json!([]));
@@ -1990,7 +1996,7 @@ fn a_pass_writes_one_record_of_daniels_terms_and_never_reads_a_session_never_swi
     // The record is written at format 23: a header and one open segment
     // holding this pass's segment text.
     let file = std::fs::read_to_string(setup.record_file()).unwrap();
-    assert!(file.starts_with("---\nformat: 23\n"), "{file}");
+    assert!(file.starts_with("---\nformat: 24\n"), "{file}");
     assert!(file.contains("\n## Log\n### 1. "), "{file}");
     assert!(!file.contains("## Outcome"), "{file}");
     assert_eq!(record["active"], true);
@@ -2920,9 +2926,10 @@ fn type_settlement(s: &Setup, prompt: &str) -> Output {
 /// Daniel types `prompt`, holding one `#scribe` marker, as turn `uuid` of
 /// the `ON` session, and the Stop after the reply catalogs it
 /// (2_design.md §14.6): the fake `claude` answers the annotation call with
-/// an entry under `tag` stating `statement`, with `quote` as his words.
-/// The default pass answer is restored after. Returns Stop's echo.
-fn mark(s: &Setup, uuid: &str, prompt: &str, tag: &str, statement: &str, quote: &str) -> String {
+/// an entry under `tag` whose context is [`context_of`] `said`, with
+/// `quote` as his words. The default pass answer is restored after.
+/// Returns Stop's echo.
+fn mark(s: &Setup, uuid: &str, prompt: &str, tag: &str, said: &str, quote: &str) -> String {
     let submitted = type_settlement(s, prompt);
     let echo: Value = serde_json::from_slice(&submitted.stdout).unwrap();
     assert_eq!(
@@ -2937,7 +2944,7 @@ fn mark(s: &Setup, uuid: &str, prompt: &str, tag: &str, statement: &str, quote: 
         ],
     );
     s.answer(&json!({"marks": [{"marker": 1, "kind": "entry", "tag": tag,
-                                "statement": statement, "subject": "the work at hand",
+                                "context": context_of(said), "subject": "the work at hand",
                                 "quote": quote, "message": uuid, "reason": ""}]}));
     let stopped = s.hook("stop", &s.payload("Stop"));
     s.answer(&answer());
@@ -3105,6 +3112,8 @@ fn candidate_open_cap_is_enforced_even_when_the_model_ignores_it() {
             p["older"] = json!(format!("preferences-{n}"));
             p["candidate"]["quote"] = json!(format!("Stored preference {n}."));
             p["candidate"]["statement"] = json!(format!("Stored preference {n}."));
+            // A format-14 claim has no `context` (format 24).
+            p["candidate"].as_object_mut().unwrap().remove("context");
             p
         })
         .collect();
@@ -3253,7 +3262,7 @@ fn candidate_ids_are_reserved_for_approval_and_agent_settlement_is_refused() {
             .stdout,
     )
     .unwrap();
-    assert_eq!(entry["content"], quote);
+    assert_eq!(entry["content"], context_of(quote));
     type_settlement(&s, "#scribe forget preferences-1");
     assert_eq!(proposals(&s)["proposals"][0]["candidate"]["quote"], "");
     type_settlement(&s, "#scribe approve p-1");
@@ -3294,7 +3303,7 @@ fn interrupted_candidate_approval_is_replayed_once_from_the_durable_proposal() {
             .stdout,
     )
     .unwrap();
-    assert_eq!(entry["content"], quote);
+    assert_eq!(entry["content"], context_of(quote));
     assert_eq!(entry["author"]["kind"], "user");
 }
 
@@ -4085,31 +4094,38 @@ fn pass_and_catalog_audit_persisted_closures_when_marking_failure_aborts() {
 // --- statements (2_design.md §11.1) ------------------------------------------
 
 #[test]
-fn a_pass_claim_carries_a_statement_and_subject_and_an_empty_subject_opens_nothing() {
+fn a_pass_claim_carries_a_context_and_subject_and_a_line_or_an_empty_subject_opens_nothing() {
     let s = Setup::new();
     let quote = "ok that makes sense. I prefer that session records keep the whole history in an append-only log.";
     let vague = "I prefer we keep it like this from now on.";
     let long = "I prefer squash merges on every agent branch we open.";
+    let terse = "I prefer the short form of every release note.";
     s.write(
         ON,
         &[
             line("user", "u-1", quote),
             line("user", "u-2", vague),
             line("user", "u-3", long),
+            line("user", "u-4", terse),
         ],
     );
-    let statement = "Daniel prefers that session records keep the whole session's history in an append-only log rather than one rewritten outcome.";
+    // The design's example (2_design.md §15.3): what was being discussed
+    // and what the remark settles, standing alone.
+    let context = "The user and the agent were choosing how scribe stores session records. The user rejected a single 2,500-character outcome because rewrites lose the session's start, and asked for an append-only log.";
     let mut body = answer();
     body["candidates"] = json!([
         {"quote": quote, "message": "u-1", "tag": "preferences",
-            "statement": statement, "subject": "session records"},
+            "context": context, "subject": "session records"},
         // The window does not name what this turn is about.
         {"quote": vague, "message": "u-2", "tag": "preferences",
-            "statement": "Daniel prefers to keep it like this.", "subject": " "},
+            "context": "The user and the agent were reviewing it. The user prefers to keep it like this.", "subject": " "},
         // A subject past 80 characters is not a short noun phrase.
         {"quote": long, "message": "u-3", "tag": "preferences",
-            "statement": "Daniel prefers squash merges on agent branches.",
-            "subject": "x".repeat(81)}
+            "context": "The user and the agent were merging. The user prefers squash merges on agent branches.",
+            "subject": "x".repeat(81)},
+        // A single line does not stand alone (2_design.md §15.3).
+        {"quote": terse, "message": "u-4", "tag": "preferences",
+            "context": "The user prefers short release notes.", "subject": "release notes"}
     ]);
     s.answer(&body);
     s.scribe("/scribe on");
@@ -4118,20 +4134,30 @@ fn a_pass_claim_carries_a_statement_and_subject_and_an_empty_subject_opens_nothi
     assert_eq!(listed["total"], 1, "{listed}");
     let candidate = &listed["proposals"][0]["candidate"];
     assert_eq!(candidate["quote"], quote);
-    assert_eq!(candidate["statement"], statement);
+    assert_eq!(candidate["context"], context);
+    assert_eq!(candidate["statement"], Value::Null);
     assert_eq!(candidate["subject"], "session records");
     // The request asked for both, within their bounds.
     let prompt = s.prompts().join("\n");
-    assert!(prompt.contains("statement (one or two"), "{prompt}");
+    assert!(prompt.contains("context (a paragraph of"), "{prompt}");
 
-    // `proposal list` reads the statement first and Daniel's words after it.
+    // `proposal list` and `proposal show` read the context first and
+    // Daniel's words after it; `proposal show --json` carries it.
     let plain = text(&s.fx.ok(&["proposal", "list"]).stdout);
     assert!(
-        plain.contains(&format!("\t{statement} | The user's words: \"{quote}\"\t")),
+        plain.contains(&format!("\t{context} | The user's words: \"{quote}\"\t")),
         "{plain}"
     );
+    let shown = text(&s.fx.ok(&["proposal", "show", "p-1"]).stdout);
+    assert!(
+        shown.contains(&format!("\t{context} | The user's words: \"{quote}\"\t")),
+        "{shown}"
+    );
+    let shown: Value =
+        serde_json::from_slice(&s.fx.ok(&["proposal", "show", "p-1", "--json"]).stdout).unwrap();
+    assert_eq!(shown["candidate"]["context"], context);
 
-    // Approval writes scribe's statement as content and his words as quote;
+    // Approval writes scribe's context as content and his words as quote;
     // the entry stays his.
     type_settlement(&s, "#scribe approve p-1");
     let entry: Value = serde_json::from_slice(
@@ -4140,7 +4166,7 @@ fn a_pass_claim_carries_a_statement_and_subject_and_an_empty_subject_opens_nothi
             .stdout,
     )
     .unwrap();
-    assert_eq!(entry["content"], statement);
+    assert_eq!(entry["content"], context);
     assert_eq!(entry["quote"], quote);
     assert_eq!(
         entry["stated_by"],
@@ -4166,7 +4192,7 @@ fn a_pass_claim_carries_a_statement_and_subject_and_an_empty_subject_opens_nothi
     let gate = "Daniel runs the gate before every push.";
     mark(
         &s,
-        "u-4",
+        "u-5",
         &format!("{words} #scribe preferences"),
         "preferences",
         gate,
@@ -4178,7 +4204,7 @@ fn a_pass_claim_carries_a_statement_and_subject_and_an_empty_subject_opens_nothi
             .stdout,
     )
     .unwrap();
-    assert_eq!(typed["content"], gate);
+    assert_eq!(typed["content"], context_of(gate));
     assert_eq!(
         typed["stated_by"],
         json!({"kind": "scribe", "name": "annotation"})
@@ -4200,6 +4226,7 @@ fn a_candidate_from_before_statements_approves_with_its_quote_as_content() {
     let mut doc: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     doc["format"] = json!(13);
     let candidate = doc["proposals"][0]["candidate"].as_object_mut().unwrap();
+    candidate.remove("context");
     candidate.remove("statement");
     candidate.remove("subject");
     std::fs::write(&path, doc.to_string()).unwrap();
@@ -4222,7 +4249,70 @@ fn a_candidate_from_before_statements_approves_with_its_quote_as_content() {
 }
 
 #[test]
-fn a_statement_needing_redaction_is_kept_redacted_and_a_quote_needing_it_is_omitted() {
+fn a_format_23_claim_reads_with_no_context_shows_its_statement_as_an_older_claim_and_approves_it() {
+    // 2_design.md §15.3: a claim opened before format 24 is not rewritten.
+    // It reads with `context: null`, `proposal show` puts its statement in
+    // the context's place labelled `older claim`, and approval keeps the
+    // statement as content; the next write persists format 24.
+    let s = Setup::new();
+    let quote = "I prefer short explanations beside each changed behavior.";
+    let statement = "The user prefers a short explanation beside each changed behavior.";
+    s.write(ON, &[line("user", "u-1", quote)]);
+    s.answer(&candidate_answer(quote, "u-1", "preferences"));
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON], b"");
+    let path = s.fx.root().join("proposals.json");
+    let mut doc: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(doc["format"], 24);
+    doc["format"] = json!(23);
+    let candidate = doc["proposals"][0]["candidate"].as_object_mut().unwrap();
+    assert!(candidate.remove("context").is_some_and(|c| c.is_string()));
+    candidate.insert(String::from("statement"), json!(statement));
+    std::fs::write(&path, doc.to_string()).unwrap();
+    make_private(&path);
+
+    let shown: Value =
+        serde_json::from_slice(&s.fx.ok(&["proposal", "show", "p-1", "--json"]).stdout).unwrap();
+    assert_eq!(shown["candidate"]["context"], Value::Null);
+    assert_eq!(shown["candidate"]["statement"], statement);
+    let plain = text(&s.fx.ok(&["proposal", "show", "p-1"]).stdout);
+    assert!(
+        plain.contains(&format!(
+            "\tolder claim: {statement} | The user's words: \"{quote}\"\t"
+        )),
+        "{plain}"
+    );
+    let table = text(
+        &s.fx
+            .ok(&["proposal", "show", "p-1", "--format", "table"])
+            .stdout,
+    );
+    assert!(
+        table.contains(&format!("older claim: {statement}")),
+        "{table}"
+    );
+
+    type_settlement(&s, "#scribe approve p-1");
+    let entry: Value = serde_json::from_slice(
+        &s.fx
+            .ok(&["entry", "show", "preferences-1", "--json"])
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(entry["content"], statement);
+    assert_eq!(entry["quote"], quote);
+    assert_eq!(
+        entry["stated_by"],
+        json!({"kind": "scribe", "name": "session-pass"})
+    );
+    let doc: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(doc["format"], 24);
+    assert_eq!(doc["proposals"][0]["candidate"]["context"], Value::Null);
+    assert_eq!(doc["proposals"][0]["candidate"]["statement"], statement);
+}
+
+#[test]
+fn a_context_needing_redaction_is_kept_redacted_and_a_quote_needing_it_is_omitted() {
     let s = Setup::new();
     let clean = "I prefer that the deploy job reads its token from the vault.";
     let leaky = "I prefer to paste sensitive-value-123 into the deploy job directly.";
@@ -4252,8 +4342,10 @@ fn a_statement_needing_redaction_is_kept_redacted_and_a_quote_needing_it_is_omit
     let candidate = &listed["proposals"][0]["candidate"];
     assert_eq!(candidate["quote"], clean);
     assert_eq!(
-        candidate["statement"],
-        "Daniel prefers that the deploy job reads [redacted:TEST_SECRET] from the vault, never from the job file."
+        candidate["context"],
+        context_of(
+            "Daniel prefers that the deploy job reads [redacted:TEST_SECRET] from the vault, never from the job file."
+        )
     );
     assert_eq!(
         candidate["subject"],
@@ -4264,23 +4356,25 @@ fn a_statement_needing_redaction_is_kept_redacted_and_a_quote_needing_it_is_omit
 }
 
 #[test]
-fn a_statement_and_subject_at_their_caps_stay_when_redaction_lengthens_them() {
+fn a_context_and_subject_at_their_caps_stay_when_redaction_lengthens_them() {
     // The caps hold the model's words; the mask `[redacted:TEST_SECRET]`
     // is longer than the secret it replaces, and the masked value is kept.
     const SECRET: &str = "sv-12345678";
     let s = Setup::new();
     let quote = "I prefer that the deploy job reads its token from the vault.";
     s.write(ON, &[line("user", "u-1", quote)]);
-    let head = format!("Daniel prefers that the deploy job reads {SECRET} from the vault");
-    let statement = format!("{head}{}.", " and never from the job file".repeat(10));
-    let statement: String = statement.chars().take(299).chain(['.']).collect();
-    assert_eq!(statement.chars().count(), 300);
+    let head = format!(
+        "The user and the agent were setting up the deploy job. The user prefers that it reads {SECRET} from the vault"
+    );
+    let context = format!("{head}{}.", " and never from the job file".repeat(30));
+    let context: String = context.chars().take(599).chain(['.']).collect();
+    assert_eq!(context.chars().count(), 600);
     let subject = format!("the deploy job's {SECRET} {}", "x".repeat(80));
     let subject: String = subject.chars().take(80).collect();
     let mut body = answer();
     body["candidates"] = json!([
         {"quote": quote, "message": "u-1", "tag": "preferences",
-            "statement": statement, "subject": subject}
+            "context": context, "subject": subject}
     ]);
     s.answer(&body);
     s.config("[redact]\nenv = [\"TEST_SECRET\"]\n");
@@ -4292,16 +4386,16 @@ fn a_statement_and_subject_at_their_caps_stay_when_redaction_lengthens_them() {
     let listed = proposals(&s);
     assert_eq!(listed["total"], 1, "{listed}");
     let candidate = &listed["proposals"][0]["candidate"];
-    let masked_statement = statement.replace(SECRET, "[redacted:TEST_SECRET]");
+    let masked_context = context.replace(SECRET, "[redacted:TEST_SECRET]");
     let masked_subject = subject.replace(SECRET, "[redacted:TEST_SECRET]");
-    assert!(masked_statement.chars().count() > 300);
+    assert!(masked_context.chars().count() > 600);
     assert!(masked_subject.chars().count() > 80);
-    assert_eq!(candidate["statement"], masked_statement.as_str());
+    assert_eq!(candidate["context"], masked_context.as_str());
     assert_eq!(candidate["subject"], masked_subject.as_str());
     let stored = std::fs::read_to_string(s.fx.root().join("proposals.json")).unwrap();
     assert!(!stored.contains(SECRET), "{stored}");
 
-    // The longer, masked statement still approves and reads back.
+    // The longer, masked context still approves and reads back.
     let mut payload = s.payload("UserPromptSubmit");
     payload["prompt"] = json!("#scribe approve p-1");
     let mut cmd = s.fx.cmd(&["hook", "user-prompt-submit"]);
@@ -4314,20 +4408,21 @@ fn a_statement_and_subject_at_their_caps_stay_when_redaction_lengthens_them() {
             .stdout,
     )
     .unwrap();
-    assert_eq!(entry["content"], masked_statement.as_str());
+    assert_eq!(entry["content"], masked_context.as_str());
     assert_eq!(entry["quote"], quote);
 }
 
 #[test]
-fn a_claim_whose_statement_an_entry_already_says_opens_nothing() {
+fn a_claim_whose_context_an_entry_already_says_opens_nothing() {
     let s = Setup::new();
     let quote = "ok fine, I prefer that we keep the changelog out of task branches.";
     s.write(ON, &[line("user", "u-1", quote)]);
-    let statement = "Daniel prefers that task branches never touch the changelog.";
+    let context = context_of("Daniel prefers that task branches never touch the changelog.");
     let mut body = answer();
     body["candidates"] = json!([{"quote": quote, "message": "u-1", "tag": "preferences",
-        "statement": statement, "subject": "task branches"}]);
+        "context": context, "subject": "task branches"}]);
     s.answer(&body);
+    let recorded = format!("Recorded earlier: {context}");
     s.fx.ok(&[
         "entry",
         "add",
@@ -4337,15 +4432,11 @@ fn a_claim_whose_statement_an_entry_already_says_opens_nothing() {
         "scribe",
         "--author",
         "opus",
-        "Recorded earlier: Daniel prefers that task branches never touch the changelog.",
+        &recorded,
     ]);
     s.scribe("/scribe on");
     s.run(&["session", "pass", "--session", ON, "--json"], b"");
-    assert_eq!(
-        proposals(&s)["total"],
-        0,
-        "the statement is already recorded"
-    );
+    assert_eq!(proposals(&s)["total"], 0, "the context is already recorded");
 }
 
 // --- ideas the pass writes itself (2_design.md §11.6) -----------------------
@@ -4408,7 +4499,7 @@ fn the_pass_writes_daniels_idea_itself_as_an_entry_it_authors_with_no_proposal()
     let shown: Value =
         serde_json::from_slice(&s.fx.ok(&["entry", "show", "idea-1", "--json"]).stdout).unwrap();
     assert_eq!(shown["status"], "active");
-    assert_eq!(shown["content"], statement);
+    assert_eq!(shown["content"], context_of(statement));
     assert_eq!(shown["quote"], idea);
     assert_eq!(shown["said"], "");
     assert_eq!(
@@ -4766,14 +4857,15 @@ fn an_idea_an_active_entry_already_covers_is_not_written_and_ideas_are_sent_as_e
     assert_eq!(
         entries_json(&s, &["--tag", "idea"])["total"],
         1,
-        "the quote and the statement are each covered by idea-1"
+        "the quote and the context are each covered by idea-1"
     );
-    // The existing idea went to the model as an exclusion, statement and
+    // The existing idea went to the model as an exclusion, context and
     // his words.
     let prompts = s.prompts();
     let second = prompts.last().unwrap();
     let excluded = format!(
-        "Already recorded under written tags: [\"{statement} (the user's words: \\\"{idea}\\\")\"]"
+        "Already recorded under written tags: [\"{} (the user's words: \\\"{idea}\\\")\"]",
+        context_of(statement)
     );
     assert!(second.contains(&excluded), "{second}");
 }
@@ -4927,7 +5019,7 @@ fn a_pass_over_a_switched_on_session_writes_memory_items_with_verbatim_occurrenc
     assert!(audit.contains("\"memory:m-1\""), "{audit}");
     let control: Value =
         serde_json::from_slice(&std::fs::read(s.fx.root().join("control.json")).unwrap()).unwrap();
-    assert_eq!(control["format"], 23);
+    assert_eq!(control["format"], 24);
 
     // The same window again appends nothing: the turns are already on the items.
     s.append(
@@ -5206,11 +5298,11 @@ fn an_older_build_cannot_read_a_memory_item_and_a_newer_one_is_refused() {
     let file = s.fx.root().join("memory/m-1.md");
     let original = std::fs::read_to_string(&file).unwrap();
     assert!(
-        original.starts_with("---\nformat: 23\nkind: memory\n"),
+        original.starts_with("---\nformat: 24\nkind: memory\n"),
         "{original}"
     );
 
-    std::fs::write(&file, original.replacen("format: 23", "format: 24", 1)).unwrap();
+    std::fs::write(&file, original.replacen("format: 24", "format: 25", 1)).unwrap();
     let newer = s.run_any(&["memory", "show", "--json"], b"");
     assert_ne!(newer.status.code(), Some(0));
     assert!(
@@ -5223,7 +5315,7 @@ fn an_older_build_cannot_read_a_memory_item_and_a_newer_one_is_refused() {
     // consolidation keys: an older file carrying newer keys is refused,
     // and skipped like any bad file.
     for older in ["format: 20", "format: 19", "format: 18"] {
-        std::fs::write(&file, original.replacen("format: 23", older, 1)).unwrap();
+        std::fs::write(&file, original.replacen("format: 24", older, 1)).unwrap();
         let shown = memory_items(&s, &[]);
         assert_eq!(
             shown["items"].as_array().unwrap().len(),

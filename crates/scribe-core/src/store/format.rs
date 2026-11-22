@@ -41,7 +41,7 @@ use time::OffsetDateTime;
 
 /// The newest store format: this build reads formats 1 to `FORMAT` of every
 /// document and would write `FORMAT`.
-pub(super) const FORMAT: u32 = 23;
+pub(super) const FORMAT: u32 = 24;
 
 /// Which document an upgrade step is applied to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -91,6 +91,7 @@ pub(super) const UPGRADES: &[Upgrade] = &[
     memory_preference_proposal,
     annotations,
     user_author,
+    claim_context,
 ];
 
 /// The first format a memory item exists at: `memory/<id>.md` has no older
@@ -135,6 +136,40 @@ fn user_author(
     _document: Document,
     value: serde_json::Value,
 ) -> serde_json::Result<serde_json::Value> {
+    Ok(value)
+}
+
+/// The first format a claim carries `context` at, and an approved
+/// assistant entry scribe's context of its turn (2_design.md §15.3).
+pub(super) const CONTEXT_SINCE: u32 = 24;
+
+/// Format 23 -> 24 (2_design.md §15.3) adds `context` to each proposal
+/// candidate: scribe's paragraph of what was being discussed and what the
+/// turn settles, which replaces the one-line `statement` as what a new
+/// claim says and what approval writes as content. A format-23 candidate
+/// reads with `context: null` and keeps its statement, shown as an older
+/// claim. From this format an approved assistant claim may also carry the
+/// context as content, the assistant's words in `quote` and `stated_by`
+/// the session pass, which a format-23 build refuses. Other documents are
+/// unchanged.
+fn claim_context(
+    document: Document,
+    mut value: serde_json::Value,
+) -> serde_json::Result<serde_json::Value> {
+    if document == Document::Proposals {
+        for candidate in value
+            .get_mut("proposals")
+            .and_then(serde_json::Value::as_array_mut)
+            .into_iter()
+            .flatten()
+            .filter_map(|p| p.get_mut("candidate"))
+            .filter_map(serde_json::Value::as_object_mut)
+        {
+            candidate
+                .entry("context")
+                .or_insert(serde_json::Value::Null);
+        }
+    }
     Ok(value)
 }
 
@@ -991,6 +1026,66 @@ struct CandidateV10 {
     host: crate::Label,
 }
 
+/// Frozen format-14 to 23 proposal shape (a candidate without `context`),
+/// checked before the 23 -> 24 upgrade.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "frozen shape checked before upgrade")]
+struct ProposalsV23 {
+    format: u32,
+    proposals: Vec<ProposalV23>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "frozen shape checked before upgrade")]
+struct ProposalV23 {
+    id: ProposalId,
+    kind: ProposalKind,
+    older: EntryId,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    candidate: Option<CandidateV23>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    newer: Option<EntryId>,
+    reason: String,
+    quotes: Vec<Quote>,
+    state: ProposalState,
+    #[serde(with = "time::serde::rfc3339")]
+    opened_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339::option")]
+    settled_at: Option<OffsetDateTime>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    settled_by: Option<Cite>,
+    author: Author,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    updated_by: Option<Author>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    settled_author: Option<Author>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    closed_reason: Option<crate::ClosedReason>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    instruction: Option<crate::entry::Instruction>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "frozen shape checked before upgrade")]
+struct CandidateV23 {
+    tag: crate::TagName,
+    role: crate::Speaker,
+    quote: String,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    statement: Option<String>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    subject: Option<String>,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    evidence: Option<String>,
+    cite: Cite,
+    project: crate::Project,
+    provider: crate::Label,
+    host: crate::Label,
+    #[serde(deserialize_with = "crate::record::nullable")]
+    admitted: Option<crate::Admitted>,
+}
+
 /// Frozen format-10 to 12 entry shape (no `approved_by` or `instruction`),
 /// migrated in typed YAML so local YAML tags stay intact. `inactive_since`
 /// exists from format 12 on; `decode_entry` refuses it in an older file and
@@ -1778,9 +1873,16 @@ pub(super) fn decode_entry(
                         ..
                     }
                 )
-                && entry.quote.is_none()
                 && entry.window.is_none();
-            (direct || approved_assistant) && entry.stated_by.is_none()
+            // A direct note may carry a quote. An approved assistant turn
+            // keeps the assistant's words as content, no quote; or (format 24,
+            // 2_design.md §15.3) scribe's context of the turn as content,
+            // the assistant's words in `quote` until it is forgotten.
+            let words = entry.stated_by.is_none() && entry.quote.is_none();
+            let context = from >= CONTEXT_SINCE
+                && entry.stated_by.as_ref() == Some(&Author::session_pass())
+                && (entry.status == crate::EntryStatus::Forgotten) == entry.quote.is_none();
+            (direct && entry.stated_by.is_none()) || (approved_assistant && (words || context))
         }
         // An entry a write-route catcher had the session pass write itself
         // (format 16, 2_design.md §15.2): scribe's statement of one turn as
@@ -2235,9 +2337,10 @@ fn decode_json<T: DeserializeOwned>(path: &Path, bytes: &[u8], document: Documen
         Document::Proposals if from == 13 => {
             serde_json::from_slice::<ProposalsV13>(bytes).map_err(|e| Error::corrupt(path, e))?;
         }
-        // Format 15 changed no key, only admitted `closed_reason: covered`.
+        // Format 15 changed no key, only admitted `closed_reason: covered`,
+        // so a format-14 document has the format-23 shape.
         Document::Proposals if from == 14 => {
-            let doc = serde_json::from_slice::<ProposalsDocument>(bytes)
+            let doc = serde_json::from_slice::<ProposalsV23>(bytes)
                 .map_err(|e| Error::corrupt(path, e))?;
             if doc
                 .proposals
@@ -2251,10 +2354,10 @@ fn decode_json<T: DeserializeOwned>(path: &Path, bytes: &[u8], document: Documen
         // only entries, 17 and 19 added record kinds, 20 and 21 changed only
         // memory items, 22 added marks.json and the annotation entry, 23
         // renamed the user's author value, which `Author` reads either way),
-        // so a format-15 to format-22 proposals.json has the current shape.
-        Document::Proposals if (15..=22).contains(&from) => {
-            serde_json::from_slice::<ProposalsDocument>(bytes)
-                .map_err(|e| Error::corrupt(path, e))?;
+        // so a format-15 to format-23 proposals.json has the format-23
+        // shape: today's without the candidate's `context` (format 24).
+        Document::Proposals if (15..=23).contains(&from) => {
+            serde_json::from_slice::<ProposalsV23>(bytes).map_err(|e| Error::corrupt(path, e))?;
         }
         Document::Proposals if from == 10 => {
             serde_json::from_slice::<ProposalsV10>(bytes).map_err(|e| Error::corrupt(path, e))?;
@@ -2307,17 +2410,21 @@ pub(super) fn encode_control(path: &Path, state: &ControlState) -> Result<Vec<u8
 pub(super) fn decode_proposals(path: &Path, bytes: &[u8]) -> Result<Vec<Proposal>> {
     let doc: ProposalsDocument = decode_json(path, bytes, Document::Proposals)?;
     for proposal in &doc.proposals {
-        // A statement is scribe's statement of Daniel's turn (format 14):
-        // only on a candidate from his words, with its subject beside it.
+        // A context (format 24) is scribe's paragraph of either speaker's
+        // turn; a statement (formats 14 to 23) its line of the user's turn.
+        // A claim carries at most one of them, with its subject beside it.
         // A forgotten candidate has neither.
-        if let Some(candidate) = &proposal.candidate
-            && (candidate.statement.is_some() != candidate.subject.is_some()
-                || (candidate.statement.is_some() && candidate.role != crate::Speaker::User))
-        {
-            return Err(shape(
-                path,
-                "candidate statement and subject must be set together, on a user candidate",
-            ));
+        if let Some(candidate) = &proposal.candidate {
+            let stated = candidate.context.is_some() || candidate.statement.is_some();
+            if (candidate.context.is_some() && candidate.statement.is_some())
+                || stated != candidate.subject.is_some()
+                || (candidate.statement.is_some() && candidate.role != crate::Speaker::User)
+            {
+                return Err(shape(
+                    path,
+                    "candidate context or statement, never both, must be set with its subject; a statement only on a user candidate",
+                ));
+            }
         }
         // Only a closed proposal carries a reason scribe closed it.
         if proposal.closed_reason.is_some() && proposal.state != ProposalState::Rejected {

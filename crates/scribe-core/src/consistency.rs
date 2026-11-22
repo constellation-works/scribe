@@ -661,7 +661,7 @@ pub fn settle(
 /// its `said` and `content` blanked, its `evidence`, `as_of`, `quote`,
 /// `window` and `retirement_reason` cleared and its instruction's quote
 /// dropped, and every proposal quote, candidate `quote`, `evidence`,
-/// `statement`, `subject`, `admitted.matched`, instruction quote and
+/// `context`, `statement`, `subject`, `admitted.matched`, instruction quote and
 /// `reason` about it cleared.
 /// Session records remain. The typed `#scribe forget` and the instructed
 /// `entry forget` both apply it; an entry already forgotten is
@@ -706,6 +706,7 @@ pub fn forget(
             proposal.reason.clear();
             if let Some(candidate) = &mut proposal.candidate {
                 candidate.quote.clear();
+                candidate.context = None;
                 candidate.statement = None;
                 candidate.subject = None;
                 candidate.evidence = None;

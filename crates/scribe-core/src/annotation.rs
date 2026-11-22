@@ -1,7 +1,7 @@
 //! `#scribe` as an annotation (docs/design/scribe/2_design.md §14): a
 //! marker anywhere in a sentence Daniel typed, cataloged at the end of the
-//! same turn by one bounded model call into a statement with his verbatim
-//! quote.
+//! same turn by one bounded model call into a paragraph of context with
+//! his verbatim quote.
 //!
 //! This module is pure: [`marks`] finds the markers of a turn and the
 //! mentions that are not markers (§14.1), [`window`] builds the bounded
@@ -45,8 +45,9 @@ pub const TURN_CHARS: usize = 8_000;
 pub const MESSAGE_CHARS: usize = 3_000;
 /// The most characters the window holds in all; older messages go first.
 pub const WINDOW_CHARS: usize = 40_000;
-/// The longest statement an annotation records, in characters.
-pub const STATEMENT_CHARS: usize = 300;
+/// The longest context an annotation records, in characters (the claim
+/// bound, 2_design.md §15.3).
+pub const CONTEXT_CHARS: usize = crate::CONTEXT_CHARS;
 /// The longest subject, in characters.
 pub const SUBJECT_CHARS: usize = 80;
 /// The shortest quote, in characters (as §6.4's check).
@@ -423,8 +424,8 @@ pub enum Checked {
 pub struct Annotated {
     /// The tag.
     pub tag: TagName,
-    /// Scribe's statement: the entry's content.
-    pub statement: String,
+    /// Scribe's paragraph of context: the entry's content.
+    pub context: String,
     /// What it is about.
     pub subject: String,
     /// Daniel's verbatim span: the entry's `quote`.
@@ -445,7 +446,8 @@ pub enum CheckRefusal {
     NotVerbatim,
     /// The tag is not configured, or not the hint's.
     WrongTag,
-    /// A statement, subject, quote or reason out of bounds, or a kind that
+    /// A context (or one under two sentences), subject, quote or reason
+    /// out of bounds, or a kind that
     /// is neither `entry` nor `none`.
     OutOfBounds,
 }
@@ -500,12 +502,11 @@ pub fn check(
             }))
         }
         "entry" => {
-            let statement = answer.statement.trim();
+            let context = answer.context.trim();
             let subject = answer.subject.trim();
             let quote = answer.quote.trim();
             let quote_chars = quote.chars().count();
-            if statement.is_empty()
-                || statement.chars().count() > STATEMENT_CHARS
+            if !crate::context_stands_alone(context)
                 || subject.is_empty()
                 || subject.chars().count() > SUBJECT_CHARS
                 || !(QUOTE_MIN_CHARS..=QUOTE_MAX_CHARS).contains(&quote_chars)
@@ -533,7 +534,7 @@ pub fn check(
             }
             Ok(Checked::Entry(Annotated {
                 tag,
-                statement: statement.to_owned(),
+                context: context.to_owned(),
                 subject: subject.to_owned(),
                 quote: quote.to_owned(),
                 message: message.uuid.clone(),
@@ -545,7 +546,7 @@ pub fn check(
 }
 
 /// The entry a checked annotation records, before the store gives it an
-/// id (§14.4): Daniel's, with scribe's statement as its content, his
+/// id (§14.4): Daniel's, with scribe's context as its content, his
 /// words in `quote`, the marker's line in `said`, and `turn` the marked
 /// turn (its `at` when it was typed), cited with `message`, its uuid.
 /// `#scribe/global` records it for every project.
@@ -571,7 +572,7 @@ pub fn draft(
         host: turn.host.clone(),
         created: turn.at,
         said: mark.said.clone(),
-        content: annotated.statement,
+        content: annotated.context,
         content_from: crate::ContentFrom::Message {
             role: Speaker::User,
             message: annotated.message,

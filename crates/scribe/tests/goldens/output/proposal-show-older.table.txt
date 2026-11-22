@@ -1,0 +1,18 @@
+id          p-6
+kind        candidate
+state       open
+older       preferences-3
+subject     the scribe tmux popup
+context     older claim: The user prefers that the scribe tmux popup lists only the five newest records.
+quote       yeah, for the popup just show the newest five, nothing older.
+tag         preferences
+session     7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02
+message     user-popup
+settle      #scribe approve p-6 or #scribe reject p-6
+newer       -
+reason      Unmarked preferences statement: yeah, for the popup just show the newest five, nothing older.
+author      scribe:session-pass
+updated_by  -
+settled_author -
+opened      2026-11-15T00:06:00Z
+settled     -

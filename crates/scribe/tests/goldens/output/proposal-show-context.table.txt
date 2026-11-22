@@ -1,0 +1,18 @@
+id          p-7
+kind        candidate
+state       open
+older       preferences-4
+subject     session records
+context     The user and the agent were choosing how scribe stores session records. The user rejected a single 2,500-character outcome because rewrites lose the session's start, and asked for an append-only log.
+quote       no, keep every window as its own segment so the start of the session is never rewritten.
+tag         preferences
+session     7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02
+message     user-segments
+settle      #scribe approve p-7 or #scribe reject p-7
+newer       -
+reason      Unmarked preferences statement: no, keep every window as its own segment so the start of the session is never rewritten.
+author      scribe:session-pass
+updated_by  -
+settled_author -
+opened      2026-11-15T00:08:00Z
+settled     -

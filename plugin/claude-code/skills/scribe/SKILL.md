@@ -125,18 +125,21 @@ and grouped, never as a gate on the work:
 - **Entries.** When this session is on (the hook acknowledged `/scribe on`,
   or its `session show <id> --json` reports `on: true`), stop offering
   ready-to-type lines for preferences. The session pass now
-  proposes unmarked statements from the human's own turns: scribe's own
-  one-sentence statement of the claim and its subject, the exact quote,
-  source turn and suggested memory tag. It offers
+  proposes claims from the human's own turns: scribe's own context
+  paragraph (two to four sentences on what was being discussed and what
+  the turn settles) and its subject, the exact quote, source turn and
+  suggested memory tag. `scribe proposal show <proposal-id>` prints one in
+  full, so the human can settle it without opening its session; a claim
+  opened before contexts shows its one-line statement as `older claim`. It offers
   at most three per session pass, with at most twenty open candidates in
   the store. Mention open candidates in the brief; the human keeps one
   with `#scribe approve <proposal-id>`, drops it for good with
   `#scribe reject <proposal-id>`, or tells you to settle it on their
   instruction (see below). Approval writes the entry as theirs,
-  citing the original turn: its content is scribe's statement (`stated_by`
+  citing the original turn: its content is scribe's context (`stated_by`
   is `scribe:session-pass`) and its `quote` their words, so quote only the
   `quote` as theirs. If an active entry of the same tag and project
-  already covers that statement, approval writes nothing and names the
+  already covers that claim, approval writes nothing and names the
   existing entry. No entry exists before approval. Action tags
   you write yourself follow their separate rules below.
   When the session is off or its state is unknown, and the human states a
@@ -269,7 +272,7 @@ at the next `scribe session pass`. In Claude Code and Codex, every `#scribe` in 
 human's typed turn, inside a sentence or opening a line (`#scribe idea: …`,
 `#scribe add this to preferences`), marks it: after your reply scribe
 catalogs it as their entry in the working directory's project, its content
-scribe's statement (`stated_by` is `scribe:annotation`) and its `quote` their
+scribe's context paragraph (`stated_by` is `scribe:annotation`) and its `quote` their
 words. A tag named after the marker or at the end of its line is the tag.
 `#scribe/global` in place of `#scribe` records it with `project: global` for
 every repository. Do not record it yourself, and quote only the `quote` as

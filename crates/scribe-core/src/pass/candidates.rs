@@ -6,7 +6,7 @@ use crate::models::{EntryCandidateAnswer, FiringTurn, PassMessage, SessionReques
 use crate::tag::{TagDef, TagTable};
 use crate::{
     Admitted, Cite, Entry, EntryCandidate, EntryStatus, Outcome, OutcomeState, Project, Proposal,
-    STATEMENT_CHARS, SUBJECT_CHARS, SessionRecord, Speaker, TagName, transcript, trigger, verbatim,
+    SUBJECT_CHARS, SessionRecord, Speaker, TagName, transcript, trigger, verbatim,
 };
 use std::collections::BTreeSet;
 
@@ -166,30 +166,29 @@ pub(super) fn check(
             && request.messages.iter().any(|message| {
                 message.uuid == answer.message && own_span(&message.text, &answer.quote)
             });
-        // A claim names what it is about and states it so it stands
-        // alone (2_design.md §11.1): an empty subject or statement, or one
-        // past its bound, opens nothing.
-        let statement = answer.statement.trim().to_owned();
+        // A claim names what it is about and gives the context it can be
+        // settled from (2_design.md §15.3): an empty subject, a context
+        // under two sentences, or either past its bound, opens nothing.
+        let context = answer.context.trim().to_owned();
         let subject = answer.subject.trim().to_owned();
         if answer.quote.chars().count() > 400
             || answer.message.chars().count() > 128
-            || statement.is_empty()
-            || statement.chars().count() > STATEMENT_CHARS
+            || !crate::context_stands_alone(&context)
             || subject.is_empty()
             || subject.chars().count() > SUBJECT_CHARS
             || !fits
             || (write && !outcome_in_bounds(&answer))
             || checked.iter().any(|prior| {
                 claim_covers(
-                    &[prior.quote.as_str(), prior.statement.as_str()],
-                    &[answer.quote.as_str(), statement.as_str()],
+                    &[prior.quote.as_str(), prior.context.as_str()],
+                    &[answer.quote.as_str(), context.as_str()],
                 )
             })
         {
             continue;
         }
         let mut answer = answer;
-        answer.statement = statement;
+        answer.context = context;
         answer.subject = subject;
         let tag = answer.tag.clone();
         checked.push(answer);
@@ -393,7 +392,7 @@ pub fn candidate_drafts(
             if !own_span(&own, &answer.quote) || !raw.contains(&answer.quote) {
                 return None;
             }
-            if answer.statement.trim().is_empty() || answer.subject.trim().is_empty() {
+            if !crate::context_stands_alone(&answer.context) || answer.subject.trim().is_empty() {
                 return None;
             }
             let tag: TagName = answer.tag.parse().ok()?;
@@ -412,8 +411,8 @@ pub fn candidate_drafts(
                     tag,
                     role: message.role,
                     quote: answer.quote.clone(),
-                    statement: Some(answer.statement.trim().to_owned())
-                        .filter(|text| !text.is_empty()),
+                    context: Some(answer.context.trim().to_owned()).filter(|text| !text.is_empty()),
+                    statement: None,
                     subject: Some(answer.subject.trim().to_owned()).filter(|text| !text.is_empty()),
                     evidence: None,
                     cite: Cite {
@@ -618,12 +617,12 @@ pub(crate) fn entry_says(entry: &Entry) -> Vec<&str> {
     texts
 }
 
-/// What a candidate says: Daniel's quote and, when the pass gave one,
-/// its statement.
+/// What a candidate says: the speaker's quote and, when the pass gave
+/// one, its context (or an older claim's statement).
 pub(crate) fn candidate_says(candidate: &EntryCandidate) -> Vec<&str> {
     let mut texts = vec![candidate.quote.as_str()];
-    if let Some(statement) = &candidate.statement {
-        texts.push(statement);
+    if let Some(stated) = candidate.stated() {
+        texts.push(stated);
     }
     texts
 }
@@ -672,7 +671,7 @@ pub fn candidate_exclusions(
         proposals
             .iter()
             .filter_map(|p| p.candidate.as_ref())
-            .map(|c| c.statement.as_deref().unwrap_or(&c.quote)),
+            .map(|c| c.stated().unwrap_or(&c.quote)),
     );
     let mut ranked: Vec<_> = statements
         .map(|text| (words(text).intersection(&query).count(), text))

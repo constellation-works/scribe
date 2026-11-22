@@ -1,0 +1,45 @@
+{
+  "candidate": {
+    "tag": "preferences",
+    "role": "user",
+    "quote": "no, keep every window as its own segment so the start of the session is never rewritten.",
+    "context": "The user and the agent were choosing how scribe stores session records. The user rejected a single 2,500-character outcome because rewrites lose the session's start, and asked for an append-only log.",
+    "statement": null,
+    "subject": "session records",
+    "evidence": null,
+    "cite": {
+      "session": "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02",
+      "message": "user-segments",
+      "at": "2026-11-15T00:00:00Z",
+      "prompt_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "line": 1,
+      "cwd": "/home/user/workspace/scribe"
+    },
+    "project": "constellation-works/scribe",
+    "provider": "claude-code",
+    "host": "dk-server-1",
+    "admitted": {
+      "trigger": "let's keep",
+      "matched": "let's keep",
+      "criteria": "A standing rule from the user that applies beyond the work at hand."
+    }
+  },
+  "id": "p-7",
+  "kind": "candidate",
+  "older": "preferences-4",
+  "newer": null,
+  "reason": "Unmarked preferences statement: no, keep every window as its own segment so the start of the session is never rewritten.",
+  "quotes": [],
+  "state": "open",
+  "opened_at": "2026-11-15T00:08:00Z",
+  "settled_at": null,
+  "settled_by": null,
+  "author": {
+    "kind": "scribe",
+    "name": "session-pass"
+  },
+  "settled_author": null,
+  "updated_by": null,
+  "closed_reason": null,
+  "instruction": null
+}

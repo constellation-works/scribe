@@ -11,7 +11,13 @@ use scribe_core::{AuthorKind, ProposalFilter, ProposalState};
 pub(super) const PROPOSAL_EXAMPLES: &str = "\
 Examples:
   scribe proposal list
+  scribe proposal show <id>
   scribe proposal list --json | jq '.proposals[] | select(.state == \"open\")'";
+
+const SHOW_EXAMPLES: &str = "\
+Examples:
+  scribe proposal show p-7
+  scribe proposal show p-7 --json | jq '.candidate.context'";
 
 const LIST_EXAMPLES: &str = "\
 Examples:
@@ -43,6 +49,16 @@ pub(crate) enum ProposalCommand {
     /// List every proposal by id and its settlement state
     #[command(after_help = LIST_EXAMPLES)]
     List(ListArgs),
+    /// Show one proposal in full: a claim's context, subject and quote
+    #[command(after_help = SHOW_EXAMPLES)]
+    Show(ShowArgs),
+}
+
+/// Arguments to `proposal show`.
+#[derive(Debug, Args)]
+pub(crate) struct ShowArgs {
+    /// The proposal: its id (`p-<n>`)
+    pub(crate) id: String,
 }
 
 /// Arguments to `proposal list`.
@@ -93,7 +109,7 @@ impl ProposalCommand {
     /// a refusal is attributable. `add` names its target only in its output.
     pub(super) fn subject(&self, ctx: &Context) -> AuditSubject {
         match self {
-            Self::List(_) => AuditSubject::default(),
+            Self::List(_) | Self::Show(_) => AuditSubject::default(),
             Self::Add(args) => AuditSubject {
                 target: None,
                 author: Some(args.author.as_str().to_owned()),
@@ -112,7 +128,7 @@ impl ProposalCommand {
     /// Audit every write; listings remain read-only.
     pub(super) fn audit(&self) -> Option<AuditMeta> {
         match self {
-            Self::List(_) => None,
+            Self::List(_) | Self::Show(_) => None,
             Self::Add(_) => Some(AuditMeta {
                 command: "proposal add",
             }),
@@ -138,6 +154,12 @@ fn resolved_proposal(ctx: &Context, input: &str) -> Option<String> {
 pub(super) fn run(command: ProposalCommand, ctx: &Context) -> Result<Output, CliError> {
     match command {
         ProposalCommand::List(args) => list(&args, ctx),
+        ProposalCommand::Show(args) => {
+            let proposal = ctx.store().resolve_proposal(&args.id)?;
+            Ok(Output::Show {
+                record: Record::Proposal(Box::new(ProposalPayload::from(&proposal))),
+            })
+        }
         ProposalCommand::Add(args) => {
             scribe_core::check_agent_author(&args.author)?;
             let (kind, needs_newer) = match args.kind {
