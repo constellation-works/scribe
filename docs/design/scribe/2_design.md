@@ -241,7 +241,7 @@ Rules every verb keeps:
   (`--json`: the record object), so an agent can read back the id.
 - **Grammar.** Names follow STD-01 R1–R2, with one recorded deviation:
   the search is the top-level verb `scribe search`, since it spans every
-  kind of stored record (Daniel, 2026-11-21; it replaced `scribe search`
+  kind of stored record (Daniel, 2026-11-21; it replaced `scribe record search`
   with no alias; [4_decisions.md](./4_decisions.md#search-is-a-top-level-verb)).
   Backfill candidates are `transcript list` and `transcript show`. `session rebuild` replaces
   a record's text, so it refuses without `--confirm` (STD-01 R5).
