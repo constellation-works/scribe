@@ -110,13 +110,16 @@ pub(super) fn run<M: Models>(
         })?;
     // Codex: the rollout's verified typed inputs and assistant text, and
     // the session's cwd; the dispatcher already checked its identity.
-    let (messages, codex_cwd) = if ctx.provider() == Provider::Codex {
+    let (messages, codex_cwd, line_indices) = if ctx.provider() == Provider::Codex {
         match scribe_core::codex::parse(&bytes) {
-            Ok(rollout) if rollout.session == *session => (rollout.messages, Some(rollout.cwd)),
+            Ok(rollout) if rollout.session == *session => {
+                (rollout.messages, Some(rollout.cwd), None)
+            }
             _ => return Ok(out),
         }
     } else {
-        (transcript::parse(&bytes), None)
+        let (messages, line_indices) = transcript::parse_with_line_indices(&bytes);
+        (messages, None, line_indices)
     };
     let marked: Vec<(usize, Vec<Mark>)> = messages
         .iter()
@@ -143,10 +146,9 @@ pub(super) fn run<M: Models>(
     if candidates.is_empty() {
         return Ok(out);
     }
-    let raw = if codex_cwd.is_some() {
-        BTreeMap::new()
-    } else {
-        raw_lines(&bytes, &candidates)
+    let raw = match (codex_cwd.as_ref(), line_indices.as_deref()) {
+        (None, Some(indices)) => raw_lines(&bytes, &candidates, &messages, indices),
+        _ => BTreeMap::new(),
     };
     let mut work = Vec::new();
     for (index, marks) in marked {
@@ -455,23 +457,32 @@ fn written_lines(
     Ok(written)
 }
 
-/// The raw transcript line of each `candidates` message, by uuid, kept for
-/// its original origin fields and cwd, which parsing the conversation
-/// deliberately strips.
-fn raw_lines(bytes: &[u8], candidates: &BTreeSet<&str>) -> BTreeMap<String, serde_json::Value> {
-    #[derive(serde::Deserialize)]
-    struct Identity {
-        uuid: Option<String>,
-    }
+/// The raw source row selected by `transcript::parse` for each candidate user
+/// message, kept for its origin fields and cwd, which parsing deliberately
+/// strips.
+fn raw_lines(
+    bytes: &[u8],
+    candidates: &BTreeSet<&str>,
+    messages: &[Message],
+    line_indices: &[usize],
+) -> BTreeMap<String, serde_json::Value> {
+    let selected = messages
+        .iter()
+        .zip(line_indices)
+        .filter(|(message, _)| {
+            message.role == Speaker::User && candidates.contains(message.uuid.as_str())
+        })
+        .map(|(message, line_index)| (*line_index, message.uuid.clone()))
+        .collect::<BTreeMap<_, _>>();
     let mut raw = BTreeMap::new();
-    for line in bytes.split(|&b| b == b'\n') {
-        // Most lines are tool payloads. Keep a DOM only for candidate user
-        // messages, so an old instruction does not retain the whole file.
-        if let Ok(Identity { uuid: Some(uuid) }) = serde_json::from_slice(line)
-            && candidates.contains(uuid.as_str())
+    for (line_index, line) in bytes.split(|&b| b == b'\n').enumerate() {
+        // Keep a DOM only for candidate user rows the parser retained, so
+        // progress rows and replayed or skipped conversation rows cannot lend
+        // origin metadata to another message with the same uuid.
+        if let Some(uuid) = selected.get(&line_index)
             && let Ok(value) = serde_json::from_slice::<serde_json::Value>(line)
         {
-            raw.entry(uuid).or_insert(value);
+            raw.insert(uuid.clone(), value);
         }
     }
     raw

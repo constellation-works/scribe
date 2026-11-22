@@ -60,37 +60,47 @@ impl Message {
 /// line keeps the position of its first copy.
 #[must_use]
 pub fn parse(bytes: &[u8]) -> Vec<Message> {
-    analyze(bytes).messages
+    analyze(bytes, false).messages
+}
+
+/// Parse the messages and, for Claude transcripts, the zero-based source line
+/// of each retained message. Codex rollouts have no Claude source-line map.
+#[must_use]
+pub fn parse_with_line_indices(bytes: &[u8]) -> (Vec<Message>, Option<Vec<usize>>) {
+    let analysis = analyze(bytes, true);
+    (analysis.messages, analysis.line_indices)
 }
 
 /// The working directory the transcript's first message was written in
 /// (each line carries Claude Code's `cwd`), if any line names one.
 #[must_use]
 pub fn cwd(bytes: &[u8]) -> Option<String> {
-    analyze(bytes).cwd
+    analyze(bytes, false).cwd
 }
 
 /// Survey and cwd from a single pass over `bytes`.
 #[must_use]
 pub fn survey_with_cwd(bytes: &[u8]) -> (Survey, Option<String>) {
-    let analysis = analyze(bytes);
+    let analysis = analyze(bytes, false);
     (survey_from(&analysis.messages, bytes.len()), analysis.cwd)
 }
 
 struct Analysis {
     messages: Vec<Message>,
+    line_indices: Option<Vec<usize>>,
     cwd: Option<String>,
 }
 
 /// One pass over `bytes`: Codex is detected from the first parseable line,
 /// and Claude lines are deserialized into a typed borrowed view, so no
 /// `serde_json::Value` DOM is built per line.
-fn analyze(bytes: &[u8]) -> Analysis {
+fn analyze(bytes: &[u8], with_line_indices: bool) -> Analysis {
     let mut seen = std::collections::HashSet::new();
     let mut messages = Vec::new();
+    let mut line_indices = with_line_indices.then(Vec::new);
     let mut cwd: Option<String> = None;
     let mut decided = false;
-    for line in bytes.split(|&b| b == b'\n') {
+    for (line_index, line) in bytes.split(|&b| b == b'\n').enumerate() {
         let raw = match serde_json::from_slice::<RawLine<'_>>(line) {
             Ok(raw) => raw,
             Err(_) => {
@@ -109,10 +119,12 @@ fn analyze(bytes: &[u8]) -> Analysis {
                 return match crate::codex::parse(bytes) {
                     Ok(rollout) => Analysis {
                         messages: rollout.messages,
+                        line_indices: None,
                         cwd: Some(rollout.cwd),
                     },
                     Err(_) => Analysis {
                         messages: Vec::new(),
+                        line_indices: None,
                         cwd: None,
                     },
                 };
@@ -128,10 +140,17 @@ fn analyze(bytes: &[u8]) -> Analysis {
             }
             if seen.insert(message.uuid.clone()) {
                 messages.push(message);
+                if let Some(indices) = &mut line_indices {
+                    indices.push(line_index);
+                }
             }
         }
     }
-    Analysis { messages, cwd }
+    Analysis {
+        messages,
+        line_indices,
+        cwd,
+    }
 }
 
 fn message_from(line: &RawLine<'_>) -> Option<Message> {

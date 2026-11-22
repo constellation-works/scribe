@@ -2261,7 +2261,18 @@ fn claude_desktop_origin_shapes_match_cli_verdicts_in_hooks() {
         }
         format!("{line}\n")
     };
+    let progress = format!(
+        "{}\n",
+        json!({
+            "type": "progress",
+            "uuid": "u-human",
+            "origin": {"kind": "peer"},
+            "promptSource": "system",
+            "turnOrigin": "peer"
+        })
+    );
     let transcript = [
+        progress,
         make_line(
             "u-human",
             typed,
@@ -2303,4 +2314,56 @@ fn claude_desktop_origin_shapes_match_cli_verdicts_in_hooks() {
     assert!(msg.starts_with("scribe: added preferences-1"), "{msg}");
     assert_eq!(claude_calls(&fx).len(), 1, "only u-human sent to model");
     assert_eq!(entries(&fx).len(), 1);
+}
+
+#[test]
+fn stop_uses_the_retained_user_row_instead_of_same_uuid_progress_origin() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let typed = "always prefer explicit dates #scribe preferences";
+    let at = now_rfc3339();
+    let progress = json!({
+        "type": "progress",
+        "uuid": "u-synth",
+        "origin": {"kind": "human"},
+        "promptSource": "sdk",
+        "turnOrigin": "human"
+    });
+    let synthetic = json!({
+        "type": "user",
+        "uuid": "u-synth",
+        "sessionId": SESSION,
+        "timestamp": at,
+        "cwd": claude.cwd,
+        "entrypoint": "claude-desktop",
+        "message": {"role": "user", "content": typed},
+        "promptSource": "sdk",
+        "turnOrigin": "host_synthetic"
+    });
+    write_lines(&claude, &[progress, synthetic]);
+    let path = annotating_claude(
+        &fx,
+        &json!([{
+            "marker": 1,
+            "kind": "entry",
+            "tag": "preferences",
+            "statement": "Daniel prefers explicit dates.",
+            "subject": "dates",
+            "quote": "always prefer explicit dates",
+            "message": "u-synth",
+            "reason": ""
+        }]),
+    );
+
+    hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
+
+    assert!(
+        claude_calls(&fx).is_empty(),
+        "synthetic turn is not sent to the model"
+    );
+    assert!(entries(&fx).is_empty(), "synthetic turn creates no entry");
+    assert!(
+        marks_json(&fx).is_empty(),
+        "synthetic turn writes no mark outcome"
+    );
 }
