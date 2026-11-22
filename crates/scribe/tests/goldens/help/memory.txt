@@ -5,12 +5,13 @@ Shows what scribe has noticed about the user from switched-on sessions, and lets
 Usage: scribe memory [OPTIONS] <COMMAND>
 
 Commands:
-  show    Show session memory items, one item, or the page
-  rules   Show active memory promotion rules and windows
-  ack     Mark a now item as raised in this session
-  retire  Retire an item with a reason: off the page, lists and ask, text kept
-  forget  Forget a memory item or occurrence for good
-  help    Print this message or the help of the given subcommand(s)
+  show     Show the memory block, one memory file, or a profile revision
+  rules    Show memory's fixed rules
+  ack      Mark a now item as raised in this session
+  forget   Forget a now item or milestone for good
+  restore  Write a stored profile revision back as the profile
+  refresh  Rebuild the profile and settle passed now items
+  help     Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help
@@ -34,14 +35,15 @@ Global options:
       --json
           Shorthand for --format json
 
-Memory is written by the session pass of a session switched on with
-/scribe on, from the user's own turns; nothing else writes it. It describes,
-it never binds: rules are their preferences entries.
+Memory is one fixed shape: memory/profile.md, rebuilt weekly by 'scribe
+memory refresh'; memory/now/, dated things the user plans, attends or must
+meet, written by the session pass of a session switched on with /scribe on;
+and memory/milestones/. It describes, it never binds: rules are their
+preferences entries.
 
 Examples:
   scribe memory show
-  scribe memory show --section now
-  scribe memory show <id>
-  scribe memory show --page
-  scribe memory rules
-  scribe memory ack <id> --session <id> --author opus
+  scribe memory show profile
+  scribe memory show 2026-12-01-hackathon-deadline
+  scribe memory ack 2026-12-01-hackathon-deadline --session <id> --author opus
+  scribe memory refresh

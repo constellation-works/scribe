@@ -41,7 +41,7 @@ use time::OffsetDateTime;
 
 /// The newest store format: this build reads formats 1 to `FORMAT` of every
 /// document and would write `FORMAT`.
-pub(super) const FORMAT: u32 = 24;
+pub(super) const FORMAT: u32 = 25;
 
 /// Which document an upgrade step is applied to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -92,7 +92,21 @@ pub(super) const UPGRADES: &[Upgrade] = &[
     annotations,
     user_author,
     claim_context,
+    memory_files,
 ];
+
+/// Format 24 -> 25 (2_design.md §15.5, §15.11) changes no stored document.
+/// It adds `memory/profile.md`, `memory/now/<stem>.md` and
+/// `memory/milestones/<stem>.md`, and the first memory write migrates the
+/// `memory/m-<n>.md` items into them and removes them. A memory write
+/// rewrites `control.json` at this format, so a format-24 build refuses a
+/// store whose memory it cannot read.
+fn memory_files(
+    _document: Document,
+    value: serde_json::Value,
+) -> serde_json::Result<serde_json::Value> {
+    Ok(value)
+}
 
 /// The first format a memory item exists at: `memory/<id>.md` has no older
 /// form.
@@ -2359,6 +2373,12 @@ fn decode_json<T: DeserializeOwned>(path: &Path, bytes: &[u8], document: Documen
         Document::Proposals if (15..=23).contains(&from) => {
             serde_json::from_slice::<ProposalsV23>(bytes).map_err(|e| Error::corrupt(path, e))?;
         }
+        // Format 25 changed only memory files, so a format-24
+        // proposals.json has today's shape.
+        Document::Proposals if from == 24 => {
+            serde_json::from_slice::<ProposalsDocument>(bytes)
+                .map_err(|e| Error::corrupt(path, e))?;
+        }
         Document::Proposals if from == 10 => {
             serde_json::from_slice::<ProposalsV10>(bytes).map_err(|e| Error::corrupt(path, e))?;
         }
@@ -2676,7 +2696,7 @@ pub(super) fn decode_memory(
     path: &Path,
     bytes: &[u8],
     expected: &str,
-) -> Result<crate::memory::MemoryItem> {
+) -> Result<crate::memory::legacy::MemoryItem> {
     let (front, body) = split_frontmatter(path, bytes)?;
     let (from, value) = parse_frontmatter(path, front, MEMORY_KIND)?;
     if from < MEMORY_SINCE {
@@ -2705,7 +2725,7 @@ pub(super) fn decode_memory(
     if from >= PREFERENCE_PROPOSAL_SINCE && !has {
         return Err(shape(path, "missing field `preference_proposal`"));
     }
-    let item: crate::memory::MemoryItem =
+    let item: crate::memory::legacy::MemoryItem =
         yaml_serde::from_value(value).map_err(|e| Error::corrupt(path, e))?;
     if item.id.as_str() != expected {
         return Err(shape(
@@ -2713,7 +2733,7 @@ pub(super) fn decode_memory(
             format!("id {} does not match its file name {expected}", item.id),
         ));
     }
-    use crate::memory::MemoryStatus;
+    use crate::memory::legacy::MemoryStatus;
     if from < CONSOLIDATION_SINCE
         && matches!(
             item.status,
@@ -2728,8 +2748,8 @@ pub(super) fn decode_memory(
     // A merge or a promotion moves the occurrences to the item it names
     // (and a later forget keeps that link).
     let moved = item.merged_into.is_some()
-        || (item.section == crate::memory::Section::Now && item.promotion.is_some());
-    if item.statement.chars().count() > crate::memory::STATEMENT_CHARS
+        || (item.section == crate::memory::legacy::Section::Now && item.promotion.is_some());
+    if item.statement.chars().count() > crate::memory::legacy::STATEMENT_CHARS
         || (item.sensitive && !item.section.holds_sensitive())
         || (item.occurrences.is_empty() && !moved)
     {
@@ -2753,14 +2773,18 @@ pub(super) fn decode_memory(
     Ok(item)
 }
 
-/// A memory item's bytes at the current format.
-pub(super) fn encode_memory(path: &Path, item: &crate::memory::MemoryItem) -> Result<Vec<u8>> {
+/// A format-24 memory item's bytes, for migration fixtures.
+#[cfg(test)]
+pub(super) fn encode_memory(
+    path: &Path,
+    item: &crate::memory::legacy::MemoryItem,
+) -> Result<Vec<u8>> {
     #[derive(Serialize)]
     struct MemoryFile<'a> {
         format: u32,
         kind: &'static str,
         #[serde(flatten)]
-        item: &'a crate::memory::MemoryItem,
+        item: &'a crate::memory::legacy::MemoryItem,
     }
     let front = yaml_serde::to_string(&MemoryFile {
         format: FORMAT,
@@ -2769,4 +2793,111 @@ pub(super) fn encode_memory(path: &Path, item: &crate::memory::MemoryItem) -> Re
     })
     .map_err(|e| Error::corrupt(path, e))?;
     Ok(format!("---\n{front}---\n").into_bytes())
+}
+
+/// The body of a `now` or milestone file: `# <title>`, a blank line, then
+/// its prose on one line.
+fn memory_body(title: &str, text: &str) -> String {
+    format!("# {title}\n\n{text}\n")
+}
+
+/// The title and prose of a `now` or milestone file's body.
+fn split_memory_body(path: &Path, body: &str) -> Result<(String, String)> {
+    let bad = || {
+        shape(
+            path,
+            "a memory file's body is '# <title>', a blank line, then its text",
+        )
+    };
+    let rest = body.strip_prefix("# ").ok_or_else(bad)?;
+    let (title, text) = rest.split_once('\n').ok_or_else(bad)?;
+    let title = title.trim();
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if title.is_empty()
+        || title.chars().count() > crate::memory::TITLE_CHARS
+        || text.is_empty()
+        || text.chars().count() > crate::memory::TEXT_CHARS
+    {
+        return Err(bad());
+    }
+    Ok((title.to_owned(), text))
+}
+
+fn memory_front<T: serde::de::DeserializeOwned>(path: &Path, bytes: &[u8]) -> Result<(T, String)> {
+    let (front, body) = split_frontmatter(path, bytes)?;
+    let value: T = yaml_serde::from_str(front).map_err(|e| Error::corrupt(path, e))?;
+    Ok((value, body.to_owned()))
+}
+
+fn stem_of(path: &Path, stem: &str) -> Result<crate::memory::Stem> {
+    stem.parse().map_err(|e: String| shape(path, e))
+}
+
+/// Parse `memory/now/<stem>.md`.
+pub(super) fn decode_now(path: &Path, bytes: &[u8], stem: &str) -> Result<crate::memory::NowItem> {
+    let stem = stem_of(path, stem)?;
+    let (front, body): (crate::memory::NowFront, String) = memory_front(path, bytes)?;
+    let (title, text) = split_memory_body(path, &body)?;
+    if front.sources.is_empty() {
+        return Err(shape(path, "a now item names at least one source session"));
+    }
+    Ok(crate::memory::NowItem {
+        stem,
+        date: front.date,
+        kind: front.kind,
+        sources: front.sources,
+        updated: front.updated,
+        raised: front.raised,
+        title,
+        text,
+    })
+}
+
+/// A `now` file's bytes.
+pub(super) fn encode_now(path: &Path, item: &crate::memory::NowItem) -> Result<String> {
+    let front = yaml_serde::to_string(&crate::memory::NowFront {
+        date: item.date,
+        kind: item.kind,
+        sources: item.sources.clone(),
+        updated: item.updated,
+        raised: item.raised.clone(),
+    })
+    .map_err(|e| Error::corrupt(path, e))?;
+    Ok(format!(
+        "---\n{front}---\n{}",
+        memory_body(&item.title, &item.text)
+    ))
+}
+
+/// Parse `memory/milestones/<stem>.md`.
+pub(super) fn decode_milestone(
+    path: &Path,
+    bytes: &[u8],
+    stem: &str,
+) -> Result<crate::memory::Milestone> {
+    let stem = stem_of(path, stem)?;
+    let (front, body): (crate::memory::MilestoneFront, String) = memory_front(path, bytes)?;
+    let (title, text) = split_memory_body(path, &body)?;
+    Ok(crate::memory::Milestone {
+        stem,
+        date: front.date,
+        sources: front.sources,
+        updated: front.updated,
+        title,
+        text,
+    })
+}
+
+/// A milestone file's bytes.
+pub(super) fn encode_milestone(path: &Path, item: &crate::memory::Milestone) -> Result<String> {
+    let front = yaml_serde::to_string(&crate::memory::MilestoneFront {
+        date: item.date,
+        sources: item.sources.clone(),
+        updated: item.updated,
+    })
+    .map_err(|e| Error::corrupt(path, e))?;
+    Ok(format!(
+        "---\n{front}---\n{}",
+        memory_body(&item.title, &item.text)
+    ))
 }

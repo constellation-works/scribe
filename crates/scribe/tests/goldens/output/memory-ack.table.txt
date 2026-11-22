@@ -1,16 +1,9 @@
-id          m-3
-section     now
-status      active
-statement   Said a scribe release is planned for 2099-01-01.
-page        on
-project     -
-event_date  2099-01-01
-sensitive   false
-acknowledged 2026-11-02T19:05:00Z in 7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02 by agent:opus
-not_yet_raised false
-author      scribe:session-pass
-updated_by  scribe:session-pass
-created     2026-11-02T19:00:00Z
-updated     2026-11-02T19:00:00Z
-occurrence 1 2026-11-02T18:59:00Z 7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02 u-8
-             the next scribe release goes out 2099-01-01
+id          2026-12-12-sisters-wedding
+kind        now
+date        2026-12-12
+now_kind    event
+title       Sister's wedding
+text        The user said their sister's wedding is on 2026-12-12.
+sources     7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02
+updated     2026-11-02T00:00:00Z
+raised      2026-11-02T19:05:00Z in 7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02

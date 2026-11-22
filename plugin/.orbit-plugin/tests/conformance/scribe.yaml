@@ -66,3 +66,17 @@ tests:
   expect:
     error:
       code: invalid_input
+- name: memory_refresh_without_a_store_root_is_not_configured
+  tool: memory-refresh
+  input: {}
+  expect:
+    error:
+      code: not_configured
+      retryable: false
+- name: memory_refresh_with_an_input_key_is_invalid
+  tool: memory-refresh
+  input:
+    dry_run: true
+  expect:
+    error:
+      code: invalid_input

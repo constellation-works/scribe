@@ -1,55 +1,17 @@
 {
-  "id": "m-3",
-  "section": "now",
-  "status": "active",
-  "statement": "Said a scribe release is planned for 2099-01-01.",
-  "project": null,
-  "event_date": "2099-01-01",
-  "sensitive": false,
-  "sensitive_kind": null,
-  "on_page": true,
-  "off_page": null,
-  "not_yet_raised": false,
-  "acknowledged": {
+  "id": "2026-12-12-sisters-wedding",
+  "kind": "now",
+  "date": "2026-12-12",
+  "now_kind": "event",
+  "title": "Sister's wedding",
+  "text": "The user said their sister's wedding is on 2026-12-12.",
+  "sources": [
+    "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02"
+  ],
+  "updated": "2026-11-02T00:00:00Z",
+  "raised": {
     "at": "2026-11-02T19:05:00Z",
-    "session": "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02",
-    "author": {
-      "kind": "agent",
-      "name": "opus"
-    }
+    "session": "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02"
   },
-  "occurrence_count": 1,
-  "sessions": 1,
-  "latest": "2026-11-02T18:59:00Z",
-  "retirement_reason": null,
-  "promoted_from": null,
-  "promotion": null,
-  "merged_into": null,
-  "superseded_by": null,
-  "preference_proposal": null,
-  "author": {
-    "kind": "scribe",
-    "name": "session-pass"
-  },
-  "updated_by": {
-    "kind": "scribe",
-    "name": "session-pass"
-  },
-  "created": "2026-11-02T19:00:00Z",
-  "updated": "2026-11-02T19:00:00Z",
-  "occurrences": [
-    {
-      "n": 1,
-      "date": "2026-11-02T18:59:00Z",
-      "session": "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02",
-      "message": "u-8",
-      "host": "host",
-      "project": "scribe",
-      "quote": "the next scribe release goes out 2099-01-01",
-      "author": {
-        "kind": "scribe",
-        "name": "session-pass"
-      }
-    }
-  ]
+  "as_of": null
 }

@@ -1,6 +1,6 @@
-Show active memory promotion rules and windows
+Show memory's fixed rules
 
-Shows the promotion rules and page windows in effect, each with its origin.
+Shows memory's fixed rules and values; memory has no switches.
 
 Usage: scribe memory rules [OPTIONS]
 
@@ -26,10 +26,10 @@ Global options:
       --json
           Shorthand for --format json
 
-Prints the rules that promote a now item to milestones and the windows
-after which an item leaves the session-start page, each with its value
-and where it came from: shipped, or config with the file and line. Set
-them under [memory] and [memory.promote] in config.toml.
+Prints memory's fixed rules: how many items a pass writes, how many undated
+candidates a session holds, how long a now item stays after its date, the
+milestone lines shown, the profile's length and the phrases that make an
+event a milestone. Memory has no switches.
 
 Examples:
   scribe memory rules

@@ -74,7 +74,7 @@ pub(crate) fn reads(tag: &TagDef, speaker: Speaker) -> bool {
 /// (fenced, indented, quoted and `#scribe` lines left out). A marked turn
 /// fires nothing ([`is_marked`]), so it supplies no candidate and no
 /// written idea, here and under the store lock.
-fn fire(tag: &TagDef, own: &str) -> Option<trigger::Fired> {
+pub(crate) fn fire(tag: &TagDef, own: &str) -> Option<trigger::Fired> {
     let triggers = tag.capture.pass_triggers()?;
     if is_marked(own) {
         return None;

@@ -90,8 +90,8 @@ pub enum ModelUse {
     Ask,
     /// The consistency routine's judgement of entry pairs.
     Consistency,
-    /// The consistency routine's judgement of memory pairs.
-    MemoryPairs,
+    /// `memory refresh`'s profile rebuild (2_design.md §15.6).
+    Profile,
     /// The consistency routine's judgement of removed-feature pairs.
     Removal,
 }
@@ -104,7 +104,7 @@ impl ModelUse {
         Self::SessionHeader,
         Self::Ask,
         Self::Consistency,
-        Self::MemoryPairs,
+        Self::Profile,
         Self::Removal,
     ];
 
@@ -117,7 +117,7 @@ impl ModelUse {
             Self::SessionHeader => "session_header",
             Self::Ask => "ask",
             Self::Consistency => "consistency",
-            Self::MemoryPairs => "memory_pairs",
+            Self::Profile => "profile",
             Self::Removal => "removal",
         }
     }

@@ -1,0 +1,22 @@
+profile	profile	-	-
+text	## Role and work
+text	- Builds personal developer tooling: scribe, orbit and the constellation front door.
+text	
+text	## Current focus
+text	- Moving scribe memory to a profile, now items and milestones.
+text	
+text	## Projects
+text	- scribe: the session memory store; see preferences-1.
+text	
+text	## Goals
+text	- Keep every agent session briefed from one page.
+text	
+text	## Environment
+text	- A Mac and the dk-server-1 and dk-server-2 Linux hosts.
+text	
+text	## How they work
+text	- Works through supervised agent formations.
+text	
+text	## Pinned
+text	- Call me Daniel.
+text	

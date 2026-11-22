@@ -20,21 +20,19 @@
 //! and is not audited.
 //!
 //! In an interactive Claude Code session (`CLAUDE_CODE_ENTRYPOINT=cli`) it
-//! also gives the agent the memory page as `additionalContext`
-//! (2_design.md §13.6): the memory sections and the last sessions, within
-//! the page budget, read-only. Headless runs (`sdk-cli`), routines and
-//! drains get none. The page does not depend on this session being on.
-//! Milestone lines past 600 characters log `memory_page_over_budget`, a
-//! warning that never fails the hook.
+//! also gives the agent the brief as `additionalContext`, read-only.
+//! Headless runs (`sdk-cli`), routines and drains get none. The brief does
+//! not depend on this session being on.
 //!
 //! The context is the brief (`scribe brief`), the one session-start page:
-//! the memory page as its top block, then the last sessions (this project's
+//! the memory block (Profile, Now, Milestones; 2_design.md §15.4) at the
+//! top, then the last sessions (this project's
 //! first, this one left out), then every open claim grouped by tag with its
 //! id, so the agent can present them and the user can settle a claim by its
 //! id. The brief sits alongside the proposal count, not in its place: the
 //! count is the user's `systemMessage`, shown in every session, while the
 //! brief is agent context, given only to an interactive session. With no
-//! memory page, no session and no claim it adds nothing.
+//! memory, no session and no claim it adds nothing.
 
 use super::payload::{self, SessionStartPayload};
 use super::project;
@@ -105,43 +103,36 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
     }))
 }
 
-/// The memory page for this session, or `None` when there is none or the
+/// The memory block's text, or `None` when memory holds nothing or the
 /// store cannot be read (logged, so the session still starts).
-fn memory_page(ctx: &Context, session: &SessionId, cwd: Option<&str>) -> Option<String> {
-    let project = cwd
-        .map(str::trim)
-        .filter(|cwd| !cwd.is_empty())
-        .map(|cwd| project::of(Path::new(cwd)));
-    match crate::commands::memory::page(ctx, Some(session), project.as_ref()) {
-        Ok(Some(page)) => {
-            if page.over_budget {
-                tracing::warn!(
-                    code = "memory_page_over_budget",
-                    chars = page.text.chars().count(),
-                    "the memory page's milestones pass their budget; injecting it whole"
-                );
+fn memory_block(ctx: &Context) -> Option<String> {
+    match crate::commands::memory::block(ctx) {
+        Ok(block) => {
+            for warning in &block.warnings {
+                tracing::warn!("{warning}");
             }
-            Some(page.text)
+            let empty =
+                block.profile.is_none() && block.now.is_empty() && block.milestones.is_empty();
+            (!empty).then_some(block.text)
         }
-        Ok(None) => None,
         Err(err) => {
-            tracing::warn!(%err, "cannot read the memory; not injecting the page");
+            tracing::warn!(%err, "cannot read the memory; not injecting the memory block");
             None
         }
     }
 }
 
-/// The brief for this session's project, or `None` when it has no memory
-/// page, no session and no claim, or the store cannot be read (logged, so
-/// the session still starts). A memory page that cannot be read is left
-/// out (logged by [`memory_page`]); the rest is still given. With no `cwd`,
+/// The brief for this session's project, or `None` when it has no memory,
+/// no session and no claim, or the store cannot be read (logged, so the
+/// session still starts). Memory that cannot be read is left out (logged by
+/// [`memory_block`]); the rest is still given. With no `cwd`,
 /// every project's sessions by date alone.
 fn brief_text(ctx: &Context, session: &SessionId, cwd: Option<&str>) -> Option<String> {
     let project = cwd
         .map(str::trim)
         .filter(|cwd| !cwd.is_empty())
         .map(|cwd| project::of(Path::new(cwd)));
-    let memory = memory_page(ctx, session, cwd);
+    let memory = memory_block(ctx);
     match crate::commands::brief::brief(
         ctx,
         memory,

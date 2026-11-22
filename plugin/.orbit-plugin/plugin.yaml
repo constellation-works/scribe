@@ -1,8 +1,8 @@
 # scribe's Orbit plugin (docs/design/scribe/2_design.md §1). The backend is
 # the installed `scribe` binary, run as `scribe plugin call`; this tree holds
-# no code of its own. `scribe.ask` is the one tool agents see: the two
+# no code of its own. `scribe.ask` is the one tool agents see: the three
 # routine tools are `mutating`, not agent-callable and `mcp_scope: none`, the
-# two routines ship `enabled: false`, and tests/conformance.rs (run by
+# three routines ship `enabled: false`, and tests/conformance.rs (run by
 # `cargo test`) keeps it that way.
 schemaVersion: 2
 kind: Plugin
@@ -27,7 +27,7 @@ spec:
     # The cap. ask: up to 30 s of Orbit task reads, then a 90 s model
     # budget. session-pass starts no session after 50 s, and one session is
     # at most two 121 s asks; consistency-scan starts no batch after 170 s,
-    # and one batch is at most 121 s.
+    # and one batch is at most 121 s; memory-refresh is one 120 s call.
     timeout_ms: 300000
     sandbox: default
 
@@ -37,7 +37,7 @@ spec:
       # Claude Code's transcripts, which session-pass reads.
       read: ["{{config.root}}", "{{config.transcripts}}", "{{config.codex_home}}"]
       write: ["{{config.root}}", "{{plugin_state}}"]
-    # The ask, session and consistency models, through the claude CLI.
+    # The ask, session, consistency and profile models, through the claude CLI.
     network: any
     # The model credential names config.toml lists by default (§8). A
     # `[redact] env` name in the store's config.toml must be added here
@@ -105,8 +105,20 @@ spec:
       input_schema: { $ref: schemas/empty.input.json }
       output_schema: { $ref: schemas/routine.output.json }
 
+    - name: memory-refresh
+      description: >-
+        The scribe-memory-refresh routine's job: rebuild memory/profile.md from
+        the sessions since the last run and settle now items past their 14
+        days, as `scribe memory refresh --json` does. Writes nothing when there
+        is nothing new. Needs [plugins.scribe] root.
+      execution_kind: mutating
+      agent_callable: false
+      mcp_scope: none
+      input_schema: { $ref: schemas/empty.input.json }
+      output_schema: { $ref: schemas/routine.output.json }
+
   definitions:
-    jobs: [jobs/session_pass.yaml, jobs/consistency.yaml]
-    routines: [routines/session_pass.yaml, routines/consistency.yaml]
+    jobs: [jobs/session_pass.yaml, jobs/consistency.yaml, jobs/memory_refresh.yaml]
+    routines: [routines/session_pass.yaml, routines/consistency.yaml, routines/memory_refresh.yaml]
 
   tests: [tests/conformance/*.yaml]

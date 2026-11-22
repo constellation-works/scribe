@@ -6,6 +6,7 @@ mod audit;
 mod db;
 mod format;
 mod fsio;
+mod memory;
 mod rebuild;
 mod redact;
 mod store;

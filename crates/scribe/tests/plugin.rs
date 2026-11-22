@@ -177,7 +177,11 @@ fn unknown_tools_are_refused() {
 #[test]
 fn the_routine_tools_refuse_any_input_key() {
     let s = Setup::new();
-    for tool in ["scribe.session-pass", "scribe.consistency-scan"] {
+    for tool in [
+        "scribe.session-pass",
+        "scribe.consistency-scan",
+        "scribe.memory-refresh",
+    ] {
         let reply = s.reply(tool, json!({"limit": 1}), s.root_config());
         assert_eq!(error_code(&reply), "invalid_input", "{tool}");
     }

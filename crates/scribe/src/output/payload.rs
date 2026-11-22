@@ -988,8 +988,6 @@ pub(crate) enum Records {
     Hits(Vec<HitPayload>),
     /// `transcript list`.
     Transcripts(Vec<TranscriptPayload>),
-    /// `memory show`, in page order.
-    Memory(Vec<MemoryPayload>),
 }
 
 impl Records {
@@ -1002,7 +1000,6 @@ impl Records {
             Self::Tags(v) => v.len(),
             Self::Hits(v) => v.len(),
             Self::Transcripts(v) => v.len(),
-            Self::Memory(v) => v.len(),
         }
     }
 }
@@ -1090,227 +1087,315 @@ pub(crate) enum Record {
     Entry(Box<EntryPayload>),
     Session(Box<SessionPayload>),
     Transcript(Box<TranscriptPayload>),
-    /// One memory item, with every occurrence.
+    /// One memory file.
     Memory(Box<MemoryPayload>),
-    /// `memory show --page`.
-    MemoryPage(Box<MemoryPagePayload>),
+    /// `memory show` with no id: the memory block.
+    MemoryBlock(Box<MemoryBlockPayload>),
+    /// `memory show --revision`.
+    MemoryRevision(Box<RevisionPayload>),
+    /// `memory refresh`.
+    MemoryRefresh(Box<RefreshPayload>),
     /// `memory rules`.
     MemoryRules(Box<MemoryRulesPayload>),
     /// `brief`.
     Brief(Box<BriefPayload>),
 }
 
-/// One memory item (`memory show`, and its writes;
+/// One memory file (`memory show <id>`, and the writes on one;
 /// docs/design/scribe/specs/output-contract.md). Field names are a
 /// contract.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct MemoryPayload {
-    /// `m-<n>`.
+    /// `profile`, or the file stem of a `now` item or milestone.
     pub(crate) id: String,
-    /// The id's number, for ordering; not serialized.
-    #[serde(skip)]
-    pub(crate) number: u64,
-    /// `profile`, `projects`, `working`, `now` or `milestones`.
-    pub(crate) section: &'static str,
-    /// `active`, `merged`, `superseded`, `promoted`, `retired` or
-    /// `forgotten`.
-    pub(crate) status: &'static str,
-    /// scribe's statement; empty once forgotten.
-    pub(crate) statement: String,
-    /// `projects` only: the project; `null` otherwise.
-    pub(crate) project: Option<String>,
-    /// `now` and `milestones`: the event date; `null` when none was said.
-    pub(crate) event_date: Option<String>,
-    /// A sensitive event.
-    pub(crate) sensitive: bool,
-    /// `loss`, `health`, `relationship` or `family`; `null` otherwise.
-    pub(crate) sensitive_kind: Option<&'static str>,
-    /// Whether the session-start page shows it today.
-    pub(crate) on_page: bool,
-    /// Why not: `merged`, `superseded`, `promoted`, `retired`,
-    /// `forgotten`, `section_off`, `decayed` or `past_window`; `null` when
-    /// on the page.
-    pub(crate) off_page: Option<&'static str>,
-    /// `now` only: whether the page labels it not yet raised.
-    pub(crate) not_yet_raised: bool,
-    /// `now` only: when it was last brought up; `null` when never.
-    pub(crate) acknowledged: Option<scribe_core::memory::Acknowledged>,
-    /// How many occurrences support it.
-    pub(crate) occurrence_count: usize,
-    /// From how many distinct sessions.
-    pub(crate) sessions: usize,
-    /// The newest occurrence's date.
-    #[serde(with = "time::serde::rfc3339")]
-    pub(crate) latest: Timestamp,
-    /// Why an agent retired it; `null` otherwise.
-    pub(crate) retirement_reason: Option<String>,
-    /// `milestones`: the `now` item it was promoted from; `null` otherwise.
-    pub(crate) promoted_from: Option<String>,
-    /// A promotion: `{rule, to, profile_from, profile_to}` on the milestone
-    /// and on the `now` item it came from; `null` otherwise.
-    pub(crate) promotion: Option<scribe_core::memory::Promotion>,
-    /// `merged`: the item that holds its occurrences; `null` otherwise.
-    pub(crate) merged_into: Option<String>,
-    /// `superseded`: the item that replaced it; `null` otherwise.
-    pub(crate) superseded_by: Option<String>,
-    /// `working`: the `preferences` candidate opened when it recurred
-    /// across sessions; `null` otherwise.
-    pub(crate) preference_proposal: Option<String>,
-    /// scribe's session pass.
-    pub(crate) author: scribe_core::Author,
-    /// Who changed it last.
-    pub(crate) updated_by: scribe_core::Author,
-    /// When it was written.
-    #[serde(with = "time::serde::rfc3339")]
-    pub(crate) created: Timestamp,
-    /// When it last changed.
-    #[serde(with = "time::serde::rfc3339")]
-    pub(crate) updated: Timestamp,
-    /// The turns that support it, newest first, each with the user's
-    /// verbatim quote.
-    pub(crate) occurrences: Vec<scribe_core::memory::Occurrence>,
+    /// `profile`, `now` or `milestone`.
+    pub(crate) kind: &'static str,
+    /// The event date or deadline, `YYYY-MM-DD`; `null` for the profile.
+    pub(crate) date: Option<String>,
+    /// `now` only: `deadline`, `event` or `plan`; `null` otherwise.
+    pub(crate) now_kind: Option<&'static str>,
+    /// The title; `null` for the profile.
+    pub(crate) title: Option<String>,
+    /// The prose, or the whole profile.
+    pub(crate) text: String,
+    /// The sessions it came from; empty for the profile.
+    pub(crate) sources: Vec<String>,
+    /// When it last changed; `null` for the profile.
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub(crate) updated: Option<Timestamp>,
+    /// `now` only: when an agent last raised it; `null` when never.
+    pub(crate) raised: Option<scribe_core::memory::Raised>,
+    /// The profile only: the date of its last revision; `null` otherwise.
+    pub(crate) as_of: Option<String>,
+}
+
+fn day(date: time::Date) -> String {
+    date.format(time::macros::format_description!("[year]-[month]-[day]"))
+        .unwrap_or_default()
 }
 
 impl MemoryPayload {
-    /// The payload of `item` on `today`.
-    pub(crate) fn from_item(
-        item: &scribe_core::memory::MemoryItem,
-        config: &scribe_core::memory::MemoryConfig,
-        today: time::Date,
-    ) -> Self {
-        let off = scribe_core::memory::off_page(item, config, today);
+    /// The payload of a shown file.
+    pub(crate) fn from_shown(shown: &scribe_core::MemoryShown) -> Self {
+        match shown {
+            scribe_core::MemoryShown::Profile(p) => Self::profile(p),
+            scribe_core::MemoryShown::Now(n) => Self::now(n),
+            scribe_core::MemoryShown::Milestone(m) => Self::milestone(m),
+        }
+    }
+
+    pub(crate) fn profile(p: &scribe_core::memory::ProfileView) -> Self {
         Self {
-            id: item.id.to_string(),
-            number: item.id.number(),
-            section: item.section.as_str(),
-            status: item.status.as_str(),
-            statement: item.statement.clone(),
-            project: item.project.as_ref().map(ToString::to_string),
-            event_date: item.event_date.map(|d| {
-                d.format(time::macros::format_description!("[year]-[month]-[day]"))
-                    .unwrap_or_default()
-            }),
-            sensitive: item.sensitive,
-            sensitive_kind: item.sensitive_kind.map(|k| k.as_str()),
-            on_page: off.is_none(),
-            off_page: off.map(|o| o.as_str()),
-            not_yet_raised: item.not_yet_raised(today),
-            acknowledged: item.acknowledged.clone(),
-            occurrence_count: item.occurrences.len(),
-            sessions: item.sessions(),
-            latest: item.latest(),
-            retirement_reason: item.retirement_reason.clone(),
-            promoted_from: item.promoted_from.as_ref().map(ToString::to_string),
-            promotion: item.promotion.clone(),
-            merged_into: item.merged_into.as_ref().map(ToString::to_string),
-            superseded_by: item.superseded_by.as_ref().map(ToString::to_string),
-            preference_proposal: item.preference_proposal.as_ref().map(ToString::to_string),
-            author: item.author.clone(),
-            updated_by: item.updated_by.clone(),
-            created: item.created,
-            updated: item.updated,
-            occurrences: item.occurrences.clone(),
+            id: String::from("profile"),
+            kind: "profile",
+            date: None,
+            now_kind: None,
+            title: None,
+            text: p.text.clone(),
+            sources: Vec::new(),
+            updated: None,
+            raised: None,
+            as_of: p.as_of.map(day),
+        }
+    }
+
+    pub(crate) fn now(n: &scribe_core::memory::NowItem) -> Self {
+        Self {
+            id: n.stem.to_string(),
+            kind: "now",
+            date: Some(day(n.date)),
+            now_kind: Some(n.kind.as_str()),
+            title: Some(n.title.clone()),
+            text: n.text.clone(),
+            sources: n.sources.iter().map(ToString::to_string).collect(),
+            updated: Some(n.updated),
+            raised: n.raised.clone(),
+            as_of: None,
+        }
+    }
+
+    pub(crate) fn milestone(m: &scribe_core::memory::Milestone) -> Self {
+        Self {
+            id: m.stem.to_string(),
+            kind: "milestone",
+            date: Some(day(m.date)),
+            now_kind: None,
+            title: Some(m.title.clone()),
+            text: m.text.clone(),
+            sources: m.sources.iter().map(ToString::to_string).collect(),
+            updated: Some(m.updated),
+            raised: None,
+            as_of: None,
         }
     }
 }
 
-/// `memory rules`: the effective promotion rules and page windows, each
-/// with its origin (2_design.md §13.4). Field names are a contract.
+/// The profile in the memory block.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct ProfileBlockPayload {
+    /// `profile.md`, or its committed revision while a journal is open.
+    pub(crate) text: String,
+    /// The date of its last revision; `null` for a file no revision wrote.
+    pub(crate) as_of: Option<String>,
+}
+
+/// One line of the memory block's Now or Milestones part.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct MemoryLinePayload {
+    /// The file stem.
+    pub(crate) id: String,
+    /// `YYYY-MM-DD`.
+    pub(crate) date: String,
+    /// Its title.
+    pub(crate) title: String,
+}
+
+/// The memory block (2_design.md §15.4): `memory show` with no id prints
+/// it, and `scribe brief` embeds it. `--json` prints `{profile, now,
+/// milestones}`. Field names are a contract.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct MemoryBlockPayload {
+    /// The profile; `null` when there is none.
+    pub(crate) profile: Option<ProfileBlockPayload>,
+    /// Every `now` item, nearest date first.
+    pub(crate) now: Vec<MemoryLinePayload>,
+    /// The last five milestones, newest first.
+    pub(crate) milestones: Vec<MemoryLinePayload>,
+    /// The block as text.
+    #[serde(skip)]
+    pub(crate) text: String,
+    /// Warning codes and lines for stderr: `memory_pending`, a read-only
+    /// copy, files that did not parse, items not yet migrated.
+    #[serde(skip)]
+    pub(crate) warnings: Vec<String>,
+}
+
+impl MemoryBlockPayload {
+    /// The block of `view`, with the root it was read from for notices.
+    pub(crate) fn from_view(view: &scribe_core::MemoryView, root: &std::path::Path) -> Self {
+        let mut now: Vec<&scribe_core::memory::NowItem> = view.now.iter().collect();
+        now.sort_by(|a, b| a.date.cmp(&b.date).then_with(|| a.stem.cmp(&b.stem)));
+        let mut warnings = Vec::new();
+        if view.pending {
+            warnings.push(String::from(
+                "warning: memory_pending: a memory write was interrupted; the profile shown is its committed revision, and the next memory write completes it",
+            ));
+        }
+        if view.read_only_copy {
+            warnings.push(format!(
+                "read-only copy: {} has no -wal or -shm file and its directory is read-only, so it was opened immutable",
+                root.join(scribe_core::DB_FILE).display()
+            ));
+        }
+        for skipped in &view.skipped {
+            warnings.push(format!("warning: skipped {}", skipped.error));
+        }
+        if view.unmigrated > 0 {
+            warnings.push(format!(
+                "warning: {} format-24 memory item(s) not yet migrated; the next memory write migrates them",
+                view.unmigrated
+            ));
+        }
+        Self {
+            profile: view.profile.as_ref().map(|p| ProfileBlockPayload {
+                text: p.text.clone(),
+                as_of: p.as_of.map(day),
+            }),
+            now: now
+                .iter()
+                .map(|n| MemoryLinePayload {
+                    id: n.stem.to_string(),
+                    date: day(n.date),
+                    title: n.title.clone(),
+                })
+                .collect(),
+            milestones: scribe_core::memory::newest_milestones(&view.milestones)
+                .into_iter()
+                .map(|m| MemoryLinePayload {
+                    id: m.stem.to_string(),
+                    date: day(m.date),
+                    title: m.title.clone(),
+                })
+                .collect(),
+            text: scribe_core::memory::block(view.profile.as_ref(), &view.now, &view.milestones),
+            warnings,
+        }
+    }
+}
+
+/// `memory rules`: the fixed memory rules (2_design.md §15.5). Field names
+/// are a contract.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct MemoryRulesPayload {
-    /// In a fixed order: the three promotion rules, then the windows.
+    /// In a fixed order.
     pub(crate) rules: Vec<MemoryRulePayload>,
 }
 
 /// One rule.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct MemoryRulePayload {
-    /// Its config key under `[memory]`: `promote.profile_change`,
-    /// `promote.recurs_in_sessions`, `promote.user_says`, `decay_days`,
-    /// `now_undated_days` or `now_after_days`.
+    /// Its name.
     pub(crate) rule: &'static str,
-    /// Its effective value: a boolean, a number of sessions or days, or the
-    /// list of phrases.
+    /// Its value: a number or the list of phrases.
     pub(crate) value: serde_json::Value,
-    /// Where it came from.
+    /// Where it came from: always shipped, as memory has no switches.
     pub(crate) origin: OriginPayload,
     /// What it does, in one line.
     pub(crate) meaning: &'static str,
 }
 
 impl MemoryRulesPayload {
-    /// The rules of `config`, whose config file is `file`.
-    pub(crate) fn new(config: &scribe_core::memory::MemoryConfig, file: &str) -> Self {
-        use scribe_core::{Rule, RuleOrigin};
-        let p = &config.promote;
-        let w = &config.windows;
-        let at = |origin: RuleOrigin| OriginPayload::of(Some(&Rule { value: (), origin }), file);
-        let rule = |rule, value, origin, meaning| MemoryRulePayload {
+    /// The fixed rules.
+    pub(crate) fn new() -> Self {
+        use scribe_core::memory as m;
+        let rule = |rule, value, meaning| MemoryRulePayload {
             rule,
             value,
-            origin,
+            origin: OriginPayload::SHIPPED,
             meaning,
         };
         Self {
             rules: vec![
                 rule(
-                    "promote.profile_change",
-                    serde_json::Value::Bool(p.profile_change.value),
-                    OriginPayload::of(Some(&p.profile_change), file),
-                    "a now or milestones event that changes a profile fact becomes a milestone and replaces that profile item",
+                    "max_per_pass",
+                    serde_json::Value::from(m::MAX_PER_PASS),
+                    "the most now and milestone elements one pass invocation writes per session",
                 ),
                 rule(
-                    "promote.recurs_in_sessions",
-                    serde_json::Value::from(p.recurs_in_sessions.value),
-                    OriginPayload::of(Some(&p.recurs_in_sessions), file),
-                    "a now item raised in this many distinct sessions becomes a milestone; 0 switches it off",
+                    "max_pending",
+                    serde_json::Value::from(m::MAX_PENDING),
+                    "the most undated now candidates a session holds until a later turn dates one; dropped when the session ends",
                 ),
                 rule(
-                    "promote.user_says",
-                    serde_json::Value::from(p.user_says.value.clone()),
-                    OriginPayload::of(Some(&p.user_says), file),
+                    "now_keep_days",
+                    serde_json::Value::from(m::NOW_KEEP_DAYS),
+                    "a now item stays this many days after its date, then the weekly refresh makes it a milestone or history",
+                ),
+                rule(
+                    "milestone_lines",
+                    serde_json::Value::from(m::MILESTONE_LINES),
+                    "the memory block shows this many milestones, newest first",
+                ),
+                rule(
+                    "profile_chars",
+                    serde_json::Value::from(m::profile::PROFILE_CHARS),
+                    "the longest profile the weekly refresh writes",
+                ),
+                rule(
+                    "user_says",
+                    serde_json::Value::from(
+                        m::USER_SAYS
+                            .iter()
+                            .map(|p| (*p).to_owned())
+                            .collect::<Vec<_>>(),
+                    ),
                     "one of these phrases in the user's turn makes the event a milestone",
-                ),
-                rule(
-                    "decay_days",
-                    serde_json::Value::from(config.decay_days),
-                    at(w.decay_days),
-                    "a projects or working item leaves the page this many days after its latest occurrence",
-                ),
-                rule(
-                    "now_undated_days",
-                    serde_json::Value::from(config.now_undated_days),
-                    at(w.now_undated_days),
-                    "an undated now item leaves the page this many days after its latest occurrence",
-                ),
-                rule(
-                    "now_after_days",
-                    serde_json::Value::from(config.now_after_days),
-                    at(w.now_after_days),
-                    "a dated now item leaves the page this many days after its date",
                 ),
             ],
         }
     }
 }
 
-/// `memory show --page`: the page the session-start hook injects.
+/// `memory refresh`: what the weekly profile job did. Field names are a
+/// contract.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct MemoryPagePayload {
-    /// The page; `null` when memory is off or there is nothing to show.
-    pub(crate) page: Option<String>,
-    /// Its length in characters.
-    pub(crate) chars: usize,
-    /// Whether the milestone lines pass 600 characters.
-    pub(crate) over_budget: bool,
+pub(crate) struct RefreshPayload {
+    /// `written`, or `nothing_new` when nothing changed since the last run
+    /// and no model was called.
+    pub(crate) result: &'static str,
+    /// The new profile revision; `null` when the profile did not change.
+    pub(crate) revision: Option<i64>,
+    /// Sessions read.
+    pub(crate) sessions: usize,
+    /// Sessions after the cursor left for the next run.
+    pub(crate) backlog: usize,
+    /// Milestones written, by stem.
+    pub(crate) milestones: Vec<String>,
+    /// Passed `now` items removed, by stem.
+    pub(crate) removed: Vec<String>,
+}
+
+/// `memory show --revision <n>`: one profile revision.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct RevisionPayload {
+    /// Its number.
+    pub(crate) revision: i64,
+    /// When it was committed.
+    #[serde(with = "time::serde::rfc3339")]
+    pub(crate) created: Timestamp,
+    /// The profile's text.
+    pub(crate) text: String,
 }
 
 /// `scribe brief`: the last sessions and the open claims
 /// (docs/design/scribe/specs/output-contract.md). Field names are a contract.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct BriefPayload {
-    /// The memory block (today the memory page); `null` when there is none.
-    pub(crate) memory: Option<String>,
+    /// The memory block: `{profile, now, milestones}`.
+    pub(crate) memory: MemoryBlockPayload,
+    /// Warnings about the memory block (`memory_pending`, a read-only
+    /// copy), each also a stderr line.
+    pub(crate) warnings: Vec<String>,
     /// The project whose sessions come first; `null` for none.
     pub(crate) project: Option<String>,
     /// The last sessions: the project's first, each part newest first.
@@ -1363,10 +1448,12 @@ pub(crate) struct BriefClaimPayload {
     pub(crate) opened_at: Timestamp,
 }
 
-impl From<&scribe_core::brief::Brief> for BriefPayload {
-    fn from(b: &scribe_core::brief::Brief) -> Self {
+impl BriefPayload {
+    /// The payload of `b`, whose memory block is `memory`.
+    pub(crate) fn new(b: &scribe_core::brief::Brief, memory: MemoryBlockPayload) -> Self {
         Self {
-            memory: b.memory.clone(),
+            warnings: memory.warnings.clone(),
+            memory,
             project: b.project.as_ref().map(ToString::to_string),
             sessions: b
                 .sessions
@@ -1518,18 +1605,20 @@ pub(crate) struct PassPayload {
     pub(crate) error: Option<String>,
     /// Deterministic repairs in successfully persisted windows, in order.
     pub(crate) warnings: Vec<String>,
-    /// Memory items created or occurrences added in persisted windows
-    /// (2_design.md §13.3).
+    /// `now` and milestone files written in persisted windows (2_design.md
+    /// §15.5).
     pub(crate) memory_written: usize,
-    /// `now` items promoted to `milestones`, and milestones written
-    /// directly on rule (a) or (c), in persisted windows (2_design.md
-    /// §13.4).
+    /// Always 0 since the fixed memory shape (2_design.md §15.5): the pass
+    /// promotes nothing, and the weekly refresh writes rule (a)'s
+    /// milestones. Kept because `--json` field names are a contract.
     pub(crate) memory_promoted: usize,
     /// Always 0: the `preferences` candidates once opened for recurring
     /// `working` items (2_design.md §13.7) are no longer opened, since the
     /// pass writes no `working` item (§15.9 phase 1). Kept because `--json`
     /// field names are a contract.
     pub(crate) memory_proposed: usize,
+    /// Undated `now` candidates kept pending in persisted windows.
+    pub(crate) memory_pending: usize,
     /// Memory elements refused, by code (`memory_sensitive`, ...).
     pub(crate) memory_refused: std::collections::BTreeMap<&'static str, usize>,
 }
@@ -1679,7 +1768,9 @@ pub(crate) struct ScanReport {
     /// Removed-feature batches the model failed; their pairs are offered
     /// again while their later record is recent.
     pub(crate) failed_removal_batches: Vec<BatchFailure>,
-    /// The memory steps (2_design.md §13.5).
+    /// Always empty since the fixed memory shape (2_design.md §15.5): the
+    /// scan no longer consolidates memory. Kept because `--json` field names
+    /// are a contract.
     pub(crate) memory: MemoryScanPayload,
     /// Lines for stderr, printed in every mode.
     #[serde(skip)]
@@ -1944,6 +2035,8 @@ pub(crate) enum PluginReply {
     Pass(PassReport),
     /// `scribe.consistency-scan` ran.
     Scan(Box<ScanReport>),
+    /// `scribe.memory-refresh` ran.
+    Refresh(Box<RefreshPayload>),
     /// The call failed; the envelope carries the code.
     Error(PluginError),
 }

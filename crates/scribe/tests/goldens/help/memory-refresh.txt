@@ -1,0 +1,38 @@
+Rebuild the profile and settle passed now items
+
+Rebuilds the profile from the sessions since the last run and settles now items past their 14 days.
+
+Usage: scribe memory refresh [OPTIONS]
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Global options:
+      --provider <PROVIDER>
+          Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+
+      --root <DIR>
+          Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+
+      --format <FORMAT>
+          Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto]
+          
+          [possible values: auto, table, json]
+
+      --json
+          Shorthand for --format json
+
+Rebuilds memory/profile.md from the sessions since the last run (at most 40
+per run; a longer backlog is taken over several runs), keeps Pinned byte for
+byte, and settles now items past their 14 days: each becomes a milestone or
+history. It calls models.profile once, within 120 s, and writes nothing when
+there is nothing new. Run weekly: the scribe plugin seeds a disabled Orbit
+routine, or use cron or launchd.
+
+Examples:
+  scribe memory refresh
+  scribe memory refresh --json | jq '{result, revision, backlog}'

@@ -58,7 +58,9 @@ pub use candidates::{
     MAX_CANDIDATES, MAX_COLLECTED, MAX_OPEN_CANDIDATES, PassClaim, candidate_drafts,
     candidate_exclusions, capture_request, write_exclusions,
 };
-pub(crate) use candidates::{admission, is_marker, own_marked_span, own_span, statement_tokens};
+pub(crate) use candidates::{
+    admission, fire, is_marker, own_marked_span, own_span, statement_tokens,
+};
 pub(crate) use candidates::{
     candidate_says, claim_covers, covering_claim, covering_entry, entry_says,
 };
@@ -319,10 +321,10 @@ pub fn request(
         candidate_exclusions: Vec::new(),
         write_limit: 0,
         write_exclusions: Vec::new(),
+        memory: false,
         memory_limit: 0,
-        memory_sections: Vec::new(),
-        memory_personal: false,
-        memory_items: Vec::new(),
+        memory_now: Vec::new(),
+        memory_pending: Vec::new(),
         budgets: BUDGETS,
         final_pass,
         correction: None,
@@ -369,6 +371,9 @@ pub struct Distilled {
     /// The model's memory elements, unchecked: the caller checks them with
     /// [`crate::memory::check`] against the config and redactor.
     pub memory: Vec<crate::models::MemoryAnswer>,
+    /// How much the window says about who the user is, 0–3, when memory
+    /// was asked (2_design.md §15.6).
+    pub signal: Option<u8>,
     /// The title.
     pub title: String,
     /// `## Summary`.
@@ -629,9 +634,12 @@ fn check_with_rules(
         .into_iter()
         .take(request.memory_limit)
         .collect();
+    // The signal only when asked, clamped to 0-3 (2_design.md §15.6).
+    let signal = answer.signal.filter(|_| request.memory).map(|s| s.min(3));
     Ok(Distilled {
         candidates,
         memory,
+        signal,
         title,
         summary,
         goals,

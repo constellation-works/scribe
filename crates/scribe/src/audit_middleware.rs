@@ -332,7 +332,12 @@ fn target_of(output: &Output) -> Option<String> {
             record: Record::Memory(item),
         } => Some(format!("memory:{}", item.id)),
         Output::Show {
-            record: Record::MemoryPage(_) | Record::MemoryRules(_) | Record::Brief(_),
+            record:
+                Record::MemoryBlock(_)
+                | Record::MemoryRevision(_)
+                | Record::MemoryRefresh(_)
+                | Record::MemoryRules(_)
+                | Record::Brief(_),
         }
         | Output::List { .. } => None,
         // Hook replies, passes and scans are audited per outcome in
@@ -350,7 +355,11 @@ fn target_of(output: &Output) -> Option<String> {
 fn record_target(record: &Record) -> Option<String> {
     Some(match record {
         Record::Memory(m) => format!("memory:{}", m.id),
-        Record::MemoryPage(_) | Record::MemoryRules(_) | Record::Brief(_) => return None,
+        Record::MemoryRefresh(_) => String::from("memory:profile"),
+        Record::MemoryBlock(_)
+        | Record::MemoryRevision(_)
+        | Record::MemoryRules(_)
+        | Record::Brief(_) => return None,
         Record::Entry(e) => e.id.clone(),
         Record::Session(s) => format!("session:{}", s.id),
         Record::Tag(t) => t.name.to_string(),

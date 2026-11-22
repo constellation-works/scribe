@@ -1,3 +1,27 @@
-m-3	now	active	on	1	2026-11-02T18:59:00Z	Said a scribe release is planned for 2099-01-01.
-m-2	milestones	active	on	1	2026-10-20T09:12:00Z	Decommissioned pulsar.
-m-1	profile	active	on	2	2026-11-02T18:58:00Z	Runs Orbit on a home server and a Mac mini.
+## Profile
+## Role and work
+- Builds personal developer tooling: scribe, orbit and the constellation front door.
+
+## Current focus
+- Moving scribe memory to a profile, now items and milestones.
+
+## Projects
+- scribe: the session memory store; see preferences-1.
+
+## Goals
+- Keep every agent session briefed from one page.
+
+## Environment
+- A Mac and the dk-server-1 and dk-server-2 Linux hosts.
+
+## How they work
+- Works through supervised agent formations.
+
+## Pinned
+- Call me Daniel.
+## Now
+- 2026-12-01-hackathon-deadline · due 2026-12-01 · Hackathon submission deadline
+- 2026-12-12-sisters-wedding · due 2026-12-12 · Sister's wedding
+## Milestones
+- 2026-10-02-pulsar-decommissioned · 2026-10-02 · Pulsar decommissioned
+- 2026-06-14-married · 2026-06-14 · Married

@@ -1,197 +1,74 @@
-//! Memory: what scribe has noticed about the user, by section
-//! (docs/design/scribe/2_design.md §13, slice (a) of §13.10).
+//! Memory: who the user is, what they have coming up, and what happened
+//! (docs/design/scribe/2_design.md §15.5, §15.6). One fixed shape, the same
+//! for every user, with no switches:
 //!
-//! A memory item is one statement about the user, written by the session
-//! pass of a session switched on with `/scribe on`, with the occurrences
-//! (the user's verbatim turns) that support it. Its section is one of five
-//! fixed in code ([`Section`]); config switches a section off, never adds
-//! one. Writing needs no approval: the pass's checks ([`check`]) and the
-//! sensitive-content gate stand in for it (§13.3, §13.8). Whether an item is
-//! on the session-start page is derived from the item and the day
-//! ([`off_page`]), never stored, so no routine has to run for an item to
-//! leave the page.
+//! - `memory/profile.md`: one document of seven sections fixed in code
+//!   ([`profile::HEADINGS`]), rebuilt weekly by `scribe memory refresh`
+//!   ([`profile`]); its `Pinned` section is the user's own and is copied
+//!   byte for byte.
+//! - `memory/now/<date>-<slug>.md`: something the user plans or must meet,
+//!   always with a date ([`NowItem`]). It stays [`NOW_KEEP_DAYS`] days past
+//!   its date; then the refresh promotes it to a milestone or moves it to
+//!   `memory_history`.
+//! - `memory/milestones/<date>-<slug>.md`: a dated event that changed a
+//!   profile fact or that the user called a milestone ([`Milestone`]).
 //!
-//! Items carry no `layer`, `person` or `recurs` field: only the parked
-//! parts of §13.12-13.14 read them. Slice (b) adds the routine's merges and
-//! supersedes ([`consolidate`]) and the promotion of `now` items to
-//! `milestones` ([`promote`]). Slice (c), which proposed a recurring
-//! `working` item as a `preferences` candidate (§13.7), is removed: since
-//! phase 1 of §15.9 the pass writes no `working` or `projects` item
-//! ([`Section::written`]), and stored ones stay readable until phase 5
-//! migrates them.
+//! The session pass writes only `now` items and stated milestones, from the
+//! user's own turns ([`check`], [`drafts`], [`plan`]). An undated `now`
+//! candidate waits in `now_pending` until a later window of the same session
+//! dates it, and is dropped when the session goes final. [`block`] renders
+//! the `## Profile`, `## Now` and `## Milestones` block that `scribe memory
+//! show` prints and `scribe brief` embeds. The items of formats 19–24
+//! ([`legacy`]) are read once and migrated ([`migrate`], §15.11).
 //!
-//! No I/O (STD-02 R5): the store reads and writes the files, the CLI reads
-//! the transcript and the clock.
+//! No I/O (STD-02 R5): the store reads and writes the files and the
+//! database, the CLI reads the transcript and the clock.
 
-pub mod consolidate;
-pub mod promote;
-
-pub use promote::{PromoteRules, Promotion, PromotionRule};
+pub mod legacy;
+pub mod migrate;
+pub mod profile;
 
 use crate::entry::Speaker;
 use crate::models::{MemoryAnswer, PassMessage};
-use crate::record::{Author, Label, Project, nullable, nullable_date};
+use crate::record::nullable;
 use crate::session::SessionId;
 use crate::transcript;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
 use std::fmt;
 use std::str::FromStr;
 use time::{Date, Duration, OffsetDateTime};
 
 /// The most memory elements one pass invocation takes per session, across
-/// its windows; a refused element uses its slot (§13.3).
+/// its windows; a refused element uses its slot (§15.5).
 pub const MAX_PER_PASS: usize = 3;
-/// The longest statement, in characters.
-pub const STATEMENT_CHARS: usize = 200;
+/// The most undated `now` candidates one session keeps pending.
+pub const MAX_PENDING: usize = 5;
+/// Days a `now` item stays after its date.
+pub const NOW_KEEP_DAYS: i64 = 14;
+/// How many milestones the block shows, newest first.
+pub const MILESTONE_LINES: usize = 5;
+/// The longest title, in characters.
+pub const TITLE_CHARS: usize = 80;
+/// The longest item text, in characters.
+pub const TEXT_CHARS: usize = 400;
 /// The shortest quote, in characters.
 pub const QUOTE_MIN_CHARS: usize = 8;
 /// The longest quote, in characters.
 pub const QUOTE_CHARS: usize = 400;
 /// The longest message id the model may name.
 pub const MESSAGE_CHARS: usize = 128;
-/// The most active statements a pass request lists for the model to name
-/// a repeat by.
-pub const MAX_CONTEXT_ITEMS: usize = 40;
-/// The longest milestone line on the page, in characters.
-pub const MILESTONE_LINE_CHARS: usize = 100;
-/// How many `now` items the page shows at most.
-pub const MAX_NOW_LINES: usize = 8;
-/// The page budget of §13.6, in characters, every part but `milestones`.
-pub const PAGE_CHARS: usize = 2400;
-/// The characters of milestone lines past which the hook logs
-/// `memory_page_over_budget`.
-pub const MILESTONES_WARN_CHARS: usize = 600;
-
-/// The five sections, in page order (§13.1).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Section {
-    /// Role, skills, hosts and environment; with `personal` on, household
-    /// facts as he states them. Global, no decay.
-    Profile,
-    /// A project's purpose, status and focus, with an as-of date. No
-    /// longer written (§15.9 phase 1); stored items stay readable.
-    Projects,
-    /// How the user steers agents, as observed. No longer written (§15.9
-    /// phase 1): a standing habit is a preference claim, not memory.
-    Working,
-    /// Upcoming things and recent happenings.
-    Now,
-    /// Big, dated life or project events. Never leave the page.
-    Milestones,
-}
-
-impl Section {
-    /// Every section, in the order the page shows them.
-    pub const ALL: [Self; 5] = [
-        Self::Now,
-        Self::Milestones,
-        Self::Profile,
-        Self::Projects,
-        Self::Working,
-    ];
-
-    /// The section's name.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Profile => "profile",
-            Self::Projects => "projects",
-            Self::Working => "working",
-            Self::Now => "now",
-            Self::Milestones => "milestones",
-        }
-    }
-
-    /// Whether an item of this section may carry a sensitive event (§13.8).
-    #[must_use]
-    pub fn holds_sensitive(self) -> bool {
-        matches!(self, Self::Now | Self::Milestones)
-    }
-
-    /// Whether the session pass may write an item of this section. Since
-    /// phase 1 of 2_design.md §15.9 it writes no `projects` or `working`
-    /// item: a project decision belongs on its task and a working habit is
-    /// a preference claim. Stored items of both still load and print.
-    #[must_use]
-    pub fn written(self) -> bool {
-        match self {
-            Self::Profile | Self::Now | Self::Milestones => true,
-            Self::Projects | Self::Working => false,
-        }
-    }
-
-    /// Whether an item of this section keeps an event date.
-    #[must_use]
-    pub fn dated(self) -> bool {
-        matches!(self, Self::Now | Self::Milestones)
-    }
-}
-
-impl fmt::Display for Section {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl FromStr for Section {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim() {
-            "profile" => Ok(Self::Profile),
-            "projects" => Ok(Self::Projects),
-            "working" => Ok(Self::Working),
-            "now" => Ok(Self::Now),
-            "milestones" => Ok(Self::Milestones),
-            other => Err(format!(
-                "'{other}' is not a memory section; use one of: profile, projects, working, now, milestones"
-            )),
-        }
-    }
-}
-
-/// Where an item stands (§13.2). Only an active item is on the page.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum MemoryStatus {
-    /// On record; on the page while its window lasts.
-    Active,
-    /// The routine judged it the same as an older item and moved its
-    /// occurrences there (`merged_into`).
-    Merged,
-    /// A newer item contradicts it (`superseded_by`); text kept.
-    Superseded,
-    /// A `now` item that became a milestone (`promotion`); its occurrences
-    /// moved to the milestone.
-    Promoted,
-    /// Hidden from the page, lists and `ask`; text kept.
-    Retired,
-    /// Statement and every quote blanked for good.
-    Forgotten,
-}
-
-impl MemoryStatus {
-    /// The status's name.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Active => "active",
-            Self::Merged => "merged",
-            Self::Superseded => "superseded",
-            Self::Promoted => "promoted",
-            Self::Retired => "retired",
-            Self::Forgotten => "forgotten",
-        }
-    }
-}
-
-impl fmt::Display for MemoryStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
+/// The longest slug of a file stem, in characters.
+pub const SLUG_CHARS: usize = 48;
+/// The phrases with which the user calls an event a milestone (§15.5): a
+/// stated milestone is written only when its turn holds one, matched as a
+/// capture trigger.
+pub const USER_SAYS: &[&str] = &[
+    "milestone",
+    "big day",
+    "remember this",
+    "never forget",
+    "life changing",
+];
 
 /// What kind of sensitive event an item records (§13.8).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -218,412 +95,11 @@ impl SensitiveKind {
             Self::Family => "family",
         }
     }
-
-    fn parse(text: &str) -> Option<Self> {
-        match text.trim() {
-            "loss" => Some(Self::Loss),
-            "health" => Some(Self::Health),
-            "relationship" => Some(Self::Relationship),
-            "family" => Some(Self::Family),
-            _ => None,
-        }
-    }
 }
 
 impl fmt::Display for SensitiveKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
-    }
-}
-
-/// A memory item's id, `m-<n>`.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
-pub struct MemoryId(String);
-
-impl MemoryId {
-    /// The id numbered `n`.
-    #[must_use]
-    pub fn numbered(n: u64) -> Self {
-        Self(format!("m-{n}"))
-    }
-
-    /// Its number.
-    #[must_use]
-    pub fn number(&self) -> u64 {
-        self.0
-            .strip_prefix("m-")
-            .and_then(|n| n.parse().ok())
-            .unwrap_or(0)
-    }
-
-    /// The id text.
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl TryFrom<String> for MemoryId {
-    type Error = String;
-
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        let valid = value.strip_prefix("m-").is_some_and(|n| {
-            !n.is_empty()
-                && n.len() <= 19
-                && n.bytes().all(|b| b.is_ascii_digit())
-                && !n.starts_with('0')
-        });
-        if valid {
-            Ok(Self(value))
-        } else {
-            Err(format!("'{value}' is not a memory id (m-<n>)"))
-        }
-    }
-}
-
-impl FromStr for MemoryId {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::try_from(s.to_owned())
-    }
-}
-
-impl From<MemoryId> for String {
-    fn from(id: MemoryId) -> Self {
-        id.0
-    }
-}
-
-impl fmt::Display for MemoryId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-/// One turn that supports an item: the user's verbatim words with where and
-/// when he said them, all but the quote derived by the pass (§13.2).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Occurrence {
-    /// Its number on the item, from 1; never reused.
-    pub n: u32,
-    /// When the turn was sent (the transcript's timestamp, not the pass's).
-    #[serde(with = "time::serde::rfc3339")]
-    pub date: OffsetDateTime,
-    /// The session the turn is in.
-    pub session: SessionId,
-    /// The turn's message uuid.
-    pub message: String,
-    /// The host the session ran on.
-    pub host: Label,
-    /// The session's project.
-    pub project: Project,
-    /// The user's words, verbatim; empty once forgotten.
-    pub quote: String,
-    /// Who wrote the occurrence: scribe's session pass.
-    pub author: Author,
-}
-
-/// When a `now` item was last brought up (§13.4): it limits unprompted
-/// mentions, never what the page shows.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Acknowledged {
-    /// When.
-    #[serde(with = "time::serde::rfc3339")]
-    pub at: OffsetDateTime,
-    /// In which session.
-    pub session: SessionId,
-    /// The agent that raised it (`memory ack`), or the session pass when
-    /// the user raised it himself.
-    pub author: Author,
-}
-
-/// One memory item: `memory/<id>.md`, frontmatter only (§13.2).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct MemoryItem {
-    /// `m-<n>`.
-    pub id: MemoryId,
-    /// Its section.
-    pub section: Section,
-    /// Where it stands.
-    pub status: MemoryStatus,
-    /// scribe's statement about the user, at most [`STATEMENT_CHARS`]
-    /// characters; empty once forgotten.
-    pub statement: String,
-    /// `projects` only: the project the sessions it came from belong to.
-    #[serde(deserialize_with = "nullable")]
-    pub project: Option<Project>,
-    /// `now` and `milestones`: the event's date, when one was said.
-    #[serde(with = "nullable_date")]
-    pub event_date: Option<Date>,
-    /// A sensitive event (§13.8), only ever in `now` or `milestones`.
-    pub sensitive: bool,
-    /// Its kind, when sensitive.
-    #[serde(deserialize_with = "nullable")]
-    pub sensitive_kind: Option<SensitiveKind>,
-    /// `now` only: when it was last brought up.
-    #[serde(deserialize_with = "nullable")]
-    pub acknowledged: Option<Acknowledged>,
-    /// Why an agent retired it; `null` otherwise.
-    #[serde(deserialize_with = "nullable")]
-    pub retirement_reason: Option<String>,
-    /// `milestones`: the `now` item it was promoted from, when there was
-    /// one (format 20).
-    #[serde(default, deserialize_with = "nullable")]
-    pub promoted_from: Option<MemoryId>,
-    /// A promotion's journal (format 20): on the milestone from its first
-    /// write, so a crash between the files is completed by the next scan;
-    /// on the `now` item once it is `promoted`.
-    #[serde(default, deserialize_with = "nullable")]
-    pub promotion: Option<Promotion>,
-    /// `merged`: the item its occurrences moved to (format 20).
-    #[serde(default, deserialize_with = "nullable")]
-    pub merged_into: Option<MemoryId>,
-    /// `superseded`: the item that contradicts it (format 20).
-    #[serde(default, deserialize_with = "nullable")]
-    pub superseded_by: Option<MemoryId>,
-    /// Items the routine judged unrelated to this one, newer than it, so
-    /// the pair is never offered again (format 20).
-    #[serde(default)]
-    pub unrelated_to: Vec<MemoryId>,
-    /// `working`: the `preferences` candidate opened for it when it
-    /// recurred (format 21, §13.7), so it opens once.
-    #[serde(default, deserialize_with = "nullable")]
-    pub preference_proposal: Option<crate::ProposalId>,
-    /// Who wrote it: scribe's session pass.
-    pub author: Author,
-    /// Who changed it last.
-    pub updated_by: Author,
-    /// When it was written.
-    #[serde(with = "time::serde::rfc3339")]
-    pub created: OffsetDateTime,
-    /// When it last changed.
-    #[serde(with = "time::serde::rfc3339")]
-    pub updated: OffsetDateTime,
-    /// The turns that support it, newest first.
-    pub occurrences: Vec<Occurrence>,
-}
-
-impl MemoryItem {
-    /// The newest occurrence's date, or when the item was written.
-    #[must_use]
-    pub fn latest(&self) -> OffsetDateTime {
-        self.occurrences
-            .iter()
-            .map(|o| o.date)
-            .max()
-            .unwrap_or(self.created)
-    }
-
-    /// How many distinct sessions its occurrences come from.
-    #[must_use]
-    pub fn sessions(&self) -> usize {
-        self.occurrences
-            .iter()
-            .map(|o| o.session.as_str())
-            .collect::<BTreeSet<_>>()
-            .len()
-    }
-
-    /// Whether the page labels it "not yet raised" on `today` (§13.4): a
-    /// `now` item with no mark, or whose date has passed since the mark.
-    #[must_use]
-    pub fn not_yet_raised(&self, today: Date) -> bool {
-        if self.section != Section::Now {
-            return false;
-        }
-        match (&self.acknowledged, self.event_date) {
-            (None, _) => true,
-            (Some(ack), Some(date)) => date < today && ack.at.date() < date,
-            (Some(_), None) => false,
-        }
-    }
-}
-
-/// `[memory]` in `config.toml` (§13.3), every key optional. The parked
-/// settings of §13.12-13.14 are not read.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MemoryConfig {
-    /// `false` switches every section off.
-    pub enabled: bool,
-    /// Whether the pass may keep personal elements (§13.1); ships `true`.
-    pub personal: bool,
-    /// Days after their latest occurrence that `projects` and `working`
-    /// items stay on the page.
-    pub decay_days: u32,
-    /// Days after its latest occurrence an undated `now` item stays on the
-    /// page.
-    pub now_undated_days: u32,
-    /// Days after its date a dated `now` item stays on the page.
-    pub now_after_days: u32,
-    /// The session-start page's budget, every part but `milestones`.
-    pub page_chars: usize,
-    /// How many recent sessions the page lists; 0 lists none.
-    pub recent_sessions: usize,
-    /// `[memory.sections]`: each section switched on or off alone.
-    pub sections: SectionSwitches,
-    /// `[memory.promote]`: when a `now` item becomes a milestone (§13.4).
-    pub promote: PromoteRules,
-    /// Where `decay_days`, `now_undated_days` and `now_after_days` came
-    /// from, for `memory rules`.
-    pub windows: WindowOrigins,
-}
-
-/// Where each page window's value came from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct WindowOrigins {
-    /// `decay_days`.
-    pub decay_days: crate::tag::RuleOrigin,
-    /// `now_undated_days`.
-    pub now_undated_days: crate::tag::RuleOrigin,
-    /// `now_after_days`.
-    pub now_after_days: crate::tag::RuleOrigin,
-}
-
-impl Default for WindowOrigins {
-    fn default() -> Self {
-        Self {
-            decay_days: crate::tag::RuleOrigin::Shipped,
-            now_undated_days: crate::tag::RuleOrigin::Shipped,
-            now_after_days: crate::tag::RuleOrigin::Shipped,
-        }
-    }
-}
-
-impl Default for MemoryConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            personal: true,
-            decay_days: 90,
-            now_undated_days: 7,
-            now_after_days: 14,
-            page_chars: PAGE_CHARS,
-            recent_sessions: 5,
-            sections: SectionSwitches::default(),
-            promote: PromoteRules::default(),
-            windows: WindowOrigins::default(),
-        }
-    }
-}
-
-impl MemoryConfig {
-    /// Whether `section` is written and shown: memory enabled and the
-    /// section's own switch on.
-    #[must_use]
-    pub fn section_on(&self, section: Section) -> bool {
-        self.enabled && self.sections.get(section)
-    }
-
-    /// The sections switched on, in page order.
-    #[must_use]
-    pub fn sections_on(&self) -> Vec<Section> {
-        Section::ALL
-            .into_iter()
-            .filter(|s| self.section_on(*s))
-            .collect()
-    }
-
-    /// The sections the session pass asks for and writes: those switched
-    /// on that are still [`Section::written`], in page order.
-    #[must_use]
-    pub fn sections_written(&self) -> Vec<Section> {
-        self.sections_on()
-            .into_iter()
-            .filter(|s| s.written())
-            .collect()
-    }
-}
-
-/// `[memory.sections]`, each `true` unless configured.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(
-    clippy::struct_excessive_bools,
-    reason = "one switch per fixed section"
-)]
-pub struct SectionSwitches {
-    /// `profile`.
-    pub profile: bool,
-    /// `projects`.
-    pub projects: bool,
-    /// `working`.
-    pub working: bool,
-    /// `now`.
-    pub now: bool,
-    /// `milestones`.
-    pub milestones: bool,
-}
-
-impl Default for SectionSwitches {
-    fn default() -> Self {
-        Self {
-            profile: true,
-            projects: true,
-            working: true,
-            now: true,
-            milestones: true,
-        }
-    }
-}
-
-impl SectionSwitches {
-    /// The switch of `section`.
-    #[must_use]
-    pub fn get(&self, section: Section) -> bool {
-        match section {
-            Section::Profile => self.profile,
-            Section::Projects => self.projects,
-            Section::Working => self.working,
-            Section::Now => self.now,
-            Section::Milestones => self.milestones,
-        }
-    }
-}
-
-/// Why the pass refused a memory element; counted in the pass report by
-/// code and audited by code only, never with its text (§13.8).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Refusal {
-    /// `memory_invalid`: an unknown section, or a field empty or past its
-    /// bound.
-    Invalid,
-    /// `memory_unverified`: the quote is not the user's own verbatim span
-    /// of the turn named, in this window and in the original transcript.
-    Unverified,
-    /// `memory_section_off`: the section is switched off.
-    SectionOff,
-    /// `memory_section_not_written`: the pass no longer writes this
-    /// section (`projects` or `working`, 2_design.md §15.9 phase 1).
-    NotWritten,
-    /// `memory_sensitive`: a credential or anything the redactor changes, a
-    /// listed finance word, or a sensitive event outside `now` and
-    /// `milestones`.
-    Sensitive,
-    /// `memory_personal_off`: a personal element while `[memory] personal`
-    /// is off.
-    PersonalOff,
-    /// `memory_inferred`: a `now` statement naming a mood its quote does
-    /// not.
-    Inferred,
-}
-
-impl Refusal {
-    /// The stable code.
-    #[must_use]
-    pub fn code(self) -> &'static str {
-        match self {
-            Self::Invalid => "memory_invalid",
-            Self::Unverified => "memory_unverified",
-            Self::SectionOff => "memory_section_off",
-            Self::NotWritten => "memory_section_not_written",
-            Self::Sensitive => "memory_sensitive",
-            Self::PersonalOff => "memory_personal_off",
-            Self::Inferred => "memory_inferred",
-        }
     }
 }
 
@@ -734,30 +210,307 @@ pub fn inferred_mood(statement: &str, quote: &str) -> bool {
         .any(|word| has_phrase(statement, word) && !has_phrase(quote, word))
 }
 
+/// What a `now` item is: a deadline the user must meet, an event they
+/// attend, or something they plan.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NowKind {
+    /// A date by which something is due.
+    Deadline,
+    /// Something that happens on the date.
+    Event,
+    /// Something the user plans to do by or on the date.
+    Plan,
+}
+
+impl NowKind {
+    /// The kind's name.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Deadline => "deadline",
+            Self::Event => "event",
+            Self::Plan => "plan",
+        }
+    }
+}
+
+impl FromStr for NowKind {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim() {
+            "deadline" => Ok(Self::Deadline),
+            "event" => Ok(Self::Event),
+            "plan" => Ok(Self::Plan),
+            other => Err(format!(
+                "'{other}' is not a now kind; use deadline, event or plan"
+            )),
+        }
+    }
+}
+
+/// A `now` or milestone file's stem and id: `<YYYY-MM-DD>-<slug>`, the slug
+/// lowercase ASCII letters and digits in runs joined by `-`.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct Stem(String);
+
+impl Stem {
+    /// The stem for an item dated `date` titled `title`: the title's words
+    /// as a slug, cut at [`SLUG_CHARS`] on a word, or `item` when it has
+    /// none.
+    #[must_use]
+    pub fn new(date: Date, title: &str) -> Self {
+        let mut slug = String::new();
+        for word in title
+            .to_lowercase()
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|w| !w.is_empty())
+        {
+            let extra = usize::from(!slug.is_empty()) + word.len();
+            if slug.len() + extra > SLUG_CHARS {
+                break;
+            }
+            if !slug.is_empty() {
+                slug.push('-');
+            }
+            slug.push_str(word);
+        }
+        if slug.is_empty() {
+            slug.push_str("item");
+        }
+        Self(format!(
+            "{}-{slug}",
+            crate::record::nullable_date::format(date)
+        ))
+    }
+
+    /// The stem text.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// The date the stem starts with.
+    #[must_use]
+    pub fn date(&self) -> Option<Date> {
+        self.0
+            .get(..10)
+            .and_then(|d| crate::record::parse_day(d).ok())
+    }
+}
+
+impl TryFrom<String> for Stem {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let slug = value.get(11..).unwrap_or_default();
+        let valid = value.len() <= 11 + SLUG_CHARS
+            && value
+                .get(..10)
+                .is_some_and(|d| crate::record::parse_day(d).is_ok())
+            && value.as_bytes().get(10) == Some(&b'-')
+            && !slug.is_empty()
+            && !slug.starts_with('-')
+            && !slug.ends_with('-')
+            && !slug.contains("--")
+            && slug
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+        if valid {
+            Ok(Self(value))
+        } else {
+            Err(format!(
+                "'{value}' is not a memory file stem (<YYYY-MM-DD>-<slug>)"
+            ))
+        }
+    }
+}
+
+impl FromStr for Stem {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::try_from(s.to_owned())
+    }
+}
+
+impl From<Stem> for String {
+    fn from(stem: Stem) -> Self {
+        stem.0
+    }
+}
+
+impl fmt::Display for Stem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// When an agent last raised a `now` item (`scribe memory ack`): it limits
+/// unprompted mentions, never what the block shows.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Raised {
+    /// When.
+    #[serde(with = "time::serde::rfc3339")]
+    pub at: OffsetDateTime,
+    /// In which session.
+    pub session: SessionId,
+}
+
+/// One `now` item: `memory/now/<stem>.md`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NowItem {
+    /// Its file stem and id.
+    pub stem: Stem,
+    /// The event date or deadline.
+    pub date: Date,
+    /// What it is.
+    pub kind: NowKind,
+    /// The sessions it came from, in the order they were added.
+    pub sources: Vec<SessionId>,
+    /// When it last changed: the turn that wrote it.
+    pub updated: OffsetDateTime,
+    /// When an agent last raised it.
+    pub raised: Option<Raised>,
+    /// Its one-line title.
+    pub title: String,
+    /// Its prose.
+    pub text: String,
+}
+
+/// One milestone: `memory/milestones/<stem>.md`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Milestone {
+    /// Its file stem and id.
+    pub stem: Stem,
+    /// When it happened.
+    pub date: Date,
+    /// The sessions it came from.
+    pub sources: Vec<SessionId>,
+    /// When it last changed.
+    pub updated: OffsetDateTime,
+    /// Its one-line title.
+    pub title: String,
+    /// Its prose.
+    pub text: String,
+}
+
+/// The frontmatter of a `now` file, as stored.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NowFront {
+    /// The event date or deadline.
+    #[serde(with = "crate::record::nullable_date::required")]
+    pub date: Date,
+    /// What it is.
+    pub kind: NowKind,
+    /// The sessions it came from.
+    pub sources: Vec<SessionId>,
+    /// When it last changed.
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated: OffsetDateTime,
+    /// When an agent last raised it.
+    #[serde(
+        default,
+        deserialize_with = "nullable",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub raised: Option<Raised>,
+}
+
+/// The frontmatter of a milestone file, as stored.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MilestoneFront {
+    /// When it happened.
+    #[serde(with = "crate::record::nullable_date::required")]
+    pub date: Date,
+    /// The sessions it came from.
+    pub sources: Vec<SessionId>,
+    /// When it last changed.
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated: OffsetDateTime,
+}
+
+/// What kind of memory a pass element writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ElementKind {
+    /// A `now` item, or a pending candidate when it has no date.
+    Now,
+    /// A milestone the user called one.
+    Milestone,
+}
+
+/// Why the pass refused a memory element; counted in the pass report by
+/// code and audited by code only, never with its text (§13.8).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Refusal {
+    /// `memory_invalid`: an unknown kind, or a field empty or past its
+    /// bound.
+    Invalid,
+    /// `memory_unverified`: the quote is not the user's own verbatim span
+    /// of the turn named, in this window and in the original transcript.
+    Unverified,
+    /// `memory_sensitive`: a credential or anything the redactor changes,
+    /// or a listed finance word.
+    Sensitive,
+    /// `memory_inferred`: a `now` text naming a mood its quote does not.
+    Inferred,
+    /// `memory_undated`: a milestone, an update or a completion with no
+    /// real date within a year before and two years after the turn.
+    Undated,
+    /// `memory_not_stated`: a milestone whose turn does not call it one.
+    NotStated,
+    /// `memory_unknown`: an update naming no listed `now` item, or a
+    /// completion naming no pending candidate of this session.
+    Unknown,
+    /// `memory_pending_full`: the session already holds [`MAX_PENDING`]
+    /// undated candidates.
+    PendingFull,
+}
+
+impl Refusal {
+    /// The stable code.
+    #[must_use]
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Invalid => "memory_invalid",
+            Self::Unverified => "memory_unverified",
+            Self::Sensitive => "memory_sensitive",
+            Self::Inferred => "memory_inferred",
+            Self::Undated => "memory_undated",
+            Self::NotStated => "memory_not_stated",
+            Self::Unknown => "memory_unknown",
+            Self::PendingFull => "memory_pending_full",
+        }
+    }
+}
+
 /// One element that passed every model-free check, on its way to the
 /// original-transcript check and the store.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Checked {
-    /// The section.
-    pub section: Section,
-    /// The statement, trimmed.
-    pub statement: String,
-    /// The quote.
+    /// What it writes.
+    pub kind: ElementKind,
+    /// The title, on one line.
+    pub title: String,
+    /// The prose, on one line.
+    pub text: String,
+    /// The user's words.
     pub quote: String,
     /// The turn named.
     pub message: String,
-    /// The event date as the model gave it, checked later against the
-    /// turn's timestamp.
-    pub event_date: Option<String>,
-    /// The item the model says this repeats.
-    pub same_as: Option<MemoryId>,
-    /// Sensitive, by the word list or the model.
-    pub sensitive: bool,
-    /// Its kind.
-    pub sensitive_kind: Option<SensitiveKind>,
-    /// `now` and `milestones`: the new profile statement promotion rule
-    /// (a) writes, when it passed the profile checks.
-    pub promote: Option<String>,
+    /// The date as the model gave it, checked later against the turn.
+    pub date: Option<String>,
+    /// A `now` item's kind.
+    pub now_kind: NowKind,
+    /// The listed `now` item this updates.
+    pub update: Option<Stem>,
+    /// The pending candidate this dates.
+    pub completes: Option<i64>,
 }
 
 /// What [`check`] made of a window's elements.
@@ -771,26 +524,27 @@ pub struct CheckReport {
     pub used: usize,
 }
 
-/// Check the model's memory elements for one window (§13.3, §13.8), at most
+fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Check the model's memory elements for one window (§15.5, §13.8), at most
 /// `slots` of them (the rest are ignored and use no slot). In order: the
 /// shape and bounds; the quote, a verbatim span of the user's own words of
-/// the turn it names in `messages`; the section switch; the redactor
-/// (`masks` says whether it would change a text: a change drops the
-/// element); the finance words; the sensitive words, which force the flag,
-/// with `personal` off refusing a flagged or model-marked personal element;
-/// the section rule for sensitive items; and the mood rule.
+/// the turn it names in `messages`; the redactor (`masks` says whether it
+/// would change a text); the finance words; and the mood rule. Sensitive
+/// events are kept: `now` items and milestones may hold them.
 #[must_use]
 pub fn check(
     answers: &[MemoryAnswer],
     messages: &[PassMessage],
     slots: usize,
-    config: &MemoryConfig,
     masks: &dyn Fn(&str) -> bool,
 ) -> CheckReport {
     let mut report = CheckReport::default();
     for answer in answers.iter().take(slots) {
         report.used = report.used.saturating_add(1);
-        match check_one(answer, messages, config, masks) {
+        match check_one(answer, messages, masks) {
             Ok(checked) => report.checked.push(checked),
             Err(refusal) => report.refused.push(refusal),
         }
@@ -801,23 +555,60 @@ pub fn check(
 fn check_one(
     answer: &MemoryAnswer,
     messages: &[PassMessage],
-    config: &MemoryConfig,
     masks: &dyn Fn(&str) -> bool,
 ) -> Result<Checked, Refusal> {
-    let section: Section = answer.section.parse().map_err(|_| Refusal::Invalid)?;
-    let statement = answer
-        .statement
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    let kind = match answer.kind.trim() {
+        "now" => ElementKind::Now,
+        "milestone" => ElementKind::Milestone,
+        _ => return Err(Refusal::Invalid),
+    };
+    let title = one_line(&answer.title);
+    let text = one_line(&answer.text);
     let quote = answer.quote.clone();
     let quote_chars = quote.trim().chars().count();
-    if statement.is_empty()
-        || statement.chars().count() > STATEMENT_CHARS
+    if title.is_empty()
+        || title.chars().count() > TITLE_CHARS
+        || text.is_empty()
+        || text.chars().count() > TEXT_CHARS
         || !(QUOTE_MIN_CHARS..=QUOTE_CHARS).contains(&quote_chars)
         || answer.message.is_empty()
         || answer.message.chars().count() > MESSAGE_CHARS
     {
+        return Err(Refusal::Invalid);
+    }
+    let now_kind = match kind {
+        ElementKind::Now => answer
+            .now_kind
+            .as_deref()
+            .unwrap_or("plan")
+            .parse()
+            .map_err(|_| Refusal::Invalid)?,
+        ElementKind::Milestone => NowKind::Event,
+    };
+    let update = match answer
+        .update
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(stem) => Some(stem.parse::<Stem>().map_err(|_| Refusal::Unknown)?),
+        None => None,
+    };
+    let completes = match answer
+        .completes
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(id) => Some(
+            id.strip_prefix("pending-")
+                .unwrap_or(id)
+                .parse::<i64>()
+                .map_err(|_| Refusal::Unknown)?,
+        ),
+        None => None,
+    };
+    if kind == ElementKind::Milestone && (update.is_some() || completes.is_some()) {
         return Err(Refusal::Invalid);
     }
     let own = messages.iter().any(|m| {
@@ -828,99 +619,53 @@ fn check_one(
     if !own {
         return Err(Refusal::Unverified);
     }
-    if !section.written() {
-        return Err(Refusal::NotWritten);
-    }
-    if !config.section_on(section) {
-        return Err(Refusal::SectionOff);
-    }
-    if masks(&statement) || masks(&quote) {
+    if masks(&title) || masks(&text) || masks(&quote) {
         return Err(Refusal::Sensitive);
     }
-    if finance_word(&statement) || finance_word(&quote) {
+    if finance_word(&title) || finance_word(&text) || finance_word(&quote) {
         return Err(Refusal::Sensitive);
     }
-    let listed = sensitive_word(&statement).or_else(|| sensitive_word(&quote));
-    let named = answer
-        .sensitive_kind
-        .as_deref()
-        .and_then(SensitiveKind::parse);
-    let sensitive = listed.is_some() || named.is_some();
-    if !config.personal && (sensitive || answer.personal) {
-        return Err(Refusal::PersonalOff);
-    }
-    if sensitive && !section.holds_sensitive() {
-        return Err(Refusal::Sensitive);
-    }
-    if section == Section::Now && inferred_mood(&statement, &quote) {
+    if inferred_mood(&format!("{title} {text}"), &quote) {
         return Err(Refusal::Inferred);
     }
     Ok(Checked {
-        section,
-        statement,
+        kind,
+        title,
+        text,
         quote,
         message: answer.message.clone(),
-        event_date: answer
-            .event_date
+        date: answer
+            .date
             .as_deref()
             .map(str::trim)
             .filter(|d| !d.is_empty())
-            .map(str::to_owned)
-            .filter(|_| section.dated()),
-        same_as: answer
-            .same_as
-            .as_deref()
-            .and_then(|id| id.trim().parse().ok()),
-        sensitive,
-        sensitive_kind: listed.or(named),
-        promote: answer
-            .promote
-            .as_deref()
-            .and_then(|text| profile_statement(text, section, masks)),
+            .map(str::to_owned),
+        now_kind,
+        update,
+        completes,
     })
 }
 
-/// Rule (a)'s new profile statement, when it may be kept (§13.4, §13.8):
-/// on a `now` or `milestones` element only, at most
-/// [`promote::PROMOTE_CHARS`] characters, unchanged by the redactor, with
-/// no finance or sensitive word (a profile item holds nothing sensitive).
-/// One that fails drops the promotion, not the element.
-fn profile_statement(text: &str, section: Section, masks: &dyn Fn(&str) -> bool) -> Option<String> {
-    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    (matches!(section, Section::Now | Section::Milestones)
-        && !text.is_empty()
-        && text.chars().count() <= promote::PROMOTE_CHARS
-        && !masks(&text)
-        && !finance_word(&text)
-        && sensitive_word(&text).is_none())
-    .then_some(text)
-}
-
 /// A checked element tied to its turn in the original transcript, ready for
-/// the store: the turn's own words (against which the store repeats the
-/// verbatim check under its lock) and its timestamp.
+/// the store.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Draft {
     /// The element.
     pub checked: Checked,
-    /// The event date, kept only when real and within a year before and
-    /// two years after the turn.
-    pub event_date: Option<Date>,
-    /// The user's own words of the turn (pasted blocks left out).
+    /// The date, kept only when real and within a year before and two years
+    /// after the turn.
+    pub date: Option<Date>,
+    /// The user's own words of the turn (pasted blocks left out), against
+    /// which the store repeats the verbatim check under its lock.
     pub turn: String,
     /// When the turn was sent.
     pub at: OffsetDateTime,
-    /// SHA-256 of the turn's original text: the cite of a `preferences`
-    /// candidate the item may open (§13.7).
-    pub prompt_sha256: String,
-    /// The quote's line within the turn's original text, from 1.
-    pub line: u32,
 }
 
 /// Tie each checked element to its turn in the original transcript, never
 /// the model's metadata: only the user's turns, and only when the quote is
-/// his own span of that turn's original text. An element that fails here is
-/// refused `memory_unverified`.
+/// their own span of that turn's original text. An element that fails here
+/// is refused `memory_unverified`.
 #[must_use]
 pub fn drafts(
     checked: Vec<Checked>,
@@ -937,26 +682,20 @@ pub fn drafts(
                 crate::pass::own_span(&turn.own, &element.quote)
                     && m.text().contains(&element.quote)
             });
-        let raw = found.as_ref().map(|(m, _)| m.text()).unwrap_or_default();
-        let line = raw
-            .find(&element.quote)
-            .and_then(|start| u32::try_from(raw[..start].matches('\n').count() + 1).ok());
-        let (Some((message, turn)), Some(line)) = (found, line) else {
+        let Some((message, turn)) = found else {
             refused.push(Refusal::Unverified);
             continue;
         };
-        let event_date = element
-            .event_date
+        let date = element
+            .date
             .as_deref()
             .and_then(|text| crate::record::parse_day(text).ok())
             .filter(|date| plausible_date(*date, message.at.date()));
         out.push(Draft {
             checked: element,
-            event_date,
+            date,
             turn: turn.own,
             at: message.at,
-            prompt_sha256: crate::capture::prompt_sha256(&raw),
-            line,
         });
     }
     (out, refused)
@@ -968,658 +707,285 @@ pub fn plausible_date(date: Date, turn: Date) -> bool {
     date >= turn - Duration::days(365) && date <= turn + Duration::days(730)
 }
 
-/// The occurrence fields the pass derives: never the model's.
+/// Whether the user's `turn` calls its event a milestone: one of
+/// [`USER_SAYS`] occurs in it, matched as a capture trigger.
+#[must_use]
+pub fn user_says_milestone(turn: &str) -> bool {
+    USER_SAYS
+        .iter()
+        .any(|phrase| crate::trigger::find(phrase, turn).is_some())
+}
+
+/// An undated `now` candidate kept in `now_pending` (§15.5).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Provenance {
-    /// The session passed.
+pub struct Pending {
+    /// Its row id; the model names it `pending-<id>` to date it.
+    pub id: i64,
+    /// The session it came from.
     pub session: SessionId,
-    /// This host.
-    pub host: Label,
-    /// The session's project.
-    pub project: Project,
-}
-
-/// What [`apply`] did with one draft.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Applied {
-    /// A new item.
-    Created(MemoryId),
-    /// An occurrence appended to an existing item.
-    Appended(MemoryId),
-    /// The turn is already an occurrence of the item: a replayed window.
-    Replayed(MemoryId),
-}
-
-/// Write one draft into `items` (§13.3): an occurrence of the item the
-/// model named (`same_as`) when it is active, in the same section (or, for
-/// a `now` element, a milestone a `now` item was promoted to) and its
-/// statement shares at least one content token in four with the new one;
-/// else of an active item of the same section (and project, for
-/// `projects`) whose statement's tokens equal, contain or overlap the new
-/// one's (Jaccard at least 0.8); else a new item numbered past the highest.
-/// A turn already on the item it would join appends nothing. A new
-/// occurrence of a `now` item marks it raised by the user's turn.
-pub fn apply(
-    items: &mut Vec<MemoryItem>,
-    draft: &Draft,
-    provenance: &Provenance,
-    now: OffsetDateTime,
-) -> Applied {
-    let element = &draft.checked;
-    let project = (element.section == Section::Projects).then(|| provenance.project.clone());
-    let new_tokens = token_set(&element.statement);
-    let named = element.same_as.as_ref().and_then(|id| {
-        items.iter().position(|item| {
-            &item.id == id
-                && item.status == MemoryStatus::Active
-                && joins(element.section, item.section)
-                && overlaps_quarter(&token_set(&item.statement), &new_tokens)
-        })
-    });
-    let duplicate = || {
-        items.iter().position(|item| {
-            item.status == MemoryStatus::Active
-                && item.section == element.section
-                && item.project == project
-                && near_duplicate(&token_set(&item.statement), &new_tokens)
-        })
-    };
-    let author = Author::session_pass();
-    if let Some(i) = named.or_else(duplicate) {
-        let item = &mut items[i];
-        if item
-            .occurrences
-            .iter()
-            .any(|o| o.message == element.message)
-        {
-            return Applied::Replayed(item.id.clone());
-        }
-        let n = item
-            .occurrences
-            .iter()
-            .map(|o| o.n)
-            .max()
-            .unwrap_or(0)
-            .saturating_add(1);
-        item.occurrences.insert(0, occurrence(n, draft, provenance));
-        item.occurrences
-            .sort_by(|a, b| b.date.cmp(&a.date).then(b.n.cmp(&a.n)));
-        if item.event_date.is_none() {
-            item.event_date = draft.event_date;
-        }
-        if element.sensitive && !item.sensitive {
-            item.sensitive = true;
-            item.sensitive_kind = element.sensitive_kind;
-        }
-        if item.section == Section::Now {
-            item.acknowledged = Some(Acknowledged {
-                at: draft.at,
-                session: provenance.session.clone(),
-                author: author.clone(),
-            });
-        }
-        item.updated = now;
-        item.updated_by = author;
-        return Applied::Appended(item.id.clone());
-    }
-    // A replayed window may name no repeat and the statement may differ:
-    // a turn already recorded in this section is not recorded twice.
-    if let Some(item) = items.iter().find(|item| {
-        joins(element.section, item.section)
-            && item
-                .occurrences
-                .iter()
-                .any(|o| o.message == element.message && o.quote == element.quote)
-    }) {
-        return Applied::Replayed(item.id.clone());
-    }
-    let next = items.iter().map(|i| i.id.number()).max().unwrap_or(0) + 1;
-    let id = MemoryId::numbered(next);
-    items.push(MemoryItem {
-        id: id.clone(),
-        section: element.section,
-        status: MemoryStatus::Active,
-        statement: element.statement.clone(),
-        project,
-        event_date: draft.event_date,
-        sensitive: element.sensitive,
-        sensitive_kind: element.sensitive_kind,
-        acknowledged: None,
-        retirement_reason: None,
-        promoted_from: None,
-        promotion: None,
-        merged_into: None,
-        superseded_by: None,
-        unrelated_to: Vec::new(),
-        preference_proposal: None,
-        author: author.clone(),
-        updated_by: author,
-        created: now,
-        updated: now,
-        occurrences: vec![occurrence(1, draft, provenance)],
-    });
-    Applied::Created(id)
-}
-
-/// Whether an element of `section` may join an item of `item`: its own
-/// section, or, for a `now` element, a milestone, which holds the
-/// occurrences of the `now` item promoted to it (§13.4).
-fn joins(section: Section, item: Section) -> bool {
-    section == item || (section == Section::Now && item == Section::Milestones)
-}
-
-fn occurrence(n: u32, draft: &Draft, provenance: &Provenance) -> Occurrence {
-    Occurrence {
-        n,
-        date: draft.at,
-        session: provenance.session.clone(),
-        message: draft.checked.message.clone(),
-        host: provenance.host.clone(),
-        project: provenance.project.clone(),
-        quote: draft.checked.quote.clone(),
-        author: Author::session_pass(),
-    }
-}
-
-fn token_set(text: &str) -> BTreeSet<String> {
-    crate::ask::tokens(text).into_iter().collect()
-}
-
-/// At least one content token in four in common (§7's rule).
-fn overlaps_quarter(a: &BTreeSet<String>, b: &BTreeSet<String>) -> bool {
-    let common = a.intersection(b).count();
-    let union = a.union(b).count();
-    common > 0 && common.saturating_mul(4) >= union
-}
-
-/// Equal, one containing the other, or Jaccard at least 0.8 (memory's own
-/// duplicate rule, §13.3).
-fn near_duplicate(a: &BTreeSet<String>, b: &BTreeSet<String>) -> bool {
-    if a.is_empty() || b.is_empty() {
-        return false;
-    }
-    let common = a.intersection(b).count();
-    let union = a.union(b).count();
-    a.is_subset(b) || b.is_subset(a) || common.saturating_mul(5) >= union.saturating_mul(4)
-}
-
-/// The active items a pass request lists so the model can name a repeat:
-/// those of the sections switched on that the pass still writes
-/// ([`Section::written`]), best word overlap with the window's
-/// user turns first, then newest, at most [`MAX_CONTEXT_ITEMS`].
-#[must_use]
-pub fn context(
-    items: &[MemoryItem],
-    messages: &[PassMessage],
-    config: &MemoryConfig,
-) -> Vec<crate::models::MemoryContext> {
-    let window: BTreeSet<String> = messages
-        .iter()
-        .filter(|m| m.role == Speaker::User)
-        .flat_map(|m| crate::ask::tokens(&m.text))
-        .collect();
-    let mut active: Vec<(usize, &MemoryItem)> = items
-        .iter()
-        .filter(|i| {
-            i.status == MemoryStatus::Active && config.section_on(i.section) && i.section.written()
-        })
-        .map(|i| (token_set(&i.statement).intersection(&window).count(), i))
-        .collect();
-    active.sort_by(|(a, x), (b, y)| b.cmp(a).then(y.latest().cmp(&x.latest())));
-    active
-        .into_iter()
-        .take(MAX_CONTEXT_ITEMS)
-        .map(|(_, i)| crate::models::MemoryContext {
-            id: i.id.to_string(),
-            section: i.section.as_str(),
-            statement: i.statement.clone(),
-        })
-        .collect()
-}
-
-/// Why an item is not on the page on a given day (§13.2: derived, never
-/// stored).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OffPage {
-    /// Merged into an older item.
-    Merged,
-    /// Superseded by a newer item.
-    Superseded,
-    /// Promoted to a milestone.
-    Promoted,
-    /// Retired.
-    Retired,
-    /// Forgotten.
-    Forgotten,
-    /// Its section is switched off.
-    SectionOff,
-    /// `projects` or `working`, with no occurrence within `decay_days`.
-    Decayed,
-    /// `now`, past its window.
-    PastWindow,
-}
-
-impl OffPage {
-    /// The label `memory show --include-off-page` gives it.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Merged => "merged",
-            Self::Superseded => "superseded",
-            Self::Promoted => "promoted",
-            Self::Retired => "retired",
-            Self::Forgotten => "forgotten",
-            Self::SectionOff => "section_off",
-            Self::Decayed => "decayed",
-            Self::PastWindow => "past_window",
-        }
-    }
-}
-
-/// Why `item` is off the page on `today`, or `None` when it is on it
-/// (§13.4, §13.5): `profile` and `milestones` stay while active;
-/// `projects` and `working` leave `decay_days` after their latest
-/// occurrence; a dated `now` item leaves `now_after_days` after its date,
-/// an undated one `now_undated_days` after its latest occurrence.
-#[must_use]
-pub fn off_page(item: &MemoryItem, config: &MemoryConfig, today: Date) -> Option<OffPage> {
-    match item.status {
-        MemoryStatus::Merged => return Some(OffPage::Merged),
-        MemoryStatus::Superseded => return Some(OffPage::Superseded),
-        MemoryStatus::Promoted => return Some(OffPage::Promoted),
-        MemoryStatus::Retired => return Some(OffPage::Retired),
-        MemoryStatus::Forgotten => return Some(OffPage::Forgotten),
-        MemoryStatus::Active => {}
-    }
-    if !config.section_on(item.section) {
-        return Some(OffPage::SectionOff);
-    }
-    let age = |from: Date| (today - from).whole_days();
-    let latest = item.latest().date();
-    match item.section {
-        Section::Profile | Section::Milestones => None,
-        Section::Projects | Section::Working => {
-            (age(latest) > i64::from(config.decay_days)).then_some(OffPage::Decayed)
-        }
-        Section::Now => {
-            let past = match item.event_date {
-                Some(date) => age(date) > i64::from(config.now_after_days),
-                None => age(latest) > i64::from(config.now_undated_days),
-            };
-            past.then_some(OffPage::PastWindow)
-        }
-    }
-}
-
-/// One recently active session, as the page lists it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RecentSession {
-    /// The session.
-    pub id: SessionId,
-    /// Its title.
-    pub title: String,
-    /// Its last message.
-    pub at: OffsetDateTime,
-}
-
-/// The session-start page (§13.6).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Page {
-    /// What the hook injects.
+    /// The turn it came from.
+    pub message: String,
+    /// What it is about: the element's title.
+    pub subject: String,
+    /// The element's prose.
     pub text: String,
-    /// Whether the milestone lines pass [`MILESTONES_WARN_CHARS`]: the
-    /// signal that a cap is needed.
-    pub over_budget: bool,
 }
 
-const HEADER: &str = "scribe memory — what you know about the user. Descriptive, not rules: rules are their preferences. Raise milestones only when the conversation goes there.";
-const FOOTER: &str = "More: scribe memory show · scribe session show <id> · scribe question ask";
+/// One change a pass window's memory makes (§15.5).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PassChange {
+    /// Write a `now` file whole.
+    Now(NowItem),
+    /// Write a milestone file whole.
+    Milestone(Milestone),
+    /// Keep an undated candidate.
+    AddPending {
+        /// The turn.
+        message: String,
+        /// The title.
+        subject: String,
+        /// The prose.
+        text: String,
+    },
+    /// Drop a pending candidate a dated element completed.
+    DropPending(i64),
+}
 
-/// The parts' base budgets of §13.6, scaled to `page_chars`.
-const NOW_BUDGET: usize = 600;
-const PROFILE_BUDGET: usize = 400;
-const PROJECTS_BUDGET: usize = 300;
-const WORKING_BUDGET: usize = 440;
-const RECENT_BUDGET: usize = 400;
-
-/// Build the page from the store's items and the recent sessions on
-/// `today`; `project` is the session's own project, whose `projects` items
-/// alone are shown. `None` when there is nothing to show. Sections in page
-/// order, each line one item and its id; a part over its budget drops whole
-/// items from its end and says `(+k more)`, and its unused budget passes to
-/// `working`, then `profile`. Milestones are never cut.
+/// The changes `drafts` make for `session` against the current `now` items,
+/// milestones and this session's pending candidates, and the elements
+/// refused under the lock. In order, per draft:
+///
+/// - **milestone**: needs a date and a turn that calls it one; written by
+///   stem (`<date>-<slug of title>`), merging its sources into one already
+///   there.
+/// - **dated `now`**: an update rewrites the listed item in place, keeping
+///   its stem and raised mark; a completion writes the item with the
+///   candidate's session among its sources and drops the candidate;
+///   otherwise the item is written by stem, joining one already there.
+/// - **undated `now`**: kept pending, one per subject, at most
+///   [`MAX_PENDING`] per session; an undated update or completion is
+///   refused.
+///
+/// Each file's `updated` is its turn's time, so a replayed window writes
+/// the same bytes.
 #[must_use]
-pub fn page(
-    items: &[MemoryItem],
-    recent: &[RecentSession],
-    project: Option<&Project>,
-    config: &MemoryConfig,
-    today: Date,
-) -> Option<Page> {
-    let on: Vec<&MemoryItem> = items
+pub fn plan(
+    drafts: &[Draft],
+    now_items: &[NowItem],
+    milestones: &[Milestone],
+    pending: &[Pending],
+    session: &SessionId,
+) -> (Vec<PassChange>, Vec<Refusal>) {
+    let mut changes: Vec<PassChange> = Vec::new();
+    let mut refused = Vec::new();
+    let mut now: Vec<NowItem> = now_items.to_vec();
+    let mut miles: Vec<Milestone> = milestones.to_vec();
+    let mut pending: Vec<Pending> = pending
         .iter()
-        .filter(|i| off_page(i, config, today).is_none())
+        .filter(|p| &p.session == session)
+        .cloned()
         .collect();
-    let of = |section: Section| -> Vec<&MemoryItem> {
-        on.iter()
-            .copied()
-            .filter(|i| i.section == section)
-            .collect()
+    let add_source = |sources: &mut Vec<SessionId>, s: &SessionId| {
+        if !sources.contains(s) {
+            sources.push(s.clone());
+        }
     };
-    let scale = |base: usize| base.saturating_mul(config.page_chars) / PAGE_CHARS;
-
-    let mut now = of(Section::Now);
-    now.sort_by(|a, b| match (a.event_date, b.event_date) {
-        (Some(x), Some(y)) => x.cmp(&y),
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => b.latest().cmp(&a.latest()),
-    });
-    let now_lines: Vec<String> = now.iter().map(|i| now_line(i, today)).collect();
-    let (now_part, now_left) = lines_part("Now:", &now_lines, scale(NOW_BUDGET), MAX_NOW_LINES);
-
-    let mut milestones = of(Section::Milestones);
-    milestones.sort_by_key(|i| {
-        (
-            i.event_date.unwrap_or_else(|| i.latest().date()),
-            i.id.number(),
-        )
-    });
-    let milestone_lines: Vec<String> = milestones.iter().map(|i| milestone_line(i)).collect();
-    let milestone_chars: usize = milestone_lines.iter().map(|l| l.chars().count() + 1).sum();
-    let milestones_part = (!milestone_lines.is_empty())
-        .then(|| format!("Milestones:\n{}", milestone_lines.join("\n")));
-
-    let mut projects = of(Section::Projects);
-    projects.retain(|i| project.is_some_and(|p| i.project.as_ref() == Some(p)));
-    projects.sort_by_key(|i| std::cmp::Reverse(i.latest()));
-    let projects_label = project.map_or_else(String::new, |p| {
-        let as_of = projects
-            .first()
-            .map(|i| crate::record::nullable_date::format(i.latest().date()))
-            .unwrap_or_default();
-        format!("Project {p} (as of {as_of}):")
-    });
-    let (projects_part, projects_left) =
-        inline_part(&projects_label, &projects, scale(PROJECTS_BUDGET));
-
-    let recent_part = recent_part(recent, config.recent_sessions, scale(RECENT_BUDGET));
-    let recent_left =
-        scale(RECENT_BUDGET).saturating_sub(recent_part.as_ref().map_or(0, |p| p.chars().count()));
-
-    let mut working = of(Section::Working);
-    working.sort_by(|a, b| {
-        b.sessions()
-            .cmp(&a.sessions())
-            .then(b.latest().cmp(&a.latest()))
-    });
-    let spare = now_left + projects_left + recent_left;
-    let (working_part, working_left) =
-        inline_part("Working:", &working, scale(WORKING_BUDGET) + spare);
-
-    let mut profile = of(Section::Profile);
-    profile.sort_by(|a, b| {
-        b.occurrences
-            .len()
-            .cmp(&a.occurrences.len())
-            .then(b.latest().cmp(&a.latest()))
-    });
-    let (profile_part, _) = inline_part("Profile:", &profile, scale(PROFILE_BUDGET) + working_left);
-
-    let body: Vec<String> = [
-        now_part,
-        milestones_part,
-        profile_part,
-        projects_part,
-        working_part,
-        recent_part,
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    if body.is_empty() {
-        return None;
-    }
-    let text = format!("{HEADER}\n{}\n{FOOTER}", body.join("\n"));
-    Some(Page {
-        text,
-        over_budget: milestone_chars > MILESTONES_WARN_CHARS,
-    })
-}
-
-fn now_line(item: &MemoryItem, today: Date) -> String {
-    let raised = if item.not_yet_raised(today) {
-        "; not yet raised"
-    } else {
-        ""
-    };
-    match item.event_date {
-        Some(date) => {
-            let days = (date - today).whole_days();
-            let when = match days {
-                0 => String::from("today"),
-                d if d > 0 => format!("in {d} days"),
-                d => format!("{} days ago", d.unsigned_abs()),
-            };
-            format!(
-                "- {} {} ({when}{raised}) [{}]",
-                crate::record::nullable_date::format(date),
-                item.statement,
-                item.id
-            )
-        }
-        None => format!(
-            "- {} (said {}{raised}) [{}]",
-            item.statement,
-            crate::record::nullable_date::format(item.latest().date()),
-            item.id
-        ),
-    }
-}
-
-fn milestone_line(item: &MemoryItem) -> String {
-    let date = item.event_date.unwrap_or_else(|| item.latest().date());
-    let tail = format!(" [{}]", item.id);
-    let head = format!("- {} ", crate::record::nullable_date::format(date));
-    let room = MILESTONE_LINE_CHARS.saturating_sub(head.chars().count() + tail.chars().count());
-    format!("{head}{}{tail}", cut(&item.statement, room))
-}
-
-/// `text` cut to `max` characters, with `…` when cut.
-fn cut(text: &str, max: usize) -> String {
-    if text.chars().count() <= max {
-        return text.to_owned();
-    }
-    let mut out: String = text.chars().take(max.saturating_sub(1)).collect();
-    out.push('…');
-    out
-}
-
-/// A part of one line per item under `label`, within `budget` characters
-/// and `max` lines. Returns the part and the budget it left unused.
-fn lines_part(label: &str, lines: &[String], budget: usize, max: usize) -> (Option<String>, usize) {
-    if lines.is_empty() {
-        return (None, budget);
-    }
-    let mut used = label.chars().count();
-    let mut kept: Vec<&str> = Vec::new();
-    for line in lines.iter().take(max) {
-        let chars = line.chars().count() + 1;
-        if used + chars > budget {
-            break;
-        }
-        used += chars;
-        kept.push(line);
-    }
-    let more = lines.len() - kept.len();
-    let mut part = label.to_owned();
-    for line in &kept {
-        part.push('\n');
-        part.push_str(line);
-    }
-    if more > 0 {
-        part.push_str(&format!("\n(+{more} more)"));
-    }
-    if kept.is_empty() && more > 0 {
-        return (Some(part), 0);
-    }
-    (Some(part), budget.saturating_sub(used))
-}
-
-/// A part of items joined on one line after `label`, within `budget`.
-fn inline_part(label: &str, items: &[&MemoryItem], budget: usize) -> (Option<String>, usize) {
-    if items.is_empty() || label.is_empty() {
-        return (None, budget);
-    }
-    let mut line = label.to_owned();
-    let mut kept = 0usize;
-    for item in items {
-        let piece = format!(
-            "{} {} [{}]",
-            if kept == 0 { "" } else { ";" },
-            item.statement,
-            item.id
-        );
-        let piece = if kept == 0 {
-            piece.trim_start().to_owned()
-        } else {
-            piece
-        };
-        let addition = if kept == 0 {
-            format!(" {piece}")
-        } else {
-            piece
-        };
-        if line.chars().count() + addition.chars().count() > budget {
-            break;
-        }
-        line.push_str(&addition);
-        kept += 1;
-    }
-    let more = items.len() - kept;
-    if more > 0 {
-        line.push_str(&format!(" (+{more} more)"));
-    }
-    let left = budget.saturating_sub(line.chars().count());
-    (Some(line), left)
-}
-
-fn recent_part(recent: &[RecentSession], n: usize, budget: usize) -> Option<String> {
-    if n == 0 || recent.is_empty() {
-        return None;
-    }
-    let mut line = String::from("Recent sessions:");
-    let mut kept = 0usize;
-    for session in recent.iter().take(n) {
-        let piece = format!(
-            "{} {} \"{}\" ({})",
-            if kept == 0 { "" } else { ";" },
-            session.id,
-            cut(
-                &session
-                    .title
-                    .split_whitespace()
-                    .collect::<Vec<_>>()
-                    .join(" "),
-                60
-            ),
-            crate::record::nullable_date::format(session.at.date())
-        );
-        let piece = if kept == 0 {
-            format!(" {}", piece.trim_start())
-        } else {
-            piece
-        };
-        if line.chars().count() + piece.chars().count() > budget {
-            break;
-        }
-        line.push_str(&piece);
-        kept += 1;
-    }
-    (kept > 0).then_some(line)
-}
-
-/// Forget `item` for good (§13.9): its statement, every occurrence's quote
-/// and any retirement reason blanked, its status `forgotten`; id, section,
-/// dates and authors stay. Returns whether anything changed.
-pub fn forget(item: &mut MemoryItem, by: Author, now: OffsetDateTime) -> bool {
-    if item.status == MemoryStatus::Forgotten
-        && item.statement.is_empty()
-        && item.occurrences.iter().all(|o| o.quote.is_empty())
-    {
-        return false;
-    }
-    item.status = MemoryStatus::Forgotten;
-    item.statement.clear();
-    item.retirement_reason = None;
-    for occurrence in &mut item.occurrences {
-        occurrence.quote.clear();
-    }
-    item.updated = now;
-    item.updated_by = by;
-    true
-}
-
-/// The items whose words `forget` of `id` must also blank (§13.9): those
-/// merged into it, whose statements still stand, and those merged into
-/// them in turn; and, across a promotion, the milestone, the `now` item it
-/// came from and rule (a)'s new profile item (`profile_to`), each reached
-/// from either of the others, as they hold the same event and Daniel's same
-/// words. Followed to a fixed point, so a link
-/// reached through another link goes too. By index into `items`, in store
-/// order, without `id` itself.
-#[must_use]
-pub fn linked(items: &[MemoryItem], id: &MemoryId) -> Vec<usize> {
-    if !items.iter().any(|i| &i.id == id) {
-        return Vec::new();
-    }
-    let mut reached: Vec<&MemoryId> = vec![id];
-    let mut next = 0;
-    while let Some(&current) = reached.get(next) {
-        next += 1;
-        let Some(item) = items.iter().find(|i| &i.id == current) else {
+    for draft in drafts {
+        let element = &draft.checked;
+        if !crate::pass::own_span(&draft.turn, &element.quote) {
+            refused.push(Refusal::Unverified);
             continue;
-        };
-        let promotion = item.promotion.as_ref();
-        let neighbours = items
-            .iter()
-            .filter(|i| {
-                i.merged_into.as_ref() == Some(current)
-                    || item.promoted_from.as_ref() == Some(&i.id)
-                    || i.promoted_from.as_ref() == Some(current)
-                    || i.promotion.as_ref().and_then(|p| p.profile_to.as_ref()) == Some(current)
-                    || promotion
-                        .is_some_and(|p| p.to == i.id || p.profile_to.as_ref() == Some(&i.id))
-            })
-            .map(|i| &i.id);
-        for found in neighbours {
-            if !reached.contains(&found) {
-                reached.push(found);
+        }
+        match (element.kind, draft.date) {
+            (ElementKind::Milestone, None) => refused.push(Refusal::Undated),
+            (ElementKind::Milestone, Some(date)) => {
+                if !user_says_milestone(&draft.turn) {
+                    refused.push(Refusal::NotStated);
+                    continue;
+                }
+                let stem = Stem::new(date, &element.title);
+                let item = match miles.iter_mut().find(|m| m.stem == stem) {
+                    Some(m) => {
+                        add_source(&mut m.sources, session);
+                        m.title.clone_from(&element.title);
+                        m.text.clone_from(&element.text);
+                        m.updated = draft.at;
+                        m.clone()
+                    }
+                    None => {
+                        let m = Milestone {
+                            stem,
+                            date,
+                            sources: vec![session.clone()],
+                            updated: draft.at,
+                            title: element.title.clone(),
+                            text: element.text.clone(),
+                        };
+                        miles.push(m.clone());
+                        m
+                    }
+                };
+                changes.push(PassChange::Milestone(item));
+            }
+            (ElementKind::Now, None) => {
+                if element.update.is_some() || element.completes.is_some() {
+                    refused.push(Refusal::Undated);
+                    continue;
+                }
+                if pending.iter().any(|p| p.subject == element.title) {
+                    continue;
+                }
+                if pending.len() >= MAX_PENDING {
+                    refused.push(Refusal::PendingFull);
+                    continue;
+                }
+                pending.push(Pending {
+                    id: 0,
+                    session: session.clone(),
+                    message: element.message.clone(),
+                    subject: element.title.clone(),
+                    text: element.text.clone(),
+                });
+                changes.push(PassChange::AddPending {
+                    message: element.message.clone(),
+                    subject: element.title.clone(),
+                    text: element.text.clone(),
+                });
+            }
+            (ElementKind::Now, Some(date)) => {
+                let mut sources = Vec::new();
+                if let Some(id) = element.completes {
+                    let Some(at) = pending.iter().position(|p| p.id == id && p.id != 0) else {
+                        refused.push(Refusal::Unknown);
+                        continue;
+                    };
+                    let done = pending.remove(at);
+                    add_source(&mut sources, &done.session);
+                    changes.push(PassChange::DropPending(id));
+                }
+                add_source(&mut sources, session);
+                let target = match &element.update {
+                    Some(stem) => match now.iter().position(|n| &n.stem == stem) {
+                        Some(i) => Some(i),
+                        None => {
+                            refused.push(Refusal::Unknown);
+                            continue;
+                        }
+                    },
+                    None => {
+                        let stem = Stem::new(date, &element.title);
+                        now.iter().position(|n| n.stem == stem)
+                    }
+                };
+                let item = match target {
+                    Some(i) => {
+                        let n = &mut now[i];
+                        for s in &sources {
+                            add_source(&mut n.sources, s);
+                        }
+                        n.date = date;
+                        n.kind = element.now_kind;
+                        n.title.clone_from(&element.title);
+                        n.text.clone_from(&element.text);
+                        n.updated = draft.at;
+                        n.clone()
+                    }
+                    None => {
+                        let n = NowItem {
+                            stem: Stem::new(date, &element.title),
+                            date,
+                            kind: element.now_kind,
+                            sources,
+                            updated: draft.at,
+                            raised: None,
+                            title: element.title.clone(),
+                            text: element.text.clone(),
+                        };
+                        now.push(n.clone());
+                        n
+                    }
+                };
+                changes.push(PassChange::Now(item));
             }
         }
     }
-    items
-        .iter()
-        .enumerate()
-        .filter(|(_, i)| &i.id != id && reached.contains(&&i.id))
-        .map(|(n, _)| n)
-        .collect()
+    (changes, refused)
 }
 
-/// Forget occurrence `n` of `item` for good: its quote blanked. Returns
-/// whether anything changed; `None` when the item has no occurrence `n`.
-pub fn forget_occurrence(
-    item: &mut MemoryItem,
-    n: u32,
-    by: Author,
-    now: OffsetDateTime,
-) -> Option<bool> {
-    let occurrence = item.occurrences.iter_mut().find(|o| o.n == n)?;
-    if occurrence.quote.is_empty() {
-        return Some(false);
+/// Whether a `now` item dated `date` is past its stay on `today`: more than
+/// [`NOW_KEEP_DAYS`] days after its date.
+#[must_use]
+pub fn expired(date: Date, today: Date) -> bool {
+    date + Duration::days(NOW_KEEP_DAYS) < today
+}
+
+/// The profile as the block shows it: its text and the date of the
+/// revision it is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProfileView {
+    /// `profile.md`, or the committed revision while a journal is open.
+    pub text: String,
+    /// The day of its last revision; `None` for a file no revision wrote.
+    pub as_of: Option<Date>,
+}
+
+/// The memory block (§15.4): `## Profile (as of <date>)` with the profile
+/// in full, `## Now` with every item nearest date first, and `## Milestones`
+/// with the last [`MILESTONE_LINES`], newest first. An empty part prints
+/// its heading and `(none)`.
+#[must_use]
+pub fn block(profile: Option<&ProfileView>, now: &[NowItem], milestones: &[Milestone]) -> String {
+    let mut out = String::new();
+    match profile {
+        Some(p) => {
+            match p.as_of {
+                Some(date) => out.push_str(&format!(
+                    "## Profile (as of {})\n",
+                    crate::record::nullable_date::format(date)
+                )),
+                None => out.push_str("## Profile\n"),
+            }
+            out.push_str(p.text.trim_end());
+            out.push('\n');
+        }
+        None => out.push_str("## Profile\n(none)\n"),
     }
-    occurrence.quote.clear();
-    item.updated = now;
-    item.updated_by = by;
-    Some(true)
+    out.push_str("## Now\n");
+    let mut now: Vec<&NowItem> = now.iter().collect();
+    now.sort_by(|a, b| a.date.cmp(&b.date).then_with(|| a.stem.cmp(&b.stem)));
+    if now.is_empty() {
+        out.push_str("(none)\n");
+    }
+    for n in now {
+        out.push_str(&format!(
+            "- {} · due {} · {}\n",
+            n.stem,
+            crate::record::nullable_date::format(n.date),
+            n.title
+        ));
+    }
+    out.push_str("## Milestones\n");
+    let shown = newest_milestones(milestones);
+    if shown.is_empty() {
+        out.push_str("(none)\n");
+    }
+    for m in shown {
+        out.push_str(&format!(
+            "- {} · {} · {}\n",
+            m.stem,
+            crate::record::nullable_date::format(m.date),
+            m.title
+        ));
+    }
+    out
+}
+
+/// The milestones the block shows: the last [`MILESTONE_LINES`], newest
+/// first.
+#[must_use]
+pub fn newest_milestones(milestones: &[Milestone]) -> Vec<&Milestone> {
+    let mut shown: Vec<&Milestone> = milestones.iter().collect();
+    shown.sort_by(|a, b| b.date.cmp(&a.date).then_with(|| b.stem.cmp(&a.stem)));
+    shown.truncate(MILESTONE_LINES);
+    shown
 }

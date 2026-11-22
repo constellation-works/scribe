@@ -15,11 +15,11 @@ mod table;
 
 pub(crate) use payload::{
     AskPayload, BatchFailure, BriefPayload, CoveredPayload, DeactivatedPayload,
-    DeactivationFailure, EntryPayload, HitPayload, HookOutcome, HookReply, Kin, MemoryPagePayload,
-    MemoryPayload, MemoryRulesPayload, MemoryScanPayload, MergedPayload, Output, PassPayload,
-    PassReport, PluginError, PluginReply, PopupRows, PromotedPayload, ProposalPayload,
-    ReappliedPayload, Record, Records, ScanReport, SessionPayload, SessionsContext,
-    SupersededPayload, TagPayload, TagShowPayload, TranscriptPayload, TreeRow, WarningPayload,
+    DeactivationFailure, EntryPayload, HitPayload, HookOutcome, HookReply, Kin, MemoryBlockPayload,
+    MemoryPayload, MemoryRulesPayload, MemoryScanPayload, Output, PassPayload, PassReport,
+    PluginError, PluginReply, PopupRows, ProposalPayload, ReappliedPayload, Record, Records,
+    RefreshPayload, RevisionPayload, ScanReport, SessionPayload, SessionsContext, TagPayload,
+    TagShowPayload, TranscriptPayload, TreeRow, WarningPayload,
 };
 pub(crate) use sink::{FORMAT_ENV, FormatArg, Sink, help_width};
 
@@ -170,6 +170,24 @@ fn emit(sink: &Sink, output: &Output) -> io::Result<()> {
         let mut err = io::stderr().lock();
         for notice in &report.notices {
             let _ = writeln!(err, "{notice}");
+        }
+    }
+    if let Output::Show {
+        record: Record::MemoryBlock(block),
+    } = output
+    {
+        let mut err = io::stderr().lock();
+        for warning in &block.warnings {
+            let _ = writeln!(err, "{warning}");
+        }
+    }
+    if let Output::Show {
+        record: Record::Brief(brief),
+    } = output
+    {
+        let mut err = io::stderr().lock();
+        for warning in &brief.warnings {
+            let _ = writeln!(err, "{warning}");
         }
     }
     if let Output::Written { notices, .. } = output {

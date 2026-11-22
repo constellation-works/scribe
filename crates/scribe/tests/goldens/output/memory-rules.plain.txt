@@ -1,6 +1,6 @@
-promote.profile_change	true	shipped
-promote.recurs_in_sessions	3	shipped
-promote.user_says	"milestone", "big day", "remember this", "never forget", "life changing"	shipped
-decay_days	90	shipped
-now_undated_days	7	shipped
-now_after_days	14	shipped
+max_per_pass	3	shipped
+max_pending	5	shipped
+now_keep_days	14	shipped
+milestone_lines	5	shipped
+profile_chars	6000	shipped
+user_says	"milestone", "big day", "remember this", "never forget", "life changing"	shipped

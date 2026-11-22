@@ -106,6 +106,7 @@ pub(in crate::commands) fn run_with<M: Models>(
         memory_written: 0,
         memory_promoted: 0,
         memory_proposed: 0,
+        memory_pending: 0,
         memory_refused: std::collections::BTreeMap::new(),
     };
     let records = store

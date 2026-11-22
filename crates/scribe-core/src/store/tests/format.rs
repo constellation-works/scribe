@@ -2327,6 +2327,39 @@ fn a_format_sixteen_proposals_document_reads_at_the_current_shape() {
     assert!(decode_proposals(path, &serde_json::to_vec(&value).unwrap()).is_err());
 }
 
+#[test]
+fn a_format_24_proposals_document_reads_at_the_current_shape() {
+    // Format 25 changed only memory files: a format-24 proposals.json,
+    // context and all, reads back equal to the current one.
+    let path = Path::new("proposals.json");
+    let cite = serde_json::json!({"session":"7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02",
+        "message":"u-1", "at":"2026-11-02T00:00:00Z",
+        "prompt_sha256":"0".repeat(64), "line":1, "cwd":"/work"});
+    let proposal = serde_json::json!({
+        "id":"p-6", "kind":"candidate", "older":"preferences-3", "newer":null,
+        "candidate": {
+            "tag":"preferences", "role":"user", "quote":"show the newest five.",
+            "context":"The user trims the popup.", "statement":null,
+            "subject":"the popup", "evidence":null, "cite":cite,
+            "project":"scribe", "provider":"claude-code", "host":"host", "admitted":null
+        },
+        "reason":"Unmarked preferences statement", "quotes":[],
+        "state":"open", "opened_at":"2026-11-02T00:06:00Z", "settled_at":null,
+        "settled_by":null, "author":{"kind":"scribe", "name":"session-pass"},
+        "settled_author":null, "updated_by":null, "closed_reason":null, "instruction":null
+    });
+    let mut value = serde_json::json!({"format":24, "proposals":[proposal]});
+    let old = decode_proposals(path, &serde_json::to_vec(&value).unwrap()).unwrap();
+    value["format"] = serde_json::json!(FORMAT);
+    assert_eq!(
+        decode_proposals(path, &serde_json::to_vec(&value).unwrap()).unwrap(),
+        old
+    );
+    value["format"] = serde_json::json!(24);
+    value["stray"] = serde_json::json!(1);
+    assert!(decode_proposals(path, &serde_json::to_vec(&value).unwrap()).is_err());
+}
+
 const MEMORY_FILE: &str = "memory/m-1.md";
 
 /// A memory item at format `format`, with `extra` frontmatter lines, the
@@ -2352,7 +2385,7 @@ const V20_LINKS: &str = "promoted_from: null\npromotion: null\nmerged_into: null
 /// Every key of the current format, empty.
 const NO_LINKS: &str = "promoted_from: null\npromotion: null\nmerged_into: null\nsuperseded_by: null\nunrelated_to: []\npreference_proposal: null\n";
 
-fn memory(text: &str) -> crate::Result<crate::memory::MemoryItem> {
+fn memory(text: &str) -> crate::Result<crate::memory::legacy::MemoryItem> {
     crate::store::format::decode_memory(Path::new(MEMORY_FILE), text.as_bytes(), "m-1")
 }
 
@@ -2633,12 +2666,11 @@ fn a_format_23_store_upgrades_to_24_and_its_claims_read_with_no_context() {
     assert_eq!((&bare.context, bare.stated()), (&None, None));
     assert!(!bare.is_older_claim());
 
-    // The next write persists format 24, the document unchanged but for
-    // its format and each candidate's null `context`.
+    // The next write persists the current format, the document unchanged
+    // but for its format and each candidate's null `context`.
     let encoded = crate::store::format::encode_proposals(path, &proposals).unwrap();
     let mut value: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
-    assert_eq!(value["format"], serde_json::json!(24));
-    assert_eq!(FORMAT, 24);
+    assert_eq!(value["format"], serde_json::json!(FORMAT));
     value["format"] = serde_json::json!(23);
     for p in value["proposals"].as_array_mut().unwrap() {
         let c = p["candidate"].as_object_mut().unwrap();

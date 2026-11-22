@@ -1,0 +1,12 @@
+{
+  "id": "profile",
+  "kind": "profile",
+  "date": null,
+  "now_kind": null,
+  "title": null,
+  "text": "## Role and work\n- Builds personal developer tooling: scribe, orbit and the constellation front door.\n\n## Current focus\n- Moving scribe memory to a profile, now items and milestones.\n\n## Projects\n- scribe: the session memory store; see preferences-1.\n\n## Goals\n- Keep every agent session briefed from one page.\n\n## Environment\n- A Mac and the dk-server-1 and dk-server-2 Linux hosts.\n\n## How they work\n- Works through supervised agent formations.\n\n## Pinned\n- Call me Daniel.\n\n",
+  "sources": [],
+  "updated": null,
+  "raised": null,
+  "as_of": null
+}

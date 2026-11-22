@@ -5,8 +5,8 @@ use crate::config::Config;
 use crate::entry::Speaker;
 use crate::models::{
     ANNOTATION_INSTRUCTIONS, ASK_INSTRUCTIONS, AskRequest, Budgets, CONSISTENCY_INSTRUCTIONS,
-    ConsistencyRequest, EvidenceItem, FiringTurn, MEMORY_PAIRS_INSTRUCTIONS, MemoryPairsRequest,
-    PassMessage, REMOVAL_INSTRUCTIONS, RemovalRequest, SESSION_HEADER_INSTRUCTIONS,
+    ConsistencyRequest, EvidenceItem, FiringTurn, PROFILE_INSTRUCTIONS, PassMessage,
+    ProfileRequest, REMOVAL_INSTRUCTIONS, RemovalRequest, SESSION_HEADER_INSTRUCTIONS,
     SESSION_INSTRUCTIONS, SessionHeader, SessionHeaderRequest, TagCriteria,
 };
 use crate::tag::TagTable;
@@ -22,7 +22,7 @@ fn shipped(model_use: ModelUse) -> &'static str {
         ModelUse::SessionHeader => SESSION_HEADER_INSTRUCTIONS,
         ModelUse::Ask => ASK_INSTRUCTIONS,
         ModelUse::Consistency => CONSISTENCY_INSTRUCTIONS,
-        ModelUse::MemoryPairs => MEMORY_PAIRS_INSTRUCTIONS,
+        ModelUse::Profile => PROFILE_INSTRUCTIONS,
         ModelUse::Removal => REMOVAL_INSTRUCTIONS,
     }
 }
@@ -90,9 +90,8 @@ fn prompt(model_use: ModelUse, voice: Voice, shipped_tags: bool) -> String {
                     writes: true,
                 },
             ];
+            request.memory = true;
             request.memory_limit = 3;
-            request.memory_sections = vec!["profile", "working"];
-            request.memory_personal = false;
             request.prompt()
         }
         ModelUse::SessionHeader => SessionHeaderRequest {
@@ -138,10 +137,17 @@ fn prompt(model_use: ModelUse, voice: Voice, shipped_tags: bool) -> String {
             voice,
         }
         .prompt(),
-        ModelUse::MemoryPairs => MemoryPairsRequest {
+        ModelUse::Profile => ProfileRequest {
             model: String::from("m"),
             budget,
-            pairs: Vec::new(),
+            profile: crate::memory::profile::template(),
+            corrections: None,
+            hints: Vec::new(),
+            sessions: Vec::new(),
+            now: Vec::new(),
+            passed: Vec::new(),
+            milestones: Vec::new(),
+            preferences: Vec::new(),
             voice,
         }
         .prompt(),

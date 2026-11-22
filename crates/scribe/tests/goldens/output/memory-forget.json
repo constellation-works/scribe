@@ -1,48 +1,14 @@
 {
-  "id": "m-5",
-  "section": "profile",
-  "status": "forgotten",
-  "statement": "",
-  "project": null,
-  "event_date": null,
-  "sensitive": false,
-  "sensitive_kind": null,
-  "on_page": false,
-  "off_page": "forgotten",
-  "not_yet_raised": false,
-  "acknowledged": null,
-  "occurrence_count": 1,
-  "sessions": 1,
-  "latest": "2026-11-02T18:56:00Z",
-  "retirement_reason": null,
-  "promoted_from": null,
-  "promotion": null,
-  "merged_into": null,
-  "superseded_by": null,
-  "preference_proposal": null,
-  "author": {
-    "kind": "scribe",
-    "name": "session-pass"
-  },
-  "updated_by": {
-    "kind": "scribe",
-    "name": "session-pass"
-  },
-  "created": "2026-11-02T19:00:00Z",
-  "updated": "2026-11-02T19:00:00Z",
-  "occurrences": [
-    {
-      "n": 1,
-      "date": "2026-11-02T18:56:00Z",
-      "session": "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02",
-      "message": "u-5",
-      "host": "host",
-      "project": "scribe",
-      "quote": "",
-      "author": {
-        "kind": "scribe",
-        "name": "session-pass"
-      }
-    }
-  ]
+  "id": "2026-10-02-pulsar-decommissioned",
+  "kind": "milestone",
+  "date": "2026-10-02",
+  "now_kind": null,
+  "title": "Pulsar decommissioned",
+  "text": "The user called shutting pulsar down a milestone.",
+  "sources": [
+    "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02"
+  ],
+  "updated": "2026-10-02T12:00:00Z",
+  "raised": null,
+  "as_of": null
 }

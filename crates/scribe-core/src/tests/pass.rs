@@ -121,6 +121,7 @@ fn answer() -> SessionAnswer {
     SessionAnswer {
         candidates: Vec::new(),
         memory: Vec::new(),
+        signal: None,
         title: String::from("Planning the orchestrator"),
         summary: String::from("Daniel planned the resident orchestrator."),
         goals: String::from("Define the orchestrator."),

@@ -1,25 +1,16 @@
-Show session memory items, one item, or the page
+Show the memory block, one memory file, or a profile revision
 
-Shows memory items on the session-start page, one item in full, or the page itself.
+Shows the memory block (Profile, Now, Milestones), one file by id, or one stored profile revision.
 
 Usage: scribe memory show [OPTIONS] [ID]
 
 Arguments:
   [ID]
-          Show this item with every occurrence (its id or a unique prefix of at least four characters) [default: list the items]
+          Show this file: profile, or a now or milestone file stem [default: the memory block]
 
 Options:
-      --section <SECTION>
-          Only items of this section: profile, projects, working, now or milestones [default: every section]
-
-      --project <PROJECT>
-          Only projects items of this project, and the page's project part for it [default: any project; for --page, the current directory's]
-
-      --include-off-page
-          Also list items off the page (decayed, past their window, retired, forgotten, section off), labelled with why [default: on-page items only]
-
-      --page
-          Print exactly the page the session-start hook injects into an interactive session
+      --revision <N>
+          Show this stored profile revision instead
 
   -h, --help
           Print help (see a summary with '-h')
@@ -42,13 +33,14 @@ Global options:
       --json
           Shorthand for --format json
 
-Lists the items on the session-start page, by section; --include-off-page
-adds decayed, past-window, retired and forgotten items, each labelled with
-why. With an id, prints that item with every occurrence and its quote.
+With no id, prints the memory block the session-start brief embeds:
+Profile, Now (every item, nearest date first) and Milestones (the last
+five, newest first). With an id (profile, or a now or milestone file stem),
+prints that file. --revision prints one stored profile revision.
 
 Examples:
   scribe memory show
-  scribe memory show --section working --include-off-page
-  scribe memory show --project scribe
-  scribe memory show <id> --json
-  scribe memory show --page
+  scribe memory show --json | jq '.now[].id'
+  scribe memory show profile
+  scribe memory show 2026-12-01-hackathon-deadline --json
+  scribe memory show --revision 3

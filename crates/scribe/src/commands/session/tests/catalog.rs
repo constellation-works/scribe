@@ -69,6 +69,7 @@ fn answer() -> SessionAnswer {
     SessionAnswer {
         candidates: Vec::new(),
         memory: Vec::new(),
+        signal: None,
         title: String::from("Defining crew levels"),
         summary: String::from("Daniel defined what level 4 means for crews."),
         goals: String::from("Name the crew levels."),

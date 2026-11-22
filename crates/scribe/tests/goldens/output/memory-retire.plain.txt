@@ -1,2 +1,0 @@
-m-4	working	retired	retired	1	2026-11-02T18:57:00Z	Reviews every agent PR himself.
-occurrence	1	2026-11-02T18:57:00Z	7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02	u-6	I review every agent PR myself

@@ -13,7 +13,8 @@
 //!   both return the same payload for the same store.
 //! - `scribe.session-pass` runs `session pass` (the `scribe-session-pass`
 //!   routine's job) and `scribe.consistency-scan` runs `consistency scan`
-//!   (the `scribe-consistency` routine's), on the same code as the CLI
+//!   (the `scribe-consistency` routine's), and `scribe.memory-refresh` runs
+//!   `memory refresh` (the `scribe-memory-refresh` routine's), on the same code as the CLI
 //!   verbs, with the same reports. Both are `agent_callable: false` and
 //!   `mcp_scope: none` in `plugin.yaml`: only the routines reach them. So
 //!   that a call ends inside Orbit's 300 s backend timeout, no session
@@ -37,7 +38,7 @@ use super::{RunLimits, consistency, session};
 use crate::app::Context;
 use crate::audit_middleware::{AuditGuard, AuditMeta};
 use crate::error::CliError;
-use crate::output::{Output, PassReport, PluginError, PluginReply};
+use crate::output::{Output, PassReport, PluginError, PluginReply, Record};
 use clap::{Args, Subcommand};
 use scribe_core::ask::{Question, RecordKind, Scope};
 use scribe_core::models::ModelError;
@@ -200,6 +201,7 @@ fn call(raw: &[u8], ctx: &Context) -> PluginReply {
         "ask" => ask(envelope.input, &envelope.context.config, ctx),
         "session-pass" => session_pass(&envelope.input, &envelope.context.config, ctx),
         "consistency-scan" => consistency_scan(&envelope.input, &envelope.context.config, ctx),
+        "memory-refresh" => memory_refresh(&envelope.input, &envelope.context.config, ctx),
         _ => failure(
             "unknown_tool",
             format!("{} is not a scribe tool", envelope.tool),
@@ -290,6 +292,10 @@ fn audited(
     match result {
         Ok(Output::Pass(report)) => PluginReply::Pass(report),
         Ok(Output::Scan(report)) => PluginReply::Scan(report),
+        Ok(Output::Written {
+            record: Record::MemoryRefresh(report),
+            ..
+        }) => PluginReply::Refresh(report),
         Ok(_) => failure(
             "internal_error",
             format!("{command} returned no report"),
@@ -344,7 +350,10 @@ fn session_pass(input: &Value, config: &Value, _ctx: &Context) -> PluginReply {
 fn pass_reply(reply: PluginReply) -> PluginReply {
     let failed = match &reply {
         PluginReply::Pass(report) => failed_passes(report),
-        PluginReply::Scan(_) | PluginReply::Ask(_) | PluginReply::Error(_) => None,
+        PluginReply::Scan(_)
+        | PluginReply::Refresh(_)
+        | PluginReply::Ask(_)
+        | PluginReply::Error(_) => None,
     };
     failed.unwrap_or(reply)
 }
@@ -392,6 +401,25 @@ fn consistency_scan(input: &Value, config: &Value, _ctx: &Context) -> PluginRepl
     let routine = Context::at(root, None).with_codex_home(codex_home);
     audited(&routine, consistency::COMMAND, |routine| {
         consistency::scan(routine, |config| routine.models(config), limits)
+    })
+}
+
+fn memory_refresh(input: &Value, config: &Value, _ctx: &Context) -> PluginReply {
+    if let Err(reply) = routine_input("scribe.memory-refresh", input) {
+        return reply;
+    }
+    let root = match store_root(config) {
+        Ok(root) => root,
+        Err(reply) => return reply,
+    };
+    let codex_home = match codex_home(config) {
+        Ok(path) => path,
+        Err(reply) => return reply,
+    };
+    let routine = Context::at(root, None).with_codex_home(codex_home);
+    audited(&routine, "memory refresh", |routine| {
+        let config = routine.config()?;
+        super::memory::refresh(routine, &routine.models(&config))
     })
 }
 

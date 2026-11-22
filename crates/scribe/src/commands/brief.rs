@@ -1,9 +1,9 @@
 //! `scribe brief`: the session-start page (`scribe_core::brief`). The
-//! memory block (today the memory page, as `memory show --page` prints it),
+//! memory block (Profile, Now and Milestones, as `memory show` prints it),
 //! then the last sessions, this project's first, then every open claim,
 //! grouped by tag with the id that settles it.
 //!
-//! Model-free and read-only: it reads the memory items, the session records
+//! Model-free and read-only: it reads the memory files, the session records
 //! and `proposals.json`, takes no lock, writes nothing and is not audited
 //! (STD-01 R31). The `SessionStart` hook injects the same text into an
 //! interactive session's context through [`brief`].
@@ -28,7 +28,7 @@ pub(crate) struct BriefArgs {
     #[arg(long, value_name = "N", default_value_t = DEFAULT_SESSIONS, value_parser = sessions_parser)]
     sessions: usize,
 
-    /// List this project's sessions first, and show its memory page [default: the current directory's project]
+    /// List this project's sessions first [default: the current directory's project]
     #[arg(long, value_name = "PROJECT")]
     project: Option<Project>,
 }
@@ -48,10 +48,16 @@ pub(super) fn run(args: &BriefArgs, ctx: &Context) -> Result<Output, CliError> {
             .ok()
             .map(|cwd| super::hook::project::of(&cwd))
     });
-    let memory = super::memory::page(ctx, None, project.as_ref())?.map(|p| p.text);
-    let brief = brief(ctx, memory, project.as_ref(), None, args.sessions)?;
+    let block = super::memory::block(ctx)?;
+    let brief = brief(
+        ctx,
+        Some(block.text.clone()),
+        project.as_ref(),
+        None,
+        args.sessions,
+    )?;
     Ok(Output::Show {
-        record: Record::Brief(Box::new(BriefPayload::from(&brief))),
+        record: Record::Brief(Box::new(BriefPayload::new(&brief, block))),
     })
 }
 

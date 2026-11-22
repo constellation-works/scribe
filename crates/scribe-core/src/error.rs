@@ -339,10 +339,29 @@ pub enum WriteRefusal {
     /// `memory_not_found`: no memory item has this id, or no occurrence
     /// this number.
     MemoryNotFound,
-    /// `memory_not_active`: the item is retired or forgotten.
-    MemoryNotActive,
     /// `memory_not_now`: `memory ack` of an item outside `now`.
     MemoryNotNow,
+    /// `memory_changed`: the profile, its cursor or the memory files changed
+    /// while `memory refresh` asked the model; nothing was written.
+    MemoryChanged,
+    /// `revision_not_found`: no profile revision has this number.
+    RevisionNotFound,
+    /// `profile_shape`: the rebuilt profile is not the seven headings in
+    /// order.
+    ProfileShape,
+    /// `profile_pinned`: the rebuilt profile changed Pinned.
+    ProfilePinned,
+    /// `profile_too_long`: the rebuilt profile is over 6,000 characters.
+    ProfileTooLong,
+    /// `profile_unknown_link`: the rebuilt profile links an entry id that
+    /// does not exist.
+    ProfileUnknownLink,
+    /// `profile_sensitive`: the rebuilt profile or a promoted milestone holds
+    /// a credential, a finance word or a sensitive event.
+    ProfileSensitive,
+    /// `profile_milestone`: a promoted milestone names no passed `now` item,
+    /// or has no real date, title or text within bounds.
+    ProfileMilestone,
 }
 impl WriteRefusal {
     /// Stable machine-readable code.
@@ -376,8 +395,15 @@ impl WriteRefusal {
             Self::NotInteractive => "not_interactive",
             Self::AlreadyCovered => "already_covered",
             Self::MemoryNotFound => "memory_not_found",
-            Self::MemoryNotActive => "memory_not_active",
             Self::MemoryNotNow => "memory_not_now",
+            Self::MemoryChanged => "memory_changed",
+            Self::RevisionNotFound => "revision_not_found",
+            Self::ProfileShape => "profile_shape",
+            Self::ProfilePinned => "profile_pinned",
+            Self::ProfileTooLong => "profile_too_long",
+            Self::ProfileUnknownLink => "profile_unknown_link",
+            Self::ProfileSensitive => "profile_sensitive",
+            Self::ProfileMilestone => "profile_milestone",
         }
     }
 }
