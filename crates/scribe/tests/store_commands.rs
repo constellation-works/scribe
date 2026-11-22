@@ -299,3 +299,113 @@ fn jsonl_export_reads_phase_six_database_with_no_live_files() {
     assert_eq!(err["code"], "export_needs_migrate", "{err}");
     assert!(!blocked.exists());
 }
+
+#[test]
+fn jsonl_export_includes_pending_and_already_drained_spooled_audit_once() {
+    let fx = Fixture::new();
+    fx.seed();
+    let control = fx.root().join("control.json");
+    let text_now = std::fs::read_to_string(&control).unwrap();
+    std::fs::write(
+        &control,
+        text_now.replace(
+            r#"{"on": true, "since": "2026-11-02T18:55:00Z", "due": true"#,
+            r#"{"on": false, "since": "2026-11-02T18:55:00Z", "due": false"#,
+        ),
+    )
+    .unwrap();
+    make_private(&control);
+
+    let moved = json(&fx.ok(&["store", "migrate", "--json"]));
+    assert_eq!(moved["audit_lines"], 0, "{moved}");
+
+    // Hold a write lock so a failing stepwise command spools its audit event.
+    let holder = rusqlite::Connection::open(fx.root().join("scribe.db")).unwrap();
+    holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let failed = fx.run(&[
+        "session",
+        "pass",
+        "--session",
+        "00000000-0000-0000-0000-000000000099",
+        "--json",
+    ]);
+    assert_eq!(failed.status.code(), Some(1), "{}", text(&failed.stderr));
+    holder.execute_batch("ROLLBACK").unwrap();
+    drop(holder);
+
+    let spool_dir = fx.root().join("audit-spool");
+    let spool_files: Vec<_> = std::fs::read_dir(&spool_dir)
+        .unwrap()
+        .map(|e| e.unwrap())
+        .collect();
+    assert_eq!(spool_files.len(), 1);
+    let spool_name = spool_files[0].file_name().into_string().unwrap();
+    let spool_bytes = std::fs::read(spool_files[0].path()).unwrap();
+
+    // JSONL export includes the pending spooled event (alongside `store migrate`).
+    let jsonl_pending = fx.elsewhere("jsonl-pending");
+    let out = json(&fx.ok(&[
+        "export",
+        "--as",
+        "jsonl",
+        jsonl_pending.to_str().unwrap(),
+        "--json",
+    ]));
+    assert_eq!(out["audit_lines"], 2, "{out}");
+    let rows: Vec<Value> = std::fs::read_to_string(jsonl_pending.join("audit.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert_eq!(rows[0]["command"], "store migrate");
+    assert_eq!(rows[1]["id"], Value::Null);
+    assert_eq!(rows[1]["command"], "session pass");
+    assert_eq!(rows[1]["status"], "failure");
+    assert_eq!(rows[1]["error_code"], "session_not_on");
+    assert_eq!(rows[1]["spool"], spool_name);
+
+    // Trigger a write to drain the spool into scribe.db, then restore the
+    // already-drained spool file on disk.
+    let drain = fx
+        .cmd(&[
+            "tag",
+            "add",
+            "notes",
+            "--author",
+            "opus",
+            "--description",
+            "Agent notes after spool drain",
+            "--json",
+        ])
+        .env("GITHUB_TOKEN", "test-github-token-1234")
+        .output()
+        .unwrap();
+    assert_eq!(drain.status.code(), Some(0), "{}", text(&drain.stderr));
+    let restored = spool_dir.join(&spool_name);
+    assert!(!restored.exists());
+    std::fs::write(&restored, &spool_bytes).unwrap();
+    make_private(&restored);
+
+    let jsonl_drained = fx.elsewhere("jsonl-drained");
+    let out = json(&fx.ok(&[
+        "export",
+        "--as",
+        "jsonl",
+        jsonl_drained.to_str().unwrap(),
+        "--json",
+    ]));
+    assert_eq!(out["audit_lines"], 3, "{out}");
+    let rows: Vec<Value> = std::fs::read_to_string(jsonl_drained.join("audit.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(rows.len(), 3, "{rows:?}");
+    let matching: Vec<&Value> = rows
+        .iter()
+        .filter(|r| r["spool"].as_str() == Some(spool_name.as_str()))
+        .collect();
+    assert_eq!(matching.len(), 1, "{rows:?}");
+    assert!(matching[0]["id"].is_i64(), "{:?}", matching[0]);
+}

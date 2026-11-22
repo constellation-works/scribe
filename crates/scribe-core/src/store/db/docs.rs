@@ -18,7 +18,7 @@
 //!   command could not commit without waiting is spooled to a file and
 //!   drained here by the next write, keyed by its file name (`spool`).
 
-use super::sessions::{Col, columns, from_sql, object, quoted};
+use super::sessions::{Col, columns, export_sql_value, from_sql, object, quoted};
 use super::{Fallible, db_error, stamp};
 use crate::action::Pickup;
 use crate::annotation::MarkRecord;
@@ -683,6 +683,33 @@ pub(in crate::store) fn audit(conn: &Connection, db: &Path) -> Result<Vec<AuditE
         out.push(serde_json::from_value(Value::Object(obj)).map_err(|e| Error::corrupt(&path, e))?);
     }
     Ok(out)
+}
+
+/// Format a pending spooled [`AuditEvent`] as one `audit.jsonl` row in the
+/// `audit` table's JSONL schema (`id: null`, `format`, [`AUDIT`] columns,
+/// `spool`).
+pub(in crate::store) fn audit_export_row(
+    path: &Path,
+    format: u32,
+    event: &AuditEvent,
+    spool: &str,
+) -> Result<Value> {
+    let obj = serialized(path, "an audit line", event)?;
+    let values = row(path, "an audit line", &obj, AUDIT, &[])?;
+    let mut out = Map::new();
+    out.insert(String::from("id"), Value::Null);
+    out.insert(
+        String::from("format"),
+        export_sql_value(Sql::Integer(i64::from(format))),
+    );
+    for ((name, _), sql) in AUDIT.iter().zip(values) {
+        out.insert((*name).to_owned(), export_sql_value(sql));
+    }
+    out.insert(
+        String::from("spool"),
+        export_sql_value(Sql::Text(spool.to_owned())),
+    );
+    Ok(Value::Object(out))
 }
 
 /// How many rows `table` holds, for a move's count check.
