@@ -99,20 +99,30 @@ fn the_routines_ship_disabled_and_each_runs_one_routine_tool() {
         ran.push(config["tool"].as_str().expect("a tool").to_owned());
     }
     ran.sort();
-    assert_eq!(ran, ["scribe.consistency-scan", "scribe.session-pass"]);
+    assert_eq!(
+        ran,
+        [
+            "scribe.consistency-scan",
+            "scribe.memory-refresh",
+            "scribe.session-pass"
+        ]
+    );
 }
 
 #[test]
 fn no_tool_settles_a_proposal_or_changes_an_entry_by_id() {
     // Settling is Daniel's, typed in a prompt (#scribe approve|reject|
-    // retire|forget): the tools are exactly ask and the two routine jobs,
+    // retire|forget): the tools are exactly ask and the three routine jobs,
     // and the routine tools take no input.
     let manifest = manifest();
     let names: Vec<&str> = tools(&manifest)
         .into_iter()
         .map(|t| field(t, "name").expect("a tool has a name"))
         .collect();
-    assert_eq!(names, ["ask", "session-pass", "consistency-scan"]);
+    assert_eq!(
+        names,
+        ["ask", "session-pass", "consistency-scan", "memory-refresh"]
+    );
     let empty = yaml("schemas/empty.input.json");
     assert_eq!(empty["additionalProperties"].as_bool(), Some(false));
     assert!(empty.get("properties").is_none());

@@ -31,7 +31,7 @@ mod codex;
 use scribe_core::models::{
     ANNOTATION_SCHEMA, ASK_SCHEMA, AnnotationAnswer, AnnotationRequest, AskAnswer, AskRequest,
     CONSISTENCY_SCHEMA, ClaimAnswer, ConflictAnswer, ConsistencyAnswer, ConsistencyRequest,
-    JudgementAnswer, MEMORY_PAIRS_SCHEMA, MemoryPairsRequest, ModelError, REMOVAL_SCHEMA,
+    JudgementAnswer, ModelError, PROFILE_SCHEMA, ProfileAnswer, ProfileRequest, REMOVAL_SCHEMA,
     RemovalAnswer, RemovalJudgementAnswer, RemovalRequest, SESSION_HEADER_SCHEMA, SessionAnswer,
     SessionHeader, SessionHeaderRequest, SessionRequest,
 };
@@ -268,14 +268,15 @@ impl Models for ClaudeCliModels {
         judgements(value, "consistency")
     }
 
-    fn memory_pairs(&self, request: &MemoryPairsRequest) -> Result<ConsistencyAnswer, ModelError> {
+    fn profile(&self, request: &ProfileRequest) -> Result<ProfileAnswer, ModelError> {
         let value = self.call(
             &request.model,
-            MEMORY_PAIRS_SCHEMA,
+            PROFILE_SCHEMA,
             request.prompt(),
             request.budget,
         )?;
-        judgements(value, "memory consistency")
+        serde_json::from_value(value)
+            .map_err(|e| ModelError::Malformed(format!("not a profile answer: {e}")))
     }
 
     fn removal(&self, request: &RemovalRequest) -> Result<RemovalAnswer, ModelError> {

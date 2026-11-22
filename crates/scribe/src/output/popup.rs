@@ -146,9 +146,7 @@ fn build(records: &Records, year: i32) -> Vec<Row> {
         Records::Entries(items) => entries(items, year),
         Records::Proposals(items) => proposals(items, year),
         Records::Transcripts(items) => transcripts(items, year),
-        Records::SessionTree { .. } | Records::Tags(_) | Records::Hits(_) | Records::Memory(_) => {
-            Vec::new()
-        }
+        Records::SessionTree { .. } | Records::Tags(_) | Records::Hits(_) => Vec::new(),
     }
 }
 
@@ -307,7 +305,9 @@ pub(crate) fn preview(out: &mut dyn Write, record: &Record) -> io::Result<()> {
         | Record::Tag(_)
         | Record::TagRules(_)
         | Record::Memory(_)
-        | Record::MemoryPage(_)
+        | Record::MemoryBlock(_)
+        | Record::MemoryRevision(_)
+        | Record::MemoryRefresh(_)
         | Record::MemoryRules(_)
         | Record::Brief(_) => Ok(()),
     }

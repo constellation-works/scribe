@@ -1,2 +1,2 @@
-m-5	profile	forgotten	forgotten	1	2026-11-02T18:56:00Z	-
-occurrence	1	2026-11-02T18:56:00Z	7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02	u-5	-
+2026-10-02-pulsar-decommissioned	milestone	2026-10-02	Pulsar decommissioned
+text	The user called shutting pulsar down a milestone.

@@ -389,13 +389,13 @@ struct Job<'a> {
     persisted_targets: Vec<String>,
 }
 
-/// One session's memory across its windows (2_design.md §13.3): the slots
+/// One session's memory across its windows (2_design.md §15.5): the slots
 /// left (refused elements use theirs), what was written and refused, and
 /// the audit targets.
 struct MemoryTally {
     slots: usize,
     written: usize,
-    promoted: usize,
+    pending: usize,
     refused: std::collections::BTreeMap<&'static str, usize>,
     targets: Vec<String>,
 }
@@ -405,7 +405,7 @@ impl Default for MemoryTally {
         Self {
             slots: memory::MAX_PER_PASS,
             written: 0,
-            promoted: 0,
+            pending: 0,
             refused: std::collections::BTreeMap::new(),
             targets: Vec::new(),
         }
@@ -635,23 +635,18 @@ impl Job<'_> {
                 pass::candidate_exclusions(&entries.listing.items, &proposals, &request);
             request.write_exclusions =
                 pass::write_exclusions(&entries.listing.items, &project, &request);
-            // Memory (2_design.md §13.3): only from a session switched on,
-            // as every pass's is, within the invocation's slots.
-            let memory_config = &self.config.memory;
-            // Only the sections the pass still writes (§15.9 phase 1):
-            // never `projects` or `working`.
-            let sections = memory_config.sections_written();
-            if !sections.is_empty() && self.memory.slots > 0 {
-                let (items, _) = self
-                    .ctx
-                    .store()
-                    .memory_items()
-                    .map_err(|err| PassError::new(err.code(), err.to_string()))?;
-                request.memory_limit = self.memory.slots;
-                request.memory_sections = sections.iter().map(|s| s.as_str()).collect();
-                request.memory_personal = memory_config.personal;
-                request.memory_items = memory::context(&items, &request.messages, memory_config);
-            }
+            // Memory (2_design.md §15.5): only from a session switched on,
+            // as every pass's is, within the invocation's slots; the signal
+            // (§15.6) is asked of every window.
+            let (memory_now, memory_pending) = self
+                .ctx
+                .store()
+                .memory_context(self.id)
+                .map_err(|err| PassError::new(err.code(), err.to_string()))?;
+            request.memory = true;
+            request.memory_limit = self.memory.slots;
+            request.memory_now = memory_now;
+            request.memory_pending = memory_pending;
             let memory_limit = request.memory_limit;
             let distilled = distill(
                 self.id,
@@ -666,7 +661,6 @@ impl Job<'_> {
                 &distilled.memory,
                 &conversation[offset..end],
                 memory_limit,
-                memory_config,
                 &masks,
             );
             self.memory.slots = self.memory.slots.saturating_sub(checked.used);
@@ -690,6 +684,7 @@ impl Job<'_> {
                 .candidate_slots
                 .saturating_sub(distilled.candidates.len() - write_answers);
             let candidate_answers = distilled.candidates.clone();
+            let signal = distilled.signal;
             let dropped = distilled.dropped_terms;
             let warnings = window_warnings(self.windows + 1, &distilled);
             let now = self.ctx.now();
@@ -750,11 +745,10 @@ impl Job<'_> {
             };
             let pass_memory = scribe_core::PassMemory {
                 drafts: memory_drafts,
-                provenance: memory::Provenance {
-                    session: self.id.clone(),
-                    host: self.ctx.host(),
-                    project: record.project.clone(),
-                },
+                signal: signal
+                    .zip(record.scribed_through.clone())
+                    .map(|(s, t)| (t, s)),
+                final_pass: record.status == scribe_core::SessionStatus::Final,
             };
             // The window's messages go to scribe.db first (2_design.md
             // §15.7, phases 4-5): the session file written next keeps the
@@ -795,28 +789,11 @@ impl Job<'_> {
             self.memory.refuse(checked.refused);
             self.memory.refuse(unverified);
             self.memory.refuse(written.memory.refused);
-            for applied in written.memory.applied {
-                match applied {
-                    memory::Applied::Created(id) | memory::Applied::Appended(id) => {
-                        self.memory.written += 1;
-                        self.memory.targets.push(format!("memory:{id}"));
-                    }
-                    memory::Applied::Replayed(_) => {}
-                }
-            }
-            for promoted in written.memory.promoted {
-                self.memory.promoted += 1;
-                let ids = promoted
-                    .item
-                    .into_iter()
-                    .chain([promoted.to])
-                    .chain(promoted.profile_to)
-                    .chain(promoted.profile_from);
-                for id in ids {
-                    let target = format!("memory:{id}");
-                    if !self.memory.targets.contains(&target) {
-                        self.memory.targets.push(target);
-                    }
+            self.memory.written += written.memory.written.len();
+            self.memory.pending += written.memory.pending;
+            for target in written.memory.written {
+                if !self.memory.targets.contains(&target) {
+                    self.memory.targets.push(target);
                 }
             }
             self.persisted_targets.extend(
@@ -962,8 +939,9 @@ impl Job<'_> {
             error: Some(short_reason(self.redactor, &failure.message)),
             warnings: self.warnings.clone(),
             memory_written: self.memory.written,
-            memory_promoted: self.memory.promoted,
+            memory_promoted: 0,
             memory_proposed: 0,
+            memory_pending: self.memory.pending,
             memory_refused: self.memory.refused.clone(),
         })
     }
@@ -983,8 +961,9 @@ impl Job<'_> {
             error: None,
             warnings: self.warnings.clone(),
             memory_written: self.memory.written,
-            memory_promoted: self.memory.promoted,
+            memory_promoted: 0,
             memory_proposed: 0,
+            memory_pending: self.memory.pending,
             memory_refused: self.memory.refused.clone(),
         }
     }

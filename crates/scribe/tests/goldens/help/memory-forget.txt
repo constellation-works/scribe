@@ -1,19 +1,19 @@
-Forget a memory item or occurrence for good
+Forget a now item or milestone for good
 
-Forgets an item, or one occurrence, for good: blanks its words and keeps its id.
+Removes a now item or milestone file for good, with its history.
 
 Usage: scribe memory forget [OPTIONS] --author <NAME> <ID>
 
 Arguments:
   <ID>
-          The item, or <id>#<n> for one occurrence
+          The now item's or milestone's file stem
 
 Options:
       --author <NAME>
           Your crew or model name
 
       --confirm
-          Confirm blanking the words for good; it cannot be undone
+          Confirm removing it for good; it cannot be undone
 
   -h, --help
           Print help (see a summary with '-h')
@@ -36,10 +36,9 @@ Global options:
       --json
           Shorthand for --format json
 
-Blanks the item's statement and every quote for good (or one occurrence's
-quote, <id>#<n>); the id, section, dates and authors stay, and no file is
-removed. It cannot be undone, so it needs --confirm.
+Removes a now item or milestone for good, with its history; it cannot be
+undone, so it needs --confirm. The profile is corrected by editing
+memory/profile.md: the next refresh takes the edit as the user's correction.
 
 Examples:
-  scribe memory forget <id> --author opus --confirm
-  scribe memory forget <id>#2 --author opus --confirm
+  scribe memory forget 2026-12-01-hackathon-deadline --author opus --confirm

@@ -59,7 +59,7 @@ right after.
 3. Read the brief. In an interactive Claude Code session the `SessionStart`
    hook gives it to you as context, the block that starts `# scribe brief`.
    In Codex, or when it is missing, run
-   `scribe brief --project <project> --json`. It holds the memory page
+   `scribe brief --project <project> --json`. It holds the memory block
    (below), `## Recent sessions` (the last five, this project's first and
    without this session's own, each a dated title with its id) and
    `## Open claims` (every open claim grouped by tag, each dated with its
@@ -87,37 +87,32 @@ item unless the human asks.
 
 ## Memory: what scribe has noticed about the human
 
-In an interactive Claude Code session the brief the `SessionStart` hook
-gives you opens with a memory page: `Now`, `Milestones`, `Profile` and the
-recent sessions, each line one item and its id
-(`[m-<n>]`). In Codex, or when the page is missing, read it with
-`scribe memory show --page --json`. The items are scribe's statements of
-what the human said in switched-on sessions, not rules: rules are their
-preferences. Their exact words are on each item's occurrences
-(`scribe memory show <m-id> --json`); quote only those as theirs.
+The brief opens with the memory block: `## Profile (as of <date>)`, the
+human's profile in full; `## Now`, every dated thing they plan, attend or
+must meet, nearest first, as `- <id> · due <date> · <title>`; and
+`## Milestones`, the last five, as `- <id> · <date> · <title>`. In Codex,
+or when the brief is missing, `scribe memory show --json` prints the same
+block. It describes the human, it never binds: rules are their
+preferences. `scribe memory show <id> --json` prints one item, with the
+sessions it came from.
 
-- **Now.** Raise a `now` item marked "not yet raised" once, when the
-  conversation goes near it, then mark it raised for this session:
-  `scribe memory ack <m-id> --session <this session id> --author <name>`.
-- **Milestones.** Raise one only when the conversation goes there. A `now`
-  item becomes a milestone on its own when it changes a profile fact, recurs
-  in three sessions, or the human calls it a milestone or a big day; when
-  they ask why, `scribe memory rules` prints the rules and where each came
-  from.
-- **Older sections.** scribe no longer writes `working` or `projects`
-  items, and they are not on the page. Ones already stored still read with
-  `scribe memory show --section working --include-off-page` (or
-  `--section projects`), and retire and forget work on them as on any item.
-  A standing habit or rule is a preference, and a project's decisions belong
-  on its tasks.
-- **Wrong or outdated.** When the human says an item is wrong or no longer
-  true, run `scribe memory retire <m-id> --author <name> --reason "<their
-  words>"`. When they ask scribe to forget it, run `scribe memory forget
-  <m-id> --author <name> --confirm` (`<m-id>#<n>` forgets one occurrence's
-  quote); it cannot be undone.
-- Never write a memory item yourself: only the session pass writes them
-  (`now`, `milestones` and `profile`), and only from sessions switched on with `/scribe on`; the consistency
-  scan merges repeats and supersedes outdated ones.
+- **Now.** Raise a `now` item at most once before its date and once after
+  it, when the conversation goes near it, and each time mark it raised for
+  this session: `scribe memory ack <id> --session <this session id>
+  --author <name>`.
+- **Milestones.** Raise one only when the conversation goes there.
+- **The profile** is rebuilt weekly from the switched-on sessions by
+  `scribe memory refresh`. When the human says something in it is wrong,
+  tell them to edit `memory/profile.md` (the store root's): the next
+  refresh takes the edit as their correction. Lines under `## Pinned` are
+  theirs and are never rewritten.
+- **Wrong or forgotten.** When the human asks scribe to forget a `now`
+  item or milestone, run `scribe memory forget <id> --author <name>
+  --confirm`; it cannot be undone.
+- Never write memory yourself: only the session pass writes `now` items
+  and milestones, only from sessions switched on with `/scribe on`, and
+  only the refresh writes the profile. `scribe memory rules` prints the
+  fixed rules.
 
 ## Keep the store useful: suggest, the human decides
 

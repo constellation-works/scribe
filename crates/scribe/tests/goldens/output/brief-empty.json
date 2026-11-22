@@ -1,5 +1,10 @@
 {
-  "memory": null,
+  "memory": {
+    "profile": null,
+    "now": [],
+    "milestones": []
+  },
+  "warnings": [],
   "project": "constellation-works/scribe",
   "sessions": [],
   "claim_count": 0,

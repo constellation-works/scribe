@@ -110,8 +110,8 @@ ban "$CORE/store/audit.rs"  'std::fs|super::fsio'                "store/audit.rs
 # SQLite is one store module's mechanism (2_design.md §15.7): every other
 # module, in either crate, reaches scribe.db through the Store.
 for path in "$CORE"/* "$CORE"/store/*; do
-  case "$(basename "$path")" in store | tests | db.rs) continue ;; esac
-  ban "$path" 'rusqlite' "core/${path#"$CORE"/} must not use rusqlite: scribe.db belongs to store/db.rs"
+  case "$(basename "$path")" in store | tests | db.rs | db) continue ;; esac
+  ban "$path" 'rusqlite' "core/${path#"$CORE"/} must not use rusqlite: scribe.db belongs to store/db.rs and store/db/"
 done
 ban "$CLI" 'rusqlite' "the CLI must not use rusqlite: scribe.db is reached through scribe_core::Store"
 # The domain receives resolved roots and configuration (R3).

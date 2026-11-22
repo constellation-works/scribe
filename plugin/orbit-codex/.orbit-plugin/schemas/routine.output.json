@@ -1,44 +1,109 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "The routine tools' outputs: scribe.session-pass prints what `scribe session pass --json` does, scribe.consistency-scan what `scribe consistency scan --json` does (docs/design/scribe/specs/output-contract.md).",
+  "description": "The routine tools' outputs: scribe.session-pass prints what `scribe session pass --json` does, scribe.consistency-scan what `scribe consistency scan --json` does, scribe.memory-refresh what `scribe memory refresh --json` does (docs/design/scribe/specs/output-contract.md).",
   "type": "object",
   "oneOf": [
     {
       "title": "session pass",
-      "required": ["passes", "remaining"],
+      "required": [
+        "passes",
+        "remaining"
+      ],
       "properties": {
         "passes": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["session", "result", "error_code", "passes", "dropped_terms", "gave_up", "windows"],
+            "required": [
+              "session",
+              "result",
+              "error_code",
+              "passes",
+              "dropped_terms",
+              "gave_up",
+              "windows"
+            ],
             "properties": {
-              "session": { "type": "string" },
-              "result": { "enum": ["written", "unchanged", "waiting", "failed"] },
-              "error_code": { "type": ["string", "null"] },
-              "passes": { "type": ["integer", "null"], "minimum": 0 },
-              "dropped_terms": { "type": "integer", "minimum": 0 },
-              "gave_up": { "type": "boolean" },
-              "windows": { "type": "integer", "minimum": 0, "description": "Successfully persisted windows for this session in this call; retries do not count twice." }
+              "session": {
+                "type": "string"
+              },
+              "result": {
+                "enum": [
+                  "written",
+                  "unchanged",
+                  "waiting",
+                  "failed"
+                ]
+              },
+              "error_code": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "passes": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0
+              },
+              "dropped_terms": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "gave_up": {
+                "type": "boolean"
+              },
+              "windows": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Successfully persisted windows for this session in this call; retries do not count twice."
+              }
             }
           }
         },
-        "remaining": { "type": "integer", "minimum": 0 }
+        "remaining": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     {
       "title": "consistency scan",
-      "required": ["reapplied", "opened", "judged_pairs", "pairs_left", "unrelated_pairs", "dropped_labels", "stale_entries", "failed_batches"],
+      "required": [
+        "reapplied",
+        "opened",
+        "judged_pairs",
+        "pairs_left",
+        "unrelated_pairs",
+        "dropped_labels",
+        "stale_entries",
+        "failed_batches"
+      ],
       "properties": {
         "reapplied": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["proposal", "entry", "status"],
+            "required": [
+              "proposal",
+              "entry",
+              "status"
+            ],
             "properties": {
-              "proposal": { "type": "string" },
-              "entry": { "type": "string" },
-              "status": { "enum": ["superseded", "retired"] }
+              "proposal": {
+                "type": "string"
+              },
+              "entry": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "superseded",
+                  "retired"
+                ]
+              }
             }
           }
         },
@@ -47,39 +112,147 @@
           "description": "The proposals opened, in the shape `scribe proposal list --json` prints.",
           "items": {
             "type": "object",
-            "required": ["id", "kind", "older", "newer", "reason", "quotes", "state", "opened_at", "settled_at", "settled_by"],
+            "required": [
+              "id",
+              "kind",
+              "older",
+              "newer",
+              "reason",
+              "quotes",
+              "state",
+              "opened_at",
+              "settled_at",
+              "settled_by"
+            ],
             "properties": {
-              "id": { "type": "string" },
-              "kind": { "enum": ["supersedes", "stale"] },
-              "older": { "type": "string" },
-              "newer": { "type": ["string", "null"] },
-              "reason": { "type": "string" },
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "supersedes",
+                  "stale"
+                ]
+              },
+              "older": {
+                "type": "string"
+              },
+              "newer": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              },
               "quotes": {
                 "type": "array",
                 "items": {
                   "type": "object",
-                  "required": ["entry", "text"],
-                  "properties": { "entry": { "type": "string" }, "text": { "type": "string" } }
+                  "required": [
+                    "entry",
+                    "text"
+                  ],
+                  "properties": {
+                    "entry": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  }
                 }
               },
-              "state": { "const": "open" }
+              "state": {
+                "const": "open"
+              }
             }
           }
         },
-        "judged_pairs": { "type": "integer", "minimum": 0 },
-        "pairs_left": { "type": "integer", "minimum": 0 },
-        "unrelated_pairs": { "type": "integer", "minimum": 0 },
-        "dropped_labels": { "type": "integer", "minimum": 0 },
-        "stale_entries": { "type": "integer", "minimum": 0 },
+        "judged_pairs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pairs_left": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unrelated_pairs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dropped_labels": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stale_entries": {
+          "type": "integer",
+          "minimum": 0
+        },
         "failed_batches": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["batch", "error_code"],
+            "required": [
+              "batch",
+              "error_code"
+            ],
             "properties": {
-              "batch": { "type": "integer", "minimum": 1 },
-              "error_code": { "type": "string" }
+              "batch": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "error_code": {
+                "type": "string"
+              }
             }
+          }
+        }
+      }
+    },
+    {
+      "title": "memory refresh",
+      "required": [
+        "result",
+        "revision",
+        "sessions",
+        "backlog",
+        "milestones",
+        "removed"
+      ],
+      "properties": {
+        "result": {
+          "enum": [
+            "written",
+            "nothing_new"
+          ]
+        },
+        "revision": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "sessions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "backlog": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "milestones": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "removed": {
+          "type": "array",
+          "items": {
+            "type": "string"
           }
         }
       }

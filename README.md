@@ -55,7 +55,7 @@ did with `entry pickup`. `ask` leaves them out unless asked for them
 Prompts and help speak of "the user". `[user] name` in `config.toml` names
 them in prompts instead, and `[instructions]` replaces what one model use
 (`annotation`, `session`, `session_header`, `ask`, `consistency`,
-`memory_pairs`, `removal`) is told to do; `{user}` in that text stands for
+`profile`, `removal`) is told to do; `{user}` in that text stands for
 the name. The output contract that follows (the JSON shape, verbatim
 quotes, what is never kept) stays fixed in code
 ([specs/store.md](docs/design/scribe/specs/store.md#config)).
@@ -91,6 +91,8 @@ scribe session deactivate <id> --author opus --reason 'the feature was removed'
 scribe session activate <id> --author opus --pin
 scribe proposal list --state open --entry <id>
 scribe brief   # session-start page: memory, last sessions, open claims by tag; no model call
+scribe memory show   # profile, now items and milestones
+scribe memory refresh   # weekly: rebuild memory/profile.md from the sessions since the last run
 scribe search "merge policy" --kind session --since 2026-11-01   # BM25, no model call
 scribe search 'HTTP 429 secondary rate limit' --kind entry --json
 scribe consistency scan --json
@@ -249,7 +251,7 @@ packaging: [Build plugins](https://developers.openai.com/plugins/build/plugins#b
 `PATH`, and the `/scribe` command: `SessionStart` runs `scribe hook
 session-start`, which tells the user how many proposals are open and, in an
 interactive session, gives the agent the brief (`scribe brief`: the memory
-page, the last sessions and every open claim by tag, which the scribe skill
+block, the last sessions and every open claim by tag, which the scribe skill
 has the agent present);
 `UserPromptSubmit` runs `scribe hook user-prompt-submit`, which
 echoes each `#scribe` marker of the typed prompt (code fences,

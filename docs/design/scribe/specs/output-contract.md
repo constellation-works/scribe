@@ -58,7 +58,7 @@ is `-`, lists are comma-joined, and timestamps are RFC 3339.
 | `tag list` | `name entries stale_after_days aliases description`, (S12) `source` (`config` or `store`), then `action` (`free` or `ask-first`, with `,quote` when the tag requires a quote), `retired` and `rejected` (counts of agent entries); the last three are `-` for a tag that is not an action tag; (format 11) then `route` (the tag's capture route, `propose`, `write` or `agent`, or `-` when it has no capture rules) |
 | `tag show <tag>` (format 11) | one `<field>\t<value>\t<origin>` line each for `tag`, `source`, `aliases`, `description`, `stale_after_days`, `action` (`free`/`ask-first`, with `,quote`, or `-`), then the capture rules `from`, `route`, `triggers` (quoted, comma separated), `criteria`, `not` and (phase 2) `max_open`; `origin` is `shipped`, `config <file>:<line>` or `none` (an unset rule's value is `-`), and `-` for the first six. The table prints `<field> <value>  (<origin>)` |
 | `scribe search` (S11) | `cite kind score updated title snippet` (`score` to three decimals; the table cuts `title` to 40 characters and fits `snippet` to the width; (ORB-26246) an entry an agent approved on Daniel's instruction ends its snippet, in every mode, with ` \| approved by <agent> on your instruction "<quote>" (<session>, <date>)`) |
-| `memory show` (format 19) | `id section status page seen latest statement` (`page` is `on` or why the item is off it: `merged`, `superseded`, `promoted` (format 20), `retired`, `forgotten`, `section_off`, `decayed`, `past_window`; `seen` counts occurrences; `latest` is the newest occurrence's date; a forgotten statement is `-`). Sorted by section in page order (`now`, `milestones`, `profile`, `projects`, `working`), then id. `memory show <id>`, `ack`, `retire` and `forget` print the row, then one `occurrence\t<n>\t<date>\t<session>\t<message>\t<quote>` line each, newest first (`-` for a forgotten quote); the table prints the item's fields one per line |
+| `memory show <id>` (format 25) | `<id>\t<kind>\t<date or ->\t<title or ->` (`kind` `profile`, `now` or `milestone`), then one `text\t<line>` line per line of its text; the table prints the item's fields one per line (`id kind date now_kind title text sources updated raised`, `-` when empty). `memory show` with no id prints the memory block (below), not rows |
 | `transcript list` *(S14)* | `session project user_turns bytes started ended first_prompt` |
 
 Search hits are best first; on a tie entries come before sessions, then
@@ -75,8 +75,7 @@ indent, and the `parent` column carries the nesting.
 Every list is
 `{"<key>": [<record>, ...], "total": <integer>, "truncated": <boolean>,
 "warnings": [<warning>, ...]}`, with `<key>` `entries`, `sessions`,
-`proposals` or `tags`, (S11) `hits` for `scribe search`, (format 19)
-`items` for `memory show`, and *(S14)*
+`proposals` or `tags`, (S11) `hits` for `scribe search`, and *(S14)*
 `transcripts` for `transcript list`. `total` counts the records that matched the filters;
 `truncated` is true when `--limit` returned fewer. No matches is the same
 envelope with an empty array. A warning is `{"path", "code", "error"}` for a
@@ -397,7 +396,9 @@ the message lists up to ten candidates, sorted, and how many more), `user_only`,
 `instruction_mismatch` (including negation or exception markers in the instruction or answered reply), `not_interactive`, `already_covered`,
 `proposal_invalid`, `proposal_not_agent`,
 `session_cataloged`, `transcript_not_found`, (format 19) `memory_not_found`,
-`memory_not_active`, `memory_not_now`, for `tmux` `fzf_missing` and
+`memory_not_now`, (format 25) `memory_changed`, `revision_not_found`,
+`profile_shape`, `profile_pinned`, `profile_too_long`,
+`profile_unknown_link`, `profile_sensitive`, `profile_milestone`, for `tmux` `fzf_missing` and
 `tmux_failed` (exit 1; `tmux` renders no payload, its popup owns the
 terminal), for `session pass`
 `session_pass_failed` and `session_not_on`, and for `question
@@ -437,11 +438,11 @@ project was updated within the last day, it adds one more line of that
 naming the record updated most recently. No line when this session's
 switch is on or it already has a record, when no record in the project is
 that recent, or when the sessions cannot be read. (Format 19) In an
-interactive session (`CLAUDE_CODE_ENTRYPOINT` is `cli`) with memory to
-show, `SessionStart` also gives the agent the memory page (as `memory show
---page` prints it) as `hookSpecificOutput.additionalContext`
+interactive session (`CLAUDE_CODE_ENTRYPOINT` is `cli`) with memory, a
+session or a claim to show, `SessionStart` also gives the agent the brief
+(as `scribe brief` prints it) as `hookSpecificOutput.additionalContext`
 (`hookEventName` `SessionStart`); a headless run (any other entrypoint, or
-none) gets no page. It
+none) gets none. It
 exits 0 whenever the payload parsed, including when every line was refused
 or the store could not be used, so the prompt is never blocked; a payload
 that is not valid JSON, lacks a field or has an invalid `session_id` exits 1
@@ -578,19 +579,17 @@ resume; it does not change the control switch. `--confirm` missing refuses
 with `confirm_required`, naming the current segment and pass counts;
 `transcript_missing` and `session_busy` also refuse before model calls.
 One audit line names `session:<id>` for success or refusal. (Format 19) A
-pass also carries `memory_written` (memory items created or given an
-occurrence across persisted windows), (format 20) `memory_promoted` (`now`
-items promoted to `milestones` and milestones written directly on rule (a)
-or (c), including rule (b)'s recount), (format 21) `memory_proposed`
-(always `0` since [2_design.md §15.9](../2_design.md#159-phases) phase 1
-removed the §13.7 proposal; kept because field names are a contract) and
-`memory_refused` (`{"<code>": <count>}` of elements refused:
-`memory_invalid`, `memory_unverified`, `memory_section_not_written` (a
-`working` or `projects` element, which the pass no longer writes),
-`memory_section_off`, `memory_sensitive`, `memory_personal_off`,
-`memory_inferred`); a refusal is not a failure, and the pass's audit line
-names each `memory:<id>` it wrote in `targets`, a promotion's milestone and
-profile items included. *(S14, built)*
+pass also carries `memory_written` (format 25: `now` and milestone files
+written across persisted windows), (format 25) `memory_pending` (undated
+`now` candidates kept), `memory_promoted` and `memory_proposed` (both
+always `0` since [2_design.md §15.9](../2_design.md#159-phases) phase 5;
+kept because field names are a contract) and `memory_refused`
+(`{"<code>": <count>}` of elements refused: `memory_invalid`,
+`memory_unverified`, `memory_sensitive`, `memory_inferred`,
+`memory_undated`, `memory_not_stated`, `memory_unknown`,
+`memory_pending_full`); a refusal is not a failure, and the pass's audit
+line names each `memory:now/<stem>` and `memory:milestones/<stem>` it wrote
+in `targets`. *(S14, built)*
 `session catalog` prints the same report with its one session and
 `remaining: 0`. `author` stays `null` (the catalog flag is not a JSON
 field). A failure exits 1 with `session_pass_failed` and names
@@ -639,75 +638,73 @@ reason is never added to the audit line).
 
 ## Memory
 
-(Format 19, [2_design.md §13](../2_design.md#13-memory-profile-projects-working-now-and-milestones-proposed).)
-`scribe memory show --json` prints the list envelope with key `items`; by
-default the items on the page, with `--include-off-page` every item, with
-`--section <s>` and `--project <p>` (a `projects` item's project) as filters.
-An item is `{"id", "section", "status", "statement", "project",
-"event_date", "sensitive", "sensitive_kind", "on_page", "off_page",
-"not_yet_raised", "acknowledged", "occurrence_count", "sessions", "latest",
-"retirement_reason", "promoted_from", "promotion", "merged_into",
-"superseded_by", "preference_proposal", "author", "updated_by", "created",
-"updated", "occurrences"}`: `status` is `active`, `merged`, `superseded`, `promoted`,
-`retired` or `forgotten`; `off_page` is `null` or the reason it is off the
-page (as the plain `page` column); (format 20) `promoted_from` is a
-milestone's `now` item, `promotion` `null` or `{"rule", "to",
-"profile_from", "profile_to"}` (`rule` `profile_change`,
-`recurs_in_sessions` or `user_says`) on a milestone and its promoted `now`
-item, `merged_into` and `superseded_by` the item a merged or superseded
-one went to, each `null` otherwise; (format 21) `preference_proposal` is
-the `preferences` candidate (`p-<n>`) a `working` item opened when it
-recurred across sessions, else `null` (none is opened since §15.9 phase 1);
-`not_yet_raised` is true for a `now` item no agent acknowledged, or whose
-date passed since it was; `acknowledged` is `null` or `{"at", "session",
-"author"}`; `sessions` counts distinct sessions among the occurrences; an
-occurrence is `{"n", "date", "session", "message", "host", "project",
-"quote", "author"}`, newest first. A forgotten item's `statement`, quotes
-and `retirement_reason` are empty or `null`.
+(Format 25, [2_design.md §15.4–§15.6](../2_design.md#154-the-brief-one-session-start-page).)
+`scribe memory show` with no id prints the memory block, read-only and
+unaudited: plain and table the text
 
-`memory show <id>` (an id or a unique prefix) prints one item.
-`memory ack <id> --session <id> --author <name>` marks a `now` item raised
-in that session (`memory_not_now` for another section,
-`memory_not_active` for any status but `active`); `memory retire <id>
---author <name> --reason <text>` takes it off the page with its redacted
-reason; `memory forget <id>[#<n>] --author <name> --confirm` blanks its
-text for good, or one occurrence's quote (without `--confirm`,
-`confirm_required`); forgetting a whole item also blanks the items merged
-into it, directly or through another merged item, and every other side of
-a promotion (the `now` item, the milestone and rule (a)'s new profile item
-`profile_to`), leaving a superseded profile item. Each prints the item
-and writes one audit line naming `memory:<id>`; the same write again
-changes nothing and still prints it.
+```text
+## Profile (as of <YYYY-MM-DD>)
+<memory/profile.md in full>
+## Now
+- <stem> · due <YYYY-MM-DD> · <title>
+## Milestones
+- <stem> · <YYYY-MM-DD> · <title>
+```
 
-(Format 20.) `memory rules` prints the promotion rules and page windows in
-effect, read-only and unaudited. JSON is `{"rules": [{"rule", "value",
-"origin": {"source", "file", "line"}, "meaning"}]}` in a fixed order:
-`promote.profile_change` (a boolean), `promote.recurs_in_sessions` (a
-number; 0 is off), `promote.user_says` (a list of phrases), `decay_days`,
-`now_undated_days`, `now_after_days` (numbers of days). `origin` is as in
-`tag show`: `source` `shipped` (file and line `null`) or `config` with the
-config file and the key's 1-based line. Plain prints `<rule>\t<value>\t<origin>`
-lines (a list as quoted phrases joined by `, `; origin `shipped` or
-`config <file>:<line>`); the table adds the `meaning` column, cut to fit.
+(`## Profile` without a date when no revision wrote the file; every `now`
+item, nearest date first; the last 5 milestones, newest first; an empty
+part prints `(none)`), JSON `{"profile": {"text", "as_of"} or null, "now":
+[{"id", "date", "title"}], "milestones": [{"id", "date", "title"}]}`.
+Warnings go to stderr: `memory_pending` (a write was cut short; the profile
+shown is its latest committed revision until the next memory write), a
+skipped file that does not parse, a `read-only copy`, and format-24 items
+not yet migrated.
 
-`memory show --page [--project <p>]` prints the session-start page:
-plain and table the page text, JSON `{"page": <text or null>, "chars",
-"over_budget"}`. The page is the header line, then `Now:` (at most 8
-lines, by date), `Milestones:` (never cut), `Profile:`, `Project <p> (as
-of <date>):` (the current project's items only), `Working:`, and `Recent
-sessions:` (the last `[memory] recent_sessions` active records other than
-this session), then the footer line. A part over its budget drops whole
-items from its end and says `(+<k> more)`; within `[memory] page_chars`
-(2400) apart from milestones; `over_budget` is true when milestones pass
-600 characters, and the hook logs `memory_page_over_budget`.
+`memory show <id>` prints one file: `profile`, or a `now` or milestone
+stem. JSON is `{"id", "kind", "date", "now_kind", "title", "text",
+"sources", "updated", "raised", "as_of"}` (`kind` `profile`, `now` or
+`milestone`; `now_kind` `deadline`, `event` or `plan` for a `now` item;
+`raised` `null` or `{"at", "session"}`; `as_of` the profile's revision
+date; fields that do not apply are `null`). `memory show --revision <n>`
+prints a stored profile revision: plain and table its text, JSON
+`{"revision", "created", "text"}`; an unknown one is `revision_not_found`.
+`--page` is a deprecated alias of the block.
+
+`memory ack <stem> --session <id> --author <name>` marks a `now` item
+raised in that session (`memory_not_now` for a milestone); the same
+session again changes nothing. `memory forget <stem> --author <name>
+--confirm` removes a `now` item or milestone for good with its history
+(without `--confirm`, `confirm_required`; `profile` is `usage_error`, as
+the profile is corrected by editing it). `memory restore <n>` writes
+revision `n` back as a new revision. Each prints the item and writes one
+audit line.
+
+`memory refresh` rebuilds the profile (§15.6). JSON is `{"result",
+"revision", "sessions", "backlog", "milestones", "removed"}`: `result`
+`written` or `nothing_new` (no model call, nothing written), `revision` the
+new profile revision or `null` when the profile did not change, `sessions`
+the sessions read, `backlog` those left for later runs, `milestones` the
+stems written, `removed` the passed `now` stems removed. Plain is one
+`<result>\t<revision or ->\t<sessions>\t<backlog>\t<milestones>\t<removed>`
+line (the last two counts); the table prints the fields one per line. A
+refused answer exits 1 with its `profile_*` code and writes nothing;
+`memory_changed` when memory changed while the model ran. The Orbit tool
+`scribe.memory-refresh` returns the same JSON.
+
+`memory rules` prints memory's fixed rules, read-only and unaudited. JSON
+is `{"rules": [{"rule", "value", "origin": {"source", "file", "line"},
+"meaning"}]}` in a fixed order: `max_per_pass` (3), `max_pending` (5),
+`now_keep_days` (14), `milestone_lines` (5), `profile_chars` (6000) and
+`user_says` (the phrases). `origin.source` is always `shipped`. Plain
+prints `<rule>\t<value>\t<origin>` lines; the table adds `meaning`.
 
 ## Brief
 
 `brief [--sessions <n>] [--project <p>]` (n 0 to 20, default 5; the
 project defaults to the current directory's) reads and writes nothing.
 Plain and table print the same text, which the `SessionStart` hook also
-injects: `# scribe brief`; the memory block (today the page `memory show
---page --project <p>` prints, left out when there is none); `## Recent
+injects: `# scribe brief`; the memory block (as `memory show` prints it);
+`## Recent
 sessions` with one `- <id> · <YYYY-MM-DD HH:MMZ> · <project> · <title>` line
 per session, `<p>`'s first, each part newest first (or
 `(none)`); `## Open claims` with one `- <p-id> · <YYYY-MM-DD HH:MMZ> ·
@@ -716,12 +713,16 @@ to settle one (or `(none)`). A quote is on one line and cut at 200
 characters, ending in `…`. JSON:
 
 ```json
-{"memory": "<page or null>", "project": "<p or null>",
+{"memory": {"profile", "now", "milestones"}, "warnings": ["<memory warning>"],
+ "project": "<p or null>",
  "sessions": [{"id", "project", "title", "at"}],
  "claim_count": 1,
  "claims": [{"tag": "<tag>", "claims": [{"id": "p-<n>", "kind": "candidate|supersedes|stale",
    "quote", "statement", "subject", "older", "newer", "opened_at"}]}]}
 ```
+
+(Format 25) `memory` is the memory block's JSON (above); `warnings` holds
+the memory block's warnings.
 
 `at` is a session's last activity (its last segment's end, else its
 `updated`). `quote` is a candidate's verbatim words, or a consistency
@@ -782,7 +783,9 @@ proposal id), covered candidate (target the proposal id) and failed batch (targe
 one audit line under `consistency scan`.
 
 (Format 20, [2_design.md §13.5](../2_design.md#135-consolidation-the-weekly-consistency-routine).)
-`memory` is `{"pairs_judged", "pairs_left", "unrelated", "dropped_labels",
+Since §15.9 phase 5 the scan judges no memory pairs: `memory` keeps its
+shape with zero counts and empty lists, and the rows and audit lines below
+are no longer written. It was `{"pairs_judged", "pairs_left", "unrelated", "dropped_labels",
 "failed_batches": [{"batch", "error_code"}], "merged": [{"item", "into"}],
 "superseded": [{"item", "by"}], "promoted": [{"item", "to", "rule"}],
 "completed": [<id>, ...]}`: memory pairs the model labelled, those past the

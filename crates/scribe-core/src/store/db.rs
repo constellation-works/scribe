@@ -24,6 +24,13 @@
 //!   A database newer than this build is refused (STD-03 R10).
 //!   `specs/store.md` gives every table's types and constraints.
 
+mod memory;
+
+pub(super) use memory::{
+    FileOp, HistoryRow, Journal, MemoryCommit, PendingRow, Writer, memory_view, pending_read,
+    revision_at,
+};
+
 use super::fsio;
 use super::redact::Redactor;
 use crate::entry::Speaker;
@@ -42,7 +49,7 @@ pub const DB_FILE: &str = "scribe.db";
 /// The schema, one step per `user_version`: step `n` (1-based) moves the
 /// database from version `n - 1` to `n`. Append only; never edit a shipped
 /// step.
-const MIGRATIONS: &[&str] = &[V1];
+const MIGRATIONS: &[&str] = &[V1, V2];
 
 /// Version 1 (phase 4): `meta`, `messages` and its FTS5 index, and the
 /// memory tables phase 5 uses.
@@ -116,6 +123,26 @@ CREATE TABLE profile_cursor (
     id              INTEGER PRIMARY KEY CHECK (id = 1),
     through_at      TEXT    NOT NULL,
     through_session TEXT    NOT NULL CHECK (length(through_session) BETWEEN 1 AND 128)
+) STRICT;
+";
+
+/// Version 2 (phase 5): the memory journal of §15.6 and the pass's signal
+/// per window.
+const V2: &str = "
+CREATE TABLE memory_journal (
+    id       INTEGER PRIMARY KEY,
+    created  TEXT    NOT NULL,
+    ops      TEXT    NOT NULL CHECK (json_valid(ops) AND json_type(ops) = 'array'),
+    done     INTEGER NOT NULL DEFAULT 0 CHECK (done IN (0, 1)),
+    revision INTEGER REFERENCES profile_revisions (n)
+) STRICT;
+CREATE INDEX memory_journal_open ON memory_journal (done) WHERE done = 0;
+
+CREATE TABLE pass_signals (
+    session TEXT    NOT NULL CHECK (length(session) BETWEEN 1 AND 128),
+    through TEXT    NOT NULL CHECK (length(through) >= 1),
+    signal  INTEGER NOT NULL CHECK (signal BETWEEN 0 AND 3),
+    PRIMARY KEY (session, through)
 ) STRICT;
 ";
 

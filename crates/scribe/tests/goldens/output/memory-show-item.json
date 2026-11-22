@@ -1,61 +1,14 @@
 {
-  "id": "m-1",
-  "section": "profile",
-  "status": "active",
-  "statement": "Runs Orbit on a home server and a Mac mini.",
-  "project": null,
-  "event_date": null,
-  "sensitive": false,
-  "sensitive_kind": null,
-  "on_page": true,
-  "off_page": null,
-  "not_yet_raised": false,
-  "acknowledged": null,
-  "occurrence_count": 2,
-  "sessions": 1,
-  "latest": "2026-11-02T18:58:00Z",
-  "retirement_reason": null,
-  "promoted_from": null,
-  "promotion": null,
-  "merged_into": null,
-  "superseded_by": null,
-  "preference_proposal": null,
-  "author": {
-    "kind": "scribe",
-    "name": "session-pass"
-  },
-  "updated_by": {
-    "kind": "scribe",
-    "name": "session-pass"
-  },
-  "created": "2026-11-02T19:00:00Z",
-  "updated": "2026-11-02T19:00:00Z",
-  "occurrences": [
-    {
-      "n": 2,
-      "date": "2026-11-02T18:58:00Z",
-      "session": "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02",
-      "message": "u-7",
-      "host": "host",
-      "project": "scribe",
-      "quote": "the box and the mini both run orbit",
-      "author": {
-        "kind": "scribe",
-        "name": "session-pass"
-      }
-    },
-    {
-      "n": 1,
-      "date": "2026-10-20T09:10:00Z",
-      "session": "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02",
-      "message": "u-2",
-      "host": "host",
-      "project": "scribe",
-      "quote": "orbit runs on my home server",
-      "author": {
-        "kind": "scribe",
-        "name": "session-pass"
-      }
-    }
-  ]
+  "id": "2026-12-01-hackathon-deadline",
+  "kind": "now",
+  "date": "2026-12-01",
+  "now_kind": "deadline",
+  "title": "Hackathon submission deadline",
+  "text": "The user said the hackathon submission is due on 2026-12-01.",
+  "sources": [
+    "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02"
+  ],
+  "updated": "2026-11-02T00:00:00Z",
+  "raised": null,
+  "as_of": null
 }

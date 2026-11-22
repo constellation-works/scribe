@@ -13,13 +13,17 @@ The Claude Code hooks that write entries are a separate package,
 | `scribe.ask` | read-only | `global` | live |
 | `scribe.session-pass` | mutating, not agent-callable | none | live; routine ships disabled, runs every 5 minutes once enabled; also runs by hand |
 | `scribe.consistency-scan` | mutating, not agent-callable | none | live; the `scribe-consistency` routine runs it |
+| `scribe.memory-refresh` | mutating, not agent-callable | none | live; the `scribe-memory-refresh` routine runs it |
 
-`routines/` and `jobs/` hold the two routines, seeded by `orbit plugin
+`routines/` and `jobs/` hold the three routines, seeded by `orbit plugin
 enable` with `enabled: false`: `scribe-session-pass` (`*/5 * * * *`, the
 records of sessions whose pass is due, as `scribe session pass` writes them;
 enabled on each host after review; the user can also run it by hand where
 `claude` is on `PATH`) and `scribe-consistency` (`0 6 * * 1`, proposals,
-as `scribe consistency scan` opens them). Each runs one job step that
+as `scribe consistency scan` opens them) and `scribe-memory-refresh`
+(`0 5 * * 0`, `memory/profile.md` rebuilt from the week's sessions and
+`now` items past their 14 days settled, as `scribe memory refresh` does;
+one 120 s model call). Each runs one job step that
 calls its tool. A call starts no later session or window after 50 s and no
 batch after 170 s, to end inside Orbit's 300 s limit; the rest waits for the next run. No tool settles a
 proposal: that is `#scribe approve|reject` in a typed prompt.

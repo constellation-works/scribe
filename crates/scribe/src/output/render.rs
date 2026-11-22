@@ -34,16 +34,6 @@ const ENTRY_COLUMNS: [Column; 8] = [
     col("AGE", Align::Right, false),
 ];
 
-const MEMORY_COLUMNS: [Column; 7] = [
-    col("ID", Align::Left, false),
-    col("SECTION", Align::Left, false),
-    col("STATUS", Align::Left, false),
-    col("PAGE", Align::Left, false),
-    col("SEEN", Align::Right, false),
-    col("LATEST", Align::Left, false),
-    col("STATEMENT", Align::Left, true),
-];
-
 const SESSION_TREE_COLUMNS: [Column; 8] = [
     col("ID", Align::Left, false),
     col("PARENT", Align::Left, false),
@@ -181,7 +171,6 @@ pub(crate) fn list(
             Records::Transcripts(items) => {
                 write_json(out, &envelope("transcripts", items, total, warnings))
             }
-            Records::Memory(items) => write_json(out, &envelope("items", items, total, warnings)),
         };
     }
     // An empty list prints nothing, not a lone header (STD-01 R16).
@@ -227,10 +216,6 @@ pub(crate) fn list(
         Records::Transcripts(items) => (
             TRANSCRIPT_COLUMNS.to_vec(),
             items.iter().map(transcript_row).collect(),
-        ),
-        Records::Memory(items) => (
-            MEMORY_COLUMNS.to_vec(),
-            items.iter().map(memory_row).collect(),
         ),
     };
     match sink.mode {
@@ -454,17 +439,18 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
         (OutputMode::Table, Record::Transcript(transcript)) => transcript_detail(out, transcript),
         (OutputMode::Json, Record::Memory(item)) => write_json(out, item),
         (OutputMode::Plain, Record::Memory(item)) => {
-            writeln!(out, "{}", plain_line(&memory_row(item)))?;
-            for o in &item.occurrences {
-                writeln!(
-                    out,
-                    "occurrence\t{}\t{}\t{}\t{}\t{}",
-                    o.n,
-                    timestamp(o.date),
-                    o.session,
-                    o.message,
-                    one_line(&o.quote)
-                )?;
+            writeln!(
+                out,
+                "{}",
+                plain_line(&[
+                    Cell::plain(item.id.clone()),
+                    Cell::plain(item.kind.to_owned()),
+                    Cell::plain(item.date.clone().unwrap_or_else(|| String::from("-"))),
+                    Cell::plain(item.title.clone().unwrap_or_else(|| String::from("-"))),
+                ])
+            )?;
+            for line in item.text.lines() {
+                writeln!(out, "text\t{line}")?;
             }
             Ok(())
         }
@@ -473,11 +459,43 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
         (OutputMode::Plain | OutputMode::Table, Record::MemoryRules(rules)) => {
             memory_rules(out, sink, rules)
         }
-        (OutputMode::Json, Record::MemoryPage(page)) => write_json(out, page),
-        (OutputMode::Plain | OutputMode::Table, Record::MemoryPage(page)) => match &page.page {
-            Some(text) => writeln!(out, "{text}"),
-            None => Ok(()),
-        },
+        (OutputMode::Json, Record::MemoryBlock(block)) => write_json(out, block.as_ref()),
+        (OutputMode::Plain | OutputMode::Table, Record::MemoryBlock(block)) => {
+            write!(out, "{}", block.text)
+        }
+        (OutputMode::Json, Record::MemoryRevision(r)) => write_json(out, r.as_ref()),
+        (OutputMode::Plain | OutputMode::Table, Record::MemoryRevision(r)) => {
+            write!(out, "{}", r.text)?;
+            if !r.text.ends_with('\n') {
+                writeln!(out)?;
+            }
+            Ok(())
+        }
+        (OutputMode::Json, Record::MemoryRefresh(r)) => write_json(out, r.as_ref()),
+        (OutputMode::Plain, Record::MemoryRefresh(r)) => writeln!(
+            out,
+            "{}\t{}\t{}\t{}\t{}\t{}",
+            r.result,
+            r.revision
+                .map_or_else(|| String::from("-"), |n| n.to_string()),
+            r.sessions,
+            r.backlog,
+            r.milestones.len(),
+            r.removed.len()
+        ),
+        (OutputMode::Table, Record::MemoryRefresh(r)) => {
+            field(out, "result", r.result)?;
+            field(
+                out,
+                "revision",
+                &r.revision
+                    .map_or_else(|| String::from("-"), |n| n.to_string()),
+            )?;
+            field(out, "sessions", &r.sessions.to_string())?;
+            field(out, "backlog", &r.backlog.to_string())?;
+            field(out, "milestones", &or_none(&r.milestones))?;
+            field(out, "removed", &or_none(&r.removed))
+        }
         (OutputMode::Json, Record::Brief(brief)) => write_json(out, brief),
         (OutputMode::Plain | OutputMode::Table, Record::Brief(brief)) => {
             write!(out, "{}", brief.text)
@@ -485,68 +503,39 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
     }
 }
 
-fn memory_row(m: &super::payload::MemoryPayload) -> Vec<Cell> {
-    vec![
-        Cell::plain(m.id.clone()),
-        Cell::plain(m.section.to_owned()),
-        Cell {
-            text: m.status.to_owned(),
-            role: color::role_for_status(m.status),
-        },
-        Cell::plain(m.off_page.unwrap_or("on").to_owned()),
-        Cell::plain(m.occurrence_count.to_string()),
-        Cell::plain(timestamp(m.latest)),
-        Cell::plain(one_line(&m.statement)),
-    ]
+fn or_none(items: &[String]) -> String {
+    if items.is_empty() {
+        String::from("-")
+    } else {
+        items.join(", ")
+    }
 }
 
 fn memory_detail(out: &mut dyn Write, m: &super::payload::MemoryPayload) -> io::Result<()> {
     let or_dash = |v: Option<&str>| v.unwrap_or("-").to_owned();
     field(out, "id", &m.id)?;
-    field(out, "section", m.section)?;
-    field(out, "status", m.status)?;
-    field(out, "statement", &m.statement)?;
-    field(out, "page", m.off_page.unwrap_or("on"))?;
-    field(out, "project", &or_dash(m.project.as_deref()))?;
-    field(out, "event_date", &or_dash(m.event_date.as_deref()))?;
-    field(
-        out,
-        "sensitive",
-        &m.sensitive_kind
-            .map_or_else(|| m.sensitive.to_string(), |k| format!("true ({k})")),
-    )?;
-    if m.section == "now" {
+    field(out, "kind", m.kind)?;
+    if m.kind == "profile" {
+        field(out, "as_of", &or_dash(m.as_of.as_deref()))?;
+        return writeln!(out, "\n{}", m.text.trim_end());
+    }
+    field(out, "date", &or_dash(m.date.as_deref()))?;
+    if let Some(kind) = m.now_kind {
+        field(out, "now_kind", kind)?;
+    }
+    field(out, "title", &or_dash(m.title.as_deref()))?;
+    field(out, "text", &m.text)?;
+    field(out, "sources", &or_none(&m.sources))?;
+    if let Some(updated) = m.updated {
+        field(out, "updated", &timestamp(updated))?;
+    }
+    if m.kind == "now" {
         field(
             out,
-            "acknowledged",
-            &m.acknowledged.as_ref().map_or_else(
+            "raised",
+            &m.raised.as_ref().map_or_else(
                 || String::from("-"),
-                |a| format!("{} in {} by {}", timestamp(a.at), a.session, a.author),
-            ),
-        )?;
-        field(out, "not_yet_raised", &m.not_yet_raised.to_string())?;
-    }
-    if let Some(reason) = &m.retirement_reason {
-        field(out, "retirement_reason", reason)?;
-    }
-    field(out, "author", &m.author.to_string())?;
-    field(out, "updated_by", &m.updated_by.to_string())?;
-    field(out, "created", &timestamp(m.created))?;
-    field(out, "updated", &timestamp(m.updated))?;
-    for o in &m.occurrences {
-        field(
-            out,
-            &format!("occurrence {}", o.n),
-            &format!(
-                "{} {} {}\n{}",
-                timestamp(o.date),
-                o.session,
-                o.message,
-                if o.quote.is_empty() {
-                    "(forgotten)"
-                } else {
-                    &o.quote
-                }
+                |r| format!("{} in {}", timestamp(r.at), r.session),
             ),
         )?;
     }
@@ -710,6 +699,13 @@ pub(crate) fn plugin(out: &mut dyn Write, reply: &PluginReply) -> io::Result<()>
             },
         ),
         PluginReply::Scan(report) => serde_json::to_writer(
+            &mut *out,
+            &Ok {
+                ok: true,
+                output: report.as_ref(),
+            },
+        ),
+        PluginReply::Refresh(report) => serde_json::to_writer(
             &mut *out,
             &Ok {
                 ok: true,

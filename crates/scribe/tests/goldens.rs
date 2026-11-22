@@ -45,8 +45,9 @@ const HELP: &[(&str, &[&str])] = &[
     ("memory-show", &["memory", "show", "--help"]),
     ("memory-rules", &["memory", "rules", "--help"]),
     ("memory-ack", &["memory", "ack", "--help"]),
-    ("memory-retire", &["memory", "retire", "--help"]),
     ("memory-forget", &["memory", "forget", "--help"]),
+    ("memory-restore", &["memory", "restore", "--help"]),
+    ("memory-refresh", &["memory", "refresh", "--help"]),
     ("tag", &["tag", "--help"]),
     ("tag-add", &["tag", "add", "--help"]),
     ("tag-update", &["tag", "update", "--help"]),
@@ -1280,9 +1281,10 @@ fn without_age(out: &str) -> String {
     joined
 }
 
-/// The memory list and show, unchanged writes on them, and the page,
-/// against the memory fixture (`tests/fixtures/memory`), whose items keep
-/// their place on or off the page whatever the day.
+/// The memory block, each file shown, the fixed rules, and the writes on
+/// them, against the memory fixture (`tests/fixtures/memory`): a profile,
+/// two `now` items and two milestones, all with fixed dates, so the output
+/// is the same every day.
 #[test]
 fn memory_matches_goldens() {
     let fx = Fixture::new();
@@ -1318,39 +1320,53 @@ fn memory_matches_goldens() {
         }
     };
     capture("memory-show", &["memory", "show"]);
-    capture("memory-show-all", &["memory", "show", "--include-off-page"]);
-    capture("memory-show-item", &["memory", "show", "m-1"]);
+    capture("memory-show-profile", &["memory", "show", "profile"]);
+    capture(
+        "memory-show-item",
+        &["memory", "show", "2026-12-01-hackathon-deadline"],
+    );
+    capture(
+        "memory-show-milestone",
+        &["memory", "show", "2026-06-14-married"],
+    );
     capture("memory-rules", &["memory", "rules"]);
+    // The fixture's item was raised in this session already, so the ack
+    // changes nothing and prints the same every day.
     capture(
         "memory-ack",
         &[
             "memory",
             "ack",
-            "m-3",
+            "2026-12-12-sisters-wedding",
             "--session",
             session,
             "--author",
             "opus",
         ],
     );
-    capture(
-        "memory-retire",
-        &[
-            "memory", "retire", "m-4", "--author", "opus", "--reason", "again",
-        ],
-    );
-    capture(
-        "memory-forget",
-        &["memory", "forget", "m-5", "--author", "opus", "--confirm"],
-    );
-    // The page names its `now` items by days from today: retire the one
-    // here so the page is the same every day.
-    ok(&[
-        "memory", "retire", "m-3", "--author", "opus", "--reason", "done",
-    ]);
-    capture(
-        "memory-page",
-        &["memory", "show", "--page", "--project", "scribe"],
-    );
+    // Forget removes the file, so each mode forgets a fresh copy of it.
+    let stone = "milestones/2026-10-02-pulsar-decommissioned.md";
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/memory");
+    for (suffix, mode) in MODES {
+        let target = fx.root().join("memory").join(stone);
+        std::fs::copy(fixture.join(stone), &target).unwrap();
+        support::make_private(&target);
+        let out = ok(&[
+            &[
+                "memory",
+                "forget",
+                "2026-10-02-pulsar-decommissioned",
+                "--author",
+                "opus",
+                "--confirm",
+            ][..],
+            *mode,
+        ]
+        .concat());
+        failures.extend(check(
+            &format!("output/memory-forget.{suffix}"),
+            &text(&out.stdout),
+        ));
+    }
     report(&failures);
 }

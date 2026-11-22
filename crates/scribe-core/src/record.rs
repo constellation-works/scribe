@@ -736,6 +736,26 @@ pub(crate) mod nullable_date {
             .map(|text| Date::parse(&text, FORMAT).map_err(serde::de::Error::custom))
             .transpose()
     }
+
+    /// A calendar date whose key must hold one: `YYYY-MM-DD`, never `null`.
+    pub(crate) mod required {
+        use serde::{Deserialize, Deserializer, Serializer};
+        use time::Date;
+
+        pub(crate) fn serialize<S: Serializer>(
+            date: &Date,
+            serializer: S,
+        ) -> Result<S::Ok, S::Error> {
+            serializer.serialize_str(&super::format(*date))
+        }
+
+        pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
+            deserializer: D,
+        ) -> Result<Date, D::Error> {
+            let text = String::deserialize(deserializer)?;
+            Date::parse(&text, super::FORMAT).map_err(serde::de::Error::custom)
+        }
+    }
 }
 
 pub(crate) fn patch<T: Clone + PartialEq>(items: &mut Vec<T>, add: &[T], remove: &[T]) {

@@ -1,51 +1,57 @@
-//! `scribe memory`: read what scribe has noticed about the user, and the
-//! agent writes on it (docs/design/scribe/2_design.md §13.4, §13.6, §13.9).
+//! `scribe memory`: what scribe remembers about the user — the profile,
+//! `now` items and milestones (docs/design/scribe/2_design.md §15.4–§15.6).
 //!
-//! `show` and `rules` read only: no lock, no audit. `ack`, `retire` and `forget` are
-//! audited agent writes. Items are scribe-authored, so an agent retires or
-//! forgets one without the user's instruction check, as it may an agent note.
+//! `show` and `rules` read only: no lock, no audit, no replay. `ack`,
+//! `forget`, `restore` and `refresh` are audited writes. Memory is
+//! scribe-authored, so an agent acknowledges or forgets an item without the
+//! user's instruction check, as it may an agent note.
 
-use super::{ListNotice, list_output};
 use crate::app::Context;
 use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{
-    MemoryPagePayload, MemoryPayload, MemoryRulesPayload, Output, Record, Records,
+    MemoryBlockPayload, MemoryPayload, MemoryRulesPayload, Output, Record, RefreshPayload,
+    RevisionPayload,
 };
 use clap::{Args, Subcommand};
-use scribe_core::memory::{self, MemoryItem, MemoryStatus, RecentSession, Section};
-use scribe_core::{AuthorName, Project, SessionFilter, SessionId};
+use scribe_core::{AuthorName, MemoryShown, Models, SessionId};
+use std::time::Duration;
+
+/// `memory refresh`'s model budget, fixed (2_design.md §15.6).
+pub(crate) const REFRESH_BUDGET: Duration = Duration::from_secs(120);
 
 pub(super) const MEMORY_EXAMPLES: &str = "\
-Memory is written by the session pass of a session switched on with
-/scribe on, from the user's own turns; nothing else writes it. It describes,
-it never binds: rules are their preferences entries.
+Memory is one fixed shape: memory/profile.md, rebuilt weekly by 'scribe
+memory refresh'; memory/now/, dated things the user plans, attends or must
+meet, written by the session pass of a session switched on with /scribe on;
+and memory/milestones/. It describes, it never binds: rules are their
+preferences entries.
 
 Examples:
   scribe memory show
-  scribe memory show --section now
-  scribe memory show <id>
-  scribe memory show --page
-  scribe memory rules
-  scribe memory ack <id> --session <id> --author opus";
+  scribe memory show profile
+  scribe memory show 2026-12-01-hackathon-deadline
+  scribe memory ack 2026-12-01-hackathon-deadline --session <id> --author opus
+  scribe memory refresh";
 
 const SHOW_EXAMPLES: &str = "\
-Lists the items on the session-start page, by section; --include-off-page
-adds decayed, past-window, retired and forgotten items, each labelled with
-why. With an id, prints that item with every occurrence and its quote.
+With no id, prints the memory block the session-start brief embeds:
+Profile, Now (every item, nearest date first) and Milestones (the last
+five, newest first). With an id (profile, or a now or milestone file stem),
+prints that file. --revision prints one stored profile revision.
 
 Examples:
   scribe memory show
-  scribe memory show --section working --include-off-page
-  scribe memory show --project scribe
-  scribe memory show <id> --json
-  scribe memory show --page";
+  scribe memory show --json | jq '.now[].id'
+  scribe memory show profile
+  scribe memory show 2026-12-01-hackathon-deadline --json
+  scribe memory show --revision 3";
 
 const RULES_EXAMPLES: &str = "\
-Prints the rules that promote a now item to milestones and the windows
-after which an item leaves the session-start page, each with its value
-and where it came from: shipped, or config with the file and line. Set
-them under [memory] and [memory.promote] in config.toml.
+Prints memory's fixed rules: how many items a pass writes, how many undated
+candidates a session holds, how long a now item stays after its date, the
+milestone lines shown, the profile's length and the phrases that make an
+event a milestone. Memory has no switches.
 
 Examples:
   scribe memory rules
@@ -56,35 +62,46 @@ Run it after raising a now item the user did not bring up themselves, so the
 next session does not raise it again unprompted.
 
 Examples:
-  scribe memory ack <id> --session <id> --author opus";
-
-const RETIRE_EXAMPLES: &str = "\
-Hides an item from the page, lists and ask; its text is kept. Run it when
-the user says an item is wrong; the next time they say it, a fresh item opens.
-
-Examples:
-  scribe memory retire <id> --author opus --reason 'The user says this is wrong'";
+  scribe memory ack 2026-12-01-hackathon-deadline --session <id> --author opus";
 
 const FORGET_EXAMPLES: &str = "\
-Blanks the item's statement and every quote for good (or one occurrence's
-quote, <id>#<n>); the id, section, dates and authors stay, and no file is
-removed. It cannot be undone, so it needs --confirm.
+Removes a now item or milestone for good, with its history; it cannot be
+undone, so it needs --confirm. The profile is corrected by editing
+memory/profile.md: the next refresh takes the edit as the user's correction.
 
 Examples:
-  scribe memory forget <id> --author opus --confirm
-  scribe memory forget <id>#2 --author opus --confirm";
+  scribe memory forget 2026-12-01-hackathon-deadline --author opus --confirm";
+
+const RESTORE_EXAMPLES: &str = "\
+Writes a stored profile revision back as the profile, as a new revision.
+
+Examples:
+  scribe memory show --revision 3
+  scribe memory restore 3";
+
+const REFRESH_EXAMPLES: &str = "\
+Rebuilds memory/profile.md from the sessions since the last run (at most 40
+per run; a longer backlog is taken over several runs), keeps Pinned byte for
+byte, and settles now items past their 14 days: each becomes a milestone or
+history. It calls models.profile once, within 120 s, and writes nothing when
+there is nothing new. Run weekly: the scribe plugin seeds a disabled Orbit
+routine, or use cron or launchd.
+
+Examples:
+  scribe memory refresh
+  scribe memory refresh --json | jq '{result, revision, backlog}'";
 
 /// Verbs on the `memory` noun.
 #[derive(Debug, Subcommand)]
 pub(crate) enum MemoryCommand {
-    /// Show session memory items, one item, or the page
+    /// Show the memory block, one memory file, or a profile revision
     ///
-    /// Shows memory items on the session-start page, one item in full, or the page itself.
+    /// Shows the memory block (Profile, Now, Milestones), one file by id, or one stored profile revision.
     #[command(after_help = SHOW_EXAMPLES)]
     Show(ShowArgs),
-    /// Show active memory promotion rules and windows
+    /// Show memory's fixed rules
     ///
-    /// Shows the promotion rules and page windows in effect, each with its origin.
+    /// Shows memory's fixed rules and values; memory has no switches.
     #[command(after_help = RULES_EXAMPLES)]
     Rules(RulesArgs),
     /// Mark a now item as raised in this session
@@ -92,37 +109,34 @@ pub(crate) enum MemoryCommand {
     /// Marks a now item as raised in this session, so it is not raised again unprompted.
     #[command(after_help = ACK_EXAMPLES)]
     Ack(AckArgs),
-    /// Retire an item with a reason: off the page, lists and ask, text kept
-    #[command(after_help = RETIRE_EXAMPLES)]
-    Retire(RetireArgs),
-    /// Forget a memory item or occurrence for good
+    /// Forget a now item or milestone for good
     ///
-    /// Forgets an item, or one occurrence, for good: blanks its words and keeps its id.
+    /// Removes a now item or milestone file for good, with its history.
     #[command(after_help = FORGET_EXAMPLES)]
     Forget(ForgetArgs),
+    /// Write a stored profile revision back as the profile
+    #[command(after_help = RESTORE_EXAMPLES)]
+    Restore(RestoreArgs),
+    /// Rebuild the profile and settle passed now items
+    ///
+    /// Rebuilds the profile from the sessions since the last run and settles now items past their 14 days.
+    #[command(after_help = REFRESH_EXAMPLES)]
+    Refresh(RefreshArgs),
 }
 
 /// Arguments to `memory show`.
 #[derive(Debug, Args)]
 pub(crate) struct ShowArgs {
-    /// Show this item with every occurrence (its id or a unique prefix of at least four characters) [default: list the items]
+    /// Show this file: profile, or a now or milestone file stem [default: the memory block]
     #[arg(value_name = "ID")]
     id: Option<String>,
 
-    /// Only items of this section: profile, projects, working, now or milestones [default: every section]
-    #[arg(long, value_name = "SECTION", conflicts_with_all = ["id", "page"])]
-    section: Option<Section>,
+    /// Show this stored profile revision instead
+    #[arg(long, value_name = "N", conflicts_with = "id")]
+    revision: Option<i64>,
 
-    /// Only projects items of this project, and the page's project part for it [default: any project; for --page, the current directory's]
-    #[arg(long, value_name = "PROJECT", conflicts_with = "id")]
-    project: Option<Project>,
-
-    /// Also list items off the page (decayed, past their window, retired, forgotten, section off), labelled with why [default: on-page items only]
-    #[arg(long, conflicts_with_all = ["id", "page"])]
-    include_off_page: bool,
-
-    /// Print exactly the page the session-start hook injects into an interactive session
-    #[arg(long, conflicts_with = "id")]
+    /// Deprecated alias of `memory show` with no id: the memory block
+    #[arg(long, conflicts_with_all = ["id", "revision"], hide = true)]
     page: bool,
 }
 
@@ -133,7 +147,7 @@ pub(crate) struct RulesArgs {}
 /// Arguments to `memory ack`.
 #[derive(Debug, Args)]
 pub(crate) struct AckArgs {
-    /// The now item (its id or a unique prefix of at least four characters)
+    /// The now item's file stem
     id: String,
     /// The session the item was raised in
     #[arg(long, value_name = "ID")]
@@ -143,65 +157,60 @@ pub(crate) struct AckArgs {
     author: AuthorName,
 }
 
-/// Arguments to `memory retire`.
-#[derive(Debug, Args)]
-pub(crate) struct RetireArgs {
-    /// The item (its id or a unique prefix of at least four characters)
-    id: String,
-    /// Your crew or model name
-    #[arg(long, value_name = "NAME")]
-    author: AuthorName,
-    /// Why it no longer applies, 1-300 characters
-    #[arg(long, value_name = "TEXT")]
-    reason: String,
-}
-
 /// Arguments to `memory forget`.
 #[derive(Debug, Args)]
 pub(crate) struct ForgetArgs {
-    /// The item, or <id>#<n> for one occurrence
+    /// The now item's or milestone's file stem
     id: String,
     /// Your crew or model name
     #[arg(long, value_name = "NAME")]
     author: AuthorName,
-    /// Confirm blanking the words for good; it cannot be undone
+    /// Confirm removing it for good; it cannot be undone
     #[arg(long)]
     confirm: bool,
 }
 
+/// Arguments to `memory restore`.
+#[derive(Debug, Args)]
+pub(crate) struct RestoreArgs {
+    /// The revision to write back, as `memory show --revision` names it
+    #[arg(value_name = "N")]
+    revision: i64,
+}
+
+/// Arguments to `memory refresh`: none.
+#[derive(Debug, Args)]
+pub(crate) struct RefreshArgs {}
+
 impl MemoryCommand {
-    /// The item and agent a write names. See [`super::Command::subject`].
-    pub(super) fn subject(&self, ctx: &Context) -> AuditSubject {
+    /// The file and agent a write names. See [`super::Command::subject`].
+    pub(super) fn subject(&self, _ctx: &Context) -> AuditSubject {
         let of = |id: &str, author: &AuthorName| AuditSubject {
-            target: ctx
-                .store()
-                .resolve_memory(split_occurrence(id).0)
-                .ok()
-                .map(|item| format!("memory:{}", item.id)),
+            target: Some(format!("memory:{}", id.trim())),
             author: Some(author.as_str().to_owned()),
         };
         match self {
             Self::Show(_) | Self::Rules(_) => AuditSubject::default(),
             Self::Ack(args) => of(&args.id, &args.author),
-            Self::Retire(args) => of(&args.id, &args.author),
             Self::Forget(args) => of(&args.id, &args.author),
+            Self::Restore(_) | Self::Refresh(_) => AuditSubject {
+                target: Some(String::from("memory:profile")),
+                author: None,
+            },
         }
     }
 
-    /// Audit every write; `show` is read-only. See [`super::Command::audit`].
+    /// Audit every write; `show` and `rules` are read-only. See
+    /// [`super::Command::audit`].
     pub(super) fn audit(&self) -> Option<AuditMeta> {
-        match self {
-            Self::Show(_) | Self::Rules(_) => None,
-            Self::Ack(_) => Some(AuditMeta {
-                command: "memory ack",
-            }),
-            Self::Retire(_) => Some(AuditMeta {
-                command: "memory retire",
-            }),
-            Self::Forget(_) => Some(AuditMeta {
-                command: "memory forget",
-            }),
-        }
+        let command = match self {
+            Self::Show(_) | Self::Rules(_) => return None,
+            Self::Ack(_) => "memory ack",
+            Self::Forget(_) => "memory forget",
+            Self::Restore(_) => "memory restore",
+            Self::Refresh(_) => "memory refresh",
+        };
+        Some(AuditMeta { command })
     }
 }
 
@@ -209,193 +218,133 @@ impl MemoryCommand {
 pub(super) fn run(command: MemoryCommand, ctx: &Context) -> Result<Output, CliError> {
     match command {
         MemoryCommand::Show(args) => show(&args, ctx),
-        MemoryCommand::Rules(RulesArgs {}) => {
-            let config = ctx.config()?;
-            let file = ctx.store().config_path().display().to_string();
-            Ok(Output::Show {
-                record: Record::MemoryRules(Box::new(MemoryRulesPayload::new(
-                    &config.memory,
-                    &file,
-                ))),
-            })
-        }
+        MemoryCommand::Rules(RulesArgs {}) => Ok(Output::Show {
+            record: Record::MemoryRules(Box::new(MemoryRulesPayload::new())),
+        }),
         MemoryCommand::Ack(args) => {
-            let (item, changed) =
-                ctx.store()
-                    .ack_memory(&args.id, args.session, args.author, ctx.now())?;
-            written(ctx, &item, changed)
-        }
-        MemoryCommand::Retire(args) => {
             let config = ctx.config()?;
             let redactor = ctx.redactor(&config)?;
-            let (item, changed) = ctx.store().retire_memory(
+            let (item, changed) = ctx.store().ack_memory(
                 &args.id,
+                args.session,
                 args.author,
-                &args.reason,
                 &redactor,
                 ctx.now(),
             )?;
-            written(ctx, &item, changed)
+            Ok(Output::written(
+                Record::Memory(Box::new(MemoryPayload::now(&item))),
+                changed,
+            ))
         }
         MemoryCommand::Forget(args) => {
-            let (id, occurrence) = split_occurrence(&args.id);
-            let occurrence = occurrence
-                .map(|n| {
-                    n.parse::<u32>().ok().filter(|n| *n > 0).ok_or_else(|| {
-                        CliError::Usage(format!(
-                            "'{}' is not <id> or <id>#<n> with n a positive number",
-                            args.id
-                        ))
-                    })
-                })
-                .transpose()?;
             if !args.confirm {
-                let item = ctx.store().resolve_memory(id)?;
-                let target = match occurrence {
-                    Some(n) => format!("{}#{n}", item.id),
-                    None => item.id.to_string(),
-                };
-                return Err(CliError::ForgetConfirmRequired(target));
+                // Names the file, or refuses one that does not exist.
+                let shown = ctx.store().memory_file(&args.id)?;
+                return Err(CliError::ForgetConfirmRequired(
+                    MemoryPayload::from_shown(&shown).id,
+                ));
             }
-            let (item, changed) =
-                ctx.store()
-                    .forget_memory(id, occurrence, args.author, ctx.now())?;
-            written(ctx, &item, changed)
+            let config = ctx.config()?;
+            let redactor = ctx.redactor(&config)?;
+            let shown = ctx
+                .store()
+                .forget_memory(&args.id, args.author, &redactor, ctx.now())?;
+            Ok(Output::written(
+                Record::Memory(Box::new(MemoryPayload::from_shown(&shown))),
+                true,
+            ))
+        }
+        MemoryCommand::Restore(args) => {
+            let config = ctx.config()?;
+            let redactor = ctx.redactor(&config)?;
+            let written = ctx
+                .store()
+                .restore_profile(args.revision, &redactor, ctx.now())?;
+            let shown = ctx.store().memory_file("profile")?;
+            Ok(Output::written(
+                Record::Memory(Box::new(MemoryPayload::from_shown(&shown))),
+                written.is_some(),
+            ))
+        }
+        MemoryCommand::Refresh(RefreshArgs {}) => {
+            let config = ctx.config()?;
+            refresh(ctx, &ctx.models(&config))
         }
     }
 }
 
-/// `<id>#<n>` split into the id and the occurrence number's text.
-fn split_occurrence(input: &str) -> (&str, Option<&str>) {
-    match input.split_once('#') {
-        Some((id, n)) => (id, Some(n)),
-        None => (input, None),
-    }
-}
-
-fn written(ctx: &Context, item: &MemoryItem, changed: bool) -> Result<Output, CliError> {
+/// `memory refresh` with the adapter `models` (a test answers with a
+/// fake): read the inputs under the lock, ask the model without it, then
+/// check and write under the lock again (2_design.md §15.6).
+pub(crate) fn refresh<M: Models>(ctx: &Context, models: &M) -> Result<Output, CliError> {
     let config = ctx.config()?;
-    let payload = MemoryPayload::from_item(item, &config.memory, ctx.now().date());
-    Ok(Output::written(Record::Memory(Box::new(payload)), changed))
+    let redactor = ctx.redactor(&config)?;
+    let store = ctx.store();
+    let inputs = store.profile_inputs(&redactor, ctx.now())?;
+    if inputs.nothing_new() {
+        return Ok(Output::written(
+            Record::MemoryRefresh(Box::new(RefreshPayload {
+                result: "nothing_new",
+                revision: None,
+                sessions: 0,
+                backlog: 0,
+                milestones: Vec::new(),
+                removed: Vec::new(),
+            })),
+            false,
+        ));
+    }
+    let request = inputs.request(
+        config.models.profile.clone(),
+        REFRESH_BUDGET,
+        config.voice(scribe_core::voice::ModelUse::Profile),
+    );
+    let answer = models.profile(&request)?;
+    let written = store.write_refresh(&inputs, &answer, &redactor, ctx.now())?;
+    Ok(Output::written(
+        Record::MemoryRefresh(Box::new(RefreshPayload {
+            result: "written",
+            revision: written.revision,
+            sessions: written.sessions,
+            backlog: written.backlog,
+            milestones: written.milestones,
+            removed: written.removed,
+        })),
+        true,
+    ))
 }
 
 fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
-    let config = ctx.config()?;
-    let today = ctx.now().date();
-    if args.page {
-        let project = args.project.clone().or_else(|| {
-            std::env::current_dir()
-                .ok()
-                .map(|cwd| super::hook::project::of(&cwd))
-        });
-        let page = page(ctx, None, project.as_ref())?;
+    if let Some(n) = args.revision {
+        let revision = ctx.store().profile_revision(n)?;
         return Ok(Output::Show {
-            record: Record::MemoryPage(Box::new(MemoryPagePayload {
-                chars: page.as_ref().map_or(0, |p| p.text.chars().count()),
-                over_budget: page.as_ref().is_some_and(|p| p.over_budget),
-                page: page.map(|p| p.text),
+            record: Record::MemoryRevision(Box::new(RevisionPayload {
+                revision: revision.n,
+                created: revision.created,
+                text: revision.content,
             })),
         });
     }
     if let Some(id) = &args.id {
-        let item = ctx.store().resolve_memory(id)?;
+        let shown: MemoryShown = ctx.store().memory_file(id)?;
         return Ok(Output::Show {
-            record: Record::Memory(Box::new(MemoryPayload::from_item(
-                &item,
-                &config.memory,
-                today,
-            ))),
+            record: Record::Memory(Box::new(MemoryPayload::from_shown(&shown))),
         });
     }
-    let (items, skipped) = ctx.store().memory_items()?;
-    let shown: Vec<MemoryPayload> = items
-        .iter()
-        .filter(|i| args.section.is_none_or(|s| i.section == s))
-        .filter(|i| {
-            args.project
-                .as_ref()
-                .is_none_or(|p| i.section == Section::Projects && i.project.as_ref() == Some(p))
-        })
-        .filter(|i| args.include_off_page || memory::off_page(i, &config.memory, today).is_none())
-        .map(|i| MemoryPayload::from_item(i, &config.memory, today))
-        .collect();
-    let mut sorted = shown;
-    sorted.sort_by_key(|p| (section_rank(p.section), p.number));
-    let empty = format!(
-        "no memory on the page in {}; it is written by the session pass of a session switched on with /scribe on",
-        ctx.store().root().display()
-    );
-    let mut criteria = Vec::new();
-    if let Some(section) = args.section {
-        criteria.push(format!("--section {section}"));
+    let mut block = block(ctx)?;
+    if args.page {
+        block.warnings.push(String::from(
+            "warning: memory show --page is deprecated (usage_deprecated): run memory show with no id",
+        ));
     }
-    if let Some(project) = &args.project {
-        criteria.push(format!("--project {project}"));
-    }
-    if args.include_off_page {
-        criteria.push(String::from("--include-off-page"));
-    }
-    let notice = ListNotice {
-        noun: "memory items",
-        criteria,
-        empty: &empty,
-    };
-    let total = sorted.len();
-    Ok(list_output(
-        Records::Memory(sorted),
-        total,
-        &skipped,
-        &notice,
-    ))
+    Ok(Output::Show {
+        record: Record::MemoryBlock(Box::new(block)),
+    })
 }
 
-/// The section's place on the page.
-fn section_rank(section: &str) -> usize {
-    Section::ALL
-        .iter()
-        .position(|s| s.as_str() == section)
-        .unwrap_or(usize::MAX)
-}
-
-/// The session-start page for a session (`session`, left out of the recent
-/// sessions) in `project`, or `None` when memory is switched off or there
-/// is nothing to show (§13.6). Read-only: no lock, no write.
-pub(super) fn page(
-    ctx: &Context,
-    session: Option<&SessionId>,
-    project: Option<&Project>,
-) -> Result<Option<memory::Page>, CliError> {
-    let config = ctx.config()?;
-    if !config.memory.enabled {
-        return Ok(None);
-    }
-    let (items, _) = ctx.store().memory_items()?;
-    let items: Vec<MemoryItem> = items
-        .into_iter()
-        .filter(|i| i.status == MemoryStatus::Active)
-        .collect();
-    let mut recent = Vec::new();
-    if config.memory.recent_sessions > 0 {
-        let listed = ctx.store().list_sessions(&SessionFilter::default())?;
-        recent = listed
-            .listing
-            .items
-            .iter()
-            .filter(|r| r.active && session.is_none_or(|s| &r.id != s))
-            .map(|r| RecentSession {
-                id: r.id.clone(),
-                title: r.title.clone(),
-                at: r.log.last().map_or(r.updated, |s| s.to),
-            })
-            .collect();
-        recent.sort_by(|a, b| b.at.cmp(&a.at).then_with(|| a.id.cmp(&b.id)));
-        recent.truncate(config.memory.recent_sessions);
-    }
-    Ok(memory::page(
-        &items,
-        &recent,
-        project,
-        &config.memory,
-        ctx.now().date(),
-    ))
+/// The memory block (2_design.md §15.4). Read-only: no lock, no write, no
+/// replay.
+pub(super) fn block(ctx: &Context) -> Result<MemoryBlockPayload, CliError> {
+    let view = ctx.store().memory_view()?;
+    Ok(MemoryBlockPayload::from_view(&view, ctx.store().root()))
 }

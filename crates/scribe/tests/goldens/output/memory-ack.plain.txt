@@ -1,2 +1,2 @@
-m-3	now	active	on	1	2026-11-02T18:59:00Z	Said a scribe release is planned for 2099-01-01.
-occurrence	1	2026-11-02T18:59:00Z	7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02	u-8	the next scribe release goes out 2099-01-01
+2026-12-12-sisters-wedding	now	2026-12-12	Sister's wedding
+text	The user said their sister's wedding is on 2026-12-12.

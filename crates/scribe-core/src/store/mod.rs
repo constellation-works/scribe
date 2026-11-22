@@ -50,7 +50,10 @@ mod ids;
 mod init;
 mod issue_import;
 mod memory;
-pub use memory::{MEMORY_DIR, MemoryWritten, PassMemory};
+pub use memory::{
+    MEMORY_DIR, MILESTONES_DIR, MemoryShown, MemoryView, MemoryWritten, NOW_DIR, PROFILE_FILE,
+    PassMemory, ProfileInputs, ProfileRevision, RefreshWritten,
+};
 mod marks;
 mod pickups;
 pub use init::{InitFile, InitReport, init_project, integration_hooks};

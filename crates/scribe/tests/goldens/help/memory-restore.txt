@@ -1,0 +1,22 @@
+Write a stored profile revision back as the profile
+
+Usage: scribe memory restore [OPTIONS] <N>
+
+Arguments:
+  <N>  The revision to write back, as `memory show --revision` names it
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Global options:
+      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json                 Shorthand for --format json
+
+Writes a stored profile revision back as the profile, as a new revision.
+
+Examples:
+  scribe memory show --revision 3
+  scribe memory restore 3

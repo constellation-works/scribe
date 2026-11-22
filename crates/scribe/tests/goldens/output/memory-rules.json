@@ -1,27 +1,57 @@
 {
   "rules": [
     {
-      "rule": "promote.profile_change",
-      "value": true,
-      "origin": {
-        "source": "shipped",
-        "file": null,
-        "line": null
-      },
-      "meaning": "a now or milestones event that changes a profile fact becomes a milestone and replaces that profile item"
-    },
-    {
-      "rule": "promote.recurs_in_sessions",
+      "rule": "max_per_pass",
       "value": 3,
       "origin": {
         "source": "shipped",
         "file": null,
         "line": null
       },
-      "meaning": "a now item raised in this many distinct sessions becomes a milestone; 0 switches it off"
+      "meaning": "the most now and milestone elements one pass invocation writes per session"
     },
     {
-      "rule": "promote.user_says",
+      "rule": "max_pending",
+      "value": 5,
+      "origin": {
+        "source": "shipped",
+        "file": null,
+        "line": null
+      },
+      "meaning": "the most undated now candidates a session holds until a later turn dates one; dropped when the session ends"
+    },
+    {
+      "rule": "now_keep_days",
+      "value": 14,
+      "origin": {
+        "source": "shipped",
+        "file": null,
+        "line": null
+      },
+      "meaning": "a now item stays this many days after its date, then the weekly refresh makes it a milestone or history"
+    },
+    {
+      "rule": "milestone_lines",
+      "value": 5,
+      "origin": {
+        "source": "shipped",
+        "file": null,
+        "line": null
+      },
+      "meaning": "the memory block shows this many milestones, newest first"
+    },
+    {
+      "rule": "profile_chars",
+      "value": 6000,
+      "origin": {
+        "source": "shipped",
+        "file": null,
+        "line": null
+      },
+      "meaning": "the longest profile the weekly refresh writes"
+    },
+    {
+      "rule": "user_says",
       "value": [
         "milestone",
         "big day",
@@ -35,36 +65,6 @@
         "line": null
       },
       "meaning": "one of these phrases in the user's turn makes the event a milestone"
-    },
-    {
-      "rule": "decay_days",
-      "value": 90,
-      "origin": {
-        "source": "shipped",
-        "file": null,
-        "line": null
-      },
-      "meaning": "a projects or working item leaves the page this many days after its latest occurrence"
-    },
-    {
-      "rule": "now_undated_days",
-      "value": 7,
-      "origin": {
-        "source": "shipped",
-        "file": null,
-        "line": null
-      },
-      "meaning": "an undated now item leaves the page this many days after its latest occurrence"
-    },
-    {
-      "rule": "now_after_days",
-      "value": 14,
-      "origin": {
-        "source": "shipped",
-        "file": null,
-        "line": null
-      },
-      "meaning": "a dated now item leaves the page this many days after its date"
     }
   ]
 }

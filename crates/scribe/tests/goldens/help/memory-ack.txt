@@ -6,7 +6,7 @@ Usage: scribe memory ack [OPTIONS] --session <ID> --author <NAME> <ID>
 
 Arguments:
   <ID>
-          The now item (its id or a unique prefix of at least four characters)
+          The now item's file stem
 
 Options:
       --session <ID>
@@ -40,4 +40,4 @@ Run it after raising a now item the user did not bring up themselves, so the
 next session does not raise it again unprompted.
 
 Examples:
-  scribe memory ack <id> --session <id> --author opus
+  scribe memory ack 2026-12-01-hackathon-deadline --session <id> --author opus

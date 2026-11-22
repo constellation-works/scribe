@@ -11,7 +11,7 @@ Options:
           [default: 5]
 
       --project <PROJECT>
-          List this project's sessions first, and show its memory page [default: the current directory's project]
+          List this project's sessions first [default: the current directory's project]
 
   -h, --help
           Print help (see a summary with '-h')

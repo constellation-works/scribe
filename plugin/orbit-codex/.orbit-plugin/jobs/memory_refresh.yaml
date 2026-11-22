@@ -1,0 +1,18 @@
+# The scribe-memory-refresh routine's job: one call to scribe.memory-refresh.
+schemaVersion: 2
+kind: Job
+metadata:
+  name: scribe-memory-refresh
+spec:
+  state: enabled
+  kind: workflow
+  max_active_runs: 1
+  steps:
+    - id: memory-refresh
+      timeout_seconds: 300
+      spec:
+        type: deterministic
+        action: plugin.tool_call
+        config:
+          tool: scribe.memory-refresh
+          input: {}

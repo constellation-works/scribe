@@ -1,7 +1,7 @@
 ---
 type: design
-summary: "Spec: store — layout, scribe.db (phase 4: messages with FTS5, the memory tables, WAL, read-only copies), record files with YAML frontmatter (format 24: a claim's context paragraph; format 23: the user author channel; format 22: marks.json and the annotation entry; format 21: a working item's preference_proposal; format 20: memory consolidation and promotion; format 19: memory items; format 18: entry removal_instruction apart from the approval instruction; format 17: issue records; format 16: entry outcome on a pass-written idea; format 15: instructed approval said and closed_reason covered; format 14: candidate statement and subject, entry stated_by; format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
-last_validated: 2026-11-21
+summary: "Spec: store — layout, scribe.db (phase 4: messages with FTS5, WAL, read-only copies; phase 5: the memory journal and pass signals), memory files (profile, now items, milestones), record files with YAML frontmatter (format 25: memory files migrated from memory items; format 24: a claim's context paragraph; format 23: the user author channel; format 22: marks.json and the annotation entry; format 21: a working item's preference_proposal; format 20: memory consolidation and promotion; format 19: memory items; format 18: entry removal_instruction apart from the approval instruction; format 17: issue records; format 16: entry outcome on a pass-written idea; format 15: instructed approval said and closed_reason covered; format 14: candidate statement and subject, entry stated_by; format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
+last_validated: 2026-11-22
 ---
 
 # Spec: Store
@@ -10,7 +10,14 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-The code writes format 24 and reads formats 1–24. Format 24 adds
+The code writes format 25 and reads formats 1–25. Format 25 changes no
+stored document: it adds the memory files of
+[2_design.md §15.5](../2_design.md#155-memory-one-fixed-shape) (`memory/profile.md`,
+`memory/now/<stem>.md`, `memory/milestones/<stem>.md`), and the first
+memory write migrates every `memory/m-<n>.md` item into them and removes it
+(§15.11). A memory write rewrites `control.json` at format 25, so a
+format-24 build refuses the store rather than reading it without its
+memory. Format 24 adds
 `context` to each proposal candidate
 ([2_design.md §15.3](../2_design.md#153-claims-with-context)): scribe's
 paragraph of two to four sentences, at most 600 characters before
@@ -105,7 +112,10 @@ user's file could pass for one of Daniel's records.
 ├── proposals.json                       0600, optional
 ├── tags.json                            0600, optional (introduced at format 5, S12)
 ├── pickups.json                         0600, optional (introduced at format 8)
-├── memory/m-<n>.md                      0600, one file per memory item (introduced at format 19)
+├── memory/profile.md                     0600, the profile, rebuilt by `memory refresh` (format 25)
+├── memory/now/<date>-<slug>.md          0600, one file per now item (format 25)
+├── memory/milestones/<date>-<slug>.md   0600, one file per milestone (format 25)
+├── memory/m-<n>.md                      0600, a memory item (formats 19–24), migrated and removed by the first memory write
 ├── marks.json                           0600, optional (introduced at format 22)
 ├── scribe.db                            0600, SQLite in WAL mode, created by the first pass that keeps a message (phase 4)
 ├── scribe.db-wal, scribe.db-shm         0600, kept after the last connection (PERSIST_WAL)
@@ -124,8 +134,10 @@ walked.
 
 The SQLite database of [2_design.md §15.7](../2_design.md#157-storage),
 built with `rusqlite`'s `bundled` feature (SQLite compiled in, FTS5 on).
-Only `store/db.rs` opens it. Phase 4 keeps the session pass's messages in
-it and creates the memory tables phase 5 fills; every other record stays a
+Only `store/db.rs` and `store/db/` open it. It holds the session pass's
+messages (phase 4) and memory's rows (phase 5): the pending `now`
+candidates, removed items' history, the profile revisions and cursor, the
+memory journal and each pass window's signal. Every other record stays a
 file.
 
 - **Privacy.** `scribe.db`, `scribe.db-wal` and `scribe.db-shm` are checked
@@ -152,21 +164,24 @@ file.
   numbered list, each run in its own `BEGIN IMMEDIATE` transaction that
   re-reads the version, so racing writers run each step once. A version
   above this build's is `store_too_new` for readers and writers. Version 1
-  is phase 4's. Every table is `STRICT`; times are RFC 3339 UTC text.
+  is phase 4's; version 2 (phase 5) adds `memory_journal` and
+  `pass_signals`. Every table is `STRICT`; times are RFC 3339 UTC text.
 - **Errors.** A file SQLite cannot read as a database is `store_corrupt`;
   any other SQLite failure is `store_database`.
 
-### Tables (version 1)
+### Tables (version 2)
 
 | Table | Columns (type, constraint) | Written by |
 |---|---|---|
 | `meta` | `id INTEGER PRIMARY KEY CHECK (id = 1)`; `store_id TEXT NOT NULL`, 32 hex characters; `created TEXT NOT NULL` | the first migration; one row |
 | `messages` | `id INTEGER PRIMARY KEY`; `session TEXT NOT NULL`, 1–128 characters (the session record's id); `message TEXT NOT NULL`, non-empty (the provider's message id); `role TEXT NOT NULL CHECK (role IN ('user', 'assistant'))`; `at TEXT NOT NULL`; `text TEXT NOT NULL`, redacted; `sha256 TEXT NOT NULL`, 64 hex characters of the redacted text; `UNIQUE (session, message)` | the session pass |
 | `messages_fts` | FTS5 over `messages.text`, external content (`content = 'messages'`, `content_rowid = 'id'`), `tokenize = 'unicode61 remove_diacritics 2'`; kept by `AFTER INSERT`, `AFTER DELETE` and `AFTER UPDATE OF text` triggers | the triggers |
-| `now_pending` | `id INTEGER PRIMARY KEY`; `session TEXT NOT NULL`, 1–128 characters; `message TEXT NOT NULL`, non-empty; `subject TEXT NOT NULL`, non-empty; `text TEXT NOT NULL`; `created TEXT NOT NULL`; `UNIQUE (session, subject)`; a `BEFORE INSERT` trigger aborts a sixth row for one session | phase 5 |
-| `memory_history` | `id INTEGER PRIMARY KEY`; `item TEXT NOT NULL`, non-empty (the removed item's id or file stem); `kind TEXT NOT NULL`, non-empty; `text TEXT NOT NULL`; `sources TEXT NOT NULL`, a JSON array; `removed_at TEXT NOT NULL` | phase 5 |
-| `profile_revisions` | `n INTEGER PRIMARY KEY AUTOINCREMENT` (the revision); `created TEXT NOT NULL`; `content TEXT NOT NULL`; `file_sha256 TEXT`, `NULL` until the journal closes, else 64 hex characters | phase 5 |
-| `profile_cursor` | `id INTEGER PRIMARY KEY CHECK (id = 1)`; `through_at TEXT NOT NULL`; `through_session TEXT NOT NULL`, 1–128 characters | phase 5; one row |
+| `now_pending` | `id INTEGER PRIMARY KEY`; `session TEXT NOT NULL`, 1–128 characters; `message TEXT NOT NULL`, non-empty; `subject TEXT NOT NULL`, non-empty; `text TEXT NOT NULL`; `created TEXT NOT NULL`; `UNIQUE (session, subject)`; a `BEFORE INSERT` trigger aborts a sixth row for one session | the session pass; dropped by the session's final pass or when a dated element completes one |
+| `memory_history` | `id INTEGER PRIMARY KEY`; `item TEXT NOT NULL`, non-empty (the removed item's id or file stem); `kind TEXT NOT NULL`, non-empty; `text TEXT NOT NULL`; `sources TEXT NOT NULL`, a JSON array; `removed_at TEXT NOT NULL` | the migration, `memory refresh` (a passed `now` item it does not promote); `memory forget` deletes an item's rows |
+| `profile_revisions` | `n INTEGER PRIMARY KEY AUTOINCREMENT` (the revision); `created TEXT NOT NULL`; `content TEXT NOT NULL`; `file_sha256 TEXT`, `NULL` until the journal closes, else 64 hex characters | `memory refresh` and `memory restore` |
+| `profile_cursor` | `id INTEGER PRIMARY KEY CHECK (id = 1)`; `through_at TEXT NOT NULL`; `through_session TEXT NOT NULL`, 1–128 characters | `memory refresh`; one row |
+| `memory_journal` | `id INTEGER PRIMARY KEY`; `created TEXT NOT NULL`; `ops TEXT NOT NULL`, a JSON array of `{path, content}` (content `null` removes the file); `done INTEGER NOT NULL CHECK (done IN (0, 1))`; `revision INTEGER REFERENCES profile_revisions(n)`; a partial index on the open rows | every memory write (version 2) |
+| `pass_signals` | `session TEXT NOT NULL`, 1–128 characters; `through TEXT NOT NULL`, non-empty (the window's last message); `signal INTEGER NOT NULL CHECK (signal BETWEEN 0 AND 3)`; `PRIMARY KEY (session, through)` | the session pass (version 2) |
 
 ### Messages
 
@@ -187,9 +202,9 @@ file.
   stays the cursor: a crash between the two reruns the window, which writes
   the same rows (a row changes only when its text, role or time does).
 - **Forget.** `#scribe forget <entry-id>` (and `entry forget`) deletes the
-  messages the entry and its candidate proposals cite; `memory forget`
-  deletes those of the occurrences it blanks (every occurrence of the item
-  and its linked items, or the one occurrence named). The rows go before
+  messages the entry and its candidate proposals cite. `memory forget`
+  deletes no message: a `now` item or milestone cites sessions, not
+  messages. The rows go before
   the files are written; `secure_delete` overwrites their pages, an FTS5
   `optimize` rebuilds the index without their terms, and a `TRUNCATE`
   checkpoint empties the WAL. A forget on a store without a database
@@ -420,107 +435,104 @@ or occurrence remains in any store file; the audit lines never held any.
 redaction, which can lengthen them; one past its bound is refused
 `invalid_text` naming the flag, and nothing is written.
 
-## Memory items
+## Memory files
 
-`memory/m-<n>.md` is frontmatter only, written by the session pass,
-changed by the agent's `scribe memory ack|retire|forget` and by the
-consistency scan's memory steps
-([2_design.md §13.2](../2_design.md#132-the-item-and-its-occurrences)):
+Memory is three kinds of file under `memory/`
+([2_design.md §15.5](../2_design.md#155-memory-one-fixed-shape)). None carries a
+`format` or `kind` key: `control.json`'s format covers them.
+
+- **`profile.md`** has no frontmatter: exactly seven `## ` headings in this
+  order, `Role and work`, `Current focus`, `Projects`, `Goals`,
+  `Environment`, `How they work` and `Pinned`, nothing before the first. A
+  store with none reads as having none; the first refresh starts from the
+  empty headings.
+- **`now/<date>-<slug>.md`** and **`milestones/<date>-<slug>.md`**: the
+  stem is the item's id, its date and the title's lowercase ASCII words
+  joined by `-` (cut at 48 characters on a word; `item` when none). The
+  body is `# <title>`, a blank line and the text.
 
 ```yaml
 ---
-format: 20
-kind: memory
-id: m-1                     # matches the file stem; numbered past the highest
-section: now                # profile | projects | working | now | milestones
-status: active              # active | merged | superseded | promoted | retired | forgotten
-statement: Said his sister's wedding is on 2026-12-12.   # '' once forgotten
-project: null               # the session's project, for a projects item
-event_date: 2026-12-12      # now and milestones only, or null
-sensitive: false            # forced by the sensitive word list
-sensitive_kind: null        # loss | health | relationship | family
-acknowledged: null          # now only: {at, session, author} of the agent's ack
-retirement_reason: null     # redacted; blanked when forgotten
-promoted_from: null         # milestones: the now item it was promoted from
-promotion: null             # {rule, to, profile_from, profile_to}: on the milestone and the promoted now item
-merged_into: null           # merged: the item holding its occurrences
-superseded_by: null         # superseded: the item that replaced it
-unrelated_to: []            # newer items the scan judged unrelated to this one
-preference_proposal: null   # working: the preferences candidate it opened (§13.7, no longer opened)
-author: {kind: scribe, name: session-pass}
-updated_by: {kind: scribe, name: session-pass}
-created: 2026-11-21T18:00:00Z
-updated: 2026-11-21T18:00:00Z
-occurrences:                # newest first; one per turn that said it; [] once merged or promoted
-- {n: 1, date: …, session: …, message: …, host: …, project: …, quote: …, author: …}
+date: 2026-12-12           # required
+kind: event                # now only: deadline | event | plan
+sources:                   # the sessions it came from, at least one
+- 7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02
+updated: 2026-11-03T06:00:00Z   # the turn's time, so a replayed window writes the same bytes
+raised:                    # now only, optional: the last agent ack
+  at: 2026-11-04T09:00:00Z
+  session: 7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02
 ---
+# Sister's wedding
+
+The user said their sister's wedding is on 2026-12-12.
 ```
 
-There is no `layer`, `person` or `recurs` field: those belong to the
-parked slices (§13.12–13.14). A memory file below format 19, or whose `id`
-is not its stem, is `store_corrupt` and skipped; above it, `store_too_new`.
-A format-19 file has none of the format-20 keys or statuses (one that
-does is `store_corrupt`) and reads with them empty; a format-20 file has
-every format-20 key. A format-20 file has no `preference_proposal` (one
-that does is `store_corrupt`) and reads with it `null`; a format-21 file
-has it. Only an item merged or promoted (`merged_into`, or a `now` item
-with `promotion`) may have no occurrence, and a `merged`, `superseded` or
-`promoted` item names the item it went to.
-A pass writes memory under the same lock as its record, after its
-candidates and before the record: each draft is checked again under the
-lock (its quote a verbatim span of the user's own turn, its section one the
-pass still writes and on in the config on disk, its text unchanged by the redactor), then folded in —
-a repeat of an item (`same_as`, or a near-duplicate statement in the same
-section) becomes a new occurrence; a turn already on the item appends
-nothing, so a replayed window writes nothing. A `now` element may also
-join a milestone it was promoted to.
+A file that does not parse, or whose stem is not a valid one, is skipped
+with a warning and never served; an unknown key is `store_corrupt`.
 
-**Promotion** (§13.4, `memory/promote.rs`) runs on each draft under the
-same lock. Rule (a) holds when the element carries `promote` (a new profile
-statement of at most 160 characters that passed the redactor, finance and
-sensitive checks), `profile_change` is on and the `profile` section is on;
-else rule (c) when one of `user_says` occurs in the turn, matched as a
-capture trigger. A `milestones` element no rule holds for is written as a
-`now` item (refused `memory_section_off` when `now` is off). A `now` item a
-rule holds for is promoted: a milestone numbered past the highest takes its
-statement, sensitivity, date (or its latest occurrence's) and occurrences,
-with `promoted_from` and the `promotion` journal; the `now` item becomes
-`promoted` with the same journal and no occurrences. Rule (a) then writes
-the new profile item from the same turn and supersedes the active profile
-item `same_as` names. Rule (b) is recounted after every draft: an active
-`now` item with occurrences from `recurs_in_sessions` distinct sessions is
-promoted. A replayed turn promotes nothing. Changed files are written
-gainers first (a new item, a milestone with its journal, a merge's
-target), so a crash leaves words on both items rather than on neither.
+**The journal.** Every memory write takes the store lock and opens a
+`scribe.db` writer, then, in order: replays every open journal row (applies
+its file operations through `write_atomic` or removes the file, then closes
+it); migrates any `m-<n>` items (below); computes its change; commits the
+rows and one journal row holding the file operations in one transaction;
+applies the operations; closes the row (`done = 1`, and the profile
+revision's `file_sha256`); and rewrites `control.json` at format 25. A
+crash between the commit and the files is completed by the next write.
+Reads take no lock and never replay: with an open journal row they print
+the latest committed profile revision and warn `memory_pending`. A file
+operation's path must stay under `memory/`.
 
-**No `working` or `projects` writes** ([2_design.md §15.9](../2_design.md#159-phases),
-phase 1). The pass asks for `profile`, `now` and `milestones` only, and the
-check under the lock refuses an element naming `working` or `projects` as
-`memory_section_not_written`. The §13.7 proposal of a recurring `working`
-item as a `preferences` candidate is removed. Stored items of both sections
-still load, print and decay as before, and a format-21 item's
-`preference_proposal` still reads; no format changes.
+**The pass** (§15.5). Each window's elements are checked without the lock
+(shape and bounds; the quote a verbatim span of the user's own turn in the
+window and in the original transcript; the redactor; the finance words;
+the mood rule), then again under it. At most 3 are taken per invocation. A
+milestone needs a real date and a turn that calls it one (one of
+`user_says`, matched as a capture trigger). A dated `now` element writes
+its file by stem, or rewrites the item `update` names, or dates the
+pending candidate `completes` names and drops it. An undated one is kept
+in `now_pending`, one per subject and at most 5 per session; the
+session's final pass keeps none and drops the session's rows. A file whose
+bytes would not change is not written. The window's `signal` (0–3, how
+much it says about who the user is) is kept in `pass_signals`.
 
-**Consolidation** (§13.5, `memory/consolidate.rs`,
-`Store::consolidate_memory`) runs in the consistency scan under the lock,
-as `{kind: scribe, name: consistency}`: every promotion a milestone
-journals but the store does not hold is completed (the `now` item marked
-`promoted` without the occurrences the milestone holds, the named profile
-item superseded); each surviving `same` label merges the newer item into
-the older (its occurrences renumbered past the older's highest, keeping
-their authors, a turn the older already holds not added twice); each
-`contradicts` label supersedes the older by the newer; each `unrelated`
-label adds the newer id to the older's `unrelated_to`, so the pair is not
-offered again; then rule (b) is recounted. A label whose items are no
-longer both active changes nothing.
+**The refresh** (§15.6, `scribe memory refresh`, weekly). Under the lock
+it reads the sessions after `profile_cursor` in `(updated, id)` order,
+active only, at most 40 (the rest are its `backlog`, taken by later runs);
+each with its summary and goals, cut at 1,500 characters, and the three
+with the highest summed signal (ties: the longer user text) also with
+their kept user turns, cut at 12,000. It adds the hand edits since the last
+revision as a line diff, the migrated `profile` and `projects` history
+rows as hints while there is no revision, the `now` items, the ones past
+their 14 days, the milestones and the preference entries. It calls
+`models.profile` once without the lock, then writes under the lock only if
+nothing changed meanwhile (the latest revision, the profile file's hash,
+the cursor and the `now` stems; else `memory_changed`). The answer is
+refused whole when the profile does not have the seven headings
+(`profile_shape`), changes Pinned by a byte (`profile_pinned`), is over
+6,000 characters (`profile_too_long`), links an entry id that does not
+exist (`profile_unknown_link`) or holds a credential, finance or
+sensitive word outside Pinned (`profile_sensitive`); a promoted milestone
+naming no passed item or with no real date is `profile_milestone`. A
+refused answer keeps the cursor. A changed profile is a new revision; an
+unchanged one writes none. Each passed `now` item becomes the milestone
+the answer names for it, or else a `memory_history` row, and its file is
+removed. A run with no session after the cursor, no hand edit and no
+passed item calls no model and writes nothing.
 
-Forget blanks the statement, every quote and any reason and keeps the file,
-its id, section, dates and authors, and does the same to the items holding
-the same words: those merged into it, directly or through another merged
-item; and, across a promotion, the `now` item, the milestone and rule (a)'s
-new profile item (`profile_to`), whichever of the three is named. The
-profile item a change superseded (`profile_from`) holds other words and
-stays. `memory forget m-<n>#<k>` blanks one occurrence's quote.
+**Migration** (§15.11). The first memory write on a store holding
+`m-<n>.md` items migrates them through one journal: an active `now` item
+with a date not past its 14 days becomes a `now` file (kind `plan`, its
+`acknowledged` as `raised`); an active milestone a milestone file (dated
+by its event date, else its creation); every item except a forgotten one
+leaves a `memory_history` row (its statement and quotes); an active
+`working` item whose newest quote fires the `preferences` capture trigger
+opens a claim first, cited by that quote's hash, `admitted.trigger`
+`migrated working memory`; and every `m-<n>.md` is removed. Reads leave the
+items and warn how many await migration.
+
+**Forget** (`memory forget <stem> --confirm`) removes the file and deletes
+the item's `memory_history` rows. The profile is not forgotten: it is
+corrected by editing it outside Pinned.
 
 ## JSON documents
 
@@ -643,6 +655,7 @@ ask = "claude-sonnet-5-5"
 session = "claude-haiku-5-5"
 consistency = "claude-haiku-5-5"
 referent = "claude-haiku-5-5"
+profile = "claude-sonnet-5-5"    # memory refresh; gpt-6-luna under Codex
 credentials = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"]
 
 [catalog]
@@ -658,27 +671,9 @@ env = []                         # more variables whose values are masked
 [sessions]
 inactive_after_days = 120        # days since a session's last message
 
-[memory]                         # 2_design.md §13; the parked keys are refused
-enabled = true                   # false: the pass asks for no memory
-personal = true                  # false: personal and sensitive elements are refused
-decay_days = 90                  # projects and working leave the page after this
-now_undated_days = 7             # an undated now item leaves the page after this
-now_after_days = 14              # a dated now item leaves the page this long after its date
-page_chars = 2400                # the session-start page budget, 600-10000
-recent_sessions = 5              # sessions listed on the page, 0-20
-promote_working_sessions = 3     # unused since 2_design.md §15.9 phase 1; loads with a warning, then remove it
-
-[memory.sections]                # each section on by default
-profile = true
-projects = true
-working = true
-now = true
-milestones = true
-
-[memory.promote]                 # 2_design.md §13.4; `scribe memory rules` prints them
-profile_change = true            # (a) a profile fact changes
-recurs_in_sessions = 3           # (b) distinct sessions, 0-100; 0 switches it off
-user_says = ["milestone", "big day", "remember this", "never forget", "life changing"]   # (c), replaces the list; each checked as a trigger
+# [memory] has no keys since 2_design.md §15.9 phase 5: memory has one fixed
+# shape. Any key under it loads with a `config_deprecated` warning and is
+# ignored; `scribe memory rules` prints the fixed rules.
 
 # Accepted by the parser (S14). None by default.
 [projects.orbit]
@@ -689,7 +684,7 @@ name = "Sam"
 
 [instructions]                   # replaces a model use's shipped instruction text
 ask = "You answer a question about what {user} decided, prefers or did, using only the numbered evidence below."
-# also: annotation, session, session_header, consistency, memory_pairs, removal
+# also: annotation, session, session_header, consistency, profile, removal
 ```
 
 *`[user]` and `[instructions]`.* Every model prompt opens with its use's
@@ -698,7 +693,8 @@ output contract: the answer's JSON shape, the verbatim-quote rule, what is
 never kept (credentials, other people's details) and that messages are
 data. `[instructions]` replaces the instruction text of one use
 (`annotation`, `session`, `session_header`, `ask`, `consistency`,
-`memory_pairs`, `removal`); the contract stays fixed in code and always
+`profile`, `removal`; `memory_pairs` loads with a deprecation warning and is
+ignored); the contract stays fixed in code and always
 follows it, so an override changes what the model is told to do, never what
 scribe accepts back. Prompts name the user "the user", or `[user] name` when
 set; `{user}` and `{User}` in any instruction text stand for that noun (the
@@ -1032,6 +1028,12 @@ exits 0.
   shape first, so one carrying `context` is refused. From 24 an approved
   assistant entry may carry `stated_by` the session pass and the
   assistant's words in `quote`, refused below 24.
+- **Format 25** (memory files, 2_design.md §15.5, §15.11). Append-only step
+  24→25 (`memory_files`) changes no stored document: a format-24
+  `proposals.json` decodes at the current shape. It admits
+  `memory/profile.md`, `memory/now/` and `memory/milestones/`; the first
+  memory write migrates the `m-<n>` items into them and stamps
+  `control.json` at 25.
 - **Agent writes** (S12). Each write verb takes the lock, checks the
   author guards (a reserved `--author` name — `user`, `daniel`, `scribe`,
   `consistency`, `session-pass`, `tag-retired` — is refused `reserved_author`; a Daniel entry's content,
