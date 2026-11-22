@@ -349,7 +349,7 @@ fn discovery_is_read_only_and_archive_final_pass_uses_optional_plugin_codex_root
     assert!(!f.root().exists(), "discovery must not opt in or write");
     let preview = f.ok(&["--provider", "codex", "transcript", "show", ID, "--json"]);
     assert_eq!(
-        serde_json::from_slice::<Value>(&preview.stdout).unwrap()["daniel_turns"],
+        serde_json::from_slice::<Value>(&preview.stdout).unwrap()["user_turns"],
         1
     );
     assert!(!f.root().exists());
@@ -785,7 +785,7 @@ fn a_codex_marker_is_echoed_once_verified_and_cataloged_at_stop_as_daniels_entry
     assert_eq!(e.len(), 1);
     assert_eq!(e[0]["content"], "Daniel wants short status updates.");
     assert_eq!(e[0]["quote"], "I always want short status updates");
-    assert_eq!(e[0]["author"]["kind"], "daniel");
+    assert_eq!(e[0]["author"]["kind"], "user");
     assert_eq!(
         e[0]["stated_by"],
         json!({"kind": "scribe", "name": "annotation"})

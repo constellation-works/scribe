@@ -591,7 +591,8 @@ fn admission_recomputes_the_trigger_for_the_claimed_tag() {
             .capture
             .criteria
             .as_ref()
-            .map(|c| c.value.clone())
+            // Stored and shown, so `{user}` reads "the user".
+            .map(|c| crate::voice::UserName::default().fill(&c.value))
     );
     assert!(pass::admission(&tags, &idea, "I prefer short names.").is_none());
     assert!(pass::admission(&tags, &"standard".parse().unwrap(), "always").is_none());

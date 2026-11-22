@@ -80,7 +80,7 @@ open_record() {
 		# The user catalogs as themselves only from their typed prompt: Enter
 		# leaves the prompt command in the tmux paste buffer and says so;
 		# typed into a Claude Code prompt, the hook records the catalog
-		# as theirs. The CLI refuses --author daniel everywhere.
+		# as theirs. The CLI refuses --author user everywhere.
 		cmd="/scribe catalog $id"
 		if command -v tmux >/dev/null 2>&1 && tmux set-buffer -- "$cmd" 2>/dev/null; then
 			printf 'scribe tmux: paste buffer holds: %s\n' "$cmd"

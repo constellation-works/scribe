@@ -41,7 +41,7 @@ fn with_no_capture_config_tag_show_prints_the_shipped_defaults() {
     assert_eq!(
         shown["capture"],
         json!({
-            "from": "daniel",
+            "from": "user",
             "route": "propose",
             "triggers": SHIPPED_TRIGGERS,
             "criteria": "A standing rule from the user that applies beyond the work at hand.",

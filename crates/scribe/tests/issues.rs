@@ -231,7 +231,7 @@ fn an_issue_is_added_occurred_updated_shown_listed_and_searched() {
         "plain add: {plain}"
     );
     assert!(plain.contains("agent_evidence\t1\tHTTP 429: You have exceeded"));
-    assert!(plain.contains(&format!("daniel_asked\t1\t{ASK_1}")));
+    assert!(plain.contains(&format!("user_asked\t1\t{ASK_1}")));
     assert!(
         text(&out.stderr).contains("#scribe forget issue-1#1"),
         "{}",
@@ -892,10 +892,10 @@ fn an_issue_record_from_a_newer_format_is_refused_and_left_alone() {
     let path = fx.root().join("issues/issue-1.md");
     let original = std::fs::read_to_string(&path).unwrap();
     assert!(
-        original.starts_with("---\nformat: 22\nkind: issue\n"),
+        original.starts_with("---\nformat: 23\nkind: issue\n"),
         "{original}"
     );
-    let newer = original.replacen("format: 22", "format: 999", 1);
+    let newer = original.replacen("format: 23", "format: 999", 1);
     std::fs::write(&path, &newer).unwrap();
     for args in [
         &["issue", "list"][..],
@@ -1340,7 +1340,7 @@ fn forgetting_a_moved_occurrence_takes_its_words_out_of_both_headers() {
     let source = ok_json(&fx, &["issue", "show", "issue-1"]);
     assert_eq!(source["cause"], "Too many parallel pushes", "{source}");
     assert_eq!(source["fix"], "fix not found", "{source}");
-    assert_eq!(source["updated_by"]["kind"], "daniel", "{source}");
+    assert_eq!(source["updated_by"]["kind"], "user", "{source}");
 }
 
 #[test]

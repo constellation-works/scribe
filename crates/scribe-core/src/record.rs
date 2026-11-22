@@ -56,8 +56,10 @@ pub enum RecordError {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AuthorKind {
-    /// A typed `#scribe` turn: Daniel's own words.
-    Daniel,
+    /// A typed `#scribe` turn: the user's own words. Stores before format
+    /// 23 wrote it `daniel`, which still reads as this kind.
+    #[serde(alias = "daniel")]
+    User,
     /// A CLI write verb, named by its `--author`.
     Agent,
     /// scribe's own routine (proposals and activity changes only).
@@ -69,7 +71,7 @@ impl AuthorKind {
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Daniel => "daniel",
+            Self::User => "user",
             Self::Agent => "agent",
             Self::Scribe => "scribe",
         }
@@ -91,16 +93,31 @@ impl AuthorName {
         &self.0
     }
 
-    /// Whether this name belongs to a non-agent channel (`daniel`, or
-    /// scribe's routine: `scribe` and its `consistency`, `session-pass` and
-    /// `tag-retired` names), so a CLI write verb recording `kind: agent` may
-    /// never use it. Reads still accept it as a filter.
+    /// Whether this name belongs to a non-agent channel (`user`, the name
+    /// stores before format 23 gave it, or scribe's routine: `scribe` and
+    /// its `consistency`, `session-pass` and `tag-retired` names), so a CLI
+    /// write verb recording `kind: agent` may never use it. Reads still
+    /// accept it as a filter.
     #[must_use]
     pub fn is_reserved(&self) -> bool {
         matches!(
             self.0.as_str(),
-            "daniel" | "scribe" | "consistency" | "session-pass" | "tag-retired"
+            "user" | LEGACY_USER_NAME | "scribe" | "consistency" | "session-pass" | "tag-retired"
         )
+    }
+}
+
+impl AuthorName {
+    /// The name as stores since format 23 write it: `daniel`, the user's
+    /// name before, reads as `user`, so a filter written before still
+    /// selects the user's records. Any other name is itself.
+    #[must_use]
+    pub fn current(self) -> Self {
+        if self.0 == LEGACY_USER_NAME {
+            Self(String::from("user"))
+        } else {
+            self
+        }
     }
 }
 
@@ -141,23 +158,51 @@ impl fmt::Display for AuthorName {
     }
 }
 
+/// The user channel's author name in stores before format 23, read as
+/// [`Author::user`].
+const LEGACY_USER_NAME: &str = "daniel";
+
 /// Who wrote a record or a change: `{kind, name}` (store format 4).
+///
+/// Read through [`StoredAuthor`], so a user author stored before format 23
+/// (`{kind: daniel, name: daniel}`) reads as [`Author::user`] in every
+/// document, and the next write persists `user`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(from = "StoredAuthor")]
 pub struct Author {
     /// The channel.
     pub kind: AuthorKind,
-    /// `daniel`, the agent's `--author`, or the routine's name.
+    /// `user`, the agent's `--author`, or the routine's name.
     pub name: AuthorName,
 }
 
-impl Author {
-    /// Daniel, through a typed `#scribe` turn.
-    #[must_use]
-    pub fn daniel() -> Self {
+/// An author as stored, before the pre-format-23 user name is mapped.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredAuthor {
+    kind: AuthorKind,
+    name: AuthorName,
+}
+
+impl From<StoredAuthor> for Author {
+    fn from(stored: StoredAuthor) -> Self {
+        if stored.kind == AuthorKind::User && stored.name.as_str() == LEGACY_USER_NAME {
+            return Self::user();
+        }
         Self {
-            kind: AuthorKind::Daniel,
-            name: AuthorName(String::from("daniel")),
+            kind: stored.kind,
+            name: stored.name,
+        }
+    }
+}
+
+impl Author {
+    /// The user, through a typed `#scribe` turn.
+    #[must_use]
+    pub fn user() -> Self {
+        Self {
+            kind: AuthorKind::User,
+            name: AuthorName(String::from("user")),
         }
     }
 
@@ -171,7 +216,7 @@ impl Author {
         }
     }
 
-    /// The assistant of a cataloged session, whose turn Daniel kept by
+    /// The assistant of a cataloged session, whose turn the user kept by
     /// approving a session-pass candidate: an agent-channel author, since
     /// the words are the assistant's and the transcript names no crew.
     #[must_use]
@@ -193,7 +238,7 @@ impl Author {
 
     /// scribe's annotation cataloging at `Stop` (2_design.md §14.4): the
     /// `stated_by` of an entry whose content is scribe's statement of a
-    /// turn Daniel marked with `#scribe`.
+    /// turn the user marked with `#scribe`.
     #[must_use]
     pub fn annotation() -> Self {
         Self {

@@ -932,7 +932,7 @@ pub fn drafts(
         let found = messages
             .iter()
             .find(|m| m.uuid == element.message && m.role == Speaker::User)
-            .and_then(|m| Some((m, transcript::daniel_turn(m)?)))
+            .and_then(|m| Some((m, transcript::user_turn(m)?)))
             .filter(|(m, turn)| {
                 crate::pass::own_span(&turn.own, &element.quote)
                     && m.text().contains(&element.quote)

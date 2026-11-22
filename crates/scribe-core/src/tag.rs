@@ -70,12 +70,12 @@ pub struct TagDef {
     pub capture: CaptureRules,
 }
 
-/// Whose turns a tag's capture rules read (`from`). Only Daniel's typed
+/// Whose turns a tag's capture rules read (`from`). Only the user's typed
 /// turns are accepted for now; `assistant` is refused in config.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CaptureFrom {
-    /// Daniel's typed turns, with the pass's exclusions.
-    Daniel,
+    /// The user's typed turns, with the pass's exclusions.
+    User,
 }
 
 impl CaptureFrom {
@@ -83,7 +83,7 @@ impl CaptureFrom {
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Daniel => "daniel",
+            Self::User => "user",
         }
     }
 }
@@ -200,7 +200,7 @@ const SHIPPED_CAPTURE: [(&str, CaptureRoute, &[&str], &str, &str); 3] = [
             "what do you think about * idea",
             "what if we",
         ],
-        "The user proposes something that could be built, changed or tried, and the session does not carry it out.",
+        "{User} proposes something that could be built, changed or tried, and the session does not carry it out.",
         "A direction to act now; a preference; a question of fact; an idea the session goes on to carry out.",
     ),
     (
@@ -214,7 +214,7 @@ const SHIPPED_CAPTURE: [(&str, CaptureRoute, &[&str], &str, &str); 3] = [
             "I prefer",
             "by default",
         ],
-        "A standing rule from the user that applies beyond the work at hand.",
+        "A standing rule from {user} that applies beyond the work at hand.",
         "A choice about one page or task (it goes on its Orbit task or the feature's 4_decisions.md); an acknowledgement.",
     ),
     (
@@ -227,7 +227,7 @@ const SHIPPED_CAPTURE: [(&str, CaptureRoute, &[&str], &str, &str); 3] = [
             "root cause",
             "find root cause",
         ],
-        "The user asks for the cause of something that went wrong.",
+        "{User} asks for the cause of something that went wrong.",
         "How something works; a feature request.",
     ),
 ];
@@ -240,7 +240,7 @@ impl CaptureRules {
             .iter()
             .find(|(tag, ..)| *tag == name)
             .map(|(_, route, triggers, criteria, not)| Self {
-                from: Some(Rule::shipped(CaptureFrom::Daniel)),
+                from: Some(Rule::shipped(CaptureFrom::User)),
                 route: Some(Rule::shipped(*route)),
                 triggers: Some(Rule::shipped(
                     triggers.iter().map(|t| (*t).to_owned()).collect(),
@@ -259,10 +259,10 @@ impl CaptureRules {
         let from = self.from.as_ref()?.value;
         let route = self.route.as_ref()?.value;
         match (from, route) {
-            (CaptureFrom::Daniel, CaptureRoute::Propose | CaptureRoute::Write) => {
+            (CaptureFrom::User, CaptureRoute::Propose | CaptureRoute::Write) => {
                 self.triggers.as_ref().map(|t| t.value.as_slice())
             }
-            (CaptureFrom::Daniel, CaptureRoute::Agent) => None,
+            (CaptureFrom::User, CaptureRoute::Agent) => None,
         }
     }
 
@@ -306,7 +306,7 @@ pub const SHIPPED_ACTION_TAGS: [(&str, &str, bool); 2] = [
     ("idea", "a future consideration worth revisiting", false),
     (
         "standard",
-        "a rule change for the constellation standards, in the user's words",
+        "a rule change for the constellation standards, in {user}'s words",
         true,
     ),
 ];
@@ -416,7 +416,7 @@ impl TagTable {
             Ok::<_, crate::entry::EntryError>(TagDef {
                 name: name("preferences")?,
                 aliases: vec![name("preference")?, name("pref")?],
-                description: Some(String::from("how the user likes things done")),
+                description: Some(String::from("how {user} likes things done")),
                 stale_after_days: NonZeroU32::new(180),
                 action: None,
                 require_evidence: false,

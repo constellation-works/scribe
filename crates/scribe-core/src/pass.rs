@@ -117,7 +117,7 @@ pub const SEGMENT_WINDOWS: NonZeroU32 = match NonZeroU32::new(3) {
 };
 
 /// The session's messages as a pass reads them, in transcript order.
-/// Daniel's turns are [`crate::transcript::daniel_turn`].
+/// Daniel's turns are [`crate::transcript::user_turn`].
 #[must_use]
 pub fn conversation(messages: &[Message]) -> Vec<PassMessage> {
     messages
@@ -133,7 +133,7 @@ pub fn conversation(messages: &[Message]) -> Vec<PassMessage> {
                 })
             }
             Speaker::User => {
-                let turn = crate::transcript::daniel_turn(m)?;
+                let turn = crate::transcript::user_turn(m)?;
                 Some(PassMessage {
                     uuid: m.uuid.clone(),
                     role: Speaker::User,

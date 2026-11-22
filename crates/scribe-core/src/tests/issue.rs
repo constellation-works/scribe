@@ -140,7 +140,7 @@ fn a_number_moved_or_forgotten_is_never_given_again() {
 fn forgetting_blanks_every_word_and_keeps_the_numbers() {
     let mut issue = sample();
     issue.topics = Topics::try_from(vec!["github".parse().unwrap()]).unwrap();
-    assert!(issue.forget(Author::daniel(), T0));
+    assert!(issue.forget(Author::user(), T0));
     assert_eq!(issue.status, IssueStatus::Forgotten);
     assert!(issue.title.is_empty() && issue.cause.is_empty() && issue.fix.is_empty());
     assert!(issue.signature.is_empty() && issue.occurrences.is_empty());
@@ -149,7 +149,7 @@ fn forgetting_blanks_every_word_and_keeps_the_numbers() {
     assert_eq!(issue.gone.len(), 1);
     assert_eq!(issue.gone[0].reason, GoneReason::Forgotten);
     assert_eq!(issue.next_occurrence(), n(2));
-    assert!(!issue.forget(Author::daniel(), T0), "forgotten once");
+    assert!(!issue.forget(Author::user(), T0), "forgotten once");
 }
 
 #[test]
@@ -241,7 +241,7 @@ fn a_new_issue_and_a_patch_are_bounded() {
 fn the_list_hides_forgotten_issues_unless_asked_and_filters_by_place() {
     let mut forgotten = sample();
     forgotten.id = "issue-2".parse().unwrap();
-    forgotten.forget(Author::daniel(), T0 + Duration::hours(1));
+    forgotten.forget(Author::user(), T0 + Duration::hours(1));
     let issues = vec![sample(), forgotten];
     let all = IssueFilter::default().select(issues.clone());
     assert_eq!(all.total, 1);

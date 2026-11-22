@@ -23,7 +23,7 @@ Examples:
   scribe entry list
   scribe entry list --tag preferences --status active
   scribe entry list --topic ci --limit 10
-  scribe entry list --since 2026-10-01 --until 2026-10-31 --author-kind daniel
+  scribe entry list --since 2026-10-01 --until 2026-10-31 --author-kind user
   scribe entry list --related task:<id> --related pr:<owner>/<repo>#<n>
   scribe entry list --tag standard --after 2026-11-15T09:00:00Z --window --json
   scribe entry list --json | jq '.entries[].content'
@@ -131,11 +131,11 @@ pub(crate) struct ListArgs {
     #[arg(long)]
     pub(crate) window: bool,
 
-    /// Only entries written under this author name, such as daniel or an agent's --author [default: any]
+    /// Only entries written under this author name, such as user or an agent's --author [default: any]
     #[arg(long, value_name = "NAME")]
     pub(crate) author: Option<AuthorName>,
 
-    /// Only entries written through this channel: daniel (a #scribe line or an approval), agent (entry add) or scribe (an idea the session pass captured) [default: any]
+    /// Only entries written through this channel: user (a #scribe line or an approval), agent (entry add) or scribe (an idea the session pass captured) [default: any]
     #[arg(long, value_name = "KIND", value_enum)]
     pub(crate) author_kind: Option<EntryAuthorKind>,
 
@@ -147,8 +147,9 @@ pub(crate) struct ListArgs {
 /// The channels an entry can be written through.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub(crate) enum EntryAuthorKind {
-    // A #scribe line Daniel typed.
-    Daniel,
+    // A #scribe line the user typed.
+    #[value(alias = "daniel")]
+    User,
     // A CLI write verb.
     Agent,
     // The session pass, capturing an idea itself.
@@ -158,7 +159,7 @@ pub(crate) enum EntryAuthorKind {
 impl From<EntryAuthorKind> for AuthorKind {
     fn from(kind: EntryAuthorKind) -> Self {
         match kind {
-            EntryAuthorKind::Daniel => Self::Daniel,
+            EntryAuthorKind::User => Self::User,
             EntryAuthorKind::Agent => Self::Agent,
             EntryAuthorKind::Scribe => Self::Scribe,
         }
@@ -391,7 +392,7 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
         related: args.related,
         dates: args.dates.range()?,
         after: args.after,
-        author: args.author,
+        author: args.author.map(scribe_core::AuthorName::current),
         author_kind: args.author_kind.map(AuthorKind::from),
         limit: args.limit,
     };
@@ -570,7 +571,7 @@ pub(crate) struct AddArgs {
     /// Tag name or alias
     #[arg(long)]
     tag: TagName,
-    /// Agent name (even daniel records the agent channel)
+    /// Agent name (always recorded as the agent channel; reserved names are refused)
     #[arg(long)]
     author: scribe_core::AuthorName,
     /// Project slug

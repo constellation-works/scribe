@@ -23,13 +23,13 @@
     "at": "2026-11-15T00:00:00Z",
     "prompt_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
     "line": 1,
-    "cwd": "/home/daniel/workspace/scribe"
+    "cwd": "/home/user/workspace/scribe"
   },
   "superseded_by": null,
   "review_after": null,
   "author": {
-    "kind": "daniel",
-    "name": "daniel"
+    "kind": "user",
+    "name": "user"
   },
   "updated_by": null,
   "retirement_reason": null,

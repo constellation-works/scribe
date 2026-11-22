@@ -562,7 +562,7 @@ impl UserTurn {
 /// Daniel's turn, or `None` when `message` is not one: an assistant line,
 /// a synthetic tag, a `/scribe` control line, or a turn with no words.
 #[must_use]
-pub fn daniel_turn(message: &Message) -> Option<UserTurn> {
+pub fn user_turn(message: &Message) -> Option<UserTurn> {
     if message.role != Speaker::User {
         return None;
     }
@@ -575,7 +575,7 @@ pub fn daniel_turn(message: &Message) -> Option<UserTurn> {
     (!own.is_empty() || !pasted.is_empty()).then_some(UserTurn { own, pasted })
 }
 
-/// Daniel's own words in a prompt he typed, as [`daniel_turn`] reads a
+/// Daniel's own words in a prompt he typed, as [`user_turn`] reads a
 /// transcript turn: pasted blocks left out; `None` for a synthetic harness
 /// line or a `/scribe` control line.
 #[must_use]
@@ -591,8 +591,8 @@ pub fn typed_own(prompt: &str) -> Option<String> {
 
 /// Daniel's turns, in transcript order.
 #[must_use]
-pub fn daniel_turns(messages: &[Message]) -> Vec<UserTurn> {
-    messages.iter().filter_map(daniel_turn).collect()
+pub fn user_turns(messages: &[Message]) -> Vec<UserTurn> {
+    messages.iter().filter_map(user_turn).collect()
 }
 
 /// A model-free reading of a transcript (docs/design/scribe/2_design.md §5.8).
@@ -604,8 +604,8 @@ pub struct Survey {
     pub ended: Option<OffsetDateTime>,
     /// The file's length.
     pub bytes: u64,
-    /// Daniel's turns ([`daniel_turn`]).
-    pub daniel_turns: u32,
+    /// Daniel's turns ([`user_turn`]).
+    pub user_turns: u32,
     /// His first turn, cut to [`PROMPT_CHARS`]. Empty when he has none.
     pub first_prompt: String,
     /// His first [`FIRST_TURNS`] turns, each cut the same way.
@@ -620,7 +620,7 @@ pub fn survey(bytes: &[u8]) -> Survey {
 }
 
 fn survey_from(messages: &[Message], len: usize) -> Survey {
-    let turns = daniel_turns(messages);
+    let turns = user_turns(messages);
     let first_turns: Vec<String> = turns
         .iter()
         .take(FIRST_TURNS)
@@ -630,7 +630,7 @@ fn survey_from(messages: &[Message], len: usize) -> Survey {
         started: messages.first().map(|m| m.at),
         ended: messages.last().map(|m| m.at),
         bytes: u64::try_from(len).unwrap_or(u64::MAX),
-        daniel_turns: u32::try_from(turns.len()).unwrap_or(u32::MAX),
+        user_turns: u32::try_from(turns.len()).unwrap_or(u32::MAX),
         first_prompt: first_turns.first().cloned().unwrap_or_default(),
         first_turns,
     }

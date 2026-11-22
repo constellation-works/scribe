@@ -10,7 +10,15 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-The code writes format 22 and reads formats 1–22. Format 22 changes no
+The code writes format 23 and reads formats 1–23. Format 23 renames the
+user's author channel ([2_design.md §15.8](../2_design.md#158-generic-and-configurable)):
+the value stored before it, `{kind: daniel, name: daniel}`, reads as
+`{kind: user, name: user}` in every document (entries, sessions,
+`control.json`, `proposals.json`, issues, `marks.json`, `pickups.json` and
+`audit.jsonl`), and the next write persists `user` at format 23, which a
+format-22 build refuses as too new. `user` is a reserved `--author` name,
+and `daniel` stays one. A tag's `[tags.<name>.capture] from` is `user`;
+`daniel` is still read. Format 22 changes no
 stored value: it adds `marks.json`, each `#scribe` annotation marker's
 outcome, and admits an entry with `stated_by: {kind: scribe, name:
 annotation}`, scribe's statement of a turn Daniel marked
@@ -131,7 +139,7 @@ Format 12 adds `inactive_since` (RFC 3339 or `null`): when the entry left
 `store_corrupt`. Stop recovery reads it to tell which turns the entry still
 covered ([2_design.md §4.1](../2_design.md#41-detection)).
 
-Format 4 adds `author` (`{kind: daniel|agent, name}`; `name` lowercase
+Format 4 adds `author` (`{kind: daniel|agent, name}`, `user` since format 23; `name` lowercase
 `[a-z0-9._-]`, 1–40 characters) and `updated_by` (an author or `null`);
 `#scribe` capture writes `{kind: daniel, name: daniel}`. (S12) An agent entry (`author.kind: agent`) has `said: ""`,
 `content_from: {kind: agent}` and `cite: null`; a Daniel entry always has a
@@ -283,7 +291,7 @@ to}`, so a number is never reused.
 The body is `## Cause`, the header's cause (≤600 characters, or nothing),
 `## Fix`, its fix, then `## Occurrences`: one `### <n>. <date> — <host>,
 <project>` section per frontmatter occurrence in the same order, each the
-summary (≤1200 characters), `**Daniel asked:** "<request>"` (his words,
+summary (≤1200 characters), `**The user asked:** "<request>"` (`**Daniel asked:**` before format 23, still read; their words,
 checked verbatim against his typed turns of `session` when written,
 ≤1200 characters), `**Error lines (agent evidence):**` over at most 10
 lines indented four spaces (≤300 characters each), `**Cause:** ` and
@@ -428,7 +436,7 @@ stays. `memory forget m-<n>#<k>` blanks one occurrence's quote.
   "text"}], "state": "open"|"approved"|"rejected", "opened_at",
   "settled_at", "settled_by"}]}`. `newer`, `settled_at` and `settled_by`
   (a cite) may be `null`. Proposals are returned sorted by number.
-  Each proposal also has `author` (`{kind: scribe|agent|daniel, name}`;
+  Each proposal also has `author` (`{kind: scribe|agent|user, name}`, `daniel` before format 23;
   the consistency routine writes `{kind: scribe, name: consistency}`) and
   `settled_author` (an author or `null`; `#scribe approve|reject|retire|forget`
   sets Daniel's). (S12) An agent's settle leaves `settled_by` `null`. Format 5 adds
@@ -901,11 +909,11 @@ exits 0.
   `marks.json`, read only at 22 or later, and the annotation `stated_by`
   on an entry, refused below 22.
 - **Agent writes** (S12). Each write verb takes the lock, checks the
-  author guards (a reserved `--author` name — `daniel`, `scribe`,
+  author guards (a reserved `--author` name — `user`, `daniel`, `scribe`,
   `consistency`, `session-pass`, `tag-retired` — is refused `reserved_author`; a Daniel entry's content,
   retirement without his checked instruction, the settling of a candidate
   without it, and the settling of a proposal
-  whose `older` is a Daniel entry (with or without one) are refused `daniel_only`; author names between agents are
+  whose `older` is a Daniel entry (with or without one) are refused `user_only` (`daniel_only` before format 23); author names between agents are
   attribution only, so any agent may update or retire an active agent
   entry, update an open agent proposal or settle one; a changed `--reason` when settling a
   proposal Daniel or scribe opened is refused `proposal_not_agent`),

@@ -498,7 +498,7 @@ fn string(value: Option<&serde_json::Value>) -> Option<String> {
 
 /// A Claude Code transcript as the check reads it: the conversation
 /// ([`transcript::parse`]), each user turn marked as Daniel's when
-/// [`transcript::daniel_turn`] keeps it and §4.1's origin guard
+/// [`transcript::user_turn`] keeps it and §4.1's origin guard
 /// ([`capture::agent_originated`]) passes its line's origin fields and
 /// text, and each message's `entrypoint` checked against
 /// [`INTERACTIVE_ENTRYPOINTS`]. A replayed line keeps its first copy's
@@ -549,7 +549,7 @@ pub fn claude_conversation(bytes: &[u8]) -> Vec<Spoken> {
             let origins: Vec<&str> = claim
                 .map(|c| c.origins.iter().map(String::as_str).collect())
                 .unwrap_or_default();
-            let typed = transcript::daniel_turn(&message)
+            let typed = transcript::user_turn(&message)
                 .filter(|_| {
                     claim.is_some_and(|c| !c.invalid_origin)
                         && !capture::agent_originated(&origins, &message.text())
@@ -611,7 +611,7 @@ pub fn codex_conversation(bytes: &[u8], session: &SessionId) -> Result<Vec<Spoke
         .messages
         .into_iter()
         .map(|message| {
-            let typed = transcript::daniel_turn(&message)
+            let typed = transcript::user_turn(&message)
                 .map(|turn| own_words(&turn.own))
                 .filter(|own| !own.trim().is_empty());
             Spoken {

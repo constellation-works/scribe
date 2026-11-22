@@ -680,7 +680,7 @@ fn candidate_proposal_list_matches_goldens() {
 /// Daniel's turn the stated-claim goldens quote, verbatim.
 const STATED_QUOTE: &str = "ok that makes sense. then let's keep the whole history in an append-only log, not one rewritten outcome.";
 /// Scribe's statement of it, the approved entry's content.
-const STATED: &str = "Daniel prefers that session records keep the whole session's history in an append-only log rather than one rewritten outcome.";
+const STATED: &str = "The user prefers that session records keep the whole session's history in an append-only log rather than one rewritten outcome.";
 
 /// A store holding one approved pass claim with scribe's statement
 /// (`preferences-2`, from `p-5`) and one open one (`p-6`), at format 14
@@ -709,7 +709,7 @@ updated: 2026-11-15T00:05:00Z
 inactive_since: null
 said: \"#scribe approve p-5\"
 content_from: {{kind: message, role: user, message: user-history, at: 2026-11-15T00:00:00Z}}
-cite: {{session: 7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02, message: user-history, at: 2026-11-15T00:00:00Z, prompt_sha256: \"{sha}\", line: 1, cwd: /home/daniel/workspace/scribe}}
+cite: {{session: 7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02, message: user-history, at: 2026-11-15T00:00:00Z, prompt_sha256: \"{sha}\", line: 1, cwd: /home/user/workspace/scribe}}
 retirement_reason: null
 superseded_by: null
 review_after: null
@@ -730,7 +730,7 @@ stated_by: {{kind: scribe, name: session-pass}}
     let cite = |message: &str| {
         json!({"session":"7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02", "message":message,
             "at":"2026-11-15T00:00:00Z", "prompt_sha256":sha, "line":1,
-            "cwd":"/home/daniel/workspace/scribe"})
+            "cwd":"/home/user/workspace/scribe"})
     };
     let admitted = json!({"trigger":"let's keep", "matched":"let's keep",
         "criteria":"A standing rule from the user that applies beyond the work at hand."});
@@ -755,7 +755,7 @@ stated_by: {{kind: scribe, name: session-pass}}
         "id":"p-6", "kind":"candidate", "older":"preferences-3", "newer":null,
         "candidate": {
             "tag":"preferences", "role":"user", "quote":open_quote,
-            "statement":"Daniel prefers that the scribe tmux popup lists only the five newest records.",
+            "statement":"The user prefers that the scribe tmux popup lists only the five newest records.",
             "subject":"the scribe tmux popup",
             "evidence":null, "cite":cite("user-popup"),
             "project":"constellation-works/scribe", "provider":"claude-code",
@@ -810,7 +810,7 @@ fn stated_claims_match_goldens() {
     // quote is (2_design.md §6.4, §11.1).
     let answer = json!({
         "status": "answered",
-        "answer": "Daniel said session records keep an append-only log.",
+        "answer": "The user said session records keep an append-only log.",
         "claims": [
             {"text": "his words", "quote": "keep the whole history in an append-only log", "cite": "preferences-2"},
             {"text": "the statement", "quote": "session records keep the whole session's history", "cite": "preferences-2"}
@@ -891,7 +891,7 @@ fn instructed_fixture() -> Fixture {
         "at":"2026-11-15T00:04:30Z", "quote":INSTRUCTED_WORDS});
     let settled_by = json!({"session":INSTRUCTED_SESSION, "message":"user-instruct",
         "at":"2026-11-15T00:04:30Z", "prompt_sha256":"0".repeat(64), "line":1,
-        "cwd":"/home/daniel/workspace/scribe"});
+        "cwd":"/home/user/workspace/scribe"});
     for p in doc["proposals"].as_array_mut().unwrap() {
         p["settled_author"] = json!({"kind":"agent", "name":"opus"});
         p["settled_by"] = settled_by.clone();
@@ -1012,7 +1012,8 @@ fn ask_evidence_names_an_instructed_approval_outside_the_quotable_text() {
 /// Daniel's turn the captured-idea goldens quote, verbatim.
 const CAPTURED_QUOTE: &str = "what if we cached the routing table per host? not now though, let's park it until the drains are quiet.";
 /// Scribe's statement of it, the captured entry's content.
-const CAPTURED: &str = "Daniel suggests caching the routing table per host so lookups stay local.";
+const CAPTURED: &str =
+    "The user suggests caching the routing table per host so lookups stay local.";
 /// His words parking it.
 const PARKED: &str = "let's park it until the drains are quiet";
 
@@ -1048,7 +1049,7 @@ updated: 2026-11-15T00:05:00Z
 inactive_since: null
 said: \"{said}\"
 content_from: {content_from}
-cite: {{session: 7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02, message: user-idea, at: 2026-11-15T00:00:00Z, prompt_sha256: \"{sha}\", line: 1, cwd: /home/daniel/workspace/scribe}}
+cite: {{session: 7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02, message: user-idea, at: 2026-11-15T00:00:00Z, prompt_sha256: \"{sha}\", line: 1, cwd: /home/user/workspace/scribe}}
 retirement_reason: null
 superseded_by: null
 review_after: null
@@ -1113,7 +1114,7 @@ fn captured_ideas_match_goldens() {
     // check labels each (2_design.md §6.4, §11.6).
     let answer = json!({
         "status": "answered",
-        "answer": "Daniel floated a per-host routing cache and a dry-run flag.",
+        "answer": "The user floated a per-host routing cache and a dry-run flag.",
         "claims": [
             {"text": "his words", "quote": "what if we cached the routing table per host?", "cite": "idea-1"},
             {"text": "the statement", "quote": "caching the routing table per host", "cite": "idea-1"},

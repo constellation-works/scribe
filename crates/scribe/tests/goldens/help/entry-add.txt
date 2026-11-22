@@ -7,7 +7,7 @@ Arguments:
 
 Options:
       --tag <TAG>           Tag name or alias
-      --author <AUTHOR>     Agent name (even daniel records the agent channel)
+      --author <AUTHOR>     Agent name (always recorded as the agent channel; reserved names are refused)
       --project <PROJECT>   Project slug [default: global]
       --topic <TOPIC>       Topic, repeatable (at most five)
       --related <RELATED>   Related reference, repeatable; under an action tag, name the session you write in (session:<id>)

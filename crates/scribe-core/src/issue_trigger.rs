@@ -19,7 +19,7 @@ pub const FIRE_VERB: &str = "fire";
 pub fn fire(rules: &CaptureRules, prompt: &str) -> Option<Fired> {
     let from = rules.from.as_ref()?.value;
     let route = rules.route.as_ref()?.value;
-    if (from, route) != (CaptureFrom::Daniel, CaptureRoute::Agent) {
+    if (from, route) != (CaptureFrom::User, CaptureRoute::Agent) {
         return None;
     }
     let triggers = rules.triggers.as_ref()?;

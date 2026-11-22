@@ -57,12 +57,12 @@ fn daniel_turns_drop_synthetic_lines_and_slash_scribe_and_a_survey_cuts_at_300()
         ),
     );
     let messages = transcript::parse(raw.as_bytes());
-    let turns = transcript::daniel_turns(&messages);
+    let turns = transcript::user_turns(&messages);
     assert_eq!(turns.len(), 2, "synthetic and /scribe are not Daniel's");
     assert_eq!(turns[1].own, "keep  this");
     assert_eq!(turns[1].pasted, ["pasted note"]);
     let survey = transcript::survey(raw.as_bytes());
-    assert_eq!(survey.daniel_turns, 2);
+    assert_eq!(survey.user_turns, 2);
     assert_eq!(
         survey.first_prompt.chars().count(),
         transcript::PROMPT_CHARS
@@ -139,7 +139,7 @@ fn survey_with_cwd_matches_survey_and_cwd_from_one_pass() {
     assert_eq!(survey, transcript::survey(raw.as_bytes()));
     assert_eq!(cwd.as_deref(), Some("/work/first"));
     assert_eq!(cwd, transcript::cwd(raw.as_bytes()));
-    assert_eq!(survey.daniel_turns, 2);
+    assert_eq!(survey.user_turns, 2);
 }
 
 #[test]
@@ -162,5 +162,5 @@ fn a_replayed_line_keeps_its_first_position_and_counts_once() {
     let messages = transcript::parse(raw.as_bytes());
     let ids: Vec<&str> = messages.iter().map(|m| m.uuid.as_str()).collect();
     assert_eq!(ids, ["u-1", "u-2", "u-3"]);
-    assert_eq!(transcript::survey(raw.as_bytes()).daniel_turns, 3);
+    assert_eq!(transcript::survey(raw.as_bytes()).user_turns, 3);
 }

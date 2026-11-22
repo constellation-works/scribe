@@ -671,19 +671,20 @@ impl RawCapture {
         if let Some(from) = self.from {
             let span = from.span();
             let value = match from.get_ref().as_str() {
-                "daniel" => CaptureFrom::Daniel,
+                // `daniel` is the pre-format-23 spelling, still read.
+                "user" | "daniel" => CaptureFrom::User,
                 "assistant" => {
                     return Err(refuse(
                         span,
                         format!(
-                            "{key}.from = \"assistant\" is not accepted: the pass reads only the user's turns; use \"daniel\""
+                            "{key}.from = \"assistant\" is not accepted: the pass reads only the user's turns; use \"user\""
                         ),
                     ));
                 }
                 other => {
                     return Err(refuse(
                         span,
-                        format!("{key}.from: '{other}' is not one of: daniel"),
+                        format!("{key}.from: '{other}' is not one of: user"),
                     ));
                 }
             };

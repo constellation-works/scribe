@@ -1,10 +1,10 @@
 tag	preferences	-
 source	config	-
 aliases	preference,pref	-
-description	how Daniel likes things done	-
+description	how the user likes things done	-
 stale_after_days	180	-
 action	-	-
-from	daniel	shipped
+from	user	shipped
 route	propose	shipped
 triggers	"always", "never", "should not", "from now on", "I prefer", "by default"	shipped
 criteria	A standing rule from the user that applies beyond the work at hand.	shipped

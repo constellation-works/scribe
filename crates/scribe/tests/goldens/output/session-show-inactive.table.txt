@@ -14,7 +14,7 @@ links       -
 children    -
 provider    claude-code
 host        dk-server-1
-cwd         /home/daniel/workspace/scribe
+cwd         /home/user/workspace/scribe
 started     2026-10-25T14:00:00Z
 on since    2026-10-25T14:05:00Z
 updated     2026-10-25T15:10:00Z

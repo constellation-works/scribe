@@ -5,7 +5,7 @@
         "tag": "preferences",
         "role": "user",
         "quote": "ok that makes sense. then let's keep the whole history in an append-only log, not one rewritten outcome.",
-        "statement": "Daniel prefers that session records keep the whole session's history in an append-only log rather than one rewritten outcome.",
+        "statement": "The user prefers that session records keep the whole session's history in an append-only log rather than one rewritten outcome.",
         "subject": "session records",
         "evidence": null,
         "cite": {
@@ -14,7 +14,7 @@
           "at": "2026-11-15T00:00:00Z",
           "prompt_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
           "line": 1,
-          "cwd": "/home/daniel/workspace/scribe"
+          "cwd": "/home/user/workspace/scribe"
         },
         "project": "constellation-works/scribe",
         "provider": "claude-code",
@@ -40,15 +40,15 @@
         "at": "2026-11-15T00:00:00Z",
         "prompt_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
         "line": 1,
-        "cwd": "/home/daniel/workspace/scribe"
+        "cwd": "/home/user/workspace/scribe"
       },
       "author": {
         "kind": "scribe",
         "name": "session-pass"
       },
       "settled_author": {
-        "kind": "daniel",
-        "name": "daniel"
+        "kind": "user",
+        "name": "user"
       },
       "updated_by": null,
       "closed_reason": null,
@@ -59,7 +59,7 @@
         "tag": "preferences",
         "role": "user",
         "quote": "yeah, for the popup just show the newest five, nothing older.",
-        "statement": "Daniel prefers that the scribe tmux popup lists only the five newest records.",
+        "statement": "The user prefers that the scribe tmux popup lists only the five newest records.",
         "subject": "the scribe tmux popup",
         "evidence": null,
         "cite": {
@@ -68,7 +68,7 @@
           "at": "2026-11-15T00:00:00Z",
           "prompt_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
           "line": 1,
-          "cwd": "/home/daniel/workspace/scribe"
+          "cwd": "/home/user/workspace/scribe"
         },
         "project": "constellation-works/scribe",
         "provider": "claude-code",

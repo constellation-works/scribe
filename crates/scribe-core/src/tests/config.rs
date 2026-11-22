@@ -198,7 +198,7 @@ fn action_tags_come_from_config_and_shipped_ones_can_be_retuned() {
             .unwrap()
             .description
             .as_deref(),
-        Some("a rule change for the constellation standards, in the user's words")
+        Some("a rule change for the constellation standards, in {user}'s words")
     );
     assert!(action("standard").is_some() && action("idea").is_some());
     assert!(
@@ -238,7 +238,7 @@ fn capture_rules_override_field_by_field_with_their_line() {
     let shipped = Config::parse("").unwrap();
     let shipped = &shipped.tags.resolve("preferences").unwrap().capture;
     assert_eq!(shipped.route(), Some(CaptureRoute::Propose));
-    assert_eq!(shipped.from.as_ref().unwrap().value, CaptureFrom::Daniel);
+    assert_eq!(shipped.from.as_ref().unwrap().value, CaptureFrom::User);
     assert_eq!(
         shipped.criteria.as_ref().unwrap().origin,
         RuleOrigin::Shipped
@@ -275,7 +275,7 @@ fn a_partial_preferences_table_keeps_shipped_aliases_description_and_stale_days(
     assert_eq!(prefs.aliases, shipped.aliases);
     assert_eq!(
         prefs.description.as_deref(),
-        Some("how the user likes things done")
+        Some("how {user} likes things done")
     );
     assert_eq!(prefs.stale_after_days, std::num::NonZeroU32::new(180));
     assert_eq!(
@@ -344,7 +344,7 @@ fn a_shipped_word_yields_to_config_and_two_config_entries_do_not() {
     assert_eq!(prefs.stale_after_days, std::num::NonZeroU32::new(180));
     assert_eq!(
         prefs.description.as_deref(),
-        Some("how the user likes things done")
+        Some("how {user} likes things done")
     );
     assert_eq!(prefs.capture, CaptureRules::shipped("preferences"));
     assert_eq!(

@@ -628,7 +628,7 @@ pub fn settle(
                     proposal.state = ProposalState::Rejected;
                     proposal.settled_at = Some(now);
                     proposal.settled_by = Some(cite.clone());
-                    proposal.settled_author = Some(Author::daniel());
+                    proposal.settled_author = Some(Author::user());
                     Settled::Rejected { proposal: *id }
                 }
             }
@@ -752,13 +752,13 @@ fn approve(
             proposal.state = ProposalState::Rejected;
             proposal.settled_at = Some(now);
             proposal.settled_by = Some(cite.clone());
-            proposal.settled_author = Some(Author::daniel());
+            proposal.settled_author = Some(Author::user());
             return Settled::Covered { proposal: id, by };
         }
         proposal.state = ProposalState::Approved;
         proposal.settled_at = Some(now);
         proposal.settled_by = Some(cite.clone());
-        proposal.settled_author = Some(Author::daniel());
+        proposal.settled_author = Some(Author::user());
         return Settled::Recorded {
             proposal: id,
             entry: proposal.older.clone(),
@@ -781,7 +781,7 @@ fn approve(
     proposal.state = ProposalState::Approved;
     proposal.settled_at = Some(now);
     proposal.settled_by = Some(cite.clone());
-    proposal.settled_author = Some(Author::daniel());
+    proposal.settled_author = Some(Author::user());
     apply_approval(proposal, entry, now);
     Settled::Approved {
         proposal: id,
@@ -812,7 +812,7 @@ pub const REMOVAL_CUES: &[&str] = &[
 
 /// A Daniel-authored entry written after a session that may say its
 /// feature is gone. Only entries Daniel wrote (`author.kind` is
-/// [`AuthorKind::Daniel`]) are removal evidence; session headers and
+/// [`AuthorKind::User`]) are removal evidence; session headers and
 /// segments are model-written and agent entries are agent-written, so
 /// neither can deactivate a session.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -898,7 +898,7 @@ fn later_records(entries: &[Entry], since: OffsetDateTime) -> Vec<LaterRecord> {
         .filter(|e| {
             e.status == EntryStatus::Active
                 && e.updated >= since
-                && e.author.kind == AuthorKind::Daniel
+                && e.author.kind == AuthorKind::User
         })
         .map(|e| LaterRecord {
             cite: e.id.to_string(),

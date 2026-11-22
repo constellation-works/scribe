@@ -316,13 +316,14 @@ fn hit(score: f64, doc: &Doc, corpus: Corpus<'_>, wanted: &BTreeSet<String>) -> 
                     .collect::<Vec<_>>()
                     .join("\n")
             );
-            // The agent's account, with Daniel's newest request word for
+            // The agent's account, with the user's newest request word for
             // word, in every output mode (2_design.md §11.4).
             let snippet = match issue.occurrences.first() {
                 Some(o) => format!(
-                    "{} [{}; the user asked: \"{}\"]",
+                    "{} [{}; {} asked: \"{}\"]",
                     snippet(&text, wanted),
                     ask::issue_whose(issue),
+                    corpus.user.noun(),
                     flatten(&o.request)
                 ),
                 None => format!("{} [{}]", snippet(&text, wanted), ask::issue_whose(issue)),

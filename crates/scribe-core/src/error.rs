@@ -256,8 +256,8 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 /// Domain classification of a refused direct write.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WriteRefusal {
-    /// `daniel_only`.
-    DanielOnly,
+    /// `user_only`.
+    UserOnly,
     /// `reserved_author`.
     ReservedAuthor,
     /// `invalid_text`.
@@ -346,7 +346,7 @@ impl WriteRefusal {
     #[must_use]
     pub fn code(self) -> &'static str {
         match self {
-            Self::DanielOnly => "daniel_only",
+            Self::UserOnly => "user_only",
             Self::ReservedAuthor => "reserved_author",
             Self::InvalidText => "invalid_text",
             Self::InvalidTopics => "invalid_topics",

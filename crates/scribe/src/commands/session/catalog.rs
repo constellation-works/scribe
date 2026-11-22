@@ -38,9 +38,9 @@ final and switched off; a newer one stays on and due. A failed catalog
 keeps its checkpoint; run the same command again to resume. Writes no entries.
 
 A new catalog is recorded as kind agent under --author; the reserved names
-daniel, scribe and consistency are refused. The user catalogs as themselves by
+user, scribe and consistency are refused. The user catalogs as themselves by
 typing /scribe catalog <id> in their prompt; running this command on that
-session afterwards runs its windows and keeps cataloged_by daniel.
+session afterwards runs its windows and keeps cataloged_by user.
 
 Examples:
   scribe session catalog <id> --author opus

@@ -1180,7 +1180,7 @@ pub(crate) fn store_docs(
                 entry.said,
                 entry.tag
             )),
-            weight: if entry.author.kind == crate::AuthorKind::Daniel {
+            weight: if entry.author.kind == crate::AuthorKind::User {
                 ENTRY_WEIGHT * boost
             } else {
                 boost
@@ -1546,7 +1546,7 @@ pub(crate) fn stated_quote(entry: &Entry) -> Option<&str> {
         .stated_by
         .as_ref()
         .and(entry.quote.as_deref())
-        .filter(|_| entry.author.kind == crate::AuthorKind::Daniel || is_pass_captured(entry))
+        .filter(|_| entry.author.kind == crate::AuthorKind::User || is_pass_captured(entry))
 }
 
 /// Whether the session pass wrote `entry` itself (an idea under a `write`

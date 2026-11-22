@@ -467,7 +467,7 @@ fn find_request(
     };
     let messages = scribe_core::transcript::parse(&bytes);
     Ok(messages.iter().find_map(|m| {
-        scribe_core::transcript::daniel_turn(m)
+        scribe_core::transcript::user_turn(m)
             .filter(|turn| scribe_core::verbatim::contains(&turn.own, words))
             .map(|_| (m.uuid.clone(), scribe_core::capture::prompt_hashes(m)))
     }))

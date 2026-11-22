@@ -179,7 +179,7 @@ pub(super) fn run<M: Models>(
                 prompt.cwd
             }
         };
-        if transcript::daniel_turn(message).is_none() || cwd.is_empty() {
+        if transcript::user_turn(message).is_none() || cwd.is_empty() {
             continue;
         }
         let turn = Turn {
@@ -261,7 +261,7 @@ pub(super) fn run<M: Models>(
         let typed: Vec<&Message> = messages[..=item.index]
             .iter()
             .filter(|m| in_window.contains(m.uuid.as_str()))
-            .filter(|m| transcript::daniel_turn(m).is_some())
+            .filter(|m| transcript::user_turn(m).is_some())
             .collect();
         let open: Vec<&Mark> = item.open.iter().collect();
         let request = annotation::request(

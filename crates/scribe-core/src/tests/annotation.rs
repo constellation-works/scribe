@@ -374,7 +374,7 @@ fn a_draft_is_daniels_with_scribes_statement_and_his_quote() {
     assert_eq!(draft.cite.message.as_deref(), Some("u-1"));
     assert_eq!(draft.cite.line, 1);
     let entry = draft.into_entry("preferences-1".parse().unwrap());
-    assert_eq!(entry.author, crate::Author::daniel());
+    assert_eq!(entry.author, crate::Author::user());
     assert!(entry.approved_by.is_none());
 }
 

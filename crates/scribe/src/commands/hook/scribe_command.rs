@@ -145,13 +145,13 @@ fn typed(switch: &Switch) -> String {
 /// that one is already under way. Audited as a write when the switch was
 /// written and as a refusal with its code; a resume writes nothing.
 fn run_catalog(switch: &Switch, target: &SessionId, ctx: &Context) -> Output {
-    match crate::commands::session::catalog::begin(ctx, target, Author::daniel()) {
+    match crate::commands::session::catalog::begin(ctx, target, Author::user()) {
         Ok(begun) => {
             let id = &begun.id;
             if begun.wrote_switch {
                 blocked(
                     format!(
-                        "scribe: cataloging {id} as yours — its windows run at the next session pass, or now with `scribe session catalog {id} --author <name>` in a shell; the record keeps cataloged_by daniel"
+                        "scribe: cataloging {id} as yours — its windows run at the next session pass, or now with `scribe session catalog {id} --author <name>` in a shell; the record keeps cataloged_by user"
                     ),
                     vec![HookOutcome {
                         target: Some(format!("session:{id}")),

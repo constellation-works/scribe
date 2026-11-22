@@ -44,7 +44,7 @@ Examples:
 const SHOW_EXAMPLES: &str = "\
 Examples:
   scribe transcript show <id>
-  scribe transcript show <id> --json | jq '.daniel_first_turns'";
+  scribe transcript show <id> --json | jq '.user_first_turns'";
 
 /// Verbs on the `transcript` noun.
 #[derive(Debug, Subcommand)]
@@ -185,7 +185,7 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
             }
         };
         let row = payload_from(&id, &bytes, &config, false);
-        if row.daniel_turns < args.min_turns {
+        if row.user_turns < args.min_turns {
             continue;
         }
         if !args.project.is_empty() && !args.project.iter().any(|p| p.as_str() == row.project) {
@@ -280,9 +280,9 @@ fn payload_from(
         started: survey.started,
         ended: survey.ended,
         bytes: survey.bytes,
-        daniel_turns: survey.daniel_turns,
+        user_turns: survey.user_turns,
         first_prompt: survey.first_prompt,
-        daniel_first_turns: with_turns.then_some(survey.first_turns),
+        user_first_turns: with_turns.then_some(survey.first_turns),
     }
 }
 

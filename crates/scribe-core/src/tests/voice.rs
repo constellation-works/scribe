@@ -285,3 +285,92 @@ fn config_refuses_a_bad_name_or_instruction() {
         assert!(err.message.contains(needle), "{text}: {}", err.message);
     }
 }
+
+/// The session prompt with the shipped `preferences` and `idea` criteria
+/// and exclusions as its candidate rules, voiced with `voice`.
+fn session_with_shipped_rules(voice: Voice) -> String {
+    let tags = TagTable::defaults();
+    let rules = ["preferences", "idea"].map(|tag| {
+        let def = tags
+            .get(&crate::entry::TagName::try_from(tag.to_owned()).unwrap())
+            .unwrap();
+        TagCriteria {
+            tag: tag.to_owned(),
+            criteria: def.capture.criteria.as_ref().map(|r| r.value.clone()),
+            not: def.capture.not.as_ref().map(|r| r.value.clone()),
+            writes: tag == "idea",
+        }
+    });
+    let mut request = pass::request(
+        "m",
+        None,
+        Vec::new(),
+        pass::Window {
+            messages: Vec::new(),
+            dropped: 0,
+        },
+        Vec::new(),
+        Vec::new(),
+        false,
+        voice,
+    );
+    request.candidate_limit = 1;
+    request.write_limit = 1;
+    request.candidate_turns = vec![FiringTurn {
+        message: String::from("u-1"),
+        tag: String::from("idea"),
+        trigger: String::from("what if we"),
+        matched: String::from("what if we"),
+    }];
+    request.candidate_rules = rules.to_vec();
+    request.prompt()
+}
+
+#[test]
+fn shipped_tag_descriptions_and_criteria_name_the_configured_user_in_prompts() {
+    let annotation = |voice| prompt(ModelUse::Annotation, voice, true);
+    for (voice, title) in [(Voice::default(), "The user"), (named("Sam"), "Sam")] {
+        for prompt in [annotation(voice.clone()), session_with_shipped_rules(voice)] {
+            assert!(
+                !prompt.contains("{user}") && !prompt.contains("{User}"),
+                "{prompt}"
+            );
+            assert!(
+                prompt.contains(&format!("{title} proposes something that could be built")),
+                "{prompt}"
+            );
+        }
+    }
+    for (voice, noun) in [(Voice::default(), "the user"), (named("Sam"), "Sam")] {
+        let annotation = annotation(voice);
+        assert!(
+            annotation.contains(&format!("preferences: how {noun} likes things done")),
+            "{annotation}"
+        );
+        assert!(
+            annotation.contains(&format!("in {noun}'s words")),
+            "{annotation}"
+        );
+    }
+}
+
+#[test]
+fn an_instruction_override_cannot_drop_the_session_or_annotation_behaviour_rules() {
+    let keep = "Keep what the record so far says unless the new messages change it.";
+    let none = "A marker that is talk about scribe itself or points at nothing to record is \
+                kind \"none\"";
+    for (model_use, rule) in [(ModelUse::Session, keep), (ModelUse::Annotation, none)] {
+        let overridden = prompt(
+            model_use,
+            Voice {
+                user: UserName::default(),
+                instructions: Some(String::from("Record only release dates.")),
+            },
+            false,
+        );
+        assert!(overridden.starts_with("Record only release dates."));
+        assert!(!overridden.contains(shipped(model_use)), "{overridden}");
+        assert!(overridden.contains(rule), "{model_use:?}: {overridden}");
+        assert!(!shipped(model_use).contains(rule), "{model_use:?}");
+    }
+}

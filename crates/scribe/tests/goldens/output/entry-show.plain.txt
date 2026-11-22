@@ -1,1 +1,1 @@
-decisions-2	active	constellation-works/scribe	merge-policy,release	2026-11-02T19:05:41Z	squash-merge agent PRs; keep merge commits for releases	daniel	-
+decisions-2	active	constellation-works/scribe	merge-policy,release	2026-11-02T19:05:41Z	squash-merge agent PRs; keep merge commits for releases	user	-

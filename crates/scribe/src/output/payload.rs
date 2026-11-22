@@ -20,6 +20,12 @@ use time::OffsetDateTime;
 /// RFC 3339 with an explicit offset (R11).
 type Timestamp = OffsetDateTime;
 
+/// Tag text as output shows it: `{user}` reads "the user", never the
+/// configured name, which reaches prompts only (2_design.md §15.8).
+fn shown(text: &str) -> String {
+    scribe_core::voice::UserName::default().fill(text)
+}
+
 /// Where an entry's content came from.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct ContentFromPayload {
@@ -893,7 +899,10 @@ impl From<&TagSummary> for TagPayload {
                 .as_ref()
                 .map(|d| strings(&d.aliases))
                 .unwrap_or_default(),
-            description: tag.def.as_ref().and_then(|d| d.description.clone()),
+            description: tag
+                .def
+                .as_ref()
+                .and_then(|d| d.description.as_deref().map(shown)),
             stale_after_days: tag
                 .def
                 .as_ref()
@@ -1006,7 +1015,7 @@ impl TagShowPayload {
             tag: def.name.to_string(),
             source,
             aliases: strings(&def.aliases),
-            description: def.description.clone(),
+            description: def.description.as_deref().map(shown),
             stale_after_days: def.stale_after_days.map(std::num::NonZeroU32::get),
             action: def.action.map(|a| TagShowActionPayload {
                 mode: a.mode(),
@@ -1016,8 +1025,8 @@ impl TagShowPayload {
                 from: c.from.as_ref().map(|r| r.value.as_str()),
                 route: c.route.as_ref().map(|r| r.value.as_str()),
                 triggers: c.triggers.as_ref().map(|r| r.value.clone()),
-                criteria: c.criteria.as_ref().map(|r| r.value.clone()),
-                not: c.not.as_ref().map(|r| r.value.clone()),
+                criteria: c.criteria.as_ref().map(|r| shown(&r.value)),
+                not: c.not.as_ref().map(|r| shown(&r.value)),
                 origin: CaptureOriginPayload {
                     from: OriginPayload::of(c.from.as_ref(), config_file),
                     route: OriginPayload::of(c.route.as_ref(), config_file),
@@ -1517,13 +1526,13 @@ pub(crate) struct TranscriptPayload {
     /// The file's length.
     pub(crate) bytes: u64,
     /// The user's turns, by the pass's rule.
-    pub(crate) daniel_turns: u32,
+    pub(crate) user_turns: u32,
     /// Their first turn, cut to 300 characters. Empty when they have none.
     pub(crate) first_prompt: String,
     /// His first five turns, each cut to 300 characters. Present on
     /// `transcript show` only.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) daniel_first_turns: Option<Vec<String>>,
+    pub(crate) user_first_turns: Option<Vec<String>>,
 }
 
 /// The reply a Claude Code hook prints: text for the user

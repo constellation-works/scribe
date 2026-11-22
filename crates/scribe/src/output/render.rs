@@ -123,7 +123,7 @@ const TAG_COLUMNS: [Column; 10] = [
 const TRANSCRIPT_COLUMNS: [Column; 7] = [
     col("SESSION", Align::Left, false),
     col("PROJECT", Align::Left, false),
-    col("DANIEL_TURNS", Align::Right, false),
+    col("USER_TURNS", Align::Right, false),
     col("BYTES", Align::Right, false),
     col("STARTED", Align::Left, false),
     col("ENDED", Align::Left, false),
@@ -457,7 +457,7 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
         (OutputMode::Json, Record::Transcript(transcript)) => write_json(out, transcript),
         (OutputMode::Plain, Record::Transcript(transcript)) => {
             writeln!(out, "{}", plain_line(&transcript_row(transcript)))?;
-            if let Some(turns) = &transcript.daniel_first_turns {
+            if let Some(turns) = &transcript.user_first_turns {
                 for (n, turn) in turns.iter().enumerate() {
                     let index = n.saturating_add(1);
                     writeln!(out, "turn\t{index}\t{}", one_line(turn))?;
@@ -1152,9 +1152,9 @@ fn entry_row(e: &EntryPayload) -> Vec<Cell> {
     ]
 }
 
-/// `daniel`, or `agent:<name>` for an agent's entry.
+/// `user`, or `<kind>:<name>` for an agent's or scribe's entry.
 fn author(a: &super::payload::AuthorPayload) -> String {
-    if a.kind == "daniel" {
+    if a.kind == "user" {
         a.name.clone()
     } else {
         format!("{}:{}", a.kind, a.name)
@@ -1715,7 +1715,7 @@ fn issue_plain(out: &mut dyn Write, i: &IssuePayload) -> io::Result<()> {
             occurrence_note(o),
             one_line(&o.summary)
         )?;
-        writeln!(out, "daniel_asked\t{}\t{}", o.n, one_line(&o.request))?;
+        writeln!(out, "user_asked\t{}\t{}", o.n, one_line(&o.request))?;
         for line in &o.error_lines {
             writeln!(out, "agent_evidence\t{}\t{}", o.n, one_line(line))?;
         }
@@ -1758,7 +1758,7 @@ fn issue_detail(out: &mut dyn Write, i: &IssuePayload) -> io::Result<()> {
         field(out, "message", &o.request_message)?;
         field(out, "author", &author(&o.author))?;
         field(out, "summary", &o.summary)?;
-        field(out, "daniel_asked", &format!("\"{}\"", o.request))?;
+        field(out, "user_asked", &format!("\"{}\"", o.request))?;
         // The agent's evidence: never checked against the transcript.
         field(out, "agent_evidence", &joined_lines(&o.error_lines))?;
         field(out, "cause", &o.cause)?;
@@ -1783,7 +1783,7 @@ fn transcript_row(t: &TranscriptPayload) -> Vec<Cell> {
     vec![
         Cell::plain(t.session.clone()),
         Cell::plain(t.project.clone()),
-        Cell::plain(t.daniel_turns.to_string()),
+        Cell::plain(t.user_turns.to_string()),
         Cell::plain(t.bytes.to_string()),
         Cell::plain(
             t.started
@@ -1822,9 +1822,9 @@ fn transcript_detail(out: &mut dyn Write, t: &TranscriptPayload) -> io::Result<(
         &t.ended.map(timestamp).unwrap_or_else(|| String::from("-")),
     )?;
     field(out, "bytes", &t.bytes.to_string())?;
-    field(out, "daniel_turns", &t.daniel_turns.to_string())?;
+    field(out, "user_turns", &t.user_turns.to_string())?;
     field(out, "first_prompt", &t.first_prompt)?;
-    if let Some(turns) = &t.daniel_first_turns {
+    if let Some(turns) = &t.user_first_turns {
         for (n, turn) in turns.iter().enumerate() {
             field(out, &format!("turn {}", n.saturating_add(1)), turn)?;
         }
