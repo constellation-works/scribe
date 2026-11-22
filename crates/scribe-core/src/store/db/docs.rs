@@ -18,7 +18,7 @@
 //!   command could not commit without waiting is spooled to a file and
 //!   drained here by the next write, keyed by its file name (`spool`).
 
-use super::sessions::{Col, columns, from_sql, object, quoted};
+use super::sessions::{Col, columns, export_sql_value, from_sql, object, quoted};
 use super::{Fallible, db_error, stamp};
 use crate::action::Pickup;
 use crate::annotation::MarkRecord;
@@ -700,4 +700,24 @@ pub(in crate::store) fn spooled_names(conn: &Connection, db: &Path) -> Result<Ve
         .map_err(err)?;
     let rows = select.query_map([], |row| row.get(0)).map_err(err)?;
     rows.collect::<rusqlite::Result<Vec<String>>>().map_err(err)
+}
+
+/// Encode one spooled [`AuditEvent`] in the JSONL row shape `audit`
+/// exports from `scribe.db`, with `id: null` and `spool` set to `spool`.
+pub(in crate::store) fn audit_export_row(
+    db: &Path,
+    format: u32,
+    event: &AuditEvent,
+    spool: &str,
+) -> Result<Value> {
+    let obj = serialized(db, "an audit line", event)?;
+    let values = row(db, "an audit line", &obj, AUDIT, &[])?;
+    let mut out = Map::new();
+    out.insert(String::from("id"), Value::Null);
+    out.insert(String::from("format"), Value::Number(format.into()));
+    for ((name, _), value) in AUDIT.iter().zip(values) {
+        out.insert((*name).to_owned(), export_sql_value(value));
+    }
+    out.insert(String::from("spool"), Value::String(spool.to_owned()));
+    Ok(Value::Object(out))
 }

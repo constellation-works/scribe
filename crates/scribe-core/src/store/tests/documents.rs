@@ -754,3 +754,100 @@ fn settle_forget_cleans_moved_files_and_drops_pre_move_open_candidate() {
         kept_quote
     );
 }
+
+#[test]
+fn jsonl_export_includes_pending_spooled_audit_once_and_skips_drained_spool() {
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+    let store = Store::open(&root);
+    store.migrate_store(NOW).unwrap();
+
+    // Hold a SQLite write lock so record_audit spools instead of inserting.
+    let holder = db::open_new_writer(&root, std::time::Duration::from_secs(1)).unwrap();
+    holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let pending = AuditEvent {
+        at: NOW,
+        command: String::from("tag add"),
+        status: AuditStatus::Failure,
+        target: Some(String::from("notes")),
+        error_code: Some(String::from("reserved_author")),
+        author: Some(String::from("user")),
+        instruction_session: None,
+        instruction_message: None,
+        issue: Some(audit::IssueAudit {
+            verb: String::from("add"),
+            id: Some(String::from("issue-1")),
+            occurrence: Some(1),
+            session: Some(String::from("s-1")),
+            request_message: None,
+            moved_to: None,
+            trigger: None,
+            request_sha256: Vec::new(),
+        }),
+        duration_ms: 7,
+    };
+    store.record_audit(&pending).unwrap();
+
+    let spool_dir = root.join("audit-spool");
+    let spool_files: Vec<_> = fs::read_dir(&spool_dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(spool_files.len(), 1, "{spool_files:?}");
+    let spool_name = &spool_files[0];
+    let spool_bytes = fs::read(spool_dir.join(spool_name)).unwrap();
+
+    // Moved store with 0 SQL audit rows and 1 pending spooled event.
+    let jsonl_pending = dir.path().join("jsonl-pending");
+    let exported = store.export(&jsonl_pending, ExportFormat::Jsonl).unwrap();
+    assert_eq!(exported.audit_lines, 1, "{exported:?}");
+    let rows: Vec<serde_json::Value> = fs::read_to_string(jsonl_pending.join("audit.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert!(rows[0]["id"].is_null(), "{rows:?}");
+    assert_eq!(rows[0]["format"], 5);
+    assert_eq!(rows[0]["command"], "tag add");
+    assert_eq!(rows[0]["status"], "failure");
+    assert_eq!(rows[0]["target"], "notes");
+    assert_eq!(rows[0]["error_code"], "reserved_author");
+    assert_eq!(rows[0]["author"], "user");
+    assert_eq!(rows[0]["duration_ms"], 7);
+    assert_eq!(rows[0]["spool"], spool_name.as_str());
+    let issue_json: serde_json::Value =
+        serde_json::from_str(rows[0]["issue"].as_str().unwrap()).unwrap();
+    assert_eq!(issue_json["verb"], "add");
+    assert_eq!(issue_json["id"], "issue-1");
+
+    // Release the writer and let a store write drain the spool into SQLite.
+    holder.execute_batch("ROLLBACK").unwrap();
+    drop(holder);
+    store
+        .update_control(|state| {
+            crate::control::switch(
+                state,
+                &"s-1".parse().unwrap(),
+                &crate::control::Switch::On,
+                NOW,
+            )
+        })
+        .unwrap();
+    assert_eq!(fs::read_dir(&spool_dir).unwrap().count(), 0);
+
+    // Simulate a crash after commit before the drained spool file was removed.
+    put(&root, &format!("audit-spool/{spool_name}"), &spool_bytes);
+    let jsonl_drained = dir.path().join("jsonl-drained");
+    let exported = store.export(&jsonl_drained, ExportFormat::Jsonl).unwrap();
+    assert_eq!(exported.audit_lines, 1, "{exported:?}");
+    let rows: Vec<serde_json::Value> = fs::read_to_string(jsonl_drained.join("audit.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert!(rows[0]["id"].is_i64(), "{rows:?}");
+    assert_eq!(rows[0]["spool"], spool_name.as_str());
+    assert_eq!(rows[0]["command"], "tag add");
+}

@@ -816,6 +816,17 @@ pub(in crate::store) fn db_path(root: &Path) -> PathBuf {
     root.join(DB_FILE)
 }
 
+/// Convert one SQLite column value to the JSON shape `scribe export --as jsonl` writes.
+pub(super) fn export_sql_value(value: Sql) -> Value {
+    match value {
+        Sql::Null => Value::Null,
+        Sql::Integer(n) => Value::Number(n.into()),
+        Sql::Real(f) => serde_json::Number::from_f64(f).map_or(Value::Null, Value::Number),
+        Sql::Text(s) => Value::String(s),
+        Sql::Blob(b) => Value::String(String::from_utf8_lossy(&b).into_owned()),
+    }
+}
+
 /// Every table's rows as JSON objects, for `scribe export --as jsonl`:
 /// `(table, row)` in table order, then row order. Reads only.
 pub(in crate::store) fn export_rows(
@@ -834,15 +845,7 @@ pub(in crate::store) fn export_rows(
         while let Some(row) = rows.next().map_err(err)? {
             let mut obj = Map::new();
             for (i, name) in names.iter().enumerate() {
-                let value = match row.get::<_, Sql>(i).map_err(err)? {
-                    Sql::Null => Value::Null,
-                    Sql::Integer(n) => Value::Number(n.into()),
-                    Sql::Real(f) => {
-                        serde_json::Number::from_f64(f).map_or(Value::Null, Value::Number)
-                    }
-                    Sql::Text(s) => Value::String(s),
-                    Sql::Blob(b) => Value::String(String::from_utf8_lossy(&b).into_owned()),
-                };
+                let value = export_sql_value(row.get::<_, Sql>(i).map_err(err)?);
                 obj.insert(name.clone(), value);
             }
             out.push((table, Value::Object(obj)));

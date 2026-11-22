@@ -205,3 +205,115 @@ fn jsonl_export_reads_phase_six_database_with_no_live_files() {
     assert_eq!(err["code"], "export_needs_migrate", "{err}");
     assert!(!blocked.exists());
 }
+
+#[test]
+fn jsonl_export_includes_pending_and_already_drained_spooled_audit_once() {
+    let fx = Fixture::new();
+    fx.seed();
+    let control = fx.root().join("control.json");
+    let text_now = std::fs::read_to_string(&control).unwrap();
+    std::fs::write(
+        &control,
+        text_now.replace(
+            r#"{"on": true, "since": "2026-11-02T18:55:00Z", "due": true"#,
+            r#"{"on": false, "since": "2026-11-02T18:55:00Z", "due": false"#,
+        ),
+    )
+    .unwrap();
+    make_private(&control);
+    fx.ok(&["store", "migrate", "--json"]);
+
+    // Hold a writer lock on scribe.db so a failing audited command spools.
+    let conn = rusqlite::Connection::open(fx.root().join("scribe.db")).unwrap();
+    conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let failed = fx.run(&[
+        "tag",
+        "add",
+        "notes",
+        "--author",
+        "user",
+        "--description",
+        "Agent notes",
+        "--json",
+    ]);
+    assert_eq!(failed.status.code(), Some(1), "{}", text(&failed.stderr));
+
+    let spool_dir = fx.root().join("audit-spool");
+    let spool_files: Vec<String> = std::fs::read_dir(&spool_dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(spool_files.len(), 1, "{spool_files:?}");
+    let spool_name = &spool_files[0];
+    let spool_bytes = std::fs::read(spool_dir.join(spool_name)).unwrap();
+
+    let jsonl_pending = fx.elsewhere("jsonl-pending");
+    let out = json(&fx.ok(&[
+        "export",
+        "--as",
+        "jsonl",
+        jsonl_pending.to_str().unwrap(),
+        "--json",
+    ]));
+    assert_eq!(out["audit_lines"], 2, "{out}");
+    let rows: Vec<Value> = std::fs::read_to_string(jsonl_pending.join("audit.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    let spooled_rows: Vec<&Value> = rows
+        .iter()
+        .filter(|r| r["spool"] == spool_name.as_str())
+        .collect();
+    assert_eq!(spooled_rows.len(), 1, "{rows:?}");
+    assert!(spooled_rows[0]["id"].is_null(), "{spooled_rows:?}");
+    assert_eq!(spooled_rows[0]["command"], "tag add");
+    assert_eq!(spooled_rows[0]["status"], "failure");
+
+    // Release the lock and run a write that drains the spool, then leave the
+    // drained spool file on disk as if a crash occurred before cleanup.
+    conn.execute_batch("ROLLBACK").unwrap();
+    drop(conn);
+    let added = fx
+        .cmd(&[
+            "tag",
+            "add",
+            "notes",
+            "--author",
+            "opus",
+            "--description",
+            "Agent notes",
+            "--json",
+        ])
+        .env("GITHUB_TOKEN", "ghp_testtoken123")
+        .output()
+        .unwrap();
+    assert_eq!(added.status.code(), Some(0), "{}", text(&added.stderr));
+    assert_eq!(std::fs::read_dir(&spool_dir).unwrap().count(), 0);
+    let drained_copy = spool_dir.join(spool_name);
+    std::fs::write(&drained_copy, &spool_bytes).unwrap();
+    make_private(&drained_copy);
+
+    let jsonl_drained = fx.elsewhere("jsonl-drained");
+    let out = json(&fx.ok(&[
+        "export",
+        "--as",
+        "jsonl",
+        jsonl_drained.to_str().unwrap(),
+        "--json",
+    ]));
+    assert_eq!(out["audit_lines"], 3, "{out}");
+    let rows: Vec<Value> = std::fs::read_to_string(jsonl_drained.join("audit.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(rows.len(), 3, "{rows:?}");
+    let spooled_rows: Vec<&Value> = rows
+        .iter()
+        .filter(|r| r["spool"] == spool_name.as_str())
+        .collect();
+    assert_eq!(spooled_rows.len(), 1, "{rows:?}");
+    assert!(spooled_rows[0]["id"].is_i64(), "{spooled_rows:?}");
+}

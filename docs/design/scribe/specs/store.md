@@ -408,7 +408,9 @@ line has the session's `s-<n>` as its target.
   `pickups.json`, `audit.jsonl`), which a build reads as a store and moves
   in again unchanged; `--as jsonl` as one `<table>.jsonl` per table, which
   needs every kind with records moved (a phase-6 store with no live
-  record files exports its session tables).
+  record files or pending `audit-spool/` lines exports its session tables),
+  merging any undrained `audit-spool/` lines into `audit.jsonl` (without
+  duplicating a line whose spool file was already drained).
 
 ## Record files
 
