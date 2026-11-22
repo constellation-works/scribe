@@ -108,7 +108,7 @@ fn catalog_starts_only_a_session_with_no_record_and_no_switch() {
         "a /scribe on switch is refused"
     );
 
-    let by = Author::daniel();
+    let by = Author::user();
     control::catalog_on(&mut state, &s, by, T0);
     let switch = state.get(&s).unwrap().clone();
     assert_eq!(switch.since, Some(T0));

@@ -5,7 +5,7 @@ cwd         /work/constellation
 started     2026-10-15T10:00:00Z
 ended       2026-10-16T11:00:00Z
 bytes       372
-daniel_turns 2
+user_turns  2
 first_prompt Backfill the orbit work in codebases/orbit and again codebases/orbit.
 turn 1      Backfill the orbit work in codebases/orbit and again codebases/orbit.
 turn 2      And one more turn about codebases/scribe.

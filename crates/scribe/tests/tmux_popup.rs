@@ -644,7 +644,7 @@ fn the_session_preview_leads_with_title_and_summary_and_puts_the_ids_last() {
     assert!(at("## Goals") < at("## Next"));
     assert!(at("## Next") < at("id         7c2b9d14"));
     assert!(at("id         7c2b9d14") < at("host       dk-server-1"));
-    assert!(at("host       dk-server-1") < at("cwd        /home/daniel/workspace/scribe"));
+    assert!(at("host       dk-server-1") < at("cwd        /home/user/workspace/scribe"));
 }
 
 #[test]

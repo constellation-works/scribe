@@ -222,7 +222,7 @@ fn each_scribe_line_of_the_fixture_prompt_is_a_marker_cataloged_at_stop() {
     assert_eq!(first["status"], "active");
     assert_eq!(first["provider"], "claude-code");
     assert_eq!(first["project"], "scribe", "the cwd's basename outside git");
-    assert_eq!(first["author"]["kind"], "daniel");
+    assert_eq!(first["author"]["kind"], "user");
     assert!(first["review_after"].is_string(), "preferences go stale");
     let cite = &first["cite"];
     assert_eq!(cite["session"], SESSION);
@@ -1036,7 +1036,7 @@ fn store_tag_capture_and_daniel_approval_of_agent_proposal() {
     let recorded = entries(&fx);
     assert_eq!(recorded.len(), 1);
     assert_eq!(recorded[0]["tag"], "notes");
-    assert_eq!(recorded[0]["author"]["kind"], "daniel");
+    assert_eq!(recorded[0]["author"]["kind"], "user");
     fx.ok(&[
         "proposal",
         "add",
@@ -1056,10 +1056,7 @@ fn store_tag_capture_and_daniel_approval_of_agent_proposal() {
     assert_eq!(entries(&fx)[0]["status"], "retired");
     let proposals: Value =
         serde_json::from_slice(&fx.ok(&["proposal", "list", "--json"]).stdout).unwrap();
-    assert_eq!(
-        proposals["proposals"][0]["settled_author"]["kind"],
-        "daniel"
-    );
+    assert_eq!(proposals["proposals"][0]["settled_author"]["kind"], "user");
 }
 
 fn listed(fx: &Fixture, project: &str) -> Vec<Value> {
@@ -1147,10 +1144,10 @@ fn each_marker_records_global_or_the_cwd_project() {
         let entry = by_said(entries, said);
         assert_eq!(entry["tag"], "preferences");
         assert_eq!(entry["project"], project);
-        assert_eq!(entry["author"]["kind"], "daniel");
+        assert_eq!(entry["author"]["kind"], "user");
         let front = frontmatter(&fx, entry);
         assert!(front.contains(&format!("project: {project}")), "{front}");
-        assert!(front.contains("kind: daniel"), "{front}");
+        assert!(front.contains("kind: user"), "{front}");
         assert!(!front.contains("kind: agent"), "{front}");
     }
 }
@@ -1887,7 +1884,7 @@ fn stop_catalogs_a_marked_turn_as_daniels_entry_with_scribes_statement_once() {
     let entry = &stored[0];
     assert_eq!(entry["content"], "Daniel wants short status updates.");
     assert_eq!(entry["quote"], "I always want short status updates");
-    assert_eq!(entry["author"]["kind"], "daniel");
+    assert_eq!(entry["author"]["kind"], "user");
     assert_eq!(
         entry["stated_by"],
         json!({"kind": "scribe", "name": "annotation"})

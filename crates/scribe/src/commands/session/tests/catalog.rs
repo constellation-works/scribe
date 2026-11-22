@@ -379,7 +379,7 @@ fn a_daniel_catalog_switch_is_finished_by_session_catalog_and_keeps_daniel() {
     let old = setup.stamp(time::Duration::hours(25));
     setup.write_at(&[("u-1", &old, &format!("Crews. {DEFINED}."))]);
     // What `/scribe catalog <id>` writes: the switch, no window.
-    let begun = catalog::begin(&setup.ctx, &setup.id(), scribe_core::Author::daniel()).unwrap();
+    let begun = catalog::begin(&setup.ctx, &setup.id(), scribe_core::Author::user()).unwrap();
     assert!(begun.wrote_switch);
     assert!(setup.ctx.store().session(&setup.id()).is_err());
 
@@ -388,10 +388,7 @@ fn a_daniel_catalog_switch_is_finished_by_session_catalog_and_keeps_daniel() {
     assert!(!report.switch_written);
     let view = setup.ctx.store().session(&setup.id()).unwrap();
     assert_eq!(view.record.status, SessionStatus::Final);
-    assert_eq!(
-        view.record.cataloged_by.unwrap().by.kind,
-        AuthorKind::Daniel
-    );
+    assert_eq!(view.record.cataloged_by.unwrap().by.kind, AuthorKind::User);
     assert!(!view.control.unwrap().on);
 }
 
@@ -400,7 +397,7 @@ fn a_daniel_catalog_switch_is_finished_as_a_catalog_by_an_ordinary_pass() {
     let setup = Setup::new();
     let old = setup.stamp(time::Duration::hours(25));
     setup.write_at(&[("u-1", &old, &format!("Crews. {DEFINED}."))]);
-    catalog::begin(&setup.ctx, &setup.id(), scribe_core::Author::daniel()).unwrap();
+    catalog::begin(&setup.ctx, &setup.id(), scribe_core::Author::user()).unwrap();
 
     let models = fake(Ok(answer()));
     let Output::Pass(report) = super::super::pass::run_with(
@@ -421,10 +418,7 @@ fn a_daniel_catalog_switch_is_finished_as_a_catalog_by_an_ordinary_pass() {
             .iter()
             .all(|segment| segment.origin == scribe_core::SegmentOrigin::Catalog)
     );
-    assert_eq!(
-        view.record.cataloged_by.unwrap().by.kind,
-        AuthorKind::Daniel
-    );
+    assert_eq!(view.record.cataloged_by.unwrap().by.kind, AuthorKind::User);
     let control = view.control.unwrap();
     assert!(!control.on && !control.due);
 }

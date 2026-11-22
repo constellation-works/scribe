@@ -641,7 +641,7 @@ impl NewEntry {
             related: self.related,
             provider: self.provider,
             host: self.host,
-            author: Author::daniel(),
+            author: Author::user(),
             updated_by: None,
             created: self.created,
             updated: self.created,

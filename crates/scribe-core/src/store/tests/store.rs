@@ -1244,7 +1244,7 @@ mod marks {
             panic!("{added:?}")
         };
         assert_eq!(entry.id.to_string(), "preferences-1");
-        assert_eq!(entry.author, crate::Author::daniel());
+        assert_eq!(entry.author, crate::Author::user());
         assert_eq!(entry.stated_by, Some(crate::Author::annotation()));
         assert_eq!(store.entry(&entry.id).unwrap(), *entry);
         let marks = store.marks(&"s-9".parse().unwrap()).unwrap();

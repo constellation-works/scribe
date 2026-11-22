@@ -71,7 +71,7 @@ fn pass_candidate_waits_for_typed_approval_and_keeps_original_user_cite() {
     )
     .unwrap();
     assert_eq!(entry["content"], quote);
-    assert_eq!(entry["author"]["kind"], "daniel");
+    assert_eq!(entry["author"]["kind"], "user");
     assert_eq!(entry["cite"]["message"], "preference-turn");
     assert_eq!(entry["content_from"]["role"], "user");
 
@@ -419,6 +419,12 @@ fn pass_asks_for_standing_preferences_only_and_never_proposes_a_decision() {
     assert_eq!(
         admitted["criteria"],
         "A standing rule from the user that applies beyond the work at hand."
+    );
+    // Stored text never keeps the prompt placeholder (2_design.md §15.8).
+    let stored = std::fs::read_to_string(s.fx.root().join("proposals.json")).unwrap();
+    assert!(
+        !stored.contains("{user}") && !stored.contains("{User}"),
+        "{stored}"
     );
 }
 
@@ -1721,7 +1727,7 @@ fn legacy_control_is_read_without_writes_and_new_retry_state_is_strict() {
     );
     setup.pass();
     let current: Value = serde_json::from_slice(&setup.control_bytes()).unwrap();
-    assert_eq!(current["format"], 22);
+    assert_eq!(current["format"], 23);
     assert_eq!(current["sessions"][ON]["consecutive_failures"], 0);
     assert_eq!(current["sessions"][ON]["retry_after"], Value::Null);
     assert_eq!(current["sessions"][ON]["pending_links"], json!([]));
@@ -1837,7 +1843,7 @@ fn scribe_catalog_in_a_typed_prompt_catalogs_a_past_session_as_daniel() {
     let switch = serde_json::from_str::<Value>(&text).unwrap()["sessions"][NEVER].clone();
     assert_eq!(switch["on"], true);
     assert_eq!(switch["due"], true);
-    assert_eq!(switch["cataloged_by"]["by"]["kind"], "daniel");
+    assert_eq!(switch["cataloged_by"]["by"]["kind"], "user");
     assert!(setup.prompts().is_empty());
     assert!(setup.record(NEVER).is_none());
     let audited = setup.audit_lines();
@@ -1856,7 +1862,7 @@ fn scribe_catalog_in_a_typed_prompt_catalogs_a_past_session_as_daniel() {
     assert_eq!(pass["passes"][0]["result"], "written", "{pass}");
     let record = setup.record(NEVER).unwrap();
     assert_eq!(record["status"], "final", "{record}");
-    assert_eq!(record["cataloged_by"]["by"]["kind"], "daniel", "{record}");
+    assert_eq!(record["cataloged_by"]["by"]["kind"], "user", "{record}");
     let text = std::fs::read_to_string(setup.fx.root().join("control.json")).unwrap();
     let switch = serde_json::from_str::<Value>(&text).unwrap()["sessions"][NEVER].clone();
     assert_eq!(switch["on"], false);
@@ -1977,10 +1983,10 @@ fn a_pass_writes_one_record_of_daniels_terms_and_never_reads_a_session_never_swi
         json!([{"term": "graduate to level 4", "said": DEFINED, "message": "u-1"}])
     );
     assert!(!setup.fx.root().join("entries").exists(), "no entries");
-    // The record is written at format 22: a header and one open segment
+    // The record is written at format 23: a header and one open segment
     // holding this pass's segment text.
     let file = std::fs::read_to_string(setup.record_file()).unwrap();
-    assert!(file.starts_with("---\nformat: 22\n"), "{file}");
+    assert!(file.starts_with("---\nformat: 23\n"), "{file}");
     assert!(file.contains("\n## Log\n### 1. "), "{file}");
     assert!(!file.contains("## Outcome"), "{file}");
     assert_eq!(record["active"], true);
@@ -3200,7 +3206,7 @@ fn candidate_ids_are_reserved_for_approval_and_agent_settlement_is_refused() {
     assert_eq!(denied.status.code(), Some(1));
     assert_eq!(
         serde_json::from_slice::<Value>(&denied.stderr).unwrap()["code"],
-        "daniel_only"
+        "user_only"
     );
     let direct: Value = serde_json::from_slice(
         &s.fx
@@ -3283,7 +3289,7 @@ fn interrupted_candidate_approval_is_replayed_once_from_the_durable_proposal() {
     )
     .unwrap();
     assert_eq!(entry["content"], quote);
-    assert_eq!(entry["author"]["kind"], "daniel");
+    assert_eq!(entry["author"]["kind"], "user");
 }
 
 #[test]
@@ -4134,7 +4140,7 @@ fn a_pass_claim_carries_a_statement_and_subject_and_an_empty_subject_opens_nothi
         entry["stated_by"],
         json!({"kind": "scribe", "name": "session-pass"})
     );
-    assert_eq!(entry["author"]["kind"], "daniel");
+    assert_eq!(entry["author"]["kind"], "user");
     assert_eq!(entry["content_from"]["kind"], "message");
     assert_eq!(entry["content_from"]["role"], "user");
     assert_eq!(entry["content_from"]["message"], "u-1");
@@ -4172,7 +4178,7 @@ fn a_pass_claim_carries_a_statement_and_subject_and_an_empty_subject_opens_nothi
         json!({"kind": "scribe", "name": "annotation"})
     );
     assert_eq!(typed["quote"], words);
-    assert_eq!(typed["author"]["kind"], "daniel");
+    assert_eq!(typed["author"]["kind"], "user");
 }
 
 #[test]
@@ -4206,7 +4212,7 @@ fn a_candidate_from_before_statements_approves_with_its_quote_as_content() {
     assert_eq!(entry["content"], quote);
     assert_eq!(entry["quote"], Value::Null);
     assert_eq!(entry["stated_by"], Value::Null);
-    assert_eq!(entry["author"]["kind"], "daniel");
+    assert_eq!(entry["author"]["kind"], "user");
 }
 
 #[test]
@@ -4413,11 +4419,14 @@ fn the_pass_writes_daniels_idea_itself_as_an_entry_it_authors_with_no_proposal()
         json!({"state": "open", "reason": null, "task": null})
     );
 
-    // Never listed as Daniel's own; listed under the pass's channel.
-    assert_eq!(
-        entries_json(&s, &["--tag", "idea", "--author-kind", "daniel"])["total"],
-        0
-    );
+    // Never listed as the user's own (`daniel` is the kind's name before
+    // format 23, still accepted); listed under the pass's channel.
+    for kind in ["user", "daniel"] {
+        assert_eq!(
+            entries_json(&s, &["--tag", "idea", "--author-kind", kind])["total"],
+            0
+        );
+    }
     assert_eq!(
         entries_json(&s, &["--tag", "idea", "--author-kind", "scribe"])["total"],
         1
@@ -4900,7 +4909,7 @@ fn a_pass_over_a_switched_on_session_writes_memory_items_with_verbatim_occurrenc
     assert!(audit.contains("\"memory:m-1\""), "{audit}");
     let control: Value =
         serde_json::from_slice(&std::fs::read(s.fx.root().join("control.json")).unwrap()).unwrap();
-    assert_eq!(control["format"], 22);
+    assert_eq!(control["format"], 23);
 
     // The same window again appends nothing: the turns are already on the items.
     s.append(
@@ -5179,11 +5188,11 @@ fn an_older_build_cannot_read_a_memory_item_and_a_newer_one_is_refused() {
     let file = s.fx.root().join("memory/m-1.md");
     let original = std::fs::read_to_string(&file).unwrap();
     assert!(
-        original.starts_with("---\nformat: 22\nkind: memory\n"),
+        original.starts_with("---\nformat: 23\nkind: memory\n"),
         "{original}"
     );
 
-    std::fs::write(&file, original.replacen("format: 22", "format: 23", 1)).unwrap();
+    std::fs::write(&file, original.replacen("format: 23", "format: 24", 1)).unwrap();
     let newer = s.run_any(&["memory", "show", "--json"], b"");
     assert_ne!(newer.status.code(), Some(0));
     assert!(
@@ -5196,7 +5205,7 @@ fn an_older_build_cannot_read_a_memory_item_and_a_newer_one_is_refused() {
     // consolidation keys: an older file carrying newer keys is refused,
     // and skipped like any bad file.
     for older in ["format: 20", "format: 19", "format: 18"] {
-        std::fs::write(&file, original.replacen("format: 22", older, 1)).unwrap();
+        std::fs::write(&file, original.replacen("format: 23", older, 1)).unwrap();
         let shown = memory_items(&s, &[]);
         assert_eq!(
             shown["items"].as_array().unwrap().len(),

@@ -149,7 +149,7 @@ fn search_ranks_the_store_reads_only_and_calls_nothing() {
     // Daniel's active entry outranks the session units saying the same.
     assert_eq!(hits[0]["cite"], "decisions-2");
     assert_eq!(hits[0]["kind"], "entry");
-    assert_eq!(hits[0]["author"]["kind"], "daniel");
+    assert_eq!(hits[0]["author"]["kind"], "user");
     assert_eq!(hits[0]["segment"], Value::Null);
     for key in [
         "kind", "cite", "id", "segment", "score", "title", "snippet", "project", "topics",
@@ -298,6 +298,8 @@ fn entry_list_filters_by_topics_related_dates_and_author() {
         ]),
         ["preferences-1", "decisions-1"]
     );
+    assert_eq!(list(&["entry", "list", "--author", "user"]).len(), 4);
+    // The name before format 23 still selects the user's entries.
     assert_eq!(list(&["entry", "list", "--author", "daniel"]).len(), 4);
     assert!(list(&["entry", "list", "--author-kind", "agent"]).is_empty());
     ok(

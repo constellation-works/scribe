@@ -17,9 +17,9 @@ pub(super) fn refusal(kind: WriteRefusal, message: impl Into<String>) -> Error {
     }
 }
 
-/// Refuse a reserved name on an agent-channel write: `daniel`, `scribe`,
-/// `consistency`, `session-pass` and `tag-retired` name Daniel's and
-/// scribe's own channels, so a record
+/// Refuse a reserved name on an agent-channel write: `user` (and `daniel`,
+/// its name before format 23), `scribe`, `consistency`, `session-pass` and
+/// `tag-retired` name the user's and scribe's own channels, so a record
 /// written with one could be mistaken for theirs.
 ///
 /// # Errors
@@ -437,7 +437,7 @@ impl Store {
         if let Some(content) = patching.content {
             if entry.author.kind != AuthorKind::Agent {
                 return Err(refusal(
-                    WriteRefusal::DanielOnly,
+                    WriteRefusal::UserOnly,
                     "The user's content changes only through #scribe",
                 ));
             }
@@ -494,7 +494,7 @@ impl Store {
         let mut entry = self.resolve_entry(id)?;
         if entry.author.kind != AuthorKind::Agent && instruction.is_none() {
             return Err(refusal(
-                WriteRefusal::DanielOnly,
+                WriteRefusal::UserOnly,
                 "The user retires their entries through #scribe retire, or on their instruction with --session and --instruction",
             ));
         }
@@ -709,7 +709,7 @@ impl Store {
             else {
                 // Without an instruction the refusal reads as it always has.
                 return Err(refusal(
-                    WriteRefusal::DanielOnly,
+                    WriteRefusal::UserOnly,
                     if instruction.is_some() {
                         "The user settles candidate proposals through #scribe approve or reject; their reason is scribe's"
                     } else {
@@ -730,7 +730,7 @@ impl Store {
             let mut older = self.entry(&p.older)?;
             if older.author.kind != AuthorKind::Agent {
                 return Err(refusal(
-                    WriteRefusal::DanielOnly,
+                    WriteRefusal::UserOnly,
                     "The user settles proposals about their entries through #scribe approve or reject",
                 ));
             }

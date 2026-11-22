@@ -60,7 +60,7 @@ pub(crate) struct ListArgs {
     #[arg(long, value_name = "ID")]
     pub(crate) entry: Option<String>,
 
-    /// Only proposals opened through this channel: daniel, agent (proposal add) or scribe (consistency or session pass) [default: any]
+    /// Only proposals opened through this channel: user, agent (proposal add) or scribe (consistency or session pass) [default: any]
     #[arg(long, value_name = "KIND", value_enum)]
     pub(crate) author_kind: Option<AuthorKindArg>,
 }
@@ -79,8 +79,9 @@ pub(crate) enum StateArg {
 /// Who opened a proposal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub(crate) enum AuthorKindArg {
-    // Daniel.
-    Daniel,
+    // The user, through a typed #scribe line.
+    #[value(alias = "daniel")]
+    User,
     // An agent, through proposal add.
     Agent,
     // scribe's consistency routine.
@@ -238,7 +239,7 @@ fn list(args: &ListArgs, ctx: &Context) -> Result<Output, CliError> {
         dates: args.dates.range()?,
         entry,
         author_kind: args.author_kind.map(|k| match k {
-            AuthorKindArg::Daniel => AuthorKind::Daniel,
+            AuthorKindArg::User => AuthorKind::User,
             AuthorKindArg::Agent => AuthorKind::Agent,
             AuthorKindArg::Scribe => AuthorKind::Scribe,
         }),

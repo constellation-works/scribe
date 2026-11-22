@@ -14,7 +14,7 @@ links       continues 0f8e7a52-3c1d-4b6e-9a2f-5d4c3b2a1e01 (Scribe store layout)
 children    -
 provider    claude-code
 host        dk-server-1
-cwd         /home/daniel/workspace/scribe
+cwd         /home/user/workspace/scribe
 started     2026-11-02T18:50:00Z
 on since    2026-11-02T18:55:00Z
 updated     2026-11-02T19:40:00Z

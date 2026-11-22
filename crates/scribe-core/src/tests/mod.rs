@@ -47,7 +47,7 @@ pub(crate) fn entry(id: &str, created: OffsetDateTime) -> Entry {
         related: Vec::new(),
         provider: String::from("claude-code").try_into().unwrap(),
         host: String::from("host").try_into().unwrap(),
-        author: crate::record::Author::daniel(),
+        author: crate::record::Author::user(),
         updated_by: None,
         created,
         updated: created,

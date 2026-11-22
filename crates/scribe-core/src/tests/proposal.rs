@@ -65,7 +65,7 @@ fn close_retired_tag_candidates_closes_only_open_candidates_outside_the_tag_tabl
         settled_by: None,
         author: Author::session_pass(),
         updated_by: None,
-        settled_author: (state != ProposalState::Open).then(Author::daniel),
+        settled_author: (state != ProposalState::Open).then(Author::user),
         closed_reason: None,
         instruction: None,
     };

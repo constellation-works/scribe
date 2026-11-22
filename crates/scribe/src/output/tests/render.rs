@@ -18,8 +18,8 @@ fn entry(id: &str, content: &str) -> EntryPayload {
         provider: String::from("claude-code"),
         host: String::from("host"),
         author: AuthorPayload {
-            kind: "daniel",
-            name: String::from("daniel"),
+            kind: "user",
+            name: String::from("user"),
         },
         updated_by: None,
         created: at,
@@ -93,8 +93,8 @@ fn the_plain_form_is_one_tab_separated_line_per_record_with_text_flattened() {
     assert_eq!(
         lines,
         [
-            "preferences-1\tactive\tscribe\tci,release\t2026-01-02T03:04:05Z\tone two three\tdaniel\t-",
-            "preferences-2\tactive\tscribe\tci,release\t2026-01-02T03:04:05Z\t-\tdaniel\t-",
+            "preferences-1\tactive\tscribe\tci,release\t2026-01-02T03:04:05Z\tone two three\tuser\t-",
+            "preferences-2\tactive\tscribe\tci,release\t2026-01-02T03:04:05Z\t-\tuser\t-",
         ]
     );
 }

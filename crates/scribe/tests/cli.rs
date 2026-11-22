@@ -933,6 +933,6 @@ fn a_format_three_store_reads_and_is_never_rewritten_by_a_read() {
         "the old outcome is kept in the segment"
     );
     let entry = json(&fx.ok(&["entry", "show", "decisions-1", "--json"]).stdout);
-    assert_eq!(entry["author"]["kind"], "daniel");
+    assert_eq!(entry["author"]["kind"], "user");
     assert_eq!(std::fs::read(&path).unwrap(), before);
 }

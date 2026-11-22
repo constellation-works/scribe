@@ -41,7 +41,7 @@ use time::OffsetDateTime;
 
 /// The newest store format: this build reads formats 1 to `FORMAT` of every
 /// document and would write `FORMAT`.
-pub(super) const FORMAT: u32 = 22;
+pub(super) const FORMAT: u32 = 23;
 
 /// Which document an upgrade step is applied to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,6 +90,7 @@ pub(super) const UPGRADES: &[Upgrade] = &[
     memory_consolidation,
     memory_preference_proposal,
     annotations,
+    user_author,
 ];
 
 /// The first format a memory item exists at: `memory/<id>.md` has no older
@@ -118,6 +119,19 @@ pub(super) const ANNOTATIONS_SINCE: u32 = 22;
 /// (`stated_by: {kind: scribe, name: annotation}`, 2_design.md §14.4),
 /// which only a format-22 entry may carry.
 fn annotations(
+    _document: Document,
+    value: serde_json::Value,
+) -> serde_json::Result<serde_json::Value> {
+    Ok(value)
+}
+
+/// Format 22 -> 23 (2_design.md §15.8) renames the user's author channel
+/// from `daniel` to `user`. It changes no stored value here: every
+/// [`Author`] read maps `{kind: daniel, name: daniel}` to [`Author::user`],
+/// in these documents and in the ones outside this registry (issues,
+/// `marks.json`, `pickups.json`, `audit.jsonl`), and the next write
+/// persists `user` at this format, which a format-22 build refuses.
+fn user_author(
     _document: Document,
     value: serde_json::Value,
 ) -> serde_json::Result<serde_json::Value> {
@@ -1683,7 +1697,7 @@ pub(super) fn decode_entry(
                 && said.starts_with(crate::proposal::INSTRUCTED_SAID_PREFIX))
     };
     let valid = match entry.author.kind {
-        crate::AuthorKind::Daniel => {
+        crate::AuthorKind::User => {
             entry.cite.is_some()
                 && entry.content_from != crate::ContentFrom::Agent
                 && match &entry.stated_by {
@@ -2237,11 +2251,12 @@ fn decode_json<T: DeserializeOwned>(path: &Path, bytes: &[u8], document: Documen
                 return Err(shape(path, "unknown variant `covered`"));
             }
         }
-        // Formats 16 to 22 changed no proposal (16 and 18 changed only
-        // entries, 17 and 19 added record kinds, 20 and 21 changed only
-        // memory items, 22 added marks.json and the annotation entry), so
-        // a format-15 to format-21 proposals.json has the current shape.
-        Document::Proposals if (15..=21).contains(&from) => {
+        // Formats 16 to 23 changed no proposal's keys (16 and 18 changed
+        // only entries, 17 and 19 added record kinds, 20 and 21 changed only
+        // memory items, 22 added marks.json and the annotation entry, 23
+        // renamed the user's author value, which `Author` reads either way),
+        // so a format-15 to format-22 proposals.json has the current shape.
+        Document::Proposals if (15..=22).contains(&from) => {
             serde_json::from_slice::<ProposalsDocument>(bytes)
                 .map_err(|e| Error::corrupt(path, e))?;
         }

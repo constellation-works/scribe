@@ -35,10 +35,7 @@ pub(super) fn run(forget: &ForgetIssue, turn: &Turn, ctx: &Context) -> Reply {
         trigger: None,
         request_sha256: Vec::new(),
     };
-    match ctx
-        .store()
-        .forget_issue(target, Author::daniel(), ctx.now())
-    {
+    match ctx.store().forget_issue(target, Author::user(), ctx.now()) {
         Ok((_, true)) => Reply {
             echo: match target.occurrence {
                 Some(_) => format!(

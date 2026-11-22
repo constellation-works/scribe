@@ -101,7 +101,12 @@ pub(crate) fn admission(tags: &TagTable, tag: &TagName, own: &str) -> Option<Adm
     Some(Admitted {
         trigger: fired.trigger,
         matched: fired.matched,
-        criteria: def.capture.criteria.as_ref().map(|c| c.value.clone()),
+        // Stored and shown, so `{user}` reads "the user", never the name.
+        criteria: def
+            .capture
+            .criteria
+            .as_ref()
+            .map(|c| crate::voice::UserName::default().fill(&c.value)),
     })
 }
 
@@ -300,7 +305,7 @@ fn checked_outcome(
                     let message = messages
                         .iter()
                         .find(|m| m.uuid == id && m.role == Speaker::User)?;
-                    let turn = transcript::daniel_turn(message)?;
+                    let turn = transcript::user_turn(message)?;
                     (!said.trim().is_empty()
                         && own_span(&turn.own, said)
                         && message.text().contains(said))
@@ -361,7 +366,7 @@ pub fn candidate_drafts(
             let raw = message.text();
             // The original text check also rejects a span joined across pasted data
             // or a window's truncation marker.
-            let turn = transcript::daniel_turn(message)?;
+            let turn = transcript::user_turn(message)?;
             if !own_span(&turn.own, &answer.quote) || !raw.contains(&answer.quote) {
                 return None;
             }

@@ -10,7 +10,7 @@
   "created": "2026-11-15T00:05:00Z",
   "updated": "2026-11-15T00:05:00Z",
   "said": "",
-  "content": "Daniel suggests caching the routing table per host so lookups stay local.",
+  "content": "The user suggests caching the routing table per host so lookups stay local.",
   "content_from": {
     "kind": "message",
     "role": "user",
@@ -23,7 +23,7 @@
     "at": "2026-11-15T00:00:00Z",
     "prompt_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
     "line": 1,
-    "cwd": "/home/daniel/workspace/scribe"
+    "cwd": "/home/user/workspace/scribe"
   },
   "superseded_by": null,
   "review_after": null,

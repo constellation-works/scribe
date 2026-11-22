@@ -386,7 +386,7 @@ fn approve_takes_a_bare_yes_only_after_a_reply_asking_to_approve_the_id() {
     // instruction does not yet widen what it accepts.
     assert_eq!(
         run(&fx, &settle("yes")),
-        (Some(1), Some(String::from("daniel_only")))
+        (Some(1), Some(String::from("user_only")))
     );
 
     claude(
@@ -566,7 +566,7 @@ fn instructed_retire_hides_daniels_entry_and_keeps_its_text() {
                 "Daniel asked"
             ]
         ),
-        (Some(1), Some(String::from("daniel_only")))
+        (Some(1), Some(String::from("user_only")))
     );
     let out = ok(&fx, &retire("preferences-1", words));
     assert_eq!(text(&out.stderr).trim(), "", "it changed the entry");
@@ -577,7 +577,7 @@ fn instructed_retire_hides_daniels_entry_and_keeps_its_text() {
     assert_eq!(shown["status"], "retired");
     assert_eq!(shown["retirement_reason"], "Daniel asked");
     assert_eq!(shown["content"], PREFERENCE, "retiring keeps the text");
-    assert_eq!(shown["author"]["kind"], "daniel", "it stays his entry");
+    assert_eq!(shown["author"]["kind"], "user", "it stays his entry");
     assert_eq!(shown["updated_by"]["name"], "opus");
     assert_eq!(shown["removal_instruction"]["session"], SESSION);
     assert_eq!(shown["removal_instruction"]["message"], "u-1");
@@ -619,7 +619,7 @@ fn instructed_retire_hides_daniels_entry_and_keeps_its_text() {
 
     let lines = audit_lines(&fx, "entry retire");
     assert_eq!(lines.len(), 2, "one refusal and one change: {lines:?}");
-    assert_eq!(lines[0]["error_code"], "daniel_only");
+    assert_eq!(lines[0]["error_code"], "user_only");
     assert_eq!(lines[1]["status"], "success");
     assert_eq!(lines[1]["target"], "preferences-1");
     let audit = std::fs::read_to_string(fx.root().join("audit.jsonl")).unwrap();
@@ -726,7 +726,7 @@ fn forget_leaves_no_store_file_holding_the_entry_its_quotes_or_the_instruction()
         assert_eq!(shown["id"], id);
         assert_eq!(shown["status"], "forgotten");
         assert_eq!(shown["content"], "");
-        assert_eq!(shown["author"]["kind"], "daniel");
+        assert_eq!(shown["author"]["kind"], "user");
         assert_eq!(shown["updated_by"]["name"], "opus");
         assert_eq!(shown["removal_instruction"]["session"], SESSION);
         assert_eq!(shown["removal_instruction"]["message"], message);
@@ -783,7 +783,7 @@ fn an_instruction_does_not_let_entry_update_change_daniels_content() {
     ];
     assert_eq!(
         run(&fx, &update),
-        (Some(1), Some(String::from("daniel_only")))
+        (Some(1), Some(String::from("user_only")))
     );
     let out = exec(
         &fx,
@@ -793,7 +793,7 @@ fn an_instruction_does_not_let_entry_update_change_daniels_content() {
     assert_eq!(state(&fx), before);
     let lines = audit_lines(&fx, "entry update");
     assert_eq!(lines.len(), 1, "{lines:?}");
-    assert_eq!(lines[0]["error_code"], "daniel_only");
+    assert_eq!(lines[0]["error_code"], "user_only");
 }
 
 /// Daniel's claim the session pass opened as `p-1` (reserving
@@ -903,7 +903,7 @@ fn an_instructed_approval_writes_daniels_reserved_entry_with_the_agent_as_approv
             &fx,
             &["proposal", "settle", "p-1", "--approve", "--author", "opus"]
         ),
-        (Some(1), Some(String::from("daniel_only")))
+        (Some(1), Some(String::from("user_only")))
     );
     assert_eq!(state(&fx), before);
 
@@ -924,7 +924,7 @@ fn an_instructed_approval_writes_daniels_reserved_entry_with_the_agent_as_approv
 
     // His entry, under the id the claim reserved: his cite and words.
     let e = show(&fx, "entry", "preferences-1");
-    assert_eq!(e["author"], json!({"kind": "daniel", "name": "daniel"}));
+    assert_eq!(e["author"], json!({"kind": "user", "name": "user"}));
     assert_eq!(e["content"], CLAIM_STATEMENT);
     assert_eq!(e["quote"], CLAIM_QUOTE);
     assert_eq!(e["cite"]["session"], "s-1");
@@ -954,7 +954,7 @@ fn an_instructed_approval_writes_daniels_reserved_entry_with_the_agent_as_approv
     // instruction's ids, never its words.
     let lines = audit_lines(&fx, "proposal settle");
     assert_eq!(lines.len(), 3, "{lines:?}");
-    assert_eq!(lines[0]["error_code"], "daniel_only");
+    assert_eq!(lines[0]["error_code"], "user_only");
     assert_eq!(lines[0]["instruction_session"], Value::Null);
     assert_eq!(lines[1]["status"], "success");
     assert_eq!(lines[2]["error_code"], "instruction_not_found");
@@ -1045,7 +1045,7 @@ fn an_instruction_does_not_settle_a_proposal_about_daniels_entry() {
         claude(&fx, Some("cli"), &[("u-1", "user", words, 1)]);
         assert_eq!(
             run(&fx, &settle("p-1", act, words)),
-            (Some(1), Some(String::from("daniel_only"))),
+            (Some(1), Some(String::from("user_only"))),
             "{act}"
         );
     }
@@ -1053,7 +1053,7 @@ fn an_instruction_does_not_settle_a_proposal_about_daniels_entry() {
     let lines = audit_lines(&fx, "proposal settle");
     assert_eq!(lines.len(), 2, "{lines:?}");
     for line in &lines {
-        assert_eq!(line["error_code"], "daniel_only");
+        assert_eq!(line["error_code"], "user_only");
         assert_eq!(line["target"], "p-1");
         assert_eq!(line["instruction_session"], SESSION);
         assert_eq!(line["instruction_message"], "u-1");
@@ -1158,7 +1158,7 @@ fn without_an_instruction_a_claim_is_refused_with_the_wording_it_always_had() {
     for act in ["--approve", "--reject"] {
         let (code, err) = refusal(&fx, &["proposal", "settle", "p-1", act, "--author", "opus"]);
         assert_eq!(code, Some(1), "{act}");
-        assert_eq!(err["code"], "daniel_only", "{act}");
+        assert_eq!(err["code"], "user_only", "{act}");
         assert_eq!(
             err["error"], "The user settles candidate proposals through #scribe approve or reject",
             "{act}"

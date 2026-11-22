@@ -5,11 +5,11 @@
     "preference",
     "pref"
   ],
-  "description": "how Daniel likes things done",
+  "description": "how the user likes things done",
   "stale_after_days": 180,
   "action": null,
   "capture": {
-    "from": "daniel",
+    "from": "user",
     "route": "propose",
     "triggers": [
       "always",

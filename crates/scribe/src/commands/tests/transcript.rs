@@ -158,9 +158,9 @@ fn list_filters_by_span_project_turns_and_limit_newest_first() {
     assert_eq!(october[1].project_mentions["orbit"], 2);
     assert_eq!(october[1].project_mentions["scribe"], 0);
     assert_eq!(october[0].project, "scribe");
-    assert_eq!(october[1].daniel_turns, 2);
+    assert_eq!(october[1].user_turns, 2);
     assert_eq!(october[1].first_prompt, "codebases/orbit first");
-    assert!(october[1].daniel_first_turns.is_none());
+    assert!(october[1].user_first_turns.is_none());
 
     let mut narrow = args(day(2026, 10, 1));
     narrow.until = Some(day(2026, 10, 14));
@@ -291,7 +291,7 @@ fn show_prints_the_first_five_turns_and_resolves_a_unique_prefix() {
         panic!("show");
     };
     assert_eq!(row.session, LONG);
-    let turns = row.daniel_first_turns.unwrap();
+    let turns = row.user_first_turns.unwrap();
     assert_eq!(turns.len(), 5);
     assert!(turns.iter().all(|turn| turn.chars().count() == 300));
     assert!(turns[0].starts_with("turn 1 "));

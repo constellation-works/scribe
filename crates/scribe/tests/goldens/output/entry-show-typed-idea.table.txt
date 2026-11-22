@@ -12,9 +12,9 @@ review      -
 superseded  -
 from        the #scribe line
 cite        session 7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02, line 1, message user-idea, at 2026-11-15T00:00:00Z
-cwd         /home/daniel/workspace/scribe
+cwd         /home/user/workspace/scribe
 said        #scribe idea: a dry-run flag for the session pass
-author      daniel
+author      user
 age         <age>
 cancel      none (the user's own line)
 pickups     -

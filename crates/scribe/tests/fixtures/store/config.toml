@@ -1,10 +1,10 @@
-# The fixture store's config: the shipped preferences tag as Daniel declared it,
+# The fixture store's config: the shipped preferences tag as the user declared it,
 # plus one secret name. The store predates the removal of the `decisions` tag:
 # its `decisions-1` and `decisions-2` entries sit under a tag the config no
 # longer names, like `rituals-1`.
 [tags.preferences]
 aliases = ["preference", "pref"]
-description = "how Daniel likes things done"
+description = "how the user likes things done"
 stale_after_days = 180
 
 [models]

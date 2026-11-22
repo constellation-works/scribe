@@ -28,7 +28,7 @@ Author names are attribution, not ownership: any agent may add, update or
 retire an agent note, add or update a tag, and open, update or settle an agent
 proposal, and the record keeps who changed it. Agent notes are separate from
 the human's words. Never claim another agent's name. The human's name and
-scribe's (`daniel`, `scribe`, `consistency`, `session-pass`) are refused on every write; the
+scribe's (`user`, `scribe`, `consistency`, `session-pass`) are refused on every write; the
 human's entries change only in topics and related references, and proposals
 about them are the human's to settle. Catalog a past session
 (`session catalog <id>`) only when asked; the human catalogs as themselves by

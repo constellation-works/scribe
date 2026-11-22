@@ -12,7 +12,7 @@ review      -
 superseded  -
 from        user message user-idea at 2026-11-15T00:00:00Z
 cite        session 7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02, line 1, message user-idea, at 2026-11-15T00:00:00Z
-cwd         /home/daniel/workspace/scribe
+cwd         /home/user/workspace/scribe
 said        -
 author      scribe:session-pass
 stated_by   scribe:session-pass (content is scribe's statement of the user's turn, captured by the session pass (not typed by the user))
@@ -21,4 +21,4 @@ outcome     parked, in the user's words: "let's park it until the drains are qui
 age         <age>
 cancel      none (written by scribe, not an agent)
 pickups     -
-content     Daniel suggests caching the routing table per host so lookups stay local.
+content     The user suggests caching the routing table per host so lookups stay local.

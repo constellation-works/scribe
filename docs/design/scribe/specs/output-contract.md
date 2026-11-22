@@ -17,6 +17,16 @@ ones.
 
 ## Why This Exists
 
+**Format 23 (contract change, 2_design.md §15.8).** The user's author
+channel is `user`, not `daniel`: an author's `kind` (and the user's `name`)
+in `--json`, the plain `author` column, `--author-kind user` (`daniel`
+still accepted), the error code `user_only` (was `daniel_only`), and the
+labels `user_turns`, `user_first_turns`, `USER_TURNS` and `user_asked`
+(were `daniel_turns`, `daniel_first_turns`, `DANIEL_TURNS` and
+`daniel_asked`). The only readers, the skill and the tmux popup, ship in
+the same package. The text below keeps the older tokens where it
+describes formats before 23.
+
 Three readers — Daniel at a terminal, a script in a pipe, an agent through
 a shell tool — need different bytes from the same result, and scripts and
 agents break silently when the machine form drifts.
@@ -40,7 +50,7 @@ is `-`, lists are comma-joined, and timestamps are RFC 3339.
 
 | Command | Columns |
 |---------|---------|
-| `entry list` | `id status project topics created content author age` (`author` is `daniel` or `agent:<name>`; `age` is an action entry's age, `45s`, `12m`, `3h` or `9d`, and `-` for any other entry) |
+| `entry list` | `id status project topics created content author age` (`author` is `user` or `agent:<name>`; `age` is an action entry's age, `45s`, `12m`, `3h` or `9d`, and `-` for any other entry) |
 | `session list` | `id status due project topics updated title` (`due` is `yes` or `no`) |
 | `session list --tree` | `id parent status due project topics updated title` (`parent` is the session the row nests under, its `spawned_from` link else its first `continues` link, or `-`) |
 | `session list --include-inactive` | `id status active due project topics updated title` (`active` is `yes` or `no`); without the flag the columns are unchanged, inactive sessions are left out, and when any matched the notice `<n> inactive session(s) also match and are hidden; --include-inactive lists them` goes to stderr. With `--tree` too, `active` follows `status` |
@@ -48,11 +58,11 @@ is `-`, lists are comma-joined, and timestamps are RFC 3339.
 | `tag list` | `name entries stale_after_days aliases description`, (S12) `source` (`config` or `store`), then `action` (`free` or `ask-first`, with `,quote` when the tag requires a quote), `retired` and `rejected` (counts of agent entries); the last three are `-` for a tag that is not an action tag; (format 11) then `route` (the tag's capture route, `propose`, `write` or `agent`, or `-` when it has no capture rules) |
 | `tag show <tag>` (format 11) | one `<field>\t<value>\t<origin>` line each for `tag`, `source`, `aliases`, `description`, `stale_after_days`, `action` (`free`/`ask-first`, with `,quote`, or `-`), then the capture rules `from`, `route`, `triggers` (quoted, comma separated), `criteria` and `not`; `origin` is `shipped`, `config <file>:<line>` or `none` (an unset rule's value is `-`), and `-` for the first six. The table prints `<field> <value>  (<origin>)` |
 | `scribe search` (S11) | `cite kind score updated title snippet` (`score` to three decimals; the table cuts `title` to 40 characters and fits `snippet` to the width; (ORB-26246) an entry an agent approved on Daniel's instruction ends its snippet, in every mode, with ` \| approved by <agent> on your instruction "<quote>" (<session>, <date>)`) |
-| `issue list`, `issue add\|occur\|update\|move` (format 17) | `id status occurrences projects hosts updated author title` (`author` is `agent:<name>`). `issue show` and every issue write print that row, then `signature\t<a \| b>`, `cause\t<cause>` and `fix\t<fix>`, and for each occurrence, newest first, `occurrence\t<n>\t<date>\t<host>\t<project>\t<session>\t<note>\t<summary>` (`note` is `recurred after fix`, `moved from issue-<n>#<m>`, both joined by `; `, or `-`), `daniel_asked\t<n>\t<request>`, one `agent_evidence\t<n>\t<error line>` per error line, `occurrence_cause\t<n>\t<cause>` and `occurrence_fix\t<n>\t<fix>`. The table detail prints the same as fields, the error lines under `agent_evidence` |
+| `issue list`, `issue add\|occur\|update\|move` (format 17) | `id status occurrences projects hosts updated author title` (`author` is `agent:<name>`). `issue show` and every issue write print that row, then `signature\t<a \| b>`, `cause\t<cause>` and `fix\t<fix>`, and for each occurrence, newest first, `occurrence\t<n>\t<date>\t<host>\t<project>\t<session>\t<note>\t<summary>` (`note` is `recurred after fix`, `moved from issue-<n>#<m>`, both joined by `; `, or `-`), `user_asked\t<n>\t<request>`, one `agent_evidence\t<n>\t<error line>` per error line, `occurrence_cause\t<n>\t<cause>` and `occurrence_fix\t<n>\t<fix>`. The table detail prints the same as fields, the error lines under `agent_evidence` |
 | `issue search` (format 17) | as `scribe search`, every hit of kind `issue` |
 | `memory show` (format 19) | `id section status page seen latest statement` (`page` is `on` or why the item is off it: `merged`, `superseded`, `promoted` (format 20), `retired`, `forgotten`, `section_off`, `decayed`, `past_window`; `seen` counts occurrences; `latest` is the newest occurrence's date; a forgotten statement is `-`). Sorted by section in page order (`now`, `milestones`, `profile`, `projects`, `working`), then id. `memory show <id>`, `ack`, `retire` and `forget` print the row, then one `occurrence\t<n>\t<date>\t<session>\t<message>\t<quote>` line each, newest first (`-` for a forgotten quote); the table prints the item's fields one per line |
 | `issue stats` (audit format 5) | `count value means`: one row each for `fires`, `fires_with_write`, `writes`, `writes_without_fire`, `writes_forgotten`, `writes_moved` and `writes_withdrawn`, then `precision` and `trigger_yield` as `<numerator>/<denominator> (<value to 3 places>)` (`-` with nothing to divide) with `means` `proxy: <what it divides>`. `--json` is `{since, fires, fires_with_write, writes, writes_without_fire, writes_forgotten, writes_moved, writes_withdrawn, precision_proxy, trigger_yield_proxy, skipped_lines}`, each proxy `{numerator, denominator, value, means}` or `null`. Lines of the audit log that did not parse are a stderr warning |
-| `transcript list` *(S14)* | `session project daniel_turns bytes started ended first_prompt` |
+| `transcript list` *(S14)* | `session project user_turns bytes started ended first_prompt` |
 
 Search hits are best first; on a tie entries come before sessions, then
 the newest first (as `ask` ranks); transcripts newest first by
@@ -89,10 +99,10 @@ inactive sessions; --include-hidden shows them`.
 and `--until <date>` (`YYYY-MM-DD`, both days included), `--status`,
 repeated `--topic` (every one must match) and repeated `--related
 <kind:target>` (any may match); `entry list` also `--author <name>` and
-`--author-kind daniel|agent|scribe` (format 16: `scribe` lists the ideas
-the session pass wrote itself; `daniel` never lists them); `proposal list` takes `--state`, `--since`,
+`--author-kind user|agent|scribe` (format 16: `scribe` lists the ideas
+the session pass wrote itself; `user` never lists them); `proposal list` takes `--state`, `--since`,
 `--until`, `--entry <id>` (the older or the newer entry) and
-`--author-kind daniel|agent|scribe`. An entry's day is its `created`, a
+`--author-kind user|agent|scribe`. An entry's day is its `created`, a
 proposal's its `opened_at`; a session matches when its span, `started` to
 `updated`, has a day in the range, and its topics and references are the
 record's and its segments'. A date that does not parse, or `--until`
@@ -112,7 +122,7 @@ are RFC 3339 with offset.
 instruction), `cite` (`{session, message, at, prompt_sha256, line, cwd}`;
 `message` may be `null`), `superseded_by` (an id or `null`),
 `review_after` (`YYYY-MM-DD` or `null`), `author` (`{kind, name}`, `kind`
-`daniel` or `agent`), `updated_by` (an author or `null`) and
+`user` or `agent`), `updated_by` (an author or `null`) and
 `retirement_reason` (text or `null`). (Format 11) `entry show` adds
 `admitted` (the `{trigger, matched, criteria}` of the approved candidate
 proposal that created the entry, or `null`); plain prints it as an
@@ -262,7 +272,7 @@ Daniel's turn: <statement> | Daniel's words: "<quote>"`, each part cut to
 240 characters; format 16: for an idea the pass wrote itself, `scribe's
 statement of Daniel's turn, captured by the session pass (not typed by
 Daniel): <statement> | Daniel's words: "<quote>" | outcome: <outcome>`;
-format 17: an issue's ends `[agent account (<author>); Daniel asked:
+format 17: an issue's ends `[agent account (<author>); the user asked:
 "<newest request>"]`, and its `title` is the issue's title, its `project`
 the newest occurrence's, its `status` the issue's and its `active` `null`),
 `project`, `topics` (a segment's are its session's plus its
@@ -277,7 +287,7 @@ session's `open` or `final`).
 `forgotten`), `signature` (strings), `projects`, `hosts`, `topics`,
 `related` (every occurrence's session and links, `kind:target`), `author`
 and `updated_by` (`{kind: "agent", name}`; `updated_by` may be `null`, and
-is `{kind: "daniel"}` after his `#scribe forget` of the issue or an
+is `{kind: "user"}` after their `#scribe forget` of the issue or an
 occurrence),
 `created`, `updated`, `cause` and `fix` (`cause not found` / `fix not
 found` until known; empty once forgotten), `occurrences` (newest first) and
@@ -301,8 +311,8 @@ typed turns `quote_not_found` (exit 1); `entry add --tag issue` is
 **Transcript** *(S14, `transcripts[]`, `transcript show`)*: `session`,
 `project` (the attributed slug), `project_mentions` (`{"<slug>":
 <count>}`), `cwd`, `started`, `ended` (the last message's time), `bytes`,
-`daniel_turns`, `first_prompt` (at most 300 characters); `transcript show`
-adds `daniel_first_turns` (up to five strings of at most 300 characters).
+`user_turns`, `first_prompt` (at most 300 characters); `transcript show`
+adds `user_first_turns` (up to five strings of at most 300 characters).
 
 **Write verbs** (S12 built; S10 separately): `entry add`, `entry update`, `entry
 retire`, `entry pickup` (format 8; prints the entry it noted), `tag add`, `tag update`, `proposal add`, `proposal update`,
@@ -329,7 +339,8 @@ list columns; table mode shows settlement metadata. Proposal writes use the
 proposal-list item shape, including the additive `updated_by` author.
 Entry writes use the entry-show shape, with `cite: null` and
 `content_from.kind: agent` for an agent note. Every write requires
-`--author`; the name `daniel` still records kind `agent`.
+`--author`, and a reserved name (`user`, `daniel`, `scribe`, `consistency`,
+`session-pass`, `tag-retired`) is refused.
 
 For retrieval with any agent evidence, checked quotes and source labels
 form the answer and claim text; model-written attribution prose is not
@@ -374,7 +385,7 @@ Stable codes: `entry_not_found`, `session_not_found`, `io_error`,
 `output_error`, `usage_error`, `hook_payload_invalid`,
 `segment_not_found`, `sealed_segment_changed`, `confirm_required`,
 `transcript_missing`, `session_busy` (exit 1), (S11) `id_ambiguous` (exit 2;
-the message lists up to ten candidates, sorted, and how many more), `daniel_only`, `reserved_author`, `tag_not_found`, `tag_conflict`, `tag_configured`,
+the message lists up to ten candidates, sorted, and how many more), `user_only`, `reserved_author`, `tag_not_found`, `tag_conflict`, `tag_configured`,
 `proposal_not_found`, `proposal_settled`, `entry_not_active`,
 (S12) `invalid_text`, `invalid_topics`, (format 8) `quote_required`,
 `quote_not_found`, `not_action_tag`, `cancel_window`, (§12, `--session` with

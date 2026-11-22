@@ -66,7 +66,7 @@ quotes, what is never kept) stays fixed in code
 scribe entry list                       # a table on a terminal, tab-separated lines in a pipe
 scribe entry list --tag preferences --status active
 scribe entry list --project constellation-works/scribe --topic release
-scribe entry list --since 2026-11-01 --author-kind daniel --related task:<id>
+scribe entry list --since 2026-11-01 --author-kind user --related task:<id>
 scribe entry list --json | jq -r '.entries[].content'
 scribe entry show <id>                  # or a unique prefix of at least four characters
 scribe entry add --tag preferences --author opus 'Keep the API stable.'
@@ -117,7 +117,7 @@ user owns or could write, a linked file and a record from a newer build are
 refused. List, show, search and question commands only read: they take no lock
 and write nothing, including audit lines. Direct agent writes, session
 passes and rebuilds, `session deactivate` and `session activate`, and consistency scans are audited. Each direct write
-requires `--author` and records kind `agent`, even for the name `daniel`.
+requires `--author` and records kind `agent`; the reserved names (`user`, `scribe`, `consistency`, `session-pass`, `tag-retired`) are refused.
 Agents may annotate the user's topics and references, but cannot replace their
 content or settle proposals about their entries; the user settles those through
 `#scribe`. Only on their checked instruction (`--session` and `--instruction`,

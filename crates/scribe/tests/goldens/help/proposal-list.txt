@@ -7,7 +7,7 @@ Options:
       --since <DATE>        Only records on or after this day, YYYY-MM-DD [default: no lower bound]
       --until <DATE>        Only records on or before this day, YYYY-MM-DD [default: no upper bound]
       --entry <ID>          Only proposals about this entry, as the older or the newer one: its id or a unique prefix (at least four characters) [default: any]
-      --author-kind <KIND>  Only proposals opened through this channel: daniel, agent (proposal add) or scribe (consistency or session pass) [default: any] [possible values: daniel, agent, scribe]
+      --author-kind <KIND>  Only proposals opened through this channel: user, agent (proposal add) or scribe (consistency or session pass) [default: any] [possible values: user, agent, scribe]
   -h, --help                Print help
   -V, --version             Print version
 

@@ -1,6 +1,6 @@
 [package]
 name = "scribe"
-description = "Keep Daniel's marked preferences and his opted-in session records, and answer from them."
+description = "Keep the user's marked preferences and opted-in session records, and answer from them."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

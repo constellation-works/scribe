@@ -61,11 +61,11 @@ fn list_and_show_read_a_read_only_root_and_a_missing_catalog_is_not_found() {
     assert_eq!(list["transcripts"][0]["session"], SESSION);
     assert_eq!(list["transcripts"][0]["project"], "orbit");
     assert_eq!(list["transcripts"][0]["project_mentions"]["orbit"], 2);
-    assert_eq!(list["transcripts"][0]["daniel_turns"], 1);
-    assert!(list["transcripts"][0].get("daniel_first_turns").is_none());
+    assert_eq!(list["transcripts"][0]["user_turns"], 1);
+    assert!(list["transcripts"][0].get("user_first_turns").is_none());
 
     let show = serde_json::from_slice::<serde_json::Value>(&shown.stdout).unwrap();
-    assert_eq!(show["daniel_first_turns"].as_array().unwrap().len(), 1);
+    assert_eq!(show["user_first_turns"].as_array().unwrap().len(), 1);
 
     let missing = fx.run(&[
         "session",

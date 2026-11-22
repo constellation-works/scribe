@@ -205,7 +205,7 @@ fn daniel_guards_preserve_records_but_allow_metadata_and_open_proposals() {
     ] {
         let out = fx.run(&args);
         assert_eq!(out.status.code(), Some(1));
-        assert_eq!(json(&out.stderr)["code"], "daniel_only");
+        assert_eq!(json(&out.stderr)["code"], "user_only");
         assert_eq!(
             std::fs::read(fx.root().join("entries/decisions/decisions-2.md")).unwrap(),
             before
@@ -233,7 +233,7 @@ fn daniel_guards_preserve_records_but_allow_metadata_and_open_proposals() {
         let out = fx.run(&[
             "proposal", "settle", id, action, "--author", "opus", "--json",
         ]);
-        assert_eq!(json(&out.stderr)["code"], "daniel_only");
+        assert_eq!(json(&out.stderr)["code"], "user_only");
         assert_eq!(
             std::fs::read(fx.root().join("proposals.json")).unwrap(),
             before
@@ -252,7 +252,7 @@ fn daniel_guards_preserve_records_but_allow_metadata_and_open_proposals() {
         ])
         .stdout,
     );
-    assert_eq!(updated["author"]["kind"], "daniel");
+    assert_eq!(updated["author"]["kind"], "user");
     assert_eq!(updated["updated_by"]["kind"], "agent");
     assert!(
         updated["topics"]
@@ -773,7 +773,7 @@ fn refused_writes_audit_the_target_and_author_but_never_the_arguments() {
     ];
     for (args, _, _) in &refusals {
         let out = fx.run(args);
-        assert_eq!(json(&out.stderr)["code"], "daniel_only");
+        assert_eq!(json(&out.stderr)["code"], "user_only");
     }
     let audit = std::fs::read_to_string(fx.root().join("audit.jsonl")).unwrap();
     let lines: Vec<serde_json::Value> = audit
@@ -784,7 +784,7 @@ fn refused_writes_audit_the_target_and_author_but_never_the_arguments() {
     for (line, (_, command, target)) in refused.iter().zip(&refusals) {
         assert_eq!(line["command"], *command);
         assert_eq!(line["status"], "failure");
-        assert_eq!(line["error_code"], "daniel_only");
+        assert_eq!(line["error_code"], "user_only");
         assert_eq!(line["target"], *target);
         assert_eq!(line["author"], "opus");
     }
@@ -823,6 +823,7 @@ fn a_session_id_that_resolves_to_no_record_leaves_the_audit_target_null() {
 fn reserved_author_names_are_refused_on_every_agent_write() {
     let fx = Fixture::new();
     for name in [
+        "user",
         "daniel",
         "scribe",
         "consistency",

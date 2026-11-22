@@ -1,2 +1,2 @@
-SESSION                               PROJECT  DANIEL_TURNS  BYTES  STARTED               ENDED                 FIRST_PROMPT
-c0ffee00-1111-4222-8333-444455556666  orbit               2    372  2026-10-15T10:00:00Z  2026-10-16T11:00:00Z  Backfill the orbit work in codebases/orbit and again codebases/orbit.
+SESSION                               PROJECT  USER_TURNS  BYTES  STARTED               ENDED                 FIRST_PROMPT
+c0ffee00-1111-4222-8333-444455556666  orbit             2    372  2026-10-15T10:00:00Z  2026-10-16T11:00:00Z  Backfill the orbit work in codebases/orbit and again codebases/orbit.

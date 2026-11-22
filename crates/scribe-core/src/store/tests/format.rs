@@ -384,7 +384,10 @@ fn a_format_ten_store_upgrades_with_null_admission_and_closed_reason_only() {
         }
     }
     value["format"] = serde_json::json!(10);
-    let original: serde_json::Value = serde_json::from_str(&old).unwrap();
+    let mut original: serde_json::Value = serde_json::from_str(&old).unwrap();
+    // Format 23 renames the user's author value, which the read maps.
+    original["proposals"][1]["settled_author"] =
+        serde_json::json!({"kind": "user", "name": "user"});
     assert_eq!(value, original);
 
     let stray = old.replace(
@@ -792,7 +795,7 @@ fn a_log_whose_body_and_metadata_disagree_is_corrupt_naming_the_file() {
 #[test]
 fn the_activity_and_author_fields_round_trip() {
     let mut original = session(&two_segments()).unwrap();
-    let daniel = crate::record::Author::daniel();
+    let daniel = crate::record::Author::user();
     let at = time::macros::datetime!(2026-11-02 08:00 UTC);
     original.active = false;
     original.keep_active = true;
@@ -819,7 +822,7 @@ fn the_activity_and_author_fields_round_trip() {
     let bytes = crate::store::format::encode_entry(Path::new(ENTRY), &e).unwrap();
     let back = entry(&String::from_utf8(bytes).unwrap()).unwrap();
     assert_eq!(back, e);
-    assert_eq!(back.author.to_string(), "daniel:daniel");
+    assert_eq!(back.author.to_string(), "user:user");
     assert_eq!(back.updated_by.unwrap().to_string(), "scribe:consistency");
 }
 
@@ -851,7 +854,7 @@ fn a_session_the_writer_cannot_keep_apart_is_refused() {
 #[test]
 fn legacy_entries_proposals_and_control_gain_their_authors() {
     let e = entry(&entry_text("")).unwrap();
-    assert_eq!(e.author, crate::record::Author::daniel());
+    assert_eq!(e.author, crate::record::Author::user());
     assert_eq!(e.updated_by, None);
     let current = entry_text("").replacen("format: 1", &format!("format: {FORMAT}"), 1);
     assert!(corrupt_message(&entry(&current).unwrap_err()).contains("author"));
@@ -868,10 +871,7 @@ fn legacy_entries_proposals_and_control_gain_their_authors() {
         assert_eq!(p.author, crate::record::Author::consistency());
     }
     assert_eq!(list[0].settled_author, None, "open: not settled");
-    assert_eq!(
-        list[1].settled_author,
-        Some(crate::record::Author::daniel())
-    );
+    assert_eq!(list[1].settled_author, Some(crate::record::Author::user()));
 
     let control = br#"{"format":3,"sessions":{"s-1":{"on":true,"since":null,"due":false,
         "final":false,"consecutive_failures":0,"retry_after":null,"pending_links":[]}}}"#;
@@ -1163,7 +1163,7 @@ fn instructed_entry_fields_round_trip_and_refuse_contradictions() {
 
     // Non-agent `approved_by` is refused.
     let mut daniel_approved = e;
-    daniel_approved.approved_by = Some(crate::Author::daniel());
+    daniel_approved.approved_by = Some(crate::Author::user());
     let bytes = crate::store::format::encode_entry(Path::new(ENTRY), &daniel_approved).unwrap();
     corrupt_message(&entry(&String::from_utf8(bytes).unwrap()).unwrap_err());
 
@@ -1876,7 +1876,7 @@ fn a_stated_entry_is_daniels_with_his_quote_and_contradictions_are_refused() {
     assert_eq!(e.content, statement);
     assert_eq!(e.quote.as_deref(), Some("ok, short updates please"));
     assert_eq!(e.stated_by, Some(crate::Author::session_pass()));
-    assert_eq!(e.author, crate::Author::daniel());
+    assert_eq!(e.author, crate::Author::user());
     let encoded = crate::store::format::encode_entry(Path::new(ENTRY), &e).unwrap();
     assert_eq!(entry(std::str::from_utf8(&encoded).unwrap()).unwrap(), e);
     // Forgotten: blank, its quote cleared, `stated_by` kept.
@@ -2015,7 +2015,7 @@ fn an_instructed_approval_entry_rereads_at_format_15_and_is_refused_at_14() {
         );
         assert_eq!(e.instruction, proposal.instruction);
         let kind = if role == "user" {
-            crate::AuthorKind::Daniel
+            crate::AuthorKind::User
         } else {
             crate::AuthorKind::Agent
         };
@@ -2435,7 +2435,7 @@ fn a_format_twenty_one_store_upgrades_unchanged_and_only_format_twenty_two_admit
     let current = at_twenty_one.replacen("format: 21\n", &format!("format: {FORMAT}\n"), 1);
     let annotation = entry(&current).unwrap();
     assert_eq!(annotation.stated_by, Some(crate::Author::annotation()));
-    assert_eq!(annotation.author, crate::Author::daniel());
+    assert_eq!(annotation.author, crate::Author::user());
     assert_eq!(annotation.quote.as_deref(), Some("I want short updates"));
     // It needs his quote, his message, and no approval.
     corrupt_message(
@@ -2486,4 +2486,83 @@ fn marks_json_is_new_at_format_twenty_two_and_holds_consistent_outcomes() {
     assert!(decode_marks(path, &doc(FORMAT, &inconsistent)).is_err());
     let stray = entry_mark.replace(r#""attempts":1"#, r#""attempts":1,"quote":"words""#);
     assert!(decode_marks(path, &doc(FORMAT, &stray)).is_err());
+}
+
+#[test]
+fn a_format_22_store_reads_the_daniel_author_as_the_user_and_writes_user() {
+    // 2_design.md §15.8: before format 23 the user's channel was stored as
+    // `{kind: daniel, name: daniel}`. It reads as `Author::user()` in every
+    // document, and the next write persists `user` at format 23.
+    let legacy = serde_json::json!({"kind": "daniel", "name": "daniel"});
+    let user = crate::record::Author::user();
+
+    let current = entry(&entry_text("")).unwrap();
+    let encoded = crate::store::format::encode_entry(Path::new(ENTRY), &current).unwrap();
+    let encoded = String::from_utf8(encoded).unwrap();
+    let (front, _) = split_frontmatter(Path::new(ENTRY), encoded.as_bytes()).unwrap();
+    let mut front: serde_json::Value = yaml_serde::from_str(front).unwrap();
+    assert_eq!(front["format"], serde_json::json!(FORMAT));
+    assert_eq!(
+        front["author"],
+        serde_json::json!({"kind": "user", "name": "user"})
+    );
+    front["format"] = serde_json::json!(22);
+    front["author"] = legacy.clone();
+    let body = encoded.split_once("\n---\n").unwrap().1;
+    let v22 = format!("---\n{}---\n{body}", yaml_serde::to_string(&front).unwrap());
+    let read = entry(&v22).unwrap();
+    assert_eq!(read.author, user);
+    assert_eq!(read, current);
+
+    // A settled proposal, written at the current format and rewound to 22.
+    let legacy_doc = br#"{"format":3,"proposals":[
+        {"id":"p-2","kind":"stale","older":"preferences-1","newer":null,"reason":"r",
+         "quotes":[{"entry":"preferences-1","text":"t"}],"state":"rejected",
+         "opened_at":"2026-11-01T10:00:00Z","settled_at":"2026-11-01T11:00:00Z","settled_by":null}]}"#;
+    let list = decode_proposals(Path::new("proposals.json"), legacy_doc).unwrap();
+    let encoded =
+        crate::store::format::encode_proposals(Path::new("proposals.json"), &list).unwrap();
+    let mut doc: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+    assert_eq!(doc["format"], serde_json::json!(FORMAT));
+    assert_eq!(
+        doc["proposals"][0]["settled_author"],
+        serde_json::json!({"kind": "user", "name": "user"})
+    );
+    doc["format"] = serde_json::json!(22);
+    doc["proposals"][0]["settled_author"] = legacy.clone();
+    let read = decode_proposals(Path::new("proposals.json"), doc.to_string().as_bytes()).unwrap();
+    assert_eq!(read, list);
+    assert_eq!(read[0].settled_author, Some(user.clone()));
+
+    // Documents outside the upgrade registry read through the same
+    // `Author`: an agent named `daniel` stays an agent.
+    let author: crate::record::Author = serde_json::from_value(legacy).unwrap();
+    assert_eq!(author, user);
+    let agent: crate::record::Author =
+        serde_json::from_value(serde_json::json!({"kind": "agent", "name": "daniel"})).unwrap();
+    assert_eq!(agent.kind, crate::AuthorKind::Agent);
+    assert_eq!(agent.name.as_str(), "daniel");
+    // An unknown field is still refused.
+    assert!(
+        serde_json::from_value::<crate::record::Author>(
+            serde_json::json!({"kind": "user", "name": "user", "x": 1})
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn an_issue_file_writes_the_generic_request_line_and_still_reads_the_old_one() {
+    let path = Path::new("issues/issue-1.md");
+    let issue = crate::tests::sample_issue();
+    let bytes = crate::store::issue_file::encode_issue(path, &issue).unwrap();
+    let text = String::from_utf8(bytes).unwrap();
+    let line = "**The user asked:** \"why does the drain fail\"";
+    assert!(text.lines().any(|l| l == line), "{text}");
+    let before_23 = text.replace("**The user asked:**", "**Daniel asked:**");
+    for text in [&text, &before_23] {
+        let read =
+            crate::store::issue_file::decode_issue(path, text.as_bytes(), "issue-1").unwrap();
+        assert_eq!(read, issue);
+    }
 }

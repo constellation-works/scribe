@@ -526,7 +526,7 @@ pub fn check(
                 .iter()
                 .find(|m| m.uuid == answer.message)
                 .ok_or(CheckRefusal::NotVerbatim)?;
-            let own = crate::transcript::daniel_turn(message)
+            let own = crate::transcript::user_turn(message)
                 .map(|turn| turn.own)
                 .ok_or(CheckRefusal::NotVerbatim)?;
             if !crate::pass::own_marked_span(&own, quote)

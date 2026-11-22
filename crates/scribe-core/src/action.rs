@@ -20,7 +20,7 @@
 use crate::entry::{Entry, EntryId, EntryStatus, TagName};
 use crate::record::{Author, AuthorKind, Related};
 use crate::tag::TagTable;
-use crate::transcript::{Message, daniel_turns};
+use crate::transcript::{Message, user_turns};
 use crate::verbatim;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -149,7 +149,7 @@ pub fn tag_counts(
 /// pasted blocks, harness wrappers and `/scribe` lines left out.
 #[must_use]
 pub fn quote_found(messages: &[Message], quote: &str) -> bool {
-    daniel_turns(messages)
+    user_turns(messages)
         .iter()
         .any(|turn| verbatim::contains(&turn.own, quote))
 }

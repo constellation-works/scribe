@@ -284,7 +284,7 @@ fn an_action_line_keeps_the_turns_since_the_last_scribe_line_and_a_memory_line_n
     let standard = entry(&fx, "standard-1", &[]);
     assert_eq!(standard["window"], Value::Null, "left out unless asked");
     assert_eq!(standard["window_turns"], 4);
-    assert_eq!(standard["author"]["kind"], "daniel");
+    assert_eq!(standard["author"]["kind"], "user");
     assert_eq!(
         standard["said"],
         "#scribe standard: name the unit in every size"
@@ -322,7 +322,7 @@ fn an_action_line_keeps_the_turns_since_the_last_scribe_line_and_a_memory_line_n
     let plain = text(&fx.ok(&["entry", "list", "--tag", "standard"]).stdout);
     let fields: Vec<&str> = plain.trim_end().split('\t').collect();
     assert_eq!(fields[0], "standard-1");
-    assert_eq!(fields[6], "daniel");
+    assert_eq!(fields[6], "user");
     assert_ne!(fields[7], "-", "an action entry shows its age");
     assert!(!plain.contains("Bytes, then?"));
 }

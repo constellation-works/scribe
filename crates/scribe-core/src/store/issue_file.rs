@@ -45,7 +45,9 @@ const FIRST_FORMAT: u32 = 17;
 const CAUSE: &str = "## Cause";
 const FIX: &str = "## Fix";
 const OCCURRENCES: &str = "## Occurrences";
-const ASKED: &str = "**Daniel asked:** \"";
+const ASKED: &str = "**The user asked:** \"";
+/// The request line's opening before format 23, still read.
+const ASKED_BEFORE_23: &str = "**Daniel asked:** \"";
 const ERRORS: &str = "**Error lines (agent evidence):**";
 const ERROR_INDENT: &str = "    ";
 const OCCURRENCE_CAUSE: &str = "**Cause:** ";
@@ -212,16 +214,16 @@ pub(super) fn decode_issue(path: &Path, bytes: &[u8], expected: &str) -> Result<
     }
     let status: IssueStatus = front.status.parse().map_err(|e: String| shape(path, e))?;
     let agent = |a: &Author| a.kind == AuthorKind::Agent;
-    // Daniel changes an issue only by forgetting it or an occurrence.
+    // The user changes an issue only by forgetting it or an occurrence.
     if !agent(&front.author)
         || front
             .updated_by
             .as_ref()
-            .is_some_and(|a| !agent(a) && a.kind != AuthorKind::Daniel)
+            .is_some_and(|a| !agent(a) && a.kind != AuthorKind::User)
     {
         return Err(shape(
             path,
-            "an issue's author must be an agent, and updated_by an agent or daniel",
+            "an issue's author must be an agent, and updated_by an agent or the user",
         ));
     }
     let (cause, fix, texts) = split_body(path, body)?;
@@ -429,12 +431,13 @@ fn fill(path: &Path, o: &mut Occurrence, lines: &[&str]) -> Result<()> {
         Some((last, before)) => {
             let request = last
                 .strip_prefix(ASKED)
+                .or_else(|| last.strip_prefix(ASKED_BEFORE_23))
                 .and_then(|r| r.strip_suffix('"'))
-                .ok_or_else(|| bad("missing Daniel's request line"))?;
+                .ok_or_else(|| bad("missing the user's request line"))?;
             rest = before;
             request.to_owned()
         }
-        None => return Err(bad("missing Daniel's request line")),
+        None => return Err(bad("missing the user's request line")),
     };
     let summary = rest.join("\n");
     if summary.trim().is_empty() || request.trim().is_empty() {

@@ -20,7 +20,7 @@ session     7e2d4c1a-9b3f-4e8d-a6c5-1f0e2d3c4b5a
 message     u-1
 author      agent:opus
 summary     The drain stopped when the GitHub API refused pushes.
-daniel_asked "the drain is failing again, look into it"
+user_asked  "the drain is failing again, look into it"
 agent_evidence -
 cause       cause not found
 fix         Paused the drain for an hour
@@ -32,7 +32,7 @@ session     7e2d4c1a-9b3f-4e8d-a6c5-1f0e2d3c4b5a
 message     u-1
 author      agent:opus
 summary     The drain stopped when the GitHub API refused pushes.
-daniel_asked "can you investigate why the drain keeps failing"
+user_asked  "can you investigate why the drain keeps failing"
 agent_evidence HTTP 429: You have exceeded a secondary rate limit
 cause       cause not found
 fix         Paused the drain for an hour

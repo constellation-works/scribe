@@ -1,4 +1,4 @@
-preferences-2	active	constellation-works/scribe	-	2026-11-15T00:05:00Z	Daniel prefers that session records keep the whole session's history in an append-only log rather than one rewritten outcome.	daniel	-
+preferences-2	active	constellation-works/scribe	-	2026-11-15T00:05:00Z	The user prefers that session records keep the whole session's history in an append-only log rather than one rewritten outcome.	user	-
 stated_by	scribe:session-pass	ok that makes sense. then let's keep the whole history in an append-only log, not one rewritten outcome.
 approved	approved by opus on your instruction "approve p-5, that is how session records should work" (9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c03, 2026-11-15)
 admitted	let's keep	let's keep	A standing rule from the user that applies beyond the work at hand.

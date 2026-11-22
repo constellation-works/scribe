@@ -152,7 +152,7 @@ fn author_and_author_kind_select_the_writer() {
     };
     assert!(by_kind.matches(&agent) && !by_kind.matches(&daniel));
     let by_name = EntryFilter {
-        author: Some("daniel".parse().unwrap()),
+        author: Some("user".parse().unwrap()),
         ..EntryFilter::default()
     };
     assert!(by_name.matches(&daniel) && !by_name.matches(&agent));
