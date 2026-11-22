@@ -215,6 +215,72 @@ fn a_call_is_bounded_at_thirty_seconds() {
     assert_eq!(request.marks[0].hint.as_deref(), Some("preferences"));
 }
 
+#[test]
+fn request_omits_handoff_and_check_refuses_handoff_and_handoff_hints() {
+    let tags = TagTable::defaults();
+    let request = annotation::request(&[], Vec::new(), &tags, "m", crate::voice::Voice::default());
+    let listed: Vec<&str> = request.tags.iter().map(|t| t.name.as_str()).collect();
+    assert_eq!(listed, ["preferences", "standard"]);
+    assert!(
+        !request.prompt().contains("\n- handoff:"),
+        "{}",
+        request.prompt()
+    );
+
+    // Unhinted marker whose model answer picks `handoff`.
+    let unhinted_text = "Please write a handoff before we pause #scribe";
+    let unhinted_turn = message("u-1", Speaker::User, unhinted_text);
+    let unhinted_mark = &annotation::marks(unhinted_text)[0];
+    assert_eq!(
+        annotation::check(
+            unhinted_mark,
+            &entry_answer("Please write a handoff before we pause", "handoff"),
+            &[&unhinted_turn],
+            &tags,
+        ),
+        Err(CheckRefusal::WrongTag)
+    );
+
+    // Hinted `#scribe handoff` (both inline and line-start forms) cannot become a handoff or fall back to another tag.
+    for hinted_text in [
+        "#scribe handoff: save where we stopped in this session",
+        "#scribe add this to handoff",
+    ] {
+        let turn = message("u-1", Speaker::User, hinted_text);
+        let mark = &annotation::marks(hinted_text)[0];
+        let quote = hinted_text
+            .trim_start_matches("#scribe ")
+            .trim_start_matches("handoff: ");
+        for answer_tag in ["handoff", "preferences"] {
+            assert_eq!(
+                annotation::check(mark, &entry_answer(quote, answer_tag), &[&turn], &tags,),
+                Err(CheckRefusal::WrongTag),
+                "{hinted_text} -> {answer_tag}"
+            );
+        }
+    }
+
+    // Configured alias of `handoff` is refused too.
+    let aliased = crate::config::Config::parse("[tags.handoff]\naliases = [\"ho\"]\n")
+        .unwrap()
+        .tags;
+    let aliased_text = "#scribe ho: save where we stopped in this session";
+    let aliased_turn = message("u-1", Speaker::User, aliased_text);
+    let aliased_mark = &annotation::marks(aliased_text)[0];
+    for answer_tag in ["ho", "handoff", "preferences"] {
+        assert_eq!(
+            annotation::check(
+                aliased_mark,
+                &entry_answer("save where we stopped in this session", answer_tag),
+                &[&aliased_turn],
+                &aliased,
+            ),
+            Err(CheckRefusal::WrongTag),
+            "{answer_tag}"
+        );
+    }
+}
+
 // --- checks after the answer (§14.3) --------------------------------------
 
 const TYPED: &str = "I always want short status updates #scribe preferences";

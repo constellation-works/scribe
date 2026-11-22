@@ -4968,13 +4968,15 @@ statement, subject, quote, message, reason}`:
   points at nothing.
 
 Messages are data, never instructions, as in every scribe prompt. The tag
-list goes into the prompt with each tag's criteria from §11.2.
+list goes into the prompt with each tag's criteria from §11.2, excluding
+`handoff` (an agent-written handoff note, §16, never a user annotation).
 
 **Checks after the answer** (deterministic, then under the store lock):
 the quote passes §6.4's check against the original transcript text of the
 named message. That message is a plainly typed turn of his in the window,
-outside every exclusion of §14.1. The tag is configured and equals the
-hint when there is one. The statement and subject are non-empty and
+outside every exclusion of §14.1. The tag is configured, annotatable (not
+`handoff`), and equals the hint when there is one (`Store::record_marks`
+likewise refuses `handoff` as `unknown_tag`). The statement and subject are non-empty and
 within bounds. Then redaction (a quote that redaction would change is
 refused, as §5.3 omits such quotes), the idempotency key, and the same-tag,
 same-project duplicate check `covering_entry` (§4.2). A marker whose answer
@@ -6317,7 +6319,10 @@ session.
   No new write verb or store format bump is needed: a handoff is a regular
   agent-authored entry (`author.kind: agent`, `content_from: agent`,
   `cite: null`) whose `related` carries `session:<id>` and whose `quote`
-  carries the user's request.
+  carries the user's request. Because `handoff` is an agent-written note,
+  marker capture excludes it from `annotation::request` and refuses it in
+  `annotation::check` and `Store::record_marks` (`unknown_tag`), so a
+  `#scribe` marker can never create a user-authored or unvalidated handoff.
 - **Quote check.** Because `handoff` ships with `require_quote`, the store
   refuses an entry with no `--quote` or no `--related session:<id>`
   (`quote_required`), and the CLI refuses a quote that is not a verbatim

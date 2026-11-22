@@ -368,9 +368,16 @@ fn cut(text: &str, max: usize) -> String {
     out
 }
 
+/// Whether `def` may be written by `#scribe` marker capture. `handoff` is
+/// always an agent-written entry with six headings and a session reference
+/// (§16), never a user-authored annotation.
+fn is_annotatable(def: &crate::tag::TagDef) -> bool {
+    def.name.as_str() != crate::handoff::HANDOFF_TAG
+}
+
 /// The call for one marked turn: its markers the model reads (those with
-/// no problem), the window and every configured tag with its criteria,
-/// voiced with `voice`.
+/// no problem), the window and every annotatable configured tag with its
+/// criteria, voiced with `voice`.
 #[must_use]
 pub fn request(
     marks: &[&Mark],
@@ -395,6 +402,7 @@ pub fn request(
         tags: tags
             .tags()
             .iter()
+            .filter(|def| is_annotatable(def))
             .map(|def| AnnotationTag {
                 name: def.name.to_string(),
                 description: def.description.clone(),
@@ -515,6 +523,7 @@ pub fn check(
             }
             let tag = tags
                 .resolve(answer.tag.trim())
+                .filter(|def| is_annotatable(def))
                 .map(|def| def.name.clone())
                 .ok_or(CheckRefusal::WrongTag)?;
             if mark.hint(tags).is_some_and(|hint| *hint != tag) {
