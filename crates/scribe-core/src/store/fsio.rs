@@ -143,6 +143,9 @@ pub(super) fn inspect_dir(dir: &Path) -> Result<bool> {
 /// Unlike the root, a directory inside the store is never followed through a
 /// link: the store uses only real directories (STD-05 R7).
 pub(super) fn inspect_subdir(dir: &Path) -> Result<bool> {
+    if is_os_metadata(dir) {
+        return Ok(false);
+    }
     let meta = match fs::symlink_metadata(dir) {
         Ok(meta) => meta,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
@@ -267,6 +270,9 @@ pub(super) fn read_bounded_beneath(
 /// Check an existing store file; `Ok(false)` when it does not exist. A file
 /// reached through a symbolic link is refused, not followed.
 pub(super) fn inspect_file(path: &Path) -> Result<bool> {
+    if is_os_metadata(path) {
+        return Ok(false);
+    }
     let meta = match fs::symlink_metadata(path) {
         Ok(meta) => meta,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
@@ -274,6 +280,14 @@ pub(super) fn inspect_file(path: &Path) -> Result<bool> {
     };
     refuse_symlink(path, &meta)?;
     check_owner_and_mode(path, &meta, "600").map(|()| true)
+}
+
+/// macOS Finder metadata is not part of the store, even when a directory
+/// walk reaches a name where it would otherwise check a record or subdir.
+fn is_os_metadata(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name == ".DS_Store" || name.starts_with("._"))
 }
 
 fn refuse_symlink(path: &Path, meta: &Metadata) -> Result<()> {

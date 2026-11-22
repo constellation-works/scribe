@@ -4,7 +4,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use scribe_core::{
-    EntryFilter, EntryStatus, Error, Redactor, SessionFilter, Store, TagName, verbatim,
+    Author, EntryFilter, EntryStatus, Error, Redactor, SessionFilter, Store, StoreTag, TagName,
+    verbatim,
 };
 use std::fs;
 use std::num::NonZeroUsize;
@@ -44,6 +45,19 @@ fn store() -> (tempfile::TempDir, Store) {
     let root = dir.path().join("store");
     copy_tree(&fixture(), &root);
     (dir, Store::open(root))
+}
+
+fn probe_tag() -> StoreTag {
+    StoreTag {
+        name: "probe".parse().unwrap(),
+        aliases: Vec::new(),
+        description: String::from("probe tag"),
+        stale_after_days: None,
+        author: Author::agent("scribe-test".parse().unwrap()),
+        updated_by: None,
+        created: time::OffsetDateTime::UNIX_EPOCH,
+        updated: time::OffsetDateTime::UNIX_EPOCH,
+    }
 }
 
 /// Every file under `root` with its bytes, for proving reads write nothing.
@@ -172,6 +186,89 @@ fn a_group_writable_root_or_a_linked_record_is_refused() {
     std::os::unix::fs::symlink(&real, &path).unwrap();
     let err = store.entry(&"decisions-2".parse().unwrap()).unwrap_err();
     assert_eq!(err.code(), "store_symlink", "got {err:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_write_ignores_finder_metadata_and_moves_legacy_records() {
+    let (_dir, store) = store();
+    let metadata = [
+        ".DS_Store",
+        "._root",
+        "entries/.DS_Store",
+        "entries/._entries",
+        "entries/preferences/.DS_Store",
+        "entries/preferences/._entry",
+        "sessions/.DS_Store",
+        "sessions/._sessions",
+        "sessions/2026/.DS_Store",
+        "sessions/2026/._year",
+        "sessions/2026/10/.DS_Store",
+        "sessions/2026/10/._session",
+    ];
+    for rel in metadata {
+        let path = store.root().join(rel);
+        fs::write(&path, b"Finder metadata").unwrap();
+        private(&path, 0o644);
+    }
+
+    let added = store
+        .add_agent_tag(probe_tag(), &Redactor::default())
+        .unwrap();
+    assert_eq!(added.name.as_str(), "probe");
+    assert_eq!(
+        store
+            .list_entries(&EntryFilter::default())
+            .unwrap()
+            .listing
+            .total,
+        4
+    );
+    assert_eq!(
+        store
+            .list_sessions(&SessionFilter::default())
+            .unwrap()
+            .listing
+            .total,
+        2
+    );
+
+    let moved = fs::read_dir(store.root())
+        .unwrap()
+        .filter_map(Result::ok)
+        .find(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("pre-sqlite-")
+        })
+        .expect("the legacy files moved aside")
+        .path();
+    for rel in metadata {
+        let original = store.root().join(rel);
+        let archived = moved.join(rel);
+        let path = if rel.starts_with("entries/") || rel.starts_with("sessions/") {
+            archived
+        } else {
+            original
+        };
+        assert_eq!(fs::read(path).unwrap(), b"Finder metadata", "{rel}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_world_readable_record_still_refuses_a_write() {
+    let (_dir, store) = store();
+    private(
+        &store.root().join("entries/preferences/preferences-1.md"),
+        0o644,
+    );
+
+    let err = store
+        .add_agent_tag(probe_tag(), &Redactor::default())
+        .unwrap_err();
+    assert_eq!(err.code(), "store_permissions", "got {err:?}");
 }
 
 #[test]
