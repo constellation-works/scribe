@@ -418,7 +418,17 @@ impl Store {
         let fail = |e| db::db_error("move documents into", &path, e);
         if !docs::moved(&conn).map_err(fail)? {
             self.import_documents(&conn, &path, &mut moved)?;
-            docs::mark_moved(&conn, now, None).map_err(fail)?;
+            // Each kind records the directory its files move to, or none
+            // when it has no files (`record_kinds.moved_to`).
+            let with_files = self.document_files_to_move_aside()?;
+            let archive = super::sessions::moved_dir_name(now);
+            docs::mark_moved(&conn, now, |kind| {
+                with_files
+                    .iter()
+                    .any(|(k, _)| *k == kind)
+                    .then(|| archive.clone())
+            })
+            .map_err(fail)?;
             self.after(|a| a.aside = true);
         } else if self.audit_file_present()? {
             // A line an older build appended after the move, or the
@@ -579,30 +589,59 @@ impl Store {
     }
 
     /// Files and directories under the root that `move_files_aside` will
-    /// rename into `pre-sqlite-<date>/`.
+    /// rename into `pre-sqlite-<date>/`: the session files, then the
+    /// document files.
     fn files_to_move_aside(&self) -> Result<Vec<String>> {
-        let mut moves: Vec<String> = Vec::new();
-        for dir in [SESSIONS_DIR, ENTRIES_DIR] {
-            if fsio::inspect_subdir(&self.root.join(dir))? {
-                moves.push(dir.to_owned());
-            }
+        let mut moves = self.session_files_to_move_aside()?;
+        moves.extend(
+            self.document_files_to_move_aside()?
+                .into_iter()
+                .map(|(_, name)| name),
+        );
+        Ok(moves)
+    }
+
+    /// The session files `move_files_aside` renames: `sessions/`,
+    /// `control.json` while it holds a switch or a Codex cursor, and the
+    /// root's `.codex-<id>.lock` files. Empty when the `sessions` record
+    /// kind had no files, so its `moved_to` is `None`.
+    pub(super) fn session_files_to_move_aside(&self) -> Result<Vec<String>> {
+        let mut moves = Vec::new();
+        if fsio::inspect_subdir(&self.root.join(SESSIONS_DIR))? {
+            moves.push(SESSIONS_DIR.to_owned());
         }
         if self.control_has_content()? {
             moves.push(CONTROL_FILE.to_owned());
-        }
-        for name in [PROPOSALS_FILE, TAGS_FILE, MARKS_FILE, PICKUPS_FILE] {
-            if self.document_has_content(name)? {
-                moves.push(name.to_owned());
-            }
-        }
-        if self.audit_file_present()? {
-            moves.push(AUDIT_FILE.to_owned());
         }
         moves.extend(
             fsio::list_dir(&self.root)?
                 .into_iter()
                 .filter(|n| n.starts_with(".codex-") && n.ends_with(".lock")),
         );
+        Ok(moves)
+    }
+
+    /// The document files `move_files_aside` renames, each with the record
+    /// kind its rows came from: `entries/`, and each JSON document or the
+    /// audit log that holds anything.
+    fn document_files_to_move_aside(&self) -> Result<Vec<(&'static str, String)>> {
+        let mut moves = Vec::new();
+        if fsio::inspect_subdir(&self.root.join(ENTRIES_DIR))? {
+            moves.push(("entries", ENTRIES_DIR.to_owned()));
+        }
+        for (kind, name) in [
+            ("claims", PROPOSALS_FILE),
+            ("agent_tags", TAGS_FILE),
+            ("marks", MARKS_FILE),
+            ("pickups", PICKUPS_FILE),
+        ] {
+            if self.document_has_content(name)? {
+                moves.push((kind, name.to_owned()));
+            }
+        }
+        if self.audit_file_present()? {
+            moves.push(("audit", AUDIT_FILE.to_owned()));
+        }
         Ok(moves)
     }
 

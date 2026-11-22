@@ -243,7 +243,11 @@ impl Store {
                 ),
             ));
         }
-        tx.mark_moved(now, None)?;
+        // The directory the session files move to, `None` when there are none
+        // (`record_kinds.moved_to`).
+        let moved_to =
+            (!self.session_files_to_move_aside()?.is_empty()).then(|| moved_dir_name(now));
+        tx.mark_moved(now, moved_to.as_deref())?;
         tx.commit()?;
         self.after(|a| a.aside = true);
         Ok(Moved {
