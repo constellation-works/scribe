@@ -11,7 +11,7 @@ summary: Why superseded entries are hidden not removed, why one JSON file per ta
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26650, ORB-26709]
 ---
 
 # scribe — Decisions
@@ -4183,3 +4183,82 @@ update`, `orbit search` etc. can you adjust the standard?"
 
 - Callers outside this repository that run `scribe record search` fail with
   a usage error until they change; a separate task updates the umbrella's.
+
+## Format 23 renames JSON fields and a code without aliases
+
+**Recorded:** 2026-11-22 · [ORB-26709] · **Daniel's choice** (design §15.8,
+part of the §15 proposal he accepted, [ORB-26640]; shipped in PR #133 under
+[ORB-26650])
+**Code anchors:** `crates/scribe/src/output/payload.rs::TranscriptPayload`,
+`crates/scribe-core/src/error.rs::WriteRefusal::code`,
+`crates/scribe-core/src/record.rs::AuthorKind`
+
+### Context
+
+Format 23 renamed machine output: the `transcript list` and `transcript show`
+JSON keys `daniel_turns` and `daniel_first_turns`, the error code
+`daniel_only`, and the author `kind` and `name` values `daniel`. STD-01@2
+§R10 makes renaming a field a breaking change, and the workspace guide says
+`--json` names are contracts. The change was recorded only in
+`specs/output-contract.md`, not as a deviation from §R10 here; the review in
+[ORB-26670] found the gap.
+
+### Decision
+
+A deviation from **STD-01@2 §R10** for format 23, with this scope:
+
+- JSON keys `daniel_turns` → `user_turns` and `daniel_first_turns` →
+  `user_first_turns` in `transcript list --json` and `transcript show --json`.
+- Error code `daniel_only` → `user_only`, returned when an agent write
+  touches the user's own entries.
+- Author values `kind: daniel` → `kind: user` and `name: daniel` →
+  `name: user`, in every `--json` record that carries an author.
+- Human labels, outside the machine contract: the `USER_TURNS` table header
+  and the `user_turns` and `user_first_turns` labels in `show`'s table form.
+  Plain output has no header and prints one line per record, so R9's piped
+  form carries none of them.
+- `daniel_asked` → `user_asked`: `specs/output-contract.md` names this
+  issue-occurrence label, but no `asked` label exists in the code at this
+  HEAD, so neither spelling is printed. It is listed so the rename is on
+  record.
+
+No alias. The old keys, code and author values are not emitted beside the
+new ones, for three reasons:
+
+1. §15.8 says "Nothing shipped names a person." An alias would put
+   `daniel_turns` back into every transcript payload.
+2. No release has shipped: there is no tag, and the CHANGELOG has only
+   `Unreleased`. The names become stable at the first release, the same rule
+   the list envelope recorded under [ORB-13134] follows.
+3. The only readers, the skill and the tmux popup, changed in the same
+   package. A search of the repository at this HEAD finds no old key, code or
+   author value in output code, the plugin or the skill; the only code hit is
+   a test function's name.
+
+A second deviation, from **STD-01@2 §R35**, covers one accepted value.
+`--author-kind daniel` and the stored `daniel` author stay accepted, as a clap
+value alias (`crates/scribe/src/commands/entry.rs`,
+`crates/scribe/src/commands/proposal.rs`) and a serde alias
+(`crates/scribe-core/src/record.rs`), and they print nothing. R35 requires a
+stderr warning on use of a renamed flag or config key; an accepted value is
+named in R35 only as a breaking change, so this silent alias is recorded here
+rather than justified as a warning. The config key
+`[tags.<tag>.capture] from = "daniel"` does warn, as deprecated, and is read
+for a 30-day window (`crates/scribe-core/src/config.rs`).
+
+### Alternatives
+
+- **Emit the old names beside the new ones.** Keeps any script working, but
+  puts the personal name back into the machine contract that §15.8 removes,
+  and keeps the names until a release that has not happened. Rejected.
+- **Record the deviation (chosen).** Costs silent breakage for any script
+  written against the old names.
+
+### Consequences
+
+- Cost: a script that reads `.daniel_turns` gets `null`, and one that matches
+  `daniel_only` finds nothing, with no warning. None is known to exist.
+- From the first release these names are frozen; a later rename is a breaking
+  change under §R10 and needs an alias path.
+- The S14 rows in `2_design.md` keep the old keys as provenance, as §15.8
+  allows. `specs/output-contract.md` is the current contract.
