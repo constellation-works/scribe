@@ -856,7 +856,7 @@ stale_after_days = 180           # omit: entries never go stale
 
 [tags.idea]
 action = true                    # an action tag: work items for a consumer
-require_quote = false            # agents' entries must quote Daniel (action tags only)
+require_quote = false            # agents' entries must quote Daniel (memory and action tags)
 ask_first = false                # agents ask before writing (action tags only)
 
 [models]
