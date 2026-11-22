@@ -199,7 +199,20 @@ Store format 4 adds `active`, `keep_active`, `active_change` (`null` or
 `{at, by, route, reason, cite}`), `cataloged_by` (`null` or `{at, by}`)
 and `log`: in `session show` the segments `[{n, heading, first_message,
 last_message, from, to, state, windows, origin, topics, related, text}]`,
-oldest first; a `session list` row has no `log` key (use `show`). `outcome` stays and
+oldest first; a `session list` row has no `log` key (use `show`).
+(§16, ORB-26826) `session show` also adds `handoffs`: active agent-written
+`handoff` entries referencing `session:<id>`, newest first, each `{id,
+author, created, project, quote, content}`; a `session list` row has no
+`handoffs` key. When the session has active handoff(s), the table view
+prints `## Handoffs` (each as `### <id> · <author> · <created>` followed by
+its body) before `## Summary`, and plain prints one
+`handoff\t<id>\t<author>\t<created>\t<content>` line per handoff before the
+segments. For an off session with active handoff(s) and no session record,
+`session show <id>` prints `{id, has_record: false, project, on: false,
+due: false, summary: "", goals: "", next: "", handoffs}` in JSON, `record:
+none (handoff only; session was not switched on)` with `## Handoffs` in
+table mode, and `<id>\thandoff-only\tno\t<project>\t-\t<created>\tno
+session record` followed by the `handoff\t...` lines in plain mode. `outcome` stays and
 is `""` for every format-4 record; what it held is in `log`. `--segment
 <n>` and `session show session:<id>#<n>` print the record with `log`
 holding that one segment; `--segment <n>` with a cite naming another
@@ -419,7 +432,8 @@ the message lists up to ten candidates, sorted, and how many more), `user_only`,
 `profile_unknown_link`, `profile_sensitive`, `profile_milestone`, (phase 6)
 `migrate_blocked`, `export_target_exists`, `export_needs_migrate`,
 `session_forgotten` (a record write to a forgotten session, or switching it
-on), for `tmux` `fzf_missing` and
+on), `handoff_shape` and `handoff_too_long` (a `handoff` entry whose body
+violates the six fixed headings in order or exceeds 3,000 characters), for `tmux` `fzf_missing` and
 `tmux_failed` (exit 1; `tmux` renders no payload, its popup owns the
 terminal), for `session pass`
 `session_pass_failed` and `session_not_on`, and for `question
@@ -734,7 +748,10 @@ injects: `# scribe brief`; the memory block (as `memory show` prints it);
 `## Recent
 sessions` with one `- <id> · <YYYY-MM-DD HH:MMZ> · <project> · <title>` line
 per session, `<p>`'s first, each part newest first (or
-`(none)`); `## Open claims` with one `- <p-id> · <YYYY-MM-DD HH:MMZ> ·
+`(none)`): a recorded session with an active handoff ends in
+`[handoff: <entry-id>]`, and an off session with a handoff and no session
+record appears as `- <id> · <YYYY-MM-DD HH:MMZ> · <project> · no session
+record [handoff: <entry-id>]`; `## Open claims` with one `- <p-id> · <YYYY-MM-DD HH:MMZ> ·
 <tag> · "<quote>"` line per claim, by tag then id, and the line naming how
 to settle one (or `(none)`). A quote is on one line and cut at 200
 characters, ending in `…`. JSON:
@@ -742,7 +759,7 @@ characters, ending in `…`. JSON:
 ```json
 {"memory": {"profile", "now", "milestones"}, "warnings": ["<memory warning>"],
  "project": "<p or null>",
- "sessions": [{"id", "project", "title", "at"}],
+ "sessions": [{"id", "project", "title", "at", "has_record", "handoff", "handoffs"}],
  "claim_count": 1,
  "claims": [{"tag": "<tag>", "claims": [{"id": "p-<n>", "kind": "candidate|supersedes|stale",
    "quote", "statement", "subject", "older", "newer", "opened_at"}]}]}

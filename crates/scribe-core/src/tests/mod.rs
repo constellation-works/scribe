@@ -13,6 +13,7 @@ mod config;
 mod consistency;
 mod control;
 mod entry;
+mod handoff;
 mod instruction;
 mod memory;
 mod message;

@@ -198,6 +198,7 @@ impl Store {
             }
             if entries
                 .iter()
+                .filter(|entry| entry.tag.as_str() != crate::handoff::HANDOFF_TAG)
                 .any(|entry| claim_covers(&entry_says(entry), &says))
             {
                 continue;

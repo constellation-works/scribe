@@ -13,7 +13,7 @@ use crate::error::CliError;
 use crate::output::{BriefPayload, Output, Record};
 use clap::Args;
 use scribe_core::brief::{self, Brief, DEFAULT_SESSIONS, MAX_SESSIONS};
-use scribe_core::{Project, SessionFilter, SessionId};
+use scribe_core::{EntryFilter, EntryStatus, Project, SessionFilter, SessionId};
 
 pub(super) const EXAMPLES: &str = "\
 Examples:
@@ -70,10 +70,19 @@ pub(in crate::commands) fn brief(
     exclude: Option<&SessionId>,
     sessions: usize,
 ) -> Result<Brief, CliError> {
-    let listed = ctx.store().list_sessions(&SessionFilter::default())?;
+    let listed = ctx.store().list_sessions(&SessionFilter {
+        include_inactive: true,
+        ..SessionFilter::default()
+    })?;
+    let handoffs = ctx.store().list_entries(&EntryFilter {
+        tag: scribe_core::HANDOFF_TAG.parse().ok(),
+        status: Some(EntryStatus::Active),
+        ..EntryFilter::default()
+    })?;
     let proposals = ctx.store().proposals()?;
     let mut brief = brief::build(
         &listed.listing.items,
+        &handoffs.listing.items,
         &proposals,
         project,
         exclude,

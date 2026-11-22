@@ -60,5 +60,6 @@
       ],
       "text": "Settled the store layout: one Markdown file per record with YAML\nfrontmatter.\n\nEntries and session records are Markdown files; control and proposals stay JSON."
     }
-  ]
+  ],
+  "handoffs": []
 }

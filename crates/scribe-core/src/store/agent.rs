@@ -62,31 +62,67 @@ fn unknown_tag() -> Error {
     )
 }
 
-/// A quote belongs on an action entry, and a tag that requires one gets
-/// one. Whether it is verbatim in Daniel's turns is the caller's check: it
-/// needs the transcript.
+/// A quote belongs on an action tag or a `require_quote` tag, and any tag
+/// that requires one gets one. Whether it is verbatim in the user's turns is
+/// the caller's check: it needs the transcript.
 fn check_quote(def: &crate::TagDef, quote: Option<&str>) -> Result<()> {
-    match (def.action, quote) {
-        (None, Some(_)) => Err(refusal(
-            WriteRefusal::NotActionTag,
-            format!(
-                "{} is not an action tag; --quote applies only to an action tag",
-                def.name
-            ),
-        )),
-        (Some(action), None) if action.require_quote => Err(refusal(
-            WriteRefusal::QuoteRequired,
-            format!(
-                "{} requires the user's words: pass --quote with the user's correction and --related session:<id>; without a quote, file a friction instead",
-                def.name
-            ),
-        )),
-        (Some(_), Some(quote)) if quote.trim().is_empty() => Err(refusal(
-            WriteRefusal::QuoteRequired,
-            "--quote must not be empty",
-        )),
-        _ => Ok(()),
+    if def.requires_quote() {
+        match quote {
+            None => Err(refusal(
+                WriteRefusal::QuoteRequired,
+                if def.name.as_str() == crate::handoff::HANDOFF_TAG {
+                    format!(
+                        "{} requires the user's request: pass --quote with their words and --related session:<id>",
+                        def.name
+                    )
+                } else {
+                    format!(
+                        "{} requires the user's words: pass --quote with the user's correction and --related session:<id>; without a quote, file a friction instead",
+                        def.name
+                    )
+                },
+            )),
+            Some(quote) if quote.trim().is_empty() => Err(refusal(
+                WriteRefusal::QuoteRequired,
+                "--quote must not be empty",
+            )),
+            Some(_) => Ok(()),
+        }
+    } else {
+        match (def.action, quote) {
+            (None, Some(_)) => Err(refusal(
+                WriteRefusal::NotActionTag,
+                format!(
+                    "{} is not an action tag; --quote applies only to an action tag or a require_quote tag",
+                    def.name
+                ),
+            )),
+            (Some(_), Some(quote)) if quote.trim().is_empty() => Err(refusal(
+                WriteRefusal::QuoteRequired,
+                "--quote must not be empty",
+            )),
+            _ => Ok(()),
+        }
     }
+}
+
+/// A handoff entry's body must carry the six fixed headings in order and fit
+/// within [`crate::handoff::MAX_CHARS`] (2_design.md §16).
+fn check_handoff(tag: &TagName, content: &str) -> Result<()> {
+    if tag.as_str() != crate::handoff::HANDOFF_TAG {
+        return Ok(());
+    }
+    crate::handoff::check(content).map(|_| ()).map_err(|err| {
+        let kind = match err {
+            crate::HandoffError::TooLong { .. } => WriteRefusal::HandoffTooLong,
+            crate::HandoffError::Preamble
+            | crate::HandoffError::MissingHeadings(_)
+            | crate::HandoffError::DuplicateHeading(_)
+            | crate::HandoffError::UnknownHeading(_)
+            | crate::HandoffError::OutOfOrder(_) => WriteRefusal::HandoffShape,
+        };
+        refusal(kind, err.to_string())
+    })
 }
 
 /// An evidence pointer belongs on a `require_evidence` (finding) entry,
@@ -284,6 +320,7 @@ impl Store {
             .ok_or_else(unknown_tag)?;
         check_quote(&def, quote)?;
         check_evidence(&def, evidence)?;
+        check_handoff(&def.name, content)?;
         Ok(def)
     }
 
@@ -295,6 +332,9 @@ impl Store {
             required(content)?;
         }
         let entry = self.resolve_entry(id)?;
+        if let Some(content) = &patching.content {
+            check_handoff(&entry.tag, content)?;
+        }
         let mut topics = entry.topics.as_slice().to_vec();
         patch(&mut topics, &patching.add_topics, &patching.remove_topics);
         Topics::try_from(topics)
@@ -321,6 +361,15 @@ impl Store {
             .ok_or_else(unknown_tag)?;
         check_quote(tag, draft.quote.as_deref())?;
         check_evidence(tag, draft.evidence.as_deref())?;
+        check_handoff(&tag.name, &draft.content)?;
+        if tag.name.as_str() == crate::handoff::HANDOFF_TAG
+            && draft_session(&draft.related).is_none()
+        {
+            return Err(refusal(
+                WriteRefusal::QuoteRequired,
+                "handoff requires the session it belongs to: pass --related session:<id>",
+            ));
+        }
         let (entries, skipped) = self.load_entries()?;
         if tag.require_evidence {
             let session = draft_session(&draft.related);
@@ -425,6 +474,7 @@ impl Store {
                     ));
                 }
                 required(&content)?;
+                check_handoff(&entry.tag, &content)?;
                 if entry.status == EntryStatus::Forgotten {
                     return Err(refusal(
                         WriteRefusal::EntryNotActive,

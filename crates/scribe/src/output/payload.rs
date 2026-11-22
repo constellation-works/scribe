@@ -532,6 +532,67 @@ impl<'a> Kin<'a> {
     }
 }
 
+/// One agent-written handoff entry shown beside a session's header
+/// (docs/design/scribe/2_design.md §16).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct HandoffPayload {
+    pub(crate) id: String,
+    pub(crate) author: AuthorPayload,
+    #[serde(with = "time::serde::rfc3339")]
+    pub(crate) created: Timestamp,
+    pub(crate) project: String,
+    pub(crate) quote: Option<String>,
+    pub(crate) content: String,
+}
+
+impl From<&Entry> for HandoffPayload {
+    fn from(entry: &Entry) -> Self {
+        Self {
+            id: entry.id.to_string(),
+            author: AuthorPayload::from(&entry.author),
+            created: entry.created,
+            project: entry.project.to_string(),
+            quote: entry.quote.clone(),
+            content: entry.content.clone(),
+        }
+    }
+}
+
+/// `session show <id>` for a session that was never switched on and has no
+/// session record, only agent-written handoffs (2_design.md §16). Never
+/// fabricates record timestamps.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct SessionHandoffsPayload {
+    pub(crate) id: String,
+    pub(crate) has_record: bool,
+    pub(crate) project: String,
+    pub(crate) on: bool,
+    pub(crate) due: bool,
+    pub(crate) summary: String,
+    pub(crate) goals: String,
+    pub(crate) next: String,
+    pub(crate) handoffs: Vec<HandoffPayload>,
+}
+
+impl SessionHandoffsPayload {
+    pub(crate) fn new(id: &SessionId, handoffs: &[Entry]) -> Self {
+        let project = handoffs
+            .first()
+            .map_or_else(|| String::from("global"), |e| e.project.to_string());
+        Self {
+            id: id.to_string(),
+            has_record: false,
+            project,
+            on: false,
+            due: false,
+            summary: String::new(),
+            goals: String::new(),
+            next: String::new(),
+            handoffs: handoffs.iter().map(HandoffPayload::from).collect(),
+        }
+    }
+}
+
 /// One session record, with its switch, as every output mode sees it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct SessionPayload {
@@ -593,6 +654,10 @@ pub(crate) struct SessionPayload {
     /// `--segment`); absent from a list, whose rows carry no log.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) log: Option<Vec<SegmentPayload>>,
+    /// Active agent-written handoffs for this session, newest first; absent
+    /// from a list, whose rows carry no handoffs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) handoffs: Option<Vec<HandoffPayload>>,
     /// Whether the table view prints each segment's text (`--log`,
     /// `--segment`) or only the table of contents.
     #[serde(skip)]
@@ -647,8 +712,18 @@ impl SessionPayload {
             cataloged_by: record.cataloged_by.as_ref().map(CatalogedByPayload::from),
             rebuilt_by: record.rebuilt_by.as_ref().map(AuthorPayload::from),
             log: None,
+            handoffs: None,
             log_text: false,
         }
+    }
+
+    /// With its active handoff entries, newest first, for `session show`.
+    pub(crate) fn with_handoffs<'a>(
+        mut self,
+        handoffs: impl IntoIterator<Item = &'a Entry>,
+    ) -> Self {
+        self.handoffs = Some(handoffs.into_iter().map(HandoffPayload::from).collect());
+        self
     }
 
     /// With when it was forgotten.
@@ -1107,6 +1182,8 @@ pub(crate) enum Record {
     Proposal(Box<ProposalPayload>),
     Entry(Box<EntryPayload>),
     Session(Box<SessionPayload>),
+    /// `session show <id>` for a session with handoff(s) and no session record.
+    SessionHandoffs(Box<SessionHandoffsPayload>),
     Transcript(Box<TranscriptPayload>),
     /// One memory file.
     Memory(Box<MemoryPayload>),
@@ -1493,6 +1570,12 @@ pub(crate) struct BriefSessionPayload {
     /// Its last recorded activity.
     #[serde(with = "time::serde::rfc3339")]
     pub(crate) at: Timestamp,
+    /// Whether scribe holds a session record; `false` for a handoff-only session.
+    pub(crate) has_record: bool,
+    /// The newest active handoff entry id, or `null` when none.
+    pub(crate) handoff: Option<String>,
+    /// How many active handoff entries this session has.
+    pub(crate) handoffs: usize,
 }
 
 /// The open claims under one tag.
@@ -1538,6 +1621,9 @@ impl BriefPayload {
                     project: s.project.to_string(),
                     title: s.title.clone(),
                     at: s.at,
+                    has_record: s.has_record,
+                    handoff: s.handoff.as_ref().map(ToString::to_string),
+                    handoffs: s.handoffs,
                 })
                 .collect(),
             claim_count: b.claim_count(),
@@ -2011,7 +2097,11 @@ impl FoundPayload {
                     )
                     .with_number(sessions.numbers.get(&record.id).copied())
                     .with_forgotten(sessions.forgotten.get(&record.id).copied())
-                    .with_log(&record.log),
+                    .with_log(&record.log)
+                    .with_handoffs(scribe_core::handoff::for_session(
+                        sessions.entries,
+                        &record.id,
+                    )),
                 ),
                 task: None,
                 terms: terms.iter().map(TermPayload::from).collect(),
@@ -2037,6 +2127,7 @@ pub(crate) struct SessionsContext<'a> {
     pub(crate) titles: &'a BTreeMap<SessionId, String>,
     pub(crate) numbers: &'a BTreeMap<SessionId, std::num::NonZeroU64>,
     pub(crate) forgotten: &'a BTreeMap<SessionId, Timestamp>,
+    pub(crate) entries: &'a [Entry],
 }
 
 /// What `question ask` and the `scribe.ask` tool return (2_design.md §6.1):

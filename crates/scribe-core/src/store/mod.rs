@@ -288,6 +288,16 @@ impl Store {
         Ok(config)
     }
 
+    /// Active `handoff` entries referencing `session:<id>`, newest first.
+    /// Reads only: no lock, no write.
+    pub fn handoffs_for_session(&self, id: &SessionId) -> Result<Vec<Entry>> {
+        let (entries, _) = self.load_entries()?;
+        Ok(crate::handoff::for_session(&entries, id)
+            .into_iter()
+            .cloned()
+            .collect())
+    }
+
     /// Entries matching `filter`, oldest first, and how many matched. A
     /// missing store is an empty one.
     pub fn list_entries(&self, filter: &EntryFilter) -> Result<EntryList> {

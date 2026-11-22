@@ -246,7 +246,7 @@ fn declaring_a_new_tag_keeps_all_shipped_tags_and_their_defaults() {
     let listed = listed(&fx);
     let tags = listed["tags"].as_array().unwrap();
     let names: Vec<&str> = tags.iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["preferences", "remind", "standard"]);
+    assert_eq!(names, ["handoff", "preferences", "remind", "standard"]);
 
     let prefs = tags.iter().find(|t| t["name"] == "preferences").unwrap();
     assert_eq!(prefs["stale_after_days"], 180);
@@ -382,7 +382,7 @@ fn the_mac_preferences_and_remind_config_reads_as_the_shipped_preferences_tag() 
         .iter()
         .map(|t| t["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, ["preferences", "remind", "standard"]);
+    assert_eq!(names, ["handoff", "preferences", "remind", "standard"]);
     let prefs = tags["tags"]
         .as_array()
         .unwrap()

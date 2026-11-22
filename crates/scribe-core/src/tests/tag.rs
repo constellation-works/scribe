@@ -9,11 +9,13 @@ fn name(s: &str) -> TagName {
 }
 
 #[test]
-fn the_defaults_are_preferences_and_the_shipped_action_tag_standard() {
+fn the_defaults_are_handoff_preferences_and_standard() {
     let table = TagTable::defaults();
     let names: Vec<&str> = table.tags().iter().map(|t| t.name.as_str()).collect();
-    assert_eq!(names, ["preferences", "standard"]);
+    assert_eq!(names, ["handoff", "preferences", "standard"]);
     assert!(table.action(&name("preferences")).is_none());
+    assert!(table.action(&name("handoff")).is_none());
+    assert!(table.resolve("handoff").unwrap().requires_quote());
     let standard = table.action(&name("standard")).unwrap();
     assert!(standard.require_quote && !standard.ask_first);
     assert!(
@@ -41,6 +43,7 @@ fn a_word_claimed_by_two_tags_is_refused() {
         description: None,
         stale_after_days: None,
         action: None,
+        require_quote: false,
         require_evidence: false,
         capture: crate::tag::CaptureRules::default(),
     };
@@ -65,6 +68,7 @@ fn review_after_counts_the_stale_days_from_creation() {
         description: None,
         stale_after_days: NonZeroU32::new(180),
         action: None,
+        require_quote: false,
         require_evidence: false,
         capture: crate::tag::CaptureRules::default(),
     };
@@ -94,6 +98,7 @@ fn a_summary_counts_entries_per_tag_and_keeps_unconfigured_ones() {
     assert_eq!(
         view,
         [
+            ("handoff", 0, true),
             ("preferences", 2, true),
             ("rituals", 1, false),
             ("standard", 0, true)
@@ -106,7 +111,12 @@ fn the_shipped_catchers_are_exactly_preference_and_standard() {
     use crate::tag::{CaptureFrom, CaptureRoute, CaptureRules, DEFAULT_MAX_OPEN};
     let table = TagTable::defaults();
     let names: Vec<&str> = table.tags().iter().map(|t| t.name.as_str()).collect();
-    assert_eq!(names, ["preferences", "standard"]);
+    assert_eq!(names, ["handoff", "preferences", "standard"]);
+    assert_eq!(
+        CaptureRules::shipped("handoff"),
+        CaptureRules::default(),
+        "handoff has no pass capture rules"
+    );
     assert_eq!(
         table.resolve("preference").map(|t| t.name.as_str()),
         Some("preferences")

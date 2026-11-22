@@ -61,6 +61,10 @@ pub struct TagDef {
     /// `Some` for an action tag (config `action = true`): its entries are
     /// work items for a consumer, captured with a transcript window.
     pub action: Option<ActionTag>,
+    /// An agent entry must quote the user's words verbatim from one of their
+    /// typed turns in the session it names (`standard`, `handoff`, or config
+    /// `require_quote = true`).
+    pub require_quote: bool,
     /// An agent entry must carry an evidence pointer and an as-of date
     /// (config `require_evidence = true`).
     /// Memory tags only; action tags refuse the flag in config.
@@ -353,6 +357,13 @@ impl TagDef {
         self.stale_after_days
             .and_then(|days| created.checked_add(Duration::days(i64::from(days.get()))))
     }
+
+    /// Whether an agent entry under this tag must carry `--quote` verified
+    /// verbatim against one of the user's typed turns in the session it names.
+    #[must_use]
+    pub fn requires_quote(&self) -> bool {
+        self.require_quote || self.action.is_some_and(|a| a.require_quote)
+    }
 }
 
 /// Effective tags, sorted by name, with no name or alias claimed twice.
@@ -409,11 +420,15 @@ impl TagTable {
         Ok((Self::new(tags)?, warnings))
     }
 
-    /// The tags scribe ships: `preferences` (aliases `preference`, `pref`;
-    /// stale after 180 days) and the action tag `standard`.
+    /// The tags scribe ships: `handoff` (`require_quote`), `preferences`
+    /// (aliases `preference`, `pref`; stale after 180 days) and the action
+    /// tag `standard`.
     #[must_use]
     pub fn defaults() -> Self {
-        let mut tags: Vec<TagDef> = Self::shipped_preferences().into_iter().collect();
+        let mut tags: Vec<TagDef> = Self::shipped_preferences()
+            .into_iter()
+            .chain(Self::shipped_handoff())
+            .collect();
         for (name, _, _) in SHIPPED_ACTION_TAGS {
             if let Some(def) = Self::shipped_action(name) {
                 tags.push(def);
@@ -423,15 +438,33 @@ impl TagTable {
         Self { tags }
     }
 
-    /// The shipped tag named `name` (`preferences` or `standard`).
+    /// The shipped tag named `name` (`handoff`, `preferences` or `standard`).
     /// A partial `[tags.<name>]` table inherits the fields it omits from this.
     #[must_use]
     pub fn shipped(name: &str) -> Option<TagDef> {
-        if name == "preferences" {
-            Self::shipped_preferences()
-        } else {
-            Self::shipped_action(name)
+        match name {
+            "preferences" => Self::shipped_preferences(),
+            crate::handoff::HANDOFF_TAG => Self::shipped_handoff(),
+            _ => Self::shipped_action(name),
         }
+    }
+
+    /// The shipped `handoff` tag: a memory tag with `require_quote = true`
+    /// and no capture rules (2_design.md §16).
+    #[must_use]
+    pub fn shipped_handoff() -> Option<TagDef> {
+        Some(TagDef {
+            name: TagName::try_from(crate::handoff::HANDOFF_TAG.to_owned()).ok()?,
+            aliases: Vec::new(),
+            description: Some(String::from(
+                "An agent-written session handoff, recorded on {user}'s request.",
+            )),
+            stale_after_days: None,
+            action: None,
+            require_quote: true,
+            require_evidence: false,
+            capture: CaptureRules::default(),
+        })
     }
 
     /// The shipped `preferences` tag on its own: aliases `preference` and
@@ -448,6 +481,7 @@ impl TagTable {
                 )),
                 stale_after_days: NonZeroU32::new(180),
                 action: None,
+                require_quote: false,
                 require_evidence: false,
                 capture: CaptureRules::shipped("preferences"),
             })
@@ -471,6 +505,7 @@ impl TagTable {
                         require_quote: *require_quote,
                         ask_first: false,
                     }),
+                    require_quote: *require_quote,
                     require_evidence: false,
                     capture: CaptureRules::shipped(n),
                 })
@@ -596,6 +631,7 @@ impl StoreTag {
             description: Some(self.description.clone()),
             stale_after_days: self.stale_after_days,
             action: None,
+            require_quote: false,
             require_evidence: false,
             capture: CaptureRules::default(),
         }

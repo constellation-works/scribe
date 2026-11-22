@@ -59,5 +59,6 @@
       "related": [],
       "text": "Agent PRs merge with a merge commit so their history stays."
     }
-  ]
+  ],
+  "handoffs": []
 }

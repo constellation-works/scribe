@@ -91,7 +91,31 @@ impl Store {
     /// [`Error::AgentWrite`] naming the candidates when several do; a store
     /// error otherwise.
     pub fn resolve_session(&self, input: &SessionId) -> Result<SessionId> {
+        self.resolve_session_with(input, false)
+    }
+
+    /// [`Store::resolve_session`], also accepting sessions known only through
+    /// an active `handoff` entry (a session that was never switched on and
+    /// has no session record; 2_design.md §16). Reads only.
+    pub fn resolve_session_or_handoff(&self, input: &SessionId) -> Result<SessionId> {
+        self.resolve_session_with(input, true)
+    }
+
+    fn resolve_session_with(&self, input: &SessionId, include_handoffs: bool) -> Result<SessionId> {
         let loaded = self.load_sessions()?;
+        let handoff_sessions: Vec<SessionId> = if include_handoffs {
+            self.load_entries()?
+                .0
+                .iter()
+                .filter(|e| {
+                    e.status == crate::EntryStatus::Active
+                        && e.tag.as_str() == crate::handoff::HANDOFF_TAG
+                })
+                .flat_map(crate::handoff::session_ids)
+                .collect()
+        } else {
+            Vec::new()
+        };
         let not_found = || -> Result<SessionId> {
             Err(Error::SessionNotFound {
                 id: input.clone(),
@@ -104,6 +128,7 @@ impl Store {
         if !loaded.records.iter().any(|r| exact(&r.id))
             && !loaded.numbers.keys().any(exact)
             && !loaded.control.sessions.keys().any(exact)
+            && !handoff_sessions.iter().any(exact)
             && let Some(n) = input
                 .as_str()
                 .strip_prefix("s-")
@@ -132,6 +157,7 @@ impl Store {
                     .keys()
                     .map(|id| id.as_str().to_owned()),
             )
+            .chain(handoff_sessions.iter().map(|id| id.as_str().to_owned()))
             .collect();
         ids.sort();
         ids.dedup();

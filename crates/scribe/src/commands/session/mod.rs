@@ -21,7 +21,9 @@ use super::{DateArgs, ListNotice, list_output};
 use crate::app::Context;
 use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
-use crate::output::{Kin, Output, Record, Records, SessionPayload, TreeRow};
+use crate::output::{
+    Kin, Output, Record, Records, SessionHandoffsPayload, SessionPayload, TreeRow,
+};
 use clap::{Args, Subcommand};
 use scribe_core::{
     Project, Related, SessionFilter, SessionId, SessionRecord, SessionStatus, Topic,
@@ -349,8 +351,26 @@ fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
         }
         (flag, cite) => flag.or(cite),
     };
-    let id = ctx.store().resolve_session(&args.id.id)?;
-    let view = ctx.store().session(&id)?;
+    let id = ctx.store().resolve_session_or_handoff(&args.id.id)?;
+    let handoffs = ctx.store().handoffs_for_session(&id)?;
+    let view = match ctx.store().session(&id) {
+        Ok(view) => view,
+        Err(scribe_core::Error::SessionNotFound { .. }) if !handoffs.is_empty() => {
+            if let Some(n) = segment {
+                return Err(CliError::SegmentNotFound {
+                    session: id,
+                    n: n.get(),
+                    count: 0,
+                });
+            }
+            return Ok(Output::Show {
+                record: Record::SessionHandoffs(Box::new(SessionHandoffsPayload::new(
+                    &id, &handoffs,
+                ))),
+            });
+        }
+        Err(err) => return Err(err.into()),
+    };
     let record = &view.record;
     let payload = SessionPayload::new(
         record,
@@ -361,7 +381,8 @@ fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
         },
     )
     .with_number(view.number)
-    .with_forgotten(view.forgotten);
+    .with_forgotten(view.forgotten)
+    .with_handoffs(&handoffs);
     let mut payload = match segment {
         Some(n) => {
             let one = record

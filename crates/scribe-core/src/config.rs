@@ -685,28 +685,24 @@ impl RawTag {
         // tag a memory tag.
         let shipped = TagTable::shipped(&name);
         let shipped_action = shipped.as_ref().and_then(|def| def.action);
+        let require_quote = self
+            .require_quote
+            .unwrap_or_else(|| shipped.as_ref().is_some_and(TagDef::requires_quote));
         let action = if self.action.unwrap_or(shipped_action.is_some()) {
             Some(ActionTag {
-                require_quote: self
-                    .require_quote
-                    .unwrap_or_else(|| shipped_action.is_some_and(|a| a.require_quote)),
+                require_quote,
                 ask_first: self
                     .ask_first
                     .unwrap_or_else(|| shipped_action.is_some_and(|a| a.ask_first)),
             })
         } else {
-            for (flag, set) in [
-                ("require_quote", self.require_quote),
-                ("ask_first", self.ask_first),
-            ] {
-                if set.is_some() {
-                    return Err(ConfigError {
-                        line: None,
-                        message: format!(
-                            "{key}.{flag} applies only to an action tag; add action = true"
-                        ),
-                    });
-                }
+            if self.ask_first.is_some() {
+                return Err(ConfigError {
+                    line: None,
+                    message: format!(
+                        "{key}.ask_first applies only to an action tag; add action = true"
+                    ),
+                });
             }
             None
         };
@@ -759,6 +755,7 @@ impl RawTag {
                     .stale_after_days
                     .or_else(|| shipped.as_ref().and_then(|def| def.stale_after_days)),
                 action,
+                require_quote,
                 require_evidence,
                 capture,
             },

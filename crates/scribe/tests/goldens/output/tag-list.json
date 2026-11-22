@@ -15,6 +15,18 @@
     {
       "author": null,
       "source": "config",
+      "name": "handoff",
+      "aliases": [],
+      "description": "An agent-written session handoff, recorded on the user's request.",
+      "stale_after_days": null,
+      "configured": true,
+      "entries": 0,
+      "action": null,
+      "route": null
+    },
+    {
+      "author": null,
+      "source": "config",
       "name": "preferences",
       "aliases": [
         "preference",
@@ -57,7 +69,7 @@
       "route": "propose"
     }
   ],
-  "total": 4,
+  "total": 5,
   "truncated": false,
   "warnings": []
 }

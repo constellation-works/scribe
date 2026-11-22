@@ -354,6 +354,9 @@ fn target_of(output: &Output) -> Option<String> {
             record: Record::Session(session),
         } => Some(session.id.clone()),
         Output::Show {
+            record: Record::SessionHandoffs(session),
+        } => Some(session.id.clone()),
+        Output::Show {
             record: Record::Transcript(transcript),
         } => Some(format!("session:{}", transcript.session)),
         Output::Show {
@@ -394,6 +397,7 @@ fn record_target(record: &Record) -> Option<String> {
         | Record::Brief(_) => return None,
         Record::Entry(e) => e.id.clone(),
         Record::Session(s) => format!("session:{}", s.id),
+        Record::SessionHandoffs(s) => format!("session:{}", s.id),
         Record::Tag(t) => t.name.to_string(),
         Record::TagRules(t) => t.tag.clone(),
         Record::Proposal(p) => p.id.clone(),
