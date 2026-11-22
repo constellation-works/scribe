@@ -831,6 +831,47 @@ fn read_matches(
     Ok(matches)
 }
 
+/// What `scribe export --as jsonl` read from `scribe.db`, with which record
+/// kinds already live there.
+#[derive(Default)]
+pub(in crate::store) struct DbExport {
+    /// Whether the session tables live in `scribe.db`.
+    pub sessions_moved: bool,
+    /// Whether the document tables live in `scribe.db`.
+    pub docs_moved: bool,
+    /// Rows from whichever kinds live in `scribe.db`, in table then row order.
+    pub rows: Vec<(&'static str, serde_json::Value)>,
+}
+
+/// Read every moved table's rows for `scribe export --as jsonl`, read-only.
+pub(in crate::store) fn read_export(
+    root: &Path,
+    session_tables: &[(&'static str, &str)],
+    doc_tables: &[(&'static str, &str)],
+) -> Result<DbExport> {
+    let (found, _) = memory::read(root, |conn, path| {
+        refuse_newer(conn, path)?;
+        let sessions_moved =
+            sessions::moved(conn).map_err(|e| Fallible::from_sqlite("read", path, e))?;
+        let docs_moved = docs::moved(conn).map_err(|e| Fallible::from_sqlite("read", path, e))?;
+        let mut rows = Vec::new();
+        if sessions_moved {
+            rows.extend(
+                sessions::export_rows(conn, path, session_tables).map_err(Fallible::Failed)?,
+            );
+        }
+        if docs_moved {
+            rows.extend(sessions::export_rows(conn, path, doc_tables).map_err(Fallible::Failed)?);
+        }
+        Ok(DbExport {
+            sessions_moved,
+            docs_moved,
+            rows,
+        })
+    })?;
+    Ok(found)
+}
+
 /// The store id `meta` records: 32 hex characters from the creation time,
 /// the process and the path, unique per database without a random source.
 fn store_id(path: &Path, created: &str) -> String {
