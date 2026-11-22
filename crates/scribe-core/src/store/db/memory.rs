@@ -224,7 +224,7 @@ fn read_view(conn: &Connection, path: &Path) -> Result<MemoryDb, Fallible> {
 /// Read `f` from the database under `root` read-only, retrying as a
 /// read-only copy (`immutable=1`) when the WAL cannot be opened. A missing
 /// database reads as `T::default()`.
-fn read<T: Default>(
+pub(super) fn read<T: Default>(
     root: &Path,
     f: impl Fn(&Connection, &Path) -> Result<T, Fallible>,
 ) -> Result<(T, bool)> {
@@ -362,145 +362,10 @@ impl<'a> Writer<'a> {
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(fail)?;
-        let revision = match &commit.revision {
-            Some(content) => {
-                tx.execute(
-                    "INSERT INTO profile_revisions (created, content, file_sha256) VALUES (?1, ?2, NULL)",
-                    (stamp(now), content),
-                )
-                .map_err(fail)?;
-                Some(tx.last_insert_rowid())
-            }
-            None => None,
-        };
-        if let Some((at, session)) = &commit.cursor {
-            tx.execute(
-                "INSERT INTO profile_cursor (id, through_at, through_session) VALUES (1, ?1, ?2)
-                 ON CONFLICT (id) DO UPDATE SET through_at = excluded.through_at,
-                     through_session = excluded.through_session",
-                (stamp(*at), session.as_str()),
-            )
-            .map_err(fail)?;
-        }
-        for item in &commit.forget_history {
-            tx.execute("DELETE FROM memory_history WHERE item = ?1", [item])
-                .map_err(fail)?;
-        }
-        for (item, session, message) in &commit.links {
-            tx.execute(
-                "INSERT INTO memory_messages (item, session, message) VALUES (?1, ?2, ?3)
-                 ON CONFLICT DO NOTHING",
-                (item, session, message),
-            )
-            .map_err(fail)?;
-        }
-        for (from, to) in &commit.link_copies {
-            tx.execute(
-                "INSERT INTO memory_messages (item, session, message)
-                 SELECT ?2, session, message FROM memory_messages WHERE item = ?1
-                 ON CONFLICT DO NOTHING",
-                (from, to),
-            )
-            .map_err(fail)?;
-        }
-        let mut erased = 0;
-        for item in &commit.forget_messages {
-            erased += tx
-                .execute(
-                    "DELETE FROM messages WHERE EXISTS (SELECT 1 FROM memory_messages l
-                         WHERE l.item = ?1 AND l.session = messages.session
-                         AND l.message = messages.message)",
-                    [item],
-                )
-                .map_err(fail)?;
-            tx.execute("DELETE FROM memory_messages WHERE item = ?1", [item])
-                .map_err(fail)?;
-        }
-        if erased > 0 {
-            tx.execute(
-                "INSERT INTO messages_fts (messages_fts) VALUES ('optimize')",
-                [],
-            )
-            .map_err(fail)?;
-        }
-        for row in &commit.history {
-            let sources =
-                serde_json::to_string(&row.sources).map_err(|e| Error::corrupt(&path, e))?;
-            tx.execute(
-                "INSERT INTO memory_history (item, kind, text, sources, removed_at)
-                 SELECT ?1, ?2, ?3, ?4, ?5
-                 WHERE NOT EXISTS (SELECT 1 FROM memory_history
-                     WHERE item = ?1 AND kind = ?2 AND text = ?3)",
-                (
-                    &row.item,
-                    &row.kind,
-                    &row.text,
-                    &sources,
-                    stamp(row.removed_at),
-                ),
-            )
-            .map_err(fail)?;
-        }
-        if let Some(session) = &commit.pending_clear {
-            tx.execute(
-                "DELETE FROM now_pending WHERE session = ?1",
-                [session.as_str()],
-            )
-            .map_err(fail)?;
-        }
-        for id in &commit.pending_drop {
-            tx.execute("DELETE FROM now_pending WHERE id = ?1", [id])
-                .map_err(fail)?;
-        }
-        for row in &commit.pending_add {
-            tx.execute(
-                "INSERT INTO now_pending (session, message, subject, text, created)
-                 VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT (session, subject) DO NOTHING",
-                (
-                    row.session.as_str(),
-                    &row.message,
-                    &row.subject,
-                    &row.text,
-                    stamp(row.created),
-                ),
-            )
-            .map_err(fail)?;
-        }
-        for (session, through, signal) in &commit.signals {
-            tx.execute(
-                "INSERT INTO pass_signals (session, through, signal) VALUES (?1, ?2, ?3)
-                 ON CONFLICT (session, through) DO UPDATE SET signal = excluded.signal",
-                (session.as_str(), through, i64::from(*signal)),
-            )
-            .map_err(fail)?;
-        }
-        let journal = if commit.ops.is_empty() {
-            None
-        } else {
-            let ops = serde_json::to_string(&commit.ops).map_err(|e| Error::corrupt(&path, e))?;
-            tx.execute(
-                "INSERT INTO memory_journal (created, ops, done, revision) VALUES (?1, ?2, 0, ?3)",
-                (stamp(now), &ops, revision),
-            )
-            .map_err(fail)?;
-            Some(Journal {
-                id: tx.last_insert_rowid(),
-                ops: commit.ops.clone(),
-                revision,
-            })
-        };
+        let (journal, erased) = stage(&tx, &path, started, commit, now)?;
         tx.commit().map_err(fail)?;
         if erased > 0 {
-            // As a phase-4 forget: the checkpoint empties the WAL that held
-            // the deleted pages; a reader still holding them leaves them
-            // until the next checkpoint, so a busy result is reported.
-            let busy: i64 = self
-                .conn
-                .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))
-                .map_err(fail)?;
-            if busy != 0 {
-                tracing::warn!(path = %path.display(), "a reader kept forgotten messages' old pages in the WAL until the next checkpoint");
-            }
+            super::truncate_wal(self.conn, &path, started)?;
         }
         Ok(journal)
     }
@@ -638,4 +503,145 @@ impl<'a> Writer<'a> {
         }
         Ok(out)
     }
+}
+
+/// Stage `commit` in a transaction the caller opened (`conn`): its rows,
+/// and a journal row when it has file operations. Returns the journal and
+/// how many messages a forget erased; after committing, the caller
+/// truncates the WAL when that is more than none.
+pub(super) fn stage(
+    conn: &Connection,
+    path: &Path,
+    started: Instant,
+    commit: &MemoryCommit,
+    now: OffsetDateTime,
+) -> Result<(Option<Journal>, usize)> {
+    let fail = |e| write_error("write memory to", path, started, e);
+    let revision = match &commit.revision {
+        Some(content) => {
+            conn.execute(
+                    "INSERT INTO profile_revisions (created, content, file_sha256) VALUES (?1, ?2, NULL)",
+                    (stamp(now), content),
+                )
+                .map_err(fail)?;
+            Some(conn.last_insert_rowid())
+        }
+        None => None,
+    };
+    if let Some((at, session)) = &commit.cursor {
+        conn.execute(
+            "INSERT INTO profile_cursor (id, through_at, through_session) VALUES (1, ?1, ?2)
+                 ON CONFLICT (id) DO UPDATE SET through_at = excluded.through_at,
+                     through_session = excluded.through_session",
+            (stamp(*at), session.as_str()),
+        )
+        .map_err(fail)?;
+    }
+    for item in &commit.forget_history {
+        conn.execute("DELETE FROM memory_history WHERE item = ?1", [item])
+            .map_err(fail)?;
+    }
+    for (item, session, message) in &commit.links {
+        conn.execute(
+            "INSERT INTO memory_messages (item, session, message) VALUES (?1, ?2, ?3)
+                 ON CONFLICT DO NOTHING",
+            (item, session, message),
+        )
+        .map_err(fail)?;
+    }
+    for (from, to) in &commit.link_copies {
+        conn.execute(
+            "INSERT INTO memory_messages (item, session, message)
+                 SELECT ?2, session, message FROM memory_messages WHERE item = ?1
+                 ON CONFLICT DO NOTHING",
+            (from, to),
+        )
+        .map_err(fail)?;
+    }
+    let mut erased = 0;
+    for item in &commit.forget_messages {
+        erased += conn
+            .execute(
+                "DELETE FROM messages WHERE EXISTS (SELECT 1 FROM memory_messages l
+                         WHERE l.item = ?1 AND l.session = messages.session
+                         AND l.message = messages.message)",
+                [item],
+            )
+            .map_err(fail)?;
+        conn.execute("DELETE FROM memory_messages WHERE item = ?1", [item])
+            .map_err(fail)?;
+    }
+    if erased > 0 {
+        conn.execute(
+            "INSERT INTO messages_fts (messages_fts) VALUES ('optimize')",
+            [],
+        )
+        .map_err(fail)?;
+    }
+    for row in &commit.history {
+        let sources = serde_json::to_string(&row.sources).map_err(|e| Error::corrupt(path, e))?;
+        conn.execute(
+            "INSERT INTO memory_history (item, kind, text, sources, removed_at)
+                 SELECT ?1, ?2, ?3, ?4, ?5
+                 WHERE NOT EXISTS (SELECT 1 FROM memory_history
+                     WHERE item = ?1 AND kind = ?2 AND text = ?3)",
+            (
+                &row.item,
+                &row.kind,
+                &row.text,
+                &sources,
+                stamp(row.removed_at),
+            ),
+        )
+        .map_err(fail)?;
+    }
+    if let Some(session) = &commit.pending_clear {
+        conn.execute(
+            "DELETE FROM now_pending WHERE session = ?1",
+            [session.as_str()],
+        )
+        .map_err(fail)?;
+    }
+    for id in &commit.pending_drop {
+        conn.execute("DELETE FROM now_pending WHERE id = ?1", [id])
+            .map_err(fail)?;
+    }
+    for row in &commit.pending_add {
+        conn.execute(
+            "INSERT INTO now_pending (session, message, subject, text, created)
+                 VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT (session, subject) DO NOTHING",
+            (
+                row.session.as_str(),
+                &row.message,
+                &row.subject,
+                &row.text,
+                stamp(row.created),
+            ),
+        )
+        .map_err(fail)?;
+    }
+    for (session, through, signal) in &commit.signals {
+        conn.execute(
+            "INSERT INTO pass_signals (session, through, signal) VALUES (?1, ?2, ?3)
+                 ON CONFLICT (session, through) DO UPDATE SET signal = excluded.signal",
+            (session.as_str(), through, i64::from(*signal)),
+        )
+        .map_err(fail)?;
+    }
+    let journal = if commit.ops.is_empty() {
+        None
+    } else {
+        let ops = serde_json::to_string(&commit.ops).map_err(|e| Error::corrupt(path, e))?;
+        conn.execute(
+            "INSERT INTO memory_journal (created, ops, done, revision) VALUES (?1, ?2, 0, ?3)",
+            (stamp(now), &ops, revision),
+        )
+        .map_err(fail)?;
+        Some(Journal {
+            id: conn.last_insert_rowid(),
+            ops: commit.ops.clone(),
+            revision,
+        })
+    };
+    Ok((journal, erased))
 }

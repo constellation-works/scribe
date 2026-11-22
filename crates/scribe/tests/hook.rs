@@ -332,7 +332,7 @@ fn an_agent_wrapper_cannot_forget_an_entry_or_switch_scribe_on() {
     let out = hook_ok(&fx, "user-prompt-submit", &payload);
     assert!(out.stdout.is_empty(), "{}", text(&out.stdout));
     assert!(
-        !fx.root().join("control.json").exists(),
+        !support::has_control(&fx.root()),
         "agent turn switched scribe on"
     );
 }

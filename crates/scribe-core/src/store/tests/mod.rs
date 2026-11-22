@@ -9,6 +9,7 @@ mod fsio;
 mod memory;
 mod rebuild;
 mod redact;
+mod sessions;
 mod store;
 
 /// A temporary directory that is owner-only whatever the umask, as a store

@@ -362,6 +362,15 @@ pub enum WriteRefusal {
     /// `profile_milestone`: a promoted milestone names no passed `now` item,
     /// or has no real date, title or text within bounds.
     ProfileMilestone,
+    /// `migrate_blocked`: `store migrate` was refused: a session is switched
+    /// on, a rebuild checkpoint waits, or the sessions already moved.
+    MigrateBlocked,
+    /// `export_target_exists`: `export` was given a directory that is not
+    /// empty.
+    ExportTargetExists,
+    /// `export_needs_migrate`: `export --as jsonl` of a store whose sessions
+    /// are still files.
+    ExportNeedsMigrate,
 }
 impl WriteRefusal {
     /// Stable machine-readable code.
@@ -404,6 +413,9 @@ impl WriteRefusal {
             Self::ProfileUnknownLink => "profile_unknown_link",
             Self::ProfileSensitive => "profile_sensitive",
             Self::ProfileMilestone => "profile_milestone",
+            Self::MigrateBlocked => "migrate_blocked",
+            Self::ExportTargetExists => "export_target_exists",
+            Self::ExportNeedsMigrate => "export_needs_migrate",
         }
     }
 }

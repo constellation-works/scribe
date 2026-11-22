@@ -41,7 +41,7 @@ use time::OffsetDateTime;
 
 /// The newest store format: this build reads formats 1 to `FORMAT` of every
 /// document and would write `FORMAT`.
-pub(super) const FORMAT: u32 = 25;
+pub(super) const FORMAT: u32 = 26;
 
 /// Which document an upgrade step is applied to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,7 +93,21 @@ pub(super) const UPGRADES: &[Upgrade] = &[
     user_author,
     claim_context,
     memory_files,
+    sessions_sqlite,
 ];
+
+/// Format 25 -> 26 (2_design.md §15.7, §15.11, phase 6) changes no stored
+/// document. The sessions move into `scribe.db` (schema 3): the first write
+/// imports `sessions/` and `control.json`'s switches and Codex cursors, then
+/// moves those files to `pre-sqlite-<date>/`. `control.json` stays as a
+/// format stamp with no sessions, so a format-25 build refuses the store
+/// instead of writing session files beside the database.
+fn sessions_sqlite(
+    _document: Document,
+    value: serde_json::Value,
+) -> serde_json::Result<serde_json::Value> {
+    Ok(value)
+}
 
 /// Format 24 -> 25 (2_design.md §15.5, §15.11) changes no stored document.
 /// It adds `memory/profile.md`, `memory/now/<stem>.md` and
@@ -2034,6 +2048,18 @@ pub(super) fn decode_session(
     expected: &str,
     year_month: (&str, &str),
 ) -> Result<SessionRecord> {
+    decode_session_at(path, bytes, expected, Some(year_month))
+}
+
+/// [`decode_session`] with the directories as borrowed text, or `None` for
+/// a record that lives in no directory (a rebuild checkpoint row, an
+/// exported file read back).
+pub(super) fn decode_session_at(
+    path: &Path,
+    bytes: &[u8],
+    expected: &str,
+    year_month: Option<(&str, &str)>,
+) -> Result<SessionRecord> {
     let (front, body) = split_frontmatter(path, bytes)?;
     let (from, value) = parse_frontmatter(path, front, SESSION_KIND)?;
     let mut record: SessionRecord = if from >= 6 {
@@ -2046,12 +2072,18 @@ pub(super) fn decode_session(
         format!("{:04}", record.started.year()),
         format!("{:02}", u8::from(record.started.month())),
     );
-    if record.id.as_str() != expected || (started.0.as_str(), started.1.as_str()) != year_month {
+    if record.id.as_str() != expected
+        || year_month.is_some_and(|ym| (started.0.as_str(), started.1.as_str()) != ym)
+    {
         return Err(shape(
             path,
             format!(
                 "id {} started {}-{} does not match the file sessions/{}/{}/{expected}.md",
-                record.id, started.0, started.1, year_month.0, year_month.1
+                record.id,
+                started.0,
+                started.1,
+                year_month.map_or("?", |ym| ym.0),
+                year_month.map_or("?", |ym| ym.1)
             ),
         ));
     }

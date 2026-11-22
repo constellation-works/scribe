@@ -25,6 +25,7 @@
 //!   `specs/store.md` gives every table's types and constraints.
 
 mod memory;
+pub(super) mod sessions;
 
 pub(super) use memory::{
     FileOp, HistoryRow, Journal, MemoryCommit, PendingRow, Writer, memory_view, pending_read,
@@ -49,7 +50,7 @@ pub const DB_FILE: &str = "scribe.db";
 /// The schema, one step per `user_version`: step `n` (1-based) moves the
 /// database from version `n - 1` to `n`. Append only; never edit a shipped
 /// step.
-const MIGRATIONS: &[&str] = &[V1, V2];
+const MIGRATIONS: &[&str] = &[V1, V2, V3];
 
 /// Version 1 (phase 4): `meta`, `messages` and its FTS5 index, and the
 /// memory tables phase 5 uses.
@@ -151,6 +152,112 @@ CREATE TABLE pass_signals (
     through TEXT    NOT NULL CHECK (length(through) >= 1),
     signal  INTEGER NOT NULL CHECK (signal BETWEEN 0 AND 3),
     PRIMARY KEY (session, through)
+) STRICT;
+";
+
+/// Version 3 (phase 6): sessions, their segments, links and terms, the
+/// switch fields `control.json` held, Codex cursors, rebuild checkpoints,
+/// and which record kinds have moved in from files.
+const V3: &str = "
+CREATE TABLE sessions (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider_session        TEXT    NOT NULL UNIQUE
+                                    CHECK (length(provider_session) BETWEEN 1 AND 128),
+    has_record              INTEGER NOT NULL CHECK (has_record IN (0, 1)),
+    status                  TEXT    CHECK (status IN ('open', 'final')),
+    active                  INTEGER CHECK (active IN (0, 1)),
+    keep_active             INTEGER CHECK (keep_active IN (0, 1)),
+    active_change           TEXT    CHECK (active_change IS NULL OR json_valid(active_change)),
+    cataloged_by            TEXT    CHECK (cataloged_by IS NULL OR json_valid(cataloged_by)),
+    rebuilt_by              TEXT    CHECK (rebuilt_by IS NULL OR json_valid(rebuilt_by)),
+    project                 TEXT,
+    topics                  TEXT    CHECK (topics IS NULL OR json_valid(topics)),
+    related                 TEXT    CHECK (related IS NULL OR json_valid(related)),
+    provider                TEXT,
+    host                    TEXT,
+    created                 TEXT,
+    updated                 TEXT,
+    title                   TEXT,
+    cwd                     TEXT,
+    started                 TEXT,
+    on_since                TEXT,
+    scribed_through         TEXT,
+    passes                  INTEGER CHECK (passes >= 0),
+    next_open               INTEGER CHECK (next_open >= 0),
+    summary                 TEXT,
+    goals                   TEXT,
+    next                    TEXT,
+    has_switch              INTEGER NOT NULL CHECK (has_switch IN (0, 1)),
+    sw_provider             TEXT,
+    sw_on                   INTEGER CHECK (sw_on IN (0, 1)),
+    sw_since                TEXT,
+    sw_due                  INTEGER CHECK (sw_due IN (0, 1)),
+    sw_final                INTEGER CHECK (sw_final IN (0, 1)),
+    sw_consecutive_failures INTEGER CHECK (sw_consecutive_failures >= 0),
+    sw_retry_after          TEXT,
+    sw_pending_links        TEXT    CHECK (sw_pending_links IS NULL OR json_valid(sw_pending_links)),
+    sw_cataloged_by         TEXT    CHECK (sw_cataloged_by IS NULL OR json_valid(sw_cataloged_by)),
+    CHECK (has_record = 0 OR (status IS NOT NULL AND active IS NOT NULL
+        AND keep_active IS NOT NULL AND project IS NOT NULL AND topics IS NOT NULL
+        AND related IS NOT NULL AND provider IS NOT NULL AND host IS NOT NULL
+        AND created IS NOT NULL AND updated IS NOT NULL AND title IS NOT NULL
+        AND cwd IS NOT NULL AND started IS NOT NULL AND on_since IS NOT NULL
+        AND passes IS NOT NULL AND next_open IS NOT NULL AND summary IS NOT NULL
+        AND goals IS NOT NULL AND next IS NOT NULL)),
+    CHECK (has_switch = 0 OR (sw_provider IS NOT NULL AND sw_on IS NOT NULL
+        AND sw_due IS NOT NULL AND sw_final IS NOT NULL
+        AND sw_consecutive_failures IS NOT NULL AND sw_pending_links IS NOT NULL))
+) STRICT;
+
+CREATE TABLE segments (
+    session       INTEGER NOT NULL,
+    n             INTEGER NOT NULL CHECK (n >= 1),
+    heading       TEXT    NOT NULL CHECK (length(heading) >= 1),
+    first_message TEXT,
+    last_message  TEXT,
+    \"from\"        TEXT    NOT NULL,
+    \"to\"          TEXT    NOT NULL,
+    state         TEXT    NOT NULL CHECK (state IN ('open', 'sealed')),
+    windows       INTEGER NOT NULL CHECK (windows >= 1),
+    origin        TEXT    NOT NULL CHECK (origin IN ('pass', 'rebuild', 'catalog', 'upgrade')),
+    topics        TEXT    NOT NULL CHECK (json_valid(topics) AND json_type(topics) = 'array'),
+    related       TEXT    NOT NULL CHECK (json_valid(related) AND json_type(related) = 'array'),
+    text          TEXT    NOT NULL,
+    PRIMARY KEY (session, n)
+) STRICT;
+
+CREATE TABLE session_links (
+    session  INTEGER NOT NULL,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    type     TEXT    NOT NULL CHECK (type IN ('spawned_from', 'continues')),
+    target   TEXT    NOT NULL CHECK (length(target) BETWEEN 1 AND 128),
+    PRIMARY KEY (session, position)
+) STRICT;
+
+CREATE TABLE session_terms (
+    session  INTEGER NOT NULL,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    term     TEXT    NOT NULL,
+    said     TEXT    NOT NULL,
+    message  TEXT    NOT NULL,
+    PRIMARY KEY (session, position)
+) STRICT;
+
+CREATE TABLE codex_cursors (
+    session TEXT NOT NULL PRIMARY KEY CHECK (length(session) BETWEEN 1 AND 128),
+    message TEXT NOT NULL CHECK (length(message) >= 1)
+) STRICT;
+
+CREATE TABLE rebuild_checkpoints (
+    session INTEGER NOT NULL PRIMARY KEY,
+    record  TEXT    NOT NULL,
+    created TEXT    NOT NULL
+) STRICT;
+
+CREATE TABLE record_kinds (
+    kind     TEXT NOT NULL PRIMARY KEY CHECK (kind IN ('sessions')),
+    moved_at TEXT NOT NULL,
+    moved_to TEXT
 ) STRICT;
 ";
 
@@ -309,38 +416,62 @@ pub(super) fn upsert_messages(
     let tx = conn
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|e| write_error("write messages to", &path, started, e))?;
-    let mut changed = 0;
-    {
-        let mut insert = tx
-            .prepare(
-                "INSERT INTO messages (session, message, role, at, text, sha256)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                 ON CONFLICT (session, message) DO UPDATE SET
-                     role = excluded.role, at = excluded.at,
-                     text = excluded.text, sha256 = excluded.sha256
-                 WHERE messages.sha256 <> excluded.sha256
-                    OR messages.role <> excluded.role
-                    OR messages.at <> excluded.at",
-            )
-            .map_err(|e| db_error("write messages to", &path, e))?;
-        for m in messages {
-            let text = redactor.mask(&m.text);
-            let sha256 = crate::capture::prompt_sha256(&text);
-            changed += insert
-                .execute((
-                    m.session.as_str(),
-                    &m.message,
-                    m.role.as_str(),
-                    stamp(m.at),
-                    &text,
-                    &sha256,
-                ))
-                .map_err(|e| write_error("write messages to", &path, started, e))?;
-        }
-    }
+    let changed = upsert_in(&tx, &path, started, messages, redactor)?;
     tx.commit()
         .map_err(|e| write_error("write messages to", &path, started, e))?;
     Ok(changed)
+}
+
+/// [`upsert_messages`] inside a transaction the caller opened.
+pub(super) fn upsert_in(
+    conn: &Connection,
+    path: &Path,
+    started: Instant,
+    messages: &[NewMessage],
+    redactor: &Redactor,
+) -> Result<usize> {
+    let mut changed = 0;
+    let mut insert = conn
+        .prepare(
+            "INSERT INTO messages (session, message, role, at, text, sha256)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT (session, message) DO UPDATE SET
+                 role = excluded.role, at = excluded.at,
+                 text = excluded.text, sha256 = excluded.sha256
+             WHERE messages.sha256 <> excluded.sha256
+                OR messages.role <> excluded.role
+                OR messages.at <> excluded.at",
+        )
+        .map_err(|e| db_error("write messages to", path, e))?;
+    for m in messages {
+        let text = redactor.mask(&m.text);
+        let sha256 = crate::capture::prompt_sha256(&text);
+        changed += insert
+            .execute((
+                m.session.as_str(),
+                &m.message,
+                m.role.as_str(),
+                stamp(m.at),
+                &text,
+                &sha256,
+            ))
+            .map_err(|e| write_error("write messages to", path, started, e))?;
+    }
+    Ok(changed)
+}
+
+/// Empty the WAL after a forget committed (`TRUNCATE`), so the deleted
+/// pages leave the store. The checkpoint waits out readers through
+/// `busy_timeout`; one still reading keeps its frames until the next
+/// checkpoint, so a busy result is reported, not failed.
+pub(super) fn truncate_wal(conn: &Connection, path: &Path, started: Instant) -> Result<()> {
+    let busy: i64 = conn
+        .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))
+        .map_err(|e| write_error("checkpoint", path, started, e))?;
+    if busy != 0 {
+        tracing::warn!(path = %path.display(), "a reader kept forgotten messages' old pages in the WAL until the next checkpoint");
+    }
+    Ok(())
 }
 
 /// Delete the messages keyed by `keys` (session, message id) for a forget,
@@ -383,15 +514,7 @@ pub(super) fn delete_messages(
     tx.commit()
         .map_err(|e| write_error("forget messages in", &path, started, e))?;
     if deleted > 0 {
-        // The checkpoint waits out readers through busy_timeout; one still
-        // reading leaves its frames until the next checkpoint, so a busy
-        // result is reported, not failed.
-        let busy: i64 = conn
-            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))
-            .map_err(|e| write_error("checkpoint", &path, started, e))?;
-        if busy != 0 {
-            tracing::warn!(path = %path.display(), "a reader kept forgotten messages' old pages in the WAL until the next checkpoint");
-        }
+        truncate_wal(&conn, &path, started)?;
     }
     Ok(deleted)
 }

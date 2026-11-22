@@ -536,6 +536,9 @@ impl<'a> Kin<'a> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct SessionPayload {
     pub(crate) id: String,
+    /// The session's `s-<n>` (2_design.md §15.7), accepted wherever an id
+    /// is; `id` stays the provider's session id, which cites use.
+    pub(crate) short_id: Option<String>,
     /// `open` or `final`.
     pub(crate) status: &'static str,
     pub(crate) project: String,
@@ -600,6 +603,7 @@ impl SessionPayload {
     ) -> Self {
         Self {
             id: record.id.to_string(),
+            short_id: None,
             status: record.status.as_str(),
             project: record.project.to_string(),
             topics: strings(record.topics.as_slice()),
@@ -640,6 +644,12 @@ impl SessionPayload {
             log: None,
             log_text: false,
         }
+    }
+
+    /// With its `s-<n>`.
+    pub(crate) fn with_number(mut self, number: Option<std::num::NonZeroU64>) -> Self {
+        self.short_id = number.map(|n| format!("s-{n}"));
+        self
     }
 
     /// With `segments` as its `log`: a `show` carries the whole log, or the
@@ -1095,6 +1105,10 @@ pub(crate) enum Record {
     MemoryRevision(Box<RevisionPayload>),
     /// `memory refresh`.
     MemoryRefresh(Box<RefreshPayload>),
+    /// `store migrate`: what the move into `scribe.db` did.
+    StoreMigrate(Box<MigratePayload>),
+    /// `export`: what was written where.
+    Export(Box<ExportPayload>),
     /// `memory rules`.
     MemoryRules(Box<MemoryRulesPayload>),
     /// `brief`.
@@ -1373,6 +1387,36 @@ pub(crate) struct RefreshPayload {
     pub(crate) milestones: Vec<String>,
     /// Passed `now` items removed, by stem.
     pub(crate) removed: Vec<String>,
+}
+
+/// `store migrate`: the sessions moved into `scribe.db`. Field names are a
+/// contract.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct MigratePayload {
+    /// Session records imported.
+    pub(crate) sessions: usize,
+    /// Switches imported.
+    pub(crate) switches: usize,
+    /// Codex cursors imported.
+    pub(crate) cursors: usize,
+    /// Where the files went, under the data directory; `null` when there
+    /// were none.
+    pub(crate) moved_to: Option<String>,
+}
+
+/// `export`: the files written. Field names are a contract.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct ExportPayload {
+    /// The directory written into.
+    pub(crate) dir: String,
+    /// `markdown` or `jsonl`.
+    pub(crate) format: &'static str,
+    /// Sessions written.
+    pub(crate) sessions: usize,
+    /// Every file written, relative to `dir`, in order.
+    pub(crate) files: Vec<String>,
+    /// Records that did not read, so were not written.
+    pub(crate) skipped: Vec<String>,
 }
 
 /// `memory show --revision <n>`: one profile revision.
@@ -1934,6 +1978,7 @@ impl FoundPayload {
                         sessions.control.get(&record.id),
                         Kin::of(&record.id, sessions.children, sessions.titles),
                     )
+                    .with_number(sessions.numbers.get(&record.id).copied())
                     .with_log(&record.log),
                 ),
                 task: None,
@@ -1958,6 +2003,7 @@ pub(crate) struct SessionsContext<'a> {
     pub(crate) control: &'a ControlState,
     pub(crate) children: &'a BTreeMap<SessionId, Vec<Child>>,
     pub(crate) titles: &'a BTreeMap<SessionId, String>,
+    pub(crate) numbers: &'a BTreeMap<SessionId, std::num::NonZeroU64>,
 }
 
 /// What `question ask` and the `scribe.ask` tool return (2_design.md §6.1):

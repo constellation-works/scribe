@@ -1,0 +1,31 @@
+Move session files into scribe.db now, keeping the old files aside
+
+Imports sessions/ and control.json's switches and Codex cursors into scribe.db in one transaction that checks the record count, then moves the files to pre-sqlite-<date>/ in the data directory, which scribe never deletes. Every write makes this move on its own. Refused while a session is switched on, while a rebuild checkpoint waits, and once the sessions moved.
+
+Usage: scribe store migrate [OPTIONS]
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Global options:
+      --provider <PROVIDER>
+          Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+
+      --root <DIR>
+          Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+
+      --format <FORMAT>
+          Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto]
+          
+          [possible values: auto, table, json]
+
+      --json
+          Shorthand for --format json
+
+Examples:
+  scribe store migrate
+  scribe store migrate --json | jq .moved_to

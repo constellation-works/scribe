@@ -955,7 +955,7 @@ fn reserved_author_names_are_refused_on_every_agent_write() {
     // Reads still accept the name as a filter.
     fx.ok(&["entry", "list", "--author", "daniel", "--json"]);
     assert!(!fx.root().join("entries").exists());
-    assert!(!fx.root().join("control.json").exists());
+    assert!(!support::has_control(&fx.root()));
 }
 
 #[test]
@@ -1102,7 +1102,7 @@ fn a_faked_terminal_cannot_catalog_as_daniel() {
         .expect("run script(1)");
     let shown = format!("{}{}", text(&out.stdout), text(&out.stderr));
     assert!(shown.contains("reserved_author"), "{shown}");
-    assert!(!fx.root().join("control.json").exists());
+    assert!(!support::has_control(&fx.root()));
     assert!(!fx.root().join("sessions").exists());
 }
 

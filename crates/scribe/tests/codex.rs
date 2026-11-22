@@ -165,8 +165,7 @@ fn verified_skill_opt_in_capture_luna_pass_citations_off_and_provider_isolation(
     assert_eq!(marks[0]["outcome"], "entry");
     // The luna pass below reads its own calls from a fresh log.
     std::fs::remove_file(f.home().join("model-calls.jsonl")).unwrap();
-    let control: Value =
-        serde_json::from_slice(&std::fs::read(f.root().join("control.json")).unwrap()).unwrap();
+    let control: Value = support::control(&f.root());
     assert_eq!(control["sessions"][ID]["provider"], "codex");
     let before = support::snapshot(&f.root());
     c.hook_with(&f, "Stop", "current", "", &annotate);
@@ -240,8 +239,7 @@ fn verified_skill_opt_in_capture_luna_pass_citations_off_and_provider_isolation(
         .unwrap();
     cmd.stdin.take().unwrap().write_all(json!({"session_id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee","transcript_path":claude,"cwd":"/synthetic","prompt":"/scribe on"}).to_string().as_bytes()).unwrap();
     assert!(cmd.wait_with_output().unwrap().status.success());
-    let state: Value =
-        serde_json::from_slice(&std::fs::read(f.root().join("control.json")).unwrap()).unwrap();
+    let state: Value = support::control(&f.root());
     assert_eq!(state["sessions"][ID]["on"], false);
     assert_eq!(
         state["sessions"]["aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"]["on"],
@@ -256,20 +254,16 @@ fn deferred_prompt_requires_host_metadata_and_only_processes_current_turn() {
     c.write();
     let out = c.hook(&f, "UserPromptSubmit", "active", "/scribe on");
     assert!(text(&out.stdout).contains("not yet verified"));
-    assert!(!f.root().join("control.json").exists());
+    assert!(!support::has_control(&f.root()));
     c.typed("old", "previous", "/scribe on");
     c.typed("unrelated", "active", "ordinary typed input");
     c.write();
     c.hook(&f, "Stop", "active", "");
-    assert!(
-        !f.root().join("control.json").exists(),
-        "never replay old opt-in"
-    );
+    assert!(!support::has_control(&f.root()), "never replay old opt-in");
     c.typed("new-on", "active", "/scribe on");
     c.write();
     c.hook(&f, "Stop", "active", "");
-    let state: Value =
-        serde_json::from_slice(&std::fs::read(f.root().join("control.json")).unwrap()).unwrap();
+    let state: Value = support::control(&f.root());
     assert_eq!(state["sessions"][ID]["on"], true);
     c.typed("agent", "later", "#scribe preferences: agent text");
     c.rows.last_mut().unwrap()["payload"]
@@ -291,7 +285,7 @@ fn subagents_unsafe_paths_and_missing_identity_never_record() {
         c.write();
         let out = c.hook(&f, "Stop", "t", "");
         assert!(text(&out.stdout).contains("not recorded"));
-        assert!(!f.root().join("control.json").exists());
+        assert!(!support::has_control(&f.root()));
     }
     let f = Fixture::new();
     let mut c = Codex::new(&f);
@@ -303,7 +297,7 @@ fn subagents_unsafe_paths_and_missing_identity_never_record() {
     std::os::unix::fs::symlink(&outside, &original).unwrap();
     let out = c.hook(&f, "Stop", "t", "");
     assert!(text(&out.stdout).contains("not recorded"));
-    assert!(!f.root().join("control.json").exists());
+    assert!(!support::has_control(&f.root()));
 }
 
 fn plugin_pass(f: &Fixture, path: &std::ffi::OsStr) -> Value {
@@ -420,8 +414,7 @@ fn controls_links_settlements_and_invalid_instructions_do_not_block_later_off() 
     c.typed("off", "last", "/scribe off");
     c.write();
     c.hook(&f, "Stop", "last", "");
-    let state: Value =
-        serde_json::from_slice(&std::fs::read(f.root().join("control.json")).unwrap()).unwrap();
+    let state: Value = support::control(&f.root());
     assert_eq!(state["sessions"][ID]["on"], false);
 }
 
@@ -510,7 +503,7 @@ fn unsupported_transcripts_return_nonblocking_refusal_for_ordinary_prompts() {
     assert_eq!(reply.status.code(), Some(0));
     let value: Value = serde_json::from_slice(&reply.stdout).unwrap();
     assert!(value.get("decision").is_none());
-    assert!(!f.root().join("control.json").exists());
+    assert!(!support::has_control(&f.root()));
 }
 
 #[test]
@@ -626,8 +619,7 @@ fn explicit_codex_catalog_stamps_provider_with_agent_authorship() {
         text(&out.stdout),
         text(&out.stderr)
     );
-    let state: Value =
-        serde_json::from_slice(&std::fs::read(f.root().join("control.json")).unwrap()).unwrap();
+    let state: Value = support::control(&f.root());
     assert_eq!(state["sessions"][ID]["provider"], "codex");
     assert_eq!(state["sessions"][ID]["cataloged_by"]["by"]["kind"], "agent");
 }

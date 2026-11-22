@@ -496,6 +496,35 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
             field(out, "milestones", &or_none(&r.milestones))?;
             field(out, "removed", &or_none(&r.removed))
         }
+        (OutputMode::Json, Record::StoreMigrate(r)) => write_json(out, r.as_ref()),
+        (OutputMode::Plain, Record::StoreMigrate(r)) => writeln!(
+            out,
+            "{}\t{}\t{}\t{}",
+            r.sessions,
+            r.switches,
+            r.cursors,
+            r.moved_to.as_deref().unwrap_or("-")
+        ),
+        (OutputMode::Table, Record::StoreMigrate(r)) => {
+            field(out, "sessions", &r.sessions.to_string())?;
+            field(out, "switches", &r.switches.to_string())?;
+            field(out, "cursors", &r.cursors.to_string())?;
+            field(out, "moved to", r.moved_to.as_deref().unwrap_or("-"))
+        }
+        (OutputMode::Json, Record::Export(r)) => write_json(out, r.as_ref()),
+        (OutputMode::Plain, Record::Export(r)) => {
+            for file in &r.files {
+                writeln!(out, "{file}")?;
+            }
+            Ok(())
+        }
+        (OutputMode::Table, Record::Export(r)) => {
+            field(out, "dir", &r.dir)?;
+            field(out, "format", r.format)?;
+            field(out, "sessions", &r.sessions.to_string())?;
+            field(out, "files", &r.files.len().to_string())?;
+            field(out, "skipped", &or_none(&r.skipped))
+        }
         (OutputMode::Json, Record::Brief(brief)) => write_json(out, brief),
         (OutputMode::Plain | OutputMode::Table, Record::Brief(brief)) => {
             write!(out, "{}", brief.text)
@@ -1006,6 +1035,9 @@ fn origin_text(o: &OriginPayload) -> String {
 fn session_detail(out: &mut dyn Write, sink: &Sink, s: &SessionPayload) -> io::Result<()> {
     let due = color::paint(yes_no(s.due), due_role(s.due), sink.color);
     field(out, "id", &s.id)?;
+    if let Some(short) = &s.short_id {
+        field(out, "short id", short)?;
+    }
     field(out, "title", or_dash(&s.title))?;
     field(out, "status", s.status)?;
     field(out, "active", yes_no(s.active))?;

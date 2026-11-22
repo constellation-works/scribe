@@ -239,21 +239,20 @@ fn list_skips_cataloged_transcripts_and_provenance_failures() {
             );
         })
         .unwrap();
-    let record = setup
-        .ctx
-        .store()
-        .root()
-        .join(format!("sessions/2026/10/{CORRUPT}.md"));
-    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
-    std::fs::write(&record, "not a session\n").unwrap();
-    std::fs::set_permissions(&record, std::fs::Permissions::from_mode(0o600)).unwrap();
-    for dir in [
-        setup.ctx.store().root().join("sessions"),
-        setup.ctx.store().root().join("sessions/2026"),
-        setup.ctx.store().root().join("sessions/2026/10"),
-    ] {
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
-    }
+    // A record row that does not decode (an empty project): listed as a
+    // skipped record, never as an uncataloged transcript.
+    let db = rusqlite::Connection::open(setup.ctx.store().root().join("scribe.db")).unwrap();
+    db.execute(
+        "INSERT INTO sessions (provider_session, has_record, status, active, keep_active,
+             project, topics, related, provider, host, created, updated, title, cwd,
+             started, on_since, passes, next_open, summary, goals, next, has_switch)
+         VALUES (?1, 1, 'open', 1, 0, '', '[]', '[]', 'claude-code', 'host',
+             '2026-10-04T10:00:00Z', '2026-10-04T10:00:00Z', 'Bad', '/work/scribe',
+             '2026-10-04T10:00:00Z', '2026-10-04T10:00:00Z', 0, 0, '', '', '', 0)",
+        [CORRUPT],
+    )
+    .unwrap();
+    drop(db);
 
     let found = rows(setup.list(args(day(2026, 10, 1))));
     assert_eq!(found.len(), 1);

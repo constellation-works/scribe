@@ -21,6 +21,8 @@ Find:
 
 Upkeep:
   consistency  Propose superseding or retiring entries via scan
+  store        Move the store's session files into scribe.db
+  export       Write every session to a directory as Markdown or JSONL
 
 Integration:
   hook         Run a provider hook for session and prompt events

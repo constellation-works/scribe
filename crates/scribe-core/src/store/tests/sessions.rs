@@ -1,0 +1,355 @@
+//! Sessions in `scribe.db` (§15.7): the move, `store migrate`, `export`,
+//! `s-<n>` numbers and the pass as one transaction.
+
+use super::{SESSION_BODY, private_tempdir, session_text};
+use crate::control::{self, Switch};
+use crate::error::Error;
+use crate::memory::{Checked, Draft, ElementKind, NowKind};
+use crate::session::{SessionFilter, SessionId};
+use crate::store::memory::CRASH_AFTER_COMMIT;
+use crate::store::{ExportFormat, PassMemory, PassWrite, Redactor, Store, db, format};
+use crate::tests::{T0, session};
+use std::fs;
+use std::path::Path;
+use time::macros::date;
+
+fn code(err: &Error) -> &'static str {
+    err.code()
+}
+
+/// Write `text` at `rel` under `root`, creating owner-only directories.
+fn put(root: &Path, rel: &str, text: &str) {
+    let path = root.join(rel);
+    let mut missing = Vec::new();
+    let mut dir = path.parent().unwrap().to_path_buf();
+    while !dir.exists() {
+        missing.push(dir.clone());
+        dir = dir.parent().unwrap().to_path_buf();
+    }
+    for d in missing.iter().rev() {
+        fs::create_dir(d).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(d, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+    }
+    fs::write(&path, text).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+}
+
+/// A file store holding the record `s-1` and no switch.
+fn file_store() -> (tempfile::TempDir, Store) {
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+    put(
+        &root,
+        "sessions/2026/11/s-1.md",
+        &session_text("", SESSION_BODY),
+    );
+    (dir, Store::open(root))
+}
+
+fn s1() -> SessionId {
+    "s-1".parse().unwrap()
+}
+
+#[test]
+fn migrate_moves_the_files_aside_and_the_records_read_the_same() {
+    let (_dir, store) = file_store();
+    let before = store.session(&s1()).unwrap().record;
+    let moved = store.migrate_sessions(T0).unwrap();
+    assert_eq!(moved.sessions, 1);
+    assert_eq!(moved.moved_to.as_deref(), Some("pre-sqlite-2026-11-01"));
+    let root = store.root();
+    assert!(!root.join("sessions").exists());
+    assert!(
+        root.join("pre-sqlite-2026-11-01/sessions/2026/11/s-1.md")
+            .is_file()
+    );
+    assert_eq!(store.session(&s1()).unwrap().record, before);
+    // Once moved, a second migrate is refused and changes nothing.
+    let err = store.migrate_sessions(T0).unwrap_err();
+    assert_eq!(code(&err), "migrate_blocked", "{err}");
+}
+
+#[test]
+fn migrate_is_refused_while_a_session_is_on() {
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+    put(
+        &root,
+        "sessions/2026/11/s-1.md",
+        &session_text("", SESSION_BODY),
+    );
+    put(
+        &root,
+        "control.json",
+        r#"{"format": 1, "sessions": {"s-1": {"on": true, "since": "2026-11-01T09:00:00Z", "due": true, "final": false}}}"#,
+    );
+    let store = Store::open(&root);
+    let err = store.migrate_sessions(T0).unwrap_err();
+    assert_eq!(code(&err), "migrate_blocked", "{err}");
+    assert!(root.join("sessions/2026/11/s-1.md").is_file());
+    assert_eq!(store.session(&s1()).unwrap().record.title, "a session");
+}
+
+#[test]
+fn migrate_is_refused_while_a_rebuild_checkpoint_exists() {
+    let (_dir, store) = file_store();
+    let root = store.root().to_path_buf();
+    put(
+        &root,
+        "sessions/2026/11/.s-1.rebuild.md",
+        &session_text("", SESSION_BODY),
+    );
+    let err = store.migrate_sessions(T0).unwrap_err();
+    assert_eq!(code(&err), "migrate_blocked", "{err}");
+    assert!(err.to_string().contains("checkpoint"), "{err}");
+    assert!(root.join("sessions/2026/11/s-1.md").is_file());
+    assert!(root.join("sessions/2026/11/.s-1.rebuild.md").is_file());
+    assert_eq!(store.session(&s1()).unwrap().record.title, "a session");
+}
+
+#[test]
+fn a_write_moves_the_files_and_keeps_a_checkpoint_as_a_row() {
+    let (_dir, store) = file_store();
+    let root = store.root().to_path_buf();
+    put(
+        &root,
+        "sessions/2026/11/.s-1.rebuild.md",
+        &session_text("", SESSION_BODY),
+    );
+    // A session write is never refused for the move.
+    let other: SessionId = "s-2".parse().unwrap();
+    store
+        .update_control(|s| control::switch(s, &other, &Switch::On, T0))
+        .unwrap();
+    assert!(!root.join("sessions").exists());
+    let moved = fs::read_dir(&root)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .find(|e| e.file_name().to_string_lossy().starts_with("pre-sqlite-"))
+        .expect("the files moved aside");
+    assert!(
+        moved
+            .path()
+            .join("sessions/2026/11/.s-1.rebuild.md")
+            .is_file()
+    );
+    let record = store.session(&s1()).unwrap().record;
+    assert!(store.checkpoint_of(&record).unwrap().is_some());
+}
+
+#[test]
+fn a_record_that_does_not_read_refuses_the_move() {
+    let (_dir, store) = file_store();
+    let root = store.root().to_path_buf();
+    put(&root, "sessions/2026/11/s-9.md", "not a session\n");
+    let err = store.migrate_sessions(T0).unwrap_err();
+    assert_eq!(code(&err), "store_corrupt", "{err}");
+    assert!(root.join("sessions/2026/11/s-1.md").is_file());
+}
+
+#[test]
+fn records_number_by_creation_and_a_new_session_numbers_after_them() {
+    let (_dir, store) = file_store();
+    let before = store.session_numbers().unwrap();
+    assert_eq!(before[&s1()].get(), 1);
+    store.migrate_sessions(T0).unwrap();
+    assert_eq!(store.session_numbers().unwrap(), before);
+    let new: SessionId = "0b8ef4a6-0c6a-4d77-9c41-000000000001".parse().unwrap();
+    store
+        .update_control(|s| control::switch(s, &new, &Switch::On, T0))
+        .unwrap();
+    // Updates spend no number: the record and switch rewritten, then a
+    // third session.
+    store
+        .update_control(|s| control::switch(s, &new, &Switch::Off, T0))
+        .unwrap();
+    let mut record = store.session(&s1()).unwrap().record;
+    record.title = String::from("renamed");
+    store
+        .settle_pass(
+            &s1(),
+            Some(record.clone()),
+            false,
+            Some(record.updated),
+            &Redactor::default(),
+        )
+        .unwrap();
+    let third: SessionId = "0b8ef4a6-0c6a-4d77-9c41-000000000002".parse().unwrap();
+    store
+        .update_control(|s| control::switch(s, &third, &Switch::On, T0))
+        .unwrap();
+    let numbers = store.session_numbers().unwrap();
+    assert_eq!(numbers[&new].get(), 2);
+    assert_eq!(numbers[&third].get(), 3);
+    // `s-<n>` names a session wherever an id is taken.
+    let by_number: SessionId = "s-3".parse().unwrap();
+    assert_eq!(store.resolve_session(&by_number).unwrap(), third);
+}
+
+#[test]
+fn markdown_export_writes_every_session_in_its_file_shape() {
+    let (dir, store) = file_store();
+    store.migrate_sessions(T0).unwrap();
+    let record = store.session(&s1()).unwrap().record;
+    let target = dir.path().join("export");
+    let out = store
+        .export_sessions(&target, ExportFormat::Markdown)
+        .unwrap();
+    assert_eq!(out.sessions, 1);
+    assert_eq!(
+        fs::read(target.join("sessions/2026/11/s-1.md")).unwrap(),
+        format::encode_session(Path::new("record"), &record).unwrap()
+    );
+    assert!(target.join("control.json").is_file());
+    // A directory with anything in it is refused.
+    let err = store
+        .export_sessions(&target, ExportFormat::Markdown)
+        .unwrap_err();
+    assert_eq!(code(&err), "export_target_exists", "{err}");
+}
+
+#[test]
+fn jsonl_export_writes_one_line_per_row_and_needs_moved_sessions() {
+    let (dir, store) = file_store();
+    let err = store
+        .export_sessions(&dir.path().join("early"), ExportFormat::Jsonl)
+        .unwrap_err();
+    assert_eq!(code(&err), "export_needs_migrate", "{err}");
+    store.migrate_sessions(T0).unwrap();
+    let target = dir.path().join("export");
+    let out = store.export_sessions(&target, ExportFormat::Jsonl).unwrap();
+    assert_eq!(out.sessions, 1);
+    let sessions = fs::read_to_string(target.join("sessions.jsonl")).unwrap();
+    assert_eq!(sessions.lines().count(), 1, "{sessions}");
+    let row: serde_json::Value = serde_json::from_str(sessions.lines().next().unwrap()).unwrap();
+    assert_eq!(row["provider_session"], "s-1");
+}
+
+fn draft(title: &str) -> Draft {
+    const TURN: &str = "My sister's wedding is on december 12 and I'm still on the seating.";
+    let day = date!(2026 - 12 - 12);
+    Draft {
+        checked: Checked {
+            kind: ElementKind::Now,
+            title: title.to_owned(),
+            text: format!("{title}."),
+            quote: TURN.to_owned(),
+            message: String::from("u-1"),
+            date: Some(crate::record::nullable_date::format(day)),
+            now_kind: NowKind::Event,
+            update: None,
+            completes: None,
+        },
+        date: Some(day),
+        turn: TURN.to_owned(),
+        at: T0,
+    }
+}
+
+fn memory(drafts: Vec<Draft>) -> PassMemory {
+    PassMemory {
+        drafts,
+        signal: None,
+        final_pass: false,
+    }
+}
+
+const WEDDING: &str = "memory/now/2026-12-12-sister-s-wedding.md";
+
+#[test]
+fn a_pass_window_commits_its_record_and_memory_together_then_applies_the_journal() {
+    let dir = private_tempdir();
+    let store = Store::open(dir.path().join("store"));
+    let redactor = Redactor::default();
+    let id: SessionId = "0b8ef4a6-0c6a-4d77-9c41-000000000001".parse().unwrap();
+    let record = session(id.as_str(), T0);
+    CRASH_AFTER_COMMIT.with(|c| c.set(true));
+    let err = store
+        .write_pass_window(
+            record.clone(),
+            None,
+            PassWrite::Settle(false),
+            &[],
+            Some(&memory(vec![draft("Sister's wedding")])),
+            &[],
+            &redactor,
+        )
+        .unwrap_err();
+    assert!(matches!(err, Error::Io { .. }), "{err:?}");
+    // The crash came after the commit: the record and the memory rows are
+    // in, the journal open, its file not yet written.
+    assert_eq!(store.session(&id).unwrap().record, record);
+    assert!(!store.root().join(WEDDING).exists());
+    assert!(store.memory_view().unwrap().pending);
+    // The next write replays the journal first.
+    let mut next = record.clone();
+    next.updated = T0 + time::Duration::minutes(1);
+    store
+        .write_pass_window(
+            next,
+            Some(record.updated),
+            PassWrite::Settle(false),
+            &[],
+            Some(&memory(Vec::new())),
+            &[],
+            &redactor,
+        )
+        .unwrap();
+    assert!(store.root().join(WEDDING).is_file());
+    let view = store.memory_view().unwrap();
+    assert!(!view.pending);
+    assert_eq!(view.now.len(), 1);
+}
+
+#[test]
+fn a_pass_window_that_fails_inside_its_transaction_writes_nothing() {
+    let dir = private_tempdir();
+    let store = Store::open(dir.path().join("store"));
+    let redactor = Redactor::default();
+    let id: SessionId = "0b8ef4a6-0c6a-4d77-9c41-000000000001".parse().unwrap();
+    store
+        .update_control(|s| control::switch(s, &id, &Switch::On, T0))
+        .unwrap();
+    // The record's row is refused after the memory rows were staged.
+    db::execute(
+        store.root(),
+        "CREATE TRIGGER staged_failure BEFORE UPDATE ON sessions WHEN NEW.has_record = 1
+         BEGIN SELECT RAISE(ABORT, 'staged failure'); END;",
+    )
+    .unwrap();
+    let err = store
+        .write_pass_window(
+            session(id.as_str(), T0),
+            None,
+            PassWrite::Settle(false),
+            &[],
+            Some(&memory(vec![draft("Sister's wedding")])),
+            &[],
+            &redactor,
+        )
+        .unwrap_err();
+    assert_eq!(code(&err), "store_database", "{err}");
+    let listed = store
+        .list_sessions(&SessionFilter {
+            include_inactive: true,
+            ..SessionFilter::default()
+        })
+        .unwrap();
+    assert!(listed.listing.items.is_empty());
+    let view = store.memory_view().unwrap();
+    assert!(!view.pending, "no journal committed");
+    assert!(view.now.is_empty());
+    assert!(!store.root().join(WEDDING).exists());
+    assert!(
+        store.control().unwrap().get(&id).unwrap().due,
+        "the switch is unchanged"
+    );
+}

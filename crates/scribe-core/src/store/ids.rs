@@ -80,9 +80,9 @@ fn ambiguous<'a>(input: &str, candidates: impl Iterator<Item = &'a str>) -> Erro
 }
 
 impl Store {
-    /// The session `input` names: a session with that exact id (a record
-    /// or a switch), else the one session whose id starts with it (at least
-    /// four characters). Reads only.
+    /// The session `input` names: `s-<n>`, a session with that exact
+    /// provider id (a record or a switch), else the one session whose id
+    /// starts with it (at least four characters). Reads only.
     ///
     /// # Errors
     ///
@@ -91,23 +91,55 @@ impl Store {
     /// [`Error::AgentWrite`] naming the candidates when several do; a store
     /// error otherwise.
     pub fn resolve_session(&self, input: &SessionId) -> Result<SessionId> {
-        let mut ids: Vec<String> = self.session_files()?.into_iter().map(|f| f.stem).collect();
-        ids.extend(
-            self.control()?
-                .sessions
-                .keys()
-                .map(|id| id.as_str().to_owned()),
-        );
+        let loaded = self.load_sessions()?;
+        let not_found = || -> Result<SessionId> {
+            Err(Error::SessionNotFound {
+                id: input.clone(),
+                path: self.root.join(super::SESSIONS_DIR),
+            })
+        };
+        let exact = |id: &SessionId| id == input;
+        // An exact provider id first; then `s-<n>`, the row id (2_design.md
+        // §15.7), which a provider's UUID never looks like.
+        if !loaded.records.iter().any(|r| exact(&r.id))
+            && !loaded.numbers.keys().any(exact)
+            && !loaded.control.sessions.keys().any(exact)
+            && let Some(n) = input
+                .as_str()
+                .strip_prefix("s-")
+                .and_then(|n| n.parse::<u64>().ok())
+        {
+            return match loaded.numbers.iter().find(|(_, v)| v.get() == n) {
+                Some((id, _)) => Ok(id.clone()),
+                None => not_found(),
+            };
+        }
+        let mut ids: Vec<String> = loaded
+            .records
+            .iter()
+            .map(|r| r.id.as_str().to_owned())
+            .chain(
+                loaded
+                    .skipped
+                    .iter()
+                    .filter_map(|(id, _)| id.as_ref().map(|id| id.as_str().to_owned())),
+            )
+            .chain(loaded.numbers.keys().map(|id| id.as_str().to_owned()))
+            .chain(
+                loaded
+                    .control
+                    .sessions
+                    .keys()
+                    .map(|id| id.as_str().to_owned()),
+            )
+            .collect();
         ids.sort();
         ids.dedup();
         match resolve(input.as_str(), &ids)? {
             Some(i) => ids[i]
                 .parse::<SessionId>()
                 .map_err(|e| refusal(WriteRefusal::InvalidId, e.to_string())),
-            None => Err(Error::SessionNotFound {
-                id: input.clone(),
-                path: self.root.join(super::SESSIONS_DIR),
-            }),
+            None => not_found(),
         }
     }
 }

@@ -1,6 +1,6 @@
 ---
 type: design
-summary: "Spec: store — layout, scribe.db (phase 4: messages with FTS5, WAL, read-only copies; phase 5: the memory journal and pass signals), memory files (profile, now items, milestones), record files with YAML frontmatter (format 25: memory files migrated from memory items; format 24: a claim's context paragraph; format 23: the user author channel; format 22: marks.json and the annotation entry; format 21: a working item's preference_proposal; format 20: memory consolidation and promotion; format 19: memory items; format 18: entry removal_instruction apart from the approval instruction; format 17: issue records; format 16: entry outcome on a pass-written idea; format 15: instructed approval said and closed_reason covered; format 14: candidate statement and subject, entry stated_by; format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
+summary: "Spec: store — layout, scribe.db (phase 4: messages with FTS5, WAL, read-only copies; phase 5: the memory journal and pass signals; phase 6: sessions, switches, Codex cursors and rebuild checkpoints as rows, s-<n> ids, store migrate and export), memory files (profile, now items, milestones), record files with YAML frontmatter (format 25: memory files migrated from memory items; format 24: a claim's context paragraph; format 23: the user author channel; format 22: marks.json and the annotation entry; format 21: a working item's preference_proposal; format 20: memory consolidation and promotion; format 19: memory items; format 18: entry removal_instruction apart from the approval instruction; format 17: issue records; format 16: entry outcome on a pass-written idea; format 15: instructed approval said and closed_reason covered; format 14: candidate statement and subject, entry stated_by; format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
 last_validated: 2026-11-22
 ---
 
@@ -10,7 +10,13 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-The code writes format 25 and reads formats 1–25. Format 25 changes no
+The code writes format 26 and reads formats 1–26. Format 26 moves the
+sessions into `scribe.db`
+([2_design.md §15.7](../2_design.md#157-storage), phase 6): records,
+switches, Codex cursors and rebuild checkpoints become rows (schema version
+3), the first session write moves the files to `pre-sqlite-<date>/`, and
+`control.json` stays as the format stamp alone; see
+[Sessions in scribe.db](#sessions-in-scribedb-phase-6). Format 25 changes no
 stored document: it adds the memory files of
 [2_design.md §15.5](../2_design.md#155-memory-one-fixed-shape) (`memory/profile.md`,
 `memory/now/<stem>.md`, `memory/milestones/<stem>.md`), and the first
@@ -107,8 +113,11 @@ user's file could pass for one of Daniel's records.
 ├── entries/<tag>/<tag>-<n>.md           0600, one file per entry
 ├── issues/issue-<n>.md                  0600, one file per issue (formats 17–23; phase 2 converts each to an entry)
 ├── pre-issue-<yyyy-mm-dd>/issue-<n>.md   0600, an issue file after its conversion (phase 2)
-├── sessions/<yyyy>/<mm>/<session-id>.md 0600, one file per session record
-├── control.json                         0600, optional
+├── sessions/<yyyy>/<mm>/<session-id>.md 0600, one file per session record, until the move (formats 1–25)
+├── control.json                         0600, optional; after the move only the format stamp, `{"format": 26, "sessions": {}, "codex_cursors": {}}`
+├── pre-sqlite-<yyyy-mm-dd>/             0700, `sessions/`, `control.json` and `.codex-<id>.lock` files after the move (phase 6), never deleted
+├── locks/codex-<id>.lock                0600, the Codex ingestion lock of a session (phase 6)
+├── locks/rebuild-<id>.lock              0600, the rebuild lock of a session (phase 6)
 ├── proposals.json                       0600, optional
 ├── tags.json                            0600, optional (introduced at format 5, S12)
 ├── pickups.json                         0600, optional (introduced at format 8)
@@ -117,7 +126,7 @@ user's file could pass for one of Daniel's records.
 ├── memory/milestones/<date>-<slug>.md   0600, one file per milestone (format 25)
 ├── memory/m-<n>.md                      0600, a memory item (formats 19–24), migrated and removed by the first memory write
 ├── marks.json                           0600, optional (introduced at format 22)
-├── scribe.db                            0600, SQLite in WAL mode, created by the first pass that keeps a message (phase 4)
+├── scribe.db                            0600, SQLite in WAL mode, created by the first write that needs it (phase 4)
 ├── scribe.db-wal, scribe.db-shm         0600, kept after the last connection (PERSIST_WAL)
 ├── audit.jsonl                          0600, created by the first audited command
 └── .lock                                0600, created by the first writer, never deleted
@@ -165,11 +174,13 @@ file.
   re-reads the version, so racing writers run each step once. A version
   above this build's is `store_too_new` for readers and writers. Version 1
   is phase 4's; version 2 (phase 5) adds `memory_journal`,
-  `memory_messages` and `pass_signals`. Every table is `STRICT`; times are RFC 3339 UTC text.
+  `memory_messages` and `pass_signals`; version 3 (phase 6) adds
+  `sessions`, `segments`, `session_links`, `session_terms`,
+  `codex_cursors`, `rebuild_checkpoints` and `record_kinds`. Every table is `STRICT`; times are RFC 3339 UTC text.
 - **Errors.** A file SQLite cannot read as a database is `store_corrupt`;
   any other SQLite failure is `store_database`.
 
-### Tables (version 2)
+### Tables (version 3)
 
 | Table | Columns (type, constraint) | Written by |
 |---|---|---|
@@ -183,6 +194,13 @@ file.
 | `memory_journal` | `id INTEGER PRIMARY KEY`; `created TEXT NOT NULL`; `ops TEXT NOT NULL`, a JSON array of `{path, content}` (content `null` removes the file); `done INTEGER NOT NULL CHECK (done IN (0, 1))`; `revision INTEGER REFERENCES profile_revisions(n)`; a partial index on the open rows | every memory write (version 2) |
 | `memory_messages` | `item TEXT NOT NULL`, non-empty (a `now` or milestone stem, or a migrated `m-<n>`); `session TEXT NOT NULL`, 1–128 characters; `message TEXT NOT NULL`, non-empty; `PRIMARY KEY (item, session, message)` | the session pass (the turn an element quotes, and a completed candidate's turn), the migration (each occurrence's turn), `memory refresh` (a promoted `now` item's links copied to its milestone); `memory forget` deletes an item's rows (version 2) |
 | `pass_signals` | `session TEXT NOT NULL`, 1–128 characters; `through TEXT NOT NULL`, non-empty (the window's last message); `signal INTEGER NOT NULL CHECK (signal BETWEEN 0 AND 3)`; `PRIMARY KEY (session, through)` | the session pass (version 2) |
+| `sessions` | `id INTEGER PRIMARY KEY AUTOINCREMENT`, shown as `s-<id>`; `provider_session TEXT NOT NULL UNIQUE`, 1–128 characters (the provider's session id, the key cites and messages use); `has_record` and `has_switch`, each `0` or `1`; the record's header as columns (`status` `open` or `final`, `active`, `keep_active`, `project`, `provider`, `host`, `created`, `updated`, `title`, `cwd`, `started`, `on_since`, `scribed_through`, `passes`, `next_open`; `active_change`, `cataloged_by`, `rebuilt_by`, `topics` and `related` as JSON text) and its `summary`, `goals` and `next`; the switch as `sw_provider`, `sw_on`, `sw_since`, `sw_due`, `sw_final`, `sw_consecutive_failures`, `sw_retry_after`, `sw_pending_links` (JSON) and `sw_cataloged_by` (JSON). A row with `has_record = 1` has every header column; one with `has_switch = 1` every switch column the switch requires | every session write (version 3) |
+| `segments` | `session INTEGER NOT NULL` (`sessions.id`); `n INTEGER NOT NULL CHECK (n >= 1)`; `heading`, `first_message`, `last_message`, `"from"`, `"to"`, `state` (`open` or `sealed`), `windows`, `origin`, `topics` and `related` (JSON), `text`; `PRIMARY KEY (session, n)` | the record's writer, replacing the session's rows (version 3) |
+| `session_links` | `session INTEGER NOT NULL`; `position INTEGER NOT NULL`; `type TEXT NOT NULL CHECK (type IN ('spawned_from', 'continues'))`; `target TEXT NOT NULL` (a provider session id); `PRIMARY KEY (session, position)` | the record's writer (version 3) |
+| `session_terms` | `session INTEGER NOT NULL`; `position INTEGER NOT NULL`; `term`, `said`, `message`; `PRIMARY KEY (session, position)` | the record's writer (version 3) |
+| `codex_cursors` | `session TEXT PRIMARY KEY`, 1–128 characters; `message TEXT NOT NULL` | Codex ingestion (version 3) |
+| `rebuild_checkpoints` | `session INTEGER NOT NULL PRIMARY KEY` (`sessions.id`); `record TEXT NOT NULL`, the checkpoint as a record file's text; `created TEXT NOT NULL` | `session rebuild`; dropped in the transaction that writes the rebuilt record (version 3) |
+| `record_kinds` | `kind TEXT PRIMARY KEY CHECK (kind IN ('sessions'))`; `moved_at TEXT NOT NULL`; `moved_to TEXT`, the `pre-sqlite-<date>` directory, `NULL` when there were no files | the move; its row says the sessions are rows (version 3) |
 
 ### Messages
 
@@ -197,11 +215,12 @@ file.
   `memory::sensitive_word`). A memory item may not hold them outside `now`
   and `milestones`, and the profile job is the reader these messages are
   for. A session that is off keeps nothing.
-- **When.** Until phase 6, the pass upserts a window's messages on
-  (`session`, `message`) in one transaction, then writes the session
-  record through `write_atomic` as before. The record's `scribed_through`
-  stays the cursor: a crash between the two reruns the window, which writes
-  the same rows (a row changes only when its text, role or time does).
+- **When.** The pass upserts a window's messages on (`session`,
+  `message`) in the transaction that writes the window's record (phase 6;
+  before it, the messages committed first and the record file followed).
+  The record's `scribed_through` stays the cursor, and a rerun window
+  writes the same rows (a row changes only when its text, role or time
+  does).
 - **Forget.** `#scribe forget <entry-id>` (and `entry forget`) deletes the
   messages the entry and its candidate proposals cite; `memory forget`
   deletes those its item cites (`memory_messages`: the turn each element
@@ -215,6 +234,60 @@ file.
   a word prefix (`"<token>"*`, any of them) and orders by `bm25()`, then
   time. Messages are filtered through their session's record; one whose
   session has no record is not shown.
+
+### Sessions in scribe.db (phase 6)
+
+- **Where sessions are read from.** With a `record_kinds` row for
+  `sessions`, every session read is a query and the files are not read;
+  without one the store has not moved and reads `sessions/` and
+  `control.json` as before. `control.json`'s format is checked either way,
+  so a store stamped by a newer build is `store_too_new`.
+- **The move.** The first session write (a switch, a pass, a rebuild, an
+  activity change, a link) moves the files in under `.lock` before it
+  writes: in one transaction it reads every record (one that does not read
+  refuses the move with `store_corrupt`, naming the file, and nothing
+  moves), inserts them ordered by `created` then id, inserts every switch
+  and Codex cursor, imports each `.<id>.rebuild.md` checkpoint as a row,
+  checks the row count against the files read, and adds the `record_kinds`
+  row. After the commit it moves `sessions/`, `control.json` and the root's
+  `.codex-<id>.lock` files to `pre-sqlite-<yyyy-mm-dd>/` (`.2`, `.3` … when
+  taken; scribe never deletes it) and writes `control.json` as the format
+  stamp. A move cut off after the commit finishes at the next write. A
+  write that refuses, or one that touches no session (an entry, a tag, an
+  audit line), leaves the files where they are. A store with no session
+  files is marked moved by its first session write.
+- **`scribe store migrate`** makes the move now, under `.lock`. It is
+  refused with `migrate_blocked` while any session is switched on, while
+  any rebuild checkpoint waits, and once the sessions moved; the write's
+  own move is never refused for these, since it imports switches and
+  checkpoints as rows.
+- **`s-<n>` ids.** A session's number is its `sessions.id`. Before the
+  move a file store computes the numbers the move will give: records by
+  `created` then id, then sessions with only a switch by id, so
+  `session show --json` reads the same before and after. Every command
+  taking a session id takes `s-<n>`: an exact provider id wins first, then
+  `s-<n>`, then a unique prefix. JSON keeps `id` as the provider id and adds
+  `short_id`. Cites (`session:<id>#<n>`), messages and memory links keep the
+  provider id. A row is written by an UPDATE and, for a new session, an
+  INSERT, so rewriting a record spends no number.
+- **One pass, one transaction.** A pass window writes its record, its
+  messages, its memory rows with the memory journal row, and its switch in
+  one `BEGIN IMMEDIATE` transaction; the journal's file operations apply
+  after the commit and close the journal (§15.6). A crash after the commit
+  leaves the journal open for the next memory or pass write to replay; a
+  failure before it writes nothing.
+- **Locks.** The Codex ingestion lock and the rebuild lock are
+  `locks/codex-<id>.lock` and `locks/rebuild-<id>.lock`, created `0600` in a
+  `0700` directory and kept after release.
+- **`scribe export <dir>`** writes every session to a missing or empty
+  directory, created `0700`, reading the store only (no lock, no write):
+  `--as markdown` (the default) as `sessions/<yyyy>/<mm>/<id>.md` record
+  files at the current format plus `control.json` with the switches and
+  cursors; `--as jsonl` as one `<table>.jsonl` per session table, one JSON
+  object per row. A directory with anything in it is
+  `export_target_exists`; JSONL of a store whose sessions are still files
+  is `export_needs_migrate`. A record that does not read is left out and
+  reported under `skipped`.
 
 ## Record files
 
@@ -773,11 +846,12 @@ exits 0.
   session whose `cite.message` is `null` and for which the caller finds a
   message, setting `cite.message` and `updated`; it does nothing when the
   root does not exist.
-- **Control** (S4). `Store::update_control` changes `control.json` under
-  `.lock` and writes it only when the change reports one, so `/scribe on`
+- **Control** (S4). `Store::update_control` changes the switches (rows
+  since phase 6, `control.json` before) under `.lock` and writes only when
+  the change reports one, so `/scribe on`
   twice, `off` for a session that is not on, and a `Stop` or `SessionEnd`
   for a session never switched on write nothing. A session never switched
-  on has no key in `control.json`.
+  on has no switch.
 - **Session records** (S4). `Store::settle_pass` writes a session record
   (redacted, `sessions/<yyyy>/<mm>/` from its `started`, created `0700`)
   and settles its switch (`due` cleared, `final` too when the final pass
@@ -901,17 +975,18 @@ exits 0.
   the lock; a mismatch refuses the write with `record_changed` before the
   sealed-segment check, so a pass that loaded its record before a rebuild
   finished cannot overwrite the rebuilt record. A rebuild writes its
-  windows to `.<id>.rebuild.md` beside the record and replaces the record
+  windows to a checkpoint (a `rebuild_checkpoints` row since phase 6,
+  `.<id>.rebuild.md` beside the record before) and replaces the record
   under the lock only if the record's `updated` is unchanged since the
   rebuild began. Checkpoints use the same format-4 session shape; their
   `updated` pins that visible revision rather than the checkpoint write time.
   No new persisted field or store version is needed. Each rebuilt segment
-  has `origin: rebuild`. A per-session `.<id>.rebuild.lock` serializes
+  has `origin: rebuild`. A per-session `locks/rebuild-<id>.lock` serializes
   rebuilders without holding the store lock over model calls. The lock file
   remains after release; ordinary reads skip it. A changed visible revision
   causes rebuild to read the transcript again and fold in newer messages
   before retrying replacement. A successful replacement removes its
-  checkpoint. It records `rebuilt_by` (format 6) with the `--author` that ran it. Identity, creation time, links and activity/catalog fields
+  checkpoint in the transaction that writes the record. It records `rebuilt_by` (format 6) with the `--author` that ran it. Identity, creation time, links and activity/catalog fields
   come from the latest visible record; the control switch stays unchanged.
   `--confirm` is mandatory, missing transcripts refuse `transcript_missing`,
   and on-and-due sessions refuse `session_busy`. Sealed segments are checked
@@ -1035,6 +1110,12 @@ exits 0.
   shape first, so one carrying `context` is refused. From 24 an approved
   assistant entry may carry `stated_by` the session pass and the
   assistant's words in `quote`, refused below 24.
+- **Format 26** (sessions in scribe.db, 2_design.md §15.7, §15.9 phase 6).
+  Append-only step 25→26 (`sessions_sqlite`) changes no file's shape: a
+  format-25 record or `control.json` decodes at the current shape. The
+  first session write moves the sessions into schema version 3 and stamps
+  `control.json` at 26, so a format-25 build refuses the store rather than
+  reading an empty `sessions/`.
 - **Format 25** (memory files, 2_design.md §15.5, §15.11). Append-only step
   24→25 (`memory_files`) changes no stored document: a format-24
   `proposals.json` decodes at the current shape. It admits
@@ -1173,10 +1254,11 @@ exits 0.
 
 ## Codex ingestion state (format 7)
 
-`control.json` has `codex_cursors: {"<session-id>": "<host-message-id>"}`.
+`control.json` has `codex_cursors: {"<session-id>": "<host-message-id>"}`
+(the `codex_cursors` table since phase 6).
 Each session switch also stores `provider: claude-code|codex`. Provider stamping
 and switch mutation share one locked atomic control write. The Codex ingestion
-lock `.codex-<session-id>.lock` serializes lifecycle events independently of the
+lock `locks/codex-<session-id>.lock` (`.codex-<session-id>.lock` before phase 6) serializes lifecycle events independently of the
 store lock; actual records and cursors still use the store lock and atomic writes.
 The cursor advances only after effects, so an interruption can replay an
 idempotent capture/settlement/control; it cannot silently lose a pending write.

@@ -44,7 +44,7 @@ pub(crate) const ROOT_GROUPS: &[Group] = &[
     },
     Group {
         heading: "Upkeep",
-        commands: &["consistency"],
+        commands: &["consistency", "store", "export"],
     },
     Group {
         heading: "Integration",

@@ -75,15 +75,33 @@ fn ids(list: &Value, key: &str, field: &str) -> Vec<String> {
 /// Copy the record of `SESSION` under another id, so two sessions share a
 /// prefix.
 fn copy_session(fx: &Fixture, id: &str) {
+    // Before the first session write the record is still a file; after
+    // it, a row.
     let dir = fx.root().join("sessions/2026/11");
-    let original = std::fs::read_to_string(dir.join(format!("{SESSION}.md"))).unwrap();
-    let path = dir.join(format!("{id}.md"));
-    std::fs::write(
-        &path,
-        original.replace(&format!("id: {SESSION}"), &format!("id: {id}")),
-    )
-    .unwrap();
-    make_private(&path);
+    let file = dir.join(format!("{SESSION}.md"));
+    if file.exists() {
+        let original = std::fs::read_to_string(&file).unwrap();
+        let path = dir.join(format!("{id}.md"));
+        std::fs::write(
+            &path,
+            original.replace(&format!("id: {SESSION}"), &format!("id: {id}")),
+        )
+        .unwrap();
+        make_private(&path);
+        return;
+    }
+    support::sql(
+        &fx.root(),
+        &format!(
+            "CREATE TEMP TABLE c AS SELECT * FROM sessions WHERE provider_session = '{SESSION}';
+             UPDATE c SET id = NULL, provider_session = '{id}';
+             INSERT INTO sessions SELECT * FROM c;
+             CREATE TEMP TABLE g AS SELECT * FROM segments WHERE session =
+                 (SELECT id FROM sessions WHERE provider_session = '{SESSION}');
+             UPDATE g SET session = (SELECT id FROM sessions WHERE provider_session = '{id}');
+             INSERT INTO segments SELECT * FROM g;"
+        ),
+    );
 }
 
 #[test]

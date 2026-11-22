@@ -14,7 +14,7 @@
 
 use super::agent::{check_agent_author, refusal};
 use super::db::{self, FileOp, HistoryRow, Journal, MemoryCommit, PendingRow, Writer};
-use super::{CONTROL_FILE, RECORD_EXT, Redactor, Skipped, Store, format, fsio};
+use super::{RECORD_EXT, Redactor, Skipped, Store, format, fsio};
 use crate::entry::EntryStatus;
 use crate::memory::legacy::MemoryItem;
 use crate::memory::{
@@ -373,19 +373,29 @@ impl Store {
             return Ok(None);
         }
         let journal = writer.commit(commit, now)?;
+        self.finish_journal(writer, journal.as_ref())?;
+        Ok(journal)
+    }
+
+    /// Apply a committed journal's file operations, then close it.
+    pub(super) fn finish_journal(
+        &self,
+        writer: &mut Writer<'_>,
+        journal: Option<&Journal>,
+    ) -> Result<()> {
         #[cfg(test)]
-        if CRASH_AFTER_COMMIT.with(|c| c.replace(false)) {
+        if journal.is_some() && CRASH_AFTER_COMMIT.with(|c| c.replace(false)) {
             return Err(Error::io(
                 "apply the memory journal in",
                 self.memory_dir(),
                 std::io::Error::other("a crash injected by a test"),
             ));
         }
-        if let Some(journal) = &journal {
+        if let Some(journal) = journal {
             let sha = self.apply_ops(&journal.ops)?;
             writer.close(journal, sha.as_deref())?;
         }
-        Ok(journal)
+        Ok(())
     }
 
     /// Every item file under `memory/<sub>/`, in stem order, and the files
@@ -617,20 +627,32 @@ impl Store {
         self.prepare_subdir(&self.memory_dir())?;
         let mut conn = db::open_writer(&self.root, self.lock_wait)?;
         let mut writer = Writer::new(&mut conn, &self.root);
-        self.replay(&mut writer)?;
-        let mut files = self.files_for_write()?;
-        if !files.legacy.is_empty() {
-            self.migrate_memory(&mut writer, &files, redactor, now)?;
-            files = self.files_for_write()?;
-        }
+        let files = self.prepare_memory(&mut writer, redactor, now)?;
         let (commit, out) = f(&mut writer, &files)?;
         let journal = self.commit_memory(&mut writer, &commit, now)?;
         drop(writer);
         drop(conn);
-        let control = self.root.join(CONTROL_FILE);
-        let state = self.control()?;
-        fsio::write_atomic(&control, &format::encode_control(&control, &state)?)?;
+        self.stamp_format()?;
         Ok((out, journal))
+    }
+
+    /// The start of every memory write, under the lock the caller holds:
+    /// replay any open journal and migrate `m-<n>` items, then read the
+    /// files as they now stand.
+    fn prepare_memory(
+        &self,
+        writer: &mut Writer<'_>,
+        redactor: &Redactor,
+        now: OffsetDateTime,
+    ) -> Result<Files> {
+        self.prepare_subdir(&self.memory_dir())?;
+        self.replay(writer)?;
+        let mut files = self.files_for_write()?;
+        if !files.legacy.is_empty() {
+            self.migrate_memory(writer, &files, redactor, now)?;
+            files = self.files_for_write()?;
+        }
+        Ok(files)
     }
 
     /// Migrate format-24 items (§15.11) through one journal: `now` and
@@ -678,25 +700,36 @@ impl Store {
         Ok(())
     }
 
-    /// Write a pass window's memory under the lock the caller holds, for
-    /// the session `record` (§15.5): each draft's quote checked again
+    /// Plan a pass window's memory under the lock the caller holds, for
+    /// the session `record` (§15.5), after any open journal is replayed and
+    /// `m-<n>` items migrated: each draft's quote checked again
     /// against its turn and its texts against the redactor, then planned
     /// against the current files and this session's pending candidates
     /// ([`memory::plan`]). A file whose content would not change is not
     /// written, so a replayed window writes nothing. The final pass drops
-    /// the session's pending candidates.
-    pub(super) fn write_pass_memory(
+    /// the session's pending candidates. The pass commits the returned rows
+    /// and journal in its own transaction, with the record.
+    pub(super) fn plan_pass_memory(
         &self,
+        writer: &mut Writer<'_>,
         pass: &PassMemory,
         redactor: &Redactor,
         record: &crate::SessionRecord,
-    ) -> Result<MemoryWritten> {
+    ) -> Result<(MemoryCommit, MemoryWritten)> {
         if pass.drafts.is_empty() && pass.signal.is_none() && !pass.final_pass {
-            return Ok(MemoryWritten::default());
+            // Nothing to plan, but a journal a crash left open is still
+            // applied: every pass window is a write.
+            if !writer.open_journals()?.is_empty() {
+                self.prepare_subdir(&self.memory_dir())?;
+                self.replay(writer)?;
+            }
+            return Ok((MemoryCommit::default(), MemoryWritten::default()));
         }
         let session = record.id.clone();
         let path = self.memory_dir();
-        let (written, _) = self.memory_write(redactor, record.updated, |writer, files| {
+        let files = self.prepare_memory(writer, redactor, record.updated)?;
+        let files = &files;
+        let planned = (|| -> Result<(MemoryCommit, MemoryWritten)> {
             let mut written = MemoryWritten::default();
             let mut drafts = Vec::new();
             for draft in &pass.drafts {
@@ -764,7 +797,28 @@ impl Store {
                     .push((session.clone(), through.clone(), (*signal).min(3)));
             }
             Ok((commit, written))
-        })?;
+        })()?;
+        Ok(planned)
+    }
+
+    /// A pass window's memory written on its own, for tests: planned and
+    /// committed through one journal, as the pass's transaction does.
+    #[cfg(test)]
+    pub(super) fn write_pass_memory(
+        &self,
+        pass: &PassMemory,
+        redactor: &Redactor,
+        record: &crate::SessionRecord,
+    ) -> Result<MemoryWritten> {
+        self.prepare_dir(&self.root)?;
+        self.prepare_subdir(&self.memory_dir())?;
+        let mut conn = db::open_writer(&self.root, self.lock_wait)?;
+        let mut writer = Writer::new(&mut conn, &self.root);
+        let (commit, written) = self.plan_pass_memory(&mut writer, pass, redactor, record)?;
+        self.commit_memory(&mut writer, &commit, record.updated)?;
+        drop(writer);
+        drop(conn);
+        self.stamp_format()?;
         Ok(written)
     }
 
@@ -925,10 +979,11 @@ impl Store {
         if let Some(bad) = skipped.into_iter().next() {
             return Err(bad.error);
         }
-        let mut records = Vec::new();
-        for file in self.session_files()? {
-            records.push(file.load()?);
+        let mut loaded = self.load_sessions()?;
+        if let Some((_, bad)) = loaded.skipped.pop() {
+            return Err(bad.error);
         }
+        let records = loaded.records;
         let today = now.date();
         let (inputs, _) = self.memory_write(redactor, now, |writer, files| {
             let (latest, closed) = writer.revisions()?;

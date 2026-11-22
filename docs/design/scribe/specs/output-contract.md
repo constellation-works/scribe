@@ -171,7 +171,9 @@ stated entry: the table detail's `stated_by` reads `scribe:annotation
 (content is scribe's statement of Daniel's turn)` before `quote`, and plain
 prints `stated_by\tscribe:annotation\t<quote>`.
 
-**Session** (`sessions[]`, `session show`): `id`, `status` (`open`,
+**Session** (`sessions[]`, `session show`): `id` (the provider's session
+id), (phase 6) `short_id` (`s-<n>`, or `null` for a session with no number;
+the table detail prints it as a `short id` field under `id`), `status` (`open`,
 `final`), `project`, `topics`, `related` (unchanged: model-extracted
 `kind:target` strings), `links` (`[{type, session, title}]`: the links the
 record stores, `type` `spawned_from` or `continues`, `title` the linked
@@ -303,6 +305,18 @@ comparable. A store whose database had to be opened as a read-only copy
 adds the notice `read-only copy: <path> has no -wal or -shm file and its
 directory is read-only, so it was opened immutable; …` on stderr.
 
+**Store migrate** (phase 6, `store migrate`): `{"sessions", "switches",
+"cursors", "moved_to"}`, the counts imported and the `pre-sqlite-<date>`
+directory the files went to (or `null`). Plain is one line
+`<sessions>\t<switches>\t<cursors>\t<moved_to or ->`; the table prints one
+field per line. It is a write: audited as `store migrate`.
+
+**Export** (phase 6, `export <dir>`): `{"dir", "format", "sessions",
+"files", "skipped"}`, `format` `markdown` or `jsonl`, `files` the paths
+written relative to `dir`, `skipped` the records that did not read. Plain
+prints one path per line; the table prints `dir`, `format`, `sessions`,
+`files` (a count) and `skipped`. It reads only and is not audited.
+
 **Issue** (format 17) is removed in phase 2 (2_design.md §15.9) with the
 `issue` noun: `issue list|show|add|occur|update|move|search|stats` exit 2
 as unknown commands, `scribe search --kind issue` exits 2, and the codes
@@ -398,7 +412,8 @@ the message lists up to ten candidates, sorted, and how many more), `user_only`,
 `session_cataloged`, `transcript_not_found`, (format 19) `memory_not_found`,
 `memory_not_now`, (format 25) `memory_changed`, `revision_not_found`,
 `profile_shape`, `profile_pinned`, `profile_too_long`,
-`profile_unknown_link`, `profile_sensitive`, `profile_milestone`, for `tmux` `fzf_missing` and
+`profile_unknown_link`, `profile_sensitive`, `profile_milestone`, (phase 6)
+`migrate_blocked`, `export_target_exists`, `export_needs_migrate`, for `tmux` `fzf_missing` and
 `tmux_failed` (exit 1; `tmux` renders no payload, its popup owns the
 terminal), for `session pass`
 `session_pass_failed` and `session_not_on`, and for `question
