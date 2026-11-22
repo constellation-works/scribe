@@ -773,7 +773,7 @@ pub(crate) struct TagPayload {
     /// For an action tag, how agents use it and how often the user undid
     /// their entries; `null` for a memory tag.
     pub(crate) action: Option<TagActionPayload>,
-    /// The capture route (`propose`, `write` or `agent`); `null` for a tag
+    /// The capture route (`propose` or `write`); `null` for a tag
     /// with no capture rules, which the pass never captures.
     pub(crate) route: Option<&'static str>,
 }
