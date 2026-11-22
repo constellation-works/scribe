@@ -2779,6 +2779,37 @@ fn a_spoken_instruction_agent_entry_reads_with_agent_stated_by_and_quote() {
         Some(crate::Author::agent("haiku".parse().unwrap()))
     );
 
+    // Retirement by the original author and forgetting by another agent keep
+    // the last statement writer even though the updater has changed.
+    for (status, updater) in [("retired", "opus"), ("forgotten", "delta")] {
+        let mut record = re_edited
+            .replace("status: active", &format!("status: {status}"))
+            .replace(
+                "inactive_since: null",
+                "inactive_since: 2026-11-02T10:00:00Z",
+            )
+            .replace("name: haiku", &format!("name: {updater}"));
+        if status == "forgotten" {
+            record = record
+                .replace("quote: \"short updates please\"", "quote: null")
+                .replace(statement, "");
+        }
+        let decoded = entry(&record).unwrap();
+        assert_eq!(
+            decoded.stated_by,
+            Some(crate::Author::agent("sonnet".parse().unwrap()))
+        );
+        assert_eq!(
+            decoded.updated_by,
+            Some(crate::Author::agent(updater.parse().unwrap()))
+        );
+    }
+    let non_agent_update = re_edited.replace(
+        "updated_by: {kind: agent, name: haiku}",
+        "updated_by: {kind: scribe, name: consistency}",
+    );
+    corrupt_message(&entry(&non_agent_update).unwrap_err());
+
     // Active without quote, or mismatched/scribe stated_by, is refused.
     corrupt_message(
         &entry(&raw.replace("quote: \"short updates please\"", "quote: null")).unwrap_err(),

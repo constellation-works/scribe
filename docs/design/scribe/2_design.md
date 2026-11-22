@@ -6493,7 +6493,8 @@ scribe entry add --tag <tag> --author <name> --project <project> \
   - `content`: the agent's one-sentence statement (redacted),
   - `quote`: the user's verbatim words,
   - `stated_by`: `{kind: agent, name: <author>}` (updated to the editing
-    agent if `entry update --content` changes the statement),
+    agent if `entry update --content` changes the statement; metadata edits,
+    retirement and forgetting retain the statement author),
   - `content_from`: `{kind: agent}`, `cite: null`, `said: ""`.
 - **Reading back (`entry show`, `search`, `ask`) and pass isolation.**
   Because `stated_by` is set to the agent, `entry show`, `scribe search`
