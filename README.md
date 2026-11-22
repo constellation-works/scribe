@@ -92,7 +92,7 @@ scribe session rebuild <id> --author <name> --confirm
 scribe session deactivate <id> --author opus --reason 'the feature was removed'
 scribe session activate <id> --author opus --pin
 scribe proposal list --state open --entry <id>
-scribe record search "merge policy" --kind session --since 2026-11-01   # BM25, no model call
+scribe search "merge policy" --kind session --since 2026-11-01   # BM25, no model call
 scribe issue search 'HTTP 429 secondary rate limit' --json
 scribe issue occur <id> --author opus --related session:<id> --request '<their words>' --summary 'The drain failed again' --fix 'Paused the drain'
 scribe consistency scan --json
@@ -296,7 +296,7 @@ says why.
 `claude plugin update` applies on the next Claude Code restart.
 
 The package also ships one skill, `skills/scribe/SKILL.md`, which teaches
-agents the CLI above: when a word, date or topic makes `record search` or
+agents the CLI above: when a word, date or topic makes `scribe search` or
 a list the right tool and when a vague question goes to `question ask`,
 the `--author` rule for the write verbs, and the guard that the user's own
 entries are settled only by them. The skill serves sessions on this Mac,

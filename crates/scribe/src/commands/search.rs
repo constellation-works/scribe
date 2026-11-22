@@ -1,4 +1,4 @@
-//! The `record` noun: `record search`, every stored record ranked for a few
+//! `search`: every stored record ranked for a few
 //! words as `question ask` ranks them, with no model and no Orbit call
 //! (docs/design/scribe/2_design.md §6.8). It reads only: no lock, no audit
 //! line (STD-01 R31), and one load of the entries, the sessions and the
@@ -9,19 +9,13 @@ use crate::app::Context;
 use crate::audit_middleware::AuditMeta;
 use crate::error::CliError;
 use crate::output::{HitPayload, Output, Records};
-use clap::{Args, Subcommand};
+use clap::Args;
 use scribe_core::ask::{Corpus, RecordKind};
 use scribe_core::search::{self, DEFAULT_LIMIT, SearchError, SearchQuery};
 use scribe_core::{EntryFilter, Project, SessionFilter, Topic};
 use std::num::NonZeroUsize;
 
-pub(super) const RECORD_EXAMPLES: &str = "\
-Examples:
-  scribe record search \"merge queue\"
-  scribe record search release --kind session --since 2026-11-01
-  scribe record search \"api\" --json | jq -r '.hits[].cite'";
-
-const SEARCH_EXAMPLES: &str = "\
+pub(super) const SEARCH_EXAMPLES: &str = "\
 Ranks each entry, each session header, each segment of a session's log and
 each issue with BM25, as question ask does, and prints the best first;
 the user's own entries weigh 1.5 times. The CITE column is what question ask
@@ -30,21 +24,11 @@ the agent's account, with the user's request quoted. Superseded and retired
 entries and inactive sessions are left out unless --include-hidden.
 
 Examples:
-  scribe record search \"merge queue\"
-  scribe record search release --kind session --since 2026-11-01
-  scribe record search \"store format\" --project scribe --topic store --limit 5
-  scribe record search \"rate limit\" --kind issue
-  scribe record search \"api\" --json | jq -r '.hits[].cite'";
-
-/// Verbs on the `record` noun.
-#[derive(Debug, Subcommand)]
-pub(crate) enum RecordCommand {
-    /// Rank stored records for words with no model call
-    ///
-    /// Ranks entries, session headers, segments and issues for words, best first, with no model call.
-    #[command(after_help = SEARCH_EXAMPLES)]
-    Search(SearchArgs),
-}
+  scribe search \"merge queue\"
+  scribe search release --kind session --since 2026-11-01
+  scribe search \"store format\" --project scribe --topic store --limit 5
+  scribe search \"rate limit\" --kind issue
+  scribe search \"api\" --json | jq -r '.hits[].cite'";
 
 /// The record kinds a search can keep.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
@@ -57,7 +41,7 @@ pub(crate) enum KindArg {
     Issue,
 }
 
-/// Arguments to `record search`.
+/// Arguments to `search`.
 #[derive(Debug, Args)]
 pub(crate) struct SearchArgs {
     /// The words to look for; stopwords and words under three letters are ignored
@@ -89,23 +73,13 @@ pub(crate) struct SearchArgs {
     pub(crate) limit: Option<NonZeroUsize>,
 }
 
-impl RecordCommand {
-    /// `record search` reads only. See [`super::Command::audit`].
-    pub(super) fn audit(&self) -> Option<AuditMeta> {
-        match self {
-            Self::Search(_) => None,
-        }
-    }
+/// `search` reads only. See [`super::Command::audit`].
+pub(super) fn audit(_args: &SearchArgs) -> Option<AuditMeta> {
+    None
 }
 
-/// Run one `record` verb.
-pub(super) fn run(command: RecordCommand, ctx: &Context) -> Result<Output, CliError> {
-    match command {
-        RecordCommand::Search(args) => search(args, ctx),
-    }
-}
-
-fn search(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
+/// Run `search`.
+pub(super) fn run(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
     let limit = args
         .limit
         .or(NonZeroUsize::new(DEFAULT_LIMIT))

@@ -71,7 +71,7 @@ Examples:
 
 const SEARCH_EXAMPLES: &str = "\
 Ranks issues by their titles, signatures, causes, fixes and occurrences with
-BM25, as record search --kind issue does, with no model call. Run it before
+BM25, as scribe search --kind issue does, with no model call. Run it before
 diagnosing.
 
 Examples:

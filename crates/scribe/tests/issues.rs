@@ -1,7 +1,7 @@
 //! End-to-end tests of issue records (docs/design/scribe/2_design.md
 //! §11.4): `issue add|occur|update|move|search|show|list`, the request
 //! check, the reopen on a recurrence, the reserved `issue` tag, `#scribe
-//! forget <issue-id>[#<n>]`, `record search --kind issue` and the audit
+//! forget <issue-id>[#<n>]`, `scribe search --kind issue` and the audit
 //! line each write leaves.
 //!
 //! Every run is the built binary with a temp `HOME` and data root.
@@ -320,13 +320,7 @@ fn an_issue_is_added_occurred_updated_shown_listed_and_searched() {
 
     for args in [
         &["issue", "search", "secondary rate limit 429"][..],
-        &[
-            "record",
-            "search",
-            "secondary rate limit 429",
-            "--kind",
-            "issue",
-        ][..],
+        &["search", "secondary rate limit 429", "--kind", "issue"][..],
     ] {
         let found = ok_json(&fx, args);
         assert_eq!(found["total"], 1, "{args:?}");
@@ -341,7 +335,7 @@ fn an_issue_is_added_occurred_updated_shown_listed_and_searched() {
     }
     let plain = text(&fx.ok(&["issue", "search", "429"]).stdout);
     assert!(plain.starts_with("issue-1\tissue\t"), "{plain}");
-    let entries_only = ok_json(&fx, &["record", "search", "429", "--kind", "entry"]);
+    let entries_only = ok_json(&fx, &["search", "429", "--kind", "entry"]);
     assert_eq!(entries_only["total"], 0);
 }
 
@@ -907,7 +901,7 @@ fn an_issue_record_from_a_newer_format_is_refused_and_left_alone() {
         &["issue", "list"][..],
         &["issue", "show", "issue-1"][..],
         &["issue", "search", "rate limit"][..],
-        &["record", "search", "rate limit"][..],
+        &["search", "rate limit"][..],
     ] {
         assert_eq!(refused(&fx, args)["code"], "store_too_new", "{args:?}");
     }

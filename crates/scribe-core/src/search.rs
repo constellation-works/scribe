@@ -1,4 +1,4 @@
-//! `record search`: the store's records ranked for a few words, with no
+//! `scribe search`: the store's records ranked for a few words, with no
 //! model and no Orbit call (docs/design/scribe/2_design.md §6.8).
 //!
 //! [`search`] runs `ask`'s retrieval over the records the caller loaded and

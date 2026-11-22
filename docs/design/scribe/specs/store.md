@@ -614,7 +614,7 @@ claiming its name (`action = false` turns a shipped action tag into a memory
 tag and keeps it). A name or alias the file sets that a shipped tag also
 holds is Daniel's: the shipped tag loses that alias, or is left out when the
 word is its name, and `tag list` prints a line naming both. The file stays
-readable (`tag list`, `entry list` and `record search` still run). Omitting
+readable (`tag list`, `entry list` and `scribe search` still run). Omitting
 `aliases` does not claim the inherited aliases. A word that two config
 entries claim is `config_invalid`. An entry under a tag no config or
 `tags.json` names (such as a `decisions`, `remind` or `finding` entry from

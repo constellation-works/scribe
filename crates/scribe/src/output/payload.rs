@@ -1075,7 +1075,7 @@ pub(crate) enum Records {
     },
     Proposals(Vec<ProposalPayload>),
     Tags(Vec<TagPayload>),
-    /// `record search`, best first.
+    /// `scribe search`, best first.
     Hits(Vec<HitPayload>),
     /// `transcript list`.
     Transcripts(Vec<TranscriptPayload>),
@@ -1101,7 +1101,7 @@ impl Records {
     }
 }
 
-/// One `record search` hit (docs/design/scribe/specs/output-contract.md).
+/// One `scribe search` hit (docs/design/scribe/specs/output-contract.md).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct HitPayload {
     /// `entry` or `session`.

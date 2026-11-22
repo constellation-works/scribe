@@ -211,11 +211,8 @@ fn verified_skill_opt_in_capture_luna_pass_citations_off_and_provider_isolation(
         !PathBuf::from(call["cwd"].as_str().unwrap()).exists(),
         "isolated runtime directory removed"
     );
-    let hits: Value = serde_json::from_slice(
-        &f.ok(&["record", "search", "compact widgets", "--json"])
-            .stdout,
-    )
-    .unwrap();
+    let hits: Value =
+        serde_json::from_slice(&f.ok(&["search", "compact widgets", "--json"]).stdout).unwrap();
     assert!(!hits["hits"].as_array().unwrap().is_empty());
     c.typed("off", "next", "$scribe off");
     c.write();

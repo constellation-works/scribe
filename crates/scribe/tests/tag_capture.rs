@@ -213,7 +213,7 @@ fn listed(fx: &Fixture) -> Value {
 fn reads(fx: &Fixture) {
     fx.ok(&["tag", "list"]);
     fx.ok(&["entry", "list", "--json"]);
-    fx.ok(&["record", "search", "preference", "--json"]);
+    fx.ok(&["search", "preference", "--json"]);
 }
 
 #[test]

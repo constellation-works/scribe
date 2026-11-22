@@ -1,4 +1,4 @@
-//! `record search` over fixture records (2_design.md §6.8): `ask`'s units,
+//! `scribe search` over fixture records (2_design.md §6.8): `ask`'s units,
 //! weights and filters, no model and no tasks.
 
 use super::{T0, entry, segment, session};

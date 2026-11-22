@@ -4142,3 +4142,44 @@ file store first would mean building them twice.
 - The `m-3` class of item stops in phase 1, a small change.
 - Cost: memory keeps its current shape, minus `working` and `projects`,
   until phase 5.
+
+## Search is a top-level verb
+
+**Recorded:** 2026-11-22 · [ORB-26646] · **Daniel's choice** (2026-11-21)
+**Paths:** `crates/scribe/src/commands/search.rs`, `crates/scribe/src/help.rs`
+
+### Context
+
+`scribe record search` was the only verb under the `record` noun. The noun
+existed only to satisfy STD-01 §R1 (`<tool> <noun> <verb>`). The search
+spans every kind of stored record (entries, sessions, issues; `--kind`
+narrows it), so it never named one resource. Daniel: "I would say just use
+`scribe search`, no need for alias." and "in orbit, we also have `orbit
+update`, `orbit search` etc. can you adjust the standard?"
+
+### Decision
+
+- The command is `scribe search`, a top-level verb, with the same
+  arguments, flags, ranking, output (`--json` included) and exit codes.
+- The `record` noun is removed with no alias: `scribe record search` is an
+  unknown command (exit 2). STD-01 §R35's keep-for-one-release rule names
+  flags and config keys, not commands; the removal is recorded in the
+  changelog as a breaking change.
+- **Deviation from `STD-01@2 §R1`**, which says one tool must not mix
+  `<tool> <verb>` with `<tool> <noun> <verb>`. Scope: `scribe search` only.
+  Every other command keeps the noun-first order, including
+  `scribe issue search` (one resource) and `scribe question ask`. The
+  matching change to §R1 is scribe entry `standard-5`, in the standards
+  intake; when the canon admits a cross-resource verb, this deviation ends.
+
+### Alternatives
+
+- **Keep `record search`.** Cost: a noun that names no resource, kept only
+  for the grammar rule.
+- **Add `scribe search` and keep `record search` as an alias.** Cost: two
+  spellings of one command; Daniel said no alias.
+
+### Consequences
+
+- Callers outside this repository that run `scribe record search` fail with
+  a usage error until they change; a separate task updates the umbrella's.
