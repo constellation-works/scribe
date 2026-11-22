@@ -4031,8 +4031,9 @@ audit log holds one issue trigger fire.
 - An incident is caught by a catcher like any other remark.
 - `issue` ships as an **example** catcher (`from = "both"`, `route =
   "write"`, [2_design.md §15.2](./2_design.md#152-tags-are-catchers)), not
-  as a default. The defaults stay `preference` and `standard`, as Daniel
-  named them.
+  as a default. The defaults stay `preference` and `standard`. Daniel,
+  asked "Should `issue` ship as a third default tag?", answered "No,
+  example only" (2026-11-22).
 - Any stored issue becomes one `issue` entry, model-free (2_design.md
   §15.11).
 - It is a breaking CLI change, so it lands in phase 2 with the approved

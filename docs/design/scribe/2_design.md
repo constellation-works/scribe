@@ -6024,9 +6024,9 @@ Daniel's words, with its reason.
 2. **`issue` is a tag, not a record kind** (Daniel, 2026-11-22, replacing
    decision 2 of the proposal, which kept issue records outside the
    redesign). The design removes the record kind and its CLI, and ships
-   `issue` as an example catcher, not a default. Daniel named only
-   `preference` and `standard` as defaults, and the Mac store holds no
-   issue record. As a `write` catcher reading both sides, it keeps the
+   `issue` as an example catcher, not a default. Asked "Should `issue`
+   ship as a third default tag?", Daniel answered "No, example only"
+   (2026-11-22). The Mac store holds no issue record. As a `write` catcher reading both sides, it keeps the
    incident's context and verbatim quote, which is most of what an issue
    held. What it loses: occurrences across sessions, the resolved and
    reopened states, and `issue stats`. Those parts never had data to
