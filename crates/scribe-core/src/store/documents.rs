@@ -273,11 +273,21 @@ impl Store {
 
     /// `audit.jsonl`'s lines with their formats, and how many did not parse.
     fn audit_file(&self) -> Result<(Vec<(u32, AuditEvent)>, usize)> {
+        let (lines, torn) = self.audit_file_for_import()?;
+        Ok((
+            lines.into_iter().map(|l| (l.format, l.event)).collect(),
+            torn,
+        ))
+    }
+
+    /// `audit.jsonl`'s lines with their formats and idempotency keys, and
+    /// how many did not parse.
+    fn audit_file_for_import(&self) -> Result<(Vec<audit::ImportedLine>, usize)> {
         let path = self.root.join(AUDIT_FILE);
         if !fsio::inspect_file(&path)? {
             return Ok((Vec::new(), 0));
         }
-        audit::decode_formatted(&path, &fsio::read(&path)?)
+        audit::decode_for_import(&path, &fsio::read(&path)?)
     }
 
     /// Write `entry` in the write under way. A new entry never replaces
@@ -343,12 +353,22 @@ impl Store {
             docs::mark_moved(&conn, now, None).map_err(fail)?;
             self.after(|a| a.aside = true);
         } else if self.audit_file_present()? {
-            // A line an older build appended after the move: kept.
-            let (lines, torn) = self.audit_file()?;
-            for (format, event) in &lines {
-                docs::put_audit(&conn, &path, *format, event, None, fail)?;
+            // A line an older build appended after the move, or the
+            // original log left by an interruption before `move_files_aside`:
+            // keyed so already-imported lines are not added twice.
+            let (lines, torn) = self.audit_file_for_import()?;
+            for line in &lines {
+                if docs::put_audit(
+                    &conn,
+                    &path,
+                    line.format,
+                    &line.event,
+                    Some(&line.key),
+                    fail,
+                )? {
+                    moved.audit_lines += 1;
+                }
             }
-            moved.audit_lines += lines.len();
             moved.audit_torn += torn;
             self.after(|a| a.aside = true);
         }
@@ -404,15 +424,15 @@ impl Store {
             }
         };
         docs::put_pickups(conn, path, &pickups, fail)?;
-        let (lines, torn) = self.audit_file()?;
+        let (lines, torn) = self.audit_file_for_import()?;
         if torn > 0 {
             tracing::warn!(
                 torn,
                 "audit.jsonl lines that do not parse were not moved into scribe.db"
             );
         }
-        for (format, event) in &lines {
-            docs::put_audit(conn, path, *format, event, None, fail)?;
+        for line in &lines {
+            docs::put_audit(conn, path, line.format, &line.event, Some(&line.key), fail)?;
         }
         let counts = [
             ("entries", entries.len()),

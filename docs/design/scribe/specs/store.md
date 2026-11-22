@@ -214,7 +214,7 @@ Only `config.toml` and `memory/`'s files stay files.
 | `agent_tags` | `name TEXT PRIMARY KEY`; the fields `tags.json` held | `tag add`, `tag update` (version 5) |
 | `marks` | `position INTEGER PRIMARY KEY`; the fields of one `marks.json` record | the `Stop` hook's marker outcomes (version 5) |
 | `pickups` | `position INTEGER PRIMARY KEY`; the fields of one `pickups.json` record | `entry pickup` (version 5) |
-| `audit` | `id INTEGER PRIMARY KEY`; `format INTEGER NOT NULL`, the line's own format (1–5); the event's fields (`issue` as JSON text, `NULL` for none); `spool TEXT UNIQUE`, the spool file a line was drained from, else `NULL` | every audited command; the move; the spool drain (version 5) |
+| `audit` | `id INTEGER PRIMARY KEY`; `format INTEGER NOT NULL`, the line's own format (1–5); the event's fields (`issue` as JSON text, `NULL` for none); `spool TEXT UNIQUE`, the spool file a line was drained from or the `audit.jsonl:<offset>:<sha256>` key of an imported log line, else `NULL` | every audited command; the move; the spool drain (version 5) |
 
 ### Messages
 
@@ -378,7 +378,10 @@ line has the session's `s-<n>` as its target.
   written as empty stamps at format 27, so a format-26 build refuses the
   store instead of writing files beside the database. A write that refuses
   rolls the move back with it; a move cut off after the commit finishes at
-  the next write. `scribe store migrate` makes the move now, refused as in
+  the next write, with `audit.jsonl` lines keyed in `spool` by byte offset
+  and SHA-256 so replaying an interrupted move keeps one copy of each
+  original line and still preserves new lines appended before the rename.
+  `scribe store migrate` makes the move now, refused as in
   phase 6.
 - **The memory journal** is staged in the write's transaction and applied
   after its commit, in a write of its own, so a rollback leaves no memory

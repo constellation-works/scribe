@@ -5,6 +5,7 @@
 use super::{SESSION_BODY, on_disk, private_tempdir, session_text};
 use crate::annotation::{MarkRecord, MarkState};
 use crate::consistency::{Draft, ReapplyReport, Settle, Settled};
+use crate::control::{self, Switch};
 use crate::entry::{Cite, ContentFrom, Entry, EntryStatus};
 use crate::error::Error;
 use crate::instruction::Instructed;
@@ -753,4 +754,115 @@ fn settle_forget_cleans_moved_files_and_drops_pre_move_open_candidate() {
         moved_claims[0].candidate.as_ref().unwrap().quote,
         kept_quote
     );
+}
+
+#[test]
+fn interrupted_move_before_archive_rename_does_not_duplicate_audit_and_preserves_new_lines() {
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+    file_store(&root);
+
+    // Include a duplicate of an existing event in the original audit.jsonl so
+    // we verify distinct identical lines are each preserved once (not collapsed
+    // and not doubled on recovery).
+    let expected = fixture_lines();
+    let dup_line = r#"{"format":5,"at":"2026-11-21T09:00:00Z","command":"hook user-prompt-submit","status":"success","target":"session:s-1","error_code":null,"author":null,"issue":{"verb":"fire","session":"s-1","trigger":"root cause","request_sha256":["ab"]},"duration_ms":2}"#;
+    let initial_events: Vec<AuditEvent> = {
+        let mut v: Vec<AuditEvent> = expected.iter().map(|(_, e)| e.clone()).collect();
+        let dup: AuditEvent = serde_json::from_str(dup_line).unwrap();
+        v.push(dup);
+        v
+    };
+    let initial_audit = format!(
+        "{}\n{dup_line}\n",
+        AUDIT_FIXTURE.lines().take(5).collect::<Vec<_>>().join("\n"),
+    );
+    put(&root, "audit.jsonl", initial_audit.as_bytes());
+
+    let store = Store::open(&root);
+    crate::store::write::CRASH_BEFORE_ASIDE.with(|c| c.set(true));
+    let err = store.migrate_store(NOW).unwrap_err();
+    assert!(matches!(err, Error::Io { .. }), "{err:?}");
+    // Migration committed, but move_files_aside never ran.
+    assert!(root.join("audit.jsonl").is_file());
+    assert!(!root.join("pre-sqlite-2026-11-02").exists());
+    assert_eq!(store.audit_events().unwrap().0, initial_events);
+
+    // An older build appends a genuinely new event before the next write,
+    // which itself crashes before move_files_aside.
+    let new_line_1 = r#"{"format":5,"at":"2026-11-22T01:00:00Z","command":"entry add","status":"success","target":"preferences-3","error_code":null,"duration_ms":7}"#;
+    let new_event_1: AuditEvent = serde_json::from_str(new_line_1).unwrap();
+    put(
+        &root,
+        "audit.jsonl",
+        format!("{initial_audit}{new_line_1}\n").as_bytes(),
+    );
+
+    crate::store::write::CRASH_BEFORE_ASIDE.with(|c| c.set(true));
+    let err = store
+        .update_control(|s| control::switch(s, &"s-2".parse().unwrap(), &Switch::On, NOW))
+        .unwrap_err();
+    assert!(matches!(err, Error::Io { .. }), "{err:?}");
+    assert!(root.join("audit.jsonl").is_file());
+
+    // Another genuinely new event arrives before the final recovery write.
+    let new_line_2 = r#"{"format":5,"at":"2026-11-22T02:00:00Z","command":"entry add","status":"success","target":"preferences-4","error_code":null,"duration_ms":8}"#;
+    let new_event_2: AuditEvent = serde_json::from_str(new_line_2).unwrap();
+    put(
+        &root,
+        "audit.jsonl",
+        format!("{initial_audit}{new_line_1}\n{new_line_2}\n").as_bytes(),
+    );
+
+    store
+        .update_control(|s| control::switch(s, &"s-3".parse().unwrap(), &Switch::On, NOW))
+        .unwrap();
+
+    assert!(!root.join("audit.jsonl").exists());
+    let moved_audit_present = fs::read_dir(&root)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .any(|e| {
+            e.file_name().to_string_lossy().starts_with("pre-sqlite-")
+                && e.path().join("audit.jsonl").is_file()
+        });
+    assert!(moved_audit_present, "audit.jsonl moved aside");
+
+    let mut want = initial_events;
+    want.push(new_event_1);
+    want.push(new_event_2);
+    assert_eq!(store.audit_events().unwrap(), (want, 0));
+}
+
+#[test]
+fn post_move_audit_jsonl_still_imports_new_events() {
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+    file_store(&root);
+    let store = Store::open(&root);
+    store.migrate_store(NOW).unwrap();
+    assert!(!root.join("audit.jsonl").exists());
+    assert!(root.join("pre-sqlite-2026-11-02/audit.jsonl").is_file());
+
+    let mut want: Vec<AuditEvent> = fixture_lines().into_iter().map(|(_, e)| e).collect();
+    // Simulate a post-move audit.jsonl created at offset 0 by an older build.
+    let late_line = r#"{"format":5,"at":"2026-11-22T03:00:00Z","command":"entry add","status":"failure","target":null,"error_code":"store_too_new","duration_ms":2}"#;
+    let late_event: AuditEvent = serde_json::from_str(late_line).unwrap();
+    put(&root, "audit.jsonl", format!("{late_line}\n").as_bytes());
+
+    store
+        .update_control(|s| control::switch(s, &"s-2".parse().unwrap(), &Switch::On, NOW))
+        .unwrap();
+
+    assert!(!root.join("audit.jsonl").exists());
+    let moved_late_present = fs::read_dir(&root)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .any(|e| {
+            e.file_name().to_string_lossy().starts_with("pre-sqlite-")
+                && e.path().join("audit.jsonl").is_file()
+        });
+    assert!(moved_late_present, "post-move audit.jsonl moved aside");
+    want.push(late_event);
+    assert_eq!(store.audit_events().unwrap(), (want, 0));
 }
