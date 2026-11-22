@@ -86,3 +86,32 @@ fn truncate_keeps_short_text_and_marks_cut_text() {
     assert_eq!(truncate("abc", 3), "abc");
     assert_eq!(truncate("abcdef", 4), "abc…");
 }
+
+#[test]
+fn wide_characters_take_two_columns_so_the_next_column_lines_up() {
+    let rows = [row("1", "日本語", "a"), row("2", "abcdef", "b")];
+    let text = render(&COLUMNS, &rows, None, false);
+    let tags_at: Vec<usize> = text
+        .lines()
+        .map(|line| {
+            let cut = line.rfind(' ').unwrap();
+            unicode_width::UnicodeWidthStr::width(&line[..cut])
+        })
+        .collect();
+    assert_eq!(tags_at, [tags_at[0]; 3], "{text}");
+}
+
+#[test]
+fn truncation_counts_display_columns() {
+    assert_eq!(truncate("日本語です", 5), "日本…");
+    assert_eq!(truncate("日本語です", 6), "日本…");
+    assert_eq!(truncate("日本語です", 10), "日本語です");
+}
+
+#[test]
+fn control_characters_in_a_cell_print_as_replacement_characters() {
+    let rows = [row("1", "red \x1b[31mtext\r", "a")];
+    let text = render(&COLUMNS, &rows, None, true);
+    assert!(text.contains("red \u{FFFD}[31mtext\u{FFFD}"), "{text:?}");
+    assert!(!text.contains("\x1b[31m"), "{text:?}");
+}
