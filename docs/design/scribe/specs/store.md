@@ -10,20 +10,23 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-The code writes format 26 and reads formats 1–26. Format 26 moves the
+The code writes format 27 and reads formats 1–27. Format 26 moves the
 sessions into `scribe.db`
 ([2_design.md §15.7](../2_design.md#157-storage), phase 6): records,
 switches, Codex cursors and rebuild checkpoints become rows (schema version
-3), the first session write moves the files to `pre-sqlite-<date>/`, and
+3), the first write moves the files to `pre-sqlite-<date>/`, and
 `control.json` stays as the format stamp alone; see
-[Sessions in scribe.db](#sessions-in-scribedb-phase-6). Format 25 changes no
+[Sessions in scribe.db](#sessions-in-scribedb-phase-6). Format 27 (phase 7)
+moves the other kinds into `scribe.db` the same way and writes the format
+stamps, `control.json` among them, at 27; see
+[Documents in scribe.db](#documents-in-scribedb-phase-7). Format 25 changes no
 stored document: it adds the memory files of
 [2_design.md §15.5](../2_design.md#155-memory-one-fixed-shape) (`memory/profile.md`,
 `memory/now/<stem>.md`, `memory/milestones/<stem>.md`), and the first
 memory write migrates every `memory/m-<n>.md` item into them and removes it
-(§15.11). A memory write rewrites `control.json` at format 25, so a
-format-24 build refuses the store rather than reading it without its
-memory. Format 24 adds
+(§15.11). A memory write stamps `control.json` at the format it writes (25
+when these files arrived), so a format-24 build refuses the store rather
+than reading it without its memory. Format 24 adds
 `context` to each proposal candidate
 ([2_design.md §15.3](../2_design.md#153-claims-with-context)): scribe's
 paragraph of two to four sentences, at most 600 characters before
@@ -284,19 +287,21 @@ session's `s-<n>` as its target.
   `control.json` as before. `control.json`'s format is checked either way,
   so a store stamped by a newer build is `store_too_new`.
 - **The move.** The first session write (a switch, a pass, a rebuild, an
-  activity change, a link) moves the files in in its write's transaction before it
-  writes: in one transaction it reads every record (one that does not read
-  refuses the move with `store_corrupt`, naming the file, and nothing
-  moves), inserts them ordered by `created` then id, inserts every switch
+  activity change, a link) moves the files in in its write's transaction
+  before it writes (from format 27 the first write of any kind does, see
+  [Documents in scribe.db](#documents-in-scribedb-phase-7)): in one
+  transaction it reads every record (one that does not read refuses the move
+  with `store_corrupt`, naming the file, and nothing moves), inserts them
+  ordered by `created` then id, inserts every switch
   and Codex cursor, imports each `.<id>.rebuild.md` checkpoint as a row,
   checks the row count against the files read, and adds the `record_kinds`
   row. After the commit it moves `sessions/`, `control.json` and the root's
   `.codex-<id>.lock` files to `pre-sqlite-<yyyy-mm-dd>/` (`.2`, `.3` … when
   taken; scribe never deletes it) and writes `control.json` as the format
   stamp. A move cut off after the commit finishes at the next write. A
-  write that refuses, or one that touches no session (an entry, a tag, an
-  audit line), leaves the files where they are. A store with no session
-  files is marked moved by its first session write.
+  write that refuses leaves the files where they are, and at format 26 so
+  does a write that touches no session (an entry, a tag, an audit line). A
+  store with no session files is marked moved by its first write.
 - **`scribe store migrate`** makes the move now, in its write's transaction. It is
   refused with `migrate_blocked` while any session is switched on, while
   any rebuild checkpoint waits, and once the sessions moved; the write's
@@ -732,9 +737,15 @@ corrected by editing it outside Pinned.
 
 ## JSON documents
 
-- `control.json` (written at format 22; an older file upgrades on read): `{"sessions": {"<session-id>": {"on",
-  "since", "due", "final", "consecutive_failures", "retry_after",
-  "pending_links", "cataloged_by"}}}`. `pending_links` holds `{type, session}` links
+- `control.json` is the format stamp. Before the sessions moved (phase 6) it
+  also held the switches and Codex cursors: `{"sessions": {"<session-id>":
+  {"provider", "on", "since", "due", "final", "consecutive_failures",
+  "retry_after", "pending_links", "cataloged_by"}}, "codex_cursors": {...}}`
+  (an older file upgrades on read). Once the sessions moved, a switch is a
+  row of `sessions` (its `sw_*` columns) and a cursor a row of
+  `codex_cursors`, both in `scribe.db`, and the file holds only
+  `{"format": 27, "sessions": {}, "codex_cursors": {}}`. A switch has the
+  same fields in either home. `pending_links` holds `{type, session}` links
   Daniel asserted before the session had a record; the pass that writes
   the record moves them onto it, then clears them, in one locked call.
   `since` and `retry_after` are RFC 3339 timestamps or `null`; the failure
@@ -794,7 +805,8 @@ corrected by editing it outside Pinned.
   empty subject or a context under two sentences or past its bound, and the
   duplicate check compares the quote and the context (an older claim's
   statement) as it compared statements.
-- `cataloged_by` on a `control.json` switch is `null` or `{at, by}`;
+- `cataloged_by` on a switch (in `control.json` before the move, a `sessions`
+  row after it) is `null` or `{at, by}`;
   `/scribe on` keeps it. *(S14)* `session catalog` sets it and the pass
   copies it onto the record.
 - (S12) `tags.json` (written at format 22; introduced at format 5): `{"tags": [{"name",
@@ -1371,15 +1383,17 @@ exits 0.
 
 ## Known gaps
 
-- `session list` lists session records. A session switched on in
-  `control.json` before its first pass has no record yet and is not listed;
+- `session list` lists session records. A session switched on before its
+  first pass has no record yet and is not listed;
   `/scribe status` in that session reports it as on with no record yet.
 - `entry list --tag` matches a tag's name, not its aliases.
 
 ## Codex ingestion state (format 7)
 
-`control.json` has `codex_cursors: {"<session-id>": "<host-message-id>"}`
-(the `codex_cursors` table since phase 6).
+Before the sessions moved, `control.json` has `codex_cursors: {"<session-id>":
+"<host-message-id>"}`. Since phase 6 the cursors are rows of the
+`codex_cursors` table in `scribe.db`, and `control.json` holds an empty
+`codex_cursors` object.
 Each session switch also stores `provider: claude-code|codex`. Provider stamping
 and switch mutation share one write transaction. The Codex ingestion
 lock `locks/codex-<session-id>.lock` (`.codex-<session-id>.lock` before phase 6) serializes lifecycle events independently of
