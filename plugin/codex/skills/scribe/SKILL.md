@@ -435,8 +435,16 @@ or delete. Every act follows the same order.
    - **Approve**: the entry it wrote is retired if the approval was wrong. An
      entry from an assistant's claim retires under your own `--author`; the
      human's entry retires on their instruction. Its text is kept.
-   - **Retire**: repaired by adding a new entry on their explicit instruction
-     (through `entry add --spoken` with their quote), rather than unprompted;
+   - **Retire**: repaired by adding a new entry on their explicit instruction,
+     rather than unprompted, through the write path for the retired entry's
+     tag: a non-action memory tag (`preferences`, or a configured memory tag)
+     through `entry add --spoken` with their quote; an action tag (such as
+     `standard`) through its route under "Action tags" above, with their
+     words as `--quote` where that tag needs them; `handoff` through a new
+     handoff under "Session handoffs" above; a `require_evidence` tag (such
+     as `finding`) through `entry add --evidence <pointer>`, which records the
+     agent's finding rather than their words. Never `--spoken` on an action,
+     `handoff` or `require_evidence` tag: it is refused (`not_memory_tag`).
      `scribe entry show <e-id>` still shows the text.
    - **Reject**: irreversible. The claim closes and stays out of future
      proposals.
