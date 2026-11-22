@@ -25,7 +25,7 @@ pub(crate) struct Group {
 
 /// Root nouns, in the order `scribe --help` shows them.
 ///
-/// `search` sits with Find: it searches stored records, it is not one of them.
+/// `brief` leads Find: it is what a session reads first. `search` sits with Find: it searches stored records, it is not one of them.
 /// `transcript` and `tmux` sit there too, as discovery and browse. Clap's
 /// built-in `help` subcommand is not a declared noun; it stays runnable and
 /// is left off this page, as Orbit's root help leaves it off.
@@ -40,7 +40,7 @@ pub(crate) const ROOT_GROUPS: &[Group] = &[
     },
     Group {
         heading: "Find",
-        commands: &["question", "search", "transcript", "tmux"],
+        commands: &["brief", "question", "search", "transcript", "tmux"],
     },
     Group {
         heading: "Upkeep",

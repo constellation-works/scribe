@@ -495,6 +495,10 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
             Some(text) => writeln!(out, "{text}"),
             None => Ok(()),
         },
+        (OutputMode::Json, Record::Brief(brief)) => write_json(out, brief),
+        (OutputMode::Plain | OutputMode::Table, Record::Brief(brief)) => {
+            write!(out, "{}", brief.text)
+        }
     }
 }
 

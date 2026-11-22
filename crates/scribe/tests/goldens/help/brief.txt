@@ -1,0 +1,40 @@
+Show the session-start page: memory, recent sessions, open claims
+
+Shows the session-start page the hook injects: the memory page, the last sessions (this project's first) and every open claim grouped by tag with the id that settles it; model-free, writing nothing.
+
+Usage: scribe brief [OPTIONS]
+
+Options:
+      --sessions <N>
+          How many of the last sessions to show, 0 to 20
+          
+          [default: 5]
+
+      --project <PROJECT>
+          List this project's sessions first, and show its memory page [default: the current directory's project]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Global options:
+      --provider <PROVIDER>
+          Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+
+      --root <DIR>
+          Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+
+      --format <FORMAT>
+          Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto]
+          
+          [possible values: auto, table, json]
+
+      --json
+          Shorthand for --format json
+
+Examples:
+  scribe brief
+  scribe brief --sessions 10 --project scribe
+  scribe brief --json | jq '.claims[].claims[].id'

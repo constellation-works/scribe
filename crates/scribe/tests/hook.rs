@@ -2078,3 +2078,95 @@ fn an_annotation_under_an_action_tag_keeps_its_window() {
     assert!(window.contains("an earlier turn"), "{window}");
     assert_eq!(entry["stated_by"]["name"], "annotation");
 }
+
+/// Run `hook session-start` as Claude Code starts a session from
+/// `entrypoint` (`cli` is interactive).
+fn start_from(fx: &Fixture, entrypoint: &str, payload: &Value) -> Value {
+    let child = fx
+        .cmd(&["hook", "session-start"])
+        .env("CLAUDE_CODE_ENTRYPOINT", entrypoint)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut guard = support::ChildGuard::new(child);
+    guard
+        .child()
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(payload.to_string().as_bytes())
+        .unwrap();
+    let out = guard.finish();
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    reply(&out)
+}
+
+#[test]
+fn session_start_gives_an_interactive_agent_the_brief() {
+    let fx = Fixture::new();
+    let cwd = project_cwd(&fx);
+    write_session(
+        &fx,
+        PREVIOUS,
+        "scribe",
+        "2026-11-16T10:00:00Z",
+        "2026-11-16T11:00:00Z",
+        true,
+    );
+    write_session(
+        &fx,
+        NEWER,
+        "orbit",
+        "2026-11-17T10:00:00Z",
+        "2026-11-17T11:00:00Z",
+        true,
+    );
+    write_session(
+        &fx,
+        CURRENT,
+        "scribe",
+        "2026-11-18T10:00:00Z",
+        "2026-11-18T11:00:00Z",
+        true,
+    );
+    write_open_proposal(&fx);
+    let before = snapshot(&fx.root());
+    let payload = start_payload(Some(&cwd), CURRENT);
+
+    let interactive = start_from(&fx, "cli", &payload);
+    let context = interactive["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{interactive}"));
+    assert!(context.starts_with("# scribe brief\n"), "{context}");
+    // This project's session first, then another project's; never the
+    // session starting.
+    assert!(
+        context.contains(&format!(
+            "## Recent sessions\n- {PREVIOUS} · 2026-11-16 11:00Z · scribe · Continue the work\n- {NEWER} · 2026-11-17 11:00Z · orbit · Continue the work\n"
+        )),
+        "{context}"
+    );
+    assert!(!context.contains(CURRENT), "{context}");
+    assert!(
+        context.contains(
+            "## Open claims\n- p-1 · 2026-11-16 12:00Z · rituals · \"run the full gate\"\n"
+        ),
+        "{context}"
+    );
+    // The user's count stays beside it.
+    assert_eq!(
+        interactive["systemMessage"],
+        "scribe: 1 proposal to review — scribe proposal list"
+    );
+
+    let headless = start_from(&fx, "sdk-cli", &payload);
+    assert_eq!(headless["hookSpecificOutput"], Value::Null, "{headless}");
+    assert!(audit(&fx).is_empty(), "the brief is not audited");
+    assert_eq!(
+        snapshot(&fx.root()),
+        before,
+        "session-start wrote the store"
+    );
+}

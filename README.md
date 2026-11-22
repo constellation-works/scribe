@@ -92,6 +92,7 @@ scribe session rebuild <id> --author <name> --confirm
 scribe session deactivate <id> --author opus --reason 'the feature was removed'
 scribe session activate <id> --author opus --pin
 scribe proposal list --state open --entry <id>
+scribe brief   # session-start page: memory, last sessions, open claims by tag; no model call
 scribe search "merge policy" --kind session --since 2026-11-01   # BM25, no model call
 scribe issue search 'HTTP 429 secondary rate limit' --json
 scribe issue occur <id> --author opus --related session:<id> --request '<their words>' --summary 'The drain failed again' --fix 'Paused the drain'
@@ -249,7 +250,10 @@ packaging: [Build plugins](https://developers.openai.com/plugins/build/plugins#b
 
 `plugin/claude-code/` registers four hooks that run the `scribe` binary on
 `PATH`, and the `/scribe` command: `SessionStart` runs `scribe hook
-session-start`, which tells the user how many proposals are open;
+session-start`, which tells the user how many proposals are open and, in an
+interactive session, gives the agent the brief (`scribe brief`: the memory
+page, the last sessions and every open claim by tag, which the scribe skill
+has the agent present);
 `UserPromptSubmit` runs `scribe hook user-prompt-submit`, which
 echoes each `#scribe` marker of the typed prompt (code fences,
 blockquotes, pasted blocks and quoted mentions are skipped), applies each

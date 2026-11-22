@@ -687,6 +687,35 @@ items from its end and says `(+<k> more)`; within `[memory] page_chars`
 (2400) apart from milestones; `over_budget` is true when milestones pass
 600 characters, and the hook logs `memory_page_over_budget`.
 
+## Brief
+
+`brief [--sessions <n>] [--project <p>]` (n 0 to 20, default 5; the
+project defaults to the current directory's) reads and writes nothing.
+Plain and table print the same text, which the `SessionStart` hook also
+injects: `# scribe brief`; the memory block (today the page `memory show
+--page --project <p>` prints, left out when there is none); `## Recent
+sessions` with one `- <id> · <YYYY-MM-DD HH:MMZ> · <project> · <title>` line
+per session, `<p>`'s first, each part newest first (or
+`(none)`); `## Open claims` with one `- <p-id> · <YYYY-MM-DD HH:MMZ> ·
+<tag> · "<quote>"` line per claim, by tag then id, and the line naming how
+to settle one (or `(none)`). A quote is on one line and cut at 200
+characters, ending in `…`. JSON:
+
+```json
+{"memory": "<page or null>", "project": "<p or null>",
+ "sessions": [{"id", "project", "title", "at"}],
+ "claim_count": 1,
+ "claims": [{"tag": "<tag>", "claims": [{"id": "p-<n>", "kind": "candidate|supersedes|stale",
+   "quote", "statement", "subject", "older", "newer", "opened_at"}]}]}
+```
+
+`at` is a session's last activity (its last segment's end, else its
+`updated`). `quote` is a candidate's verbatim words, or a consistency
+proposal's first quoted span (its reason when it quotes none);
+`statement` is a candidate's statement (its quote when it has none) or a
+consistency proposal's reason; `subject` is `null` for a consistency
+proposal, `older` and `newer` `null` for a candidate.
+
 ## Consistency scan report
 
 `scribe consistency scan --json` and the Orbit tool

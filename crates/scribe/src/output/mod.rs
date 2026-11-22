@@ -14,12 +14,13 @@ mod sink;
 mod table;
 
 pub(crate) use payload::{
-    AskPayload, BatchFailure, CoveredPayload, DeactivatedPayload, DeactivationFailure,
-    EntryPayload, HitPayload, HookOutcome, HookReply, IssuePayload, IssueStatsPayload, Kin,
-    MemoryPagePayload, MemoryPayload, MemoryRulesPayload, MemoryScanPayload, MergedPayload, Output,
-    PassPayload, PassReport, PluginError, PluginReply, PopupRows, PromotedPayload, ProposalPayload,
-    ReappliedPayload, Record, Records, ScanReport, SessionPayload, SessionsContext,
-    SupersededPayload, TagPayload, TagShowPayload, TranscriptPayload, TreeRow, WarningPayload,
+    AskPayload, BatchFailure, BriefPayload, CoveredPayload, DeactivatedPayload,
+    DeactivationFailure, EntryPayload, HitPayload, HookOutcome, HookReply, IssuePayload,
+    IssueStatsPayload, Kin, MemoryPagePayload, MemoryPayload, MemoryRulesPayload,
+    MemoryScanPayload, MergedPayload, Output, PassPayload, PassReport, PluginError, PluginReply,
+    PopupRows, PromotedPayload, ProposalPayload, ReappliedPayload, Record, Records, ScanReport,
+    SessionPayload, SessionsContext, SupersededPayload, TagPayload, TagShowPayload,
+    TranscriptPayload, TreeRow, WarningPayload,
 };
 pub(crate) use sink::{FORMAT_ENV, FormatArg, Sink, help_width};
 
