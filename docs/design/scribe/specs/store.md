@@ -433,12 +433,13 @@ line has the session's `s-<n>` as its target.
   last step (`documents_sqlite`) changes no document, and later SQLite schema changes are SQL migrations; format 28 also adds the optional handoff mode to exported entries. The steps stay so the move can read a store
   left at any older format for the support window; phase 8 removes them
   with the file decoders.
-- **`scribe export <dir>`** writes every kind: `--as markdown` as the
+- **`scribe export <dir>`** writes every kind. `--as markdown` writes the
   file store's files at format 27 (`sessions/`, `entries/<tag>/<id>.md`,
   `control.json`, `proposals.json`, `tags.json`, `marks.json`,
   `pickups.json`, `audit.jsonl`), which a build reads as a store and moves
-  in again unchanged; `--as jsonl` as one `<table>.jsonl` per table, which
-  needs every kind with records moved (a phase-6 store with no live
+  in again unchanged. Each exported audit line keeps its original audit
+  format and decoded event. `--as jsonl` writes one `<table>.jsonl` per
+  table and needs every kind with records moved (a phase-6 store with no live
   record files exports its session tables), and on a moved store merges any
   pending `audit-spool/` events not yet drained into `audit.jsonl` (with
   `id: null` and `spool` set to the spool filename), skipping spool files

@@ -311,32 +311,34 @@ impl Store {
     /// An unsafe file (a link, loose modes) as for any store read, or a
     /// line of a newer audit format (`store_too_new`).
     pub fn audit_events(&self) -> Result<(Vec<AuditEvent>, usize)> {
+        let (lines, torn) = self.audit_lines()?;
+        Ok((lines.into_iter().map(|(_, event)| event).collect(), torn))
+    }
+
+    /// Audit lines with their original formats, in the same order as `audit_events`.
+    fn audit_lines(&self) -> Result<(Vec<(u32, AuditEvent)>, usize)> {
         if !self.root_exists()? {
             return Ok((Vec::new(), 0));
         }
-        let (mut events, mut torn, drained) = match self.read_db(|conn, path| {
+        let (mut lines, mut torn, drained) = match self.read_db(|conn, path| {
             let drained = docs::spooled_names(conn, path)?;
             Ok((docs::audit(conn, path)?, drained))
         })? {
-            Some((events, drained)) => (events, 0, drained),
+            Some((lines, drained)) => (lines, 0, drained),
             None => {
-                let (events, torn) = self.audit_file()?;
-                (
-                    events.into_iter().map(|(_, e)| e).collect(),
-                    torn,
-                    Vec::new(),
-                )
+                let (lines, torn) = self.audit_file()?;
+                (lines, torn, Vec::new())
             }
         };
         let (spooled, spool_torn) = self.spooled_audit()?;
         torn += spool_torn;
-        events.extend(
+        lines.extend(
             spooled
                 .into_iter()
                 .filter(|(name, _, _)| !drained.contains(name))
-                .map(|(_, _, e)| e),
+                .map(|(_, format, event)| (format, event)),
         );
-        Ok((events, torn))
+        Ok((lines, torn))
     }
 
     /// `audit.jsonl`'s lines with their formats, and how many did not parse.
@@ -747,10 +749,10 @@ impl Store {
             PICKUPS_FILE.to_owned(),
             &format::encode_pickups(&path, &self.pickups()?)?,
         )?;
-        let (events, _) = self.audit_events()?;
+        let (lines, _) = self.audit_lines()?;
         let mut log = Vec::new();
-        for event in &events {
-            log.extend(audit::encode_line(event).map_err(|e| {
+        for (format, event) in &lines {
+            log.extend(audit::encode_line(*format, event).map_err(|e| {
                 Error::corrupt(
                     target.join(AUDIT_FILE),
                     format!("an audit line does not encode: {e}"),
@@ -758,7 +760,7 @@ impl Store {
             })?);
         }
         write(AUDIT_FILE.to_owned(), &log)?;
-        out.audit_lines = events.len();
+        out.audit_lines = lines.len();
         Ok(())
     }
 
