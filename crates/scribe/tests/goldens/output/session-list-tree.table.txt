@@ -1,3 +1,3 @@
-ID                                    PARENT                                STATUS  DUE  PROJECT                     TOPICS                UPDATED               TITLE
-0f8e7a52-3c1d-4b6e-9a2f-5d4c3b2a1e01  -                                     final   no   constellation-works/scribe  design                2026-10-20T11:02:00Z  Scribe store layout
-7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02  0f8e7a52-3c1d-4b6e-9a2f-5d4c3b2a1e01  open    yes  constellation-works/scribe  release,merge-policy  2026-11-02T19:40:00Z    Merge policy for agent PRs
+ID                                    PARENT                                STATUS  DUE  PROJECT                     TOPICS                UPDATED     TITLE
+0f8e7a52-3c1d-4b6e-9a2f-5d4c3b2a1e01  -                                     final   no   constellation-works/scribe  design                2026-10-20  Scribe store layout
+7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02  0f8e7a52-3c1d-4b6e-9a2f-5d4c3b2a1e01  open    yes  constellation-works/scribe  release,merge-policy  2026-11-02    Merge policy for agent PRs

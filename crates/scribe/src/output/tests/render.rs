@@ -2,7 +2,7 @@ use crate::output::payload::{
     AuthorPayload, CitePayload, ContentFromPayload, EntryPayload, HandoffPayload, Record, Records,
     SessionHandoffsPayload, TagPayload, WarningPayload,
 };
-use crate::output::render::{list, show};
+use crate::output::render::{list, show, updated_date};
 use crate::output::sink::{OutputMode, Sink};
 use time::macros::datetime;
 
@@ -97,6 +97,21 @@ fn the_plain_form_is_one_tab_separated_line_per_record_with_text_flattened() {
             "preferences-1\tactive\tscribe\tci,release\t2026-01-02T03:04:05Z\tone two three\tuser\t-",
             "preferences-2\tactive\tscribe\tci,release\t2026-01-02T03:04:05Z\t-\tuser\t-",
         ]
+    );
+}
+
+#[test]
+fn a_session_table_updated_is_its_utc_date() {
+    // ORB-27238: the table shows the date of the stored UTC instant. The
+    // full instant stays in piped, JSON and show output (render.rs).
+    assert_eq!(
+        updated_date(datetime!(2026-10-20 11:02:00 UTC)),
+        "2026-10-20"
+    );
+    // 23:30 on the 22nd at UTC-5 is 04:30 on the 23rd in UTC.
+    assert_eq!(
+        updated_date(datetime!(2026-11-22 23:30:00 -5)),
+        "2026-11-23"
     );
 }
 
