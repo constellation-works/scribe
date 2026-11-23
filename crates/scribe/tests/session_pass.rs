@@ -641,6 +641,69 @@ fn forgetting_an_entry_deletes_the_stored_message_it_cites() {
 }
 
 #[test]
+fn forget_first_write_and_repeat_erase_legacy_session_archives() {
+    let s = Setup::new();
+    s.fx.seed();
+    let root = s.fx.root();
+    let shown: Value =
+        serde_json::from_slice(&s.fx.ok(&["session", "show", "s-1", "--json"]).stdout).unwrap();
+    let id = shown["id"].as_str().unwrap();
+    let files = |base: &std::path::Path| -> Vec<PathBuf> {
+        fn walk(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        walk(&path, out);
+                    } else {
+                        out.push(path);
+                    }
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(base, &mut out);
+        out
+    };
+    let original = files(&root.join("sessions"))
+        .into_iter()
+        .find(|p| p.file_name().unwrap() == format!("{id}.md").as_str())
+        .unwrap();
+    let bytes = std::fs::read(&original).unwrap();
+    let checkpoint = original.with_file_name(format!(".{id}.rebuild.md"));
+    std::fs::write(&checkpoint, &bytes).unwrap();
+    make_private(&checkpoint);
+    assert!(!root.join("scribe.db").exists());
+    let out = text(&type_settlement(&s, "#scribe forget s-1").stdout);
+    assert!(out.contains("forgot s-1"), "{out}");
+    let assert_absent = || {
+        for path in files(&root) {
+            let name = path.file_name().unwrap().to_string_lossy();
+            assert!(
+                name != format!("{id}.md") && name != format!(".{id}.rebuild.md"),
+                "{}",
+                path.display()
+            );
+        }
+    };
+    assert_absent();
+    let other: Value =
+        serde_json::from_slice(&s.fx.ok(&["session", "show", "s-2", "--json"]).stdout).unwrap();
+    assert!(other["id"].is_string());
+    // Model the residue left by an older build after a successful forget.
+    let stale = root.join("pre-sqlite-stale/sessions/2026/11");
+    s.fx.create_private_dir_all(&stale);
+    for name in [format!("{id}.md"), format!(".{id}.rebuild.md")] {
+        let path = stale.join(name);
+        std::fs::write(&path, &bytes).unwrap();
+        make_private(&path);
+    }
+    let again = text(&type_settlement(&s, "#scribe forget s-1").stdout);
+    assert!(again.contains("already forgotten"), "{again}");
+    assert_absent();
+}
+
+#[test]
 fn forgetting_a_session_erases_its_words_keeps_its_id_and_takes_no_more_writes() {
     let s = Setup::new();
     let quote = "I prefer the lighthouse keeper plan for every Saturday release.";
