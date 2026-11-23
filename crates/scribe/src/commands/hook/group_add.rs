@@ -108,9 +108,22 @@ pub(super) fn run(
 /// prefix refuses the line before writes; unknown ids stay as typed, since a
 /// session that was never recorded has no other source.
 fn additions(ctx: &Context, named: &[SessionId]) -> Result<Vec<GroupAddition>, CliError> {
-    let files = payload::files_for(ctx)?;
+    let mut files = std::collections::BTreeMap::new();
+    for provider in [
+        scribe_core::Provider::ClaudeCode,
+        scribe_core::Provider::Codex,
+    ] {
+        let provider_ctx = ctx.with_provider(provider);
+        for (id, path) in payload::files_for(&provider_ctx)? {
+            if files.insert(id, (path, provider)).is_some() {
+                return Err(CliError::Usage(String::from(
+                    "session exists in multiple transcript providers",
+                )));
+            }
+        }
+    }
     let store: &Store = ctx.store();
-    let mut ids: Vec<String> = files.iter().map(|(id, _)| id.to_string()).collect();
+    let mut ids: Vec<String> = files.keys().map(ToString::to_string).collect();
     for group in store.groups()? {
         ids.extend(group.members().into_iter().map(|id| id.to_string()));
     }
@@ -120,8 +133,8 @@ fn additions(ctx: &Context, named: &[SessionId]) -> Result<Vec<GroupAddition>, C
         if additions.iter().any(|a| a.session == id) {
             continue;
         }
-        let turns = match files.iter().find(|(found, _)| *found == id) {
-            Some((_, path)) => group_turns::past(ctx, &id, path)?,
+        let turns = match files.get(&id) {
+            Some((path, provider)) => group_turns::past(&ctx.with_provider(*provider), &id, path)?,
             None => None,
         };
         additions.push(GroupAddition { session: id, turns });

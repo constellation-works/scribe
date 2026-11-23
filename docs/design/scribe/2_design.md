@@ -6696,8 +6696,9 @@ not enrol the session it is typed in unless that session is named. The prompt
 hook reads it with the same checks as `/scribe group <slug>`: a peer message,
 scheduled prompt, harness line or pasted block never acts (§4.1), and the
 prompt's transcript must pass the provenance check. A named session need not
-have been recorded. When its transcript is still on disk, its typed turns are
-stored with the selection a member's own turns get (a typed turn, not an agent
+have been recorded. Both supported providers are searched, including archived
+Codex rollouts, regardless of the caller’s provider. When its transcript is still
+on disk, its typed turns are stored with the selection a member's own turns get (a typed turn, not an agent
 or harness turn, nor a copied history) whatever their age, and its capture
 cursor is set after the last of them, so a later capture neither repeats them
 nor skips newer ones; the reply says `transcript on disk, <n> typed turns
