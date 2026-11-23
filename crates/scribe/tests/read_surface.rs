@@ -675,3 +675,90 @@ fn a_session_reference_given_as_a_prefix_is_stored_in_full() {
     );
     assert_eq!(ok_json(&fx, &["entry", "list"])["total"], before);
 }
+
+#[test]
+fn literal_session_references_remain_filterable_and_removable_after_cataloging() {
+    let fx = Fixture::new();
+    fx.seed();
+    let literal = ok_json(
+        &fx,
+        &[
+            "entry",
+            "add",
+            "--tag",
+            "preferences",
+            "--author",
+            "opus",
+            "--related",
+            "session:abcd",
+            "Keep this reference until the session is known",
+        ],
+    );
+    let id = literal["id"].as_str().unwrap();
+    assert_eq!(literal["related"][0], "session:abcd");
+
+    // Make a longer matching session known only after the reference was
+    // written. This is the ordering that turns resolution into a regression.
+    copy_session(&fx, "abcd1234");
+    let filtered = ok_json(&fx, &["entry", "list", "--related", "session:abcd"]);
+    assert!(ids(&filtered, "entries", "id").contains(&id.to_owned()));
+
+    let removed = ok_json(
+        &fx,
+        &[
+            "entry",
+            "update",
+            id,
+            "--author",
+            "opus",
+            "--remove-related",
+            "session:abcd",
+        ],
+    );
+    assert!(removed["related"].as_array().unwrap().is_empty());
+    assert!(
+        !ids(
+            &ok_json(&fx, &["entry", "list", "--related", "session:abcd"]),
+            "entries",
+            "id"
+        )
+        .contains(&id.to_owned())
+    );
+
+    // Fully canonical references keep the established add, filter, and
+    // removal behavior.
+    let canonical = ok_json(
+        &fx,
+        &[
+            "entry",
+            "update",
+            id,
+            "--author",
+            "opus",
+            "--add-related",
+            "session:abcd1234",
+        ],
+    );
+    assert_eq!(canonical["related"][0], "session:abcd1234");
+    assert!(
+        ids(
+            &ok_json(&fx, &["entry", "list", "--related", "session:abcd1234"]),
+            "entries",
+            "id"
+        )
+        .contains(&id.to_owned())
+    );
+    let removed = ok_json(
+        &fx,
+        &[
+            "entry",
+            "update",
+            id,
+            "--author",
+            "opus",
+            "--remove-related",
+            "session:abcd1234",
+        ],
+    );
+    assert!(removed["related"].as_array().unwrap().is_empty());
+}

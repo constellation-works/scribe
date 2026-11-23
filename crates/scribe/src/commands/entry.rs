@@ -343,7 +343,7 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
                 add_topics: args.add_topic,
                 remove_topics: args.remove_topic,
                 add_related: super::resolve_relateds(ctx, &args.add_related)?,
-                remove_related: super::resolve_relateds(ctx, &args.remove_related)?,
+                remove_related: resolve_relateds_preserving_input(ctx, &args.remove_related)?,
             };
             ctx.store().check_agent_entry_update(&args.id, &patch)?;
             let redactor = ctx.redactor(&ctx.store().config()?)?;
@@ -423,7 +423,7 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
         status: args.status,
         project: args.project,
         topics: args.topic,
-        related: super::resolve_relateds(ctx, &args.related)?,
+        related: resolve_relateds_preserving_input(ctx, &args.related)?,
         dates: args.dates.range()?,
         after: args.after,
         author: args.author.map(scribe_core::AuthorName::current),
@@ -442,7 +442,7 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
         "no entries in {}; they are recorded by a #scribe line in a Claude Code session",
         ctx.store().root().display()
     );
-    let mut criteria = criteria(&filter);
+    let mut criteria = criteria_with_related(&filter, &args.related);
     if let Some(group) = group {
         criteria.push(format!("--group {}", group.id));
     }
@@ -476,7 +476,12 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
 
 /// The filters applied, as the flags that set them (the dates aside, which
 /// the caller adds from its flags).
+#[cfg(test)]
 pub(super) fn criteria(filter: &EntryFilter) -> Vec<String> {
+    criteria_with_related(filter, &filter.related)
+}
+
+fn criteria_with_related(filter: &EntryFilter, related: &[scribe_core::Related]) -> Vec<String> {
     let mut criteria = Vec::new();
     if let Some(tag) = &filter.tag {
         criteria.push(format!("--tag {tag}"));
@@ -490,7 +495,7 @@ pub(super) fn criteria(filter: &EntryFilter) -> Vec<String> {
     for topic in &filter.topics {
         criteria.push(format!("--topic {topic}"));
     }
-    for related in &filter.related {
+    for related in related {
         criteria.push(format!("--related {related}"));
     }
     if let Some(author) = &filter.author {
@@ -500,6 +505,27 @@ pub(super) fn criteria(filter: &EntryFilter) -> Vec<String> {
         criteria.push(format!("--author-kind {}", kind.as_str()));
     }
     criteria
+}
+
+/// Resolve session prefixes for validation and canonical matching while
+/// retaining each caller-supplied reference. Existing entries can contain
+/// an unknown session reference literally, so lookup and removal must also
+/// compare that original value after a matching session is cataloged.
+fn resolve_relateds_preserving_input(
+    ctx: &Context,
+    related: &[scribe_core::Related],
+) -> Result<Vec<scribe_core::Related>, CliError> {
+    let resolved = super::resolve_relateds(ctx, related)?;
+    let mut preserved = Vec::with_capacity(resolved.len() * 2);
+    for (input, canonical) in related.iter().zip(resolved) {
+        if !preserved.contains(input) {
+            preserved.push(input.clone());
+        }
+        if !preserved.contains(&canonical) {
+            preserved.push(canonical);
+        }
+    }
+    Ok(preserved)
 }
 
 fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
