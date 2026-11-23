@@ -1,14 +1,14 @@
 Join a named seat under your own author name
 
-Usage: scribe group join [OPTIONS] --as <SEAT> --author <AUTHOR> <ID>
+Usage: scribe group join [OPTIONS] --author <AUTHOR> <ID>
 
 Arguments:
-  <ID>  Group id or unique prefix
+  <ID>  Group id, unique prefix, or project group slug
 
 Options:
-      --as <SEAT>        Seat name within this group
+      --as <SEAT>        Seat name (defaults to the short session id for a project group)
       --author <AUTHOR>  Your agent author name
-      --role <ROLE>      Free role label (defaults to the seat name for a new seat)
+      --role <ROLE>      Role (defaults to member for a project group, otherwise the seat name)
       --replace          Explicitly replace the newest holder of an occupied seat
   -h, --help             Print help
   -V, --version          Print version

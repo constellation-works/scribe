@@ -9,6 +9,9 @@ use std::collections::BTreeSet;
 pub struct Group {
     /// Stable public id, `g-<n>`.
     pub id: String,
+    /// Project group slug, when named by a typed command.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slug: Option<String>,
     /// User-facing name of this piece of work.
     pub title: String,
     /// Free kind label.

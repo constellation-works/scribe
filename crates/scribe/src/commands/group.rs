@@ -46,15 +46,15 @@ pub(crate) enum GroupCommand {
         after_help = "Example: scribe group join <id> --as editor --author aide --role reviewer"
     )]
     Join {
-        /// Group id or unique prefix
+        /// Group id, unique prefix, or project group slug
         id: String,
-        /// Seat name within this group
+        /// Seat name (defaults to the short session id for a project group)
         #[arg(long = "as", value_name = "SEAT", value_parser = seat_name)]
-        seat: Label,
+        seat: Option<Label>,
         /// Your agent author name
         #[arg(long)]
         author: AuthorName,
-        /// Free role label (defaults to the seat name for a new seat)
+        /// Role (defaults to member for a project group, otherwise the seat name)
         #[arg(long)]
         role: Option<String>,
         /// Explicitly replace the newest holder of an occupied seat
@@ -67,13 +67,13 @@ pub(crate) enum GroupCommand {
     /// Summarize and close the group from the session that opened it
     #[command(after_help = "Example: scribe group close <id>")]
     Close {
-        /// Group id or unique prefix
+        /// Group id, unique prefix, or project group slug
         id: String,
     },
     /// Show one group, its references and its seat chains
     #[command(after_help = "Example: scribe group show <id> --json")]
     Show {
-        /// Group id or unique prefix
+        /// Group id, unique prefix, or project group slug
         id: String,
     },
     /// List groups newest first with their rosters
@@ -205,6 +205,19 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
         } => {
             let caller = caller(ctx)?;
             let group = store.group(&id)?;
+            let seat = match seat {
+                Some(seat) => seat,
+                None if group.slug.is_some() => {
+                    let short: String = caller.as_str().chars().take(8).collect();
+                    let occupied = group
+                        .seats
+                        .iter()
+                        .any(|s| s.name == short && !s.transcripts.contains(&caller));
+                    Label::sanitized(if occupied { caller.as_str() } else { &short }, "member")
+                }
+                None => return Err(CliError::Usage("pass --as for a named seat".into())),
+            };
+            let role = role.or_else(|| group.slug.as_ref().map(|_| "member".to_owned()));
             let latest = group
                 .seats
                 .iter()

@@ -89,7 +89,11 @@ pub(super) fn run(
         ));
     }
     let change = match switch {
-        Switch::Link { .. } | Switch::Catalog(_) | Switch::Continue(_) | Switch::Status => store
+        Switch::Link { .. }
+        | Switch::Catalog(_)
+        | Switch::Continue(_)
+        | Switch::Group(_)
+        | Switch::Status => store
             .control()
             .map(|state| Change::Status(state.get(session).cloned())),
         Switch::Unknown(arg) => Ok(Change::Unknown(arg.clone())),
@@ -108,6 +112,7 @@ pub(super) fn run(
                 Switch::Link { .. }
                 | Switch::Catalog(_)
                 | Switch::Continue(_)
+                | Switch::Group(_)
                 | Switch::Status
                 | Switch::Unknown(_) => Vec::new(),
             };
@@ -151,6 +156,7 @@ fn typed(switch: &Switch) -> String {
         Switch::Link { link, on: false } => {
             format!("/scribe link {} --type {}", link.session, link.kind)
         }
+        Switch::Group(slug) => format!("/scribe group {slug}"),
         Switch::Continue(id) => format!("/scribe continue {id}"),
         Switch::Catalog(id) => format!("/scribe catalog {id}"),
         Switch::Unknown(arg) => format!("/scribe {arg}"),

@@ -118,3 +118,34 @@ fn a_capture_line_is_echoed_as_marked_and_writes_nothing() {
         assert!(setup.entries().is_empty(), "{prompt}");
     }
 }
+
+#[test]
+fn typed_project_group_joins_and_untyped_commands_are_refused() {
+    let setup = Setup::new();
+    let Output::Hook(reply) = run(&setup.input("/scribe group water-economy"), &setup.ctx).unwrap()
+    else {
+        panic!("hook reply")
+    };
+    assert!(reply.block.unwrap().contains("joined group water-economy"));
+    let group = setup.ctx.store().group("water-economy").unwrap();
+    assert_eq!(group.kind, "project");
+    assert_eq!(group.seats[0].role, "member");
+    for (prompt, source) in [
+        ("/scribe group peer", "agent"),
+        ("/scribe group scheduled", "scheduled"),
+    ] {
+        let mut input: serde_json::Value = serde_json::from_slice(&setup.input(prompt)).unwrap();
+        input["source"] = json!(source);
+        let Output::Hook(reply) = run(input.to_string().as_bytes(), &setup.ctx).unwrap() else {
+            panic!("hook reply")
+        };
+        assert!(reply.block.unwrap().contains("not a typed user turn"));
+        assert!(
+            setup
+                .ctx
+                .store()
+                .group(prompt.split_whitespace().last().unwrap())
+                .is_err()
+        );
+    }
+}

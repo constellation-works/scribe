@@ -114,8 +114,50 @@ fn capture_prompt(payload: &PromptPayload, ctx: &Context) -> Result<Output, CliE
             "session belongs to another transcript provider",
         )));
     }
+    let first = payload.prompt.lines().next().unwrap_or("").trim();
+    let words: Vec<_> = first.split_whitespace().collect();
+    let group_command = matches!(words.as_slice(), ["/scribe" | "/scribe:scribe", "group", _]);
     if payload::agent_originated(payload) {
+        if group_command
+            || payload.prompt.lines().any(|line| {
+                let parts: Vec<_> = line.split_whitespace().collect();
+                matches!(parts.as_slice(), ["/scribe" | "/scribe:scribe", "group", _])
+            })
+        {
+            return Ok(group_reply(
+                "scribe: group refused — the prompt is not a typed user turn".into(),
+                Some("group_membership"),
+                &session,
+            ));
+        }
         return Ok(reply(Vec::new(), Vec::new()));
+    }
+    if group_command {
+        if let Err(reason) = payload::check(ctx, &payload.transcript_path, &session) {
+            return Ok(group_reply(
+                format!("scribe: group refused — {reason}"),
+                Some(PROVENANCE_FAILED),
+                &session,
+            ));
+        }
+        let project = project::of(std::path::Path::new(&payload.cwd));
+        return Ok(
+            match ctx
+                .store()
+                .join_project_group(words[2], &project, &session, ctx.now())
+            {
+                Ok(id) => group_reply(
+                    format!("scribe: joined group {} ({id})", words[2]),
+                    None,
+                    &session,
+                ),
+                Err(err) => group_reply(
+                    format!("scribe: group refused — {err}"),
+                    Some(err.code()),
+                    &session,
+                ),
+            },
+        );
     }
     if let Some(switch) = scribe_core::control::parse(&payload.prompt) {
         return Ok(super::scribe_command::run(&switch, payload, &session, ctx));
@@ -186,6 +228,19 @@ fn capture_prompt(payload: &PromptPayload, ctx: &Context) -> Result<Output, CliE
     }
     echoes.extend(mark_echoes);
     Ok(reply(echoes, outcomes))
+}
+
+fn group_reply(reason: String, error_code: Option<&'static str>, session: &SessionId) -> Output {
+    Output::Hook(HookReply {
+        event: EVENT,
+        message: None,
+        context: None,
+        block: Some(reason),
+        outcomes: vec![HookOutcome {
+            target: Some(format!("session:{session}")),
+            error_code,
+        }],
+    })
 }
 
 /// The line a parsed settling command came from, as typed.

@@ -4304,3 +4304,7 @@ for a 30-day window (`crates/scribe-core/src/config.rs`).
   change under §R10 and needs an alias path.
 - The S14 rows in `2_design.md` keep the old keys as provenance, as §15.8
   allows. `specs/output-contract.md` is the current contract.
+
+## Typed project-group consent
+
+Daniel asked to keep project sessions together: “I would like to keep different groups by projects. I have an on-going water-economy project, and I want all the sessions stored there.” On 2026-11-23, when offered a typed `/scribe group <slug>` that creates and enrols, terminal group commands, and retained membership after refresh, he answered “sounds good” (chief's chat, ORB-26869). The typed line itself consents to creation and membership; agent `group open` still requires a verbatim quote. Non-typed prompts do not consent. Daniel also answered “No, one group” to membership in two groups; a session already in a group must leave before joining another.

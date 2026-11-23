@@ -3,7 +3,7 @@ Summarize and close the group from the session that opened it
 Usage: scribe group close [OPTIONS] <ID>
 
 Arguments:
-  <ID>  Group id or unique prefix
+  <ID>  Group id, unique prefix, or project group slug
 
 Options:
   -h, --help     Print help

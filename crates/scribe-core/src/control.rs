@@ -48,6 +48,8 @@ pub enum Switch {
     Catalog(SessionId),
     /// Resume from an active continue handoff by entry id or unique prefix.
     Continue(String),
+    /// Join a project group on a typed command.
+    Group(String),
     /// Any other argument: refused with the usage.
     Unknown(String),
 }
@@ -70,6 +72,7 @@ pub fn parse(prompt: &str) -> Option<Switch> {
         [arg] if arg.eq_ignore_ascii_case("on") => Switch::On,
         [arg] if arg.eq_ignore_ascii_case("off") => Switch::Off,
         [arg] if arg.eq_ignore_ascii_case("status") => Switch::Status,
+        [arg, slug] if arg.eq_ignore_ascii_case("group") => Switch::Group((*slug).to_owned()),
         [arg, id] if arg.eq_ignore_ascii_case("continue") => Switch::Continue((*id).to_owned()),
         [arg, id] if arg.eq_ignore_ascii_case("catalog") => id
             .parse()
@@ -369,7 +372,9 @@ pub fn switch(
         Switch::Status => Change::Status(current),
         // A link is applied by the store's link call, and a catalog by
         // `catalog_gate` and `catalog_on`, not here.
-        Switch::Link { .. } | Switch::Catalog(_) | Switch::Continue(_) => Change::Status(current),
+        Switch::Link { .. } | Switch::Catalog(_) | Switch::Continue(_) | Switch::Group(_) => {
+            Change::Status(current)
+        }
         Switch::Unknown(arg) => Change::Unknown(arg.clone()),
     }
 }
