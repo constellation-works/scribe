@@ -2145,12 +2145,15 @@ Mutating commands — every `hook` event that writes, `session pass`,
 lines hold ids and error codes only; `said`, `content` and model text never
 enter the audit log. A hook run writes one line per entry written
 (`target` the entry id), per refusal and per failed line (`target`
-`session:<id>`, with its `error_code`) and per cite filled. A `UserPromptSubmit`
-or `Stop` run that stores a group member's new typed turns writes one more
-content-free success line for the run (`target` `session:<id>`, no
-`error_code`), however many turns it stores. A run that changed nothing (no
-`#scribe` line, no new group turn, a replay, a `Stop` with no missed
-instruction or waiting cite) writes none.
+`session:<id>`, with its `error_code`) and per cite filled. A session start that
+records a deferred ancestry check, and a typed `UserPromptSubmit` that consumes
+one, each write one success line (`target` `session:<id>`, no `error_code`). A
+`UserPromptSubmit` or `Stop` run that stores a group member's new typed turns
+writes one more content-free success line for the run (`target`
+`session:<id>`, no `error_code`), however many turns it stores. A run that
+changed nothing (no `#scribe` line, no deferred check to consume, no new group
+turn, a replay, a `Stop` with no missed instruction or waiting cite) writes
+none.
 
 ## 9. Concerns & Honest Limitations
 

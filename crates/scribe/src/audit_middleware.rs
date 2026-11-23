@@ -21,8 +21,11 @@
 //! `continue`, `target` `session:<id>`), and a refused `/scribe` command is one
 //! failure line; one more per run that stores a group member's new typed turns
 //! (`target` `session:<id>`, no error code, content-free, one per run however
-//! many turns it stores). A run that only moves a group member's capture cursor
-//! writes none, and so does a no-op switch or a status; a session pass one per
+//! many turns it stores); one per deferred ancestry check that a session start
+//! records, and one per typed prompt that consumes one (`target` `session:<id>`,
+//! no error code, whatever the prompt holds). A run that only moves a group
+//! member's capture cursor writes none, and so does a no-op switch or a status;
+//! a session pass one per
 //! session passed (a `session catalog`
 //! also one for the switch it wrote, unless a window failed: a failed catalog is one
 //! failure line) and one per retired-tag candidate closed; a consistency scan one
@@ -33,7 +36,7 @@
 //! when it did not: the `Stop` hook runs after
 //! every reply and usually has nothing to do. A prompt with no `#scribe` line
 //! adds a line only when it changes a `/scribe` switch, is a refused `/scribe`
-//! command, or stores a group member's turn.
+//! command, stores a group member's turn, or consumes a deferred ancestry check.
 //!
 //! A command that calls no model runs, with its lines, as one `scribe.db`
 //! transaction: [`AuditGuard::flush`] writes them inside it, so a write and
