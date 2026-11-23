@@ -1091,6 +1091,8 @@ counts zero new rows). That bookkeeping is unlogged, as
 **Code anchors:** `crates/scribe/src/audit_middleware.rs`;
 `crates/scribe/src/output/payload.rs` (`HookOutcome`);
 `crates/scribe/src/commands/hook/scribe_command.rs` (the switch outcomes);
+`crates/scribe/src/commands/hook/session_start.rs` (the deferred check);
+`crates/scribe/src/commands/hook/user_prompt_submit.rs` (its consume);
 `crates/scribe/src/commands/hook/group_turns.rs` (the capture outcome);
 `crates/scribe-core/src/store/db/groups.rs` (`capture_group_turns`,
 `skip_displaced_turns`)
@@ -1108,9 +1110,11 @@ A hook result carries its outcomes: an entry written or a cite filled
 `session:<id>`, `error_code`), or a group member's new typed turns stored
 (`target` `session:<id>`, no `error_code`, one per run that stored any), or a
 `/scribe` switch, link, catalog or continuation that changed state (`target`
-`session:<id>`, no `error_code`). The guard writes one audit line per outcome
-and none when there are none; a hook that fails before a result (an invalid
-payload) writes one failure line.
+`session:<id>`, no `error_code`), or a deferred ancestry check that a session
+start records or a typed prompt consumes (`target` `session:<id>`, no
+`error_code`). The guard writes one audit line per outcome and none when there
+are none; a hook that fails before a result (an invalid payload) writes one
+failure line.
 
 ### Consequences
 
