@@ -153,6 +153,33 @@ fn codex_failure_diagnostics_mask_configured_credentials() {
 }
 
 #[test]
+fn codex_masks_a_credential_that_straddles_the_reporting_cut() {
+    // The 30-byte credential starts at byte 172 of a 202-character line, so
+    // the 200-character cut falls inside it. Masked first, the credential is
+    // one 25-byte marker that fits inside the cut (172 + 25 = 197).
+    let prefix = "p".repeat(172);
+    let fake = Fake::new(&format!(
+        "printf '%s%s\\n' '{prefix}' \"$OPENAI_API_KEY\" >&2\nexit 7"
+    ));
+    let path = format!("{}:/usr/bin:/bin", fake.dir.path().join("bin").display());
+    let env = vec![
+        (OsString::from("PATH"), OsString::from(path)),
+        (OsString::from("HOME"), fake.dir.path().into()),
+        (
+            OsString::from("OPENAI_API_KEY"),
+            OsString::from("synthetic-secret-for-redaction"),
+        ),
+    ];
+    let adapter = ClaudeCliModels::new(env).with_provider(Provider::Codex);
+    let error = adapter.annotation(&request()).unwrap_err().to_string();
+    assert!(!error.contains("synthetic"), "{error}");
+    assert!(
+        error.ends_with(&format!("{prefix}[redacted:OPENAI_API_KEY]")),
+        "{error}"
+    );
+}
+
+#[test]
 fn codex_transport_notifications_require_a_successful_validated_completion() {
     // Observed with the real CLI: WebSocket retry diagnostics and an HTTPS
     // fallback error item precede a successful data-only answer, exit zero.

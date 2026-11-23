@@ -240,11 +240,22 @@ fn pem_block_end(text: &str, i: usize) -> Option<usize> {
 /// An `Authorization: Bearer <token>` header starting at `i`
 /// (case-insensitive): the token's `(start, end)`, header kept as written.
 fn bearer_token_span(text: &str, i: usize) -> Option<(usize, usize)> {
+    const SCHEME: &str = "authorization:";
+    const BEARER: &str = "bearer";
+    // Compared in place: a lower-cased copy of the rest of the text on every
+    // call would make masking a whole captured stream quadratic.
     let rest = text.get(i..)?;
-    let lower = rest.to_ascii_lowercase();
-    let after_scheme = lower.strip_prefix("authorization:")?;
-    let after_scheme = after_scheme.trim_start_matches([' ', '\t']);
-    let after_bearer = after_scheme.strip_prefix("bearer")?;
+    if !rest.get(..SCHEME.len())?.eq_ignore_ascii_case(SCHEME) {
+        return None;
+    }
+    let after_scheme = rest[SCHEME.len()..].trim_start_matches([' ', '\t']);
+    if !after_scheme
+        .get(..BEARER.len())?
+        .eq_ignore_ascii_case(BEARER)
+    {
+        return None;
+    }
+    let after_bearer = &after_scheme[BEARER.len()..];
     if !after_bearer.starts_with([' ', '\t']) {
         return None;
     }
