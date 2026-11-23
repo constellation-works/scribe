@@ -85,7 +85,13 @@ const MIGRATIONS: &[&str] = &[
     V13,
     docs::V14,
     groups::V15,
+    V16,
 ];
+
+/// Protect legacy issue erasure obligations from older writers. They can
+/// read the digest rows but would discard them without erasing pre-issue
+/// sources. No table shape changes.
+const V16: &str = "SELECT 1;";
 
 /// Pending first-prompt ancestry checks for starts before transcript creation.
 const V13: &str = "CREATE TABLE deferred_ancestry (session TEXT PRIMARY KEY NOT NULL) STRICT;";

@@ -5869,6 +5869,9 @@ a `now` file (`raised: {at, session}`), set by `scribe memory ack <id>`.
 - `scribe memory show|ack|forget` take a file stem (`now/2026-12-01-…`) or
   `profile`. `retire` goes: a `now` item removed by hand is forgotten, and
   the profile is corrected by editing it.
+- `memory forget` clears the item's history, cited turns and older file
+  copies from the memory journal. It truncates the WAL after committing
+  the deletion.
 
 ### 15.6 The weekly profile job
 
@@ -6044,7 +6047,10 @@ with phase 4):
   forget <entry-id>`. Memory loses the session's occurrences. Items with
   no remaining occurrence retire.
 - Scribe erases the matching contents of its `pre-sqlite-*` archives
-  after commit. Subsequent exports read the erased store, and an earlier
+  after commit. Legacy audit events that name the session keep their audit
+  fields and lose extra fields that can hold free text. Forgetting an
+  imported issue entry also erases its original `pre-issue-*` source file.
+  Subsequent exports read the erased store, and an earlier
   export to a caller's directory is a copy the caller controls. The
   provider owns the transcript and the hook's reply confirms it was left
   untouched. The audit contains ids only. Repeating a forget cleans any

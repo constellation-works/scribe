@@ -701,8 +701,9 @@ impl Store {
     /// and author, records the agent in `updated_by` and the instruction's
     /// session and message ids in `removal_instruction`, apart from any
     /// approval's `instruction`, but not its quote, which may repeat the words
-    /// he wants gone. No file is removed. `proposals.json` is written first,
-    /// then the entry. Forgetting a forgotten entry changes nothing.
+    /// he wants gone. The database keeps the entry row. Any matching legacy
+    /// files are erased after commit, and a repeat can finish interrupted
+    /// archive cleanup.
     pub fn forget_entry(
         &self,
         id: &str,
@@ -741,8 +742,8 @@ impl Store {
                 quote: None,
             });
             // The cited turns' stored messages go first: they hold the words
-            // the forget removes, and deleting them again is a no-op; moved
-            // `pre-sqlite-*` copies follow the commit via a durable obligation.
+            // the forget removes, and deleting them again is a no-op; legacy
+            // archive copies follow the commit via a durable obligation.
             self.forget_entry_residue(&target, &before, now)?;
             if proposals != before {
                 self.write_proposals(&proposals)?;

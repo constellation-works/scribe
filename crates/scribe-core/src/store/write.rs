@@ -377,11 +377,17 @@ impl Store {
             let conn = db::open_new_writer(&self.root, self.lock_wait)?;
             db::truncate_wal(&conn, &path, std::time::Instant::now())?;
         }
-        for (from, to) in &after.renames {
-            if let Some(dir) = to.parent() {
-                self.prepare_subdir(dir)?;
+        if !after.renames.is_empty() {
+            let path = self.lock_path(super::documents::ARCHIVE_FORGET_LOCK)?;
+            let _lock = fsio::LockGuard::acquire(&path, "move legacy issues", self.lock_wait)?;
+            for (from, to) in &after.renames {
+                if fsio::inspect_file(from)? {
+                    if let Some(dir) = to.parent() {
+                        self.prepare_subdir(dir)?;
+                    }
+                    fsio::rename(from, to)?;
+                }
             }
-            fsio::rename(from, to)?;
         }
         if after.aside {
             #[cfg(test)]

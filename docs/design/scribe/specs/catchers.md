@@ -177,7 +177,10 @@ The first write that takes the store lock converts every
 | cite | none: an issue kept no prompt hash, so the request's session is in `related` instead |
 
 A forgotten issue has no text left and writes nothing. Each file then moves
-to `pre-issue-<YYYY-MM-DD>/` in the data root. A file that does not parse
+to `pre-issue-<YYYY-MM-DD>/` in the data root. Forgetting an imported entry
+also erases its legacy issue file, including its old cause, fix and occurrence
+text. The erasure follows the source even when import assigned a different
+entry id. A file that does not parse
 stays in `issues/` with a warning and is tried on the next write; while any
 entry is unreadable, nothing converts. A run that finds the entry already
 written (same tag, content and quote) only moves the file, so running it
