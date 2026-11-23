@@ -700,7 +700,49 @@ pub(super) fn upsert_in(
     messages: &[NewMessage],
     redactor: &Redactor,
 ) -> Result<usize> {
-    write_messages(conn, path, started, messages.iter(), redactor, false)
+    write_messages(
+        conn,
+        path,
+        started,
+        messages.iter(),
+        redactor,
+        MessageConflict::Replace,
+    )
+}
+
+/// Write turns captured on group consent alone, inside a transaction the
+/// caller opened. A turn already stored under the same `(session, message)`
+/// is left as it is: it keeps its content and its provenance, so a pass's
+/// turn is never marked group-only and a group-only turn is never rewritten
+/// by a second group capture.
+pub(super) fn insert_group_only_in<'a>(
+    conn: &Connection,
+    path: &Path,
+    started: Instant,
+    messages: impl Iterator<Item = &'a NewMessage>,
+    redactor: &Redactor,
+) -> Result<usize> {
+    write_messages(
+        conn,
+        path,
+        started,
+        messages,
+        redactor,
+        MessageConflict::KeepExisting,
+    )
+}
+
+/// What a message write does when the `(session, message)` row exists. It
+/// also fixes the row's provenance: [`Replace`](Self::Replace) writes a
+/// pass's turn, [`KeepExisting`](Self::KeepExisting) a group-only one.
+#[derive(Clone, Copy)]
+enum MessageConflict {
+    /// A pass's turn takes the row: content is replaced and group-only
+    /// provenance is cleared, so a turn kept on group consent becomes
+    /// session-consented content once a pass records it.
+    Replace,
+    /// A group-only turn never touches an existing row.
+    KeepExisting,
 }
 
 fn write_messages<'a>(
@@ -709,14 +751,15 @@ fn write_messages<'a>(
     started: Instant,
     messages: impl Iterator<Item = &'a NewMessage>,
     redactor: &Redactor,
-    group_only: bool,
+    on_conflict: MessageConflict,
 ) -> Result<usize> {
+    let group_only = matches!(on_conflict, MessageConflict::KeepExisting);
     let insert = "INSERT INTO messages (session, message, role, at, text, sha256, group_only)
                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
-    let conflict = if group_only {
-        "ON CONFLICT (session, message) DO NOTHING"
-    } else {
-        "ON CONFLICT (session, message) DO UPDATE SET
+    let conflict = match on_conflict {
+        MessageConflict::KeepExisting => "ON CONFLICT (session, message) DO NOTHING",
+        MessageConflict::Replace => {
+            "ON CONFLICT (session, message) DO UPDATE SET
                  group_only = 0,
                  role = excluded.role, at = excluded.at,
                  text = excluded.text, sha256 = excluded.sha256
@@ -724,6 +767,7 @@ fn write_messages<'a>(
                 OR messages.role <> excluded.role
                 OR messages.at <> excluded.at
                 OR messages.group_only = 1"
+        }
     };
     let mut insert = conn
         .prepare(&format!("{insert} {conflict}"))
