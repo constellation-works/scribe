@@ -97,15 +97,15 @@ pub use session::{
 };
 pub use store::{
     AUDIT_FILE, AuditEvent, AuditStatus, CONFIG_FILE, CONTROL_FILE, COVERED, ClaudeCapturePosition,
-    ClaudeGroupCapture, DB_FILE, DEFAULT_LOCK_WAIT, ENTRIES_DIR, EntryList, ExportFormat, Exported,
-    HandoffSelection, InitFile, InitReport, IssueAudit, LOCKS_DIR, MARKS_FILE, MEMORY_DIR,
-    MILESTONES_DIR, MIN_SECRET_CHARS, MODEL_FAILED, MarkChange, MarkKey, MarkResult, MemoryShown,
-    MemoryView, MemoryWritten, Moved, NEEDS_REDACTION, NOW_DIR, PROFILE_FILE, PROPOSALS_FILE,
-    PassMemory, PassWrite, PassWritten, ProfileInputs, ProfileRevision, REDACTED_FIELDS,
-    RebuildGuard, Redactor, RefreshWritten, SESSIONS_DIR, SessionForget, SessionList, SessionView,
-    Skipped, Store, TagList, check_agent_author, check_content, check_description,
-    check_handoff_related, check_reason, init_project, init_project_with_skill_files,
-    integration_hooks, resolve_prefix, unresolved_redact_env,
+    ClaudeGroupCapture, CloseGroupOutcome, DB_FILE, DEFAULT_LOCK_WAIT, ENTRIES_DIR, EntryList,
+    ExportFormat, Exported, HandoffSelection, InitFile, InitReport, IssueAudit, LOCKS_DIR,
+    MARKS_FILE, MEMORY_DIR, MILESTONES_DIR, MIN_SECRET_CHARS, MODEL_FAILED, MarkChange, MarkKey,
+    MarkResult, MemoryShown, MemoryView, MemoryWritten, Moved, NEEDS_REDACTION, NOW_DIR,
+    PROFILE_FILE, PROPOSALS_FILE, PassMemory, PassWrite, PassWritten, ProfileInputs,
+    ProfileRevision, REDACTED_FIELDS, RebuildGuard, Redactor, RefreshWritten, SESSIONS_DIR,
+    SessionForget, SessionList, SessionView, Skipped, Store, TagList, check_agent_author,
+    check_content, check_description, check_handoff_related, check_reason, init_project,
+    init_project_with_skill_files, integration_hooks, resolve_prefix, unresolved_redact_env,
 };
 pub use tag::{
     ActionTag, CAPTURE_TEXT_CHARS, CaptureFrom, CaptureRoute, CaptureRules, FINDING_TAG,

@@ -141,7 +141,8 @@ impl<'a> AuditGuard<'a> {
     }
 
     /// Attach a shared flag set when a stepwise write commits its own success
-    /// audit row inside its store transaction.
+    /// audit row inside its store transaction. The committed row is final
+    /// even if the command returns a post-commit error.
     pub(crate) fn set_committed_flag(&mut self, committed: Arc<AtomicBool>) {
         self.committed = Some(committed);
     }

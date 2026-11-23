@@ -6725,8 +6725,12 @@ stored user turns from the members, with each source clipped, to the configured
 ask model for one call with a 90-second budget. The summary names decisions,
 completed work and open work supported by those sources. Scribe appends the
 group's related references for work missing from the handoffs. Before writing,
-it checks that the evidence still matches and redacts the summary. An already
-closed group returns its current record without another model call.
+it checks that the evidence still matches and redacts the summary. The closing
+timestamp, summary and success audit commit together. If store cleanup fails
+after that commit, the CLI reports the cleanup error and the committed success
+audit remains the sole audit for the attempt. A refusal or transaction failure
+leaves the group unchanged and records a failure audit. An already closed
+group returns its current record without another model call.
 
 **Reading.** `group show <id>` and `group list` include related references,
 seat names and roles, transcript ids in join order, the newest active handoff

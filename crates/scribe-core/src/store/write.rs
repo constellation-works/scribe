@@ -163,6 +163,19 @@ impl Store {
         now: OffsetDateTime,
         f: impl FnOnce() -> std::result::Result<T, E>,
     ) -> std::result::Result<T, E> {
+        let (value, cleanup) = self.transaction_with_cleanup(mode, now, f)?;
+        cleanup?;
+        Ok(value)
+    }
+
+    /// Return the transaction result and any post-commit error separately.
+    /// Nested calls leave cleanup to the outer transaction.
+    fn transaction_with_cleanup<T, E: From<Error>>(
+        &self,
+        mode: Move,
+        now: OffsetDateTime,
+        f: impl FnOnce() -> Result<T, E>,
+    ) -> Result<(T, Result<()>), E> {
         if self.in_write() {
             if mode == Move::ByHand {
                 let adopted = PENDING.with(|p| {
@@ -187,7 +200,7 @@ impl Store {
                     .into());
                 }
             }
-            return f();
+            return f().map(|value| (value, Ok(())));
         }
         let mut restore = Restore {
             previous: Some(PENDING.with(|p| {
@@ -204,10 +217,10 @@ impl Store {
         let out = f();
         let previous = restore.previous.take().unwrap_or_default();
         let Some(pending) = PENDING.with(|p| p.replace(previous)) else {
-            return out;
+            return out.map(|value| (value, Ok(())));
         };
         let Some(open) = pending.open else {
-            return out;
+            return out.map(|value| (value, Ok(())));
         };
         let path = self.root.join(DB_FILE);
         match out {
@@ -215,8 +228,10 @@ impl Store {
                 let committed = scope::commit_outer(&open.conn, &path);
                 let truncate = open.scope.leave();
                 committed?;
-                self.after_commit(pending.after, pending.now, truncate)?;
-                Ok(value)
+                Ok((
+                    value,
+                    self.after_commit(pending.after, pending.now, truncate),
+                ))
             }
             Err(e) => {
                 scope::rollback_outer(&open.conn);
@@ -237,6 +252,15 @@ impl Store {
             step.commit()?;
             Ok(out)
         })
+    }
+
+    /// Run a write and retain its committed result even if cleanup fails.
+    /// The caller must run outside a pending write to observe the commit.
+    pub(super) fn write_with_cleanup<T>(
+        &self,
+        f: impl FnOnce() -> Result<T>,
+    ) -> Result<(T, Result<()>)> {
+        self.transaction_with_cleanup(Move::AtWrite, OffsetDateTime::now_utc(), || self.write(f))
     }
 
     /// Whether a write transaction is pending on this thread for this

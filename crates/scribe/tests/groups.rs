@@ -681,6 +681,111 @@ fn opening_flags_only_other_open_groups_in_the_same_project() {
 }
 
 #[test]
+fn close_reports_archive_cleanup_failure_with_only_the_committed_success_audit() {
+    let f = Fixture::new();
+    let opener = transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
+    open(&f);
+    join(&f, B, "g-1", &[], 0);
+    let forgotten = hook(
+        &f,
+        &["hook", "user-prompt-submit"],
+        json!({
+            "session_id": A, "transcript_path": opener, "cwd": f.home(),
+            "prompt": format!("#scribe forget {B}")
+        }),
+        &[],
+    );
+    assert!(text(&forgotten.stdout).contains("forgot"));
+
+    // Re-create residue a previous build could have left after the forget.
+    let archive = f.root().join("pre-sqlite-stale/sessions/2026/11");
+    f.create_private_dir_all(&archive);
+    let residue = archive.join(format!("{B}.md"));
+    std::fs::write(&residue, "forgotten session residue").unwrap();
+    support::make_private(&residue);
+    let locks = f.root().join(scribe_core::LOCKS_DIR);
+    f.create_private_dir_all(&locks);
+    let lock_path = locks.join("archive-forget.lock");
+    let lock = std::fs::File::create(&lock_path).unwrap();
+    support::make_private(&lock_path);
+    lock.try_lock().unwrap();
+
+    let error = close_with_summary_error(&f);
+    assert_eq!(error["code"], "store_locked", "{error}");
+    assert!(error.to_string().contains("archive-forget.lock"), "{error}");
+    assert!(residue.is_file());
+
+    let record = invoke(&f, A, &["group", "show", "g-1"], 0);
+    assert!(record["closed"].is_string(), "{record}");
+    assert!(
+        record["summary"]
+            .as_str()
+            .unwrap()
+            .starts_with("Review complete."),
+        "{record}"
+    );
+    let lines = group_close_audits(&f);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert_eq!(lines[0]["status"], "success");
+    assert_eq!(lines[0]["target"], "g-1");
+    assert_eq!(lines[0]["instruction_session"], A);
+    assert!(lines[0]["error_code"].is_null());
+}
+
+#[test]
+fn close_audit_insert_failure_rolls_back_and_records_the_failure() {
+    let f = Fixture::new();
+    transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
+    open(&f);
+    let conn = rusqlite::Connection::open(f.root().join(scribe_core::DB_FILE)).unwrap();
+    conn.execute_batch(
+        "CREATE TRIGGER abort_group_close_audit BEFORE INSERT ON audit
+         WHEN NEW.command = 'group close' AND NEW.status = 'success'
+         BEGIN
+             SELECT RAISE(ABORT, 'injected audit failure');
+         END;",
+    )
+    .unwrap();
+    drop(conn);
+
+    let error = close_with_summary_error(&f);
+    assert_eq!(error["code"], "store_database", "{error}");
+    let record = invoke(&f, A, &["group", "show", "g-1"], 0);
+    assert!(record["closed"].is_null() && record["summary"].is_null());
+    let lines = group_close_audits(&f);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert_eq!(lines[0]["status"], "failure");
+    assert_eq!(lines[0]["target"], "g-1");
+    assert_eq!(lines[0]["instruction_session"], A);
+    assert_eq!(lines[0]["error_code"], "store_database");
+}
+
+fn close_with_summary_error(f: &Fixture) -> Value {
+    let path = f.fake_program(
+        "claude",
+        r#"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{"type":"result","is_error":false,"structured_output":{"summary":"Review complete."}}'
+"#,
+    );
+    let out = f
+        .cmd(&["group", "close", "g-1", "--json"])
+        .env("CLAUDE_CODE_SESSION_ID", A)
+        .env("PATH", path)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    serde_json::from_slice(&out.stderr).unwrap()
+}
+
+fn group_close_audits(f: &Fixture) -> Vec<Value> {
+    support::audit_lines(&f.root())
+        .into_iter()
+        .filter(|line| line["command"] == "group close")
+        .collect()
+}
+
+#[test]
 fn close_cannot_publish_a_summary_after_a_member_erases_its_sources() {
     let f = Fixture::new();
     transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
@@ -713,10 +818,7 @@ fn close_cannot_publish_a_summary_after_a_member_erases_its_sources() {
     hold.join();
     let record = invoke(&f, A, &["group", "show", "g-1"], 0);
     assert!(record["closed"].is_null() && record["summary"].is_null());
-    let close_lines: Vec<_> = support::audit_lines(&f.root())
-        .into_iter()
-        .filter(|line| line["command"] == "group close")
-        .collect();
+    let close_lines = group_close_audits(&f);
     assert_eq!(close_lines.len(), 1, "{close_lines:?}");
     assert_eq!(close_lines[0]["status"], "failure");
     assert_eq!(close_lines[0]["target"], "g-1");
