@@ -9,7 +9,8 @@ use crate::output::{Output, Record, Records};
 use clap::Subcommand;
 use scribe_core::group::{GroupConsent, JoinGroup, NewGroup};
 use scribe_core::{
-    AuthorName, Label, Models, Project, Provider, Related, SessionId, WriteRefusal, transcript,
+    AuthorName, CloseGroupOutcome, Label, Models, Project, Provider, Related, SessionId,
+    WriteRefusal, transcript,
 };
 
 const CLOSE_COMMAND: &str = "group close";
@@ -274,7 +275,7 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
             let started = std::time::Instant::now();
             let config = ctx.config()?;
             let models = ctx.models(&config);
-            let (id, changed) = store.close_group(
+            let outcome = store.close_group_with_outcome(
                 &id,
                 &session,
                 now,
@@ -307,9 +308,11 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
                     duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
                 },
             )?;
-            if changed {
+            if matches!(&outcome, CloseGroupOutcome::Closed { .. }) {
                 ctx.note_audit_committed();
-            } else {
+            }
+            let (id, changed) = outcome.into_result()?;
+            if !changed {
                 notices.push("group is already closed".into());
             }
             (id, changed)

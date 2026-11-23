@@ -4,7 +4,9 @@
 use super::{DB_FILE, Fallible, db_error, open_writer, refusal, stamp};
 use crate::group::CloseEvidence;
 use crate::store::fsio::LockGuard;
-use crate::{AuditEvent, Error, Redactor, Related, Result, SessionId, Store, WriteRefusal};
+use crate::{
+    AuditEvent, CloseGroupOutcome, Error, Redactor, Related, Result, SessionId, Store, WriteRefusal,
+};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
 use time::OffsetDateTime;
@@ -31,6 +33,22 @@ impl Store {
         summarize: impl FnOnce(&CloseEvidence) -> std::result::Result<String, E>,
         audit: impl FnOnce(&str) -> AuditEvent,
     ) -> std::result::Result<(String, bool), E> {
+        self.close_group_with_outcome(id, caller, now, redactor, summarize, audit)?
+            .into_result()
+            .map_err(E::from)
+    }
+
+    /// Close a group and report a committed success audit even if cleanup
+    /// failed. An outer error means this attempt did not commit a close.
+    pub fn close_group_with_outcome<E: From<Error>>(
+        &self,
+        id: &str,
+        caller: &SessionId,
+        now: OffsetDateTime,
+        redactor: &Redactor,
+        summarize: impl FnOnce(&CloseEvidence) -> Result<String, E>,
+        audit: impl FnOnce(&str) -> AuditEvent,
+    ) -> Result<CloseGroupOutcome, E> {
         if self.in_write() {
             return Err(refusal(
                 WriteRefusal::GroupMembership,
@@ -41,7 +59,7 @@ impl Store {
         let group = self.group(id)?;
         check_opener(&group.opener, caller)?;
         if group.closed.is_some() {
-            return Ok((group.id, false));
+            return Ok(CloseGroupOutcome::AlreadyClosed { id: group.id });
         }
         let n = self.group_number(&group.id)?;
         let lock_path = self.lock_path(&format!("group-close-{n}.lock"))?;
@@ -53,7 +71,7 @@ impl Store {
             snapshot(&tx, path, n, caller).map_err(Fallible::Failed)
         })?
         else {
-            return Ok((group.id, false));
+            return Ok(CloseGroupOutcome::AlreadyClosed { id: group.id });
         };
         let answer = summarize(&before.evidence)?;
         let mut summary = redactor.group_summary(answer.trim());
@@ -81,7 +99,7 @@ impl Store {
             );
             summary.push('.');
         }
-        self.write(|| {
+        let ((), cleanup) = self.write_with_cleanup(|| {
             let conn = open_writer(self.root(), self.lock_wait)?;
             let path = self.root().join(DB_FILE);
             if snapshot(&conn, &path, n, caller)?.as_ref() != Some(&before) {
@@ -98,7 +116,10 @@ impl Store {
             self.record_audit(&audit(&group.id))?;
             Ok(())
         })?;
-        Ok((group.id, true))
+        Ok(CloseGroupOutcome::Closed {
+            id: group.id,
+            cleanup,
+        })
     }
 }
 
