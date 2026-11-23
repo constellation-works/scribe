@@ -6586,3 +6586,27 @@ fn older_approved_assistant_finding_refuses_content_update() {
         serde_json::from_slice(&s.fx.ok(&["entry", "show", "finding-1", "--json"]).stdout).unwrap();
     assert_eq!(after, before);
 }
+
+#[test]
+fn unmatched_session_matrix_outcomes() {
+    let setup = Setup::new();
+    setup.scribe("/scribe on");
+    let before = setup.control_bytes();
+    let reason = setup.scribe(&format!("/scribe link {UNKNOWN}"));
+    let expected = support::session_id_outcome("manual_link");
+    assert_eq!(expected["exit"], 0); // scribe observed hook exit 0
+    assert!(
+        reason.contains(expected["value"].as_str().unwrap()),
+        "{reason}"
+    );
+    assert_eq!(setup.audit_codes().last().unwrap(), &expected["code"]);
+    assert_eq!(setup.control_bytes(), before);
+    let out = setup.run_any(&["session", "pass", "--session", UNKNOWN, "--json"], b"");
+    let expected = support::session_id_outcome("session_pass");
+    assert_eq!(
+        out.status.code(),
+        expected["exit"].as_i64().map(|n| i32::try_from(n).unwrap())
+    );
+    let error: Value = serde_json::from_slice(&out.stderr).unwrap();
+    assert_eq!(error["code"], expected["code"]);
+}

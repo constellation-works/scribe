@@ -1,0 +1,8 @@
+[
+  {"id":"related_literal", "case":"Unmatched related reference on entry add", "outcome":"Success; retain the literal reference", "exit":0, "code":null, "value":"session:abcd"},
+  {"id":"manual_link", "case":"Manual link to an unknown session", "outcome":"Refused; no link or switch changes", "exit":0, "code":"link_unknown_session", "value":"refused"},
+  {"id":"session_pass", "case":"Pass for an unmatched session", "outcome":"Refused as not switched on", "exit":1, "code":"session_not_on", "value":null},
+  {"id":"instruction_missing", "case":"Instruction lookup with no matching transcript", "outcome":"Refused when transcript is absent", "exit":1, "code":"instruction_not_found", "value":null},
+  {"id":"instruction_prefix", "case":"Instruction lookup by unique uncataloged transcript prefix", "outcome":"Success; citation stores the full session ID", "exit":0, "code":null, "value":"5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f"},
+  {"id":"instruction_ambiguous", "case":"Instruction lookup by ambiguous transcript prefix", "outcome":"Refused; no entry changes", "exit":2, "code":"id_ambiguous", "value":null}
+]

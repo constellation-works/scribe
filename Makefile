@@ -63,6 +63,7 @@ structure:
 	./scripts/check-test-modules.sh
 	./scripts/check-terminal-guard.sh
 	python3 scripts/check-store-format-claims.py
+	python3 scripts/check-session-id-outcomes.py
 	./scripts/tests/check-gates.sh
 
 # STD-09 R12: every relative link, heading anchor and image path in README.md

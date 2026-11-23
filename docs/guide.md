@@ -129,6 +129,20 @@ a prefix stores the full id, and a command that changes something names it.
 What an id that matches no session does depends on what the command does with
 it:
 
+The manual-link row reports the hook process exit and its audited refusal code.
+
+<!-- session-id-outcomes:start -->
+| Case | Outcome | Exit | Error code |
+| --- | --- | --- | --- |
+| Unmatched related reference on entry add | Success; retain the literal reference | 0 | — |
+| Manual link to an unknown session | Refused; no link or switch changes | 0 | `link_unknown_session` |
+| Pass for an unmatched session | Refused as not switched on | 1 | `session_not_on` |
+| Instruction lookup with no matching transcript | Refused when transcript is absent | 1 | `instruction_not_found` |
+| Instruction lookup by unique uncataloged transcript prefix | Success; citation stores the full session ID | 0 | — |
+| Instruction lookup by ambiguous transcript prefix | Refused; no entry changes | 2 | `id_ambiguous` |
+<!-- session-id-outcomes:end -->
+
+
 - A command that acts on a session the store knows refuses it with a not-found
   error (`session_not_found`) and changes nothing: `session show`, `session
   activate`, `session deactivate`, `session rebuild` and `#scribe forget`.

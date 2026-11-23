@@ -203,6 +203,16 @@ expect fail check-store-format-claims.py "$(format_tree claims-unmarked 30 <<<'T
   "a spec with no marked claim"
 expect fail check-store-format-claims.py "$(tree claims-absent)" "a tree with no format.rs or store spec"
 
+# The published session-ID tables must match the same matrix as CLI tests.
+outcomes=$(tree outcomes)
+mkdir -p "$outcomes/scripts" "$outcomes/docs/design/scribe"
+cp "$here/session-id-outcomes.json" "$outcomes/scripts/"
+cp "$here/../docs/guide.md" "$outcomes/docs/guide.md"
+cp "$here/../docs/design/scribe/2_design.md" "$outcomes/docs/design/scribe/2_design.md"
+expect pass check-session-id-outcomes.py "$outcomes" "matching session-ID outcome tables"
+sed -i.bak 's/Refused as not switched on/Stale outcome/' "$outcomes/docs/guide.md"
+expect fail check-session-id-outcomes.py "$outcomes" "a stale session-ID outcome table"
+
 if [[ "$fail" -eq 0 ]]; then
   echo "check-gates: ok ($n cases)"
 fi

@@ -695,7 +695,10 @@ fn literal_session_references_remain_filterable_and_removable_after_cataloging()
         ],
     );
     let id = literal["id"].as_str().unwrap();
-    assert_eq!(literal["related"][0], "session:abcd");
+    let expected = support::session_id_outcome("related_literal");
+    assert_eq!(expected["exit"], 0); // ok_json observed exit 0
+    assert!(expected["code"].is_null());
+    assert_eq!(literal["related"][0], expected["value"]);
 
     // Make a longer matching session known only after the reference was
     // written. This is the ordering that turns resolution into a regression.
@@ -761,4 +764,22 @@ fn literal_session_references_remain_filterable_and_removable_after_cataloging()
         ],
     );
     assert!(removed["related"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn session_id_matrix_rows_have_boundary_cases() {
+    let rows: Vec<Value> =
+        serde_json::from_str(include_str!("../../../scripts/session-id-outcomes.json")).unwrap();
+    let ids: Vec<&str> = rows.iter().map(|row| row["id"].as_str().unwrap()).collect();
+    assert_eq!(
+        ids,
+        [
+            "related_literal",
+            "manual_link",
+            "session_pass",
+            "instruction_missing",
+            "instruction_prefix",
+            "instruction_ambiguous"
+        ]
+    );
 }

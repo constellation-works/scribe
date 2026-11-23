@@ -504,3 +504,10 @@ not = "A direction to act now; a preference; a question of fact; an idea the ses
 pub fn idea_catcher_on(route: &str) -> String {
     IDEA_CATCHER.replace("route = \"write\"", &format!("route = \"{route}\""))
 }
+
+/// A documented session-ID outcome shared with the structure gate.
+pub fn session_id_outcome(id: &str) -> serde_json::Value {
+    let rows: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("../../../../scripts/session-id-outcomes.json")).unwrap();
+    rows.into_iter().find(|row| row["id"] == id).unwrap()
+}
