@@ -544,11 +544,11 @@ fn project_group_slug_joins_and_inherits() {
     let second = "session-two".parse().unwrap();
     let child = "session-child".parse().unwrap();
     let id = store
-        .join_project_group("water-economy", &project, &first, T0)
+        .join_project_group("water-economy", &project, &first, T0, &Redactor::default())
         .unwrap();
     assert_eq!(
         store
-            .join_project_group("water-economy", &project, &second, T0)
+            .join_project_group("water-economy", &project, &second, T0, &Redactor::default())
             .unwrap(),
         id
     );
@@ -575,7 +575,7 @@ fn project_group_slug_joins_and_inherits() {
     );
     assert!(
         store
-            .join_project_group("other", &project, &first, T0)
+            .join_project_group("other", &project, &first, T0, &Redactor::default())
             .unwrap_err()
             .to_string()
             .contains("water-economy")
@@ -595,6 +595,38 @@ fn project_group_slug_joins_and_inherits() {
 }
 
 #[test]
+fn project_group_refuses_sensitive_slug_and_masks_legacy_membership_in_errors() {
+    let dir = private_tempdir();
+    let store = Store::open(dir.path());
+    let project = crate::Project::sanitized("checkout");
+    let first = "session-one".parse().unwrap();
+    let second = "session-two".parse().unwrap();
+    let secret = "orchid-secret-token";
+    let redactor = Redactor::new([("TOKEN".into(), secret.into())]);
+    for slug in [secret, "prefix-orchid-secret-token-suffix"] {
+        let err = store
+            .join_project_group(slug, &project, &first, T0, &redactor)
+            .unwrap_err();
+        assert_eq!(err.code(), "invalid_text");
+        assert!(!err.to_string().contains(secret));
+        assert!(store.group(slug).is_err());
+    }
+    // A name created before the secret was configured must not leak in a refusal either.
+    store
+        .join_project_group(secret, &project, &first, T0, &Redactor::default())
+        .unwrap();
+    let err = store
+        .join_project_group("ordinary", &project, &first, T0, &redactor)
+        .unwrap_err();
+    assert!(!err.to_string().contains(secret));
+    assert!(
+        store
+            .join_project_group(secret, &project, &second, T0, &redactor)
+            .is_err()
+    );
+}
+
+#[test]
 fn close_group_commits_audit_with_closing_record_without_holding_write_lock_across_model() {
     let dir = private_tempdir();
     let store = Store::open(dir.path());
@@ -602,7 +634,7 @@ fn close_group_commits_audit_with_closing_record_without_holding_write_lock_acro
     let opener: crate::SessionId = "session-opener".parse().unwrap();
     let second_opener: crate::SessionId = "session-second".parse().unwrap();
     let id = store
-        .join_project_group("close-audit", &project, &opener, T0)
+        .join_project_group("close-audit", &project, &opener, T0, &Redactor::default())
         .unwrap();
     store
         .capture_group_turns(
@@ -686,7 +718,13 @@ fn close_group_commits_audit_with_closing_record_without_holding_write_lock_acro
 
     // If writing the audit row fails inside the final write, closed and summary roll back too.
     let second_id = store
-        .join_project_group("close-rollback", &project, &second_opener, T0)
+        .join_project_group(
+            "close-rollback",
+            &project,
+            &second_opener,
+            T0,
+            &Redactor::default(),
+        )
         .unwrap();
     let conn = rusqlite::Connection::open(dir.path().join(DB_FILE)).unwrap();
     conn.execute_batch(

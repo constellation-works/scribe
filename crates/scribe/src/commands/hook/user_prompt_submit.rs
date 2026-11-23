@@ -212,10 +212,11 @@ fn capture_prompt(payload: &PromptPayload, ctx: &Context) -> Result<Output, CliE
             ));
         }
         let project = project::of(std::path::Path::new(&payload.cwd));
+        let redactor = ctx.redactor(&ctx.config()?)?;
         return Ok(
             match ctx
                 .store()
-                .join_project_group(words[2], &project, &session, ctx.now())
+                .join_project_group(words[2], &project, &session, ctx.now(), &redactor)
             {
                 Ok(id) => group_reply(
                     format!("scribe: joined group {} ({id})", words[2]),
