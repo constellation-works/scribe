@@ -14,13 +14,18 @@ The code writes format 28 and reads formats 1–28. Format 28 adds an optional `
 sessions into `scribe.db`
 ([2_design.md §15.7](../2_design.md#157-storage), phase 6): records,
 switches, Codex cursors and rebuild checkpoints become rows (schema version
-3), the first write moves the files to `pre-sqlite-<date>/`, and
-`control.json` stays as the format stamp alone; see
+3); the first write that touches a session moves the session files to
+`pre-sqlite-<date>/` (a write that touches no session leaves them in files),
+and `control.json` stays as the format stamp alone; see
 [Sessions in scribe.db](#sessions-in-scribedb-phase-6). Format 27 (phase 7)
-moves the other kinds into `scribe.db` the same way and writes the format
-stamps, `control.json` among them, at 27; see
-[Documents in scribe.db](#documents-in-scribedb-phase-7). Format 25 changes no
-stored document: it adds the memory files of
+moves the other kinds into `scribe.db` and writes the format stamps,
+`control.json` among them, at 27. At format 27 the first eligible store write
+transaction moves every kind still in files, sessions first. A standalone
+audit line does not start that move: it is inserted without waiting, or
+spooled under `audit-spool/` while the store is still in files or another
+writer holds the database, and the next eligible transaction drains the
+spool; see [Documents in scribe.db](#documents-in-scribedb-phase-7). Format 25
+changes no stored document: it adds the memory files of
 [2_design.md §15.5](../2_design.md#155-memory-one-fixed-shape) (`memory/profile.md`,
 `memory/now/<stem>.md`, `memory/milestones/<stem>.md`), and the first
 memory write migrates every `memory/m-<n>.md` item into them and removes it
