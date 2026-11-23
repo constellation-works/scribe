@@ -207,8 +207,8 @@ fn documented_invocation(line: &str) -> Option<Vec<OsString>> {
 
 #[test]
 fn every_documented_command_line_parses() {
-    // STD-04 R14: examples in help and in the README are run through the real
-    // parser, so an example naming a removed flag or value fails here.
+    // STD-04 R14: examples in help and the user-facing docs are run through
+    // the real parser, so a removed flag or value fails here.
     let mut documented: Vec<(String, String)> = Vec::new();
     for (path, mut cmd) in every_command() {
         let help = cmd.render_long_help().to_string();
@@ -219,13 +219,24 @@ fn every_documented_command_line_parses() {
                 .map(|l| (format!("`{path} --help`"), l.to_owned())),
         );
     }
-    let readme = concat!(env!("CARGO_MANIFEST_DIR"), "/../../README.md");
-    let readme = std::fs::read_to_string(readme).expect("README.md next to the workspace");
-    documented.extend(
-        readme
-            .lines()
-            .map(|l| ("README.md".to_owned(), l.to_owned())),
-    );
+    for (source, path) in [
+        (
+            "README.md",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../../README.md"),
+        ),
+        (
+            "docs/guide.md",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/guide.md"),
+        ),
+    ] {
+        let content = std::fs::read_to_string(path)
+            .unwrap_or_else(|err| panic!("failed to read {source}: {err}"));
+        documented.extend(
+            content
+                .lines()
+                .map(|line| (source.to_owned(), line.to_owned())),
+        );
+    }
 
     let mut parsed = 0;
     for (source, line) in &documented {
