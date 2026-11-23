@@ -148,7 +148,10 @@ fn additions(ctx: &Context, named: &[SessionId]) -> Result<Vec<GroupAddition>, C
         if additions.iter().any(|a| a.session == id) {
             continue;
         }
-        let turns = match files.get(&id).or_else(|| refused.get(&id)) {
+        // A refused entry takes precedence over a regular one for the same id,
+        // so a session with both is read through the checked open and refuses
+        // the whole line, never backfilled from its regular transcript.
+        let turns = match refused.get(&id).or_else(|| files.get(&id)) {
             Some((path, provider)) => group_turns::past(&ctx.with_provider(*provider), &id, path)?,
             None => None,
         };

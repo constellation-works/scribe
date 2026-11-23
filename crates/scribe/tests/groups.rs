@@ -2767,6 +2767,94 @@ fn typed_group_add_refuses_a_linked_transcript_but_keeps_an_absent_one_membershi
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn typed_group_add_refuses_a_session_with_a_regular_and_a_refused_transcript() {
+    let f = Fixture::new();
+    let typing = transcript(&f, A, &[row(A, "t", "user", "/scribe group add planning")]);
+    let rollout = |text: &str| -> String {
+        [
+            json!({"type":"session_meta","payload":{"id":B,"source":"vscode","thread_source":"user","cwd":f.home()}}),
+            json!({"timestamp":"2090-11-20T01:00:00Z","type":"response_item","payload":{
+                "type":"message","role":"user","id":"mixed",
+                "content":[{"type":"input_text","text":text}],
+                "internal_chat_message_metadata_passthrough":{"turn_id":"mixed-turn","content_item_kinds":["user.text"],"content_item_metadata":[{"provenance":{"type":"user"}}]}
+            }}),
+        ]
+        .iter()
+        .map(|r| format!("{r}\n"))
+        .collect()
+    };
+    // B has a valid Codex rollout in the active root and, in the archived
+    // root, a link named for it: discovery reports both entries.
+    let active = f.home().join(".codex/sessions/2090/11/20");
+    f.create_private_dir_all(&active);
+    let regular = active.join(format!("rollout-2090-11-20T01-00-00-{B}.jsonl"));
+    std::fs::write(&regular, rollout("mixedorchid typed")).unwrap();
+    support::make_private(&regular);
+    let outside = f.elsewhere("outside.jsonl");
+    std::fs::write(&outside, rollout("linkedmixedorchid typed")).unwrap();
+    support::make_private(&outside);
+    let archived = f.home().join(".codex/archived_sessions");
+    f.create_private_dir_all(&archived);
+    std::os::unix::fs::symlink(
+        &outside,
+        archived.join(format!("rollout-2090-11-19T01-00-00-{B}.jsonl")),
+    )
+    .unwrap();
+    let store = scribe_core::Store::open(f.root());
+    let submit = |named: &str| {
+        text(
+            &hook(
+                &f,
+                &["hook", "user-prompt-submit"],
+                json!({"session_id": A, "transcript_path": typing, "cwd": f.home(),
+                    "prompt": format!("/scribe group add planning {named}")}),
+                &[],
+            )
+            .stdout,
+        )
+    };
+
+    // The refused entry refuses the whole line, even beside an absent session:
+    // nothing is joined, stored or audited.
+    let reply = submit(&format!("{B} {C}"));
+    assert!(reply.contains("group add refused"), "{reply}");
+    assert!(reply.contains("nothing changed"), "{reply}");
+    assert!(!reply.contains("membership only"), "{reply}");
+    assert!(store.groups().unwrap().is_empty());
+    assert_eq!(
+        invoke(&f, A, &["search", "mixedorchid", "--kind", "message"], 0)["total"],
+        0
+    );
+    let log = support::audit_text(&f.root());
+    assert!(!log.contains("mixedorchid"), "{log}");
+
+    // A lone valid transcript still backfills, and a genuinely absent session
+    // is membership only.
+    transcript(&f, D, &[row(D, "d1", "user", "lonevalidorchid typed")]);
+    let reply = submit(D);
+    assert!(reply.contains("group planning (g-1) opened"), "{reply}");
+    assert!(reply.contains("1 typed turn stored"), "{reply}");
+    let reply = submit(C);
+    assert!(
+        reply.contains("membership only, no transcript on disk"),
+        "{reply}"
+    );
+
+    // B still refuses its own line once the group exists, and is not a member.
+    let reply = submit(B);
+    assert!(reply.contains("group add refused"), "{reply}");
+    let groups = store.groups().unwrap();
+    assert_eq!(groups.len(), 1);
+    let members: Vec<String> = groups[0]
+        .members()
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(members, [C, D]);
+}
+
 #[test]
 fn typed_group_add_resolves_prefixes_and_exact_ids_across_disk_and_store() {
     let f = Fixture::new();
