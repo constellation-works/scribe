@@ -2,11 +2,9 @@
 //! transaction, then compares the evidence before publishing its summary.
 
 use super::{DB_FILE, Fallible, HOLDS_SEAT, db_error, open_writer, refusal, stamp};
-use crate::group::CloseEvidence;
+use crate::group::{CloseEvidence, GroupCloser};
 use crate::store::fsio::LockGuard;
-use crate::{
-    AuditEvent, CloseGroupOutcome, Error, Redactor, Related, Result, SessionId, Store, WriteRefusal,
-};
+use crate::{AuditEvent, CloseGroupOutcome, Error, Redactor, Related, Result, Store, WriteRefusal};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
 use time::OffsetDateTime;
@@ -29,7 +27,7 @@ impl Store {
     pub fn close_group_with_outcome<E: From<Error>>(
         &self,
         id: &str,
-        caller: &SessionId,
+        closer: GroupCloser<'_>,
         now: OffsetDateTime,
         redactor: &Redactor,
         summarize: impl FnOnce(&CloseEvidence) -> Result<String, E>,
@@ -45,7 +43,7 @@ impl Store {
         let group = self.group(id)?;
         let n = self.group_number(&group.id)?;
         self.read_groups(|conn, path| {
-            check_closer(conn, path, n, &group.opener, caller).map_err(Fallible::Failed)
+            check_closer(conn, path, n, &group.opener, closer).map_err(Fallible::Failed)
         })?;
         if group.closed.is_some() {
             return Ok(CloseGroupOutcome::AlreadyClosed { id: group.id });
@@ -56,7 +54,7 @@ impl Store {
             let tx = conn
                 .unchecked_transaction()
                 .map_err(|e| Fallible::from_sqlite("read group for close", path, e))?;
-            snapshot(&tx, path, n, caller).map_err(Fallible::Failed)
+            snapshot(&tx, path, n, closer).map_err(Fallible::Failed)
         })?
         else {
             return Ok(CloseGroupOutcome::AlreadyClosed { id: group.id });
@@ -90,7 +88,7 @@ impl Store {
         let ((), cleanup) = self.write_with_cleanup(|| {
             let conn = open_writer(self.root(), self.lock_wait)?;
             let path = self.root().join(DB_FILE);
-            if snapshot(&conn, &path, n, caller)?.as_ref() != Some(&before) {
+            if snapshot(&conn, &path, n, closer)?.as_ref() != Some(&before) {
                 return Err(refusal(
                     WriteRefusal::GroupMembership,
                     "group evidence changed during close; run group close again",
@@ -115,13 +113,19 @@ impl Store {
 /// opener, may close. A seat replacement already took Daniel's word or a
 /// verified clear, so the seat chain is consent-checked. An opener that never
 /// joined a seat, or left it, has no chain: only that exact session closes.
+/// A quoted closer's words were verified for this group by the command, so it
+/// needs no seat.
 fn check_closer(
     conn: &Connection,
     path: &Path,
     n: i64,
     opener: &str,
-    caller: &SessionId,
+    closer: GroupCloser<'_>,
 ) -> Result<()> {
+    let caller = match closer {
+        GroupCloser::Session(caller) => caller,
+        GroupCloser::Quoted(_) => return Ok(()),
+    };
     if opener == caller.as_str() {
         return Ok(());
     }
@@ -150,7 +154,7 @@ fn snapshot(
     conn: &Connection,
     path: &Path,
     n: i64,
-    caller: &SessionId,
+    closer: GroupCloser<'_>,
 ) -> Result<Option<Snapshot>> {
     let fail = |e| db_error("read evidence for group close from", path, e);
     let (opener, open, title, related): (String, bool, String, String) = conn.query_row(
@@ -160,7 +164,7 @@ fn snapshot(
     ).optional().map_err(fail)?.ok_or_else(|| {
         refusal(WriteRefusal::GroupNotFound, format!("no group g-{n}"))
     })?;
-    check_closer(conn, path, n, &opener, caller)?;
+    check_closer(conn, path, n, &opener, closer)?;
     if !open {
         return Ok(None);
     }

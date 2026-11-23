@@ -11,7 +11,7 @@ summary: Why superseded entries are hidden not removed, why one JSON file per ta
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26650, ORB-26709, ORB-27567]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26650, ORB-26709, ORB-27567, ORB-27597]
 ---
 
 # scribe — Decisions
@@ -4482,3 +4482,43 @@ writable rollout too. Read bits are not refused.
   not depend on the process umask.
 - Cost: this is an accident guard (STD-05@1 §R5). A process running as the same
   user can still write a transcript it owns.
+
+## A quoted request may close a group from any session
+
+**Recorded:** 2026-11-23 · [ORB-27597] · **Overridable by Daniel**
+
+### Context
+
+[ORB-27567] lets the opener and the newest transcript of its seat close a
+group. When every transcript of that seat has ended, no running session can
+close the group. The only route left is a session with no seat joining the
+opener's seat with `--replace`, and a formation chief already holds its own
+seat, so it cannot. Only a throwaway session could close `g-1` then (friction
+F2026-11-025).
+
+### Decision
+
+`scribe group close <id> --quote '<span>'` closes the group for a caller that
+holds no seat in it when `<span>` is a verbatim span of the user's own typed
+turn in the calling session and contains the group's `g-<n>` id as a whole word.
+The check is the consent `group open` takes (`GroupConsent::verify`), plus the
+id, so a quote about another group does not serve. The quote is Daniel's
+explicit ask, which satisfies the accident guard. The caller takes no seat, and
+the seat rule is not widened. Without `--quote` the closer rule is unchanged.
+The quote is verified for every caller, so a refused quote fails even for the
+opener. A typed `/scribe group close` line was not added.
+
+### Consequences
+
+- A span found only in a cross-session message or an `isMeta` line, a span not
+  typed in the calling session, and a span that does not name the group are
+  refused before any model call and leave the group unchanged. They record a
+  failure audit with `quote_not_found` or `group_membership`.
+- The success audit's `instruction_message` names the consenting message uuid,
+  as `open` does. The audit and the store keep ids only, never the quote text.
+- A retry returns the closed record with no second model call. A retry whose
+  quoted transcript can no longer be read is refused with `quote_not_found`,
+  although the group is closed.
+- Cost: the power to close reaches any session the user quotes into, not only
+  the opener's seat chain. Only a typed quote grants it, so a session cannot
+  close a group on its own word.

@@ -136,6 +136,26 @@ impl GroupConsent {
         })
     }
 
+    /// [`GroupConsent::verify`] for closing `group`, its `g-<n>` id. The quote
+    /// must also name the group as a whole word, so `g-1` does not match `g-12`.
+    pub fn verify_close(
+        session: SessionId,
+        provider: Provider,
+        bytes: &[u8],
+        quote: &str,
+        group: &str,
+    ) -> crate::Result<Self> {
+        let consent = Self::verify(session, provider, bytes, quote)?;
+        if names_group(quote, group) {
+            Ok(consent)
+        } else {
+            Err(Error::AgentWrite {
+                kind: WriteRefusal::GroupMembership,
+                message: format!("the quote must contain {group}, the group it closes"),
+            })
+        }
+    }
+
     /// Provider session in which the user typed the quote.
     pub fn session(&self) -> &SessionId {
         &self.session
@@ -145,6 +165,25 @@ impl GroupConsent {
     pub fn message(&self) -> &str {
         &self.message
     }
+}
+
+/// Whether `quote` contains `group` with no letter or digit on either side.
+fn names_group(quote: &str, group: &str) -> bool {
+    quote.match_indices(group).any(|(at, _)| {
+        let before = quote[..at].chars().next_back();
+        let after = quote[at + group.len()..].chars().next();
+        !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
+    })
+}
+
+/// Who asks to close a group: a session that the store judges against the
+/// opener's seat chain, or a session whose verified typed quote names the group.
+#[derive(Clone, Copy)]
+pub enum GroupCloser<'a> {
+    /// The calling session, checked against the opener's seat chain.
+    Session(&'a SessionId),
+    /// The user's own typed words, verified for this group. Needs no seat.
+    Quoted(&'a GroupConsent),
 }
 
 /// The open group seat a session holds after start checks.

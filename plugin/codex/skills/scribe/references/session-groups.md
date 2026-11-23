@@ -81,6 +81,11 @@ For open, join, leave and close in Codex, put `--provider codex` before
 - **Close.** Run `scribe group close <id>` from the session that opened the
   group or from the session that now holds the opener's seat (its newest
   transcript, after a clear or a `--replace`), and only when the human asks. This runs a model call.
+- **Close with a quote.** From any other session, and only when the human asks
+  in their own typed words, run `scribe group close <id> --quote '<span>'`. The
+  span must be a verbatim turn the human typed in this session and must contain
+  the group id (`g-<n>`), not a slug. The call closes the group without taking a
+  seat. Otherwise it is refused.
 - **Closing summary.** Scribe sends up to 16 of the members' newest active
   handoffs and 32 newest stored user turns to the ask model in one call. It then
   writes the summary (up to 4,000 characters, redacted), naming the group's
@@ -123,6 +128,9 @@ and harness prompts cannot give consent. Clear-time seat inheritance also
 applies to project groups in Claude Code. The group stays open until
 `scribe group close <slug>` from its opening session or the current holder of
 its seat.
+
+A quoted close, described in the Close with a quote bullet above, names the
+group's `g-<n>` id, not the slug.
 
 ## Corrections
 

@@ -1,4 +1,4 @@
-Summarize and close the group from its opener or its seat holder
+Summarize and close the group from its opener, seat holder or a quote
 
 Usage: scribe group close [OPTIONS] <ID>
 
@@ -6,8 +6,9 @@ Arguments:
   <ID>  Group id, unique prefix, or project group slug
 
 Options:
-  -h, --help     Print help
-  -V, --version  Print version
+      --quote <QUOTE>  Words the user typed in this session that contain the group id; closes the group for a session that holds no seat in it
+  -h, --help           Print help
+  -V, --version        Print version
 
 Global options:
       --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]

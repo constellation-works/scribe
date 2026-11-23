@@ -6,7 +6,7 @@ Commands:
   open   Open a group on a verbatim quote from the calling session
   join   Join a named seat under your own author name
   leave  Remove the calling session from its seat
-  close  Summarize and close the group from its opener or its seat holder
+  close  Summarize and close the group from its opener, seat holder or a quote
   show   Show one group, its references and its seat chains
   list   List groups newest first with their rosters
   help   Print this message or the help of the given subcommand(s)

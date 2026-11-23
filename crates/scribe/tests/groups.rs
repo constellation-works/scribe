@@ -614,19 +614,35 @@ fn seated_group() -> (Fixture, std::ffi::OsString) {
     }
     open(&f);
     join_as(&f, A, "g-1", "chief", &[], 0);
-    let path = f.fake_program(
+    let path = summary_model(&f);
+    (f, path)
+}
+
+/// A fake model that answers every close with one fixed summary and records each call.
+fn summary_model(f: &Fixture) -> std::ffi::OsString {
+    f.fake_program(
         "claude",
         r#"#!/bin/sh
 echo call >> "$HOME/model-calls"
 cat >/dev/null
 printf '%s\n' '{"type":"result","is_error":false,"structured_output":{"summary":"Review complete."}}'
 "#,
-    );
-    (f, path)
+    )
 }
 
 fn close_as(f: &Fixture, path: &std::ffi::OsStr, session: &str) -> std::process::Output {
-    f.cmd(&["group", "close", "g-1", "--json"])
+    close_with(f, path, session, &[])
+}
+
+/// Close `g-1` as `session` with extra arguments, such as `--quote`.
+fn close_with(
+    f: &Fixture,
+    path: &std::ffi::OsStr,
+    session: &str,
+    extra: &[&str],
+) -> std::process::Output {
+    let args = [&["group", "close", "g-1"][..], extra, &["--json"][..]].concat();
+    f.cmd(&args)
         .env("CLAUDE_CODE_SESSION_ID", session)
         .env("PATH", path)
         .output()
@@ -640,29 +656,41 @@ fn model_calls(f: &Fixture) -> usize {
 /// The caller is refused with `group_membership`: no model call, the group
 /// unchanged and exactly one more failure audit.
 fn assert_close_refused(f: &Fixture, path: &std::ffi::OsStr, session: &str) {
+    assert_close_refused_with(f, path, session, &[], "group_membership");
+}
+
+/// The close with `extra` arguments is refused with `code`: no model call, the
+/// group unchanged and exactly one more failure audit naming `session`.
+fn assert_close_refused_with(
+    f: &Fixture,
+    path: &std::ffi::OsStr,
+    session: &str,
+    extra: &[&str],
+    code: &str,
+) {
     let calls = model_calls(f);
     let group = invoke(f, A, &["group", "show", "g-1"], 0);
     let audits = group_close_audits(f).len();
-    let out = close_as(f, path, session);
+    let out = close_with(f, path, session, extra);
     assert_eq!(
         out.status.code(),
         Some(1),
-        "{session}: {}",
+        "{session} {extra:?}: {}",
         text(&out.stderr)
     );
     let error: Value = serde_json::from_slice(&out.stderr).unwrap();
-    assert_eq!(error["code"], "group_membership", "{session}: {error}");
-    assert_eq!(model_calls(f), calls, "{session}");
+    assert_eq!(error["code"], code, "{session} {extra:?}: {error}");
+    assert_eq!(model_calls(f), calls, "{session} {extra:?}");
     assert_eq!(
         invoke(f, A, &["group", "show", "g-1"], 0),
         group,
-        "{session}"
+        "{session} {extra:?}"
     );
     let after = group_close_audits(f);
-    assert_eq!(after.len(), audits + 1, "{session}: {after:?}");
+    assert_eq!(after.len(), audits + 1, "{session} {extra:?}: {after:?}");
     let last = after.last().unwrap();
     assert_eq!(last["status"], "failure");
-    assert_eq!(last["error_code"], "group_membership");
+    assert_eq!(last["error_code"], code);
     assert_eq!(last["instruction_session"], session);
 }
 
@@ -747,6 +775,97 @@ printf '%s\n' '{"type":"result","is_error":false,"structured_output":{"summary":
     let out = close_as(&f, &path, A);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     assert_eq!(model_calls(&f), 1);
+}
+
+#[test]
+fn a_quoted_request_closes_the_group_for_a_session_with_no_seat() {
+    let f = Fixture::new();
+    for id in [A, B] {
+        transcript(&f, id, &[row(id, "u", "user", QUOTE)]);
+    }
+    transcript(
+        &f,
+        D,
+        &[row(
+            D,
+            "u-close",
+            "user",
+            "please close g-1 once the release ships",
+        )],
+    );
+    open(&f);
+    join_as(&f, B, "g-1", "chief", &[], 0);
+    let path = summary_model(&f);
+    let quote = "close g-1 once the release ships";
+    // Without a quote D holds no seat, so the opener's rule still refuses it.
+    assert_close_refused(&f, &path, D);
+
+    let out = close_with(&f, &path, D, &["--quote", quote]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(model_calls(&f), 1);
+    let successes: Vec<_> = group_close_audits(&f)
+        .into_iter()
+        .filter(|line| line["status"] == "success")
+        .collect();
+    assert_eq!(successes.len(), 1, "{successes:?}");
+    assert_eq!(successes[0]["instruction_session"], D);
+    assert_eq!(successes[0]["instruction_message"], "u-close");
+    let group = invoke(&f, A, &["group", "show", "g-1"], 0);
+    // The model's text leads; the group's related references follow it.
+    assert!(
+        group["summary"]
+            .as_str()
+            .is_some_and(|summary| summary.starts_with("Review complete.")),
+        "{group}"
+    );
+    assert!(!group["seats"].to_string().contains(D), "{group}");
+
+    // A retry returns the closed record with no second model call or audit.
+    let audits = group_close_audits(&f).len();
+    let again = close_with(&f, &path, D, &["--quote", quote]);
+    assert_eq!(again.status.code(), Some(0), "{}", text(&again.stderr));
+    assert_eq!(model_calls(&f), 1);
+    assert_eq!(group_close_audits(&f).len(), audits);
+    assert_eq!(invoke(&f, A, &["group", "show", "g-1"], 0), group);
+}
+
+#[test]
+fn a_quoted_close_is_refused_unless_a_typed_span_of_this_session_names_the_group() {
+    let f = Fixture::new();
+    for id in [A, B] {
+        transcript(&f, id, &[row(id, "u", "user", QUOTE)]);
+    }
+    open(&f);
+    join_as(&f, B, "g-1", "chief", &[], 0);
+    let mut harness = row(D, "u-harness", "user", "close g-1 from the harness");
+    harness["isMeta"] = json!(true);
+    transcript(
+        &f,
+        D,
+        &[
+            row(D, "u-typed", "user", "close g-1 once the release ships"),
+            row(D, "u-other", "user", "close g-12 after the audit"),
+            row(B, "u-copied", "user", "close g-1 copied from the parent"),
+            harness,
+        ],
+    );
+    let path = summary_model(&f);
+    for (quote, code) in [
+        // Not in any turn typed in this session.
+        ("close g-1 right now", "quote_not_found"),
+        // Typed in another session's transcript.
+        ("close g-1 copied from the parent", "quote_not_found"),
+        // Only in a harness line, which is not a typed turn.
+        ("close g-1 from the harness", "quote_not_found"),
+        // Verbatim in a typed turn, but it does not name g-1.
+        ("the release ships", "group_membership"),
+        // Names g-12, which is not g-1.
+        ("close g-12 after the audit", "group_membership"),
+    ] {
+        assert_close_refused_with(&f, &path, D, &["--quote", quote], code);
+    }
+    assert_eq!(model_calls(&f), 0);
+    assert!(invoke(&f, A, &["group", "show", "g-1"], 0)["closed"].is_null());
 }
 
 #[test]

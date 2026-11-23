@@ -7,6 +7,7 @@ use super::super::db::{self, DB_FILE};
 use super::private_tempdir;
 use crate::entry::Speaker;
 use crate::error::Error;
+use crate::group::GroupCloser;
 use crate::message::NewMessage;
 use crate::store::{AuditEvent, AuditStatus, Redactor, Store};
 use crate::tests::T0;
@@ -1688,7 +1689,7 @@ fn close_group_commits_audit_with_closing_record_without_holding_write_lock_acro
     let (closed_id, changed) = store
         .close_group_with_outcome(
             &id,
-            &opener,
+            GroupCloser::Session(&opener),
             T0,
             &Redactor::default(),
             |_| {
@@ -1734,7 +1735,7 @@ fn close_group_commits_audit_with_closing_record_without_holding_write_lock_acro
     let (retry_id, retry_changed) = store
         .close_group_with_outcome(
             &id,
-            &opener,
+            GroupCloser::Session(&opener),
             T0,
             &Redactor::default(),
             |_| -> Result<String, Error> { panic!("model must not run on retry") },
@@ -1771,7 +1772,7 @@ fn close_group_commits_audit_with_closing_record_without_holding_write_lock_acro
     let err = store
         .close_group_with_outcome(
             &second_id,
-            &second_opener,
+            GroupCloser::Session(&second_opener),
             T0,
             &Redactor::default(),
             |_| Ok::<_, Error>("Rolled back summary.".to_owned()),
