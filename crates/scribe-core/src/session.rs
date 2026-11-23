@@ -124,6 +124,7 @@ pub const SHORT_ID_MIN: usize = 8;
 pub struct ShortIds {
     /// Every id, sorted, without duplicates.
     ids: Vec<String>,
+    aliases: std::collections::BTreeMap<String, String>,
 }
 
 impl ShortIds {
@@ -136,7 +137,29 @@ impl ShortIds {
         let mut ids: Vec<String> = ids.into_iter().map(Into::into).collect();
         ids.sort_unstable();
         ids.dedup();
-        Self { ids }
+        Self {
+            ids,
+            aliases: std::collections::BTreeMap::new(),
+        }
+    }
+
+    /// Associate provider ids with their stable session aliases.
+    pub fn set_aliases(&mut self, aliases: impl IntoIterator<Item = (String, String)>) {
+        self.aliases = aliases.into_iter().collect();
+    }
+
+    /// A copy that displays prefixes in place of aliases.
+    #[must_use]
+    pub fn prefixes_only(&self) -> Self {
+        Self::new(self.ids.clone())
+    }
+
+    /// The stable alias when cataloged, otherwise the unique prefix.
+    #[must_use]
+    pub fn display<'a>(&'a self, id: &'a str) -> &'a str {
+        self.aliases
+            .get(id)
+            .map_or_else(|| self.short(id), String::as_str)
     }
 
     /// The short form of `id`: its shortest unique prefix, at least

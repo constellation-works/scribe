@@ -4643,3 +4643,7 @@ chat.
   has a task (the task comment and the record), the CLI grows two verbs and
   eight flags, and a quote of Daniel's that is not in a transcript on this
   host cannot be recorded here.
+
+## Session aliases in piped output and the brief
+
+Daniel chose “Yes, s-<n> alias for open-item-7” after asking “can we only show first n letters of the session_id column?”. Piped session ids, the session-start brief and group show use the stable `s-<n>` where a sessions row exists; otherwise they use the shortest unique prefix of at least eight characters. JSON and stored references retain the full provider id. This supersedes our earlier reading of STD-01@2 §R15 for piped session ids: the accepted alias is a complete, stable identifier, and keeps agent output concise.

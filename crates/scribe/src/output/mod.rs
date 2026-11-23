@@ -249,11 +249,11 @@ fn emit(sink: &Sink, shorts: &ShortIds, output: &Output) -> io::Result<()> {
         Output::Show { record } | Output::Written { record, .. } => {
             render::show(&mut out, sink, shorts, record)?;
         }
-        Output::GroupBackfill(report) => render::group_backfill(&mut out, sink, report)?,
+        Output::GroupBackfill(report) => render::group_backfill(&mut out, sink, shorts, report)?,
         Output::Hook(reply) => render::hook(&mut out, reply)?,
         Output::Pass(report) => render::pass(&mut out, sink, shorts, report)?,
-        Output::Scan(report) => render::scan(&mut out, sink, report)?,
-        Output::Ask(payload) => render::ask(&mut out, sink, payload)?,
+        Output::Scan(report) => render::scan(&mut out, sink, shorts, report)?,
+        Output::Ask(payload) => render::ask(&mut out, sink, shorts, payload)?,
         Output::Plugin(reply) => render::plugin(&mut out, reply)?,
         Output::Popup => {}
         Output::PopupRows(rows) => {

@@ -78,7 +78,7 @@ Don't act on an item unless the human asks.
 ## Authorship and consent
 
 - Preserve verbatim quotes and their citations. Treat an empty or failed
-  lookup as missing evidence. Cite sessions with the full id.
+  lookup as missing evidence. Piped output and the brief use a stable `s-<n>` or a unique prefix; JSON gives the full provider id for citations.
 - Write under your own `--author <name>` (your crew or model name).
   Attribute agent notes to their authors. Any agent may add, update or retire
   an agent note, add or update a tag, and open, update or settle an agent

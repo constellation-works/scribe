@@ -120,14 +120,14 @@ pub(in crate::commands) fn resolve_transcript(
     };
     let files = payload::files_for(ctx)?;
     let ids: Vec<String> = files.into_iter().map(|(id, _)| id.to_string()).collect();
-    match scribe_core::resolve_prefix(input.as_str(), &ids)? {
-        Some(full) => full
-            .parse::<SessionId>()
-            .map_err(|e| CliError::Usage(e.to_string())),
-        None => Err(CliError::TranscriptNotFound {
+    let resolved = ctx.store().resolve_session_or_typed_with(input, &ids)?;
+    if ids.iter().any(|id| id == resolved.as_str()) {
+        Ok(resolved)
+    } else {
+        Err(CliError::TranscriptNotFound {
             id: input.clone(),
             dir,
-        }),
+        })
     }
 }
 

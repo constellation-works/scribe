@@ -534,7 +534,7 @@ fn the_record_noun_is_gone_and_search_is_a_top_level_verb() {
 }
 
 #[test]
-fn a_table_prints_the_shortest_unique_prefix_and_piped_output_the_full_id() {
+fn a_table_prints_unique_prefixes_and_piped_output_aliases() {
     let fx = Fixture::new();
     fx.seed();
     let table = |fx: &Fixture| text(&ok(fx, &["session", "list", "--format", "table"]).stdout);
@@ -547,9 +547,13 @@ fn a_table_prints_the_shortest_unique_prefix_and_piped_output_the_full_id() {
         ok_json(&fx, &["session", "show", "7c2b9d14"])["id"],
         SESSION
     );
-    // Piped and JSON output keep the full id.
+    // Piped output uses an alias that resolves; JSON keeps the provider id.
     let plain = text(&ok(&fx, &["session", "list", "--format", "auto"]).stdout);
-    assert!(plain.contains(SESSION), "{plain}");
+    assert!(
+        plain.lines().any(|line| line.starts_with("s-3\t")),
+        "{plain}"
+    );
+    assert_eq!(ok_json(&fx, &["session", "show", "s-3"])["id"], SESSION);
     let listed_json = ok_json(&fx, &["session", "list"]);
     assert!(ids(&listed_json, "sessions", "id").contains(&SESSION.to_owned()));
     // A session sharing the first eight characters (a UUIDv7's timestamp)

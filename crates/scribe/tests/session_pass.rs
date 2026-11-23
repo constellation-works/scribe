@@ -573,7 +573,7 @@ fn a_pass_keeps_the_windows_typed_turns_for_search_kind_message() {
         "{default}"
     );
     let plain = text(&s.fx.ok(&["search", "merge", "--kind", "message"]).stdout);
-    assert!(plain.contains("u-1") || plain.contains(ON), "{plain}");
+    assert!(plain.contains("session:s-1"), "{plain}");
 
     // A read-only copy of the store, without the -wal and -shm files, is
     // opened immutable and says so.
@@ -3047,7 +3047,7 @@ fn a_session_links_to_its_parent_and_its_pass_reads_the_parent_as_context() {
         .collect();
     assert_eq!(
         rows[1][..2],
-        [CHILD.to_owned(), ON.to_owned()],
+        ["s-2".to_owned(), "s-1".to_owned()],
         "PARENT column"
     );
 }

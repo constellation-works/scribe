@@ -2180,9 +2180,9 @@ fn session_start_gives_an_interactive_agent_the_brief() {
     // This project's session first, then another project's; never the
     // session starting.
     assert!(
-        context.contains(&format!(
-            "## Recent sessions\n- {PREVIOUS} · 2026-11-16 11:00Z · scribe · Continue the work\n- {NEWER} · 2026-11-17 11:00Z · orbit · Continue the work\n"
-        )),
+        context.contains(
+            "## Recent sessions\n- s-1 · 2026-11-16 11:00Z · scribe · Continue the work\n- s-2 · 2026-11-17 11:00Z · orbit · Continue the work\n"
+        ),
         "{context}"
     );
     assert!(!context.contains(CURRENT), "{context}");

@@ -56,8 +56,10 @@ pub(super) fn run(args: &BriefArgs, ctx: &Context) -> Result<Output, CliError> {
         None,
         args.sessions,
     )?;
+    let mut payload = BriefPayload::new(&brief, block);
+    payload.text = brief.text_with_ids(&brief_ids(ctx, &brief));
     Ok(Output::Show {
-        record: Record::Brief(Box::new(BriefPayload::new(&brief, block))),
+        record: Record::Brief(Box::new(payload)),
     })
 }
 
@@ -93,4 +95,20 @@ pub(in crate::commands) fn brief(
         brief.last_group = ctx.store().last_group(project)?;
     }
     Ok(brief)
+}
+
+/// Resolve display names against all known sessions, including transcripts.
+pub(in crate::commands) fn brief_ids(ctx: &Context, brief: &Brief) -> scribe_core::ShortIds {
+    let mut ids = ctx.store().session_ids().unwrap_or_default();
+    ids.extend(super::transcript_session_ids(ctx).unwrap_or_default());
+    ids.extend(brief.sessions.iter().map(|s| s.id.to_string()));
+    let mut shorts = scribe_core::ShortIds::new(ids);
+    if let Ok(numbers) = ctx.store().session_numbers() {
+        shorts.set_aliases(
+            numbers
+                .into_iter()
+                .map(|(id, n)| (id.to_string(), format!("s-{n}"))),
+        );
+    }
+    shorts
 }

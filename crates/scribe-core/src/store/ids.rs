@@ -103,8 +103,8 @@ impl Store {
 
     /// Every session id the store knows and `resolve_session_or_handoff`
     /// accepts: records (readable or not), switches, Codex cursors and
-    /// sessions named only by an active handoff. The universe a table's
-    /// short ids must be unique in. Reads only.
+    /// sessions named only by an active handoff, and group members. The
+    /// universe display prefixes must be unique in. Reads only.
     pub fn session_ids(&self) -> Result<Vec<String>> {
         let loaded = self.load_sessions()?;
         let handoffs: Vec<SessionId> = self
@@ -117,7 +117,11 @@ impl Store {
             })
             .flat_map(crate::handoff::session_ids)
             .collect();
-        Ok(Self::session_id_universe(&loaded, &handoffs))
+        let mut ids = Self::session_id_universe(&loaded, &handoffs);
+        ids.extend(self.group_session_ids()?);
+        ids.sort();
+        ids.dedup();
+        Ok(ids)
     }
 
     /// `related` with a `session:` target written as a unique id prefix
@@ -216,6 +220,19 @@ impl Store {
             .collect()
     }
 
+    fn group_session_ids(&self) -> Result<Vec<String>> {
+        Ok(self
+            .groups()?
+            .into_iter()
+            .flat_map(|g| {
+                let mut ids: Vec<String> =
+                    g.members().into_iter().map(|id| id.to_string()).collect();
+                ids.push(g.opener);
+                ids
+            })
+            .collect())
+    }
+
     fn session_id_universe(
         loaded: &super::sessions::Loaded,
         handoffs: &[SessionId],
@@ -279,6 +296,7 @@ impl Store {
             })
         };
         let mut ids = Self::session_id_universe(&loaded, &handoff_sessions);
+        ids.extend(self.group_session_ids()?);
         ids.extend(extra_ids.iter().cloned());
         ids.sort();
         ids.dedup();

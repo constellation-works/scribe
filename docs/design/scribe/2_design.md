@@ -219,12 +219,17 @@ Rules every verb keeps:
   `session pass --session <id>` also keeps a no-match id and refuses it as
   `session_not_on`. Other session lookups refuse a no-match as
   `session_not_found`. A record written from a prefix stores the full id,
-  and a changing command names the full id in its success line. A terminal
-  table prints a session id as its shortest prefix that no other session in
-  the store shares, at least eight characters (`ShortIds`), so a printed
-  prefix is accepted back; a group record's terminal table also counts the
-  session ids held by its seats, even when they are not cataloged. Piped and
-  `--json` output keep the full id (STD-01 R15).
+  and stored references keep the full provider id. A terminal `session list`
+  table prints an id as its shortest prefix that no other session in the store
+  shares, at least eight characters (`ShortIds`), so a printed prefix is
+  accepted back. When a group is shown in a terminal table, its seat ids also
+  count when a unique prefix is needed, even when they are not cataloged.
+  Piped output, the session-start brief and `group show` print the stable
+  `s-<n>` alias when a sessions row exists, otherwise the shortest unique
+  prefix of at least eight characters (`ShortIds`), counting stored sessions,
+  group seats and local transcripts. These forms are accepted back. `--json`
+  retains full provider ids. This supersedes the earlier STD-01@2 §R15 reading
+  for piped session ids: Daniel chose “Yes, s-<n> alias for open-item-7”.
 
 The manual-link row reports the hook process exit and its audited refusal code.
 

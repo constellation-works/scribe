@@ -38,3 +38,5 @@ Group consent captures eligible typed turns after joining an open group even whe
 cataloging is off. Search finds them with or without `--group <id>`. Group
 turns are always the human's. Leaving removes turns held only on group consent.
 They feed no memory and make no catalog entry.
+
+Piped session IDs, the session-start brief and `group show` use `s-<n>` when cataloged, otherwise a unique prefix of at least eight characters. Both can be passed back; JSON and stored references retain the full provider ID.

@@ -200,6 +200,12 @@ pub(crate) fn list(
             Records::Marks(items) => write_json(out, &envelope("marks", items, total, warnings)),
         };
     }
+    let prefixes = shorts.prefixes_only();
+    let list_ids = if sink.mode == OutputMode::Table {
+        &prefixes
+    } else {
+        shorts
+    };
     // An empty list prints nothing, not a lone header (STD-01 R16).
     if records.len() == 0 {
         return Ok(());
@@ -216,7 +222,7 @@ pub(crate) fn list(
                 .iter()
                 .map(|label| col(label, Align::Left, false))
                 .collect(),
-            items.iter().map(|g| group_row(g, None)).collect(),
+            items.iter().map(|g| group_row(g, Some(shorts))).collect(),
         ),
         Records::Entries(items) => (
             ENTRY_COLUMNS.to_vec(),
@@ -232,7 +238,7 @@ pub(crate) fn list(
             with_active(&SESSION_COLUMNS, *active_column, 2),
             items
                 .iter()
-                .map(|s| session_row(s, *active_column, table_shorts(sink, shorts), sink.mode))
+                .map(|s| session_row(s, *active_column, table_shorts(sink, list_ids), sink.mode))
                 .collect(),
         ),
         Records::SessionTree {
@@ -241,26 +247,29 @@ pub(crate) fn list(
         } => (
             with_active(&SESSION_TREE_COLUMNS, *active_column, 3),
             rows.iter()
-                .map(|row| tree_row(row, table_shorts(sink, shorts), *active_column, sink.mode))
+                .map(|row| tree_row(row, table_shorts(sink, list_ids), *active_column, sink.mode))
                 .collect(),
         ),
         Records::Proposals(items) => (
             PROPOSAL_COLUMNS.to_vec(),
             items
                 .iter()
-                .flat_map(|p| proposal_rows(p, sink.mode))
+                .flat_map(|p| proposal_rows(p, sink.mode, shorts))
                 .collect(),
         ),
         Records::Tags(items) => (TAG_COLUMNS.to_vec(), items.iter().map(tag_row).collect()),
         Records::Hits(items) => (
             HIT_COLUMNS.to_vec(),
-            items.iter().map(|h| hit_row(h, sink.mode)).collect(),
+            items
+                .iter()
+                .map(|h| hit_row(h, sink.mode, shorts))
+                .collect(),
         ),
         Records::Transcripts(items) => (
             TRANSCRIPT_COLUMNS.to_vec(),
             items
                 .iter()
-                .map(|t| transcript_row(t, sink.mode, table_shorts(sink, shorts)))
+                .map(|t| transcript_row(t, sink.mode, table_shorts(sink, list_ids)))
                 .collect(),
         ),
         Records::Marks(items) => (
@@ -281,16 +290,25 @@ pub(crate) fn list(
     }
 }
 
-/// `shorts` when the output is a terminal table, which prints session ids in
-/// their short form; `None` for piped and `--json` output, which keep full
-/// ids (STD-01 R15).
+/// Display names for non-JSON output; JSON retains provider ids.
 fn table_shorts<'a>(sink: &Sink, shorts: &'a ShortIds) -> Option<&'a ShortIds> {
-    (sink.mode == OutputMode::Table).then_some(shorts)
+    (sink.mode != OutputMode::Json).then_some(shorts)
 }
 
-/// A session id as a table prints it: the short form when `shorts` is set.
+/// A session id in its display form when `shorts` is set.
 fn shown_id(id: &str, shorts: Option<&ShortIds>) -> String {
-    shorts.map_or_else(|| id.to_owned(), |s| s.short(id).to_owned())
+    shorts.map_or_else(|| id.to_owned(), |s| s.display(id).to_owned())
+}
+
+/// Render a session citation without changing its segment suffix.
+fn shown_cite(cite: &str, shorts: &ShortIds) -> String {
+    let Some(session) = cite.strip_prefix("session:") else {
+        return cite.to_owned();
+    };
+    let (id, suffix) = session
+        .split_once('#')
+        .map_or((session, ""), |(id, _)| (id, &session[id.len()..]));
+    format!("session:{}{suffix}", shorts.display(id))
 }
 
 /// `columns` with an `ACTIVE` column inserted at `at` when `active`.
@@ -330,7 +348,7 @@ pub(crate) fn show(
     match (sink.mode, record) {
         (OutputMode::Json, Record::Group(g)) => write_json(out, g),
         (OutputMode::Plain, Record::Group(g)) => {
-            writeln!(out, "{}", plain_line(&group_row(g, None)))
+            writeln!(out, "{}", plain_line(&group_row(g, Some(shorts))))
         }
         (OutputMode::Table, Record::Group(g)) => {
             for (label, cell) in GROUP_COLUMNS
@@ -363,7 +381,11 @@ pub(crate) fn show(
                 .join(",")
         ),
         (OutputMode::Plain, Record::Proposal(p)) => {
-            writeln!(out, "{}", plain_line(&proposal_row(p, OutputMode::Plain)))
+            writeln!(
+                out,
+                "{}",
+                plain_line(&proposal_row(p, OutputMode::Plain, shorts))
+            )
         }
         (OutputMode::Table, Record::Tag(tag)) => {
             field(out, "name", tag.name.as_str())?;
@@ -446,7 +468,7 @@ pub(crate) fn show(
             if let Some(reason) = p.closed_reason {
                 field(out, "closed_reason", reason)?;
             }
-            if let Some(line) = settled_line(p) {
+            if let Some(line) = settled_line(p, None) {
                 field(out, "instruction", &line)?;
             }
             field(out, "opened", &timestamp(p.opened_at))?;
@@ -467,7 +489,7 @@ pub(crate) fn show(
                 writeln!(out, "stated_by\t{}\t{}", author(by), one_line(quote))?;
             }
             // An approval an agent made on his instruction (2_design.md §12.3).
-            if let Some(line) = approved_line(entry) {
+            if let Some(line) = approved_line(entry, Some(shorts)) {
                 writeln!(out, "approved\t{line}")?;
             }
             // An idea the pass captured: where it stands, then the parking
@@ -501,7 +523,12 @@ pub(crate) fn show(
             writeln!(
                 out,
                 "{}",
-                plain_line(&session_row(session, false, None, OutputMode::Plain))
+                plain_line(&session_row(
+                    session,
+                    false,
+                    Some(shorts),
+                    OutputMode::Plain
+                ))
             )?;
             if let Some(at) = session.forgotten {
                 writeln!(out, "forgotten\t{}", timestamp(at))?;
@@ -543,7 +570,7 @@ pub(crate) fn show(
             writeln!(
                 out,
                 "{}\thandoff-only\t{}\t{}\t-\t{}\tno session record",
-                session.id,
+                shown_id(&session.id, Some(shorts)),
                 yes_no(session.due),
                 session.project,
                 latest
@@ -576,7 +603,7 @@ pub(crate) fn show(
             writeln!(
                 out,
                 "{}",
-                plain_line(&transcript_row(transcript, OutputMode::Plain, None))
+                plain_line(&transcript_row(transcript, OutputMode::Plain, Some(shorts)))
             )?;
             if let Some(turns) = &transcript.user_first_turns {
                 for (n, turn) in turns.iter().enumerate() {
@@ -770,7 +797,12 @@ pub(crate) fn hook(out: &mut dyn Write, reply: &HookReply) -> io::Result<()> {
 
 /// An answer: the JSON payload, one tab-separated line per part, or a
 /// detail view with each record a lookup returned shown in full.
-pub(crate) fn ask(out: &mut dyn Write, sink: &Sink, a: &AskPayload) -> io::Result<()> {
+pub(crate) fn ask(
+    out: &mut dyn Write,
+    sink: &Sink,
+    shorts: &ShortIds,
+    a: &AskPayload,
+) -> io::Result<()> {
     match sink.mode {
         OutputMode::Json => write_json(out, a),
         OutputMode::Plain => {
@@ -779,7 +811,7 @@ pub(crate) fn ask(out: &mut dyn Write, sink: &Sink, a: &AskPayload) -> io::Resul
                 writeln!(
                     out,
                     "claim\t{}\t{}\t{}",
-                    c.cite,
+                    shown_cite(&c.cite, shorts),
                     one_line(&c.quote),
                     one_line(&c.text)
                 )?;
@@ -788,12 +820,16 @@ pub(crate) fn ask(out: &mut dyn Write, sink: &Sink, a: &AskPayload) -> io::Resul
                 writeln!(
                     out,
                     "conflict\t{}\t{}",
-                    c.cites.join(","),
+                    c.cites
+                        .iter()
+                        .map(|cite| shown_cite(cite, shorts))
+                        .collect::<Vec<_>>()
+                        .join(","),
                     one_line(&c.note)
                 )?;
             }
             for r in &a.records {
-                writeln!(out, "record\t{}\t{}", r.kind, r.cite)?;
+                writeln!(out, "record\t{}\t{}", r.kind, shown_cite(&r.cite, shorts))?;
             }
             Ok(())
         }
@@ -963,7 +999,7 @@ pub(super) fn entry_metadata(out: &mut dyn Write, e: &EntryPayload, color: bool)
     field(out, "superseded", e.superseded_by.as_deref().unwrap_or("-"))?;
     field(out, "from", &from)?;
     field(out, "cite", &cite)?;
-    if let Some(line) = approved_line(e) {
+    if let Some(line) = approved_line(e, None) {
         field(out, "approved", &line)?;
     }
     field(out, "cwd", e.cite.as_ref().map_or("-", |c| c.cwd.as_str()))?;
@@ -1420,9 +1456,7 @@ fn group_row(g: &scribe_core::group::Group, shorts: Option<&ShortIds>) -> Vec<Ce
             let chain = s
                 .transcripts
                 .iter()
-                .map(|id| {
-                    shorts.map_or_else(|| id.to_string(), |s| s.short(id.as_str()).to_owned())
-                })
+                .map(|id| shown_id(id.as_str(), shorts))
                 .collect::<Vec<_>>()
                 .join(" -> ");
             format!(
@@ -1442,11 +1476,14 @@ fn group_row(g: &scribe_core::group::Group, shorts: Option<&ShortIds>) -> Vec<Ce
         g.project.clone(),
         g.opened.clone(),
         g.closed.clone().unwrap_or_else(|| "-".into()),
-        g.opener.clone(),
+        shown_id(&g.opener, shorts),
         or_dash(
             &g.related
                 .iter()
-                .map(ToString::to_string)
+                .map(|r| {
+                    let cite = r.to_string();
+                    shorts.map_or(cite.clone(), |ids| shown_cite(&cite, ids))
+                })
                 .collect::<Vec<_>>()
                 .join(", "),
         )
@@ -1517,10 +1554,16 @@ pub(crate) fn pass(
     if report.passes.is_empty() {
         return Ok(());
     }
+    let prefixes = shorts.prefixes_only();
+    let pass_ids = if sink.mode == OutputMode::Table {
+        &prefixes
+    } else {
+        shorts
+    };
     let rows: Vec<Vec<Cell>> = report
         .passes
         .iter()
-        .map(|p| pass_row(p, table_shorts(sink, shorts)))
+        .map(|p| pass_row(p, table_shorts(sink, pass_ids)))
         .collect();
     match sink.mode {
         OutputMode::Table => {
@@ -1538,7 +1581,12 @@ pub(crate) fn pass(
 /// covered candidate, session deactivated or deactivation
 /// failed, or the JSON object. A scan that changed nothing prints nothing
 /// but the JSON object.
-pub(crate) fn scan(out: &mut dyn Write, sink: &Sink, report: &ScanReport) -> io::Result<()> {
+pub(crate) fn scan(
+    out: &mut dyn Write,
+    sink: &Sink,
+    shorts: &ShortIds,
+    report: &ScanReport,
+) -> io::Result<()> {
     if sink.mode == OutputMode::Json {
         return write_json(out, report);
     }
@@ -1600,7 +1648,7 @@ pub(crate) fn scan(out: &mut dyn Write, sink: &Sink, report: &ScanReport) -> io:
                 text: String::from("deactivated"),
                 role: Role::Warn,
             },
-            Cell::plain(d.session.clone()),
+            Cell::plain(shown_id(&d.session, Some(shorts))),
             Cell::plain(d.route),
             Cell::plain(d.cite.clone().unwrap_or_else(|| String::from("-"))),
             Cell::plain("-"),
@@ -1612,7 +1660,7 @@ pub(crate) fn scan(out: &mut dyn Write, sink: &Sink, report: &ScanReport) -> io:
                 text: String::from("failed"),
                 role: Role::Warn,
             },
-            Cell::plain(f.session.clone()),
+            Cell::plain(shown_id(&f.session, Some(shorts))),
             Cell::plain(f.route),
             Cell::plain(f.error_code),
             Cell::plain("-"),
@@ -1724,7 +1772,7 @@ fn tree_row(row: &TreeRow, shorts: Option<&ShortIds>, active: bool, mode: Output
                 .map_or_else(|| String::from("-"), |parent| shown_id(parent, shorts)),
         ),
     );
-    if shorts.is_some()
+    if mode == OutputMode::Table
         && let Some(title) = cells.last_mut()
     {
         title.text = format!("{}{}", "  ".repeat(row.depth), title.text);
@@ -1734,8 +1782,8 @@ fn tree_row(row: &TreeRow, shorts: Option<&ShortIds>, active: bool, mode: Output
 
 /// A session's list row; `active` adds its `active` column after the
 /// status (`session list --include-inactive`). `shorts` is set for a
-/// terminal table: it shows the id as its short form. Plain and JSON output
-/// keep the full id and the full instant; the `updated` cell is the UTC date
+/// non-JSON output: it shows the display id. Plain and JSON output
+/// keep the full instant; the `updated` cell is the UTC date
 /// in table mode (see [`list_timestamp`]).
 fn session_row(
     s: &SessionPayload,
@@ -1771,7 +1819,7 @@ fn session_row(
 /// `approved by <aide> on your instruction "<quote>" (<session>, <date>)`
 /// for an entry an agent approved on the user's checked instruction
 /// (2_design.md §12.3); `None` when they typed the approval.
-fn approved_line(e: &EntryPayload) -> Option<String> {
+fn approved_line(e: &EntryPayload, shorts: Option<&ShortIds>) -> Option<String> {
     let by = e.approved_by.as_ref()?;
     let inst = e.instruction.as_ref()?;
     Some(scribe_core::ask::instructed_line(
@@ -1779,7 +1827,7 @@ fn approved_line(e: &EntryPayload) -> Option<String> {
         &by.name,
         scribe_core::ask::INSTRUCTION_YOURS,
         inst.quote.as_deref(),
-        &inst.session,
+        &shown_id(&inst.session, shorts),
         inst.at,
     ))
 }
@@ -1787,7 +1835,7 @@ fn approved_line(e: &EntryPayload) -> Option<String> {
 /// How a candidate settled on the user's checked instruction reads:
 /// `approved by <aide> on your instruction "<quote>" (<session>, <date>)`,
 /// or `rejected by …`; `None` for one they settled by typing, or still open.
-fn settled_line(p: &ProposalPayload) -> Option<String> {
+fn settled_line(p: &ProposalPayload, shorts: Option<&ShortIds>) -> Option<String> {
     let inst = p.instruction.as_ref()?;
     let by = p.settled_author.as_ref()?;
     Some(scribe_core::ask::instructed_line(
@@ -1795,7 +1843,7 @@ fn settled_line(p: &ProposalPayload) -> Option<String> {
         &by.name,
         scribe_core::ask::INSTRUCTION_YOURS,
         inst.quote.as_deref(),
-        &inst.session,
+        &shown_id(&inst.session, shorts),
         inst.at,
     ))
 }
@@ -1803,8 +1851,8 @@ fn settled_line(p: &ProposalPayload) -> Option<String> {
 /// A proposal's rows: one, and for a candidate carrying scribe's
 /// context (or an older claim's statement), in the table, a second under it holding the user's quote in
 /// the `REASON` column (2_design.md §11.1).
-fn proposal_rows(p: &ProposalPayload, mode: OutputMode) -> Vec<Vec<Cell>> {
-    let mut rows = vec![proposal_row(p, mode)];
+fn proposal_rows(p: &ProposalPayload, mode: OutputMode, shorts: &ShortIds) -> Vec<Vec<Cell>> {
+    let mut rows = vec![proposal_row(p, mode, shorts)];
     if mode == OutputMode::Table
         && let Some(quote) = stated_candidate_quote(p)
     {
@@ -1821,7 +1869,7 @@ fn proposal_rows(p: &ProposalPayload, mode: OutputMode) -> Vec<Vec<Cell>> {
         rows.push(under);
     }
     if mode == OutputMode::Table
-        && let Some(line) = settled_line(p)
+        && let Some(line) = settled_line(p, None)
     {
         let mut under: Vec<Cell> = PROPOSAL_COLUMNS
             .iter()
@@ -1857,7 +1905,7 @@ fn stated_candidate_quote(p: &ProposalPayload) -> Option<String> {
 /// context (an older claim its labelled statement) as its reason; the plain
 /// line adds the speaker's quote after it, where the table puts it on the
 /// row under.
-fn proposal_row(p: &ProposalPayload, mode: OutputMode) -> Vec<Cell> {
+fn proposal_row(p: &ProposalPayload, mode: OutputMode, shorts: &ShortIds) -> Vec<Cell> {
     let reason = match (
         p.candidate.as_ref().and_then(super::payload::claim_context),
         stated_candidate_quote(p),
@@ -1870,7 +1918,7 @@ fn proposal_row(p: &ProposalPayload, mode: OutputMode) -> Vec<Cell> {
     };
     // The plain line carries the instruction after the reason, where the
     // table puts it on a row under (2_design.md §12.3).
-    let reason = match settled_line(p) {
+    let reason = match settled_line(p, (mode == OutputMode::Plain).then_some(shorts)) {
         Some(line) if mode != OutputMode::Table => format!("{reason} | {line}"),
         _ => reason,
     };
@@ -1913,12 +1961,16 @@ fn admitted(a: &scribe_core::Admitted) -> String {
 /// A hit's row, the same in the table and the plain line, except that the
 /// table cuts the title to [`TITLE_CELL_CHARS`] so the snippet keeps room.
 /// A hidden record's cite is muted in the table.
-fn hit_row(h: &HitPayload, mode: OutputMode) -> Vec<Cell> {
+fn hit_row(h: &HitPayload, mode: OutputMode, shorts: &ShortIds) -> Vec<Cell> {
     let title = one_line(&h.title);
     let hidden = h.active == Some(false) || !matches!(h.status, "active" | "open" | "final");
     vec![
         Cell {
-            text: h.cite.clone(),
+            text: if mode == OutputMode::Plain {
+                shown_cite(&h.cite, shorts)
+            } else {
+                h.cite.clone()
+            },
             role: if hidden { Role::Muted } else { Role::Neutral },
         },
         Cell::plain(h.kind),
@@ -2152,6 +2204,7 @@ pub(super) fn init(
 pub(crate) fn group_backfill(
     out: &mut dyn Write,
     sink: &Sink,
+    shorts: &ShortIds,
     report: &super::GroupBackfill,
 ) -> io::Result<()> {
     if sink.mode == super::sink::OutputMode::Json {
@@ -2163,7 +2216,7 @@ pub(crate) fn group_backfill(
                 out,
                 "{} {}: {} stored, {} skipped{}",
                 member.seat,
-                member.session,
+                shown_id(&member.session, Some(shorts)),
                 member.stored,
                 member.skipped,
                 if member.transcript_unavailable {

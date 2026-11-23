@@ -146,3 +146,30 @@ fn list_skips_a_transcript_whose_mtime_is_before_since() {
     );
     assert_eq!(list["total"], 1);
 }
+
+#[test]
+fn cataloged_transcript_alias_round_trips_and_json_keeps_provider_id() {
+    const ID: &str = "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02";
+    let fx = Fixture::new();
+    fx.seed();
+    let project = fx.home().join(".claude/projects/-work");
+    std::fs::create_dir_all(&project).unwrap();
+    let path = project.join(format!("{ID}.jsonl"));
+    std::fs::write(
+        &path,
+        format!(
+            "{}\n",
+            json!({
+                "type": "user", "uuid": "u-1", "timestamp": "2026-10-15T10:00:00Z",
+                "cwd": "/work", "message": {"role": "user", "content": "Hello"}
+            })
+        ),
+    )
+    .unwrap();
+    support::make_private(&path);
+    let plain = text(&fx.ok(&["transcript", "show", ID]).stdout);
+    assert!(plain.starts_with("s-3\t"), "{plain}");
+    let shown: serde_json::Value =
+        serde_json::from_slice(&fx.ok(&["transcript", "show", "s-3", "--json"]).stdout).unwrap();
+    assert_eq!(shown["session"], ID);
+}
