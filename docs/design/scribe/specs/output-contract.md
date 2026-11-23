@@ -636,7 +636,8 @@ A prompt whose first line is `/scribe on`, `/scribe off`, `/scribe status`,
 <type>]`, `/scribe catalog <id>`, `/scribe group <slug>`, `/scribe group add <slug>
 <session-id>...` or a bare `/scribe`
 (also `/scribe:scribe …`, the plugin-namespaced form; the control verb is
-case-insensitive except `group`) is not scanned for `#scribe` lines: the
+case-insensitive, including `group` and `add`; group slugs are validated as
+typed and must be lowercase) is not scanned for `#scribe` lines: the
 reply is `{"decision": "block", "reason": "<status>"}`, which keeps the
 prompt from the model and shows Daniel the reason. The reason is one line:
 `scribe: on — …`, `scribe: already on since <time> — nothing changed`,
