@@ -4516,9 +4516,18 @@ opener. A typed `/scribe group close` line was not added.
   failure audit with `quote_not_found` or `group_membership`.
 - The success audit's `instruction_message` names the consenting message uuid,
   as `open` does. The audit and the store keep ids only, never the quote text.
-- A retry returns the closed record with no second model call. A retry whose
-  quoted transcript can no longer be read is refused with `quote_not_found`,
-  although the group is closed.
+- A retry returns the closed record with no second model call, and verifies the
+  quote first. A retry whose quoted transcript is missing or fails the
+  provenance check is refused with `quote_not_found`, although the group is
+  closed. A retry, or a first attempt, whose transcript cannot be found or read
+  because of an I/O failure (an unreadable transcript directory or file) is
+  refused with `io_error`, which names the path and the operating-system error
+  and is the failure audit's code. A valid request is not told its evidence is
+  absent when the host could not look. Neither outcome calls the model or
+  changes the group.
+- The closer's own transcript check before the model call follows the same
+  split: missing or refused evidence is `group_membership`, an I/O failure is
+  `io_error`.
 - The consent is bound to the canonical `g-<n>` id and to closing. The command
   resolves the id or slug once, and the store checks the binding at the first
   check and again before the commit, so consent for another group, consent to

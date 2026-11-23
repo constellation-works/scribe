@@ -189,6 +189,24 @@ fn earlier_turns(ctx: &Context, session: &SessionId) -> Result<Vec<NewMessage>, 
     }
 }
 
+/// The caller's transcript bytes once the provenance check passes. `Ok(None)`
+/// is evidence that is missing or refused, which the caller refuses without a
+/// model call. A discovery or read I/O failure is an error, so its diagnostic
+/// and `io_error` audit code survive instead of reading as missing evidence.
+fn checked_transcript(ctx: &Context, session: &SessionId) -> Result<Option<Vec<u8>>, CliError> {
+    let Some(path) = payload::locate(ctx, session)? else {
+        return Ok(None);
+    };
+    match payload::read_checked(ctx, &path, session) {
+        Ok(bytes) => Ok(bytes),
+        Err(payload::Unreadable::Refused(_)) => Ok(None),
+        Err(payload::Unreadable::Io(source)) => Err(CliError::Read {
+            what: path.display().to_string(),
+            source,
+        }),
+    }
+}
+
 pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliError> {
     let store = ctx.store();
     let mut notices = Vec::new();
@@ -389,15 +407,14 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
                     .into());
                 }
                 Some(quote) => {
-                    let path = payload::locate(ctx, &session)?;
-                    let bytes = path
-                        .and_then(|p| payload::read_checked(ctx, &p, &session).ok().flatten())
-                        .ok_or_else(|| scribe_core::Error::AgentWrite {
+                    let bytes = checked_transcript(ctx, &session)?.ok_or_else(|| {
+                        scribe_core::Error::AgentWrite {
                             kind: WriteRefusal::QuoteNotFound,
                             message: format!(
                                 "cannot verify a typed quote in session {session} on this host"
                             ),
-                        })?;
+                        }
+                    })?;
                     let consent = GroupConsent::verify_close(
                         session.clone(),
                         ctx.provider(),
@@ -418,11 +435,7 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
                 now,
                 &ctx.redactor(&config)?,
                 |evidence| -> Result<_, CliError> {
-                    let path = payload::locate(ctx, &session)?;
-                    if !path.as_deref().is_some_and(|path| {
-                        payload::read_checked(ctx, path, &session)
-                            .is_ok_and(|bytes| bytes.is_some())
-                    }) {
+                    if checked_transcript(ctx, &session)?.is_none() {
                         return Err(scribe_core::Error::AgentWrite {
                             kind: WriteRefusal::GroupMembership,
                             message: format!(
