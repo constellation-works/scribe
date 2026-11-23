@@ -637,9 +637,10 @@ A prompt whose first line is `/scribe on`, `/scribe off`, `/scribe status`,
 <session-id>...` or a bare `/scribe`
 (also `/scribe:scribe …`, the plugin-namespaced form; the control verb is
 case-insensitive, including `group` and `add`; group slugs are validated as
-typed and must be lowercase) is not scanned for `#scribe` lines: the
-reply is `{"decision": "block", "reason": "<status>"}`, which keeps the
-prompt from the model and shows Daniel the reason. The reason is one line:
+typed and must be lowercase) is not scanned for `#scribe` lines. Under Claude
+Code, the reply is `{"decision": "block", "reason": "<status>"}`, which
+keeps the prompt from the model and shows Daniel the reason. The reason is one
+line:
 `scribe: on — …`, `scribe: already on since <time> — nothing changed`,
 `scribe: off — …`, `scribe: this session is not on — nothing changed`,
 `scribe: on since <time>[; a pass is due]; <record status>` or `scribe: off
@@ -648,7 +649,14 @@ command "/scribe <arg>" — use /scribe on, /scribe off, /scribe status,
 /scribe on --from <id>, /scribe link <id> [--type spawned_from|continues],
 /scribe catalog <id>, /scribe group <slug>, /scribe group add <slug> <session-id>... or /scribe continue <handoff-id>`,
 or `scribe: /scribe <arg> not applied — …` when the payload fails the
-transcript check. `/scribe group <slug>` replies `scribe: joined group
+transcript check. Codex processes a control line only after the host rollout
+verifies it as a typed `user.text` turn. Its reply is in `systemMessage` and
+`hookSpecificOutput.additionalContext`; Codex does not receive a blocking
+decision. A caller transcript or typed-turn check that fails before command
+dispatch replies `scribe: not recorded — <reason>`; an unverified typed turn
+also says `typed input not yet verified …; Stop will retry`.
+
+`/scribe group <slug>` replies `scribe: joined group
 <slug> (g-<n>)` (audited against `session:<id>`) or `scribe: group refused —
 <reason>` with code `group_membership`, `invalid_text`, or
 `provenance_failed`. A slug changed by the configured redactor is refused
@@ -656,15 +664,32 @@ with `invalid_text` and is not echoed. `/scribe group add <slug>
 <session-id>...` replies `scribe: group <slug> (g-<n>) opened|open`, then one
 line per named session: `<id>: added; transcript on disk, <n> typed turns
 stored`, `<id>: added; membership only, no transcript on disk` or `<id>:
-already a member; nothing changed`. One audit line per added session, against
-`session:<id>`. A refusal is `scribe: group add refused — <reason>` with code
+already a member; nothing changed`. Each newly added session has one success
+audit line against `session:<id>`; an already-member line has none. Codex also
+audits the verified turn's cursor advance against the typing session.
+
+A named-session refusal is `scribe: group add refused — <reason>` with code
 `group_membership` (a session already in another group, one `session <id>
 already belongs to group <group>` per session, `; nothing changed`; or more
-than 32 sessions), `invalid_text`, `session_forgotten`, `provenance_failed` (the
-prompt's or a named transcript's check) or `id_ambiguous`, audited against the
-typing session, and changes nothing. A peer, scheduled, harness or pasted
-prompt is refused `scribe: group refused — the prompt is not a typed user
-turn`. A status of a linked session ends `; linked: <type>
+than 32 sessions), `invalid_text`, `session_forgotten`, `provenance_failed`
+(the named transcript failed its check), `id_ambiguous` or `usage_error` (a
+non-exact session id shorter than four characters); the whole command
+changes nothing and its failure audit targets the typing session. A caller
+transcript that fails its provenance check is separate: Claude Code replies
+`scribe: group refused — <reason>`, code `provenance_failed`, and records the
+failure against the typing session. Codex checks the caller transcript before
+replaying the command and uses its `scribe: not recorded — <reason>` reply for
+that failure.
+
+An explicit agent, scheduled, harness or recognized wrapper origin containing
+a group command is refused `scribe: group refused — the prompt is not a typed
+user turn` (code `group_membership`), audited against the typing session.
+Claude Code blocks with that reason;
+Codex returns it in its nonblocking reply. Ordinary pasted prose such as
+`run this:\n/scribe group add <slug> <session-id>` is not a command because
+its first line is not a control line: it gets no group refusal or group-add
+action; normal prompt handling continues. A status of a linked session ends
+`; linked: <type>
 <id>, …`. A link replies `scribe: on — this session is cataloged from now
 on and linked: <type> <id>; …`, `scribe: on — … it was already linked:
 <type> <id>`, `scribe: linked — this session is <type> <id>`, `scribe:
