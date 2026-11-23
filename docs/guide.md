@@ -340,12 +340,15 @@ names are already taken. A join never displaces a seat and uses role `member`;
 when typed from another session, the command joins the existing open group
 (one group per session until `scribe group leave`; non-typed prompts are
 refused). `/scribe group add <slug> <session-id>...` adds only the named
-sessions to the group, creating it when absent. The typing session is included
-only when its ID is explicitly named. A session whose transcript is still on
-disk has its typed turns stored, any other gets membership only, and the reply
-says which. A session
-already in another group refuses the whole line. It is a typed line only; there
-is no terminal command. Codex accepts the same `/scribe group <slug>`, `$scribe group <slug>`,
+sessions to the group, creating it when absent. The session typing the line is
+included only when its ID is explicitly named. For each named session, scribe
+checks and reads a transcript on disk before storing its typed turns; if no
+transcript exists, the session gets membership only.
+If a present transcript fails its checks or cannot be read or parsed, the hook
+refuses the whole line before writing membership; it does not treat that
+transcript as absent. A session already in another group also refuses the whole
+line. It is a typed line only; there is no terminal command. Codex accepts the
+same `/scribe group <slug>`, `$scribe group <slug>`,
 `$scribe group add <slug> <session-id>...`, and skill mention link `[$scribe](.../scribe/SKILL.md) group <slug>` once the host
 rollout verifies the typed turn. After a desktop clear, the transcript names
 the previous session. When its newest active handoff has mode `continue`, the
