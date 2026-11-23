@@ -43,7 +43,7 @@ const PROVENANCE_FAILED: &str = "provenance_failed";
 /// The code of a `/scribe` argument that is not a command.
 const UNKNOWN_COMMAND: &str = "unknown_scribe_command";
 /// The commands, for a refusal.
-const USAGE: &str = "use /scribe on, /scribe off, /scribe status, /scribe on --from <id>, /scribe link <id> [--type spawned_from|continues], /scribe catalog <id>, /scribe group <slug>, /scribe group add <slug> <session-id>... or /scribe continue <handoff-id>";
+const USAGE: &str = "use /scribe on, /scribe off, /scribe status, /scribe on --from <id>, /scribe link <id> [--type spawned_from|continues], /scribe catalog <id>, /scribe group <slug>, /scribe group add <slug> <session-id>..., /scribe group move <session-id> <slug>, /scribe group remove <session-id>, /scribe session update <session-id> project|title <value> or /scribe continue <handoff-id>";
 
 /// Apply `switch` for the payload's session and block the prompt with the
 /// result.
@@ -96,6 +96,9 @@ pub(super) fn run(
         | Switch::Continue(_)
         | Switch::Group(_)
         | Switch::GroupAdd { .. }
+        | Switch::GroupMove { .. }
+        | Switch::GroupRemove(_)
+        | Switch::SessionUpdate { .. }
         | Switch::Status => store
             .control()
             .map(|state| (Change::Status(state.get(session).cloned()), false)),
@@ -134,6 +137,9 @@ pub(super) fn run(
                 | Switch::Continue(_)
                 | Switch::Group(_)
                 | Switch::GroupAdd { .. }
+                | Switch::GroupMove { .. }
+                | Switch::GroupRemove(_)
+                | Switch::SessionUpdate { .. }
                 | Switch::Status
                 | Switch::Unknown(_) => Vec::new(),
             };
@@ -186,6 +192,13 @@ fn typed(switch: &Switch) -> String {
             let ids: Vec<_> = sessions.iter().map(SessionId::as_str).collect();
             format!("/scribe group add {slug} {}", ids.join(" "))
         }
+        Switch::GroupMove { session, slug } => format!("/scribe group move {session} {slug}"),
+        Switch::GroupRemove(id) => format!("/scribe group remove {id}"),
+        Switch::SessionUpdate {
+            session,
+            field,
+            value,
+        } => format!("/scribe session update {session} {field} {value}"),
         Switch::Continue(id) => format!("/scribe continue {id}"),
         Switch::Catalog(id) => format!("/scribe catalog {id}"),
         Switch::Unknown(arg) => format!("/scribe {arg}"),

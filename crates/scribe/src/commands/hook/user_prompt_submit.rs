@@ -259,7 +259,12 @@ fn capture_prompt(payload: &PromptPayload, ctx: &Context) -> Result<Output, CliE
         }
         return Ok(reply(Vec::new(), Vec::new()));
     }
-    if let Some(line) = group_line(&payload.prompt) {
+    if let Some(line) = group_line(&payload.prompt).filter(|line| match line {
+        GroupLine::Join(_) | GroupLine::Add { .. } => true,
+        GroupLine::Move { .. } | GroupLine::Remove(_) | GroupLine::Update { .. } => {
+            payload.prompt.lines().count() == 1
+        }
+    }) {
         if let Err(reason) = payload::check(ctx, &payload.transcript_path, &session) {
             return Ok(group_reply(
                 format!("scribe: group refused — {reason}"),
@@ -293,10 +298,65 @@ fn capture_prompt(payload: &PromptPayload, ctx: &Context) -> Result<Output, CliE
                 );
             }
             GroupLine::Add { slug, sessions } => (slug, sessions),
+            GroupLine::Move {
+                session: named,
+                slug,
+            } => {
+                let ids: Vec<String> = ctx
+                    .store()
+                    .groups()?
+                    .iter()
+                    .flat_map(|g| g.members().into_iter().map(|id| id.to_string()))
+                    .collect();
+                let redactor = ctx.redactor(&ctx.config()?)?;
+                let result = ctx
+                    .store()
+                    .resolve_session_or_typed_with(&named, &ids)
+                    .and_then(|id| {
+                        let project = project::of(std::path::Path::new(&payload.cwd));
+                        ctx.store()
+                            .move_project_group(&id, &slug, &project, ctx.now(), &redactor)
+                            .map(|_| id)
+                    });
+                return Ok(named_reply(result, "moved", &session));
+            }
+            GroupLine::Remove(named) => {
+                let ids: Vec<String> = ctx
+                    .store()
+                    .groups()?
+                    .iter()
+                    .flat_map(|g| g.members().into_iter().map(|id| id.to_string()))
+                    .collect();
+                let result = ctx
+                    .store()
+                    .resolve_session_or_typed_with(&named, &ids)
+                    .and_then(|id| ctx.store().leave_group(&id).map(|_| id));
+                return Ok(named_reply(result, "removed", &session));
+            }
+            GroupLine::Update {
+                session: named,
+                field,
+                value,
+            } => {
+                let redactor = ctx.redactor(&ctx.config()?)?;
+                let result = ctx.store().resolve_session(&named).and_then(|id| {
+                    ctx.store()
+                        .update_session_metadata(&id, &field, &value, &redactor)
+                        .map(|()| id)
+                });
+                return Ok(named_reply(result, "updated", &session));
+            }
         };
         return super::group_add::run(&slug, &named, payload, &session, ctx);
     }
-    if let Some(switch) = scribe_core::control::parse(&payload.prompt) {
+    if let Some(switch) = scribe_core::control::parse(&payload.prompt).filter(|s| {
+        !matches!(
+            s,
+            scribe_core::control::Switch::GroupMove { .. }
+                | scribe_core::control::Switch::GroupRemove(_)
+                | scribe_core::control::Switch::SessionUpdate { .. }
+        )
+    }) {
         return Ok(super::scribe_command::run(&switch, payload, &session, ctx));
     }
     let mut outcomes: Vec<HookOutcome> = if ctx.provider() == Provider::ClaudeCode {
@@ -369,6 +429,16 @@ fn capture_prompt(payload: &PromptPayload, ctx: &Context) -> Result<Output, CliE
 
 /// A typed project-group line.
 enum GroupLine {
+    Move {
+        session: SessionId,
+        slug: String,
+    },
+    Remove(SessionId),
+    Update {
+        session: SessionId,
+        field: String,
+        value: String,
+    },
     /// `/scribe group <slug>`: the typing session joins.
     Join(String),
     /// `/scribe group add <slug> <session-id>...`: the named sessions join.
@@ -387,7 +457,33 @@ fn group_line(text: &str) -> Option<GroupLine> {
         Some(scribe_core::control::Switch::GroupAdd { slug, sessions }) => {
             Some(GroupLine::Add { slug, sessions })
         }
+        Some(scribe_core::control::Switch::GroupMove { session, slug }) => {
+            Some(GroupLine::Move { session, slug })
+        }
+        Some(scribe_core::control::Switch::GroupRemove(session)) => {
+            Some(GroupLine::Remove(session))
+        }
+        Some(scribe_core::control::Switch::SessionUpdate {
+            session,
+            field,
+            value,
+        }) => Some(GroupLine::Update {
+            session,
+            field,
+            value,
+        }),
         _ => None,
+    }
+}
+
+fn named_reply(result: scribe_core::Result<SessionId>, verb: &str, caller: &SessionId) -> Output {
+    match result {
+        Ok(id) => group_reply(format!("scribe: session {id} {verb}"), None, &id),
+        Err(err) => group_reply(
+            format!("scribe: {verb} refused — {err}"),
+            Some(err.code()),
+            caller,
+        ),
     }
 }
 

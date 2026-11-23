@@ -543,7 +543,7 @@ pub(in crate::store) fn forget(
             )
             .map_err(err)?;
     }
-    changed += super::groups::forget_session(conn, db, id)?;
+    changed += super::groups::forget_session(conn, db, id, now)?;
     changed += conn
         .execute(
             "DELETE FROM session_links WHERE type = 'continues' AND target = ?1",
@@ -1091,5 +1091,38 @@ impl<'c> SessionTx<'c> {
     /// Commit.
     pub(in crate::store) fn commit(self) -> Result<()> {
         self.tx.commit()
+    }
+}
+
+impl crate::Store {
+    /// Update one user-specified session record field in a store write.
+    pub fn update_session_metadata(
+        &self,
+        id: &SessionId,
+        field: &str,
+        value: &str,
+        redactor: &crate::Redactor,
+    ) -> Result<()> {
+        let value = value.trim();
+        crate::check_content(value)?;
+        if field == "project" {
+            value
+                .parse::<crate::Project>()
+                .map_err(|_| refusal(WriteRefusal::InvalidText, "invalid project"))?;
+        } else if field != "title" || value.contains(['\n', '\r']) {
+            return Err(refusal(
+                WriteRefusal::InvalidText,
+                "invalid session field or title",
+            ));
+        }
+        let value = redactor.mask(value);
+        self.write(|| {
+            let conn = super::open_writer(self.root(), self.lock_wait)?;
+            let path = self.root().join(DB_FILE);
+            let sql = if field == "project" { "UPDATE sessions SET project=?2 WHERE provider_session=?1 AND has_record=1 AND forgotten IS NULL" } else { "UPDATE sessions SET title=?2 WHERE provider_session=?1 AND has_record=1 AND forgotten IS NULL" };
+            let changed = conn.execute(sql, (id.as_str(), &value)).map_err(|e| db_error("update session in", &path, e))?;
+            if changed == 0 { return Err(Error::SessionNotFound { id: id.clone(), path: self.root().to_path_buf() }); }
+            Ok(())
+        })
     }
 }

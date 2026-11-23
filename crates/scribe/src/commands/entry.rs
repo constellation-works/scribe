@@ -707,13 +707,30 @@ fn verify_self_refresh(
                 "invalid refresh session",
             )
         })?;
-    // A clear or a launch continues the same interactive session. Follow at
-    // most 16 verified predecessor edges, stopping as soon as a typed turn is
-    // found. A clear edge is followed first, so a refreshed rank walks its clear
-    // chain to the seat's root and then takes that root's launch edge.
-    let mut link = id;
+    // Walk launchers in metadata order with one budget and cycle guard. A
+    // clear predecessor takes precedence over every launch edge at that node.
+    // A cycle is a link already on the current path; a session an earlier
+    // branch already examined (a shared ancestor) is skipped, not refused.
+    enum Step {
+        Enter(scribe_core::SessionId),
+        Leave(scribe_core::SessionId),
+    }
+    let mut last_failure: CliError = scribe_core::Error::AgentWrite {
+        kind: scribe_core::WriteRefusal::QuoteNotFound,
+        message: format!("refresh session {id}: transcript is not readable on this host"),
+    }
+    .into();
+    let mut pending = vec![Step::Enter(id)];
     let mut seen = std::collections::HashSet::new();
-    for hops in 0..=16 {
+    let mut on_path = std::collections::HashSet::new();
+    while let Some(step) = pending.pop() {
+        let link = match step {
+            Step::Leave(link) => {
+                on_path.remove(&link);
+                continue;
+            }
+            Step::Enter(link) => link,
+        };
         let failed = |reason: &str| -> CliError {
             scribe_core::Error::AgentWrite {
                 kind: scribe_core::WriteRefusal::QuoteNotFound,
@@ -721,50 +738,60 @@ fn verify_self_refresh(
             }
             .into()
         };
-        if !seen.insert(link.clone()) {
+        if on_path.contains(&link) {
             return Err(failed("ancestry contains a cycle"));
         }
-        let path = payload::locate(ctx, &link)?
-            .ok_or_else(|| failed("transcript is not readable on this host"))?;
-        let bytes = payload::read_checked(ctx, &path, &link)
-            .ok()
-            .flatten()
-            .ok_or_else(|| failed("transcript failed provenance or is not readable"))?;
-        let typed = if ctx.provider() == scribe_core::Provider::ClaudeCode {
-            scribe_core::instruction::claude_conversation_raw_typed(&bytes)
-                .iter()
-                .any(|turn| turn.typed.is_some())
+        if !seen.insert(link.clone()) {
+            continue;
+        }
+        on_path.insert(link.clone());
+        pending.push(Step::Leave(link.clone()));
+        let path = payload::locate(ctx, &link).ok().flatten();
+        let bytes = path
+            .as_ref()
+            .and_then(|path| payload::read_checked(ctx, path, &link).ok().flatten());
+        if let Some(bytes) = bytes {
+            let typed = if ctx.provider() == scribe_core::Provider::ClaudeCode {
+                scribe_core::instruction::claude_conversation_raw_typed(&bytes)
+                    .iter()
+                    .any(|turn| turn.typed.is_some())
+            } else {
+                scribe_core::transcript::parse(&bytes)
+                    .iter()
+                    .filter_map(scribe_core::transcript::user_turn)
+                    .any(|turn| !turn.own.trim().is_empty())
+            };
+            if typed {
+                return Ok(());
+            }
+            let parents = if ctx.provider() == scribe_core::Provider::ClaudeCode {
+                scribe_core::transcript::predecessors(&bytes)
+            } else {
+                scribe_core::transcript::Predecessors::default()
+            };
+            if parents.clear.len() > 1 {
+                return Err(failed("ambiguous: more than one clear predecessor"));
+            }
+            if let Some(parent) = parents.clear.first() {
+                pending.push(Step::Enter(parent.clone()));
+            } else {
+                pending.extend(parents.launch.into_iter().rev().map(Step::Enter));
+            }
+            last_failure = failed(
+                "transcript must contain a typed user turn or a clear or launch predecessor",
+            );
         } else {
-            scribe_core::transcript::parse(&bytes)
+            last_failure = failed("transcript failed provenance or is not readable on this host");
+        }
+        if seen.len() == 16
+            && pending
                 .iter()
-                .filter_map(scribe_core::transcript::user_turn)
-                .any(|turn| !turn.own.trim().is_empty())
-        };
-        if typed {
-            return Ok(());
+                .any(|step| matches!(step, Step::Enter(next) if !seen.contains(next)))
+        {
+            return Err(failed("ancestry exceeds the 16-transcript limit"));
         }
-        let parents = if ctx.provider() == scribe_core::Provider::ClaudeCode {
-            scribe_core::transcript::predecessors(&bytes)
-        } else {
-            scribe_core::transcript::Predecessors::default()
-        };
-        if parents.clear.len() > 1 {
-            return Err(failed("ambiguous: more than one clear predecessor"));
-        }
-        if parents.launch.len() > 1 {
-            return Err(failed("ambiguous: more than one launch predecessor"));
-        }
-        let Some(parent) = parents.clear.first().or_else(|| parents.launch.first()) else {
-            return Err(failed(
-                "transcript must contain a typed user turn or exactly one clear or launch predecessor",
-            ));
-        };
-        if hops == 16 {
-            return Err(failed("ancestry exceeds the 16-hop limit"));
-        }
-        link = parent.clone();
     }
-    unreachable!("bounded ancestry loop returns")
+    Err(last_failure)
 }
 
 #[derive(Debug, Args)]

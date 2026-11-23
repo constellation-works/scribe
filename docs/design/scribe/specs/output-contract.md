@@ -47,13 +47,16 @@ number, else the terminal's own size (`TIOCGWINSZ` on stdout); both are read
 in the output sink only, and with neither no table is cut. In plain and table
 rows, free text is flattened to one line (every whitespace run becomes one
 space), an empty value or list is `-`, lists are comma-joined, and timestamps
-are RFC 3339, except the `updated` column of `session list` in table mode
-(flat, `--tree` or `--include-inactive`), which shows the UTC date as
-`YYYY-MM-DD` when representable. For a present timestamp whose UTC date is
-outside the supported range, the column shows `-`. This applies when table
-mode is selected by `--format table` on a pipe too. Plain
-and JSON `session list` output keep the full instant, as does `session show`
-in every mode. The table date is display-only. After filtering, `session list`
+are RFC 3339, except in table mode, where every timestamp cell of a human list
+table shows the UTC date as `YYYY-MM-DD` when representable: `entry list`
+`created`, `session list` `updated` (flat, `--tree` or `--include-inactive`),
+`proposal list` `opened_at`, `scribe search` `updated`, `transcript list`
+`started` and `ended`, and `group list` `opened` and `closed`. A present
+timestamp whose UTC date is outside the supported range shows `-`. Table mode
+is the default on a terminal and `--format table` selects it on a pipe too.
+Plain and JSON list output keep the full instant, as does `show` (`session
+show`, `group show` and the other records) in every mode. The table date is
+display-only. After filtering, `session list`
 sorts matches by full `updated` instant, newest first (IDs ascending on ties),
 before applying `--limit`; `--tree` then traverses limited rows depth first,
 parent before child, preserving selection order among roots and siblings. A
@@ -631,6 +634,8 @@ hook echoes a marker once the typed turn is in the rollout (before that it
 refuses with `provenance_failed`, `typed input not yet verified …; Stop will
 retry`), and Stop catalogs from the rollout.
 
+The single-line commands `/scribe group move <session-id> <slug>`, `/scribe group remove <session-id>`, and `/scribe session update <session-id> project|title <value>` block with `scribe: session <id> moved|removed|updated` on success, or `scribe: <verb> refused — <reason>` on refusal. Their audit targets contain session ids and error codes only.
+
 A prompt whose first line is `/scribe on`, `/scribe off`, `/scribe status`,
 `/scribe on --from <id> [--type <type>]`, `/scribe link <id> [--type
 <type>]`, `/scribe catalog <id>`, `/scribe group <slug>`, `/scribe group add <slug>
@@ -639,15 +644,17 @@ A prompt whose first line is `/scribe on`, `/scribe off`, `/scribe status`,
 case-insensitive, including `group` and `add`; group slugs are validated as
 typed and must be lowercase) is not scanned for `#scribe` lines. Under Claude
 Code, the reply is `{"decision": "block", "reason": "<status>"}`, which
-keeps the prompt from the model and shows Daniel the reason. The reason is one
-line:
+keeps the prompt from the model and shows Daniel the reason. For `/scribe
+group` and `/scribe group add`, the first line selects the command even when
+later prompt lines follow; the block consumes the prompt, so those lines are
+not sent to the model. The reason is one line:
 `scribe: on — …`, `scribe: already on since <time> — nothing changed`,
 `scribe: off — …`, `scribe: this session is not on — nothing changed`,
 `scribe: on since <time>[; a pass is due]; <record status>` or `scribe: off
 — this session was never switched on …` for a status, `scribe: unknown
 command "/scribe <arg>" — use /scribe on, /scribe off, /scribe status,
 /scribe on --from <id>, /scribe link <id> [--type spawned_from|continues],
-/scribe catalog <id>, /scribe group <slug>, /scribe group add <slug> <session-id>... or /scribe continue <handoff-id>`,
+/scribe catalog <id>, /scribe group <slug>, /scribe group add <slug> <session-id>..., /scribe group move <session-id> <slug>, /scribe group remove <session-id>, /scribe session update <session-id> project|title <value> or /scribe continue <handoff-id>`,
 or `scribe: /scribe <arg> not applied — …` when the payload fails the
 transcript check. Codex processes a control line only after the host rollout
 verifies it as a typed `user.text` turn. Its reply is in `systemMessage` and

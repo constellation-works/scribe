@@ -35,6 +35,21 @@ pub(super) fn run(
     session: &SessionId,
     ctx: &Context,
 ) -> Result<Output, CliError> {
+    run_with_transcript_reader(slug, named, payload, session, ctx, group_turns::past)
+}
+
+pub(super) fn run_with_transcript_reader(
+    slug: &str,
+    named: &[SessionId],
+    payload: &PromptPayload,
+    session: &SessionId,
+    ctx: &Context,
+    mut read_past: impl FnMut(
+        &Context,
+        &SessionId,
+        &std::path::Path,
+    ) -> Result<Option<Vec<scribe_core::message::NewMessage>>, CliError>,
+) -> Result<Output, CliError> {
     if named.len() > MAX_SESSIONS {
         return Ok(refusal(
             format!(
@@ -49,7 +64,7 @@ pub(super) fn run(
     // Joined time is taken before any transcript is read, so a turn appended
     // while the snapshots are read is never dated before the membership.
     let membership_at = ctx.now();
-    let additions = match additions(ctx, named) {
+    let additions = match additions(ctx, named, &mut read_past) {
         Ok(additions) => additions,
         Err(err) => {
             return Ok(refusal(
@@ -110,23 +125,53 @@ pub(super) fn run(
 /// transcripts on disk so an exact id wins across every source and a shared
 /// prefix refuses the line before writes; unknown ids stay as typed, since a
 /// session that was never recorded has no other source.
-fn additions(ctx: &Context, named: &[SessionId]) -> Result<Vec<GroupAddition>, CliError> {
+fn additions(
+    ctx: &Context,
+    named: &[SessionId],
+    read_past: &mut impl FnMut(
+        &Context,
+        &SessionId,
+        &std::path::Path,
+    ) -> Result<Option<Vec<scribe_core::message::NewMessage>>, CliError>,
+) -> Result<Vec<GroupAddition>, CliError> {
     let mut files = std::collections::BTreeMap::new();
+    // Sessions with a regular transcript in more than one provider: kept in the
+    // id universe for prefix resolution, and refused only if a named session
+    // resolves to one.
+    let mut cross_provider = std::collections::BTreeSet::new();
+    // Entries named like a transcript whose file type is refused: present, so
+    // a named session among them is read through the checked open, which
+    // refuses it, never treated as membership only.
+    let mut refused: std::collections::BTreeMap<
+        SessionId,
+        Vec<(std::path::PathBuf, scribe_core::Provider)>,
+    > = std::collections::BTreeMap::new();
     for provider in [
         scribe_core::Provider::ClaudeCode,
         scribe_core::Provider::Codex,
     ] {
         let provider_ctx = ctx.with_provider(provider);
-        for (id, path) in payload::files_for(&provider_ctx)? {
-            if files.insert(id, (path, provider)).is_some() {
-                return Err(CliError::Usage(String::from(
-                    "session exists in multiple transcript providers",
-                )));
+        let found = payload::discovered_for(&provider_ctx)?;
+        for (id, path) in found.files {
+            match files.entry(id) {
+                std::collections::btree_map::Entry::Vacant(slot) => {
+                    slot.insert((path, provider));
+                }
+                std::collections::btree_map::Entry::Occupied(slot) => {
+                    cross_provider.insert(slot.key().clone());
+                }
             }
+        }
+        for (id, path) in found.refused {
+            refused.entry(id).or_default().push((path, provider));
         }
     }
     let store: &Store = ctx.store();
-    let mut ids: Vec<String> = files.keys().map(ToString::to_string).collect();
+    let mut ids: Vec<String> = files
+        .keys()
+        .chain(refused.keys())
+        .map(ToString::to_string)
+        .collect();
     for group in store.groups()? {
         ids.extend(group.members().into_iter().map(|id| id.to_string()));
     }
@@ -136,13 +181,55 @@ fn additions(ctx: &Context, named: &[SessionId]) -> Result<Vec<GroupAddition>, C
         if additions.iter().any(|a| a.session == id) {
             continue;
         }
-        let turns = match files.get(&id) {
-            Some((path, provider)) => group_turns::past(&ctx.with_provider(*provider), &id, path)?,
-            None => None,
+        if cross_provider.contains(&id) {
+            return Err(collision_error(&id, true));
+        }
+        // A refused entry takes precedence over a regular one for the same id,
+        // so a session with both is read through the checked open and refuses
+        // the whole line, never backfilled from its regular transcript.
+        let turns = match refused.get(&id) {
+            Some(entries) => {
+                let mut resolved: Option<(
+                    Vec<scribe_core::message::NewMessage>,
+                    scribe_core::Provider,
+                )> = None;
+                for (path, provider) in entries {
+                    let Some(turns) = read_past(&ctx.with_provider(*provider), &id, path)? else {
+                        return Err(CliError::TranscriptRefused {
+                            id,
+                            reason: String::from(
+                                "the refused transcript disappeared after discovery",
+                            ),
+                        });
+                    };
+                    if let Some((_, other)) = files.get(&id) {
+                        return Err(collision_error(&id, *other != *provider));
+                    }
+                    if let Some((_, prev_provider)) = &resolved {
+                        return Err(collision_error(&id, *prev_provider != *provider));
+                    }
+                    resolved = Some((turns, *provider));
+                }
+                resolved.map(|(turns, _)| turns)
+            }
+            None => match files.get(&id) {
+                Some((path, provider)) => read_past(&ctx.with_provider(*provider), &id, path)?,
+                None => None,
+            },
         };
         additions.push(GroupAddition { session: id, turns });
     }
     Ok(additions)
+}
+
+fn collision_error(id: &SessionId, cross_provider: bool) -> CliError {
+    if cross_provider {
+        CliError::Usage(format!(
+            "session {id} exists in multiple transcript providers"
+        ))
+    } else {
+        CliError::Usage(String::from("ambiguous duplicate transcript session id"))
+    }
 }
 
 fn joined(id: &SessionId) -> HookOutcome {

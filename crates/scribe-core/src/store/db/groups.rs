@@ -73,36 +73,83 @@ ALTER TABLE groups ADD COLUMN slug TEXT;
 CREATE UNIQUE INDEX group_open_slug ON groups(slug) WHERE slug IS NOT NULL AND closed IS NULL;
 ";
 
-/// Invalidate summaries before dropping the membership. A seat that still
-/// has members keeps its role and chain.
-pub(super) fn forget_session(conn: &Connection, path: &Path, id: &SessionId) -> Result<usize> {
-    let fail = |e| db_error("forget a group member in", path, e);
-    let member: Option<(i64, String)> = conn
+/// Drop a forgotten session's seat membership, clear derived summaries, and
+/// restart any restored holder's capture window. A seat that still has members
+/// keeps its role and chain.
+pub(super) fn forget_session(
+    conn: &Connection,
+    path: &Path,
+    id: &SessionId,
+    now: OffsetDateTime,
+) -> Result<usize> {
+    let Some(removed) = remove_seat_member(conn, path, "forget a group member in", id, now)? else {
+        return Ok(0);
+    };
+    conn.execute(
+        "UPDATE groups SET summary = NULL WHERE id = ?1",
+        [removed.group],
+    )
+    .map_err(|e| db_error("forget a group member in", path, e))?;
+    Ok(removed.removed)
+}
+
+struct RemovedMember {
+    group: i64,
+    removed: usize,
+}
+
+/// Remove `session` from its seat, prune an empty seat, and restart any
+/// restored holder's capture window when `session` held the seat.
+fn remove_seat_member(
+    conn: &Connection,
+    path: &Path,
+    action: &'static str,
+    session: &SessionId,
+    now: OffsetDateTime,
+) -> Result<Option<RemovedMember>> {
+    let fail = |e| db_error(action, path, e);
+    let member: Option<(i64, String, bool)> = conn
         .query_row(
-            "SELECT group_id, seat FROM group_members WHERE session = ?1",
-            [id.as_str()],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            &format!(
+                "SELECT m.group_id, m.seat, {HOLDS_SEAT}
+                 FROM group_members m WHERE m.session = ?1"
+            ),
+            [session.as_str()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()
         .map_err(fail)?;
-    let Some((group, seat)) = member else {
-        return Ok(0);
+    let Some((group, seat, held)) = member else {
+        return Ok(None);
     };
-    conn.execute("UPDATE groups SET summary = NULL WHERE id = ?1", [group])
-        .map_err(fail)?;
     let removed = conn
         .execute(
             "DELETE FROM group_members WHERE session = ?1",
-            [id.as_str()],
+            [session.as_str()],
         )
         .map_err(fail)?;
     conn.execute(
         "DELETE FROM group_seats WHERE group_id = ?1 AND name = ?2
          AND NOT EXISTS (SELECT 1 FROM group_members WHERE group_id = ?1 AND seat = ?2)",
-        (group, seat),
+        params![group, seat],
     )
     .map_err(fail)?;
-    Ok(removed)
+    if held {
+        // The departing member held the seat, so the member it displaced holds
+        // it again. Turns that member typed in between were never authorized:
+        // restart its consent window now. Its cursor goes too, since a cursor
+        // would make every later turn count as new whatever its timestamp, and
+        // no hook may have moved it past the displacement interval.
+        conn.execute(
+            "UPDATE group_members SET joined = ?3, turn_cursor = NULL
+             WHERE group_id = ?1 AND seat = ?2 AND position = (
+                 SELECT MAX(position) FROM group_members WHERE group_id = ?1 AND seat = ?2
+             )",
+            params![group, seat, stamp(now)],
+        )
+        .map_err(fail)?;
+    }
+    Ok(Some(RemovedMember { group, removed }))
 }
 
 /// The handoff lookup follows the session reference and ranks active handoffs across
@@ -657,57 +704,37 @@ impl Store {
 
     /// Remove only the caller from its chain and remove a seat left empty.
     pub fn leave_group(&self, session: &SessionId) -> Result<String> {
+        self.leave_group_inner(session, false)
+    }
+
+    fn leave_group_inner(&self, session: &SessionId, keep_turns: bool) -> Result<String> {
         self.write(|| {
             let conn = open_writer(self.root(), self.lock_wait)?;
             let path = self.root().join(DB_FILE);
             let fail = |e| db_error("leave group in", &path, e);
-            let held: Option<bool> = conn
-                .query_row(
-                    &format!("SELECT {HOLDS_SEAT} FROM group_members m WHERE m.session = ?1"),
-                    [session.as_str()],
-                    |r| r.get(0),
+            let n = remove_seat_member(
+                &conn,
+                &path,
+                "leave group in",
+                session,
+                OffsetDateTime::now_utc(),
+            )?
+            .ok_or_else(|| {
+                refusal(
+                    WriteRefusal::GroupMembership,
+                    "the calling session has no group membership",
                 )
-                .optional()
-                .map_err(fail)?;
-            let (n, seat): (i64, String) = conn
-                .query_row(
-                    "DELETE FROM group_members WHERE session=?1 RETURNING group_id,seat",
-                    [session.as_str()],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .optional()
-                .map_err(fail)?
-                .ok_or_else(|| {
-                    refusal(
-                        WriteRefusal::GroupMembership,
-                        "the calling session has no group membership",
-                    )
-                })?;
-            conn.execute(
-                "DELETE FROM group_seats WHERE group_id=?1 AND name=?2 AND NOT EXISTS
-                (SELECT 1 FROM group_members WHERE group_id=?1 AND seat=?2)",
-                params![n, seat],
-            )
-            .map_err(fail)?;
-            if held == Some(true) {
-                // The leaver held the seat, so the member it displaced holds it
-                // again. Turns that member typed in between were never
-                // authorized: restart its consent window now.
+            })?
+            .group;
+            let erased = if keep_turns {
+                0
+            } else {
                 conn.execute(
-                    "UPDATE group_members SET joined = ?3
-                     WHERE group_id = ?1 AND seat = ?2 AND position = (
-                         SELECT MAX(position) FROM group_members WHERE group_id = ?1 AND seat = ?2
-                     )",
-                    params![n, seat, stamp(OffsetDateTime::now_utc())],
-                )
-                .map_err(fail)?;
-            }
-            let erased = conn
-                .execute(
                     "DELETE FROM messages WHERE session = ?1 AND group_only = 1",
                     [session.as_str()],
                 )
-                .map_err(fail)?;
+                .map_err(fail)?
+            };
             let cleared = conn
                 .execute(
                     "UPDATE groups SET summary = NULL WHERE id = ?1 AND summary IS NOT NULL",
@@ -725,6 +752,61 @@ impl Store {
                 super::truncate_wal(&conn, &path, std::time::Instant::now())?;
             }
             Ok(format!("g-{n}"))
+        })
+    }
+
+    /// Move a member atomically, retaining its stored turns and capture cursor.
+    pub fn move_project_group(
+        &self,
+        session: &SessionId,
+        slug: &str,
+        project: &Project,
+        now: OffsetDateTime,
+        redactor: &Redactor,
+    ) -> Result<String> {
+        check_project_slug(slug, redactor)?;
+        self.write(|| {
+            let conn = open_writer(self.root(), self.lock_wait)?;
+            let path = self.root().join(DB_FILE);
+            let fail = |e| db_error("move group member in", &path, e);
+            let (old, joined, cursor, held): (i64, String, Option<String>, bool) = conn
+                .query_row(
+                    &format!("SELECT m.group_id, m.joined, m.turn_cursor, {HOLDS_SEAT} FROM group_members m WHERE m.session=?1"),
+                    [session.as_str()],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                )
+                .optional()
+                .map_err(fail)?
+                .ok_or_else(|| {
+                    refusal(
+                        WriteRefusal::GroupMembership,
+                        "session has no group membership",
+                    )
+                })?;
+            let target: Option<i64> = conn
+                .query_row(
+                    "SELECT id FROM groups WHERE slug=?1 AND closed IS NULL",
+                    [slug],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(fail)?;
+            if target == Some(old) {
+                return Ok(format!("g-{old}"));
+            }
+            self.leave_group_inner(session, true)?;
+            let id = self.join_project_group(slug, project, session, now, redactor)?;
+            let (joined, cursor) = if held { (joined, cursor) } else { (stamp(now), None) };
+            conn.execute(
+                "UPDATE group_members SET joined=?2, turn_cursor=?3 WHERE session=?1",
+                params![session.as_str(), joined, cursor],
+            )
+            .map_err(fail)?;
+            if let Some(n) = target {
+                conn.execute("UPDATE groups SET summary=NULL WHERE id=?1", [n])
+                    .map_err(fail)?;
+            }
+            Ok(id)
         })
     }
 
@@ -1045,6 +1127,9 @@ fn after_cursor<'a>(state: &CaptureState, messages: &'a [NewMessage]) -> Option<
 /// backfill or an earlier capture) it is the continuity point: every turn after
 /// it is new whatever its timestamp, since a turn appended while the cursor's
 /// snapshot was being read can be dated before the membership was committed.
+/// Restoring a displaced holder's seat clears its cursor (`leave_group`,
+/// `forget_session`), so the new join time cuts off the turns typed during the
+/// displacement.
 fn turns_since<'a>(state: &CaptureState, messages: &'a [NewMessage]) -> Vec<&'a NewMessage> {
     if state.cursor.is_some() {
         return messages.iter().collect();

@@ -6425,11 +6425,13 @@ session.
   and `CLAUDE_CODE_SESSION_ID` must equal the one related session; the CLI
   locates and verifies that session's transcript and requires a nonempty
   human-typed turn there or in its clear or launch ancestry. Each untyped
-  link follows its `via: clear` predecessor in its opening metadata first,
-  else its single `via: launch` predecessor (the session that started it);
-  two predecessors of the same kind are ambiguous and refused. Each
-  predecessor must pass transcript provenance checks. Traversal refuses
-  cycles and more than 16 predecessor hops, counted across both kinds. It
+  link follows its single `via: clear` predecessor, ignoring launch edges;
+  multiple clear predecessors are ambiguous and refused. Without a clear edge,
+  launch predecessors are tried in metadata order until one reaches a typed
+  turn. Unreadable or provenance-failing transcripts are dead ends. Traversal
+  refuses a cycle (a link already on the current path), skips an ancestor an
+  earlier branch already examined, and shares a budget of 16 distinct
+  transcripts across all paths. It
   passes that verification to the store, which refuses a quote-less handoff
   without it (`quote_required`); a missing or noninteractive
   transcript is refused (`quote_not_found`). This shell variable was measured
@@ -6719,7 +6721,9 @@ is added and the reply says `membership only, no transcript on disk`.
 Caller and named-transcript provenance failures have different replies. If the
 caller transcript fails its check, Claude Code replies `scribe: group refused —
 <reason>`; if a named transcript on disk fails its check, the whole command
-replies `scribe: group add refused — <reason>`. Both leave the group unchanged.
+replies `scribe: group add refused — <reason>`. This includes an entry whose
+named transcript is present but has a refused file type (such as a symbolic
+link); it is not treated as absent or read. Both leave the group unchanged.
 Codex verifies the caller's typed `user.text` turn in the host rollout before
 replaying the command, and a failed caller check replies `scribe: not recorded —
 <reason>` without running it. A session already in another group refuses the
@@ -6735,6 +6739,8 @@ has none. Codex also audits the verified typed-turn cursor advance against the
 typing session. Refusal audits contain ids and error codes only. There is no
 terminal command for this: no CLI path records Daniel's consent (see "Daniel
 writes only through his typed prompt").
+
+**Regrouping and metadata.** A single typed line `/scribe group move <session-id> <slug>` moves a named member to an open project group, creating the group if necessary. The old membership is removed and the new one added in one transaction; all stored turns and the capture cursor follow. `/scribe group remove <session-id>` removes membership as `group leave` does: group-only turns are erased, while cataloged turns remain. Both accept unique session prefixes. A single typed `/scribe session update <session-id> project <slug>` or `/scribe session update <session-id> title <text>` changes that recorded field without a model call or rebuild. Project labels follow the existing project validation; titles are redacted. A later catalog pass can replace the title as it normally does. These lines use the same typed-turn and provenance checks as group add; peer, scheduled, harness and pasted lines do not act. Audit targets carry session ids and error codes, not field values. No terminal command grants this user consent.
 
 **Opening consent.** The opener is the provider’s calling session
 (`CLAUDE_CODE_SESSION_ID` for Claude Code, `CODEX_THREAD_ID` with
@@ -6792,9 +6798,11 @@ session that holds the seat stores turns: while a later member holds the seat,
 the replaced session's later turns are not stored, and the turns it already
 stored stay readable until it leaves or is forgotten. The replaced session's
 hooks move its capture cursor past the turns it types meanwhile without storing
-them, and when the replacement leaves, the restored holder's consent window
-restarts at that moment, so turns typed during the displacement are never
-stored later. Capture uses the pass's exclusions for synthetic and control
+them, and when the replacement leaves or is forgotten, the restored holder's
+consent window restarts at that moment and its capture cursor is cleared, so
+turns typed during the displacement are never stored later, even when no hook
+ran for the replaced session meanwhile. Capture uses the pass's exclusions for
+synthetic and control
 turns, pasted blocks, fenced code and sensitive text, plus its store redactor.
 Claude group capture records its byte position and first-seen message
 identities with the turn cursor. Each hook opens and checks the transcript

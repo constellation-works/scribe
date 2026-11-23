@@ -2639,6 +2639,7 @@ fn typed_group_add_audits_ids_only_and_a_later_capture_resumes_after_the_stored_
         .collect();
     assert_eq!(members.len(), 2, "{members:?}");
     assert!(members.contains(&B) && members.contains(&C), "{members:?}");
+    assert!(!members.contains(&A), "{members:?}");
 
     let audit = support::audit_lines(&f.root());
     let targets: Vec<&str> = audit
@@ -2680,6 +2681,178 @@ fn typed_group_add_audits_ids_only_and_a_later_capture_resumes_after_the_stored_
     };
     assert_eq!(total("pastorchid"), 1);
     assert_eq!(total("lateorchid"), 1);
+}
+
+#[test]
+fn typed_group_add_includes_the_typing_session_when_its_id_is_named() {
+    let f = Fixture::new();
+    let typing = transcript(
+        &f,
+        A,
+        &[row(A, "t", "user", "/scribe group add planning A")],
+    );
+    let line = format!("/scribe group add planning {A}");
+    let out = hook(
+        &f,
+        &["hook", "user-prompt-submit"],
+        json!({"session_id": A, "transcript_path": typing, "cwd": f.home(), "prompt": line}),
+        &[],
+    );
+    let reply = text(&out.stdout);
+    assert!(
+        reply.contains(&format!(
+            "{A}: added; transcript on disk, 0 typed turns stored"
+        )),
+        "{reply}"
+    );
+
+    let group = invoke(&f, A, &["group", "show", "planning"], 0);
+    let members: Vec<&str> = group["seats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|s| s["transcripts"].as_array().unwrap())
+        .map(|t| t.as_str().unwrap())
+        .collect();
+    assert_eq!(members, [A]);
+}
+
+#[cfg(unix)]
+#[test]
+fn typed_group_add_refuses_a_linked_transcript_but_keeps_an_absent_one_membership_only() {
+    let f = Fixture::new();
+    let typing = transcript(&f, A, &[row(A, "t", "user", "/scribe group add planning")]);
+    // B's transcript was replaced by a link to a file elsewhere.
+    let outside = f.elsewhere("outside.jsonl");
+    std::fs::write(
+        &outside,
+        format!("{}\n", row(B, "b1", "user", "linkedorchid typed")),
+    )
+    .unwrap();
+    support::make_private(&outside);
+    std::os::unix::fs::symlink(&outside, transcript_path(&f, B)).unwrap();
+    let submit = |named: &str| {
+        text(
+            &hook(
+                &f,
+                &["hook", "user-prompt-submit"],
+                json!({"session_id": A, "transcript_path": typing, "cwd": f.home(),
+                    "prompt": format!("/scribe group add planning {named}")}),
+                &[],
+            )
+            .stdout,
+        )
+    };
+    let store = scribe_core::Store::open(f.root());
+
+    // The linked entry refuses the whole line, even beside an absent session.
+    let reply = submit(&format!("{B} {C}"));
+    assert!(reply.contains("group add refused"), "{reply}");
+    assert!(reply.contains("nothing changed"), "{reply}");
+    assert!(!reply.contains("membership only"), "{reply}");
+    assert!(store.groups().unwrap().is_empty());
+    assert_eq!(
+        invoke(&f, A, &["search", "linkedorchid", "--kind", "message"], 0)["total"],
+        0
+    );
+    let log = support::audit_text(&f.root());
+    assert!(!log.contains("linkedorchid"), "{log}");
+
+    // A genuinely absent transcript is still membership only.
+    let reply = submit(C);
+    assert!(reply.contains("group planning (g-1) opened"), "{reply}");
+    assert!(
+        reply.contains("membership only, no transcript on disk"),
+        "{reply}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn typed_group_add_refuses_a_session_with_a_regular_and_a_refused_transcript() {
+    let f = Fixture::new();
+    let typing = transcript(&f, A, &[row(A, "t", "user", "/scribe group add planning")]);
+    let rollout = |text: &str| -> String {
+        [
+            json!({"type":"session_meta","payload":{"id":B,"source":"vscode","thread_source":"user","cwd":f.home()}}),
+            json!({"timestamp":"2090-11-20T01:00:00Z","type":"response_item","payload":{
+                "type":"message","role":"user","id":"mixed",
+                "content":[{"type":"input_text","text":text}],
+                "internal_chat_message_metadata_passthrough":{"turn_id":"mixed-turn","content_item_kinds":["user.text"],"content_item_metadata":[{"provenance":{"type":"user"}}]}
+            }}),
+        ]
+        .iter()
+        .map(|r| format!("{r}\n"))
+        .collect()
+    };
+    // B has a valid Codex rollout in the active root and, in the archived
+    // root, a link named for it: discovery reports both entries.
+    let active = f.home().join(".codex/sessions/2090/11/20");
+    f.create_private_dir_all(&active);
+    let regular = active.join(format!("rollout-2090-11-20T01-00-00-{B}.jsonl"));
+    std::fs::write(&regular, rollout("mixedorchid typed")).unwrap();
+    support::make_private(&regular);
+    let outside = f.elsewhere("outside.jsonl");
+    std::fs::write(&outside, rollout("linkedmixedorchid typed")).unwrap();
+    support::make_private(&outside);
+    let archived = f.home().join(".codex/archived_sessions");
+    f.create_private_dir_all(&archived);
+    std::os::unix::fs::symlink(
+        &outside,
+        archived.join(format!("rollout-2090-11-19T01-00-00-{B}.jsonl")),
+    )
+    .unwrap();
+    let store = scribe_core::Store::open(f.root());
+    let submit = |named: &str| {
+        text(
+            &hook(
+                &f,
+                &["hook", "user-prompt-submit"],
+                json!({"session_id": A, "transcript_path": typing, "cwd": f.home(),
+                    "prompt": format!("/scribe group add planning {named}")}),
+                &[],
+            )
+            .stdout,
+        )
+    };
+
+    // The refused entry refuses the whole line, even beside an absent session:
+    // nothing is joined, stored or audited.
+    let reply = submit(&format!("{B} {C}"));
+    assert!(reply.contains("group add refused"), "{reply}");
+    assert!(reply.contains("nothing changed"), "{reply}");
+    assert!(!reply.contains("membership only"), "{reply}");
+    assert!(store.groups().unwrap().is_empty());
+    assert_eq!(
+        invoke(&f, A, &["search", "mixedorchid", "--kind", "message"], 0)["total"],
+        0
+    );
+    let log = support::audit_text(&f.root());
+    assert!(!log.contains("mixedorchid"), "{log}");
+
+    // A lone valid transcript still backfills, and a genuinely absent session
+    // is membership only.
+    transcript(&f, D, &[row(D, "d1", "user", "lonevalidorchid typed")]);
+    let reply = submit(D);
+    assert!(reply.contains("group planning (g-1) opened"), "{reply}");
+    assert!(reply.contains("1 typed turn stored"), "{reply}");
+    let reply = submit(C);
+    assert!(
+        reply.contains("membership only, no transcript on disk"),
+        "{reply}"
+    );
+
+    // B still refuses its own line once the group exists, and is not a member.
+    let reply = submit(B);
+    assert!(reply.contains("group add refused"), "{reply}");
+    let groups = store.groups().unwrap();
+    assert_eq!(groups.len(), 1);
+    let members: Vec<String> = groups[0]
+        .members()
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(members, [C, D]);
 }
 
 #[test]
@@ -2948,5 +3121,216 @@ fn typed_group_add_backfills_other_provider_including_archived_codex() {
             expected,
             "{term}"
         );
+    }
+}
+
+#[test]
+fn typed_group_add_scopes_cross_provider_collision_to_named_sessions() {
+    const E: &str = "55555555-5555-4555-8555-555555555555";
+    let f = Fixture::new();
+    let typing = transcript(&f, A, &[row(A, "a", "user", "/scribe group add planning")]);
+    let write_codex = |id: &str, body: &str| {
+        let dir = f.home().join(".codex/sessions/2090/11/20");
+        f.create_private_dir_all(&dir);
+        let path = dir.join(format!("rollout-2090-11-20T01-00-00-{id}.jsonl"));
+        let rows = [
+            json!({"type":"session_meta","payload":{"id":id,"source":"vscode","thread_source":"user","cwd":f.home()}}),
+            json!({"timestamp":"2090-11-20T01:00:00Z","type":"response_item","payload":{
+                "type":"message","role":"user","id":"u1",
+                "content":[{"type":"input_text","text":body}],
+                "internal_chat_message_metadata_passthrough":{"turn_id":"t1","content_item_kinds":["user.text"],"content_item_metadata":[{"provenance":{"type":"user"}}]}
+            }}),
+        ];
+        std::fs::write(
+            &path,
+            rows.iter().map(|r| format!("{r}\n")).collect::<String>(),
+        )
+        .unwrap();
+        support::make_private(&path);
+    };
+
+    // B collides across Claude Code and Codex; C, D, and E do not.
+    transcript(&f, B, &[row(B, "b1", "user", "collidingclaudeorchid")]);
+    write_codex(B, "collidingcodexorchid");
+    transcript(&f, C, &[row(C, "c1", "user", "unrelatedclaudeorchid")]);
+    write_codex(D, "unrelatedcodexorchid");
+    transcript(&f, E, &[row(E, "e1", "user", "partialenrollorchid")]);
+
+    let submit = |group_cmd: &str, named: &str| {
+        text(
+            &hook(
+                &f,
+                &["hook", "user-prompt-submit"],
+                json!({"session_id": A, "transcript_path": typing, "cwd": f.home(),
+                    "prompt": format!("/scribe group add {group_cmd} {named}")}),
+                &[],
+            )
+            .stdout,
+        )
+    };
+    let store = scribe_core::Store::open(f.root());
+
+    // An unrelated exact named session (in Claude or Codex) succeeds despite B colliding.
+    let reply = submit("planning", &format!("{C} {D}"));
+    assert!(reply.contains("group planning (g-1) opened"), "{reply}");
+    assert!(
+        reply.contains(&format!(
+            "{C}: added; transcript on disk, 1 typed turn stored"
+        )),
+        "{reply}"
+    );
+    assert!(
+        reply.contains(&format!(
+            "{D}: added; transcript on disk, 1 typed turn stored"
+        )),
+        "{reply}"
+    );
+    let members: Vec<String> = store
+        .group("planning")
+        .unwrap()
+        .members()
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(members, [C, D]);
+
+    // Naming the colliding ID alongside an eligible session refuses the whole
+    // line for both a new group and an existing group, without partial enrollment.
+    for (group_cmd, named) in [
+        ("other", format!("{E} {B}")),
+        ("planning", format!("{E} {B}")),
+        ("other", format!("{E} {}", &B[..8])),
+    ] {
+        let reply = submit(group_cmd, &named);
+        assert!(reply.contains("group add refused"), "{reply}");
+        assert!(
+            reply.contains("exists in multiple transcript providers"),
+            "{reply}"
+        );
+        assert!(reply.contains(B), "{reply}");
+        assert!(reply.contains("nothing changed"), "{reply}");
+        let last_audit = support::audit_lines(&f.root()).pop().unwrap();
+        assert_eq!(last_audit["command"], "hook user-prompt-submit");
+        assert_eq!(last_audit["status"], "failure");
+        assert_eq!(last_audit["target"], format!("session:{A}"));
+        assert_eq!(last_audit["error_code"], "usage_error");
+    }
+
+    assert!(store.group("other").is_err());
+    let members: Vec<String> = store
+        .group("planning")
+        .unwrap()
+        .members()
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(members, [C, D]);
+    for term in [
+        "partialenrollorchid",
+        "collidingclaudeorchid",
+        "collidingcodexorchid",
+    ] {
+        assert_eq!(
+            invoke(&f, A, &["search", term, "--kind", "message"], 0)["total"],
+            0,
+            "{term}"
+        );
+    }
+}
+
+#[test]
+fn typed_multiline_group_controls_dispatch_through_hook_and_ignore_later_lines() {
+    let add_line = format!("/scribe group add water-economy {B}");
+    let add_member_msg = format!("{B}: added; membership only, no transcript on disk");
+    let cases = [
+        (
+            "/scribe group water-economy",
+            A,
+            vec!["joined group water-economy"],
+        ),
+        (
+            add_line.as_str(),
+            B,
+            vec!["group water-economy (g-1) opened", add_member_msg.as_str()],
+        ),
+    ];
+
+    for (first_line, expected_member, expected_reason_parts) in cases {
+        let f = Fixture::new();
+        f.seed();
+        f.config("");
+        let audit_before = support::audit_lines(&f.root());
+        let marks_before = support::exported(&f.root(), "marks.json");
+        let prompt = format!(
+            "{first_line}\n#scribe retire preferences-1\n#scribe idea: multiline later line marker\n/scribe on"
+        );
+        let path = transcript(&f, A, &[row(A, "t", "user", &prompt)]);
+        let out = hook(
+            &f,
+            &["hook", "user-prompt-submit"],
+            json!({
+                "session_id": A,
+                "transcript_path": path,
+                "cwd": f.home(),
+                "prompt": prompt,
+            }),
+            &[],
+        );
+
+        let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(reply["decision"], "block", "{first_line}: {reply}");
+        assert!(
+            reply.get("systemMessage").is_none(),
+            "{first_line}: {reply}"
+        );
+        assert!(
+            reply.get("hookSpecificOutput").is_none(),
+            "{first_line}: {reply}"
+        );
+        let reason = reply["reason"].as_str().unwrap();
+        for part in expected_reason_parts {
+            assert!(reason.contains(part), "{first_line}: {reason}");
+        }
+        assert!(!reason.contains("scribe: off"), "{first_line}: {reason}");
+
+        let group = invoke(&f, A, &["group", "show", "water-economy"], 0);
+        assert_eq!(group["kind"], "project", "{first_line}: {group}");
+        assert_eq!(
+            group["seats"],
+            json!([{
+                "name": &expected_member[..8],
+                "role": "member",
+                "transcripts": [expected_member],
+                "newest_handoff": null
+            }]),
+            "{first_line}: {group}"
+        );
+
+        // Later prompt lines produce no independent settling, marking, or switch effect.
+        assert_eq!(
+            invoke(&f, A, &["entry", "show", "preferences-1"], 0)["status"],
+            "active",
+            "{first_line}"
+        );
+        assert!(
+            support::control(&f.root())["sessions"][A].is_null(),
+            "{first_line}"
+        );
+        assert_eq!(
+            support::exported(&f.root(), "marks.json"),
+            marks_before,
+            "{first_line}"
+        );
+        let audit_after = support::audit_lines(&f.root());
+        assert_eq!(
+            audit_after.len(),
+            audit_before.len() + 1,
+            "{first_line}: {audit_after:?}"
+        );
+        let line = audit_after.last().unwrap();
+        assert_eq!(line["command"], "hook user-prompt-submit");
+        assert_eq!(line["status"], "success");
+        assert_eq!(line["target"], format!("session:{expected_member}"));
+        assert!(line["error_code"].is_null(), "{line}");
     }
 }

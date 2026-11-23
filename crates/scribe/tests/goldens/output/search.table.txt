@@ -1,5 +1,5 @@
-CITE                                            KIND     SCORE  UPDATED               TITLE                       SNIPPET
-decisions-2                                     entry    2.929  2026-11-02T19:05:41Z  decisions-2 (decisions)     squash-merge agent PRs; keep merge commits for releases
-session:7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02#1  session  2.548  2026-11-02T19:20:00Z  Merge policy for agent PRs  Squash-merge agent PRs; releases keep merge commits.
-session:7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02    session  2.254  2026-11-02T19:40:00Z  Merge policy for agent PRs  Discussed how agent PRs are merged and recorded the decision. Agree a merge policy. - update the contributing guide - tell the release crew
-session:7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02#2  session  0.541  2026-11-02T19:40:00Z  Telling the release crew    Drafted the note to the release crew about the new merge policy.
+CITE                                            KIND     SCORE  UPDATED     TITLE                       SNIPPET
+decisions-2                                     entry    2.929  2026-11-02  decisions-2 (decisions)     squash-merge agent PRs; keep merge commits for releases
+session:7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02#1  session  2.548  2026-11-02  Merge policy for agent PRs  Squash-merge agent PRs; releases keep merge commits.
+session:7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02    session  2.254  2026-11-02  Merge policy for agent PRs  Discussed how agent PRs are merged and recorded the decision. Agree a merge policy. - update the contributing guide - tell the release crew
+session:7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02#2  session  0.541  2026-11-02  Telling the release crew    Drafted the note to the release crew about the new merge policy.

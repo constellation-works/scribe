@@ -531,13 +531,39 @@ fn open_beneath(root: &Path, parts: &[Component<'_>]) -> std::io::Result<std::fs
     std::fs::File::open(path)
 }
 
+/// Transcript entries found under a root: regular files, and entries named
+/// like a transcript whose file type is refused (a link, a device, a
+/// directory). A refused entry is present, not absent: it is never read.
+#[derive(Default)]
+pub(in crate::commands) struct Discovered {
+    pub(in crate::commands) files: Vec<(SessionId, PathBuf)>,
+    pub(in crate::commands) refused: Vec<(SessionId, PathBuf)>,
+}
+
+/// The session id a directory entry is named for, if its name is a transcript's.
+fn named_session(name: &std::ffi::OsStr, provider: scribe_core::Provider) -> Option<SessionId> {
+    let stem = name.to_str()?.strip_suffix(".jsonl")?;
+    let raw = if provider == scribe_core::Provider::Codex {
+        if !stem.starts_with("rollout-") || stem.len() < 36 {
+            return None;
+        }
+        stem.get(stem.len() - 36..)?
+    } else {
+        stem
+    };
+    raw.parse::<SessionId>().ok()
+}
+
 /// Discover only the provider's expected layout; never follow directory links.
-pub(in crate::commands) fn files(
+/// Also reports entries named like a transcript that are not regular files, so
+/// a caller can tell a refused entry from an absent one.
+pub(in crate::commands) fn discover(
     dir: &Path,
     provider: scribe_core::Provider,
-) -> Result<Vec<(SessionId, PathBuf)>, CliError> {
+) -> Result<Discovered, CliError> {
     let mut pending = vec![(dir.to_path_buf(), 0usize)];
     let mut found = std::collections::BTreeMap::new();
+    let mut refused = std::collections::BTreeMap::new();
     let mut count = 0usize;
     while let Some((parent, depth)) = pending.pop() {
         let entries = match std::fs::read_dir(&parent) {
@@ -570,31 +596,17 @@ pub(in crate::commands) fn files(
             } else {
                 1
             };
+            let id = named_session(&entry.file_name(), provider);
             if kind.is_dir() && depth < max_depth {
                 pending.push((entry.path(), depth + 1));
-                continue;
             }
+            let Some(id) = id else {
+                continue;
+            };
             if !kind.is_file() {
+                refused.insert(id, entry.path());
                 continue;
             }
-            let name = entry.file_name();
-            let Some(stem) = name.to_str().and_then(|s| s.strip_suffix(".jsonl")) else {
-                continue;
-            };
-            let raw = if provider == scribe_core::Provider::Codex {
-                if !stem.starts_with("rollout-") || stem.len() < 36 {
-                    continue;
-                }
-                let Some(id) = stem.get(stem.len() - 36..) else {
-                    continue;
-                };
-                id
-            } else {
-                stem
-            };
-            let Ok(id) = raw.parse::<SessionId>() else {
-                continue;
-            };
             if found.insert(id, entry.path()).is_some() {
                 return Err(CliError::Usage(String::from(
                     "ambiguous duplicate transcript session id",
@@ -602,24 +614,40 @@ pub(in crate::commands) fn files(
             }
         }
     }
-    Ok(found.into_iter().collect())
+    Ok(Discovered {
+        files: found.into_iter().collect(),
+        refused: refused.into_iter().collect(),
+    })
 }
 
 /// Discover the active provider's live and archived rollouts without duplicates.
 pub(in crate::commands) fn files_for(
     ctx: &crate::app::Context,
 ) -> Result<Vec<(SessionId, PathBuf)>, CliError> {
+    Ok(discovered_for(ctx)?.files)
+}
+
+/// [`files_for`], with the refused entries of every root.
+pub(in crate::commands) fn discovered_for(
+    ctx: &crate::app::Context,
+) -> Result<Discovered, CliError> {
     let mut all = std::collections::BTreeMap::new();
+    let mut refused = Vec::new();
     for root in ctx.transcript_roots() {
-        for (id, path) in files(root, ctx.provider())? {
+        let found = discover(root, ctx.provider())?;
+        for (id, path) in found.files {
             if all.insert(id, path).is_some() {
                 return Err(CliError::Usage(String::from(
                     "session exists in both active and archived transcript roots",
                 )));
             }
         }
+        refused.extend(found.refused);
     }
-    Ok(all.into_iter().collect())
+    Ok(Discovered {
+        files: all.into_iter().collect(),
+        refused,
+    })
 }
 
 /// Resolve a provider transcript, preserving discovery errors.
