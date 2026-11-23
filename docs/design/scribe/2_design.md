@@ -792,7 +792,9 @@ is busy is an `attachment` line of type `queued_command` with
 queued line that is `isMeta` or a sidechain line is not his. The origin
 guard above applies to both forms: a cross-session message
 (`<cross-session-…>`), a scheduled, loop or cron prompt, and any non-plain
-origin is refused on every line type.
+origin is refused on every line type. The session pass and rebuild read the
+same refusal, so a refused form is not a turn in them either, and a replay of
+a refused line stays refused.
 
 Provenance check (an accident guard, not a security boundary — STD-05 R5):
 before writing, the hook confirms `transcript_path` lies under
@@ -1327,8 +1329,9 @@ As built (S4), in `scribe-core::pass` and `commands/session/pass.rs`:
 - The conversation drops tool payloads, thinking, turns that open with a
   synthetic tag (`<task-notification>`, `<system-reminder>`,
   `<command-name>` and the like, except a slash command's `<command-args>`,
-  which are his words, §4.1) and `/scribe` command turns; a queued message
-  he typed mid-turn is his turn (§4.1); a
+  which are his words, §4.1) and `/scribe` command turns. A slash command's
+  args and a queued message he typed mid-turn are his turns (§4.1) only when
+  the origin guard passes them; a
   `<pasted_content>` block is kept apart as pasted text, offered to the
   model marked as pasted and never accepted as a term's `said`.
 - Consecutive windows start after `scribed_through` and stop at either

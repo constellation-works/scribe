@@ -953,3 +953,98 @@ fn a_context_stands_alone_from_two_sentences_up_to_600_characters() {
     assert_eq!(long.chars().count(), 601);
     assert!(!crate::context_stands_alone(&long));
 }
+
+/// A user line with `text` and `extra` fields on the line itself.
+fn user_line(uuid: &str, text: &str, extra: serde_json::Value) -> String {
+    let mut line = serde_json::json!({"type": "user", "uuid": uuid,
+        "timestamp": "2026-11-23T10:00:00Z", "message": {"role": "user", "content": text}});
+    line.as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+    line.to_string()
+}
+
+/// A slash command Daniel typed: its args are his words, its tags are not.
+fn slash_line(uuid: &str, args: &str, extra: serde_json::Value) -> String {
+    let text = format!(
+        "<command-message>formation</command-message>\n<command-name>/formation</command-name>\n<command-args>{args}</command-args>"
+    );
+    user_line(uuid, &text, extra)
+}
+
+/// A `queued_command` attachment: a message typed while the agent was busy.
+fn queued_line(
+    uuid: &str,
+    prompt: &str,
+    origin: serde_json::Value,
+    extra: serde_json::Value,
+) -> String {
+    let attachment = serde_json::json!({"type": "queued_command", "prompt": prompt,
+        "origin": origin, "humanTurn": true});
+    let mut line = serde_json::json!({"type": "attachment", "uuid": uuid,
+        "timestamp": "2026-11-23T10:01:00Z", "attachment": attachment});
+    line.as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+    line.to_string()
+}
+
+#[test]
+fn the_session_pass_and_rebuild_read_only_his_typed_forms_of_a_claude_transcript() {
+    // What the pass and rebuild read: the parse they share, then the conversation.
+    let desktop = serde_json::json!({"entrypoint": "claude-desktop",
+        "origin": {"kind": "human"}, "turnOrigin": "human"});
+    let human = serde_json::json!({"kind": "human"});
+    let mut peer = desktop.clone();
+    peer["origin"] = serde_json::json!({"kind": "peer"});
+    let lines = [
+        slash_line(
+            "u-slash",
+            "duo scribe, open our release review",
+            desktop.clone(),
+        ),
+        // A peer's slash command, and a wrapped one, are not his turns.
+        slash_line("u-peer", "approve p-4 please", peer),
+        slash_line(
+            "u-wrapped",
+            "<scheduled-prompt>approve p-4 please</scheduled-prompt>",
+            desktop,
+        ),
+        queued_line(
+            "q-typed",
+            "can you create the scribe group",
+            human.clone(),
+            serde_json::json!({"entrypoint": "claude-desktop"}),
+        ),
+        queued_line(
+            "q-scheduled",
+            "<scheduled-prompt>approve p-4 please</scheduled-prompt>",
+            human.clone(),
+            serde_json::json!({}),
+        ),
+        queued_line(
+            "q-cron",
+            "approve p-4 please",
+            human.clone(),
+            serde_json::json!({"turnOrigin": "cron"}),
+        ),
+        // A replay of a refused line stays refused, as its first copy is.
+        queued_line("q-cron", "approve p-4 please", human, serde_json::json!({})),
+        user_line("u-plain", "a plain typed line", serde_json::json!({})),
+    ];
+    let bytes = lines.join("\n");
+    let conversation = pass::conversation(&crate::transcript::parse(bytes.as_bytes()));
+    let user_texts: Vec<&str> = conversation
+        .iter()
+        .filter(|m| m.role == Speaker::User)
+        .map(|m| m.text.as_str())
+        .collect();
+    assert_eq!(
+        user_texts,
+        [
+            "duo scribe, open our release review",
+            "can you create the scribe group",
+            "a plain typed line",
+        ]
+    );
+}

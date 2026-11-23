@@ -428,6 +428,58 @@ fn a_queued_message_he_typed_is_a_typed_turn_and_other_queued_lines_are_not() {
 }
 
 #[test]
+fn a_queued_message_with_a_contradicting_line_claim_is_not_his_typed_turn() {
+    // The attachment says he typed it; a claim on the line itself says otherwise.
+    let typed = || queued("approve p-4 please", json!({"kind": "human"}));
+    let contradicting = [
+        ("turn_origin_cron", json!({"turnOrigin": "cron"})),
+        ("top_origin_cron", json!({"origin": {"kind": "cron"}})),
+        ("top_origin_peer", json!({"origin": {"kind": "peer"}})),
+        ("source_peer", json!({"source": "peer"})),
+        (
+            "prompt_origin_task",
+            json!({"promptOrigin": "task-notification"}),
+        ),
+        ("prompt_source_cron", json!({"promptSource": "cron"})),
+    ];
+    for (name, claim) in contradicting {
+        let mut top = json!({"entrypoint": "claude-desktop"});
+        top.as_object_mut()
+            .unwrap()
+            .extend(claim.as_object().unwrap().clone());
+        let line = queued_line("q-claim", typed(), top);
+        assert_eq!(
+            run(
+                &claude_conversation(line.as_bytes()),
+                "approve p-4",
+                Act::Approve,
+                "p-4"
+            ),
+            "instruction_not_found",
+            "{name}"
+        );
+        assert!(
+            crate::instruction::claude_group_turns(line.as_bytes(), &session()).is_empty(),
+            "{name}"
+        );
+    }
+    let plain = queued_line(
+        "q-plain",
+        typed(),
+        json!({"entrypoint": "claude-desktop", "turnOrigin": "human"}),
+    );
+    assert_eq!(
+        run(
+            &claude_conversation(plain.as_bytes()),
+            "approve p-4",
+            Act::Approve,
+            "p-4"
+        ),
+        "ok"
+    );
+}
+
+#[test]
 fn group_turns_store_his_slash_command_args_and_queued_words_only() {
     let bytes = [
         slash("u-slash", "duo scribe, open our release review", desktop_human()),
