@@ -554,7 +554,10 @@ impl Store {
     /// fails an already-committed write on someone else's lock. The scan
     /// repeats under the lock before anything is deleted.
     pub(super) fn clean_forgotten_session_files(&self) -> Result<()> {
-        let forgotten = self.load_sessions()?.forgotten;
+        let Some(forgotten) = rows::read_forgotten(&self.root)? else {
+            return Ok(());
+        };
+        self.check_stamp()?;
         let mut pending = false;
         for id in forgotten.keys() {
             if !self.moved_files_of(id)?.is_empty() {
