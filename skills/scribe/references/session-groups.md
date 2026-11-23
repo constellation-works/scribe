@@ -94,6 +94,15 @@ group with
 `scribe group join <slug> --author <name>` (prefix `--provider codex` before
 `group` in Codex) can omit `--as` and `--role` to take those defaults.
 
+To add past sessions, give the human `/scribe group add <slug> <session-id>...`
+to type, naming the sessions to add. It creates the project group when absent
+and adds only the named sessions; the session that typed the line is not
+enrolled unless it is named. A named session's typed turns are stored only
+when its transcript is on disk; otherwise only membership is added. If any
+named session already belongs to another group, the whole line is refused and
+nothing changes. This is a human-typed prompt line with no terminal command or
+agent route, so the agent gives the human the line to type.
+
 The same typed line in another session joins the existing open group. A session in
 a group must leave before joining another. Peer, scheduled and harness
 prompts cannot give consent. Clear-time seat inheritance also applies to
