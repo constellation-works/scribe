@@ -276,8 +276,11 @@ first line is `/scribe on`, `/scribe off` or `/scribe status` is answered
 by the `UserPromptSubmit` hook and never reaches the model; so are
 `/scribe on --from <id>` and `/scribe link <id> [--type continues]`, which
 link this session to the one it was spawned from (or continues), refusing
-an unknown id, a self-link or a cycle. Claude Code's hook input and
-transcripts name no parent session, so links are only ever typed. No hook calls a
+an unknown id, a self-link or a cycle. After a desktop clear, the transcript names the previous
+session. When its newest active handoff has mode `continue`, the hook puts
+its body before the brief, carries the recording switch and writes a
+`continues` link. If the ancestry is missing, type
+`/scribe continue <handoff-id>`. A `new` handoff starts with the ordinary brief. No hook calls a
 model except Stop's annotation call; the pass does. Each
 write and refusal leaves one audit line in `scribe.db` with ids, the `--author`
 name and error codes only. Install it from this checkout after `make install`:

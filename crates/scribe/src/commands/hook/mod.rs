@@ -23,11 +23,12 @@
 //! `project.rs` finds the repository a session's cwd belongs to (both also
 //! serve `session pass`). These are the only commands that write entries or
 //! `control.json`, and the only ones that settle proposals; every one that
-//! writes is audited (`session-start` reads only), and none calls a model
+//! writes is audited, and none calls a model
 //! except Stop's annotation call in `annotation.rs`.
 
 mod annotation;
 mod codex;
+mod continuation;
 pub(super) mod payload;
 pub(super) mod project;
 mod proposal_command;
@@ -66,7 +67,8 @@ proposal or hide or blank an entry. A prompt whose first
 line is /scribe on, /scribe off or /scribe status switches this session's
 cataloging and is blocked, its status given as the reason; /scribe catalog
 <id> starts the user's catalog of a past session, whose windows the next
-session pass runs.
+session pass runs. /scribe continue <handoff-id> restores a continue handoff
+to this turn and inherits its session's recording switch.
 
 Examples:
   scribe hook user-prompt-submit < <payload.json>";
@@ -91,12 +93,11 @@ Examples:
   scribe hook stop < <payload.json>";
 
 const SESSION_START_EXAMPLES: &str = "\
-Reads the SessionStart payload (session_id, and cwd when the harness sends
-it) on stdin. Prints a message for the user when proposals are open, when
-action entries have waited over an hour with no pickup, or when this
-session is not opted in and a session in the same project was recorded
-within the last day. Nothing otherwise, and nothing for the agent. Reads
-only; calls no model.
+Reads the SessionStart payload (session_id, cwd, source and transcript_path).
+Reports open proposals, unpicked actions and possible recorded predecessors.
+Interactive Claude sessions receive the brief. After a clear with a continue
+handoff, the hook prepends that handoff and links the sessions, carrying the
+recording switch. Calls no model.
 
 Examples:
   scribe hook session-start < <payload.json>";
@@ -138,12 +139,13 @@ pub(crate) enum HookCommand {
 pub(crate) struct HookArgs {}
 
 impl HookCommand {
-    /// Every verb but `session-start` writes, so those are audited; a run
-    /// that changed nothing writes no line (see `audit_middleware`).
-    /// `session-start` reads only (STD-01 R31).
+    /// Each hook reports its writes and refusals. A silent read has no audit line.
     pub(super) fn audit(&self) -> Option<AuditMeta> {
         match self {
-            Self::SessionStart(_) => None,
+            Self::SessionStart(_) => Some(AuditMeta {
+                command: "hook session-start",
+                stepwise: false,
+            }),
             Self::UserPromptSubmit(_) => Some(AuditMeta {
                 command: "hook user-prompt-submit",
                 stepwise: false,

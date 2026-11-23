@@ -9,9 +9,8 @@
 //! ([`switch`], [`mark_due`], [`mark_final`], [`settle`]); the store persists
 //! the result under its lock and the hook words the reply.
 //!
-//! Every session starts off and has no switch at all until Daniel turns it
-//! on, so a session never switched on is never mentioned in `control.json`
-//! and a pass never reads its transcript. Pure values, no I/O (STD-02 R5).
+//! Every session starts off. Restoring a handoff can leave an off switch
+//! holding a pending link. Only an on switch schedules a pass.
 
 use crate::activity::CatalogedBy;
 use crate::record::Author;
@@ -47,6 +46,8 @@ pub enum Switch {
     /// Catalog a past session by name as Daniel (`/scribe catalog <id>`):
     /// the id, or a unique prefix of it, of the session to catalog.
     Catalog(SessionId),
+    /// Resume from an active continue handoff by entry id or unique prefix.
+    Continue(String),
     /// Any other argument: refused with the usage.
     Unknown(String),
 }
@@ -69,6 +70,7 @@ pub fn parse(prompt: &str) -> Option<Switch> {
         [arg] if arg.eq_ignore_ascii_case("on") => Switch::On,
         [arg] if arg.eq_ignore_ascii_case("off") => Switch::Off,
         [arg] if arg.eq_ignore_ascii_case("status") => Switch::Status,
+        [arg, id] if arg.eq_ignore_ascii_case("continue") => Switch::Continue((*id).to_owned()),
         [arg, id] if arg.eq_ignore_ascii_case("catalog") => id
             .parse()
             .map_or_else(|_| Switch::Unknown(words.join(" ")), Switch::Catalog),
@@ -172,12 +174,46 @@ pub fn link(
     on: bool,
     now: OffsetDateTime,
 ) -> Result<Linked, LinkError> {
+    apply_link(
+        state,
+        records,
+        session,
+        link,
+        LinkSwitch::Manual { on },
+        now,
+    )
+}
+
+/// How to set the child's switch when adding a session link.
+#[derive(Clone, Copy)]
+pub(crate) enum LinkSwitch {
+    Manual {
+        on: bool,
+    },
+    /// The verified handoff identifies a parent even if it was never on.
+    Inherit,
+}
+
+pub(crate) fn apply_link(
+    state: &mut ControlState,
+    records: &BTreeMap<SessionId, Vec<SessionLink>>,
+    session: &SessionId,
+    link: &SessionLink,
+    mode: LinkSwitch,
+    now: OffsetDateTime,
+) -> Result<Linked, LinkError> {
     let has_record = records.contains_key(session);
-    if !on && !has_record && !state.sessions.contains_key(session) {
+    if matches!(mode, LinkSwitch::Manual { on: false })
+        && !has_record
+        && !state.sessions.contains_key(session)
+    {
         return Err(LinkError::NotCataloged);
     }
     let mut known: BTreeSet<SessionId> = records.keys().cloned().collect();
     known.extend(state.sessions.keys().cloned());
+    if matches!(mode, LinkSwitch::Inherit) {
+        known.insert(link.session.clone());
+    }
     let mut graph = records.clone();
     for (id, control) in &state.sessions {
         graph
@@ -186,7 +222,22 @@ pub fn link(
             .extend(control.pending_links.iter().cloned());
     }
     let added = check_link(session, link, &known, &graph)?;
-    let switched_on = on && switch(state, session, &Switch::On, now) == Change::SwitchedOn;
+    let switched_on = match mode {
+        LinkSwitch::Manual { on } => {
+            on && switch(state, session, &Switch::On, now) == Change::SwitchedOn
+        }
+        LinkSwitch::Inherit if !added => false, // A replay preserves the child's later switch.
+        LinkSwitch::Inherit if state.get(&link.session).is_some_and(|s| s.on) => {
+            switch(state, session, &Switch::On, now) == Change::SwitchedOn
+        }
+        LinkSwitch::Inherit => {
+            switch(state, session, &Switch::Off, now);
+            if !has_record {
+                state.sessions.entry(session.clone()).or_default();
+            }
+            false
+        }
+    };
     let mut write_record = false;
     if added {
         if has_record {
@@ -293,15 +344,12 @@ pub fn switch(
                 state.sessions.insert(
                     session.clone(),
                     SessionControl {
-                        provider: crate::Provider::ClaudeCode,
                         on: true,
                         since: Some(now),
                         due: true,
-                        final_pass: false,
-                        consecutive_failures: 0,
-                        retry_after: None,
                         pending_links,
                         cataloged_by,
+                        ..SessionControl::default()
                     },
                 );
                 Change::SwitchedOn
@@ -321,7 +369,7 @@ pub fn switch(
         Switch::Status => Change::Status(current),
         // A link is applied by the store's link call, and a catalog by
         // `catalog_gate` and `catalog_on`, not here.
-        Switch::Link { .. } | Switch::Catalog(_) => Change::Status(current),
+        Switch::Link { .. } | Switch::Catalog(_) | Switch::Continue(_) => Change::Status(current),
         Switch::Unknown(arg) => Change::Unknown(arg.clone()),
     }
 }

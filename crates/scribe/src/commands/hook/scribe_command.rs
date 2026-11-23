@@ -2,8 +2,8 @@
 //! `scribe hook user-prompt-submit` (docs/design/scribe/2_design.md §5.1,
 //! §5.4, §5.8).
 //!
-//! A prompt whose first line is a `/scribe` command never reaches the
-//! model: the hook switches the session in `control.json` and returns
+//! A successful `/scribe continue <handoff-id>` passes the handoff to the
+//! agent as context. For the other commands, the hook returns
 //! `decision: "block"` with the status as the `reason` Claude Code shows
 //! the user. `on` records when and marks a pass due; `on` again is a no-op
 //! that says so; `off` stops further passes and keeps the record; `status`
@@ -41,7 +41,7 @@ const PROVENANCE_FAILED: &str = "provenance_failed";
 /// The code of a `/scribe` argument that is not a command.
 const UNKNOWN_COMMAND: &str = "unknown_scribe_command";
 /// The commands, for a refusal.
-const USAGE: &str = "use /scribe on, /scribe off, /scribe status, /scribe on --from <id>, /scribe link <id> [--type spawned_from|continues] or /scribe catalog <id>";
+const USAGE: &str = "use /scribe on, /scribe off, /scribe status, /scribe on --from <id>, /scribe link <id> [--type spawned_from|continues], /scribe catalog <id> or /scribe continue <handoff-id>";
 
 /// Apply `switch` for the payload's session and block the prompt with the
 /// result.
@@ -71,8 +71,25 @@ pub(super) fn run(
     if let Switch::Catalog(target) = switch {
         return run_catalog(switch, target, ctx);
     }
+    if let Switch::Continue(id) = switch {
+        if ctx.provider() != scribe_core::Provider::ClaudeCode {
+            return blocked(
+                "scribe: handoff continuation requires Claude Code".to_owned(),
+                vec![HookOutcome {
+                    target: target(),
+                    error_code: Some("handoff_session"),
+                }],
+            );
+        }
+        return Output::Hook(super::continuation::restore(
+            ctx,
+            EVENT,
+            session,
+            scribe_core::HandoffSelection::Named(id),
+        ));
+    }
     let change = match switch {
-        Switch::Link { .. } | Switch::Catalog(_) | Switch::Status => store
+        Switch::Link { .. } | Switch::Catalog(_) | Switch::Continue(_) | Switch::Status => store
             .control()
             .map(|state| Change::Status(state.get(session).cloned())),
         Switch::Unknown(arg) => Ok(Change::Unknown(arg.clone())),
@@ -88,9 +105,11 @@ pub(super) fn run(
                     target: target(),
                     error_code: Some(err.code()),
                 }],
-                Switch::Link { .. } | Switch::Catalog(_) | Switch::Status | Switch::Unknown(_) => {
-                    Vec::new()
-                }
+                Switch::Link { .. }
+                | Switch::Catalog(_)
+                | Switch::Continue(_)
+                | Switch::Status
+                | Switch::Unknown(_) => Vec::new(),
             };
             return blocked(
                 format!("scribe: {} failed — {}", typed(switch), chain(&err)),
@@ -132,6 +151,7 @@ fn typed(switch: &Switch) -> String {
         Switch::Link { link, on: false } => {
             format!("/scribe link {} --type {}", link.session, link.kind)
         }
+        Switch::Continue(id) => format!("/scribe continue {id}"),
         Switch::Catalog(id) => format!("/scribe catalog {id}"),
         Switch::Unknown(arg) => format!("/scribe {arg}"),
     }

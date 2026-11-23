@@ -56,6 +56,45 @@ impl Message {
     }
 }
 
+/// Distinct cleared sessions in the opening desktop transcript metadata.
+/// A launch ancestor or a reference inside a conversation turn is never a parent.
+#[must_use]
+pub fn cleared_sessions(header: &[u8]) -> Vec<crate::SessionId> {
+    #[derive(Deserialize)]
+    struct Row {
+        #[serde(rename = "type")]
+        kind: String,
+        #[serde(default)]
+        sessions: Vec<Ancestor>,
+    }
+    #[derive(Deserialize)]
+    struct Ancestor {
+        via: String,
+        id: crate::SessionId,
+    }
+    let mut parents = std::collections::BTreeSet::new();
+    for (index, line) in header.split(|b| *b == b'\n').enumerate() {
+        if line.is_empty() {
+            break;
+        }
+        let Ok(row) = serde_json::from_slice::<Row>(line) else {
+            return Vec::new();
+        };
+        match row.kind.as_str() {
+            "derived-from" => parents.extend(
+                row.sessions
+                    .into_iter()
+                    .filter(|s| s.via == "clear")
+                    .map(|s| s.id),
+            ),
+            "user" | "assistant" | "system" => break,
+            _ if index == 0 => {}
+            _ => break,
+        }
+    }
+    parents.into_iter().collect()
+}
+
 /// The messages of a transcript, in file order, each uuid once: a replayed
 /// line keeps the position of its first copy.
 #[must_use]

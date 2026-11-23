@@ -656,7 +656,7 @@ impl SessionFilter {
 }
 
 /// One session's cataloging switch, in `control.json`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SessionControl {
     /// Transcript provider; old controls are Claude Code.
@@ -676,7 +676,7 @@ pub struct SessionControl {
     /// Earliest automatic retry; explicit `--session` bypasses it.
     #[serde(with = "time::serde::rfc3339::option")]
     pub retry_after: Option<OffsetDateTime>,
-    /// Links Daniel asserted before the session had a record; the next
+    /// Links established before the session had a record; the next
     /// pass that writes the record moves them onto it and clears this.
     pub pending_links: Vec<SessionLink>,
     /// Who cataloged the session by name (`session catalog`, S14), copied
@@ -690,12 +690,12 @@ pub struct SessionControl {
 pub struct ControlState {
     /// Last verified Codex instruction message processed in each session.
     pub codex_cursors: BTreeMap<SessionId, String>,
-    /// The sessions that were ever switched on.
+    /// Sessions with a switch or a pending continuation link.
     pub sessions: BTreeMap<SessionId, SessionControl>,
 }
 
 impl ControlState {
-    /// The switch for `id`; a session never switched on has none.
+    /// The switch for `id`; absent until first switched on or linked through a handoff.
     #[must_use]
     pub fn get(&self, id: &SessionId) -> Option<&SessionControl> {
         self.sessions.get(id)

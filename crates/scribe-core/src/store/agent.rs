@@ -150,7 +150,7 @@ fn check_spoken_quote(quote: Option<&str>) -> Result<()> {
 
 /// A handoff entry's body must carry the six fixed headings in order and fit
 /// within [`crate::handoff::MAX_CHARS`] (2_design.md §16).
-fn check_handoff(tag: &TagName, content: &str) -> Result<()> {
+pub(super) fn check_handoff(tag: &TagName, content: &str) -> Result<()> {
     if tag.as_str() != crate::handoff::HANDOFF_TAG {
         return Ok(());
     }

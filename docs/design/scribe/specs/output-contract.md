@@ -494,14 +494,20 @@ When this session is not opted in and an active session in the same
 project was updated within the last day, it adds one more line of that
 `systemMessage` (after the stuck-entries line when there is one),
 `scribe: this may continue <id> (recorded) — type /scribe on --from <id> to keep recording`,
-naming the record updated most recently. No line when this session's
+when just one record matches. With several matches it names their ids. No line when this session's
 switch is on or it already has a record, when no record in the project is
 that recent, or when the sessions cannot be read. (Format 19) In an
-interactive session (`CLAUDE_CODE_ENTRYPOINT` is `cli`) with memory, a
+interactive session (`CLAUDE_CODE_ENTRYPOINT` is `cli` or `claude-desktop`) with memory, a
 session or a claim to show, `SessionStart` also gives the agent the brief
 (as `scribe brief` prints it) as `hookSpecificOutput.additionalContext`
 (`hookEventName` `SessionStart`); a headless run (any other entrypoint, or
-none) gets none. It
+none) gets none. A verified clear with a single predecessor and a current
+`continue` handoff prepends its body to the brief and writes the link.
+A `new`, missing or legacy handoff leaves the ordinary brief alone.
+Multiple clear predecessors are named in `systemMessage`. A typed
+`/scribe continue <handoff-id>` supplies the same body in the prompt’s
+`hookSpecificOutput.additionalContext` and lets that turn reach the agent.
+It
 exits 0 whenever the payload parsed, including when every line was refused
 or the store could not be used, so the prompt is never blocked; a payload
 that is not valid JSON, lacks a field or has an invalid `session_id` exits 1
@@ -589,8 +595,8 @@ prompt from the model and shows Daniel the reason. The reason is one line:
 `scribe: on since <time>[; a pass is due]; <record status>` or `scribe: off
 — this session was never switched on …` for a status, `scribe: unknown
 command "/scribe <arg>" — use /scribe on, /scribe off, /scribe status,
-/scribe on --from <id>, /scribe link <id> [--type spawned_from|continues] or
-/scribe catalog <id>`,
+/scribe on --from <id>, /scribe link <id> [--type spawned_from|continues],
+/scribe catalog <id> or /scribe continue <handoff-id>`,
 or `scribe: /scribe <arg> not applied — …` when the payload fails the
 transcript check. A status of a linked session ends `; linked: <type>
 <id>, …`. A link replies `scribe: on — this session is cataloged from now
