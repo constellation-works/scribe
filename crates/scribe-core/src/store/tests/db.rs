@@ -8,7 +8,7 @@ use super::private_tempdir;
 use crate::entry::Speaker;
 use crate::error::Error;
 use crate::message::NewMessage;
-use crate::store::{Redactor, Store};
+use crate::store::{AuditEvent, AuditStatus, Redactor, Store};
 use crate::tests::T0;
 use std::path::Path;
 use std::time::Duration;
@@ -592,4 +592,128 @@ fn project_group_slug_joins_and_inherits() {
             .members()
             .contains(&child)
     );
+}
+
+#[test]
+fn close_group_commits_audit_with_closing_record_without_holding_write_lock_across_model() {
+    let dir = private_tempdir();
+    let store = Store::open(dir.path());
+    let project = crate::Project::sanitized("checkout");
+    let opener: crate::SessionId = "session-opener".parse().unwrap();
+    let second_opener: crate::SessionId = "session-second".parse().unwrap();
+    let id = store
+        .join_project_group("close-audit", &project, &opener, T0)
+        .unwrap();
+    store
+        .capture_group_turns(
+            &opener,
+            &[message("session-opener", "m-1", "secret phrase in turn")],
+            &Redactor::default(),
+        )
+        .unwrap();
+
+    let audit_for = |group_id: &str, session: &crate::SessionId| AuditEvent {
+        at: T0,
+        command: "group close".to_owned(),
+        status: AuditStatus::Success,
+        target: Some(group_id.to_owned()),
+        error_code: None,
+        author: None,
+        instruction_session: Some(session.as_str().to_owned()),
+        instruction_message: None,
+        issue: None,
+        duration_ms: 1,
+    };
+
+    let mut model_calls = 0;
+    let (closed_id, changed) = store
+        .close_group(
+            &id,
+            &opener,
+            T0,
+            &Redactor::default(),
+            |_| {
+                model_calls += 1;
+                // No SQLite write transaction may be held during the model call.
+                let probe = rusqlite::Connection::open(dir.path().join(DB_FILE)).unwrap();
+                probe.execute_batch("BEGIN IMMEDIATE; ROLLBACK;").unwrap();
+                Ok::<_, Error>("Summary of secret phrase work.".to_owned())
+            },
+            |group_id| audit_for(group_id, &opener),
+        )
+        .unwrap();
+    assert_eq!(closed_id, id);
+    assert!(changed);
+    assert_eq!(model_calls, 1);
+
+    let group = store.group(&id).unwrap();
+    assert!(group.closed.is_some());
+    assert_eq!(
+        group.summary.as_deref(),
+        Some("Summary of secret phrase work.")
+    );
+    let (events, torn) = store.audit_events().unwrap();
+    assert_eq!(torn, 0);
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].command, "group close");
+    assert_eq!(events[0].status, AuditStatus::Success);
+    assert_eq!(events[0].target.as_deref(), Some(id.as_str()));
+    assert_eq!(events[0].error_code, None);
+    assert_eq!(events[0].author, None);
+    assert_eq!(
+        events[0].instruction_session.as_deref(),
+        Some(opener.as_str())
+    );
+    assert_eq!(events[0].instruction_message, None);
+    let serialized = serde_json::to_string(&events).unwrap();
+    assert!(!serialized.contains("Summary of secret phrase work."));
+    assert!(!serialized.contains("secret phrase in turn"));
+
+    // Retry returns changed=false without calling the model or adding an audit row.
+    let (retry_id, retry_changed) = store
+        .close_group(
+            &id,
+            &opener,
+            T0,
+            &Redactor::default(),
+            |_| -> Result<String, Error> { panic!("model must not run on retry") },
+            |_| panic!("audit builder must not run on retry"),
+        )
+        .unwrap();
+    assert_eq!(retry_id, id);
+    assert!(!retry_changed);
+    assert_eq!(store.audit_events().unwrap().0.len(), 1);
+
+    // If writing the audit row fails inside the final write, closed and summary roll back too.
+    let second_id = store
+        .join_project_group("close-rollback", &project, &second_opener, T0)
+        .unwrap();
+    let conn = rusqlite::Connection::open(dir.path().join(DB_FILE)).unwrap();
+    conn.execute_batch(
+        "CREATE TRIGGER abort_group_close_audit BEFORE INSERT ON audit
+         WHEN NEW.command = 'group close'
+         BEGIN
+             SELECT RAISE(ABORT, 'injected audit failure');
+         END;",
+    )
+    .unwrap();
+    drop(conn);
+
+    let err = store
+        .close_group(
+            &second_id,
+            &second_opener,
+            T0,
+            &Redactor::default(),
+            |_| Ok::<_, Error>("Rolled back summary.".to_owned()),
+            |group_id| audit_for(group_id, &second_opener),
+        )
+        .unwrap_err();
+    let source = std::error::Error::source(&err).unwrap().to_string();
+    assert!(source.contains("injected audit failure"), "{source}");
+
+    let still_open = store.group(&second_id).unwrap();
+    assert!(still_open.closed.is_none());
+    assert!(still_open.summary.is_none());
+    assert_eq!(store.audit_events().unwrap().0.len(), 1);
 }

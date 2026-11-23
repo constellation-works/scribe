@@ -12,6 +12,8 @@ use scribe_core::{
     AuthorName, Label, Models, Project, Provider, Related, SessionId, WriteRefusal, transcript,
 };
 
+const CLOSE_COMMAND: &str = "group close";
+
 pub(super) const EXAMPLES: &str = "Examples:
   scribe group open --title 'Release review' --kind review --project scribe --quote 'open a release review'
   scribe group join <id> --as editor --author aide --role reviewer
@@ -91,7 +93,7 @@ impl GroupCommand {
             Self::Open { .. } => "group open",
             Self::Join { .. } => "group join",
             Self::Leave => "group leave",
-            Self::Close { .. } => "group close",
+            Self::Close { .. } => CLOSE_COMMAND,
             Self::List | Self::Show { .. } => return None,
         };
         Some(AuditMeta {
@@ -265,12 +267,14 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
         GroupCommand::Close { id } => {
             let session = caller(ctx)?;
             ctx.note_instruction_session(session.as_str());
+            let now = ctx.now();
+            let started = std::time::Instant::now();
             let config = ctx.config()?;
             let models = ctx.models(&config);
             let (id, changed) = store.close_group(
                 &id,
                 &session,
-                ctx.now(),
+                now,
                 &ctx.redactor(&config)?,
                 |evidence| -> Result<_, CliError> {
                     let path = payload::locate(ctx, &session)?;
@@ -287,8 +291,22 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
                     }
                     Ok(models.group_summary(&config.models.ask, evidence)?)
                 },
+                |group_id| scribe_core::AuditEvent {
+                    at: now,
+                    command: CLOSE_COMMAND.to_owned(),
+                    status: scribe_core::AuditStatus::Success,
+                    target: Some(group_id.to_owned()),
+                    error_code: None,
+                    author: None,
+                    instruction_session: Some(session.as_str().to_owned()),
+                    instruction_message: None,
+                    issue: None,
+                    duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                },
             )?;
-            if !changed {
+            if changed {
+                ctx.note_audit_committed();
+            } else {
                 notices.push("group is already closed".into());
             }
             (id, changed)

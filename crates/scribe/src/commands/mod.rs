@@ -195,6 +195,9 @@ impl Command {
 pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
     let meta = command.audit();
     let mut audit = meta.map(|meta| AuditGuard::start(ctx.store(), meta, ctx.now()));
+    if let Some(audit) = audit.as_mut() {
+        audit.set_committed_flag(ctx.audit_committed_flag());
+    }
     let subject = command.subject(ctx);
     if let Some(audit) = audit.as_mut() {
         subject.apply(audit);

@@ -190,3 +190,32 @@ fn a_hook_that_changed_nothing_writes_no_line() {
     drop(guard);
     assert!(!store.audit_path().exists());
 }
+
+#[test]
+fn committed_flag_suppresses_guard_lines_on_mark_result_and_drop() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let dir = private_tempdir();
+    let store = Store::open(dir.path());
+    let committed = Arc::new(AtomicBool::new(false));
+
+    let Output::Show {
+        record: Record::Entry(entry),
+    } = shown_entry(&store)
+    else {
+        panic!("expected shown entry");
+    };
+    let mut guard = AuditGuard::start(&store, ADD, datetime!(2026-09-26 12:00:00 UTC));
+    guard.set_committed_flag(Arc::clone(&committed));
+    committed.store(true, Ordering::Release);
+    guard.mark_result(&Ok(Output::written(Record::Entry(entry), true)));
+    drop(guard);
+    assert!(store.audit_events().unwrap().0.is_empty());
+
+    // Even if a panic unwinds before mark_result runs, Drop writes nothing once committed.
+    let mut unwind_guard = AuditGuard::start(&store, ADD, datetime!(2026-09-26 12:00:00 UTC));
+    unwind_guard.set_committed_flag(committed);
+    drop(unwind_guard);
+    assert!(store.audit_events().unwrap().0.is_empty());
+}
