@@ -422,6 +422,12 @@ impl Store {
         now: OffsetDateTime,
         redactor: &Redactor,
     ) -> Result<OpenedGroup> {
+        if !consent.authorizes_open() {
+            return Err(refusal(
+                WriteRefusal::GroupMembership,
+                "the quoted consent was given for another operation, not opening a group",
+            ));
+        }
         check_own_user_turns(consent.session(), earlier_turns)?;
         crate::check_content(&draft.title)?;
         crate::check_content(&draft.kind)?;

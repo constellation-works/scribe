@@ -376,6 +376,9 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
             let started = std::time::Instant::now();
             let config = ctx.config()?;
             let models = ctx.models(&config);
+            // Resolve the alias once: consent, close and audit all bind to this
+            // canonical id, so a slug reused after a close cannot redirect them.
+            let group = store.group(&id)?;
             let consent = match quote {
                 None => None,
                 Some(quote) if quote.trim().is_empty() => {
@@ -386,7 +389,6 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
                     .into());
                 }
                 Some(quote) => {
-                    let group = store.group(&id)?;
                     let path = payload::locate(ctx, &session)?;
                     let bytes = path
                         .and_then(|p| payload::read_checked(ctx, &p, &session).ok().flatten())
@@ -411,7 +413,7 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
                 .as_ref()
                 .map_or(GroupCloser::Session(&session), GroupCloser::Quoted);
             let outcome = store.close_group_with_outcome(
-                &id,
+                &group.id,
                 closer,
                 now,
                 &ctx.redactor(&config)?,

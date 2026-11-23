@@ -1896,3 +1896,168 @@ fn a_join_backfill_takes_only_the_joining_sessions_own_user_turns() {
         .unwrap();
     assert_eq!(rows, 0);
 }
+
+fn quoter_transcript(session: &str, typed: &str) -> Vec<u8> {
+    serde_json::json!({"type": "user", "uuid": "u-1", "sessionId": session,
+        "timestamp": "2026-11-23T10:00:00Z", "message": {"role": "user", "content": typed}})
+    .to_string()
+    .into_bytes()
+}
+
+#[test]
+fn quoted_close_consent_authorizes_only_its_own_group_and_operation() {
+    use crate::Provider;
+    use crate::group::GroupConsent;
+
+    let dir = private_tempdir();
+    let store = Store::open(dir.path());
+    let project = crate::Project::sanitized("checkout");
+    let opener: crate::SessionId = "session-opener".parse().unwrap();
+    let quoter: crate::SessionId = "session-quoter".parse().unwrap();
+    let redactor = Redactor::default();
+    let audit = |group_id: &str| AuditEvent {
+        at: T0,
+        command: "group close".to_owned(),
+        status: AuditStatus::Success,
+        target: Some(group_id.to_owned()),
+        error_code: None,
+        author: None,
+        instruction_session: Some(quoter.as_str().to_owned()),
+        instruction_message: None,
+        issue: None,
+        duration_ms: 1,
+    };
+    let try_close = |id: &str, consent: &GroupConsent| {
+        store.close_group_with_outcome(
+            id,
+            GroupCloser::Quoted(consent),
+            T0,
+            &redactor,
+            |_| -> Result<String, Error> { panic!("a refused close must not call the model") },
+            audit,
+        )
+    };
+
+    let first = store
+        .join_project_group("alpha", &project, &opener, T0, &redactor)
+        .unwrap();
+    let other: crate::SessionId = "session-other".parse().unwrap();
+    let second = store
+        .join_project_group("beta", &project, &other, T0, &redactor)
+        .unwrap();
+
+    // Consent for closing one group does not close another, by id or alias.
+    let bytes = quoter_transcript(quoter.as_str(), &format!("please close {second} now"));
+    let for_second = GroupConsent::verify_close(
+        quoter.clone(),
+        Provider::ClaudeCode,
+        &bytes,
+        &format!("close {second}"),
+        &second,
+    )
+    .unwrap();
+    for target in [first.as_str(), "alpha"] {
+        let err = try_close(target, &for_second).unwrap_err();
+        assert_eq!(err.code(), "group_membership", "{target}");
+        assert!(store.group(&first).unwrap().closed.is_none());
+    }
+
+    // Consent to open a group is another operation and closes nothing.
+    let for_open = GroupConsent::verify(
+        quoter.clone(),
+        Provider::ClaudeCode,
+        &bytes,
+        &format!("close {second}"),
+    )
+    .unwrap();
+    assert!(try_close(&second, &for_open).is_err());
+    assert!(store.group(&second).unwrap().closed.is_none());
+
+    // And consent to close cannot open one.
+    let err = store
+        .open_group(
+            crate::group::NewGroup {
+                title: "title".to_owned(),
+                kind: "work".to_owned(),
+                project: project.clone(),
+                related: Vec::new(),
+            },
+            &for_second,
+            &[],
+            T0,
+            &redactor,
+        )
+        .err()
+        .expect("close consent must not open a group");
+    assert_eq!(err.code(), "group_membership");
+}
+
+#[test]
+fn quoted_close_consent_for_a_closed_group_does_not_reach_its_reused_alias() {
+    use crate::Provider;
+    use crate::group::GroupConsent;
+
+    let dir = private_tempdir();
+    let store = Store::open(dir.path());
+    let project = crate::Project::sanitized("checkout");
+    let opener: crate::SessionId = "session-opener".parse().unwrap();
+    let replacer: crate::SessionId = "session-replacer".parse().unwrap();
+    let quoter: crate::SessionId = "session-quoter".parse().unwrap();
+    let redactor = Redactor::default();
+
+    let old = store
+        .join_project_group("reused", &project, &opener, T0, &redactor)
+        .unwrap();
+    let bytes = quoter_transcript(quoter.as_str(), &format!("close {old}"));
+    let consent = GroupConsent::verify_close(
+        quoter.clone(),
+        Provider::ClaudeCode,
+        &bytes,
+        &format!("close {old}"),
+        &old,
+    )
+    .unwrap();
+
+    // The old group closes and its slug is reused by a replacement.
+    store
+        .close_group_with_outcome(
+            &old,
+            GroupCloser::Session(&opener),
+            T0,
+            &redactor,
+            |_| Ok::<_, Error>("Done.".to_owned()),
+            |id| AuditEvent {
+                at: T0,
+                command: "group close".to_owned(),
+                status: AuditStatus::Success,
+                target: Some(id.to_owned()),
+                error_code: None,
+                author: None,
+                instruction_session: None,
+                instruction_message: None,
+                issue: None,
+                duration_ms: 1,
+            },
+        )
+        .unwrap();
+    let replacement = store
+        .join_project_group("reused", &project, &replacer, T0, &redactor)
+        .unwrap();
+    assert_ne!(replacement, old);
+    assert_eq!(store.group("reused").unwrap().id, replacement);
+
+    // The old request, replayed through the alias, cannot close the replacement.
+    let err = store
+        .close_group_with_outcome(
+            "reused",
+            GroupCloser::Quoted(&consent),
+            T0,
+            &redactor,
+            |_| -> Result<String, Error> { panic!("the replacement must not be summarized") },
+            |_| panic!("the replacement must not be audited"),
+        )
+        .unwrap_err();
+    assert_eq!(err.code(), "group_membership");
+    assert!(store.group(&replacement).unwrap().closed.is_none());
+    assert!(store.group(&old).unwrap().closed.is_some());
+}

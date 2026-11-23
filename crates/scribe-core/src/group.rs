@@ -99,11 +99,22 @@ pub struct NewGroup {
 pub struct GroupConsent {
     session: SessionId,
     message: String,
+    scope: ConsentScope,
+}
+
+/// The one operation a verified quote authorizes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ConsentScope {
+    /// Opening a group; names no group.
+    Open,
+    /// Closing exactly this group, its `g-<n>` id.
+    Close(String),
 }
 
 impl GroupConsent {
     /// Locate the user's own words in the calling session's transcript.
     /// A Claude transcript can contain history copied from another session.
+    /// The consent authorizes opening a group and nothing else.
     pub fn verify(
         session: SessionId,
         provider: Provider,
@@ -156,11 +167,15 @@ impl GroupConsent {
         Ok(Self {
             session,
             message: found.message.uuid.clone(),
+            scope: group.map_or(ConsentScope::Open, |group| {
+                ConsentScope::Close(group.to_owned())
+            }),
         })
     }
 
-    /// [`GroupConsent::verify`] for closing `group`, its `g-<n>` id. The quote
-    /// must also name the group as a whole word, so `g-1` does not match `g-12`.
+    /// [`GroupConsent::verify`] for closing `group`, its canonical `g-<n>` id.
+    /// The quote must also name the group as a whole word, so `g-1` does not
+    /// match `g-12`. The consent authorizes closing that group only.
     pub fn verify_close(
         session: SessionId,
         provider: Provider,
@@ -169,6 +184,19 @@ impl GroupConsent {
         group: &str,
     ) -> crate::Result<Self> {
         Self::verify_matching(session, provider, bytes, quote, Some(group))
+    }
+
+    /// Whether this consent was verified for opening a group.
+    #[must_use]
+    pub fn authorizes_open(&self) -> bool {
+        self.scope == ConsentScope::Open
+    }
+
+    /// Whether this consent was verified for closing exactly `group`, its
+    /// canonical `g-<n>` id.
+    #[must_use]
+    pub fn authorizes_close(&self, group: &str) -> bool {
+        matches!(&self.scope, ConsentScope::Close(named) if named == group)
     }
 
     /// Provider session in which the user typed the quote.
@@ -207,7 +235,8 @@ fn names_group(source: &str, quote: &str, group: &str) -> bool {
 pub enum GroupCloser<'a> {
     /// The calling session, checked against the opener's seat chain.
     Session(&'a SessionId),
-    /// The user's own typed words, verified for this group. Needs no seat.
+    /// The user's own typed words, verified for closing one group. Needs no
+    /// seat, and authorizes no other group or operation.
     Quoted(&'a GroupConsent),
 }
 

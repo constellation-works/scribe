@@ -113,8 +113,9 @@ impl Store {
 /// opener, may close. A seat replacement already took Daniel's word or a
 /// verified clear, so the seat chain is consent-checked. An opener that never
 /// joined a seat, or left it, has no chain: only that exact session closes.
-/// A quoted closer's words were verified for this group by the command, so it
-/// needs no seat.
+/// A quoted closer needs no seat, but its consent must have been verified for
+/// closing exactly this group: consent for another group or for opening one
+/// never authorizes a close.
 fn check_closer(
     conn: &Connection,
     path: &Path,
@@ -124,7 +125,16 @@ fn check_closer(
 ) -> Result<()> {
     let caller = match closer {
         GroupCloser::Session(caller) => caller,
-        GroupCloser::Quoted(_) => return Ok(()),
+        GroupCloser::Quoted(consent) => {
+            return if consent.authorizes_close(&format!("g-{n}")) {
+                Ok(())
+            } else {
+                Err(refusal(
+                    WriteRefusal::GroupMembership,
+                    format!("the quoted consent was not given to close g-{n}"),
+                ))
+            };
+        }
     };
     if opener == caller.as_str() {
         return Ok(());
