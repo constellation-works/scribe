@@ -39,7 +39,9 @@ pub(crate) struct Column {
     pub(crate) truncate: bool,
 }
 
-/// One cell: its text and what its color means.
+/// One cell: its text and what its color means. Empty text in a record's row
+/// is an absent value and renders as `-` (R14); the one exception is a
+/// continuation row, whose first cell is empty (see [`render`]).
 #[derive(Clone, Debug)]
 pub(crate) struct Cell {
     /// The text; an absent value is `-`, never empty (R14).
@@ -59,6 +61,10 @@ impl Cell {
 }
 
 /// Render `rows` under `columns`, each line ending in `\n`.
+///
+/// An empty cell is an absent value and prints as `-` (R14), in every table.
+/// A row whose first cell is empty is a continuation of the row above it (a
+/// proposal's quote line): its blanks are layout, not values, and stay blank.
 pub(crate) fn render(
     columns: &[Column],
     rows: &[Vec<Cell>],
@@ -68,9 +74,14 @@ pub(crate) fn render(
     let rows: Vec<Vec<Cell>> = rows
         .iter()
         .map(|row| {
+            let continuation = row.first().is_some_and(|cell| cell.text.is_empty());
             row.iter()
                 .map(|cell| Cell {
-                    text: printable(&cell.text),
+                    text: if cell.text.is_empty() && !continuation {
+                        "-".to_owned()
+                    } else {
+                        printable(&cell.text)
+                    },
                     role: cell.role,
                 })
                 .collect()

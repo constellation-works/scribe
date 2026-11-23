@@ -115,3 +115,17 @@ fn control_characters_in_a_cell_print_as_replacement_characters() {
     assert!(text.contains("red \u{FFFD}[31mtext\u{FFFD}"), "{text:?}");
     assert!(!text.contains("\x1b[31m"), "{text:?}");
 }
+
+// STD-01 R14: an absent cell is `-`, never blank, in every table.
+#[test]
+fn an_empty_cell_renders_as_a_dash() {
+    let text = render(&COLUMNS, &[row("1", "", "")], None, false);
+    assert_eq!(text.lines().nth(1), Some(" 1  -      -"), "{text:?}");
+}
+
+#[test]
+fn a_continuation_row_keeps_its_layout_blanks() {
+    let rows = [row("1", "title", "-"), row("", "a second line", "")];
+    let text = render(&COLUMNS, &rows, None, false);
+    assert_eq!(text.lines().nth(2), Some("    a second line"), "{text:?}");
+}

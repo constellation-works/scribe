@@ -366,7 +366,10 @@ fn group_roster_matches_goldens() {
             'Review complete.' || char(10) || 'For work missing from the handoffs, see repo:scribe.');
         INSERT INTO group_seats VALUES (1,'editor','reviewer');
         INSERT INTO group_members (position, group_id, seat, session, author, joined)
-            VALUES (1,1,'editor','member','aide','2026-11-22T09:05:00Z');"#,
+            VALUES (1,1,'editor','member','aide','2026-11-22T09:05:00Z');
+        -- An open group has no summary and no closing time: its cells are `-` (STD-01 R14).
+        INSERT INTO groups (id, title, kind, project, opened, closed, opener, related, summary)
+            VALUES (2,'Docs sweep','sweep','scribe','2026-11-22T11:00:00Z',NULL,'opener','[]',NULL);"#,
     );
     let mut failures = Vec::new();
     for (name, args) in [

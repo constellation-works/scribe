@@ -42,9 +42,14 @@ agents break silently when the machine form drifts.
 Precedence: flag > `SCRIBE_FORMAT` > auto. An unrecognized environment
 value means auto. Off a terminal there are no escapes and no truncation; on
 a terminal only the last free-text column is cut to the width, and `show`
-or `--json` has it whole. In plain and table rows, free text is flattened to
-one line (every whitespace run becomes one space), an empty value or list
-is `-`, lists are comma-joined, and timestamps are RFC 3339.
+or `--json` has it whole. The width is `COLUMNS` when it holds a positive
+number, else the terminal's own size (`TIOCGWINSZ` on stdout); both are read
+in the output sink only, and with neither no table is cut. In plain and table
+rows, free text is flattened to one line (every whitespace run becomes one
+space), an empty value or list is `-`, lists are comma-joined, and timestamps
+are RFC 3339. An absent cell is `-` in every table, never blank; the one
+blank cells are the layout cells of a continuation row (a proposal's quote
+line).
 
 ## Plain columns
 
@@ -1023,3 +1028,12 @@ when absent). Each seat has a `name`, a `role`, its `transcripts` in join order
 and `newest_handoff` (an active entry id or null). Seats sort by name.
 `group list --json` returns the same objects newest first in `items`, alongside
 `total`, `truncated` and `warnings`.
+
+`group list`'s table holds short values only: `ID TITLE KIND PROJECT OPENED
+CLOSED SEATS`, where `SEATS` is the right-aligned number of seats and only
+`TITLE` is cut to a terminal's width (`CLOSED` is `-` while open). Its plain
+line keeps every field: `id title kind project opened closed opener related
+seats summary`, with `seats` as `<name> (<role>): <session> -> <session>
+[handoff: <id or ->]` joined by `; `, and `-` for an empty `related`, `seats`
+or `summary`. The opener, related references, seat chains and summary are
+read in full with `group show <id>` or `--json`.

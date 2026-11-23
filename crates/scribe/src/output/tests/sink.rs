@@ -74,6 +74,34 @@ fn only_a_terminal_has_a_width() {
     assert_eq!(Sink::resolve(true, &SinkEnv::default(), None).width, None);
 }
 
+#[test]
+fn a_terminal_without_columns_takes_its_own_width() {
+    let queried = SinkEnv {
+        terminal_columns: Some(120),
+        ..SinkEnv::default()
+    };
+    assert_eq!(Sink::resolve(true, &queried, None).width, Some(120));
+    // `COLUMNS` still wins when it holds a width, and is ignored when it does not.
+    let both = SinkEnv {
+        columns: Some("80".into()),
+        ..queried.clone()
+    };
+    assert_eq!(Sink::resolve(true, &both, None).width, Some(80));
+    let junk = SinkEnv {
+        columns: Some("wide".into()),
+        ..queried.clone()
+    };
+    assert_eq!(Sink::resolve(true, &junk, None).width, Some(120));
+    // A pipe never truncates, whatever the terminal reports (STD-01 R9).
+    assert_eq!(Sink::resolve(false, &both, None).width, None);
+    // A terminal that reports a zero width has none.
+    let zero = SinkEnv {
+        terminal_columns: Some(0),
+        ..SinkEnv::default()
+    };
+    assert_eq!(Sink::resolve(true, &zero, None).width, None);
+}
+
 fn args(list: &[&str]) -> Vec<OsString> {
     list.iter().map(OsString::from).collect()
 }

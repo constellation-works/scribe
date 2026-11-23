@@ -1,2 +1,3 @@
-ID   TITLE           KIND    PROJECT  OPENED                CLOSED                OPENER  RELATED      SEATS                                   SUMMARY
-g-1  Release review  review  scribe   2026-11-22T09:00:00Z  2026-11-22T10:00:00Z  opener  repo:scribe  editor (reviewer): member [handoff: -]  Review complete. For work missing from the handoffs, see repo:scribe.
+ID   TITLE           KIND    PROJECT  OPENED                CLOSED                SEATS
+g-2  Docs sweep      sweep   scribe   2026-11-22T11:00:00Z  -                         0
+g-1  Release review  review  scribe   2026-11-22T09:00:00Z  2026-11-22T10:00:00Z      1

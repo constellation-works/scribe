@@ -3,10 +3,10 @@
 //! Each group names commands. The name and the summary printed beside it come
 //! from that command's one clap declaration (the doc comment on the noun),
 //! never from a second copy of the summary (STD-01 R25). Every group shares
-//! one description column, taken from the longest name. A pipe, or a terminal
-//! with no `COLUMNS`, keeps one line per command so the root golden does not
-//! depend on the machine (STD-01 R17, R24). A terminal that has `COLUMNS`
-//! wraps a long summary under that column.
+//! one description column, taken from the longest name. A pipe keeps one line
+//! per command so the root golden does not depend on the machine (STD-01 R17,
+//! R24). A terminal wraps a long summary under that column, to `COLUMNS` or,
+//! when that is unset, the terminal's own width.
 
 use clap::Command;
 
