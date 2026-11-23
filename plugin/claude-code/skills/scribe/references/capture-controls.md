@@ -14,6 +14,11 @@ catalog a past session, run
 `scribe --provider <provider> session catalog <id> --author <name>`
 under your own author.
 
+A catalog switch is an on switch: its passes write memory the same way
+`/scribe on` passes do. A session that is off gets no pass and no memory. Its
+`#scribe` lines are still recorded, and an open group may still store its typed
+turns; those are group-only (`session-groups.md`).
+
 ## Annotating a turn
 
 In Claude Code and Codex, every `#scribe` in the human's typed turn, inside a

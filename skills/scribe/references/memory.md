@@ -23,6 +23,8 @@ Run `scribe memory show <id> --json` to read one item and its source sessions.
   item or milestone, run `scribe memory forget <id> --author <name>
   --confirm`; it cannot be undone.
 - Never write memory yourself: only the session pass writes `now` items
-  and milestones, only from sessions switched on with `/scribe on`, and
-  only the refresh writes the profile. `scribe memory rules` prints the
-  fixed rules.
+  and milestones, only from sessions switched on with `/scribe on` or named
+  with `session catalog`, and only the refresh writes the profile. A session
+  that is off gets no memory pass. Memory evidence is the human's own typed
+  words; the assistant's turns are context only. `scribe memory rules`
+  prints the fixed rules.

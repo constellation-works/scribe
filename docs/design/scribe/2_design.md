@@ -7,7 +7,7 @@ status: Draft
 feature: scribe
 doc_role: design
 type: design
-summary: How the scribe plugin is bounded (one binary; Daniel writes through hooks, agents read and write through the CLI taught by one skill, and the MCP surface stays ask), how #scribe entries, /scribe on session records (a rewritable header over an append-only log of segments), active and inactive sessions, ask and search, the consistency routine, backfill by name and the tmux popup work, where everything is stored, which model does what, and the slice plan that builds it; §11–§13 are proposed designs (claims and issues, settling on instruction, and the descriptive memory written from /scribe on sessions; its personal base for sessions that are off, people, recurring dates and light catalog entries are designed but parked 2026-11-21, and scribe reads Claude Code and Codex sessions only); §14 (approved 2026-11-21; step 1 built, store format 22) catalogs `#scribe` as an annotation anywhere in a typed turn, at the end of the turn, with a statement and a verbatim quote; §15 (proposed 2026-11-22, not built) makes tags configurable catchers whose inferred catches are claims with a context paragraph and a verbatim quote, adds `scribe brief`, fixes memory to `profile.md`, `now/` and `milestones/` with a weekly profile job, removes every personal name from shipped text, makes `issue` a catcher tag instead of a record kind, and moves sessions, entries, claims, state and audit into one SQLite database.
+summary: How the scribe plugin is bounded (one binary; Daniel writes through hooks, agents read and write through the CLI taught by one skill, and the MCP surface stays ask), how #scribe entries, /scribe on session records (a rewritable header over an append-only log of segments), active and inactive sessions, ask and search, the consistency routine, backfill by name and the tmux popup work, where everything is stored, which model does what, and the slice plan that builds it; §11–§13 are proposed designs (claims and issues, settling on instruction, and the descriptive memory written from sessions switched on by /scribe on or cataloged by name; its personal base for sessions that are off, people, recurring dates and light catalog entries are designed but parked 2026-11-21, and scribe reads Claude Code and Codex sessions only); §14 (approved 2026-11-21; step 1 built, store format 22) catalogs `#scribe` as an annotation anywhere in a typed turn, at the end of the turn, with a statement and a verbatim quote; §15 (proposed 2026-11-22, not built) makes tags configurable catchers whose inferred catches are claims with a context paragraph and a verbatim quote, adds `scribe brief`, fixes memory to `profile.md`, `now/` and `milestones/` with a weekly profile job, removes every personal name from shipped text, makes `issue` a catcher tag instead of a record kind, and moves sessions, entries, claims, state and audit into one SQLite database.
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
@@ -3789,7 +3789,8 @@ memory only. The reasons and the alternatives are in
 memory split per session into a **personal base** that every session a
 human types in would feed (`profile`, `now`, `milestones`, a sixth section
 `people`, and recurring dates) and a **work layer** that only sessions
-switched on with `/scribe on` feed, with a **light catalog entry** for a
+switched on (with `/scribe on`, or named with `session catalog`, §5.8)
+feed, with a **light catalog entry** for a
 session that is off. **Those parts are parked, 2026-11-21 ([ORB-26256]).**
 Daniel, chief's chat, 2026-11-21, of the consolidated task list of this
 section: "park 2-5, keep 1, 6, 7". Parked, each marked in its own section
@@ -3902,7 +3903,8 @@ list is not a section and has its own setting (`recent_sessions = 0`).
 **Work and personal.** A second setting, `[memory] personal`, decides
 whether personal life is kept at all, and it ships **true** (the default of
 [ORB-26240], kept when its base was parked; ORB-26219 had shipped false).
-Memory is written only from sessions switched on with `/scribe on`, and
+Memory is written only from sessions switched on (with `/scribe on`, or
+named with `session catalog`, §5.8), and
 `personal = true` means the pass of such a session may keep the personal
 elements it finds in what he typed: household facts in `profile`, personal
 events in `now` (§13.4), personal milestones, and the stated events
@@ -3914,7 +3916,8 @@ that the model marks personal, in every section (`memory_personal_off`), so
 `now` holds work state ("a release under way", "dk-server-1 unreachable")
 and `milestones` work milestones ("pulsar decommissioned"); no family
 event, loss or household fact is written. The setting does not choose
-**which** sessions feed memory: that is only `/scribe on` while the base
+**which** sessions feed memory: that is only the switch (`/scribe on`, or
+`session catalog`) while the base
 ([§13.12](#1312-a-personal-base-and-a-work-layer-per-session)) is parked.
 How a store chooses these settings as a whole was first to be `work` and
 `personal` presets; [ORB-26240] replaced them with a per-session split,
@@ -3991,13 +3994,18 @@ updates the record returns a `memory` array beside `candidates`.
 `session rebuild` leaves it disabled, as it does candidates.
 
 - **Source.** Only the user's typed turns of a session he switched on (or
-  named for catalog; §5.8) are read, with every exclusion of §5.3: pasted
-  blocks, fenced or indented code, blockquotes, marked `#scribe` lines,
-  synthetic and meta turns. Assistant turns are never a source (§11.3
-  already stops the pass reading them). While the base is parked, a session
-  neither switched on nor explicitly named for catalog gets no
-  personal-memory pass; group consent can still store its eligible turns
-  from the time it joins an open group, without a catalog entry (§17).
+  named for catalog; §5.8) are memory evidence, with every exclusion of §5.3:
+  pasted blocks, fenced or indented code, blockquotes, marked `#scribe` lines,
+  synthetic and meta turns. A memory quote must be a verbatim span of one of
+  those turns; the check refuses any other (the own-words check in
+  `memory/mod.rs`). The model window still carries the assistant's turns as
+  context, labelled as the assistant's, so the pass can read what a user turn
+  answers; an assistant turn is never memory evidence. (§11.3 proposes that
+  the pass stop reading assistant turns at all; that is not built.) While the
+  base is parked, a session neither switched on nor explicitly named for
+  catalog gets no personal-memory pass. Group consent can still store its
+  eligible typed turns from the time it joins an open group, as group-only
+  turns: no memory pass reads them and they make no catalog entry (§17).
 - **Bound.** At most **3 memory items per session per pass invocation**,
   shared across its windows and separate from the 3 candidate slots;
   refused items consume a slot. Each array element is `{section,
@@ -4452,7 +4460,7 @@ Not built until seen:
 > **Parked 2026-11-21 ([ORB-26256]).** Daniel, chief's chat, 2026-11-21: "park 2-5, keep 1, 6, 7".
 > Reason: Claude Code and Codex only ([4_decisions.md](./4_decisions.md#scribe-reads-claude-code-and-codex-sessions-only)), so there is no surface whose sessions the base pass and `/scribe private` would serve beyond what `/scribe on` already covers.
 > Nothing below is built or scheduled; the text is kept for when he unparks it.
-> While it is parked, memory items are written only from sessions switched on with `/scribe on`, and `[memory] personal = true` only admits personal elements from those (§13.1). The settings `[memory] base` and `base_idle_minutes` and the `layer` field are not shipped with (a), and the issue hint of §11.4 stays in every interactive session.
+> While it is parked, memory items are written only from sessions switched on with `/scribe on` or named with `session catalog` (§5.8), and `[memory] personal = true` only admits personal elements from those (§13.1). The settings `[memory] base` and `base_idle_minutes` and the `layer` field are not shipped with (a), and the issue hint of §11.4 stays in every interactive session.
 
 [ORB-26240], designed 2026-11-21, **not built**. Daniel, chief's chat,
 2026-11-21, after approving `work` and `personal` presets ("Yes, add
@@ -5907,8 +5915,10 @@ with phase 4):
 **Messages.**
 
 - **What is stored.** A session pass stores the user's typed turns of a
-  switched-on session; group consent also permits capture from the time a
-  session joins an open group, even with cataloging off (§17). Both use
+  session switched on with `/scribe on` or named with `session catalog`
+  (§5.8); group consent also permits capture from the time a session joins an
+  open group, even with cataloging off (§17); those group-only turns feed no
+  memory pass and make no catalog entry. Both use
   §5.3's exclusions (pasted blocks, fenced code, synthetic and meta
   turns). The text passes the redactor before it is written (STD-05). The
   only assistant turns stored are those a claim or a collected entry cites
