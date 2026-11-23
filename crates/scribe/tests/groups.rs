@@ -754,6 +754,35 @@ fn a_session_that_left_the_openers_seat_cannot_close() {
     assert_close_refused(&f, &path, D);
 }
 
+/// A closer whose own transcript cannot be verified is refused, and the refusal
+/// names that session's transcript rather than the opener's, for the opener and
+/// for the seat holder that replaced it.
+#[test]
+fn a_closer_whose_own_transcript_cannot_be_verified_is_named_as_itself() {
+    let (f, path) = seated_group();
+    join_as(&f, B, "g-1", "chief", &["--replace"], 0);
+    std::fs::remove_file(transcript_path(&f, A)).unwrap();
+    std::fs::remove_file(transcript_path(&f, B)).unwrap();
+    for (closer, other) in [(B, A), (A, B)] {
+        let out = close_as(&f, &path, closer);
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "{closer}: {}",
+            text(&out.stderr)
+        );
+        let message = text(&out.stderr);
+        assert!(
+            message.contains(&format!("transcript of session {closer} ")),
+            "{message}"
+        );
+        assert!(!message.contains(other), "{message}");
+        assert_close_refused(&f, &path, closer);
+    }
+    assert_eq!(model_calls(&f), 0);
+    assert!(invoke(&f, A, &["group", "show", "g-1"], 0)["closed"].is_null());
+}
+
 #[test]
 fn an_opener_without_a_seat_is_the_only_closer() {
     let f = Fixture::new();
