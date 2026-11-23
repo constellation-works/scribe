@@ -553,6 +553,12 @@ pub fn claude_conversation(bytes: &[u8]) -> Vec<Spoken> {
     read_claude_conversation(bytes, own_words)
 }
 
+/// Read origin-verified typed turns without removing fenced or quoted text.
+#[must_use]
+pub fn claude_conversation_raw_typed(bytes: &[u8]) -> Vec<Spoken> {
+    read_claude_conversation(bytes, str::to_owned)
+}
+
 fn read_claude_conversation(bytes: &[u8], own: impl Fn(&str) -> String) -> Vec<Spoken> {
     let mut claims: BTreeMap<String, Claims> = BTreeMap::new();
     for line in bytes.split(|&b| b == b'\n') {

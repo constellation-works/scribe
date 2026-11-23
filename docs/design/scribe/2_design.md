@@ -6394,7 +6394,10 @@ session.
   and the existing verbatim check. A quote-less handoff requires `--mode`,
   and `CLAUDE_CODE_SESSION_ID` must equal the one related session; the CLI
   locates and verifies that session's transcript and requires a nonempty
-  human-typed turn. It passes that verification to the store, which refuses
+  human-typed turn there or in its clear ancestry. Each untyped link must
+  name exactly one `via: clear` predecessor in its opening metadata; each
+  predecessor must pass transcript provenance checks. Traversal refuses
+  cycles and more than 16 predecessor hops. It passes that verification to the store, which refuses
   a quote-less handoff without it (`quote_required`); a missing or noninteractive
   transcript is refused (`quote_not_found`). This shell variable was measured
   in Claude desktop on 2026-11-22 and changes on clear. A handoff belongs to
@@ -6505,8 +6508,9 @@ as in §16.1; the shell session id is the chosen identity signal, not a claim
 of cryptographic identity. For handoffs with a quote, the existing verbatim
 check remains: the quote must be at least eight characters from one typed
 turn, so a bare “yes” or a synthetic UI event alone does not pass it. The
-transcript check also excludes synthetic or assistant-only sessions from the
-quote-less path.
+transcript check also excludes sessions with no typed turn in their verified
+clear ancestry from the quote-less path. A clear continues the same interactive
+session; peer messages and scheduled prompts do not count as typed turns.
 
 ### 16.6 Entries on a spoken instruction
 

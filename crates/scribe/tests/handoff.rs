@@ -1756,3 +1756,112 @@ fn refresh_requires_interactive_start_and_provenance_and_refuses_a_self_link() {
             .contains("never switched on")
     );
 }
+
+// Write the opening ancestry before the peer-origin user turn, as Claude does.
+fn clear_transcript(fx: &Fixture, id: &str, parents: &[&str]) -> Transcript {
+    let tr = Transcript::new(fx, id);
+    let sessions: Vec<_> = parents
+        .iter()
+        .map(|id| json!({"via":"clear", "id":id}))
+        .collect();
+    let rows = [
+        json!({"type":"session-owner", "sessionId":id}),
+        json!({"type":"derived-from", "sessions":sessions}),
+        json!({"type":"user", "uuid":"peer-1", "sessionId":id,
+            "timestamp":"2026-11-22T12:00:00Z", "promptSource":"system",
+            "turnOrigin":"peer", "message":{"role":"user", "content":"<cross-session>continue from handoff-1</cross-session>"}}),
+    ];
+    std::fs::write(
+        &tr.path,
+        rows.iter().map(|r| format!("{r}\n")).collect::<String>(),
+    )
+    .unwrap();
+    make_private(&tr.path);
+    tr
+}
+
+fn try_refresh(fx: &Fixture, id: &str) -> Output {
+    fx.cmd(&[
+        "entry",
+        "add",
+        "--tag",
+        "handoff",
+        "--author",
+        "opus",
+        "--related",
+        &format!("session:{id}"),
+        "--mode",
+        "continue",
+        "--json",
+        &valid_handoff(&format!("Continued {id}."), "Keep working."),
+    ])
+    .env("CLAUDE_CODE_SESSION_ID", id)
+    .output()
+    .unwrap()
+}
+
+#[test]
+fn peer_restarted_session_can_write_second_refresh_through_clear_ancestry() {
+    let fx = Fixture::new();
+    let parent = Transcript::new(&fx, OFF_SESSION);
+    refresh_handoff(
+        &fx,
+        &parent,
+        "continue",
+        &valid_handoff("First.", "Continue."),
+    );
+    clear_transcript(&fx, CHILD, &[OFF_SESSION]);
+    let out = try_refresh(&fx, CHILD);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(json_of(&out)["handoff_mode"], "continue");
+    assert_eq!(json_of(&out)["id"], "handoff-2");
+    let grandchild = "8f3e2d90-4b6c-4e51-8a83-2c1d0e9f8a72";
+    clear_transcript(&fx, grandchild, &[CHILD]);
+    let out = try_refresh(&fx, grandchild);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+}
+
+#[test]
+fn refresh_rejects_invalid_clear_ancestry_and_reports_failed_link() {
+    let fx = Fixture::new();
+    let parent = clear_transcript(&fx, OFF_SESSION, &[]);
+    clear_transcript(&fx, CHILD, &[OFF_SESSION]);
+    let assert_refused = |id: &str, failed: &str| {
+        let out = try_refresh(&fx, id);
+        assert_eq!(out.status.code(), Some(1));
+        let error: Value = serde_json::from_slice(&out.stderr).unwrap();
+        assert_eq!(error["code"], "quote_not_found");
+        assert!(error.to_string().contains(failed), "{error}");
+    };
+    assert_refused(CHILD, OFF_SESSION);
+    clear_transcript(&fx, OFF_SESSION, &[CHILD]);
+    assert_refused(CHILD, CHILD);
+    clear_transcript(&fx, OFF_SESSION, &[CHILD, ON_SESSION]);
+    assert_refused(CHILD, OFF_SESSION);
+    // A symlink is never acceptable transcript provenance, even to a typed transcript.
+    let typed = Transcript::new(&fx, ON_SESSION);
+    typed.write(&[("u", "user", "A typed turn")]);
+    std::fs::remove_file(&parent.path).unwrap();
+    std::os::unix::fs::symlink(&typed.path, &parent.path).unwrap();
+    assert_refused(CHILD, OFF_SESSION);
+}
+
+#[test]
+fn refresh_clear_ancestry_is_limited_to_sixteen_hops() {
+    let fx = Fixture::new();
+    let ids: Vec<String> = (0..18)
+        .map(|n| format!("00000000-0000-4000-8000-{n:012x}"))
+        .collect();
+    for n in 0..17 {
+        clear_transcript(&fx, &ids[n], &[&ids[n + 1]]);
+    }
+    Transcript::new(&fx, &ids[17]).write(&[("u", "user", "A typed turn")]);
+    let accepted = try_refresh(&fx, &ids[1]);
+    assert!(accepted.status.success(), "{}", text(&accepted.stderr));
+    let refused = try_refresh(&fx, &ids[0]);
+    assert_eq!(refused.status.code(), Some(1));
+    let error: Value = serde_json::from_slice(&refused.stderr).unwrap();
+    assert_eq!(error["code"], "quote_not_found");
+    assert!(error.to_string().contains(&ids[16]));
+    assert!(error.to_string().contains("16-hop"));
+}
