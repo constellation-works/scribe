@@ -579,11 +579,9 @@ fn entries_proposals_and_backfill_rows_have_their_shapes() {
             .to_string()
         })
         .collect();
-    std::fs::write(
-        dir.join("c0ffee00-1111-4222-8333-444455556666.jsonl"),
-        lines.join("\n") + "\n",
-    )
-    .unwrap();
+    let transcript = dir.join("c0ffee00-1111-4222-8333-444455556666.jsonl");
+    std::fs::write(&transcript, lines.join("\n") + "\n").unwrap();
+    support::make_private(&transcript);
     let year = now.year().to_string();
     let transcripts = fields(&rows(&fx, &["transcripts", "--year", &year], &[]));
     assert_eq!(transcripts[0].0, "transcript");

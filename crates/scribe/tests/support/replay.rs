@@ -150,11 +150,10 @@ pub fn rebuild(recording: &Path, mode: Mode) -> Run {
     }
     let project = fx.home().join(".claude/projects").join(&meta.project);
     std::fs::create_dir_all(&project).expect("create projects dir");
-    std::fs::copy(
-        recording.join("transcript.jsonl"),
-        project.join(format!("{}.jsonl", meta.session)),
-    )
-    .expect("place transcript");
+    let transcript = project.join(format!("{}.jsonl", meta.session));
+    std::fs::copy(recording.join("transcript.jsonl"), &transcript).expect("place transcript");
+    // `copy` keeps the recording's mode, which follows the checkout's umask.
+    make_private(&transcript);
     let state = fx.elsewhere("replay");
     std::fs::create_dir(&state).expect("create replay state");
     let path = fx.fake_program("claude", &fake_claude(recording, &state, mode));

@@ -1326,13 +1326,17 @@ impl Setup {
 
     fn write(&self, session: &str, lines: &[Value]) {
         let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
-        std::fs::write(self.transcript(session), text).unwrap();
+        let path = self.transcript(session);
+        std::fs::write(&path, text).unwrap();
+        make_private(&path);
     }
 
     fn append(&self, session: &str, lines: &[Value]) {
         let mut text = std::fs::read_to_string(self.transcript(session)).unwrap_or_default();
         text.extend(lines.iter().map(|l| format!("{l}\n")));
-        std::fs::write(self.transcript(session), text).unwrap();
+        let path = self.transcript(session);
+        std::fs::write(&path, text).unwrap();
+        make_private(&path);
     }
 
     /// The fake `claude`: saves its stdin (the prompt) and answers `body`

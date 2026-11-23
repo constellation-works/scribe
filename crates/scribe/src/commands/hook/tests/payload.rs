@@ -54,6 +54,19 @@ impl Setup {
     }
 }
 
+/// Write `text` as the session's transcript at exactly `mode`: the process
+/// umask must not decide what a test checks.
+fn write_transcript(setup: &Setup, text: &str, mode: u32) -> PathBuf {
+    let path = setup.transcript();
+    std::fs::write(&path, text).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+    path
+}
+
+/// Modes that another user can write: a group or an other write bit.
+const WRITABLE_BY_OTHERS: [u32; 4] = [0o664, 0o646, 0o622, 0o666];
+const WRITE_REFUSAL: &str = "writable by another user";
+
 #[test]
 fn a_regular_transcript_is_read_and_a_missing_one_is_none() {
     let setup = Setup::new();
@@ -62,7 +75,7 @@ fn a_regular_transcript_is_read_and_a_missing_one_is_none() {
             .unwrap()
             .is_none()
     );
-    std::fs::write(setup.transcript(), "line\n").unwrap();
+    write_transcript(&setup, "line\n", 0o600);
     let bytes = payload::read_checked(&setup.ctx, &setup.transcript(), &setup.id())
         .unwrap()
         .unwrap();
@@ -72,8 +85,7 @@ fn a_regular_transcript_is_read_and_a_missing_one_is_none() {
 #[test]
 fn a_transcript_swapped_for_a_link_after_the_check_is_not_followed() {
     let setup = Setup::new();
-    std::fs::write(setup.transcript(), "real\n").unwrap();
-    let path = setup.transcript();
+    let path = write_transcript(&setup, "real\n", 0o600);
     assert_eq!(
         payload::check(&setup.ctx, &path, &setup.id()),
         Ok(Transcript::Present)
@@ -133,9 +145,113 @@ fn a_pipe_in_place_of_the_transcript_is_refused_without_blocking() {
 fn a_transcript_named_for_another_session_is_refused_before_it_is_opened() {
     let setup = Setup::new();
     let other: SessionId = "0a1b2c3d-0000-4000-8000-0000000000d2".parse().unwrap();
-    std::fs::write(setup.transcript(), "x\n").unwrap();
+    write_transcript(&setup, "x\n", 0o600);
     assert!(matches!(
         payload::read_checked(&setup.ctx, &setup.transcript(), &other),
         Err(Unreadable::Refused(_))
     ));
+}
+
+#[test]
+fn a_transcript_only_its_owner_can_write_is_accepted_whatever_its_read_bits() {
+    for mode in [0o600, 0o640, 0o644, 0o400] {
+        let setup = Setup::new();
+        let path = write_transcript(&setup, "line\n", mode);
+        let id = setup.id();
+        assert_eq!(
+            payload::check(&setup.ctx, &path, &id),
+            Ok(Transcript::Present),
+            "mode {mode:o}"
+        );
+        let bytes = payload::read_checked(&setup.ctx, &path, &id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(bytes, b"line\n", "mode {mode:o}");
+    }
+}
+
+#[test]
+fn a_transcript_writable_by_another_user_is_refused_by_the_path_check() {
+    for mode in WRITABLE_BY_OTHERS {
+        let setup = Setup::new();
+        let path = write_transcript(&setup, "line\n", mode);
+        let checked = payload::check(&setup.ctx, &path, &setup.id());
+        assert!(
+            matches!(&checked, Err(why) if why.contains(WRITE_REFUSAL)),
+            "mode {mode:o}: {checked:?}"
+        );
+    }
+}
+
+#[test]
+fn a_transcript_writable_by_another_user_is_refused_by_the_open_handle_and_every_read() {
+    for mode in WRITABLE_BY_OTHERS {
+        let setup = Setup::new();
+        let path = write_transcript(&setup, "line\n", mode);
+        let id = setup.id();
+        let ctx = &setup.ctx;
+
+        let opened = payload::open_checked(ctx, &path, &id);
+        assert!(
+            matches!(&opened, Err(Unreadable::Refused(why)) if why.contains(WRITE_REFUSAL)),
+            "open_checked, mode {mode:o}: {opened:?}"
+        );
+        let read = payload::read_checked(ctx, &path, &id);
+        assert!(
+            matches!(&read, Err(Unreadable::Refused(why)) if why.contains(WRITE_REFUSAL)),
+            "read_checked, mode {mode:o}: {read:?}"
+        );
+        let bytes = payload::read_checked_bytes(ctx, &path, &id);
+        assert!(
+            matches!(&bytes, Err(Unreadable::Refused(why)) if why.contains(WRITE_REFUSAL)),
+            "read_checked_bytes, mode {mode:o}: {bytes:?}"
+        );
+        let header = payload::claude_header(ctx, &path, &id);
+        assert!(
+            matches!(&header, Err(Unreadable::Refused(why)) if why.contains(WRITE_REFUSAL)),
+            "claude_header, mode {mode:o}: {header:?}"
+        );
+        let unchecked = payload::read_for(ctx, &path);
+        assert!(
+            matches!(&unchecked, Err(e) if e.to_string().contains(WRITE_REFUSAL)),
+            "read_for, mode {mode:o}: {unchecked:?}"
+        );
+    }
+}
+
+#[test]
+fn a_transcript_made_writable_after_its_check_is_refused_on_read() {
+    let setup = Setup::new();
+    let path = write_transcript(&setup, "line\n", 0o600);
+    let id = setup.id();
+    assert_eq!(
+        payload::check(&setup.ctx, &path, &id),
+        Ok(Transcript::Present)
+    );
+
+    // Another user's write bit appears between the path check and the read.
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o664)).unwrap();
+    let read = payload::read_checked(&setup.ctx, &path, &id);
+    assert!(
+        matches!(&read, Err(Unreadable::Refused(why)) if why.contains(WRITE_REFUSAL)),
+        "{read:?}"
+    );
+}
+
+#[test]
+fn a_codex_rollout_writable_by_another_user_is_refused_by_the_path_check() {
+    let setup = Setup::new();
+    let ctx = setup.ctx.with_provider(scribe_core::Provider::Codex);
+    let sessions = setup.dir.path().join("home/.codex/sessions/2026/11/23");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let path = sessions.join(format!("rollout-2026-11-23T00-00-00-{ID}.jsonl"));
+    std::fs::write(&path, "x\n").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o664)).unwrap();
+    // The preflight's own reason: the Codex read guard's wording says "Codex
+    // transcript", so this cannot pass by the read refusal alone.
+    let checked = payload::check(&ctx, &path, &setup.id());
+    assert!(
+        matches!(&checked, Err(why) if why.starts_with("the transcript is writable by another user")),
+        "{checked:?}"
+    );
 }

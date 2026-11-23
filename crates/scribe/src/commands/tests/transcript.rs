@@ -48,7 +48,10 @@ impl Setup {
 
     fn write(&self, session: &str, lines: &[serde_json::Value]) {
         let text: String = lines.iter().map(|line| format!("{line}\n")).collect();
-        std::fs::write(self.projects_dir().join(format!("{session}.jsonl")), text).unwrap();
+        let path = self.projects_dir().join(format!("{session}.jsonl"));
+        std::fs::write(&path, text).unwrap();
+        // Owner-only, as Claude Code writes it: the umask must not decide it.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
     }
 
     fn config(&self, text: &str) {

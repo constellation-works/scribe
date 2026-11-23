@@ -221,6 +221,7 @@ impl Setup {
         ];
         let body: String = lines.iter().map(|l| format!("{l}\n")).collect();
         std::fs::write(&self.transcript, body).unwrap();
+        make_private(&self.transcript);
         let payload = json!({"session_id": SESSION, "transcript_path": self.transcript,
             "cwd": self.cwd, "permission_mode": "default",
             "hook_event_name": "UserPromptSubmit", "prompt": prompt});

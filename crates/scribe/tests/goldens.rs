@@ -395,6 +395,7 @@ fn session_forget_matches_golden() {
     std::fs::create_dir_all(&project).unwrap();
     let transcript = project.join(format!("{SESSION}.jsonl"));
     std::fs::write(&transcript, b"").unwrap();
+    support::make_private(&transcript);
     let submit = |prompt| {
         let payload = json!({
             "session_id": SESSION,
@@ -444,6 +445,7 @@ fn failed_session_pass_matches_golden() {
         ),
     )
     .unwrap();
+    support::make_private(&transcript);
     let hook = json!({
         "session_id": SESSION,
         "transcript_path": transcript,
@@ -527,6 +529,7 @@ fn transcript_list_and_show_match_goldens() {
         ),
     )
     .unwrap();
+    support::make_private(&project.join(format!("{SESSION}.jsonl")));
     let mut failures = Vec::new();
     for (name, args) in [
         (

@@ -4449,3 +4449,36 @@ seat chain is consent-checked. The check stays an accident guard. A typed
 - Cost: whoever takes the opener's seat gains the power to close, and an
   opener that never took a seat or left its seat cannot hand closing to a
   successor.
+
+## Claude transcripts writable by another user are refused
+
+**Recorded:** 2026-11-23 · [ORB-27571] · **Overridable by Daniel**
+
+### Context
+
+STD-05@1 §R9 requires state that grants authority to be owned by the current
+user and not group- or world-writable. The transcript provenance check
+([2_design.md §4.1](./2_design.md#41-detection)) tested the
+owner but not the mode, so a transcript another user could write still passed
+as the record of Daniel's own turns. The Codex rollout read already refused a
+group- or other-writable file, but its path preflight did not.
+
+**Code anchors:** `crates/scribe/src/commands/hook/payload.rs::private_to_this_user`.
+
+### Decision
+
+On Unix, every provenance decision on a Claude transcript refuses a file with a
+group or other write bit, as well as a file another uid owns. The path
+preflight, the open-handle check and each handle read make the same decision.
+The Codex rollout check uses the same rule, so its preflight refuses a
+writable rollout too. Read bits are not refused.
+
+### Consequences
+
+- Claude Code creates transcripts owner-only (`0600`), also under a
+  group-writable umask, so the refusal reaches only a transcript that someone
+  made writable.
+- Test fixtures that write transcripts set the mode explicitly, so the tests do
+  not depend on the process umask.
+- Cost: this is an accident guard (STD-05@1 §R5). A process running as the same
+  user can still write a transcript it owns.

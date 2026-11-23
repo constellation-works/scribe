@@ -72,6 +72,7 @@ impl Claude {
         ];
         let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
         std::fs::write(&self.transcript, text).unwrap();
+        make_private(&self.transcript);
     }
 }
 
@@ -244,6 +245,7 @@ fn write_lines(claude: &Claude, lines: &[Value]) {
             .collect::<String>(),
     )
     .unwrap();
+    make_private(&claude.transcript);
 }
 
 #[test]
@@ -2295,6 +2297,7 @@ fn claude_desktop_origin_shapes_match_cli_verdicts_in_hooks() {
     ]
     .concat();
     std::fs::write(&claude.transcript, transcript).unwrap();
+    make_private(&claude.transcript);
     let path = annotating_claude(
         &fx,
         &json!([{

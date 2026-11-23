@@ -148,8 +148,12 @@ impl Setup {
     }
 
     fn write(&self, session: &str, lines: &[serde_json::Value]) {
+        use std::os::unix::fs::PermissionsExt;
         let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
-        std::fs::write(self.transcript(session), text).unwrap();
+        let path = self.transcript(session);
+        std::fs::write(&path, text).unwrap();
+        // Owner-only, as Claude Code writes it: the umask must not decide it.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
     }
 
     fn append(&self, lines: &[serde_json::Value]) {

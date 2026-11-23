@@ -40,6 +40,7 @@ fn list_and_show_read_a_read_only_root_and_a_missing_catalog_is_not_found() {
         ),
     )
     .unwrap();
+    support::make_private(&project.join(format!("{SESSION}.jsonl")));
 
     let before = support::snapshot(&root);
     // Owner read-only: the store refuses group and other bits (STD-05 R9).
@@ -111,6 +112,7 @@ fn list_skips_a_transcript_whose_mtime_is_before_since() {
             ),
         )
         .unwrap();
+        support::make_private(&path);
         let file = std::fs::File::options().write(true).open(&path).unwrap();
         file.set_modified(
             std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(mtime_secs),
