@@ -8,6 +8,7 @@ Setup:
 Records:
   entry        Read entries and write agent notes
   session      List, show and write session records cataloged with /scribe on
+  group        Group sessions into named seats for a shared piece of work
   proposal     Read, open, update and settle proposals
   memory       Show what scribe noticed about the user and manage memory items
   tag          List tags and manage agent-created store tags

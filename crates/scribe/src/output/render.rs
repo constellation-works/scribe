@@ -154,6 +154,7 @@ pub(crate) fn list(
 ) -> io::Result<()> {
     if sink.mode == OutputMode::Json {
         return match records {
+            Records::Groups(items) => write_json(out, &envelope("items", items, total, warnings)),
             Records::Entries(items) => {
                 write_json(out, &envelope("entries", items, total, warnings))
             }
@@ -178,6 +179,13 @@ pub(crate) fn list(
         return Ok(());
     }
     let (columns, rows): (Vec<Column>, Vec<Vec<Cell>>) = match records {
+        Records::Groups(items) => (
+            GROUP_COLUMNS
+                .iter()
+                .map(|label| col(label, Align::Left, true))
+                .collect(),
+            items.iter().map(group_row).collect(),
+        ),
         Records::Entries(items) => (
             ENTRY_COLUMNS.to_vec(),
             items.iter().map(entry_row).collect(),
@@ -257,6 +265,14 @@ fn envelope<'a, T>(
 /// R15).
 pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Result<()> {
     match (sink.mode, record) {
+        (OutputMode::Json, Record::Group(g)) => write_json(out, g),
+        (OutputMode::Plain, Record::Group(g)) => writeln!(out, "{}", plain_line(&group_row(g))),
+        (OutputMode::Table, Record::Group(g)) => {
+            for (label, cell) in GROUP_COLUMNS.iter().zip(group_row(g)) {
+                field(out, &label.to_ascii_lowercase(), &cell.text)?;
+            }
+            Ok(())
+        }
         (OutputMode::Json, Record::Tag(tag)) => write_json(out, tag),
         (OutputMode::Json, Record::TagRules(tag)) => write_json(out, tag),
         (OutputMode::Plain, Record::TagRules(tag)) => tag_rules(out, tag, false),
@@ -1274,6 +1290,51 @@ fn field(out: &mut dyn Write, label: &str, value: &str) -> io::Result<()> {
     let width = LABEL_WIDTH.max(label.chars().count() + 1);
     let indent = format!("\n{}", " ".repeat(width));
     writeln!(out, "{label:<width$}{}", value.replace('\n', &indent))
+}
+
+const GROUP_COLUMNS: [&str; 9] = [
+    "ID", "TITLE", "KIND", "PROJECT", "OPENED", "CLOSED", "OPENER", "RELATED", "SEATS",
+];
+
+fn group_row(g: &scribe_core::group::Group) -> Vec<Cell> {
+    let seats = g
+        .seats
+        .iter()
+        .map(|s| {
+            let chain = s
+                .transcripts
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(" -> ");
+            format!(
+                "{} ({}): {} [handoff: {}]",
+                s.name,
+                one_line(&s.role),
+                chain,
+                s.newest_handoff.as_deref().unwrap_or("-")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    [
+        g.id.clone(),
+        one_line(&g.title),
+        one_line(&g.kind),
+        g.project.clone(),
+        g.opened.clone(),
+        g.closed.clone().unwrap_or_else(|| "-".into()),
+        g.opener.clone(),
+        g.related
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", "),
+        seats,
+    ]
+    .into_iter()
+    .map(Cell::plain)
+    .collect()
 }
 
 fn entry_row(e: &EntryPayload) -> Vec<Cell> {

@@ -1,0 +1,20 @@
+Open a group on a verbatim quote from the calling session
+
+Usage: scribe group open [OPTIONS] --title <TITLE> --kind <KIND>
+
+Options:
+      --title <TITLE>      Title of the work
+      --kind <KIND>        Free label for the kind of work
+      --project <PROJECT>  Project slug [default: global]
+      --related <RELATED>  Task, PR or repository reference, repeatable
+      --quote <QUOTE>      Words the user typed in this session
+  -h, --help               Print help
+  -V, --version            Print version
+
+Global options:
+      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json                 Shorthand for --format json
+
+Example: scribe group open --title 'Release review' --kind review --quote 'open a release review'

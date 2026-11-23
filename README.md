@@ -49,6 +49,16 @@ scribe entry list --tag preferences --status active
 4. To mark a sentence or catalog a session, install the Claude Code or Codex package. The steps are in the [guide](docs/guide.md).
 5. Ask with `scribe question ask "preferences this week"`. That lookup does not call a model. Other questions use the configured model and quote each record they cite.
 
+## Session groups
+
+A group links named seats to the ordered sessions that held them. Open it from the session where you asked for it, quoting your typed words; each agent joins from its own session under its own author.
+
+```sh
+scribe group open --title 'Release review' --kind review --project scribe --quote 'open a release review'
+scribe group join <id> --as editor --role reviewer --author aide
+scribe group show <id> --json
+```
+
 <details>
 <summary>Other ways to set it up</summary>
 

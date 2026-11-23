@@ -1,0 +1,2 @@
+ID   TITLE           KIND    PROJECT  OPENED                CLOSED  OPENER  RELATED      SEATS
+g-1  Release review  review  scribe   2026-11-22T09:00:00Z  -       opener  repo:scribe  editor (reviewer): member [handoff: -]

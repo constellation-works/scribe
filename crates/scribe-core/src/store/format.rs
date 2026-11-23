@@ -41,7 +41,7 @@ use time::OffsetDateTime;
 
 /// The newest store format: this build reads formats 1 to `FORMAT` of every
 /// document and would write `FORMAT`.
-pub(super) const FORMAT: u32 = 28;
+pub(super) const FORMAT: u32 = 29;
 
 /// Which document an upgrade step is applied to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,7 +102,13 @@ pub(super) const UPGRADES: &[Upgrade] = &[
     sessions_sqlite,
     documents_sqlite,
     handoff_mode,
+    session_groups,
 ];
+
+/// Format 28 -> 29 adds groups in SQLite schema 9. Existing file records keep their shape.
+fn session_groups(_: Document, value: serde_json::Value) -> serde_json::Result<serde_json::Value> {
+    Ok(value)
+}
 
 /// Format 27 -> 28 adds the optional refresh mode to entries.
 fn handoff_mode(
@@ -1812,7 +1818,7 @@ pub(super) fn decode_entry(
 ) -> Result<Entry> {
     let (front, body) = split_frontmatter(path, bytes)?;
     let (from, value) = parse_frontmatter(path, front, ENTRY_KIND)?;
-    let entry: Entry = if from == FORMAT {
+    let entry: Entry = if from >= 28 {
         yaml_serde::from_value(value).map_err(|e| Error::corrupt(path, e))?
     } else if (10..=12).contains(&from) {
         let has_inactive_since = value
@@ -2436,7 +2442,7 @@ fn decode_json<T: DeserializeOwned>(path: &Path, bytes: &[u8], document: Documen
         serde_json::from_slice(bytes).map_err(|e| Error::corrupt(path, e))?;
     let probe = FormatProbe::deserialize(&value).map_err(|e| Error::corrupt(path, e));
     let from = check_format(path, probe)?;
-    if from == FORMAT {
+    if from >= 28 {
         // Straight from the bytes, so a repeated key is refused too.
         return serde_json::from_slice(bytes).map_err(|e| Error::corrupt(path, e));
     }

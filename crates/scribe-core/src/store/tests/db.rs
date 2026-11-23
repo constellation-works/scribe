@@ -54,7 +54,7 @@ fn the_first_write_creates_an_owner_only_wal_database_at_the_current_schema() {
         .unwrap();
     assert_eq!(written, 1);
     let (version, store_id) = db::meta(dir.path()).unwrap().unwrap();
-    assert_eq!(version, 8);
+    assert_eq!(version, 9);
     assert_eq!(store_id.len(), 32);
     // PERSIST_WAL: both companions outlive the last connection.
     for name in [DB_FILE, "scribe.db-wal", "scribe.db-shm"] {
@@ -401,7 +401,7 @@ fn concurrent_writer_processes_all_commit_under_wal_and_busy_timeout() {
         .search_messages(&tokens("merge"))
         .unwrap();
     assert_eq!(found.matches.len(), WRITERS * WINDOWS * 3);
-    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 8);
+    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 9);
 }
 
 #[test]

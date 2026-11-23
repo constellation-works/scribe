@@ -180,7 +180,7 @@ fn export_writes_every_session_and_writes_nothing_to_the_store() {
     ] {
         let exported =
             std::fs::read_to_string(target.join(format!("sessions/{month}/{id}.md"))).unwrap();
-        assert!(exported.starts_with("---\nformat: 28\n"), "{exported}");
+        assert!(exported.starts_with("---\nformat: 29\n"), "{exported}");
         assert!(exported.contains(&format!("\nid: {id}\n")), "{exported}");
     }
     for rel in [
@@ -232,7 +232,8 @@ fn jsonl_export_reads_phase_six_database_with_no_live_files() {
         )
         .unwrap();
         conn.execute_batch(
-            "DROP TABLE entries;
+            "DROP TABLE group_members; DROP TABLE group_seats; DROP TABLE groups;
+             DROP TABLE entries;
              DROP TABLE claims;
              DROP TABLE agent_tags;
              DROP TABLE marks;

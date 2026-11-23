@@ -54,6 +54,9 @@ pub const REDACTED_FIELDS: &[&str] = &[
     "proposal.candidate.admitted.matched",
     "proposal.candidate.admitted.criteria",
     "tag.description",
+    "group.title",
+    "group.kind",
+    "seat.role",
 ];
 
 /// A value shorter than this is not masked: a one-character "secret" would
@@ -128,6 +131,11 @@ impl Redactor {
     /// Mask a store tag's description.
     pub fn tag(&self, tag: &mut crate::StoreTag) {
         self.mask_all(tag_fields(tag));
+    }
+
+    /// Mask the free-text metadata of a group before storing it.
+    pub(super) fn group(&self, draft: &mut crate::group::NewGroup) {
+        self.mask_all(group_fields(draft));
     }
 
     /// Mask a session record's free text. A segment heading a marker made
@@ -408,4 +416,11 @@ pub(super) fn proposal_fields(proposal: &mut Proposal) -> Vec<(&'static str, &mu
 /// Store tag free text.
 pub(super) fn tag_fields(tag: &mut crate::StoreTag) -> Vec<(&'static str, &mut String)> {
     vec![("tag.description", &mut tag.description)]
+}
+
+pub(super) fn group_fields(draft: &mut crate::group::NewGroup) -> [(&'static str, &mut String); 2] {
+    [
+        ("group.title", &mut draft.title),
+        ("group.kind", &mut draft.kind),
+    ]
 }

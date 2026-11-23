@@ -10,7 +10,7 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-The code writes format 28 and reads formats 1–28. Format 28 adds an optional `handoff_mode` (`continue` or `new`) to entries; SQLite schema 7 adds its nullable column, and older databases read it as null until the next write migrates them. SQLite schema 8 removes stale rebuild checkpoints for forgotten sessions; export omits them before that migration runs. Format 26 moves the
+The code writes format 29 and reads formats 1–29. Format 29 adds groups and seats in SQLite schema 9. Format 28 adds an optional `handoff_mode` (`continue` or `new`) to entries; SQLite schema 7 adds its nullable column, and older databases read it as null until the next write migrates them. SQLite schema 8 removes stale rebuild checkpoints for forgotten sessions; export omits them before that migration runs. Format 26 moves the
 sessions into `scribe.db`
 ([2_design.md §15.7](../2_design.md#157-storage), phase 6): records,
 switches, Codex cursors and rebuild checkpoints become rows (schema version
@@ -198,15 +198,18 @@ Only `config.toml` and `memory/`'s files remain as primary data files outside th
   `rebuild_checkpoints` rows whose session is forgotten (a
   checkpoint an older build could write after the forget) and adds no
   table. `scribe export --as jsonl` leaves those rows out even before that
-  migration runs. Every table is `STRICT`; times are RFC 3339 UTC text.
+  migration runs. Version 9 adds the group, seat and membership tables. Every table is `STRICT`; times are RFC 3339 UTC text.
 - **Errors.** A file SQLite cannot read as a database is `store_corrupt`;
   any other SQLite failure is `store_database`.
 
-### Tables (version 8)
+### Tables (version 9)
 
 | Table | Columns (type, constraint) | Written by |
 |---|---|---|
 | `meta` | `id INTEGER PRIMARY KEY CHECK (id = 1)`; `store_id TEXT NOT NULL`, 32 hex characters; `created TEXT NOT NULL` | the first migration; one row |
+| `groups` | `id INTEGER PRIMARY KEY AUTOINCREMENT` (shown as `g-<n>`), `title` and `kind` nonblank redacted text, `project` slug, `opened` timestamp, nullable `closed` timestamp, `opener` provider session id, `related` JSON array of task, PR and repository references | `group open` on a verified typed quote |
+| `group_seats` | `group_id INTEGER` referencing the group, `name TEXT`, `role TEXT` (redacted free label), primary key `(group_id, name)` | `group join` creates the seat, `group leave` removes an empty seat |
+| `group_members` | `position INTEGER PRIMARY KEY AUTOINCREMENT`, foreign key `(group_id, seat)` to the seat, `session TEXT UNIQUE` (provider id), `author TEXT` (joining agent). Index on `(group_id, seat, position)` orders the chain. | `group join` appends, `group leave` removes the caller’s row |
 | `messages` | `id INTEGER PRIMARY KEY`; `session TEXT NOT NULL`, 1–128 characters (the session record's id); `message TEXT NOT NULL`, non-empty (the provider's message id); `role TEXT NOT NULL CHECK (role IN ('user', 'assistant'))`; `at TEXT NOT NULL`; `text TEXT NOT NULL`, redacted; `sha256 TEXT NOT NULL`, 64 hex characters of the redacted text; `UNIQUE (session, message)` | the session pass |
 | `messages_fts` | FTS5 over `messages.text`, external content (`content = 'messages'`, `content_rowid = 'id'`), `tokenize = 'unicode61 remove_diacritics 2'`; kept by `AFTER INSERT`, `AFTER DELETE` and `AFTER UPDATE OF text` triggers | the triggers |
 | `now_pending` | `id INTEGER PRIMARY KEY`; `session TEXT NOT NULL`, 1–128 characters; `message TEXT NOT NULL`, non-empty; `subject TEXT NOT NULL`, non-empty; `text TEXT NOT NULL`; `created TEXT NOT NULL`; `UNIQUE (session, subject)`; a `BEFORE INSERT` trigger aborts a sixth row for one session | the session pass; dropped by the session's final pass or when a dated element completes one |
@@ -458,13 +461,13 @@ audit line has the session's `s-<n>` as its target.
   schema changes use migrations. The existing steps stay so the move can
   read a store left at any older format for the support window; phase 8
   removes them with the file decoders.
-- **`scribe export <dir>`** writes every kind. `--as markdown` writes the
-  file store's files at format 28 (`sessions/`, `entries/<tag>/<id>.md`,
+- **`scribe export <dir>`** writes records into a separate directory. `--as markdown` writes the
+  file store's files at format 29 (`sessions/`, `entries/<tag>/<id>.md`,
   `control.json`, `proposals.json`, `tags.json`, `marks.json`,
   `pickups.json`, `audit.jsonl`), which a build reads as a store and moves
   in again unchanged. Each exported audit line keeps its original audit
   format and decoded event. `--as jsonl` writes one `<table>.jsonl` per
-  table and needs every kind with records moved (a phase-6 store with no live
+  table with rows, including groups, seats and membership chains. Groups have no legacy Markdown file representation. JSONL needs every kind with records moved (a phase-6 store with no live
   record files exports its session tables), and on a moved store merges any
   pending `audit-spool/` events not yet drained into `audit.jsonl` (with
   `id: null` and `spool` set to the spool filename), skipping spool files
@@ -1402,7 +1405,7 @@ exits 0.
   `issue.title`, `issue.signature`, `issue.cause`, `issue.fix`,
   `issue.occurrences.summary`, `issue.occurrences.request`,
   `issue.occurrences.error_lines`, `issue.occurrences.cause` and
-  `issue.occurrences.fix`. A masked segment
+  `issue.occurrences.fix`. Format 29 also masks `group.title`, `group.kind` and `seat.role`. A masked segment
   heading is cut back to 80 characters. Values shorter than 8 characters are not masked;
   identifiers, timestamps and paths are not free text. A `[redact] env`
   name with no value in the writer's environment refuses the write

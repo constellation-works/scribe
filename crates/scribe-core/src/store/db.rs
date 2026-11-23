@@ -28,6 +28,7 @@ pub(super) mod docs;
 
 /// A `scribe.db` connection, as the store's writers hold it.
 pub(in crate::store) type Conn = Connection;
+mod groups;
 mod memory;
 pub(super) mod scope;
 pub(super) mod sessions;
@@ -57,7 +58,7 @@ pub const DB_FILE: &str = "scribe.db";
 /// The schema, one step per `user_version`: step `n` (1-based) moves the
 /// database from version `n - 1` to `n`. Append only; never edit a shipped
 /// step.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, groups::V9];
 
 /// Version 1 (phase 4): `meta`, `messages` and its FTS5 index, and the
 /// memory tables phase 5 uses.
@@ -446,7 +447,7 @@ WHERE session IN (SELECT id FROM sessions WHERE forgotten IS NOT NULL);
 /// Refuse, for a reader as for a writer, a database a newer build migrated
 /// past this build's schema: `store_too_new`, never a read of tables whose
 /// shape this build does not know.
-fn refuse_newer(conn: &Connection, path: &Path) -> Result<(), Fallible> {
+fn refuse_newer(conn: &Connection, path: &Path) -> Result<u32, Fallible> {
     let version: u32 = conn
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(|e| Fallible::from_sqlite("read", path, e))?;
@@ -457,7 +458,7 @@ fn refuse_newer(conn: &Connection, path: &Path) -> Result<(), Fallible> {
             supported: schema(),
         }));
     }
-    Ok(())
+    Ok(version)
 }
 
 fn schema() -> u32 {
@@ -894,7 +895,7 @@ pub(in crate::store) fn read_export(
     doc_tables: &[(&'static str, &str)],
 ) -> Result<DbExport> {
     let (found, _) = memory::read(root, |conn, path| {
-        refuse_newer(conn, path)?;
+        let version = refuse_newer(conn, path)?;
         let sessions_moved =
             sessions::moved(conn).map_err(|e| Fallible::from_sqlite("read", path, e))?;
         let docs_moved = docs::moved(conn).map_err(|e| Fallible::from_sqlite("read", path, e))?;
@@ -906,6 +907,14 @@ pub(in crate::store) fn read_export(
         }
         if docs_moved {
             rows.extend(sessions::export_rows(conn, path, doc_tables).map_err(Fallible::Failed)?);
+        }
+        if version >= 9 {
+            let tables = [
+                ("groups", "id"),
+                ("group_seats", "group_id, name"),
+                ("group_members", "position"),
+            ];
+            rows.extend(sessions::export_rows(conn, path, &tables).map_err(Fallible::Failed)?);
         }
         Ok(DbExport {
             sessions_moved,
