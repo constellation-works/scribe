@@ -10,7 +10,7 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-The code writes format 29 and reads formats 1–29. Format 29 adds groups and seats in SQLite schema 9. Format 28 adds an optional `handoff_mode` (`continue` or `new`) to entries; SQLite schema 7 adds its nullable column, and older databases read it as null until the next write migrates them. SQLite schema 8 removes stale rebuild checkpoints for forgotten sessions; export omits them before that migration runs. Schema 10 records completion of the required WAL cleanup, retrying after a busy reader or interruption, including on stores already at schema 9. Format 26 moves the
+The code writes format 29 and reads formats 1–29. Format 29 adds groups and seats in SQLite schema 9. Format 28 adds an optional `handoff_mode` (`continue` or `new`) to entries; SQLite schema 7 adds its nullable column, and older databases read it as null until the next write migrates them. SQLite schema 8 removes stale rebuild checkpoints for forgotten sessions; export omits them before that migration runs. Schema 10 records completion of the required WAL cleanup, retrying after a busy reader, a busy writer, or interruption, including on stores already at schema 9. Format 26 moves the
 sessions into `scribe.db`
 ([2_design.md §15.7](../2_design.md#157-storage), phase 6): records,
 switches, Codex cursors and rebuild checkpoints become rows (schema version
@@ -198,12 +198,12 @@ Only `config.toml` and `memory/`'s files remain as primary data files outside th
   `rebuild_checkpoints` rows whose session is forgotten (a
   checkpoint an older build could write after the forget) and adds no
   table. `scribe export --as jsonl` leaves those rows out even before that
-  migration runs. Version 9 adds the group, seat and membership tables. Before advancing past versions 8 or 9, a writer truncates the WAL; a busy reader makes the write fail and leaves the version available for retry. Version 10 records that cleanup without changing tables. Every application table is `STRICT`; the one virtual table, `messages_fts`, is an FTS5 index (`CREATE VIRTUAL TABLE`), and a virtual table takes no `STRICT` option. Times are RFC 3339 UTC text.
+  migration runs. Version 9 adds the group, seat and membership tables. Before advancing past versions 8 or 9, a writer truncates the WAL; if another reader or writer connection keeps the checkpoint from completing, the write fails and leaves the version available for retry. Version 10 records that cleanup without changing tables. Every application table is `STRICT`; the one virtual table, `messages_fts`, is an FTS5 index (`CREATE VIRTUAL TABLE`), and a virtual table takes no `STRICT` option. Times are RFC 3339 UTC text.
 - **Errors.** Contention is `store_locked`: a write that waits past the lock
   wait (`SQLITE_BUSY` or `SQLITE_LOCKED`) fails with holder
-  `another scribe.db writer`, and a schema 8 or 9 WAL cleanup that a reader
-  keeps from completing fails with holder `a scribe.db reader`, leaving the
-  version for retry. A file SQLite cannot read as a database, or one it
+  `another scribe.db writer`, and a schema 8 or 9 WAL cleanup blocked by an
+  active reader or writer fails with holder `another scribe.db connection`,
+  leaving the version for retry. A file SQLite cannot read as a database, or one it
   reports as corrupt (`SQLITE_NOTADB` or `SQLITE_CORRUPT`), is
   `store_corrupt`, naming the file. Any other SQLite failure is
   `store_database`; readers set no busy timeout, so a read SQLite reports
