@@ -605,6 +605,69 @@ fn a_pass_keeps_the_windows_typed_turns_for_search_kind_message() {
 }
 
 #[test]
+fn an_empty_default_search_names_the_stored_messages_that_match() {
+    let s = Setup::new();
+    // The word is only in a turn he typed: no entry or session holds it.
+    let quote = "Keep the quartzlark rollout note out of the release.";
+    s.write(ON, &[line("user", "u-1", quote)]);
+    s.answer(&candidate_answer(quote, "u-1", "preferences"));
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let json = |out: &Output| -> Value { serde_json::from_slice(&out.stdout).unwrap() };
+
+    // The default search finds no entry or session, and its last stderr line
+    // names the messages and the command that lists them.
+    let found = s.fx.ok(&["search", "quartzlark"]);
+    assert!(found.stdout.is_empty(), "{}", text(&found.stdout));
+    assert_eq!(
+        text(&found.stderr).lines().last(),
+        Some(
+            "1 stored message(s) match, and no entry or session does: scribe search quartzlark --kind message lists them"
+        ),
+        "{}",
+        text(&found.stderr)
+    );
+    let listed = json(
+        &s.fx
+            .ok(&["search", "quartzlark", "--kind", "message", "--json"]),
+    );
+    assert_eq!(listed["total"], 1, "{listed}");
+    assert_eq!(listed["hits"][0]["message"], "u-1", "{listed}");
+    let default_json = json(&s.fx.ok(&["search", "quartzlark", "--json"]));
+    assert_eq!(default_json["hits"], json!([]), "{default_json}");
+    assert_eq!(default_json["message_matches"], 1, "{default_json}");
+
+    // The count takes the same filters, so a project with no such message
+    // gets no hint.
+    let other = s.fx.ok(&["search", "quartzlark", "--project", "orbit"]);
+    assert_eq!(
+        text(&other.stderr),
+        "no records match \"quartzlark\" --project orbit\n"
+    );
+
+    // With no matching message, the output and the JSON are unchanged.
+    let none = s.fx.ok(&["search", "zzznomatch"]);
+    assert_eq!(text(&none.stderr), "no records match \"zzznomatch\"\n");
+    let none_json = json(&s.fx.ok(&["search", "zzznomatch", "--json"]));
+    assert!(none_json.get("message_matches").is_none(), "{none_json}");
+
+    // An entry that holds the word answers the default search, so no hint.
+    s.fx.ok(&[
+        "entry",
+        "add",
+        "--tag",
+        "preferences",
+        "--author",
+        "opus",
+        "Quartzlark is the rollout code name.",
+    ]);
+    let answered = json(&s.fx.ok(&["search", "quartzlark", "--json"]));
+    assert_eq!(answered["total"], 1, "{answered}");
+    assert!(answered.get("message_matches").is_none(), "{answered}");
+    assert!(!text(&s.fx.ok(&["search", "quartzlark"]).stderr).contains("stored message"));
+}
+
+#[test]
 fn forgetting_an_entry_deletes_the_stored_message_it_cites() {
     let s = Setup::new();
     let quote = "I prefer short explanations beside each changed behavior.";

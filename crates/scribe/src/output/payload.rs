@@ -2295,6 +2295,10 @@ pub(crate) enum Output {
         /// searched when nothing matched (R16), or that the list was cut
         /// (R34).
         notices: Vec<String>,
+        /// The stored messages a default `search` found when no entry or
+        /// session matched (`message_matches` in `--json`); `None` otherwise,
+        /// and then the key is absent.
+        message_matches: Option<usize>,
     },
     /// A single record (`show`).
     Show {

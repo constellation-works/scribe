@@ -153,6 +153,7 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
             records: Records::Transcripts(Vec::new()),
             total: 0,
             warnings: Vec::new(),
+            message_matches: None,
         });
     };
     let config = ctx.config()?;
@@ -218,6 +219,7 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
         records: Records::Transcripts(rows),
         total,
         warnings,
+        message_matches: None,
     })
 }
 

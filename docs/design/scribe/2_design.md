@@ -1996,7 +1996,12 @@ overlaps it, and a segment whose `from`–`to` does. A hit's `title` is a
 session's title, a segment's heading or `<id> (<tag>)` for an entry;
 `active` is `null` for an entry, and an additive `status` field carries
 the entry's or session's status. When hidden records matched and are left
-out, stderr says how many.
+out, stderr says how many. A default search (no `--kind`) that finds no entry
+or session, with stored messages matching the same filters, ends stderr with
+the count and the `--kind message` command that lists them, and `--json`
+carries the count as `message_matches`
+([output contract](./specs/output-contract.md)). The default kinds stay,
+since message scores are not comparable with entry and session scores.
 
 ## 7. Consistency routine
 

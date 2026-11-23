@@ -499,6 +499,7 @@ pub(super) fn list_output(
         records,
         total,
         warnings: skipped.iter().map(WarningPayload::from).collect(),
+        message_matches: None,
     }
 }
 
