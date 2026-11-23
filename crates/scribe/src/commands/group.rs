@@ -68,7 +68,7 @@ pub(crate) enum GroupCommand {
     /// Remove the calling session from its seat
     #[command(after_help = "Example: scribe group leave")]
     Leave,
-    /// Summarize and close the group from the session that opened it
+    /// Summarize and close the group from its opener or its seat holder
     #[command(after_help = "Example: scribe group close <id>")]
     Close {
         /// Group id, unique prefix, or project group slug

@@ -6796,8 +6796,11 @@ catalog record. It erases the member's turns, removes that membership and
 clears the derived summary. A closed group stays closed.
 
 **Closing.** `group close <id>` checks the caller against the recorded opening
-session and its local provider transcript, an accident guard against closing
-from the wrong session. It sends up to 16 recent active handoffs and 32 recent
+session, or the newest transcript of the seat whose chain contains the opener
+(the seat's current holder after a clear or `--replace`), and its local
+provider transcript, an accident guard against closing from the wrong session.
+An opener that holds no seat can be closed only by the opening session itself,
+and a caller that is not authorized is refused even on a closed group. It sends up to 16 recent active handoffs and 32 recent
 stored user turns from the members, with each source clipped, to the configured
 ask model for one call with a 90-second budget. The summary names decisions,
 completed work and open work supported by those sources. Scribe appends the

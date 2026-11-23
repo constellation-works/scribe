@@ -515,7 +515,7 @@ printf '%s\n' '{{"type":"result","is_error":false,"structured_output":{{"summary
     };
     let denied = close(B);
     assert_eq!(denied.status.code(), Some(1));
-    assert!(text(&denied.stderr).contains("only the opening session"));
+    assert!(text(&denied.stderr).contains("only the opening session or the current holder"));
     assert!(!f.home().join("model-calls").exists());
     let after_denied: Vec<_> = support::audit_lines(&f.root())
         .into_iter()
@@ -604,6 +604,149 @@ printf '%s\n' '{{"type":"result","is_error":false,"structured_output":{{"summary
     let left = invoke(&f, B, &["group", "leave"], 0);
     assert!(left["summary"].is_null());
     assert!(!left["closed"].is_null());
+}
+
+/// A fixture whose opener `A` holds seat `chief` and whose model records each call.
+fn seated_group() -> (Fixture, std::ffi::OsString) {
+    let f = Fixture::new();
+    for id in [A, B, C, D] {
+        transcript(&f, id, &[row(id, "u", "user", QUOTE)]);
+    }
+    open(&f);
+    join_as(&f, A, "g-1", "chief", &[], 0);
+    let path = f.fake_program(
+        "claude",
+        r#"#!/bin/sh
+echo call >> "$HOME/model-calls"
+cat >/dev/null
+printf '%s\n' '{"type":"result","is_error":false,"structured_output":{"summary":"Review complete."}}'
+"#,
+    );
+    (f, path)
+}
+
+fn close_as(f: &Fixture, path: &std::ffi::OsStr, session: &str) -> std::process::Output {
+    f.cmd(&["group", "close", "g-1", "--json"])
+        .env("CLAUDE_CODE_SESSION_ID", session)
+        .env("PATH", path)
+        .output()
+        .unwrap()
+}
+
+fn model_calls(f: &Fixture) -> usize {
+    std::fs::read_to_string(f.home().join("model-calls")).map_or(0, |calls| calls.lines().count())
+}
+
+/// The caller is refused with `group_membership`: no model call, the group
+/// unchanged and exactly one more failure audit.
+fn assert_close_refused(f: &Fixture, path: &std::ffi::OsStr, session: &str) {
+    let calls = model_calls(f);
+    let group = invoke(f, A, &["group", "show", "g-1"], 0);
+    let audits = group_close_audits(f).len();
+    let out = close_as(f, path, session);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{session}: {}",
+        text(&out.stderr)
+    );
+    let error: Value = serde_json::from_slice(&out.stderr).unwrap();
+    assert_eq!(error["code"], "group_membership", "{session}: {error}");
+    assert_eq!(model_calls(f), calls, "{session}");
+    assert_eq!(
+        invoke(f, A, &["group", "show", "g-1"], 0),
+        group,
+        "{session}"
+    );
+    let after = group_close_audits(f);
+    assert_eq!(after.len(), audits + 1, "{session}: {after:?}");
+    let last = after.last().unwrap();
+    assert_eq!(last["status"], "failure");
+    assert_eq!(last["error_code"], "group_membership");
+    assert_eq!(last["instruction_session"], session);
+}
+
+#[test]
+fn the_newest_transcript_of_the_openers_seat_closes_after_a_replace() {
+    let (f, path) = seated_group();
+    join_as(&f, C, "g-1", "editor", &[], 0);
+    join_as(&f, B, "g-1", "chief", &["--replace"], 0);
+    // The replaced opener and the newest transcript of its seat both pass;
+    // other sessions do not.
+    assert_close_refused(&f, &path, D);
+    assert_close_refused(&f, &path, C);
+    for _ in 0..2 {
+        let out = close_as(&f, &path, B);
+        assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    }
+    assert_eq!(model_calls(&f), 1);
+    let successes: Vec<_> = group_close_audits(&f)
+        .into_iter()
+        .filter(|line| line["status"] == "success")
+        .collect();
+    assert_eq!(successes.len(), 1, "{successes:?}");
+    assert_eq!(successes[0]["instruction_session"], B);
+    assert!(!invoke(&f, B, &["group", "show", "g-1"], 0)["closed"].is_null());
+    // An unauthorized caller is refused on a closed group, not told it is closed.
+    assert_close_refused(&f, &path, D);
+    assert_close_refused(&f, &path, C);
+}
+
+#[test]
+fn the_newest_transcript_of_the_openers_seat_closes_after_a_clear() {
+    let (f, path) = seated_group();
+    cleared_transcript(&f, B, D, &[A]);
+    join_as(&f, B, "g-1", "chief", &[], 0);
+    let out = close_as(&f, &path, B);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(model_calls(&f), 1);
+    let again = close_as(&f, &path, B);
+    assert_eq!(again.status.code(), Some(0), "{}", text(&again.stderr));
+    assert_eq!(model_calls(&f), 1);
+}
+
+#[test]
+fn a_replaced_transcript_that_is_not_the_opener_cannot_close() {
+    let (f, path) = seated_group();
+    join_as(&f, B, "g-1", "chief", &["--replace"], 0);
+    join_as(&f, C, "g-1", "chief", &["--replace"], 0);
+    assert_close_refused(&f, &path, B);
+    // The opener itself still closes, as before.
+    let out = close_as(&f, &path, A);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(model_calls(&f), 1);
+}
+
+#[test]
+fn a_session_that_left_the_openers_seat_cannot_close() {
+    let (f, path) = seated_group();
+    join_as(&f, B, "g-1", "chief", &["--replace"], 0);
+    invoke(&f, B, &["group", "leave"], 0);
+    assert_close_refused(&f, &path, B);
+    assert_close_refused(&f, &path, D);
+}
+
+#[test]
+fn an_opener_without_a_seat_is_the_only_closer() {
+    let f = Fixture::new();
+    for id in [A, B, C] {
+        transcript(&f, id, &[row(id, "u", "user", QUOTE)]);
+    }
+    open(&f);
+    join_as(&f, B, "g-1", "chief", &[], 0);
+    let path = f.fake_program(
+        "claude",
+        r#"#!/bin/sh
+echo call >> "$HOME/model-calls"
+cat >/dev/null
+printf '%s\n' '{"type":"result","is_error":false,"structured_output":{"summary":"Review complete."}}'
+"#,
+    );
+    assert_close_refused(&f, &path, B);
+    assert_close_refused(&f, &path, C);
+    let out = close_as(&f, &path, A);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(model_calls(&f), 1);
 }
 
 #[test]
