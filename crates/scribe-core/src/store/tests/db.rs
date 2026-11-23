@@ -54,7 +54,7 @@ fn the_first_write_creates_an_owner_only_wal_database_at_the_current_schema() {
         .unwrap();
     assert_eq!(written, 1);
     let (version, store_id) = db::meta(dir.path()).unwrap().unwrap();
-    assert_eq!(version, 11);
+    assert_eq!(version, 12);
     assert_eq!(store_id.len(), 32);
     // PERSIST_WAL: both companions outlive the last connection.
     for name in [DB_FILE, "scribe.db-wal", "scribe.db-shm"] {
@@ -282,7 +282,7 @@ fn schema_nine_checkpoint_reports_a_neutral_holder_when_a_writer_is_active() {
             &Redactor::default(),
         )
         .unwrap();
-    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 11);
+    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 12);
 }
 
 #[test]
@@ -468,7 +468,7 @@ fn concurrent_writer_processes_all_commit_under_wal_and_busy_timeout() {
         .search_messages(&tokens("merge"))
         .unwrap();
     assert_eq!(found.matches.len(), WRITERS * WINDOWS * 3);
-    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 11);
+    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 12);
 }
 
 #[test]
@@ -533,4 +533,63 @@ fn a_value_that_does_not_encode_is_corrupt_not_io() {
     };
     assert_eq!(path, db_path);
     assert!(source.to_string().contains("an audit line"), "{source}");
+}
+
+#[test]
+fn project_group_slug_joins_and_inherits() {
+    let dir = private_tempdir();
+    let store = Store::open(dir.path());
+    let project = crate::Project::sanitized("checkout");
+    let first = "session-one".parse().unwrap();
+    let second = "session-two".parse().unwrap();
+    let child = "session-child".parse().unwrap();
+    let id = store
+        .join_project_group("water-economy", &project, &first, T0)
+        .unwrap();
+    assert_eq!(
+        store
+            .join_project_group("water-economy", &project, &second, T0)
+            .unwrap(),
+        id
+    );
+    let group = store.group("water-economy").unwrap();
+    assert_eq!(group.id, id);
+    assert_eq!(group.kind, "project");
+    assert_eq!(group.seats.len(), 2);
+    assert!(group.seats.iter().all(|s| s.role == "member"));
+    assert!(group.closed.is_none());
+    store
+        .capture_group_turns(
+            &first,
+            &[message("session-one", "m-1", "water economy plans")],
+            &Redactor::default(),
+        )
+        .unwrap();
+    assert_eq!(
+        store
+            .search_group_messages("water-economy", &tokens("economy"))
+            .unwrap()
+            .matches
+            .len(),
+        1
+    );
+    assert!(
+        store
+            .join_project_group("other", &project, &first, T0)
+            .unwrap_err()
+            .to_string()
+            .contains("water-economy")
+    );
+    assert!(store.group("other").is_err());
+    assert!(matches!(
+        store.inherit_seat(&child, Some(&first)).unwrap(),
+        crate::group::SeatStart::Inherited { .. }
+    ));
+    assert!(
+        store
+            .group("water-economy")
+            .unwrap()
+            .members()
+            .contains(&child)
+    );
 }

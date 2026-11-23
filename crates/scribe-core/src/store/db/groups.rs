@@ -63,6 +63,11 @@ BEGIN
 END;
 ";
 
+pub(super) const V12: &str = "
+ALTER TABLE groups ADD COLUMN slug TEXT;
+CREATE UNIQUE INDEX group_open_slug ON groups(slug) WHERE slug IS NOT NULL AND closed IS NULL;
+";
+
 /// The handoff lookup follows the session reference and ranks active handoffs across
 /// the whole seat. A single SELECT keeps metadata, chains and handoffs in one snapshot.
 const ROSTER: &str = "
@@ -72,7 +77,7 @@ WITH handoffs AS (
     WHERE e.tag = 'handoff' AND e.status = 'active' AND substr(r.value, 1, 8) = 'session:'
 )
 SELECT g.id, g.title, g.kind, g.project, g.opened, g.closed, g.opener, g.related,
-       s.name, s.role, m.session, h.id, h.created, h.n, {summary}
+       s.name, s.role, m.session, h.id, h.created, h.n, {summary}, {slug}
 FROM groups g LEFT JOIN group_seats s ON s.group_id = g.id
 LEFT JOIN group_members m ON m.group_id = s.group_id AND m.seat = s.name
 LEFT JOIN handoffs h ON h.session = m.session
@@ -86,7 +91,12 @@ fn roster(conn: &Connection, path: &Path, number: Option<i64>) -> Result<Vec<Gro
     } else {
         "NULL"
     };
-    let sql = ROSTER.replace("{summary}", summary);
+    let slug = if refuse_newer(conn, path)? >= 12 {
+        "g.slug"
+    } else {
+        "NULL"
+    };
+    let sql = ROSTER.replace("{summary}", summary).replace("{slug}", slug);
     let mut query = conn.prepare(&sql).map_err(fail)?;
     let mut rows = query.query([number]).map_err(fail)?;
     let mut groups: Vec<Group> = Vec::new();
@@ -97,6 +107,7 @@ fn roster(conn: &Connection, path: &Path, number: Option<i64>) -> Result<Vec<Gro
             let related: String = row.get(7).map_err(fail)?;
             groups.push(Group {
                 id,
+                slug: row.get(15).map_err(fail)?,
                 title: row.get(1).map_err(fail)?,
                 kind: row.get(2).map_err(fail)?,
                 project: row.get(3).map_err(fail)?,
@@ -201,6 +212,22 @@ impl Store {
     }
 
     fn group_number(&self, input: &str) -> Result<i64> {
+        // Open project slugs take precedence over id prefixes.
+        let slug = self.read_groups(|conn, path| {
+            if refuse_newer(conn, path)? < 12 {
+                return Ok(None);
+            }
+            conn.query_row(
+                "SELECT id FROM groups WHERE slug = ?1 ORDER BY closed IS NULL DESC, id DESC LIMIT 1",
+                [input],
+                |r| r.get::<_, i64>(0),
+            )
+            .optional()
+            .map_err(|e| Fallible::from_sqlite("read group slug from", path, e))
+        })?;
+        if let Some(n) = slug {
+            return Ok(n);
+        }
         // An exact id wins, including when a longer id starts with it.
         let ids = self.read_groups(|conn, path| {
             let fail = |e| Fallible::from_sqlite("read group ids from", path, e);
@@ -297,6 +324,53 @@ impl Store {
         })
     }
 
+    /// Create or join an open project group on a user-typed hook command.
+    pub fn join_project_group(
+        &self,
+        slug: &str,
+        project: &Project,
+        session: &SessionId,
+        now: OffsetDateTime,
+    ) -> Result<String> {
+        if slug.is_empty()
+            || slug.len() > 64
+            || !slug
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            || slug.starts_with('-')
+            || slug.ends_with('-')
+            || number(slug).is_some()
+        {
+            return Err(refusal(
+                WriteRefusal::InvalidText,
+                "group slug must be lowercase letters, digits and interior hyphens, and not a group id",
+            ));
+        }
+        self.write(|| {
+            let conn = open_writer(self.root(), self.lock_wait)?;
+            let path = self.root().join(DB_FILE);
+            let fail = |e| db_error("join project group in", &path, e);
+            let held: Option<(i64, String)> = conn.query_row(
+                "SELECT m.group_id, COALESCE(g.slug, 'g-' || g.id) FROM group_members m JOIN groups g ON g.id=m.group_id WHERE m.session=?1",
+                [session.as_str()], |r| Ok((r.get(0)?, r.get(1)?))
+            ).optional().map_err(fail)?;
+            if let Some((_, name)) = held {
+                return Err(refusal(WriteRefusal::GroupMembership, format!("session already belongs to group {name}; leave it before joining")));
+            }
+            let existing: Option<i64> = conn.query_row("SELECT id FROM groups WHERE slug=?1 AND closed IS NULL", [slug], |r| r.get(0)).optional().map_err(fail)?;
+            let n = match existing {
+                Some(n) => n,
+                None => conn.query_row("INSERT INTO groups(title,kind,project,opened,opener,related,slug) VALUES (?1,'project',?2,?3,?4,'[]',?1) RETURNING id", params![slug, project.as_str(), stamp(now), session.as_str()], |r| r.get(0)).map_err(fail)?,
+            };
+            let short: String = session.as_str().chars().take(8).collect();
+            let occupied: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM group_seats WHERE group_id=?1 AND name=?2)", params![n, short], |r| r.get(0)).map_err(fail)?;
+            let seat = if occupied { session.as_str() } else { &short };
+            conn.execute("INSERT INTO group_seats(group_id,name,role) VALUES (?1,?2,'member')", params![n, seat]).map_err(fail)?;
+            conn.execute("INSERT INTO group_members(group_id,seat,session,author,joined) VALUES (?1,?2,?3,'user',?4)", params![n, seat, session.as_str(), stamp(now)]).map_err(fail)?;
+            Ok(format!("g-{n}"))
+        })
+    }
+
     /// Append a member, or return false on retry. An ended transcript is named
     /// explicitly so a stale liveness check cannot authorize a different replacement.
     pub fn join_group(&self, join: JoinGroup<'_>, redactor: &Redactor) -> Result<bool> {
@@ -322,10 +396,12 @@ impl Store {
                 )
                 .optional()
                 .map_err(fail)?;
-            if held.as_ref().is_some_and(|(group, name)| *group != n || name != seat) {
+            if let Some((group, name)) = &held
+                && (*group != n || name != seat)
+            {
                 return Err(refusal(
                     WriteRefusal::GroupMembership,
-                    "the calling session already belongs to another seat; leave it before joining",
+                    format!("the calling session already belongs to group g-{group}; leave it before joining"),
                 ));
             }
             if closed && held.is_none() {

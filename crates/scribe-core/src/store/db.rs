@@ -58,7 +58,20 @@ pub const DB_FILE: &str = "scribe.db";
 /// The schema, one step per `user_version`: step `n` (1-based) moves the
 /// database from version `n - 1` to `n`. Append only; never edit a shipped
 /// step.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, groups::V9, V10, groups::V11];
+const MIGRATIONS: &[&str] = &[
+    V1,
+    V2,
+    V3,
+    V4,
+    V5,
+    V6,
+    V7,
+    V8,
+    groups::V9,
+    V10,
+    groups::V11,
+    groups::V12,
+];
 
 /// Version 1 (phase 4): `meta`, `messages` and its FTS5 index, and the
 /// memory tables phase 5 uses.
@@ -1078,6 +1091,8 @@ pub(super) fn db_error(action: &'static str, path: &Path, e: rusqlite::Error) ->
 /// Restore the schema-10 shape before exercising migrations from an older version.
 #[cfg(test)]
 pub(super) const REMOVE_GROUP_CAPTURE_SCHEMA: &str = "
+DROP INDEX group_open_slug;
+ALTER TABLE groups DROP COLUMN slug;
 DROP TRIGGER handoffs_clear_group_summary;
 DROP TRIGGER messages_clear_group_summary;
 ALTER TABLE messages DROP COLUMN group_only;

@@ -243,7 +243,9 @@ pub fn sql(root: &Path, statement: &str) {
 pub fn remove_group_capture_schema(root: &Path) {
     sql(
         root,
-        "DROP TRIGGER handoffs_clear_group_summary;
+        "DROP INDEX group_open_slug;
+        ALTER TABLE groups DROP COLUMN slug;
+        DROP TRIGGER handoffs_clear_group_summary;
         DROP TRIGGER messages_clear_group_summary;
         ALTER TABLE messages DROP COLUMN group_only;
         ALTER TABLE group_members DROP COLUMN turn_cursor;

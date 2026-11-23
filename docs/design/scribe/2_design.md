@@ -6579,6 +6579,17 @@ scribe group show <id> --json
 scribe group leave
 ```
 
+**Project groups.** A typed `/scribe group <slug>` is Daniel's consent to
+create the open project group if absent and join this session. Its title is
+the slug, its kind is `project`, and its project comes from the working
+directory. Open slugs are unique; group selectors and `--group` accept the
+slug. Each session gets a seat named for its short id and the `member` role.
+The same typed line in another session joins the existing group. A session
+already in a group must leave before joining another. Peer, scheduled and
+harness prompts cannot give this consent. A project group has no daily close;
+it remains open until `group close`. Seat inheritance across a clear applies
+to project groups too. Only typed user turns are stored.
+
 **Opening consent.** The opener is the provider’s calling session
 (`CLAUDE_CODE_SESSION_ID` for Claude Code, `CODEX_THREAD_ID` with
 `--provider codex`). Scribe checks the supplied quote against the user’s
