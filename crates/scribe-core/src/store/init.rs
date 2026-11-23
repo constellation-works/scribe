@@ -36,6 +36,11 @@ pub struct InitReport {
     pub next: Vec<String>,
 }
 
+/// Receipt format this binary writes. Format 2 adds `skill_files`.
+const RECEIPT_FORMAT: u32 = 2;
+/// Receipt formats this binary reads. Format 1 (no `skill_files`) upgrades in place.
+const READABLE_RECEIPT_FORMATS: [u32; 2] = [1, 2];
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Receipt {
@@ -44,6 +49,24 @@ struct Receipt {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     skill_files: BTreeMap<String, String>,
     hooks: BTreeMap<String, Value>,
+}
+
+/// Only the version of a receipt, read before its shape is checked.
+#[derive(Deserialize)]
+struct ReceiptFormat {
+    format: u32,
+}
+
+/// Parse a receipt. The format is checked before the shape, so a receipt from
+/// another format is refused as unsupported even when it carries fields this
+/// reader does not know.
+fn read_receipt(path: &Path, bytes: &[u8]) -> Result<Receipt> {
+    let version: ReceiptFormat = serde_json::from_slice(bytes)
+        .map_err(|_| conflict(path, "invalid installation receipt"))?;
+    if !READABLE_RECEIPT_FORMATS.contains(&version.format) {
+        return Err(conflict(path, "unsupported installation receipt format"));
+    }
+    serde_json::from_slice(bytes).map_err(|_| conflict(path, "invalid installation receipt"))
 }
 
 fn conflict(path: &Path, why: &str) -> Error {
@@ -116,17 +139,8 @@ pub fn init_project_with_skill_files(
     let old = read_optional(&target, &receipt_path)?;
     let receipt: Option<Receipt> = old
         .as_deref()
-        .map(|bytes| {
-            serde_json::from_slice(bytes)
-                .map_err(|_| conflict(&receipt_path, "invalid installation receipt"))
-        })
+        .map(|bytes| read_receipt(&receipt_path, bytes))
         .transpose()?;
-    if receipt.as_ref().is_some_and(|r| r.format != 1) {
-        return Err(conflict(
-            &receipt_path,
-            "unsupported installation receipt format",
-        ));
-    }
     let skill_before = read_owned_skill(
         &target,
         &skill_path,
@@ -194,7 +208,7 @@ pub fn init_project_with_skill_files(
         }
     }
     let new_receipt = Receipt {
-        format: 1,
+        format: RECEIPT_FORMAT,
         skill_sha256: prompt_sha256(skill),
         skill_files: digests,
         hooks: expected,
