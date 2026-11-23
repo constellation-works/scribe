@@ -1,0 +1,404 @@
+# Using scribe
+
+The [README](../README.md) is the front page. This page holds the install steps,
+the command list and the operating notes that used to live there. How an agent
+should read and write the records is the [skill](../skills/scribe/SKILL.md).
+The mechanism is the [design](design/scribe/2_design.md). Every config key is
+the [store spec](design/scribe/specs/store.md).
+
+## What a mark does
+
+In Claude Code or Codex, a `#scribe` you type in your own turn, inside a
+sentence or opening a line (`#scribe idea: …`, `#scribe add this to preferences`),
+marks that sentence. The prompt hook echoes it. After the reply, Stop catalogs
+it with one bounded model call: the entry's content is scribe's statement and
+its `quote` is your words. A tag named by the marker, or written at the end of
+the line (`… to preferences`), is a hint that call must follow. `#scribe/global`
+instead of `#scribe` stores `project: global`, for every repository; otherwise
+the entry keeps the working directory's project.
+
+`/scribe on` in Claude Code, or an exact `$scribe on` in Codex, catalogs that
+session. `scribe session pass` then writes one record per session whose pass is
+due, and proposes unmarked preferences and standards from your own turns.
+`scribe proposal list --state open --json` shows the quotes and the source
+turns. `#scribe approve <id>` creates the entry as yours, citing the original
+turn. `#scribe reject <id>` closes it for good.
+
+`scribe question ask` answers from the records and quotes each one it cites.
+The Orbit plugin serves the same answer to agents as `scribe.ask`
+([install](../plugin/.orbit-plugin/README.md)). `scribe consistency scan`
+proposes superseding an entry a later one replaced, and retiring an entry due
+for review. You settle each with `#scribe approve <id>` or `#scribe reject <id>`.
+`#scribe retire <id>` hides an entry and keeps its text. `#scribe forget <id>`
+blanks it. The scan also deactivates sessions with no messages for
+`[sessions] inactive_after_days` (the default named in `scribe consistency scan
+--help`) and sessions a later record says were removed or replaced. By hand:
+
+```sh
+scribe session deactivate <id> --author opus --reason 'the feature was removed'
+scribe session activate <id> --author opus --pin
+```
+
+Catchers decide what the pass catches. Each tag's `[tags.<tag>.capture]` names
+whose turns it reads, the trigger phrases, whether a catch is proposed or
+written at once, and how many claims may wait open. `preferences` and
+`standard` ship. A new catcher is config only. Examples are in
+[specs/catchers.md](design/scribe/specs/catchers.md).
+
+Action tags hold work for a consumer outside scribe. `standard` ships, and
+config may mark another tag the same way. Agents write them with `entry add`,
+and consumers read them with `entry list --tag <tag> --after <time> --window`
+and note what they did with `entry pickup`. `question ask` leaves them out
+unless the question names their tag. The rules are
+[2_design.md §4.6](design/scribe/2_design.md#46-action-tags) and the
+[skill](../skills/scribe/SKILL.md).
+
+Prompts say "the user". `[user] name` in `config.toml` names you instead, and
+`[instructions]` replaces what one model use is told to do. `{user}` in that
+text stands for the name. The JSON shapes stay fixed in code
+([store spec](design/scribe/specs/store.md),
+[output contract](design/scribe/specs/output-contract.md)).
+
+## Commands
+
+These are the lines `scribe --help` and each command's `--help` document.
+`<id>` is an id or a unique prefix of at least four characters. `--author` is
+the agent name on a write; the reserved names are `user`, `scribe`,
+`consistency`, `session-pass` and `tag-retired`.
+
+```sh
+scribe entry list --tag preferences --status active
+scribe entry list --topic ci --limit 10
+scribe entry list --since 2026-10-01 --until 2026-10-31 --author-kind user
+scribe entry list --related task:<id> --related pr:<owner>/<repo>#<n>
+scribe entry list --tag standard --after 2026-11-15T09:00:00Z --window --json
+scribe entry show <id> --json
+scribe entry show <id> --window
+scribe entry add --tag preferences --author opus 'Use the stable API'
+scribe entry add --tag preferences --author opus --related session:<id> --quote '<their words>' --spoken 'The user prefers short updates.'
+scribe entry add --tag standard --author opus --related session:<id> --quote '<quoted words>' 'Name the unit in every size'
+scribe entry pickup <id> --author standards-intake --result task:<id>
+scribe entry update <id> --author opus --add-topic api
+scribe entry retire <id> --author opus --reason 'No longer applies'
+scribe entry retire <id> --author opus --reason 'The user asked' --session <id> --instruction '<their words>'
+scribe entry forget <id> --author opus --session <id> --instruction '<their words>' --confirm
+scribe tag list
+scribe tag add notes --author opus --description 'Agent notes'
+scribe tag update notes --author opus --add-alias note
+scribe proposal list --state open --author-kind scribe
+scribe proposal list --entry <id> --since 2026-11-01
+scribe proposal add --kind stale --older <id> --reason 'Review needed' --author opus
+scribe proposal update <id> --author opus --reason 'New evidence'
+scribe proposal settle <id> --approve --author opus
+scribe proposal settle <id> --reject --author opus --session <id> --instruction '<their words>'
+scribe session list --project scribe
+scribe session list --since 2026-11-01 --status final --topic store --topic release
+scribe session show <id> --log
+scribe session show <id> --json
+scribe session pass --json
+scribe session pass --session <id> --json
+scribe session rebuild <id> --author <name> --confirm
+scribe session deactivate <id> --author opus --reason 'the feature was removed'
+scribe session activate <id> --author opus --pin
+scribe brief
+scribe memory show
+scribe memory refresh
+scribe search "merge policy" --kind session --since 2026-11-01
+scribe search "merge queue" --kind message
+scribe consistency scan --json
+scribe question ask "how do we merge agent PRs?"
+scribe question ask "preferences this week" --json
+scribe --provider codex transcript list --since 2026-10-01 --min-turns 1 --json
+scribe --provider codex transcript show <id> --json
+```
+
+`scribe question ask "can you fetch me last session summary?"` is a lookup: it
+returns the stored record and does not call a model. Anything that is not a
+lookup is answered by the configured ask model, and every quote is checked
+against the record it cites.
+
+An agent's own notes have no typed-turn citation. `ask` labels them
+`agent note (<name>)`. Repeating an unchanged write prints the record with
+`nothing changed` on stderr and writes no audit event. Only on your checked
+instruction (`--session` and `--instruction`, a turn you typed in the last 30
+minutes) may an agent retire or forget your entry, or approve or reject a
+claim a session pass proposed. The [skill](../skills/scribe/SKILL.md) is the
+procedure.
+
+## Data directory
+
+`--root <dir>`, else `$SCRIBE_ROOT`, else `~/.scribe`. Entries, proposals,
+tags, pickups, annotation marks, the audit log and session records are rows in
+`scribe.db`. A store from before that keeps the old files until its first
+write, or until `scribe store migrate`, moves them in and leaves the files in
+`pre-sqlite-<date>/`. `scribe export <dir>` writes them back out as that file
+shape, or `--as jsonl` for one file per table. Memory stays files under
+`memory/`. `config.toml` holds configured tags, models, catalog cadence,
+session age and redaction. The layout and every key are in the
+[store spec](design/scribe/specs/store.md).
+
+A store that another user owns or could write, a linked file, and a record
+from a newer build are refused. List, show, search, brief and question
+commands only read: they take no lock and write nothing, including audit
+lines. Direct writes, session passes and rebuilds, `session deactivate` and
+`session activate`, and consistency scans are audited.
+
+The build writes the store format named `FORMAT` in
+`crates/scribe-core/src/store/format.rs` and reads every older format. What
+each format changed is the store spec.
+
+## Project init
+
+The provider-neutral skill is [skills/scribe/SKILL.md](../skills/scribe/SKILL.md).
+It is embedded in the binary, so installing `scribe` is enough to initialize
+another project:
+
+```sh
+scribe init --provider codex --target /absolute/path/to/project
+scribe init --provider claude-code --target /absolute/path/to/project
+```
+
+Init requires the selected runtime on `PATH` and an existing project. Codex
+receives `.agents/skills/scribe/SKILL.md` and `.codex/hooks.json`. Claude
+receives `.claude/skills/scribe/SKILL.md` and `.claude/settings.json`. The hook
+command names the absolute installed `scribe`. Unrelated hooks and
+configuration are preserved. A private `scribe-init.json` receipt in the
+provider configuration directory tracks owned skill content and hook
+definitions. Repeating init reports unchanged files. An upgrade replaces only
+unchanged owned artifacts. Your edits produce a conflict instead of an
+overwrite. The persistent `.scribe-init.lock` serializes initialization; do not
+remove it while an initializer is running. Created state is owner-only.
+Symlinked or foreign-writable targets are refused.
+
+Init does not grant hook trust, turn cataloging on, or enable a scheduler.
+Restart the provider after installation. Codex requires review of the hooks in
+**Settings > Hooks** (desktop) or `/hooks` (CLI). A changed package needs that
+review again. You type `/scribe on`, `/scribe off` or `/scribe status`, or an
+exact Codex `$scribe on|off|status`. Loading the skill changes no recording
+state. Do not initialize project hooks and install the native plugin for the
+same project unless you want both hook sources.
+
+## Codex plugin
+
+The local package is `plugin/codex/`. The marketplace manifest is
+[`.agents/plugins/marketplace.json`](../.agents/plugins/marketplace.json).
+Register the repository root, then install:
+
+```sh
+codex plugin marketplace add /absolute/path/to/scribe --json
+codex plugin add scribe@scribe-local --json
+```
+
+This does not submit the package to a public marketplace. The packaged
+launcher tries `SCRIBE_BIN` (an absolute executable), then `scribe` on `PATH`,
+then `$HOME/.cargo/bin/scribe`, so a GUI environment need not have Cargo on
+`PATH`. A missing binary says recording is unavailable. Authenticate the Codex
+CLI and review the hooks after enabling the plugin. The skill copies in the
+packages are generated by `python3 scripts/sync-skills.py`. `make ci-fast`
+checks them against [skills/scribe/SKILL.md](../skills/scribe/SKILL.md).
+
+Codex transcripts are read from `$CODEX_HOME/sessions` and
+`$CODEX_HOME/archived_sessions` (default `$HOME/.codex`). A supported desktop
+rollout has to identify a main user thread and carry per-content user
+provenance with a host turn id. User roles alone, injected skills, repository
+instructions, tools, automation and subagents do not supply that provenance.
+Unknown transcript versions fail closed with a nonblocking recording refusal.
+The model transport is written against the Codex request shape named in
+`crates/scribe/src/models/codex.rs`. It is not a stable transcript API.
+
+`UserPromptSubmit` may arrive before its transcript item exists. It then
+reports pending verification. Stop processes matching host-attributed inputs,
+once, from the current turn. First activation does not replay earlier turns.
+An existing cursor resumes later inputs. A rewritten or missing cursor refuses
+replay. The host-owned file checks prevent accidents. A process with the same
+OS account can still forge them. Agents must not call hooks to impersonate you
+or relax the author rules.
+
+`scribe session pass` routes each opted-in session to its provider, including
+an archived final pass. `session rebuild` uses the record's provider.
+Discovery only reads:
+
+```sh
+scribe --provider codex transcript list --since 2026-11-01 --min-turns 1 --json
+scribe --provider codex transcript show <id> --json
+scribe session pass --session <id> --json
+```
+
+Codex model work defaults to Luna (`gpt-6-luna`), with no fallback. Override it
+in the private store's `config.toml`. Missing keys keep the defaults in
+`ModelIds::codex()` (`crates/scribe-core/src/config.rs`):
+
+```toml
+[codex.models]
+provider = "codex"                 # or explicit "claude-code" transport
+ask = "gpt-6-luna"
+session = "gpt-6-luna"
+consistency = "gpt-6-luna"
+annotation = "gpt-6-luna"
+credentials = ["OPENAI_API_KEY"]   # an existing Codex login also works
+```
+
+`[models]` keeps the Claude defaults. It also accepts `provider = "codex"` for
+global routing, and then defaults its model ids to Luna. Global question and
+consistency jobs otherwise use `[models]`. `--provider codex` selects the Codex
+model table for those CLI calls. An explicit id is honored. Model children run
+ephemeral, without your instructions, plugins, hooks, shell, apps, web search
+or tools, from a private temporary directory. The supervisor bounds time and
+output and terminates the process group. Schemas are validated, tool items are
+refused, secrets are masked in diagnostics, and temporary schemas and logs are
+removed. A missing CLI, login or model is an error, not a fall back to Claude.
+
+For Luna-backed Orbit session passes, install the generated
+[plugin/orbit-codex](../plugin/orbit-codex/README.md) variant. It needs
+`codex_home`, `codex_runtime_tmp` and `codex_installation_id`, and an Orbit
+build that can write the exact files the manifest names. Codex needs its `tmp`
+directory and `installation_id` file writable at startup, even for an ephemeral
+model call. Its auth, configuration and transcripts stay read-only. Scribe
+copies no credentials and requests no whole-home write. The default
+`plugin/.orbit-plugin/` stays the Claude-only package. Both variants keep ask
+as the only agent-callable tool and ship routines disabled. Upgrading preserves
+existing enablement and schedules.
+
+Lifecycle and trust: [Codex hooks](https://learn.chatgpt.com/docs/hooks).
+Packaging: [Build plugins](https://developers.openai.com/plugins/build/plugins#bundled-mcp-servers-and-lifecycle-hooks).
+
+## Claude Code package
+
+`plugin/claude-code/` registers four hooks that run the `scribe` binary on
+`PATH`, and the `/scribe` command.
+
+- `SessionStart` runs `scribe hook session-start`. It tells you how many
+  proposals are open and, in an interactive session, gives the agent the brief
+  (`scribe brief`: memory, the last sessions, and every open claim by tag).
+- `UserPromptSubmit` runs `scribe hook user-prompt-submit`. It echoes each
+  `#scribe` marker of the typed prompt (code fences, blockquotes, pasted
+  blocks and quoted mentions are skipped), applies each whole-line
+  `#scribe approve|reject|retire|forget`, and replies with what it marked,
+  settled or refused.
+- `Stop` runs `scribe hook stop`. It catalogs the session's unsettled markers
+  (one annotation call per marked turn, at most two turns per Stop), echoes what it recorded or why not,
+  and fills the message id of an older entry's cite. A line an older store
+  already recorded verbatim is not cataloged again, and settling commands are
+  not replayed. For a session that is on, Stop also marks a pass due on the
+  `[catalog]` cadence in `config.toml`.
+- `SessionEnd` runs `scribe hook session-end`, which marks the last pass due
+  and final.
+
+A prompt whose first line is `/scribe on`, `/scribe off` or `/scribe status`
+is answered by `UserPromptSubmit` and never reaches the model. So are
+`/scribe on --from <id>` and `/scribe link <id> [--type continues]`, which link
+this session to the one it was spawned from or continues. They refuse an
+unknown id, a self-link or a cycle. After a desktop clear, the transcript names
+the previous session. When its newest active handoff has mode `continue`, the
+hook puts that body before the brief, carries the recording switch and writes
+a `continues` link. If the ancestry is missing, type
+`/scribe continue <handoff-id>`. A `new` handoff starts with the ordinary
+brief. No hook calls a model except Stop's annotation call. The pass does.
+Each write and refusal leaves one audit line in `scribe.db` with ids, the
+`--author` name and error codes only.
+
+Install from this checkout after `make install`:
+
+```sh
+claude plugin install scribe --marketplace ./plugin
+```
+
+[`plugin/.claude-plugin/marketplace.json`](../plugin/.claude-plugin/marketplace.json)
+is the local marketplace that command adds. `claude plugin validate plugin/claude-code`
+checks the package. An install after a plugin change runs:
+
+```sh
+claude plugin marketplace update scribe-local
+claude plugin update scribe@scribe-local
+```
+
+Orbit's copy of the plugin is installed from outside the repository. The
+commands and the reason are in the
+[plugin README](../plugin/.orbit-plugin/README.md#install-operator).
+`claude plugin update` applies on the next Claude Code restart.
+
+The package ships the same skill, which teaches the CLI above. The skill is
+for sessions on the machine where the data directory lives.
+
+## tmux popup
+
+`scribe tmux` browses sessions, entries, proposals and backfill candidates in
+an `fzf` popup. It only reads, and it needs `fzf` on `PATH`. The preview, the
+keys and the backfill window are in `scribe tmux --help`. Bind a key in
+`~/.tmux.conf`:
+
+```tmux
+bind-key S display-popup -E -w 90% -h 85% scribe tmux
+```
+
+An empty list, or a list that fails, is one notice row instead of a failed
+popup.
+
+## Settings
+
+| Setting | Flag | Environment | Default |
+|---|---|---|---|
+| Data directory | `--root <DIR>` | `SCRIBE_ROOT` | `~/.scribe` |
+| Output format | `--format auto\|table\|json`, `--json` | `SCRIBE_FORMAT` | `auto` |
+| Color | — | `NO_COLOR`, `CLICOLOR_FORCE`, `TERM` | on for a terminal |
+| Log level (stderr) | — | `SCRIBE_LOG` (for example `debug`) | `warn` |
+
+`auto` is a table on a terminal and tab-separated lines otherwise. Color is
+off in a pipe, when `NO_COLOR` is non-empty, and for `TERM=dumb`. A non-empty
+`CLICOLOR_FORCE` overrides `TERM=dumb` and never overrides `NO_COLOR` or a
+pipe.
+
+Exit status is 0 on success, 1 when a command fails and 2 on a usage error.
+`--json` is the contract in the
+[output spec](design/scribe/specs/output-contract.md): a list is
+`{"<entries|sessions|proposals|tags|hits|transcripts>": [...], "total": N, "truncated": false, "warnings": [...]}`,
+one record is an object, and an error in JSON mode is one `{"error", "code"}`
+object on stderr.
+
+## Where this repository came from
+
+This repository was created from the constellation Rust CLI template, either
+with GitHub's "Use this template" on `constellation-works/rust-cli-template`
+followed by `scripts/rename-template.sh <name>`, or inside the constellation
+umbrella by `operations/scripts/new-rust-cli.sh`. The template's note example
+has been replaced by scribe's domain. The structure, gates and tests remain
+the pattern (STD-01 CLI surface, STD-02 Rust architecture, STD-03 concurrency
+and process safety, STD-04 testing and verification, STD-05 security
+boundaries), vendored under [docs/standards/](standards/README.md).
+
+## Layout
+
+[ARCHITECTURE.md](../ARCHITECTURE.md) is the layer list and the dependency
+rules. The top of the tree:
+
+```text
+crates/scribe-core/    domain library, including store/
+crates/scribe/         the scribe binary
+plugin/claude-code/    Claude Code hooks and the /scribe command
+plugin/codex/          Codex plugin
+plugin/.orbit-plugin/  Orbit plugin (Claude-oriented)
+plugin/orbit-codex/    Orbit plugin variant for Codex model calls
+skills/scribe/         canonical skill, embedded by scribe init
+docs/design/scribe/    design, decisions and specs
+scripts/               structure gates run by make ci-fast
+```
+
+## Development
+
+```sh
+make ci-fast          # fmt, structure checks, standards-check; no compile
+make ci-lint          # clippy -D warnings, plus cargo-deny
+make test             # nextest when installed, else cargo test; then doctests
+make goldens          # compare help and output with the built binary
+make goldens UPDATE=1 # regenerate after an intended surface change
+make ci               # all of the above; what CI runs
+```
+
+`cargo-deny` and `cargo-nextest` are optional locally (the Makefile warns and
+skips or falls back). CI installs both at pinned versions, and there a missing
+tool fails. `make standards-check` runs `docs/standards/check.sh`.
+
+Every line in the root [README](../README.md) that starts with `scribe ` is
+parsed by `every_documented_command_line_parses`
+(`crates/scribe/src/tests/cli.rs`), so those lines have to stay real commands.
+The same test parses the examples in `--help`.
