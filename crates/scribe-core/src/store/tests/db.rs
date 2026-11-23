@@ -978,8 +978,10 @@ fn backfill_keeps_a_turn_appended_after_the_snapshot_but_dated_before_the_join()
 }
 
 /// A displaced holder that typed while another session held its seat keeps
-/// those turns out of group search when it regains the seat, even though it
-/// keeps its backfill cursor and no hook ran during the displacement.
+/// those turns out of group search when it regains the seat. Its backfill
+/// cursor, set before the displacement, is cleared on restoration, which
+/// restarts its consent window; the new join time then cuts off the turns typed
+/// during the displacement, even though no hook ran to move the cursor past them.
 #[test]
 fn a_restored_seat_with_a_cursor_excludes_turns_typed_during_displacement() {
     use crate::ClaudeCapturePosition;
