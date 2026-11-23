@@ -90,7 +90,7 @@ use crate::session::{
     self as session_mod, Child, ControlState, SessionFilter, SessionId, SessionLink, SessionRecord,
 };
 use crate::tag::{self, TagSummary};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -303,7 +303,20 @@ impl Store {
     /// Entries matching `filter`, oldest first, and how many matched. A
     /// missing store is an empty one.
     pub fn list_entries(&self, filter: &EntryFilter) -> Result<EntryList> {
-        let (entries, skipped) = self.load_entries()?;
+        self.list_entries_scoped(filter, None)
+    }
+
+    /// List entries, optionally restricted to the group's member sessions
+    /// before applying the filter and its limit.
+    pub fn list_entries_scoped(
+        &self,
+        filter: &EntryFilter,
+        members: Option<&BTreeSet<SessionId>>,
+    ) -> Result<EntryList> {
+        let (mut entries, skipped) = self.load_entries()?;
+        if let Some(members) = members {
+            entries.retain(|entry| crate::group::entry_belongs(entry, members));
+        }
         Ok(EntryList {
             listing: filter.select(entries),
             skipped,
@@ -313,7 +326,23 @@ impl Store {
     /// Session records matching `filter`, oldest first, with the on/off
     /// state beside them.
     pub fn list_sessions(&self, filter: &SessionFilter) -> Result<SessionList> {
-        let loaded = self.load_sessions()?;
+        self.list_sessions_scoped(filter, None)
+    }
+
+    /// List session records, optionally restricting the records and their
+    /// derived lookup data to the group's member sessions.
+    pub fn list_sessions_scoped(
+        &self,
+        filter: &SessionFilter,
+        members: Option<&BTreeSet<SessionId>>,
+    ) -> Result<SessionList> {
+        let mut loaded = self.load_sessions()?;
+        if let Some(members) = members {
+            loaded.records.retain(|r| members.contains(&r.id));
+            loaded
+                .skipped
+                .retain(|(id, _)| id.as_ref().is_some_and(|id| members.contains(id)));
+        }
         let control = loaded.control;
         let records = loaded.records;
         let skipped_sessions = loaded
@@ -1278,7 +1307,7 @@ impl Store {
         if !self.root_exists()? {
             return Ok(crate::message::MessageSearch::default());
         }
-        db::search_messages(&self.root, tokens)
+        db::search_messages(&self.root, tokens, None)
     }
 
     fn prepare_dir(&self, dir: &Path) -> Result<()> {

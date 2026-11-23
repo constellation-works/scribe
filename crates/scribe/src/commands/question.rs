@@ -13,7 +13,8 @@ use crate::app::Context;
 use crate::error::CliError;
 use crate::output::{AskPayload, Output, SessionsContext};
 use clap::{Args, Subcommand, ValueEnum};
-use scribe_core::ask::{self, Corpus, Question, RecordKind, Scope, Tasks};
+use scribe_core::ask::{self, Corpus, NoTasks, Question, RecordKind, Scope, Tasks};
+use scribe_core::group::Group;
 use scribe_core::{Config, EntryFilter, Models, Project, SessionFilter, Store, TagName, Topic};
 use time::{Date, OffsetDateTime};
 
@@ -22,7 +23,7 @@ Examples:
   scribe question ask \"how do we merge agent PRs?\"
   scribe question ask \"can you fetch me last session summary?\" --json";
 
-const ASK_EXAMPLES: &str = "\
+pub(super) const ASK_EXAMPLES: &str = "\
 Lookups (the newest session, a named session, open next steps, a tag's
 entries today or this week, month or year, a term the user defined, the last
 on-call session for a workspace) return the stored records with no model
@@ -32,6 +33,7 @@ the record it cites; claims that fail are dropped and counted.
 
 Examples:
   scribe question ask \"how do we merge agent PRs?\"
+  scribe ask \"what remains for the release?\" --group <id>
   scribe question ask \"preferences this week\" --json | jq '.records[].entry.content'
   scribe question ask \"what do I prefer for releases?\" --tag preferences --since 2026-01-01
   scribe question ask \"merge policy\" --include-hidden --json | jq .claims";
@@ -74,6 +76,10 @@ pub(crate) struct AskArgs {
     #[arg(long, value_name = "PROJECT")]
     pub(crate) project: Option<Project>,
 
+    /// Use only records of this group's members, including stored turns (id or unique prefix)
+    #[arg(long, value_name = "ID")]
+    pub(crate) group: Option<String>,
+
     /// Only this kind of record. Leaves out Orbit tasks [default: any]
     #[arg(long, value_enum, value_name = "KIND")]
     pub(crate) kind: Option<KindArg>,
@@ -115,13 +121,21 @@ pub(super) fn run(command: QuestionCommand, ctx: &Context) -> Result<Output, Cli
                 include_hidden: args.include_hidden,
             };
             let config = ctx.config()?;
+            let group = args
+                .group
+                .as_deref()
+                .map(|id| ctx.store().group(id))
+                .transpose()?;
+            let orbit = ctx.tasks();
+            let tasks: &dyn Tasks = if group.is_some() { &NoTasks } else { &orbit };
             let payload = answer_with_config(
                 &config,
                 ctx.store(),
                 question,
                 |config| ctx.models(config),
-                &ctx.tasks(),
+                tasks,
                 ctx.now(),
+                group.as_ref(),
             )?;
             Ok(Output::Ask(Box::new(payload)))
         }
@@ -139,7 +153,7 @@ pub(super) fn answer_with<M: Models, T: Tasks + ?Sized>(
     now: OffsetDateTime,
 ) -> Result<AskPayload, CliError> {
     let config = store.config()?;
-    answer_with_config(&config, store, question, models, tasks, now)
+    answer_with_config(&config, store, question, models, tasks, now, None)
 }
 
 fn answer_with_config<M: Models, T: Tasks + ?Sized>(
@@ -149,9 +163,24 @@ fn answer_with_config<M: Models, T: Tasks + ?Sized>(
     models: impl FnOnce(&Config) -> M,
     tasks: &T,
     now: OffsetDateTime,
+    group: Option<&Group>,
 ) -> Result<AskPayload, CliError> {
-    let entries = store.list_entries(&EntryFilter::default())?;
-    let sessions = store.list_sessions(&SessionFilter::default())?;
+    let members = group.map(Group::members);
+    let entries = store.list_entries_scoped(&EntryFilter::default(), members.as_ref())?;
+    let sessions = store.list_sessions_scoped(
+        &SessionFilter {
+            include_inactive: group.is_some(),
+            ..SessionFilter::default()
+        },
+        members.as_ref(),
+    )?;
+    let messages = if let Some(group) = group {
+        store
+            .search_group_messages(&group.id, &ask::tokens(&question.text))?
+            .matches
+    } else {
+        Vec::new()
+    };
     for tag in &mut question.scope.tags {
         if let Some(def) = config.tags.resolve(tag.as_str()) {
             *tag = def.name.clone();
@@ -160,6 +189,7 @@ fn answer_with_config<M: Models, T: Tasks + ?Sized>(
     let corpus = Corpus {
         entries: &entries.listing.items,
         sessions: &sessions.listing.items,
+        messages: &messages,
         tags: &config.tags,
         user: &config.user,
     };

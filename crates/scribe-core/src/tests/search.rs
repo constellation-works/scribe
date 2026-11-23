@@ -37,6 +37,7 @@ fn run(q: &SearchQuery, entries: &[Entry], sessions: &[SessionRecord]) -> search
         Corpus {
             entries,
             sessions,
+            messages: &[],
             tags: &tags,
             user: &crate::voice::UserName::default(),
         },
@@ -158,6 +159,7 @@ fn terms_with_no_searchable_word_are_refused() {
         Corpus {
             entries: &[],
             sessions: &[],
+            messages: &[],
             tags: &tags,
             user: &crate::voice::UserName::default(),
         },

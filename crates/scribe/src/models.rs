@@ -180,6 +180,28 @@ impl ClaudeCliModels {
 }
 
 impl Models for ClaudeCliModels {
+    fn group_summary(
+        &self,
+        model: &str,
+        evidence: &scribe_core::group::CloseEvidence,
+    ) -> Result<String, ModelError> {
+        const SCHEMA: &str = r#"{"type":"object","properties":{"summary":{"type":"string","minLength":1,"maxLength":4000}},"required":["summary"],"additionalProperties":false}"#;
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Summary {
+            summary: String,
+        }
+        let value = self.call(
+            model,
+            SCHEMA,
+            evidence.prompt(),
+            scribe_core::models::ASK_BUDGET,
+        )?;
+        serde_json::from_value::<Summary>(value)
+            .map(|answer| answer.summary)
+            .map_err(|e| ModelError::Malformed(format!("not a group summary: {e}")))
+    }
+
     fn annotation(&self, request: &AnnotationRequest) -> Result<AnnotationAnswer, ModelError> {
         let value = self.call(
             &request.model,

@@ -100,7 +100,7 @@ counting action entries left unpicked for over an hour
 session in the same project was recorded within the last day, adds
 `scribe: this may continue <id> (recorded) — type /scribe on --from <id> to keep recording`
 ([§5.4](#54-session-links), [§7](#7-consistency-routine)). It prints nothing
-otherwise. Restoring a continue handoff (§16.7) is the hook’s write path. It does not create `config.toml`
+otherwise. Restoring a continue handoff (§16.7) and inheriting a group seat across a clear (§17) are the hook’s write paths. It does not create `config.toml`
 ([§3](#3-storage)).
 (Proposed, not built: it also gives the agent the memory page as
 `additionalContext` in interactive sessions,
@@ -697,10 +697,11 @@ texts that replace the shipped ones ahead of the fixed output contract
 an unknown key or bad value is refused, naming the file and line
 ([specs/store.md](./specs/store.md#config)).
 `session-start` does not create or rewrite this file; when it is absent, the
-defaults apply. Outside the continue-handoff restoration in [§16.7](#167-continuing-after-a-clear),
+defaults apply. Outside the continue-handoff restoration in [§16.7](#167-continuing-after-a-clear) and group-seat inheritance in [§17](#17-session-groups-and-seats),
 the hook is read-only. Restoring that handoff writes the child's link and
-inherited switch and audits the write
-([4_decisions.md](./4_decisions.md#session-start-is-read-only-except-when-restoring-a-continue-handoff)).
+inherited switch; inheriting an open seat appends the child to its chain. Both
+writes are audited
+([4_decisions.md](./4_decisions.md#session-start-is-read-only-except-for-handoff-restoration-and-seat-inheritance)).
 
 **Redaction.** Before any write of `said`, `content`, a session record's
 title, text fields and terms (from S8 also each segment's heading and text,
@@ -3967,8 +3968,9 @@ occurrences:
   (decayed, past its window). It is a pure function of the item and the
   day, in `scribe-core`, so no routine has to run for an item to leave the
   page. `SessionStart` derives the memory page without writing memory and,
-  except when restoring a continue handoff (§16.7), remains read-only
-  ([4_decisions.md](./4_decisions.md#session-start-is-read-only-except-when-restoring-a-continue-handoff)).
+  except when restoring a continue handoff (§16.7) or inheriting an open group
+  seat (§17), remains read-only
+  ([4_decisions.md](./4_decisions.md#session-start-is-read-only-except-for-handoff-restoration-and-seat-inheritance)).
 
 ### 13.3 Writing: the session pass
 
@@ -6519,8 +6521,10 @@ The desktop app sends SessionStart with source `startup` on a clear. The
 new transcript has its own session id and an opening `derived-from` record.
 The hook reads up to 64 KiB from the checked transcript path, looking for
 distinct session ids marked `via: clear`. A `via: launch` id can survive
-several clears. Only the clear ids identify immediate predecessors. Hook
-sources `resume` and `compact` do not restore a handoff.
+several clears. Only the clear ids identify immediate predecessors. This
+lookup runs for interactive Claude Code starts whose source is `startup`,
+`clear`, or omitted; other source values, including `resume` and `compact`,
+do not restore a handoff.
 
 For a single predecessor, the hook reads its newest active handoff. If its
 mode is `continue`, that one checked body (at most 3,000 characters) starts
@@ -6551,6 +6555,9 @@ seats’ roles are labels chosen by the caller. The public id is `g-<n>`.
 scribe group open --title 'Release review' --kind review --project scribe \
   --related repo:scribe --quote 'open a release review'
 scribe group join <id> --as editor --role reviewer --author aide
+scribe search 'release checklist' --group <id> --kind message
+scribe ask 'what remains for the release?' --group <id>
+scribe group close <id>
 scribe group show <id> --json
 scribe group leave
 ```
@@ -6562,28 +6569,76 @@ own words in a typed turn of its local transcript. Claude history copied
 from a different session, pasted material and agent-originated turns cannot
 authorize an open. Codex uses host-attributed user input. The audit line
 records the group, session and message ids. The user’s quoted text stays
-in the transcript. Opening authorizes members to join and leaves seat
-selection to a separate join, including for the opener.
+in the transcript. Opening gives consent to store the user's typed turns of
+member sessions while the group is open. Seat selection takes a separate join,
+including for the opener. Opening a group reports any other open group ids in
+that project on stderr.
 
 **Joining and correcting membership.** A caller supplies its own agent
 `--author`. A new seat takes `--role`, defaulting to the seat name.
 A replacement inherits that role. A transcript can occur in only one
 seat across the store, including earlier positions in a chain. Repeating
 the same join preserves its position. To take an occupied seat, pass
-`--replace` or let scribe verify that the previous holder’s transcript
-has ended. This uses the catalog’s 24-hour last-message rule. An unreadable
-or empty transcript requires explicit replacement. The write rechecks the
-holder under the store transaction before appending. `group leave`
-removes only the caller’s position and drops a seat when its chain is empty.
+`--replace`, let scribe verify that the previous holder’s transcript
+has ended (using the catalog’s 24-hour last-message rule), or match
+the caller’s own single `via: clear` predecessor against the seat’s
+newest transcript. An unreadable
+or empty transcript requires explicit replacement unless the caller cleared
+from that holder. The write rechecks the
+holder under the store transaction before appending. Closed groups accept no
+new members. `group leave` removes the caller’s position and drops a seat when
+its chain is empty.
+
+**Seats across clears.** An interactive Claude Code `SessionStart` whose
+source is `startup`, `clear`, or omitted reuses
+[§16.7](#167-continuing-after-a-clear)’s `derived-from` (`via: clear`)
+predecessor lookup once per start. When a single clear predecessor is the
+newest transcript of a seat in an open group, the hook appends the new session
+to that seat’s chain under the predecessor’s author, audits the write against
+the group id, and notes the held seat in `additionalContext`, without
+switching cataloging on or creating a session record. Repeating
+`SessionStart` keeps the existing seat with no second write. A session that a
+later member replaced on its seat holds none: its chain row stays as history,
+so `additionalContext` says it was replaced rather than naming it the holder,
+and it is never appended again; it receives no join recommendation. A session
+that already holds a seat is told which seat it holds. An unseated session
+with no open groups gets no seat context. When open groups exist and the
+starting session holds no seat for another reason (no predecessor line,
+multiple predecessors, or a predecessor holding no open seat), nothing is
+joined and `additionalContext` tells the session to re-run
+`scribe group join`. If the seat lookup fails, the hook reports the failure
+and also recommends running `scribe group join`.
+
+**Stored turns.** Joining starts no catalog pass and creates no session record.
+Once the provider persists a typed turn, the prompt or Stop hook can store its
+words without a model call, beginning at the time the session joined. Capture
+uses the pass's exclusions for synthetic and control turns, pasted blocks,
+fenced code and sensitive text, plus its store redactor. Regular cataloging
+still follows the session's own switch. Explicit `#scribe` annotations keep
+their usual behavior. Leaving deletes the turns stored on group consent alone.
+`#scribe forget <session-id>` also works for a session with stored turns and no
+catalog record. Erasing a member's sources can clear the group's derived
+summary, and the group stays closed.
+
+**Closing.** `group close <id>` checks the caller against the recorded opening
+session and its local provider transcript, an accident guard against closing
+from the wrong session. It sends up to 16 recent active handoffs and 32 recent
+stored user turns from the members, with each source clipped, to the configured
+ask model for one call with a 90-second budget. The summary names decisions,
+completed work and open work supported by those sources. Scribe appends the
+group's related references for work missing from the handoffs. Before writing,
+it checks that the evidence still matches and redacts the summary. An already
+closed group returns its current record without another model call.
 
 **Reading.** `group show <id>` and `group list` include related references,
-seat names and roles, transcript ids in join order, and the newest active
-handoff id across each chain. Read that entry with `entry show <id>`.
-Membership is independent of cataloging. Joining works in an off session,
-creates no session record and starts no passes. Entries, claims, handoffs
-and stored turns remain associated through their existing session ids.
-Group closing, turn storage and seat inheritance across clears belong to
-later phases.
+seat names and roles, transcript ids in join order, the newest active handoff
+id across each chain, and any retained closing summary. Read a handoff with
+`entry show <id>`. `search`, `ask` (also `question ask`), `entry list` and
+`session list` accept `--group <id>`, which limits candidates to recordings
+associated through the group's member sessions. Use `search --kind message`
+to find their stored turns. Scoped `ask` uses matching stored turns and does
+not query Orbit tasks. The project brief shows its most recently opened group
+and its closing summary when available.
 
 ## Task References
 

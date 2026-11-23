@@ -238,6 +238,7 @@ fn jsonl_export_reads_phase_six_sessions_when_no_live_files_remain() {
     store.migrate_store(T0).unwrap();
     let root = store.root();
     let conn = rusqlite::Connection::open(root.join(db::DB_FILE)).unwrap();
+    conn.execute_batch(db::REMOVE_GROUP_CAPTURE_SCHEMA).unwrap();
     conn.execute_batch(
         "DROP TABLE group_members; DROP TABLE group_seats; DROP TABLE groups;
          DROP TABLE entries;
@@ -479,6 +480,7 @@ fn stage_legacy_checkpoint(root: &Path, session: &str, record: &str, user_versio
         .unwrap();
     assert_eq!(inserted, 1, "the legacy writer found the session row");
     if let Some(version) = user_version {
+        conn.execute_batch(db::REMOVE_GROUP_CAPTURE_SCHEMA).unwrap();
         if version == 6 {
             // Remove the schema-9 group tables and schema-7 entry column
             // before replaying the upgrades from version 6.
@@ -573,7 +575,7 @@ fn jsonl_export_omits_a_preexisting_forgotten_checkpoint_until_upgrade_erases_it
             &Redactor::default(),
         )
         .unwrap();
-    assert_eq!(user_version(&root), 10);
+    assert_eq!(user_version(&root), 11);
     assert_eq!(checkpoint_record(&root, "s-1"), None);
     assert!(
         checkpoint_record(&root, "s-2")
@@ -719,11 +721,157 @@ fn schema_nine_retries_cleanup_left_by_an_older_writer() {
     reader.execute_batch("ROLLBACK").unwrap();
     drop(reader);
     write().unwrap();
-    assert_eq!(user_version(&root), 10);
+    assert_eq!(user_version(&root), 11);
     assert!(!on_disk(&root, STALE_CHECKPOINT));
     assert!(
         checkpoint_record(&root, "s-2")
             .unwrap()
             .contains(LIVE_CHECKPOINT)
     );
+}
+
+fn unrelated_write(store: &Store) -> crate::error::Result<()> {
+    let other = session("s-3", T0 + time::Duration::hours(2));
+    store
+        .settle_pass(
+            &other.id,
+            Some(other.clone()),
+            false,
+            None,
+            &Redactor::default(),
+        )
+        .map(|_| ())
+}
+
+#[test]
+fn unrelated_write_without_forgets_does_not_read_session_payloads() {
+    let (_dir, store) = file_store();
+    store.migrate_store(T0).unwrap();
+    let conn = rusqlite::Connection::open(store.root().join(db::DB_FILE)).unwrap();
+    // Invalid UTF-8 makes fetching segment text fail, while SQLite can still
+    // store it as TEXT. This detects a payload read without timing assumptions.
+    let changed = conn
+        .execute("UPDATE segments SET text = CAST(x'80' AS TEXT)", [])
+        .unwrap();
+    assert!(changed > 0, "fixture must contain a segment");
+    drop(conn);
+    assert!(
+        store.load_sessions().is_err(),
+        "the poisoned text detects a full load"
+    );
+    store
+        .with_conn(|conn, path| {
+            conn.execute("UPDATE meta SET created = created", [])
+                .map_err(|e| db::db_error("update", path, e))?;
+            Ok(())
+        })
+        .unwrap();
+}
+
+#[test]
+fn an_unrelated_write_ignores_the_archive_lock_when_no_archive_file_is_left() {
+    use crate::store::{LOCKS_DIR, fsio};
+    use std::time::Duration;
+
+    let pair = forgotten_pair();
+    let root = pair.store.root().to_path_buf();
+    let store = Store::open(&root).with_lock_wait(Duration::from_millis(50));
+    let lock_path = store.lock_path("archive-forget.lock").unwrap();
+    assert!(lock_path.starts_with(root.join(LOCKS_DIR)));
+    let _held =
+        fsio::LockGuard::acquire(&lock_path, "other forget", Duration::from_secs(1)).unwrap();
+    unrelated_write(&store).unwrap();
+    let ids = store.load_sessions().unwrap().numbers;
+    assert!(
+        ids.contains_key(&"s-3".parse().unwrap()),
+        "the write committed"
+    );
+}
+
+#[test]
+fn archive_erasure_stays_serialized_and_retries_after_the_lock_is_released() {
+    use crate::store::fsio;
+    use std::time::Duration;
+
+    let pair = forgotten_pair();
+    let second: SessionId = "s-2".parse().unwrap();
+    let cite = Cite {
+        session: second.clone(),
+        message: None,
+        at: T0,
+        prompt_sha256: "0".repeat(64),
+        line: 1,
+        cwd: String::from("/work"),
+    };
+    pair.store
+        .settle(&Settle::ForgetSession(second), &cite, T0)
+        .unwrap();
+    let root = pair.store.root().to_path_buf();
+    let archived = "pre-sqlite-2026-11-01/sessions/2026/11/s-1.md";
+    put(&root, archived, "forgotten plaintext");
+    let checkpoint = "pre-sqlite-2026-11-02/sessions.2/2025/12/.s-1.rebuild.md";
+    let second = "pre-sqlite-2026-11-02/sessions.2/2025/12/s-2.md";
+    let live = "pre-sqlite-2026-11-02/sessions.2/2025/12/s-4.md";
+    put(&root, checkpoint, "forgotten checkpoint");
+    put(&root, second, "another forgotten session");
+    put(&root, live, "live session");
+    let store = Store::open(&root).with_lock_wait(Duration::from_millis(50));
+    let lock_path = store.lock_path("archive-forget.lock").unwrap();
+    let held =
+        fsio::LockGuard::acquire(&lock_path, "other forget", Duration::from_secs(1)).unwrap();
+    let err = unrelated_write(&store).unwrap_err();
+    assert_eq!(code(&err), "store_locked");
+    assert!(root.join(archived).exists(), "no erasure under a held lock");
+    drop(held);
+    store.clean_forgotten_session_files().unwrap();
+    assert!(!root.join(archived).exists());
+    assert!(!root.join(checkpoint).exists());
+    assert!(!root.join(second).exists());
+    assert!(root.join(live).exists());
+}
+
+#[test]
+fn a_first_write_forget_counts_the_legacy_files_it_deletes() {
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+    let record = session_text("", SESSION_BODY);
+    let other = record.replace("id: s-1", "id: s-2");
+    put(&root, "sessions/2026/11/s-1.md", &record);
+    put(&root, "sessions/2026/11/.s-1.rebuild.md", &record);
+    put(&root, "sessions/2026/11/s-2.md", &other);
+    let store = Store::open(&root);
+    let cite = Cite {
+        session: s1(),
+        message: None,
+        at: T0,
+        prompt_sha256: "0".repeat(64),
+        line: 1,
+        cwd: String::from("/work"),
+    };
+
+    let settled = store
+        .settle(&Settle::ForgetSession(s1()), &cite, T0)
+        .unwrap();
+
+    let Settled::SessionForgotten(forgot) = settled else {
+        panic!("expected a forgotten session, got {settled:?}");
+    };
+    assert_eq!(forgot.id, s1());
+    assert_eq!(
+        forgot.files, 2,
+        "the record and the checkpoint the cleanup deleted"
+    );
+    let archive = fs::read_dir(&root)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| {
+            p.file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with("pre-sqlite-"))
+        })
+        .expect("the first write moved the files aside");
+    let moved = archive.join("sessions/2026/11");
+    assert!(!moved.join("s-1.md").exists());
+    assert!(!moved.join(".s-1.rebuild.md").exists());
+    assert!(moved.join("s-2.md").is_file(), "the other session is kept");
+    assert!(store.session(&"s-2".parse().unwrap()).is_ok());
 }

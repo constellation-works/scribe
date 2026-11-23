@@ -533,7 +533,7 @@ impl Store {
             }
         };
         db::truncate_wal_of(&self.root, self.lock_wait)?;
-        let files = self.forget_moved_files(&id)?;
+        let files = self.forget_moved_files(&id)? + self.legacy_files_to_forget(&id)?;
         Ok(SessionForgetOutcome::Forgotten(SessionForget {
             id,
             number,
@@ -548,9 +548,24 @@ impl Store {
     /// Replay after every commit, including a restarted migration, so an
     /// interruption between the database commit and the archive move cannot
     /// leave a forgotten session in plaintext.
+    ///
+    /// The archive lock is taken only when a moved archive still holds a
+    /// file of a forgotten session, so a store with nothing to erase never
+    /// fails an already-committed write on someone else's lock. The scan
+    /// repeats under the lock before anything is deleted.
     pub(super) fn clean_forgotten_session_files(&self) -> Result<()> {
-        let forgotten = self.load_sessions()?.forgotten;
-        if forgotten.is_empty() {
+        let Some(forgotten) = rows::read_forgotten(&self.root)? else {
+            return Ok(());
+        };
+        self.check_stamp()?;
+        let mut pending = false;
+        for id in forgotten.keys() {
+            if !self.moved_files_of(id)?.is_empty() {
+                pending = true;
+                break;
+            }
+        }
+        if !pending {
             return Ok(());
         }
         let lock_path = self.lock_path("archive-forget.lock")?;
@@ -564,8 +579,16 @@ impl Store {
     /// Delete `id`'s record and rebuild checkpoint files from every
     /// `pre-sqlite-<date>/sessions*/<yyyy>/<mm>/`. Returns how many went.
     fn forget_moved_files(&self, id: &SessionId) -> Result<usize> {
-        let names = [format!("{id}{RECORD_EXT}"), format!(".{id}.rebuild.md")];
-        let mut removed = 0;
+        let files = self.moved_files_of(id)?;
+        for path in &files {
+            fsio::remove_private(path)?;
+        }
+        Ok(files.len())
+    }
+
+    /// The files [`Self::forget_moved_files`] would delete for `id`.
+    fn moved_files_of(&self, id: &SessionId) -> Result<Vec<PathBuf>> {
+        let mut found = Vec::new();
         for moved in fsio::list_dir(&self.root)? {
             let moved = self.root.join(&moved);
             if !moved
@@ -578,36 +601,56 @@ impl Store {
             }
             for sessions in fsio::list_dir(&moved)? {
                 let sessions = moved.join(&sessions);
-                if !sessions
+                if sessions
                     .file_name()
                     .and_then(|n| n.to_str())
                     .is_some_and(|n| n.starts_with(SESSIONS_DIR))
-                    || !fsio::inspect_subdir(&sessions)?
+                    && fsio::inspect_subdir(&sessions)?
                 {
+                    found.extend(Self::session_files_of(&sessions, id)?);
+                }
+            }
+        }
+        Ok(found)
+    }
+
+    /// How many legacy files of `id` the pending write's move will carry
+    /// to `pre-sqlite-<date>/` after its commit, where the cleanup that
+    /// follows deletes them: they are not yet in any archive when the
+    /// forget counts, so [`Self::moved_files_of`] misses them. Zero when
+    /// the write moves nothing aside.
+    fn legacy_files_to_forget(&self, id: &SessionId) -> Result<usize> {
+        let sessions = self.root.join(SESSIONS_DIR);
+        if !self.aside_pending() || !fsio::inspect_subdir(&sessions)? {
+            return Ok(0);
+        }
+        Ok(Self::session_files_of(&sessions, id)?.len())
+    }
+
+    /// `id`'s record and rebuild checkpoint files under
+    /// `<sessions>/<yyyy>/<mm>/`.
+    fn session_files_of(sessions: &Path, id: &SessionId) -> Result<Vec<PathBuf>> {
+        let names = [format!("{id}{RECORD_EXT}"), format!(".{id}.rebuild.md")];
+        let mut found = Vec::new();
+        for year in fsio::list_dir(sessions)? {
+            let year = sessions.join(year);
+            if !fsio::inspect_subdir(&year)? {
+                continue;
+            }
+            for month in fsio::list_dir(&year)? {
+                let month = year.join(month);
+                if !fsio::inspect_subdir(&month)? {
                     continue;
                 }
-                for year in fsio::list_dir(&sessions)? {
-                    let year = sessions.join(year);
-                    if !fsio::inspect_subdir(&year)? {
-                        continue;
-                    }
-                    for month in fsio::list_dir(&year)? {
-                        let month = year.join(month);
-                        if !fsio::inspect_subdir(&month)? {
-                            continue;
-                        }
-                        for name in &names {
-                            let path = month.join(name);
-                            if fsio::inspect_file(&path)? {
-                                fsio::remove_private(&path)?;
-                                removed += 1;
-                            }
-                        }
+                for name in &names {
+                    let path = month.join(name);
+                    if fsio::inspect_file(&path)? {
+                        found.push(path);
                     }
                 }
             }
         }
-        Ok(removed)
+        Ok(found)
     }
 
     /// The `s-<n>` of every session, read-only.

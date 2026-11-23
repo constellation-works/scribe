@@ -231,6 +231,7 @@ fn jsonl_export_reads_phase_six_database_with_no_live_files() {
             rusqlite::FileControl::PersistWal(&mut persist),
         )
         .unwrap();
+        support::remove_group_capture_schema(&fx.root());
         conn.execute_batch(
             "DROP TABLE group_members; DROP TABLE group_seats; DROP TABLE groups;
              DROP TABLE entries;

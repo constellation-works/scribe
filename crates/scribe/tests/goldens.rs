@@ -39,6 +39,7 @@ const HELP: &[(&str, &[&str])] = &[
     ("group-open", &["group", "open", "--help"]),
     ("group-join", &["group", "join", "--help"]),
     ("group-leave", &["group", "leave", "--help"]),
+    ("group-close", &["group", "close", "--help"]),
     ("group-show", &["group", "show", "--help"]),
     ("group-list", &["group", "list", "--help"]),
     ("proposal", &["proposal", "--help"]),
@@ -60,6 +61,8 @@ const HELP: &[(&str, &[&str])] = &[
     ("tag-list", &["tag", "list", "--help"]),
     ("tag-show", &["tag", "show", "--help"]),
     ("brief", &["brief", "--help"]),
+    // The two ask paths share long help. Pin this path's short form.
+    ("ask", &["ask", "-h"]),
     ("question", &["question", "--help"]),
     ("question-ask", &["question", "ask", "--help"]),
     ("search", &["search", "--help"]),
@@ -358,9 +361,12 @@ fn group_roster_matches_goldens() {
     fx.ok(&["store", "migrate"]);
     support::sql(
         &fx.root(),
-        r#"INSERT INTO groups VALUES (1,'Release review','review','scribe','2026-11-22T09:00:00Z',NULL,'opener','["repo:scribe"]');
+        r#"INSERT INTO groups (id, title, kind, project, opened, closed, opener, related, summary)
+            VALUES (1,'Release review','review','scribe','2026-11-22T09:00:00Z','2026-11-22T10:00:00Z','opener','["repo:scribe"]',
+            'Review complete.' || char(10) || 'For work missing from the handoffs, see repo:scribe.');
         INSERT INTO group_seats VALUES (1,'editor','reviewer');
-        INSERT INTO group_members VALUES (1,1,'editor','member','aide');"#,
+        INSERT INTO group_members (position, group_id, seat, session, author, joined)
+            VALUES (1,1,'editor','member','aide','2026-11-22T09:05:00Z');"#,
     );
     let mut failures = Vec::new();
     for (name, args) in [

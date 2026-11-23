@@ -54,7 +54,7 @@ fn the_first_write_creates_an_owner_only_wal_database_at_the_current_schema() {
         .unwrap();
     assert_eq!(written, 1);
     let (version, store_id) = db::meta(dir.path()).unwrap().unwrap();
-    assert_eq!(version, 10);
+    assert_eq!(version, 11);
     assert_eq!(store_id.len(), 32);
     // PERSIST_WAL: both companions outlive the last connection.
     for name in [DB_FILE, "scribe.db-wal", "scribe.db-shm"] {
@@ -216,6 +216,66 @@ fn a_database_from_a_newer_build_is_refused() {
         matches!(err, Error::NewerFormat { found: 99, .. }),
         "{err:?}"
     );
+}
+
+#[test]
+fn schema_nine_checkpoint_reports_a_neutral_holder_when_a_writer_is_active() {
+    let dir = private_tempdir();
+    let store = Store::open(dir.path()).with_lock_wait(Duration::from_millis(50));
+    store
+        .write_messages(
+            &[message("s-1", "m-1", "existing committed WAL frame")],
+            &Redactor::default(),
+        )
+        .unwrap();
+    db::execute(
+        dir.path(),
+        &format!(
+            "{} PRAGMA user_version = 9",
+            db::REMOVE_GROUP_CAPTURE_SCHEMA
+        ),
+    )
+    .unwrap();
+    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 9);
+
+    let writer = rusqlite::Connection::open(dir.path().join(DB_FILE)).unwrap();
+    writer.busy_timeout(Duration::ZERO).unwrap();
+    writer
+        .execute_batch(
+            "BEGIN IMMEDIATE;
+             INSERT INTO messages (session, message, role, at, text, sha256)
+             VALUES ('s-held', 'm-held', 'user', '2026-11-23T00:00:00Z', 'uncommitted',
+                     '0000000000000000000000000000000000000000000000000000000000000000');",
+        )
+        .unwrap();
+
+    let err = store
+        .write_messages(
+            &[message("s-1", "m-2", "retry after the writer releases")],
+            &Redactor::default(),
+        )
+        .unwrap_err();
+    let Error::Locked { holder, .. } = &err else {
+        panic!("expected a locked store, got {err:?}");
+    };
+    assert_eq!(holder, "another scribe.db connection");
+    assert_eq!(err.code(), "store_locked");
+    assert!(
+        err.to_string()
+            .contains("is locked by another scribe.db connection"),
+        "{err}"
+    );
+    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 9);
+
+    writer.execute_batch("ROLLBACK").unwrap();
+    drop(writer);
+    store
+        .write_messages(
+            &[message("s-1", "m-2", "retry after the writer releases")],
+            &Redactor::default(),
+        )
+        .unwrap();
+    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 11);
 }
 
 #[test]
@@ -401,7 +461,7 @@ fn concurrent_writer_processes_all_commit_under_wal_and_busy_timeout() {
         .search_messages(&tokens("merge"))
         .unwrap();
     assert_eq!(found.matches.len(), WRITERS * WINDOWS * 3);
-    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 10);
+    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 11);
 }
 
 #[test]

@@ -29,6 +29,7 @@
 mod annotation;
 mod codex;
 mod continuation;
+mod group_turns;
 pub(super) mod payload;
 pub(super) mod project;
 mod proposal_command;
@@ -37,6 +38,8 @@ mod session_end;
 mod session_start;
 mod stop;
 mod user_prompt_submit;
+
+pub(in crate::commands) use continuation::{ClearedPredecessor, cleared_predecessor};
 
 use crate::app::Context;
 use crate::audit_middleware::AuditMeta;
@@ -93,11 +96,18 @@ Examples:
   scribe hook stop < <payload.json>";
 
 const SESSION_START_EXAMPLES: &str = "\
-Reads the SessionStart payload (session_id, cwd, source and transcript_path).
+Reads SessionStart JSON on stdin; `source` may be omitted.
 Reports open proposals, unpicked actions and possible recorded predecessors.
-Interactive Claude sessions receive the brief. After a clear with a continue
-handoff, the hook prepends that handoff and links the sessions, carrying the
-recording switch. Calls no model.
+Interactive Claude sessions receive the brief. On interactive Claude Code
+starts with source `startup`, `clear`, or omitted, a single clear predecessor's
+continue handoff may be prepended and linked. If that predecessor holds an open
+group seat, the new session can inherit it. Existing seats are reported, and
+a session replaced on its seat is told it was replaced and gets no join
+recommendation. With open groups, a session with no predecessor line, multiple
+predecessors, or a predecessor with no open seat receives a
+`scribe group join` recommendation. A session with no open groups gets no seat
+context. A seat-lookup error also reports the error and recommends
+`scribe group join`. Calls no model.
 
 Examples:
   scribe hook session-start < <payload.json>";

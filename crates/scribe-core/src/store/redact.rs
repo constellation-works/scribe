@@ -57,6 +57,8 @@ pub const REDACTED_FIELDS: &[&str] = &[
     "group.title",
     "group.kind",
     "seat.role",
+    "group.summary",
+    "message.text",
 ];
 
 /// A value shorter than this is not masked: a one-character "secret" would
@@ -136,6 +138,14 @@ impl Redactor {
     /// Mask the free-text metadata of a group before storing it.
     pub(super) fn group(&self, draft: &mut crate::group::NewGroup) {
         self.mask_all(group_fields(draft));
+    }
+
+    pub(super) fn group_summary(&self, summary: &str) -> String {
+        self.mask(summary)
+    }
+
+    pub(super) fn message(&self, text: &str) -> String {
+        self.mask(text)
     }
 
     /// Mask a session record's free text. A segment heading a marker made

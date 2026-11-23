@@ -1,0 +1,37 @@
+Answer a question from stored records with verbatim quotes
+
+Usage: scribe ask [OPTIONS] <QUESTION>
+
+Arguments:
+  <QUESTION>  The question, 1 to 2000 characters
+
+Options:
+      --tag <TAG>          Only entries in this tag (or alias); repeat for several. Leaves out session records and Orbit tasks [default: any]
+      --topic <TOPIC>      Only records carrying this topic; repeat for several. Leaves out Orbit tasks [default: any]
+      --project <PROJECT>  Only records of this project (a repository slug) [default: any]
+      --group <ID>         Use only records of this group's members, including stored turns (id or unique prefix)
+      --kind <KIND>        Only this kind of record. Leaves out Orbit tasks [default: any] [possible values: entry, session]
+      --since <DATE>       Only records changed on or after this day, YYYY-MM-DD [default: any]
+      --include-hidden     Include superseded and retired entries as evidence [default: active only]
+  -h, --help               Print help (see more with '--help')
+  -V, --version            Print version
+
+Global options:
+      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json                 Shorthand for --format json
+
+Lookups (the newest session, a named session, open next steps, a tag's
+entries today or this week, month or year, a term the user defined, the last
+on-call session for a workspace) return the stored records with no model
+call. Anything else is answered by the configured ask model from the
+records that match, and every quote it gives is checked verbatim against
+the record it cites; claims that fail are dropped and counted.
+
+Examples:
+  scribe question ask "how do we merge agent PRs?"
+  scribe ask "what remains for the release?" --group <id>
+  scribe question ask "preferences this week" --json | jq '.records[].entry.content'
+  scribe question ask "what do I prefer for releases?" --tag preferences --since 2026-01-01
+  scribe question ask "merge policy" --include-hidden --json | jq .claims

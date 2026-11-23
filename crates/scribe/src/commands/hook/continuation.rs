@@ -1,9 +1,51 @@
-//! Restore a handoff for an identified predecessor or the user's explicit selection.
+//! Restore a handoff for an identified predecessor or the user's explicit selection,
+//! and resolve the shared `derived-from` (`via: clear`) predecessor lookup.
 
-use super::payload::{self, SessionStartPayload};
+use super::payload;
 use crate::app::Context;
 use crate::output::{HookOutcome, HookReply};
 use scribe_core::{HandoffSelection, Provider, SessionId};
+use std::path::Path;
+
+/// What a Claude Code transcript's opening `derived-from` metadata says about
+/// which session(s) a new transcript was cleared from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::commands) enum ClearedPredecessor {
+    /// Not Claude Code, path missing, file absent/unreadable, or no `via: clear` entry.
+    None,
+    /// One distinct `via: clear` predecessor.
+    One(SessionId),
+    /// Multiple distinct `via: clear` predecessors.
+    Multiple(Vec<SessionId>),
+}
+
+/// Inspect `path` for opening `derived-from` (`via: clear`) ancestors of `session`.
+pub(in crate::commands) fn cleared_predecessor(
+    ctx: &Context,
+    path: Option<&Path>,
+    session: &SessionId,
+) -> ClearedPredecessor {
+    if ctx.provider() != Provider::ClaudeCode {
+        return ClearedPredecessor::None;
+    }
+    let Some(path) = path else {
+        return ClearedPredecessor::None;
+    };
+    let header = match payload::claude_header(ctx, path, session) {
+        Ok(Some(header)) => header,
+        Ok(None) => return ClearedPredecessor::None,
+        Err(err) => {
+            tracing::warn!(?err, "cannot read session ancestry");
+            return ClearedPredecessor::None;
+        }
+    };
+    let mut parents = scribe_core::transcript::cleared_sessions(&header);
+    match parents.len() {
+        0 => ClearedPredecessor::None,
+        1 => ClearedPredecessor::One(parents.swap_remove(0)),
+        _ => ClearedPredecessor::Multiple(parents),
+    }
+}
 
 pub(super) fn restore(
     ctx: &Context,
@@ -46,35 +88,20 @@ pub(super) fn restore(
 
 pub(super) fn at_start(
     ctx: &Context,
-    payload: &SessionStartPayload,
     child: &SessionId,
+    predecessor: &ClearedPredecessor,
 ) -> Option<HookReply> {
-    if !ctx.interactive()
-        || ctx.provider() != Provider::ClaudeCode
-        || !matches!(payload.source.as_deref(), None | Some("startup" | "clear"))
-    {
-        return None;
-    }
-    let path = payload.transcript_path.as_deref()?;
-    let header = match payload::claude_header(ctx, path, child) {
-        Ok(header) => header?,
-        Err(err) => {
-            tracing::warn!(?err, "cannot read session ancestry");
-            return None;
-        }
-    };
-    let parents = scribe_core::transcript::cleared_sessions(&header);
-    match parents.as_slice() {
-        [] => None,
-        [parent] => Some(restore(
+    match predecessor {
+        ClearedPredecessor::None => None,
+        ClearedPredecessor::One(parent) => Some(restore(
             ctx,
             "SessionStart",
             child,
             HandoffSelection::Predecessor(parent),
         )),
-        _ => Some(HookReply {
+        ClearedPredecessor::Multiple(parents) => Some(HookReply {
             event: "SessionStart",
-            message: Some(ambiguous(&parents)),
+            message: Some(ambiguous(parents)),
             context: None,
             block: None,
             outcomes: Vec::new(),

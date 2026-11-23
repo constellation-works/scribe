@@ -1532,12 +1532,14 @@ stay.
 - Cost: a proposal about a forgotten entry no longer says why it was
   opened, or what the other entry's quote was contrasted with.
 
-## `session-start` is read-only except when restoring a continue handoff
+## `session-start` is read-only except for handoff restoration and seat inheritance
 
 **Recorded:** 2026-11 · [ORB-21795]
-**Refined by session refresh:** Outside the §16.7 continue-handoff path,
+**Refined by session refresh and session groups:** Outside the §16.7
+continue-handoff path and §17 group seat inheritance across a clear,
 `session-start` remains read-only. Restoring a continue handoff writes the
-child's `continues` link and inherited switch and audits that write.
+child's `continues` link and inherited switch, and inheriting a group seat
+appends the child to the predecessor's open seat; both audit their writes.
 **Code anchors:** `crates/scribe/src/commands/hook/session_start.rs`,
 `crates/scribe/src/commands/hook/continuation.rs` (the restoration)
 
@@ -1549,7 +1551,8 @@ missing file as the defaults, and the hook runs before every session.
 
 ### Decision
 
-Outside the continue-handoff restoration in [design §16.7](./2_design.md#167-continuing-after-a-clear),
+Outside the continue-handoff restoration in [design §16.7](./2_design.md#167-continuing-after-a-clear)
+and an inherited open group seat in [design §17](./2_design.md#17-session-groups-and-seats),
 `session-start` is read-only: it reads the store and writes nothing. It
 replies with a message and additional context:
 
@@ -1561,14 +1564,23 @@ replies with a message and additional context:
   names a cleared predecessor, the restoration gives the line instead: an
   ambiguity note when several are named, or a failure note when the restore
   fails.
-- The context is a restored continue handoff's body, then, in an interactive
-  session, the brief for this project with its memory page.
+- The context is a restored continue handoff's body, any group-seat status,
+  then, in an interactive session, the brief for this project with its memory
+  page. Seat inheritance and ancestry lookup run only for interactive Claude
+  Code starts whose source is `startup`, `clear`, or omitted. With no open
+  groups, an unseated session gets no seat context. When open groups exist but
+  no predecessor line exists, multiple predecessors exist, or a single
+  predecessor holds no open seat, the context recommends `scribe group join`.
+  A session replaced on its seat is told it was replaced without a join
+  recommendation. A seat-lookup error is reported in `systemMessage`, and
+  `additionalContext` also gives the recommendation.
 
 The proposals come from the store: its database, or `proposals.json` before
 migration. A read that fails is logged and that part is left out; the rest
 still prints. When it restores a continue handoff, it writes the `continues`
-link and inherited switch under `Store::write`, and audits the write (or
-refusal). That is the hook's only write path.
+link and inherited switch under `Store::write`; when it inherits an open
+group seat, it appends the child to the predecessor's seat chain. Both writes
+are audited. These are the hook's write paths.
 
 ### Consequences
 

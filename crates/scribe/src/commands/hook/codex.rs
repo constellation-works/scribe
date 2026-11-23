@@ -195,6 +195,7 @@ fn ingest(event: &'static str, input: &[u8], ctx: &Context) -> Result<Output, Cl
             ));
         }
     }
+    super::group_turns::codex(ctx, &id, &rollout.typed)?;
     let candidates: Vec<_> = rollout.typed.iter().filter(|t| relevant(t)).collect();
     if candidates.is_empty() {
         return if event == "Stop" {

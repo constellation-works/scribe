@@ -240,6 +240,21 @@ pub(in crate::store) fn read_sessions(root: &Path) -> Result<Option<Sessions>> {
     Ok(found)
 }
 
+/// Forgotten session IDs and timestamps, without loading session payloads.
+/// `None` means sessions have not moved into the database yet.
+pub(in crate::store) fn read_forgotten(
+    root: &Path,
+) -> Result<Option<BTreeMap<SessionId, OffsetDateTime>>> {
+    let (found, _) = read(root, |conn, path| {
+        super::refuse_newer(conn, path)?;
+        if !moved(conn).map_err(|e| Fallible::from_sqlite("read", path, e))? {
+            return Ok(None);
+        }
+        forgotten(conn, path).map(Some).map_err(Fallible::Failed)
+    })?;
+    Ok(found)
+}
+
 /// The switches and cursors, read-only, when the sessions live in the
 /// database; `None` when they are still files.
 pub(in crate::store) fn read_control(root: &Path) -> Result<Option<ControlState>> {
@@ -491,6 +506,12 @@ pub(in crate::store) fn forget(
     let messages = conn
         .execute("DELETE FROM messages WHERE session = ?1", [id.as_str()])
         .map_err(err)?;
+    conn.execute(
+        "UPDATE groups SET summary = NULL WHERE summary IS NOT NULL
+         AND id = (SELECT group_id FROM group_members WHERE session = ?1)",
+        [id.as_str()],
+    )
+    .map_err(err)?;
     conn.execute("DELETE FROM now_pending WHERE session = ?1", [id.as_str()])
         .map_err(err)?;
     for table in ["session_terms", "rebuild_checkpoints"] {

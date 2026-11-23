@@ -3,7 +3,9 @@ title       Release review
 kind        review
 project     scribe
 opened      2026-11-22T09:00:00Z
-closed      -
+closed      2026-11-22T10:00:00Z
 opener      opener
 related     repo:scribe
 seats       editor (reviewer): member [handoff: -]
+summary     Review complete.
+            For work missing from the handoffs, see repo:scribe.

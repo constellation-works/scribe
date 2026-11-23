@@ -18,6 +18,9 @@ Options:
       --project <PROJECT>
           Only records of this project (a repository slug) [default: any]
 
+      --group <ID>
+          Use only records of this group's members, including stored turns (id or unique prefix)
+
       --kind <KIND>
           Only this kind of record. Leaves out Orbit tasks [default: any]
 
@@ -61,6 +64,7 @@ the record it cites; claims that fail are dropped and counted.
 
 Examples:
   scribe question ask "how do we merge agent PRs?"
+  scribe ask "what remains for the release?" --group <id>
   scribe question ask "preferences this week" --json | jq '.records[].entry.content'
   scribe question ask "what do I prefer for releases?" --tag preferences --since 2026-01-01
   scribe question ask "merge policy" --include-hidden --json | jq .claims
