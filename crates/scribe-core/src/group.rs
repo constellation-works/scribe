@@ -196,10 +196,12 @@ pub enum SeatStart {
     Unjoined,
 }
 
-/// The automatic seat name for `session` when it joins without naming one: the
-/// first of its eight-character prefix, its full id, then the full id with a
-/// numeric suffix that `taken` does not report as held. `taken` must say true
-/// for every seat already in the group, so a join never displaces anyone.
+/// The automatic seat name for `session` when it joins without naming one: its
+/// eight-character prefix, its full id, then the first available numbered
+/// candidate. A numbered candidate uses the first `Label::MAX_CHARS - 12`
+/// characters of the id followed by `-2`, `-3`, and so on; shorter ids use
+/// their whole id as the stem. `taken` must say true for every seat already in
+/// the group, so a join never displaces anyone.
 ///
 /// # Errors
 ///
