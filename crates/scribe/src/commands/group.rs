@@ -331,8 +331,9 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
                     }) {
                         return Err(scribe_core::Error::AgentWrite {
                             kind: WriteRefusal::GroupMembership,
-                            message: "cannot verify the opening session's transcript on this host"
-                                .into(),
+                            message: format!(
+                                "cannot verify the transcript of session {session} on this host"
+                            ),
                         }
                         .into());
                     }
