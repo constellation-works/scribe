@@ -259,8 +259,12 @@ fn capture_prompt(payload: &PromptPayload, ctx: &Context) -> Result<Output, CliE
         }
         return Ok(reply(Vec::new(), Vec::new()));
     }
-    if let Some(line) = group_line(&payload.prompt).filter(|_| payload.prompt.lines().count() == 1)
-    {
+    if let Some(line) = group_line(&payload.prompt).filter(|line| match line {
+        GroupLine::Join(_) | GroupLine::Add { .. } => true,
+        GroupLine::Move { .. } | GroupLine::Remove(_) | GroupLine::Update { .. } => {
+            payload.prompt.lines().count() == 1
+        }
+    }) {
         if let Err(reason) = payload::check(ctx, &payload.transcript_path, &session) {
             return Ok(group_reply(
                 format!("scribe: group refused — {reason}"),
