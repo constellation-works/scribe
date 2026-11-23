@@ -174,8 +174,8 @@ Symlinked or foreign-writable targets are refused.
 Init does not grant hook trust, turn cataloging on, or enable a scheduler.
 Restart the provider after installation. Codex requires review of the hooks in
 **Settings > Hooks** (desktop) or `/hooks` (CLI). A changed package needs that
-review again. You type `/scribe on`, `/scribe off` or `/scribe status`, or an
-exact Codex `$scribe on|off|status`. Loading the skill changes no recording
+review again. You type `/scribe on`, `/scribe off`, `/scribe status` or `/scribe group <slug>`, or an
+exact Codex `$scribe on|off|status` or `$scribe group <slug>` (including a Codex skill mention link `[$scribe](.../scribe/SKILL.md) group <slug>`). Loading the skill changes no recording
 state. Do not initialize project hooks and install the native plugin for the
 same project unless you want both hook sources.
 
@@ -287,9 +287,17 @@ Packaging: [Build plugins](https://developers.openai.com/plugins/build/plugins#b
 
 A prompt whose first line is `/scribe on`, `/scribe off` or `/scribe status`
 is answered by `UserPromptSubmit` and never reaches the model. So are
-`/scribe on --from <id>` and `/scribe link <id> [--type continues]`, which link
-this session to the one it was spawned from or continues. They refuse an
-unknown id, a self-link or a cycle. After a desktop clear, the transcript names
+`/scribe on --from <id>`, `/scribe link <id> [--type continues]`, `/scribe catalog <id>`,
+and `/scribe group <slug>` (also `/scribe:scribe …`). The link forms connect
+this session to the one it was spawned from or continues, and refuse an
+unknown id, a self-link or a cycle. `/scribe group <slug>` creates an open
+`project` group titled `<slug>` in the working directory's project if absent and
+joins the calling session on an automatic short-session-id seat (full session id
+on collision) with role `member`, or joins the existing open group when typed in
+another session (one group per session until `scribe group leave`; non-typed
+prompts are refused). Codex accepts the same `/scribe group <slug>`, `$scribe group <slug>`,
+and skill mention link `[$scribe](.../scribe/SKILL.md) group <slug>` once the host
+rollout verifies the typed turn. After a desktop clear, the transcript names
 the previous session. When its newest active handoff has mode `continue`, the
 hook puts that body before the brief, carries the recording switch and writes
 a `continues` link. If the ancestry is missing, type

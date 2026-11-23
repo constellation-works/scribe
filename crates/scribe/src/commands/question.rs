@@ -76,7 +76,7 @@ pub(crate) struct AskArgs {
     #[arg(long, value_name = "PROJECT")]
     pub(crate) project: Option<Project>,
 
-    /// Use only records of this group's members, including stored turns (id or unique prefix)
+    /// Use only records of this group's members, including stored turns (id, unique prefix, or project group slug)
     #[arg(long, value_name = "ID")]
     pub(crate) group: Option<String>,
 

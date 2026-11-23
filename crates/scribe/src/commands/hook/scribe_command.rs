@@ -42,7 +42,7 @@ const PROVENANCE_FAILED: &str = "provenance_failed";
 /// The code of a `/scribe` argument that is not a command.
 const UNKNOWN_COMMAND: &str = "unknown_scribe_command";
 /// The commands, for a refusal.
-const USAGE: &str = "use /scribe on, /scribe off, /scribe status, /scribe on --from <id>, /scribe link <id> [--type spawned_from|continues], /scribe catalog <id> or /scribe continue <handoff-id>";
+const USAGE: &str = "use /scribe on, /scribe off, /scribe status, /scribe on --from <id>, /scribe link <id> [--type spawned_from|continues], /scribe catalog <id>, /scribe group <slug> or /scribe continue <handoff-id>";
 
 /// Apply `switch` for the payload's session and block the prompt with the
 /// result.

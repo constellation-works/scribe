@@ -51,12 +51,13 @@ scribe entry list --tag preferences --status active
 
 ## Session groups
 
-A group links named seats to the ordered sessions that held them. Open it from the session where you asked for it, quoting your typed words; each agent joins from its own session under its own author.
+A group links sessions working together and captures typed user turns while open. Type `/scribe group <slug>` in Claude Code (or `$scribe group <slug>` in Codex) to open a project group if absent and join on an automatic short-session-id seat with role `member`; agents join with `scribe group join <slug> --author <name>` without `--as` or `--role`. For a named-seat group, open it from the session where you asked for it, quoting your typed words, and join each seat under its own author; `<id>` accepts a group id, unique prefix, or open project slug.
 
 ```sh
 scribe group open --title 'Release review' --kind review --project scribe --quote 'open a release review'
 scribe group join <id> --as editor --role reviewer --author aide
-scribe group show <id> --json
+scribe group join <slug> --author aide
+scribe group show <slug> --json
 ```
 
 <details>

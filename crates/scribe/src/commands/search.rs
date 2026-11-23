@@ -60,7 +60,7 @@ pub(crate) struct SearchArgs {
     #[arg(long, value_name = "PROJECT")]
     pub(crate) project: Option<Project>,
 
-    /// Only records of member sessions in this group (id or unique prefix)
+    /// Only records of member sessions in this group (id, unique prefix, or project group slug)
     #[arg(long, value_name = "ID")]
     pub(crate) group: Option<String>,
 

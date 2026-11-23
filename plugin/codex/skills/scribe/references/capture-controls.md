@@ -3,14 +3,16 @@
 ## Cataloging sessions
 
 The human types `/scribe on`, `/scribe off` or `/scribe status` in chat.
-Codex also supports an exact typed `$scribe on|off|status` invocation
-(including a Codex skill mention link). On enables session cataloging.
-Off stops further passes and keeps the record.
+Codex also supports an exact typed `$scribe` invocation (or a Codex skill
+mention link `[$scribe](.../scribe/SKILL.md) ...`) for `on`, `off`, `status`,
+`on --from <id>`, `link <id>`, `catalog <id>`, and `group <slug>`. On enables
+session cataloging. Off stops further passes and keeps the record.
 
 The human types `/scribe on --from <id>` or `/scribe link <id> --type continues`
-to link related sessions. `/scribe catalog <id>` catalogs a past session as
-theirs. Its windows run at the next `scribe session pass`. If they ask you to
-catalog a past session, run
+to link related sessions, `/scribe group <slug>` (or `$scribe group <slug>` in
+Codex) to create or join an open project group, and `/scribe catalog <id>` to
+catalog a past session as theirs. Its windows run at the next
+`scribe session pass`. If they ask you to catalog a past session, run
 `scribe --provider <provider> session catalog <id> --author <name>`
 under your own author.
 
