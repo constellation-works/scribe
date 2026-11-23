@@ -1,22 +1,30 @@
 # Session groups
 
+Contents:
+- [Group commands](#group-commands)
+- [Project groups](#project-groups)
+- [Corrections](#corrections)
+
 A group is a named piece of shared work across the sessions on this host. Its
 id is `g-<n>`. Use its id, a unique prefix, or a project group slug wherever
 a command takes a group selector.
 For open, join, leave and close in Codex, put `--provider codex` before
 `group` so scribe can find the calling session.
 
+## Group commands
+
 - **Open.** `scribe group open --title '<title>' --kind <kind> [--project <project>]
   [--related <ref>] --quote '<their words>'`, with `--related` repeated for each
-  task, PR or repository. The quote must be a verbatim span of one of the
-  human's typed turns in this session, so open a group only when the human asks.
-  Opening warns about any other open group in the project. The opener joins
-  separately to take a seat.
+  task, PR or repository. Open a group only when the human asks: the quote must
+  be a verbatim span of one of the human's typed turns in this session.
+- **After opening.** Opening warns about any other open group in the project.
+  The opener joins separately to take a seat.
 - **Join.** Run `scribe group join <id> --as <seat> --author <name> [--role <role>]`
   in the session that joins, under its own `--author`. Join when the human names
   the group and seat, or when the brief that started the session names them. A
   new seat takes `--role`, which defaults to the seat name and then stays fixed.
-  For a project group, omit `--as` and `--role` to take the automatic seat:
+- **Project group seat.** For a project group, omit `--as` and `--role` to take
+  the automatic seat:
   the 8-character short session id, then the full session id, then the full
   session id with a numeric suffix. It never displaces a seat already held
   in the group. If this session already holds a seat, `group join` without
@@ -81,28 +89,31 @@ For open, join, leave and close in Codex, put `--provider codex` before
 
 ## Project groups
 
-Have the human type `/scribe group <slug>` (or in Codex, `$scribe group <slug>`,
-a skill mention link `[$scribe](.../scribe/SKILL.md) group <slug>`, or
-`/scribe group <slug>`) to join the open project group or create and join it
-when absent. A slug is 1–64 bytes of lowercase ASCII letters, digits and
-interior hyphens (not a `g-<n>` id). The group uses the slug as its title,
-`project` as its kind and the working directory's project. Each typed join
-records under author `user`. When the session needs a new automatic seat, Scribe
-tries its 8-character short id, then its full session id, then its full session
-id with a numeric suffix, using the first name not already held in the group. It
-never displaces a held seat; the role is `member`. An agent joining a project
-group with
-`scribe group join <slug> --author <name>` (prefix `--provider codex` before
-`group` in Codex) can omit `--as` and `--role` to take those defaults.
+- **Typed join.** Have the human type `/scribe group <slug>` to join the open
+  project group, or create and join it when absent. In Codex they may type
+  `$scribe group <slug>`, a skill mention link
+  `[$scribe](/<path>/scribe/SKILL.md) group <slug>`, or `/scribe group <slug>`.
+- **Slug.** A slug is 1–64 bytes of lowercase ASCII letters, digits and
+  interior hyphens (not a `g-<n>` id). The group uses the slug as its title,
+  `project` as its kind and the working directory's project. Each typed join
+  records under author `user`.
+- **Automatic seat.** When the session needs a new seat, Scribe tries its
+  8-character short id, then its full session id, then its full session id with
+  a numeric suffix, using the first name not already held in the group. It never
+  displaces a held seat; the role is `member`.
+- **Agent join.** An agent joining a project group with
+  `scribe group join <slug> --author <name>` (prefix `--provider codex` before
+  `group` in Codex) can omit `--as` and `--role` to take those defaults.
 
 To add past sessions, give the human `/scribe group add <slug> <session-id>...`
 to type, naming the sessions to add. It creates the project group when absent
 and adds only the named sessions; the session that typed the line is not
 enrolled unless it is named. A named session's typed turns are stored only
-when its transcript is on disk; otherwise only membership is added. If any
-named session already belongs to another group, the whole line is refused and
-nothing changes. This is a human-typed prompt line with no terminal command or
-agent route, so the agent gives the human the line to type.
+when its transcript is on disk; otherwise only membership is added.
+
+If any named session already belongs to another group, the whole line is
+refused and nothing changes. This is a human-typed prompt line with no terminal
+command or agent route, so the agent gives the human the line to type.
 
 A second session joins itself to the existing open group by typing
 `/scribe group <slug>` there. A `group add` line joins only the sessions it
@@ -110,5 +121,7 @@ names. A session in a group must leave before joining another. Peer, scheduled
 and harness prompts cannot give consent. Clear-time seat inheritance also
 applies to project groups in Claude Code. The group stays open until
 `scribe group close <slug>` from its opening session.
+
+## Corrections
 
 For corrections, have the human type `/scribe group move <session-id> <slug>` to move a session (stored turns follow), or `/scribe group remove <session-id>` to remove it (group-only turns are erased). To relabel a recorded session, have the human type `/scribe session update <session-id> project <slug>` or `/scribe session update <session-id> title <text>`. These are typed lines only; agents cannot act for the human.
