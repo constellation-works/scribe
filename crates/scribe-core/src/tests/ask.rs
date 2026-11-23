@@ -1130,3 +1130,40 @@ fn a_spoken_instruction_entry_labels_the_agents_statement_and_cites_users_words_
     let res_std = run(&q_std, &[std_agent], &[], &models_std, &NoTasks);
     assert_eq!(res_std.claims[0].text, "agent note (opus)");
 }
+
+#[test]
+fn naming_a_project_keeps_its_group_only_messages_next_to_its_entries() {
+    let entries = [decision("preferences-1", 0, SQUASH)];
+    let said = |session: &str, project: &str| crate::message::MessageMatch {
+        session: session.parse().unwrap(),
+        message: String::from("m-1"),
+        role: Speaker::User,
+        at: T0 + Duration::days(1),
+        text: String::from("squash-merge agent PRs here"),
+        score: 1.0,
+        group_project: Some(project.parse().unwrap()),
+    };
+    let messages = [said("g-1", "scribe"), said("g-2", "orbit")];
+    let tags = TagTable::defaults();
+    let corpus = Corpus {
+        entries: &entries,
+        sessions: &[],
+        messages: &messages,
+        tags: &tags,
+        user: &crate::voice::UserName::default(),
+    };
+    let models = FakeModels::silent();
+    ask::answer(
+        &question("how does scribe squash-merge agent PRs"),
+        corpus,
+        &models,
+        &NoTasks,
+        "claude-sonnet-5-5",
+        &crate::voice::Voice::default(),
+        T0 + Duration::days(30),
+    )
+    .unwrap();
+    let mut cites = models.cites();
+    cites.sort();
+    assert_eq!(cites, ["preferences-1", "session:g-1#message:m-1"]);
+}
