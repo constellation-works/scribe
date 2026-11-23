@@ -2,7 +2,7 @@ use crate::output::payload::{
     AuthorPayload, CitePayload, ContentFromPayload, EntryPayload, HandoffPayload, Record, Records,
     SessionHandoffsPayload, TagPayload, WarningPayload,
 };
-use crate::output::render::{list, show, updated_date};
+use crate::output::render::{list, show, table_date};
 use crate::output::sink::{OutputMode, Sink};
 use scribe_core::ShortIds;
 use time::macros::datetime;
@@ -110,34 +110,24 @@ fn the_plain_form_is_one_tab_separated_line_per_record_with_text_flattened() {
 }
 
 #[test]
-fn a_session_table_updated_is_its_utc_date() {
-    // ORB-27238: the table shows the date of the stored UTC instant. The
-    // full instant stays in piped, JSON and show output (render.rs).
-    assert_eq!(
-        updated_date(datetime!(2026-10-20 11:02:00 UTC)),
-        "2026-10-20"
-    );
+fn the_shared_table_timestamp_formatter_uses_the_stored_utc_date() {
+    // The full instant stays in piped, JSON and show output (render.rs).
+    assert_eq!(table_date(datetime!(2026-10-20 11:02:00 UTC)), "2026-10-20");
     // 23:30 on the 22nd at UTC-5 is 04:30 on the 23rd in UTC.
-    assert_eq!(
-        updated_date(datetime!(2026-11-22 23:30:00 -5)),
-        "2026-11-23"
-    );
+    assert_eq!(table_date(datetime!(2026-11-22 23:30:00 -5)), "2026-11-23");
 }
 
 #[test]
-fn a_session_table_updated_whose_utc_date_leaves_the_supported_range_is_a_dash() {
+fn a_table_timestamp_whose_utc_date_leaves_the_supported_range_is_a_dash() {
     // ORB-27257: a record keeps the offset it was written with, so its local
     // date can sit at the supported bound while its UTC date does not. The
     // last UTC date in range renders; the first one past the bound is `-`.
     // 9999-12-30 23:00 at UTC-1 is 9999-12-31 00:00 UTC.
-    assert_eq!(
-        updated_date(datetime!(9999-12-30 23:00:00 -1)),
-        "9999-12-31"
-    );
+    assert_eq!(table_date(datetime!(9999-12-30 23:00:00 -1)), "9999-12-31");
     // 9999-12-31 23:00 at UTC-1 is 10000-01-01 00:00 UTC: out of range.
-    assert_eq!(updated_date(datetime!(9999-12-31 23:00:00 -1)), "-");
+    assert_eq!(table_date(datetime!(9999-12-31 23:00:00 -1)), "-");
     // The lower bound: -9999-01-01 00:30 at UTC+1 is in year -10000 UTC.
-    assert_eq!(updated_date(datetime!(-9999-01-01 00:30:00 +1)), "-");
+    assert_eq!(table_date(datetime!(-9999-01-01 00:30:00 +1)), "-");
 }
 
 #[test]
@@ -374,16 +364,16 @@ fn group(id: &str, summary: Option<&str>) -> scribe_core::group::Group {
 // opener or summary (STD-01 R15); an absent value is `-` (R14).
 #[test]
 fn the_group_list_table_holds_short_values_and_counts_seats() {
-    let records = Records::Groups(vec![
-        group("g-1", Some("Review complete.")),
-        group("g-2", None),
-    ]);
+    let mut closed = group("g-1", Some("Review complete."));
+    closed.opened = String::from("2026-11-22T23:30:00-05:00");
+    closed.closed = Some(String::from("2026-11-24T00:30:00+02:00"));
+    let records = Records::Groups(vec![closed, group("g-2", None)]);
     let text = render_list(OutputMode::Table, &records, 2, &[]);
     assert_eq!(
         text,
-        "ID   TITLE           KIND    PROJECT  OPENED                CLOSED  SEATS\n\
-         g-1  Release review  review  scribe   2026-11-22T09:00:00Z  -           2\n\
-         g-2  Release review  review  scribe   2026-11-22T09:00:00Z  -           2\n"
+        "ID   TITLE           KIND    PROJECT  OPENED      CLOSED      SEATS\n\
+         g-1  Release review  review  scribe   2026-11-23  2026-11-23      2\n\
+         g-2  Release review  review  scribe   2026-11-22  -               2\n"
     );
 }
 
@@ -423,19 +413,34 @@ fn the_group_plain_line_and_show_keep_every_field_and_dash_an_absent_summary() {
         fields[8].contains("first-session -> second-session"),
         "{plain:?}"
     );
+    assert_eq!(fields[4], "2026-11-22T09:00:00Z");
     assert_eq!(fields[9], "-");
 
+    let mut shown_group = group("g-1", Some("Review complete."));
+    shown_group.closed = Some(String::from("2026-11-22T10:00:00Z"));
     let mut out = Vec::new();
     show(
         &mut out,
         &sink(OutputMode::Table),
         &ShortIds::default(),
-        &Record::Group(Box::new(group("g-1", Some("Review complete.")))),
+        &Record::Group(Box::new(shown_group)),
     )
     .unwrap();
     let shown = String::from_utf8(out).unwrap();
     for label in ["opener", "related", "seats", "summary"] {
         assert!(shown.lines().any(|l| l.starts_with(label)), "{shown}");
     }
+    assert!(
+        shown
+            .lines()
+            .any(|l| l.starts_with("opened") && l.contains("2026-11-22T09:00:00Z")),
+        "{shown}"
+    );
+    assert!(
+        shown
+            .lines()
+            .any(|l| l.starts_with("closed") && l.contains("2026-11-22T10:00:00Z")),
+        "{shown}"
+    );
     assert!(shown.contains("first-session -> second-session"), "{shown}");
 }

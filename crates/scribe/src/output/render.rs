@@ -196,7 +196,10 @@ pub(crate) fn list(
         ),
         Records::Entries(items) => (
             ENTRY_COLUMNS.to_vec(),
-            items.iter().map(entry_row).collect(),
+            items
+                .iter()
+                .map(|entry| entry_row(entry, sink.mode))
+                .collect(),
         ),
         Records::Sessions {
             items,
@@ -205,7 +208,7 @@ pub(crate) fn list(
             with_active(&SESSION_COLUMNS, *active_column, 2),
             items
                 .iter()
-                .map(|s| session_row(s, *active_column, table_shorts(sink, shorts)))
+                .map(|s| session_row(s, *active_column, table_shorts(sink, shorts), sink.mode))
                 .collect(),
         ),
         Records::SessionTree {
@@ -214,7 +217,7 @@ pub(crate) fn list(
         } => (
             with_active(&SESSION_TREE_COLUMNS, *active_column, 3),
             rows.iter()
-                .map(|row| tree_row(row, table_shorts(sink, shorts), *active_column))
+                .map(|row| tree_row(row, table_shorts(sink, shorts), *active_column, sink.mode))
                 .collect(),
         ),
         Records::Proposals(items) => (
@@ -233,7 +236,7 @@ pub(crate) fn list(
             TRANSCRIPT_COLUMNS.to_vec(),
             items
                 .iter()
-                .map(|t| transcript_row(t, table_shorts(sink, shorts)))
+                .map(|t| transcript_row(t, sink.mode, table_shorts(sink, shorts)))
                 .collect(),
         ),
     };
@@ -425,7 +428,7 @@ pub(crate) fn show(
         (OutputMode::Json, Record::Session(session)) => write_json(out, session),
         (OutputMode::Json, Record::SessionHandoffs(session)) => write_json(out, session),
         (OutputMode::Plain, Record::Entry(entry)) => {
-            writeln!(out, "{}", plain_line(&entry_row(entry)))?;
+            writeln!(out, "{}", plain_line(&entry_row(entry, OutputMode::Plain)))?;
             // Scribe's statement is the row's content; Daniel's own words
             // follow on their line, with whose statement it is.
             if let (Some(by), Some(quote)) = (&entry.stated_by, &entry.quote) {
@@ -463,7 +466,11 @@ pub(crate) fn show(
             Ok(())
         }
         (OutputMode::Plain, Record::Session(session)) => {
-            writeln!(out, "{}", plain_line(&session_row(session, false, None)))?;
+            writeln!(
+                out,
+                "{}",
+                plain_line(&session_row(session, false, None, OutputMode::Plain))
+            )?;
             if let Some(at) = session.forgotten {
                 writeln!(out, "forgotten\t{}", timestamp(at))?;
             }
@@ -534,7 +541,11 @@ pub(crate) fn show(
         }
         (OutputMode::Json, Record::Transcript(transcript)) => write_json(out, transcript),
         (OutputMode::Plain, Record::Transcript(transcript)) => {
-            writeln!(out, "{}", plain_line(&transcript_row(transcript, None)))?;
+            writeln!(
+                out,
+                "{}",
+                plain_line(&transcript_row(transcript, OutputMode::Plain, None))
+            )?;
             if let Some(turns) = &transcript.user_first_turns {
                 for (n, turn) in turns.iter().enumerate() {
                     let index = n.saturating_add(1);
@@ -1355,8 +1366,11 @@ fn group_list_row(g: &scribe_core::group::Group) -> Vec<Cell> {
         one_line(&g.title),
         one_line(&g.kind),
         g.project.clone(),
-        g.opened.clone(),
-        g.closed.clone().unwrap_or_else(|| "-".into()),
+        table_date_string(&g.opened),
+        g.closed
+            .as_deref()
+            .map(table_date_string)
+            .unwrap_or_else(|| "-".into()),
         g.seats.len().to_string(),
     ]
     .into_iter()
@@ -1413,7 +1427,7 @@ fn group_row(g: &scribe_core::group::Group, shorts: Option<&ShortIds>) -> Vec<Ce
     .collect()
 }
 
-fn entry_row(e: &EntryPayload) -> Vec<Cell> {
+fn entry_row(e: &EntryPayload, mode: OutputMode) -> Vec<Cell> {
     vec![
         Cell::plain(e.id.clone()),
         Cell {
@@ -1422,7 +1436,7 @@ fn entry_row(e: &EntryPayload) -> Vec<Cell> {
         },
         Cell::plain(e.project.clone()),
         Cell::plain(joined(&e.topics)),
-        Cell::plain(timestamp(e.created)),
+        Cell::plain(list_timestamp(e.created, mode)),
         Cell::plain(one_line(&e.content)),
         Cell::plain(author(&e.author)),
         Cell::plain(
@@ -1668,8 +1682,8 @@ fn pass_row(p: &PassPayload, shorts: Option<&ShortIds>) -> Vec<Cell> {
 
 /// A `session list --tree` row: the session's row with its parent after
 /// the id; in a table the title is indented two spaces per level.
-fn tree_row(row: &TreeRow, shorts: Option<&ShortIds>, active: bool) -> Vec<Cell> {
-    let mut cells = session_row(&row.session, active, shorts);
+fn tree_row(row: &TreeRow, shorts: Option<&ShortIds>, active: bool, mode: OutputMode) -> Vec<Cell> {
+    let mut cells = session_row(&row.session, active, shorts, mode);
     cells.insert(
         1,
         Cell::plain(
@@ -1688,14 +1702,15 @@ fn tree_row(row: &TreeRow, shorts: Option<&ShortIds>, active: bool) -> Vec<Cell>
 
 /// A session's list row; `active` adds its `active` column after the
 /// status (`session list --include-inactive`). `shorts` is set for a
-/// terminal table: it shows the id as its short form and `UPDATED` as its
-/// date; piped output keeps the full id and the full instant.
-fn session_row(s: &SessionPayload, active: bool, shorts: Option<&ShortIds>) -> Vec<Cell> {
-    let updated = if shorts.is_some() {
-        updated_date(s.updated)
-    } else {
-        timestamp(s.updated)
-    };
+/// terminal table: it shows the id as its short form; piped output keeps the
+/// full id and the full instant.
+fn session_row(
+    s: &SessionPayload,
+    active: bool,
+    shorts: Option<&ShortIds>,
+    mode: OutputMode,
+) -> Vec<Cell> {
+    let updated = list_timestamp(s.updated, mode);
     let mut cells = vec![
         Cell::plain(shown_id(&s.id, shorts)),
         Cell::plain(s.status),
@@ -1839,7 +1854,7 @@ fn proposal_row(p: &ProposalPayload, mode: OutputMode) -> Vec<Cell> {
         },
         Cell::plain(p.older.clone()),
         Cell::plain(p.newer.clone().unwrap_or_else(|| String::from("-"))),
-        Cell::plain(timestamp(p.opened_at)),
+        Cell::plain(list_timestamp(p.opened_at, mode)),
         Cell::plain(reason),
         Cell::plain(
             p.candidate
@@ -1875,7 +1890,7 @@ fn hit_row(h: &HitPayload, mode: OutputMode) -> Vec<Cell> {
         },
         Cell::plain(h.kind),
         Cell::plain(format!("{:.3}", h.score.as_f64().unwrap_or_default())),
-        Cell::plain(timestamp(h.updated)),
+        Cell::plain(list_timestamp(h.updated, mode)),
         Cell::plain(if mode == OutputMode::Table {
             table::truncate(&title, TITLE_CELL_CHARS)
         } else {
@@ -1888,18 +1903,14 @@ fn hit_row(h: &HitPayload, mode: OutputMode) -> Vec<Cell> {
 /// The widest title a hit's table row shows.
 const TITLE_CELL_CHARS: usize = 40;
 
-fn transcript_row(t: &TranscriptPayload, shorts: Option<&ShortIds>) -> Vec<Cell> {
+fn transcript_row(t: &TranscriptPayload, mode: OutputMode, shorts: Option<&ShortIds>) -> Vec<Cell> {
     vec![
         Cell::plain(shown_id(&t.session, shorts)),
         Cell::plain(t.project.clone()),
         Cell::plain(t.user_turns.to_string()),
         Cell::plain(t.bytes.to_string()),
-        Cell::plain(
-            t.started
-                .map(timestamp)
-                .unwrap_or_else(|| String::from("-")),
-        ),
-        Cell::plain(t.ended.map(timestamp).unwrap_or_else(|| String::from("-"))),
+        Cell::plain(optional_list_timestamp(t.started, mode)),
+        Cell::plain(optional_list_timestamp(t.ended, mode)),
         Cell::plain(one_line(&t.first_prompt)),
     ]
 }
@@ -2035,14 +2046,33 @@ fn timestamp(at: OffsetDateTime) -> String {
     at.format(&Rfc3339).unwrap_or_else(|_| String::from("-"))
 }
 
-/// A session's `UPDATED` in the table: its UTC date, `YYYY-MM-DD`. Sorting
-/// and every piped or machine form use the full instant ([`timestamp`]).
+/// A human table's timestamp: its stored UTC date, `YYYY-MM-DD`. Sorting and
+/// every piped or machine form use the full instant ([`timestamp`]).
 /// A record's offset can put its UTC date outside the supported range, which
 /// has no `YYYY-MM-DD`; the table shows `-` there rather than panicking.
-pub(super) fn updated_date(at: OffsetDateTime) -> String {
+pub(super) fn table_date(at: OffsetDateTime) -> String {
     at.checked_to_offset(UtcOffset::UTC)
         .and_then(|utc| utc.date().format(&Iso8601::DATE).ok())
         .unwrap_or_else(|| String::from("-"))
+}
+
+fn list_timestamp(at: OffsetDateTime, mode: OutputMode) -> String {
+    if mode == OutputMode::Table {
+        table_date(at)
+    } else {
+        timestamp(at)
+    }
+}
+
+fn optional_list_timestamp(at: Option<OffsetDateTime>, mode: OutputMode) -> String {
+    at.map(|at| list_timestamp(at, mode))
+        .unwrap_or_else(|| String::from("-"))
+}
+
+fn table_date_string(value: &str) -> String {
+    OffsetDateTime::parse(value, &Rfc3339)
+        .map(table_date)
+        .unwrap_or_else(|_| String::from("-"))
 }
 
 fn write_json<T: Serialize + ?Sized>(out: &mut dyn Write, value: &T) -> io::Result<()> {
