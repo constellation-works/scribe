@@ -6429,7 +6429,9 @@ session.
   multiple clear predecessors are ambiguous and refused. Without a clear edge,
   launch predecessors are tried in metadata order until one reaches a typed
   turn. Unreadable or provenance-failing transcripts are dead ends. Traversal
-  refuses cycles and shares a budget of 16 transcripts across all paths. It
+  refuses a cycle (a link already on the current path), skips an ancestor an
+  earlier branch already examined, and shares a budget of 16 distinct
+  transcripts across all paths. It
   passes that verification to the store, which refuses a quote-less handoff
   without it (`quote_required`); a missing or noninteractive
   transcript is refused (`quote_not_found`). This shell variable was measured
