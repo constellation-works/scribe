@@ -142,7 +142,10 @@ fn additions(
     // Entries named like a transcript whose file type is refused: present, so
     // a named session among them is read through the checked open, which
     // refuses it, never treated as membership only.
-    let mut refused = std::collections::BTreeMap::new();
+    let mut refused: std::collections::BTreeMap<
+        SessionId,
+        Vec<(std::path::PathBuf, scribe_core::Provider)>,
+    > = std::collections::BTreeMap::new();
     for provider in [
         scribe_core::Provider::ClaudeCode,
         scribe_core::Provider::Codex,
@@ -160,7 +163,7 @@ fn additions(
             }
         }
         for (id, path) in found.refused {
-            refused.insert(id, (path, provider));
+            refused.entry(id).or_default().push((path, provider));
         }
     }
     let store: &Store = ctx.store();
@@ -178,25 +181,36 @@ fn additions(
         if additions.iter().any(|a| a.session == id) {
             continue;
         }
+        if cross_provider.contains(&id) {
+            return Err(collision_error(&id, true));
+        }
         // A refused entry takes precedence over a regular one for the same id,
         // so a session with both is read through the checked open and refuses
         // the whole line, never backfilled from its regular transcript.
-        let was_refused = refused.contains_key(&id);
         let turns = match refused.get(&id) {
-            Some((path, provider)) => {
-                let turns = read_past(&ctx.with_provider(*provider), &id, path)?;
-                if was_refused && turns.is_none() {
-                    return Err(CliError::TranscriptRefused {
-                        id,
-                        reason: String::from("the refused transcript disappeared after discovery"),
-                    });
+            Some(entries) => {
+                let mut resolved: Option<(
+                    Vec<scribe_core::message::NewMessage>,
+                    scribe_core::Provider,
+                )> = None;
+                for (path, provider) in entries {
+                    let Some(turns) = read_past(&ctx.with_provider(*provider), &id, path)? else {
+                        return Err(CliError::TranscriptRefused {
+                            id,
+                            reason: String::from(
+                                "the refused transcript disappeared after discovery",
+                            ),
+                        });
+                    };
+                    if let Some((_, other)) = files.get(&id) {
+                        return Err(collision_error(&id, *other != *provider));
+                    }
+                    if let Some((_, prev_provider)) = &resolved {
+                        return Err(collision_error(&id, *prev_provider != *provider));
+                    }
+                    resolved = Some((turns, *provider));
                 }
-                turns
-            }
-            None if cross_provider.contains(&id) => {
-                return Err(CliError::Usage(format!(
-                    "session {id} exists in multiple transcript providers"
-                )));
+                resolved.map(|(turns, _)| turns)
             }
             None => match files.get(&id) {
                 Some((path, provider)) => read_past(&ctx.with_provider(*provider), &id, path)?,
@@ -206,6 +220,16 @@ fn additions(
         additions.push(GroupAddition { session: id, turns });
     }
     Ok(additions)
+}
+
+fn collision_error(id: &SessionId, cross_provider: bool) -> CliError {
+    if cross_provider {
+        CliError::Usage(format!(
+            "session {id} exists in multiple transcript providers"
+        ))
+    } else {
+        CliError::Usage(String::from("ambiguous duplicate transcript session id"))
+    }
 }
 
 fn joined(id: &SessionId) -> HookOutcome {
