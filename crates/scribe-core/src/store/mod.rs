@@ -1144,8 +1144,20 @@ impl Store {
         self.write(|| {
             if let Settle::ForgetSession(id) = action {
                 return Ok(match self.forget_session_locked(id, now)? {
-                    Some(forgot) => Settled::SessionForgotten(forgot),
-                    None => Settled::Already(format!("{id} is already forgotten")),
+                    sessions::SessionForgetOutcome::Forgotten(forgot) => {
+                        Settled::SessionForgotten(forgot)
+                    }
+                    sessions::SessionForgetOutcome::Already {
+                        id: resolved,
+                        number,
+                        cleaned: true,
+                    } => Settled::SessionForgetRepaired {
+                        id: resolved,
+                        number,
+                    },
+                    sessions::SessionForgetOutcome::Already { cleaned: false, .. } => {
+                        Settled::Already(format!("{id} is already forgotten"))
+                    }
                 });
             }
             let mut proposals = self.proposals()?;

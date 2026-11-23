@@ -620,7 +620,7 @@ fn forgetting_again_erases_a_stale_checkpoint_and_keeps_a_live_one() {
         .settle(&Settle::ForgetSession(pair.forgotten.id.clone()), &cite, T0)
         .unwrap();
     assert!(
-        matches!(again, Settled::Already(_)),
+        matches!(again, Settled::SessionForgetRepaired { .. }),
         "a repeated forget still reports already forgotten: {again:?}"
     );
     assert_eq!(user_version(&root), version);

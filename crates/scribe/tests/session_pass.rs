@@ -704,6 +704,39 @@ fn forget_first_write_and_repeat_erase_legacy_session_archives() {
 }
 
 #[test]
+fn repeated_session_forget_audits_stale_checkpoint_cleanup_once() {
+    let s = Setup::new();
+    s.scribe("/scribe on");
+    s.pass();
+    type_settlement(&s, "#scribe forget s-1");
+    let conn = rusqlite::Connection::open(s.fx.root().join("scribe.db")).unwrap();
+    assert_eq!(conn.execute(
+        "INSERT INTO rebuild_checkpoints (session, record, created) SELECT id, ?2, '2026-11-01T00:00:00Z' FROM sessions WHERE provider_session = ?1",
+        (ON, "private stale checkpoint"),
+    ).unwrap(), 1);
+    drop(conn);
+    let before = audit_log(&s).len();
+    let reply = text(&type_settlement(&s, "#scribe forget s-1").stdout);
+    assert!(
+        reply.contains("already forgotten") && reply.contains("checkpoint"),
+        "{reply}"
+    );
+    assert_eq!(s.checkpoint_count(), 0);
+    let audit = audit_log(&s);
+    assert_eq!(audit.len(), before + 1, "{audit:?}");
+    let line = &audit[before];
+    assert_eq!(line["target"], "s-1");
+    assert_eq!(line["status"], "success");
+    assert!(!line.to_string().contains("private stale checkpoint"));
+    let clean = text(&type_settlement(&s, "#scribe forget s-1").stdout);
+    assert!(
+        clean.contains("already forgotten") && clean.contains("nothing changed"),
+        "{clean}"
+    );
+    assert_eq!(audit_log(&s).len(), before + 1);
+}
+
+#[test]
 fn forgetting_a_session_erases_its_words_keeps_its_id_and_takes_no_more_writes() {
     let s = Setup::new();
     let quote = "I prefer the lighthouse keeper plan for every Saturday release.";

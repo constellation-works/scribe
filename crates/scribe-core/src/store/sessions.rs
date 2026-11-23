@@ -84,6 +84,16 @@ pub struct SessionForget {
     pub was_on: bool,
 }
 
+/// Result of forgetting a session, including cleanup on a replay.
+pub(super) enum SessionForgetOutcome {
+    Forgotten(SessionForget),
+    Already {
+        id: SessionId,
+        number: Option<NonZeroU64>,
+        cleaned: bool,
+    },
+}
+
 /// The format of `scribe export`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExportFormat {
@@ -493,14 +503,13 @@ impl Store {
     /// checkpoint so the deleted pages leave the WAL, then its moved-aside
     /// files deleted, the one exception to `pre-sqlite-<date>/` being kept.
     /// A session that is on is switched off in the same transaction, and
-    /// stays off. `Ok(None)` when it is already forgotten. A rebuild
-    /// checkpoint an older build left is still deleted, and the WAL is
-    /// truncated when one was.
+    /// stays off. An already-forgotten result reports whether a rebuild
+    /// checkpoint an older build left was deleted and the WAL truncated.
     pub(super) fn forget_session_locked(
         &self,
         input: &SessionId,
         now: OffsetDateTime,
-    ) -> Result<Option<SessionForget>> {
+    ) -> Result<SessionForgetOutcome> {
         let id = self.resolve_session(input)?;
         let number = self.load_sessions()?.numbers.get(&id).copied();
         let outcome = self.sessions_tx(|tx| tx.forget(&id, now))?;
@@ -510,7 +519,11 @@ impl Store {
                 if checkpoints > 0 {
                     db::truncate_wal_of(&self.root, self.lock_wait)?;
                 }
-                return Ok(None);
+                return Ok(SessionForgetOutcome::Already {
+                    id,
+                    number,
+                    cleaned: checkpoints > 0,
+                });
             }
             None => {
                 return Err(Error::SessionNotFound {
@@ -521,7 +534,7 @@ impl Store {
         };
         db::truncate_wal_of(&self.root, self.lock_wait)?;
         let files = self.forget_moved_files(&id)?;
-        Ok(Some(SessionForget {
+        Ok(SessionForgetOutcome::Forgotten(SessionForget {
             id,
             number,
             messages: erased.messages,
