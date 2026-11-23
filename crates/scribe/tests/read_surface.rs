@@ -570,6 +570,58 @@ fn a_table_prints_the_shortest_unique_prefix_and_piped_output_the_full_id() {
 }
 
 #[test]
+fn cursor_only_codex_sessions_disambiguate_cataloged_session_prefixes() {
+    let fx = Fixture::new();
+    fx.seed();
+    let cursor_only = "7c2b9d14-ffff-4a3b-b1c6-2f9e8d7a6b02";
+    // The first store write migrates the checked-in document fixture into
+    // SQLite, where cursor-only ids are persisted independently of sessions.
+    ok(
+        &fx,
+        &[
+            "session",
+            "deactivate",
+            SESSION,
+            "--author",
+            "opus",
+            "--reason",
+            "fixture migration",
+        ],
+    );
+    ok(&fx, &["session", "activate", SESSION, "--author", "opus"]);
+    support::sql(
+        &fx.root(),
+        &format!(
+            "INSERT INTO codex_cursors (session, message) VALUES ('{cursor_only}', 'cursor-1')"
+        ),
+    );
+
+    let table = text(&ok(&fx, &["session", "list", "--format", "table"]).stdout);
+    assert!(table.contains("7c2b9d14-8 "), "{table}");
+
+    let err = usage_error(
+        &fx,
+        &[
+            "entry",
+            "add",
+            "--tag",
+            "preferences",
+            "--author",
+            "opus",
+            "--related",
+            "session:7c2b9d14",
+            "Cache the manifest between runs",
+        ],
+    );
+    assert_eq!(err["code"], "id_ambiguous");
+    let message = err["error"].as_str().unwrap();
+    assert!(
+        message.contains(SESSION) && message.contains(cursor_only),
+        "{message}"
+    );
+}
+
+#[test]
 fn a_session_reference_given_as_a_prefix_is_stored_in_full() {
     let fx = Fixture::new();
     fx.seed();

@@ -194,6 +194,13 @@ impl Store {
                     .keys()
                     .map(|id| id.as_str().to_owned()),
             )
+            .chain(
+                loaded
+                    .control
+                    .codex_cursors
+                    .keys()
+                    .map(|id| id.as_str().to_owned()),
+            )
             .chain(handoffs.iter().map(|id| id.as_str().to_owned()))
             .collect();
         ids.sort();
