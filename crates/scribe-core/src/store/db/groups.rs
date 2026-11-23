@@ -587,9 +587,9 @@ impl Store {
         })
     }
 
-    /// Consume a deferred check once, without writing on ordinary prompts.
-    pub fn take_deferred_ancestry(&self, session: &SessionId) -> Result<bool> {
-        let pending = self.read_groups(|conn, path| {
+    /// Whether a deferred ancestry check is pending for `session`.
+    pub fn has_deferred_ancestry(&self, session: &SessionId) -> Result<bool> {
+        self.read_groups(|conn, path| {
             if refuse_newer(conn, path)? < 13 {
                 return Ok(false);
             }
@@ -599,8 +599,12 @@ impl Store {
                 |row| row.get::<_, bool>(0),
             )
             .map_err(|e| Fallible::from_sqlite("read deferred ancestry from", path, e))
-        })?;
-        if !pending {
+        })
+    }
+
+    /// Consume a deferred check once, without writing on ordinary prompts.
+    pub fn take_deferred_ancestry(&self, session: &SessionId) -> Result<bool> {
+        if !self.has_deferred_ancestry(session)? {
             return Ok(false);
         }
         self.write(|| {

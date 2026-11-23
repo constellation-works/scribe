@@ -61,64 +61,79 @@ const PROVENANCE_FAILED: &str = "provenance_failed";
 pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
     let payload: PromptPayload = payload::decode(input)?;
     let mut output = capture_prompt(&payload, ctx)?;
-    if ctx.provider() != Provider::ClaudeCode || payload::agent_originated(&payload) {
+    // A blocked reply (`decision: "block"`) drops context and message on render
+    // and never reaches the agent, so keep any deferred ancestry check pending.
+    if ctx.provider() != Provider::ClaudeCode
+        || payload::agent_originated(&payload)
+        || matches!(&output, Output::Hook(reply) if reply.block.is_some())
+    {
         return Ok(output);
     }
     let session = payload::session(&payload.session_id)?;
-    if !ctx.store().take_deferred_ancestry(&session)? {
+    if !ctx.store().has_deferred_ancestry(&session)? {
         return Ok(output);
     }
+    apply_deferred_ancestry(&payload, &session, ctx, &mut output)?;
+    Ok(output)
+}
+
+fn apply_deferred_ancestry(
+    payload: &PromptPayload,
+    session: &SessionId,
+    ctx: &Context,
+    output: &mut Output,
+) -> Result<(), CliError> {
     let listed = ctx.store().list_sessions(&scribe_core::SessionFilter {
         include_inactive: true,
         ..Default::default()
     })?;
-    let linked = listed.control.get(&session).is_some_and(|c| {
+    let linked = listed.control.get(session).is_some_and(|c| {
         c.pending_links
             .iter()
             .any(|l| l.kind == scribe_core::LinkType::Continues)
     }) || listed.listing.items.iter().any(|r| {
-        r.id == session
+        &r.id == session
             && r.links
                 .iter()
                 .any(|l| l.kind == scribe_core::LinkType::Continues)
     });
     let held = matches!(
-        ctx.store().inherit_seat(&session, None)?,
+        ctx.store().inherit_seat(session, None)?,
         scribe_core::group::SeatStart::AlreadySeated(_) | scribe_core::group::SeatStart::Replaced
     );
-    let predecessor =
-        super::continuation::cleared_predecessor(ctx, Some(&payload.transcript_path), &session);
-    let (restored, seat) = if !linked && !held {
-        (
-            super::continuation::at_start(ctx, &session, &predecessor),
-            super::session_start::seat_at_start(ctx, &session, &predecessor),
-        )
-    } else {
-        (None, Default::default())
+    if linked || held {
+        if ctx.store().take_deferred_ancestry(session)?
+            && let Output::Hook(reply) = output
+        {
+            reply.outcomes.push(HookOutcome {
+                target: Some(format!("session:{session}")),
+                error_code: None,
+            });
+        }
+        return Ok(());
+    }
+    // Keep the check pending while the transcript is still missing or unreadable.
+    let Some(predecessor) =
+        super::continuation::try_cleared_predecessor(ctx, &payload.transcript_path, session)
+    else {
+        return Ok(());
     };
-    if let Output::Hook(ref mut reply) = output {
+    if !ctx.store().take_deferred_ancestry(session)? {
+        return Ok(());
+    }
+    let restored = super::continuation::at_start(ctx, session, &predecessor);
+    let seat = super::session_start::seat_at_start(ctx, session, &predecessor);
+    if let Output::Hook(reply) = output {
         let mut contexts = Vec::new();
         if let Some(restored) = restored {
             contexts.extend(restored.context);
             if let Some(message) = restored.message {
-                reply.message = Some(
-                    [Some(message), reply.message.take()]
-                        .into_iter()
-                        .flatten()
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                );
+                prepend_message(&mut reply.message, message);
             }
             reply.outcomes.extend(restored.outcomes);
         }
         if let Some(message) = seat.message {
-            reply.message = Some(
-                [Some(message), reply.message.take()]
-                    .into_iter()
-                    .flatten()
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            );
+            prepend_message(&mut reply.message, message);
         }
         contexts.extend(seat.context);
         contexts.extend(reply.context.take());
@@ -131,7 +146,17 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
             error_code: None,
         });
     }
-    Ok(output)
+    Ok(())
+}
+
+fn prepend_message(target: &mut Option<String>, message: String) {
+    *target = Some(
+        [Some(message), target.take()]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
 }
 
 /// One echo line and the note the agent gets for it.

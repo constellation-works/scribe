@@ -229,7 +229,7 @@ pub(crate) fn apply_link(
         LinkSwitch::Manual { on } => {
             on && switch(state, session, &Switch::On, now) == Change::SwitchedOn
         }
-        LinkSwitch::Inherit if !added => false, // A replay preserves the child's later switch.
+        LinkSwitch::Inherit if !added || state.sessions.contains_key(session) => false, // Preserve an explicit or later child switch.
         LinkSwitch::Inherit if state.get(&link.session).is_some_and(|s| s.on) => {
             switch(state, session, &Switch::On, now) == Change::SwitchedOn
         }
