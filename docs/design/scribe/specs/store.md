@@ -311,8 +311,10 @@ leaves the group open for retry.
 
 ### Forgetting a session
 
-Daniel types `#scribe forget s-<n>`, or uses the full provider session id
-(2_design.md §15.7). The verified typed hook is the deletion route.
+Daniel types `#scribe forget <session-id>` with `s-<n>`, the full provider
+session id or a unique prefix of it of at least four characters (2_design.md
+§15.7). An ambiguous prefix is refused `id_ambiguous` and erases nothing. The
+verified typed hook is the deletion route.
 
 - The session transaction deletes its segments, terms, links, switch, cursor,
   rebuild checkpoint, pending candidates and indexed message rows, including
