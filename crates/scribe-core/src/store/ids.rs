@@ -278,14 +278,13 @@ impl Store {
                 path: self.root.join(super::SESSIONS_DIR),
             })
         };
-        let exact = |id: &SessionId| id == input;
+        let mut ids = Self::session_id_universe(&loaded, &handoff_sessions);
+        ids.extend(extra_ids.iter().cloned());
+        ids.sort();
+        ids.dedup();
         // An exact provider id first; then `s-<n>`, the row id (2_design.md
         // §15.7), which a provider's UUID never looks like.
-        if !loaded.records.iter().any(|r| exact(&r.id))
-            && !loaded.numbers.keys().any(exact)
-            && !loaded.control.sessions.keys().any(exact)
-            && !handoff_sessions.iter().any(exact)
-            && !extra_ids.iter().any(|id| id == input.as_str())
+        if !ids.iter().any(|id| id == input.as_str())
             && let Some(n) = input
                 .as_str()
                 .strip_prefix("s-")
@@ -296,10 +295,6 @@ impl Store {
                 None => not_found(),
             };
         }
-        let mut ids = Self::session_id_universe(&loaded, &handoff_sessions);
-        ids.extend(extra_ids.iter().cloned());
-        ids.sort();
-        ids.dedup();
         match resolve(input.as_str(), &ids)? {
             Some(i) => ids[i]
                 .parse::<SessionId>()

@@ -2681,3 +2681,175 @@ fn typed_group_add_audits_ids_only_and_a_later_capture_resumes_after_the_stored_
     assert_eq!(total("pastorchid"), 1);
     assert_eq!(total("lateorchid"), 1);
 }
+
+#[test]
+fn typed_group_add_resolves_prefixes_and_exact_ids_across_disk_and_store() {
+    let f = Fixture::new();
+    let typing = transcript(&f, A, &[row(A, "t", "user", "/scribe group add planning")]);
+    let submit = |prompt: String| {
+        hook(
+            &f,
+            &["hook", "user-prompt-submit"],
+            json!({"session_id": A, "transcript_path": typing, "cwd": f.home(), "prompt": prompt}),
+            &[],
+        )
+    };
+    let store = scribe_core::Store::open(f.root());
+
+    // Shared prefix across a disk transcript (`abcd-one`), a catalog-only
+    // switched session (`abcd-two`), and a valid earlier session (`B`) refuses
+    // the whole line before any group, membership, or turn writes.
+    transcript(
+        &f,
+        "abcd-one",
+        &[row("abcd-one", "d1", "user", "diskorchid")],
+    );
+    transcript(&f, B, &[row(B, "b1", "user", "validorchid")]);
+    let stored_only: scribe_core::SessionId = "abcd-two".parse().unwrap();
+    store
+        .update_control(|state| {
+            scribe_core::control::switch(
+                state,
+                &stored_only,
+                &scribe_core::control::Switch::On,
+                time::OffsetDateTime::now_utc(),
+            )
+        })
+        .unwrap();
+
+    let ambig = submit(format!("/scribe group add planning {B} abcd"));
+    let reply = text(&ambig.stdout);
+    assert!(reply.contains("group add refused"), "{reply}");
+    assert!(reply.contains("ambiguous"), "{reply}");
+    assert!(
+        reply.contains("abcd-one") && reply.contains("abcd-two"),
+        "{reply}"
+    );
+    assert!(store.groups().unwrap().is_empty());
+    assert_eq!(
+        invoke(&f, A, &["search", "diskorchid", "--kind", "message"], 0)["total"],
+        0
+    );
+    assert_eq!(
+        invoke(&f, A, &["search", "validorchid", "--kind", "message"], 0)["total"],
+        0
+    );
+    let last_audit = support::audit_lines(&f.root()).pop().unwrap();
+    assert_eq!(last_audit["command"], "hook user-prompt-submit");
+    assert_eq!(last_audit["status"], "failure");
+    assert_eq!(last_audit["target"], format!("session:{A}"));
+    assert_eq!(last_audit["error_code"], "id_ambiguous");
+
+    // Unique prefix for the disk session resolves and stores its typed turn;
+    // unique prefix for the stored session adds membership only.
+    let disambig = submit(String::from("/scribe group add planning abcd-o abcd-t"));
+    let disambig_reply = text(&disambig.stdout);
+    assert!(
+        disambig_reply.contains("abcd-one: added; transcript on disk, 1 typed turn stored"),
+        "{disambig_reply}"
+    );
+    assert!(
+        disambig_reply.contains("abcd-two: added; membership only, no transcript on disk"),
+        "{disambig_reply}"
+    );
+
+    // A membership-only session already in a group (`memb-two`) also collides
+    // with a disk transcript (`memb-one`) on prefix `memb` before writes.
+    let memb_first = submit(String::from("/scribe group add first memb-two"));
+    assert!(
+        text(&memb_first.stdout).contains("memb-two: added; membership only"),
+        "{}",
+        text(&memb_first.stdout)
+    );
+    transcript(
+        &f,
+        "memb-one",
+        &[row("memb-one", "m1", "user", "memberorchid")],
+    );
+    let memb_ambig = submit(String::from("/scribe group add second memb"));
+    let memb_reply = text(&memb_ambig.stdout);
+    assert!(memb_reply.contains("group add refused"), "{memb_reply}");
+    assert!(
+        memb_reply.contains("memb-one") && memb_reply.contains("memb-two"),
+        "{memb_reply}"
+    );
+    assert!(store.group("second").is_err());
+
+    // Exact known IDs win across both sources, including IDs shorter than four
+    // characters and when a longer ID in the other source shares the prefix.
+    // 1. Exact stored ID (`abc`, <4 chars) wins over longer disk ID (`abc-one`).
+    transcript(
+        &f,
+        "abc-one",
+        &[row("abc-one", "x1", "user", "longdiskorchid")],
+    );
+    let exact_short_stored: scribe_core::SessionId = "abc".parse().unwrap();
+    store
+        .update_control(|state| {
+            scribe_core::control::switch(
+                state,
+                &exact_short_stored,
+                &scribe_core::control::Switch::On,
+                time::OffsetDateTime::now_utc(),
+            )
+        })
+        .unwrap();
+    let short_stored = submit(String::from("/scribe group add exact-wins abc"));
+    let short_stored_reply = text(&short_stored.stdout);
+    assert!(
+        short_stored_reply.contains("  abc: added; membership only, no transcript on disk"),
+        "{short_stored_reply}"
+    );
+    assert_eq!(
+        invoke(
+            &f,
+            A,
+            &[
+                "search",
+                "longdiskorchid",
+                "--kind",
+                "message",
+                "--group",
+                "exact-wins"
+            ],
+            0
+        )["total"],
+        0
+    );
+
+    // 2. Exact disk ID (`def`, <4 chars) wins over longer stored ID (`def-two`).
+    transcript(&f, "def", &[row("def", "d2", "user", "shortdiskorchid")]);
+    let longer_stored: scribe_core::SessionId = "def-two".parse().unwrap();
+    store
+        .update_control(|state| {
+            scribe_core::control::switch(
+                state,
+                &longer_stored,
+                &scribe_core::control::Switch::On,
+                time::OffsetDateTime::now_utc(),
+            )
+        })
+        .unwrap();
+    let short_disk = submit(String::from("/scribe group add exact-wins def"));
+    let short_disk_reply = text(&short_disk.stdout);
+    assert!(
+        short_disk_reply.contains("  def: added; transcript on disk, 1 typed turn stored"),
+        "{short_disk_reply}"
+    );
+    assert_eq!(
+        invoke(
+            &f,
+            A,
+            &[
+                "search",
+                "shortdiskorchid",
+                "--kind",
+                "message",
+                "--group",
+                "exact-wins"
+            ],
+            0
+        )["total"],
+        1
+    );
+}

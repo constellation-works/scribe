@@ -102,14 +102,18 @@ pub(super) fn run(
 }
 
 /// The named sessions, each resolved to a full id, deduplicated in the order
-/// named, with the typed turns of those whose transcript is on disk. An id or
-/// prefix a transcript matches resolves against transcripts first; any other
-/// is resolved against the store and otherwise taken as typed, since a session
-/// that was never recorded has no other source.
+/// named, with the typed turns of those whose transcript is on disk. Resolution
+/// searches the union of known store sessions, existing group members, and
+/// transcripts on disk so an exact id wins across every source and a shared
+/// prefix refuses the line before writes; unknown ids stay as typed, since a
+/// session that was never recorded has no other source.
 fn additions(ctx: &Context, named: &[SessionId]) -> Result<Vec<GroupAddition>, CliError> {
     let files = payload::files_for(ctx)?;
-    let ids: Vec<String> = files.iter().map(|(id, _)| id.to_string()).collect();
     let store: &Store = ctx.store();
+    let mut ids: Vec<String> = files.iter().map(|(id, _)| id.to_string()).collect();
+    for group in store.groups()? {
+        ids.extend(group.members().into_iter().map(|id| id.to_string()));
+    }
     let mut additions: Vec<GroupAddition> = Vec::new();
     for input in named {
         let id = store.resolve_session_or_typed_with(input, &ids)?;
