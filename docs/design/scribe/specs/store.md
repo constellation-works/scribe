@@ -221,7 +221,7 @@ are derived from the checked local transcript and are omitted from exports.
 | `meta` | `id INTEGER PRIMARY KEY CHECK (id = 1)`; `store_id TEXT NOT NULL`, 32 hex characters; `created TEXT NOT NULL` | the first migration; one row |
 | `groups` | `id INTEGER PRIMARY KEY AUTOINCREMENT` (shown as `g-<n>`), `title` and `kind` nonblank redacted text, `project` slug, `opened` timestamp, nullable `closed` timestamp and redacted `summary`, `opener` provider session id, `related` JSON array of task, PR and repository references, nullable `slug TEXT` with unique partial index `group_open_slug` on `slug WHERE slug IS NOT NULL AND closed IS NULL` (version 12) | `group open` on a verified typed quote, `/scribe group <slug>` (or Codex `$scribe group <slug>`), `group close` by the opener or the newest transcript of the opener's seat, or with `--quote` by a session whose verified typed turn names the group |
 | `group_seats` | `group_id INTEGER` referencing the group, `name TEXT`, `role TEXT` (redacted free label), primary key `(group_id, name)` | `group join` creates the seat, `group leave` removes an empty seat |
-| `group_members` | `position INTEGER PRIMARY KEY AUTOINCREMENT`, foreign key `(group_id, seat)` to the seat, `session TEXT UNIQUE` (provider id), `author TEXT` (joining agent), `joined` (capture start), nullable `turn_cursor` (provider message id). Index on `(group_id, seat, position)` orders the chain. | `group join` or clear inheritance appends, capture advances the cursor, `group leave` removes the caller’s row |
+| `group_members` | `position INTEGER PRIMARY KEY AUTOINCREMENT`, foreign key `(group_id, seat)` to the seat, `session TEXT UNIQUE` (provider id), `author TEXT` (joining agent), `joined` (the join time, the cutoff for a member with no cursor), nullable `turn_cursor` (provider message id). Index on `(group_id, seat, position)` orders the chain. | `group join` or clear inheritance appends, capture advances the cursor, `group leave` removes the caller’s row |
 | `group_claude_progress` | `position INTEGER PRIMARY KEY` referencing a membership, `file_id TEXT` (device and inode), `offset INTEGER` (next byte), `modified TEXT` (file mtime) and `boundary TEXT` (digest of bounded head and tail samples). | Claude group capture, with its message and cursor updates |
 | `group_claude_seen` | Primary key `(position, id_hash)` referencing the checkpoint by position. `id_hash TEXT` is the hashed provider message id, `permitted INTEGER` the nullable first origin and entry-point verdict, and `message INTEGER` records whether the parser saw a message for that id. | Claude group capture advances the index with its checkpoint. Replaying a transcript replaces the index, and deleting a membership cascades to both tables. |
 | `messages` | `id INTEGER PRIMARY KEY`; `session TEXT NOT NULL`, 1–128 characters (the session record's id); `message TEXT NOT NULL`, non-empty (the provider's message id); `role TEXT NOT NULL CHECK (role IN ('user', 'assistant'))`; `at TEXT NOT NULL`; `text TEXT NOT NULL`, redacted; `sha256 TEXT NOT NULL`, 64 hex characters of the redacted text; `group_only INTEGER NOT NULL DEFAULT 0` (0 or 1); `UNIQUE (session, message)` | the session pass and group hooks |
@@ -250,7 +250,15 @@ are derived from the checked local transcript and are omitted from exports.
 | `pending_archive_forgets` | `id INTEGER PRIMARY KEY`; `entry TEXT NOT NULL` (`<tag>-<n>`); `salt TEXT NOT NULL`, 64 hex characters; `digests TEXT NOT NULL`, JSON array of `{len, sha256}` salted SHA-256 digests of erased texts (never cleartext); `created TEXT NOT NULL` | committed in the entry forget's transaction when `pre-sqlite-*` archives exist or are pending move-aside; drained after commit by that write or any restarted write (version 6) |
 
 Group turns use the same `messages` and FTS5 rows, with `group_only = 1` for
-turns kept solely through membership. A session pass that writes the same
+turns kept solely through membership. `group open` stores the opener's typed
+turns from the start of its transcript in the transaction that inserts the
+group, and `group join` stores the joining session's in the transaction that
+inserts the membership, setting `turn_cursor` to the last of them; later
+capture resumes after that cursor, and the `(session, message)` key keeps a
+retry from storing a turn twice. An opener's turns stored at open belong to no
+membership until it joins a seat; an opener already in a group or forgotten
+stores none. A restored displaced holder still restarts at its new join time
+with its cursor cleared. A session pass that writes the same
 message clears that flag. Capture rechecks open membership, that the membership
 is still its seat's newest position (a replaced member holds none), and the
 cursor in the message write transaction. Capture skips replay if the transcript no
@@ -283,8 +291,8 @@ leaves the group open for retry.
   `memory::sensitive_word`). A memory item may not hold them outside `now`
   and `milestones`, and the profile job is the reader these messages are
   for. An off session receives no catalog pass; an open group membership
-  can still capture eligible typed turns from the time it joins, without a
-  session record or switch.
+  can still capture eligible typed turns, from the start of its own transcript,
+  without a session record or switch.
 - **When.** The pass upserts a window's messages on (`session`,
   `message`) in the transaction that writes the window's record (phase 6;
   before it, the messages committed first and the record file followed).

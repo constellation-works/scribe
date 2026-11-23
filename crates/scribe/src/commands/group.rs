@@ -10,7 +10,7 @@ use clap::Subcommand;
 use scribe_core::group::{GroupCloser, GroupConsent, JoinGroup, NewGroup, automatic_seat};
 use scribe_core::{
     AuthorName, CloseGroupOutcome, Label, Models, Project, Provider, Related, SessionId,
-    WriteRefusal, transcript,
+    WriteRefusal, message::NewMessage, transcript,
 };
 
 const CLOSE_COMMAND: &str = "group close";
@@ -161,6 +161,27 @@ fn ended(ctx: &Context, session: &SessionId) -> Result<bool, CliError> {
     Ok(found)
 }
 
+/// The caller's typed turns from the start of its own transcript, for the
+/// group it joins. A join does not need the transcript: one that is missing or
+/// fails its check joins with no earlier turns, as it always has.
+fn earlier_turns(ctx: &Context, session: &SessionId) -> Result<Vec<NewMessage>, CliError> {
+    let Some(path) = payload::locate(ctx, session)? else {
+        return Ok(Vec::new());
+    };
+    match payload::read_checked(ctx, &path, session) {
+        Ok(Some(bytes)) => hook::typed_turns(ctx, session, &bytes),
+        Ok(None) => Ok(Vec::new()),
+        Err(payload::Unreadable::Refused(reason)) => {
+            tracing::warn!(%session, %reason, "group join stores no earlier turns: transcript refused");
+            Ok(Vec::new())
+        }
+        Err(payload::Unreadable::Io(source)) => Err(CliError::Read {
+            what: path.display().to_string(),
+            source,
+        }),
+    }
+}
+
 pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliError> {
     let store = ctx.store();
     let mut notices = Vec::new();
@@ -197,8 +218,16 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
                 project,
                 related: super::resolve_relateds(ctx, &related)?,
             };
-            let opened =
-                store.open_group(draft, &consent, ctx.now(), &ctx.redactor(&ctx.config()?)?)?;
+            // The opener's earlier typed turns are group record from its first
+            // line. A transcript that cannot be read as turns stores none.
+            let earlier = hook::typed_turns(ctx, consent.session(), &bytes)?;
+            let opened = store.open_group(
+                draft,
+                &consent,
+                &earlier,
+                ctx.now(),
+                &ctx.redactor(&ctx.config()?)?,
+            )?;
             for id in opened.still_open {
                 notices.push(format!("warning: group {id} is still open in this project"));
             }
@@ -260,6 +289,7 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
                 }
                 _ => (None, None),
             };
+            let earlier = earlier_turns(ctx, &caller)?;
             let join = JoinGroup {
                 group: &group.id,
                 session: &caller,
@@ -269,6 +299,7 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
                 replace,
                 ended,
                 predecessor: predecessor.as_ref(),
+                earlier_turns: &earlier,
             };
             let changed = store.join_group(join, &ctx.redactor(&ctx.config()?)?)?;
             if !changed {

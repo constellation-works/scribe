@@ -301,4 +301,9 @@ pub struct JoinGroup<'a> {
     pub ended: Option<&'a SessionId>,
     /// Previous holder verified as the caller's own cleared predecessor, if any.
     pub predecessor: Option<&'a SessionId>,
+    /// The calling session's typed turns from the start of its own transcript,
+    /// chosen as a member's capture chooses them. Stored with the membership;
+    /// the last one becomes the capture cursor. Empty when there is no
+    /// readable transcript.
+    pub earlier_turns: &'a [crate::message::NewMessage],
 }

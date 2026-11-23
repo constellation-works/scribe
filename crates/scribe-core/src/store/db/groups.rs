@@ -409,13 +409,20 @@ impl Store {
     }
 
     /// Open a group on verified consent. The opener joins a seat separately.
+    /// `earlier_turns` are the opener's typed turns from the start of its own
+    /// transcript. They are stored with the group in the same transaction, so
+    /// the line that started the work is kept even though it was typed before
+    /// the group existed. An opener that is already a member of a group, or has
+    /// been forgotten, stores none: its own join decided what it keeps.
     pub fn open_group(
         &self,
         mut draft: NewGroup,
         consent: &GroupConsent,
+        earlier_turns: &[NewMessage],
         now: OffsetDateTime,
         redactor: &Redactor,
     ) -> Result<OpenedGroup> {
+        check_own_user_turns(consent.session(), earlier_turns)?;
         crate::check_content(&draft.title)?;
         crate::check_content(&draft.kind)?;
         if draft
@@ -458,6 +465,19 @@ impl Store {
                     |r| r.get(0),
                 )
                 .map_err(fail)?;
+            let opener = consent.session();
+            if !earlier_turns.is_empty()
+                && !has_membership(&conn, opener).map_err(fail)?
+                && !super::sessions::is_forgotten(&conn, opener).map_err(fail)?
+            {
+                write_captured_turns(
+                    &conn,
+                    &path,
+                    opener,
+                    earlier_turns.iter().collect(),
+                    redactor,
+                )?;
+            }
             Ok(OpenedGroup { id: format!("g-{n}"), still_open })
         })
     }
@@ -608,6 +628,7 @@ impl Store {
         if let Some(role) = join.role {
             crate::check_content(role)?;
         }
+        check_own_user_turns(join.session, join.earlier_turns)?;
         self.write(|| {
             self.refuse_forgotten(join.session)?;
             let n = self.group_number(join.group)?;
@@ -682,6 +703,22 @@ impl Store {
                 params![n, seat, session, join.author.as_str(), stamp(OffsetDateTime::now_utc())],
             )
             .map_err(fail)?;
+            // The capture starts at the session's own first line, not at the
+            // join time, so the cursor takes over from its last stored turn.
+            if let Some(last) = join.earlier_turns.last() {
+                write_captured_turns(
+                    &conn,
+                    &path,
+                    join.session,
+                    join.earlier_turns.iter().collect(),
+                    redactor,
+                )?;
+                conn.execute(
+                    "UPDATE group_members SET turn_cursor = ?2 WHERE session = ?1",
+                    params![session, last.message],
+                )
+                .map_err(fail)?;
+            }
             Ok(true)
         })
     }
@@ -1008,6 +1045,20 @@ impl Store {
             Ok(0)
         })
     }
+}
+
+/// A backfill takes only the named session's own user turns.
+fn check_own_user_turns(session: &SessionId, turns: &[NewMessage]) -> Result<()> {
+    if turns
+        .iter()
+        .any(|m| &m.session != session || m.role != crate::Speaker::User)
+    {
+        return Err(refusal(
+            WriteRefusal::GroupMembership,
+            "group backfill takes only the member's own user turns",
+        ));
+    }
+    Ok(())
 }
 
 fn write_captured_turns(

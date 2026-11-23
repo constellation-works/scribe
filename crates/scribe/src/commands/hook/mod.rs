@@ -41,6 +41,7 @@ mod stop;
 mod user_prompt_submit;
 
 pub(in crate::commands) use continuation::{ClearedPredecessor, cleared_predecessor};
+pub(in crate::commands) use group_turns::typed_turns;
 
 use crate::app::Context;
 use crate::audit_middleware::AuditMeta;

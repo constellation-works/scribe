@@ -768,6 +768,7 @@ fn project_group_automatic_seat_avoids_every_taken_name() {
                 replace: false,
                 ended: None,
                 predecessor: None,
+                earlier_turns: &[],
             },
             &redactor,
         )
@@ -1092,6 +1093,7 @@ fn a_restored_seat_with_a_cursor_excludes_turns_typed_during_displacement() {
                     replace: true,
                     ended: None,
                     predecessor: None,
+                    earlier_turns: &[],
                 },
                 &redactor,
             )
@@ -1301,6 +1303,7 @@ fn forgetting_the_seat_holder_restarts_the_restored_holders_capture_window() {
                     replace: true,
                     ended: None,
                     predecessor: None,
+                    earlier_turns: &[],
                 },
                 &redactor,
             )
@@ -1509,6 +1512,7 @@ fn forgetting_a_non_holder_preserves_the_active_holders_capture_state() {
                     replace: true,
                     ended: None,
                     predecessor: None,
+                    earlier_turns: &[],
                 },
                 &redactor,
             )
@@ -1840,4 +1844,55 @@ fn project_group_join_returns_error_promptly_when_seat_lookup_fails() {
         )
         .unwrap();
     assert_eq!(new_groups, 0);
+}
+
+/// A backfill carries only the joining session's own user turns; anything else
+/// is refused before the membership is written.
+#[test]
+fn a_join_backfill_takes_only_the_joining_sessions_own_user_turns() {
+    use crate::group::JoinGroup;
+
+    let dir = private_tempdir();
+    let store = Store::open(dir.path());
+    let project = crate::Project::sanitized("checkout");
+    let redactor = Redactor::default();
+    let opener = "backfill-opener".parse().unwrap();
+    store
+        .join_project_group("backfill", &project, &opener, T0, &redactor)
+        .unwrap();
+    let session: crate::SessionId = "backfill-joiner".parse().unwrap();
+    let seat = crate::Label::sanitized("editor", "member");
+    let author = "aide".parse().unwrap();
+    let mut assistant = message("backfill-joiner", "a-1", "assistant words");
+    assistant.role = Speaker::Assistant;
+    let foreign = message("backfill-other", "f-1", "another session's words");
+    for turns in [vec![assistant], vec![foreign]] {
+        let err = store
+            .join_group(
+                JoinGroup {
+                    group: "backfill",
+                    seat: &seat,
+                    role: None,
+                    session: &session,
+                    author: &author,
+                    replace: false,
+                    ended: None,
+                    predecessor: None,
+                    earlier_turns: &turns,
+                },
+                &redactor,
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("own user turns"), "{err}");
+    }
+    let conn = rusqlite::Connection::open(dir.path().join(DB_FILE)).unwrap();
+    let rows: i64 = conn
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM group_members WHERE session = ?1)
+                  + (SELECT COUNT(*) FROM messages)",
+            [session.as_str()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(rows, 0);
 }
