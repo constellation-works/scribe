@@ -595,6 +595,67 @@ fn project_group_slug_joins_and_inherits() {
 }
 
 #[test]
+fn project_group_automatic_seat_avoids_every_taken_name() {
+    use crate::group::JoinGroup;
+    let dir = private_tempdir();
+    let store = Store::open(dir.path());
+    let project = crate::Project::sanitized("checkout");
+    let redactor = Redactor::default();
+    let join = |session: &str| {
+        let session = session.parse().unwrap();
+        store
+            .join_project_group("seat-taking", &project, &session, T0, &redactor)
+            .unwrap();
+        session
+    };
+    // The short name is held, then an explicit seat takes another session's full id.
+    join("abcdefgh-one");
+    let two = "abcdefgh-two".parse().unwrap();
+    let seat = crate::Label::sanitized("abcdefgh-three", "member");
+    let author = "aide".parse().unwrap();
+    store
+        .join_project_group("seat-taking", &project, &two, T0, &redactor)
+        .unwrap();
+    store.leave_group(&two).unwrap();
+    store
+        .join_group(
+            JoinGroup {
+                group: "seat-taking",
+                seat: &seat,
+                role: None,
+                session: &two,
+                author: &author,
+                replace: false,
+                ended: None,
+                predecessor: None,
+            },
+            &redactor,
+        )
+        .unwrap();
+    // Both of this session's candidate names are taken.
+    join("abcdefgh-three");
+    // A session whose short and full ids are the same name.
+    join("abcdefgh");
+    let mut names: Vec<_> = store
+        .group("seat-taking")
+        .unwrap()
+        .seats
+        .into_iter()
+        .map(|s| (s.name, s.transcripts.len()))
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            ("abcdefgh".to_owned(), 1),
+            ("abcdefgh-2".to_owned(), 1),
+            ("abcdefgh-three".to_owned(), 1),
+            ("abcdefgh-three-2".to_owned(), 1),
+        ]
+    );
+}
+
+#[test]
 fn claude_capture_rejects_a_stale_snapshot_before_advancing_progress() {
     use crate::ClaudeCapturePosition;
     use crate::instruction::ClaudeGroupTurns;

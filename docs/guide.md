@@ -301,8 +301,8 @@ and `/scribe group <slug>` (also `/scribe:scribe …`). The link forms connect
 this session to the one it was spawned from or continues, and refuse an
 unknown id, a self-link or a cycle. `/scribe group <slug>` creates an open
 `project` group titled `<slug>` in the working directory's project if absent and
-joins the calling session on an automatic short-session-id seat (full session id
-on collision) with role `member`, or joins the existing open group when typed in
+joins the calling session on an automatic short-session-id seat (full session id,
+then the full id with `-2`, `-3`… when taken, never displacing a seat) with role `member`, or joins the existing open group when typed in
 another session (one group per session until `scribe group leave`; non-typed
 prompts are refused). Codex accepts the same `/scribe group <slug>`, `$scribe group <slug>`,
 and skill mention link `[$scribe](.../scribe/SKILL.md) group <slug>` once the host

@@ -2326,3 +2326,62 @@ fn typed_project_group_refuses_configured_secret_without_persisting_or_echoing_i
             .any(|line| line["error_code"] == "invalid_text")
     );
 }
+
+#[test]
+fn automatic_project_group_seat_avoids_taken_names_and_survives_a_retry() {
+    let f = Fixture::new();
+    let prompt = "/scribe group seat-collision";
+    let transcript = transcript(&f, A, &[row(A, "typed", "user", prompt)]);
+    hook(
+        &f,
+        &["hook", "user-prompt-submit"],
+        json!({"session_id": A, "transcript_path": transcript, "cwd": f.home(), "prompt": prompt}),
+        &[],
+    );
+    // E shares A's eight-character prefix; an explicit seat already uses E's full id.
+    const E: &str = "11111111-eeee-4eee-8eee-eeeeeeeeeeee";
+    let squatter = join_as(&f, B, "seat-collision", E, &[], 0);
+    assert!(
+        squatter["seats"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["name"] == E)
+    );
+
+    let args = ["group", "join", "seat-collision", "--author", "aide"];
+    let joined = invoke(&f, E, &args, 0);
+    let seats: Vec<(&str, Vec<&str>)> = joined["seats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| {
+            (
+                s["name"].as_str().unwrap(),
+                s["transcripts"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|t| t.as_str().unwrap())
+                    .collect(),
+            )
+        })
+        .collect();
+    let automatic = format!("{E}-2");
+    assert!(seats.contains(&("11111111", vec![A])), "{seats:?}");
+    assert!(seats.contains(&(E, vec![B])), "{seats:?}");
+    assert!(seats.contains(&(automatic.as_str(), vec![E])), "{seats:?}");
+
+    // The short name frees up; a retry keeps the existing automatic seat.
+    invoke(&f, A, &["group", "leave"], 0);
+    let retry = invoke(&f, E, &args, 0);
+    let held: Vec<&str> = retry["seats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|s| s["transcripts"].as_array().unwrap().contains(&json!(E)))
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(held, [automatic.as_str()]);
+    assert!(retry["seats"].as_array().unwrap().len() == 2);
+}

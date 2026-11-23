@@ -7,7 +7,7 @@ use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{Output, Record, Records};
 use clap::Subcommand;
-use scribe_core::group::{GroupConsent, JoinGroup, NewGroup};
+use scribe_core::group::{GroupConsent, JoinGroup, NewGroup, automatic_seat};
 use scribe_core::{
     AuthorName, CloseGroupOutcome, Label, Models, Project, Provider, Related, SessionId,
     WriteRefusal, transcript,
@@ -212,12 +212,14 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
             let seat = match seat {
                 Some(seat) => seat,
                 None if group.slug.is_some() => {
-                    let short: String = caller.as_str().chars().take(8).collect();
-                    let occupied = group
-                        .seats
-                        .iter()
-                        .any(|s| s.name == short && !s.transcripts.contains(&caller));
-                    Label::sanitized(if occupied { caller.as_str() } else { &short }, "member")
+                    // A retry keeps the seat this session already holds, even
+                    // when the short name it first missed has since been freed.
+                    match group.seats.iter().find(|s| s.transcripts.contains(&caller)) {
+                        Some(held) => Label::sanitized(&held.name, "member"),
+                        None => automatic_seat(&caller, |name| {
+                            group.seats.iter().any(|s| s.name == name)
+                        }),
+                    }
                 }
                 None => return Err(CliError::Usage("pass --as for a named seat".into())),
             };
