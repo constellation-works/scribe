@@ -145,7 +145,11 @@ fn check_closer(
     } else {
         Err(refusal(
             WriteRefusal::GroupMembership,
-            "only the opening session or the current holder of its seat can close this group",
+            format!(
+                "only the opening session or the current holder of its seat can close g-{n}; \
+                 any other session can close it with --quote '<span>', where <span> is a \
+                 verbatim turn the user typed in that session and contains g-{n} as a whole word"
+            ),
         ))
     }
 }
