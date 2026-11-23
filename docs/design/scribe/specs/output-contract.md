@@ -47,13 +47,16 @@ number, else the terminal's own size (`TIOCGWINSZ` on stdout); both are read
 in the output sink only, and with neither no table is cut. In plain and table
 rows, free text is flattened to one line (every whitespace run becomes one
 space), an empty value or list is `-`, lists are comma-joined, and timestamps
-are RFC 3339, except the `updated` column of `session list` in table mode
-(flat, `--tree` or `--include-inactive`), which shows the UTC date as
-`YYYY-MM-DD` when representable. For a present timestamp whose UTC date is
-outside the supported range, the column shows `-`. This applies when table
-mode is selected by `--format table` on a pipe too. Plain
-and JSON `session list` output keep the full instant, as does `session show`
-in every mode. The table date is display-only. After filtering, `session list`
+are RFC 3339, except in table mode, where every timestamp cell of a human list
+table shows the UTC date as `YYYY-MM-DD` when representable: `entry list`
+`created`, `session list` `updated` (flat, `--tree` or `--include-inactive`),
+`proposal list` `opened_at`, `scribe search` `updated`, `transcript list`
+`started` and `ended`, and `group list` `opened` and `closed`. A present
+timestamp whose UTC date is outside the supported range shows `-`. Table mode
+is the default on a terminal and `--format table` selects it on a pipe too.
+Plain and JSON list output keep the full instant, as does `show` (`session
+show`, `group show` and the other records) in every mode. The table date is
+display-only. After filtering, `session list`
 sorts matches by full `updated` instant, newest first (IDs ascending on ties),
 before applying `--limit`; `--tree` then traverses limited rows depth first,
 parent before child, preserving selection order among roots and siblings. A

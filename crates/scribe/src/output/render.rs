@@ -1702,8 +1702,9 @@ fn tree_row(row: &TreeRow, shorts: Option<&ShortIds>, active: bool, mode: Output
 
 /// A session's list row; `active` adds its `active` column after the
 /// status (`session list --include-inactive`). `shorts` is set for a
-/// terminal table: it shows the id as its short form; piped output keeps the
-/// full id and the full instant.
+/// terminal table: it shows the id as its short form. Plain and JSON output
+/// keep the full id and the full instant; the `updated` cell is the UTC date
+/// in table mode (see [`list_timestamp`]).
 fn session_row(
     s: &SessionPayload,
     active: bool,
@@ -2046,8 +2047,9 @@ fn timestamp(at: OffsetDateTime) -> String {
     at.format(&Rfc3339).unwrap_or_else(|_| String::from("-"))
 }
 
-/// A human table's timestamp: its stored UTC date, `YYYY-MM-DD`. Sorting and
-/// every piped or machine form use the full instant ([`timestamp`]).
+/// A human table's timestamp in table mode (on a terminal, or with
+/// `--format table` on a pipe): its UTC date, `YYYY-MM-DD`. Sorting, plain
+/// output and JSON use the full instant ([`timestamp`]).
 /// A record's offset can put its UTC date outside the supported range, which
 /// has no `YYYY-MM-DD`; the table shows `-` there rather than panicking.
 pub(super) fn table_date(at: OffsetDateTime) -> String {
