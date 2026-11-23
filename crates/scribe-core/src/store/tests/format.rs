@@ -1013,7 +1013,8 @@ run the gate before every push
         .replace("removal_instruction: null\n", "")
         .replace("instruction: null\n", "")
         .replace("stated_by: null\n", "")
-        .replace("outcome: null\n", "");
+        .replace("outcome: null\n", "")
+        .replace("handoff_mode: null\n", "");
     assert_eq!(entry(&stripped_entry).unwrap(), decoded_entry);
 
     // Format-11 entries must reject later keys.
@@ -1632,6 +1633,7 @@ fn a_format_thirteen_store_upgrades_with_null_statement_subject_and_stated_by_on
         .replacen(&format!("format: {FORMAT}\n"), "format: 13\n", 1)
         .replace("stated_by: null\n", "")
         .replace("outcome: null\n", "")
+        .replace("handoff_mode: null\n", "")
         .replace("removal_instruction: null\n", "");
     assert_eq!(entry(&back).unwrap(), decoded);
     // Local YAML tags on a format-13 string survive the upgrade.
@@ -1784,6 +1786,7 @@ fn an_older_entry_keeps_an_approval_instruction_and_moves_a_removal_one() {
             assert_eq!(entry(&older).unwrap(), approved, "{role} {from}");
         }
         let v17 = text
+            .replace("handoff_mode: null\n", "")
             .replacen(&format!("format: {FORMAT}\n"), "format: 17\n", 1)
             .replacen("removal_instruction: null\n", "", 1);
         assert_eq!(entry(&v17).unwrap(), approved, "{role}");
@@ -2062,6 +2065,7 @@ fn an_instructed_approval_entry_rereads_at_format_15_and_is_refused_at_14() {
         let fifteen = text
             .replacen(&format!("format: {FORMAT}\n"), "format: 15\n", 1)
             .replace("outcome: null\n", "")
+            .replace("handoff_mode: null\n", "")
             .replace("removal_instruction: null\n", "");
         assert_eq!(entry(&fifteen).unwrap(), e, "{role}");
         let old = fifteen.replacen("format: 15\n", "format: 14\n", 1);
@@ -2216,7 +2220,9 @@ fn a_format_fourteen_or_fifteen_entry_reads_with_no_outcome_and_a_stray_outcome_
         let older = current
             .replace(&format!("format: {FORMAT}"), &format!("format: {from}"))
             .replace("removal_instruction: null\n", "");
-        let old = older.replace("outcome: null\n", "");
+        let old = older
+            .replace("outcome: null\n", "")
+            .replace("handoff_mode: null\n", "");
         let e = entry(&old).unwrap();
         assert_eq!(e.outcome, None, "{from}");
         assert_eq!(e.stated_by, Some(crate::Author::session_pass()), "{from}");
@@ -2293,6 +2299,7 @@ fn a_format_fifteen_store_upgrades_with_a_null_outcome_only() {
         let back = encoded
             .replacen(&format!("format: {FORMAT}\n"), "format: 15\n", 1)
             .replace("outcome: null\n", "")
+            .replace("handoff_mode: null\n", "")
             .replace("removal_instruction: null\n", "");
         assert_eq!(entry(&back).unwrap(), decoded);
     }

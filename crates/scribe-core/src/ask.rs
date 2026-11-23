@@ -1712,7 +1712,14 @@ fn entry_item(entry: &Entry, user: &UserName) -> EvidenceItem {
         )
     } else if entry.author.kind == crate::AuthorKind::Agent {
         (
-            format!("agent note ({})", entry.author.name),
+            format!(
+                "agent note ({}){}",
+                entry.author.name,
+                entry.handoff_mode.map_or(String::new(), |m| format!(
+                    " [handoff mode: {}]",
+                    m.as_str()
+                ))
+            ),
             entry.content.clone(),
         )
     } else {

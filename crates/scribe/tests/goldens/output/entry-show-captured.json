@@ -58,5 +58,6 @@
     "reason": "let's park it until the drains are quiet",
     "task": null
   },
+  "handoff_mode": null,
   "removal_instruction": null
 }

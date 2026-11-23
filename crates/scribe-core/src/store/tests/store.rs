@@ -1444,6 +1444,8 @@ None.
             evidence: None,
             as_of: None,
             spoken: false,
+            handoff_mode: None,
+            self_refresh_verified: false,
         };
 
         // Direct API call refuses multiple sessions and invalid session refs.

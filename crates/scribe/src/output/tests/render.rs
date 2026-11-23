@@ -53,6 +53,7 @@ fn entry(id: &str, content: &str) -> EntryPayload {
         instruction: None,
         stated_by: None,
         outcome: None,
+        handoff_mode: None,
         removal_instruction: None,
         action: None,
     }
@@ -226,6 +227,7 @@ fn handoff_only_session_renders_switch_state_in_every_mode() {
             project: String::from("scribe"),
             quote: Some(String::from("write a handoff")),
             content: String::from("## State\nReady."),
+            handoff_mode: None,
         }],
     };
 

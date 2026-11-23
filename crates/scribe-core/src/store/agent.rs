@@ -423,7 +423,9 @@ impl Store {
             check_spoken_tag(&def)?;
             check_spoken_quote(quote)?;
         } else {
-            check_quote(&def, quote)?;
+            if def.name.as_str() != crate::handoff::HANDOFF_TAG || quote.is_some() {
+                check_quote(&def, quote)?;
+            }
         }
         check_evidence(&def, evidence)?;
         check_handoff(&def.name, content)?;
@@ -484,8 +486,17 @@ impl Store {
                 ));
             }
         } else {
-            check_quote(tag, draft.quote.as_deref())?;
+            if tag.name.as_str() == crate::handoff::HANDOFF_TAG && draft.quote.is_none() {
+                if !draft.self_refresh_verified {
+                    return Err(refusal(WriteRefusal::QuoteRequired, "a quote-less handoff requires a verified self-refresh session"));
+                }
+            } else {
+                check_quote(tag, draft.quote.as_deref())?;
+            }
             check_handoff_related(&tag.name, &draft.related)?;
+        }
+        if draft.handoff_mode.is_some() && tag.name.as_str() != crate::handoff::HANDOFF_TAG {
+            return Err(refusal(WriteRefusal::InvalidText, "--mode applies only to handoffs"));
         }
         check_evidence(tag, draft.evidence.as_deref())?;
         check_handoff(&tag.name, &draft.content)?;
@@ -546,6 +557,7 @@ impl Store {
             removal_instruction: None,
             stated_by: draft.spoken.then(|| Author::agent(author)),
             outcome: None,
+            handoff_mode: draft.handoff_mode,
             content: draft.content,
         };
         redactor.entry(&mut entry);

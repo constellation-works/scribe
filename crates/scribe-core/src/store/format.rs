@@ -41,7 +41,7 @@ use time::OffsetDateTime;
 
 /// The newest store format: this build reads formats 1 to `FORMAT` of every
 /// document and would write `FORMAT`.
-pub(super) const FORMAT: u32 = 27;
+pub(super) const FORMAT: u32 = 28;
 
 /// Which document an upgrade step is applied to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,11 +69,11 @@ pub(super) type Upgrade = fn(Document, serde_json::Value) -> serde_json::Result<
 /// removed. Reads upgrade in memory only; the next write persists the
 /// current format. The template's `notes.json` is not carried over.
 ///
-/// Closed at format 27 (phase 7): every record kind now lives in
+/// Since format 27 (phase 7), every record kind now lives in
 /// `scribe.db`, whose schema changes are SQL migrations (`db::MIGRATIONS`).
 /// The steps stay so the move can read a store left at any older format
 /// for the support window (§15.7, §15.11); phase 8 removes them with the
-/// file decoders. No step is appended after `documents_sqlite`.
+/// file decoders. Later persisted shapes still append their upgrade step.
 pub(super) const UPGRADES: &[Upgrade] = &[
     retry_state,
     session_links,
@@ -101,7 +101,23 @@ pub(super) const UPGRADES: &[Upgrade] = &[
     memory_files,
     sessions_sqlite,
     documents_sqlite,
+    handoff_mode,
 ];
+
+/// Format 27 -> 28 adds the optional refresh mode to entries.
+fn handoff_mode(
+    document: Document,
+    mut value: serde_json::Value,
+) -> serde_json::Result<serde_json::Value> {
+    if matches!(document, Document::Entry)
+        && let Some(entry) = value.as_object_mut()
+    {
+        entry
+            .entry("handoff_mode")
+            .or_insert(serde_json::Value::Null);
+    }
+    Ok(value)
+}
 
 /// Format 26 -> 27 (2_design.md §15.7, §15.11, phase 7) changes no stored
 /// document. Entries, claims, agent tags, marks, pickups and the audit log
@@ -1216,6 +1232,7 @@ impl EntryV12 {
             instruction: None,
             removal_instruction: None,
             stated_by: None,
+            handoff_mode: None,
             outcome: None,
             content: String::new(),
         }
@@ -1300,6 +1317,7 @@ impl EntryV13 {
             instruction,
             removal_instruction,
             stated_by: None,
+            handoff_mode: None,
             outcome: None,
             content: String::new(),
         }
@@ -1386,6 +1404,7 @@ impl EntryV14 {
             instruction,
             removal_instruction,
             stated_by: self.stated_by,
+            handoff_mode: None,
             outcome: None,
             content: String::new(),
         }
@@ -1475,6 +1494,7 @@ impl EntryV16 {
             removal_instruction,
             stated_by: self.stated_by,
             outcome: self.outcome,
+            handoff_mode: None,
             content: String::new(),
         }
     }

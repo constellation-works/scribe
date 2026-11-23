@@ -284,6 +284,13 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
                     def.name.as_str() == scribe_core::HANDOFF_TAG,
                 )?;
             }
+            let self_refresh_verified =
+                if def.name.as_str() == scribe_core::HANDOFF_TAG && args.quote.is_none() {
+                    verify_self_refresh(ctx, &args.related, args.mode)?;
+                    true
+                } else {
+                    false
+                };
             let redactor = ctx.redactor(&ctx.store().config()?)?;
             let entry = ctx.store().add_agent_entry(
                 scribe_core::AgentEntry {
@@ -297,6 +304,8 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
                     evidence: args.evidence,
                     as_of: args.as_of,
                     spoken: args.spoken,
+                    handoff_mode: args.mode,
+                    self_refresh_verified,
                 },
                 args.author,
                 ctx.now(),
@@ -620,6 +629,58 @@ fn verify_quote(
     Err(not_found())
 }
 
+fn verify_self_refresh(
+    ctx: &Context,
+    related: &[Related],
+    mode: Option<scribe_core::handoff::Mode>,
+) -> Result<(), CliError> {
+    use super::hook::payload;
+    let refuse = |kind, message: &str| -> CliError {
+        scribe_core::Error::AgentWrite {
+            kind,
+            message: message.to_owned(),
+        }
+        .into()
+    };
+    let current = std::env::var("CLAUDE_CODE_SESSION_ID").ok();
+    let target = related
+        .iter()
+        .find(|r| r.kind() == scribe_core::RelatedKind::Session);
+    if mode.is_none() || current.as_deref() != target.map(Related::target) || current.is_none() {
+        return Err(refuse(
+            scribe_core::WriteRefusal::QuoteRequired,
+            "a quote-less refresh requires --mode and the current CLAUDE_CODE_SESSION_ID matching the related session",
+        ));
+    }
+    let id = target
+        .and_then(|r| r.target().parse::<scribe_core::SessionId>().ok())
+        .ok_or_else(|| {
+            refuse(
+                scribe_core::WriteRefusal::QuoteRequired,
+                "invalid refresh session",
+            )
+        })?;
+    let path = payload::locate(ctx, &id)?;
+    let valid = path.as_ref().is_some_and(|path| {
+        matches!(
+            payload::check(ctx, path, &id),
+            Ok(payload::Transcript::Present)
+        ) && payload::read_for(ctx, path).ok().is_some_and(|bytes| {
+            scribe_core::transcript::parse(&bytes)
+                .iter()
+                .filter_map(scribe_core::transcript::user_turn)
+                .any(|turn| !turn.own.trim().is_empty())
+        })
+    });
+    if !valid {
+        return Err(refuse(
+            scribe_core::WriteRefusal::QuoteNotFound,
+            "the refresh session transcript must contain a typed user turn",
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Args)]
 pub(crate) struct AddArgs {
     /// Content to record
@@ -639,9 +700,12 @@ pub(crate) struct AddArgs {
     /// Related reference, repeatable; under an action tag, name the session you write in (session:<id>)
     #[arg(long)]
     related: Vec<scribe_core::Related>,
-    /// The user's correction that prompted the entry, verbatim from one of the user's typed turns in the session named by --related; required under a tag that requires a quote
+    /// The user's words, verbatim from a typed turn in the related session; required by quote tags except a verified self-refresh handoff
     #[arg(long)]
     quote: Option<String>,
+    /// Handoff refresh mode: continue or new
+    #[arg(long)]
+    mode: Option<scribe_core::handoff::Mode>,
     /// Evidence pointer (a path, task, run, experiment or commit); required under a require_evidence tag, refused under any other tag
     #[arg(long, value_name = "POINTER")]
     evidence: Option<String>,

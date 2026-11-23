@@ -96,9 +96,10 @@ Don't act on an item unless the human asks.
 
 ## Session handoffs: writing one on request
 
-Write a handoff **only** when the human explicitly asks for one in this
-session — never unasked, never at the end of a session by default, and never
-from routines, scheduled or background jobs, Orbit runs or subagents.
+Write a handoff when the human explicitly asks for one in this session.
+A verified self-refresh may also write one without a quote; do not write one
+by default or from routines, scheduled or background jobs, Orbit runs or
+subagents.
 
 When they ask for a handoff, write it under your own `--author` with the
 shipped `handoff` tag, naming this session in `--related` and quoting their
@@ -106,7 +107,7 @@ request word for word from one of their typed turns in this session:
 
 ```sh
 scribe entry add --tag handoff --author <name> --project <project> \
-  --related session:<this session id> --quote '<their request>' \
+  --related session:<this session id> [--mode continue|new] --quote '<their request>' \
   '## State
 ...
 ## In flight
@@ -121,9 +122,11 @@ scribe entry add --tag handoff --author <name> --project <project> \
 ...'
 ```
 
-- **Quote check.** `handoff` ships with `require_quote`: scribe refuses the
-  entry unless `--quote` is a verbatim span (at least 8 characters) of one
-  of the human's typed turns in that session's transcript.
+- **Quote check.** When supplied, `--quote` must be a verbatim span (at
+  least 8 characters) of a typed turn in that session. For a self-refresh,
+  `--mode continue|new` may be used without a quote when the current
+  `CLAUDE_CODE_SESSION_ID` matches the related session and its transcript
+  contains a typed user turn.
 - **Works when the session is off.** Writing a handoff needs no session
   record and does not switch the session on; no session pass reads an off
   session, and even in an on session the pass never reads handoffs.

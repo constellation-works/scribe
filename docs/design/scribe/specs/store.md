@@ -10,7 +10,7 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-The code writes format 27 and reads formats 1–27. Format 26 moves the
+The code writes format 28 and reads formats 1–28. Format 28 adds an optional `handoff_mode` (`continue` or `new`) to entries; SQLite schema 7 adds its nullable column, and older databases read it as null until the next write migrates them. Format 26 moves the
 sessions into `scribe.db`
 ([2_design.md §15.7](../2_design.md#157-storage), phase 6): records,
 switches, Codex cursors and rebuild checkpoints become rows (schema version
@@ -430,8 +430,7 @@ line has the session's `s-<n>` as its target.
   text. Other files in `pre-sqlite-<date>/` are the user's and are never
   rewritten.
 - **Format 27.** `FORMAT` is 27 and the upgrade registry is closed: its
-  last step (`documents_sqlite`) changes no document, and later schema
-  changes are SQL migrations. The steps stay so the move can read a store
+  last step (`documents_sqlite`) changes no document, and later SQLite schema changes are SQL migrations; format 28 also adds the optional handoff mode to exported entries. The steps stay so the move can read a store
   left at any older format for the support window; phase 8 removes them
   with the file decoders.
 - **`scribe export <dir>`** writes every kind: `--as markdown` as the

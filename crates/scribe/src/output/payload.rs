@@ -277,6 +277,7 @@ pub(crate) struct EntryPayload {
     /// open|parked|task, reason, task}`, `reason` the user's own words
     /// parking it; `null` for every other entry.
     pub(crate) outcome: Option<scribe_core::Outcome>,
+    pub(crate) handoff_mode: Option<scribe_core::handoff::Mode>,
     /// The user's checked instruction that retired or forgot this entry;
     /// `null` otherwise.
     pub(crate) removal_instruction: Option<InstructionPayload>,
@@ -450,6 +451,7 @@ impl From<&Entry> for EntryPayload {
             instruction: entry.instruction.as_ref().map(InstructionPayload::from),
             stated_by: entry.stated_by.as_ref().map(AuthorPayload::from),
             outcome: entry.outcome.clone(),
+            handoff_mode: entry.handoff_mode,
             removal_instruction: entry
                 .removal_instruction
                 .as_ref()
@@ -545,6 +547,7 @@ pub(crate) struct HandoffPayload {
     pub(crate) project: String,
     pub(crate) quote: Option<String>,
     pub(crate) content: String,
+    pub(crate) handoff_mode: Option<scribe_core::handoff::Mode>,
 }
 
 impl From<&Entry> for HandoffPayload {
@@ -556,6 +559,7 @@ impl From<&Entry> for HandoffPayload {
             project: entry.project.to_string(),
             quote: entry.quote.clone(),
             content: entry.content.clone(),
+            handoff_mode: entry.handoff_mode,
         }
     }
 }
@@ -1582,6 +1586,7 @@ pub(crate) struct BriefSessionPayload {
     pub(crate) handoff: Option<String>,
     /// How many active handoff entries this session has.
     pub(crate) handoffs: usize,
+    pub(crate) handoff_mode: Option<scribe_core::handoff::Mode>,
 }
 
 /// The open claims under one tag.
@@ -1630,6 +1635,7 @@ impl BriefPayload {
                     has_record: s.has_record,
                     handoff: s.handoff.as_ref().map(ToString::to_string),
                     handoffs: s.handoffs,
+                    handoff_mode: s.handoff_mode,
                 })
                 .collect(),
             claim_count: b.claim_count(),

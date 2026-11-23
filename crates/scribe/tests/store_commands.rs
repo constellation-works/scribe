@@ -180,7 +180,7 @@ fn export_writes_every_session_and_writes_nothing_to_the_store() {
     ] {
         let exported =
             std::fs::read_to_string(target.join(format!("sessions/{month}/{id}.md"))).unwrap();
-        assert!(exported.starts_with("---\nformat: 27\n"), "{exported}");
+        assert!(exported.starts_with("---\nformat: 28\n"), "{exported}");
         assert!(exported.contains(&format!("\nid: {id}\n")), "{exported}");
     }
     for rel in [

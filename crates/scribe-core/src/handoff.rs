@@ -1,9 +1,9 @@
 //! Agent-written session handoffs (docs/design/scribe/2_design.md §16).
 //!
 //! A handoff is an ordinary agent-authored entry under the shipped `handoff`
-//! tag whose `related` names the session (`session:<id>`) and whose `quote`
-//! carries the user's request verbatim from one of their typed turns in that
-//! session. Its body must carry six fixed `## ` headings in exact order and
+//! tag whose `related` names the session (`session:<id>`). A quote carries
+//! the user's request verbatim; a verified self-refresh can omit it. An
+//! optional mode records how the next context should start. Its body must carry six fixed `## ` headings in exact order and
 //! stay within [`MAX_CHARS`] so it fits one screen. Pure values, no I/O
 //! (STD-02 R5).
 
@@ -14,6 +14,38 @@ use std::collections::BTreeSet;
 
 /// The shipped tag name for agent-written session handoffs.
 pub const HANDOFF_TAG: &str = "handoff";
+
+/// How the next context should treat a refresh handoff.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Mode {
+    /// Resume from this handoff.
+    Continue,
+    /// Start a clean context.
+    New,
+}
+
+impl Mode {
+    /// Stable CLI and storage spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Continue => "continue",
+            Self::New => "new",
+        }
+    }
+}
+
+impl std::str::FromStr for Mode {
+    type Err = &'static str;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "continue" => Ok(Self::Continue),
+            "new" => Ok(Self::New),
+            _ => Err("expected continue or new"),
+        }
+    }
+}
 
 /// The six required level-2 Markdown headings, in exact order.
 pub const HEADINGS: [&str; 6] = [

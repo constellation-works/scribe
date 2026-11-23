@@ -296,6 +296,9 @@ fn hit(score: f64, doc: &Doc, corpus: Corpus<'_>, wanted: &BTreeSet<String>) -> 
             } else {
                 snippet(text, wanted)
             };
+            let snippet = e.handoff_mode.map_or(snippet.clone(), |m| {
+                format!("{snippet} | handoff mode: {}", m.as_str())
+            });
             // An approval an agent made on his instruction says so after
             // the snippet, in every output mode (2_design.md §12.3).
             let snippet = match ask::approved_line(e, ask::INSTRUCTION_YOURS) {
