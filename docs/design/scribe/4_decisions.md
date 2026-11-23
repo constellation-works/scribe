@@ -1590,13 +1590,16 @@ are structured.
 - Links are ordinarily manual: `/scribe on --from <id>` and
   `/scribe link <id> [--type …]`, typed by Daniel in the child. A desktop
   clear is the automatic exception: when its checked transcript ancestry
-  names one predecessor with an active `continue` handoff, `session-start`
-  records a `continues` link and carries over the recording switch
-  ([design §16.7](./2_design.md#167-continuing-after-a-clear)). It does not
-  pair sessions by checkout or time. For a manual link, an unknown target,
-  a self-link, a cycle (through links of either type), a second parent and a
-  `link` in an uncataloged session are refused with stable codes and change
-  nothing.
+  names one predecessor, `session-start` considers that predecessor's
+  newest active handoff. It records a `continues` link and carries over the
+  recording switch only when that newest handoff has mode `continue`. A
+  newer active handoff with mode `new` or no mode takes precedence over an
+  older active `continue` handoff, leaving the ordinary brief and recording
+  switch alone ([design §16.7](./2_design.md#167-continuing-after-a-clear)).
+  It does not pair sessions by checkout or time. For a manual link, an
+  unknown target, a self-link, a cycle (through links of either type), a
+  second parent and a `link` in an uncataloged session are refused with
+  stable codes and change nothing.
 - A link typed before the session has a record waits on its switch
   (`pending_links` in `control.json`) and moves onto the record with the
   first pass write. Store format 3 adds `links` and `pending_links`; the
