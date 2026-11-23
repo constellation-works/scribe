@@ -151,6 +151,41 @@ fn typed_project_group_joins_and_untyped_commands_are_refused() {
 }
 
 #[test]
+fn typed_project_group_first_lines_dispatch_in_multiline_prompts() {
+    let setup = Setup::new();
+    let reply = setup.block(&setup.input("/scribe group water-economy\nsecond line"));
+    assert!(reply.contains("joined group water-economy"), "{reply}");
+    assert!(!reply.contains("scribe: off"), "{reply}");
+    assert_eq!(
+        setup.ctx.store().group("water-economy").unwrap().kind,
+        "project"
+    );
+
+    let setup = Setup::new();
+    let reply = setup.block(&setup.input(&format!(
+        "/scribe group add water-economy {GHOST}\nsecond line"
+    )));
+    assert!(
+        reply.contains("group water-economy (g-1) opened"),
+        "{reply}"
+    );
+    assert!(
+        reply.contains(&format!("{GHOST}: added; membership only")),
+        "{reply}"
+    );
+    assert!(!reply.contains("scribe: off"), "{reply}");
+    assert!(
+        setup
+            .ctx
+            .store()
+            .group("water-economy")
+            .unwrap()
+            .members()
+            .contains(&GHOST.parse().unwrap())
+    );
+}
+
+#[test]
 fn group_subcommand_spelling_follows_the_shared_parser() {
     for prompt in [
         "/scribe GROUP water-economy",

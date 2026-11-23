@@ -644,7 +644,10 @@ A prompt whose first line is `/scribe on`, `/scribe off`, `/scribe status`,
 case-insensitive, including `group` and `add`; group slugs are validated as
 typed and must be lowercase) is not scanned for `#scribe` lines: the
 reply is `{"decision": "block", "reason": "<status>"}`, which keeps the
-prompt from the model and shows Daniel the reason. The reason is one line:
+prompt from the model and shows Daniel the reason. For `/scribe group` and
+`/scribe group add`, the first line selects the command even when later
+prompt lines follow; the block consumes the prompt, so those lines are not
+sent to the model. The reason is one line:
 `scribe: on — …`, `scribe: already on since <time> — nothing changed`,
 `scribe: off — …`, `scribe: this session is not on — nothing changed`,
 `scribe: on since <time>[; a pass is due]; <record status>` or `scribe: off
