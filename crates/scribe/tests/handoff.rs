@@ -1498,7 +1498,8 @@ fn legacy_database_reads_without_migrating_and_upgrades_on_write() {
     ]);
     support::sql(
         &fx.root(),
-        "ALTER TABLE entries DROP COLUMN handoff_mode; PRAGMA user_version = 6;",
+        "DROP TABLE group_members; DROP TABLE group_seats; DROP TABLE groups;
+             ALTER TABLE entries DROP COLUMN handoff_mode; PRAGMA user_version = 6;",
     );
     let shown = json_of(&fx.ok(&["session", "show", OFF_SESSION, "--json"]));
     assert_eq!(shown["handoffs"][0]["handoff_mode"], Value::Null);

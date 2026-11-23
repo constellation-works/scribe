@@ -35,6 +35,12 @@ const HELP: &[(&str, &[&str])] = &[
     ("session-deactivate", &["session", "deactivate", "--help"]),
     ("session-activate", &["session", "activate", "--help"]),
     ("session-catalog", &["session", "catalog", "--help"]),
+    ("group", &["group", "--help"]),
+    ("group-open", &["group", "open", "--help"]),
+    ("group-join", &["group", "join", "--help"]),
+    ("group-leave", &["group", "leave", "--help"]),
+    ("group-show", &["group", "show", "--help"]),
+    ("group-list", &["group", "list", "--help"]),
     ("proposal", &["proposal", "--help"]),
     ("proposal-add", &["proposal", "add", "--help"]),
     ("proposal-update", &["proposal", "update", "--help"]),
@@ -337,6 +343,32 @@ fn output_matches_goldens() {
     for (name, args) in OUTPUT {
         for (suffix, mode) in MODES {
             let out = fx.ok(&[*args, *mode].concat());
+            failures.extend(check(
+                &format!("output/{name}.{suffix}"),
+                &text(&out.stdout),
+            ));
+        }
+    }
+    report(&failures);
+}
+
+#[test]
+fn group_roster_matches_goldens() {
+    let fx = Fixture::new();
+    fx.ok(&["store", "migrate"]);
+    support::sql(
+        &fx.root(),
+        r#"INSERT INTO groups VALUES (1,'Release review','review','scribe','2026-11-22T09:00:00Z',NULL,'opener','["repo:scribe"]');
+        INSERT INTO group_seats VALUES (1,'editor','reviewer');
+        INSERT INTO group_members VALUES (1,1,'editor','member','aide');"#,
+    );
+    let mut failures = Vec::new();
+    for (name, args) in [
+        ("group-list", vec!["group", "list"]),
+        ("group-show", vec!["group", "show", "g-1"]),
+    ] {
+        for (suffix, mode) in MODES {
+            let out = fx.ok(&[args.as_slice(), *mode].concat());
             failures.extend(check(
                 &format!("output/{name}.{suffix}"),
                 &text(&out.stdout),

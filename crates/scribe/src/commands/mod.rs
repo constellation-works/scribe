@@ -13,6 +13,7 @@ pub(in crate::commands) mod brief;
 mod consistency;
 mod entry;
 mod export;
+mod group;
 mod hook;
 mod init;
 mod instruction;
@@ -57,6 +58,9 @@ pub(crate) enum Command {
     /// Read entries and write agent notes
     #[command(subcommand, after_help = entry::ENTRY_EXAMPLES)]
     Entry(EntryCommand),
+    /// Group sessions into named seats for a shared piece of work
+    #[command(subcommand, after_help = group::EXAMPLES)]
+    Group(group::GroupCommand),
     /// List, show and write session records cataloged with /scribe on
     ///
     /// Lists and shows cataloged session records, and writes them with pass and catalog.
@@ -126,6 +130,7 @@ impl Command {
     /// refusal is attributable too. Exhaustive like [`Command::audit`].
     pub(crate) fn subject(&self, ctx: &Context) -> AuditSubject {
         match self {
+            Self::Group(command) => command.subject(ctx),
             Self::Entry(command) => command.subject(ctx),
             Self::Session(command) => command.subject(ctx),
             Self::Proposal(command) => command.subject(ctx),
@@ -156,6 +161,7 @@ impl Command {
                 command: "init",
                 stepwise: false,
             }),
+            Self::Group(command) => command.audit(),
             Self::Entry(command) => command.audit(),
             Self::Session(command) => command.audit(),
             Self::Transcript(command) => command.audit(),
@@ -221,6 +227,7 @@ pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
 fn dispatch(command: Command, ctx: &Context) -> Result<Output, CliError> {
     match command {
         Command::Init(args) => init::run(args, ctx),
+        Command::Group(command) => group::run(command, ctx),
         Command::Entry(command) => entry::run(command, ctx),
         Command::Session(command) => session::run(command, ctx),
         Command::Transcript(command) => transcript::run(command, ctx),

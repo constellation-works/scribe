@@ -6541,6 +6541,49 @@ successful prompt supplies that body as `hookSpecificOutput.additionalContext` f
 and goes through to the agent. A refused selection blocks the command with
 its reason. Both routes audit the write or refusal against the child id.
 
+## 17. Session groups and seats
+
+A group names a piece of work shared by sessions on this host. Its kind and its
+seats’ roles are labels chosen by the caller. The public id is `g-<n>`.
+
+```sh
+scribe group open --title 'Release review' --kind review --project scribe \
+  --related repo:scribe --quote 'open a release review'
+scribe group join <id> --as editor --role reviewer --author aide
+scribe group show <id> --json
+scribe group leave
+```
+
+**Opening consent.** The opener is the provider’s calling session
+(`CLAUDE_CODE_SESSION_ID` for Claude Code, `CODEX_THREAD_ID` with
+`--provider codex`). Scribe checks the supplied quote against the user’s
+own words in a typed turn of its local transcript. Claude history copied
+from a different session, pasted material and agent-originated turns cannot
+authorize an open. Codex uses host-attributed user input. The audit line
+records the group, session and message ids. The user’s quoted text stays
+in the transcript. Opening authorizes members to join and leaves seat
+selection to a separate join, including for the opener.
+
+**Joining and correcting membership.** A caller supplies its own agent
+`--author`. A new seat takes `--role`, defaulting to the seat name.
+A replacement inherits that role. A transcript can occur in only one
+seat across the store, including earlier positions in a chain. Repeating
+the same join preserves its position. To take an occupied seat, pass
+`--replace` or let scribe verify that the previous holder’s transcript
+has ended. This uses the catalog’s 24-hour last-message rule. An unreadable
+or empty transcript requires explicit replacement. The write rechecks the
+holder under the store transaction before appending. `group leave`
+removes only the caller’s position and drops a seat when its chain is empty.
+
+**Reading.** `group show <id>` and `group list` include related references,
+seat names and roles, transcript ids in join order, and the newest active
+handoff id across each chain. Read that entry with `entry show <id>`.
+Membership is independent of cataloging. Joining works in an off session,
+creates no session record and starts no passes. Entries, claims, handoffs
+and stored turns remain associated through their existing session ids.
+Group closing, turn storage and seat inheritance across clears belong to
+later phases.
+
 ## Task References
 
 - [ORB-21747] — designed the standalone scribe plugin.

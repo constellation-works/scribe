@@ -975,3 +975,12 @@ its message is the CLI's, naming each failed session with its code and short
 reason, and the report is not returned. `scribe.ask`
 writes no audit line; the routine tools write the lines their CLI commands
 do, in the store `root` names.
+
+## Session groups
+
+`group open`, `group join`, `group leave` and `group show` return one group.
+Its JSON fields are `id`, `title`, `kind`, `project`, `opened`, `closed`
+(null while open), `opener`, `related` and `seats`. Each seat has a `name`,
+a `role`, its `transcripts` in join order and `newest_handoff` (an active
+entry id or null). Seats sort by name. `group list --json` returns the same
+objects newest first in `items`, alongside `total`, `truncated` and `warnings`.

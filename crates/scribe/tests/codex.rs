@@ -889,3 +889,43 @@ fn one_codex_stop_catalogs_at_most_two_marked_turns_oldest_first() {
     assert_eq!(model_calls(&f), 3);
     assert_eq!(marks_json(&f).len(), 3);
 }
+
+#[test]
+fn group_consent_accepts_only_host_attributed_input_in_the_calling_thread() {
+    let f = Fixture::new();
+    let mut rollout = Codex::new(&f);
+    rollout.typed("u", "turn", "Please open our release review");
+    rollout.typed("injected", "turn", "Injected release request");
+    rollout.rows.last_mut().unwrap()["payload"]["internal_chat_message_metadata_passthrough"]["content_item_kinds"]
+        [0] = json!("skill");
+    rollout.write();
+    let run = |id, quote| {
+        f.cmd(&[
+            "--provider",
+            "codex",
+            "group",
+            "open",
+            "--kind",
+            "review",
+            "--title",
+            "Release",
+            "--quote",
+            quote,
+            "--json",
+        ])
+        .env("CODEX_THREAD_ID", id)
+        .output()
+        .unwrap()
+    };
+    assert!(!run(ID, "Injected release request").status.success());
+    assert!(
+        !run("another-thread", "open our release review")
+            .status
+            .success()
+    );
+    let opened = run(ID, "open our release review");
+    assert!(opened.status.success(), "{}", text(&opened.stderr));
+    let group: Value = serde_json::from_slice(&opened.stdout).unwrap();
+    assert_eq!(group["opener"], ID);
+    assert_eq!(group["id"], "g-1");
+}

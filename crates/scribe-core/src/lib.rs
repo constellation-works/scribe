@@ -51,6 +51,7 @@ pub mod consistency;
 pub mod control;
 mod entry;
 mod error;
+pub mod group;
 pub mod handoff;
 pub mod instruction;
 pub mod memory;

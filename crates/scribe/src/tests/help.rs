@@ -91,7 +91,13 @@ fn piped_root_help_uses_one_column_and_the_declaration() {
             seen += 1;
         }
     }
-    assert_eq!(seen, 16);
+    assert_eq!(
+        seen,
+        source
+            .get_subcommands()
+            .filter(|sub| !sub.is_hide_set())
+            .count()
+    );
     assert!(column.is_some());
 }
 

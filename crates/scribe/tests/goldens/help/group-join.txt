@@ -1,0 +1,22 @@
+Join a named seat under your own author name
+
+Usage: scribe group join [OPTIONS] --as <SEAT> --author <AUTHOR> <ID>
+
+Arguments:
+  <ID>  Group id or unique prefix
+
+Options:
+      --as <SEAT>        Seat name within this group
+      --author <AUTHOR>  Your agent author name
+      --role <ROLE>      Free role label (defaults to the seat name for a new seat)
+      --replace          Explicitly replace the newest holder of an occupied seat
+  -h, --help             Print help
+  -V, --version          Print version
+
+Global options:
+      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json                 Shorthand for --format json
+
+Example: scribe group join <id> --as editor --author aide --role reviewer

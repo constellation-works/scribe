@@ -1,0 +1,22 @@
+{
+  "id": "g-1",
+  "title": "Release review",
+  "kind": "review",
+  "project": "scribe",
+  "opened": "2026-11-22T09:00:00Z",
+  "closed": null,
+  "opener": "opener",
+  "related": [
+    "repo:scribe"
+  ],
+  "seats": [
+    {
+      "name": "editor",
+      "role": "reviewer",
+      "transcripts": [
+        "member"
+      ],
+      "newest_handoff": null
+    }
+  ]
+}

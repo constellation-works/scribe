@@ -1,4 +1,6 @@
-use super::super::redact::{entry_fields, proposal_fields, session_fields, tag_fields};
+use super::super::redact::{
+    entry_fields, group_fields, proposal_fields, session_fields, tag_fields,
+};
 use crate::config::Config;
 use crate::proposal::{Proposal, ProposalKind, ProposalState, Quote};
 use crate::session::{SessionRecord, Term};
@@ -122,6 +124,18 @@ fn the_redacted_field_inventory_is_exactly_the_fields_masked() {
     names.extend(proposal_fields(&mut p).into_iter().map(|(n, _)| n));
     let mut tag = store_tag();
     names.extend(tag_fields(&mut tag).into_iter().map(|(n, _)| n));
+    let mut draft = crate::group::NewGroup {
+        title: SECRET.into(),
+        kind: SECRET.into(),
+        project: crate::Project::sanitized("test"),
+        related: vec![],
+    };
+    names.extend(group_fields(&mut draft).into_iter().map(|(n, _)| n));
+    names.push("seat.role");
+    let redactor = Redactor::new([("SECRET".into(), SECRET.into())]);
+    redactor.group(&mut draft);
+    assert_eq!(draft.title, "[redacted:SECRET]");
+    assert_eq!(draft.kind, draft.title);
     names.dedup();
     assert_eq!(names, REDACTED_FIELDS);
 }

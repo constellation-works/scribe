@@ -1076,6 +1076,7 @@ impl From<&Skipped> for WarningPayload {
 /// The records a list returned, by kind.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Records {
+    Groups(Vec<scribe_core::group::Group>),
     Entries(Vec<EntryPayload>),
     /// `session list`; `active_column` with `--include-inactive`, which adds
     /// an `active` column to the human forms.
@@ -1099,6 +1100,7 @@ pub(crate) enum Records {
 impl Records {
     pub(crate) fn len(&self) -> usize {
         match self {
+            Self::Groups(v) => v.len(),
             Self::Entries(v) => v.len(),
             Self::Sessions { items, .. } => items.len(),
             Self::SessionTree { rows, .. } => rows.len(),
@@ -1187,6 +1189,7 @@ pub(crate) struct TreeRow {
 /// One record a `show` returned.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Record {
+    Group(Box<scribe_core::group::Group>),
     Tag(Box<scribe_core::StoreTag>),
     TagRules(Box<TagShowPayload>),
     Proposal(Box<ProposalPayload>),

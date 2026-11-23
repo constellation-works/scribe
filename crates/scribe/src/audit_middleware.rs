@@ -338,6 +338,9 @@ fn target_of(output: &Output) -> Option<String> {
         Output::Init(report) => Some(report.provider.to_string()),
         Output::Written { record, .. } => record_target(record),
         Output::Show {
+            record: Record::Group(g),
+        } => Some(g.id.clone()),
+        Output::Show {
             record: Record::Tag(tag),
         } => Some(tag.name.to_string()),
         Output::Show {
@@ -386,6 +389,7 @@ fn target_of(output: &Output) -> Option<String> {
 
 fn record_target(record: &Record) -> Option<String> {
     Some(match record {
+        Record::Group(g) => g.id.clone(),
         Record::Memory(m) => format!("memory:{}", m.id),
         Record::MemoryRefresh(_) => String::from("memory:profile"),
         Record::StoreMigrate(_) => String::from("store:records"),

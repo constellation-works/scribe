@@ -236,6 +236,12 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 /// Domain classification of a refused direct write.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WriteRefusal {
+    /// No group matched the requested id.
+    GroupNotFound,
+    /// The caller already holds a different seat or group.
+    GroupMembership,
+    /// Another live transcript holds the seat.
+    SeatOccupied,
     /// `user_only`.
     UserOnly,
     /// `reserved_author`.
@@ -368,6 +374,9 @@ impl WriteRefusal {
     #[must_use]
     pub fn code(self) -> &'static str {
         match self {
+            Self::GroupNotFound => "group_not_found",
+            Self::GroupMembership => "group_membership",
+            Self::SeatOccupied => "seat_occupied",
             Self::UserOnly => "user_only",
             Self::ReservedAuthor => "reserved_author",
             Self::InvalidText => "invalid_text",
