@@ -134,6 +134,14 @@ it:
   activate`, `session deactivate`, `session rebuild` and `#scribe forget`.
 - `session pass --session <id>` refuses it as not switched on
   (`session_not_on`).
+- Typed `/scribe link <id>` and `/scribe on --from <id>` keep an unmatched
+  link target as typed; `/scribe group add <slug> <id>...` keeps unmatched
+  member ids as typed. These targets need not have been cataloged.
+- `scribe memory ack <now-id> --session <id>` accepts and records the supplied
+  id even when it has no cataloged session.
+- An instruction check's `--session <id>` is used as typed to look for a
+  local transcript; if none is available, the check refuses with
+  `instruction_not_found`.
 - A `session:<id>` reference is not a lookup. `--related` on `entry add` and
   `entry update --add-related` keeps an id that matches no session as written:
   `entry add --tag preferences --related session:abcd` succeeds on a store with

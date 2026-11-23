@@ -190,16 +190,24 @@ Rules every verb keeps:
   prefix is refused with exit 2 and `id_ambiguous`, listing up to ten
   candidates; an input that is not an id and is shorter than four
   characters is a usage error (exit 2) for every noun; no match is the
-  noun's `*_not_found` (exit 1), whose message names the id and the store
+  lookup's `*_not_found` (exit 1), whose message names the id and the store
   path searched (`entries/…`, `sessions`, `proposals.json`, the
   transcripts directory) so a wrong `--root` shows. A session id is
-  resolved by `Store::resolve_session` (and `resolve_related` for a
-  `session:<id>` reference) before the command's own logic, so no command
-  parses its own prefixes. A `session:<id>` reference is the exception to
-  not-found: one no session matches is kept as written, since the session may
-  never have been cataloged (`resolve_related`). A record written from a prefix
-  stores the full id, and a changing command names the full id in its success
-  line. A terminal
+  resolved before the command's own logic, so no command parses its own
+  prefixes. `Store::resolve_session` resolves a cataloged session;
+  `Store::resolve_session_or_handoff` also accepts sessions named by an
+  active handoff. A `session:<id>` reference uses `resolve_related`, which
+  keeps a reference with no matching session as written because the session
+  may never have been cataloged. Other paths use
+  `Store::resolve_session_or_typed` when
+  they accept an uncataloged id: typed `/scribe link <id>` and `/scribe on
+  --from <id>` keep the link target, `/scribe group add` keeps member ids,
+  and `scribe memory ack --session <id>` records the supplied id. An
+  instruction check also uses its `--session <id>` as typed when locating a
+  local transcript; if no transcript is available, it refuses with
+  `instruction_not_found`. Other session lookups refuse a no-match as
+  `session_not_found`. A record written from a prefix stores the full id,
+  and a changing command names the full id in its success line. A terminal
   table prints a session id as its shortest prefix that no other session in
   the store shares, at least eight characters (`ShortIds`), so a printed
   prefix is accepted back; piped and `--json` output keep the full id
