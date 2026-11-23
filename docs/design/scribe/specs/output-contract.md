@@ -634,7 +634,7 @@ hook echoes a marker once the typed turn is in the rollout (before that it
 refuses with `provenance_failed`, `typed input not yet verified …; Stop will
 retry`), and Stop catalogs from the rollout.
 
-The single-line commands `/scribe group move <session-id> <slug>`, `/scribe group remove <session-id>`, and `/scribe session update <session-id> project|title <value>` block with `scribe: session <id> moved|removed|updated` on success, or `scribe: <verb> refused — <reason>` on refusal. Their audit targets contain session ids and error codes only.
+The single-line commands `/scribe group move <session-id> <slug>`, `/scribe group remove <session-id>`, and `/scribe session update <session-id> project|title <value>` have provider-specific replies. Claude Code blocks with `scribe: session <id> moved|removed|updated` on success, or `scribe: <verb> refused — <reason>` on refusal. Codex returns a verified command's reply as `systemMessage` and `hookSpecificOutput.additionalContext`, without `decision: "block"`. Their audit targets contain session ids and error codes only.
 
 A prompt whose first line is `/scribe on`, `/scribe off`, `/scribe status`,
 `/scribe on --from <id> [--type <type>]`, `/scribe link <id> [--type
@@ -642,12 +642,18 @@ A prompt whose first line is `/scribe on`, `/scribe off`, `/scribe status`,
 <session-id>...` or a bare `/scribe`
 (also `/scribe:scribe …`, the plugin-namespaced form; the control verb is
 case-insensitive, including `group` and `add`; group slugs are validated as
-typed and must be lowercase) is not scanned for `#scribe` lines: the
-reply is `{"decision": "block", "reason": "<status>"}`, which keeps the
-prompt from the model and shows Daniel the reason. For `/scribe group` and
-`/scribe group add`, the first line selects the command even when later
-prompt lines follow; the block consumes the prompt, so those lines are not
-sent to the model. The reason is one line:
+typed and must be lowercase) is not scanned for `#scribe` lines. Under
+Claude Code, the reply is `{"decision": "block", "reason": "<status>"}`;
+the prompt does not reach the model, and Daniel sees the reason. Under
+Codex, once the typed turn is present and verified in the rollout, the reply
+uses `systemMessage` and `hookSpecificOutput.additionalContext` with no
+`decision: "block"`; the command text still reaches the model. If the turn
+is not yet in the rollout, Codex says `scribe: not recorded — typed input
+not yet verified in the host transcript; nothing recorded yet; Stop will
+retry. Agent or skill-injected text cannot activate scribe` and does not
+advance the cursor. For `/scribe group` and `/scribe group add`, the first
+line selects the command even when later prompt lines follow. Status,
+unknown-command and failed-transcript replies use these one-line forms:
 `scribe: on — …`, `scribe: already on since <time> — nothing changed`,
 `scribe: off — …`, `scribe: this session is not on — nothing changed`,
 `scribe: on since <time>[; a pass is due]; <record status>` or `scribe: off
@@ -664,15 +670,41 @@ with `invalid_text` and is not echoed. `/scribe group add <slug>
 <session-id>...` replies `scribe: group <slug> (g-<n>) opened|open`, then one
 line per named session: `<id>: added; transcript on disk, <n> typed turns
 stored`, `<id>: added; membership only, no transcript on disk` or `<id>:
-already a member; nothing changed`. One audit line per added session, against
-`session:<id>`. A refusal is `scribe: group add refused — <reason>` with code
+already a member; nothing changed`. For example, a one-session add with no
+transcript gives Claude Code:
+
+```json
+{"decision":"block","reason":"scribe: group planning (g-1) opened\n  <id>: added; membership only, no transcript on disk"}
+```
+
+Codex returns the same reply text as context, without blocking:
+
+```json
+{"systemMessage":"scribe: group planning (g-1) opened\n  <id>: added; membership only, no transcript on disk","hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"scribe: group planning (g-1) opened\n  <id>: added; membership only, no transcript on disk"}}
+```
+
+Both providers audit one line per added session, against `session:<id>`.
+Codex additionally audits one content-free success outcome against the
+typing session (`session:<caller-id>`) when the verified typed turn advances
+its rollout cursor. A refusal is `scribe: group add refused — <reason>` with code
 `group_membership` (a session already in another group, one `session <id>
 already belongs to group <group>` per session, `; nothing changed`; or more
-than 32 sessions), `invalid_text`, `session_forgotten`, `provenance_failed` (the
-prompt's or a named transcript's check) or `id_ambiguous`, audited against the
-typing session, and changes nothing. A peer, scheduled, harness or pasted
-prompt is refused `scribe: group refused — the prompt is not a typed user
-turn`. A status of a linked session ends `; linked: <type>
+than 32 sessions), `invalid_text`, `session_forgotten`, `provenance_failed`
+(the named transcript's check), `id_ambiguous` or `usage_error` (a non-exact
+id shorter than four characters), audited against the typing session, and
+changes nothing. If the caller's transcript fails its check before dispatch,
+the hook instead replies `scribe: group refused — <reason>` with
+`provenance_failed`, audited against the caller. Codex checks its rollout
+before dispatch; a caller transcript failure is reported as `scribe: not
+recorded — <reason>` with `provenance_failed`, no audit target, and no
+group-add or cursor advance. An explicitly agent- or harness-originated
+turn, or one opening with a markup wrapper, that contains a group command replies
+`scribe: group refused — the prompt is not a typed user turn` with
+`group_membership`, audited against the caller. Ordinary, unmarked prose or
+pasted text that mentions `/scribe group add` later in the prompt is not a
+command and receives no group refusal; an actionable command must parse
+from the first line of a typed prompt. A status of a linked
+session ends `; linked: <type>
 <id>, …`. A link replies `scribe: on — this session is cataloged from now
 on and linked: <type> <id>; …`, `scribe: on — … it was already linked:
 <type> <id>`, `scribe: linked — this session is <type> <id>`, `scribe:
