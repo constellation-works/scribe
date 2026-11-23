@@ -5967,7 +5967,11 @@ with phase 4):
 - **Not stored.** An off session receives no catalog pass; without group
   consent it has no group-captured turns.
 - **Forget.** Daniel types one whole `#scribe forget <session-id>` line,
-  using `s-<n>` or the full provider id. The existing typed-turn gate
+  using `s-<n>`, the full provider id or a unique prefix of it of at least
+  four characters (the form a table prints). An ambiguous prefix is refused
+  `id_ambiguous` and erases nothing; the echo names the full id erased. A
+  UUID or a prefix cut at a group boundary reads as a session, not an entry
+  id, even when its last group is all digits. The existing typed-turn gate
   excludes peer, scheduled, harness and pasted content. In one audited
   transaction, scribe erases the header, summary, goals, next, segments,
   indexed turns, checkpoints and switch. The forgotten row keeps its ids

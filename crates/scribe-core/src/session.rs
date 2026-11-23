@@ -105,6 +105,10 @@ impl fmt::Display for SessionId {
     }
 }
 
+/// The shortest id prefix any command accepts, in characters: the store's id
+/// resolution and the typed `#scribe forget` parser share it.
+pub(crate) const MIN_ID_PREFIX: usize = 4;
+
 /// The shortest prefix a table prints for a session id, in characters. The
 /// first group of a Claude Code UUID is this long.
 pub const SHORT_ID_MIN: usize = 8;

@@ -14,7 +14,8 @@
 //! - retire: the entry is hidden from answers and stays on disk;
 //! - forget: entry text and evidence, proposal quotes of it, and related
 //!   candidate quotes, evidence and reasons are cleared; session records stay;
-//! - forget a session (`s-<n>` or its provider id; 2_design.md §15.7): its
+//! - forget a session (`s-<n>`, its provider id or a unique prefix of it, as a
+//!   table prints it; 2_design.md §15.7): its
 //!   scribe's stored session data is erased and the id is kept as a tombstone.
 //!   The provider transcript stays in place.
 //!

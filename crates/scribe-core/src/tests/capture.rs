@@ -261,6 +261,52 @@ fn forget_issue_n_names_the_entry_an_issue_became_and_an_occurrence_is_refused()
 }
 
 #[test]
+fn forget_takes_a_printed_session_prefix_before_an_entry_id() {
+    let session = |id: &str| Settle::ForgetSession(id.parse().unwrap());
+    // The first group of a UUID, as a table prints it, with a trailing stop.
+    assert_eq!(settles("#scribe forget 7c2b9d14."), [session("7c2b9d14")]);
+    assert_eq!(settles("#scribe forget 7c2b"), [session("7c2b")]);
+    // A longer prefix that ends in digits would read as an entry id.
+    for prefix in [
+        "7c2b9d14-1234",
+        "7c2b9d14-8e5f",
+        "7c2b9d14-8e5f-4a3b-1234",
+        "7c2b9d14-8e5f-4a3b-b1c6-2026",
+    ] {
+        assert_eq!(
+            settles(&format!("#scribe forget {prefix}")),
+            [session(prefix)]
+        );
+    }
+    // Entry ids keep their meaning, and retire never takes a session.
+    assert_eq!(
+        settles("#scribe forget preferences-12"),
+        [Settle::Forget(
+            EntryId::try_from(String::from("preferences-12")).unwrap()
+        )]
+    );
+    assert_eq!(
+        settles("#scribe forget beef-12"),
+        [Settle::Forget(
+            EntryId::try_from(String::from("beef-12")).unwrap()
+        )]
+    );
+    // Too short, not hex, or not shaped like a UUID cut short.
+    assert_eq!(
+        parse(
+            "#scribe forget 7c2\n#scribe forget zzzzzzzz\n#scribe forget 7c2b9d14-\n#scribe forget 7c2b9d14-8e5f1\n#scribe retire 7c2b9d14"
+        ),
+        [
+            (1, "unparsed_instruction"),
+            (2, "unparsed_instruction"),
+            (3, "unparsed_instruction"),
+            (4, "unparsed_instruction"),
+            (5, "unparsed_instruction"),
+        ]
+    );
+}
+
+#[test]
 fn forget_takes_a_session_as_s_n_or_its_uuid_before_an_entry_id() {
     let session = |id: &str| Settle::ForgetSession(id.parse().unwrap());
     assert_eq!(settles("#scribe forget s-12"), [session("s-12")]);
