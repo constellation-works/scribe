@@ -1,4 +1,4 @@
-.PHONY: help build test goldens fmt fmt-check clippy deny structure standards-check ci-fast ci-lint ci install clean
+.PHONY: help build test goldens fmt fmt-check clippy deny structure readme-links standards-check ci-fast ci-lint ci install clean
 
 CARGO ?= cargo
 # Every build uses the committed Cargo.lock as is; a stale lock fails instead
@@ -27,7 +27,7 @@ endef
 help:
 	@echo "scribe make targets"
 	@echo ""
-	@echo "  make ci-fast          Pre-handoff gate, no compile: fmt, structure, standards-check"
+	@echo "  make ci-fast          Pre-handoff gate, no compile: fmt, structure, readme-links, standards-check"
 	@echo "  make ci-lint          clippy -D warnings + cargo-deny (skipped locally if not installed)"
 	@echo "  make test             All tests (nextest when installed, else cargo test) + doctests"
 	@echo "  make goldens          Compare --help and output goldens with the built binary"
@@ -59,6 +59,12 @@ structure:
 	./scripts/check-test-modules.sh
 	./scripts/check-terminal-guard.sh
 	./scripts/tests/check-gates.sh
+
+# STD-09 R12: every relative link, heading anchor and image path in README.md
+# resolves, in Markdown and in HTML href, src and srcset. External URLs are not
+# checked: the gate needs no network.
+readme-links:
+	python3 scripts/check-readme-links.py
 
 clippy:
 	$(CARGO) clippy --workspace --all-targets $(LOCKED) -- -D warnings
@@ -127,7 +133,7 @@ standards-check:
 # Pre-handoff gate for agents: no compile, and every parity check CI runs
 # that needs no build (STD-04 R12). Goldens need the binary, so they are
 # their own target.
-ci-fast: fmt-check structure standards-check
+ci-fast: fmt-check structure readme-links standards-check
 
 ci-lint: clippy deny
 

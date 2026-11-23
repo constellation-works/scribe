@@ -77,6 +77,85 @@ near=$(tree deps-near)
 printf '//! entry\nuse std::{fmt, ffi::OsStr};\n' >"$near/crates/scribe-core/src/entry.rs"
 expect pass check-dependency-direction.sh "$near" "a grouped import of names that only start like fs"
 
+# --- check-readme-links.py: README links, anchors and paths (STD-09 R12) -----
+# readme <name>: a fixture root whose README.md is read from stdin, with the
+# files the clean README below names. A broken case appends one reference to it.
+readme() {
+  local root
+  root=$(tree "$1")
+  mkdir -p "$root/docs" "$root/img"
+  printf '## Install\n' >"$root/docs/guide.md"
+  printf 'png\n' >"$root/img/logo.png"
+  printf 'MIT\n' >"$root/LICENSE"
+  cat >"$root/README.md"
+  echo "$root"
+}
+readme_clean=$(cat <<'EOF'
+# scribe
+
+<a href="LICENSE">Licence</a> and <a href="https://example.com/">site</a>.
+
+<h1 align="center"><img src="img/logo.png" alt="logo" /></h1>
+
+## Install
+
+Read the [guide](docs/guide.md#install), [the top](#scribe) or [the licence](LICENSE).
+
+<a id="setup"></a>
+Set up with [setup](#setup) and ![logo](img/logo.png).
+
+<img src="img/logo.png" srcset="img/logo.png 1x, img/logo.png 2x" alt="logo">
+
+<img alt="a src=img/missing.png inside a value" src="img/logo.png">
+
+[external](https://example.com/missing.md) and [guide by reference][g].
+
+[g]: docs/guide.md
+
+```markdown
+[never checked](docs/missing.md)
+```
+EOF
+)
+# readme_with <name> <text>: the clean README with <text> appended.
+readme_with() {
+  local root
+  root=$(readme "$1" <<<"$readme_clean")
+  printf '%s\n' "$2" >>"$root/README.md"
+  echo "$root"
+}
+printf 'outside\n' >"$work/outside-target.md"
+
+clean=$(readme readme-clean <<<"$readme_clean")
+expect pass check-readme-links.py "$clean" "a README whose links, anchors, images and HTML attributes resolve"
+
+expect fail check-readme-links.py "$(readme_with readme-link-missing '[x](docs/missing.md)')" \
+  "a Markdown link to a missing file"
+expect fail check-readme-links.py "$(readme_with readme-anchor-own '[x](#no-such-heading)')" \
+  "a heading anchor that is not in the README"
+expect fail check-readme-links.py "$(readme_with readme-anchor-other '[x](docs/guide.md#no-such-heading)')" \
+  "a heading anchor that is not in the file it names"
+expect fail check-readme-links.py "$(readme_with readme-image-missing '![x](img/missing.png)')" \
+  "a Markdown image path that does not resolve"
+expect fail check-readme-links.py "$(readme_with readme-html-src '<img src="img/missing.png" alt="x">')" \
+  "an HTML img src that does not resolve"
+expect fail check-readme-links.py \
+  "$(readme_with readme-html-srcset '<img src="img/logo.png" srcset="img/logo.png 1x, img/missing.png 2x" alt="x">')" \
+  "an HTML srcset candidate that does not resolve"
+expect fail check-readme-links.py "$(readme_with readme-html-href '<a href="docs/missing.md">x</a>')" \
+  "an HTML href that does not resolve"
+expect fail check-readme-links.py "$(readme_with readme-html-quoted-gt '<a title="a > b" href="docs/missing.md">x</a>')" \
+  "an HTML href after a > inside a quoted attribute value"
+expect fail check-readme-links.py "$(readme_with readme-reference-missing $'[x][bad]\n\n[bad]: docs/missing.md')" \
+  "a reference definition whose target does not resolve"
+expect fail check-readme-links.py "$(readme_with readme-case-differs '[x](docs/Guide.md)')" \
+  "a link whose case differs from the file on disk"
+expect fail check-readme-links.py "$(readme_with readme-escapes-root '[x](../outside-target.md)')" \
+  "a link that leaves the repository, even to a file that exists beside it"
+expect fail check-readme-links.py "$(readme_with readme-live-after-code-span '```x``` [y](docs/missing.md)')" \
+  "a live link after a triple-backtick code span on the same line"
+expect fail check-readme-links.py "$(tree readme-absent)" "a repository with no README.md"
+
 if [[ "$fail" -eq 0 ]]; then
   echo "check-gates: ok ($n cases)"
 fi

@@ -380,13 +380,13 @@ plugin/.orbit-plugin/  Orbit plugin (Claude-oriented)
 plugin/orbit-codex/    Orbit plugin variant for Codex model calls
 skills/scribe/         canonical skill, embedded by scribe init
 docs/design/scribe/    design, decisions and specs
-scripts/               structure gates run by make ci-fast
+scripts/               gates run by make ci-fast (structure, README links)
 ```
 
 ## Development
 
 ```sh
-make ci-fast          # fmt, structure checks, standards-check; no compile
+make ci-fast          # fmt, structure checks, README links, standards-check; no compile
 make ci-lint          # clippy -D warnings, plus cargo-deny
 make test             # nextest when installed, else cargo test; then doctests
 make goldens          # compare help and output with the built binary
