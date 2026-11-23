@@ -324,10 +324,14 @@ and `/scribe group <slug>` (also `/scribe:scribe …`). The link forms connect
 this session to the one it was spawned from or continues, and refuse an
 unknown id, a self-link or a cycle. `/scribe group <slug>` creates an open
 `project` group titled `<slug>` in the working directory's project if absent and
-joins the calling session on an automatic short-session-id seat (full session id,
-then the full id with `-2`, `-3`… when taken, never displacing a seat) with role `member`, or joins the existing open group when typed in
-another session (one group per session until `scribe group leave`; non-typed
-prompts are refused). `/scribe group add <slug> <session-id>...` adds past
+joins the calling session on an automatic seat: the first eight ID characters,
+then the full ID, then the first available numbered name. Numbered names use
+the first 116 ID characters plus `-2`, `-3`… (or the whole ID when shorter),
+so a 128-character ID of `a`s gets 116 `a`s plus `-2` when its short and full
+names are already taken. A join never displaces a seat and uses role `member`;
+when typed from another session, the command joins the existing open group
+(one group per session until `scribe group leave`; non-typed prompts are
+refused). `/scribe group add <slug> <session-id>...` adds past
 sessions to the group, creating it when absent, without enrolling the session it
 is typed in: a session whose transcript is still on disk has its typed turns
 stored, any other gets membership only, and the reply says which. A session
