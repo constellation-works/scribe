@@ -434,7 +434,7 @@ impl Store {
         static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let dir = self.root.join(AUDIT_SPOOL_DIR);
         self.prepare_subdir(&dir)?;
-        let line = audit::encode_line(event)
+        let line = audit::encode_line(audit::AUDIT_FORMAT, event)
             .map_err(|e| Error::corrupt(&dir, format!("an audit line does not encode: {e}")))?;
         let name = format!(
             "{:020}-{}-{}.json",

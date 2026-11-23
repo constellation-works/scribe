@@ -202,6 +202,23 @@ fn fixture_lines() -> Vec<(u32, AuditEvent)> {
     lines
 }
 
+fn exported_audit_lines(root: &Path) -> Vec<(u32, AuditEvent)> {
+    let path = root.join("audit.jsonl");
+    let (lines, torn) = audit::decode_formatted(&path, &fs::read(&path).unwrap()).unwrap();
+    assert_eq!(torn, 0);
+    lines
+}
+
+fn audit_table_formats(root: &Path) -> Vec<u32> {
+    let conn = rusqlite::Connection::open(root.join(db::DB_FILE)).unwrap();
+    conn.prepare("SELECT format FROM audit ORDER BY id")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap()
+}
+
 /// Every line of a format-26 `audit.jsonl`, formats 1 to 5 and their issue
 /// fields included, reads back from the `audit` table at its own format,
 /// and the torn line is counted, not imported.
@@ -227,15 +244,7 @@ fn every_audit_line_reads_back_from_the_table_at_its_own_format() {
     assert_eq!(issue.trigger.as_deref(), Some("root cause"));
     assert_eq!(issue.request_sha256, ["ab"]);
 
-    let conn = rusqlite::Connection::open(root.join(db::DB_FILE)).unwrap();
-    let formats: Vec<u32> = conn
-        .prepare("SELECT format FROM audit ORDER BY id")
-        .unwrap()
-        .query_map([], |row| row.get(0))
-        .unwrap()
-        .collect::<rusqlite::Result<_>>()
-        .unwrap();
-    assert_eq!(formats, [1, 2, 3, 4, 5]);
+    assert_eq!(audit_table_formats(&root), [1, 2, 3, 4, 5]);
 }
 
 /// The move takes in every kind in one transaction, and the records read
@@ -255,6 +264,13 @@ fn export_round_trips_every_kind_through_the_move() {
     assert_eq!(before.marks.len(), 1);
     assert_eq!(before.pickups.len(), 1);
     assert_eq!(before.audit.len(), 5);
+
+    let expected_audit = fixture_lines();
+    let legacy_export = dir.path().join("legacy-export");
+    store
+        .export(&legacy_export, ExportFormat::Markdown)
+        .unwrap();
+    assert_eq!(exported_audit_lines(&legacy_export), expected_audit);
 
     let moved = store.migrate_store(NOW).unwrap();
     assert_eq!(
@@ -295,10 +311,12 @@ fn export_round_trips_every_kind_through_the_move() {
     ] {
         assert!(exported.files.iter().any(|f| f == rel), "{rel} exported");
     }
+    assert_eq!(exported_audit_lines(&out), expected_audit);
     let copy = Store::open(&out);
     assert_eq!(kinds(&copy), before, "the export reads as the store did");
     copy.migrate_store(NOW).unwrap();
     assert_eq!(kinds(&copy), before, "and moves in unchanged");
+    assert_eq!(audit_table_formats(&out), [1, 2, 3, 4, 5]);
 
     let jsonl = dir.path().join("jsonl");
     let rows = store.export(&jsonl, ExportFormat::Jsonl).unwrap();
@@ -1823,7 +1841,7 @@ fn corrupt_pending_archive_forget_row_fails_closed_without_dropping() {
 }
 
 #[test]
-fn jsonl_export_includes_pending_spooled_audit_once_and_skips_drained_spool() {
+fn export_includes_pending_spooled_audit_once_and_skips_drained_spool() {
     use crate::store::audit::IssueAudit;
     use std::time::Duration;
 
@@ -1957,6 +1975,19 @@ fn jsonl_export_includes_pending_spooled_audit_once_and_skips_drained_spool() {
     assert_eq!(rows[6]["command"], "entry add");
     assert_eq!(rows[6]["error_code"], "reserved_author");
     assert!(rows[6]["spool"].as_str().is_some());
+
+    // A spool file from an older writer keeps its format too.
+    let legacy_line = AUDIT_FIXTURE.lines().next().unwrap();
+    put(&root, "audit-spool/000-legacy.json", legacy_line.as_bytes());
+    let markdown_mixed = dir.path().join("markdown-mixed");
+    let exported = store
+        .export(&markdown_mixed, ExportFormat::Markdown)
+        .unwrap();
+    assert_eq!(exported.audit_lines, 8);
+    let mut expected = fixture_lines();
+    let legacy = expected[0].clone();
+    expected.extend([(5, pending), legacy, (5, second.clone())]);
+    assert_eq!(exported_audit_lines(&markdown_mixed), expected);
 
     // An unmoved store with only a spooled audit file still requires migration.
     let unmoved_dir = private_tempdir();

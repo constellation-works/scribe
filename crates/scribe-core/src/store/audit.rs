@@ -205,10 +205,10 @@ pub(super) fn decode_formatted(
     ))
 }
 
-/// The event as one newline-terminated JSON line at the current format.
-pub(super) fn encode_line(event: &AuditEvent) -> serde_json::Result<Vec<u8>> {
+/// The event as one newline-terminated JSON line with its format.
+pub(super) fn encode_line(format: u32, event: &AuditEvent) -> serde_json::Result<Vec<u8>> {
     let mut line = serde_json::to_vec(&AuditLine {
-        format: AUDIT_FORMAT,
+        format,
         event: event.clone(),
     })?;
     line.push(b'\n');

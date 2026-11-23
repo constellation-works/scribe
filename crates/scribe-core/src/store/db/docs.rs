@@ -681,9 +681,9 @@ pub(in crate::store) fn put_audit(
     Ok(added > 0)
 }
 
-/// Every audit line, oldest first. A line of a newer format refuses the
-/// read, as it does in `audit.jsonl`.
-pub(in crate::store) fn audit(conn: &Connection, db: &Path) -> Result<Vec<AuditEvent>> {
+/// Every audit line with its stored format, oldest first. A line of a newer
+/// format refuses the read, as it does in `audit.jsonl`.
+pub(in crate::store) fn audit(conn: &Connection, db: &Path) -> Result<Vec<(u32, AuditEvent)>> {
     let extra = [("id", Col::Int), ("format", Col::Int)];
     let mut out = Vec::new();
     for mut obj in objects(conn, db, "audit", &extra, AUDIT, "id")? {
@@ -701,7 +701,9 @@ pub(in crate::store) fn audit(conn: &Connection, db: &Path) -> Result<Vec<AuditE
                 supported: AUDIT_FORMAT,
             });
         }
-        out.push(serde_json::from_value(Value::Object(obj)).map_err(|e| Error::corrupt(&path, e))?);
+        let event =
+            serde_json::from_value(Value::Object(obj)).map_err(|e| Error::corrupt(&path, e))?;
+        out.push((found, event));
     }
     Ok(out)
 }
