@@ -3123,3 +3123,117 @@ fn typed_group_add_backfills_other_provider_including_archived_codex() {
         );
     }
 }
+
+#[test]
+fn typed_group_add_scopes_cross_provider_collision_to_named_sessions() {
+    const E: &str = "55555555-5555-4555-8555-555555555555";
+    let f = Fixture::new();
+    let typing = transcript(&f, A, &[row(A, "a", "user", "/scribe group add planning")]);
+    let write_codex = |id: &str, body: &str| {
+        let dir = f.home().join(".codex/sessions/2090/11/20");
+        f.create_private_dir_all(&dir);
+        let path = dir.join(format!("rollout-2090-11-20T01-00-00-{id}.jsonl"));
+        let rows = [
+            json!({"type":"session_meta","payload":{"id":id,"source":"vscode","thread_source":"user","cwd":f.home()}}),
+            json!({"timestamp":"2090-11-20T01:00:00Z","type":"response_item","payload":{
+                "type":"message","role":"user","id":"u1",
+                "content":[{"type":"input_text","text":body}],
+                "internal_chat_message_metadata_passthrough":{"turn_id":"t1","content_item_kinds":["user.text"],"content_item_metadata":[{"provenance":{"type":"user"}}]}
+            }}),
+        ];
+        std::fs::write(
+            &path,
+            rows.iter().map(|r| format!("{r}\n")).collect::<String>(),
+        )
+        .unwrap();
+        support::make_private(&path);
+    };
+
+    // B collides across Claude Code and Codex; C, D, and E do not.
+    transcript(&f, B, &[row(B, "b1", "user", "collidingclaudeorchid")]);
+    write_codex(B, "collidingcodexorchid");
+    transcript(&f, C, &[row(C, "c1", "user", "unrelatedclaudeorchid")]);
+    write_codex(D, "unrelatedcodexorchid");
+    transcript(&f, E, &[row(E, "e1", "user", "partialenrollorchid")]);
+
+    let submit = |group_cmd: &str, named: &str| {
+        text(
+            &hook(
+                &f,
+                &["hook", "user-prompt-submit"],
+                json!({"session_id": A, "transcript_path": typing, "cwd": f.home(),
+                    "prompt": format!("/scribe group add {group_cmd} {named}")}),
+                &[],
+            )
+            .stdout,
+        )
+    };
+    let store = scribe_core::Store::open(f.root());
+
+    // An unrelated exact named session (in Claude or Codex) succeeds despite B colliding.
+    let reply = submit("planning", &format!("{C} {D}"));
+    assert!(reply.contains("group planning (g-1) opened"), "{reply}");
+    assert!(
+        reply.contains(&format!(
+            "{C}: added; transcript on disk, 1 typed turn stored"
+        )),
+        "{reply}"
+    );
+    assert!(
+        reply.contains(&format!(
+            "{D}: added; transcript on disk, 1 typed turn stored"
+        )),
+        "{reply}"
+    );
+    let members: Vec<String> = store
+        .group("planning")
+        .unwrap()
+        .members()
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(members, [C, D]);
+
+    // Naming the colliding ID alongside an eligible session refuses the whole
+    // line for both a new group and an existing group, without partial enrollment.
+    for (group_cmd, named) in [
+        ("other", format!("{E} {B}")),
+        ("planning", format!("{E} {B}")),
+        ("other", format!("{E} {}", &B[..8])),
+    ] {
+        let reply = submit(group_cmd, &named);
+        assert!(reply.contains("group add refused"), "{reply}");
+        assert!(
+            reply.contains("exists in multiple transcript providers"),
+            "{reply}"
+        );
+        assert!(reply.contains(B), "{reply}");
+        assert!(reply.contains("nothing changed"), "{reply}");
+        let last_audit = support::audit_lines(&f.root()).pop().unwrap();
+        assert_eq!(last_audit["command"], "hook user-prompt-submit");
+        assert_eq!(last_audit["status"], "failure");
+        assert_eq!(last_audit["target"], format!("session:{A}"));
+        assert_eq!(last_audit["error_code"], "usage_error");
+    }
+
+    assert!(store.group("other").is_err());
+    let members: Vec<String> = store
+        .group("planning")
+        .unwrap()
+        .members()
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(members, [C, D]);
+    for term in [
+        "partialenrollorchid",
+        "collidingclaudeorchid",
+        "collidingcodexorchid",
+    ] {
+        assert_eq!(
+            invoke(&f, A, &["search", term, "--kind", "message"], 0)["total"],
+            0,
+            "{term}"
+        );
+    }
+}
