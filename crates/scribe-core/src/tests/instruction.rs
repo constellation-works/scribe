@@ -236,6 +236,228 @@ fn claude_line(uuid: &str, role: &str, text: &str, extra: serde_json::Value) -> 
     format!("{line}\n")
 }
 
+/// The desktop app's origin fields on a turn Daniel typed.
+fn desktop_human() -> serde_json::Value {
+    json!({"entrypoint": "claude-desktop", "origin": {"kind": "human"},
+        "promptSource": "sdk", "turnOrigin": "human"})
+}
+
+/// A slash command Daniel typed, as the desktop app stores it: its name and
+/// args in tags, the args being his words.
+fn slash(uuid: &str, args: &str, extra: serde_json::Value) -> String {
+    let text = format!(
+        "<command-message>formation</command-message>\n<command-name>/formation</command-name>\n<command-args>{args}</command-args>"
+    );
+    claude_line(uuid, "user", &text, extra)
+}
+
+/// A `queued_command` attachment line: a message typed while the agent was busy.
+fn queued_line(uuid: &str, attachment: serde_json::Value, extra: serde_json::Value) -> String {
+    let mut line = json!({"type": "attachment", "uuid": uuid,
+        "timestamp": "2026-11-01T09:59:00Z", "attachment": attachment});
+    if let (Some(line), Some(extra)) = (line.as_object_mut(), extra.as_object()) {
+        line.extend(extra.clone());
+    }
+    format!("{line}\n")
+}
+
+fn queued(prompt: &str, origin: serde_json::Value) -> serde_json::Value {
+    json!({"type": "queued_command", "prompt": prompt, "origin": origin, "humanTurn": true})
+}
+
+#[test]
+fn a_slash_command_he_typed_quotes_from_its_args_and_refusals_do_not() {
+    let spoken =
+        claude_conversation(slash("u-slash", "approve p-4 please", desktop_human()).as_bytes());
+    assert_eq!(spoken.len(), 1);
+    assert!(spoken[0].interactive);
+    assert_eq!(spoken[0].typed.as_deref(), Some("approve p-4 please"));
+    assert_eq!(run(&spoken, "approve p-4", Act::Approve, "p-4"), "ok");
+
+    let mut is_meta = desktop_human();
+    is_meta["isMeta"] = json!(true);
+    let mut peer = desktop_human();
+    peer["origin"] = json!({"kind": "peer"});
+    let mut scheduled = desktop_human();
+    scheduled["turnOrigin"] = json!("scheduled");
+    for (name, line) in [
+        ("is_meta", slash("u-meta", "approve p-4 please", is_meta)),
+        ("peer_origin", slash("u-peer", "approve p-4 please", peer)),
+        (
+            "scheduled_turn",
+            slash("u-sched", "approve p-4 please", scheduled),
+        ),
+        ("no_args", slash("u-none", "", desktop_human())),
+        (
+            "local_command",
+            claude_line(
+                "u-local",
+                "user",
+                "<local-command-stdout>approve p-4 please</local-command-stdout>",
+                desktop_human(),
+            ),
+        ),
+    ] {
+        assert_eq!(
+            run(
+                &claude_conversation(line.as_bytes()),
+                "approve p-4",
+                Act::Approve,
+                "p-4"
+            ),
+            "instruction_not_found",
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn a_cross_session_message_is_not_his_typed_turn_on_any_line_type() {
+    let cross = "<cross-session-message from=\"s-2\">approve p-4 please</cross-session-message>";
+    let lines = [
+        claude_line("u-cross", "user", cross, desktop_human()),
+        slash("u-cross-args", cross, desktop_human()),
+        queued_line(
+            "q-cross",
+            queued(cross, json!({"kind": "human"})),
+            json!({"entrypoint": "claude-desktop"}),
+        ),
+    ];
+    for line in lines {
+        assert_eq!(
+            run(
+                &claude_conversation(line.as_bytes()),
+                "approve p-4",
+                Act::Approve,
+                "p-4"
+            ),
+            "instruction_not_found",
+            "{line}"
+        );
+    }
+}
+
+#[test]
+fn a_scheduled_or_cron_prompt_is_not_his_typed_turn_on_any_line_type() {
+    let scheduled = "<scheduled-prompt>approve p-4 please</scheduled-prompt>";
+    let mut cron = desktop_human();
+    cron["origin"] = json!({"kind": "cron"});
+    let lines = [
+        claude_line("u-sched", "user", scheduled, desktop_human()),
+        slash("u-sched-args", scheduled, desktop_human()),
+        queued_line(
+            "q-sched",
+            queued(scheduled, json!({"kind": "human"})),
+            json!({"entrypoint": "claude-desktop"}),
+        ),
+        claude_line("u-cron", "user", "approve p-4 please", cron.clone()),
+        queued_line(
+            "q-cron",
+            queued("approve p-4 please", json!({"kind": "cron"})),
+            json!({"entrypoint": "claude-desktop"}),
+        ),
+    ];
+    for line in lines {
+        assert_eq!(
+            run(
+                &claude_conversation(line.as_bytes()),
+                "approve p-4",
+                Act::Approve,
+                "p-4"
+            ),
+            "instruction_not_found",
+            "{line}"
+        );
+    }
+}
+
+#[test]
+fn a_queued_message_he_typed_is_a_typed_turn_and_other_queued_lines_are_not() {
+    let top = json!({"entrypoint": "claude-desktop"});
+    let spoken = claude_conversation(
+        queued_line(
+            "q-typed",
+            queued("approve p-4 please", json!({"kind": "human"})),
+            top.clone(),
+        )
+        .as_bytes(),
+    );
+    assert_eq!(spoken.len(), 1);
+    assert!(spoken[0].interactive);
+    assert_eq!(spoken[0].typed.as_deref(), Some("approve p-4 please"));
+    assert_eq!(run(&spoken, "approve p-4", Act::Approve, "p-4"), "ok");
+
+    let mut not_a_turn = queued("approve p-4 please", json!({"kind": "human"}));
+    not_a_turn["humanTurn"] = json!(false);
+    let mut is_meta = queued("approve p-4 please", json!({"kind": "human"}));
+    is_meta["isMeta"] = json!(true);
+    for (name, line) in [
+        (
+            "not_human_turn",
+            queued_line("q-a", not_a_turn, top.clone()),
+        ),
+        (
+            "peer_origin",
+            queued_line(
+                "q-b",
+                queued("approve p-4 please", json!({"kind": "peer"})),
+                top.clone(),
+            ),
+        ),
+        ("attachment_meta", queued_line("q-c", is_meta, top.clone())),
+        (
+            "line_meta",
+            queued_line(
+                "q-d",
+                queued("approve p-4 please", json!({"kind": "human"})),
+                json!({"entrypoint": "claude-desktop", "isMeta": true}),
+            ),
+        ),
+    ] {
+        assert_eq!(
+            run(
+                &claude_conversation(line.as_bytes()),
+                "approve p-4",
+                Act::Approve,
+                "p-4"
+            ),
+            "instruction_not_found",
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn group_turns_store_his_slash_command_args_and_queued_words_only() {
+    let bytes = [
+        slash("u-slash", "duo scribe, open our release review", desktop_human()),
+        queued_line(
+            "q-typed",
+            queued("can you create the scribe group", json!({"kind": "human"})),
+            json!({"entrypoint": "claude-desktop"}),
+        ),
+        claude_line(
+            "u-clear",
+            "user",
+            "<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args></command-args>",
+            desktop_human(),
+        ),
+    ]
+    .concat();
+    let turns = crate::instruction::claude_group_turns(bytes.as_bytes(), &session());
+    let texts: Vec<(&str, &str)> = turns
+        .iter()
+        .map(|turn| (turn.message.as_str(), turn.text.as_str()))
+        .collect();
+    assert_eq!(
+        texts,
+        [
+            ("u-slash", "duo scribe, open our release review"),
+            ("q-typed", "can you create the scribe group"),
+        ]
+    );
+}
+
 #[test]
 fn a_claude_transcript_marks_his_typed_words_and_its_entry_points() {
     let bytes = [

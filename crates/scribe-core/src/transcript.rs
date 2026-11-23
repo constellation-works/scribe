@@ -206,7 +206,12 @@ fn analyze(bytes: &[u8], with_line_indices: bool, detect_codex: bool) -> Analysi
                 };
             }
         }
-        if let Some(message) = message_from(&raw) {
+        let message = message_from(&raw).or_else(|| {
+            (raw.kind.as_deref() == Some("attachment"))
+                .then(|| queued_message(line))
+                .flatten()
+        });
+        if let Some(message) = message {
             if cwd.is_none() {
                 cwd = raw
                     .cwd
@@ -256,6 +261,70 @@ fn message_from(line: &RawLine<'_>) -> Option<Message> {
         role,
         at,
         blocks,
+    })
+}
+
+/// An `attachment` line, read only for the kind this module keeps: a message
+/// Daniel typed while the agent was busy (`queued_command`).
+#[derive(Deserialize)]
+struct RawQueued<'a> {
+    #[serde(rename = "isSidechain", default)]
+    is_sidechain: LooseBool,
+    #[serde(rename = "isMeta", default)]
+    is_meta: LooseBool,
+    #[serde(default, borrow)]
+    uuid: MaybeStr<'a>,
+    #[serde(default, borrow)]
+    timestamp: MaybeStr<'a>,
+    #[serde(default, borrow)]
+    attachment: Option<RawAttachment<'a>>,
+}
+
+#[derive(Deserialize)]
+struct RawAttachment<'a> {
+    #[serde(rename = "type", default, borrow)]
+    kind: MaybeStr<'a>,
+    #[serde(default, borrow)]
+    prompt: MaybeStr<'a>,
+    #[serde(rename = "humanTurn", default)]
+    human_turn: LooseBool,
+    #[serde(rename = "isMeta", default)]
+    is_meta: LooseBool,
+    #[serde(default)]
+    origin: Option<serde_json::Value>,
+}
+
+/// The message Daniel typed while the agent was busy, when `line` is a
+/// `queued_command` attachment Claude Code marks as his: `humanTurn` true,
+/// `origin.kind` `human`, and neither meta nor sidechain. Its words are the
+/// attachment's `prompt`. Claude Code keeps no `user` line for it. The origin
+/// guard still reads the line's claims before a check accepts the message.
+pub(crate) fn queued_message(line: &[u8]) -> Option<Message> {
+    let queued: RawQueued<'_> = serde_json::from_slice(line).ok()?;
+    let attachment = queued.attachment.as_ref()?;
+    let human = attachment
+        .origin
+        .as_ref()
+        .and_then(|origin| origin.get("kind"))
+        .and_then(serde_json::Value::as_str)
+        == Some("human");
+    if attachment.kind.as_deref()? != "queued_command"
+        || !attachment.human_turn.0
+        || attachment.is_meta.0
+        || queued.is_meta.0
+        || queued.is_sidechain.0
+        || !human
+    {
+        return None;
+    }
+    let uuid = queued.uuid.as_deref()?.to_owned();
+    let at = OffsetDateTime::parse(queued.timestamp.as_deref()?, &Rfc3339).ok()?;
+    let prompt = attachment.prompt.as_deref()?;
+    Some(Message {
+        uuid,
+        role: Speaker::User,
+        at,
+        blocks: vec![prompt.to_owned()],
     })
 }
 
@@ -612,7 +681,8 @@ where
 }
 
 /// User turns Claude Code writes itself, not Daniel. A turn whose text
-/// starts with one of these tags is dropped, the same rule a pass uses.
+/// starts with one of these tags is dropped, the same rule a pass uses,
+/// except a slash command's args ([`slash_command_args`]).
 const SYNTHETIC: &[&str] = &[
     "<task-notification>",
     "<command-name>",
@@ -655,19 +725,55 @@ impl UserTurn {
 }
 
 /// Daniel's turn, or `None` when `message` is not one: an assistant line,
-/// a synthetic tag, a `/scribe` control line, or a turn with no words.
+/// a synthetic tag, a `/scribe` control line, or a turn with no words. A
+/// slash command he typed is his turn in its args ([`slash_command_args`]).
 #[must_use]
 pub fn user_turn(message: &Message) -> Option<UserTurn> {
     if message.role != Speaker::User {
         return None;
     }
     let text = message.text();
+    let words = match slash_command_args(&text) {
+        Some(args) => args,
+        None => {
+            let start = text.trim_start();
+            if SYNTHETIC.iter().any(|tag| start.starts_with(tag)) || control::parse(&text).is_some()
+            {
+                return None;
+            }
+            text.as_str()
+        }
+    };
+    let (own, pasted) = split_pasted(words);
+    (!own.is_empty() || !pasted.is_empty()).then_some(UserTurn { own, pasted })
+}
+
+/// The args of a slash command Daniel typed, when `text` is one: the text
+/// inside its `<command-args>` tag, trimmed. Claude Code writes the command's
+/// name and args as tags, but the args are his own words. `/clear` and
+/// `/compact`, a command with no args and a `/scribe` control line give none.
+#[must_use]
+pub fn slash_command_args(text: &str) -> Option<&str> {
     let start = text.trim_start();
-    if SYNTHETIC.iter().any(|tag| start.starts_with(tag)) || control::parse(&text).is_some() {
+    if !(start.starts_with("<command-name>") || start.starts_with("<command-message>")) {
         return None;
     }
-    let (own, pasted) = split_pasted(&text);
-    (!own.is_empty() || !pasted.is_empty()).then_some(UserTurn { own, pasted })
+    let name = between(text, "<command-name>", "</command-name>")?.trim();
+    if matches!(name, "/clear" | "/compact") {
+        return None;
+    }
+    let args = between(text, "<command-args>", "</command-args>")?.trim();
+    if args.is_empty() || control::parse(&format!("{name} {args}")).is_some() {
+        return None;
+    }
+    Some(args)
+}
+
+/// The text between the first `open` and the `close` after it.
+fn between<'a>(text: &'a str, open: &str, close: &str) -> Option<&'a str> {
+    let from = text.find(open)? + open.len();
+    let to = text[from..].find(close)? + from;
+    Some(&text[from..to])
 }
 
 /// Daniel's turns, in transcript order.

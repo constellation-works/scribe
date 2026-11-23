@@ -769,6 +769,22 @@ reply is empty and nothing is audited. This is an accident
 guard like the provenance check below (STD-05 R5), not a security
 boundary: a process running as Daniel can forge a plain payload.
 
+Two more Claude Code lines carry Daniel's own typed words, and count as
+his typed turns wherever a check reads a typed turn (the opening quote,
+the instruction check, `entry add --spoken`, and a group's member turns).
+A slash command he types is a user line whose `<command-name>` and
+`<command-args>` tags wrap it: the text inside `<command-args>` is his
+words, and the name and tags are not. `/clear`, `/compact`, a command
+with no args, a `/scribe` control line and `<local-command-*>` lines carry
+none of his words. The expanded skill body Claude Code writes after a
+command is `isMeta` and never counts. A message he types while the agent
+is busy is an `attachment` line of type `queued_command` with
+`humanTurn: true` and `origin.kind: human`; its `prompt` is his turn. A
+queued line that is `isMeta` or a sidechain line is not his. The origin
+guard above applies to both forms: a cross-session message
+(`<cross-session-…>`), a scheduled, loop or cron prompt, and any non-plain
+origin is refused on every line type.
+
 Provenance check (an accident guard, not a security boundary — STD-05 R5):
 before writing, the hook confirms `transcript_path` lies under
 `~/.claude/projects/`, belongs to the user, and that its session id matches
@@ -1301,7 +1317,9 @@ As built (S4), in `scribe-core::pass` and `commands/session/pass.rs`:
   No transcript or no message yet leaves the pass `waiting` and due.
 - The conversation drops tool payloads, thinking, turns that open with a
   synthetic tag (`<task-notification>`, `<system-reminder>`,
-  `<command-name>` and the like) and `/scribe` command turns; a
+  `<command-name>` and the like, except a slash command's `<command-args>`,
+  which are his words, §4.1) and `/scribe` command turns; a queued message
+  he typed mid-turn is his turn (§4.1); a
   `<pasted_content>` block is kept apart as pasted text, offered to the
   model marked as pasted and never accepted as a term's `said`.
 - Consecutive windows start after `scribed_through` and stop at either

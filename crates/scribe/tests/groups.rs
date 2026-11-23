@@ -1155,6 +1155,48 @@ fn consent_belongs_to_the_callers_own_typed_turn() {
 }
 
 #[test]
+fn a_slash_command_he_typed_opens_a_group_from_its_args() {
+    let f = Fixture::new();
+    let formation = |extra: Value| {
+        let mut row = json!({"sessionId": A, "uuid": "slash", "type": "user",
+            "entrypoint": "claude-desktop", "origin": {"kind": "human"},
+            "promptSource": "sdk", "turnOrigin": "human",
+            "timestamp": "2090-11-20T01:00:00Z",
+            "message": {"role": "user", "content": "<command-message>formation</command-message>\n<command-name>/formation</command-name>\n<command-args>duo scribe, open our release review</command-args>"}});
+        row.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        row
+    };
+    transcript(&f, A, &[formation(json!({"isMeta": true}))]);
+    assert_eq!(
+        invoke(&f, A, &[OPEN, &["--quote", QUOTE]].concat(), 1)["code"],
+        "quote_not_found"
+    );
+    transcript(&f, A, &[formation(json!({}))]);
+    assert_eq!(open(&f)["opener"], A);
+}
+
+#[test]
+fn a_message_he_typed_mid_turn_opens_a_group() {
+    let f = Fixture::new();
+    let queued = |human_turn: bool| {
+        json!({"sessionId": A, "uuid": "queued", "type": "attachment",
+            "entrypoint": "claude-desktop", "timestamp": "2090-11-20T01:00:00Z",
+            "attachment": {"type": "queued_command",
+                "prompt": "can you create the scribe group open our release review",
+                "origin": {"kind": "human"}, "humanTurn": human_turn}})
+    };
+    transcript(&f, A, &[queued(false)]);
+    assert_eq!(
+        invoke(&f, A, &[OPEN, &["--quote", QUOTE]].concat(), 1)["code"],
+        "quote_not_found"
+    );
+    transcript(&f, A, &[queued(true)]);
+    assert_eq!(open(&f)["opener"], A);
+}
+
+#[test]
 fn seat_chains_replacement_handoffs_and_mistaken_joins() {
     let f = Fixture::new();
     for id in [A, B] {
