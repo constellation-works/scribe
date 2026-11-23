@@ -6772,10 +6772,11 @@ session that holds the seat stores turns: while a later member holds the seat,
 the replaced session's later turns are not stored, and the turns it already
 stored stay readable until it leaves or is forgotten. The replaced session's
 hooks move its capture cursor past the turns it types meanwhile without storing
-them, and when the replacement leaves, the restored holder's consent window
-restarts at that moment and its capture cursor is cleared, so turns typed
-during the displacement are never stored later, even when no hook ran for the
-replaced session meanwhile. Capture uses the pass's exclusions for synthetic and control
+them, and when the replacement leaves or is forgotten, the restored holder's
+consent window restarts at that moment and its capture cursor is cleared, so
+turns typed during the displacement are never stored later, even when no hook
+ran for the replaced session meanwhile. Capture uses the pass's exclusions for
+synthetic and control
 turns, pasted blocks, fenced code and sensitive text, plus its store redactor.
 Claude group capture records its byte position and first-seen message
 identities with the turn cursor. Each hook opens and checks the transcript

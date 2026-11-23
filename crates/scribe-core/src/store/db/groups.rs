@@ -73,36 +73,83 @@ ALTER TABLE groups ADD COLUMN slug TEXT;
 CREATE UNIQUE INDEX group_open_slug ON groups(slug) WHERE slug IS NOT NULL AND closed IS NULL;
 ";
 
-/// Invalidate summaries before dropping the membership. A seat that still
-/// has members keeps its role and chain.
-pub(super) fn forget_session(conn: &Connection, path: &Path, id: &SessionId) -> Result<usize> {
-    let fail = |e| db_error("forget a group member in", path, e);
-    let member: Option<(i64, String)> = conn
+/// Drop a forgotten session's seat membership, clear derived summaries, and
+/// restart any restored holder's capture window. A seat that still has members
+/// keeps its role and chain.
+pub(super) fn forget_session(
+    conn: &Connection,
+    path: &Path,
+    id: &SessionId,
+    now: OffsetDateTime,
+) -> Result<usize> {
+    let Some(removed) = remove_seat_member(conn, path, "forget a group member in", id, now)? else {
+        return Ok(0);
+    };
+    conn.execute(
+        "UPDATE groups SET summary = NULL WHERE id = ?1",
+        [removed.group],
+    )
+    .map_err(|e| db_error("forget a group member in", path, e))?;
+    Ok(removed.removed)
+}
+
+struct RemovedMember {
+    group: i64,
+    removed: usize,
+}
+
+/// Remove `session` from its seat, prune an empty seat, and restart any
+/// restored holder's capture window when `session` held the seat.
+fn remove_seat_member(
+    conn: &Connection,
+    path: &Path,
+    action: &'static str,
+    session: &SessionId,
+    now: OffsetDateTime,
+) -> Result<Option<RemovedMember>> {
+    let fail = |e| db_error(action, path, e);
+    let member: Option<(i64, String, bool)> = conn
         .query_row(
-            "SELECT group_id, seat FROM group_members WHERE session = ?1",
-            [id.as_str()],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            &format!(
+                "SELECT m.group_id, m.seat, {HOLDS_SEAT}
+                 FROM group_members m WHERE m.session = ?1"
+            ),
+            [session.as_str()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()
         .map_err(fail)?;
-    let Some((group, seat)) = member else {
-        return Ok(0);
+    let Some((group, seat, held)) = member else {
+        return Ok(None);
     };
-    conn.execute("UPDATE groups SET summary = NULL WHERE id = ?1", [group])
-        .map_err(fail)?;
     let removed = conn
         .execute(
             "DELETE FROM group_members WHERE session = ?1",
-            [id.as_str()],
+            [session.as_str()],
         )
         .map_err(fail)?;
     conn.execute(
         "DELETE FROM group_seats WHERE group_id = ?1 AND name = ?2
          AND NOT EXISTS (SELECT 1 FROM group_members WHERE group_id = ?1 AND seat = ?2)",
-        (group, seat),
+        params![group, seat],
     )
     .map_err(fail)?;
-    Ok(removed)
+    if held {
+        // The departing member held the seat, so the member it displaced holds
+        // it again. Turns that member typed in between were never authorized:
+        // restart its consent window now. Its cursor goes too, since a cursor
+        // would make every later turn count as new whatever its timestamp, and
+        // no hook may have moved it past the displacement interval.
+        conn.execute(
+            "UPDATE group_members SET joined = ?3, turn_cursor = NULL
+             WHERE group_id = ?1 AND seat = ?2 AND position = (
+                 SELECT MAX(position) FROM group_members WHERE group_id = ?1 AND seat = ?2
+             )",
+            params![group, seat, stamp(now)],
+        )
+        .map_err(fail)?;
+    }
+    Ok(Some(RemovedMember { group, removed }))
 }
 
 /// The handoff lookup follows the session reference and ranks active handoffs across
@@ -665,50 +712,20 @@ impl Store {
             let conn = open_writer(self.root(), self.lock_wait)?;
             let path = self.root().join(DB_FILE);
             let fail = |e| db_error("leave group in", &path, e);
-            let held: Option<bool> = conn
-                .query_row(
-                    &format!("SELECT {HOLDS_SEAT} FROM group_members m WHERE m.session = ?1"),
-                    [session.as_str()],
-                    |r| r.get(0),
+            let n = remove_seat_member(
+                &conn,
+                &path,
+                "leave group in",
+                session,
+                OffsetDateTime::now_utc(),
+            )?
+            .ok_or_else(|| {
+                refusal(
+                    WriteRefusal::GroupMembership,
+                    "the calling session has no group membership",
                 )
-                .optional()
-                .map_err(fail)?;
-            let (n, seat): (i64, String) = conn
-                .query_row(
-                    "DELETE FROM group_members WHERE session=?1 RETURNING group_id,seat",
-                    [session.as_str()],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .optional()
-                .map_err(fail)?
-                .ok_or_else(|| {
-                    refusal(
-                        WriteRefusal::GroupMembership,
-                        "the calling session has no group membership",
-                    )
-                })?;
-            conn.execute(
-                "DELETE FROM group_seats WHERE group_id=?1 AND name=?2 AND NOT EXISTS
-                (SELECT 1 FROM group_members WHERE group_id=?1 AND seat=?2)",
-                params![n, seat],
-            )
-            .map_err(fail)?;
-            if held == Some(true) {
-                // The leaver held the seat, so the member it displaced holds it
-                // again. Turns that member typed in between were never
-                // authorized: restart its consent window now. Its cursor goes
-                // too, since a cursor would make every later turn count as
-                // new whatever its timestamp, and no hook may have moved it
-                // past the displacement interval.
-                conn.execute(
-                    "UPDATE group_members SET joined = ?3, turn_cursor = NULL
-                     WHERE group_id = ?1 AND seat = ?2 AND position = (
-                         SELECT MAX(position) FROM group_members WHERE group_id = ?1 AND seat = ?2
-                     )",
-                    params![n, seat, stamp(OffsetDateTime::now_utc())],
-                )
-                .map_err(fail)?;
-            }
+            })?
+            .group;
             let erased = if keep_turns {
                 0
             } else {
@@ -1110,8 +1127,9 @@ fn after_cursor<'a>(state: &CaptureState, messages: &'a [NewMessage]) -> Option<
 /// backfill or an earlier capture) it is the continuity point: every turn after
 /// it is new whatever its timestamp, since a turn appended while the cursor's
 /// snapshot was being read can be dated before the membership was committed.
-/// Restoring a displaced holder's seat clears its cursor (`leave_group`), so
-/// the new join time cuts off the turns typed during the displacement.
+/// Restoring a displaced holder's seat clears its cursor (`leave_group`,
+/// `forget_session`), so the new join time cuts off the turns typed during the
+/// displacement.
 fn turns_since<'a>(state: &CaptureState, messages: &'a [NewMessage]) -> Vec<&'a NewMessage> {
     if state.cursor.is_some() {
         return messages.iter().collect();

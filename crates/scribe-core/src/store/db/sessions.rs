@@ -543,7 +543,7 @@ pub(in crate::store) fn forget(
             )
             .map_err(err)?;
     }
-    changed += super::groups::forget_session(conn, db, id)?;
+    changed += super::groups::forget_session(conn, db, id, now)?;
     changed += conn
         .execute(
             "DELETE FROM session_links WHERE type = 'continues' AND target = ?1",
