@@ -6,9 +6,19 @@
 //! directory, and read the `origin` remote's url from its `config` (the
 //! first remote when there is no `origin`). `.../constellation-works/scribe.git`
 //! and `git@host:owner/scribe` are both `scribe`.
+//!
+//! The hooks run this synchronously, and the metadata is local and
+//! workspace-controlled, so each file is read only when it is a regular file
+//! no larger than [`MAX_METADATA_BYTES`] and is not itself a link. Anything
+//! else gives no name, and the basename answers.
 
 use scribe_core::Project;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+
+/// The largest Git metadata file read for a project name. A real config or
+/// pointer is far smaller; a larger file is refused rather than read.
+pub(super) const MAX_METADATA_BYTES: u64 = 64 * 1024;
 
 /// The project for `cwd`. Never fails: when no remote can be read, the cwd's
 /// basename names the project.
@@ -26,8 +36,57 @@ fn basename(cwd: &Path) -> String {
 }
 
 fn remote_name(cwd: &Path) -> Option<String> {
-    let config = std::fs::read_to_string(common_dir(cwd)?.join("config")).ok()?;
+    let config = read_metadata(&common_dir(cwd)?.join("config")).ok()?;
     repo_name(&remote_url(&config)?)
+}
+
+/// The text of a Git metadata file: a regular file of at most
+/// [`MAX_METADATA_BYTES`] bytes, opened without following a link at its own
+/// name and without waiting on a pipe or device. Any other file is an error.
+fn read_metadata(path: &Path) -> io::Result<String> {
+    let mut file = open_metadata(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "the Git metadata file is not a regular file",
+        ));
+    }
+    let mut bytes = Vec::new();
+    file.by_ref()
+        .take(MAX_METADATA_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_METADATA_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "the Git metadata file is larger than the limit",
+        ));
+    }
+    String::from_utf8(bytes).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+}
+
+/// Open `path` read-only. `NOFOLLOW` refuses a link at the last name, and
+/// `NONBLOCK` keeps a FIFO from stalling the open; the file type is checked
+/// on the open handle, so a pipe swapped in is refused, not read.
+#[cfg(unix)]
+fn open_metadata(path: &Path) -> io::Result<std::fs::File> {
+    use rustix::fs::{Mode, OFlags, open};
+    let fd = open(
+        path,
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
+        Mode::empty(),
+    )?;
+    Ok(std::fs::File::from(fd))
+}
+
+#[cfg(not(unix))]
+fn open_metadata(path: &Path) -> io::Result<std::fs::File> {
+    if std::fs::symlink_metadata(path)?.file_type().is_symlink() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "the Git metadata file is a link",
+        ));
+    }
+    std::fs::File::open(path)
 }
 
 /// The git directory shared by every worktree of the repository holding
@@ -42,13 +101,16 @@ fn common_dir(cwd: &Path) -> Option<PathBuf> {
     }
     // A worktree: `.git` is a file `gitdir: <dir>`, and `<dir>/commondir`
     // names the shared directory relative to it.
-    let text = std::fs::read_to_string(&dot_git).ok()?;
+    let text = read_metadata(&dot_git).ok()?;
     let gitdir = text.lines().find_map(|l| l.strip_prefix("gitdir:"))?.trim();
     let base = dot_git.parent()?;
     let gitdir = base.join(gitdir);
-    match std::fs::read_to_string(gitdir.join("commondir")) {
+    match read_metadata(&gitdir.join("commondir")) {
         Ok(common) => Some(gitdir.join(common.trim())),
-        Err(_) => Some(gitdir),
+        // A missing `commondir` means the worktree's directory is the common
+        // one; a present but unsafe one names nothing.
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Some(gitdir),
+        Err(_) => None,
     }
 }
 
