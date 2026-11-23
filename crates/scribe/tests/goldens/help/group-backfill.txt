@@ -1,0 +1,18 @@
+Store earlier typed turns for each current seat holder
+
+Usage: scribe group backfill [OPTIONS] <ID>
+
+Arguments:
+  <ID>  Group id, unique prefix, or project group slug
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Global options:
+      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json                 Shorthand for --format json
+
+Example: scribe group backfill <id> --json

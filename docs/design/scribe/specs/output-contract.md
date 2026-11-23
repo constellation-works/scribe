@@ -1092,6 +1092,8 @@ do, in the store `root` names.
 
 ## Session groups
 
+`group backfill <id>` reports `group`, `members` (each with `seat`, `session`, `stored`, `skipped`, and `transcript_unavailable`), and total `stored` and `skipped` in JSON. Skipped counts are eligible turns already stored; an unavailable or refused transcript is named separately because its turn count is unknown. Terminal output gives the same counts and marks unavailable transcripts.
+
 `group open`, `group join`, `group leave`, `group close` and `group show` return one group.
 Its JSON fields are `id`, optional `slug` (present on project groups, omitted when
 absent), `title`, `kind`, `project`, `opened`, `closed` (null while open),

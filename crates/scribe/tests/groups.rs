@@ -4027,3 +4027,65 @@ fn a_join_without_a_readable_transcript_still_joins_and_stores_nothing() {
         json!([B])
     );
 }
+
+#[test]
+fn backfill_existing_holders_is_idempotent_and_keeps_capture_cursor() {
+    let f = Fixture::new();
+    transcript(&f, A, &[row_at(A, "u", "user", QUOTE, OLD)]);
+    open(&f);
+    // Join without a transcript, as old versions did without earlier turns.
+    join(&f, B, "g-1", &[], 0);
+    join_as(&f, C, "g-1", "missing", &[], 0);
+    let [slash, queued] = desktop_rows(B);
+    let mut rows = vec![slash, queued];
+    rows.extend(never_stored(B, A));
+    transcript(&f, B, &rows);
+    let db = rusqlite::Connection::open(f.root().join("scribe.db")).unwrap();
+    let cursor = || {
+        db.query_row(
+            "SELECT turn_cursor FROM group_members WHERE session = ?1",
+            [B],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .unwrap()
+    };
+    db.execute(
+        "UPDATE group_members SET turn_cursor = 'later-cursor' WHERE session = ?1",
+        [B],
+    )
+    .unwrap();
+    let before = cursor();
+    let result = invoke(&f, A, &["group", "backfill", "g-1"], 0);
+    assert_eq!(result["stored"], 2);
+    assert_eq!(result["members"][0]["seat"], "editor");
+    assert_eq!(result["members"][0]["session"], B);
+    assert_eq!(result["members"][1]["transcript_unavailable"], true);
+    assert_eq!(stored_turns(&f, B), ["slash", "queued"]);
+    assert_eq!(cursor(), before);
+    let repeat = invoke(&f, A, &["group", "backfill", "g-1"], 0);
+    assert_eq!(repeat["stored"], 0);
+    assert_eq!(repeat["skipped"], 2);
+    assert_eq!(cursor(), before);
+    assert_eq!(model_calls(&f), 0);
+}
+
+#[test]
+fn backfill_reports_terminal_and_refuses_closed_groups() {
+    let f = Fixture::new();
+    transcript(&f, A, &[row_at(A, "u", "user", QUOTE, OLD)]);
+    open(&f);
+    join(&f, B, "g-1", &[], 0);
+    let out = f.cmd(&["group", "backfill", "g-1"]).output().unwrap();
+    assert!(out.status.success());
+    let stdout = text(&out.stdout);
+    assert!(
+        stdout.contains(B)
+            && stdout.contains("transcript unavailable")
+            && stdout.contains("Total:"),
+        "{stdout}"
+    );
+    let fake = summary_model(&f);
+    assert!(close_as(&f, &fake, A).status.success());
+    let error = invoke(&f, A, &["group", "backfill", "g-1"], 1);
+    assert_eq!(error["code"], "group_membership");
+}

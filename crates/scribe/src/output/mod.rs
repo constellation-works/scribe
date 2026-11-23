@@ -16,12 +16,12 @@ mod table;
 
 pub(crate) use payload::{
     AskPayload, BatchFailure, BriefPayload, CoveredPayload, DeactivatedPayload,
-    DeactivationFailure, EntryPayload, ExportPayload, HitPayload, HookOutcome, HookReply, Kin,
-    MemoryBlockPayload, MemoryPayload, MemoryRulesPayload, MemoryScanPayload, MigratePayload,
-    Output, PassPayload, PassReport, PluginError, PluginReply, PopupRows, ProposalPayload,
-    ReappliedPayload, Record, Records, RefreshPayload, RevisionPayload, ScanReport,
-    SessionHandoffsPayload, SessionPayload, SessionsContext, TagPayload, TagShowPayload,
-    TranscriptPayload, TreeRow, WarningPayload,
+    DeactivationFailure, EntryPayload, ExportPayload, GroupBackfill, GroupBackfillMember,
+    HitPayload, HookOutcome, HookReply, Kin, MemoryBlockPayload, MemoryPayload, MemoryRulesPayload,
+    MemoryScanPayload, MigratePayload, Output, PassPayload, PassReport, PluginError, PluginReply,
+    PopupRows, ProposalPayload, ReappliedPayload, Record, Records, RefreshPayload, RevisionPayload,
+    ScanReport, SessionHandoffsPayload, SessionPayload, SessionsContext, TagPayload,
+    TagShowPayload, TranscriptPayload, TreeRow, WarningPayload,
 };
 pub(crate) use sink::{FORMAT_ENV, FormatArg, Sink, help_width};
 
@@ -82,6 +82,7 @@ pub(crate) fn finish(sink: &Sink, outcome: Result<(Output, ShortIds), CliError>)
             | Output::List { .. }
             | Output::Show { .. }
             | Output::Written { .. }
+            | Output::GroupBackfill(_)
             | Output::Hook(_)
             | Output::Scan(_)
             | Output::Ask(_)
@@ -216,6 +217,7 @@ fn emit(sink: &Sink, shorts: &ShortIds, output: &Output) -> io::Result<()> {
         | Output::Show { .. }
         | Output::Written { .. }
         | Output::Pass(_)
+        | Output::GroupBackfill(_)
         | Output::Scan(_)
         | Output::Ask(_)
         | Output::Popup
@@ -247,6 +249,7 @@ fn emit(sink: &Sink, shorts: &ShortIds, output: &Output) -> io::Result<()> {
         Output::Show { record } | Output::Written { record, .. } => {
             render::show(&mut out, sink, shorts, record)?;
         }
+        Output::GroupBackfill(report) => render::group_backfill(&mut out, sink, report)?,
         Output::Hook(reply) => render::hook(&mut out, reply)?,
         Output::Pass(report) => render::pass(&mut out, sink, shorts, report)?,
         Output::Scan(report) => render::scan(&mut out, sink, report)?,

@@ -206,6 +206,7 @@ pub(crate) fn short_ids(output: &Output, ctx: &Context) -> scribe_core::ShortIds
         }
         Output::Init(_)
         | Output::Hook(_)
+        | Output::GroupBackfill(_)
         | Output::Scan(_)
         | Output::Ask(_)
         | Output::Plugin(_)

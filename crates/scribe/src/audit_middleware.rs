@@ -166,6 +166,7 @@ impl<'a> AuditGuard<'a> {
         self.lines = match result {
             Ok(Output::Init(report)) if !report.changed => Vec::new(),
             Ok(Output::Written { changed: false, .. }) => Vec::new(),
+            Ok(Output::GroupBackfill(report)) if report.stored == 0 => Vec::new(),
             Ok(Output::Hook(reply)) => reply
                 .outcomes
                 .iter()
@@ -373,6 +374,7 @@ fn target_of(output: &Output) -> Option<String> {
     match output {
         Output::Init(report) => Some(report.provider.to_string()),
         Output::Written { record, .. } => record_target(record),
+        Output::GroupBackfill(report) => Some(report.group.clone()),
         Output::Show {
             record: Record::Group(g),
         } => Some(g.id.clone()),

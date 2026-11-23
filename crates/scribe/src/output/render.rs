@@ -2113,3 +2113,37 @@ pub(super) fn init(
     }
     Ok(())
 }
+
+/// Render the result of a group backfill.
+pub(crate) fn group_backfill(
+    out: &mut dyn Write,
+    sink: &Sink,
+    report: &super::GroupBackfill,
+) -> io::Result<()> {
+    if sink.mode == super::sink::OutputMode::Json {
+        serde_json::to_writer(&mut *out, report)?;
+        writeln!(out)?;
+    } else {
+        for member in &report.members {
+            writeln!(
+                out,
+                "{} {}: {} stored, {} skipped{}",
+                member.seat,
+                member.session,
+                member.stored,
+                member.skipped,
+                if member.transcript_unavailable {
+                    " (transcript unavailable)"
+                } else {
+                    ""
+                }
+            )?;
+        }
+        writeln!(
+            out,
+            "Total: {} stored, {} skipped",
+            report.stored, report.skipped
+        )?;
+    }
+    Ok(())
+}

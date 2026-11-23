@@ -2276,6 +2276,24 @@ pub(crate) struct PopupRows {
     pub(crate) color: bool,
 }
 
+/// Result of backfilling the current holders of a group.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct GroupBackfill {
+    pub(crate) group: String,
+    pub(crate) members: Vec<GroupBackfillMember>,
+    pub(crate) stored: usize,
+    pub(crate) skipped: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct GroupBackfillMember {
+    pub(crate) seat: String,
+    pub(crate) session: String,
+    pub(crate) stored: usize,
+    pub(crate) skipped: usize,
+    pub(crate) transcript_unavailable: bool,
+}
+
 /// What a command produced, before rendering.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Output {
@@ -2316,6 +2334,8 @@ pub(crate) enum Output {
         /// that a deactivation unpinned the session.
         notices: Vec<String>,
     },
+    /// Group backfill counts.
+    GroupBackfill(GroupBackfill),
     /// A hook's reply.
     Hook(HookReply),
     /// A session pass's report.

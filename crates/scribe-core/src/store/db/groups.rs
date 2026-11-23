@@ -951,6 +951,50 @@ impl Store {
         })
     }
 
+    /// Backfill verified turns for the current holders without changing capture cursors.
+    /// Membership and the open state are checked again in the write transaction.
+    pub fn backfill_group_turns(
+        &self,
+        id: &str,
+        members: &[(SessionId, Vec<NewMessage>)],
+        redactor: &Redactor,
+    ) -> Result<Vec<usize>> {
+        for (session, turns) in members {
+            check_own_user_turns(session, turns)?;
+        }
+        let n = self.group_number(id)?;
+        self.write(|| {
+            let conn = open_writer(self.root(), self.lock_wait)?;
+            let path = self.root().join(DB_FILE);
+            let fail = |e| db_error("backfill group turns in", &path, e);
+            let open: bool = conn.query_row(
+                "SELECT closed IS NULL FROM groups WHERE id = ?1", [n], |r| r.get(0),
+            ).map_err(fail)?;
+            if !open {
+                return Err(refusal(WriteRefusal::GroupMembership, "the group is already closed"));
+            }
+            let holders: i64 = conn.query_row(
+                &format!("SELECT count(*) FROM group_members m WHERE m.group_id = ?1 AND {HOLDS_SEAT}"),
+                [n], |r| r.get(0),
+            ).map_err(fail)?;
+            if usize::try_from(holders).ok() != Some(members.len()) {
+                return Err(refusal(WriteRefusal::GroupMembership, "group membership changed during backfill; retry"));
+            }
+            let mut counts = Vec::with_capacity(members.len());
+            for (session, turns) in members {
+                let holds: bool = conn.query_row(
+                    &format!("SELECT EXISTS(SELECT 1 FROM group_members m WHERE m.group_id = ?1 AND m.session = ?2 AND {HOLDS_SEAT})"),
+                    params![n, session.as_str()], |r| r.get(0),
+                ).map_err(fail)?;
+                if !holds {
+                    return Err(refusal(WriteRefusal::GroupMembership, "group membership changed during backfill; retry"));
+                }
+                counts.push(write_captured_turns(&conn, &path, session, turns.iter().collect(), redactor)?);
+            }
+            Ok(counts)
+        })
+    }
+
     /// Whether an open group authorizes capture for this session. A missing,
     /// closed or forgotten membership takes no write lock in the hook.
     pub fn captures_group_turns(&self, session: &SessionId) -> Result<bool> {
