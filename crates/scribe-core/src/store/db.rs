@@ -52,6 +52,8 @@ use std::time::{Duration, Instant};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
+pub use groups::{ClaudeCapturePosition, ClaudeGroupCapture};
+
 /// The database's file name under the store root.
 pub const DB_FILE: &str = "scribe.db";
 
@@ -73,6 +75,7 @@ const MIGRATIONS: &[&str] = &[
     groups::V12,
     V13,
     docs::V14,
+    groups::V15,
 ];
 
 /// Pending first-prompt ancestry checks for starts before transcript creation.
@@ -1106,6 +1109,8 @@ pub(super) fn db_error(action: &'static str, path: &Path, e: rusqlite::Error) ->
 /// Restore the schema-10 shape before exercising migrations from an older version.
 #[cfg(test)]
 pub(super) const REMOVE_GROUP_CAPTURE_SCHEMA: &str = "
+DROP TABLE group_claude_seen;
+DROP TABLE group_claude_progress;
 DROP TABLE deferred_ancestry;
 DROP INDEX group_open_slug;
 ALTER TABLE groups DROP COLUMN slug;

@@ -47,7 +47,7 @@ mod candidates;
 mod continuation;
 pub use continuation::HandoffSelection;
 mod db;
-pub use db::DB_FILE;
+pub use db::{ClaudeCapturePosition, ClaudeGroupCapture, DB_FILE};
 mod documents;
 pub use documents::Moved;
 mod format;

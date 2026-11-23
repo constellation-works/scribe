@@ -560,6 +560,35 @@ pub fn claude_conversation_raw_typed(bytes: &[u8]) -> Vec<Spoken> {
 }
 
 fn read_claude_conversation(bytes: &[u8], own: impl Fn(&str) -> String) -> Vec<Spoken> {
+    let claims = claude_claims(bytes);
+    transcript::parse(bytes)
+        .into_iter()
+        .map(|message| {
+            let claim = claims.get(&message.uuid);
+            let entrypoint = claim.and_then(|c| c.entrypoint.clone());
+            let typed = verified_words(&message, claim.is_some_and(|c| !c.origin_blocked))
+                .map(|words| own(&words))
+                .filter(|own| !own.trim().is_empty());
+            let interactive = entrypoint
+                .as_deref()
+                .is_some_and(|e| INTERACTIVE_ENTRYPOINTS.contains(&e));
+            Spoken {
+                message,
+                typed,
+                entrypoint,
+                interactive,
+            }
+        })
+        .collect()
+}
+
+fn verified_words(message: &Message, permitted: bool) -> Option<String> {
+    transcript::user_turn(message)
+        .filter(|_| permitted && !capture::agent_originated(&[], &message.text()))
+        .map(|turn| turn.own)
+}
+
+fn claude_claims(bytes: &[u8]) -> BTreeMap<String, Claims> {
     let mut claims: BTreeMap<String, Claims> = BTreeMap::new();
     for line in bytes.split(|&b| b == b'\n') {
         let Ok(meta) = serde_json::from_slice::<LineMeta>(line) else {
@@ -587,29 +616,98 @@ fn read_claude_conversation(bytes: &[u8], own: impl Fn(&str) -> String) -> Vec<S
             }
         });
     }
-    transcript::parse(bytes)
-        .into_iter()
-        .map(|message| {
-            let claim = claims.get(&message.uuid);
-            let entrypoint = claim.and_then(|c| c.entrypoint.clone());
-            let typed = transcript::user_turn(&message)
-                .filter(|_| {
-                    claim.is_some_and(|c| !c.origin_blocked)
-                        && !capture::agent_originated(&[], &message.text())
+    claims
+}
+
+/// Parsed Claude transcript lines for group capture. A batch can be the
+/// whole transcript or a suffix starting at a JSONL record boundary.
+pub struct ClaudeGroupTurns {
+    session: SessionId,
+    messages: Vec<Message>,
+    claims: BTreeMap<String, bool>,
+}
+
+/// The first origin claim and whether a parseable message has already been
+/// seen for an id. These are separate because a metadata line can supply
+/// claims even when it does not produce a message.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct ClaudeSeen {
+    pub(crate) permitted: Option<bool>,
+    pub(crate) message: bool,
+}
+
+impl ClaudeGroupTurns {
+    /// Apply the session filter and parse this batch before taking a store lock.
+    #[must_use]
+    pub fn parse(bytes: &[u8], session: &SessionId) -> Self {
+        let local = claude_session_lines(bytes, session);
+        Self {
+            session: session.clone(),
+            messages: transcript::parse_claude(&local),
+            claims: claude_claims(&local)
+                .into_iter()
+                .map(|(uuid, claim)| {
+                    let interactive = claim
+                        .entrypoint
+                        .as_deref()
+                        .is_none_or(|e| INTERACTIVE_ENTRYPOINTS.contains(&e));
+                    (uuid, interactive && !claim.origin_blocked)
                 })
-                .map(|turn| own(&turn.own))
-                .filter(|own| !own.trim().is_empty());
-            let interactive = entrypoint
-                .as_deref()
-                .is_some_and(|e| INTERACTIVE_ENTRYPOINTS.contains(&e));
-            Spoken {
-                message,
-                typed,
-                entrypoint,
-                interactive,
+                .collect(),
+        }
+    }
+
+    /// Whether there are messages for which the caller may need its redactor.
+    #[must_use]
+    pub fn has_user_messages(&self) -> bool {
+        self.messages.iter().any(|m| m.role == Speaker::User)
+    }
+
+    pub(crate) fn session(&self) -> &SessionId {
+        &self.session
+    }
+
+    /// Keep first-copy semantics across batches, including ids whose first
+    /// copy was rejected. The index only receives hashed ids and flags.
+    pub(crate) fn resolve<E>(
+        mut self,
+        mut lookup: impl FnMut(&str) -> Result<ClaudeSeen, E>,
+    ) -> Result<ResolvedClaudeTurns, E> {
+        let mut turns = Vec::new();
+        let mut seen = Vec::new();
+        for message in self.messages {
+            let id = capture::prompt_sha256(&message.uuid);
+            let previous = lookup(&id)?;
+            let permitted = previous.permitted.or(self.claims.remove(&message.uuid));
+            let current = ClaudeSeen {
+                permitted,
+                message: true,
+            };
+            if current != previous {
+                seen.push((id, current));
             }
-        })
-        .collect()
+            if !previous.message
+                && let Some(words) = verified_words(&message, permitted == Some(true))
+                && let Some(turn) = crate::message::typed_turn(&self.session, &message, &words)
+            {
+                turns.push(turn);
+            }
+        }
+        for (uuid, permitted) in self.claims {
+            let id = capture::prompt_sha256(&uuid);
+            let mut previous = lookup(&id)?;
+            if previous.permitted.is_none() {
+                previous.permitted = Some(permitted);
+                seen.push((id, previous));
+            }
+        }
+        Ok(ResolvedClaudeTurns { turns, seen })
+    }
+}
+
+pub(crate) struct ResolvedClaudeTurns {
+    pub(crate) turns: Vec<crate::message::NewMessage>,
+    pub(crate) seen: Vec<(String, ClaudeSeen)>,
 }
 
 /// A Codex rollout as the check reads it. The session's interactivity is

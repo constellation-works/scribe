@@ -334,6 +334,26 @@ fn read_checked_with(
     session: &SessionId,
     rollout: Rollout,
 ) -> Result<Option<Vec<u8>>, Unreadable> {
+    let Some((file, _)) = open_checked(ctx, path, session)? else {
+        return Ok(None);
+    };
+    read_opened(ctx, path, file, rollout)
+        .map(Some)
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::InvalidInput {
+                Unreadable::Refused(e.to_string())
+            } else {
+                Unreadable::Io(e)
+            }
+        })
+}
+
+/// Open and check one file before any read or seek.
+pub(super) fn open_checked(
+    ctx: &crate::app::Context,
+    path: &Path,
+    session: &SessionId,
+) -> Result<Option<(std::fs::File, std::fs::Metadata)>, Unreadable> {
     let refused = |why: &str| Unreadable::Refused(String::from(why));
     let root = ctx
         .transcript_roots()
@@ -360,14 +380,7 @@ fn read_checked_with(
         return Err(refused("the transcript is not a regular file"));
     }
     owned_by_this_user(&meta).map_err(Unreadable::Refused)?;
-    let bytes = read_opened(ctx, path, file, rollout).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::InvalidInput {
-            Unreadable::Refused(e.to_string())
-        } else {
-            Unreadable::Io(e)
-        }
-    })?;
-    Ok(Some(bytes))
+    Ok(Some((file, meta)))
 }
 
 /// Why [`read_checked`] gave no bytes for a transcript that exists.
