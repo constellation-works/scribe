@@ -573,7 +573,7 @@ fn jsonl_export_omits_a_preexisting_forgotten_checkpoint_until_upgrade_erases_it
             &Redactor::default(),
         )
         .unwrap();
-    assert_eq!(user_version(&root), 9);
+    assert_eq!(user_version(&root), 10);
     assert_eq!(checkpoint_record(&root, "s-1"), None);
     assert!(
         checkpoint_record(&root, "s-2")
@@ -632,4 +632,98 @@ fn forgetting_again_erases_a_stale_checkpoint_and_keeps_a_live_one() {
     );
     assert!(!on_disk(&root, STALE_CHECKPOINT));
     assert!(on_disk(&root, LIVE_CHECKPOINT));
+}
+
+#[test]
+fn schema_eight_cleanup_retries_after_a_reader_releases_the_wal() {
+    let pair = forgotten_pair();
+    let root = pair.store.root().to_path_buf();
+    stage_legacy_checkpoint(&root, "s-1", STALE_CHECKPOINT, Some(6));
+    let reader = rusqlite::Connection::open(root.join(db::DB_FILE)).unwrap();
+    reader.execute_batch("BEGIN").unwrap();
+    let _: i64 = reader
+        .query_row("SELECT count(*) FROM rebuild_checkpoints", [], |r| r.get(0))
+        .unwrap();
+    let store = Store::open(&root).with_lock_wait(std::time::Duration::from_millis(50));
+    let write = || {
+        store.write_messages(
+            &[NewMessage {
+                session: "s-9".parse().unwrap(),
+                message: String::from("retry"),
+                role: Speaker::User,
+                at: T0,
+                text: String::from("unrelated"),
+            }],
+            &Redactor::default(),
+        )
+    };
+    let exported = jsonl_text(&store, &pair.dir.path().join("before-retry"));
+    assert!(!exported.contains(STALE_CHECKPOINT));
+    assert!(exported.contains(LIVE_CHECKPOINT));
+    assert!(write().is_err(), "a reader must prevent completing cleanup");
+    let exported = jsonl_text(&store, &pair.dir.path().join("during-retry"));
+    assert!(!exported.contains(STALE_CHECKPOINT));
+    assert!(exported.contains(LIVE_CHECKPOINT));
+    reader.execute_batch("ROLLBACK").unwrap();
+    drop(reader);
+    write().unwrap();
+    assert_eq!(checkpoint_record(&root, "s-1"), None);
+    assert!(
+        checkpoint_record(&root, "s-2")
+            .unwrap()
+            .contains(LIVE_CHECKPOINT)
+    );
+    assert!(!on_disk(&root, STALE_CHECKPOINT));
+    let exported = jsonl_text(&store, &pair.dir.path().join("after-retry"));
+    assert!(!exported.contains(STALE_CHECKPOINT));
+    assert!(exported.contains(LIVE_CHECKPOINT));
+}
+
+#[test]
+fn schema_nine_retries_cleanup_left_by_an_older_writer() {
+    let pair = forgotten_pair();
+    let root = pair.store.root().to_path_buf();
+    stage_legacy_checkpoint(&root, "s-1", STALE_CHECKPOINT, Some(9));
+    let reader = rusqlite::Connection::open(root.join(db::DB_FILE)).unwrap();
+    reader.execute_batch("BEGIN").unwrap();
+    let _: i64 = reader
+        .query_row("SELECT count(*) FROM rebuild_checkpoints", [], |r| r.get(0))
+        .unwrap();
+    let old_writer = rusqlite::Connection::open(root.join(db::DB_FILE)).unwrap();
+    old_writer.busy_timeout(std::time::Duration::ZERO).unwrap();
+    old_writer.execute_batch("PRAGMA secure_delete = ON; DELETE FROM rebuild_checkpoints WHERE session IN (SELECT id FROM sessions WHERE forgotten IS NOT NULL);").unwrap();
+    let busy: i64 = old_writer
+        .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0))
+        .unwrap();
+    assert_ne!(busy, 0);
+    drop(old_writer);
+    assert!(on_disk(&root, STALE_CHECKPOINT));
+    let store = Store::open(&root).with_lock_wait(std::time::Duration::from_millis(50));
+    let write = || {
+        store.write_messages(
+            &[NewMessage {
+                session: "s-9".parse().unwrap(),
+                message: String::from("retry"),
+                role: Speaker::User,
+                at: T0,
+                text: String::from("unrelated"),
+            }],
+            &Redactor::default(),
+        )
+    };
+    assert!(write().is_err());
+    assert_eq!(user_version(&root), 9);
+    let exported = jsonl_text(&store, &pair.dir.path().join("old-before"));
+    assert!(!exported.contains(STALE_CHECKPOINT));
+    assert!(exported.contains(LIVE_CHECKPOINT));
+    reader.execute_batch("ROLLBACK").unwrap();
+    drop(reader);
+    write().unwrap();
+    assert_eq!(user_version(&root), 10);
+    assert!(!on_disk(&root, STALE_CHECKPOINT));
+    assert!(
+        checkpoint_record(&root, "s-2")
+            .unwrap()
+            .contains(LIVE_CHECKPOINT)
+    );
 }

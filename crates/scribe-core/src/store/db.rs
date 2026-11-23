@@ -58,7 +58,7 @@ pub const DB_FILE: &str = "scribe.db";
 /// The schema, one step per `user_version`: step `n` (1-based) moves the
 /// database from version `n - 1` to `n`. Append only; never edit a shipped
 /// step.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, groups::V9];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, groups::V9, V10];
 
 /// Version 1 (phase 4): `meta`, `messages` and its FTS5 index, and the
 /// memory tables phase 5 uses.
@@ -429,10 +429,6 @@ CREATE TABLE pending_archive_forgets (
 /// Version 7: optional handoff refresh mode.
 const V7: &str = "ALTER TABLE entries ADD COLUMN handoff_mode TEXT CHECK (handoff_mode IS NULL OR handoff_mode IN ('continue', 'new'));";
 
-/// `user_version` before [`V8`]. The repair runs once, when a writer opens
-/// a database this build's previous schema left behind.
-const FORGOTTEN_CHECKPOINT_REPAIR_FROM: u32 = 7;
-
 /// Version 8: drop rebuild checkpoints an older build could write after
 /// `#scribe forget` (STD-03 R26). No table changes. A forgotten session's
 /// checkpoint is plaintext the forget was supposed to delete; checkpoints
@@ -442,6 +438,9 @@ const V8: &str = "
 DELETE FROM rebuild_checkpoints
 WHERE session IN (SELECT id FROM sessions WHERE forgotten IS NOT NULL);
 ";
+
+/// Version 10 marks completion of the schema-8 WAL cleanup barrier.
+const V10: &str = "SELECT 1;";
 
 /// The newest schema version this build reads and writes.
 /// Refuse, for a reader as for a writer, a database a newer build migrated
@@ -571,6 +570,26 @@ fn migrate(conn: &mut Connection, path: &Path) -> Result<()> {
     let target = schema();
     loop {
         let started = Instant::now();
+        // Versions 8 and 9 may have committed the deletion without finishing
+        // its physical cleanup. Version 10 is the durable completion marker.
+        // Checkpoint outside the transaction; never let a busy reader erase
+        // the obligation. Recheck the version under the write lock below.
+        let observed: u32 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .map_err(|e| db_error("read the schema version of", path, e))?;
+        let cleaned = (8..=9).contains(&observed);
+        if cleaned {
+            let busy: i64 = conn
+                .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))
+                .map_err(|e| write_error("checkpoint", path, started, e))?;
+            if busy != 0 {
+                return Err(Error::Locked {
+                    path: path.to_path_buf(),
+                    holder: String::from("a scribe.db reader"),
+                    waited_ms: started.elapsed().as_millis(),
+                });
+            }
+        }
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|e| write_error("migrate", path, started, e))?;
@@ -584,6 +603,11 @@ fn migrate(conn: &mut Connection, path: &Path) -> Result<()> {
                 supported: target,
             });
         }
+        if (8..=9).contains(&version) && !cleaned {
+            tx.commit()
+                .map_err(|e| write_error("migrate", path, started, e))?;
+            continue;
+        }
         if version == target {
             return tx
                 .commit()
@@ -595,13 +619,6 @@ fn migrate(conn: &mut Connection, path: &Path) -> Result<()> {
         };
         tx.execute_batch(step)
             .map_err(|e| db_error("migrate", path, e))?;
-        // Count the repair's delete before the version bump. `changes` is
-        // the last statement, and the bump is not that delete.
-        let removed_checkpoints = if version == FORGOTTEN_CHECKPOINT_REPAIR_FROM {
-            tx.changes()
-        } else {
-            0
-        };
         if version == 0 {
             let created = now();
             tx.execute(
@@ -614,11 +631,6 @@ fn migrate(conn: &mut Connection, path: &Path) -> Result<()> {
             .map_err(|e| db_error("migrate", path, e))?;
         tx.commit()
             .map_err(|e| write_error("migrate", path, started, e))?;
-        // A removed checkpoint's plaintext leaves the WAL, as a forget's
-        // own delete does. Skip that checkpoint when the repair removed nothing.
-        if removed_checkpoints > 0 {
-            truncate_wal(conn, path, started)?;
-        }
     }
 }
 
