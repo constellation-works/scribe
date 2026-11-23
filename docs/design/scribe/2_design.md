@@ -225,6 +225,20 @@ Rules every verb keeps:
   prefix is accepted back; a group record's terminal table also counts the
   session ids held by its seats, even when they are not cataloged. Piped and
   `--json` output keep the full id (STD-01 R15).
+
+The manual-link row reports the hook process exit and its audited refusal code.
+
+<!-- session-id-outcomes:start -->
+| Case | Outcome | Exit | Error code |
+| --- | --- | --- | --- |
+| Unmatched related reference on entry add | Success; retain the literal reference | 0 | — |
+| Manual link to an unknown session | Refused; no link or switch changes | 0 | `link_unknown_session` |
+| Pass for an unmatched session | Refused as not switched on | 1 | `session_not_on` |
+| Instruction lookup with no matching transcript | Refused when transcript is absent | 1 | `instruction_not_found` |
+| Instruction lookup by unique uncataloged transcript prefix | Success; citation stores the full session ID | 0 | — |
+| Instruction lookup by ambiguous transcript prefix | Refused; no entry changes | 2 | `id_ambiguous` |
+<!-- session-id-outcomes:end -->
+
 - **Argument checks come first.** A write verb refuses a bad argument
   (unknown tag, blank content or reason, an id that matches nothing, a
   repeated tag) before it reports an unset `[redact] env` name, so the

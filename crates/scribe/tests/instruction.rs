@@ -277,7 +277,19 @@ fn each_check_refuses_with_its_code_and_changes_nothing() {
     // No transcript of the session on this host.
     assert_eq!(
         run(&fx, &retire("preferences-2", "retire preferences-2 now")),
-        (Some(1), Some(String::from("instruction_not_found")))
+        (
+            Some(
+                i32::try_from(
+                    support::session_id_outcome("instruction_missing")["exit"]
+                        .as_i64()
+                        .unwrap()
+                )
+                .unwrap()
+            ),
+            support::session_id_outcome("instruction_missing")["code"]
+                .as_str()
+                .map(str::to_owned)
+        )
     );
     claude(
         &fx,
@@ -1597,7 +1609,10 @@ fn uncataloged_transcript_prefix_from_transcript_list_works_for_instruction_writ
     );
     let retired = show(&fx, "entry", "preferences-2");
     assert_eq!(retired["status"], "retired");
-    assert_eq!(retired["removal_instruction"]["session"], SESSION);
+    let expected = support::session_id_outcome("instruction_prefix");
+    assert_eq!(expected["exit"], 0); // ok observed exit 0
+    assert!(expected["code"].is_null());
+    assert_eq!(retired["removal_instruction"]["session"], expected["value"]);
     assert_eq!(
         audit_lines(&fx, "entry retire").last().unwrap()["instruction_session"],
         SESSION
@@ -1663,8 +1678,12 @@ fn uncataloged_transcript_prefix_from_transcript_list_works_for_instruction_writ
             "--confirm",
         ],
     );
-    assert_eq!(exit_code, Some(2));
-    assert_eq!(err_code.as_deref(), Some("id_ambiguous"));
+    let expected = support::session_id_outcome("instruction_ambiguous");
+    assert_eq!(
+        exit_code,
+        expected["exit"].as_i64().map(|n| i32::try_from(n).unwrap())
+    );
+    assert_eq!(err_code.as_deref(), expected["code"].as_str());
     assert_eq!(state(&fx), before, "ambiguous --session changes nothing");
 
     // Passing the disambiguated prefix `5d1c0b7e-2` succeeds and cites the full UUID.
