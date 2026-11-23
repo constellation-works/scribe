@@ -24,7 +24,7 @@ scribe is a standalone Rust CLI and Orbit plugin that records explicitly marked 
 - Follow [ARCHITECTURE.md](ARCHITECTURE.md) for layer boundaries and ownership.
 - Store writes go through `Store::write`, or `Store::transaction` for a whole command, so a write and its audit row commit in one `scribe.db` transaction; never hold one across a model call ([store/write.rs](crates/scribe-core/src/store/write.rs)). Reads never write or lock.
 - `Command::audit` decides for every command whether it is audited; reads return `None`. Audit lines carry ids and error codes, never argument values, content or model text ([decision](docs/design/scribe/4_decisions.md#mutating-commands-are-audited-through-one-guard)).
-- `--json` field names, the list envelope and the store's persisted shape are contracts: add fields, never rename or retype them (STD-01 R10). A persisted-shape change bumps the store format and appends a step to `UPGRADES` in [store/format.rs](crates/scribe-core/src/store/format.rs).
+- `--json` field names, the list envelope and the store's persisted shape are contracts: add fields, never rename or retype them (STD-01 R10). A document-shape change bumps the document format and appends a step to `UPGRADES` in [store/format.rs](crates/scribe-core/src/store/format.rs). SQL-only schema changes append a database migration in [store/db.rs](crates/scribe-core/src/store/db.rs); they do not bump the document format unless they also change a document shape.
 - Product behavior and decisions belong in [scribe design docs](docs/design/scribe/); new feature docs start from [the design template](docs/design/_templates/).
 
 ## Tests
