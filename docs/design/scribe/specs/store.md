@@ -198,9 +198,16 @@ Only `config.toml` and `memory/`'s files remain as primary data files outside th
   `rebuild_checkpoints` rows whose session is forgotten (a
   checkpoint an older build could write after the forget) and adds no
   table. `scribe export --as jsonl` leaves those rows out even before that
-  migration runs. Version 9 adds the group, seat and membership tables. Before advancing past versions 8 or 9, a writer truncates the WAL; a busy reader makes the write fail and leaves the version available for retry. Version 10 records that cleanup without changing tables. Every table is `STRICT`; times are RFC 3339 UTC text.
-- **Errors.** A file SQLite cannot read as a database is `store_corrupt`;
-  any other SQLite failure is `store_database`.
+  migration runs. Version 9 adds the group, seat and membership tables. Before advancing past versions 8 or 9, a writer truncates the WAL; a busy reader makes the write fail and leaves the version available for retry. Version 10 records that cleanup without changing tables. Every application table is `STRICT`; the one virtual table, `messages_fts`, is an FTS5 index (`CREATE VIRTUAL TABLE`), and a virtual table takes no `STRICT` option. Times are RFC 3339 UTC text.
+- **Errors.** Contention is `store_locked`: a write that waits past the lock
+  wait (`SQLITE_BUSY` or `SQLITE_LOCKED`) fails with holder
+  `another scribe.db writer`, and a schema 8 or 9 WAL cleanup that a reader
+  keeps from completing fails with holder `a scribe.db reader`, leaving the
+  version for retry. A file SQLite cannot read as a database, or one it
+  reports as corrupt (`SQLITE_NOTADB` or `SQLITE_CORRUPT`), is
+  `store_corrupt`, naming the file. Any other SQLite failure is
+  `store_database`; readers set no busy timeout, so a read SQLite reports
+  busy is one too.
 
 ### Tables (version 10)
 
