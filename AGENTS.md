@@ -34,7 +34,7 @@ Reviewers check every change against the adopted standards and report violations
 
 ## Gates
 
-`make ci-fast` (fmt, structure, `standards-check`), `make ci-lint` and `make goldens` must pass before a task moves to review. After an intended change to help or output, run `make goldens UPDATE=1` and review the diff as a contract change. `make ci` (everything, including tests and doctests) runs in CI on Linux and macOS.
+`make ci-fast` (fmt, structure, `readme-links`, `standards-check`), `make ci-lint` and `make goldens` must pass before a task moves to review. After an intended change to help or output, run `make goldens UPDATE=1` and review the diff as a contract change. `make ci` (everything, including tests and doctests) runs in CI on Linux and macOS.
 
 ## Code
 
