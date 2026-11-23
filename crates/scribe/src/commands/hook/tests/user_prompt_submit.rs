@@ -31,7 +31,13 @@ impl Setup {
                    "message": {"role": "assistant", "content": [{"type": "text", "text": SPOKEN}]}}),
         ];
         let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
-        std::fs::write(projects.join(format!("{SESSION}.jsonl")), text).unwrap();
+        let transcript = projects.join(format!("{SESSION}.jsonl"));
+        std::fs::write(&transcript, text).unwrap();
+        // Owner-only, as Claude Code writes it: the umask must not decide it.
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&transcript, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
         let env = AppEnv {
             root: None,
             home: Some(home.into_os_string()),
@@ -226,7 +232,12 @@ impl Setup {
             .dir
             .path()
             .join(format!("home/.claude/projects/-work/{PAST}.jsonl"));
-        std::fs::write(path, text).unwrap();
+        std::fs::write(&path, text).unwrap();
+        // Owner-only, as Claude Code writes it: the umask must not decide it.
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
     }
 
     fn block(&self, input: &[u8]) -> String {

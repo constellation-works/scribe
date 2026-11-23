@@ -5,9 +5,10 @@
 //! the user can pipe JSON into `scribe hook`. Before a hook acts on a session,
 //! it confirms the payload's `transcript_path` is a Claude Code transcript
 //! of this user for that session: under the transcripts directory, named
-//! `<session_id>.jsonl`, a regular file (not a link) owned by this uid. That
-//! stops a confused agent or a mistyped command, not a hostile process of the
-//! same user; the design documents it as an accident guard (STD-05 R5).
+//! `<session_id>.jsonl`, a regular file (not a link) owned by this uid and
+//! writable by no group or other user. That stops a confused agent or a
+//! mistyped command, not a hostile process of the same user; the design
+//! documents it as an accident guard (STD-05 R5).
 
 use crate::error::CliError;
 use scribe_core::SessionId;
@@ -216,26 +217,34 @@ pub(in crate::commands) fn check_transcript(
     if !real.starts_with(&real_root) {
         return Err(String::from("transcript escapes its physical root"));
     }
-    owned_by_this_user(&meta)?;
+    private_to_this_user(&meta)?;
     Ok(Transcript::Present)
 }
 
+/// Whether the transcript is this user's alone to write: owned by this uid,
+/// with no group or other write bit. Every provenance decision calls this on
+/// the file it checked (path preflight, open handle, handle read), so a
+/// writable transcript is refused whichever entry point reached it (STD-05 R9).
 #[cfg(unix)]
-fn owned_by_this_user(meta: &std::fs::Metadata) -> Result<(), String> {
+fn private_to_this_user(meta: &std::fs::Metadata) -> Result<(), String> {
     use std::os::unix::fs::MetadataExt;
     let uid = rustix::process::geteuid().as_raw();
-    if meta.uid() == uid {
-        Ok(())
-    } else {
-        Err(format!(
+    if meta.uid() != uid {
+        return Err(format!(
             "the transcript is owned by uid {}, not this user (uid {uid})",
             meta.uid()
-        ))
+        ));
     }
+    if meta.mode() & 0o022 != 0 {
+        return Err(String::from(
+            "the transcript is writable by another user (a group or other write bit is set)",
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(not(unix))]
-fn owned_by_this_user(_meta: &std::fs::Metadata) -> Result<(), String> {
+fn private_to_this_user(_meta: &std::fs::Metadata) -> Result<(), String> {
     Ok(())
 }
 
@@ -379,7 +388,7 @@ pub(super) fn open_checked(
     if !meta.is_file() {
         return Err(refused("the transcript is not a regular file"));
     }
-    owned_by_this_user(&meta).map_err(Unreadable::Refused)?;
+    private_to_this_user(&meta).map_err(Unreadable::Refused)?;
     Ok(Some((file, meta)))
 }
 
@@ -445,9 +454,9 @@ fn is_link_refusal(e: &std::io::Error) -> bool {
     }
 }
 
-/// Validate the open `file` and read its bytes. A Codex rollout is also
-/// bounded, writable by no one else, and must name the session its own
-/// metadata does.
+/// Validate the open `file` and read its bytes. The owner and write-bit check
+/// runs on the handle before any byte is read, for every provider. A Codex
+/// rollout is also bounded and must name the session its own metadata does.
 fn read_opened(
     ctx: &crate::app::Context,
     path: &Path,
@@ -460,7 +469,7 @@ fn read_opened(
             "the transcript is not a regular file",
         )));
     }
-    owned_by_this_user(&meta).map_err(invalid)?;
+    private_to_this_user(&meta).map_err(invalid)?;
     if rollout == Rollout::Header {
         let mut bytes = Vec::new();
         file.take(64 * 1024).read_to_end(&mut bytes)?;
@@ -470,15 +479,6 @@ fn read_opened(
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;
         return Ok(bytes);
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        if meta.mode() & 0o022 != 0 {
-            return Err(invalid(String::from(
-                "Codex transcript is writable by another user",
-            )));
-        }
     }
     const MAX: u64 = 64 * 1024 * 1024;
     let mut bytes = Vec::new();

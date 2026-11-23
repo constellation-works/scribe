@@ -781,13 +781,14 @@ documented in [§9](#9-concerns--honest-limitations).
 As built (S2): the transcripts directory is `$CLAUDE_CONFIG_DIR/projects`,
 else `$HOME/.claude/projects`. The path must be absolute, without `.` or `..`
 components, inside that directory and named `<session_id>.jsonl`; when the
-file exists it must be a regular file (not a link) owned by this uid. A
+file exists it must be a regular file (not a link) owned by this uid and
+writable by no group or other user (STD-05 R9). A
 missing file passes, because a session's first prompt can reach the hook
 before Claude Code has written the transcript. Where a command goes on to
 read the transcript (`session catalog`, `transcript show` and `list`,
 `session rebuild`), the check and the read share one handle: the file is
 opened once, every component below the transcripts root without following
-links and without blocking on a pipe, and its type, owner and bytes come
+links and without blocking on a pipe, and its type, owner, mode and bytes come
 from that open file, so a path swapped for a link after discovery is refused
 rather than read (STD-03, STD-05 R7). A failed check records
 nothing; each `#scribe` line gets a `could not record` reply and an audit
@@ -3565,8 +3566,9 @@ it takes the store lock, finds that session's transcript on this host and
 runs these checks; any failure refuses the command and changes nothing.
 
 1. **Provenance.** The transcript passes §4.1's checks (under the
-   transcripts root, owned by this uid, named `<id>.jsonl`, one no-follow
-   handle for check and read), as `verify_quote` does today
+   transcripts root, owned by this uid and writable by no group or other user,
+   named `<id>.jsonl`, one no-follow handle for check and read), as
+   `verify_quote` does today
    (`crates/scribe/src/commands/entry.rs`). No transcript on this host:
    `instruction_not_found`.
 2. **His typed turn.** `--instruction` is a verbatim span (§6.4's check) of

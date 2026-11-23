@@ -148,6 +148,9 @@ impl Setup {
             })
             .collect();
         std::fs::write(self.transcript(), text).unwrap();
+        // Owner-only, as Claude Code writes it: the umask must not decide it.
+        std::fs::set_permissions(self.transcript(), std::fs::Permissions::from_mode(0o600))
+            .unwrap();
     }
 
     fn stamp(&self, ago: time::Duration) -> String {
@@ -317,6 +320,7 @@ fn a_live_catalog_keeps_the_recorded_project_when_resumed_with_another() {
         })
     ));
     std::fs::write(setup.transcript(), text).unwrap();
+    std::fs::set_permissions(setup.transcript(), std::fs::Permissions::from_mode(0o600)).unwrap();
     setup.run(&fake(Ok(answer())), Some("scribe")).unwrap();
     let record = setup.ctx.store().session(&setup.id()).unwrap().record;
     assert_eq!(record.project.as_str(), "orbit");
@@ -428,6 +432,7 @@ fn a_daniel_catalog_switch_is_finished_as_a_catalog_by_an_ordinary_pass() {
 fn an_empty_transcript_stays_due_and_calls_no_model() {
     let setup = Setup::new();
     std::fs::write(setup.transcript(), "").unwrap();
+    std::fs::set_permissions(setup.transcript(), std::fs::Permissions::from_mode(0o600)).unwrap();
     let models = fake(Ok(answer()));
     let report = setup.run(&models, None).unwrap();
     assert!(report.switch_written);
