@@ -22,6 +22,7 @@ use time::format_description::well_known::Rfc3339;
 
 const SESSION: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f";
 const CODEX_SESSION: &str = "11111111-2222-4333-8444-555555555555";
+const STORED_SESSION: &str = "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02";
 
 /// One transcript line: `(uuid, role, text, minutes before now)`.
 type Turn<'a> = (&'a str, &'a str, &'a str, i64);
@@ -1480,6 +1481,51 @@ fn claude_desktop_human_turn_is_accepted_and_non_human_desktop_turns_are_refused
     assert_eq!(show(&fx, "entry", "preferences-1")["status"], "retired");
     ok(&fx, &forget("preferences-1", forget_words));
     assert_eq!(show(&fx, "entry", "preferences-1")["status"], "forgotten");
+}
+
+#[test]
+fn store_session_resolution_survives_unreadable_claude_transcript_directory() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fx = store_with_agent_entry();
+    let memory_id = "2099-01-01-session-resolution";
+    let memory_dir = fx.root().join("memory/now");
+    fx.create_private_dir_all(&memory_dir);
+    let memory_path = memory_dir.join(format!("{memory_id}.md"));
+    std::fs::write(
+        &memory_path,
+        format!(
+            "---\ndate: 2099-01-01\nkind: plan\nsources:\n- {STORED_SESSION}\nupdated: 2026-11-22T00:00:00Z\n---\n# Session resolution\n\nKeep this item for the CLI regression test.\n"
+        ),
+    )
+    .unwrap();
+    make_private(&memory_path);
+
+    let locked = fx.home().join(".claude/projects/locked");
+    std::fs::create_dir_all(&locked).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    struct RestorePermissions(PathBuf);
+    impl Drop for RestorePermissions {
+        fn drop(&mut self) {
+            let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o700));
+        }
+    }
+    let _restore = RestorePermissions(locked);
+
+    let related = format!("session:{STORED_SESSION}");
+    fx.ok(&["entry", "list", "--related", &related]);
+    ok(
+        &fx,
+        &[
+            "memory",
+            "ack",
+            memory_id,
+            "--session",
+            STORED_SESSION,
+            "--author",
+            "opus",
+        ],
+    );
 }
 
 #[test]
