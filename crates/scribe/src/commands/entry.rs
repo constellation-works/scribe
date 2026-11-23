@@ -674,25 +674,56 @@ fn verify_self_refresh(
                 "invalid refresh session",
             )
         })?;
-    let path = payload::locate(ctx, &id)?;
-    let valid = path.as_ref().is_some_and(|path| {
-        matches!(
-            payload::check(ctx, path, &id),
-            Ok(payload::Transcript::Present)
-        ) && payload::read_for(ctx, path).ok().is_some_and(|bytes| {
+    // A clear continues the same interactive session. Follow at most 16
+    // verified predecessor edges, stopping as soon as a typed turn is found.
+    let mut link = id;
+    let mut seen = std::collections::HashSet::new();
+    for hops in 0..=16 {
+        let failed = |reason: &str| -> CliError {
+            scribe_core::Error::AgentWrite {
+                kind: scribe_core::WriteRefusal::QuoteNotFound,
+                message: format!("refresh session {link}: {reason}"),
+            }
+            .into()
+        };
+        if !seen.insert(link.clone()) {
+            return Err(failed("clear ancestry contains a cycle"));
+        }
+        let path = payload::locate(ctx, &link)?
+            .ok_or_else(|| failed("transcript is not readable on this host"))?;
+        let bytes = payload::read_checked(ctx, &path, &link)
+            .ok()
+            .flatten()
+            .ok_or_else(|| failed("transcript failed provenance or is not readable"))?;
+        let typed = if ctx.provider() == scribe_core::Provider::ClaudeCode {
+            scribe_core::instruction::claude_conversation_raw_typed(&bytes)
+                .iter()
+                .any(|turn| turn.typed.is_some())
+        } else {
             scribe_core::transcript::parse(&bytes)
                 .iter()
                 .filter_map(scribe_core::transcript::user_turn)
                 .any(|turn| !turn.own.trim().is_empty())
-        })
-    });
-    if !valid {
-        return Err(refuse(
-            scribe_core::WriteRefusal::QuoteNotFound,
-            "the refresh session transcript must contain a typed user turn",
-        ));
+        };
+        if typed {
+            return Ok(());
+        }
+        let parents = if ctx.provider() == scribe_core::Provider::ClaudeCode {
+            scribe_core::transcript::cleared_sessions(&bytes)
+        } else {
+            Vec::new()
+        };
+        let [parent] = parents.as_slice() else {
+            return Err(failed(
+                "transcript must contain a typed user turn or exactly one clear predecessor",
+            ));
+        };
+        if hops == 16 {
+            return Err(failed("clear ancestry exceeds the 16-hop limit"));
+        }
+        link = parent.clone();
     }
-    Ok(())
+    unreachable!("bounded ancestry loop returns")
 }
 
 #[derive(Debug, Args)]
