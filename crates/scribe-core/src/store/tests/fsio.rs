@@ -1,5 +1,5 @@
 use crate::error::Error;
-use crate::store::fsio::{LockGuard, write_atomic};
+use crate::store::fsio::{LockGuard, create_new_private, write_atomic};
 use std::time::Duration;
 
 #[test]
@@ -11,6 +11,49 @@ fn write_atomic_replaces_the_file_and_leaves_no_temp_files() {
     assert_eq!(std::fs::read(&path).unwrap(), b"two");
     let entries = std::fs::read_dir(dir.path()).unwrap().count();
     assert_eq!(entries, 1, "only the target file should remain");
+}
+
+#[test]
+fn create_new_private_refuses_an_existing_file_and_write_atomic_replaces_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("line.txt");
+    create_new_private(&path, b"first").unwrap();
+    let err = create_new_private(&path, b"second").unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            Error::Io {
+                action: "create",
+                ..
+            }
+        ),
+        "got {err:?}"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), b"first");
+    write_atomic(&path, b"third").unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), b"third");
+    let entries = std::fs::read_dir(dir.path()).unwrap().count();
+    assert_eq!(entries, 1, "a refused write leaves no temp file behind");
+}
+
+#[test]
+fn write_atomic_names_replace_when_the_target_is_a_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("taken");
+    std::fs::create_dir(&path).unwrap();
+    let err = write_atomic(&path, b"x").unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            Error::Io {
+                action: "replace",
+                ..
+            }
+        ),
+        "got {err:?}"
+    );
+    let entries = std::fs::read_dir(dir.path()).unwrap().count();
+    assert_eq!(entries, 1, "a failed replace leaves no temp file behind");
 }
 
 #[test]

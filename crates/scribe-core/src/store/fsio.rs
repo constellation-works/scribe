@@ -50,6 +50,29 @@ const PRIVATE_FILE_MODE: u32 = 0o600;
 /// the memory files, the format stamps and `scribe export`'s files are
 /// written this way.
 pub(super) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    write_staged(path, bytes, "replace", |staged, to| staged.persist(to))
+}
+
+/// Create `path` with `bytes`, durably, refusing one that exists: a spool
+/// file's name is unique, so it never replaces another line.
+pub(super) fn create_new_private(path: &Path, bytes: &[u8]) -> Result<()> {
+    write_staged(path, bytes, "create", |staged, to| {
+        staged.persist_noclobber(to)
+    })
+}
+
+/// Stage `bytes` in a temporary file beside `path`, `fsync` it, publish it at
+/// `path` with `publish` (replace or refuse an existing file), then `fsync`
+/// the directory. `op` names the publish step in the error.
+fn write_staged(
+    path: &Path,
+    bytes: &[u8],
+    op: &'static str,
+    publish: impl FnOnce(
+        tempfile::NamedTempFile,
+        &Path,
+    ) -> std::result::Result<File, tempfile::PersistError>,
+) -> Result<()> {
     let parent = parent_dir(path);
     // Same directory as the target, so the rename cannot cross filesystems.
     // tempfile creates the file 0600 on unix and the rename keeps that mode.
@@ -59,25 +82,7 @@ pub(super) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
         .write_all(bytes)
         .and_then(|()| staged.as_file().sync_all())
         .map_err(|e| Error::io("write", staged.path().to_path_buf(), e))?;
-    staged
-        .persist(path)
-        .map_err(|e| Error::io("replace", path, e.error))?;
-    sync_dir(parent)
-}
-
-/// Create `path` with `bytes`, durably, refusing one that exists: a spool
-/// file's name is unique, so it never replaces another line.
-pub(super) fn create_new_private(path: &Path, bytes: &[u8]) -> Result<()> {
-    let parent = parent_dir(path);
-    let mut staged = tempfile::NamedTempFile::new_in(parent)
-        .map_err(|e| Error::io("create a temporary file in", parent, e))?;
-    staged
-        .write_all(bytes)
-        .and_then(|()| staged.as_file().sync_all())
-        .map_err(|e| Error::io("write", staged.path().to_path_buf(), e))?;
-    staged
-        .persist_noclobber(path)
-        .map_err(|e| Error::io("create", path, e.error))?;
+    publish(staged, path).map_err(|e| Error::io(op, path, e.error))?;
     sync_dir(parent)
 }
 
@@ -431,10 +436,5 @@ pub(super) fn remove_private(path: &Path) -> Result<()> {
         return Ok(());
     }
     fs::remove_file(path).map_err(|e| Error::io("remove", path, e))?;
-    if let Some(parent) = path.parent() {
-        File::open(parent)
-            .and_then(|dir| dir.sync_all())
-            .map_err(|e| Error::io("sync directory", parent, e))?;
-    }
-    Ok(())
+    sync_dir(parent_dir(path))
 }
