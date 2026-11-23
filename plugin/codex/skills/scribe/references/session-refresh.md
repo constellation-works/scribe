@@ -13,9 +13,11 @@ With no mode named, ask which. Then, as the last acts of your turn:
 
 1. **Write the handoff** under your own author and project with the selected mode.
    Omit `--quote` when `CLAUDE_CODE_SESSION_ID` matches the related session
-   and its transcript holds a typed user turn. Elsewhere pass
-   `--quote '<their request>'` with a verbatim span of at least 8 characters
-   from a typed turn in this session.
+   and a typed user turn is in its transcript or its verified clear ancestry
+   (at most 16 predecessors). Peer and scheduled prompts do not count as typed
+   turns, so a session a peer restarted after a clear is checked through its
+   clear ancestry. Elsewhere pass `--quote '<their request>'` with a verbatim
+   span of at least 8 characters from a typed turn in this session.
 
    ```sh
    scribe entry add --tag handoff --author <name> --project <project> \
