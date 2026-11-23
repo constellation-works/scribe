@@ -35,13 +35,16 @@ answer it first and do this right after.
    In Codex, or when it is missing, run
    `scribe brief --project <project> --json`.
 
-   Read the memory block, `## Last group` when present (the selected project's
-   most recently opened group, which can be the only populated part outside
-   the memory block),
-   `## Recent sessions` (the last five, this project's first and without this
-   session's own, each a dated title with its id), and `## Open claims` (every
-   open claim, grouped by tag and dated with its id `p-<n>` and the words it
-   rests on). A handoff is marked `[handoff: <entry-id>]`.
+   Read these parts:
+   - the memory block;
+   - `## Last group` when present: the selected project's most recently opened
+     group, which can be the only populated part outside the memory block;
+   - `## Recent sessions`: the last five, this project's first and without this
+     session's own, each a dated title with its id;
+   - `## Open claims`: every open claim, grouped by tag and dated with its id
+     `p-<n>` and the words it rests on.
+
+   A handoff is marked `[handoff: <entry-id>]`.
    An off session appears only through its handoff as `no session record`.
 4. For the last session in this project, run `scribe session show <id>
    --json`. Read its newest handoff first (`handoffs[0]`, if present), then

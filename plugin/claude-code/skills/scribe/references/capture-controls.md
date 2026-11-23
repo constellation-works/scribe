@@ -4,18 +4,21 @@
 
 The human types `/scribe on`, `/scribe off` or `/scribe status` in chat.
 Codex also supports an exact typed `$scribe` invocation (or a Codex skill
-mention link `[$scribe](.../scribe/SKILL.md) ...`) for `on`, `off`, `status`,
+mention link `[$scribe](/<path>/scribe/SKILL.md) ...`) for `on`, `off`, `status`,
 `on --from <id>`, `link <id>`, `catalog <id>`, `group <slug>`, and
 `group add <slug> <session-id>...`. On enables session cataloging. Off stops
 further passes and keeps the record.
 
-The human types `/scribe on --from <id>` or `/scribe link <id> --type continues`
-to link related sessions, `/scribe group <slug>` (or `$scribe group <slug>` in
-Codex) to create or join an open project group, `/scribe group add <slug> <session-id>...`
-(or `$scribe group add <slug> <session-id>...` in Codex) to add past sessions to
-one, and `/scribe catalog <id>` to
-catalog a past session as theirs. Its windows run at the next
-`scribe session pass`. If they ask you to catalog a past session, run
+The human types these lines (in Codex, `$scribe` in place of `/scribe`):
+
+- `/scribe on --from <id>` or `/scribe link <id> --type continues` to link
+  related sessions;
+- `/scribe group <slug>` to create or join an open project group;
+- `/scribe group add <slug> <session-id>...` to add past sessions to one;
+- `/scribe catalog <id>` to catalog a past session as theirs. Its windows run
+  at the next `scribe session pass`.
+
+If they ask you to catalog a past session, run
 `scribe --provider <provider> session catalog <id> --author <name>`
 under your own author.
 
@@ -48,6 +51,7 @@ session record stays.
 To erase a whole session, tell the human to type `#scribe forget s-<n>`
 (or use the session's full provider id there). This erases scribe's session
 record, stored turns and handoffs, then leaves an id-only forgotten marker.
+
 Open claims from the session are withdrawn with their quotes cleared.
 Approved entries keep their text with a deleted `session:<id>` citation; the
 human can remove one with `#scribe forget <entry-id>`. The session cannot be
