@@ -398,7 +398,8 @@ make ci               # all of the above; what CI runs
 skips or falls back). CI installs both at pinned versions, and there a missing
 tool fails. `make standards-check` runs `docs/standards/check.sh`.
 
-Every line in the root [README](../README.md) that starts with `scribe ` is
-parsed by `every_documented_command_line_parses`
-(`crates/scribe/src/tests/cli.rs`), so those lines have to stay real commands.
-The same test parses the examples in `--help`.
+Every line in the root [README](../README.md) and every command example in this
+guide that starts with `scribe ` is parsed by
+`every_documented_command_line_parses` (`crates/scribe/src/tests/cli.rs`), so
+those lines have to stay real commands. The same test parses the examples in
+`--help`.
