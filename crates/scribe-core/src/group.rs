@@ -200,7 +200,15 @@ pub enum SeatStart {
 /// first of its eight-character prefix, its full id, then the full id with a
 /// numeric suffix that `taken` does not report as held. `taken` must say true
 /// for every seat already in the group, so a join never displaces anyone.
-pub fn automatic_seat(session: &SessionId, mut taken: impl FnMut(&str) -> bool) -> crate::Label {
+///
+/// # Errors
+///
+/// Returns the first error reported by `taken` without probing further
+/// candidates.
+pub fn automatic_seat<E>(
+    session: &SessionId,
+    mut taken: impl FnMut(&str) -> std::result::Result<bool, E>,
+) -> std::result::Result<crate::Label, E> {
     use crate::Label;
     let id = session.as_str();
     let short: String = id.chars().take(8).collect();
@@ -211,8 +219,8 @@ pub fn automatic_seat(session: &SessionId, mut taken: impl FnMut(&str) -> bool) 
         .chain((2u64..).map(|n| format!("{stem}-{n}")));
     loop {
         let label = Label::sanitized(&name, "member");
-        if !taken(label.as_str()) {
-            return label;
+        if !taken(label.as_str())? {
+            return Ok(label);
         }
         name = next.next().unwrap_or_default();
     }

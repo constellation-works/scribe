@@ -217,8 +217,11 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
                     match group.seats.iter().find(|s| s.transcripts.contains(&caller)) {
                         Some(held) => Label::sanitized(&held.name, "member"),
                         None => automatic_seat(&caller, |name| {
-                            group.seats.iter().any(|s| s.name == name)
-                        }),
+                            Ok::<_, std::convert::Infallible>(
+                                group.seats.iter().any(|s| s.name == name),
+                            )
+                        })
+                        .unwrap_or_else(|e| match e {}),
                     }
                 }
                 None => return Err(CliError::Usage("pass --as for a named seat".into())),

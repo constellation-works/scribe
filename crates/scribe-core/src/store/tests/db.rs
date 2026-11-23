@@ -905,3 +905,57 @@ fn close_group_commits_audit_with_closing_record_without_holding_write_lock_acro
     assert!(still_open.summary.is_none());
     assert_eq!(store.audit_events().unwrap().0.len(), 1);
 }
+
+#[test]
+fn project_group_join_returns_error_promptly_when_seat_lookup_fails() {
+    let dir = private_tempdir();
+    let store = Store::open(dir.path());
+    let project = crate::Project::sanitized("checkout");
+    let first: crate::SessionId = "session-one".parse().unwrap();
+    let second: crate::SessionId = "session-two".parse().unwrap();
+    store
+        .join_project_group("existing", &project, &first, T0, &Redactor::default())
+        .unwrap();
+
+    // Replace `group_seats` with a view whose evaluation fails inside `query_row`
+    // (after `prepare` succeeds), simulating a persistent SQLite seat-query failure.
+    let conn = rusqlite::Connection::open(dir.path().join(DB_FILE)).unwrap();
+    conn.execute_batch(
+        "PRAGMA foreign_keys = OFF;
+         DROP TABLE group_seats;
+         CREATE VIEW group_seats AS
+         SELECT id AS group_id, json('not-json') AS name, 'member' AS role FROM groups;",
+    )
+    .unwrap();
+    drop(conn);
+
+    for slug in ["existing", "new-group"] {
+        let err = store
+            .join_project_group(slug, &project, &second, T0, &Redactor::default())
+            .unwrap_err();
+        let source = std::error::Error::source(&err).unwrap().to_string();
+        assert!(source.contains("malformed JSON"), "{slug}: {source}");
+    }
+
+    let conn = rusqlite::Connection::open(dir.path().join(DB_FILE)).unwrap();
+    let member_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM group_members", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(member_count, 1);
+    let second_rows: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM group_members WHERE session = ?1",
+            [second.as_str()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(second_rows, 0);
+    let new_groups: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM groups WHERE slug = 'new-group'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(new_groups, 0);
+}

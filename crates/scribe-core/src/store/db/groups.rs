@@ -235,16 +235,9 @@ fn seat_member(
 ) -> rusqlite::Result<()> {
     let mut query =
         conn.prepare("SELECT EXISTS(SELECT 1 FROM group_seats WHERE group_id=?1 AND name=?2)")?;
-    let mut lookup = Ok(());
     let seat = crate::group::automatic_seat(session, |name| {
-        query
-            .query_row(params![n, name], |r| r.get(0))
-            .unwrap_or_else(|e| {
-                lookup = Err(e);
-                true
-            })
-    });
-    lookup?;
+        query.query_row(params![n, name], |r| r.get(0))
+    })?;
     drop(query);
     let seat = seat.as_str();
     conn.execute(
