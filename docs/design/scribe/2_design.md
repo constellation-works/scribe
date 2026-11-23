@@ -3987,12 +3987,13 @@ updates the record returns a `memory` array beside `candidates`.
 `session rebuild` leaves it disabled, as it does candidates.
 
 - **Source.** Only the user's typed turns of a session he switched on (or
-  named for catalog; a session that is off writes nothing, the base pass of
-  the parked [§13.12](#1312-a-personal-base-and-a-work-layer-per-session)
-  not being built), with every exclusion of §5.3: pasted blocks, fenced
-  or indented code, blockquotes, marked `#scribe` lines, synthetic and
-  meta turns. Assistant turns are never a source (§11.3 already stops the
-  pass reading them).
+  named for catalog; §5.8) are read, with every exclusion of §5.3: pasted
+  blocks, fenced or indented code, blockquotes, marked `#scribe` lines,
+  synthetic and meta turns. Assistant turns are never a source (§11.3
+  already stops the pass reading them). While the base is parked, a session
+  neither switched on nor explicitly named for catalog gets no
+  personal-memory pass; group consent can still store its eligible turns
+  from the time it joins an open group, without a catalog entry (§17).
 - **Bound.** At most **3 memory items per session per pass invocation**,
   shared across its windows and separate from the 3 candidate slots;
   refused items consume a slot. Each array element is `{section,
@@ -4417,12 +4418,15 @@ keep 1, 6, 7". (a), (b) and (c) are kept. [ORB-26240]'s steps (a1)–(a4)
   that does not will raise an item again in the next session.
 - **Promotion (a) trusts the model's profile statement**; a wrong one
   supersedes a right profile fact until he retires it.
-- **Only Claude Code and Codex sessions, and only those switched on.** A
-  user whose conversations are elsewhere (Daniel's example of a user in
-  ChatGPT) has no memory, by his decision of 2026-11-21 ("claude code and
-  codex support only then. so be it",
-  [4_decisions.md](./4_decisions.md#scribe-reads-claude-code-and-codex-sessions-only)),
-  and a session that is off writes nothing while the base is parked.
+- **Personal memory and catalog.** Only Claude Code and Codex sessions
+  switched on with `/scribe on` or explicitly named with `session catalog`
+  (§5.8) get personal-memory passes and catalog records while the base is
+  parked. An off session outside those paths gets neither; group consent can
+  separately store eligible turns from the time it joins an open group,
+  without a catalog entry (§17). A user whose conversations are elsewhere
+  (Daniel's example of a user in ChatGPT) has no memory, by his decision of
+  2026-11-21 ("claude code and codex support only then. so be it",
+  [4_decisions.md](./4_decisions.md#scribe-reads-claude-code-and-codex-sessions-only)).
 
 Not built until seen:
 
@@ -4719,7 +4723,12 @@ another surface and are not built until seen.
 > **Parked 2026-11-21 ([ORB-26256]).** Daniel, chief's chat, 2026-11-21: "park 2-5, keep 1, 6, 7".
 > Reason: Claude Code and Codex only ([4_decisions.md](./4_decisions.md#scribe-reads-claude-code-and-codex-sessions-only)), so there is no surface whose sessions a light catalog entry would serve beyond what `/scribe on` already covers.
 > Nothing below is built or scheduled; the text is kept for when he unparks it.
-> A session that is off leaves nothing; `depth: light` is not added to session headers, and the page's recent-sessions list is the plain list of §13.6.
+> While the base is parked, a session neither switched on nor named with
+> `session catalog` gets no personal-memory pass or catalog record:
+> `depth: light` is not added to session headers, and the page's
+> recent-sessions list remains the plain list of §13.6. Group consent can
+> still store eligible turns from the time it joins an open group, without a
+> catalog entry (§17).
 
 **Decided by Daniel**, chief's chat, 2026-11-21, to "Should a session you
 do not switch on still leave a light catalog entry (title and summary)?":
