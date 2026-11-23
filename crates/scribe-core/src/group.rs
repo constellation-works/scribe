@@ -110,25 +110,48 @@ impl GroupConsent {
         bytes: &[u8],
         quote: &str,
     ) -> crate::Result<Self> {
+        Self::verify_matching(session, provider, bytes, quote, None)
+    }
+
+    fn verify_matching(
+        session: SessionId,
+        provider: Provider,
+        bytes: &[u8],
+        quote: &str,
+        group: Option<&str>,
+    ) -> crate::Result<Self> {
         let spoken = match provider {
             Provider::ClaudeCode => instruction::claude_session_conversation(bytes, &session),
             Provider::Codex => instruction::codex_conversation(bytes, &session)?,
         };
+        let mut quote_found = false;
         let found = spoken
             .iter()
             .rev()
             .find(|turn| {
-                (turn.entrypoint.is_none() || turn.interactive)
-                    && turn
-                        .typed
-                        .as_ref()
-                        .is_some_and(|own| crate::verbatim::contains(own, quote))
+                if !(turn.entrypoint.is_none() || turn.interactive) {
+                    return false;
+                }
+                turn.typed.as_ref().is_some_and(|own| {
+                    if !crate::verbatim::contains(own, quote) {
+                        return false;
+                    }
+                    quote_found = true;
+                    group.is_none_or(|group| names_group(own, quote, group))
+                })
             })
-            .ok_or_else(|| Error::AgentWrite {
-                kind: WriteRefusal::QuoteNotFound,
-                message:
-                    "quote a verbatim span of the user's own typed turn in the calling session"
-                        .into(),
+            .ok_or_else(|| {
+                if let (true, Some(group)) = (quote_found, group) {
+                    Error::AgentWrite {
+                        kind: WriteRefusal::GroupMembership,
+                        message: format!("the quote must contain {group}, the group it closes"),
+                    }
+                } else {
+                    Error::AgentWrite {
+                        kind: WriteRefusal::QuoteNotFound,
+                        message: "quote a verbatim span of the user's own typed turn in the calling session".into(),
+                    }
+                }
             })?;
         Ok(Self {
             session,
@@ -145,15 +168,7 @@ impl GroupConsent {
         quote: &str,
         group: &str,
     ) -> crate::Result<Self> {
-        let consent = Self::verify(session, provider, bytes, quote)?;
-        if names_group(quote, group) {
-            Ok(consent)
-        } else {
-            Err(Error::AgentWrite {
-                kind: WriteRefusal::GroupMembership,
-                message: format!("the quote must contain {group}, the group it closes"),
-            })
-        }
+        Self::verify_matching(session, provider, bytes, quote, Some(group))
     }
 
     /// Provider session in which the user typed the quote.
@@ -167,13 +182,23 @@ impl GroupConsent {
     }
 }
 
-/// Whether `quote` contains `group` with no letter or digit on either side.
-fn names_group(quote: &str, group: &str) -> bool {
-    quote.match_indices(group).any(|(at, _)| {
-        let before = quote[..at].chars().next_back();
-        let after = quote[at + group.len()..].chars().next();
-        !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
-    })
+/// Whether a matched quote names the group at boundaries in the typed turn.
+fn names_group(source: &str, quote: &str, group: &str) -> bool {
+    let source = crate::verbatim::normalize(source);
+    let quote = crate::verbatim::normalize(quote);
+    let quote = quote.trim_matches(' ');
+    source
+        .char_indices()
+        .filter(|(start, _)| source[*start..].starts_with(quote))
+        .any(|(start, _)| {
+            quote.match_indices(group).any(|(offset, _)| {
+                let at = start + offset;
+                let before = source[..at].chars().next_back();
+                let after = source[at + group.len()..].chars().next();
+                !before.is_some_and(char::is_alphanumeric)
+                    && !after.is_some_and(char::is_alphanumeric)
+            })
+        })
 }
 
 /// Who asks to close a group: a session that the store judges against the
