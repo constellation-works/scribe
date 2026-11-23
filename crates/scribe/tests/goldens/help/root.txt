@@ -15,6 +15,7 @@ Records:
 
 Find:
   brief        Show the session-start page: memory, recent sessions, open claims
+  ask          Answer a question from stored records with verbatim quotes
   question     Answer a question from the records with verbatim quotes
   search       Search every stored record by words, with no model call
   transcript   List uncataloged provider transcripts and show one, writing nothing

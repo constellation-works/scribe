@@ -9,12 +9,13 @@ use crate::output::{Output, Record, Records};
 use clap::Subcommand;
 use scribe_core::group::{GroupConsent, JoinGroup, NewGroup};
 use scribe_core::{
-    AuthorName, Label, Project, Provider, Related, SessionId, WriteRefusal, transcript,
+    AuthorName, Label, Models, Project, Provider, Related, SessionId, WriteRefusal, transcript,
 };
 
 pub(super) const EXAMPLES: &str = "Examples:
   scribe group open --title 'Release review' --kind review --project scribe --quote 'open a release review'
   scribe group join <id> --as editor --author aide --role reviewer
+  scribe group close <id>
   scribe group show <id> --json";
 
 #[derive(Debug, Subcommand)]
@@ -63,6 +64,12 @@ pub(crate) enum GroupCommand {
     /// Remove the calling session from its seat
     #[command(after_help = "Example: scribe group leave")]
     Leave,
+    /// Summarize and close the group from the session that opened it
+    #[command(after_help = "Example: scribe group close <id>")]
+    Close {
+        /// Group id or unique prefix
+        id: String,
+    },
     /// Show one group, its references and its seat chains
     #[command(after_help = "Example: scribe group show <id> --json")]
     Show {
@@ -84,11 +91,12 @@ impl GroupCommand {
             Self::Open { .. } => "group open",
             Self::Join { .. } => "group join",
             Self::Leave => "group leave",
+            Self::Close { .. } => "group close",
             Self::List | Self::Show { .. } => return None,
         };
         Some(AuditMeta {
             command,
-            stepwise: false,
+            stepwise: matches!(self, Self::Close { .. }),
         })
     }
 
@@ -96,6 +104,10 @@ impl GroupCommand {
         match self {
             Self::Join { id, author, .. } => AuditSubject {
                 author: Some(author.to_string()),
+                target: ctx.store().group(id).ok().map(|g| g.id),
+            },
+            Self::Close { id } => AuditSubject {
+                author: None,
                 target: ctx.store().group(id).ok().map(|g| g.id),
             },
             Self::Open { .. } | Self::Leave | Self::List | Self::Show { .. } => {
@@ -143,6 +155,7 @@ fn ended(ctx: &Context, session: &SessionId) -> Result<bool, CliError> {
 
 pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliError> {
     let store = ctx.store();
+    let mut notices = Vec::new();
     let (id, changed) = match command {
         GroupCommand::Open {
             title,
@@ -176,10 +189,12 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
                 project,
                 related,
             };
-            (
-                store.open_group(draft, &consent, ctx.now(), &ctx.redactor(&ctx.config()?)?)?,
-                true,
-            )
+            let opened =
+                store.open_group(draft, &consent, ctx.now(), &ctx.redactor(&ctx.config()?)?)?;
+            for id in opened.still_open {
+                notices.push(format!("warning: group {id} is still open in this project"));
+            }
+            (opened.id, true)
         }
         GroupCommand::Join {
             id,
@@ -228,9 +243,43 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
                 predecessor: predecessor.as_ref(),
             };
             let changed = store.join_group(join, &ctx.redactor(&ctx.config()?)?)?;
+            if !changed {
+                notices.push("session already holds this seat".into());
+            }
             (group.id, changed)
         }
         GroupCommand::Leave => (store.leave_group(&caller(ctx)?)?, true),
+        GroupCommand::Close { id } => {
+            let session = caller(ctx)?;
+            ctx.note_instruction_session(session.as_str());
+            let config = ctx.config()?;
+            let models = ctx.models(&config);
+            let (id, changed) = store.close_group(
+                &id,
+                &session,
+                ctx.now(),
+                &ctx.redactor(&config)?,
+                |evidence| -> Result<_, CliError> {
+                    let path = payload::locate(ctx, &session)?;
+                    if !path.as_deref().is_some_and(|path| {
+                        payload::read_checked(ctx, path, &session)
+                            .is_ok_and(|bytes| bytes.is_some())
+                    }) {
+                        return Err(scribe_core::Error::AgentWrite {
+                            kind: WriteRefusal::GroupMembership,
+                            message: "cannot verify the opening session's transcript on this host"
+                                .into(),
+                        }
+                        .into());
+                    }
+                    Ok(models.group_summary(&config.models.ask, evidence)?)
+                },
+            )?;
+            if !changed {
+                notices.push("group is already closed".into());
+            }
+            (id, changed)
+        }
         GroupCommand::Show { id } => {
             return Ok(Output::Show {
                 record: Record::Group(Box::new(store.group(&id)?)),
@@ -254,10 +303,6 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
     Ok(Output::Written {
         record: Record::Group(Box::new(store.group(&id)?)),
         changed,
-        notices: if changed {
-            Vec::new()
-        } else {
-            vec!["session already holds this seat".into()]
-        },
+        notices,
     })
 }

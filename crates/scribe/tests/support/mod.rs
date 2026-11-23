@@ -239,6 +239,19 @@ pub fn sql(root: &Path, statement: &str) {
     conn.execute_batch(statement).expect("run SQL");
 }
 
+/// Restore the schema-10 shape before a fixture stages an older database.
+pub fn remove_group_capture_schema(root: &Path) {
+    sql(
+        root,
+        "DROP TRIGGER handoffs_clear_group_summary;
+        DROP TRIGGER messages_clear_group_summary;
+        ALTER TABLE messages DROP COLUMN group_only;
+        ALTER TABLE group_members DROP COLUMN turn_cursor;
+        ALTER TABLE group_members DROP COLUMN joined;
+        ALTER TABLE groups DROP COLUMN summary;",
+    );
+}
+
 /// Whether `session` has a rebuild checkpoint.
 pub fn has_checkpoint(root: &Path, session: &str) -> bool {
     let Ok(conn) = rusqlite::Connection::open_with_flags(

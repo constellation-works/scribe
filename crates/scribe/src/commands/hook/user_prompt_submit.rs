@@ -120,6 +120,9 @@ fn capture_prompt(payload: &PromptPayload, ctx: &Context) -> Result<Output, CliE
     if let Some(switch) = scribe_core::control::parse(&payload.prompt) {
         return Ok(super::scribe_command::run(&switch, payload, &session, ctx));
     }
+    if ctx.provider() == Provider::ClaudeCode {
+        super::group_turns::claude(ctx, &session, &payload.transcript_path)?;
+    }
     // Markers (§14.6): echoed here, written nothing; the Stop of this turn
     // catalogs them. Under Codex the adapter echoes them once the typed
     // turn is verified (`codex.rs`, [`mark_echoes`]), since its Stop replays

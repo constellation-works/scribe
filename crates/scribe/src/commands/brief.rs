@@ -89,5 +89,8 @@ pub(in crate::commands) fn brief(
         sessions,
     );
     brief.memory = memory;
+    if let Some(project) = project {
+        brief.last_group = ctx.store().last_group(project)?;
+    }
     Ok(brief)
 }

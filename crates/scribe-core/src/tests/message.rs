@@ -122,6 +122,7 @@ fn found(session: &str, id: &str, score: f64) -> MessageMatch {
         at: T0,
         text: String::from("keep the merge queue"),
         score,
+        group_project: None,
     }
 }
 

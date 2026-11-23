@@ -23,9 +23,9 @@ entries weigh 1.5 times. The CITE column is what question ask would cite:
 pass it to entry show or session show. Superseded and retired entries and
 inactive sessions are left out unless --include-hidden.
 
---kind message searches the user's stored turns of switched-on sessions
-instead (and the assistant turns a claim cites), ranked by SQLite FTS5's
-BM25; a message cites its session.
+--kind message searches the user's stored turns from switched-on sessions
+and group members, plus assistant turns a claim cites. SQLite FTS5 ranks
+the turns and each cites its session.
 
 Examples:
   scribe search \"merge queue\"
@@ -59,6 +59,10 @@ pub(crate) struct SearchArgs {
     /// Only records of this project (a repository slug, or global) [default: any]
     #[arg(long, value_name = "PROJECT")]
     pub(crate) project: Option<Project>,
+
+    /// Only records of member sessions in this group (id or unique prefix)
+    #[arg(long, value_name = "ID")]
+    pub(crate) group: Option<String>,
 
     /// Only records carrying this topic (a segment: its session's or its own); repeat it to require every one [default: any]
     #[arg(long, value_name = "TOPIC")]
@@ -102,21 +106,35 @@ pub(super) fn run(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
         limit,
     };
     let store = ctx.store();
+    let group = args
+        .group
+        .as_deref()
+        .map(|id| store.group(id))
+        .transpose()?;
+    let members = group.as_ref().map(|group| group.members());
     let config = store.config()?;
-    let entries = store.list_entries(&EntryFilter::default())?;
-    let sessions = store.list_sessions(&SessionFilter {
-        include_inactive: true,
-        ..SessionFilter::default()
-    })?;
+    let entries = store.list_entries_scoped(&EntryFilter::default(), members.as_ref())?;
+    let sessions = store.list_sessions_scoped(
+        &SessionFilter {
+            include_inactive: true,
+            ..SessionFilter::default()
+        },
+        members.as_ref(),
+    )?;
     let mut read_only_copy = false;
     let found = if query.kind == Some(RecordKind::Message) {
-        let stored = store.search_messages(&scribe_core::ask::tokens(&query.terms))?;
+        let tokens = scribe_core::ask::tokens(&query.terms);
+        let stored = match &group {
+            Some(group) => store.search_group_messages(&group.id, &tokens)?,
+            None => store.search_messages(&tokens)?,
+        };
         read_only_copy = stored.read_only_copy;
         search::messages(&query, &stored, &sessions.listing.items)
     } else {
         let corpus = Corpus {
             entries: &entries.listing.items,
             sessions: &sessions.listing.items,
+            messages: &[],
             tags: &config.tags,
             user: &config.user,
         };
@@ -133,6 +151,9 @@ pub(super) fn run(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
     }
     if let Some(project) = &query.project {
         criteria.push(format!("--project {project}"));
+    }
+    if let Some(group) = group {
+        criteria.push(format!("--group {}", group.id));
     }
     for topic in &query.topics {
         criteria.push(format!("--topic {topic}"));

@@ -1,10 +1,15 @@
 //! Group records and exclusive seat membership. Every decision and its write share
 //! the store transaction. Provider ids have no foreign key to cataloged sessions.
 
+mod close;
+
 use super::{DB_FILE, Fallible, db_error, memory::read, open_writer, refuse_newer, stamp};
-use crate::group::{Group, GroupConsent, JoinGroup, NewGroup, Seat, SeatHold, SeatStart};
+use crate::group::{
+    Group, GroupConsent, JoinGroup, NewGroup, OpenedGroup, Seat, SeatHold, SeatStart,
+};
+use crate::message::NewMessage;
 use crate::store::agent::refusal;
-use crate::{Error, Redactor, RelatedKind, Result, SessionId, Store, WriteRefusal};
+use crate::{Error, Project, Redactor, RelatedKind, Result, SessionId, Store, WriteRefusal};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -37,6 +42,27 @@ CREATE TABLE group_members (
 CREATE INDEX group_chain ON group_members(group_id, seat, position);
 ";
 
+pub(super) const V11: &str = "
+ALTER TABLE groups ADD COLUMN summary TEXT;
+ALTER TABLE group_members ADD COLUMN joined TEXT;
+ALTER TABLE group_members ADD COLUMN turn_cursor TEXT;
+UPDATE group_members SET joined = strftime('%Y-%m-%dT%H:%M:%fZ', 'now');
+ALTER TABLE messages ADD COLUMN group_only INTEGER NOT NULL DEFAULT 0 CHECK (group_only IN (0, 1));
+CREATE TRIGGER messages_clear_group_summary AFTER DELETE ON messages
+BEGIN
+    UPDATE groups SET summary = NULL
+    WHERE summary IS NOT NULL AND id = (SELECT group_id FROM group_members WHERE session = old.session);
+END;
+CREATE TRIGGER handoffs_clear_group_summary AFTER UPDATE OF status ON entries
+WHEN old.tag = 'handoff' AND old.status <> 'forgotten' AND new.status = 'forgotten'
+BEGIN
+    UPDATE groups SET summary = NULL WHERE summary IS NOT NULL AND id IN (
+        SELECT gm.group_id FROM group_members gm JOIN json_each(old.related) r
+        ON r.value = 'session:' || gm.session
+    );
+END;
+";
+
 /// The handoff lookup follows the session reference and ranks active handoffs across
 /// the whole seat. A single SELECT keeps metadata, chains and handoffs in one snapshot.
 const ROSTER: &str = "
@@ -46,7 +72,7 @@ WITH handoffs AS (
     WHERE e.tag = 'handoff' AND e.status = 'active' AND substr(r.value, 1, 8) = 'session:'
 )
 SELECT g.id, g.title, g.kind, g.project, g.opened, g.closed, g.opener, g.related,
-       s.name, s.role, m.session, h.id, h.created, h.n
+       s.name, s.role, m.session, h.id, h.created, h.n, {summary}
 FROM groups g LEFT JOIN group_seats s ON s.group_id = g.id
 LEFT JOIN group_members m ON m.group_id = s.group_id AND m.seat = s.name
 LEFT JOIN handoffs h ON h.session = m.session
@@ -55,7 +81,13 @@ ORDER BY g.id DESC, s.name, m.position";
 
 fn roster(conn: &Connection, path: &Path, number: Option<i64>) -> Result<Vec<Group>, Fallible> {
     let fail = |e| Fallible::from_sqlite("read groups from", path, e);
-    let mut query = conn.prepare(ROSTER).map_err(fail)?;
+    let summary = if refuse_newer(conn, path)? >= 11 {
+        "g.summary"
+    } else {
+        "NULL"
+    };
+    let sql = ROSTER.replace("{summary}", summary);
+    let mut query = conn.prepare(&sql).map_err(fail)?;
     let mut rows = query.query([number]).map_err(fail)?;
     let mut groups: Vec<Group> = Vec::new();
     let mut newest = None;
@@ -70,6 +102,7 @@ fn roster(conn: &Connection, path: &Path, number: Option<i64>) -> Result<Vec<Gro
                 project: row.get(3).map_err(fail)?,
                 opened: row.get(4).map_err(fail)?,
                 closed: row.get(5).map_err(fail)?,
+                summary: row.get(14).map_err(fail)?,
                 opener: row.get(6).map_err(fail)?,
                 related: serde_json::from_str(&related)
                     .map_err(|e| Fallible::Failed(Error::corrupt(path, e)))?,
@@ -143,6 +176,23 @@ impl Store {
         self.read_groups(|conn, path| roster(conn, path, None))
     }
 
+    /// The most recently opened group in the project.
+    pub fn last_group(&self, project: &Project) -> Result<Option<crate::brief::LastGroup>> {
+        self.read_groups(|conn, path| {
+            let summary = if refuse_newer(conn, path)? >= 11 { "summary" } else { "NULL" };
+            conn.query_row(
+                &format!("SELECT id, title, closed, {summary} FROM groups WHERE project = ?1 ORDER BY id DESC LIMIT 1"),
+                [project.as_str()],
+                |row| Ok(crate::brief::LastGroup {
+                    id: format!("g-{}", row.get::<_, i64>(0)?),
+                    title: row.get(1)?,
+                    closed: row.get(2)?,
+                    summary: row.get(3)?,
+                }),
+            ).optional().map_err(|e| Fallible::from_sqlite("read last group from", path, e))
+        })
+    }
+
     fn missing_group(&self, id: &str) -> Error {
         refusal(
             WriteRefusal::GroupNotFound,
@@ -182,6 +232,17 @@ impl Store {
             .ok_or_else(|| self.missing_group(id))
     }
 
+    /// Search only stored messages whose session belongs to this group.
+    /// The database checks membership in the same read as the messages.
+    pub fn search_group_messages(
+        &self,
+        group: &str,
+        tokens: &[String],
+    ) -> Result<crate::message::MessageSearch> {
+        let n = self.group_number(group)?;
+        super::search_messages(self.root(), tokens, Some(n))
+    }
+
     /// Open a group on verified consent. The opener joins a seat separately.
     pub fn open_group(
         &self,
@@ -189,7 +250,7 @@ impl Store {
         consent: &GroupConsent,
         now: OffsetDateTime,
         redactor: &Redactor,
-    ) -> Result<String> {
+    ) -> Result<OpenedGroup> {
         crate::check_content(&draft.title)?;
         crate::check_content(&draft.kind)?;
         if draft
@@ -206,6 +267,15 @@ impl Store {
         self.write(|| {
             let conn = open_writer(self.root(), self.lock_wait)?;
             let path = self.root().join(DB_FILE);
+            let fail = |e| db_error("open group in", &path, e);
+            let mut query = conn
+                .prepare("SELECT 'g-' || id FROM groups WHERE project = ?1 AND closed IS NULL ORDER BY id DESC")
+                .map_err(fail)?;
+            let still_open = query
+                .query_map([draft.project.as_str()], |row| row.get(0))
+                .map_err(fail)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(fail)?;
             let related =
                 serde_json::to_string(&draft.related).map_err(|e| Error::corrupt(&path, e))?;
             let n: i64 = conn
@@ -222,8 +292,8 @@ impl Store {
                     ],
                     |r| r.get(0),
                 )
-                .map_err(|e| db_error("open group in", &path, e))?;
-            Ok(format!("g-{n}"))
+                .map_err(fail)?;
+            Ok(OpenedGroup { id: format!("g-{n}"), still_open })
         })
     }
 
@@ -241,6 +311,9 @@ impl Store {
             let fail = |e| db_error("join group in", &path, e);
             let seat = join.seat.as_str();
             let session = join.session.as_str();
+            let closed: bool = conn
+                .query_row("SELECT closed IS NOT NULL FROM groups WHERE id = ?1", [n], |r| r.get(0))
+                .map_err(fail)?;
             let held: Option<(i64, String)> = conn
                 .query_row(
                     "SELECT group_id, seat FROM group_members WHERE session = ?1",
@@ -254,6 +327,9 @@ impl Store {
                     WriteRefusal::GroupMembership,
                     "the calling session already belongs to another seat; leave it before joining",
                 ));
+            }
+            if closed && held.is_none() {
+                return Err(refusal(WriteRefusal::GroupMembership, "the group is already closed"));
             }
 
             let role = join.role.map(|role| redactor.mask(role));
@@ -295,8 +371,8 @@ impl Store {
                 .map_err(fail)?;
             }
             conn.execute(
-                "INSERT INTO group_members(group_id, seat, session, author) VALUES (?1, ?2, ?3, ?4)",
-                params![n, seat, session, join.author.as_str()],
+                "INSERT INTO group_members(group_id, seat, session, author, joined) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![n, seat, session, join.author.as_str(), stamp(OffsetDateTime::now_utc())],
             )
             .map_err(fail)?;
             Ok(true)
@@ -329,6 +405,28 @@ impl Store {
                 params![n, seat],
             )
             .map_err(fail)?;
+            let erased = conn
+                .execute(
+                    "DELETE FROM messages WHERE session = ?1 AND group_only = 1",
+                    [session.as_str()],
+                )
+                .map_err(fail)?;
+            let cleared = conn
+                .execute(
+                    "UPDATE groups SET summary = NULL WHERE id = ?1 AND summary IS NOT NULL",
+                    [n],
+                )
+                .map_err(fail)?;
+            if erased > 0 {
+                conn.execute(
+                    "INSERT INTO messages_fts (messages_fts) VALUES ('optimize')",
+                    [],
+                )
+                .map_err(fail)?;
+            }
+            if erased > 0 || cleared > 0 {
+                super::truncate_wal(&conn, &path, std::time::Instant::now())?;
+            }
             Ok(format!("g-{n}"))
         })
     }
@@ -402,8 +500,8 @@ impl Store {
                 return Ok(SeatStart::Unjoined);
             };
             conn.execute(
-                "INSERT INTO group_members(group_id, seat, session, author) VALUES (?1, ?2, ?3, ?4)",
-                params![group, seat, child.as_str(), author],
+                "INSERT INTO group_members(group_id, seat, session, author, joined) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![group, seat, child.as_str(), author, stamp(OffsetDateTime::now_utc())],
             )
             .map_err(fail)?;
             Ok(SeatStart::Inherited {
@@ -416,6 +514,120 @@ impl Store {
             })
         })
     }
+
+    /// Whether an open group authorizes capture for this session. A missing,
+    /// closed or forgotten membership takes no write lock in the hook.
+    pub fn captures_group_turns(&self, session: &SessionId) -> Result<bool> {
+        self.read_groups(|conn, path| Ok(capture_state(conn, path, session)?.is_some()))
+    }
+
+    /// Store previously unprocessed turns from a verified transcript, in its
+    /// order. The membership and cursor are rechecked inside the write.
+    pub fn capture_group_turns(
+        &self,
+        session: &SessionId,
+        messages: &[NewMessage],
+        redactor: &Redactor,
+    ) -> Result<()> {
+        if messages
+            .iter()
+            .any(|m| &m.session != session || m.role != crate::Speaker::User)
+        {
+            return Err(refusal(
+                WriteRefusal::GroupMembership,
+                "group capture takes only the member's verified user turns",
+            ));
+        }
+        let Some(before) = self.read_groups(|conn, path| capture_state(conn, path, session))?
+        else {
+            return Ok(());
+        };
+        if next_turns(&before, messages).is_empty() {
+            return Ok(());
+        }
+        self.write(|| {
+            let conn = open_writer(self.root(), self.lock_wait)?;
+            let path = self.root().join(DB_FILE);
+            let fail = |e| db_error("store group turns in", &path, e);
+            let Some(state) = capture_state(&conn, &path, session).map_err(Fallible::into_error)?
+            else {
+                return Ok(());
+            };
+            if state.position != before.position {
+                return Ok(());
+            }
+            let turns = next_turns(&state, messages);
+            let Some(last) = turns.last().copied() else {
+                return Ok(());
+            };
+            let started = std::time::Instant::now();
+            super::write_messages(&conn, &path, started, turns.into_iter(), redactor, true)?;
+            conn.execute(
+                "INSERT INTO sessions(provider_session, has_record, has_switch)
+                 VALUES (?1, 0, 0) ON CONFLICT(provider_session) DO NOTHING",
+                [session.as_str()],
+            )
+            .map_err(fail)?;
+            conn.execute(
+                "UPDATE group_members SET turn_cursor = ?2 WHERE position = ?1",
+                params![state.position, last.message],
+            )
+            .map_err(fail)?;
+            Ok(())
+        })
+    }
+}
+
+struct CaptureState {
+    position: i64,
+    since: OffsetDateTime,
+    cursor: Option<String>,
+}
+
+fn capture_state(
+    conn: &Connection,
+    path: &Path,
+    session: &SessionId,
+) -> Result<Option<CaptureState>, Fallible> {
+    let fail = |e| Fallible::from_sqlite("read group capture state from", path, e);
+    let joined = if refuse_newer(conn, path)? >= 11 {
+        ("gm.joined", "gm.turn_cursor")
+    } else {
+        ("g.opened", "NULL")
+    };
+    let row: Option<(i64, String, Option<String>)> = conn.query_row(
+        &format!("SELECT gm.position, {}, {} FROM group_members gm
+         JOIN groups g ON g.id = gm.group_id
+         WHERE gm.session = ?1 AND g.closed IS NULL AND NOT EXISTS (
+             SELECT 1 FROM sessions s WHERE s.provider_session = gm.session AND s.forgotten IS NOT NULL
+         )", joined.0, joined.1),
+        [session.as_str()],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    ).optional().map_err(fail)?;
+    row.map(|(position, joined, cursor)| {
+        let since = OffsetDateTime::parse(&joined, &Rfc3339)
+            .map_err(|e| Fallible::Failed(Error::corrupt(path, e)))?;
+        Ok(CaptureState {
+            position,
+            since,
+            cursor,
+        })
+    })
+    .transpose()
+}
+
+fn next_turns<'a>(state: &CaptureState, messages: &'a [NewMessage]) -> Vec<&'a NewMessage> {
+    let start = match &state.cursor {
+        Some(cursor) => messages
+            .iter()
+            .position(|m| &m.message == cursor)
+            .map_or(messages.len(), |i| i + 1),
+        None => 0,
+    };
+    messages[start..]
+        .iter()
+        .filter(|m| m.at >= state.since)
+        .collect()
 }
 
 /// The seat the session holds now. Its row must be the seat's newest position:

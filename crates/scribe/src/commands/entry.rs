@@ -113,6 +113,10 @@ pub(crate) struct ListArgs {
     #[arg(long, value_name = "PROJECT")]
     pub(crate) project: Option<Project>,
 
+    /// Only entries of member sessions in this group (id or unique prefix)
+    #[arg(long, value_name = "ID")]
+    pub(crate) group: Option<String>,
+
     /// Only entries carrying this topic; repeat it to require every one [default: any]
     #[arg(long, value_name = "TOPIC")]
     pub(crate) topic: Vec<Topic>,
@@ -419,12 +423,22 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
         author_kind: args.author_kind.map(AuthorKind::from),
         limit: args.limit,
     };
-    let found = ctx.store().list_entries(&filter)?;
+    let store = ctx.store();
+    let group = args
+        .group
+        .as_deref()
+        .map(|id| store.group(id))
+        .transpose()?;
+    let members = group.as_ref().map(|group| group.members());
+    let found = store.list_entries_scoped(&filter, members.as_ref())?;
     let empty = format!(
         "no entries in {}; they are recorded by a #scribe line in a Claude Code session",
         ctx.store().root().display()
     );
     let mut criteria = criteria(&filter);
+    if let Some(group) = group {
+        criteria.push(format!("--group {}", group.id));
+    }
     criteria.extend(args.dates.criteria());
     if let Some(after) = args.after
         && let Ok(text) = after.format(&time::format_description::well_known::Rfc3339)

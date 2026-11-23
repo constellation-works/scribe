@@ -10,7 +10,7 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-The code writes format 29 and reads formats 1–29. Format 29 adds groups and seats in SQLite schema 9. Format 28 adds an optional `handoff_mode` (`continue` or `new`) to entries; SQLite schema 7 adds its nullable column, and older databases read it as null until the next write migrates them. SQLite schema 8 removes stale rebuild checkpoints for forgotten sessions; export omits them before that migration runs. Schema 10 records completion of the required WAL cleanup, retrying after a busy reader, a busy writer, or interruption, including on stores already at schema 9. Format 26 moves the
+The code writes format 29 and reads formats 1–29. Format 29 adds groups and seats in SQLite schema 9. SQLite schema 11 adds group turn capture and closing summaries. Format 28 adds an optional `handoff_mode` (`continue` or `new`) to entries; SQLite schema 7 adds its nullable column, and older databases read it as null until the next write migrates them. SQLite schema 8 removes stale rebuild checkpoints for forgotten sessions; export omits them before that migration runs. Schema 10 records completion of the required WAL cleanup, retrying after a busy reader, a busy writer, or interruption, including on stores already at schema 9. Format 26 moves the
 sessions into `scribe.db`
 ([2_design.md §15.7](../2_design.md#157-storage), phase 6): records,
 switches, Codex cursors and rebuild checkpoints become rows (schema version
@@ -198,7 +198,7 @@ Only `config.toml` and `memory/`'s files remain as primary data files outside th
   `rebuild_checkpoints` rows whose session is forgotten (a
   checkpoint an older build could write after the forget) and adds no
   table. `scribe export --as jsonl` leaves those rows out even before that
-  migration runs. Version 9 adds the group, seat and membership tables. Before advancing past versions 8 or 9, a writer truncates the WAL; if another reader or writer connection keeps the checkpoint from completing, the write fails and leaves the version available for retry. Version 10 records that cleanup without changing tables. Every application table is `STRICT`; the one virtual table, `messages_fts`, is an FTS5 index (`CREATE VIRTUAL TABLE`), and a virtual table takes no `STRICT` option. Times are RFC 3339 UTC text.
+  migration runs. Version 9 adds the group, seat and membership tables. Before advancing past versions 8 or 9, a writer truncates the WAL; if another reader or writer connection keeps the checkpoint from completing, the write fails and leaves the version available for retry. Version 10 records that cleanup without changing tables. Version 11 adds summary, membership capture time and cursor, and group-only message provenance. Because old memberships have no join time, their capture starts at migration. Messages that already exist retain their independent session-pass provenance. Every application table is `STRICT`; the one virtual table, `messages_fts`, is an FTS5 index (`CREATE VIRTUAL TABLE`), and a virtual table takes no `STRICT` option. Times are RFC 3339 UTC text.
 - **Errors.** Contention is `store_locked`: a write that waits past the lock
   wait (`SQLITE_BUSY` or `SQLITE_LOCKED`) fails with holder
   `another scribe.db writer`, and a schema 8 or 9 WAL cleanup blocked by an
@@ -209,15 +209,15 @@ Only `config.toml` and `memory/`'s files remain as primary data files outside th
   `store_database`; readers set no busy timeout, so a read SQLite reports
   busy is one too.
 
-### Tables (version 10)
+### Tables (version 11)
 
 | Table | Columns (type, constraint) | Written by |
 |---|---|---|
 | `meta` | `id INTEGER PRIMARY KEY CHECK (id = 1)`; `store_id TEXT NOT NULL`, 32 hex characters; `created TEXT NOT NULL` | the first migration; one row |
-| `groups` | `id INTEGER PRIMARY KEY AUTOINCREMENT` (shown as `g-<n>`), `title` and `kind` nonblank redacted text, `project` slug, `opened` timestamp, nullable `closed` timestamp, `opener` provider session id, `related` JSON array of task, PR and repository references | `group open` on a verified typed quote |
+| `groups` | `id INTEGER PRIMARY KEY AUTOINCREMENT` (shown as `g-<n>`), `title` and `kind` nonblank redacted text, `project` slug, `opened` timestamp, nullable `closed` timestamp and redacted `summary`, `opener` provider session id, `related` JSON array of task, PR and repository references | `group open` on a verified typed quote, `group close` by the opener |
 | `group_seats` | `group_id INTEGER` referencing the group, `name TEXT`, `role TEXT` (redacted free label), primary key `(group_id, name)` | `group join` creates the seat, `group leave` removes an empty seat |
-| `group_members` | `position INTEGER PRIMARY KEY AUTOINCREMENT`, foreign key `(group_id, seat)` to the seat, `session TEXT UNIQUE` (provider id), `author TEXT` (joining agent). Index on `(group_id, seat, position)` orders the chain. | `group join` appends, `group leave` removes the caller’s row |
-| `messages` | `id INTEGER PRIMARY KEY`; `session TEXT NOT NULL`, 1–128 characters (the session record's id); `message TEXT NOT NULL`, non-empty (the provider's message id); `role TEXT NOT NULL CHECK (role IN ('user', 'assistant'))`; `at TEXT NOT NULL`; `text TEXT NOT NULL`, redacted; `sha256 TEXT NOT NULL`, 64 hex characters of the redacted text; `UNIQUE (session, message)` | the session pass |
+| `group_members` | `position INTEGER PRIMARY KEY AUTOINCREMENT`, foreign key `(group_id, seat)` to the seat, `session TEXT UNIQUE` (provider id), `author TEXT` (joining agent), `joined` (capture start), nullable `turn_cursor` (provider message id). Index on `(group_id, seat, position)` orders the chain. | `group join` or clear inheritance appends, capture advances the cursor, `group leave` removes the caller’s row |
+| `messages` | `id INTEGER PRIMARY KEY`; `session TEXT NOT NULL`, 1–128 characters (the session record's id); `message TEXT NOT NULL`, non-empty (the provider's message id); `role TEXT NOT NULL CHECK (role IN ('user', 'assistant'))`; `at TEXT NOT NULL`; `text TEXT NOT NULL`, redacted; `sha256 TEXT NOT NULL`, 64 hex characters of the redacted text; `group_only INTEGER NOT NULL DEFAULT 0` (0 or 1); `UNIQUE (session, message)` | the session pass and group hooks |
 | `messages_fts` | FTS5 over `messages.text`, external content (`content = 'messages'`, `content_rowid = 'id'`), `tokenize = 'unicode61 remove_diacritics 2'`; kept by `AFTER INSERT`, `AFTER DELETE` and `AFTER UPDATE OF text` triggers | the triggers |
 | `now_pending` | `id INTEGER PRIMARY KEY`; `session TEXT NOT NULL`, 1–128 characters; `message TEXT NOT NULL`, non-empty; `subject TEXT NOT NULL`, non-empty; `text TEXT NOT NULL`; `created TEXT NOT NULL`; `UNIQUE (session, subject)`; a `BEFORE INSERT` trigger aborts a sixth row for one session | the session pass; dropped by the session's final pass or when a dated element completes one |
 | `memory_history` | `id INTEGER PRIMARY KEY`; `item TEXT NOT NULL`, non-empty (the removed item's id or file stem); `kind TEXT NOT NULL`, non-empty; `text TEXT NOT NULL`; `sources TEXT NOT NULL`, a JSON array; `removed_at TEXT NOT NULL` | the migration, `memory refresh` (a passed `now` item it does not promote); `memory forget` deletes an item's rows |
@@ -240,6 +240,25 @@ Only `config.toml` and `memory/`'s files remain as primary data files outside th
 | `pickups` | `position INTEGER PRIMARY KEY`; the fields of one `pickups.json` record | `entry pickup` (version 5) |
 | `audit` | `id INTEGER PRIMARY KEY`; `format INTEGER NOT NULL`, the line's own format (1–5); the event's fields (`issue` as JSON text, `NULL` for none); `spool TEXT UNIQUE`, the spool file a line was drained from or the `audit.jsonl:<offset>:<sha256>` key of an imported log line, else `NULL` | every audited command; the move; the spool drain (version 5) |
 | `pending_archive_forgets` | `id INTEGER PRIMARY KEY`; `entry TEXT NOT NULL` (`<tag>-<n>`); `salt TEXT NOT NULL`, 64 hex characters; `digests TEXT NOT NULL`, JSON array of `{len, sha256}` salted SHA-256 digests of erased texts (never cleartext); `created TEXT NOT NULL` | committed in the entry forget's transaction when `pre-sqlite-*` archives exist or are pending move-aside; drained after commit by that write or any restarted write (version 6) |
+
+Group turns use the same `messages` and FTS5 rows, with `group_only = 1` for
+turns kept solely through membership. A session pass that writes the same
+message clears that flag. Capture rechecks open membership and the cursor in
+the message write transaction. Capture skips replay if the transcript no
+longer contains its cursor. A header-only `sessions` row gives an uncataloged
+member's messages a forget target.
+
+Leaving removes the membership, its group-only turns and any derived summary
+in one transaction. Session forget erases the session's turns and invalidates
+its group's summary. Deleting a stored turn or forgetting a handoff also
+invalidates the affected summary. Affected writes use the normal FTS cleanup
+and WAL checkpoint after deleting text.
+
+Close takes a per-group lock, reads the snapshot, then makes one bounded model
+call outside the SQLite write transaction. The group lock precedes the SQLite
+write lock on every close. It checks the input again before
+committing `closed` and `summary` together. A model error or changed evidence
+leaves the group open for retry.
 
 ### Messages
 
@@ -1414,7 +1433,8 @@ exits 0.
   `issue.title`, `issue.signature`, `issue.cause`, `issue.fix`,
   `issue.occurrences.summary`, `issue.occurrences.request`,
   `issue.occurrences.error_lines`, `issue.occurrences.cause` and
-  `issue.occurrences.fix`. Format 29 also masks `group.title`, `group.kind` and `seat.role`. A masked segment
+  `issue.occurrences.fix`. Group metadata, closing summaries and stored message
+  text are also masked at their database writes. A masked segment
   heading is cut back to 80 characters. Values shorter than 8 characters are not masked;
   identifiers, timestamps and paths are not free text. A `[redact] env`
   name with no value in the writer's environment refuses the write

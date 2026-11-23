@@ -44,10 +44,25 @@ pub struct Brief {
     /// The project whose sessions come first; `None` orders every project's
     /// sessions by date alone.
     pub project: Option<Project>,
+    /// The project's most recently opened group.
+    pub last_group: Option<LastGroup>,
     /// The last sessions: the project's first, each part newest first.
     pub sessions: Vec<BriefSession>,
     /// The open claims, grouped by tag in tag order; claims by id within a tag.
     pub claims: Vec<ClaimGroup>,
+}
+
+/// The group metadata and summary carried by a project brief.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct LastGroup {
+    /// Stable group id.
+    pub id: String,
+    /// Group title.
+    pub title: String,
+    /// Closing time, if closed.
+    pub closed: Option<String>,
+    /// Summary produced at close, if still retained.
+    pub summary: Option<String>,
 }
 
 /// One session in the brief.
@@ -127,6 +142,20 @@ impl Brief {
         {
             out.push_str(memory);
             out.push_str("\n\n");
+        }
+        if let Some(group) = &self.last_group {
+            out.push_str(&format!(
+                "## Last group\n{} · {}\n",
+                group.id,
+                one_line(&group.title)
+            ));
+            if let Some(summary) = &group.summary {
+                out.push_str(summary);
+                out.push('\n');
+            } else if group.closed.is_none() {
+                out.push_str("Still open.\n");
+            }
+            out.push('\n');
         }
         out.push_str("## Recent sessions\n");
         if self.sessions.is_empty() {
@@ -284,6 +313,7 @@ pub fn build(
     Brief {
         memory: None,
         project: project.cloned(),
+        last_group: None,
         sessions: recent,
         claims,
     }

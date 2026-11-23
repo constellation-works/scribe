@@ -131,6 +131,7 @@ fn run<T: Tasks>(
     let corpus = Corpus {
         entries,
         sessions,
+        messages: &[],
         tags: &tags,
         user: &crate::voice::UserName::default(),
     };

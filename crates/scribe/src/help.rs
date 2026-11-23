@@ -40,7 +40,7 @@ pub(crate) const ROOT_GROUPS: &[Group] = &[
     },
     Group {
         heading: "Find",
-        commands: &["brief", "question", "search", "transcript", "tmux"],
+        commands: &["brief", "ask", "question", "search", "transcript", "tmux"],
     },
     Group {
         heading: "Upkeep",

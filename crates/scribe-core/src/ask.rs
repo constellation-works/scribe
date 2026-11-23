@@ -232,6 +232,8 @@ pub struct Corpus<'a> {
     pub entries: &'a [Entry],
     /// Every session record.
     pub sessions: &'a [SessionRecord],
+    /// Stored message matches supplied for a group-scoped question.
+    pub messages: &'a [crate::message::MessageMatch],
     /// The configured tags, for tag words in the question.
     pub tags: &'a TagTable,
     /// How evidence labels and answers name the user (`[user] name`).
@@ -1113,6 +1115,8 @@ pub(crate) enum Origin {
     Header(usize),
     /// Segment `log[j]` of `corpus.sessions[i]`.
     Segment(usize, usize),
+    /// A stored message.
+    Message,
     /// An Orbit task.
     Task,
 }
@@ -1255,6 +1259,41 @@ fn retrieve<T: Tasks + ?Sized>(question: &Question, corpus: Corpus<'_>, tasks: &
         |e| scope.keeps_entry(e),
         |r, _| scope.keeps_session(r),
     );
+    if scope.kind.is_none() && scope.tags.is_empty() {
+        docs.extend(corpus.messages.iter().filter_map(|m| {
+            let record = corpus.sessions.iter().find(|r| r.id == m.session);
+            let project = record.map(|r| &r.project).or(m.group_project.as_ref());
+            if scope.project.as_ref().is_some_and(|p| Some(p) != project)
+                || !scope
+                    .topics
+                    .iter()
+                    .all(|t| record.is_some_and(|r| r.topics.contains(t)))
+                || scope.since.is_some_and(|since| m.at.date() < since)
+            {
+                return None;
+            }
+            let session = format!("session:{}", m.session);
+            Some(Doc {
+                item: EvidenceItem {
+                    cite: format!("{session}#message:{}", m.message),
+                    kind: "message",
+                    whose: words_label(corpus.user, m.role),
+                    status: "stored".into(),
+                    date: day(m.at),
+                    text: m.text.clone(),
+                    quote: None,
+                    approval: None,
+                },
+                record: session,
+                tokens: tokens(&m.text),
+                weight: 1.0,
+                order: 1,
+                at: m.at,
+                hidden: record.is_some_and(|r| !r.active),
+                origin: Origin::Message,
+            })
+        }));
+    }
     if scope.keeps_tasks() {
         let query_text: Vec<&str> = query.iter().map(String::as_str).collect();
         let found = tasks.search(&TaskQuery {

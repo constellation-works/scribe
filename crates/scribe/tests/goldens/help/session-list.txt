@@ -8,6 +8,9 @@ Options:
       --project <PROJECT>
           Only sessions that ran in this project (a repository slug) [default: any]
 
+      --group <ID>
+          Only session records of this group's members (id or unique prefix)
+
       --topic <TOPIC>
           Only sessions carrying this topic; repeat it to require every one [default: any]
 
