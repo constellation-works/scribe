@@ -103,8 +103,9 @@ named session already belongs to another group, the whole line is refused and
 nothing changes. This is a human-typed prompt line with no terminal command or
 agent route, so the agent gives the human the line to type.
 
-The same typed line in another session joins the existing open group. A session in
-a group must leave before joining another. Peer, scheduled and harness
-prompts cannot give consent. Clear-time seat inheritance also applies to
-project groups in Claude Code. The group stays open until
+A second session joins itself to the existing open group by typing
+`/scribe group <slug>` there. A `group add` line joins only the sessions it
+names. A session in a group must leave before joining another. Peer, scheduled
+and harness prompts cannot give consent. Clear-time seat inheritance also
+applies to project groups in Claude Code. The group stays open until
 `scribe group close <slug>` from its opening session.
