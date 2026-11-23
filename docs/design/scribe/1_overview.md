@@ -1,7 +1,7 @@
 ---
 title: scribe — Overview
 owner: claude
-last_updated: 2026-11-21
+last_updated: 2026-11-23
 last_validated: 2026-11-02
 status: Draft
 stage: building
@@ -13,7 +13,7 @@ summary: A standalone Orbit plugin that keeps Daniel's explicitly marked prefere
 tags: [scribe]
 paths: ["crates/**", "plugin/**"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21744, ORB-21404, ORB-23849, ORB-23892, ORB-25977, ORB-25980, ORB-25983, ORB-25987]
+related_artifacts: [ORB-21747, ORB-21744, ORB-21404, ORB-23849, ORB-23892, ORB-25977, ORB-25980, ORB-25983, ORB-25987, ORB-27638]
 ---
 
 # scribe — Overview
@@ -81,6 +81,9 @@ Amended 2026-11-20 ([ORB-25980]): `decisions` no longer ships as a tag; a
 decision is recorded on its Orbit task or in a feature's `4_decisions.md`
 ([4_decisions.md](./4_decisions.md#decisions-are-recorded-on-their-orbit-task-not-in-a-shipped-tag)).
 Daniel's 2026-11-02 words above are kept as he wrote them.
+Amended 2026-11-23 ([ORB-27638], proposed): a decision that outlives one task
+returns as a shipped `decision` record, beside `open-item` records for what
+waits on Daniel ([2_design.md §18](./2_design.md#18-decisions-and-open-items-proposed)).
 
 ### Directions of 2026-11-10 ([ORB-23892])
 
@@ -141,6 +144,7 @@ candidates since 2026-11-17.
 | The session pass writes findings itself, verbatim, with no proposal or approval | [ORB-25983] | filed, not landed |
 | The session pass captures his ideas and what became of them, and links near ones | [ORB-25987] | filed, not landed |
 | `preferences` keep his typed approval: agents act on them, so a wrong one costs more | none | unchanged |
+| Amended 2026-11-23: a decision that outlives a task is a `decision` record again; open items join it | [ORB-27638] | proposed, not built |
 
 Two things the principle asks for that no task covers yet:
 
@@ -233,5 +237,6 @@ can override.
 - [ORB-25980] — stop shipping the `decisions` memory tag.
 - [ORB-25983] — the session pass writes findings itself.
 - [ORB-25987] — the session pass captures ideas and their outcome.
+- [ORB-27638] — design: `decision` and `open-item` records (proposed).
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
