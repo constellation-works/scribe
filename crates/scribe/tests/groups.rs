@@ -515,8 +515,17 @@ printf '%s\n' '{{"type":"result","is_error":false,"structured_output":{{"summary
     };
     let denied = close(B);
     assert_eq!(denied.status.code(), Some(1));
-    assert!(text(&denied.stderr).contains("only the opening session or the current holder"));
+    let refused: Value = serde_json::from_slice(&denied.stderr).unwrap();
+    assert_eq!(refused["code"], "group_membership", "{refused}");
+    assert_eq!(
+        refused["error"],
+        "only the opening session or the current holder of its seat can close g-1; any other \
+         session can close it with --quote '<span>', where <span> is a verbatim turn the user \
+         typed in that session and contains g-1 as a whole word",
+        "{refused}"
+    );
     assert!(!f.home().join("model-calls").exists());
+    assert!(invoke(&f, A, &["group", "show", "g-1"], 0)["closed"].is_null());
     let after_denied: Vec<_> = support::audit_lines(&f.root())
         .into_iter()
         .filter(|line| line["command"] == "group close")
