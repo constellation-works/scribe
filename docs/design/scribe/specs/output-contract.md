@@ -329,16 +329,18 @@ own), `author` (an entry's `{kind, name}`, `null` for a session), `active`
 session's `updated`, a segment's `to`, a message's time), and `status`
 (added beside the designed fields: an entry's `active`, `superseded` or
 `retired`, a session's `open` or `final`, which a message takes from its
-session).
+session when it has a record; otherwise a group-only message is `stored`).
 
 (Phase 4, 2_design.md §15.7) `scribe search --kind message` searches the
 messages in `scribe.db` instead of the entries and sessions: ranked by
 SQLite FTS5's `bm25()` (`score` is its negation, so higher is better),
-each search token matched as a word prefix. A message's `title` is its
-session's title and its role (`<title> (user)`), and it is filtered
-through its session's record: `--project` and `--topic` are the
-session's, the dates are the message's, an inactive session's messages are
-hidden, and a message whose session has no record is left out. Without
+each search token matched as a word prefix. Both unscoped and group-scoped
+search include group-only turns without a session record. A record supplies
+the title, project, topics and active status when present; otherwise a
+group-only turn uses the session id as its title, the group's project, empty
+topics, null `active` and `stored` status. The role is appended to the title
+(`(<role>)`); dates are the message's, and an inactive session's messages
+are hidden unless `--include-hidden` is set. Without
 `--kind`, a search ranks entries and sessions only: the two scores are not
 comparable. A store whose database had to be opened as a read-only copy
 adds the notice `read-only copy: <path> has no -wal or -shm file and its
@@ -994,9 +996,10 @@ do, in the store `root` names.
 
 ## Session groups
 
-`group open`, `group join`, `group leave` and `group show` return one group.
+`group open`, `group join`, `group leave`, `group close` and `group show` return one group.
 Its JSON fields are `id`, `title`, `kind`, `project`, `opened`, `closed`
-(null while open), `opener`, `related` and `seats`. Each seat has a `name`,
+(null while open), `opener`, `related`, `seats` and `summary` (a closing
+summary or null when absent). Each seat has a `name`,
 a `role`, its `transcripts` in join order and `newest_handoff` (an active
 entry id or null). Seats sort by name. `group list --json` returns the same
 objects newest first in `items`, alongside `total`, `truncated` and `warnings`.

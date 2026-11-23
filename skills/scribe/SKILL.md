@@ -23,7 +23,10 @@ For focused lookup, use `scribe search "<words>" --json`,
 A session id may also be its short `s-<n>` (`short_id` in JSON); cite with
 the full `id`.
 `scribe search "<words>" --kind message --json` searches the user's own
-stored turns of switched-on sessions instead (each hit cites its session).
+stored turns from switched-on sessions and group members instead (each hit
+cites its session). Group consent captures eligible typed turns after joining an
+open group even when cataloging is off; search finds them with or without
+`--group <id>`. Leaving removes turns held only on group consent.
 Preserve verbatim quotes and their citations. An empty or failed lookup is
 not evidence of a preference. Use `--help` for filters and write arguments.
 
