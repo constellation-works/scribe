@@ -42,9 +42,10 @@ For open, join, leave and close in Codex, put `--provider codex` before
   until the old transcript is a day idle that join needs `--replace`, which
   the human must ask for.
 - **Stored turns.** While the group is open, a member's typed turns are stored
-  from the time it joined and contain the human's words only. They are
-  group-only: no memory pass reads them and they make no catalog entry, since
-  a session pass reads the transcript, not these rows.
+  from the time they join. Explicitly adding a member with `/scribe group add`
+  also backfills eligible older typed turns. Stored turns contain the human's
+  words only and are group-only: no memory pass reads them and they make no
+  catalog entry, since a session pass reads the transcript, not these rows.
 - **Capture exclusions.** Scribe excludes assistant turns, harness and
   `/scribe` control lines, pasted blocks, fenced code, and turns with a
   finance or sensitive-event word. It also excludes peer, agent and
