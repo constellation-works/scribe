@@ -6701,7 +6701,7 @@ Codex rollouts, regardless of the caller’s provider. When its transcript is st
 on disk, its typed turns are stored with the selection a member's own turns get (a typed turn, not an agent
 or harness turn, nor a copied history) whatever their age, and its capture
 cursor is set after the last of them, so a later capture neither repeats them
-nor skips newer ones; the reply says `transcript on disk, <n> typed turns
+nor skips newer ones. The join time is taken before any transcript is read, and once a cursor is set every turn after it is stored whatever its timestamp, so a turn appended while the snapshots were being read, though dated before the membership committed, is kept exactly once; an ordinary join, which has no cursor, keeps its join-time cutoff. The reply says `transcript on disk, <n> typed turns
 stored`. When it is not, only membership is added and the reply says
 `membership only, no transcript on disk`. A transcript on disk that fails the
 provenance check refuses the whole line. A session already in another group

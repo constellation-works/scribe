@@ -1040,7 +1040,15 @@ fn after_cursor<'a>(state: &CaptureState, messages: &'a [NewMessage]) -> Option<
     }
 }
 
+/// The turns a member's capture may store. A member with no cursor holds its
+/// join time as a cutoff, so older turns stay out. Once a cursor is set (by a
+/// backfill or an earlier capture) it is the continuity point: every turn after
+/// it is new whatever its timestamp, since a turn appended while the cursor's
+/// snapshot was being read can be dated before the membership was committed.
 fn turns_since<'a>(state: &CaptureState, messages: &'a [NewMessage]) -> Vec<&'a NewMessage> {
+    if state.cursor.is_some() {
+        return messages.iter().collect();
+    }
     messages.iter().filter(|m| m.at >= state.since).collect()
 }
 
