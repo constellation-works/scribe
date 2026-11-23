@@ -385,6 +385,14 @@ impl Store {
             let conn = open_writer(self.root(), self.lock_wait)?;
             let path = self.root().join(DB_FILE);
             let fail = |e| db_error("leave group in", &path, e);
+            let held: Option<bool> = conn
+                .query_row(
+                    &format!("SELECT {HOLDS_SEAT} FROM group_members m WHERE m.session = ?1"),
+                    [session.as_str()],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(fail)?;
             let (n, seat): (i64, String) = conn
                 .query_row(
                     "DELETE FROM group_members WHERE session=?1 RETURNING group_id,seat",
@@ -405,6 +413,19 @@ impl Store {
                 params![n, seat],
             )
             .map_err(fail)?;
+            if held == Some(true) {
+                // The leaver held the seat, so the member it displaced holds it
+                // again. Turns that member typed in between were never
+                // authorized: restart its consent window now.
+                conn.execute(
+                    "UPDATE group_members SET joined = ?3
+                     WHERE group_id = ?1 AND seat = ?2 AND position = (
+                         SELECT MAX(position) FROM group_members WHERE group_id = ?1 AND seat = ?2
+                     )",
+                    params![n, seat, stamp(OffsetDateTime::now_utc())],
+                )
+                .map_err(fail)?;
+            }
             let erased = conn
                 .execute(
                     "DELETE FROM messages WHERE session = ?1 AND group_only = 1",
@@ -543,6 +564,9 @@ impl Store {
         else {
             return Ok(0);
         };
+        if !before.holds {
+            return self.skip_displaced_turns(session, &before, messages);
+        }
         if next_turns(&before, messages).is_empty() {
             return Ok(0);
         }
@@ -554,7 +578,7 @@ impl Store {
             else {
                 return Ok(0);
             };
-            if state.position != before.position {
+            if state.position != before.position || !state.holds {
                 return Ok(0);
             }
             let turns = next_turns(&state, messages);
@@ -578,10 +602,46 @@ impl Store {
             Ok(inserted)
         })
     }
+
+    /// Move a displaced member's cursor past the turns it typed while a later
+    /// member held its seat, storing none of them, so they stay out of the
+    /// group if the seat comes back to it.
+    fn skip_displaced_turns(
+        &self,
+        session: &SessionId,
+        before: &CaptureState,
+        messages: &[NewMessage],
+    ) -> Result<usize> {
+        let Some(last) = messages.last() else {
+            return Ok(0);
+        };
+        if before.cursor.as_deref() == Some(last.message.as_str()) {
+            return Ok(0);
+        }
+        self.write(|| {
+            let conn = open_writer(self.root(), self.lock_wait)?;
+            let path = self.root().join(DB_FILE);
+            let Some(state) = capture_state(&conn, &path, session).map_err(Fallible::into_error)?
+            else {
+                return Ok(0);
+            };
+            if state.position == before.position && !state.holds {
+                conn.execute(
+                    "UPDATE group_members SET turn_cursor = ?2 WHERE position = ?1",
+                    params![state.position, last.message],
+                )
+                .map_err(|e| db_error("skip displaced group turns in", &path, e))?;
+            }
+            Ok(0)
+        })
+    }
 }
 
 struct CaptureState {
     position: i64,
+    /// Whether the member holds its seat now. A replaced member keeps its row
+    /// but stores nothing.
+    holds: bool,
     since: OffsetDateTime,
     cursor: Option<String>,
 }
@@ -599,20 +659,21 @@ fn capture_state(
     };
     // Capture belongs to the seat holder only: while a later member holds the
     // seat, a replaced member stores no new turns.
-    let row: Option<(i64, String, Option<String>)> = conn.query_row(
-        &format!("SELECT m.position, {}, {} FROM group_members m
+    let row: Option<(i64, String, Option<String>, bool)> = conn.query_row(
+        &format!("SELECT m.position, {}, {}, {HOLDS_SEAT} FROM group_members m
          JOIN groups g ON g.id = m.group_id
-         WHERE m.session = ?1 AND g.closed IS NULL AND {HOLDS_SEAT} AND NOT EXISTS (
+         WHERE m.session = ?1 AND g.closed IS NULL AND NOT EXISTS (
              SELECT 1 FROM sessions s WHERE s.provider_session = m.session AND s.forgotten IS NOT NULL
          )", joined.0, joined.1),
         [session.as_str()],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
     ).optional().map_err(fail)?;
-    row.map(|(position, joined, cursor)| {
+    row.map(|(position, joined, cursor, holds)| {
         let since = OffsetDateTime::parse(&joined, &Rfc3339)
             .map_err(|e| Fallible::Failed(Error::corrupt(path, e)))?;
         Ok(CaptureState {
             position,
+            holds,
             since,
             cursor,
         })
