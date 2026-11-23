@@ -1057,5 +1057,7 @@ CLOSED SEATS`, where `SEATS` is the right-aligned number of seats and only
 line keeps every field: `id title kind project opened closed opener related
 seats summary`, with `seats` as `<name> (<role>): <session> -> <session>
 [handoff: <id or ->]` joined by `; `, and `-` for an empty `related`, `seats`
-or `summary`. The opener, related references, seat chains and summary are
-read in full with `group show <id>` or `--json`.
+or `summary`. The opener, related references and summary are read in full
+with `group show <id>` or `--json`. A seat chain is read in full with piped
+or `--json` output; a terminal `group show` table prints its session ids in
+their short form, counting the sessions seats hold (2_design.md, Ids).

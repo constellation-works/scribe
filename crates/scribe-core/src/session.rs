@@ -116,9 +116,10 @@ pub const SHORT_ID_MIN: usize = 8;
 /// The short forms of session ids, git-style: each id prints as its shortest
 /// prefix that no other known id shares, at least [`SHORT_ID_MIN`] characters.
 /// The universe is every id the store resolves, not only the rows shown, so a
-/// printed prefix is always accepted back (STD-01 R32). Codex ids are
-/// UUIDv7, whose first eight characters are a timestamp, so a fixed length
-/// would not be unique.
+/// printed prefix is accepted back (STD-01 R32). A caller that prints other
+/// ids, such as a group's seat sessions the store does not catalog, adds them
+/// to the universe as well. Codex ids are UUIDv7, whose first eight characters
+/// are a timestamp, so a fixed length would not be unique.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ShortIds {
     /// Every id, sorted, without duplicates.
