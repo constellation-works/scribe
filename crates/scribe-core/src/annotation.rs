@@ -484,6 +484,16 @@ impl CheckRefusal {
     }
 }
 
+/// `own_span` for an annotation (§14.3): a line-start `#scribe` line is a
+/// marker whose words are Daniel's own (§14.6), so a quote may come from
+/// it; a settling command's line is still left out.
+pub(crate) fn own_marked_span(text: &str, quote: &str) -> bool {
+    verbatim::contains(text, quote)
+        && text.contains(quote)
+        && crate::claim::own_lines_where(text, |line| !crate::capture::settles(line))
+            .contains(quote)
+}
+
 /// The deterministic checks of one marker's answer (§14.3). `typed` are
 /// the window's turns Daniel plainly typed, the marked one included; the
 /// quote must be a verbatim span of his own words in the one it names.
@@ -536,9 +546,7 @@ pub fn check(
             let own = crate::transcript::user_turn(message)
                 .map(|turn| turn.own)
                 .ok_or(CheckRefusal::NotVerbatim)?;
-            if !crate::pass::own_marked_span(&own, quote)
-                || !verbatim::contains(&message.text(), quote)
-            {
+            if !own_marked_span(&own, quote) || !verbatim::contains(&message.text(), quote) {
                 return Err(CheckRefusal::NotVerbatim);
             }
             Ok(Checked::Entry(Annotated {

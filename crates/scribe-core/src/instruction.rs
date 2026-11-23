@@ -408,9 +408,9 @@ pub fn names_act(words: &str, reply: Option<&str>, act: Act, target: &Target) ->
 }
 
 fn has_exception(text: &str) -> bool {
-    let tokens = crate::pass::statement_tokens(text);
+    let tokens = crate::claim::statement_tokens(text);
     tokens.iter().any(|token| {
-        crate::pass::is_marker(token) || matches!(token.as_str(), "but" | "stop" | "cancel")
+        crate::claim::is_marker(token) || matches!(token.as_str(), "but" | "stop" | "cancel")
     }) || tokens
         .windows(2)
         .any(|pair| pair[0] == "other" && pair[1] == "than")

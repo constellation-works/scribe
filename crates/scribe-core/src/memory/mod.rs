@@ -614,7 +614,7 @@ fn check_one(
     let own = messages.iter().any(|m| {
         m.uuid == answer.message
             && m.role == Speaker::User
-            && crate::pass::own_span(&m.text, &quote)
+            && crate::claim::own_span(&m.text, &quote)
     });
     if !own {
         return Err(Refusal::Unverified);
@@ -679,7 +679,7 @@ pub fn drafts(
             .find(|m| m.uuid == element.message && m.role == Speaker::User)
             .and_then(|m| Some((m, transcript::user_turn(m)?)))
             .filter(|(m, turn)| {
-                crate::pass::own_span(&turn.own, &element.quote)
+                crate::claim::own_span(&turn.own, &element.quote)
                     && m.text().contains(&element.quote)
             });
         let Some((message, turn)) = found else {
@@ -793,7 +793,7 @@ pub fn plan(
     };
     for draft in drafts {
         let element = &draft.checked;
-        if !crate::pass::own_span(&draft.turn, &element.quote) {
+        if !crate::claim::own_span(&draft.turn, &element.quote) {
             refused.push(Refusal::Unverified);
             continue;
         }
