@@ -24,7 +24,7 @@
 //! store holds its lock around every write.
 
 use super::memory::read;
-use super::{DB_FILE, Fallible, db_error, stamp};
+use super::{DB_FILE, Fallible, db_error, optimize_fts, stamp};
 use crate::WriteRefusal;
 use crate::error::{Error, Result};
 use crate::session::{ControlState, SessionControl, SessionId, SessionRecord, check_log};
@@ -577,11 +577,7 @@ pub(in crate::store) fn forget(
         )
         .map_err(err)?;
     if messages > 0 {
-        conn.execute(
-            "INSERT INTO messages_fts (messages_fts) VALUES ('optimize')",
-            [],
-        )
-        .map_err(err)?;
+        optimize_fts(conn).map_err(err)?;
     }
     Ok(Some((
         Erased {
