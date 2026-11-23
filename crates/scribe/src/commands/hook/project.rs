@@ -10,7 +10,8 @@
 use scribe_core::Project;
 use std::path::{Path, PathBuf};
 
-/// The project for `cwd`.
+/// The project for `cwd`. Never fails: when no remote can be read, the cwd's
+/// basename names the project.
 pub(in crate::commands) fn of(cwd: &Path) -> Project {
     remote_name(cwd).map_or_else(
         || Project::sanitized(&basename(cwd)),
