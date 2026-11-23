@@ -219,6 +219,59 @@ fn a_database_from_a_newer_build_is_refused() {
 }
 
 #[test]
+fn schema_nine_checkpoint_reports_a_neutral_holder_when_a_writer_is_active() {
+    let dir = private_tempdir();
+    let store = Store::open(dir.path()).with_lock_wait(Duration::from_millis(50));
+    store
+        .write_messages(
+            &[message("s-1", "m-1", "existing committed WAL frame")],
+            &Redactor::default(),
+        )
+        .unwrap();
+    db::execute(dir.path(), "PRAGMA user_version = 9").unwrap();
+    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 9);
+
+    let writer = rusqlite::Connection::open(dir.path().join(DB_FILE)).unwrap();
+    writer.busy_timeout(Duration::ZERO).unwrap();
+    writer
+        .execute_batch(
+            "BEGIN IMMEDIATE;
+             INSERT INTO messages (session, message, role, at, text, sha256)
+             VALUES ('s-held', 'm-held', 'user', '2026-11-23T00:00:00Z', 'uncommitted',
+                     '0000000000000000000000000000000000000000000000000000000000000000');",
+        )
+        .unwrap();
+
+    let err = store
+        .write_messages(
+            &[message("s-1", "m-2", "retry after the writer releases")],
+            &Redactor::default(),
+        )
+        .unwrap_err();
+    let Error::Locked { holder, .. } = &err else {
+        panic!("expected a locked store, got {err:?}");
+    };
+    assert_eq!(holder, "another scribe.db connection");
+    assert_eq!(err.code(), "store_locked");
+    assert!(
+        err.to_string()
+            .contains("is locked by another scribe.db connection"),
+        "{err}"
+    );
+    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 9);
+
+    writer.execute_batch("ROLLBACK").unwrap();
+    drop(writer);
+    store
+        .write_messages(
+            &[message("s-1", "m-2", "retry after the writer releases")],
+            &Redactor::default(),
+        )
+        .unwrap();
+    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 10);
+}
+
+#[test]
 fn the_memory_tables_hold_their_constraints() {
     let dir = private_tempdir();
     let store = Store::open(dir.path());

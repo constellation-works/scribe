@@ -572,8 +572,8 @@ fn migrate(conn: &mut Connection, path: &Path) -> Result<()> {
         let started = Instant::now();
         // Versions 8 and 9 may have committed the deletion without finishing
         // its physical cleanup. Version 10 is the durable completion marker.
-        // Checkpoint outside the transaction; never let a busy reader erase
-        // the obligation. Recheck the version under the write lock below.
+        // Checkpoint outside the transaction; never let a busy checkpoint
+        // erase the obligation. Recheck the version under the write lock below.
         let observed: u32 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .map_err(|e| db_error("read the schema version of", path, e))?;
@@ -585,7 +585,7 @@ fn migrate(conn: &mut Connection, path: &Path) -> Result<()> {
             if busy != 0 {
                 return Err(Error::Locked {
                     path: path.to_path_buf(),
-                    holder: String::from("a scribe.db reader"),
+                    holder: String::from("another scribe.db connection"),
                     waited_ms: started.elapsed().as_millis(),
                 });
             }
