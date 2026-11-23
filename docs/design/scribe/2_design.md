@@ -1,17 +1,17 @@
 ---
 title: scribe — Design
 owner: claude
-last_updated: 2026-11-22
+last_updated: 2026-11-23
 last_validated: 2026-11-02
 status: Draft
 feature: scribe
 doc_role: design
 type: design
-summary: How the scribe plugin is bounded (one binary; Daniel writes through hooks, agents read and write through the CLI taught by one skill, and the MCP surface stays ask), how #scribe entries, /scribe on session records (a rewritable header over an append-only log of segments), active and inactive sessions, ask and search, the consistency routine, backfill by name and the tmux popup work, where everything is stored, which model does what, and the slice plan that builds it; §11–§13 are proposed designs (claims and issues, settling on instruction, and the descriptive memory written from sessions switched on by /scribe on or cataloged by name; its personal base for sessions that are off, people, recurring dates and light catalog entries are designed but parked 2026-11-21, and scribe reads Claude Code and Codex sessions only); §14 (approved 2026-11-21; step 1 built, store format 22) catalogs `#scribe` as an annotation anywhere in a typed turn, at the end of the turn, with a statement and a verbatim quote; §15 (proposed 2026-11-22, not built) makes tags configurable catchers whose inferred catches are claims with a context paragraph and a verbatim quote, adds `scribe brief`, fixes memory to `profile.md`, `now/` and `milestones/` with a weekly profile job, removes every personal name from shipped text, makes `issue` a catcher tag instead of a record kind, and moves sessions, entries, claims, state and audit into one SQLite database.
+summary: How the scribe plugin is bounded (one binary; Daniel writes through hooks, agents read and write through the CLI taught by one skill, and the MCP surface stays ask), how #scribe entries, /scribe on session records (a rewritable header over an append-only log of segments), active and inactive sessions, ask and search, the consistency routine, backfill by name and the tmux popup work, where everything is stored, which model does what, and the slice plan that builds it; §11–§13 are proposed designs (claims and issues, settling on instruction, and the descriptive memory written from sessions switched on by /scribe on or cataloged by name; its personal base for sessions that are off, people, recurring dates and light catalog entries are designed but parked 2026-11-21, and scribe reads Claude Code and Codex sessions only); §14 (approved 2026-11-21; step 1 built, store format 22) catalogs `#scribe` as an annotation anywhere in a typed turn, at the end of the turn, with a statement and a verbatim quote; §15 (proposed 2026-11-22, not built) makes tags configurable catchers whose inferred catches are claims with a context paragraph and a verbatim quote, adds `scribe brief`, fixes memory to `profile.md`, `now/` and `milestones/` with a weekly profile job, removes every personal name from shipped text, makes `issue` a catcher tag instead of a record kind, and moves sessions, entries, claims, state and audit into one SQLite database; §18 (proposed 2026-11-23, not built) ships `decision` and `open-item` records: a checked decision record for choices that outlive a task, and an open item with open, answered and closed states that the brief counts.
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26642, ORB-26826, ORB-26827]
+related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26642, ORB-26826, ORB-26827, ORB-27638]
 ---
 
 # scribe — Design
@@ -6919,6 +6919,381 @@ to find their stored turns. Scoped `ask` uses matching stored turns and does
 not query Orbit tasks. The project brief shows its most recently opened group
 and its closing summary when available.
 
+## 18. Decisions and open items (proposed)
+
+Designed in [ORB-27638]; not built. It waits for Daniel's approval, and the
+implementation tasks are listed in §18.11, not filed. It reverses, for
+decisions that outlive one task, the 2026-11-20 choice that scribe ships no
+decision tag ([4_decisions.md](./4_decisions.md#decisions-that-outlive-a-task-are-scribe-records-and-open-items-wait-for-daniel-in-scribe)).
+
+Daniel, chief's chat, 2026-11-23 (quoted on [ORB-27563]):
+
+- “I think we should add back "decision" tag - and try to capture all
+  important decisions. not just my decisions, but big decisions made by
+  chief as well. better if we include rationale, or make rationale
+  required.”
+- "I think we can use scribe to record open items for me, with options and
+  the recommended one. I will periodically check with scribe on open items,
+  where the scribe will record the decision and mark it closed."
+- To the chief's design: "File and trial".
+
+The need under both: he could not pick out of the chief's messages what was
+needed from him, and scribe could not return a decision that sat only in a
+skill or a chat ([ORB-27561]).
+
+### 18.1 What the trial showed
+
+The trial ran from 2026-11-23T23:02Z with no new code: two tags registered in
+the store (`decision`, alias `decisions`; `open-item`, aliases `open-items`
+and `ask`), and the procedure in the constellation repository's formation
+skill ("Decisions and open items (trial)"). Read at 2026-11-23T23:15Z:
+14 `decision` and 6 `open-item` entries, from three sessions (the chief, the
+orbit captain, the scribe captain).
+
+| What happened | Entries | What it means for the design |
+|---|---|---|
+| Eleven decisions and four items were written in one batch at 23:02Z by the chief, from earlier in the day | decision-1…11, open-item-1…4 | Writing after the fact works when the session still has the chat; the write is cheap. |
+| Daniel's words are quoted in prose; nothing checked them against what he typed | decision-1…11, 14 | A quote must be checked, as `standard` and `handoff` quotes are (§4.6, §16.1). |
+| The fields drifted within the hour: "Options shown" and "Options seen", no topics on 12–14, no session on decision-14, rationale written as "Rationale:", "(agent decision, rationale: …)" or "Why:" | decision-3, 7, 12, 13, 14 | A shape kept by a skill alone drifts at once. The fields that `brief` and the checks read must be typed. |
+| An answer was appended to the item's body (`ANSWERED <time>: "<words>" (where)`) and closing was a retirement with a `closed:` reason | open-item-6, open-item-4, open-item-3 | `retired` is overloaded: it means both closed and withdrawn. Answered and closed need their own states. |
+| Two items had no options: Daniel's own action, not a choice | open-item-3 (restart the dashboard), open-item-4 (type the close line) | An item is either a choice or an action for him. |
+| open-item-4 was answered and closed, and decision-14 was written for it, citing the item | open-item-4 → decision-14 | The answer and the lasting decision are two records, linked. |
+| open-item-6 was answered with a new standing rule ("don't write new test cases during task execution without explicit approvals or instructions") and closed; no decision was written | open-item-6 | The one-mechanism design lost a standing rule within six minutes. Closing must say whether a decision came of it. |
+| Most decisions had no open item before them: grants and rules Daniel gave unasked, and agents' own decisions | decision-1, 3, 10, 12, 13 | A decision is not always an answered item. |
+| The answer to open-item-5 has to be typed in a named session's chat, because auto mode there refused a relayed approval | open-item-5, decision-12 | The limit in §18.8 is real and an item must say where to answer. |
+| `scribe search 'operator authority'` returned decision-1 and decision-2 first | — | Search and `ask` need no new retrieval; they need to label the record. |
+| The session brief showed no open items | every session start | The count Daniel asked to see does not exist yet. |
+
+The trial also found a name collision: the standards plugin's decision
+intake ([ORB-25162], plugin 0.11.0) reads a `decision` action tag through the
+scribe relay (`operations/jobs/scribe-relay/relay.py`, `TAGS`) and files one
+drafting task per entry. No pickup is recorded for any trial entry, so it has
+not consumed them; §18.10 resolves it before anything ships.
+
+### 18.2 Two records, linked
+
+- **A decision** records a choice that outlives one task: a standing rule, a
+  grant of authority, a policy, or a design choice with no other home
+  (§18.9). It says who decided, what, the options when there were any, why,
+  and the record.
+- **An open item** records that something waits for Daniel: a question with
+  its options and the recommended one, or an action that is his to take. It
+  has a life (open, answered, closed) and is read by him and the aide.
+
+They are two records because they have different readers and lives. An item
+is a queue entry that should leave his view once carried out; a decision is a
+reference that `ask` cites for months. An answered item that settles
+something lasting is **closed by naming the decision** written for it
+(`--decision`); one that settles nothing lasting is closed with a note saying
+so. An item never turns into a decision in place, so its id stays valid in
+every message and handoff that named it.
+
+A choice about one piece of work stays on its Orbit task, with Daniel's words
+quoted, as [ORB-25980] decided. Neither record replaces that.
+
+### 18.3 The decision record
+
+`decision` ships as a memory tag (not an action tag; aliases `decisions` and
+`dec`). Its entries are agent-written through `entry add`. A `#scribe
+decision:` marker is refused, as a `handoff` marker is: a decision is
+written by the session that carries it out (§16.1).
+
+```sh
+scribe entry add --tag decision --author <model> --project <project> \
+  --decided-by user --quote '<his words>' \
+  --related session:<where he typed> --related task:<record> \
+  [--option '<option>' ... --recommended <n>] [--reason-quote '<his reason>'] \
+  [--supersedes decision-<n>] [--settles open-item-<n>] \
+  '<what was decided, and its scope>'
+
+scribe entry add --tag decision --author <model> --project <project> \
+  --decided-by <session name> --rationale '<why>' \
+  --related session:<id> --related task:<record> \
+  [--option ... --recommended <n>] [--supersedes ...] [--settles ...] \
+  '<what was decided, and its scope>'
+```
+
+Stored as an entry with one new object, `decision` (format bump, §18.7):
+
+| Field | Meaning | Check |
+|---|---|---|
+| `content` | What was decided and its scope, in the writer's words | required |
+| `decision.decided_by` | `user`, or the session name of the agent that decided (`0-chief`, `orbit-0-capt`) | required |
+| `quote` | Daniel's words that decided it | required when `decided_by` is `user`; verbatim (below) |
+| `decision.rationale` | Why the agent decided so | required when `decided_by` is an agent; refused when it is `user` |
+| `decision.reason_quote` | Daniel's reason, only when he stated one | `user` only; verbatim (below) |
+| `decision.options` | The options shown, each in full | 0, or 2 to 6 |
+| `decision.recommended` | The option recommended (1-based) and by whom, as written | only with options |
+| `decision.supersedes` | The decision this one reverses | active `decision` entry |
+| `decision.settles` | The open item this one answers | `open-item` entry |
+| `related` | The record: at least one `task:`, `pr:` or `repo:` reference, and the session Daniel typed in when he decided | required |
+
+- **Verbatim.** `--quote` and `--reason-quote` are checked as `--quote` is
+  for `standard` and `handoff` (§4.6, §16.1): a verbatim span of a typed
+  turn of Daniel's in one of the entry's `session:` references, found on
+  this host. His short answers ("agreed", "yes", "1") are under the
+  eight-character minimum, so a quote shorter than eight characters passes
+  only when it is a whole typed turn. A captain recording his words typed in
+  the chief's chat names the chief's session. A quote that cannot be found
+  is refused (`quote_not_found`); the decision is then recorded on its task,
+  as before.
+- **His reason is never invented.** The store cannot know whether he gave a
+  reason, but it can refuse a reason he did not type: a `user` decision
+  takes no `--rationale`, only `--reason-quote`, which must be his words.
+  That turns the trial's skill rule into a check.
+- **An agent's rationale is required.** `decided_by` other than `user`
+  without `--rationale` is refused (`rationale_required`).
+- **Reversal.** `--supersedes decision-<n>` writes the new entry and, in the
+  same transaction, sets the older one `superseded` with `superseded_by`. An
+  agent cannot supersede a decision Daniel made: superseding a `user`
+  decision requires `decided_by: user` (`supersede_user_decision`). The
+  older entry stays readable (`entry show`), and `ask` stops quoting it, as
+  for every superseded entry ([4_decisions.md](./4_decisions.md#superseded-and-stale-entries-are-hidden-not-removed)).
+- **Size.** At most 3,000 characters across content, options, rationale and
+  quotes, so one record fits on one screen (`decision_too_long`), as a
+  handoff does (§16.2). The longest trial entry was 910.
+- **Corrections.** `entry update` edits content, options and rationale.
+  `decided_by`, the quotes and `supersedes` are fixed once written: a wrong
+  one is retired and written again.
+
+### 18.4 The open-item record
+
+`open-item` ships as a memory tag (aliases `open-items` and `item`; the trial
+alias `ask` is dropped, because it is a verb of scribe's own). Its entries are
+agent-written. One open item is written by the chief or a captain the moment
+something waits for Daniel.
+
+```sh
+scribe entry add --tag open-item --author <model> --project <project> \
+  --asked-by <session name> --blocked '<what waits meanwhile>' \
+  [--option '<option in full>' ... --recommended <n> --why '<why>'] \
+  [--answer-in any|session:<id>|hand] \
+  --related session:<id> --related task:<record> \
+  '<the question, or the action that is his>'
+```
+
+| Field | Meaning | Check |
+|---|---|---|
+| `content` | The question, or the action that is his to take | required |
+| `item.asked_by` | The session name that asks | required |
+| `item.options` | Each option in full | 0 (an action for him) or 2 to 6 (a choice) |
+| `item.recommended`, `item.why` | The recommended option and why | required with options |
+| `item.blocked` | What waits meanwhile; `nothing` is an answer | required |
+| `item.answer_in` | `any` (default); `session:<id>` when only that session's chat can carry it (auto mode, §18.8); `hand` when it is his own act (permission settings, credentials, a host) | |
+| `item.answer` | `{words, session, at, recorded_by}` | set by `entry answer` |
+| `item.closed` | `{at, by, decision?, note}` | set by `entry close` |
+
+**States**, derived from the fields and shown as `state` by `entry list`,
+`entry show` and `--json`:
+
+| State | Entry status | Set by |
+|---|---|---|
+| `open` | active, no answer | `entry add` |
+| `answered` | active, with `item.answer` | `entry answer`, by the session he told |
+| `closed` | retired, with `item.closed` | `entry close`, by the asker once carried out |
+| `withdrawn` | retired, no `item.closed` | `entry retire`: the question went away or was wrong |
+
+**Answering.** The session Daniel answers in records his words:
+
+```sh
+scribe entry answer open-item-<n> --author <model> \
+  --quote '<his words>' --related session:<where he typed>
+```
+
+The quote is checked as in §18.3, short whole turns included. It is his
+answer, so `ask` and `entry show` attribute it to him. An action item (no
+options) may be answered too ("done", "not now"), or closed without an
+answer once the asker sees it done. An item whose `answer_in` is
+`session:<id>` can still be answered elsewhere; the answer is recorded, and
+the recording session tells him the answer must also be typed in that
+session for its auto mode to accept the action (§18.8).
+
+**Closing.** The asker closes once it has carried the answer out:
+
+```sh
+scribe entry close open-item-<n> --author <model> \
+  (--decision decision-<m> | --note '<what was done; nothing lasting>')
+```
+
+- A choice item closes only when answered (`not_answered`). An action item
+  closes answered or not, with a note of what was seen done.
+- `--decision` must name an active decision that `--settles` this item, so
+  the link is two-way. `--note` is the explicit "no lasting decision"; the
+  skill says to use it only for a choice about one task, whose words then go
+  on that task. That is the check open-item-6 needed.
+- Answered is not closed: his words stand on the item until the asker acts,
+  and the brief keeps showing it as `answered`.
+- `entry answer` and `entry close` refuse any entry not under `open-item`
+  (`not_open_item`) and a closed or withdrawn item (`item_settled`).
+
+Daniel's 2026-11-23 words had scribe "record the decision and mark it
+closed" when he checks in. The aide does record both in that turn when it can
+carry the answer out itself; when another session must act, it records the
+answer and the asker closes. Keeping `answered` apart from `closed` is what
+lets him see that his answer has not yet been acted on.
+
+### 18.5 Where they show: `brief`, the hook, `search` and `ask`
+
+**`scribe brief`** gains a part after `## Last group`:
+
+```text
+## Open items
+- open-item-1 · open · orbit-0-capt · ORB-27562 · dk-server-1 is unreachable over ssh and is not on Orbit 79250ad4 (dk-…
+- open-item-2 · open · 0-chief · ORB-27561 · hand · Allow rules for the formation's operator commands …
+- open-item-5 · answered · orbit-0-capt · ORB-27591 · session:789dbe82 · ORB-27591 is held proposed on a pilot warning …
+```
+
+| Line | Order | Cap |
+|---|---|---|
+| `- <id> · <state> · <asked by> · <first task> · [<answer_in> · ]<content cut to 120 chars>` | `open` before `answered`, oldest first in each | 10 lines; then `(+<n> more: scribe entry list --tag open-item --state open)` |
+
+It lists open and answered items of every project, because what waits for him
+does not depend on the session's checkout; there are few. An empty part prints
+`(none)`. `--json` adds `open_items: [{id, state, asked_by, task, answer_in,
+question}]`. Decisions are not on the page: they are reference, and `ask`
+cites them.
+
+**`SessionStart`'s `systemMessage`**, the line for the user beside "N
+proposals to review", adds "N open items for you" when there are open items,
+and nothing when there are none. This is the count the chief's design asked
+for.
+
+**`entry list --tag open-item`** gains `--state open|answered|closed|withdrawn`
+(repeatable), and a `state` column. Daniel's periodic check is the aide
+running `scribe entry list --tag open-item --state open --state answered`.
+
+**`scribe search`** needs no new retrieval; the trial's search returned the
+right entries. Each hit is labelled: `decision-1 (decision, by the user)`,
+`decision-12 (decision, by orbit-0-capt)`, `open-item-5 (open-item,
+answered)`.
+
+**`ask`** includes decisions by default, as a memory tag. A `user` decision is
+read like a spoken-instruction entry (§16.6): `stated_by` is the writing
+agent, the content is the agent's statement, and the quote and reason quote
+are the user's words, cited as his. An agent decision is an agent note,
+attributed to its decider (`agent decision (orbit-0-capt)`), with its
+rationale. Superseded decisions are left out, as superseded entries are.
+Open items are left out of `ask` unless the question's scope names the tag:
+an item is a question, not a fact. Its answer reaches `ask` through the
+decision that settles it.
+
+### 18.6 Who writes what
+
+| Act | Who | How |
+|---|---|---|
+| Write an open item | the chief or a captain, when something waits for Daniel | `entry add --tag open-item` |
+| Tell Daniel | the same session | its message carries the outcome and one line, `open-item-<n>`, not the options again |
+| List his items | the aide (or any session he asks) | `entry list --tag open-item --state open --state answered`, beside `orbit attention`'s decision requests (§18.8) |
+| Record his answer | the session he typed it in | `entry answer` |
+| Carry it out and close | the asker | the work, then `entry close` |
+| Write a decision | the session that carries it out, unasked | `entry add --tag decision`, in the same turn as the act |
+| Reverse a decision | the session that carries out the reversal | a new decision with `--supersedes` |
+
+The session pass never writes either kind: a decision is written on purpose,
+never mined (§15 catchers do not apply). Routines and Orbit runs write
+neither: the skill's rule for agent action entries holds, only an
+interactive session Daniel is in.
+
+### 18.7 Store format
+
+One format step adds two optional objects to an entry, `decision` and
+`item`, as `handoff_mode` was added in format 28 (§16.1), and the matching
+SQLite migration. JSON gains fields and renames none (STD-01 R10).
+
+**The trial's entries** stay as they are: entries under the same tag names,
+without the new objects. They are listed, searched and shown; their state is
+derived from their status (active → `open`, retired → `closed`), and `entry
+answer` and `entry close` accept them. The shipped tag definitions replace the
+store registrations of the trial (`tags.json`), and `tag list` shows them as
+shipped. No entry is rewritten.
+
+### 18.8 Limits
+
+- **Orbit decision requests stay in Orbit.** A decision request is already
+  Daniel's queue there, with its own options and answer. No open item copies
+  one. scribe never calls Orbit (§4.6), so `brief` does not show them; the
+  aide reads `orbit attention` and lists both, side by side, when he checks
+  in. An open item may name a request's id in its text.
+- **An answer in scribe is not an approval in another session.** The app's
+  auto mode reads only each session's own chat. An answer recorded by the
+  aide does not let a captain's session run what its auto mode refused; the
+  item's `answer_in` says where he must type it, and a sergeant never passes
+  a denied action up to its captain (decision-12). An item about permission
+  settings is `hand`: no session edits them on a relayed word.
+- **The checks are only as good as the transcript.** A quote is checked on
+  the host that holds the session's transcript. A decision Daniel typed on
+  another host is recorded on its task.
+- **Nothing is mined.** A decision no session wrote is not in scribe. The
+  skill makes the write part of carrying a decision out; the trial showed it
+  happening, and nothing else in this design catches a miss.
+
+### 18.9 What of [ORB-25980] stands
+
+- A choice about one piece of work is still recorded on its Orbit task, with
+  Daniel's words quoted. It is not a `decision` entry.
+- A design decision about a repository's code is still recorded in that
+  repository's `4_decisions.md`. scribe records only a short pointer
+  decision for it, when Daniel or an agent of the formation made it: the
+  statement, who decided, and the `4_decisions.md` entry in `related`
+  (`doc:<repo>/<path>#<anchor>`, a new `related` kind), so that `ask` across
+  projects finds it.
+  The context and the alternatives stay in the doc. (decision-8 of the trial
+  copied ORB-27633's entry instead.)
+- The session pass still proposes no decisions.
+- What is reversed: a decision that outlives a task and has no other home
+  (a grant, a standing rule for sessions, a provider or policy choice) is a
+  shipped scribe record, not a preference and not a line in a skill.
+
+### 18.10 The skill
+
+The shipped scribe skill gains one reference, `references/decisions.md`
+(STD-11: the router names it, the reference holds the procedure), carrying
+§18.2–§18.6 as instructions:
+
+- when an item is written, its fields, and that the message to Daniel then
+  names only `open-item-<n>`;
+- recording his answer with his exact words and where he typed them;
+- closing only after carrying out, and naming the decision or saying none
+  lasts;
+- writing a decision in the same turn as the act, his words for his, a
+  rationale for an agent's, his reason only when he gave one, and a new
+  record to reverse;
+- the two limits of §18.8.
+
+The router line: "Something waits for Daniel, or a decision outlives its
+task → [decisions](references/decisions.md)". The formation skill in the
+constellation repository replaces its trial section with a pointer to that
+reference, keeping only formation roles (the aide lists; the chief and
+captains ask).
+
+**The intake collision.** The standards plugin's decision intake keeps its
+purpose under another tag name, `design-decision` (one `TAGS` entry in the
+plugin and in the scribe relay, and its `[tags.design-decision]` action
+declaration). `decision` then means only this record, and a `decision` entry
+never files a drafting task. This must land before the relay runs against a
+store with shipped decisions.
+
+### 18.11 Implementation, in order (not filed)
+
+1. **The intake rename** (constellation, standards plugin and scribe relay):
+   `decision` → `design-decision` in both `TAGS` lists, the action-tag
+   declaration and the plugin's tests. First, because the trial's entries
+   already sit under `decision`.
+2. **Records** (scribe): ship `decision` and `open-item`; the format step and
+   migration; `entry add` flags, the checks of §18.3 and §18.4 (verbatim with
+   short whole turns, rationale and reason, options count, supersede rules,
+   size), the marker refusal, the `doc:` related kind; goldens.
+3. **Settling** (scribe): `entry answer`, `entry close`, `entry list
+   --state`, the derived `state`; refusals; goldens.
+4. **Reading** (scribe): the `## Open items` brief part and JSON, the
+   `systemMessage` count, `search` labels, `ask` attribution and the
+   open-item exclusion.
+5. **Skill** (scribe): `references/decisions.md` and the router line.
+6. **Formation** (constellation): the trial section becomes a pointer; the
+   aide's check-in lists open items beside `orbit attention`.
+
+Daniel approves this design before step 1 is filed.
+
 ## Task References
 
 - [ORB-21747] — designed the standalone scribe plugin.
@@ -6977,6 +7352,15 @@ and its closing summary when available.
   eligible non-action memory tags, verbatim typed-turn quote check,
   agent-statement/user-quote attribution in `entry show`, `search` and
   `ask`, and skill updates).
+- [ORB-27638] — designed §18: the `decision` and `open-item` records, their
+  checks and states, `entry answer` and `entry close`, the brief's open
+  items, and the intake rename (proposed, not built).
+- [ORB-27561] — the 2026-11-23 formation, in which the decision and
+  open-item trial ran.
+- [ORB-27563] — the scribe captain's assignment that day; Daniel's words on
+  decisions and open items are quoted there.
+- [ORB-25162] — the standards plugin's decision intake, which reads a
+  `decision` action tag.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
 

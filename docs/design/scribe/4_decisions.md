@@ -11,7 +11,7 @@ summary: Why superseded entries are hidden not removed, why one JSON file per ta
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26650, ORB-26709, ORB-27567, ORB-27597, ORB-27633]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26650, ORB-26709, ORB-27567, ORB-27597, ORB-27633, ORB-27638]
 ---
 
 # scribe — Decisions
@@ -4559,3 +4559,74 @@ backfills its own transcript only.
   backfilled; they keep the join-time cutoff.
 - A join whose transcript is absent or fails its check still joins, with no
   earlier turns.
+
+## Decisions that outlive a task are scribe records, and open items wait for Daniel in scribe
+
+**Recorded:** 2026-11-23 · [ORB-27638] · **Overridable by Daniel** · proposed, not built
+
+### Context
+
+On 2026-11-20 scribe stopped shipping the `decisions` tag: a decision was
+recorded on its Orbit task or in a `4_decisions.md`, and the store held no
+`decisions` entries ([ORB-25980], "Decisions are recorded on their Orbit
+task, not in a shipped tag"). Three days later Daniel could not pick out of
+the chief's messages what was needed from him, and decisions with no task to
+sit on (grants, standing rules for sessions, provider choices) lived in a
+skill or a chat that scribe could not return. In the chief's chat on
+2026-11-23 he asked to “add back "decision" tag” with rationale required,
+and to "use scribe to record open items for me, with options and the
+recommended one"; to the chief's design he said "File and trial". The trial
+wrote 14 decisions and 6 open items in its first 15 minutes
+([2_design.md §18.1](./2_design.md#181-what-the-trial-showed)).
+
+### Decision
+
+This supersedes [ORB-25980]'s decision for decisions that outlive one task,
+and only that. `decision` and `open-item` ship as agent-written memory tags
+with typed, checked fields ([2_design.md §18](./2_design.md#18-decisions-and-open-items-proposed)):
+
+- A decision names who decided. Daniel's words, and his reason when he gave
+  one, are verbatim quotes of his typed turns; an agent's decision requires a
+  rationale; a reversal is a new decision that supersedes the old, and only
+  Daniel can supersede his own.
+- An open item is a choice with options and a recommendation, or an action
+  that is his. It is `open`, `answered` (his words, where he typed them) or
+  `closed` (carried out), and closing names the decision written for it or
+  says none lasts. The brief lists open items and the session-start line
+  counts them.
+- An item and a decision are two linked records, not one that changes kind.
+
+What of [ORB-25980] stands: a choice about one piece of work stays on its
+Orbit task with his words quoted; a design decision stays in its
+repository's `4_decisions.md`, with at most a pointer decision in scribe; the
+session pass proposes no decisions. Orbit decision requests stay in Orbit,
+and an answer recorded in scribe is not an approval in another session's
+chat.
+
+### Alternatives
+
+- **One mechanism: an answered item becomes the decision** (the chief's
+  design). Rejected: in the trial, open-item-6's answer set a new standing
+  rule and was closed with no decision, and most decisions (decision-1, 3,
+  10, 12, 13) had no item before them.
+- **Keep the trial's convention**: store-registered tags and a skill-kept
+  prose shape. Rejected: the shape drifted within the hour, `retired` meant
+  both closed and withdrawn, and quotes of Daniel were never checked.
+- **A record kind of its own**, outside entries. Rejected: entries already
+  carry authors, quotes and their check, `superseded_by`, search and `ask`;
+  two optional objects on an entry cost one format step.
+- **Keep [ORB-25980] and record standing choices as preferences.** Rejected:
+  a preference needs his typed approval and binds every session; a grant or a
+  rule for formation ranks is neither, and the trial's evidence is that he
+  wants them findable with their options and reasons.
+
+### Consequences
+
+- Decisions and items are written on purpose by interactive sessions; a
+  decision no session wrote is not in scribe.
+- The standards plugin's decision intake moves to `design-decision`, so a
+  `decision` entry never files a drafting task.
+- Cost: every decision that outlives a task is written twice when it also
+  has a task (the task comment and the record), the CLI grows two verbs and
+  eight flags, and a quote of Daniel's that is not in a transcript on this
+  host cannot be recorded here.
