@@ -709,14 +709,28 @@ fn verify_self_refresh(
         })?;
     // Walk launchers in metadata order with one budget and cycle guard. A
     // clear predecessor takes precedence over every launch edge at that node.
+    // A cycle is a link already on the current path; a session an earlier
+    // branch already examined (a shared ancestor) is skipped, not refused.
+    enum Step {
+        Enter(scribe_core::SessionId),
+        Leave(scribe_core::SessionId),
+    }
     let mut last_failure: CliError = scribe_core::Error::AgentWrite {
         kind: scribe_core::WriteRefusal::QuoteNotFound,
         message: format!("refresh session {id}: transcript is not readable on this host"),
     }
     .into();
-    let mut pending = vec![id];
+    let mut pending = vec![Step::Enter(id)];
     let mut seen = std::collections::HashSet::new();
-    while let Some(link) = pending.pop() {
+    let mut on_path = std::collections::HashSet::new();
+    while let Some(step) = pending.pop() {
+        let link = match step {
+            Step::Leave(link) => {
+                on_path.remove(&link);
+                continue;
+            }
+            Step::Enter(link) => link,
+        };
         let failed = |reason: &str| -> CliError {
             scribe_core::Error::AgentWrite {
                 kind: scribe_core::WriteRefusal::QuoteNotFound,
@@ -724,9 +738,14 @@ fn verify_self_refresh(
             }
             .into()
         };
-        if !seen.insert(link.clone()) {
+        if on_path.contains(&link) {
             return Err(failed("ancestry contains a cycle"));
         }
+        if !seen.insert(link.clone()) {
+            continue;
+        }
+        on_path.insert(link.clone());
+        pending.push(Step::Leave(link.clone()));
         let path = payload::locate(ctx, &link).ok().flatten();
         let bytes = path
             .as_ref()
@@ -754,9 +773,9 @@ fn verify_self_refresh(
                 return Err(failed("ambiguous: more than one clear predecessor"));
             }
             if let Some(parent) = parents.clear.first() {
-                pending.push(parent.clone());
+                pending.push(Step::Enter(parent.clone()));
             } else {
-                pending.extend(parents.launch.into_iter().rev());
+                pending.extend(parents.launch.into_iter().rev().map(Step::Enter));
             }
             last_failure = failed(
                 "transcript must contain a typed user turn or a clear or launch predecessor",
@@ -764,7 +783,11 @@ fn verify_self_refresh(
         } else {
             last_failure = failed("transcript failed provenance or is not readable on this host");
         }
-        if seen.len() == 16 && !pending.is_empty() {
+        if seen.len() == 16
+            && pending
+                .iter()
+                .any(|step| matches!(step, Step::Enter(next) if !seen.contains(next)))
+        {
             return Err(failed("ancestry exceeds the 16-transcript limit"));
         }
     }

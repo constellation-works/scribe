@@ -1931,6 +1931,36 @@ fn refresh_launch_ancestry_refuses_untyped_ambiguous_cyclic_and_unreadable_links
 }
 
 #[test]
+fn refresh_launch_branches_converging_on_a_shared_ancestor_reach_a_later_typed_launcher() {
+    let fx = Fixture::new();
+    const FIRST: &str = "8a4f3ea1-5c7d-4f62-9b94-3d2e1f0a9b82";
+    const SECOND: &str = "9b5a4fb2-6d8e-4073-8ca5-4e3f2a1b0c93";
+    const SHARED: &str = "ac6b50c3-7e9f-4184-9db6-5f4a3b2c1da4";
+    const TYPED: &str = "bd7c61d4-8fa0-4295-8ec7-6a5b4c3d2eb5";
+    // Two untyped launchers lead to the same untyped ancestor, which has no
+    // predecessor of its own; a third launcher carries a typed turn.
+    ancestry_transcript(&fx, SHARED, &[]);
+    ancestry_transcript(&fx, FIRST, &[("launch", SHARED)]);
+    ancestry_transcript(&fx, SECOND, &[("launch", SHARED)]);
+    Transcript::new(&fx, TYPED).write(&[("u", "user", "A typed turn")]);
+    ancestry_transcript(
+        &fx,
+        CHILD,
+        &[("launch", FIRST), ("launch", SECOND), ("launch", TYPED)],
+    );
+    let out = try_refresh(&fx, CHILD);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(json_of(&out)["handoff_mode"], "continue");
+    // Without the typed launcher the walk still ends untyped, not as a cycle.
+    ancestry_transcript(&fx, CHILD, &[("launch", FIRST), ("launch", SECOND)]);
+    let out = try_refresh(&fx, CHILD);
+    assert_eq!(out.status.code(), Some(1));
+    let error = text(&out.stderr);
+    assert!(error.contains("quote_not_found"), "{error}");
+    assert!(!error.contains("cycle"), "{error}");
+}
+
+#[test]
 fn refresh_follows_a_refreshed_ranks_clear_edge_before_its_launch_edge() {
     let fx = Fixture::new();
     Transcript::new(&fx, ON_SESSION).write(&[("u", "user", "A typed turn")]);
