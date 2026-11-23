@@ -1,4 +1,3 @@
-# Build output.
 /target
 # Orbit per-user state — not a repository artifact.
 .orbit/

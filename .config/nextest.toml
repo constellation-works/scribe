@@ -16,11 +16,5 @@ leak-timeout = { period = "500ms", result = "fail" }
 
 # No test mutates process-global state (environment, current directory): the
 # integration tests set the environment on each child command instead. If one
-# ever must, serialize it here rather than with a mutex:
-#
-# [test-groups]
-# process-env = { max-threads = 1 }
-#
-# [[profile.default.overrides]]
-# filter = "test(/env_/)"
-# test-group = "process-env"
+# ever must, serialize it with a `test-group` in this file rather than with a
+# mutex.
