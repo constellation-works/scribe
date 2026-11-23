@@ -635,7 +635,8 @@ or `scribe: /scribe <arg> not applied — …` when the payload fails the
 transcript check. `/scribe group <slug>` replies `scribe: joined group
 <slug> (g-<n>)` (audited against `session:<id>`) or `scribe: group refused —
 <reason>` with code `group_membership`, `invalid_text`, or
-`provenance_failed`. A status of a linked session ends `; linked: <type>
+`provenance_failed`. A slug changed by the configured redactor is refused
+with `invalid_text` and is not echoed. A status of a linked session ends `; linked: <type>
 <id>, …`. A link replies `scribe: on — this session is cataloged from now
 on and linked: <type> <id>; …`, `scribe: on — … it was already linked:
 <type> <id>`, `scribe: linked — this session is <type> <id>`, `scribe:

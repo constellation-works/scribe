@@ -363,6 +363,7 @@ impl Store {
         project: &Project,
         session: &SessionId,
         now: OffsetDateTime,
+        redactor: &Redactor,
     ) -> Result<String> {
         if slug.is_empty()
             || slug.len() > 64
@@ -378,6 +379,12 @@ impl Store {
                 "group slug must be lowercase letters, digits and interior hyphens, and not a group id",
             ));
         }
+        if redactor.mask(slug) != slug {
+            return Err(refusal(
+                WriteRefusal::InvalidText,
+                "group slug contains sensitive text",
+            ));
+        }
         self.write(|| {
             self.refuse_forgotten(session)?;
             let conn = open_writer(self.root(), self.lock_wait)?;
@@ -388,7 +395,7 @@ impl Store {
                 [session.as_str()], |r| Ok((r.get(0)?, r.get(1)?))
             ).optional().map_err(fail)?;
             if let Some((_, name)) = held {
-                return Err(refusal(WriteRefusal::GroupMembership, format!("session already belongs to group {name}; leave it before joining")));
+                return Err(refusal(WriteRefusal::GroupMembership, format!("session already belongs to group {}; leave it before joining", redactor.mask(&name))));
             }
             let existing: Option<i64> = conn.query_row("SELECT id FROM groups WHERE slug=?1 AND closed IS NULL", [slug], |r| r.get(0)).optional().map_err(fail)?;
             let n = match existing {

@@ -6632,7 +6632,9 @@ scribe group leave
 create the open project group if absent and join this session. Its title is
 the slug, its kind is `project`, and its project comes from the working
 directory. Open slugs are unique; group selectors and `--group` accept the
-slug. Each session gets a seat named for its short id and the `member` role.
+slug. A slug the configured redactor would change is refused without echoing
+it, preserving stable lookup without storing sensitive text. Each session gets
+a seat named for its short id and the `member` role.
 The same typed line in another session joins the existing group. A session
 already in a group must leave before joining another. Peer, scheduled and
 harness prompts cannot give this consent. A project group has no daily close;

@@ -1743,3 +1743,36 @@ fn prompt_hooks_audit_newly_persisted_member_turns_once_per_turn_for_each_provid
         1
     );
 }
+
+#[test]
+fn typed_project_group_refuses_configured_secret_without_persisting_or_echoing_it() {
+    const SECRET: &str = "orchid-secret-token";
+    let f = Fixture::new();
+    f.config("[redact]\nenv = [\"GROUP_SECRET\"]\n");
+    let path = transcript(&f, A, &[row(A, "u", "user", "ordinary turn")]);
+    for slug in [SECRET, "prefix-orchid-secret-token-suffix"] {
+        let out = hook(
+            &f,
+            &["hook", "user-prompt-submit"],
+            json!({"session_id": A, "transcript_path": path, "cwd": f.home(),
+                   "prompt": format!("/scribe group {slug}")}),
+            &[("GROUP_SECRET", SECRET)],
+        );
+        let reply = text(&out.stdout);
+        assert!(
+            reply.contains("group slug contains sensitive text"),
+            "{reply}"
+        );
+        assert!(!reply.contains(SECRET));
+        assert!(!text(&out.stderr).contains(SECRET));
+    }
+    let list = invoke(&f, A, &["group", "list"], 0);
+    assert_eq!(list["items"].as_array().unwrap().len(), 0);
+    let audit = support::audit_text(&f.root());
+    assert!(!audit.contains(SECRET), "{audit}");
+    assert!(
+        support::audit_lines(&f.root())
+            .iter()
+            .any(|line| line["error_code"] == "invalid_text")
+    );
+}
