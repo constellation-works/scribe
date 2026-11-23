@@ -533,7 +533,7 @@ impl Store {
             }
         };
         db::truncate_wal_of(&self.root, self.lock_wait)?;
-        let files = self.forget_moved_files(&id)?;
+        let files = self.forget_moved_files(&id)? + self.legacy_files_to_forget(&id)?;
         Ok(SessionForgetOutcome::Forgotten(SessionForget {
             id,
             number,
@@ -588,7 +588,6 @@ impl Store {
 
     /// The files [`Self::forget_moved_files`] would delete for `id`.
     fn moved_files_of(&self, id: &SessionId) -> Result<Vec<PathBuf>> {
-        let names = [format!("{id}{RECORD_EXT}"), format!(".{id}.rebuild.md")];
         let mut found = Vec::new();
         for moved in fsio::list_dir(&self.root)? {
             let moved = self.root.join(&moved);
@@ -602,30 +601,51 @@ impl Store {
             }
             for sessions in fsio::list_dir(&moved)? {
                 let sessions = moved.join(&sessions);
-                if !sessions
+                if sessions
                     .file_name()
                     .and_then(|n| n.to_str())
                     .is_some_and(|n| n.starts_with(SESSIONS_DIR))
-                    || !fsio::inspect_subdir(&sessions)?
+                    && fsio::inspect_subdir(&sessions)?
                 {
+                    found.extend(Self::session_files_of(&sessions, id)?);
+                }
+            }
+        }
+        Ok(found)
+    }
+
+    /// How many legacy files of `id` the pending write's move will carry
+    /// to `pre-sqlite-<date>/` after its commit, where the cleanup that
+    /// follows deletes them: they are not yet in any archive when the
+    /// forget counts, so [`Self::moved_files_of`] misses them. Zero when
+    /// the write moves nothing aside.
+    fn legacy_files_to_forget(&self, id: &SessionId) -> Result<usize> {
+        let sessions = self.root.join(SESSIONS_DIR);
+        if !self.aside_pending() || !fsio::inspect_subdir(&sessions)? {
+            return Ok(0);
+        }
+        Ok(Self::session_files_of(&sessions, id)?.len())
+    }
+
+    /// `id`'s record and rebuild checkpoint files under
+    /// `<sessions>/<yyyy>/<mm>/`.
+    fn session_files_of(sessions: &Path, id: &SessionId) -> Result<Vec<PathBuf>> {
+        let names = [format!("{id}{RECORD_EXT}"), format!(".{id}.rebuild.md")];
+        let mut found = Vec::new();
+        for year in fsio::list_dir(sessions)? {
+            let year = sessions.join(year);
+            if !fsio::inspect_subdir(&year)? {
+                continue;
+            }
+            for month in fsio::list_dir(&year)? {
+                let month = year.join(month);
+                if !fsio::inspect_subdir(&month)? {
                     continue;
                 }
-                for year in fsio::list_dir(&sessions)? {
-                    let year = sessions.join(year);
-                    if !fsio::inspect_subdir(&year)? {
-                        continue;
-                    }
-                    for month in fsio::list_dir(&year)? {
-                        let month = year.join(month);
-                        if !fsio::inspect_subdir(&month)? {
-                            continue;
-                        }
-                        for name in &names {
-                            let path = month.join(name);
-                            if fsio::inspect_file(&path)? {
-                                found.push(path);
-                            }
-                        }
+                for name in &names {
+                    let path = month.join(name);
+                    if fsio::inspect_file(&path)? {
+                        found.push(path);
                     }
                 }
             }
