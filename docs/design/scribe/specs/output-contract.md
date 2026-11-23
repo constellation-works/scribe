@@ -631,7 +631,8 @@ retry`), and Stop catalogs from the rollout.
 
 A prompt whose first line is `/scribe on`, `/scribe off`, `/scribe status`,
 `/scribe on --from <id> [--type <type>]`, `/scribe link <id> [--type
-<type>]`, `/scribe catalog <id>`, `/scribe group <slug>` or a bare `/scribe`
+<type>]`, `/scribe catalog <id>`, `/scribe group <slug>`, `/scribe group add <slug>
+<session-id>...` or a bare `/scribe`
 (also `/scribe:scribe …`, the plugin-namespaced form; the control verb is
 case-insensitive except `group`) is not scanned for `#scribe` lines: the
 reply is `{"decision": "block", "reason": "<status>"}`, which keeps the
@@ -642,13 +643,25 @@ prompt from the model and shows Daniel the reason. The reason is one line:
 — this session was never switched on …` for a status, `scribe: unknown
 command "/scribe <arg>" — use /scribe on, /scribe off, /scribe status,
 /scribe on --from <id>, /scribe link <id> [--type spawned_from|continues],
-/scribe catalog <id>, /scribe group <slug> or /scribe continue <handoff-id>`,
+/scribe catalog <id>, /scribe group <slug>, /scribe group add <slug> <session-id>... or /scribe continue <handoff-id>`,
 or `scribe: /scribe <arg> not applied — …` when the payload fails the
 transcript check. `/scribe group <slug>` replies `scribe: joined group
 <slug> (g-<n>)` (audited against `session:<id>`) or `scribe: group refused —
 <reason>` with code `group_membership`, `invalid_text`, or
 `provenance_failed`. A slug changed by the configured redactor is refused
-with `invalid_text` and is not echoed. A status of a linked session ends `; linked: <type>
+with `invalid_text` and is not echoed. `/scribe group add <slug>
+<session-id>...` replies `scribe: group <slug> (g-<n>) opened|open`, then one
+line per named session: `<id>: added; transcript on disk, <n> typed turns
+stored`, `<id>: added; membership only, no transcript on disk` or `<id>:
+already a member; nothing changed`. One audit line per added session, against
+`session:<id>`. A refusal is `scribe: group add refused — <reason>` with code
+`group_membership` (a session already in another group, one `session <id>
+already belongs to group <group>` per session, `; nothing changed`; or more
+than 32 sessions), `invalid_text`, `session_forgotten`, `provenance_failed` (the
+prompt's or a named transcript's check) or `id_ambiguous`, audited against the
+typing session, and changes nothing. A peer, scheduled, harness or pasted
+prompt is refused `scribe: group refused — the prompt is not a typed user
+turn`. A status of a linked session ends `; linked: <type>
 <id>, …`. A link replies `scribe: on — this session is cataloged from now
 on and linked: <type> <id>; …`, `scribe: on — … it was already linked:
 <type> <id>`, `scribe: linked — this session is <type> <id>`, `scribe:

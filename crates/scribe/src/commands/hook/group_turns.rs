@@ -115,7 +115,11 @@ pub(super) fn codex(
     if !ctx.store().captures_group_turns(session)? {
         return Ok(None);
     }
-    let messages: Vec<_> = turns
+    save(ctx, session, &codex_messages(session, turns))
+}
+
+fn codex_messages(session: &SessionId, turns: &[TypedTurn]) -> Vec<message::NewMessage> {
+    turns
         .iter()
         .filter_map(|turn| {
             let input = &turn.message;
@@ -124,8 +128,45 @@ pub(super) fn codex(
             }
             message::typed_turn(session, input, &transcript::user_turn(input)?.own)
         })
-        .collect();
-    save(ctx, session, &messages)
+        .collect()
+}
+
+/// The typed turns of a past session whose transcript is at `path`, chosen as
+/// the capture of a member's own turns chooses them, in transcript order. The
+/// file is read through one checked handle. A transcript that is refused or
+/// unreadable is an error: it is on disk, so it is not "membership only".
+pub(super) fn past(
+    ctx: &Context,
+    session: &SessionId,
+    path: &Path,
+) -> Result<Option<Vec<message::NewMessage>>, CliError> {
+    let bytes = match payload::read_checked(ctx, path, session) {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => return Ok(None),
+        Err(payload::Unreadable::Refused(reason)) => {
+            return Err(CliError::TranscriptRefused {
+                id: session.clone(),
+                reason,
+            });
+        }
+        Err(payload::Unreadable::Io(source)) => {
+            return Err(CliError::Read {
+                what: path.display().to_string(),
+                source,
+            });
+        }
+    };
+    if ctx.provider() == scribe_core::Provider::Codex {
+        let rollout =
+            scribe_core::codex::parse(&bytes).map_err(|reason| CliError::TranscriptRefused {
+                id: session.clone(),
+                reason,
+            })?;
+        return Ok(Some(codex_messages(session, &rollout.typed)));
+    }
+    Ok(Some(scribe_core::instruction::claude_group_turns(
+        &bytes, session,
+    )))
 }
 
 fn save(

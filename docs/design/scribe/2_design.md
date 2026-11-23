@@ -6670,6 +6670,28 @@ harness prompts cannot give this consent. A project group has no daily close;
 it remains open until `group close`. Seat inheritance across a clear applies
 to project groups too. Only typed user turns are stored.
 
+**Adding past sessions.** A typed `/scribe group add <slug> <session-id>...`
+adds the named sessions, each an id or a unique prefix of one, to the open
+project group, creating it when absent as `/scribe group <slug>` does. It does
+not enrol the session it is typed in unless that session is named. The prompt
+hook reads it with the same checks as `/scribe group <slug>`: a peer message,
+scheduled prompt, harness line or pasted block never acts (§4.1), and the
+prompt's transcript must pass the provenance check. A named session need not
+have been recorded. When its transcript is still on disk, its typed turns are
+stored with the selection a member's own turns get (a typed turn, not an agent
+or harness turn, nor a copied history) whatever their age, and its capture
+cursor is set after the last of them, so a later capture neither repeats them
+nor skips newer ones; the reply says `transcript on disk, <n> typed turns
+stored`. When it is not, only membership is added and the reply says
+`membership only, no transcript on disk`. A transcript on disk that fails the
+provenance check refuses the whole line. A session already in another group
+refuses the whole line, naming each such session and its group, and changes
+nothing; a session already in this group is reported and left as it is. A line
+names at most 32 sessions. The hook blocks the prompt, as every `/scribe` line
+is, and audits one line per added session, against `session:<id>`, with ids and
+error codes only. There is no terminal command for this: no CLI path records
+Daniel's consent (see "Daniel writes only through his typed prompt").
+
 **Opening consent.** The opener is the provider’s calling session
 (`CLAUDE_CODE_SESSION_ID` for Claude Code, `CODEX_THREAD_ID` with
 `--provider codex`). Scribe checks the supplied quote against the user’s

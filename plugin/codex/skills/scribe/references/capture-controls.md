@@ -10,7 +10,8 @@ session cataloging. Off stops further passes and keeps the record.
 
 The human types `/scribe on --from <id>` or `/scribe link <id> --type continues`
 to link related sessions, `/scribe group <slug>` (or `$scribe group <slug>` in
-Codex) to create or join an open project group, and `/scribe catalog <id>` to
+Codex) to create or join an open project group, `/scribe group add <slug> <session-id>...`
+to add past sessions to one, and `/scribe catalog <id>` to
 catalog a past session as theirs. Its windows run at the next
 `scribe session pass`. If they ask you to catalog a past session, run
 `scribe --provider <provider> session catalog <id> --author <name>`

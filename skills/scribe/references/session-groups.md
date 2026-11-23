@@ -85,7 +85,13 @@ interior hyphens (not a `g-<n>` id). The group uses the slug as its title,
 `project` as its kind and the working directory's project. Each typed join
 records under author `user` and takes an automatic seat named for the session's
 8-character short id (falling back to the full session id on collision) with
-role `member`. An agent joining a project group with
+role `member`. To put past sessions in a project group, the human types
+`/scribe group add <slug> <session-id>...` (the group is created when absent; it
+does not enrol the session it is typed in). A named session's typed turns are
+stored when its transcript is on disk, otherwise only membership is added, and a
+session already in another group refuses the whole line. There is no terminal
+command for it and no agent route: if the human asks you to add sessions, give
+them the line to type. An agent joining a project group with
 `scribe group join <slug> --author <name>` (prefix `--provider codex` before
 `group` in Codex) can omit `--as` and `--role` to take those defaults.
 

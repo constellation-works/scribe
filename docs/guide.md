@@ -315,7 +315,12 @@ unknown id, a self-link or a cycle. `/scribe group <slug>` creates an open
 joins the calling session on an automatic short-session-id seat (full session id,
 then the full id with `-2`, `-3`… when taken, never displacing a seat) with role `member`, or joins the existing open group when typed in
 another session (one group per session until `scribe group leave`; non-typed
-prompts are refused). Codex accepts the same `/scribe group <slug>`, `$scribe group <slug>`,
+prompts are refused). `/scribe group add <slug> <session-id>...` adds past
+sessions to the group, creating it when absent, without enrolling the session it
+is typed in: a session whose transcript is still on disk has its typed turns
+stored, any other gets membership only, and the reply says which. A session
+already in another group refuses the whole line. It is a typed line only; there
+is no terminal command. Codex accepts the same `/scribe group <slug>`, `$scribe group <slug>`,
 and skill mention link `[$scribe](.../scribe/SKILL.md) group <slug>` once the host
 rollout verifies the typed turn. After a desktop clear, the transcript names
 the previous session. When its newest active handoff has mode `continue`, the

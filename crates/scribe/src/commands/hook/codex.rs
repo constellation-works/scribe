@@ -44,6 +44,7 @@ fn command_text(original: &str) -> String {
                     | control::Switch::Link { .. }
                     | control::Switch::Catalog(_)
                     | control::Switch::Group(_)
+                    | control::Switch::GroupAdd { .. }
             )
         ) {
             return candidate;

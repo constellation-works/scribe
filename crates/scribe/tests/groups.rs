@@ -2544,3 +2544,84 @@ fn automatic_project_group_seat_avoids_taken_names_and_survives_a_retry() {
     assert_eq!(held, [automatic.as_str()]);
     assert!(retry["seats"].as_array().unwrap().len() == 2);
 }
+
+#[test]
+fn typed_group_add_audits_ids_only_and_a_later_capture_resumes_after_the_stored_turns() {
+    let f = Fixture::new();
+    let typing = transcript(
+        &f,
+        A,
+        &[row(A, "t", "user", "/scribe group add planning B C")],
+    );
+    let past = transcript(
+        &f,
+        B,
+        &[row(B, "b1", "user", "pastorchid typed before the add")],
+    );
+    let line = format!("/scribe group add planning {B} {C}");
+    let out = hook(
+        &f,
+        &["hook", "user-prompt-submit"],
+        json!({"session_id": A, "transcript_path": typing, "cwd": f.home(), "prompt": line}),
+        &[],
+    );
+    let reply = text(&out.stdout);
+    assert!(reply.contains("group planning (g-1) opened"), "{reply}");
+    assert!(reply.contains("1 typed turn stored"), "{reply}");
+    assert!(
+        reply.contains("membership only, no transcript on disk"),
+        "{reply}"
+    );
+
+    let group = invoke(&f, A, &["group", "show", "planning"], 0);
+    let members: Vec<&str> = group["seats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|s| s["transcripts"].as_array().unwrap())
+        .map(|t| t.as_str().unwrap())
+        .collect();
+    assert_eq!(members.len(), 2, "{members:?}");
+    assert!(members.contains(&B) && members.contains(&C), "{members:?}");
+
+    let audit = support::audit_lines(&f.root());
+    let targets: Vec<&str> = audit
+        .iter()
+        .filter(|l| l["command"] == "hook user-prompt-submit")
+        .map(|l| l["target"].as_str().unwrap())
+        .collect();
+    assert_eq!(targets, [format!("session:{B}"), format!("session:{C}")]);
+    let log = support::audit_text(&f.root());
+    assert!(
+        !log.contains("pastorchid") && !log.contains("planning"),
+        "{log}"
+    );
+
+    // The session later resumes: its stored turn is not stored twice, and its
+    // new typed turn is.
+    let mut more = row(B, "b2", "user", "lateorchid typed after the add");
+    more["timestamp"] = json!("2090-11-21T01:00:00Z");
+    let mut append = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&past)
+        .unwrap();
+    writeln!(append, "{more}").unwrap();
+    hook(
+        &f,
+        &["hook", "user-prompt-submit"],
+        json!({"session_id": B, "transcript_path": past, "cwd": f.home(), "prompt": "lateorchid typed after the add"}),
+        &[],
+    );
+    let total = |term| {
+        invoke(
+            &f,
+            B,
+            &["search", term, "--kind", "message", "--group", "g-1"],
+            0,
+        )["total"]
+            .as_u64()
+            .unwrap()
+    };
+    assert_eq!(total("pastorchid"), 1);
+    assert_eq!(total("lateorchid"), 1);
+}
