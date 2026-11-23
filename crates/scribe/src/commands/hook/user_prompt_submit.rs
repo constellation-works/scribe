@@ -60,7 +60,78 @@ const PROVENANCE_FAILED: &str = "provenance_failed";
 /// Run the hook on its stdin payload.
 pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
     let payload: PromptPayload = payload::decode(input)?;
-    capture_prompt(&payload, ctx)
+    let mut output = capture_prompt(&payload, ctx)?;
+    if ctx.provider() != Provider::ClaudeCode || payload::agent_originated(&payload) {
+        return Ok(output);
+    }
+    let session = payload::session(&payload.session_id)?;
+    if !ctx.store().take_deferred_ancestry(&session)? {
+        return Ok(output);
+    }
+    let listed = ctx.store().list_sessions(&scribe_core::SessionFilter {
+        include_inactive: true,
+        ..Default::default()
+    })?;
+    let linked = listed.control.get(&session).is_some_and(|c| {
+        c.pending_links
+            .iter()
+            .any(|l| l.kind == scribe_core::LinkType::Continues)
+    }) || listed.listing.items.iter().any(|r| {
+        r.id == session
+            && r.links
+                .iter()
+                .any(|l| l.kind == scribe_core::LinkType::Continues)
+    });
+    let held = matches!(
+        ctx.store().inherit_seat(&session, None)?,
+        scribe_core::group::SeatStart::AlreadySeated(_) | scribe_core::group::SeatStart::Replaced
+    );
+    let predecessor =
+        super::continuation::cleared_predecessor(ctx, Some(&payload.transcript_path), &session);
+    let (restored, seat) = if !linked && !held {
+        (
+            super::continuation::at_start(ctx, &session, &predecessor),
+            super::session_start::seat_at_start(ctx, &session, &predecessor),
+        )
+    } else {
+        (None, Default::default())
+    };
+    if let Output::Hook(ref mut reply) = output {
+        let mut contexts = Vec::new();
+        if let Some(restored) = restored {
+            contexts.extend(restored.context);
+            if let Some(message) = restored.message {
+                reply.message = Some(
+                    [Some(message), reply.message.take()]
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                );
+            }
+            reply.outcomes.extend(restored.outcomes);
+        }
+        if let Some(message) = seat.message {
+            reply.message = Some(
+                [Some(message), reply.message.take()]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            );
+        }
+        contexts.extend(seat.context);
+        contexts.extend(reply.context.take());
+        if !contexts.is_empty() {
+            reply.context = Some(contexts.join("\n\n"));
+        }
+        reply.outcomes.extend(seat.outcomes);
+        reply.outcomes.push(HookOutcome {
+            target: Some(format!("session:{session}")),
+            error_code: None,
+        });
+    }
+    Ok(output)
 }
 
 /// One echo line and the note the agent gets for it.

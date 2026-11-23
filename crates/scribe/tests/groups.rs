@@ -936,7 +936,7 @@ fn old_schema_reads_empty_without_migration_then_upgrades_on_open() {
     };
     assert_eq!(version(), 8);
     open(&f);
-    assert_eq!(version(), 12);
+    assert_eq!(version(), 13);
 }
 
 #[test]
@@ -1080,6 +1080,75 @@ fn desktop_clear_with_continue_handoff_prepends_handoff_and_inherits_seat() {
         invoke(&f, B, &["group", "show", "g-1"], 0)["seats"][0]["transcripts"],
         json!([A, B])
     );
+}
+
+#[test]
+fn missing_start_transcript_recovers_at_first_prompt_once() {
+    let f = Fixture::new();
+    transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
+    open(&f);
+    join(&f, A, "g-1", &["--role", "reviewer"], 0);
+    invoke(
+        &f,
+        A,
+        &[
+            "entry",
+            "add",
+            "--tag",
+            "handoff",
+            "--author",
+            "aide",
+            "--related",
+            &format!("session:{A}"),
+            "--mode",
+            "continue",
+            "--quote",
+            QUOTE,
+            &format!("{HANDOFF}\nCarry on."),
+        ],
+        0,
+    );
+    let path = transcript_path(&f, B);
+    let start = session_start(&f, B, Some(&path), "startup", "claude-desktop");
+    let context = start["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(context.contains("transcript not written yet"), "{start}");
+    assert!(!context.contains("no predecessor line"), "{start}");
+    transcript(
+        &f,
+        B,
+        &[
+            json!({"type":"tools-used"}),
+            json!({"type":"derived-from","sessions":[{"id":C,"via":"launch"},{"id":A,"via":"clear"}]}),
+        ],
+    );
+    let payload = json!({"session_id":B,"transcript_path":path,"cwd":f.home(),"prompt":"continue from handoff"});
+    let result = hook(
+        &f,
+        &["hook", "user-prompt-submit"],
+        payload.clone(),
+        &[("CLAUDE_CODE_ENTRYPOINT", "claude-desktop")],
+    );
+    let reply: Value = serde_json::from_slice(&result.stdout).unwrap();
+    let context = reply["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(
+        context.starts_with("## State\nReady") && context.contains("inherited from"),
+        "{reply}"
+    );
+    assert_eq!(
+        invoke(&f, B, &["group", "show", "g-1"], 0)["seats"][0]["transcripts"],
+        json!([A, B])
+    );
+    let again = hook(
+        &f,
+        &["hook", "user-prompt-submit"],
+        payload,
+        &[("CLAUDE_CODE_ENTRYPOINT", "claude-desktop")],
+    );
+    assert!(again.stdout.is_empty(), "{}", text(&again.stdout));
 }
 
 #[test]

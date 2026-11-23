@@ -697,7 +697,7 @@ texts that replace the shipped ones ahead of the fixed output contract
 an unknown key or bad value is refused, naming the file and line
 ([specs/store.md](./specs/store.md#config)).
 `session-start` does not create or rewrite this file; when it is absent, the
-defaults apply. Outside the continue-handoff restoration in [§16.7](#167-continuing-after-a-clear) and group-seat inheritance in [§17](#17-session-groups-and-seats),
+defaults apply. Outside the continue-handoff restoration and deferred ancestry check in [§16.7](#167-continuing-after-a-clear) and group-seat inheritance in [§17](#17-session-groups-and-seats),
 the hook is read-only. Restoring that handoff writes the child's link and
 inherited switch; inheriting an open seat appends the child to its chain. Both
 writes are audited
@@ -3973,7 +3973,7 @@ occurrences:
   (decayed, past its window). It is a pure function of the item and the
   day, in `scribe-core`, so no routine has to run for an item to leave the
   page. `SessionStart` derives the memory page without writing memory and,
-  except when restoring a continue handoff (§16.7) or inheriting an open group
+  except when restoring a continue handoff or deferring its ancestry check (§16.7) or inheriting an open group
   seat (§17), remains read-only
   ([4_decisions.md](./4_decisions.md#session-start-is-read-only-except-for-handoff-restoration-and-seat-inheritance)).
 
@@ -6548,7 +6548,7 @@ distinct session ids marked `via: clear`. A `via: launch` id can survive
 several clears. Only the clear ids identify immediate predecessors. This
 lookup runs for interactive Claude Code starts whose source is `startup`,
 `clear`, or omitted; other source values, including `resume` and `compact`,
-do not restore a handoff.
+do not restore a handoff. If the checked transcript does not yet exist at an eligible start, the hook reports that and records a deferred check. The first typed UserPromptSubmit consumes that check once, reads the same ancestry and supplies the handoff and inherited seat in that turn. It does not repeat recovery if the child already has a continuation link or has held a seat.
 
 For a single predecessor, the hook reads its newest active handoff. If its
 mode is `continue`, that one checked body (at most 3,000 characters) starts

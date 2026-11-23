@@ -519,7 +519,7 @@ interactive Claude Code `SessionStart` whose source is `startup`, `clear`, or
 omitted appends the starting session to that seat's chain (audited against the
 group id) and notes the held seat in `additionalContext`. The same source
 conditions apply to clear-handoff restoration; `resume`, `compact`, and other
-source values do not use clear ancestry. A session that already holds a seat
+source values do not use clear ancestry. When the transcript is not written at an eligible start, its context says ancestry will be checked at the first prompt. The first typed prompt consumes that deferred check and may receive the handoff and seat context once, provided it has no continuation link or seat. A session that already holds a seat
 is told which seat it holds, while an unseated session with no open groups
 gets no seat context.
 When open groups exist and the starting session holds no seat for another

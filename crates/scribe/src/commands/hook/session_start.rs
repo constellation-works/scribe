@@ -56,7 +56,19 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
     let start_ancestry = ctx.interactive()
         && ctx.provider() == Provider::ClaudeCode
         && matches!(payload.source.as_deref(), None | Some("startup" | "clear"));
-    let predecessor = if start_ancestry {
+    let missing = start_ancestry
+        && payload.transcript_path.as_deref().is_some_and(|path| {
+            matches!(
+                payload::check(ctx, path, &session),
+                Ok(payload::Transcript::Missing)
+            )
+        });
+    let deferred = if missing {
+        ctx.store().defer_ancestry(&session)?
+    } else {
+        false
+    };
+    let predecessor = if start_ancestry && !missing {
         continuation::cleared_predecessor(ctx, payload.transcript_path.as_deref(), &session)
     } else {
         ClearedPredecessor::None
@@ -71,7 +83,20 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
             (reminder, None, Vec::new())
         }
     };
-    let seat = if start_ancestry {
+    if deferred {
+        outcomes.push(HookOutcome {
+            target: Some(format!("session:{session}")),
+            error_code: None,
+        });
+    }
+    let seat = if missing {
+        SeatReply {
+            context: Some(
+                "scribe: transcript not written yet; ancestry checked at the first prompt".into(),
+            ),
+            ..SeatReply::default()
+        }
+    } else if start_ancestry {
         seat_at_start(ctx, &session, &predecessor)
     } else {
         SeatReply::default()
@@ -104,13 +129,17 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
 }
 
 #[derive(Default)]
-struct SeatReply {
-    context: Option<String>,
-    message: Option<String>,
-    outcomes: Vec<HookOutcome>,
+pub(super) struct SeatReply {
+    pub(super) context: Option<String>,
+    pub(super) message: Option<String>,
+    pub(super) outcomes: Vec<HookOutcome>,
 }
 
-fn seat_at_start(ctx: &Context, child: &SessionId, predecessor: &ClearedPredecessor) -> SeatReply {
+pub(super) fn seat_at_start(
+    ctx: &Context,
+    child: &SessionId,
+    predecessor: &ClearedPredecessor,
+) -> SeatReply {
     let parent = match predecessor {
         ClearedPredecessor::One(parent) => Some(parent),
         ClearedPredecessor::None | ClearedPredecessor::Multiple(_) => None,

@@ -31,7 +31,8 @@ Reports open proposals, unpicked actions and possible recorded predecessors.
 Interactive Claude sessions receive the brief. On interactive Claude Code
 starts with source `startup`, `clear`, or omitted, a single clear predecessor's
 continue handoff may be prepended and linked. If that predecessor holds an open
-group seat, the new session can inherit it. Existing seats are reported, and
+group seat, the new session can inherit it. If the transcript is not yet
+written, ancestry is checked at the first typed prompt. Existing seats are reported, and
 a session replaced on its seat is told it was replaced and gets no join
 recommendation. With open groups, a session with no predecessor line, multiple
 predecessors, or a predecessor with no open seat receives a
