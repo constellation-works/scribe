@@ -241,9 +241,11 @@ pub(crate) fn short_ids(output: &Output, ctx: &Context) -> scribe_core::ShortIds
 }
 
 /// The session ids of provider transcripts on disk, for resolving prefixes
-/// of uncataloged sessions alongside the store's own ids.
+/// of uncataloged sessions alongside the store's own ids. If discovery is
+/// incomplete, callers keep resolving against the store alone.
 pub(in crate::commands) fn transcript_session_ids(ctx: &Context) -> Result<Vec<String>, CliError> {
-    Ok(hook::payload::files_for(ctx)?
+    Ok(hook::payload::files_for(ctx)
+        .unwrap_or_default()
         .into_iter()
         .map(|(id, _)| id.to_string())
         .collect())
