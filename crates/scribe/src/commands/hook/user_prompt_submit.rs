@@ -120,9 +120,13 @@ fn capture_prompt(payload: &PromptPayload, ctx: &Context) -> Result<Output, CliE
     if let Some(switch) = scribe_core::control::parse(&payload.prompt) {
         return Ok(super::scribe_command::run(&switch, payload, &session, ctx));
     }
-    if ctx.provider() == Provider::ClaudeCode {
-        super::group_turns::claude(ctx, &session, &payload.transcript_path)?;
-    }
+    let mut outcomes: Vec<HookOutcome> = if ctx.provider() == Provider::ClaudeCode {
+        super::group_turns::claude(ctx, &session, &payload.transcript_path)?
+            .into_iter()
+            .collect()
+    } else {
+        Vec::new()
+    };
     // Markers (§14.6): echoed here, written nothing; the Stop of this turn
     // catalogs them. Under Codex the adapter echoes them once the typed
     // turn is verified (`codex.rs`, [`mark_echoes`]), since its Stop replays
@@ -134,7 +138,7 @@ fn capture_prompt(payload: &PromptPayload, ctx: &Context) -> Result<Output, CliE
     };
     let parsed = capture::scan(&payload.prompt);
     if parsed.is_empty() {
-        return Ok(reply(mark_echoes, Vec::new()));
+        return Ok(reply(mark_echoes, outcomes));
     }
 
     // A missing transcript passes: the first prompt of a session can
@@ -149,10 +153,7 @@ fn capture_prompt(payload: &PromptPayload, ctx: &Context) -> Result<Output, CliE
                 ))
             })
             .collect();
-        let outcomes = parsed
-            .iter()
-            .map(|_| refusal(&session, PROVENANCE_FAILED))
-            .collect();
+        outcomes.extend(parsed.iter().map(|_| refusal(&session, PROVENANCE_FAILED)));
         return Ok(reply(echoes, outcomes));
     }
 
@@ -166,7 +167,6 @@ fn capture_prompt(payload: &PromptPayload, ctx: &Context) -> Result<Output, CliE
         host: ctx.host(),
     };
     let mut echoes = Vec::new();
-    let mut outcomes = Vec::new();
     for item in parsed {
         match item {
             Parsed::Refused(refused) => {

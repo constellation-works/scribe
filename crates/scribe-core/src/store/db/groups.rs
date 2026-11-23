@@ -523,12 +523,13 @@ impl Store {
 
     /// Store previously unprocessed turns from a verified transcript, in its
     /// order. The membership and cursor are rechecked inside the write.
+    /// Returns how many new message rows were persisted.
     pub fn capture_group_turns(
         &self,
         session: &SessionId,
         messages: &[NewMessage],
         redactor: &Redactor,
-    ) -> Result<()> {
+    ) -> Result<usize> {
         if messages
             .iter()
             .any(|m| &m.session != session || m.role != crate::Speaker::User)
@@ -540,10 +541,10 @@ impl Store {
         }
         let Some(before) = self.read_groups(|conn, path| capture_state(conn, path, session))?
         else {
-            return Ok(());
+            return Ok(0);
         };
         if next_turns(&before, messages).is_empty() {
-            return Ok(());
+            return Ok(0);
         }
         self.write(|| {
             let conn = open_writer(self.root(), self.lock_wait)?;
@@ -551,17 +552,18 @@ impl Store {
             let fail = |e| db_error("store group turns in", &path, e);
             let Some(state) = capture_state(&conn, &path, session).map_err(Fallible::into_error)?
             else {
-                return Ok(());
+                return Ok(0);
             };
             if state.position != before.position {
-                return Ok(());
+                return Ok(0);
             }
             let turns = next_turns(&state, messages);
             let Some(last) = turns.last().copied() else {
-                return Ok(());
+                return Ok(0);
             };
             let started = std::time::Instant::now();
-            super::write_messages(&conn, &path, started, turns.into_iter(), redactor, true)?;
+            let inserted =
+                super::write_messages(&conn, &path, started, turns.into_iter(), redactor, true)?;
             conn.execute(
                 "INSERT INTO sessions(provider_session, has_record, has_switch)
                  VALUES (?1, 0, 0) ON CONFLICT(provider_session) DO NOTHING",
@@ -573,7 +575,7 @@ impl Store {
                 params![state.position, last.message],
             )
             .map_err(fail)?;
-            Ok(())
+            Ok(inserted)
         })
     }
 }

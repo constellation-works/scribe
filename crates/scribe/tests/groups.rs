@@ -199,8 +199,22 @@ fn member_capture_is_model_free_and_leave_and_forget_erase_its_turns() {
         ("GROUP_SECRET", "groupsecretvalue"),
         ("PATH", path.to_str().unwrap()),
     ];
+    let audit_before = support::audit_lines(&f.root());
     stop(&f, B, &member, &env);
+    let after_first = support::audit_lines(&f.root());
+    assert_eq!(after_first.len(), audit_before.len() + 1, "{after_first:?}");
+    let capture_line = after_first.last().unwrap();
+    assert_eq!(capture_line["command"], "hook stop");
+    assert_eq!(capture_line["status"], "success");
+    assert_eq!(capture_line["target"], format!("session:{B}"));
+    assert!(capture_line["error_code"].is_null());
+    let log_text = support::audit_text(&f.root());
+    assert!(!log_text.contains("violetorchid"));
+    assert!(!log_text.contains("groupsecretvalue"));
+    assert!(!log_text.contains("GROUP_SECRET"));
+
     stop(&f, B, &member, &env);
+    assert_eq!(support::audit_lines(&f.root()), after_first);
     assert!(!f.home().join("model-called").exists());
     assert!(support::control(&f.root())["sessions"][B].is_null());
     assert_eq!(
@@ -583,6 +597,7 @@ fn codex_group_capture_uses_host_typed_blocks_and_ask_cites_the_stored_turn() {
     )
     .unwrap();
     support::make_private(&path);
+    let audit_before = support::audit_lines(&f.root());
     hook(
         &f,
         &["--provider", "codex", "hook", "stop"],
@@ -591,6 +606,25 @@ fn codex_group_capture_uses_host_typed_blocks_and_ask_cites_the_stored_turn() {
         }),
         &[],
     );
+    let after_first = support::audit_lines(&f.root());
+    assert_eq!(after_first.len(), audit_before.len() + 1, "{after_first:?}");
+    let capture_line = after_first.last().unwrap();
+    assert_eq!(capture_line["command"], "hook stop");
+    assert_eq!(capture_line["status"], "success");
+    assert_eq!(capture_line["target"], format!("session:{B}"));
+    assert!(capture_line["error_code"].is_null());
+    assert!(!support::audit_text(&f.root()).contains("saffronqueue"));
+
+    // Replaying the unchanged Stop payload writes no second success line.
+    hook(
+        &f,
+        &["--provider", "codex", "hook", "stop"],
+        json!({
+            "session_id": B, "transcript_path": path, "hook_event_name":"Stop", "turn_id":"turn-1"
+        }),
+        &[],
+    );
+    assert_eq!(support::audit_lines(&f.root()), after_first);
     let model = f.fake_program("claude", &format!(
         "#!/bin/sh\ncat > \"$HOME/ask-prompt\"\nprintf '%s\\n' '{{\"type\":\"result\",\"is_error\":false,\"structured_output\":{{\"status\":\"answered\",\"answer\":\"Label the queue.\",\"claims\":[{{\"text\":\"label it\",\"quote\":\"Always label the saffronqueue.\",\"cite\":\"session:{B}#message:codex-typed\"}}],\"conflicts\":[]}}}}'\n"
     ));
@@ -1107,7 +1141,9 @@ fn replaced_member_stores_no_new_turns_and_its_history_stays_readable() {
     let mut a_after = a_before.to_vec();
     a_after.push(row(A, "after", "user", "afterreplaceorchid typed by A"));
     transcript(&f, A, &a_after);
+    let before_replaced_stop = support::audit_lines(&f.root());
     stop(&f, A, &a_path, &env);
+    assert_eq!(support::audit_lines(&f.root()), before_replaced_stop);
     transcript(
         &f,
         B,
@@ -1133,4 +1169,236 @@ fn replaced_member_stores_no_new_turns_and_its_history_stays_readable() {
     let captured = search(B, "bcaptureorchid");
     assert_eq!(captured["total"], 1);
     assert_eq!(captured["hits"][0]["cite"], format!("session:{B}"));
+}
+
+#[test]
+fn prompt_hooks_audit_newly_persisted_member_turns_once_per_turn_for_each_provider() {
+    let f = Fixture::new();
+    transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
+    open(&f);
+    join(&f, B, "g-1", &[], 0);
+
+    // Claude Code: UserPromptSubmit persists a plain typed turn already in the
+    // transcript, prints nothing, writes one content-free audit line, and
+    // neither replay nor Stop writes a second line.
+    let claude_path = transcript(&f, B, &[row(B, "c-1", "user", "Keep claudepromptorchid.")]);
+    let before_claude = support::audit_lines(&f.root());
+    let prompt_out = hook(
+        &f,
+        &["hook", "user-prompt-submit"],
+        json!({
+            "session_id": B,
+            "transcript_path": claude_path,
+            "cwd": f.home(),
+            "prompt": "Keep claudepromptorchid."
+        }),
+        &[],
+    );
+    assert!(prompt_out.stdout.is_empty(), "{}", text(&prompt_out.stdout));
+    let after_claude = support::audit_lines(&f.root());
+    assert_eq!(
+        after_claude.len(),
+        before_claude.len() + 1,
+        "{after_claude:?}"
+    );
+    let line = after_claude.last().unwrap();
+    assert_eq!(line["command"], "hook user-prompt-submit");
+    assert_eq!(line["status"], "success");
+    assert_eq!(line["target"], format!("session:{B}"));
+    assert!(line["error_code"].is_null());
+    assert!(!support::audit_text(&f.root()).contains("claudepromptorchid"));
+
+    // Replay UserPromptSubmit and then Stop on the unchanged transcript.
+    hook(
+        &f,
+        &["hook", "user-prompt-submit"],
+        json!({
+            "session_id": B,
+            "transcript_path": claude_path,
+            "cwd": f.home(),
+            "prompt": "Keep claudepromptorchid."
+        }),
+        &[],
+    );
+    stop(&f, B, &claude_path, &[]);
+    assert_eq!(support::audit_lines(&f.root()), after_claude);
+    assert_eq!(
+        invoke(
+            &f,
+            A,
+            &[
+                "search",
+                "claudepromptorchid",
+                "--kind",
+                "message",
+                "--group",
+                "g-1"
+            ],
+            0
+        )["total"],
+        1
+    );
+
+    // Codex: join another member session C and verify both UserPromptSubmit
+    // (before vs after rollout persistence) and Stop replay idempotency.
+    let join_c = f
+        .cmd(&[
+            "--provider",
+            "codex",
+            "group",
+            "join",
+            "g-1",
+            "--as",
+            "reviewer",
+            "--author",
+            "aide",
+        ])
+        .env("CODEX_THREAD_ID", C)
+        .output()
+        .unwrap();
+    assert!(join_c.status.success(), "{}", text(&join_c.stderr));
+
+    let dir = f.home().join(".codex/sessions/2090/11/20");
+    f.create_private_dir_all(&dir);
+    let codex_path = dir.join(format!("rollout-2090-11-20T01-00-00-{C}.jsonl"));
+    let meta = json!({"type":"session_meta","payload":{"id":C,"source":"vscode","thread_source":"user","cwd":f.home()}});
+    let write_rollout = |rows: &[Value]| {
+        std::fs::write(
+            &codex_path,
+            rows.iter().map(|r| format!("{r}\n")).collect::<String>(),
+        )
+        .unwrap();
+        support::make_private(&codex_path);
+    };
+    write_rollout(std::slice::from_ref(&meta));
+
+    // Before the rollout holds the plain turn: UserPromptSubmit writes nothing.
+    let before_codex = support::audit_lines(&f.root());
+    let early = hook(
+        &f,
+        &["--provider", "codex", "hook", "user-prompt-submit"],
+        json!({
+            "session_id": C,
+            "transcript_path": codex_path,
+            "hook_event_name": "UserPromptSubmit",
+            "turn_id": "turn-1",
+            "prompt": "Keep codexdeferredorchid."
+        }),
+        &[],
+    );
+    assert!(early.stdout.is_empty(), "{}", text(&early.stdout));
+    assert_eq!(support::audit_lines(&f.root()), before_codex);
+
+    // Once Stop sees the persisted turn in the rollout, Stop audits it once.
+    let turn_1 = json!({"timestamp":"2090-11-20T01:00:00Z","type":"response_item","payload":{
+        "type":"message","role":"user","id":"codex-m1",
+        "content":[{"type":"input_text","text":"Keep codexdeferredorchid."}],
+        "internal_chat_message_metadata_passthrough":{
+            "turn_id":"turn-1","content_item_kinds":["user.text"],
+            "content_item_metadata":[{"provenance":{"type":"user"}}]
+        }
+    }});
+    write_rollout(&[meta.clone(), turn_1.clone()]);
+    hook(
+        &f,
+        &["--provider", "codex", "hook", "stop"],
+        json!({
+            "session_id": C,
+            "transcript_path": codex_path,
+            "hook_event_name": "Stop",
+            "turn_id": "turn-1"
+        }),
+        &[],
+    );
+    let after_codex_stop = support::audit_lines(&f.root());
+    assert_eq!(
+        after_codex_stop.len(),
+        before_codex.len() + 1,
+        "{after_codex_stop:?}"
+    );
+    let line = after_codex_stop.last().unwrap();
+    assert_eq!(line["command"], "hook stop");
+    assert_eq!(line["status"], "success");
+    assert_eq!(line["target"], format!("session:{C}"));
+    assert!(line["error_code"].is_null());
+    assert!(!support::audit_text(&f.root()).contains("codexdeferredorchid"));
+
+    // Next turn already present in rollout when UserPromptSubmit runs:
+    // UserPromptSubmit persists and audits it; replay and Stop add no second line.
+    let turn_2 = json!({"timestamp":"2090-11-20T01:05:00Z","type":"response_item","payload":{
+        "type":"message","role":"user","id":"codex-m2",
+        "content":[{"type":"input_text","text":"Keep codexpromptorchid."}],
+        "internal_chat_message_metadata_passthrough":{
+            "turn_id":"turn-2","content_item_kinds":["user.text"],
+            "content_item_metadata":[{"provenance":{"type":"user"}}]
+        }
+    }});
+    write_rollout(&[meta, turn_1, turn_2]);
+    let submit_2 = hook(
+        &f,
+        &["--provider", "codex", "hook", "user-prompt-submit"],
+        json!({
+            "session_id": C,
+            "transcript_path": codex_path,
+            "hook_event_name": "UserPromptSubmit",
+            "turn_id": "turn-2",
+            "prompt": "Keep codexpromptorchid."
+        }),
+        &[],
+    );
+    assert!(submit_2.stdout.is_empty(), "{}", text(&submit_2.stdout));
+    let after_codex_prompt = support::audit_lines(&f.root());
+    assert_eq!(
+        after_codex_prompt.len(),
+        after_codex_stop.len() + 1,
+        "{after_codex_prompt:?}"
+    );
+    let line = after_codex_prompt.last().unwrap();
+    assert_eq!(line["command"], "hook user-prompt-submit");
+    assert_eq!(line["status"], "success");
+    assert_eq!(line["target"], format!("session:{C}"));
+    assert!(line["error_code"].is_null());
+    assert!(!support::audit_text(&f.root()).contains("codexpromptorchid"));
+
+    // Replaying UserPromptSubmit and running Stop on unchanged rollout add no line.
+    hook(
+        &f,
+        &["--provider", "codex", "hook", "user-prompt-submit"],
+        json!({
+            "session_id": C,
+            "transcript_path": codex_path,
+            "hook_event_name": "UserPromptSubmit",
+            "turn_id": "turn-2",
+            "prompt": "Keep codexpromptorchid."
+        }),
+        &[],
+    );
+    hook(
+        &f,
+        &["--provider", "codex", "hook", "stop"],
+        json!({
+            "session_id": C,
+            "transcript_path": codex_path,
+            "hook_event_name": "Stop",
+            "turn_id": "turn-2"
+        }),
+        &[],
+    );
+    assert_eq!(support::audit_lines(&f.root()), after_codex_prompt);
+    assert_eq!(
+        invoke(
+            &f,
+            A,
+            &[
+                "search",
+                "codexpromptorchid",
+                "--kind",
+                "message",
+                "--group",
+                "g-1"
+            ],
+            0
+        )["total"],
+        1
+    );
 }
