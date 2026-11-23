@@ -474,10 +474,11 @@ pub enum Settle {
     Retire(EntryId),
     /// Blank an entry's text for good; its id, cite and status stay.
     Forget(EntryId),
-    /// Erase a session's words for good (`s-<n>` or its provider id): its
-    /// messages and log text go, its row stays as forgotten (2_design.md
-    /// §15.7). The store applies it ([`crate::Store::settle`]); it touches
-    /// no proposal or entry.
+    /// Erase a session's stored record and sources (`s-<n>` or its provider
+    /// id), leaving an id-only tombstone. Open claims sourced from it are
+    /// withdrawn, citing entries are detached, and handoffs naming it are
+    /// deleted (2_design.md §15.7). The store applies it
+    /// ([`crate::Store::settle`]).
     ForgetSession(SessionId),
 }
 
