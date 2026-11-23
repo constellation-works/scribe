@@ -20,7 +20,7 @@ and `control.json` stays as the format stamp alone; see
 [Sessions in scribe.db](#sessions-in-scribedb-phase-6). Format 27 (phase 7)
 introduced moving the other kinds into `scribe.db`; the format-27 release
 wrote the format stamps, including `control.json`, at 27. The current
-format-28 build retains that migration and stamps at 28 after its first
+format-29 build retains that migration and stamps at 29 after its first
 eligible store write transaction moves every kind still in files, sessions
 first. A standalone audit line does not start that move: it is inserted
 without waiting, or spooled under `audit-spool/` while the store is still in
@@ -411,9 +411,10 @@ audit line has the session's `s-<n>` as its target.
   format, and a torn line is counted and left in the moved file. After the
   commit the files go to `pre-sqlite-<yyyy-mm-dd>/`, and `control.json`,
   `proposals.json`, `tags.json`, `marks.json` and `pickups.json` are
-  written as empty stamps at format 28, so a format-27 build refuses the
+  written as empty stamps at format 29, so a format-28 build refuses the
   store instead of writing files beside the database. The format-27 release
-  wrote these stamps at 27. A standalone audit
+  wrote these stamps at 27, and the format-28 release wrote them at 28. A
+  standalone audit
   line does not trigger this move; a later eligible transaction imports the
   records and drains its spool. A write that refuses rolls the move back
   with it; a move cut off after the commit finishes at the next write, with
@@ -454,8 +455,9 @@ audit line has the session's `s-<n>` as its target.
   rewritten.
 - **Formats 27–28.** Format 27 introduced the move of every kind still in
   files into `scribe.db`, sessions first, and stamped `control.json` at 27.
-  The current format-28 build keeps that migration path and stamps
-  `control.json` at 28 after the move. Format 28 adds optional `handoff_mode`
+  The format-28 release kept that migration path and stamped `control.json`
+  at 28 after the move. The current format-29 build keeps that migration path
+  and stamps `control.json` at 29. Format 28 adds optional `handoff_mode`
   (`continue` or `new`) to entries; SQLite schema 7 adds its nullable column.
   The upgrade registry remains append-only for persisted document shapes; SQL
   schema changes use migrations. The existing steps stay so the move can
