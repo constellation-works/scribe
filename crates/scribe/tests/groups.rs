@@ -68,6 +68,17 @@ fn session_start(
     source: &str,
     entrypoint: &str,
 ) -> Value {
+    session_start_with_cwd(f, session, path, source, entrypoint, None)
+}
+
+fn session_start_with_cwd(
+    f: &Fixture,
+    session: &str,
+    path: Option<&PathBuf>,
+    source: &str,
+    entrypoint: &str,
+    cwd: Option<&PathBuf>,
+) -> Value {
     let mut payload = json!({
         "session_id": session,
         "hook_event_name": "SessionStart",
@@ -75,6 +86,9 @@ fn session_start(
     });
     if let Some(path) = path {
         payload["transcript_path"] = json!(path);
+    }
+    if let Some(cwd) = cwd {
+        payload["cwd"] = json!(cwd.to_string_lossy());
     }
     let mut cmd = f.cmd(&["hook", "session-start"]);
     cmd.env("CLAUDE_CODE_ENTRYPOINT", entrypoint)
@@ -486,6 +500,68 @@ printf '%s\n' '{{"type":"result","is_error":false,"structured_output":{{"summary
     let left = invoke(&f, B, &["group", "leave"], 0);
     assert!(left["summary"].is_null());
     assert!(!left["closed"].is_null());
+}
+
+#[test]
+fn session_start_includes_last_group_when_it_is_the_only_brief_content() {
+    let f = Fixture::new();
+    transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
+    open(&f);
+    join(&f, B, "g-1", &[], 0);
+    let member = transcript(
+        &f,
+        B,
+        &[row(B, "u", "user", "Review the release checklist.")],
+    );
+    stop(&f, B, &member, &[]);
+
+    let path = f.fake_program(
+        "claude",
+        "#!/bin/sh\nprintf '%s\\n' '{\"type\":\"result\",\"is_error\":false,\"structured_output\":{\"summary\":\"Retained group summary.\"}}'\n",
+    );
+    let closed = f
+        .cmd(&["group", "close", "g-1", "--json"])
+        .env("CLAUDE_CODE_SESSION_ID", A)
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert_eq!(closed.status.code(), Some(0), "{}", text(&closed.stderr));
+    let group = invoke(&f, A, &["group", "show", "g-1"], 0);
+    let summary = group["summary"].as_str().unwrap();
+    assert!(summary.contains("Retained group summary."), "{summary}");
+
+    let standalone = invoke(&f, A, &["brief", "--project", "scribe"], 0);
+    assert!(standalone["sessions"].as_array().unwrap().is_empty());
+    assert_eq!(standalone["claim_count"], 0);
+    assert_eq!(standalone["claims"], json!([]));
+    assert!(standalone["memory"]["profile"].is_null());
+    assert_eq!(standalone["memory"]["now"], json!([]));
+    assert_eq!(standalone["memory"]["milestones"], json!([]));
+    assert_eq!(standalone["last_group"]["summary"], summary);
+
+    let project = f.elsewhere("scribe");
+    f.create_private_dir_all(&project);
+    let reply = session_start_with_cwd(&f, C, None, "startup", "claude-desktop", Some(&project));
+    let context = reply["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(context.contains("## Last group"), "{context}");
+    assert!(context.contains(summary), "{context}");
+
+    let empty_project = f.elsewhere("empty-project");
+    f.create_private_dir_all(&empty_project);
+    let empty = session_start_with_cwd(
+        &f,
+        D,
+        None,
+        "startup",
+        "claude-desktop",
+        Some(&empty_project),
+    );
+    assert!(
+        empty["hookSpecificOutput"]["additionalContext"].is_null(),
+        "{empty}"
+    );
 }
 
 #[test]

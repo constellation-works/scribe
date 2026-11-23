@@ -5558,11 +5558,13 @@ said: "yes, put it on both tasks and tell the captain" (recorded on
 
 **Memory proper is its own block.** `scribe memory show` with no id prints
 memory and nothing else: Profile, Now and Milestones. `scribe brief` embeds
-that block verbatim and adds two parts after it. Recent sessions are part of
-the brief, not of `memory`, because a session is its own kind of record
+that block verbatim, then shows the project's most recently opened group,
+recent sessions and open claims. These are part of the brief, not of
+`memory`, because a group and a session are their own kinds of record
 (§15.1).
 
-**Layout**, in this order. Every line carries its date:
+**Layout**, in this order. Dated memory items, sessions and claims carry their
+dates; the group carries its title and any retained summary:
 
 ```text
 ## Profile (as of 2026-11-24)
@@ -5573,6 +5575,9 @@ the brief, not of `memory`, because a session is its own kind of record
 ## Milestones
 - 2026-10-02-pulsar-decommissioned · 2026-10-02 · Pulsar decommissioned
 - 2026-06-14-married · 2026-06-14 · Married
+## Last group
+g-12 · Release review
+Review complete; the release checklist is ready.
 ## Recent sessions
 - s-41 · 2026-11-21 · scribe · Annotations anywhere in a typed turn
 - s-40 · 2026-11-20 · scribe · …
@@ -5592,13 +5597,15 @@ injected into every interactive session.
 | `## Profile (as of <date>)` | `profile.md` in full; the date is its last revision | | none here: the profile job caps it at 6,000 characters when it writes it (§15.6) |
 | `## Now` | `- <id> · due <date> · <title>` | nearest date first | every item: a `now` item exists only with a date and leaves 14 days after it (§15.5), so the part bounds itself |
 | `## Milestones` | `- <id> · <date> · <title>` | newest first | the last 5 |
+| `## Last group` | `g-<n> · <title>`; its retained close summary follows when present, or `Still open.` for an open group without a summary | most recently opened in this project | one group |
 | `## Recent sessions` | `- <id> · <date> · <project> · <title>` (the date of its last message; titles only; the id is for `scribe session show`) | this project's sessions first, then the others, each group newest first; this session left out | the last 5 |
 | `## Open claims` | `- <id> · <tag> · "<quote>"` | grouped by tag, tags in table order, oldest first within a tag | every open claim (the store cap is 20); a quote over 200 characters is cut with `…` |
 
 - **Ids.** A `now` or milestone id is its file stem, the `<date>-<slug>` of
   §15.5. `scribe memory show <id>` prints that file, and `scribe memory ack
   <id>` marks it raised. A session id is `s-<n>` (§15.7), and the provider
-  UUID before phase 6. A claim id is `p-<n>`.
+  UUID before phase 6. A group id is `g-<n>`; `scribe group show <id>` prints
+  the group and its retained summary. A claim id is `p-<n>`.
 - **Empty parts.** An empty part prints its heading and `(none)`, so a
   reader can tell it is empty and not cut off.
 - **What the page leaves out.** The quotes behind memory, a claim's context
@@ -5619,9 +5626,9 @@ injected into every interactive session.
      session. The brief shows no entries, and its layout is the one Daniel
      agreed, so the binding rules are not put on the page. They stay a read
      of their own: they bind, the page describes.
-  2. **Present the brief** in the first message: the recent sessions, then
-     the open claims, and how to settle them. Use the memory block; don't
-     recite it.
+  2. **Present the brief** in the first message: the last group, recent
+     sessions, then the open claims and how to settle them. Use the memory
+     block; don't recite it.
 - A Codex session runs `scribe brief` through the skill until its hook adds
   it.
 - `--json` gives `{memory: {profile, now, milestones}, sessions, claims,

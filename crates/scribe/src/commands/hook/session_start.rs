@@ -199,7 +199,7 @@ fn memory_block(ctx: &Context) -> Option<String> {
 }
 
 /// The brief for this session's project, or `None` when it has no memory,
-/// no session and no claim, or the store cannot be read (logged, so the
+/// last group, session or claim, or the store cannot be read (logged, so the
 /// session still starts). Memory that cannot be read is left out (logged by
 /// [`memory_block`]); the rest is still given. With no `cwd`,
 /// every project's sessions by date alone.
@@ -217,7 +217,10 @@ fn brief_text(ctx: &Context, session: &SessionId, cwd: Option<&str>) -> Option<S
         scribe_core::brief::DEFAULT_SESSIONS,
     ) {
         Ok(brief)
-            if brief.memory.is_none() && brief.sessions.is_empty() && brief.claims.is_empty() =>
+            if brief.memory.is_none()
+                && brief.last_group.is_none()
+                && brief.sessions.is_empty()
+                && brief.claims.is_empty() =>
         {
             None
         }
