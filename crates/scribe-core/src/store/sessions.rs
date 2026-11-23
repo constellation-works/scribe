@@ -548,9 +548,21 @@ impl Store {
     /// Replay after every commit, including a restarted migration, so an
     /// interruption between the database commit and the archive move cannot
     /// leave a forgotten session in plaintext.
+    ///
+    /// The archive lock is taken only when a moved archive still holds a
+    /// file of a forgotten session, so a store with nothing to erase never
+    /// fails an already-committed write on someone else's lock. The scan
+    /// repeats under the lock before anything is deleted.
     pub(super) fn clean_forgotten_session_files(&self) -> Result<()> {
         let forgotten = self.load_sessions()?.forgotten;
-        if forgotten.is_empty() {
+        let mut pending = false;
+        for id in forgotten.keys() {
+            if !self.moved_files_of(id)?.is_empty() {
+                pending = true;
+                break;
+            }
+        }
+        if !pending {
             return Ok(());
         }
         let lock_path = self.lock_path("archive-forget.lock")?;
@@ -564,8 +576,17 @@ impl Store {
     /// Delete `id`'s record and rebuild checkpoint files from every
     /// `pre-sqlite-<date>/sessions*/<yyyy>/<mm>/`. Returns how many went.
     fn forget_moved_files(&self, id: &SessionId) -> Result<usize> {
+        let files = self.moved_files_of(id)?;
+        for path in &files {
+            fsio::remove_private(path)?;
+        }
+        Ok(files.len())
+    }
+
+    /// The files [`Self::forget_moved_files`] would delete for `id`.
+    fn moved_files_of(&self, id: &SessionId) -> Result<Vec<PathBuf>> {
         let names = [format!("{id}{RECORD_EXT}"), format!(".{id}.rebuild.md")];
-        let mut removed = 0;
+        let mut found = Vec::new();
         for moved in fsio::list_dir(&self.root)? {
             let moved = self.root.join(&moved);
             if !moved
@@ -599,15 +620,14 @@ impl Store {
                         for name in &names {
                             let path = month.join(name);
                             if fsio::inspect_file(&path)? {
-                                fsio::remove_private(&path)?;
-                                removed += 1;
+                                found.push(path);
                             }
                         }
                     }
                 }
             }
         }
-        Ok(removed)
+        Ok(found)
     }
 
     /// The `s-<n>` of every session, read-only.
