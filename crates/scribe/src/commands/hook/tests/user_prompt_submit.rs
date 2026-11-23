@@ -149,3 +149,58 @@ fn typed_project_group_joins_and_untyped_commands_are_refused() {
         );
     }
 }
+
+#[test]
+fn group_subcommand_spelling_follows_the_shared_parser() {
+    for prompt in [
+        "/scribe GROUP water-economy",
+        "/scribe Group water-economy",
+        "/scribe:scribe gRoUp water-economy",
+    ] {
+        let setup = Setup::new();
+        let Output::Hook(reply) = run(&setup.input(prompt), &setup.ctx).unwrap() else {
+            panic!("hook reply")
+        };
+        let block = reply.block.unwrap();
+        assert!(
+            block.contains("joined group water-economy"),
+            "{prompt}: {block}"
+        );
+        let group = setup.ctx.store().group("water-economy").unwrap();
+        assert_eq!(group.kind, "project", "{prompt}");
+    }
+    for prompt in ["/scribe group Water-Economy", "/scribe GROUP Water-Economy"] {
+        let setup = Setup::new();
+        let Output::Hook(reply) = run(&setup.input(prompt), &setup.ctx).unwrap() else {
+            panic!("hook reply")
+        };
+        let block = reply.block.unwrap();
+        assert!(block.contains("group refused"), "{prompt}: {block}");
+        assert!(block.contains("lowercase"), "{prompt}: {block}");
+        assert!(
+            setup.ctx.store().group("water-economy").is_err(),
+            "{prompt}"
+        );
+    }
+}
+
+#[test]
+fn mixed_case_group_from_untyped_origins_is_refused_without_a_write() {
+    for (prompt, source) in [
+        ("/scribe GROUP peer", "agent"),
+        ("/scribe Group scheduled", "scheduled"),
+    ] {
+        let setup = Setup::new();
+        let mut input: serde_json::Value = serde_json::from_slice(&setup.input(prompt)).unwrap();
+        input["source"] = json!(source);
+        let Output::Hook(reply) = run(input.to_string().as_bytes(), &setup.ctx).unwrap() else {
+            panic!("hook reply")
+        };
+        assert!(
+            reply.block.unwrap().contains("not a typed user turn"),
+            "{prompt}"
+        );
+        let slug = prompt.split_whitespace().last().unwrap();
+        assert!(setup.ctx.store().group(slug).is_err(), "{prompt}");
+    }
+}

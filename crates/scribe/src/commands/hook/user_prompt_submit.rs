@@ -185,15 +185,11 @@ fn capture_prompt(payload: &PromptPayload, ctx: &Context) -> Result<Output, CliE
             "session belongs to another transcript provider",
         )));
     }
-    let first = payload.prompt.lines().next().unwrap_or("").trim();
-    let words: Vec<_> = first.split_whitespace().collect();
-    let group_command = matches!(words.as_slice(), ["/scribe" | "/scribe:scribe", "group", _]);
     if payload::agent_originated(payload) {
-        if group_command
-            || payload.prompt.lines().any(|line| {
-                let parts: Vec<_> = line.split_whitespace().collect();
-                matches!(parts.as_slice(), ["/scribe" | "/scribe:scribe", "group", _])
-            })
+        if payload
+            .prompt
+            .lines()
+            .any(|line| group_slug(line).is_some())
         {
             return Ok(group_reply(
                 "scribe: group refused — the prompt is not a typed user turn".into(),
@@ -203,7 +199,7 @@ fn capture_prompt(payload: &PromptPayload, ctx: &Context) -> Result<Output, CliE
         }
         return Ok(reply(Vec::new(), Vec::new()));
     }
-    if group_command {
+    if let Some(slug) = group_slug(&payload.prompt) {
         if let Err(reason) = payload::check(ctx, &payload.transcript_path, &session) {
             return Ok(group_reply(
                 format!("scribe: group refused — {reason}"),
@@ -216,10 +212,10 @@ fn capture_prompt(payload: &PromptPayload, ctx: &Context) -> Result<Output, CliE
         return Ok(
             match ctx
                 .store()
-                .join_project_group(words[2], &project, &session, ctx.now(), &redactor)
+                .join_project_group(&slug, &project, &session, ctx.now(), &redactor)
             {
                 Ok(id) => group_reply(
-                    format!("scribe: joined group {} ({id})", words[2]),
+                    format!("scribe: joined group {slug} ({id})"),
                     None,
                     &session,
                 ),
@@ -300,6 +296,16 @@ fn capture_prompt(payload: &PromptPayload, ctx: &Context) -> Result<Output, CliE
     }
     echoes.extend(mark_echoes);
     Ok(reply(echoes, outcomes))
+}
+
+/// The slug of a `/scribe group <slug>` line, read by the shared control
+/// parser, so the subcommand is spelled as every control argument is:
+/// case-insensitively. The slug is passed on as typed; the store checks it.
+fn group_slug(text: &str) -> Option<String> {
+    match scribe_core::control::parse(text) {
+        Some(scribe_core::control::Switch::Group(slug)) => Some(slug),
+        _ => None,
+    }
 }
 
 fn group_reply(reason: String, error_code: Option<&'static str>, session: &SessionId) -> Output {
