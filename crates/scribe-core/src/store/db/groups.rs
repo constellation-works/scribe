@@ -810,13 +810,12 @@ fn write_captured_turns(
     if turns.is_empty() {
         return Ok(0);
     }
-    let inserted = super::write_messages(
+    let inserted = super::insert_group_only_in(
         conn,
         path,
         std::time::Instant::now(),
         turns.into_iter(),
         redactor,
-        true,
     )?;
     conn.execute(
         "INSERT INTO sessions(provider_session, has_record, has_switch)
