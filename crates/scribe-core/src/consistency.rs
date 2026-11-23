@@ -590,6 +590,13 @@ pub enum Settled {
     },
     /// A session's words were erased; its row stays as forgotten.
     SessionForgotten(crate::SessionForget),
+    /// The session was already forgotten, but a stale checkpoint was removed.
+    SessionForgetRepaired {
+        /// The provider session id.
+        id: crate::SessionId,
+        /// The session's short number, if it has one.
+        number: Option<std::num::NonZeroU64>,
+    },
     /// It was already so (a replayed instruction): nothing changed.
     Already(String),
     /// It was refused: nothing changed.

@@ -5907,7 +5907,8 @@ with phase 4):
   forget of a record file. (Phase 4) Forgetting an entry or a memory item
   deletes the messages it cites, so a forget still leaves no trace of the
   words in the store (`secure_delete`, an FTS5 `optimize` and a `TRUNCATE`
-  checkpoint).
+  checkpoint). Repeating a session forget removes any stale rebuild checkpoint,
+  acknowledges that cleanup, and audits it once; a clean repeat writes no audit line.
 - **Search.** BM25 over messages is FTS5's `bm25()`. `scribe search --kind
   message` and `ask` retrieval use it. Embeddings are not built until a
   miss is seen that BM25 cannot fix.

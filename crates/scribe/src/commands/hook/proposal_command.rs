@@ -133,6 +133,13 @@ pub(super) fn run(settling: &Settling, turn: &Turn, ctx: &Context) -> Reply {
                 ),
             )
         }
+        Settled::SessionForgetRepaired { id, number } => {
+            let name = number.map_or_else(|| id.to_string(), |n| format!("s-{n}"));
+            done(
+                name.clone(),
+                format!("scribe: {name} is already forgotten — removed a stale rebuild checkpoint"),
+            )
+        }
         Settled::Already(what) => Reply {
             echo: format!("scribe: {what} — nothing changed"),
             outcome: None,

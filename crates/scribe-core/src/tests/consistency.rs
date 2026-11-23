@@ -691,6 +691,7 @@ impl RefusalCode for Settled {
             | Settled::Retired(_)
             | Settled::Forgotten(_)
             | Settled::SessionForgotten(_)
+            | Settled::SessionForgetRepaired { .. }
             | Settled::Covered { .. }
             | Settled::Already(_)
             | Settled::Recorded { .. } => None,
