@@ -249,6 +249,8 @@ are derived from the checked local transcript and are omitted from exports.
 | `deleted_handoffs` | `id TEXT PRIMARY KEY NOT NULL` | session forget reserves erased handoff ids (version 14) |
 | `pending_archive_forgets` | `id INTEGER PRIMARY KEY`; `entry TEXT NOT NULL` (`<tag>-<n>`); `salt TEXT NOT NULL`, 64 hex characters; `digests TEXT NOT NULL`, JSON array of `{len, sha256}` salted SHA-256 digests of erased texts (never cleartext); `created TEXT NOT NULL` | committed in the entry forget's transaction when `pre-sqlite-*` archives exist or are pending move-aside; drained after commit by that write or any restarted write (version 6) |
 
+`group backfill <id>` rechecks that the group is open and each supplied session still holds its seat in the write transaction. It inserts each checked transcript’s eligible turns as group-only rows, preserves existing rows and capture cursors, and reports unavailable transcripts and stored and skipped counts.
+
 Group turns use the same `messages` and FTS5 rows, with `group_only = 1` for
 turns kept solely through membership. `group open` stores the opener's typed
 turns from the start of its transcript in the transaction that inserts the

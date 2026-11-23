@@ -38,6 +38,7 @@ const HELP: &[(&str, &[&str])] = &[
     ("group", &["group", "--help"]),
     ("group-open", &["group", "open", "--help"]),
     ("group-join", &["group", "join", "--help"]),
+    ("group-backfill", &["group", "backfill", "--help"]),
     ("group-leave", &["group", "leave", "--help"]),
     ("group-close", &["group", "close", "--help"]),
     ("group-show", &["group", "show", "--help"]),
@@ -383,6 +384,17 @@ fn group_roster_matches_goldens() {
                 &text(&out.stdout),
             ));
         }
+    }
+    support::sql(
+        &fx.root(),
+        "INSERT INTO group_seats VALUES (2,'reviewer','member'); INSERT INTO group_members (position, group_id, seat, session, author, joined) VALUES (2,2,'reviewer','member2','aide','2026-11-22T11:05:00Z');",
+    );
+    for (suffix, mode) in MODES {
+        let out = fx.ok(&[&["group", "backfill", "g-2"][..], *mode].concat());
+        failures.extend(check(
+            &format!("output/group-backfill.{suffix}"),
+            &text(&out.stdout),
+        ));
     }
     report(&failures);
 }

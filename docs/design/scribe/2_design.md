@@ -6850,7 +6850,9 @@ joined and `additionalContext` tells the session to re-run
 `scribe group join`. If the seat lookup fails, the hook reports the failure
 and also recommends running `scribe group join`.
 
-**Stored turns.** Joining starts no catalog pass and creates no session record.
+**Stored turns.** `scribe group backfill <id>` stores each current seat holder’s eligible typed turns from the first line of its checked transcript, including for seats joined before join-time backfill. It skips and names unavailable or refused transcripts, reports stored and already-stored counts per seat and in total, refuses closed groups, and never changes capture cursors. Repeating it stores no turn twice and makes no model call. This explicit operation includes a current holder’s earlier turns even across a prior displacement.
+
+Joining starts no catalog pass and creates no session record.
 A session's typed turns are stored from the first line of its own transcript,
 not from its join time: `group open` stores the opener's earlier turns and
 `group join` the joining session's, by the rules below (a typed turn of the
@@ -6866,8 +6868,8 @@ stored stay readable until it leaves or is forgotten. The replaced session's
 hooks move its capture cursor past the turns it types meanwhile without storing
 them, and when the replacement leaves or is forgotten, the restored holder's
 consent window restarts at that moment and its capture cursor is cleared, so
-turns typed during the displacement are never stored later, even when no hook
-ran for the replaced session meanwhile. Capture uses the pass's exclusions for
+ordinary capture never stores turns typed during the displacement, even when no hook
+ran for the replaced session meanwhile; explicit backfill can store the current holder’s earlier turns. Capture uses the pass's exclusions for
 synthetic and control
 turns, pasted blocks, fenced code and sensitive text, plus its store redactor.
 Claude group capture records its byte position and first-seen message

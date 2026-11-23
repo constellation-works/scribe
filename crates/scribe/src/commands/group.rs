@@ -65,6 +65,12 @@ pub(crate) enum GroupCommand {
         #[arg(long)]
         replace: bool,
     },
+    /// Store earlier typed turns for each current seat holder
+    #[command(after_help = "Example: scribe group backfill <id> --json")]
+    Backfill {
+        /// Group id, unique prefix, or project group slug
+        id: String,
+    },
     /// Remove the calling session from its seat
     #[command(after_help = "Example: scribe group leave")]
     Leave,
@@ -99,6 +105,7 @@ impl GroupCommand {
             Self::Open { .. } => "group open",
             Self::Join { .. } => "group join",
             Self::Leave => "group leave",
+            Self::Backfill { .. } => "group backfill",
             Self::Close { .. } => CLOSE_COMMAND,
             Self::List | Self::Show { .. } => return None,
         };
@@ -114,7 +121,7 @@ impl GroupCommand {
                 author: Some(author.to_string()),
                 target: ctx.store().group(id).ok().map(|g| g.id),
             },
-            Self::Close { id, .. } => AuditSubject {
+            Self::Close { id, .. } | Self::Backfill { id } => AuditSubject {
                 author: None,
                 target: ctx.store().group(id).ok().map(|g| g.id),
             },
@@ -306,6 +313,60 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
                 notices.push("session already holds this seat".into());
             }
             (group.id, changed)
+        }
+        GroupCommand::Backfill { id } => {
+            let group = store.group(&id)?;
+            if group.closed.is_some() {
+                return Err(scribe_core::Error::AgentWrite {
+                    kind: WriteRefusal::GroupMembership,
+                    message: "the group is already closed".into(),
+                }
+                .into());
+            }
+            let mut report = crate::output::GroupBackfill {
+                group: group.id.clone(),
+                members: Vec::new(),
+                stored: 0,
+                skipped: 0,
+            };
+            let mut batches = Vec::new();
+            for seat in &group.seats {
+                let Some(session) = seat.transcripts.last() else {
+                    continue;
+                };
+                let mut turns = None;
+                for provider in [Provider::ClaudeCode, Provider::Codex] {
+                    let view = ctx.with_provider(provider);
+                    if let Ok(Some(path)) = payload::locate(&view, session)
+                        && let Ok(Some(bytes)) = payload::read_checked(&view, &path, session)
+                        && let Ok(found) = hook::typed_turns(&view, session, &bytes)
+                    {
+                        turns = Some(found);
+                        break;
+                    }
+                }
+                let unavailable = turns.is_none();
+                let turns = turns.unwrap_or_default();
+                report.members.push(crate::output::GroupBackfillMember {
+                    seat: seat.name.clone(),
+                    session: session.to_string(),
+                    stored: 0,
+                    skipped: 0,
+                    transcript_unavailable: unavailable,
+                });
+                batches.push((session.clone(), turns));
+            }
+            let counts =
+                store.backfill_group_turns(&group.id, &batches, &ctx.redactor(&ctx.config()?)?)?;
+            for ((member, (_, turns)), stored) in
+                report.members.iter_mut().zip(&batches).zip(counts)
+            {
+                member.stored = stored;
+                member.skipped = turns.len() - stored;
+                report.stored += stored;
+                report.skipped += member.skipped;
+            }
+            return Ok(Output::GroupBackfill(report));
         }
         GroupCommand::Leave => (store.leave_group(&caller(ctx)?)?, true),
         GroupCommand::Close { id, quote } => {
