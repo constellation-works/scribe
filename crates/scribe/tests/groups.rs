@@ -3237,3 +3237,100 @@ fn typed_group_add_scopes_cross_provider_collision_to_named_sessions() {
         );
     }
 }
+
+#[test]
+fn typed_multiline_group_controls_dispatch_through_hook_and_ignore_later_lines() {
+    let add_line = format!("/scribe group add water-economy {B}");
+    let add_member_msg = format!("{B}: added; membership only, no transcript on disk");
+    let cases = [
+        (
+            "/scribe group water-economy",
+            A,
+            vec!["joined group water-economy"],
+        ),
+        (
+            add_line.as_str(),
+            B,
+            vec!["group water-economy (g-1) opened", add_member_msg.as_str()],
+        ),
+    ];
+
+    for (first_line, expected_member, expected_reason_parts) in cases {
+        let f = Fixture::new();
+        f.seed();
+        f.config("");
+        let audit_before = support::audit_lines(&f.root());
+        let marks_before = support::exported(&f.root(), "marks.json");
+        let prompt = format!(
+            "{first_line}\n#scribe retire preferences-1\n#scribe idea: multiline later line marker\n/scribe on"
+        );
+        let path = transcript(&f, A, &[row(A, "t", "user", &prompt)]);
+        let out = hook(
+            &f,
+            &["hook", "user-prompt-submit"],
+            json!({
+                "session_id": A,
+                "transcript_path": path,
+                "cwd": f.home(),
+                "prompt": prompt,
+            }),
+            &[],
+        );
+
+        let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(reply["decision"], "block", "{first_line}: {reply}");
+        assert!(
+            reply.get("systemMessage").is_none(),
+            "{first_line}: {reply}"
+        );
+        assert!(
+            reply.get("hookSpecificOutput").is_none(),
+            "{first_line}: {reply}"
+        );
+        let reason = reply["reason"].as_str().unwrap();
+        for part in expected_reason_parts {
+            assert!(reason.contains(part), "{first_line}: {reason}");
+        }
+        assert!(!reason.contains("scribe: off"), "{first_line}: {reason}");
+
+        let group = invoke(&f, A, &["group", "show", "water-economy"], 0);
+        assert_eq!(group["kind"], "project", "{first_line}: {group}");
+        assert_eq!(
+            group["seats"],
+            json!([{
+                "name": &expected_member[..8],
+                "role": "member",
+                "transcripts": [expected_member],
+                "newest_handoff": null
+            }]),
+            "{first_line}: {group}"
+        );
+
+        // Later prompt lines produce no independent settling, marking, or switch effect.
+        assert_eq!(
+            invoke(&f, A, &["entry", "show", "preferences-1"], 0)["status"],
+            "active",
+            "{first_line}"
+        );
+        assert!(
+            support::control(&f.root())["sessions"][A].is_null(),
+            "{first_line}"
+        );
+        assert_eq!(
+            support::exported(&f.root(), "marks.json"),
+            marks_before,
+            "{first_line}"
+        );
+        let audit_after = support::audit_lines(&f.root());
+        assert_eq!(
+            audit_after.len(),
+            audit_before.len() + 1,
+            "{first_line}: {audit_after:?}"
+        );
+        let line = audit_after.last().unwrap();
+        assert_eq!(line["command"], "hook user-prompt-submit");
+        assert_eq!(line["status"], "success");
+        assert_eq!(line["target"], format!("session:{expected_member}"));
+        assert!(line["error_code"].is_null(), "{line}");
+    }
+}
