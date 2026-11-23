@@ -46,8 +46,8 @@ pub(super) fn check(
         return Ok(None);
     };
     args.note(ctx);
-    // A unique prefix names the stored session; the check runs on the full id.
-    let resolved = ctx.store().resolve_session_or_typed(typed)?;
+    // A unique prefix names the stored or uncataloged session; the check runs on the full id.
+    let resolved = super::resolve_session_or_typed(ctx, typed)?;
     let session = &resolved;
     let not_found = |why: String| -> CliError {
         scribe_core::Error::AgentWrite {
@@ -103,10 +103,8 @@ impl InstructionArgs {
     /// refusal before the check is attributed too.
     pub(crate) fn note(&self, ctx: &Context) {
         if let Some(session) = &self.session {
-            let session = ctx
-                .store()
-                .resolve_session_or_typed(session)
-                .unwrap_or_else(|_| session.clone());
+            let session =
+                super::resolve_session_or_typed(ctx, session).unwrap_or_else(|_| session.clone());
             ctx.note_instruction_session(session.as_str());
         }
     }

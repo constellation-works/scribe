@@ -273,7 +273,7 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
             let topics = scribe_core::Topics::try_from(args.topic)
                 .map_err(|e| CliError::Usage(e.to_string()))?;
             // A session given as a unique prefix is stored as the full id.
-            let related = ctx.store().resolve_relateds(&args.related)?;
+            let related = super::resolve_relateds(ctx, &args.related)?;
             let def = ctx.store().check_new_entry_full(
                 &args.tag,
                 &args.content,
@@ -324,7 +324,7 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
             let result = args
                 .result
                 .as_ref()
-                .map(|r| ctx.store().resolve_related(r))
+                .map(|r| super::resolve_related(ctx, r))
                 .transpose()?;
             let (pickup, changed) = ctx.store().record_pickup(
                 &args.id,
@@ -342,8 +342,8 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
                 content: args.content,
                 add_topics: args.add_topic,
                 remove_topics: args.remove_topic,
-                add_related: ctx.store().resolve_relateds(&args.add_related)?,
-                remove_related: ctx.store().resolve_relateds(&args.remove_related)?,
+                add_related: super::resolve_relateds(ctx, &args.add_related)?,
+                remove_related: super::resolve_relateds(ctx, &args.remove_related)?,
             };
             ctx.store().check_agent_entry_update(&args.id, &patch)?;
             let redactor = ctx.redactor(&ctx.store().config()?)?;
@@ -423,7 +423,7 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
         status: args.status,
         project: args.project,
         topics: args.topic,
-        related: ctx.store().resolve_relateds(&args.related)?,
+        related: super::resolve_relateds(ctx, &args.related)?,
         dates: args.dates.range()?,
         after: args.after,
         author: args.author.map(scribe_core::AuthorName::current),

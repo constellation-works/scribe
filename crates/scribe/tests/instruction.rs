@@ -1481,3 +1481,238 @@ fn claude_desktop_human_turn_is_accepted_and_non_human_desktop_turns_are_refused
     ok(&fx, &forget("preferences-1", forget_words));
     assert_eq!(show(&fx, "entry", "preferences-1")["status"], "forgotten");
 }
+
+#[test]
+fn uncataloged_transcript_prefix_from_transcript_list_works_for_instruction_writes() {
+    let fx = store_with_agent_entry();
+    let listed_sessions = serde_json::from_slice::<Value>(
+        &ok(&fx, &["session", "list", "--include-inactive", "--json"]).stdout,
+    )
+    .unwrap();
+    assert!(
+        !listed_sessions["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["id"] == SESSION),
+        "test requires SESSION to have no store record"
+    );
+
+    let retire_words = "retire preferences-2 please";
+    let forget_words = "forget preferences-1 for good";
+    claude(
+        &fx,
+        Some("cli"),
+        &[
+            ("u-1", "user", retire_words, 2),
+            ("u-2", "user", forget_words, 1),
+        ],
+    );
+
+    // `transcript list` prints the 8-char prefix `5d1c0b7e`; it works like the full UUID.
+    let since = (OffsetDateTime::now_utc() - time::Duration::days(1))
+        .date()
+        .to_string();
+    let listed = text(
+        &ok(
+            &fx,
+            &[
+                "transcript",
+                "list",
+                "--since",
+                &since,
+                "--min-turns",
+                "1",
+                "--format",
+                "table",
+            ],
+        )
+        .stdout,
+    );
+    let prefix = &SESSION[..8];
+    assert!(listed.contains(prefix), "{listed}");
+    assert!(!listed.contains(SESSION), "{listed}");
+
+    ok(
+        &fx,
+        &[
+            "entry",
+            "retire",
+            "preferences-2",
+            "--author",
+            "opus",
+            "--reason",
+            "Daniel asked",
+            "--session",
+            prefix,
+            "--instruction",
+            retire_words,
+        ],
+    );
+    let retired = show(&fx, "entry", "preferences-2");
+    assert_eq!(retired["status"], "retired");
+    assert_eq!(retired["removal_instruction"]["session"], SESSION);
+    assert_eq!(
+        audit_lines(&fx, "entry retire").last().unwrap()["instruction_session"],
+        SESSION
+    );
+
+    // A second uncataloged transcript sharing the 8-char prefix makes `5d1c0b7e` ambiguous.
+    let sibling = "5d1c0b7e-ffff-4c39-8e61-0a9b8c7d6e5f";
+    let sibling_path = fx
+        .home()
+        .join(".claude/projects/-work-scribe")
+        .join(format!("{sibling}.jsonl"));
+    let now_ts = OffsetDateTime::now_utc().format(&Rfc3339).unwrap();
+    std::fs::write(
+        &sibling_path,
+        format!(
+            "{}\n",
+            json!({
+                "type": "user",
+                "uuid": "s-u1",
+                "sessionId": sibling,
+                "timestamp": now_ts,
+                "cwd": "/work/scribe",
+                "entrypoint": "cli",
+                "message": {"role": "user", "content": "forget preferences-1 for good"}
+            })
+        ),
+    )
+    .unwrap();
+    make_private(&sibling_path);
+
+    let disambiguated = text(
+        &ok(
+            &fx,
+            &[
+                "transcript",
+                "list",
+                "--since",
+                &since,
+                "--min-turns",
+                "1",
+                "--format",
+                "table",
+            ],
+        )
+        .stdout,
+    );
+    assert!(disambiguated.contains("5d1c0b7e-2 "), "{disambiguated}");
+    assert!(disambiguated.contains("5d1c0b7e-f "), "{disambiguated}");
+
+    let before = state(&fx);
+    let (exit_code, err_code) = run(
+        &fx,
+        &[
+            "entry",
+            "forget",
+            "preferences-1",
+            "--author",
+            "opus",
+            "--session",
+            prefix,
+            "--instruction",
+            forget_words,
+            "--confirm",
+        ],
+    );
+    assert_eq!(exit_code, Some(2));
+    assert_eq!(err_code.as_deref(), Some("id_ambiguous"));
+    assert_eq!(state(&fx), before, "ambiguous --session changes nothing");
+
+    // Passing the disambiguated prefix `5d1c0b7e-2` succeeds and cites the full UUID.
+    ok(
+        &fx,
+        &[
+            "entry",
+            "forget",
+            "preferences-1",
+            "--author",
+            "opus",
+            "--session",
+            "5d1c0b7e-2",
+            "--instruction",
+            forget_words,
+            "--confirm",
+        ],
+    );
+    let forgotten = show(&fx, "entry", "preferences-1");
+    assert_eq!(forgotten["status"], "forgotten");
+    assert_eq!(forgotten["removal_instruction"]["session"], SESSION);
+
+    // `proposal settle` also resolves an uncataloged transcript prefix and cites the full UUID.
+    let cand_fx = store_with_candidates();
+    let approve_words = "approve p-1, that is how I want reviews";
+    claude(&cand_fx, Some("cli"), &[("u-1", "user", approve_words, 1)]);
+    ok(
+        &cand_fx,
+        &[
+            "proposal",
+            "settle",
+            "p-1",
+            "--approve",
+            "--author",
+            "opus",
+            "--session",
+            prefix,
+            "--instruction",
+            approve_words,
+        ],
+    );
+    let settled = show(&cand_fx, "proposal", "p-1");
+    assert_eq!(settled["state"], "approved");
+    assert_eq!(settled["settled_by"]["session"], SESSION);
+}
+
+#[test]
+fn codex_uncataloged_transcript_prefix_works_for_instruction_writes() {
+    let fx = store_with_agent_entry();
+    let words = "retire preferences-2 please";
+    codex(&fx, "cli", &[("m-1", words, 1)]);
+    let since = (OffsetDateTime::now_utc() - time::Duration::days(1))
+        .date()
+        .to_string();
+    let listed = text(
+        &ok(
+            &fx,
+            &[
+                "--provider",
+                "codex",
+                "transcript",
+                "list",
+                "--since",
+                &since,
+                "--min-turns",
+                "1",
+                "--format",
+                "table",
+            ],
+        )
+        .stdout,
+    );
+    let prefix = &CODEX_SESSION[..8];
+    assert!(listed.contains(prefix), "{listed}");
+
+    ok(
+        &fx,
+        &[
+            "--provider",
+            "codex",
+            "entry",
+            "retire",
+            "preferences-2",
+            "--author",
+            "opus",
+            "--reason",
+            "Daniel asked",
+            "--session",
+            prefix,
+            "--instruction",
+            words,
+        ],
+    );
+    let retired = show(&fx, "entry", "preferences-2");
+    assert_eq!(retired["status"], "retired");
+    assert_eq!(retired["removal_instruction"]["session"], CODEX_SESSION);
+}

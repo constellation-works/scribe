@@ -112,12 +112,7 @@ fn additions(ctx: &Context, named: &[SessionId]) -> Result<Vec<GroupAddition>, C
     let store: &Store = ctx.store();
     let mut additions: Vec<GroupAddition> = Vec::new();
     for input in named {
-        let id = match scribe_core::resolve_prefix(input.as_str(), &ids)? {
-            Some(full) => full
-                .parse::<SessionId>()
-                .map_err(|e| CliError::Usage(e.to_string()))?,
-            None => store.resolve_session_or_typed(input)?,
-        };
+        let id = store.resolve_session_or_typed_with(input, &ids)?;
         if additions.iter().any(|a| a.session == id) {
             continue;
         }

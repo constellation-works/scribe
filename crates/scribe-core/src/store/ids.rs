@@ -91,14 +91,14 @@ impl Store {
     /// [`Error::AgentWrite`] naming the candidates when several do; a store
     /// error otherwise.
     pub fn resolve_session(&self, input: &SessionId) -> Result<SessionId> {
-        self.resolve_session_with(input, false)
+        self.resolve_session_with(input, false, &[])
     }
 
     /// [`Store::resolve_session`], also accepting sessions known only through
     /// an active `handoff` entry (a session that was never switched on and
     /// has no session record; 2_design.md §16). Reads only.
     pub fn resolve_session_or_handoff(&self, input: &SessionId) -> Result<SessionId> {
-        self.resolve_session_with(input, true)
+        self.resolve_session_with(input, true, &[])
     }
 
     /// Every session id the store knows and `resolve_session_or_handoff`
@@ -133,13 +133,27 @@ impl Store {
     /// known id; `id_ambiguous` naming the candidates when several ids
     /// match.
     pub fn resolve_related(&self, related: &crate::Related) -> Result<crate::Related> {
+        self.resolve_related_with(related, &[])
+    }
+
+    /// [`Store::resolve_related`], also counting `extra_ids` (such as
+    /// uncataloged transcripts on disk) in the session id universe. Reads only.
+    ///
+    /// # Errors
+    ///
+    /// As [`Store::resolve_related`].
+    pub fn resolve_related_with(
+        &self,
+        related: &crate::Related,
+        extra_ids: &[String],
+    ) -> Result<crate::Related> {
         if related.kind() != crate::RelatedKind::Session {
             return Ok(related.clone());
         }
         let Ok(input) = related.target().parse::<SessionId>() else {
             return Ok(related.clone());
         };
-        match self.resolve_session_or_handoff(&input) {
+        match self.resolve_session_with(&input, true, extra_ids) {
             Ok(id) if id == input => Ok(related.clone()),
             Ok(id) => format!("session:{id}")
                 .parse::<crate::Related>()
@@ -157,7 +171,21 @@ impl Store {
     ///
     /// As [`Store::resolve_session_or_handoff`], except not-found.
     pub fn resolve_session_or_typed(&self, input: &SessionId) -> Result<SessionId> {
-        match self.resolve_session_or_handoff(input) {
+        self.resolve_session_or_typed_with(input, &[])
+    }
+
+    /// [`Store::resolve_session_or_typed`], also counting `extra_ids` (such as
+    /// uncataloged transcripts on disk) in the session id universe. Reads only.
+    ///
+    /// # Errors
+    ///
+    /// As [`Store::resolve_session_or_typed`].
+    pub fn resolve_session_or_typed_with(
+        &self,
+        input: &SessionId,
+        extra_ids: &[String],
+    ) -> Result<SessionId> {
+        match self.resolve_session_with(input, true, extra_ids) {
             Err(Error::SessionNotFound { .. }) => Ok(input.clone()),
             other => other,
         }
@@ -169,7 +197,23 @@ impl Store {
     ///
     /// The first error of [`Store::resolve_related`].
     pub fn resolve_relateds(&self, related: &[crate::Related]) -> Result<Vec<crate::Related>> {
-        related.iter().map(|r| self.resolve_related(r)).collect()
+        self.resolve_relateds_with(related, &[])
+    }
+
+    /// [`Store::resolve_related_with`] over a list.
+    ///
+    /// # Errors
+    ///
+    /// The first error of [`Store::resolve_related_with`].
+    pub fn resolve_relateds_with(
+        &self,
+        related: &[crate::Related],
+        extra_ids: &[String],
+    ) -> Result<Vec<crate::Related>> {
+        related
+            .iter()
+            .map(|r| self.resolve_related_with(r, extra_ids))
+            .collect()
     }
 
     fn session_id_universe(
@@ -201,7 +245,12 @@ impl Store {
         ids
     }
 
-    fn resolve_session_with(&self, input: &SessionId, include_handoffs: bool) -> Result<SessionId> {
+    fn resolve_session_with(
+        &self,
+        input: &SessionId,
+        include_handoffs: bool,
+        extra_ids: &[String],
+    ) -> Result<SessionId> {
         let loaded = self.load_sessions()?;
         let handoff_sessions: Vec<SessionId> = if include_handoffs {
             self.load_entries()?
@@ -229,6 +278,7 @@ impl Store {
             && !loaded.numbers.keys().any(exact)
             && !loaded.control.sessions.keys().any(exact)
             && !handoff_sessions.iter().any(exact)
+            && !extra_ids.iter().any(|id| id == input.as_str())
             && let Some(n) = input
                 .as_str()
                 .strip_prefix("s-")
@@ -239,7 +289,10 @@ impl Store {
                 None => not_found(),
             };
         }
-        let ids = Self::session_id_universe(&loaded, &handoff_sessions);
+        let mut ids = Self::session_id_universe(&loaded, &handoff_sessions);
+        ids.extend(extra_ids.iter().cloned());
+        ids.sort();
+        ids.dedup();
         match resolve(input.as_str(), &ids)? {
             Some(i) => ids[i]
                 .parse::<SessionId>()
