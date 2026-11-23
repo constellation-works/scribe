@@ -66,9 +66,26 @@ fn init_embeds_skill_preserves_unrelated_config_and_is_idempotent() {
         } else {
             ".claude/skills/scribe/SKILL.md"
         });
-        assert!(skill.is_file());
-        let contents = std::fs::read_to_string(&skill).unwrap();
-        assert_eq!(contents, include_str!("../../../skills/scribe/SKILL.md"));
+        let canonical =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/scribe");
+        let installed = skill.parent().unwrap();
+        let skill_tree = |root: &std::path::Path| {
+            support::snapshot(root)
+                .into_iter()
+                .filter(|(path, _, _)| path.is_file())
+                .map(|(path, contents, _)| (path.strip_prefix(root).unwrap().to_owned(), contents))
+                .collect::<Vec<_>>()
+        };
+        let expected_files = skill_tree(&canonical);
+        assert_eq!(skill_tree(installed), expected_files);
+        let installed = installed.canonicalize().unwrap();
+        let reported = report["files"].as_array().unwrap();
+        for (relative, _) in expected_files {
+            let path = installed.join(relative);
+            assert!(reported.iter().any(|file| {
+                file["path"].as_str() == path.to_str() && file["status"] == "created"
+            }));
+        }
         let merged: Value = serde_json::from_slice(&std::fs::read(&hooks).unwrap()).unwrap();
         assert_eq!(merged["other_setting"], 42);
         assert_eq!(merged["hooks"]["Stop"][0]["hooks"][0], unrelated);
@@ -106,6 +123,75 @@ fn init_embeds_skill_preserves_unrelated_config_and_is_idempotent() {
             before
         );
     }
+}
+
+#[test]
+fn init_upgrades_a_single_file_receipt_and_preflights_reference_conflicts() {
+    let f = Fixture::new();
+    let target = f.elsewhere("project");
+    let skill_dir = target.join(".agents/skills/scribe");
+    let config = target.join(".codex");
+    f.create_private_dir_all(&skill_dir.join("references"));
+    f.create_private_dir_all(&config);
+    let skill = skill_dir.join("SKILL.md");
+    let receipt = config.join("scribe-init.json");
+    let reference = skill_dir.join("references/session-groups.md");
+    let old_skill = "old embedded skill\n";
+    std::fs::write(&skill, old_skill).unwrap();
+    support::make_private(&skill);
+    let legacy = json!({
+        "format": 1,
+        "skill_sha256": scribe_core::capture::prompt_sha256(old_skill),
+        "hooks": {},
+    });
+    std::fs::write(&receipt, legacy.to_string()).unwrap();
+    support::make_private(&receipt);
+    let path = f.fake_program("codex", "#!/bin/sh\nexit 0\n");
+    let run = || {
+        f.cmd(&[
+            "init",
+            "--provider",
+            "codex",
+            "--target",
+            target.to_str().unwrap(),
+            "--json",
+        ])
+        .env("PATH", &path)
+        .output()
+        .unwrap()
+    };
+    let snapshot = || {
+        support::snapshot(&target)
+            .into_iter()
+            .filter(|(path, _, _)| !path.ends_with(".scribe-init.lock"))
+            .collect::<Vec<_>>()
+    };
+    std::fs::write(&reference, "unowned reference\n").unwrap();
+    support::make_private(&reference);
+    let before = snapshot();
+    let denied = run();
+    assert_eq!(denied.status.code(), Some(1));
+    assert!(text(&denied.stderr).contains("init_conflict"));
+    assert_eq!(snapshot(), before);
+
+    std::fs::remove_file(&reference).unwrap();
+    let upgraded = run();
+    assert!(upgraded.status.success(), "{}", text(&upgraded.stderr));
+    assert_eq!(
+        std::fs::read_to_string(&skill).unwrap(),
+        include_str!("../../../skills/scribe/SKILL.md")
+    );
+    assert_eq!(
+        std::fs::read_to_string(&reference).unwrap(),
+        include_str!("../../../skills/scribe/references/session-groups.md")
+    );
+
+    std::fs::write(&reference, "user edited reference\n").unwrap();
+    let before = snapshot();
+    let denied = run();
+    assert_eq!(denied.status.code(), Some(1));
+    assert!(text(&denied.stderr).contains("init_conflict"));
+    assert_eq!(snapshot(), before);
 }
 
 #[test]

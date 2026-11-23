@@ -252,8 +252,9 @@ session pass keeps its model. Agents do the direct writes. scribe never
 writes an entry, a tag or a proposal on an agent's behalf from a model
 call.
 
-**The skill.** One `scribe` skill ships in the Claude Code package as
-`plugin/claude-code/skills/scribe/SKILL.md`. It teaches: which question
+**The skill.** One `scribe` skill ships in both provider packages. Its
+[entry point](../../../skills/scribe/SKILL.md) gives the session-start procedure
+and routes to references. The skill teaches which question
 goes to `search` or a list (a known word, a date range, a topic, a task
 id) and which to `ask` (vague, needs weighing or a synthesized answer);
 `session show <id>` versus `--log`, and that segments cite as
@@ -3690,9 +3691,9 @@ a wrong retire is repaired by adding the text again as a new entry; a wrong reje
 forget cannot be undone. It never runs `entry forget` unless his words say
 forget, erase or for good.
 
-**Built (task 6 of 6, ORB-26247).** The aide's side is the section "Settling
-and deleting on the human's instruction" at the end of
-`skills/scribe/SKILL.md`, copied to the two plugin skills by
+**Built (task 6 of 6, ORB-26247).** The aide's side is the
+[settlement reference](../../../skills/scribe/references/settlement.md),
+copied to the two plugin skills by
 `scripts/sync-skills.py`. It sets the §12.1 command shapes, the order (list;
 name each id and its reversal in the reply; act only on an explicit
 instruction; one command per target), the one-line echoes and the reversals
@@ -6434,9 +6435,9 @@ by `scribe_core::handoff::check`:
   (<author>)`, `stated_quote: None`): always attributed as the agent's
   account, never the user's words. Both include the mode in their text and
   JSON when it is present.
-- **The skill.** `skills/scribe/SKILL.md` teaches agents to write a handoff
-  on explicit request, with the self-refresh exception above, and at the
-  start of a session to read the last
+- **The skill.** The [handoffs reference](../../../skills/scribe/references/handoffs.md)
+  teaches agents to write a handoff on explicit request, with the self-refresh
+  exception above. At the start of a session the skill directs agents to read the last
   session's newest handoff first (`handoffs[0]`) and then scribe's
   `summary`, `goals` and `next`, presenting **State**, **Next** and
   **Waiting on you** with the handoff entry id.
@@ -6535,7 +6536,8 @@ scribe entry add --tag <tag> --author <name> --project <project> \
   sees the spoken-instruction entry and does not open a duplicate
   candidate proposal.
 - **Skill discipline.** Unprompted capture stays with scribe's session pass
-  and its proposals. `skills/scribe/SKILL.md` directs agents to use
+  and its proposals. The [store maintenance reference](../../../skills/scribe/references/store-maintenance.md)
+  directs agents to use
   `--spoken` only on the human's explicit instruction (never unprompted)
   and replaces the old instruction to ask the human to retype with `#scribe`.
 
@@ -6747,8 +6749,9 @@ and its closing summary when available.
 
 ## Codex integration and portable skill
 
-The provider-neutral source is `skills/scribe/SKILL.md`, embedded by `scribe init`
-and deterministically copied into both provider packages. Init takes an explicit
+The provider-neutral source is the [skill directory](../../../skills/scribe/).
+The binary embeds its files for `scribe init`, and the sync script mirrors
+them into both provider packages. Init takes an explicit
 provider and project target, reconciles digest-owned artifacts, preserves
 unrelated hook groups and refuses edits/symlinks. It never trusts hooks or enables
 cataloging. The native Codex marketplace installs `plugin/codex/` independently

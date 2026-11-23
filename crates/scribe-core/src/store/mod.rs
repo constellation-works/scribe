@@ -62,7 +62,9 @@ pub use memory::{
 };
 mod marks;
 mod pickups;
-pub use init::{InitFile, InitReport, init_project, integration_hooks};
+pub use init::{
+    InitFile, InitReport, init_project, init_project_with_skill_files, integration_hooks,
+};
 mod rebuild;
 mod redact;
 mod sessions;

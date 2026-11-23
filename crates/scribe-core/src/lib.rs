@@ -104,7 +104,8 @@ pub use store::{
     ProfileInputs, ProfileRevision, REDACTED_FIELDS, RebuildGuard, Redactor, RefreshWritten,
     SESSIONS_DIR, SessionForget, SessionList, SessionView, Skipped, Store, TagList,
     check_agent_author, check_content, check_description, check_handoff_related, check_reason,
-    init_project, integration_hooks, resolve_prefix, unresolved_redact_env,
+    init_project, init_project_with_skill_files, integration_hooks, resolve_prefix,
+    unresolved_redact_env,
 };
 pub use tag::{
     ActionTag, CAPTURE_TEXT_CHARS, CaptureFrom, CaptureRoute, CaptureRules, FINDING_TAG,
