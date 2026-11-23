@@ -697,10 +697,11 @@ texts that replace the shipped ones ahead of the fixed output contract
 an unknown key or bad value is refused, naming the file and line
 ([specs/store.md](./specs/store.md#config)).
 `session-start` does not create or rewrite this file; when it is absent, the
-defaults apply. Outside the continue-handoff restoration in [§16.7](#167-continuing-after-a-clear) and seat inheritance across a clear in [§17](#17-session-groups-and-seats),
+defaults apply. Outside the continue-handoff restoration in [§16.7](#167-continuing-after-a-clear) and group-seat inheritance in [§17](#17-session-groups-and-seats),
 the hook is read-only. Restoring that handoff writes the child's link and
-inherited switch, inheriting a seat appends the child to the seat chain, and both audit the write
-([4_decisions.md](./4_decisions.md#session-start-is-read-only-except-when-restoring-a-continue-handoff)).
+inherited switch; inheriting an open seat appends the child to its chain. Both
+writes are audited
+([4_decisions.md](./4_decisions.md#session-start-is-read-only-except-for-handoff-restoration-and-seat-inheritance)).
 
 **Redaction.** Before any write of `said`, `content`, a session record's
 title, text fields and terms (from S8 also each segment's heading and text,
@@ -3967,8 +3968,9 @@ occurrences:
   (decayed, past its window). It is a pure function of the item and the
   day, in `scribe-core`, so no routine has to run for an item to leave the
   page. `SessionStart` derives the memory page without writing memory and,
-  except when restoring a continue handoff (§16.7), remains read-only
-  ([4_decisions.md](./4_decisions.md#session-start-is-read-only-except-when-restoring-a-continue-handoff)).
+  except when restoring a continue handoff (§16.7) or inheriting an open group
+  seat (§17), remains read-only
+  ([4_decisions.md](./4_decisions.md#session-start-is-read-only-except-for-handoff-restoration-and-seat-inheritance)).
 
 ### 13.3 Writing: the session pass
 
@@ -6519,8 +6521,10 @@ The desktop app sends SessionStart with source `startup` on a clear. The
 new transcript has its own session id and an opening `derived-from` record.
 The hook reads up to 64 KiB from the checked transcript path, looking for
 distinct session ids marked `via: clear`. A `via: launch` id can survive
-several clears. Only the clear ids identify immediate predecessors. Hook
-sources `resume` and `compact` do not restore a handoff.
+several clears. Only the clear ids identify immediate predecessors. This
+lookup runs for interactive Claude Code starts whose source is `startup`,
+`clear`, or omitted; other source values, including `resume` and `compact`,
+do not restore a handoff.
 
 For a single predecessor, the hook reads its newest active handoff. If its
 mode is `continue`, that one checked body (at most 3,000 characters) starts
@@ -6579,21 +6583,25 @@ from that holder. The write rechecks the
 holder under the store transaction before appending. `group leave`
 removes only the caller’s position and drops a seat when its chain is empty.
 
-**Seats across clears.** An interactive Claude Code `SessionStart`
-(`startup` or `clear`) reuses [§16.7](#167-continuing-after-a-clear)’s
-`derived-from` (`via: clear`) predecessor lookup once per start. When a
-single clear predecessor is the newest transcript of a seat in an open group,
-the hook appends the new session to that seat’s chain under the predecessor’s
-author, audits the write against the group id, and notes the held seat in
-`additionalContext`, without switching cataloging on or creating a session
-record. Repeating `SessionStart` keeps the existing seat with no second
-write. A session that a later member replaced on its seat holds none: its
-chain row stays as history, so `additionalContext` says it was replaced
-rather than naming it the holder, and it is never appended again. When open
-groups exist and the starting session holds no seat for another reason (no
-predecessor line, multiple predecessors, or a predecessor holding no open
-seat), nothing is joined and `additionalContext` tells the session to re-run
-`scribe group join`.
+**Seats across clears.** An interactive Claude Code `SessionStart` whose
+source is `startup`, `clear`, or omitted reuses
+[§16.7](#167-continuing-after-a-clear)’s `derived-from` (`via: clear`)
+predecessor lookup once per start. When a single clear predecessor is the
+newest transcript of a seat in an open group, the hook appends the new session
+to that seat’s chain under the predecessor’s author, audits the write against
+the group id, and notes the held seat in `additionalContext`, without
+switching cataloging on or creating a session record. Repeating
+`SessionStart` keeps the existing seat with no second write. A session that a
+later member replaced on its seat holds none: its chain row stays as history,
+so `additionalContext` says it was replaced rather than naming it the holder,
+and it is never appended again; it receives no join recommendation. A session
+that already holds a seat is told which seat it holds. An unseated session
+with no open groups gets no seat context. When open groups exist and the
+starting session holds no seat for another reason (no predecessor line,
+multiple predecessors, or a predecessor holding no open seat), nothing is
+joined and `additionalContext` tells the session to re-run
+`scribe group join`. If the seat lookup fails, the hook reports the failure
+and also recommends running `scribe group join`.
 
 **Reading.** `group show <id>` and `group list` include related references,
 seat names and roles, transcript ids in join order, and the newest active
