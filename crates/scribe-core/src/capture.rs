@@ -526,7 +526,13 @@ pub fn prompt_hashes(message: &crate::transcript::Message) -> Vec<String> {
 /// fire's key in the audit log (2_design.md §11.4).
 #[must_use]
 pub fn prompt_sha256(prompt: &str) -> String {
-    let digest = Sha256::digest(prompt.as_bytes());
+    bytes_sha256(prompt.as_bytes())
+}
+
+/// SHA-256 of raw bytes, lowercase hex, for checks on a transcript boundary.
+#[must_use]
+pub fn bytes_sha256(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
     let mut hex = String::with_capacity(64);
     for byte in digest {
         let _ = write!(hex, "{byte:02x}");

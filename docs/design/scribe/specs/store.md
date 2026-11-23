@@ -209,7 +209,12 @@ Only `config.toml` and `memory/`'s files remain as primary data files outside th
   `store_database`; readers set no busy timeout, so a read SQLite reports
   busy is one too.
 
-### Tables (version 14)
+Schema version 15 adds the local Claude group capture checkpoint and
+first-seen message index. Existing membership cursors carry forward and seed
+the checkpoint on the next transcript replay that finds them. Both tables
+are derived from the checked local transcript and are omitted from exports.
+
+### Tables (version 15)
 
 | Table | Columns (type, constraint) | Written by |
 |---|---|---|
@@ -217,6 +222,8 @@ Only `config.toml` and `memory/`'s files remain as primary data files outside th
 | `groups` | `id INTEGER PRIMARY KEY AUTOINCREMENT` (shown as `g-<n>`), `title` and `kind` nonblank redacted text, `project` slug, `opened` timestamp, nullable `closed` timestamp and redacted `summary`, `opener` provider session id, `related` JSON array of task, PR and repository references, nullable `slug TEXT` with unique partial index `group_open_slug` on `slug WHERE slug IS NOT NULL AND closed IS NULL` (version 12) | `group open` on a verified typed quote, `/scribe group <slug>` (or Codex `$scribe group <slug>`), `group close` by the opener |
 | `group_seats` | `group_id INTEGER` referencing the group, `name TEXT`, `role TEXT` (redacted free label), primary key `(group_id, name)` | `group join` creates the seat, `group leave` removes an empty seat |
 | `group_members` | `position INTEGER PRIMARY KEY AUTOINCREMENT`, foreign key `(group_id, seat)` to the seat, `session TEXT UNIQUE` (provider id), `author TEXT` (joining agent), `joined` (capture start), nullable `turn_cursor` (provider message id). Index on `(group_id, seat, position)` orders the chain. | `group join` or clear inheritance appends, capture advances the cursor, `group leave` removes the caller’s row |
+| `group_claude_progress` | `position INTEGER PRIMARY KEY` referencing a membership, `file_id TEXT` (device and inode), `offset INTEGER` (next byte), `modified TEXT` (file mtime) and `boundary TEXT` (digest of bounded head and tail samples). | Claude group capture, with its message and cursor updates |
+| `group_claude_seen` | Primary key `(position, id_hash)` referencing the checkpoint by position. `id_hash TEXT` is the hashed provider message id, `permitted INTEGER` the nullable first origin and entry-point verdict, and `message INTEGER` records whether the parser saw a message for that id. | Claude group capture advances the index with its checkpoint. Replaying a transcript replaces the index, and deleting a membership cascades to both tables. |
 | `messages` | `id INTEGER PRIMARY KEY`; `session TEXT NOT NULL`, 1–128 characters (the session record's id); `message TEXT NOT NULL`, non-empty (the provider's message id); `role TEXT NOT NULL CHECK (role IN ('user', 'assistant'))`; `at TEXT NOT NULL`; `text TEXT NOT NULL`, redacted; `sha256 TEXT NOT NULL`, 64 hex characters of the redacted text; `group_only INTEGER NOT NULL DEFAULT 0` (0 or 1); `UNIQUE (session, message)` | the session pass and group hooks |
 | `messages_fts` | FTS5 over `messages.text`, external content (`content = 'messages'`, `content_rowid = 'id'`), `tokenize = 'unicode61 remove_diacritics 2'`; kept by `AFTER INSERT`, `AFTER DELETE` and `AFTER UPDATE OF text` triggers | the triggers |
 | `now_pending` | `id INTEGER PRIMARY KEY`; `session TEXT NOT NULL`, 1–128 characters; `message TEXT NOT NULL`, non-empty; `subject TEXT NOT NULL`, non-empty; `text TEXT NOT NULL`; `created TEXT NOT NULL`; `UNIQUE (session, subject)`; a `BEFORE INSERT` trigger aborts a sixth row for one session | the session pass; dropped by the session's final pass or when a dated element completes one |

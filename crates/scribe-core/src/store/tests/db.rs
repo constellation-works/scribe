@@ -54,7 +54,7 @@ fn the_first_write_creates_an_owner_only_wal_database_at_the_current_schema() {
         .unwrap();
     assert_eq!(written, 1);
     let (version, store_id) = db::meta(dir.path()).unwrap().unwrap();
-    assert_eq!(version, 14);
+    assert_eq!(version, 15);
     assert_eq!(store_id.len(), 32);
     // PERSIST_WAL: both companions outlive the last connection.
     for name in [DB_FILE, "scribe.db-wal", "scribe.db-shm"] {
@@ -282,7 +282,7 @@ fn schema_nine_checkpoint_reports_a_neutral_holder_when_a_writer_is_active() {
             &Redactor::default(),
         )
         .unwrap();
-    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 14);
+    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 15);
 }
 
 #[test]
@@ -468,7 +468,7 @@ fn concurrent_writer_processes_all_commit_under_wal_and_busy_timeout() {
         .search_messages(&tokens("merge"))
         .unwrap();
     assert_eq!(found.matches.len(), WRITERS * WINDOWS * 3);
-    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 14);
+    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 15);
 }
 
 #[test]
@@ -592,6 +592,95 @@ fn project_group_slug_joins_and_inherits() {
             .members()
             .contains(&child)
     );
+}
+
+#[test]
+fn claude_capture_rejects_a_stale_snapshot_before_advancing_progress() {
+    use crate::ClaudeCapturePosition;
+    use crate::instruction::ClaudeGroupTurns;
+
+    let dir = private_tempdir();
+    let store = Store::open(dir.path());
+    let session = "session-one".parse().unwrap();
+    let redactor = Redactor::default();
+    store
+        .join_project_group(
+            "replay",
+            &crate::Project::sanitized("checkout"),
+            &session,
+            T0,
+            &redactor,
+        )
+        .unwrap();
+    let batch = |id: &str, text: &str| {
+        let row = serde_json::json!({
+            "sessionId": session, "uuid": id, "type": "user", "entrypoint": "cli",
+            "timestamp": "2090-11-20T01:00:00Z", "message": {"content": text}
+        });
+        ClaudeGroupTurns::parse(row.to_string().as_bytes(), &session)
+    };
+    let position = |offset| ClaudeCapturePosition {
+        file_id: "1:2".to_owned(),
+        offset,
+        modified: offset.to_string(),
+        boundary: "sample".to_owned(),
+    };
+    let initial = store.claude_group_capture(&session).unwrap().unwrap();
+    assert_eq!(
+        store
+            .capture_claude_group_turns(
+                &initial,
+                false,
+                &position(100),
+                batch("first", "orchid first"),
+                &redactor
+            )
+            .unwrap(),
+        Some(1)
+    );
+    assert_eq!(
+        store
+            .capture_claude_group_turns(
+                &initial,
+                false,
+                &position(90),
+                batch("stale", "orchid stale"),
+                &redactor
+            )
+            .unwrap(),
+        None
+    );
+    let next = store.claude_group_capture(&session).unwrap().unwrap();
+    assert_eq!(next.progress().unwrap().offset, 100);
+    assert_eq!(
+        store
+            .capture_claude_group_turns(
+                &next,
+                true,
+                &position(150),
+                batch("next", "orchid next"),
+                &redactor
+            )
+            .unwrap(),
+        Some(1)
+    );
+    assert_eq!(
+        store
+            .search_group_messages("replay", &tokens("orchid"))
+            .unwrap()
+            .matches
+            .len(),
+        2
+    );
+
+    store.leave_group(&session).unwrap();
+    let conn = rusqlite::Connection::open(dir.path().join(DB_FILE)).unwrap();
+    for table in ["group_claude_progress", "group_claude_seen"] {
+        let count: i64 = conn
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0, "{table}");
+    }
 }
 
 #[test]

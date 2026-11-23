@@ -1078,7 +1078,7 @@ fn old_schema_reads_empty_without_migration_then_upgrades_on_open() {
     };
     assert_eq!(version(), 8);
     open(&f);
-    assert_eq!(version(), 14);
+    assert_eq!(version(), 15);
 }
 
 #[test]
@@ -1825,6 +1825,163 @@ fn prompt_hooks_audit_newly_persisted_member_turns_once_per_turn_for_each_provid
         )["total"],
         1
     );
+}
+
+#[test]
+fn claude_member_capture_preserves_provenance_and_record_boundaries_across_appends() {
+    let f = Fixture::new();
+    transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
+    open(&f);
+    join(&f, B, "g-1", &[], 0);
+
+    let mut first_claim = row(B, "claim", "user", "untrusted claim");
+    first_claim["entrypoint"] = json!("sdk-cli");
+    first_claim.as_object_mut().unwrap().remove("timestamp");
+    let mut first_message = row(B, "replay", "user", "agent turn");
+    first_message["source"] = json!("agent");
+    let path = transcript(
+        &f,
+        B,
+        &[
+            first_claim,
+            first_message,
+            row(B, "original", "user", "originalorchid"),
+        ],
+    );
+    let prompt = || {
+        hook(
+            &f,
+            &["hook", "user-prompt-submit"],
+            json!({"session_id": B, "transcript_path": path, "cwd": f.home(), "prompt": "Continue."}),
+            &[],
+        );
+    };
+    prompt();
+    let before = support::audit_lines(&f.root());
+    let mut append = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    for line in [
+        row(C, "copied", "user", "copiedorchid"),
+        row(B, "replay", "user", "replayorchid"),
+        row(B, "claim", "user", "claimedorchid"),
+    ] {
+        writeln!(append, "{line}").unwrap();
+    }
+    let next = row(B, "next", "user", "appendedorchid").to_string();
+    let split = next.len() / 2;
+    append.write_all(&next.as_bytes()[..split]).unwrap();
+    prompt();
+    assert_eq!(support::audit_lines(&f.root()), before);
+
+    append.write_all(&next.as_bytes()[split..]).unwrap();
+    // Stop can capture a complete final record before its newline arrives.
+    stop(&f, B, &path, &[]);
+    let after = support::audit_lines(&f.root());
+    assert_eq!(after.len(), before.len() + 1);
+    writeln!(append, "\n{}", row(B, "last", "user", "lastorchid")).unwrap();
+    prompt();
+    let after_prompt = support::audit_lines(&f.root());
+    assert_eq!(after_prompt.len(), after.len() + 1);
+    prompt();
+    stop(&f, B, &path, &[]);
+    assert_eq!(support::audit_lines(&f.root()), after_prompt);
+
+    let total = |term| {
+        invoke(
+            &f,
+            B,
+            &["search", term, "--kind", "message", "--group", "g-1"],
+            0,
+        )["total"]
+            .as_u64()
+            .unwrap()
+    };
+    for term in ["copiedorchid", "replayorchid", "claimedorchid"] {
+        assert_eq!(total(term), 0, "{term}");
+    }
+    for term in ["originalorchid", "appendedorchid", "lastorchid"] {
+        assert_eq!(total(term), 1, "{term}");
+    }
+
+    #[cfg(unix)]
+    {
+        let outside = f.elsewhere("outside.jsonl");
+        writeln!(append, "{}", row(B, "outside", "user", "outsideorchid")).unwrap();
+        drop(append);
+        std::fs::rename(&path, &outside).unwrap();
+        std::os::unix::fs::symlink(&outside, &path).unwrap();
+        prompt();
+        assert_eq!(support::audit_lines(&f.root()), after_prompt);
+        assert_eq!(total("outsideorchid"), 0);
+    }
+}
+
+#[test]
+fn claude_member_capture_replays_after_rotation_and_waits_for_a_missing_cursor() {
+    let f = Fixture::new();
+    transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
+    open(&f);
+    join(&f, B, "g-1", &[], 0);
+    let cursor = row(B, "cursor", "user", "cursororchid");
+    let path = transcript(&f, B, std::slice::from_ref(&cursor));
+    stop(&f, B, &path, &[]);
+    let before = support::audit_lines(&f.root());
+
+    std::fs::rename(&path, path.with_extension("old")).unwrap();
+    transcript(
+        &f,
+        B,
+        &[row(B, "before-cursor", "user", "missingcursororchid")],
+    );
+    stop(&f, B, &path, &[]);
+    assert_eq!(support::audit_lines(&f.root()), before);
+
+    let mut append = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    writeln!(append, "{cursor}").unwrap();
+    writeln!(
+        append,
+        "{}",
+        row(B, "after-cursor", "user", "rotatedorchid")
+    )
+    .unwrap();
+    drop(append);
+    stop(&f, B, &path, &[]);
+    let after = support::audit_lines(&f.root());
+    assert_eq!(after.len(), before.len() + 1);
+    stop(&f, B, &path, &[]);
+    assert_eq!(support::audit_lines(&f.root()), after);
+
+    let total = |term| {
+        invoke(
+            &f,
+            B,
+            &["search", term, "--kind", "message", "--group", "g-1"],
+            0,
+        )["total"]
+            .as_u64()
+            .unwrap()
+    };
+    assert_eq!(total("missingcursororchid"), 0);
+    assert_eq!(total("cursororchid"), 1);
+    assert_eq!(total("rotatedorchid"), 1);
+
+    support::sql(
+        &f.root(),
+        "DROP TABLE group_claude_seen; DROP TABLE group_claude_progress; PRAGMA user_version = 14;",
+    );
+    let mut append = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    writeln!(append, "{}", row(B, "migration", "user", "migrationorchid")).unwrap();
+    stop(&f, B, &path, &[]);
+    assert_eq!(total("migrationorchid"), 1);
+    assert_eq!(support::audit_lines(&f.root()).len(), after.len() + 1);
 }
 
 #[test]

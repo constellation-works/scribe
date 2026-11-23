@@ -1082,11 +1082,12 @@ A `/scribe` switch is marker-free: `on`, `off`, a link (`/scribe on --from`,
 failure outcome with its code. A no-op (`on` while on, a link already made)
 reports none. A group turn capture reports one success outcome per run that
 inserts at least one new eligible turn, however many it inserts; a run that
-inserts none reports none, even when it moved a member's capture cursor. There
-are two such cursor-only runs: a displaced member's cursor passes the turns it
+inserts none reports none, even when it moved a member's capture cursor.
+A displaced member's cursor passes the turns it
 typed while a later member held its seat (`skip_displaced_turns`), and a
 holding member's cursor passes turns already stored (`ON CONFLICT DO NOTHING`
-counts zero new rows). That bookkeeping is unlogged, as
+counts zero new rows). Claude capture also advances the transcript byte
+position through records that produce no eligible turn. That bookkeeping is unlogged, as
 [§17](./2_design.md#17-session-groups-and-seats) records.
 **Code anchors:** `crates/scribe/src/audit_middleware.rs`;
 `crates/scribe/src/output/payload.rs` (`HookOutcome`);
@@ -1095,7 +1096,8 @@ counts zero new rows). That bookkeeping is unlogged, as
 `crates/scribe/src/commands/hook/user_prompt_submit.rs` (its consume);
 `crates/scribe/src/commands/hook/group_turns.rs` (the capture outcome);
 `crates/scribe-core/src/store/db/groups.rs` (`capture_group_turns`,
-`skip_displaced_turns`)
+`skip_displaced_turns`);
+`crates/scribe-core/src/store/db/groups/claude.rs` (`capture_claude_group_turns`)
 
 ### Context
 

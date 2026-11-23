@@ -13,7 +13,8 @@
 //! and records its uuid. When several messages match (the same prompt sent
 //! twice), the one written closest to the cite's time is chosen.
 //!
-//! With no unsettled marker or waiting cite, it never locks or writes.
+//! An open group member's transcript progress can advance independently of
+//! cite filling or marker cataloging.
 //!
 //! Then the cadence: for a session that is on and not already due, the pass
 //! is due once `[catalog] every_minutes` have passed since the last pass

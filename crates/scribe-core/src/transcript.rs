@@ -99,14 +99,20 @@ pub fn cleared_sessions(header: &[u8]) -> Vec<crate::SessionId> {
 /// line keeps the position of its first copy.
 #[must_use]
 pub fn parse(bytes: &[u8]) -> Vec<Message> {
-    analyze(bytes, false).messages
+    analyze(bytes, false, true).messages
+}
+
+/// A Claude suffix does not have a provider prelude. The caller has already
+/// checked its provider, so the first record cannot reinterpret the batch.
+pub(crate) fn parse_claude(bytes: &[u8]) -> Vec<Message> {
+    analyze(bytes, false, false).messages
 }
 
 /// Parse the messages and, for Claude transcripts, the zero-based source line
 /// of each retained message. Codex rollouts have no Claude source-line map.
 #[must_use]
 pub fn parse_with_line_indices(bytes: &[u8]) -> (Vec<Message>, Option<Vec<usize>>) {
-    let analysis = analyze(bytes, true);
+    let analysis = analyze(bytes, true, true);
     (analysis.messages, analysis.line_indices)
 }
 
@@ -114,13 +120,13 @@ pub fn parse_with_line_indices(bytes: &[u8]) -> (Vec<Message>, Option<Vec<usize>
 /// (each line carries Claude Code's `cwd`), if any line names one.
 #[must_use]
 pub fn cwd(bytes: &[u8]) -> Option<String> {
-    analyze(bytes, false).cwd
+    analyze(bytes, false, true).cwd
 }
 
 /// Survey and cwd from a single pass over `bytes`.
 #[must_use]
 pub fn survey_with_cwd(bytes: &[u8]) -> (Survey, Option<String>) {
-    let analysis = analyze(bytes, false);
+    let analysis = analyze(bytes, false, true);
     (survey_from(&analysis.messages, bytes.len()), analysis.cwd)
 }
 
@@ -133,12 +139,12 @@ struct Analysis {
 /// One pass over `bytes`: Codex is detected from the first parseable line,
 /// and Claude lines are deserialized into a typed borrowed view, so no
 /// `serde_json::Value` DOM is built per line.
-fn analyze(bytes: &[u8], with_line_indices: bool) -> Analysis {
+fn analyze(bytes: &[u8], with_line_indices: bool, detect_codex: bool) -> Analysis {
     let mut seen = std::collections::HashSet::new();
     let mut messages = Vec::new();
     let mut line_indices = with_line_indices.then(Vec::new);
     let mut cwd: Option<String> = None;
-    let mut decided = false;
+    let mut decided = !detect_codex;
     for (line_index, line) in bytes.split(|&b| b == b'\n').enumerate() {
         let raw = match serde_json::from_slice::<RawLine<'_>>(line) {
             Ok(raw) => raw,

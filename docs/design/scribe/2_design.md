@@ -6703,6 +6703,12 @@ them, and when the replacement leaves, the restored holder's consent window
 restarts at that moment, so turns typed during the displacement are never
 stored later. Capture uses the pass's exclusions for synthetic and control
 turns, pasted blocks, fenced code and sensitive text, plus its store redactor.
+Claude group capture records its byte position and first-seen message
+identities with the turn cursor. Each hook opens and checks the transcript
+before validating the file identity and bounded boundary samples and parsing
+new records. Rotation, truncation and a changed boundary trigger a replay. A
+seat holder with a saved turn cursor resumes capture only after finding that
+turn in the replay. Partial final records stay pending for a subsequent read.
 Capture is audited: each prompt or `Stop` run that stores new turns writes one
 content-free line (`target` `session:<id>`, no error code; §8), and a run that
 stores none writes none. Regular cataloging

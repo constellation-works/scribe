@@ -1,7 +1,11 @@
 //! Group records and exclusive seat membership. Every decision and its write share
 //! the store transaction. Provider ids have no foreign key to cataloged sessions.
 
+mod claude;
 mod close;
+
+pub(super) use claude::V15;
+pub use claude::{ClaudeCapturePosition, ClaudeGroupCapture};
 
 use super::{DB_FILE, Fallible, db_error, memory::read, open_writer, refuse_newer, stamp};
 use crate::group::{
@@ -745,20 +749,13 @@ impl Store {
             let Some(last) = turns.last().copied() else {
                 return Ok(0);
             };
-            let started = std::time::Instant::now();
-            let inserted =
-                super::write_messages(&conn, &path, started, turns.into_iter(), redactor, true)?;
-            conn.execute(
-                "INSERT INTO sessions(provider_session, has_record, has_switch)
-                 VALUES (?1, 0, 0) ON CONFLICT(provider_session) DO NOTHING",
-                [session.as_str()],
-            )
-            .map_err(fail)?;
+            let inserted = write_captured_turns(&conn, &path, session, turns, redactor)?;
             conn.execute(
                 "UPDATE group_members SET turn_cursor = ?2 WHERE position = ?1",
                 params![state.position, last.message],
             )
             .map_err(fail)?;
+            claude::clear_progress(&conn, state.position).map_err(fail)?;
             Ok(inserted)
         })
     }
@@ -791,12 +788,42 @@ impl Store {
                     params![state.position, last.message],
                 )
                 .map_err(|e| db_error("skip displaced group turns in", &path, e))?;
+                claude::clear_progress(&conn, state.position)
+                    .map_err(|e| db_error("skip displaced group turns in", &path, e))?;
             }
             Ok(0)
         })
     }
 }
 
+fn write_captured_turns(
+    conn: &Connection,
+    path: &Path,
+    session: &SessionId,
+    turns: Vec<&NewMessage>,
+    redactor: &Redactor,
+) -> Result<usize> {
+    if turns.is_empty() {
+        return Ok(0);
+    }
+    let inserted = super::write_messages(
+        conn,
+        path,
+        std::time::Instant::now(),
+        turns.into_iter(),
+        redactor,
+        true,
+    )?;
+    conn.execute(
+        "INSERT INTO sessions(provider_session, has_record, has_switch)
+         VALUES (?1, 0, 0) ON CONFLICT(provider_session) DO NOTHING",
+        [session.as_str()],
+    )
+    .map_err(|e| db_error("store group turns in", path, e))?;
+    Ok(inserted)
+}
+
+#[derive(PartialEq, Eq)]
 struct CaptureState {
     position: i64,
     /// Whether the member holds its seat now. A replaced member keeps its row
@@ -842,17 +869,21 @@ fn capture_state(
 }
 
 fn next_turns<'a>(state: &CaptureState, messages: &'a [NewMessage]) -> Vec<&'a NewMessage> {
-    let start = match &state.cursor {
+    turns_since(state, after_cursor(state, messages).unwrap_or_default())
+}
+
+fn after_cursor<'a>(state: &CaptureState, messages: &'a [NewMessage]) -> Option<&'a [NewMessage]> {
+    match &state.cursor {
         Some(cursor) => messages
             .iter()
             .position(|m| &m.message == cursor)
-            .map_or(messages.len(), |i| i + 1),
-        None => 0,
-    };
-    messages[start..]
-        .iter()
-        .filter(|m| m.at >= state.since)
-        .collect()
+            .map(|i| &messages[i + 1..]),
+        None => Some(messages),
+    }
+}
+
+fn turns_since<'a>(state: &CaptureState, messages: &'a [NewMessage]) -> Vec<&'a NewMessage> {
+    messages.iter().filter(|m| m.at >= state.since).collect()
 }
 
 /// A membership row (alias `m`) holds its seat only while it is the seat's newest
