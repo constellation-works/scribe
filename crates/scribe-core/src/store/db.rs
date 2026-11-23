@@ -463,7 +463,6 @@ WHERE session IN (SELECT id FROM sessions WHERE forgotten IS NOT NULL);
 /// Version 10 marks completion of the schema-8 WAL cleanup barrier.
 const V10: &str = "SELECT 1;";
 
-/// The newest schema version this build reads and writes.
 /// Refuse, for a reader as for a writer, a database a newer build migrated
 /// past this build's schema: `store_too_new`, never a read of tables whose
 /// shape this build does not know.
@@ -481,6 +480,7 @@ fn refuse_newer(conn: &Connection, path: &Path) -> Result<u32, Fallible> {
     Ok(version)
 }
 
+/// The newest schema version this build reads and writes.
 fn schema() -> u32 {
     u32::try_from(MIGRATIONS.len()).unwrap_or(u32::MAX)
 }
@@ -950,16 +950,7 @@ fn read_matches(
     query: &str,
     group: Option<i64>,
 ) -> Result<Vec<MessageMatch>, Fallible> {
-    let version: u32 = conn
-        .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .map_err(|e| Fallible::from_sqlite("read", path, e))?;
-    if version > schema() {
-        return Err(Fallible::Failed(Error::NewerFormat {
-            path: path.to_path_buf(),
-            found: version,
-            supported: schema(),
-        }));
-    }
+    let version = refuse_newer(conn, path)?;
     if version == 0 || (version < 9 && group.is_some()) {
         return Ok(Vec::new());
     }

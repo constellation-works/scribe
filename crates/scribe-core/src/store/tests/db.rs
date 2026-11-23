@@ -263,6 +263,24 @@ fn a_database_from_a_newer_build_is_refused() {
 }
 
 #[test]
+fn a_memory_read_refuses_a_database_from_a_newer_build() {
+    let dir = private_tempdir();
+    let store = Store::open(dir.path());
+    store
+        .write_messages(
+            &[message("s-1", "m-1", "merge queue")],
+            &Redactor::default(),
+        )
+        .unwrap();
+    db::execute(dir.path(), "PRAGMA user_version = 99").unwrap();
+    let err = db::memory_view(dir.path()).unwrap_err();
+    assert!(
+        matches!(err, Error::NewerFormat { found: 99, .. }),
+        "{err:?}"
+    );
+}
+
+#[test]
 fn schema_nine_checkpoint_reports_a_neutral_holder_when_a_writer_is_active() {
     let dir = private_tempdir();
     let store = Store::open(dir.path()).with_lock_wait(Duration::from_millis(50));

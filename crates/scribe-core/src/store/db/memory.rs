@@ -9,7 +9,7 @@
 //! write replays a journal left open by a crash. Reads ([`memory_view`],
 //! [`revision_at`]) open read-only and never replay.
 
-use super::{DB_FILE, Fallible, db_error, inspect, open_reader, schema, stamp, write_error};
+use super::{DB_FILE, Fallible, db_error, inspect, open_reader, refuse_newer, stamp, write_error};
 use crate::error::{Error, Result};
 use crate::memory::Pending;
 use crate::session::SessionId;
@@ -178,16 +178,7 @@ const SELECT_REVISION: &str = "SELECT n, created, content, file_sha256 FROM prof
 
 fn read_view(conn: &Connection, path: &Path) -> Result<MemoryDb, Fallible> {
     let fail = |e| Fallible::from_sqlite("read", path, e);
-    let version: u32 = conn
-        .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .map_err(fail)?;
-    if version > schema() {
-        return Err(Fallible::Failed(Error::NewerFormat {
-            path: path.to_path_buf(),
-            found: version,
-            supported: schema(),
-        }));
-    }
+    let version = refuse_newer(conn, path)?;
     if version == 0 {
         return Ok(MemoryDb::default());
     }
