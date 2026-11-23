@@ -1053,6 +1053,7 @@ fn restarting_a_replaced_session_names_no_seat_and_writes_nothing() {
         .unwrap_or_default();
     assert!(!context.contains("holds seat"), "{reply}");
     assert!(context.contains("was replaced"), "{reply}");
+    assert!(!context.contains("scribe group join"), "{reply}");
 
     // A's cleared predecessor C holds an open seat in g-2. A has a historical
     // row, so it must not be inserted again (the session is unique).
@@ -1063,6 +1064,7 @@ fn restarting_a_replaced_session_names_no_seat_and_writes_nothing() {
         .unwrap_or_default();
     assert!(!context.contains("holds seat"), "{reply}");
     assert!(context.contains("was replaced"), "{reply}");
+    assert!(!context.contains("scribe group join"), "{reply}");
     assert_eq!(member_rows(&f), 3);
     assert_eq!(support::audit_lines(&f.root()), before);
     assert_eq!(

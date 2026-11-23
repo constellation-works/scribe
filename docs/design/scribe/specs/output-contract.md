@@ -521,11 +521,13 @@ source values do not use clear ancestry. A session that already holds a seat
 is told which seat it holds, while an unseated session with no open groups
 gets no seat context.
 When open groups exist and the starting session holds no seat for another
-reason (missing or ambiguous predecessor line, or a predecessor in no open
-seat), it joins nothing and notes in `additionalContext` that
-`scribe group join` must be re-run. A session replaced on its seat is told it
-was replaced and gets no join recommendation. A seat-lookup failure appears
-in `systemMessage`; `additionalContext` also recommends the command. A typed
+reason (no predecessor line, multiple predecessors, or a predecessor holding
+no open seat), it joins nothing and notes in `additionalContext` that
+`scribe group join` must be re-run. A session a later group member replaced
+on its seat holds none: its chain row stays as history, it joins nothing, and
+`additionalContext` says it was replaced on its seat, with no join
+recommendation. A seat-lookup failure appears in `systemMessage`;
+`additionalContext` also recommends the command. A typed
 `/scribe continue <handoff-id>` supplies the same body in the prompt’s
 `hookSpecificOutput.additionalContext` and lets that turn reach the agent.
 It
