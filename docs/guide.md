@@ -134,14 +134,19 @@ it:
   activate`, `session deactivate`, `session rebuild` and `#scribe forget`.
 - `session pass --session <id>` refuses it as not switched on
   (`session_not_on`).
-- Typed `/scribe link <id>` and `/scribe on --from <id>` keep an unmatched
-  link target as typed; `/scribe group add <slug> <id>...` keeps unmatched
-  member ids as typed. These targets need not have been cataloged.
+- The `/scribe link <id>` and `/scribe on --from <id>` resolvers keep an
+  unmatched target as typed, but the final link check requires an otherwise
+  valid target known by a session record or switch. Otherwise it refuses with
+  `link_unknown_session` and changes no link or switch; a target known by a
+  switch can be linked before its record is cataloged. `/scribe group add
+  <slug> <id>...` keeps unmatched member ids as typed; those members need not
+  have been cataloged.
 - `scribe memory ack <now-id> --session <id> --author <name>` accepts and records
   the supplied id even when it has no cataloged session.
-- An instruction check's `--session <id>` is used as typed to look for a
-  local transcript; if none is available, the check refuses with
-  `instruction_not_found`.
+- An instruction check resolves `--session <id>` as a unique prefix across
+  stored sessions and local transcripts, including uncataloged sessions. If
+  there is no match, it keeps the id as typed for transcript lookup; if no
+  usable transcript is available, it refuses with `instruction_not_found`.
 - A `session:<id>` reference is not a lookup. `--related` on `entry add` and
   `entry update --add-related` keeps an id that matches no session as written:
   `entry add --tag preferences --related session:abcd` succeeds on a store with

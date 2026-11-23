@@ -200,18 +200,27 @@ Rules every verb keeps:
   keeps a reference with no matching session as written because the session
   may never have been cataloged. Other paths use
   `Store::resolve_session_or_typed` when
-  they accept an uncataloged id: typed `/scribe link <id>` and `/scribe on
-  --from <id>` keep the link target, `/scribe group add` keeps member ids,
-  and `scribe memory ack --session <id>` records the supplied id. An
-  instruction check also uses its `--session <id>` as typed when locating a
-  local transcript; if no transcript is available, it refuses with
-  `instruction_not_found`. Other session lookups refuse a no-match as
+  they accept an uncataloged id: the `/scribe link <id>` and `/scribe on
+  --from <id>` resolvers keep an unmatched target as typed, but the final link
+  check still requires an otherwise valid target known by a session record or
+  switch. If it is known by neither, the command refuses with
+  `link_unknown_session` and changes no link or switch; a target known by a
+  switch can be linked before it has a cataloged record. `/scribe group add`
+  keeps unmatched member ids, and `scribe memory ack --session <id>` records
+  the supplied id. An instruction check first expands `--session <id>` as a
+  unique prefix across stored sessions and local transcripts, including
+  uncataloged sessions. If there is no match, it keeps the id as typed for
+  transcript lookup; if no usable transcript is available, it refuses with
+  `instruction_not_found`.
+  `session pass --session <id>` also keeps a no-match id and refuses it as
+  `session_not_on`. Other session lookups refuse a no-match as
   `session_not_found`. A record written from a prefix stores the full id,
   and a changing command names the full id in its success line. A terminal
   table prints a session id as its shortest prefix that no other session in
   the store shares, at least eight characters (`ShortIds`), so a printed
-  prefix is accepted back; piped and `--json` output keep the full id
-  (STD-01 R15).
+  prefix is accepted back; a group record's terminal table also counts the
+  session ids held by its seats, even when they are not cataloged. Piped and
+  `--json` output keep the full id (STD-01 R15).
 - **Argument checks come first.** A write verb refuses a bad argument
   (unknown tag, blank content or reason, an id that matches nothing, a
   repeated tag) before it reports an unset `[redact] env` name, so the
