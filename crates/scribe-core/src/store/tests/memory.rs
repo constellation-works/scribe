@@ -296,6 +296,47 @@ fn a_refresh_resumes_from_its_cursor_keeps_pinned_and_is_idempotent() {
 }
 
 #[test]
+fn a_refresh_reads_kept_turns_but_not_turns_stored_only_for_a_group() {
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+    fs::create_dir(&root).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let store = Store::open(root);
+    let redactor = Redactor::default();
+    sessions(&store, 1, T0);
+    let session = id(1);
+    let turn = |message: &str, text: &str| crate::message::NewMessage {
+        session: session.clone(),
+        message: message.to_owned(),
+        role: crate::entry::Speaker::User,
+        at: T0,
+        text: text.to_owned(),
+    };
+    store
+        .write_messages(&[turn("u-1", "kept through the pass")], &redactor)
+        .unwrap();
+    // Group capture stores a later turn on the same cataloged session.
+    let conn = rusqlite::Connection::open(store.root().join(db::DB_FILE)).unwrap();
+    conn.execute(
+        "INSERT INTO messages (session, message, role, at, text, sha256, group_only)
+         VALUES (?1, 'u-2', 'user', ?2, 'said only for the group', replace(hex(zeroblob(32)), '0', 'a'), 1)",
+        (session.as_str(), T0.format(&time::format_description::well_known::Rfc3339).unwrap()),
+    )
+    .unwrap();
+    drop(conn);
+
+    let now = T0 + Duration::days(60);
+    let inputs = store.profile_inputs(&redactor, now).unwrap();
+    let verbatim = inputs.sessions[0].verbatim.as_deref().unwrap();
+    assert!(verbatim.contains("kept through the pass"));
+    assert!(!verbatim.contains("said only for the group"));
+}
+
+#[test]
 fn a_refresh_refuses_when_memory_changed_since_its_inputs() {
     let dir = private_tempdir();
     let store = Store::open(dir.path().join("store"));
