@@ -35,7 +35,11 @@ pub(super) fn run(
     session: &SessionId,
     ctx: &Context,
 ) -> Result<Output, CliError> {
-    run_with_transcript_reader(slug, named, payload, session, ctx, group_turns::past)
+    run_with_transcript_reader(slug, named, payload, session, ctx, |ctx, id, path| {
+        #[cfg(test)]
+        super::tests::group_add::before_past_read(path);
+        group_turns::past(ctx, id, path)
+    })
 }
 
 pub(super) fn run_with_transcript_reader(

@@ -182,6 +182,12 @@ impl HookCommand {
 
 /// Run one `hook` verb on the payload read from stdin.
 pub(super) fn run(command: HookCommand, ctx: &Context) -> Result<Output, CliError> {
+    #[cfg(test)]
+    let input = match tests::group_add::take_hook_input() {
+        Some(input) => input,
+        None => payload::read_stdin()?,
+    };
+    #[cfg(not(test))]
     let input = payload::read_stdin()?;
     if ctx.provider() == scribe_core::Provider::Codex {
         let event = match command {
