@@ -88,8 +88,9 @@ For open, join, leave and close in Codex, put `--provider codex` before
   transcript, after a clear or a `--replace`), and only when the human asks. This runs a model call.
 - **Close with a quote.** From any other session, and only when the human asks
   in their own typed words, run `scribe group close <id> --quote '<span>'`. The
-  span must be a verbatim turn the human typed in this session and must contain
-  the group id (`g-<n>`), not a slug. The call closes the group without taking a
+  span must be a verbatim substring of a turn the human typed in this session
+  and must contain the exact canonical group id (`g-<n>`), not a slug. It may
+  omit other words from that turn. The call closes the group without taking a
   seat. Otherwise it is refused.
 - **Closing summary.** Scribe sends up to 16 of the members' newest active
   handoffs and 32 newest stored user turns to the ask model in one call. It then
