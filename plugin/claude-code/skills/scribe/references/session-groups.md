@@ -93,11 +93,16 @@ For open, join, leave and close in Codex, put `--provider codex` before
   omit other words from that turn. The call closes the group without taking a
   seat. Otherwise it is refused.
 - **Closing summary.** Scribe sends up to 16 of the members' newest active
-  handoffs and 32 newest stored user turns to the ask model in one call. It then
-  writes the summary (up to 4,000 characters, redacted), naming the group's
-  related references as work missing from the handoffs, and the closed time. A
-  closed group takes no members and stores no more turns. Closing a closed group
-  returns its record without another model call.
+  handoffs and 32 newest stored user turns to the ask model in one call. The
+  4,000-character limit applies to the model's text: trimmed, it must be 1–4,000
+  characters before and after redaction, or the close is refused and the group
+  stays open.
+- **Stored closing summary.** When the group has related references, Scribe
+  appends a sentence naming them as work missing from the handoffs, then stores
+  the summary with the closed time. So the stored closing summary can be longer
+  than 4,000 characters.
+- **Closed groups.** A closed group takes no members and stores no more turns.
+  Closing a closed group returns its record without another model call.
 
 ## Project groups
 
