@@ -4339,3 +4339,39 @@ for a 30-day window (`crates/scribe-core/src/config.rs`).
 ## Typed project-group consent
 
 Daniel asked to keep project sessions together: “I would like to keep different groups by projects. I have an on-going water-economy project, and I want all the sessions stored there.” On 2026-11-23, when offered a typed `/scribe group <slug>` that creates and enrols, terminal group commands, and retained membership after refresh, he answered “sounds good” (chief's chat, ORB-26869). The typed line itself consents to creation and membership; agent `group open` still requires a verbatim quote. Non-typed prompts do not consent. Daniel also answered “No, one group” to membership in two groups; a session already in a group must leave before joining another.
+
+## Receipts are versioned before they are parsed
+
+The init receipt gained `skill_files` in ORB-27143 and kept `format: 1`. A
+binary that reads the receipt with a struct denying unknown fields therefore
+refused a project another binary had initialized with the generic
+`invalid installation receipt`. The receipt is now format 2 and always carries
+the bundled skill digests. Readers check the format before they check the
+shape: formats 1 and 2 are read, any other format is refused as
+`unsupported installation receipt format` even when it carries unknown fields,
+and format 1 receipts upgrade in place (ORB-27179).
+
+This fixes readers built after this change. A binary built before ORB-27143
+still parses the receipt first, so it rejects the top-level `skill_files` key
+as invalid before it reads `format`. Only moving the digests out of the receipt
+would change that, for example into a sidecar file the older binary never reads.
+That is not done here, and it is Daniel's call, since it splits the ownership
+record across two files.
+
+### Alternatives
+
+- **Sidecar for the skill digests.** The receipt keeps the format 1 shape, so an
+  older binary reports the format. Rejected for now: one ownership record is
+  simpler to preflight and to reason about. Reopen it if pre-ORB-27143 binaries
+  stay in use.
+- **Tolerate unknown fields in the receipt.** Helps only readers built after
+  this change. It does not reach the pre-ORB-27143 binary, which denies unknown
+  fields, so it was not enough alone.
+
+### Consequences
+
+- A project initialized by this binary and then run by a pre-ORB-27143 binary
+  still gets `invalid installation receipt`. The workaround is to run the current
+  binary for that project.
+- A future receipt format is refused as unsupported without being parsed as a
+  receipt of this format.

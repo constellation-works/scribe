@@ -54,6 +54,15 @@ fn init_embeds_skill_preserves_unrelated_config_and_is_idempotent() {
         let report: Value = serde_json::from_slice(&first.stdout).unwrap();
         assert_eq!(report["changed"], true);
         assert_eq!(report["provider"], provider);
+        let written: Value =
+            serde_json::from_slice(&std::fs::read(config.join("scribe-init.json")).unwrap())
+                .unwrap();
+        assert_eq!(written["format"], 2);
+        assert!(
+            written["skill_files"]
+                .as_object()
+                .is_some_and(|files| !files.is_empty())
+        );
         assert!(
             report["next"].as_array().unwrap().iter().any(|s| s
                 .as_str()
@@ -177,6 +186,8 @@ fn init_upgrades_a_single_file_receipt_and_preflights_reference_conflicts() {
     std::fs::remove_file(&reference).unwrap();
     let upgraded = run();
     assert!(upgraded.status.success(), "{}", text(&upgraded.stderr));
+    let written: Value = serde_json::from_slice(&std::fs::read(&receipt).unwrap()).unwrap();
+    assert_eq!(written["format"], 2);
     assert_eq!(
         std::fs::read_to_string(&skill).unwrap(),
         include_str!("../../../skills/scribe/SKILL.md")
@@ -191,6 +202,53 @@ fn init_upgrades_a_single_file_receipt_and_preflights_reference_conflicts() {
     let denied = run();
     assert_eq!(denied.status.code(), Some(1));
     assert!(text(&denied.stderr).contains("init_conflict"));
+    assert_eq!(snapshot(), before);
+}
+
+#[test]
+fn init_reports_an_unsupported_receipt_format_before_its_shape() {
+    let f = Fixture::new();
+    let target = f.elsewhere("project");
+    let config = target.join(".codex");
+    f.create_private_dir_all(&config);
+    let receipt = config.join("scribe-init.json");
+    let future = json!({
+        "format": 3,
+        "skill_sha256": scribe_core::capture::prompt_sha256("future skill\n"),
+        "skill_files": {"references/session-groups.md": "digest"},
+        "hooks": {},
+        "owner_scope": "unknown",
+    });
+    std::fs::write(&receipt, future.to_string()).unwrap();
+    support::make_private(&receipt);
+    let path = f.fake_program("codex", "#!/bin/sh\nexit 0\n");
+    let snapshot = || {
+        support::snapshot(&target)
+            .into_iter()
+            .filter(|(path, _, _)| !path.ends_with(".scribe-init.lock"))
+            .collect::<Vec<_>>()
+    };
+    let before = snapshot();
+    let refused = f
+        .cmd(&[
+            "init",
+            "--provider",
+            "codex",
+            "--target",
+            target.to_str().unwrap(),
+            "--json",
+        ])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert_eq!(refused.status.code(), Some(1));
+    let stderr = text(&refused.stderr);
+    assert!(stderr.contains("init_conflict"), "{stderr}");
+    assert!(
+        stderr.contains("unsupported installation receipt format"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("invalid installation receipt"), "{stderr}");
     assert_eq!(snapshot(), before);
 }
 

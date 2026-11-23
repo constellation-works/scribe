@@ -165,7 +165,9 @@ Both skill directories include `SKILL.md`, its references and evaluation
 cases. The hook command names the absolute installed `scribe`. Unrelated hooks and
 configuration are preserved. A private `scribe-init.json` receipt in the
 provider configuration directory tracks owned skill content and hook
-definitions. Repeating init reports unchanged files. An upgrade replaces only
+definitions; it is format 2 and also records the bundled skill files. This binary
+reads formats 1 and 2 and refuses any other format as an unsupported receipt
+format. Repeating init reports unchanged files. An upgrade replaces only
 unchanged owned artifacts. Your edits produce a conflict instead of an
 overwrite. The persistent `.scribe-init.lock` serializes initialization; do not
 remove it while an initializer is running. Created state is owner-only.
