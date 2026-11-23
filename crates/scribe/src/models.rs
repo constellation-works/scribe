@@ -35,7 +35,7 @@ use scribe_core::models::{
     RemovalAnswer, RemovalJudgementAnswer, RemovalRequest, SESSION_HEADER_SCHEMA, SessionAnswer,
     SessionHeader, SessionHeaderRequest, SessionRequest,
 };
-use scribe_core::{Models, Provider};
+use scribe_core::{Models, Provider, Redactor};
 use serde::Deserialize;
 use serde_json::Value;
 use std::ffi::{OsStr, OsString};
@@ -90,6 +90,24 @@ pub(crate) fn allowed_env(
         .collect()
 }
 
+/// The redactor a new adapter starts with: the values of the credential
+/// variables its child was given (STD-05 R14). The baseline variables and the
+/// Codex home path are not secrets, and stay readable in diagnostics.
+fn credential_redactor(env: &[(OsString, OsString)]) -> Redactor {
+    Redactor::new(
+        env.iter()
+            .filter(|(name, _)| {
+                !matches!(name.to_str(), Some(n) if BASELINE_ENV.contains(&n) || n == "CODEX_HOME")
+            })
+            .map(|(name, value)| {
+                (
+                    name.to_string_lossy().into_owned(),
+                    value.to_string_lossy().into_owned(),
+                )
+            }),
+    )
+}
+
 /// The `claude` arguments for one call (the prompt goes on stdin).
 pub(crate) fn argv(model: &str, schema: &str) -> Vec<String> {
     [
@@ -115,14 +133,20 @@ pub(crate) struct ClaudeCliModels {
     provider: Provider,
     program: OsString,
     env: Vec<(OsString, OsString)>,
+    /// Masks secret values and credential shapes in every failure this
+    /// adapter reports (see [`ClaudeCliModels::with_redactor`]).
+    redactor: Redactor,
 }
 
 impl ClaudeCliModels {
-    /// Run [`PROGRAM`] with exactly `env` (see [`allowed_env`]).
+    /// Run [`PROGRAM`] with exactly `env` (see [`allowed_env`]). Failures
+    /// mask the child's own credential values until
+    /// [`ClaudeCliModels::with_redactor`] widens the set.
     pub(crate) fn new(env: Vec<(OsString, OsString)>) -> Self {
         Self {
             provider: Provider::ClaudeCode,
             program: OsString::from(PROGRAM),
+            redactor: credential_redactor(&env),
             env,
         }
     }
@@ -130,6 +154,13 @@ impl ClaudeCliModels {
     /// Select the configured executable transport, with no model-name guessing.
     pub(crate) fn with_provider(mut self, provider: Provider) -> Self {
         self.provider = provider;
+        self
+    }
+
+    /// Mask failures with `redactor`: the composition root passes every
+    /// configured secret name (`Config::secret_names`), as persisted text does.
+    pub(crate) fn with_redactor(mut self, redactor: Redactor) -> Self {
+        self.redactor = redactor;
         self
     }
 
@@ -142,7 +173,7 @@ impl ClaudeCliModels {
         budget: Duration,
     ) -> Result<Value, ModelError> {
         if self.provider == Provider::Codex {
-            return codex::call(&self.env, model, schema, prompt, budget);
+            return codex::call(&self.env, &self.redactor, model, schema, prompt, budget);
         }
         let ran = supervise(
             self.command(&argv(model, schema)),
@@ -150,11 +181,11 @@ impl ClaudeCliModels {
             budget,
         )?;
         match ran.ended {
-            Ended::Exited(status) if status.success() => structured(&ran.stdout),
+            Ended::Exited(status) if status.success() => structured(&ran.stdout, &self.redactor),
             Ended::Exited(status) => Err(ModelError::Failed(format!(
                 "{PROGRAM} ended with {status}{}",
-                detail(&ran.stderr)
-                    .or_else(|| detail(&ran.stdout))
+                detail(&ran.stderr, &self.redactor)
+                    .or_else(|| detail(&ran.stdout, &self.redactor))
                     .map(|d| format!(": {d}"))
                     .unwrap_or_default()
             ))),
@@ -199,7 +230,7 @@ impl Models for ClaudeCliModels {
         )?;
         serde_json::from_value::<Summary>(value)
             .map(|answer| answer.summary)
-            .map_err(|e| ModelError::Malformed(format!("not a group summary: {e}")))
+            .map_err(|e| malformed(&self.redactor, "not a group summary", &e))
     }
 
     fn annotation(&self, request: &AnnotationRequest) -> Result<AnnotationAnswer, ModelError> {
@@ -210,7 +241,7 @@ impl Models for ClaudeCliModels {
             request.budget,
         )?;
         serde_json::from_value(value)
-            .map_err(|e| ModelError::Malformed(format!("not an annotation answer: {e}")))
+            .map_err(|e| malformed(&self.redactor, "not an annotation answer", &e))
     }
 
     fn session(&self, request: &SessionRequest) -> Result<SessionAnswer, ModelError> {
@@ -221,7 +252,7 @@ impl Models for ClaudeCliModels {
             request.budget,
         )?;
         serde_json::from_value(value)
-            .map_err(|e| ModelError::Malformed(format!("not a session record: {e}")))
+            .map_err(|e| malformed(&self.redactor, "not a session record", &e))
     }
 
     fn session_header(&self, request: &SessionHeaderRequest) -> Result<SessionHeader, ModelError> {
@@ -232,7 +263,7 @@ impl Models for ClaudeCliModels {
             request.budget,
         )?;
         serde_json::from_value(value)
-            .map_err(|e| ModelError::Malformed(format!("not a session header: {e}")))
+            .map_err(|e| malformed(&self.redactor, "not a session header", &e))
     }
 
     fn ask(&self, request: &AskRequest) -> Result<AskAnswer, ModelError> {
@@ -256,7 +287,7 @@ impl Models for ClaudeCliModels {
         }
         let value = self.call(&request.model, ASK_SCHEMA, request.prompt(), request.budget)?;
         let a: Answer = serde_json::from_value(value)
-            .map_err(|e| ModelError::Malformed(format!("not an answer: {e}")))?;
+            .map_err(|e| malformed(&self.redactor, "not an answer", &e))?;
         Ok(AskAnswer {
             status: a.status,
             answer: a.answer,
@@ -287,7 +318,7 @@ impl Models for ClaudeCliModels {
             request.prompt(),
             request.budget,
         )?;
-        judgements(value, "consistency")
+        judgements(value, "consistency", &self.redactor)
     }
 
     fn profile(&self, request: &ProfileRequest) -> Result<ProfileAnswer, ModelError> {
@@ -298,7 +329,7 @@ impl Models for ClaudeCliModels {
             request.budget,
         )?;
         serde_json::from_value(value)
-            .map_err(|e| ModelError::Malformed(format!("not a profile answer: {e}")))
+            .map_err(|e| malformed(&self.redactor, "not a profile answer", &e))
     }
 
     fn removal(&self, request: &RemovalRequest) -> Result<RemovalAnswer, ModelError> {
@@ -321,7 +352,7 @@ impl Models for ClaudeCliModels {
             request.budget,
         )?;
         let a: Answer = serde_json::from_value(value)
-            .map_err(|e| ModelError::Malformed(format!("not a removed-feature answer: {e}")))?;
+            .map_err(|e| malformed(&self.redactor, "not a removed-feature answer", &e))?;
         Ok(RemovalAnswer {
             judgements: a
                 .judgements
@@ -340,8 +371,8 @@ impl Models for ClaudeCliModels {
 
 /// The structured answer in `claude --output-format json` output: the
 /// result object's `structured_output`, or its `result` text parsed as JSON.
-/// A result marked `is_error` is a failure.
-fn structured(stdout: &Drained) -> Result<Value, ModelError> {
+/// A result marked `is_error` is a failure, its text masked and bounded.
+fn structured(stdout: &Drained, redactor: &Redactor) -> Result<Value, ModelError> {
     if stdout.truncated {
         return Err(ModelError::Malformed(format!(
             "more than {MAX_STDOUT} bytes of output"
@@ -351,9 +382,10 @@ fn structured(stdout: &Drained) -> Result<Value, ModelError> {
         .map_err(|e| ModelError::Malformed(format!("{PROGRAM} output is not JSON: {e}")))?;
     let text = value.get("result").and_then(Value::as_str);
     if value.get("is_error").and_then(Value::as_bool) == Some(true) {
-        return Err(ModelError::Failed(
-            text.map_or_else(|| String::from("an error result"), bounded),
-        ));
+        return Err(ModelError::Failed(text.map_or_else(
+            || String::from("an error result"),
+            |text| bounded(&redactor.mask(text)),
+        )));
     }
     if let Some(found) = value.get("structured_output").filter(|v| v.is_object()) {
         return Ok(found.clone());
@@ -370,14 +402,32 @@ fn structured(stdout: &Drained) -> Result<Value, ModelError> {
         .map_err(|e| ModelError::Malformed(format!("the result is not JSON: {e}")))
 }
 
-/// The last non-empty line of a child's output, bounded, for an error.
-fn detail(out: &Drained) -> Option<String> {
-    let text = String::from_utf8_lossy(&out.bytes);
-    text.lines()
+/// The last non-empty line of a child's output, masked and bounded, for an
+/// error. The captured stream is masked as a whole before a line is chosen
+/// or cut, so the cut never splits a credential the mask would have matched.
+/// A stream cut at its limit ends mid-line; that partial line is left out,
+/// since it may hold only the start of a credential.
+fn detail(out: &Drained, redactor: &Redactor) -> Option<String> {
+    let lossy = String::from_utf8_lossy(&out.bytes);
+    let text: &str = &lossy;
+    let kept = if out.truncated && !text.ends_with('\n') {
+        &text[..text.rfind('\n').map_or(0, |at| at + 1)]
+    } else {
+        text
+    };
+    let masked = redactor.mask(kept);
+    masked
+        .lines()
         .rev()
         .map(str::trim)
         .find(|l| !l.is_empty())
         .map(bounded)
+}
+
+/// A malformed-answer error with its parse error masked. serde names the
+/// value of a mistyped field, and that value is the answer's own text.
+fn malformed(redactor: &Redactor, what: &str, error: &serde_json::Error) -> ModelError {
+    ModelError::Malformed(redactor.mask(&format!("{what}: {error}")))
 }
 
 /// `text` cut to [`MAX_DETAIL_CHARS`], the cut marked (STD-03 R15).
@@ -589,7 +639,11 @@ impl Drop for Group {
 }
 
 /// A pair-labelling answer (`consistency`, `memory_pairs`), unchecked.
-fn judgements(value: serde_json::Value, what: &str) -> Result<ConsistencyAnswer, ModelError> {
+fn judgements(
+    value: serde_json::Value,
+    what: &str,
+    redactor: &Redactor,
+) -> Result<ConsistencyAnswer, ModelError> {
     #[derive(Deserialize)]
     struct Judgement {
         pair: String,
@@ -603,7 +657,7 @@ fn judgements(value: serde_json::Value, what: &str) -> Result<ConsistencyAnswer,
         judgements: Vec<Judgement>,
     }
     let a: Answer = serde_json::from_value(value)
-        .map_err(|e| ModelError::Malformed(format!("not a {what} answer: {e}")))?;
+        .map_err(|e| malformed(redactor, &format!("not a {what} answer"), &e))?;
     Ok(ConsistencyAnswer {
         judgements: a
             .judgements

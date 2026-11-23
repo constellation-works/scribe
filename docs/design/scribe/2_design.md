@@ -2153,11 +2153,17 @@ which leaves it unreaped, so the group id is never signalled after it could
 be reused (STD-03 R14). The answer is the result object's
 `structured_output`, else its `result` text parsed as JSON (a ```` ```json ````
 fence is unwrapped); `is_error: true`, a non-zero exit (with the last line
-of stderr, cut to 200 characters), output that is not JSON or not the
-schema's shape, and no `claude` on `PATH` are each a `ModelError`, which the
-referent turns into the guessed fallback. Tests run a fake `claude` shell
-script on `PATH` under a temporary `HOME`, recording its argv, environment
-and process group.
+of stderr, or of stdout when stderr is empty), output that is not JSON or not
+the schema's shape, and no `claude` on `PATH` are each a `ModelError`, which
+the referent turns into the guessed fallback. Every failure's text is masked
+before it is cut to 200 characters, and before any answer error is shown: the
+values of every configured secret name (`[models]` and `[codex_models]`
+credentials and `[redact] env`, as persisted text uses) and the credential
+shapes of STD-05 R14 become `[redacted:…]` markers. The baseline variables
+and the Codex home path are not masked. A stream cut at its 64 KiB or 1 MiB
+limit drops its partial last line, which may hold only the start of a
+credential. Tests run a fake `claude` shell script on `PATH` under a temporary
+`HOME`, recording its argv, environment and process group.
 
 Mutating commands — every `hook` event that writes, `session pass`,
 `consistency scan` — are audited through the template's `AuditGuard`. Audit

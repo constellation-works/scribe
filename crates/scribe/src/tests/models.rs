@@ -328,3 +328,134 @@ fn no_claude_on_path_is_unavailable() {
         .unwrap_err();
     assert!(matches!(err, ModelError::Unavailable(_)), "{err:?}");
 }
+
+/// A credential-shaped value for the child's environment; synthetic, never real.
+const SYNTHETIC_OAUTH: &str = "synthetic-oauth-value-42";
+
+/// The adapter for one credential, `CLAUDE_CODE_OAUTH_TOKEN`, set to
+/// [`SYNTHETIC_OAUTH`] in the child's environment.
+fn with_oauth(fake: &FakeClaude) -> ClaudeCliModels {
+    fake.models(
+        &["CLAUDE_CODE_OAUTH_TOKEN"],
+        &[("CLAUDE_CODE_OAUTH_TOKEN", SYNTHETIC_OAUTH)],
+    )
+}
+
+#[test]
+fn a_failing_claude_masks_a_configured_credential_in_its_stderr() {
+    let fake = FakeClaude::new("echo \"auth failed for $CLAUDE_CODE_OAUTH_TOKEN\" >&2\nexit 3");
+    let err = with_oauth(&fake)
+        .annotation(&request(Duration::from_secs(10)))
+        .unwrap_err();
+    let ModelError::Failed(message) = &err else {
+        panic!("expected a failure: {err:?}");
+    };
+    assert!(message.contains("exit status: 3"), "{message}");
+    assert!(
+        message.ends_with("auth failed for [redacted:CLAUDE_CODE_OAUTH_TOKEN]"),
+        "{message}"
+    );
+    assert!(!message.contains(SYNTHETIC_OAUTH), "{message}");
+}
+
+#[test]
+fn a_failing_claude_with_only_stdout_masks_the_shapes_it_prints() {
+    // Stderr is empty, so the diagnostic is the last line of stdout.
+    let fake = FakeClaude::new(
+        "echo 'token ghp_0123456789abcdefghij leaked, Authorization: Bearer abcdef0123456789'\nexit 3",
+    );
+    let err = fake
+        .models(&[], &[])
+        .annotation(&request(Duration::from_secs(10)))
+        .unwrap_err();
+    let ModelError::Failed(message) = &err else {
+        panic!("expected a failure: {err:?}");
+    };
+    assert!(
+        message.ends_with(
+            "token [redacted:github-token] leaked, Authorization: Bearer [redacted:bearer]"
+        ),
+        "{message}"
+    );
+    assert!(!message.contains("ghp_0123"), "{message}");
+    assert!(!message.contains("abcdef0123456789"), "{message}");
+}
+
+#[test]
+fn an_error_result_masks_the_credential_and_the_shape_it_echoes() {
+    let fake = FakeClaude::new(
+        r#"printf '{"type":"result","is_error":true,"result":"API Error: token %s rejected, key sk-ant-api03-SYNTHETICTAIL123"}\n' "$CLAUDE_CODE_OAUTH_TOKEN""#,
+    );
+    let err = with_oauth(&fake)
+        .annotation(&request(Duration::from_secs(10)))
+        .unwrap_err();
+    assert_eq!(
+        err,
+        ModelError::Failed(String::from(
+            "API Error: token [redacted:CLAUDE_CODE_OAUTH_TOKEN] rejected, key [redacted:api-key]"
+        ))
+    );
+}
+
+#[test]
+fn a_mistyped_answer_does_not_echo_the_credential_in_its_error() {
+    // serde names the value of a mistyped field; the error must not carry it.
+    let fake = FakeClaude::new(
+        r#"printf '{"type":"result","is_error":false,"structured_output":{"marks":[{"marker":"%s","kind":"none","reason":"r"}]}}\n' "$CLAUDE_CODE_OAUTH_TOKEN""#,
+    );
+    let err = with_oauth(&fake)
+        .annotation(&request(Duration::from_secs(10)))
+        .unwrap_err();
+    let ModelError::Malformed(message) = &err else {
+        panic!("expected a malformed answer: {err:?}");
+    };
+    assert!(
+        message.contains("[redacted:CLAUDE_CODE_OAUTH_TOKEN]"),
+        "{message}"
+    );
+    assert!(!message.contains(SYNTHETIC_OAUTH), "{message}");
+}
+
+#[test]
+fn a_stderr_cut_at_its_limit_does_not_report_the_credential_it_cuts() {
+    // 65,526 `x` bytes and a newline end at byte 65,527, so the credential
+    // starts there and only its first nine bytes fit under the 64 KiB limit.
+    // That partial line must not be reported: the credential is never
+    // complete in what the child wrote.
+    let fake = FakeClaude::new(
+        r#"{ head -c 65526 /dev/zero | tr '\0' x; echo; printf '%s\n' "$CLAUDE_CODE_OAUTH_TOKEN"; } >&2
+exit 3"#,
+    );
+    let err = with_oauth(&fake)
+        .annotation(&request(Duration::from_secs(10)))
+        .unwrap_err();
+    let ModelError::Failed(message) = &err else {
+        panic!("expected a failure: {err:?}");
+    };
+    assert!(message.contains("exit status: 3"), "{message}");
+    assert!(!message.contains("synthetic"), "{message}");
+}
+
+#[test]
+fn a_configured_secret_the_child_never_received_is_masked_too() {
+    // A `[redact] env` value is not in the child's environment, but a
+    // provider error can echo prompt text that holds it. The composition root
+    // passes every configured secret name, and that set masks it.
+    let fake = FakeClaude::new("echo 'prompt echoed synthetic-redact-value-99' >&2\nexit 3");
+    let redactor = scribe_core::Redactor::new([(
+        String::from("MY_REDACTED_NAME"),
+        String::from("synthetic-redact-value-99"),
+    )]);
+    let err = fake
+        .models(&[], &[])
+        .with_redactor(redactor)
+        .annotation(&request(Duration::from_secs(10)))
+        .unwrap_err();
+    let ModelError::Failed(message) = &err else {
+        panic!("expected a failure: {err:?}");
+    };
+    assert!(
+        message.ends_with("prompt echoed [redacted:MY_REDACTED_NAME]"),
+        "{message}"
+    );
+}

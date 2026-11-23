@@ -3,6 +3,7 @@
 //! invocations fail rather than falling back to Claude or another model.
 
 use super::{Ended, MAX_STDOUT, detail, supervise};
+use scribe_core::Redactor;
 use scribe_core::models::ModelError;
 use serde_json::Value;
 use std::{
@@ -14,6 +15,7 @@ use std::{
 
 pub(super) fn call(
     env: &[(OsString, OsString)],
+    redactor: &Redactor,
     model: &str,
     schema: &str,
     prompt: String,
@@ -98,25 +100,13 @@ pub(super) fn call(
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
-    let redactor = scribe_core::Redactor::new(
-        env.iter()
-            .filter(|(name, _)| {
-                !matches!(name.to_str(), Some("PATH" | "HOME" | "LANG" | "CODEX_HOME"))
-            })
-            .map(|(name, value)| {
-                (
-                    name.to_string_lossy().into_owned(),
-                    value.to_string_lossy().into_owned(),
-                )
-            }),
-    );
     let ran = supervise(command, prompt.into_bytes(), budget)?;
     match ran.ended {
         Ended::TimedOut => Err(ModelError::Timeout { budget }),
         Ended::Exited(status) if !status.success() => Err(ModelError::Failed(format!(
             "codex ({model}) ended with {status}; install a supported Codex CLI, authenticate it and verify this exact model is available{}",
-            detail(&ran.stderr)
-                .map(|s| format!(": {}", redactor.mask(&s)))
+            detail(&ran.stderr, redactor)
+                .map(|s| format!(": {s}"))
                 .unwrap_or_default()
         ))),
         Ended::Exited(_) => {

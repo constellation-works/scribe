@@ -291,7 +291,8 @@ impl Context {
 
     /// The model adapter for `config`: `claude` run with `PATH`, `HOME`,
     /// `LANG` and the configured credential variables from this process's
-    /// environment, and nothing else (STD-05 R10).
+    /// environment, and nothing else (STD-05 R10). Its failure reports mask
+    /// every configured secret, as persisted text does (STD-05 R14).
     pub(crate) fn models(&self, config: &Config) -> ClaudeCliModels {
         let mut credentials = config.models.credentials.clone();
         if config.models.provider == Provider::Codex {
@@ -304,7 +305,11 @@ impl Context {
             env.retain(|(key, _)| key != "CODEX_HOME");
             env.push((OsString::from("CODEX_HOME"), root.as_os_str().to_owned()));
         }
-        ClaudeCliModels::new(env).with_provider(config.models.provider)
+        ClaudeCliModels::new(env)
+            .with_provider(config.models.provider)
+            .with_redactor(Redactor::from_config(config, |name| {
+                std::env::var(name).ok()
+            }))
     }
 
     /// The Orbit task adapter: `$ORBIT_BIN` (else `orbit`) run with `PATH`,
