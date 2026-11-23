@@ -12,8 +12,8 @@ use super::sink::{OutputMode, Sink};
 use super::table::{self, Align, Cell, Column};
 use serde::ser::{Serialize, SerializeMap, Serializer};
 use std::io::{self, Write};
-use time::OffsetDateTime;
-use time::format_description::well_known::Rfc3339;
+use time::format_description::well_known::{Iso8601, Rfc3339};
+use time::{OffsetDateTime, UtcOffset};
 
 const fn col(header: &'static str, align: Align, truncate: bool) -> Column {
     Column {
@@ -203,7 +203,7 @@ pub(crate) fn list(
             with_active(&SESSION_COLUMNS, *active_column, 2),
             items
                 .iter()
-                .map(|s| session_row(s, *active_column))
+                .map(|s| session_row(s, *active_column, sink.mode == OutputMode::Table))
                 .collect(),
         ),
         Records::SessionTree {
@@ -439,7 +439,7 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
             Ok(())
         }
         (OutputMode::Plain, Record::Session(session)) => {
-            writeln!(out, "{}", plain_line(&session_row(session, false)))?;
+            writeln!(out, "{}", plain_line(&session_row(session, false, false)))?;
             if let Some(at) = session.forgotten {
                 writeln!(out, "forgotten\t{}", timestamp(at))?;
             }
@@ -1631,21 +1631,27 @@ fn pass_row(p: &PassPayload) -> Vec<Cell> {
 
 /// A `session list --tree` row: the session's row with its parent after
 /// the id; in a table the title is indented two spaces per level.
-fn tree_row(row: &TreeRow, indent: bool, active: bool) -> Vec<Cell> {
-    let mut cells = session_row(&row.session, active);
+fn tree_row(row: &TreeRow, table: bool, active: bool) -> Vec<Cell> {
+    let mut cells = session_row(&row.session, active, table);
     cells.insert(
         1,
         Cell::plain(row.parent.clone().unwrap_or_else(|| String::from("-"))),
     );
-    if indent && let Some(title) = cells.last_mut() {
+    if table && let Some(title) = cells.last_mut() {
         title.text = format!("{}{}", "  ".repeat(row.depth), title.text);
     }
     cells
 }
 
 /// A session's list row; `active` adds its `active` column after the
-/// status (`session list --include-inactive`).
-fn session_row(s: &SessionPayload, active: bool) -> Vec<Cell> {
+/// status (`session list --include-inactive`). `table` shows `UPDATED` as
+/// its date; piped output keeps the full instant.
+fn session_row(s: &SessionPayload, active: bool, table: bool) -> Vec<Cell> {
+    let updated = if table {
+        updated_date(s.updated)
+    } else {
+        timestamp(s.updated)
+    };
     let mut cells = vec![
         Cell::plain(s.id.clone()),
         Cell::plain(s.status),
@@ -1655,7 +1661,7 @@ fn session_row(s: &SessionPayload, active: bool) -> Vec<Cell> {
         },
         Cell::plain(s.project.clone()),
         Cell::plain(joined(&s.topics)),
-        Cell::plain(timestamp(s.updated)),
+        Cell::plain(updated),
         Cell::plain(one_line(&s.title)),
     ];
     if active {
@@ -1983,6 +1989,15 @@ fn due_role(due: bool) -> Role {
 
 fn timestamp(at: OffsetDateTime) -> String {
     at.format(&Rfc3339).unwrap_or_else(|_| String::from("-"))
+}
+
+/// A session's `UPDATED` in the table: its UTC date, `YYYY-MM-DD`. Sorting
+/// and every piped or machine form use the full instant ([`timestamp`]).
+pub(super) fn updated_date(at: OffsetDateTime) -> String {
+    at.to_offset(UtcOffset::UTC)
+        .date()
+        .format(&Iso8601::DATE)
+        .unwrap_or_else(|_| String::from("-"))
 }
 
 fn write_json<T: Serialize + ?Sized>(out: &mut dyn Write, value: &T) -> io::Result<()> {

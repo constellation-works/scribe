@@ -47,7 +47,10 @@ number, else the terminal's own size (`TIOCGWINSZ` on stdout); both are read
 in the output sink only, and with neither no table is cut. In plain and table
 rows, free text is flattened to one line (every whitespace run becomes one
 space), an empty value or list is `-`, lists are comma-joined, and timestamps
-are RFC 3339. An absent cell is `-` in every table, never blank; the one
+are RFC 3339, except the `updated` column of a `session list` table (flat,
+`--tree` or `--include-inactive`), which is the UTC date `YYYY-MM-DD`; piped
+output, `--json` and `session show` keep the full instant, and the order of
+records is by the full instant, never by the shown date. An absent cell is `-` in every table, never blank; the one
 blank cells are the layout cells of a continuation row (a proposal's quote
 line).
 
