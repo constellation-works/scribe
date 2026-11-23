@@ -29,6 +29,50 @@ fn tokens(text: &str) -> Vec<String> {
     crate::ask::tokens(text)
 }
 
+fn rows(conn: &rusqlite::Connection, query: &str) -> Vec<Vec<rusqlite::types::Value>> {
+    let mut statement = conn.prepare(query).unwrap();
+    let columns = statement.column_count();
+    statement
+        .query_map([], |row| {
+            (0..columns)
+                .map(|column| row.get::<_, rusqlite::types::Value>(column))
+                .collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .unwrap()
+        .map(Result::unwrap)
+        .collect()
+}
+
+#[derive(Debug, PartialEq)]
+struct ProjectGroupRows {
+    groups: Vec<Vec<rusqlite::types::Value>>,
+    members: Vec<Vec<rusqlite::types::Value>>,
+    messages: Vec<Vec<rusqlite::types::Value>>,
+    sessions: Vec<Vec<rusqlite::types::Value>>,
+}
+
+fn project_group_rows(path: &Path) -> ProjectGroupRows {
+    let conn = rusqlite::Connection::open(path).unwrap();
+    ProjectGroupRows {
+        groups: rows(
+            &conn,
+            "SELECT id,title,kind,project,opened,closed,opener,related,summary,slug FROM groups ORDER BY id",
+        ),
+        members: rows(
+            &conn,
+            "SELECT position,group_id,seat,session,author,joined,turn_cursor FROM group_members ORDER BY position",
+        ),
+        messages: rows(
+            &conn,
+            "SELECT id,session,message,role,at,text,sha256,group_only FROM messages ORDER BY id",
+        ),
+        sessions: rows(
+            &conn,
+            "SELECT provider_session,has_record FROM sessions ORDER BY provider_session",
+        ),
+    }
+}
+
 #[cfg(unix)]
 fn mode(path: &Path) -> u32 {
     use std::os::unix::fs::PermissionsExt;
@@ -592,6 +636,83 @@ fn project_group_slug_joins_and_inherits() {
             .members()
             .contains(&child)
     );
+}
+
+#[test]
+fn project_group_backfill_rejects_unverified_turns_atomically() {
+    use crate::group::GroupAddition;
+
+    let dir = private_tempdir();
+    let store = Store::open(dir.path());
+    let project = crate::Project::sanitized("checkout");
+    let opener = "group-opener".parse().unwrap();
+    let redactor = Redactor::default();
+    store
+        .add_project_group_sessions(
+            "verified-backfill",
+            &project,
+            &opener,
+            &[GroupAddition {
+                session: "established-session".parse().unwrap(),
+                turns: Some(vec![message(
+                    "established-session",
+                    "established-turn",
+                    "verified existing turn",
+                )]),
+            }],
+            T0,
+            &redactor,
+        )
+        .unwrap();
+    let before = project_group_rows(&dir.path().join(DB_FILE));
+
+    let mut assistant_turn = message(
+        "assistant-session",
+        "assistant-turn",
+        "assistant text must not be backfilled",
+    );
+    assistant_turn.role = Speaker::Assistant;
+    let invalid_additions = [
+        GroupAddition {
+            session: "foreign-named-session".parse().unwrap(),
+            turns: Some(vec![message(
+                "different-session",
+                "foreign-turn",
+                "foreign session text",
+            )]),
+        },
+        GroupAddition {
+            session: "assistant-session".parse().unwrap(),
+            turns: Some(vec![assistant_turn]),
+        },
+    ];
+
+    for (index, invalid) in invalid_additions.into_iter().enumerate() {
+        let accepted_before_failure = GroupAddition {
+            session: format!("would-be-added-{index}").parse().unwrap(),
+            turns: Some(vec![message(
+                &format!("would-be-added-{index}"),
+                &format!("valid-turn-{index}"),
+                "this earlier batch entry must not be written",
+            )]),
+        };
+        let err = store
+            .add_project_group_sessions(
+                "verified-backfill",
+                &project,
+                &opener,
+                &[accepted_before_failure, invalid],
+                T0,
+                &redactor,
+            )
+            .unwrap_err();
+        assert_eq!(err.code(), "group_membership", "{err}");
+        assert_eq!(
+            project_group_rows(&dir.path().join(DB_FILE)),
+            before,
+            "rejected batch {index} changed group, membership, message, session, or cursor rows"
+        );
+    }
 }
 
 #[test]

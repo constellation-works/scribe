@@ -450,7 +450,9 @@ impl Store {
     /// group refuses the whole line, naming each such session and its group, so
     /// nothing changes. A session whose transcript was read has its typed turns
     /// stored, whatever their age, and its capture cursor set to the last of
-    /// them; one without a transcript gets membership only.
+    /// them; one without a transcript gets membership only. Backfilled turns
+    /// must all be user turns belonging to their named session; otherwise the
+    /// whole call is refused before it writes anything.
     pub fn add_project_group_sessions(
         &self,
         slug: &str,
@@ -461,6 +463,18 @@ impl Store {
         redactor: &Redactor,
     ) -> Result<GroupAdded> {
         check_project_slug(slug, redactor)?;
+        if additions.iter().any(|addition| {
+            addition.turns.as_ref().is_some_and(|turns| {
+                turns.iter().any(|turn| {
+                    turn.session != addition.session || turn.role != crate::Speaker::User
+                })
+            })
+        }) {
+            return Err(refusal(
+                WriteRefusal::GroupMembership,
+                "project group backfill takes only the named session's user turns",
+            ));
+        }
         self.write(|| {
             for addition in additions {
                 self.refuse_forgotten(&addition.session)?;
