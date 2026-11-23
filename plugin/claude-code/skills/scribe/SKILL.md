@@ -22,11 +22,18 @@ For focused lookup, use `scribe search "<words>" --json`,
 `session show <id> --log --json`; a citation `session:<id>#<n>` names one segment.
 A session id may also be its short `s-<n>` (`short_id` in JSON); cite with
 the full `id`.
-`scribe search "<words>" --kind message --json` searches the user's own
-stored turns from switched-on sessions and group members instead (each hit
-cites its session). Group consent captures eligible typed turns after joining an
-open group even when cataloging is off; search finds them with or without
-`--group <id>`. Leaving removes turns held only on group consent.
+`scribe search "<words>" --kind message --json` searches stored turns from
+switched-on sessions and group members instead (each hit cites its session).
+Most are the user's own typed turns. An assistant turn is stored only when a
+session pass drafts a claim from it, which needs a tag whose config `from` is
+`assistant` or `both` (the shipped tags read only the user), and never when it
+holds a finance or sensitive-event word. Each hit's `title` ends with its
+speaker, `(user)` or `(assistant)`; its `message` is the provider's message id.
+An assistant hit is the assistant's account, never the user's words. Group
+consent captures eligible typed turns after joining an open group even when
+cataloging is off; search finds them with or without `--group <id>`. Group
+turns are always the user's, and leaving removes turns held only on group
+consent.
 Preserve verbatim quotes and their citations. An empty or failed lookup is
 not evidence of a preference. Use `--help` for filters and write arguments.
 
@@ -241,7 +248,7 @@ id is `g-<n>`; every `<id>` below takes the id or a unique prefix.
   handoff with `entry show <id>`.
 - **Citing.** Cite a group as `g-<n>`. Its closing summary is an account the
   model wrote at close, not the human's words. Quote the human only from a
-  stored-turn hit, citing its `session:<id>`.
+  stored-turn hit titled `(user)`, citing its `session:<id>`.
 - **Close.** Run `scribe group close <id>` from the session that opened the
   group, and only when the human asks. It sends the members' 16 newest active
   handoffs and 32 newest stored user turns to the ask model in one call. It then
