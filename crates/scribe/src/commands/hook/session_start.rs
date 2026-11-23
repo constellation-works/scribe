@@ -125,6 +125,13 @@ fn seat_at_start(ctx: &Context, child: &SessionId, predecessor: &ClearedPredeces
             message: None,
             outcomes: Vec::new(),
         },
+        Ok(SeatStart::Replaced) => SeatReply {
+            context: Some(format!(
+                "scribe: session {child} was replaced on its group seat and holds none now; nothing inherited"
+            )),
+            message: None,
+            outcomes: Vec::new(),
+        },
         Ok(SeatStart::Inherited { hold, from }) => SeatReply {
             context: Some(format!(
                 "scribe: session {child} holds seat {} ({}) in {} (inherited from {from})",

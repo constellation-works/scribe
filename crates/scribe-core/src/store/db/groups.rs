@@ -346,6 +346,7 @@ impl Store {
             #[default]
             NoOpenGroups,
             AlreadySeated(SeatHold),
+            Replaced,
             Inherit,
             Unjoined,
         }
@@ -359,6 +360,9 @@ impl Store {
             if !has_open_groups(conn).map_err(fail)? {
                 return Ok(Snapshot::NoOpenGroups);
             }
+            if has_membership(conn, child).map_err(fail)? {
+                return Ok(Snapshot::Replaced);
+            }
             let Some(parent) = predecessor else {
                 return Ok(Snapshot::Unjoined);
             };
@@ -371,6 +375,7 @@ impl Store {
             return Ok(match snap {
                 Snapshot::NoOpenGroups => SeatStart::NoOpenGroups,
                 Snapshot::AlreadySeated(hold) => SeatStart::AlreadySeated(hold),
+                Snapshot::Replaced => SeatStart::Replaced,
                 Snapshot::Unjoined => SeatStart::Unjoined,
                 Snapshot::Inherit => unreachable!(),
             });
@@ -387,6 +392,9 @@ impl Store {
             }
             if !has_open_groups(&conn).map_err(fail)? {
                 return Ok(SeatStart::NoOpenGroups);
+            }
+            if has_membership(&conn, child).map_err(fail)? {
+                return Ok(SeatStart::Replaced);
             }
             let Some((group, seat, role, author)) =
                 newest_open_seat(&conn, parent).map_err(fail)?
@@ -410,12 +418,19 @@ impl Store {
     }
 }
 
+/// The seat the session holds now. Its row must be the seat's newest position:
+/// a session that a later member replaced keeps its row as history but holds nothing.
 fn held_seat(conn: &Connection, session: &SessionId) -> rusqlite::Result<Option<SeatHold>> {
     conn.query_row(
         "SELECT m.group_id, m.seat, s.role
          FROM group_members m
          JOIN group_seats s ON s.group_id = m.group_id AND s.name = m.seat
-         WHERE m.session = ?1",
+         WHERE m.session = ?1
+           AND m.position = (
+               SELECT MAX(m2.position)
+               FROM group_members m2
+               WHERE m2.group_id = m.group_id AND m2.seat = m.seat
+           )",
         [session.as_str()],
         |r| {
             Ok(SeatHold {
@@ -426,6 +441,16 @@ fn held_seat(conn: &Connection, session: &SessionId) -> rusqlite::Result<Option<
         },
     )
     .optional()
+}
+
+/// Whether the session has ever been a member. `session` is unique across the
+/// store, so a historical row blocks a second insert for that session.
+fn has_membership(conn: &Connection, session: &SessionId) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM group_members WHERE session = ?1)",
+        [session.as_str()],
+        |r| r.get(0),
+    )
 }
 
 fn has_open_groups(conn: &Connection) -> rusqlite::Result<bool> {
