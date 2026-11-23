@@ -815,17 +815,25 @@ fn a_quoted_request_closes_the_group_for_a_session_with_no_seat() {
     transcript(
         &f,
         D,
-        &[row(
-            D,
-            "u-close",
-            "user",
-            "please close g-1 once the release ships",
-        )],
+        &[
+            row(
+                D,
+                "u-close",
+                "user",
+                "please close g-1 once the release ships",
+            ),
+            row(
+                D,
+                "u-clipped",
+                "user",
+                "please close g-12 once the release ships",
+            ),
+        ],
     );
     open(&f);
     join_as(&f, B, "g-1", "chief", &[], 0);
     let path = summary_model(&f);
-    let quote = "close g-1 once the release ships";
+    let quote = "please close g-1";
     // Without a quote D holds no seat, so the opener's rule still refuses it.
     assert_close_refused(&f, &path, D);
 
@@ -873,7 +881,9 @@ fn a_quoted_close_is_refused_unless_a_typed_span_of_this_session_names_the_group
         D,
         &[
             row(D, "u-typed", "user", "close g-1 once the release ships"),
-            row(D, "u-other", "user", "close g-12 after the audit"),
+            row(D, "u-other", "user", "finish g-12 after the audit"),
+            row(D, "u-prefix", "user", "close xg-1 after review"),
+            row(D, "u-unicode", "user", "close g-1é after review"),
             row(B, "u-copied", "user", "close g-1 copied from the parent"),
             harness,
         ],
@@ -889,7 +899,10 @@ fn a_quoted_close_is_refused_unless_a_typed_span_of_this_session_names_the_group
         // Verbatim in a typed turn, but it does not name g-1.
         ("the release ships", "group_membership"),
         // Names g-12, which is not g-1.
-        ("close g-12 after the audit", "group_membership"),
+        ("finish g-12 after the audit", "group_membership"),
+        ("finish g-1", "group_membership"),
+        ("close g-1é", "group_membership"),
+        ("g-1 after review", "group_membership"),
     ] {
         assert_close_refused_with(&f, &path, D, &["--quote", quote], code);
     }
