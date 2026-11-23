@@ -125,6 +125,22 @@ fn a_session_table_updated_is_its_utc_date() {
 }
 
 #[test]
+fn a_session_table_updated_whose_utc_date_leaves_the_supported_range_is_a_dash() {
+    // ORB-27257: a record keeps the offset it was written with, so its local
+    // date can sit at the supported bound while its UTC date does not. The
+    // last UTC date in range renders; the first one past the bound is `-`.
+    // 9999-12-30 23:00 at UTC-1 is 9999-12-31 00:00 UTC.
+    assert_eq!(
+        updated_date(datetime!(9999-12-30 23:00:00 -1)),
+        "9999-12-31"
+    );
+    // 9999-12-31 23:00 at UTC-1 is 10000-01-01 00:00 UTC: out of range.
+    assert_eq!(updated_date(datetime!(9999-12-31 23:00:00 -1)), "-");
+    // The lower bound: -9999-01-01 00:30 at UTC+1 is in year -10000 UTC.
+    assert_eq!(updated_date(datetime!(-9999-01-01 00:30:00 +1)), "-");
+}
+
+#[test]
 fn an_empty_list_is_empty_stdout_in_human_modes_and_an_empty_envelope_in_json() {
     // STD-01 R16 (and R7: JSON mode always emits one document).
     for (records, key) in [

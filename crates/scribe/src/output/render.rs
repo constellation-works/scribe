@@ -2037,11 +2037,12 @@ fn timestamp(at: OffsetDateTime) -> String {
 
 /// A session's `UPDATED` in the table: its UTC date, `YYYY-MM-DD`. Sorting
 /// and every piped or machine form use the full instant ([`timestamp`]).
+/// A record's offset can put its UTC date outside the supported range, which
+/// has no `YYYY-MM-DD`; the table shows `-` there rather than panicking.
 pub(super) fn updated_date(at: OffsetDateTime) -> String {
-    at.to_offset(UtcOffset::UTC)
-        .date()
-        .format(&Iso8601::DATE)
-        .unwrap_or_else(|_| String::from("-"))
+    at.checked_to_offset(UtcOffset::UTC)
+        .and_then(|utc| utc.date().format(&Iso8601::DATE).ok())
+        .unwrap_or_else(|| String::from("-"))
 }
 
 fn write_json<T: Serialize + ?Sized>(out: &mut dyn Write, value: &T) -> io::Result<()> {
