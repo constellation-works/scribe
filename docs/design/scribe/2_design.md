@@ -2141,9 +2141,12 @@ Mutating commands — every `hook` event that writes, `session pass`,
 lines hold ids and error codes only; `said`, `content` and model text never
 enter the audit log. A hook run writes one line per entry written
 (`target` the entry id), per refusal and per failed line (`target`
-`session:<id>`, with its `error_code`) and per cite filled; a run that
-changed nothing (no `#scribe` line, a replay, a `Stop` with no missed instruction or waiting cite)
-writes none.
+`session:<id>`, with its `error_code`) and per cite filled. A `UserPromptSubmit`
+or `Stop` run that stores a group member's new typed turns writes one more
+content-free success line for the run (`target` `session:<id>`, no
+`error_code`), however many turns it stores. A run that changed nothing (no
+`#scribe` line, no new group turn, a replay, a `Stop` with no missed
+instruction or waiting cite) writes none.
 
 ## 9. Concerns & Honest Limitations
 
@@ -6632,8 +6635,11 @@ stored stay readable until it leaves or is forgotten. The replaced session's
 hooks move its capture cursor past the turns it types meanwhile without storing
 them, and when the replacement leaves, the restored holder's consent window
 restarts at that moment, so turns typed during the displacement are never
-stored later. Capture uses the pass's exclusions for synthetic and control turns, pasted blocks,
-fenced code and sensitive text, plus its store redactor. Regular cataloging
+stored later. Capture uses the pass's exclusions for synthetic and control
+turns, pasted blocks, fenced code and sensitive text, plus its store redactor.
+Capture is audited: each prompt or `Stop` run that stores new turns writes one
+content-free line (`target` `session:<id>`, no error code; §8), and a run that
+stores none writes none. Regular cataloging
 still follows the session's own switch. Explicit `#scribe` annotations keep
 their usual behavior. Leaving deletes the turns stored on group consent alone.
 `#scribe forget <session-id>` also works for a session with stored turns and no

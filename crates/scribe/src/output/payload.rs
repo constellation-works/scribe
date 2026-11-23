@@ -1717,8 +1717,9 @@ pub(crate) struct HookReply {
     /// Block the prompt with this reason, shown to the user: a `/scribe`
     /// command is answered here and never reaches the model.
     pub(crate) block: Option<String>,
-    /// One per record written or refused, for the audit log; empty when the
-    /// hook changed nothing.
+    /// One per record written or refused, and one per run that stored a group
+    /// member's new turns, for the audit log; empty when the hook changed
+    /// nothing.
     pub(crate) outcomes: Vec<HookOutcome>,
 }
 
