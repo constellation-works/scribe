@@ -23,7 +23,9 @@
 //! (`target` `session:<id>`, no error code, content-free, one per run however
 //! many turns it stores); one per deferred ancestry check that a session start
 //! records, and one per typed prompt that consumes one (`target` `session:<id>`,
-//! no error code, whatever the prompt holds). A run that only moves a group
+//! no error code, whatever the prompt holds), and one failure line with its
+//! code for a check that could not be recorded or consumed. A run that only
+//! moves a group
 //! member's capture cursor writes none, and so does a no-op switch or a status;
 //! a session pass one per
 //! session passed (a `session catalog`

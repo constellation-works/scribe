@@ -2147,9 +2147,11 @@ enter the audit log. A hook run writes one line per entry written
 (`target` the entry id), per refusal and per failed line (`target`
 `session:<id>`, with its `error_code`) and per cite filled. A session start that
 records a deferred ancestry check, and a typed `UserPromptSubmit` that consumes
-one, each write one success line (`target` `session:<id>`, no `error_code`). A
-`UserPromptSubmit` or `Stop` run that stores a group member's new typed turns
-writes one more content-free success line for the run (`target`
+one, each write one success line (`target` `session:<id>`, no `error_code`); a
+check that fails to record or consume writes one failure line with its
+`error_code` instead. A `UserPromptSubmit` or `Stop` run that stores a group
+member's new typed turns writes one more content-free success line for the run
+(`target`
 `session:<id>`, no `error_code`), however many turns it stores. A run that
 changed nothing (no `#scribe` line, no deferred check to consume, no new group
 turn, a replay, a `Stop` with no missed instruction or waiting cite) writes
@@ -6595,7 +6597,7 @@ distinct session ids marked `via: clear`. A `via: launch` id can survive
 several clears. Only the clear ids identify immediate predecessors. This
 lookup runs for interactive Claude Code starts whose source is `startup`,
 `clear`, or omitted; other source values, including `resume` and `compact`,
-do not restore a handoff. If the checked transcript does not yet exist at an eligible start, the hook reports that and records a deferred check. A later typed `UserPromptSubmit` whose reply is not blocked (so its context can reach the agent) consumes that check once the transcript is readable or the child already has a continuation link or seat, reading the same ancestry and supplying the handoff and inherited seat in that turn. Blocked `/scribe` prompts and prompts while the transcript is still missing leave the deferred check pending. It does not repeat recovery if the child already has a continuation link or has held a seat.
+do not restore a handoff. If the checked transcript does not yet exist at an eligible start, the hook reports that and records a deferred check. A later typed `UserPromptSubmit` whose reply is not blocked (so its context can reach the agent) consumes that check once the transcript is readable or the child already has a continuation link or seat, reading the same ancestry and supplying the handoff and inherited seat in that turn. Blocked `/scribe` prompts and prompts while the transcript is still missing leave the deferred check pending. It does not repeat recovery if the child already has a continuation link or has held a seat. A store failure is a reply, not an error exit: a start whose marker cannot be recorded still prints its brief, memory, proposals and handoff, reports the failure, and inherits no seat; a prompt whose check fails keeps its own echoes and writes and its group capture, reports the failure, and leaves the check pending for the next prompt. Both write a failure audit line with the error's code.
 
 For a single predecessor, the hook reads its newest active handoff. If its
 mode is `continue`, that one checked body (at most 3,000 characters) starts

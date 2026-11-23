@@ -63,11 +63,12 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
                 Ok(payload::Transcript::Missing)
             )
         });
-    let deferred = if missing {
-        ctx.store().defer_ancestry(&session)?
-    } else {
-        false
-    };
+    // A marker that cannot be recorded is reported, not fatal: the start
+    // still prints its brief, memory, proposals and handoff.
+    let deferral = missing.then(|| ctx.store().defer_ancestry(&session));
+    if let Some(Err(err)) = &deferral {
+        tracing::warn!(%err, "cannot record the deferred ancestry check");
+    }
     let predecessor = if start_ancestry && !missing {
         continuation::cleared_predecessor(ctx, payload.transcript_path.as_deref(), &session)
     } else {
@@ -83,23 +84,22 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
             (reminder, None, Vec::new())
         }
     };
-    if deferred {
+    if matches!(deferral, Some(Ok(true))) {
         outcomes.push(HookOutcome {
             target: Some(format!("session:{session}")),
             error_code: None,
         });
     }
-    let seat = if missing {
-        SeatReply {
+    let seat = match deferral {
+        Some(Ok(_)) => SeatReply {
             context: Some(
                 "scribe: transcript not written yet; ancestry checked at the first prompt".into(),
             ),
             ..SeatReply::default()
-        }
-    } else if start_ancestry {
-        seat_at_start(ctx, &session, &predecessor)
-    } else {
-        SeatReply::default()
+        },
+        Some(Err(err)) => deferral_failure(&session, &err),
+        None if start_ancestry => seat_at_start(ctx, &session, &predecessor),
+        None => SeatReply::default(),
     };
     outcomes.extend(seat.outcomes);
     let lines: Vec<String> = proposals
@@ -126,6 +126,24 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
         block: None,
         outcomes,
     }))
+}
+
+/// The reply when the deferred check could not be recorded. No marker exists,
+/// so the first prompt will not check this start's predecessor; no seat is
+/// inherited here.
+fn deferral_failure(child: &SessionId, err: &scribe_core::Error) -> SeatReply {
+    SeatReply {
+        context: Some(format!(
+            "scribe: could not record the deferred ancestry check ({err}) — re-run `scribe group join` if your brief names a group"
+        )),
+        message: Some(format!(
+            "scribe: could not record the deferred ancestry check — {err}"
+        )),
+        outcomes: vec![HookOutcome {
+            target: Some(format!("session:{child}")),
+            error_code: Some(err.code()),
+        }],
+    }
 }
 
 #[derive(Default)]

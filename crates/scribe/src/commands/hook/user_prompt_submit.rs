@@ -70,10 +70,12 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
         return Ok(output);
     }
     let session = payload::session(&payload.session_id)?;
-    if !ctx.store().has_deferred_ancestry(&session)? {
-        return Ok(output);
+    // The echoes and writes above stand even when this step fails: the
+    // failure is a reply, and the check stays pending for the next prompt.
+    if let Err(err) = apply_deferred_ancestry(&payload, &session, ctx, &mut output) {
+        tracing::warn!(%err, "cannot apply the deferred ancestry check");
+        ancestry_failure(&session, &err, &mut output);
     }
-    apply_deferred_ancestry(&payload, &session, ctx, &mut output)?;
     Ok(output)
 }
 
@@ -82,7 +84,10 @@ fn apply_deferred_ancestry(
     session: &SessionId,
     ctx: &Context,
     output: &mut Output,
-) -> Result<(), CliError> {
+) -> Result<(), scribe_core::Error> {
+    if !ctx.store().has_deferred_ancestry(session)? {
+        return Ok(());
+    }
     let listed = ctx.store().list_sessions(&scribe_core::SessionFilter {
         include_inactive: true,
         ..Default::default()
@@ -157,6 +162,36 @@ fn prepend_message(target: &mut Option<String>, message: String) {
             .collect::<Vec<_>>()
             .join("\n"),
     );
+}
+
+fn append_line(target: &mut Option<String>, line: String) {
+    *target = Some(
+        [target.take(), Some(line)]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+}
+
+/// The reply to a deferred ancestry check that failed, after the prompt's own
+/// echoes. Consuming the marker is the check's only write, and it comes after
+/// every call that can fail; restoration reports its own errors. So a failure
+/// leaves the marker pending and nothing restored.
+fn ancestry_failure(session: &SessionId, err: &scribe_core::Error, output: &mut Output) {
+    let Output::Hook(reply) = output else {
+        return;
+    };
+    let line = format!(
+        "scribe: could not check this session's ancestry ({}); the check stays pending for the next prompt",
+        chain(err)
+    );
+    append_line(&mut reply.message, line.clone());
+    append_line(&mut reply.context, format!("{line} {AGENT_RELAY_NOTE}"));
+    reply.outcomes.push(HookOutcome {
+        target: Some(format!("session:{session}")),
+        error_code: Some(err.code()),
+    });
 }
 
 /// One echo line and the note the agent gets for it.

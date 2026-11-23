@@ -1666,6 +1666,165 @@ fn deferred_ancestry_survives_while_transcript_remains_missing() {
     assert!(again.stdout.is_empty(), "{}", text(&again.stdout));
 }
 
+/// Count of pending deferred ancestry checks.
+fn deferred_rows(f: &Fixture) -> i64 {
+    rusqlite::Connection::open_with_flags(
+        f.root().join("scribe.db"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap()
+    .query_row("SELECT COUNT(*) FROM deferred_ancestry", [], |r| r.get(0))
+    .unwrap()
+}
+
+#[test]
+fn session_start_marker_write_failure_keeps_the_brief_and_reports_the_failure() {
+    let f = Fixture::new();
+    transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
+    open(&f);
+    join(&f, A, "g-1", &["--role", "reviewer"], 0);
+    // A closed group with a summary gives the project brief a block to keep.
+    let claude = f.fake_program(
+        "claude",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"result\",\"is_error\":false,\"structured_output\":{\"summary\":\"Retained group summary.\"}}'\n",
+    );
+    let closed = f
+        .cmd(&["group", "close", "g-1", "--json"])
+        .env("CLAUDE_CODE_SESSION_ID", A)
+        .env("PATH", &claude)
+        .output()
+        .unwrap();
+    assert_eq!(closed.status.code(), Some(0), "{}", text(&closed.stderr));
+    support::sql(
+        &f.root(),
+        "CREATE TRIGGER abort_defer_ancestry BEFORE INSERT ON deferred_ancestry
+         BEGIN
+             SELECT RAISE(ABORT, 'injected ancestry failure');
+         END;",
+    );
+
+    let path = transcript_path(&f, B);
+    let project = f.elsewhere("scribe");
+    f.create_private_dir_all(&project);
+    let start = session_start_with_cwd(
+        &f,
+        B,
+        Some(&path),
+        "startup",
+        "claude-desktop",
+        Some(&project),
+    );
+    let message = start["systemMessage"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("could not record the deferred ancestry check"),
+        "{start}"
+    );
+    let context = start["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(context.contains("scribe group join"), "{start}");
+    assert!(
+        !context.contains("ancestry checked at the first prompt"),
+        "{start}"
+    );
+    assert!(context.contains("## Last group"), "{start}");
+    assert!(context.contains("Retained group summary."), "{start}");
+    assert_eq!(deferred_rows(&f), 0);
+
+    let line = support::audit_lines(&f.root()).pop().unwrap();
+    assert_eq!(line["command"], "hook session-start");
+    assert_eq!(line["status"], "failure");
+    assert_eq!(line["target"], format!("session:{B}"));
+    assert_eq!(line["error_code"], "store_database");
+}
+
+#[test]
+fn first_prompt_ancestry_failure_keeps_the_prompts_own_writes_and_replies() {
+    let f = Fixture::new();
+    let path = setup_missing_start(&f);
+    // B is a member, so this prompt also captures its typed turn for the
+    // group, and its settling line retires the handoff A wrote.
+    transcript(&f, B, &[row(B, "typed", "user", "Keep groupretireorchid.")]);
+    join_as(&f, B, "g-1", "tester", &[], 0);
+    support::sql(
+        &f.root(),
+        "CREATE TRIGGER abort_take_ancestry BEFORE DELETE ON deferred_ancestry
+         BEGIN
+             SELECT RAISE(ABORT, 'injected ancestry failure');
+         END;",
+    );
+    assert_eq!(deferred_rows(&f), 1);
+
+    let prompt = hook(
+        &f,
+        &["hook", "user-prompt-submit"],
+        json!({
+            "session_id": B,
+            "transcript_path": path,
+            "cwd": f.home(),
+            "prompt": "#scribe retire handoff-1\nKeep groupretireorchid."
+        }),
+        &[("CLAUDE_CODE_ENTRYPOINT", "claude-desktop")],
+    );
+    let reply: Value = serde_json::from_slice(&prompt.stdout).unwrap();
+    let message = reply["systemMessage"].as_str().unwrap_or_default();
+    assert!(message.contains("retired handoff-1"), "{reply}");
+    assert!(
+        message.contains("could not check this session's ancestry"),
+        "{reply}"
+    );
+    let context = reply["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(context.contains("retired handoff-1"), "{reply}");
+    assert!(context.contains("relay this to the user"), "{reply}");
+
+    // The settling write and the group capture of this prompt are kept.
+    assert_eq!(
+        invoke(&f, A, &["entry", "show", "handoff-1"], 0)["status"],
+        "retired"
+    );
+    assert_eq!(
+        invoke(
+            &f,
+            A,
+            &[
+                "search",
+                "groupretireorchid",
+                "--kind",
+                "message",
+                "--group",
+                "g-1"
+            ],
+            0
+        )["total"],
+        1
+    );
+    // The check was not consumed, and the failure is audited with its code.
+    assert_eq!(deferred_rows(&f), 1);
+    let line = support::audit_lines(&f.root()).pop().unwrap();
+    assert_eq!(line["command"], "hook user-prompt-submit");
+    assert_eq!(line["status"], "failure");
+    assert_eq!(line["target"], format!("session:{B}"));
+    assert_eq!(line["error_code"], "store_database");
+
+    // Once the store writes again, the next typed prompt consumes the check.
+    support::sql(&f.root(), "DROP TRIGGER abort_take_ancestry;");
+    let next = hook(
+        &f,
+        &["hook", "user-prompt-submit"],
+        json!({
+            "session_id": B,
+            "transcript_path": path,
+            "cwd": f.home(),
+            "prompt": "continue"
+        }),
+        &[("CLAUDE_CODE_ENTRYPOINT", "claude-desktop")],
+    );
+    assert!(next.stdout.is_empty(), "{}", text(&next.stdout));
+    assert_eq!(deferred_rows(&f), 0);
+}
+
 #[test]
 fn missing_or_non_member_predecessor_joins_nothing_and_tells_session_to_rerun_join() {
     let f = Fixture::new();
