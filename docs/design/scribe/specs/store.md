@@ -246,7 +246,8 @@ turns kept solely through membership. A session pass that writes the same
 message clears that flag. Capture rechecks open membership and the cursor in
 the message write transaction. Capture skips replay if the transcript no
 longer contains its cursor. A header-only `sessions` row gives an uncataloged
-member's messages a forget target.
+member's messages a forget target. A profile refresh reads only turns with
+`group_only = 0`, so no derived profile holds text kept solely on group consent.
 
 Leaving removes the membership, its group-only turns and any derived summary
 in one transaction. Session forget erases the session's turns and invalidates

@@ -449,11 +449,14 @@ impl<'a> Writer<'a> {
     }
 
     /// `session`'s stored user turns, oldest first, joined by blank lines.
+    /// Turns kept only on group consent (`group_only`) are left out: a
+    /// derived profile would outlive the group.
     pub(in crate::store) fn user_text(&self, session: &str) -> Result<String> {
         let mut select = self
             .conn
             .prepare(
-                "SELECT text FROM messages WHERE session = ?1 AND role = 'user' ORDER BY at, id",
+                "SELECT text FROM messages
+                 WHERE session = ?1 AND role = 'user' AND group_only = 0 ORDER BY at, id",
             )
             .map_err(|e| self.err(e))?;
         let rows = select
