@@ -6603,8 +6603,9 @@ The transaction rechecks the handoff, copies the predecessor's on/off state
 and stores a `continues` link on the child. A parent with no switch counts
 as off. A child without a record holds the link in its switch’s
 `pending_links`, even when off, with no pass scheduled until recording is
-on. Repeating a continuation returns the body and preserves any switch
-change made since the link was written.
+on. An explicit `/scribe on` or `/scribe off` typed before a deferred check runs
+is preserved instead of inheriting the parent’s switch. Repeating a continuation
+returns the body and preserves any switch change made since the link was written.
 
 The ancestry record might not yet be visible at hook time. The user can type
 `/scribe continue <handoff-id>` to select an active continue handoff. A

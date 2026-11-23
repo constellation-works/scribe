@@ -25,7 +25,8 @@
 //! security boundary): a transcript outside Claude Code's projects
 //! directory, or named for another session, switches nothing. A change to the
 //! switch, a link or a catalog is audited (`target` `session:<id>`), and a
-//! refusal is audited with its code; a no-op or a status writes nothing.
+//! refusal is audited with its code; a no-op or a status writes nothing, except
+//! that an explicit off during deferred ancestry records and audits the opt-out.
 
 use super::payload::{self, PromptPayload};
 use crate::app::Context;
@@ -96,13 +97,30 @@ pub(super) fn run(
         | Switch::Group(_)
         | Switch::Status => store
             .control()
-            .map(|state| Change::Status(state.get(session).cloned())),
-        Switch::Unknown(arg) => Ok(Change::Unknown(arg.clone())),
-        Switch::On | Switch::Off => store.update_control(|state| {
-            control::switch_for_provider(state, session, switch, ctx.now(), ctx.provider())
+            .map(|state| (Change::Status(state.get(session).cloned()), false)),
+        Switch::Unknown(arg) => Ok((Change::Unknown(arg.clone()), false)),
+        Switch::On | Switch::Off => store.has_deferred_ancestry(session).and_then(|pending| {
+            store.update_control(|state| {
+                let change =
+                    control::switch_for_provider(state, session, switch, ctx.now(), ctx.provider());
+                // An explicit opt-out must survive a later deferred inheritance.
+                let recorded_off = pending
+                    && matches!(switch, Switch::Off)
+                    && !state.sessions.contains_key(session);
+                if recorded_off {
+                    state.sessions.insert(
+                        session.clone(),
+                        SessionControl {
+                            provider: ctx.provider(),
+                            ..SessionControl::default()
+                        },
+                    );
+                }
+                (change, recorded_off)
+            })
         }),
     };
-    let change = match change {
+    let (change, recorded_off) = match change {
         Ok(change) => change,
         Err(err) => {
             let outcomes = match switch {
@@ -131,6 +149,10 @@ pub(super) fn run(
         Change::Unknown(_) => vec![HookOutcome {
             target: target(),
             error_code: Some(UNKNOWN_COMMAND),
+        }],
+        Change::AlreadyOff if recorded_off => vec![HookOutcome {
+            target: target(),
+            error_code: None,
         }],
         Change::AlreadyOn(_) | Change::AlreadyOff | Change::Status(_) => Vec::new(),
     };
