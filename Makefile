@@ -54,13 +54,15 @@ fmt-check:
 
 # Source-only structure checks: dependency direction (STD-02 R1-R6), unit-test
 # module reachability (STD-02 R19), terminal/stream ownership (STD-01 R17),
-# and the cases that test those gates themselves (STD-04 R2, R12).
+# current-format claims in the store spec against FORMAT, and the cases that
+# test those gates themselves (STD-04 R2, R12).
 structure:
 	python3 scripts/sync-skills.py --check
 	python3 scripts/sync-orbit-packages.py --check
 	./scripts/check-dependency-direction.sh
 	./scripts/check-test-modules.sh
 	./scripts/check-terminal-guard.sh
+	python3 scripts/check-store-format-claims.py
 	./scripts/tests/check-gates.sh
 
 # STD-09 R12: every relative link, heading anchor and image path in README.md
