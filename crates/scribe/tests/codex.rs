@@ -929,3 +929,37 @@ fn group_consent_accepts_only_host_attributed_input_in_the_calling_thread() {
     assert_eq!(group["opener"], ID);
     assert_eq!(group["id"], "g-1");
 }
+
+#[test]
+fn group_subcommand_spelling_under_codex_follows_the_shared_parser() {
+    for spelling in [
+        "/scribe GROUP water-economy",
+        "$scribe Group water-economy",
+        "/scribe:scribe gRoUp water-economy",
+    ] {
+        let f = Fixture::new();
+        let mut c = Codex::new(&f);
+        c.typed("g-1", "turn-g", spelling);
+        c.write();
+        let out = c.hook(&f, "UserPromptSubmit", "turn-g", spelling);
+        assert!(
+            text(&out.stdout).contains("joined group water-economy"),
+            "{spelling}: {}",
+            text(&out.stdout)
+        );
+    }
+}
+
+#[test]
+fn untyped_mixed_case_group_under_codex_is_refused_before_joining() {
+    let f = Fixture::new();
+    let c = Codex::new(&f);
+    c.write();
+    let out = c.hook(&f, "UserPromptSubmit", "turn-a", "/scribe GROUP peer");
+    assert!(
+        text(&out.stdout).contains("not yet verified"),
+        "{}",
+        text(&out.stdout)
+    );
+    assert!(!text(&out.stdout).contains("joined group"));
+}
