@@ -188,6 +188,68 @@ predecessors, or it said nothing after a clear), the human types
 After `new`, or in Codex, nothing is added: the brief lists the previous
 session with `[handoff: <id>]`, and step 4 of the session start reads it.
 
+## Session groups
+
+A group is a named piece of shared work across the sessions on this host. Its
+id is `g-<n>`; every `<id>` below takes the id or a unique prefix.
+
+- **Open.** `scribe group open --title '<title>' --kind <kind> [--project <project>]
+  [--related <ref>] --quote '<their words>'`, with `--related` repeated for each
+  task, PR or repository. The quote must be a verbatim span of one of the
+  human's typed turns in this session, so open a group only when the human asks.
+  Opening warns about any other open group in the project.
+- **Join.** Run `scribe group join <id> --as <seat> --author <name> [--role <role>]`
+  in the session that joins, under its own `--author`. Join when the human names
+  the group and seat, or when the brief that started the session names them. A
+  new seat takes `--role`, which defaults to the seat name and then stays fixed.
+  A session holds one seat at a time; joining the seat it already holds changes
+  nothing. A seat held by another session is refused (`seat_occupied`) unless
+  its holder has been idle for a day or, in Claude Code, this session was cleared
+  from that holder. Pass `--replace`, which takes the seat from its holder, only
+  when the human says so. A closed group takes no members.
+- **Leave.** `scribe group leave` takes the calling session off its seat and
+  drops the seat when nobody else holds it. Run it when the human asks. It also
+  deletes this session's turns held only on group consent (turns it also
+  catalogues stay) and clears the group's closing summary if it has one.
+- **Seats across a refresh.** In an interactive Claude Code session, a start
+  after a clear takes over the seat of the session it was cleared from, under
+  that session's author, when that session was the seat's newest transcript and
+  the group is still open. The new session holds the seat from then on, and the
+  old one holds nothing. Its start context says which seat it holds; the start
+  does not switch recording on. If the predecessor is unknown, ambiguous or
+  holds no open seat, nothing is inherited and the context says to re-run
+  `group join`. Codex
+  inherits nothing: a new chat joins again, and until the old transcript is a
+  day idle that join needs `--replace`, which the human must ask for. See
+  "Refreshing a session: new or continue" above.
+- **Stored turns.** While the group is open, a member's typed turns are stored
+  from the time it joined: the human's words only. Not stored are assistant
+  turns; peer, agent and scheduled messages (such as `<teammate-message>`,
+  `<agent-message>` and `<scheduled-prompt>` turns, task notifications, and any
+  turn with an agent origin); harness and `/scribe` control lines; pasted blocks
+  and fenced code; and turns with a finance or sensitive-event word. Stored text
+  is redacted. Storing takes no model call and creates no session record or
+  switch.
+- **Reading.** `scribe group show <id> --json` gives one group: its title, kind,
+  project, times, related references, closing summary if closed, and each seat's
+  role, its transcripts in join order and its newest handoff id.
+  `scribe group list --json` lists groups newest first with their rosters. The
+  brief's `## Last group` names the project's newest group. `--group <id>` on
+  `search`, `question ask`, `entry list` and `session list` limits results to
+  the group's member sessions. Find stored turns with
+  `scribe search "<words>" --kind message --group <id> --json`, and read a
+  handoff with `entry show <id>`.
+- **Citing.** Cite a group as `g-<n>`. Its closing summary is an account the
+  model wrote at close, not the human's words. Quote the human only from a
+  stored-turn hit, citing its `session:<id>`.
+- **Close.** Run `scribe group close <id>` from the session that opened the
+  group, and only when the human asks. It sends the members' 16 newest active
+  handoffs and 32 newest stored user turns to the ask model in one call. It then
+  writes the summary (up to 4,000 characters, redacted), naming the group's
+  related references as work missing from the handoffs, and the closed time. A
+  closed group takes no members and stores no more turns. Closing a closed group
+  returns its record without another model call.
+
 ## Memory: what scribe has noticed about the human
 
 The brief opens with the memory block: `## Profile (as of <date>)`, the
