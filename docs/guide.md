@@ -339,10 +339,11 @@ so a 128-character ID of `a`s gets 116 `a`s plus `-2` when its short and full
 names are already taken. A join never displaces a seat and uses role `member`;
 when typed from another session, the command joins the existing open group
 (one group per session until `scribe group leave`; non-typed prompts are
-refused). `/scribe group add <slug> <session-id>...` adds past
-sessions to the group, creating it when absent, without enrolling the session it
-is typed in: a session whose transcript is still on disk has its typed turns
-stored, any other gets membership only, and the reply says which. A session
+refused). `/scribe group add <slug> <session-id>...` adds only the named
+sessions to the group, creating it when absent. The typing session is included
+only when its ID is explicitly named. A session whose transcript is still on
+disk has its typed turns stored, any other gets membership only, and the reply
+says which. A session
 already in another group refuses the whole line. It is a typed line only; there
 is no terminal command. Codex accepts the same `/scribe group <slug>`, `$scribe group <slug>`,
 `$scribe group add <slug> <session-id>...`, and skill mention link `[$scribe](.../scribe/SKILL.md) group <slug>` once the host

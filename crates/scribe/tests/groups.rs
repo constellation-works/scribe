@@ -2639,6 +2639,7 @@ fn typed_group_add_audits_ids_only_and_a_later_capture_resumes_after_the_stored_
         .collect();
     assert_eq!(members.len(), 2, "{members:?}");
     assert!(members.contains(&B) && members.contains(&C), "{members:?}");
+    assert!(!members.contains(&A), "{members:?}");
 
     let audit = support::audit_lines(&f.root());
     let targets: Vec<&str> = audit
@@ -2680,6 +2681,40 @@ fn typed_group_add_audits_ids_only_and_a_later_capture_resumes_after_the_stored_
     };
     assert_eq!(total("pastorchid"), 1);
     assert_eq!(total("lateorchid"), 1);
+}
+
+#[test]
+fn typed_group_add_includes_the_typing_session_when_its_id_is_named() {
+    let f = Fixture::new();
+    let typing = transcript(
+        &f,
+        A,
+        &[row(A, "t", "user", "/scribe group add planning A")],
+    );
+    let line = format!("/scribe group add planning {A}");
+    let out = hook(
+        &f,
+        &["hook", "user-prompt-submit"],
+        json!({"session_id": A, "transcript_path": typing, "cwd": f.home(), "prompt": line}),
+        &[],
+    );
+    let reply = text(&out.stdout);
+    assert!(
+        reply.contains(&format!(
+            "{A}: added; transcript on disk, 0 typed turns stored"
+        )),
+        "{reply}"
+    );
+
+    let group = invoke(&f, A, &["group", "show", "planning"], 0);
+    let members: Vec<&str> = group["seats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|s| s["transcripts"].as_array().unwrap())
+        .map(|t| t.as_str().unwrap())
+        .collect();
+    assert_eq!(members, [A]);
 }
 
 #[cfg(unix)]
