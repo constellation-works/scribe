@@ -528,6 +528,48 @@ impl Store {
         })
     }
 
+    /// Record that a start could not inspect its transcript yet.
+    pub fn defer_ancestry(&self, session: &SessionId) -> Result<bool> {
+        self.write(|| {
+            let conn = open_writer(self.root(), self.lock_wait)?;
+            let path = self.root().join(DB_FILE);
+            conn.execute(
+                "INSERT OR IGNORE INTO deferred_ancestry (session) VALUES (?1)",
+                [session.as_str()],
+            )
+            .map(|n| n > 0)
+            .map_err(|e| db_error("defer ancestry in", &path, e))
+        })
+    }
+
+    /// Consume a deferred check once, without writing on ordinary prompts.
+    pub fn take_deferred_ancestry(&self, session: &SessionId) -> Result<bool> {
+        let pending = self.read_groups(|conn, path| {
+            if refuse_newer(conn, path)? < 13 {
+                return Ok(false);
+            }
+            conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM deferred_ancestry WHERE session = ?1)",
+                [session.as_str()],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(|e| Fallible::from_sqlite("read deferred ancestry from", path, e))
+        })?;
+        if !pending {
+            return Ok(false);
+        }
+        self.write(|| {
+            let conn = open_writer(self.root(), self.lock_wait)?;
+            let path = self.root().join(DB_FILE);
+            conn.execute(
+                "DELETE FROM deferred_ancestry WHERE session = ?1",
+                [session.as_str()],
+            )
+            .map(|n| n > 0)
+            .map_err(|e| db_error("consume deferred ancestry in", &path, e))
+        })
+    }
+
     /// Inherit the predecessor's open seat for a newly cleared session.
     /// An ordinary start takes no write lock; any candidate write rechecks
     /// seat ownership inside the transaction.

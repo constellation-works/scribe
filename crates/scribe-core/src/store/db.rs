@@ -71,7 +71,11 @@ const MIGRATIONS: &[&str] = &[
     V10,
     groups::V11,
     groups::V12,
+    V13,
 ];
+
+/// Pending first-prompt ancestry checks for starts before transcript creation.
+const V13: &str = "CREATE TABLE deferred_ancestry (session TEXT PRIMARY KEY NOT NULL) STRICT;";
 
 /// Version 1 (phase 4): `meta`, `messages` and its FTS5 index, and the
 /// memory tables phase 5 uses.
@@ -1091,6 +1095,7 @@ pub(super) fn db_error(action: &'static str, path: &Path, e: rusqlite::Error) ->
 /// Restore the schema-10 shape before exercising migrations from an older version.
 #[cfg(test)]
 pub(super) const REMOVE_GROUP_CAPTURE_SCHEMA: &str = "
+DROP TABLE deferred_ancestry;
 DROP INDEX group_open_slug;
 ALTER TABLE groups DROP COLUMN slug;
 DROP TRIGGER handoffs_clear_group_summary;

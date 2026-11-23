@@ -243,7 +243,8 @@ pub fn sql(root: &Path, statement: &str) {
 pub fn remove_group_capture_schema(root: &Path) {
     sql(
         root,
-        "DROP INDEX group_open_slug;
+        "DROP TABLE deferred_ancestry;
+        DROP INDEX group_open_slug;
         ALTER TABLE groups DROP COLUMN slug;
         DROP TRIGGER handoffs_clear_group_summary;
         DROP TRIGGER messages_clear_group_summary;

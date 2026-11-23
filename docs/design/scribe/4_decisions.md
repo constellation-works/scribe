@@ -1543,6 +1543,7 @@ continue-handoff path and §17 group seat inheritance across a clear,
 `session-start` remains read-only. Restoring a continue handoff writes the
 child's `continues` link and inherited switch, and inheriting a group seat
 appends the child to the predecessor's open seat; both audit their writes.
+**Further refined by ORB-27153:** An eligible start whose transcript is not yet written records an audited deferred ancestry check; the first typed prompt consumes it and performs the same restoration and seat inheritance.
 **Code anchors:** `crates/scribe/src/commands/hook/session_start.rs`,
 `crates/scribe/src/commands/hook/continuation.rs` (the restoration)
 
@@ -1556,7 +1557,7 @@ missing file as the defaults, and the hook runs before every session.
 
 Outside the continue-handoff restoration in [design §16.7](./2_design.md#167-continuing-after-a-clear)
 and an inherited open group seat in [design §17](./2_design.md#17-session-groups-and-seats),
-`session-start` is read-only: it reads the store and writes nothing. It
+`session-start` is read-only unless it must defer an unavailable transcript check. It
 replies with a message and additional context:
 
 - The message is the open-proposal count (`scribe: N proposals to review`),
@@ -1583,7 +1584,7 @@ migration. A read that fails is logged and that part is left out; the rest
 still prints. When it restores a continue handoff, it writes the `continues`
 link and inherited switch under `Store::write`; when it inherits an open
 group seat, it appends the child to the predecessor's seat chain. Both writes
-are audited. These are the hook's write paths.
+are audited. A missing transcript also writes an audited deferred-check marker, consumed by the first typed prompt.
 
 ### Consequences
 
