@@ -291,22 +291,27 @@ line has the session's `s-<n>` as its target.
   without one the store has not moved and reads `sessions/` and
   `control.json` as before. `control.json`'s format is checked either way,
   so a store stamped by a newer build is `store_too_new`.
-- **The move.** The first session write (a switch, a pass, a rebuild, an
-  activity change, a link) moves the files in in its write's transaction
-  before it writes (from format 27 the first write of any kind does, see
-  [Documents in scribe.db](#documents-in-scribedb-phase-7)): in one
-  transaction it reads every record (one that does not read refuses the move
-  with `store_corrupt`, naming the file, and nothing moves), inserts them
-  ordered by `created` then id, inserts every switch
-  and Codex cursor, imports each `.<id>.rebuild.md` checkpoint as a row,
-  checks the row count against the files read, and adds the `record_kinds`
-  row. After the commit it moves `sessions/`, `control.json` and the root's
-  `.codex-<id>.lock` files to `pre-sqlite-<yyyy-mm-dd>/` (`.2`, `.3` … when
-  taken; scribe never deletes it) and writes `control.json` as the format
-  stamp. A move cut off after the commit finishes at the next write. A
-  write that refuses leaves the files where they are, and at format 26 so
-  does a write that touches no session (an entry, a tag, an audit line). A
-  store with no session files is marked moved by its first write.
+- **The move.** At format 27, the first eligible store write transaction
+  moves every kind still in files, sessions first (see
+  [Documents in scribe.db](#documents-in-scribedb-phase-7)). A session write
+  (a switch, a pass, a rebuild, an activity change, a link) starts such a
+  transaction. An audit line recorded outside a write transaction does not
+  start the move: while the store is still file-backed, it can be spooled
+  under `audit-spool/` (phase 7). In the transaction, scribe reads every
+  session record (one that does not read refuses the move with
+  `store_corrupt`, naming the file, and nothing moves), inserts them ordered
+  by `created` then id, inserts every switch and Codex cursor, imports each
+  `.<id>.rebuild.md` checkpoint as a row, checks the row count against the
+  files read, and adds the `record_kinds` row. After the commit it moves
+  `sessions/`, `control.json` and the root's `.codex-<id>.lock` files to
+  `pre-sqlite-<yyyy-mm-dd>/` (`.2`, `.3` … when taken; scribe never deletes
+  it) and writes `control.json` as the format stamp. A move cut off after
+  the commit finishes at the next write. A write that refuses leaves the
+  files where they are; at format 26, a write transaction that touches no
+  session (an entry or a tag) also leaves sessions in files. The next
+  eligible transaction can move the records and drain any spooled audit
+  lines. A store with no session files is marked moved by its first
+  eligible transaction.
 - **`scribe store migrate`** makes the move now, in its write's transaction. It is
   refused with `migrate_blocked` while any session is switched on, while
   any rebuild checkpoint waits, and once the sessions moved; the write's
@@ -349,11 +354,12 @@ line has the session's `s-<n>` as its target.
   not moved and reads the files as before. A row is checked as its file was
   (an entry's id and tag agree, a claim's fields agree with its state), and
   one that does not read is skipped and reported as a file was.
-- **One write, one transaction.** The store lock is retired. Every store
-  write is one `BEGIN IMMEDIATE` transaction whose reads see what it wrote
-  so far; a write that refuses rolls back, so it changes nothing. A step
-  inside a larger write is a savepoint. A busy database past the lock wait
-  (10 seconds) is `store_locked`, waited for once.
+- **One write, one transaction.** The store lock is retired. Each
+  transaction-backed store write is one `BEGIN IMMEDIATE` transaction whose
+  reads see what it wrote so far; a write that refuses rolls back, so it
+  changes nothing. A step inside a larger write is a savepoint. A busy
+  database past the lock wait (10 seconds) is `store_locked`, waited for
+  once.
 - **One command, one transaction.** A command that calls no model (the
   direct write verbs, `#scribe` in the prompt hook, `session-end`, `init`,
   `store migrate`) runs whole as one transaction with its audit lines, so a
@@ -363,28 +369,32 @@ line has the session's `s-<n>` as its target.
   `catalog`, `rebuild`, `consistency scan`, the `Stop` hook,
   `memory refresh`, the routine tools) holds no transaction across the
   call, and commits each step with its own lines.
-- **Audit lines that cannot wait.** A line recorded outside a write is
-  inserted without waiting. When another writer holds the database, or the
-  store has not moved, it is written to `audit-spool/` as one file of its
-  own, created `0600` under a name no other line has; every read merges the
-  spool, and the next write drains it into `audit` (a drained file's name
-  is kept in `spool`, so a crash before its removal never counts a line
-  twice) and removes the files after the commit. A refused command
-  therefore waits once and loses no line, and writes no warning before its
-  error.
-- **The move.** The first write moves every kind still in files in its own
-  transaction, sessions first: every record must read (one that does not
+- **Audit lines that cannot wait.** A line recorded outside a write
+  transaction is inserted without waiting. When another writer holds the
+  database, or the store has not moved, it is written to `audit-spool/` as
+  one file of its own, created `0600` under a name no other line has; every
+  read merges the spool. If the store is still file-backed, this audit-only
+  write can spool the line without starting migration. The next eligible
+  store write transaction moves the file-backed records and drains the
+  spool into `audit` (a drained file's name is kept in `spool`, so a crash
+  before its removal never counts a line twice), then removes the spool
+  files after commit. A refused command therefore waits once and loses no
+  line, and writes no warning before its error.
+- **The move.** The first eligible store write transaction moves every kind
+  still in files, sessions first: every record must read (one that does not
   refuses the move with `store_corrupt` and nothing moves); each kind's row
   count is checked against the files read; audit lines keep their own
   format, and a torn line is counted and left in the moved file. After the
   commit the files go to `pre-sqlite-<yyyy-mm-dd>/`, and `control.json`,
   `proposals.json`, `tags.json`, `marks.json` and `pickups.json` are
   written as empty stamps at format 27, so a format-26 build refuses the
-  store instead of writing files beside the database. A write that refuses
-  rolls the move back with it; a move cut off after the commit finishes at
-  the next write, with `audit.jsonl` lines keyed in `spool` by byte offset
-  and SHA-256 so replaying an interrupted move keeps one copy of each
-  original line and still preserves new lines appended before the rename.
+  store instead of writing files beside the database. A standalone audit
+  line does not trigger this move; a later eligible transaction imports the
+  records and drains its spool. A write that refuses rolls the move back
+  with it; a move cut off after the commit finishes at the next write, with
+  `audit.jsonl` lines keyed in `spool` by byte offset and SHA-256 so
+  replaying an interrupted move keeps one copy of each original line and
+  still preserves new lines appended before the rename.
   `scribe store migrate` makes the move now, refused as in
   phase 6.
 - **The memory journal** is staged in the write's transaction and applied
