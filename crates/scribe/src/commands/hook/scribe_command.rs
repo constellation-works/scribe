@@ -23,8 +23,9 @@
 //!
 //! The payload is checked like a `#scribe` line's (an accident guard, not a
 //! security boundary): a transcript outside Claude Code's projects
-//! directory, or named for another session, switches nothing. A switch is
-//! audited (`target` `session:<id>`); a no-op or a status writes nothing.
+//! directory, or named for another session, switches nothing. A change to the
+//! switch, a link or a catalog is audited (`target` `session:<id>`), and a
+//! refusal is audited with its code; a no-op or a status writes nothing.
 
 use super::payload::{self, PromptPayload};
 use crate::app::Context;

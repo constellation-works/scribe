@@ -1161,6 +1161,9 @@ same transcript check as a `#scribe` line first. `on` sets `since` and
 `due`; `off` also clears `due` and `final`, so no pass runs after it
 ([4_decisions.md](./4_decisions.md#scribe-off-clears-a-pending-pass));
 any other argument is refused with `unknown_scribe_command` and the usage.
+Each change of the switch, a link or a catalog is one audit line (`target`
+`session:<id>`), and a refusal is one failure line with its code; a no-op or a
+status writes none ([4_decisions.md](./4_decisions.md#one-audit-line-per-hook-outcome-none-for-a-no-op)).
 A status reports the switch, whether a pass is due, and the record's status,
 pass count and last write. The reply wording is in
 [specs/output-contract.md](./specs/output-contract.md#hook-replies).

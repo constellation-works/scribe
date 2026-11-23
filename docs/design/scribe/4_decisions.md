@@ -1074,8 +1074,26 @@ again.
 
 ## One audit line per hook outcome, none for a no-op
 
+**Further refined by ORB-27172:** The log holds the outcomes a hook reports,
+not every row a hook writes, and a prompt with no `#scribe` line can add one.
+A `/scribe` switch is marker-free: `on`, `off`, a link (`/scribe on --from`,
+`/scribe link`), `catalog` and `continue` each report one success outcome
+(`target` `session:<id>`) when they change state, and a refusal reports a
+failure outcome with its code. A no-op (`on` while on, a link already made)
+reports none. A group turn capture reports one success outcome per run that
+inserts at least one new eligible turn, however many it inserts; a run that
+inserts none reports none, even when it moved a member's capture cursor. There
+are two such cursor-only runs: a displaced member's cursor passes the turns it
+typed while a later member held its seat (`skip_displaced_turns`), and a
+holding member's cursor passes turns already stored (`ON CONFLICT DO NOTHING`
+counts zero new rows). That bookkeeping is unlogged, as
+[§17](./2_design.md#17-session-groups-and-seats) records.
 **Code anchors:** `crates/scribe/src/audit_middleware.rs`;
-`crates/scribe/src/output/payload.rs` (`HookOutcome`)
+`crates/scribe/src/output/payload.rs` (`HookOutcome`);
+`crates/scribe/src/commands/hook/scribe_command.rs` (the switch outcomes);
+`crates/scribe/src/commands/hook/group_turns.rs` (the capture outcome);
+`crates/scribe-core/src/store/db/groups.rs` (`capture_group_turns`,
+`skip_displaced_turns`)
 
 ### Context
 
@@ -1088,13 +1106,16 @@ command would either lose which line failed or log every keystroke.
 A hook result carries its outcomes: an entry written or a cite filled
 (`target` the entry id), a line refused or failed (`target`
 `session:<id>`, `error_code`), or a group member's new typed turns stored
-(`target` `session:<id>`, no `error_code`, one per run that stored any). The
-guard writes one audit line per outcome and none when there are none; a hook
-that fails before a result (an invalid payload) writes one failure line.
+(`target` `session:<id>`, no `error_code`, one per run that stored any), or a
+`/scribe` switch, link, catalog or continuation that changed state (`target`
+`session:<id>`, no `error_code`). The guard writes one audit line per outcome
+and none when there are none; a hook that fails before a result (an invalid
+payload) writes one failure line.
 
 ### Consequences
 
-- The audit log shows every write and refusal with ids and codes only.
+- The audit log shows every outcome a hook reports, with ids and codes only;
+  it does not show every row a hook writes (see the refinement above).
 - A group turn capture shows that a member's turns were stored, once per run,
   with no content; the turns themselves stay out of the log.
 - A replay writes no audit line; it changed nothing.
