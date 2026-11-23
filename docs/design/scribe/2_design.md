@@ -6399,11 +6399,14 @@ session.
   and the existing verbatim check. A quote-less handoff requires `--mode`,
   and `CLAUDE_CODE_SESSION_ID` must equal the one related session; the CLI
   locates and verifies that session's transcript and requires a nonempty
-  human-typed turn there or in its clear ancestry. Each untyped link must
-  name exactly one `via: clear` predecessor in its opening metadata; each
+  human-typed turn there or in its clear or launch ancestry. Each untyped
+  link follows its `via: clear` predecessor in its opening metadata first,
+  else its single `via: launch` predecessor (the session that started it);
+  two predecessors of the same kind are ambiguous and refused. Each
   predecessor must pass transcript provenance checks. Traversal refuses
-  cycles and more than 16 predecessor hops. It passes that verification to the store, which refuses
-  a quote-less handoff without it (`quote_required`); a missing or noninteractive
+  cycles and more than 16 predecessor hops, counted across both kinds. It
+  passes that verification to the store, which refuses a quote-less handoff
+  without it (`quote_required`); a missing or noninteractive
   transcript is refused (`quote_not_found`). This shell variable was measured
   in Claude desktop on 2026-11-22 and changes on clear. A handoff belongs to
   exactly one distinct valid `session:<id>` reference: passing multiple
@@ -6514,8 +6517,14 @@ of cryptographic identity. For handoffs with a quote, the existing verbatim
 check remains: the quote must be at least eight characters from one typed
 turn, so a bare “yes” or a synthetic UI event alone does not pass it. The
 transcript check also excludes sessions with no typed turn in their verified
-clear ancestry from the quote-less path. A clear continues the same interactive
-session; peer messages and scheduled prompts do not count as typed turns.
+clear and launch ancestry from the quote-less path. A clear and a launch both
+continue the same interactive session, so a session that an interactive session
+launched inherits the typed-turn standing of the session that launched it. A
+rank Daniel never typed in can therefore refresh through its launch edge. This
+is not a consent change: a launch is made by an interactive session for that
+session's user, and the check exists only to keep synthetic sessions (drains,
+managed runs) off the quote-less path. Peer messages and scheduled prompts do
+not count as typed turns, and nothing is recorded as Daniel's.
 
 ### 16.6 Entries on a spoken instruction
 

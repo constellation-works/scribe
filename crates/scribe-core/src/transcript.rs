@@ -56,10 +56,28 @@ impl Message {
     }
 }
 
+/// The distinct predecessors named in the opening desktop transcript metadata,
+/// by edge kind.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Predecessors {
+    /// `via: clear` ids: the same interactive session, continued after a clear.
+    pub clear: Vec<crate::SessionId>,
+    /// `via: launch` ids: the session that started this one.
+    pub launch: Vec<crate::SessionId>,
+}
+
 /// Distinct cleared sessions in the opening desktop transcript metadata.
 /// A launch ancestor or a reference inside a conversation turn is never a parent.
 #[must_use]
 pub fn cleared_sessions(header: &[u8]) -> Vec<crate::SessionId> {
+    predecessors(header).clear
+}
+
+/// Distinct clear and launch predecessors in the opening desktop transcript
+/// metadata. Reads the same rows as [`cleared_sessions`]; a reference inside a
+/// conversation turn is never a predecessor.
+#[must_use]
+pub fn predecessors(header: &[u8]) -> Predecessors {
     #[derive(Deserialize)]
     struct Row {
         #[serde(rename = "type")]
@@ -72,27 +90,34 @@ pub fn cleared_sessions(header: &[u8]) -> Vec<crate::SessionId> {
         via: String,
         id: crate::SessionId,
     }
-    let mut parents = std::collections::BTreeSet::new();
+    let mut clear = std::collections::BTreeSet::new();
+    let mut launch = std::collections::BTreeSet::new();
     for (index, line) in header.split(|b| *b == b'\n').enumerate() {
         if line.is_empty() {
             break;
         }
         let Ok(row) = serde_json::from_slice::<Row>(line) else {
-            return Vec::new();
+            return Predecessors::default();
         };
         match row.kind.as_str() {
-            "derived-from" => parents.extend(
-                row.sessions
-                    .into_iter()
-                    .filter(|s| s.via == "clear")
-                    .map(|s| s.id),
-            ),
+            "derived-from" => {
+                for ancestor in row.sessions {
+                    match ancestor.via.as_str() {
+                        "clear" => clear.insert(ancestor.id),
+                        "launch" => launch.insert(ancestor.id),
+                        _ => false,
+                    };
+                }
+            }
             "user" | "assistant" | "system" => break,
             _ if index == 0 => {}
             _ => break,
         }
     }
-    parents.into_iter().collect()
+    Predecessors {
+        clear: clear.into_iter().collect(),
+        launch: launch.into_iter().collect(),
+    }
 }
 
 /// The messages of a transcript, in file order, each uuid once: a replayed

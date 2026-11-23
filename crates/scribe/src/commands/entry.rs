@@ -674,8 +674,10 @@ fn verify_self_refresh(
                 "invalid refresh session",
             )
         })?;
-    // A clear continues the same interactive session. Follow at most 16
-    // verified predecessor edges, stopping as soon as a typed turn is found.
+    // A clear or a launch continues the same interactive session. Follow at
+    // most 16 verified predecessor edges, stopping as soon as a typed turn is
+    // found. A clear edge is followed first, so a refreshed rank walks its clear
+    // chain to the seat's root and then takes that root's launch edge.
     let mut link = id;
     let mut seen = std::collections::HashSet::new();
     for hops in 0..=16 {
@@ -687,7 +689,7 @@ fn verify_self_refresh(
             .into()
         };
         if !seen.insert(link.clone()) {
-            return Err(failed("clear ancestry contains a cycle"));
+            return Err(failed("ancestry contains a cycle"));
         }
         let path = payload::locate(ctx, &link)?
             .ok_or_else(|| failed("transcript is not readable on this host"))?;
@@ -709,17 +711,23 @@ fn verify_self_refresh(
             return Ok(());
         }
         let parents = if ctx.provider() == scribe_core::Provider::ClaudeCode {
-            scribe_core::transcript::cleared_sessions(&bytes)
+            scribe_core::transcript::predecessors(&bytes)
         } else {
-            Vec::new()
+            scribe_core::transcript::Predecessors::default()
         };
-        let [parent] = parents.as_slice() else {
+        if parents.clear.len() > 1 {
+            return Err(failed("ambiguous: more than one clear predecessor"));
+        }
+        if parents.launch.len() > 1 {
+            return Err(failed("ambiguous: more than one launch predecessor"));
+        }
+        let Some(parent) = parents.clear.first().or_else(|| parents.launch.first()) else {
             return Err(failed(
-                "transcript must contain a typed user turn or exactly one clear predecessor",
+                "transcript must contain a typed user turn or exactly one clear or launch predecessor",
             ));
         };
         if hops == 16 {
-            return Err(failed("clear ancestry exceeds the 16-hop limit"));
+            return Err(failed("ancestry exceeds the 16-hop limit"));
         }
         link = parent.clone();
     }

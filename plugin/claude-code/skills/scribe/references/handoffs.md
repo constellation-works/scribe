@@ -29,7 +29,7 @@ scribe entry add --tag handoff --author <name> --project <project> \
   least 8 characters) of a typed turn in that session. For a self-refresh,
   `--mode continue|new` may be used without a quote when the current
   `CLAUDE_CODE_SESSION_ID` matches the related session and a typed user turn
-  is in its transcript or its verified clear ancestry (at most 16
+  is in its transcript or its verified clear or launch ancestry (at most 16
   predecessors). Peer messages and scheduled prompts do not count as typed
   turns.
 - **Works when the session is off.** Writing a handoff needs no session
