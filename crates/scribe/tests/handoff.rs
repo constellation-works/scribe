@@ -1863,14 +1863,14 @@ fn refresh_clear_ancestry_is_limited_to_sixteen_hops() {
         clear_transcript(&fx, &ids[n], &[&ids[n + 1]]);
     }
     Transcript::new(&fx, &ids[17]).write(&[("u", "user", "A typed turn")]);
-    let accepted = try_refresh(&fx, &ids[1]);
+    let accepted = try_refresh(&fx, &ids[2]);
     assert!(accepted.status.success(), "{}", text(&accepted.stderr));
     let refused = try_refresh(&fx, &ids[0]);
     assert_eq!(refused.status.code(), Some(1));
     let error: Value = serde_json::from_slice(&refused.stderr).unwrap();
     assert_eq!(error["code"], "quote_not_found");
-    assert!(error.to_string().contains(&ids[16]));
-    assert!(error.to_string().contains("16-hop"));
+    assert!(error.to_string().contains(&ids[15]));
+    assert!(error.to_string().contains("16-transcript"));
 }
 
 // A session id no transcript on this host has.
@@ -1905,13 +1905,23 @@ fn refresh_launch_ancestry_refuses_untyped_ambiguous_cyclic_and_unreadable_links
     ancestry_transcript(&fx, ON_SESSION, &[]);
     clear_transcript(&fx, CHILD, &[OFF_SESSION]);
     assert_refused(CHILD, ON_SESSION, "typed user turn");
-    // Two launch edges are ambiguous, as two clear edges are.
+    // An unreadable first launcher is a dead end; the second can be typed.
+    Transcript::new(&fx, ON_SESSION).write(&[("u", "user", "A typed turn")]);
     ancestry_transcript(
         &fx,
         OFF_SESSION,
-        &[("launch", ON_SESSION), ("launch", UNREADABLE_SESSION)],
+        &[("launch", UNREADABLE_SESSION), ("launch", ON_SESSION)],
     );
-    assert_refused(CHILD, OFF_SESSION, "more than one launch predecessor");
+    let out = try_refresh(&fx, CHILD);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    // Metadata order matters: a cycle before a typed launcher is refused,
+    // even though the typed session sorts first by id.
+    ancestry_transcript(
+        &fx,
+        OFF_SESSION,
+        &[("launch", CHILD), ("launch", ON_SESSION)],
+    );
+    assert_refused(CHILD, CHILD, "cycle");
     // A launch edge back to a session already on the walk.
     ancestry_transcript(&fx, OFF_SESSION, &[("launch", CHILD)]);
     assert_refused(CHILD, CHILD, "cycle");
@@ -1930,11 +1940,38 @@ fn refresh_follows_a_refreshed_ranks_clear_edge_before_its_launch_edge() {
     ancestry_transcript(
         &fx,
         CHILD,
-        &[("launch", UNREADABLE_SESSION), ("clear", OFF_SESSION)],
+        &[
+            ("launch", UNREADABLE_SESSION),
+            ("launch", ON_SESSION),
+            ("clear", OFF_SESSION),
+        ],
     );
     let out = try_refresh(&fx, CHILD);
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(json_of(&out)["handoff_mode"], "continue");
+}
+
+#[test]
+fn refresh_launch_branches_share_the_transcript_budget() {
+    let fx = Fixture::new();
+    let ids: Vec<String> = (0..16)
+        .map(|n| format!("10000000-0000-4000-8000-{n:012x}"))
+        .collect();
+    for n in 0..14 {
+        clear_transcript(&fx, &ids[n], &[&ids[n + 1]]);
+    }
+    clear_transcript(&fx, &ids[14], &[]);
+    Transcript::new(&fx, &ids[15]).write(&[("u", "user", "A typed turn")]);
+    ancestry_transcript(&fx, CHILD, &[("launch", &ids[0]), ("launch", &ids[15])]);
+    let out = try_refresh(&fx, CHILD);
+    assert_eq!(out.status.code(), Some(1));
+    let error = text(&out.stderr);
+    assert!(error.contains(&ids[14]), "{error}");
+    assert!(error.contains("16-transcript"), "{error}");
+    // Shortening the first branch leaves room for the typed launcher.
+    clear_transcript(&fx, &ids[13], &[]);
+    let out = try_refresh(&fx, CHILD);
+    assert!(out.status.success(), "{}", text(&out.stderr));
 }
 
 #[test]
@@ -1948,14 +1985,14 @@ fn refresh_clear_and_launch_edges_share_the_sixteen_hop_limit() {
         ancestry_transcript(&fx, &ids[n], &[(via, ids[n + 1].as_str())]);
     }
     Transcript::new(&fx, &ids[17]).write(&[("u", "user", "A typed turn")]);
-    let accepted = try_refresh(&fx, &ids[1]);
+    let accepted = try_refresh(&fx, &ids[2]);
     assert!(accepted.status.success(), "{}", text(&accepted.stderr));
     let refused = try_refresh(&fx, &ids[0]);
     assert_eq!(refused.status.code(), Some(1));
     let error: Value = serde_json::from_slice(&refused.stderr).unwrap();
     assert_eq!(error["code"], "quote_not_found");
-    assert!(error.to_string().contains(&ids[16]));
-    assert!(error.to_string().contains("16-hop"));
+    assert!(error.to_string().contains(&ids[15]));
+    assert!(error.to_string().contains("16-transcript"));
 }
 
 #[test]

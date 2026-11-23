@@ -6425,11 +6425,11 @@ session.
   and `CLAUDE_CODE_SESSION_ID` must equal the one related session; the CLI
   locates and verifies that session's transcript and requires a nonempty
   human-typed turn there or in its clear or launch ancestry. Each untyped
-  link follows its `via: clear` predecessor in its opening metadata first,
-  else its single `via: launch` predecessor (the session that started it);
-  two predecessors of the same kind are ambiguous and refused. Each
-  predecessor must pass transcript provenance checks. Traversal refuses
-  cycles and more than 16 predecessor hops, counted across both kinds. It
+  link follows its single `via: clear` predecessor, ignoring launch edges;
+  multiple clear predecessors are ambiguous and refused. Without a clear edge,
+  launch predecessors are tried in metadata order until one reaches a typed
+  turn. Unreadable or provenance-failing transcripts are dead ends. Traversal
+  refuses cycles and shares a budget of 16 transcripts across all paths. It
   passes that verification to the store, which refuses a quote-less handoff
   without it (`quote_required`); a missing or noninteractive
   transcript is refused (`quote_not_found`). This shell variable was measured

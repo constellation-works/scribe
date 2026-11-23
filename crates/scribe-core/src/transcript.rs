@@ -74,7 +74,8 @@ pub fn cleared_sessions(header: &[u8]) -> Vec<crate::SessionId> {
 }
 
 /// Distinct clear and launch predecessors in the opening desktop transcript
-/// metadata. Reads the same rows as [`cleared_sessions`]; a reference inside a
+/// metadata. Launch predecessors retain their first appearance order. Reads the
+/// same rows as [`cleared_sessions`]; a reference inside a
 /// conversation turn is never a predecessor.
 #[must_use]
 pub fn predecessors(header: &[u8]) -> Predecessors {
@@ -91,7 +92,7 @@ pub fn predecessors(header: &[u8]) -> Predecessors {
         id: crate::SessionId,
     }
     let mut clear = std::collections::BTreeSet::new();
-    let mut launch = std::collections::BTreeSet::new();
+    let mut launch = Vec::new();
     for (index, line) in header.split(|b| *b == b'\n').enumerate() {
         if line.is_empty() {
             break;
@@ -104,7 +105,12 @@ pub fn predecessors(header: &[u8]) -> Predecessors {
                 for ancestor in row.sessions {
                     match ancestor.via.as_str() {
                         "clear" => clear.insert(ancestor.id),
-                        "launch" => launch.insert(ancestor.id),
+                        "launch" => {
+                            if !launch.contains(&ancestor.id) {
+                                launch.push(ancestor.id);
+                            }
+                            true
+                        }
                         _ => false,
                     };
                 }
@@ -116,7 +122,7 @@ pub fn predecessors(header: &[u8]) -> Predecessors {
     }
     Predecessors {
         clear: clear.into_iter().collect(),
-        launch: launch.into_iter().collect(),
+        launch,
     }
 }
 
