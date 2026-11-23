@@ -344,10 +344,13 @@ sessions to the group, creating it when absent. The session typing the line is
 included only when its ID is explicitly named. For each named session, scribe
 checks and reads a transcript on disk before storing its typed turns; if no
 transcript exists, the session gets membership only.
-If a present transcript fails its checks or cannot be read or parsed, the hook
-refuses the whole line before writing membership; it does not treat that
-transcript as absent. A session already in another group also refuses the whole
-line. It is a typed line only; there is no terminal command. Codex accepts the
+If a present transcript fails its checks or cannot be read, the hook refuses
+the whole line before writing membership; it does not treat that transcript as
+absent. A Codex transcript that cannot be parsed also refuses the line. Claude
+Code skips lines that are not valid JSON, so a transcript with no parseable
+lines can still be added with zero typed turns. A session already in another
+group also refuses the whole line. It is a typed line only; there is no
+terminal command. Codex accepts the
 same `/scribe group <slug>`, `$scribe group <slug>`,
 `$scribe group add <slug> <session-id>...`, and skill mention link `[$scribe](.../scribe/SKILL.md) group <slug>` once the host
 rollout verifies the typed turn. After a desktop clear, the transcript names
