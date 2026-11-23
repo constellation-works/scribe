@@ -10,7 +10,7 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-The code writes format 28 and reads formats 1–28. Format 28 adds an optional `handoff_mode` (`continue` or `new`) to entries; SQLite schema 7 adds its nullable column, and older databases read it as null until the next write migrates them. Format 26 moves the
+The code writes format 28 and reads formats 1–28. Format 28 adds an optional `handoff_mode` (`continue` or `new`) to entries; SQLite schema 7 adds its nullable column, and older databases read it as null until the next write migrates them. SQLite schema 8 removes stale rebuild checkpoints for forgotten sessions; export omits them before that migration runs. Format 26 moves the
 sessions into `scribe.db`
 ([2_design.md §15.7](../2_design.md#157-storage), phase 6): records,
 switches, Codex cursors and rebuild checkpoints become rows (schema version
@@ -191,12 +191,16 @@ Only `config.toml` and `memory/`'s files remain as primary data files outside th
   `sessions.forgotten`; version 5 (phase 7) adds `entries`, `claims`,
   `agent_tags`, `marks`, `pickups` and `audit`, and rebuilds `record_kinds`
   to accept their kinds; version 6 adds `pending_archive_forgets` for
-  durable post-commit replay of entry-forget archive erasure. Every table is
-  `STRICT`; times are RFC 3339 UTC text.
+  durable post-commit replay of entry-forget archive erasure; version 7
+  adds the nullable `entries.handoff_mode` column; version 8 deletes
+  `rebuild_checkpoints` rows whose session is forgotten (a
+  checkpoint an older build could write after the forget) and adds no
+  table. `scribe export --as jsonl` leaves those rows out even before that
+  migration runs. Every table is `STRICT`; times are RFC 3339 UTC text.
 - **Errors.** A file SQLite cannot read as a database is `store_corrupt`;
   any other SQLite failure is `store_database`.
 
-### Tables (version 6)
+### Tables (version 8)
 
 | Table | Columns (type, constraint) | Written by |
 |---|---|---|
@@ -215,7 +219,7 @@ Only `config.toml` and `memory/`'s files remain as primary data files outside th
 | `session_links` | `session INTEGER NOT NULL`; `position INTEGER NOT NULL`; `type TEXT NOT NULL CHECK (type IN ('spawned_from', 'continues'))`; `target TEXT NOT NULL` (a provider session id); `PRIMARY KEY (session, position)` | the record's writer (version 3) |
 | `session_terms` | `session INTEGER NOT NULL`; `position INTEGER NOT NULL`; `term`, `said`, `message`; `PRIMARY KEY (session, position)` | the record's writer (version 3) |
 | `codex_cursors` | `session TEXT PRIMARY KEY`, 1–128 characters; `message TEXT NOT NULL` | Codex ingestion (version 3) |
-| `rebuild_checkpoints` | `session INTEGER NOT NULL PRIMARY KEY` (`sessions.id`); `record TEXT NOT NULL`, the checkpoint as a record file's text; `created TEXT NOT NULL` | `session rebuild`; dropped in the transaction that writes the rebuilt record (version 3) |
+| `rebuild_checkpoints` | `session INTEGER NOT NULL PRIMARY KEY` (`sessions.id`); `record TEXT NOT NULL`, the checkpoint as a record file's text; `created TEXT NOT NULL` | `session rebuild`; dropped in the transaction that writes the rebuilt record, and by `#scribe forget` (version 3). A forgotten session keeps none: export omits a row an older build left, and version 8 deletes it. A checkpoint of a session that was not forgotten stays |
 | `record_kinds` | `kind TEXT PRIMARY KEY CHECK (kind IN ('sessions', 'entries', 'claims', 'agent_tags', 'marks', 'pickups', 'audit'))`; `moved_at TEXT NOT NULL`; `moved_to TEXT`, the `pre-sqlite-<date>` directory the kind's files moved to, `NULL` when that kind had no files | the move; a row says that kind is rows (version 3; the kinds past `sessions` version 5) |
 | `entries` | `id TEXT PRIMARY KEY` (`<tag>-<n>`); `tag TEXT NOT NULL`; `n INTEGER NOT NULL`, `UNIQUE (tag, n)`; every frontmatter field of an entry as a column (`"window"` quoted; lists, cites, authors and other objects as JSON text); `content TEXT NOT NULL`, the body | every entry write (version 5) |
 | `claims` | `n INTEGER PRIMARY KEY` (`p-<n>`); every field of a proposal as a column, objects as JSON text; `has_candidate` `0` or `1` and the candidate's fields as `c_<field>` columns | every claim write: only the claims a write changed (version 5) |
@@ -288,8 +292,11 @@ a catalog) and switching it on are refused with `session_forgotten`. A
 rebuild or a catalog of one is refused before any model call, and keeps no
 rebuild checkpoint. Rebuild checks again after acquiring its per-session lock,
 so a forget completed while it waited is refused before a model call.
-Forgetting it again changes nothing. The hook's audit
-line has the session's `s-<n>` as its target.
+A checkpoint an older build wrote after the forget is left out of
+`scribe export --as jsonl` before any later write. The version 8 migration
+deletes that row on the next store write, and forgetting the session again
+deletes it too. Otherwise, forgetting it again changes nothing. The hook's
+audit line has the session's `s-<n>` as its target.
 
 ### Sessions in scribe.db (phase 6)
 

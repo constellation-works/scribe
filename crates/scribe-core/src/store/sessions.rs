@@ -493,7 +493,9 @@ impl Store {
     /// checkpoint so the deleted pages leave the WAL, then its moved-aside
     /// files deleted, the one exception to `pre-sqlite-<date>/` being kept.
     /// A session that is on is switched off in the same transaction, and
-    /// stays off. `Ok(None)` when it is already forgotten.
+    /// stays off. `Ok(None)` when it is already forgotten. A rebuild
+    /// checkpoint an older build left is still deleted, and the WAL is
+    /// truncated when one was.
     pub(super) fn forget_session_locked(
         &self,
         input: &SessionId,
@@ -501,10 +503,15 @@ impl Store {
     ) -> Result<Option<SessionForget>> {
         let id = self.resolve_session(input)?;
         let number = self.load_sessions()?.numbers.get(&id).copied();
-        let erased = self.sessions_tx(|tx| tx.forget(&id, now))?;
-        let erased = match erased {
-            Some(Some(erased)) => erased,
-            Some(None) => return Ok(None),
+        let outcome = self.sessions_tx(|tx| tx.forget(&id, now))?;
+        let erased = match outcome {
+            Some(rows::ForgetOutcome::Erased(erased)) => erased,
+            Some(rows::ForgetOutcome::Already { checkpoints }) => {
+                if checkpoints > 0 {
+                    db::truncate_wal_of(&self.root, self.lock_wait)?;
+                }
+                return Ok(None);
+            }
             None => {
                 return Err(Error::SessionNotFound {
                     id: id.clone(),

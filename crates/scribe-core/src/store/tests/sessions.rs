@@ -1,11 +1,14 @@
 //! Sessions in `scribe.db` (§15.7): the move, `store migrate`, `export`,
 //! `s-<n>` numbers and the pass as one transaction.
 
-use super::{SESSION_BODY, private_tempdir, session_text};
+use super::{SESSION_BODY, on_disk, private_tempdir, session_text};
+use crate::consistency::{Settle, Settled};
 use crate::control::{self, Switch};
+use crate::entry::{Cite, Speaker};
 use crate::error::Error;
 use crate::memory::{Checked, Draft, ElementKind, NowKind};
-use crate::session::{SessionFilter, SessionId};
+use crate::message::NewMessage;
+use crate::session::{SessionFilter, SessionId, SessionRecord};
 use crate::store::memory::CRASH_AFTER_COMMIT;
 use crate::store::{ExportFormat, PassMemory, PassWrite, Redactor, Store, db, format};
 use crate::tests::{T0, session};
@@ -408,4 +411,221 @@ fn a_pass_window_that_fails_inside_its_transaction_writes_nothing() {
         store.control().unwrap().get(&id).unwrap().due,
         "the switch is unchanged"
     );
+}
+
+/// Plaintext an older `session rebuild` could store on a forgotten session.
+const STALE_CHECKPOINT: &str = "forgotten-checkpoint-plaintext-9f3a";
+/// Plaintext of a checkpoint that belongs to a session that was not forgotten.
+const LIVE_CHECKPOINT: &str = "live-checkpoint-kept-4c1b";
+
+struct ForgottenPair {
+    dir: tempfile::TempDir,
+    store: Store,
+    forgotten: SessionRecord,
+}
+
+/// Two moved sessions: `s-1` forgotten, `s-2` with a real rebuild checkpoint.
+fn forgotten_pair() -> ForgottenPair {
+    let dir = private_tempdir();
+    let store = Store::open(dir.path().join("store"));
+    let redactor = Redactor::new([]);
+    let forgotten = session("s-1", T0);
+    let live = session("s-2", T0 + time::Duration::hours(1));
+    store
+        .settle_pass(
+            &forgotten.id,
+            Some(forgotten.clone()),
+            false,
+            None,
+            &redactor,
+        )
+        .unwrap();
+    store
+        .settle_pass(&live.id, Some(live.clone()), false, None, &redactor)
+        .unwrap();
+    let cite = Cite {
+        session: forgotten.id.clone(),
+        message: None,
+        at: T0,
+        prompt_sha256: "0".repeat(64),
+        line: 1,
+        cwd: String::from("/work"),
+    };
+    store
+        .settle(&Settle::ForgetSession(forgotten.id.clone()), &cite, T0)
+        .unwrap();
+    let _guard = store.lock_rebuild(&live).unwrap();
+    let mut rebuilt = live.clone();
+    rebuilt.summary = LIVE_CHECKPOINT.to_owned();
+    store.checkpoint_rebuild(rebuilt, &redactor).unwrap();
+    ForgottenPair {
+        dir,
+        store,
+        forgotten,
+    }
+}
+
+/// The pre-batch checkpoint writer: insert by provider id, with no forgotten check.
+fn stage_legacy_checkpoint(root: &Path, session: &str, record: &str, user_version: Option<u32>) {
+    let conn = rusqlite::Connection::open(root.join(db::DB_FILE)).unwrap();
+    let inserted = conn
+        .execute(
+            "INSERT INTO rebuild_checkpoints (session, record, created)
+             SELECT id, ?2, '2026-11-01T00:00:00Z' FROM sessions
+             WHERE provider_session = ?1",
+            (session, record),
+        )
+        .unwrap();
+    assert_eq!(inserted, 1, "the legacy writer found the session row");
+    if let Some(version) = user_version {
+        if version == 6 {
+            // Recreate the schema-6 shape before lowering the version: schema 7
+            // added this column, while the forgotten-checkpoint repair is now 8.
+            conn.execute_batch("ALTER TABLE entries DROP COLUMN handoff_mode;")
+                .unwrap();
+        }
+        conn.pragma_update(None, "user_version", version).unwrap();
+    }
+}
+
+fn checkpoint_record(root: &Path, session: &str) -> Option<String> {
+    let conn = rusqlite::Connection::open_with_flags(
+        root.join(db::DB_FILE),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    match conn.query_row(
+        "SELECT c.record FROM rebuild_checkpoints c
+         JOIN sessions s ON s.id = c.session
+         WHERE s.provider_session = ?1",
+        [session],
+        |row| row.get(0),
+    ) {
+        Ok(text) => Some(text),
+        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+        Err(err) => panic!("read checkpoint: {err}"),
+    }
+}
+
+fn user_version(root: &Path) -> u32 {
+    db::meta(root).unwrap().unwrap().0
+}
+
+fn jsonl_text(store: &Store, target: &Path) -> String {
+    store.export(target, ExportFormat::Jsonl).unwrap();
+    let mut out = String::new();
+    for entry in fs::read_dir(target).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_file() {
+            out.push_str(&fs::read_to_string(&path).unwrap());
+        }
+    }
+    out
+}
+
+#[test]
+fn jsonl_export_omits_a_preexisting_forgotten_checkpoint_until_upgrade_erases_it() {
+    let pair = forgotten_pair();
+    let root = pair.store.root().to_path_buf();
+    // Schema 6 predates handoff_mode and can still hold the row. Version 8 deletes it.
+    stage_legacy_checkpoint(&root, "s-1", STALE_CHECKPOINT, Some(6));
+    assert_eq!(user_version(&root), 6);
+    let stale = checkpoint_record(&root, "s-1").unwrap();
+    assert!(stale.contains(STALE_CHECKPOINT));
+    let live = checkpoint_record(&root, "s-2").unwrap();
+    assert!(live.contains(LIVE_CHECKPOINT));
+
+    let exported = jsonl_text(&pair.store, &pair.dir.path().join("export"));
+    assert!(
+        !exported.contains(STALE_CHECKPOINT),
+        "JSONL export included the forgotten checkpoint before any later write: {exported}"
+    );
+    assert!(
+        exported.contains(LIVE_CHECKPOINT),
+        "JSONL export dropped the live session's checkpoint: {exported}"
+    );
+    // The export is a read: the row and the schema version are unchanged.
+    assert_eq!(user_version(&root), 6);
+    assert!(
+        checkpoint_record(&root, "s-1")
+            .unwrap()
+            .contains(STALE_CHECKPOINT)
+    );
+    assert_eq!(
+        pair.store.rebuild_checkpoint(&pair.forgotten).unwrap(),
+        None,
+        "a forgotten session's checkpoint is not readable"
+    );
+
+    pair.store
+        .write_messages(
+            &[NewMessage {
+                session: "s-9".parse().unwrap(),
+                message: String::from("m-unrelated"),
+                role: Speaker::User,
+                at: T0,
+                text: String::from("an unrelated note"),
+            }],
+            &Redactor::default(),
+        )
+        .unwrap();
+    assert_eq!(user_version(&root), 8);
+    assert_eq!(checkpoint_record(&root, "s-1"), None);
+    assert!(
+        checkpoint_record(&root, "s-2")
+            .unwrap()
+            .contains(LIVE_CHECKPOINT)
+    );
+    assert!(
+        !on_disk(&root, STALE_CHECKPOINT),
+        "the stale plaintext is still in the store"
+    );
+    assert!(on_disk(&root, LIVE_CHECKPOINT));
+}
+
+#[test]
+fn forgetting_again_erases_a_stale_checkpoint_and_keeps_a_live_one() {
+    let pair = forgotten_pair();
+    let root = pair.store.root().to_path_buf();
+    let version = user_version(&root);
+    stage_legacy_checkpoint(&root, "s-1", STALE_CHECKPOINT, None);
+    assert!(
+        checkpoint_record(&root, "s-1")
+            .unwrap()
+            .contains(STALE_CHECKPOINT)
+    );
+    let exported = jsonl_text(&pair.store, &pair.dir.path().join("export"));
+    assert!(!exported.contains(STALE_CHECKPOINT), "{exported}");
+    assert!(exported.contains(LIVE_CHECKPOINT), "{exported}");
+    assert!(
+        checkpoint_record(&root, "s-1")
+            .unwrap()
+            .contains(STALE_CHECKPOINT)
+    );
+
+    let cite = Cite {
+        session: pair.forgotten.id.clone(),
+        message: None,
+        at: T0,
+        prompt_sha256: "0".repeat(64),
+        line: 1,
+        cwd: String::from("/work"),
+    };
+    let again = pair
+        .store
+        .settle(&Settle::ForgetSession(pair.forgotten.id.clone()), &cite, T0)
+        .unwrap();
+    assert!(
+        matches!(again, Settled::Already(_)),
+        "a repeated forget still reports already forgotten: {again:?}"
+    );
+    assert_eq!(user_version(&root), version);
+    assert_eq!(checkpoint_record(&root, "s-1"), None);
+    assert!(
+        checkpoint_record(&root, "s-2")
+            .unwrap()
+            .contains(LIVE_CHECKPOINT)
+    );
+    assert!(!on_disk(&root, STALE_CHECKPOINT));
+    assert!(on_disk(&root, LIVE_CHECKPOINT));
 }
