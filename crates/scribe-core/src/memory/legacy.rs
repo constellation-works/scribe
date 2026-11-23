@@ -346,20 +346,6 @@ impl MemoryItem {
             .collect::<BTreeSet<_>>()
             .len()
     }
-
-    /// Whether the page labels it "not yet raised" on `today` (§13.4): a
-    /// `now` item with no mark, or whose date has passed since the mark.
-    #[must_use]
-    pub fn not_yet_raised(&self, today: Date) -> bool {
-        if self.section != Section::Now {
-            return false;
-        }
-        match (&self.acknowledged, self.event_date) {
-            (None, _) => true,
-            (Some(ack), Some(date)) => date < today && ack.at.date() < date,
-            (Some(_), None) => false,
-        }
-    }
 }
 
 /// Which rule promoted an item.
