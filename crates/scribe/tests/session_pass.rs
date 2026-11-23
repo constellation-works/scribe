@@ -2879,6 +2879,67 @@ fn a_rebuild_of_a_forgotten_session_is_refused_before_any_model_call_or_checkpoi
     assert_eq!(s.checkpoint_count(), 0, "and keeps no rebuild checkpoint");
 }
 
+// Linux exposes the child's open lock descriptor, giving the test a handshake
+// after the pre-lock tombstone check and before the held lock can be acquired.
+#[cfg(target_os = "linux")]
+#[test]
+fn rebuild_waiting_for_lock_refuses_a_session_forgotten_during_the_wait() {
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::time::{Duration, Instant};
+
+    let s = Setup::new();
+    s.scribe("/scribe on");
+    s.pass();
+    let calls = s.prompts().len();
+    let path = s.fx.root().join("locks").join(format!("rebuild-{ON}.lock"));
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    make_private(path.parent().unwrap());
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .mode(0o600)
+        .open(&path)
+        .unwrap();
+    lock.lock().unwrap();
+    let mut cmd = s.fx.cmd(&rebuild_args(true));
+    let child = cmd
+        .env("PATH", &s.path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut guard = support::ChildGuard::new(child);
+    let fds = format!("/proc/{}/fd", guard.child().id());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let admitted = std::fs::read_dir(&fds)
+            .unwrap()
+            .flatten()
+            .any(|fd| std::fs::read_link(fd.path()).is_ok_and(|target| target == path));
+        if admitted {
+            break;
+        }
+        assert!(
+            guard.child().try_wait().unwrap().is_none(),
+            "rebuild exited before lock admission"
+        );
+        assert!(Instant::now() < deadline, "rebuild never opened its lock");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let forgot = text(&type_settlement(&s, "#scribe forget s-1").stdout);
+    assert!(forgot.contains("scribe: forgot s-1"), "{forgot}");
+    lock.unlock().unwrap();
+    let out = guard.finish();
+    assert_eq!(out.status.code(), Some(1));
+    let error: Value = serde_json::from_slice(&out.stderr).unwrap();
+    assert_eq!(error["code"], "session_forgotten", "{error}");
+    assert_eq!(s.prompts().len(), calls, "no rebuild model invocation");
+    assert_eq!(s.checkpoint_count(), 0);
+}
+
 #[test]
 fn a_catalog_of_a_forgotten_session_with_a_record_is_refused_before_any_model_call() {
     let s = Setup::new();

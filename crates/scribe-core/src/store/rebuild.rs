@@ -37,9 +37,12 @@ impl Store {
             ));
         }
         let path = self.lock_path(&format!("rebuild-{}.lock", record.id))?;
-        Ok(RebuildGuard {
+        let guard = RebuildGuard {
             _lock: fsio::LockGuard::acquire(&path, "session rebuild", self.lock_wait)?,
-        })
+        };
+        // Forget may have completed while acquisition was waiting.
+        self.refuse_forgotten(&record.id)?;
+        Ok(guard)
     }
 
     /// The partial rebuilt record, if present. This read never locks or writes.
