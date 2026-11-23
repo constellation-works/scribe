@@ -1,7 +1,7 @@
 ---
 type: design
 summary: "Spec: output contract — streams, modes, plain columns, the JSON list envelope and record fields (segments, activity, agent authors and direct writes, search hits; future transcripts), warnings, errors and exit codes"
-last_validated: 2026-11-22
+last_validated: 2026-11-23
 ---
 
 # Spec: Output contract
@@ -107,6 +107,15 @@ records come from, or `no <noun> match <filters>` naming the flags) or cut
 match "<terms>" --kind session`), and when hidden records also matched it
 adds `<n> hidden record(s) also match: superseded or retired entries, or
 inactive sessions; --include-hidden shows them`.
+(ORB-27628) A default `scribe search` (no `--kind`) that finds no entry or
+session, while stored messages match the same filters, ends its stderr, in
+every mode, with the last line `<n> stored message(s) match, and no entry or
+session does: scribe search <terms> [filters] --kind message lists them`. The
+command repeats the terms and the filters (`--project`, `--group`, `--topic`,
+the dates and `--include-hidden`), so `<n>` counts what it lists. Its `--json`
+object gains `message_matches` (`<n>`) after `warnings`. Only that case adds
+the line or the key: with no matching message the output is unchanged, and
+the default kinds do not change.
 
 (S11) List filters: `entry list` and `session list` take `--since <date>`
 and `--until <date>` (`YYYY-MM-DD`, both days included), `--status`,

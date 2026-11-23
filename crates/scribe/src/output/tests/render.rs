@@ -82,6 +82,7 @@ fn render_list(
         records,
         total,
         warnings,
+        None,
     )
     .unwrap();
     String::from_utf8(out).unwrap()
@@ -393,6 +394,7 @@ fn only_the_group_title_truncates_on_a_narrow_terminal() {
         &Records::Groups(vec![long]),
         1,
         &[],
+        None,
     )
     .unwrap();
     let text = String::from_utf8(out).unwrap();

@@ -12,7 +12,7 @@ use crate::error::CliError;
 use crate::output::{HitPayload, Output, Records};
 use clap::Args;
 use scribe_core::ask::{Corpus, RecordKind};
-use scribe_core::search::{self, DEFAULT_LIMIT, SearchError, SearchQuery};
+use scribe_core::search::{self, DEFAULT_LIMIT, Found, SearchError, SearchQuery};
 use scribe_core::{EntryFilter, Project, SessionFilter, Topic};
 use std::num::NonZeroUsize;
 
@@ -121,15 +121,22 @@ pub(super) fn run(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
         },
         members.as_ref(),
     )?;
-    let mut read_only_copy = false;
-    let found = if query.kind == Some(RecordKind::Message) {
+    // The stored messages `query` keeps, and whether the store was opened as
+    // a read-only copy. Messages are ranked by the store, not by `search`.
+    let stored_messages = |query: &SearchQuery| -> Result<(Found, bool), CliError> {
         let tokens = scribe_core::ask::tokens(&query.terms);
         let stored = match &group {
             Some(group) => store.search_group_messages(&group.id, &tokens)?,
             None => store.search_messages(&tokens)?,
         };
-        read_only_copy = stored.read_only_copy;
-        search::messages(&query, &stored, &sessions.listing.items)
+        let found = search::messages(query, &stored, &sessions.listing.items).map_err(usage)?;
+        Ok((found, stored.read_only_copy))
+    };
+    let mut read_only_copy = false;
+    let found = if query.kind == Some(RecordKind::Message) {
+        let (found, copy) = stored_messages(&query)?;
+        read_only_copy = copy;
+        found
     } else {
         let corpus = Corpus {
             entries: &entries.listing.items,
@@ -138,11 +145,23 @@ pub(super) fn run(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
             tags: &config.tags,
             user: &config.user,
         };
-        search::search(&query, corpus)
+        search::search(&query, corpus).map_err(usage)?
+    };
+    // A default search that finds no entry or session says when stored
+    // messages match, since a line the user typed is only ever a message.
+    // The count uses the same filters, so the command lists those messages.
+    let mut message_matches = None;
+    if query.kind.is_none() && found.total == 0 {
+        let message_query = SearchQuery {
+            kind: Some(RecordKind::Message),
+            ..query.clone()
+        };
+        let (stored, copy) = stored_messages(&message_query)?;
+        if stored.total > 0 {
+            message_matches = Some(stored.total);
+            read_only_copy = copy;
+        }
     }
-    .map_err(|e| match e {
-        SearchError::NoTerms(_) => CliError::Usage(e.to_string()),
-    })?;
     let mut skipped = entries.skipped;
     skipped.extend(sessions.skipped);
     let mut criteria = vec![format!("{:?}", query.terms)];
@@ -152,7 +171,7 @@ pub(super) fn run(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
     if let Some(project) = &query.project {
         criteria.push(format!("--project {project}"));
     }
-    if let Some(group) = group {
+    if let Some(group) = &group {
         criteria.push(format!("--group {}", group.id));
     }
     for topic in &query.topics {
@@ -184,5 +203,63 @@ pub(super) fn run(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
             store.root().join(scribe_core::DB_FILE).display()
         ));
     }
+    // Last, so it ends the output: the stderr line and the JSON count.
+    if let Some(count) = message_matches
+        && let Output::List {
+            notices,
+            message_matches: shown,
+            ..
+        } = &mut output
+    {
+        notices.push(format!(
+            "{count} stored message(s) match, and no entry or session does: {} lists them",
+            message_command(&query, args.group.as_deref(), &args.dates)
+        ));
+        *shown = Some(count);
+    }
     Ok(output)
+}
+
+/// A refused query as a usage error (exit 2).
+fn usage(e: SearchError) -> CliError {
+    match e {
+        SearchError::NoTerms(_) => CliError::Usage(e.to_string()),
+    }
+}
+
+/// The `scribe search` command that lists the messages a hint counts: the
+/// same terms and filters, with `--kind message` (the order the criteria
+/// notice uses).
+fn message_command(query: &SearchQuery, group: Option<&str>, dates: &DateArgs) -> String {
+    let mut words = vec![
+        String::from("scribe search"),
+        shell_word(&query.terms),
+        String::from("--kind message"),
+    ];
+    if let Some(project) = &query.project {
+        words.push(format!("--project {project}"));
+    }
+    if let Some(group) = group {
+        words.push(format!("--group {}", shell_word(group)));
+    }
+    words.extend(query.topics.iter().map(|topic| format!("--topic {topic}")));
+    words.extend(dates.criteria());
+    if query.include_hidden {
+        words.push(String::from("--include-hidden"));
+    }
+    words.join(" ")
+}
+
+/// `text` as one shell word: bare when a shell reads it as itself, else
+/// single-quoted.
+fn shell_word(text: &str) -> String {
+    let bare = !text.is_empty()
+        && text
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_./:=,@%+".contains(c));
+    if bare {
+        text.to_owned()
+    } else {
+        format!("'{}'", text.replace('\'', r"'\''"))
+    }
 }

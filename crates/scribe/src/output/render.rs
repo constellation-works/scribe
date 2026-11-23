@@ -125,27 +125,33 @@ const HIT_COLUMNS: [Column; 6] = [
 
 /// The `--json` form of a list: always `{"<records>": [...], "total",
 /// "truncated", "warnings"}`, whatever the flags, so its shape never depends
-/// on them (STD-01 R34, R10).
+/// on them (STD-01 R34, R10). Only a search that hints at stored messages
+/// adds `message_matches` after them, so every other list is unchanged.
 struct Envelope<'a, T> {
     key: &'static str,
     items: &'a [T],
     total: usize,
     warnings: &'a [WarningPayload],
+    message_matches: Option<usize>,
 }
 
 impl<T: Serialize> Serialize for Envelope<'_, T> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut map = serializer.serialize_map(Some(4))?;
+        let len = if self.message_matches.is_some() { 5 } else { 4 };
+        let mut map = serializer.serialize_map(Some(len))?;
         map.serialize_entry(self.key, self.items)?;
         map.serialize_entry("total", &self.total)?;
         map.serialize_entry("truncated", &(self.items.len() < self.total))?;
         map.serialize_entry("warnings", self.warnings)?;
+        if let Some(count) = self.message_matches {
+            map.serialize_entry("message_matches", &count)?;
+        }
         map.end()
     }
 }
 
 /// A list: table, tab-separated lines, or the JSON envelope. `total` is how
-/// many matched.
+/// many matched; `message_matches` is the count a search's hint gives.
 pub(crate) fn list(
     out: &mut dyn Write,
     sink: &Sink,
@@ -153,6 +159,7 @@ pub(crate) fn list(
     records: &Records,
     total: usize,
     warnings: &[WarningPayload],
+    message_matches: Option<usize>,
 ) -> io::Result<()> {
     if sink.mode == OutputMode::Json {
         return match records {
@@ -170,7 +177,13 @@ pub(crate) fn list(
                 write_json(out, &envelope("proposals", items, total, warnings))
             }
             Records::Tags(items) => write_json(out, &envelope("tags", items, total, warnings)),
-            Records::Hits(items) => write_json(out, &envelope("hits", items, total, warnings)),
+            Records::Hits(items) => write_json(
+                out,
+                &Envelope {
+                    message_matches,
+                    ..envelope("hits", items, total, warnings)
+                },
+            ),
             Records::Transcripts(items) => {
                 write_json(out, &envelope("transcripts", items, total, warnings))
             }
@@ -282,6 +295,7 @@ fn envelope<'a, T>(
         items,
         total,
         warnings,
+        message_matches: None,
     }
 }
 

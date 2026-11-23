@@ -233,8 +233,17 @@ fn emit(sink: &Sink, shorts: &ShortIds, output: &Output) -> io::Result<()> {
             records,
             total,
             warnings,
+            message_matches,
             ..
-        } => render::list(&mut out, sink, shorts, records, *total, warnings)?,
+        } => render::list(
+            &mut out,
+            sink,
+            shorts,
+            records,
+            *total,
+            warnings,
+            *message_matches,
+        )?,
         Output::Show { record } | Output::Written { record, .. } => {
             render::show(&mut out, sink, shorts, record)?;
         }
