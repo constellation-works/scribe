@@ -810,9 +810,14 @@ the memory block's warnings.
 For each `sessions[]` row, `handoff_mode` is the newest handoff's mode or
 `null` when there is no handoff or its newest handoff has no mode.
 
-`at` is a session's last activity (its last segment's end, else its
-`updated`). `quote` is a candidate's verbatim words, or a consistency
-proposal's first quoted span (its reason when it quotes none);
+`at` is a session's last recorded activity, and the brief orders
+`sessions[]` by it, newest first, the current project's first. For a
+recorded session it is the later of its last segment's end (else its
+`updated`) and its newest active handoff's `created`; an older handoff leaves
+it at the record's time. A session with no record (handoff only) has `at`
+equal to its newest active handoff's `created`. `quote` is a candidate's
+verbatim words, or a consistency proposal's first quoted span (its reason
+when it quotes none);
 `statement` is a candidate's statement (its quote when it has none) or a
 consistency proposal's reason; `subject` is `null` for a consistency
 proposal, `older` and `newer` `null` for a candidate.
