@@ -35,6 +35,21 @@ pub(super) fn run(
     session: &SessionId,
     ctx: &Context,
 ) -> Result<Output, CliError> {
+    run_with_transcript_reader(slug, named, payload, session, ctx, group_turns::past)
+}
+
+pub(super) fn run_with_transcript_reader(
+    slug: &str,
+    named: &[SessionId],
+    payload: &PromptPayload,
+    session: &SessionId,
+    ctx: &Context,
+    mut read_past: impl FnMut(
+        &Context,
+        &SessionId,
+        &std::path::Path,
+    ) -> Result<Option<Vec<scribe_core::message::NewMessage>>, CliError>,
+) -> Result<Output, CliError> {
     if named.len() > MAX_SESSIONS {
         return Ok(refusal(
             format!(
@@ -49,7 +64,7 @@ pub(super) fn run(
     // Joined time is taken before any transcript is read, so a turn appended
     // while the snapshots are read is never dated before the membership.
     let membership_at = ctx.now();
-    let additions = match additions(ctx, named) {
+    let additions = match additions(ctx, named, &mut read_past) {
         Ok(additions) => additions,
         Err(err) => {
             return Ok(refusal(
@@ -110,7 +125,15 @@ pub(super) fn run(
 /// transcripts on disk so an exact id wins across every source and a shared
 /// prefix refuses the line before writes; unknown ids stay as typed, since a
 /// session that was never recorded has no other source.
-fn additions(ctx: &Context, named: &[SessionId]) -> Result<Vec<GroupAddition>, CliError> {
+fn additions(
+    ctx: &Context,
+    named: &[SessionId],
+    read_past: &mut impl FnMut(
+        &Context,
+        &SessionId,
+        &std::path::Path,
+    ) -> Result<Option<Vec<scribe_core::message::NewMessage>>, CliError>,
+) -> Result<Vec<GroupAddition>, CliError> {
     let mut files = std::collections::BTreeMap::new();
     // Entries named like a transcript whose file type is refused: present, so
     // a named session among them is read through the checked open, which
@@ -151,8 +174,18 @@ fn additions(ctx: &Context, named: &[SessionId]) -> Result<Vec<GroupAddition>, C
         // A refused entry takes precedence over a regular one for the same id,
         // so a session with both is read through the checked open and refuses
         // the whole line, never backfilled from its regular transcript.
+        let was_refused = refused.contains_key(&id);
         let turns = match refused.get(&id).or_else(|| files.get(&id)) {
-            Some((path, provider)) => group_turns::past(&ctx.with_provider(*provider), &id, path)?,
+            Some((path, provider)) => {
+                let turns = read_past(&ctx.with_provider(*provider), &id, path)?;
+                if was_refused && turns.is_none() {
+                    return Err(CliError::TranscriptRefused {
+                        id,
+                        reason: String::from("the refused transcript disappeared after discovery"),
+                    });
+                }
+                turns
+            }
             None => None,
         };
         additions.push(GroupAddition { session: id, turns });
