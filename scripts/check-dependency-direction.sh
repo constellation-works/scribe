@@ -127,6 +127,23 @@ for path in "$CORE"/*; do
   ban "$path" 'tempfile::|rustix::' "core/$name is business logic: file and process access belong in store/"
   ban "$path" 'crate::store'                              "core/$name is business logic: it must not depend on persistence"
 done
+# The Models port must not import its callers.
+ban "$CORE/models.rs" 'crate::(ask|memory|group)(::|[^[:alnum:]_]|$)' "the Models port must not import its callers"
+# A grouped crate import can name a caller without spelling crate::caller.
+port_grouped=$(perl -0777 -ne '
+  while (/^[ \t]*(?:pub(?:\([a-z]+\))?[ \t]+)?use[ \t]+(?:::)?crate::\{([^;]*)\};/mg) {
+    my ($stmt, $group, $at) = ($&, $1, $-[0]);
+    1 while $group =~ s/\{[^{}]*\}//g;
+    next unless $group =~ /(?<![A-Za-z0-9_:])(?:ask|memory|group)(?![A-Za-z0-9_])/;
+    my $line = 1 + (substr($_, 0, $at) =~ tr/\n//);
+    $stmt =~ s/\s+/ /g;
+    print "$ARGV:$line:$stmt\n";
+  }' "$CORE/models.rs" 2>/dev/null || true)
+if [[ -n "$port_grouped" ]]; then
+  echo "$port_grouped" >&2
+  err "the Models port must not import its callers"
+fi
+
 # Inside store/: fsio is mechanism with no knowledge of records, and the
 # format, redaction and audit record shapes do no I/O of their own (R4, R5).
 ban "$CORE/store/fsio.rs"   'crate::(entry|tag|session|proposal|record|config|verbatim|store)|super::' \

@@ -6,19 +6,7 @@
 use super::{finance_word, sensitive_word};
 use std::collections::BTreeSet;
 
-/// The profile's section headings, in order.
-pub const HEADINGS: [&str; 7] = [
-    "Role and work",
-    "Current focus",
-    "Projects",
-    "Goals",
-    "Environment",
-    "How they work",
-    "Pinned",
-];
-
-/// The longest profile the job writes, in characters.
-pub const PROFILE_CHARS: usize = 6000;
+pub use crate::models::{HEADINGS, PROFILE_CHARS};
 
 /// The longest hand-edit diff the job reads, in characters.
 pub const DIFF_CHARS: usize = 4000;

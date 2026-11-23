@@ -13,6 +13,50 @@
 //!
 //! No I/O (STD-02 R5).
 
+use crate::entry::Speaker;
+
+/// Whose words an approved pass statement is, in `ask` evidence and in
+/// `scribe search` snippets (2_design.md §11.1).
+#[must_use]
+pub fn stated_whose(user: &UserName) -> String {
+    format!("scribe's statement of {}'s turn", user.noun())
+}
+
+/// Whose words an approved pass statement of `speaker`'s turn is, in
+/// `ask` evidence, `scribe search` snippets and `entry show`
+/// (2_design.md §11.1, §15.3).
+#[must_use]
+pub fn stated_whose_for(user: &UserName, speaker: Speaker) -> String {
+    match speaker {
+        Speaker::User => stated_whose(user),
+        Speaker::Assistant => String::from("scribe's statement of the assistant's turn"),
+    }
+}
+
+/// Whose words an agent's statement of the user's spoken instruction is, in
+/// `ask` evidence, `scribe search` snippets and `entry show` (2_design.md
+/// §16.6).
+#[must_use]
+pub fn agent_stated_whose(user: &UserName, agent: &str) -> String {
+    format!("agent ({agent})'s statement of {}'s turn", user.noun())
+}
+
+/// The label before the user's own words beside such a statement.
+#[must_use]
+pub fn stated_quote_label(user: &UserName) -> String {
+    format!("{}'s words:", user.title())
+}
+
+/// The label before a quote of `speaker`'s words beside scribe's
+/// statement of their turn.
+#[must_use]
+pub fn words_label(user: &UserName, speaker: Speaker) -> String {
+    match speaker {
+        Speaker::User => stated_quote_label(user),
+        Speaker::Assistant => String::from("The assistant's words:"),
+    }
+}
+
 /// The most characters `[user] name` may hold.
 pub const USER_NAME_CHARS: usize = 64;
 

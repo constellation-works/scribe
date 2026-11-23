@@ -34,6 +34,7 @@ Checked by grep over non-test sources in `scripts/check-dependency-direction.sh`
 and `scripts/check-terminal-guard.sh`. "Module" includes any file added later.
 
 - `scribe-core` modules other than `store/` do no file, network or process I/O (`std::fs`, `std::net`, `std::process`, `tempfile`, `rustix`) and never import `crate::store`.
+- A port imports none of the modules that call it; the `Models` port does not import `ask`, `memory` or `group`.
 - `scribe-core` reads no environment variables and discovers no paths (`std::env::`, `home_dir`, `current_dir`); the caller passes resolved roots.
 - `store/fsio.rs` imports no business module and nothing else from `store`. `store/format.rs`, `store/redact.rs` and `store/audit.rs` do no file I/O.
 - Only `store/db.rs` and `store/db/` use `rusqlite`; nothing else in either crate does. Tests are exempt.
