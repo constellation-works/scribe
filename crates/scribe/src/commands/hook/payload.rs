@@ -89,6 +89,8 @@ pub(super) fn agent_originated(payload: &PromptPayload) -> bool {
 #[derive(Debug, Deserialize)]
 pub(super) struct SessionStartPayload {
     pub(super) session_id: String,
+    pub(super) transcript_path: Option<PathBuf>,
+    pub(super) source: Option<String>,
     /// Working directory, when the harness sends one. The continuation
     /// reminder matches a recorded session in this directory's project.
     /// Absent, the hook still starts the session and prints no reminder.
@@ -309,11 +311,21 @@ pub(in crate::commands) fn read_checked_bytes(
     read_checked_with(ctx, path, session, Rollout::Unparsed)
 }
 
+/// Read only the transcript prelude, with the same path and open-handle checks.
+pub(super) fn claude_header(
+    ctx: &crate::app::Context,
+    path: &Path,
+    session: &SessionId,
+) -> Result<Option<Vec<u8>>, Unreadable> {
+    read_checked_with(ctx, path, session, Rollout::Header)
+}
+
 /// Whether a Codex read parses the rollout and checks its identity.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Rollout {
     Verify,
     Unparsed,
+    Header,
 }
 
 fn read_checked_with(
@@ -436,6 +448,11 @@ fn read_opened(
         )));
     }
     owned_by_this_user(&meta).map_err(invalid)?;
+    if rollout == Rollout::Header {
+        let mut bytes = Vec::new();
+        file.take(64 * 1024).read_to_end(&mut bytes)?;
+        return Ok(bytes);
+    }
     if ctx.provider() != scribe_core::Provider::Codex {
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;

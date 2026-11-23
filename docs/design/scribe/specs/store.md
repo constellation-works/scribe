@@ -581,8 +581,7 @@ any other author or source on it is `store_corrupt`.
 **Session keys:** `format`, `kind`, `id`, `status` (`open`, `final`),
 `project`, `topics`, `related` (model-extracted references, unchanged by
 links), `links` (a list, possibly empty, of `{type, session}`: `type` is
-`spawned_from` or `continues`, `session` a session id; the links Daniel
-asserted for this session, stored once, on the child; a parent's children
+`spawned_from` or `continues`, `session` a session id; the links typed for this session or restored from a continue handoff, stored once, on the child; a parent's children
 are derived at read time and its record is never rewritten for them),
 `terms` (a list, possibly empty, of
 `{term, said, message}`: a phrase Daniel coined or defined, the verbatim
@@ -795,7 +794,7 @@ corrected by editing it outside Pinned.
   `codex_cursors`, both in `scribe.db`, and the file holds only
   `{"format": 27, "sessions": {}, "codex_cursors": {}}`. A switch has the
   same fields in either home. `pending_links` holds `{type, session}` links
-  Daniel asserted before the session had a record; the pass that writes
+  established before the session had a record; the pass that writes
   the record moves them onto it, then clears them, in one locked call.
   `since` and `retry_after` are RFC 3339 timestamps or `null`; the failure
   count is a saturating unsigned integer. A failed pass stays due; its next
@@ -1030,8 +1029,8 @@ exits 0.
   since phase 6, `control.json` before) in its write's transaction and writes only when
   the change reports one, so `/scribe on`
   twice, `off` for a session that is not on, and a `Stop` or `SessionEnd`
-  for a session never switched on write nothing. A session never switched
-  on has no switch.
+  for a session never switched on write nothing. An off session can hold a switch with a pending
+  `continues` link after restoring a handoff.
 - **Session records** (S4). `Store::settle_pass` writes a session record
   (redacted, `sessions/<yyyy>/<mm>/` from its `started`, created `0700`)
   and settles its switch (`due` cleared, `final` too when the final pass

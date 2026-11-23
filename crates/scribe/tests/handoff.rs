@@ -112,18 +112,26 @@ impl Transcript {
     }
 
     fn session_start(&self, fx: &Fixture) -> Value {
+        self.start_from(fx, "startup", "claude-desktop")
+    }
+
+    fn start_from(&self, fx: &Fixture, source: &str, entrypoint: &str) -> Value {
         let payload = json!({
             "session_id": self.session,
             "transcript_path": self.path,
             "cwd": self.cwd,
             "hook_event_name": "SessionStart",
-            "source": "startup"
+            "source": source
         });
         let mut cmd = fx.cmd(&["hook", "session-start"]);
-        cmd.env("CLAUDE_CODE_ENTRYPOINT", "cli");
+        cmd.env("CLAUDE_CODE_ENTRYPOINT", entrypoint);
         let out = piped(cmd, &payload);
         assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
-        serde_json::from_slice(&out.stdout).unwrap()
+        if out.stdout.is_empty() {
+            Value::Null
+        } else {
+            json_of(&out)
+        }
     }
 }
 
@@ -1514,4 +1522,235 @@ fn legacy_database_reads_without_migrating_and_upgrades_on_write() {
         .unwrap();
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     assert_eq!(json_of(&out)["handoff_mode"], "new");
+}
+
+const CHILD: &str = "7f3e2d90-4b6c-4e51-8a83-2c1d0e9f8a71";
+
+fn refresh_handoff(fx: &Fixture, parent: &Transcript, mode: &str, body: &str) -> String {
+    parent.write(&[("u-1", "user", "Continue working on the widget.")]);
+    let out = fx
+        .cmd(&[
+            "entry",
+            "add",
+            "--tag",
+            "handoff",
+            "--author",
+            "opus",
+            "--related",
+            &format!("session:{}", parent.session),
+            "--mode",
+            mode,
+            "--json",
+            body,
+        ])
+        .env("CLAUDE_CODE_SESSION_ID", &parent.session)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    json_of(&out)["id"].as_str().unwrap().to_owned()
+}
+
+fn after_clear(fx: &Fixture, parents: &[&str]) -> Transcript {
+    let child = Transcript::new(fx, CHILD);
+    child.write(&[]);
+    let mut sessions = vec![json!({"via":"launch", "id":ON_SESSION})];
+    sessions.extend(parents.iter().map(|id| json!({"via":"clear","id":id})));
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&child.path)
+        .unwrap();
+    writeln!(
+        file,
+        "{}",
+        json!({"type":"derived-from","sessions":sessions})
+    )
+    .unwrap();
+    child
+}
+
+#[test]
+fn refresh_continue_after_desktop_clear_inherits_switch_links_and_prepends_one_handoff() {
+    for on in [true, false] {
+        let fx = Fixture::new();
+        let parent = Transcript::new(&fx, OFF_SESSION);
+        let body = valid_handoff("The chosen handoff.", "Resume the widget.");
+        refresh_handoff(&fx, &parent, "continue", &body);
+        let neighbor = Transcript::new(&fx, ON_SESSION);
+        refresh_handoff(
+            &fx,
+            &neighbor,
+            "continue",
+            &valid_handoff("Other captain.", "Stay here."),
+        );
+        if on {
+            parent.prompt(&fx, "/scribe on");
+        }
+        let child = after_clear(&fx, &[OFF_SESSION]);
+        let before = support::audit_lines(&fx.root()).len();
+        for _ in 0..2 {
+            let reply = child.session_start(&fx);
+            let context = reply["hookSpecificOutput"]["additionalContext"]
+                .as_str()
+                .unwrap();
+            assert!(context.starts_with(body.trim_end()), "{context}");
+            assert_eq!(context.matches("## State").count(), 1);
+            assert!(!context.contains("Other captain."));
+            let status = child.prompt(&fx, "/scribe status")["reason"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            assert!(
+                status.starts_with(if on { "scribe: on" } else { "scribe: off" }),
+                "{status}"
+            );
+            assert!(
+                status.contains(&format!("continues {OFF_SESSION}")),
+                "{status}"
+            );
+        }
+        let audit = support::audit_lines(&fx.root());
+        assert_eq!(audit.len(), before + 1);
+        assert_eq!(audit[before]["command"], "hook session-start");
+        if on {
+            child.prompt(&fx, "/scribe off");
+            child.session_start(&fx);
+            let status = child.prompt(&fx, "/scribe status");
+            assert!(
+                status["reason"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("scribe: off")
+            );
+        }
+    }
+}
+
+#[test]
+fn refresh_new_or_absent_handoff_leaves_the_ordinary_brief_and_switch_alone() {
+    let fx = Fixture::new();
+    let parent = Transcript::new(&fx, OFF_SESSION);
+    let body = valid_handoff("Leave this context behind.", "Start afresh.");
+    refresh_handoff(
+        &fx,
+        &parent,
+        "continue",
+        &valid_handoff("Original plan.", "Keep working."),
+    );
+    refresh_handoff(&fx, &parent, "new", &body);
+    parent.prompt(&fx, "/scribe on");
+    for predecessor in [OFF_SESSION, ON_SESSION] {
+        let child = after_clear(&fx, &[predecessor]);
+        let before = support::audit_lines(&fx.root());
+        let reply = child.session_start(&fx);
+        let context = reply["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap();
+        assert!(
+            context.contains("[handoff: handoff-2, mode: new]"),
+            "{context}"
+        );
+        assert!(!context.contains("## State"));
+        assert!(reply.get("systemMessage").is_none(), "{reply}");
+        assert_eq!(support::audit_lines(&fx.root()), before);
+        let status = child.prompt(&fx, "/scribe status");
+        assert!(
+            status["reason"]
+                .as_str()
+                .unwrap()
+                .contains("never switched on")
+        );
+    }
+}
+
+#[test]
+fn refresh_ambiguous_or_missing_ancestry_waits_for_a_typed_handoff_id() {
+    let fx = Fixture::new();
+    let parent = Transcript::new(&fx, OFF_SESSION);
+    let body = valid_handoff("Resume exactly here.", "Run the fixture.");
+    let id = refresh_handoff(&fx, &parent, "continue", &body);
+    let child = after_clear(&fx, &[OFF_SESSION, ON_SESSION]);
+    let before = support::audit_lines(&fx.root());
+    let ambiguous = child.session_start(&fx);
+    let message = ambiguous["systemMessage"].as_str().unwrap();
+    assert!(
+        message.contains(OFF_SESSION) && message.contains(ON_SESSION),
+        "{message}"
+    );
+    assert!(
+        !ambiguous["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap()
+            .contains("## State")
+    );
+    child.write(&[]);
+    let ordinary = child.session_start(&fx);
+    assert!(
+        !ordinary["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap()
+            .contains("## State")
+    );
+    assert_eq!(support::audit_lines(&fx.root()), before);
+    let reply = child.prompt(&fx, &format!("/scribe:scribe continue {id}"));
+    assert!(reply.get("decision").is_none(), "{reply}");
+    assert_eq!(
+        reply["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap()
+            .trim_end(),
+        body.trim_end()
+    );
+    let status = child.prompt(&fx, "/scribe status");
+    assert!(
+        status["reason"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("continues {OFF_SESSION}"))
+    );
+}
+
+#[test]
+fn refresh_requires_interactive_start_and_provenance_and_refuses_a_self_link() {
+    let fx = Fixture::new();
+    let parent = Transcript::new(&fx, OFF_SESSION);
+    let id = refresh_handoff(&fx, &parent, "continue", &valid_handoff("Parent.", "Next."));
+    let child = after_clear(&fx, &[OFF_SESSION]);
+    let before = support::audit_lines(&fx.root());
+    for (source, entrypoint) in [
+        ("startup", "sdk-cli"),
+        ("resume", "cli"),
+        ("compact", "claude-desktop"),
+    ] {
+        let reply = child.start_from(&fx, source, entrypoint);
+        assert!(
+            !reply["hookSpecificOutput"]["additionalContext"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("## State")
+        );
+    }
+    let mut mismatched = Transcript::new(&fx, ON_SESSION);
+    mismatched.path = child.path.clone();
+    let reply = mismatched.session_start(&fx);
+    assert!(
+        !reply["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap()
+            .contains("## State")
+    );
+    assert_eq!(support::audit_lines(&fx.root()), before);
+    let refused = parent.prompt(&fx, &format!("/scribe continue {id}"));
+    assert_eq!(refused["decision"], "block");
+    assert!(refused.get("hookSpecificOutput").is_none());
+    assert_eq!(
+        support::audit_lines(&fx.root()).last().unwrap()["error_code"],
+        "link_self"
+    );
+    let status = parent.prompt(&fx, "/scribe status");
+    assert!(
+        status["reason"]
+            .as_str()
+            .unwrap()
+            .contains("never switched on")
+    );
 }

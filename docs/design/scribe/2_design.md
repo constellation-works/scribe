@@ -100,7 +100,7 @@ counting action entries left unpicked for over an hour
 session in the same project was recorded within the last day, adds
 `scribe: this may continue <id> (recorded) — type /scribe on --from <id> to keep recording`
 ([§5.4](#54-session-links), [§7](#7-consistency-routine)). It prints nothing
-otherwise. It reads only; it does not create `config.toml`
+otherwise. Restoring a continue handoff (§16.7) is the hook’s write path. It does not create `config.toml`
 ([§3](#3-storage)).
 (Proposed, not built: it also gives the agent the memory page as
 `additionalContext` in interactive sessions,
@@ -442,7 +442,7 @@ by fields before any ranking. Every record carries:
 | `project` | the repository slug from the cwd's git remote, else the cwd's basename; `global` when the line opens with `#scribe/global` instead of `#scribe` ([§4.2](#42-parsing-an-instruction)) |
 | `topics` | 0–5 lowercase kebab-case labels (`ci`, `crew-routing`, `release`) |
 | `related` | references the record mentions: `task:ORB-123`, `pr:<owner>/<repo>#7`, `repo:<slug>`, `session:<id>` (model-extracted for a session) |
-| `links` | sessions only: `[{type, session}]`, `type` `spawned_from` or `continues`; the session structure Daniel asserted ([§5.4](#54-session-links)), stored on the child only |
+| `links` | sessions only: `[{type, session}]`, `type` `spawned_from` or `continues`; the session structure set by a typed command or a continue handoff ([§5.4](#54-session-links)), stored on the child only |
 | `terms` | sessions only: phrases Daniel coins or defines, each `{term, said, message}` where `said` is a verbatim span of Daniel's own turn that defines or first uses it |
 | `provider`, `host` | where it was recorded |
 | `author` | entries and proposals, from S8: `{kind, name}`; `kind` is `daniel` (a typed `#scribe` turn), `agent` (a CLI write verb, `name` from `--author`) or `scribe` (scribe's own routine, proposals only) |
@@ -1437,14 +1437,11 @@ as data. The refusals and replies are in
 [specs/output-contract.md](./specs/output-contract.md#hook-replies); the
 reasons in
 [4_decisions.md](./4_decisions.md#session-links-are-typed-stored-on-the-child-and-manual).
-Neither the hook payloads nor the transcripts carry a parent session id,
-so nothing is linked automatically. The session-start brief can remind
-Daniel of the command, with the previous id filled in, when a new session
-is not itself opted in and an active session in the same project (the
-working directory's git remote name, else its directory name) was updated
-within the last day — the one updated most recently
-([§7](#7-consistency-routine)). The reminder writes nothing: the link
-still exists only when he types it. No line when this session is already
+Desktop clear ancestry also permits a `continues` link through a handoff
+(§16.7). Otherwise the start reminder suggests a single active recorded
+session in the same project updated in the last day. With several it names
+their ids and leaves the choice to Daniel. The reminder writes nothing.
+No line when this session is already
 opted in (its switch is on, or it already has a record), when no recorded
 session in the project is that recent, or when the store cannot be read.
 
@@ -1976,13 +1973,13 @@ Daniel sees open proposals at session start (the `SessionStart` hook returns
 one further line when the session starting is not opted in and an active
 session in that working directory's project was recorded within the last
 day: `scribe: this may continue <id> (recorded) — type /scribe on --from <id> to keep recording`,
-naming the record updated most recently. It does not write the link
+when there is one possible record. With several it names their ids. This reminder does not write the link
 ([§5.4](#54-session-links)). There is no such line when this session is
 already opted in (its switch is on, or it already has a record), when no
 active record in the project was updated that recently, or when the
 sessions cannot be read; a read error is logged and the session still
 starts. The agent is not told these lines. In an interactive session
-(`CLAUDE_CODE_ENTRYPOINT=cli`) it is given the brief instead, as
+(`CLAUDE_CODE_ENTRYPOINT` is `cli` or `claude-desktop`) it is given the brief instead, as
 `additionalContext`: `scribe brief`, the one session-start page, model-free
 and read-only. Its top block is the memory page of §13.6, kept whole (so
 the design's Profile, Now and Milestones can replace it without touching
@@ -4186,7 +4183,7 @@ the hook's `additionalContext` (Claude Code's `SessionStart`
 in `systemMessage` as today. It is built read-only, with no lock and no
 write, from the store and the day. It is injected **only into an
 interactive session**: the hook reads Claude Code's entry point
-(`CLAUDE_CODE_ENTRYPOINT=cli`, the interactive value §12.5 relies on;
+(`CLAUDE_CODE_ENTRYPOINT` is `cli` or `claude-desktop`, as in §12.5;
 `sdk-cli` for every `claude -p` run) and adds no page otherwise, so
 headless Orbit runs, routines and drains carry none of it. Codex's
 equivalent is mapped by the implementation task, or Codex sessions get
@@ -5597,7 +5594,7 @@ injected into every interactive session.
 **Where it runs.**
 
 - The `SessionStart` hook puts the whole page in `additionalContext`, only
-  in an interactive session (the `CLAUDE_CODE_ENTRYPOINT=cli` gate the page
+  in an interactive session (the interactive entrypoint gate the page
   uses today), so Orbit runs and routines carry none of it.
 - The skill's start-of-session steps become two:
   1. **Read the active preferences**, global and project, as today's step 2
@@ -6513,6 +6510,35 @@ scribe entry add --tag <tag> --author <name> --project <project> \
   and its proposals. `skills/scribe/SKILL.md` directs agents to use
   `--spoken` only on the human's explicit instruction (never unprompted)
   and replaces the old instruction to ask the human to retype with `#scribe`.
+
+### 16.7 Continuing after a clear
+
+The desktop app sends SessionStart with source `startup` on a clear. The
+new transcript has its own session id and an opening `derived-from` record.
+The hook reads up to 64 KiB from the checked transcript path, looking for
+distinct session ids marked `via: clear`. A `via: launch` id can survive
+several clears. Only the clear ids identify immediate predecessors. Hook
+sources `resume` and `compact` do not restore a handoff.
+
+For a single predecessor, the hook reads its newest active handoff. If its
+mode is `continue`, that one checked body (at most 3,000 characters) starts
+the new session's additional context, followed by the ordinary brief.
+A `new` handoff, a legacy handoff without a mode, or no handoff leaves the
+ordinary brief and recording state alone. Multiple clear ids are reported
+in the user message. The hook never pairs sessions by checkout or time.
+
+The transaction rechecks the handoff, copies the predecessor's on/off state
+and stores a `continues` link on the child. A parent with no switch counts
+as off. A child without a record holds the link in its switch’s
+`pending_links`, even when off, with no pass scheduled until recording is
+on. Repeating a continuation returns the body and preserves any switch
+change made since the link was written.
+
+The ancestry record might not yet be visible at hook time. The user can type
+`/scribe continue <handoff-id>` to select an active continue handoff. A
+successful prompt supplies that body as `hookSpecificOutput.additionalContext` for `UserPromptSubmit`
+and goes through to the agent. A refused selection blocks the command with
+its reason. Both routes audit the write or refusal against the child id.
 
 ## Task References
 

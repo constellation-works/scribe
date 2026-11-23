@@ -1558,6 +1558,10 @@ read-only or missing store (a read error is logged and counts as none).
 ## Session links are typed, stored on the child, and manual
 
 **Recorded:** 2026-11 · [ORB-23849]
+**Refined by session refresh:** A desktop clear names its predecessor in the
+new transcript. A continue handoff authorizes the hook to record that link
+and carry the recording switch ([design §16.7](./2_design.md#167-continuing-after-a-clear)).
+
 **Code anchors:** `crates/scribe-core/src/session.rs` (`SessionLink`, `check_link`, `children`), `crates/scribe-core/src/control.rs` (`link`), `crates/scribe-core/src/store/mod.rs` (`link_session`), `crates/scribe/src/commands/hook/scribe_command.rs`
 
 ### Context

@@ -26,12 +26,11 @@ Global options:
       --json
           Shorthand for --format json
 
-Reads the SessionStart payload (session_id, and cwd when the harness sends
-it) on stdin. Prints a message for the user when proposals are open, when
-action entries have waited over an hour with no pickup, or when this
-session is not opted in and a session in the same project was recorded
-within the last day. Nothing otherwise, and nothing for the agent. Reads
-only; calls no model.
+Reads the SessionStart payload (session_id, cwd, source and transcript_path).
+Reports open proposals, unpicked actions and possible recorded predecessors.
+Interactive Claude sessions receive the brief. After a clear with a continue
+handoff, the hook prepends that handoff and links the sessions, carrying the
+recording switch. Calls no model.
 
 Examples:
   scribe hook session-start < <payload.json>

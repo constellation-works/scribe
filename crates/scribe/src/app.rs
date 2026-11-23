@@ -22,9 +22,6 @@ pub(crate) const ROOT_ENV: &str = "SCRIBE_ROOT";
 /// types into the session.
 const ENTRYPOINT_ENV: &str = "CLAUDE_CODE_ENTRYPOINT";
 
-/// The entry point of an interactive Claude Code session.
-const INTERACTIVE_ENTRYPOINT: &str = "cli";
-
 /// Environment variable that moves Claude Code's state directory.
 const CLAUDE_CONFIG_ENV: &str = "CLAUDE_CONFIG_DIR";
 
@@ -73,7 +70,7 @@ pub(crate) struct Context {
     codex_archived: Option<PathBuf>,
     provider: Provider,
     /// Whether this process runs under an interactive Claude Code session
-    /// (`CLAUDE_CODE_ENTRYPOINT=cli`): only then does `SessionStart` inject
+    /// (`cli` or `claude-desktop`): only then does `SessionStart` inject
     /// the memory page (2_design.md §13.6).
     interactive: bool,
     /// The instruction the running command acts on, for its audit line;
@@ -117,7 +114,8 @@ impl Context {
             interactive: env
                 .claude_entrypoint
                 .as_deref()
-                .is_some_and(|e| e == INTERACTIVE_ENTRYPOINT),
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| scribe_core::instruction::INTERACTIVE_ENTRYPOINTS.contains(&e)),
             instruction: Arc::default(),
         })
     }

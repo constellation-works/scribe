@@ -1,38 +1,7 @@
-//! `scribe hook session-start`: tell the user how many proposals wait for them
-//! (docs/design/scribe/2_design.md §7), how many action entries no consumer
-//! has picked up (§4.6), and, when this session may continue a recorded
-//! one, the command that keeps recording it (§5.4, §7).
-//!
-//! Read-only and model-free: it reads `proposals.json` and, when any
-//! proposal (including a session-pass candidate) is open, prints one
-//! `systemMessage` line for the user, `scribe: 3 proposals to review —
-//! scribe proposal list`. It then counts the active entries under action
-//! tags older than `action::STUCK_AFTER` with no pickup in `pickups.json`
-//! and, when there are any, adds one line, `scribe: 2 action entries not
-//! picked up after 1 hour (standard 1, idea 1) — scribe entry list --tag
-//! <tag> --status active`. When this session is not opted in and an active
-//! session in the same project was recorded within the last day, it adds
-//! `scribe: this may continue <id> (recorded) — type /scribe on --from <id>
-//! to keep recording`, naming the one updated most recently. The agent is
-//! not told: settling is the user's, in a typed turn, and so is the link.
-//! Nothing to report, no store yet, or a store that cannot be read
-//! (logged) prints nothing, so a session always starts. It writes nothing
-//! and is not audited.
-//!
-//! In an interactive Claude Code session (`CLAUDE_CODE_ENTRYPOINT=cli`) it
-//! also gives the agent the brief as `additionalContext`, read-only.
-//! Headless runs (`sdk-cli`), routines and drains get none. The brief does
-//! not depend on this session being on.
-//!
-//! The context is the brief (`scribe brief`), the one session-start page:
-//! the memory block (Profile, Now, Milestones; 2_design.md §15.4) at the
-//! top, then the last sessions (this project's
-//! first, this one left out), then every open claim grouped by tag with its
-//! id, so the agent can present them and the user can settle a claim by its
-//! id. The brief sits alongside the proposal count, not in its place: the
-//! count is the user's `systemMessage`, shown in every session, while the
-//! brief is agent context, given only to an interactive session. With no
-//! memory, no session and no claim it adds nothing.
+//! SessionStart reports open proposals and unpicked actions to the user.
+//! An interactive Claude session also receives the ordinary brief. A clear
+//! with a continue handoff restores it before the brief (§16.7). On other
+//! starts the same-project reminder is advisory and changes no switch.
 
 use super::payload::{self, SessionStartPayload};
 use super::project;
@@ -82,24 +51,36 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
             None
         }
     };
-    let continuation = continuation_line(ctx, &session, payload.cwd.as_deref());
+    let refresh = super::continuation::at_start(ctx, &payload, &session);
+    let (continuation, handoff, outcomes) = match refresh {
+        Some(reply) => (reply.message, reply.context, reply.outcomes),
+        None => {
+            let reminder = (payload.source.as_deref() != Some("clear"))
+                .then(|| continuation_line(ctx, &session, payload.cwd.as_deref()))
+                .flatten();
+            (reminder, None, Vec::new())
+        }
+    };
     let lines: Vec<String> = proposals
         .into_iter()
         .chain(stuck)
         .chain(continuation)
         .collect();
     let message = (!lines.is_empty()).then(|| lines.join("\n"));
-    let context = if ctx.interactive() {
-        brief_text(ctx, &session, payload.cwd.as_deref())
-    } else {
-        None
+    let brief = ctx
+        .interactive()
+        .then(|| brief_text(ctx, &session, payload.cwd.as_deref()))
+        .flatten();
+    let context = match (handoff, brief) {
+        (Some(body), Some(brief)) => Some(format!("{body}\n\n{brief}")),
+        (body, brief) => body.or(brief),
     };
     Ok(Output::Hook(HookReply {
         event: EVENT,
         message,
         context,
         block: None,
-        outcomes: Vec::new(),
+        outcomes,
     }))
 }
 
@@ -155,8 +136,8 @@ fn brief_text(ctx: &Context, session: &SessionId, cwd: Option<&str>) -> Option<S
 
 /// The continuation line, or `None` when this session should not be reminded.
 ///
-/// The predecessor is the active record in `cwd`'s project, other than
-/// this session, with the newest `updated` inside [`RECENT_SECS`]. A session
+/// Only a single active record in the project within [`RECENT_SECS`] is
+/// suggested; several candidates are named for the user to choose. A session
 /// whose switch is on, or that already has a record, is already opted in.
 /// No `cwd`, no such record, or a store that cannot be listed: nothing.
 fn continuation_line(ctx: &Context, session: &SessionId, cwd: Option<&str>) -> Option<String> {
@@ -185,18 +166,27 @@ fn continuation_line(ctx: &Context, session: &SessionId, cwd: Option<&str>) -> O
         return None;
     }
     let now = ctx.now();
-    let previous = listed
+    let ids: Vec<_> = listed
         .listing
         .items
-        .iter()
-        .filter(|record| record.active && record.project == project)
-        .filter(|record| recent(now, record.updated))
-        .max_by(|left, right| {
-            left.updated
-                .cmp(&right.updated)
-                .then_with(|| left.id.cmp(&right.id))
-        })?;
-    let id = previous.id.as_str();
+        .into_iter()
+        .filter(|record| record.active && record.project == project && recent(now, record.updated))
+        .map(|record| record.id)
+        .collect();
+    let id = match ids.as_slice() {
+        [] => return None,
+        [id] => id,
+        _ => {
+            let ids = ids
+                .iter()
+                .map(SessionId::as_str)
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Some(format!(
+                "scribe: possible recorded predecessors {ids} — type /scribe on --from <id> to choose one"
+            ));
+        }
+    };
     Some(format!(
         "scribe: this may continue {id} (recorded) — type /scribe on --from {id} to keep recording"
     ))

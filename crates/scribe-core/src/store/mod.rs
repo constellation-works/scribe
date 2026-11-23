@@ -44,6 +44,8 @@
 mod agent;
 mod audit;
 mod candidates;
+mod continuation;
+pub use continuation::HandoffSelection;
 mod db;
 pub use db::DB_FILE;
 mod documents;
@@ -445,46 +447,82 @@ impl Store {
         now: time::OffsetDateTime,
         provider: crate::Provider,
     ) -> Result<control::Linked> {
-        self.prepare_dir(&self.root)?;
         self.write(|| {
-            let loaded = self.load_sessions()?;
-            let mut own: Option<SessionRecord> = None;
-            let mut graph: BTreeMap<SessionId, Vec<SessionLink>> = BTreeMap::new();
-            for record in loaded.records {
-                graph.insert(record.id.clone(), record.links.clone());
-                if &record.id == session {
-                    own = Some(record);
+            self.apply_session_link(
+                session,
+                link,
+                control::LinkSwitch::Manual { on },
+                now,
+                provider,
+            )
+        })
+    }
+
+    fn apply_session_link(
+        &self,
+        session: &SessionId,
+        link: &SessionLink,
+        mode: control::LinkSwitch,
+        now: time::OffsetDateTime,
+        provider: crate::Provider,
+    ) -> Result<control::Linked> {
+        let loaded = self.load_sessions()?;
+        if matches!(mode, control::LinkSwitch::Inherit) {
+            for id in [session, &link.session] {
+                if loaded.forgotten.contains_key(id) {
+                    return Err(db::sessions::forgotten_refusal(
+                        id,
+                        "it cannot be continued",
+                    ));
                 }
-            }
-            for (id, bad) in loaded.skipped {
-                match id {
-                    Some(id) if &id == session => return Err(bad.error),
-                    // Known by id, its links unreadable.
-                    Some(id) => {
-                        graph.entry(id).or_default();
-                    }
-                    None => {}
-                }
-            }
-            // A refused link changes nothing, so nothing is written.
-            self.sessions_tx(|tx| {
-                let mut state = tx.control()?;
-                let before = state.clone();
-                let linked = control::link(&mut state, &graph, session, link, on, now)?;
-                if let Some(control) = state.sessions.get_mut(session) {
-                    control.provider = provider;
-                }
-                if state != before {
-                    tx.put_control(&before, &state)?;
-                }
-                if linked.write_record
-                    && let Some(mut record) = own
+                if loaded
+                    .control
+                    .get(id)
+                    .is_some_and(|c| c.provider != provider)
                 {
-                    record.links.push(link.clone());
-                    tx.put_record(&record)?;
+                    return Err(agent::refusal(
+                        crate::WriteRefusal::HandoffSession,
+                        "session belongs to another transcript provider",
+                    ));
                 }
-                Ok(linked)
-            })
+            }
+        }
+        let mut own: Option<SessionRecord> = None;
+        let mut graph: BTreeMap<SessionId, Vec<SessionLink>> = BTreeMap::new();
+        for record in loaded.records {
+            graph.insert(record.id.clone(), record.links.clone());
+            if &record.id == session {
+                own = Some(record);
+            }
+        }
+        for (id, bad) in loaded.skipped {
+            match id {
+                Some(id) if &id == session => return Err(bad.error),
+                // Known by id, its links unreadable.
+                Some(id) => {
+                    graph.entry(id).or_default();
+                }
+                None => {}
+            }
+        }
+        // A refused link changes nothing, so nothing is written.
+        self.sessions_tx(|tx| {
+            let mut state = tx.control()?;
+            let before = state.clone();
+            let linked = control::apply_link(&mut state, &graph, session, link, mode, now)?;
+            if let Some(control) = state.sessions.get_mut(session) {
+                control.provider = provider;
+            }
+            if state != before {
+                tx.put_control(&before, &state)?;
+            }
+            if linked.write_record
+                && let Some(mut record) = own
+            {
+                record.links.push(link.clone());
+                tx.put_record(&record)?;
+            }
+            Ok(linked)
         })
     }
 

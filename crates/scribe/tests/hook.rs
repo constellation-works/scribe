@@ -1358,7 +1358,7 @@ fn start_message(fx: &Fixture, payload: &Value) -> String {
 }
 
 #[test]
-fn session_start_names_the_newest_recorded_session_and_the_command() {
+fn session_start_suggests_a_single_record_and_names_both_when_ambiguous() {
     let fx = Fixture::new();
     let cwd = project_cwd(&fx);
     let now_dt = time::OffsetDateTime::now_utc();
@@ -1367,26 +1367,25 @@ fn session_start_names_the_newest_recorded_session_and_the_command() {
     let now = now_dt.format(format).unwrap();
     let earlier = earlier_dt.format(format).unwrap();
     write_session(&fx, PREVIOUS, "scribe", &earlier, &earlier, true);
-    write_session(&fx, NEWER, "scribe", &now, &now, true);
     let alone = hook_ok(&fx, "session-start", &start_payload(Some(&cwd), CURRENT));
     let alone_reply = reply(&alone);
     assert_eq!(
         alone_reply["systemMessage"].as_str(),
-        Some(continuation_line(NEWER).as_str())
+        Some(continuation_line(PREVIOUS).as_str())
     );
     assert!(
         alone_reply.get("hookSpecificOutput").is_none(),
         "the agent is not told: {alone_reply}"
     );
 
+    write_session(&fx, NEWER, "scribe", &now, &now, true);
     write_open_proposal(&fx);
     let before = snapshot(&fx.root());
     let message = start_message(&fx, &start_payload(Some(&cwd), CURRENT));
     assert_eq!(
         message,
         format!(
-            "scribe: 1 proposal to review — scribe proposal list\n{}",
-            continuation_line(NEWER)
+            "scribe: 1 proposal to review — scribe proposal list\nscribe: possible recorded predecessors {PREVIOUS}, {NEWER} — type /scribe on --from <id> to choose one"
         )
     );
     let out = hook_ok(&fx, "session-start", &start_payload(Some(&cwd), CURRENT));
