@@ -112,21 +112,33 @@ pub(super) fn run(
 /// session that was never recorded has no other source.
 fn additions(ctx: &Context, named: &[SessionId]) -> Result<Vec<GroupAddition>, CliError> {
     let mut files = std::collections::BTreeMap::new();
+    // Entries named like a transcript whose file type is refused: present, so
+    // a named session among them is read through the checked open, which
+    // refuses it, never treated as membership only.
+    let mut refused = std::collections::BTreeMap::new();
     for provider in [
         scribe_core::Provider::ClaudeCode,
         scribe_core::Provider::Codex,
     ] {
         let provider_ctx = ctx.with_provider(provider);
-        for (id, path) in payload::files_for(&provider_ctx)? {
+        let found = payload::discovered_for(&provider_ctx)?;
+        for (id, path) in found.files {
             if files.insert(id, (path, provider)).is_some() {
                 return Err(CliError::Usage(String::from(
                     "session exists in multiple transcript providers",
                 )));
             }
         }
+        for (id, path) in found.refused {
+            refused.insert(id, (path, provider));
+        }
     }
     let store: &Store = ctx.store();
-    let mut ids: Vec<String> = files.keys().map(ToString::to_string).collect();
+    let mut ids: Vec<String> = files
+        .keys()
+        .chain(refused.keys())
+        .map(ToString::to_string)
+        .collect();
     for group in store.groups()? {
         ids.extend(group.members().into_iter().map(|id| id.to_string()));
     }
@@ -136,7 +148,7 @@ fn additions(ctx: &Context, named: &[SessionId]) -> Result<Vec<GroupAddition>, C
         if additions.iter().any(|a| a.session == id) {
             continue;
         }
-        let turns = match files.get(&id) {
+        let turns = match files.get(&id).or_else(|| refused.get(&id)) {
             Some((path, provider)) => group_turns::past(&ctx.with_provider(*provider), &id, path)?,
             None => None,
         };
