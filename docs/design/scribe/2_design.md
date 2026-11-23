@@ -6590,7 +6590,7 @@ distinct session ids marked `via: clear`. A `via: launch` id can survive
 several clears. Only the clear ids identify immediate predecessors. This
 lookup runs for interactive Claude Code starts whose source is `startup`,
 `clear`, or omitted; other source values, including `resume` and `compact`,
-do not restore a handoff. If the checked transcript does not yet exist at an eligible start, the hook reports that and records a deferred check. The first typed UserPromptSubmit consumes that check once, reads the same ancestry and supplies the handoff and inherited seat in that turn. It does not repeat recovery if the child already has a continuation link or has held a seat.
+do not restore a handoff. If the checked transcript does not yet exist at an eligible start, the hook reports that and records a deferred check. A later typed `UserPromptSubmit` whose reply is not blocked (so its context can reach the agent) consumes that check once the transcript is readable or the child already has a continuation link or seat, reading the same ancestry and supplying the handoff and inherited seat in that turn. Blocked `/scribe` prompts and prompts while the transcript is still missing leave the deferred check pending. It does not repeat recovery if the child already has a continuation link or has held a seat.
 
 For a single predecessor, the hook reads its newest active handoff. If its
 mode is `continue`, that one checked body (at most 3,000 characters) starts

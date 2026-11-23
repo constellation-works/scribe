@@ -1389,14 +1389,12 @@ fn desktop_clear_with_continue_handoff_prepends_handoff_and_inherits_seat() {
     assert!(!brief.to_string().contains("Carry on."), "{brief}");
 }
 
-#[test]
-fn missing_start_transcript_recovers_at_first_prompt_once() {
-    let f = Fixture::new();
-    transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
-    open(&f);
-    join(&f, A, "g-1", &["--role", "reviewer"], 0);
+fn setup_missing_start(f: &Fixture) -> PathBuf {
+    transcript(f, A, &[row(A, "u", "user", QUOTE)]);
+    open(f);
+    join(f, A, "g-1", &["--role", "reviewer"], 0);
     invoke(
-        &f,
+        f,
         A,
         &[
             "entry",
@@ -1415,21 +1413,32 @@ fn missing_start_transcript_recovers_at_first_prompt_once() {
         ],
         0,
     );
-    let path = transcript_path(&f, B);
-    let start = session_start(&f, B, Some(&path), "startup", "claude-desktop");
+    let path = transcript_path(f, B);
+    let start = session_start(f, B, Some(&path), "startup", "claude-desktop");
     let context = start["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .unwrap();
     assert!(context.contains("transcript not written yet"), "{start}");
     assert!(!context.contains("no predecessor line"), "{start}");
+    path
+}
+
+fn write_cleared_b_transcript(f: &Fixture) -> PathBuf {
     transcript(
-        &f,
+        f,
         B,
         &[
             json!({"type":"tools-used"}),
             json!({"type":"derived-from","sessions":[{"id":C,"via":"launch"},{"id":A,"via":"clear"}]}),
         ],
-    );
+    )
+}
+
+#[test]
+fn missing_start_transcript_recovers_at_first_prompt_once() {
+    let f = Fixture::new();
+    let path = setup_missing_start(&f);
+    write_cleared_b_transcript(&f);
     let payload = json!({"session_id":B,"transcript_path":path,"cwd":f.home(),"prompt":"continue from handoff"});
     let result = hook(
         &f,
@@ -1449,6 +1458,127 @@ fn missing_start_transcript_recovers_at_first_prompt_once() {
         invoke(&f, B, &["group", "show", "g-1"], 0)["seats"][0]["transcripts"],
         json!([A, B])
     );
+    let again = hook(
+        &f,
+        &["hook", "user-prompt-submit"],
+        payload,
+        &[("CLAUDE_CODE_ENTRYPOINT", "claude-desktop")],
+    );
+    assert!(again.stdout.is_empty(), "{}", text(&again.stdout));
+}
+
+#[test]
+fn blocked_first_prompt_preserves_deferred_ancestry_for_next_prompt() {
+    let f = Fixture::new();
+    let path = setup_missing_start(&f);
+    write_cleared_b_transcript(&f);
+
+    let status = hook(
+        &f,
+        &["hook", "user-prompt-submit"],
+        json!({"session_id":B,"transcript_path":path,"cwd":f.home(),"prompt":"/scribe status"}),
+        &[("CLAUDE_CODE_ENTRYPOINT", "claude-desktop")],
+    );
+    let status_reply: Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(status_reply["decision"], "block", "{status_reply}");
+    assert!(
+        status_reply.get("hookSpecificOutput").is_none(),
+        "{status_reply}"
+    );
+    assert_eq!(
+        invoke(&f, B, &["group", "show", "g-1"], 0)["seats"][0]["transcripts"],
+        json!([A])
+    );
+
+    // An explicit `/scribe on` (also blocked) leaves the deferred check intact
+    // and is preserved once handoff inheritance runs.
+    let on = hook(
+        &f,
+        &["hook", "user-prompt-submit"],
+        json!({"session_id":B,"transcript_path":path,"cwd":f.home(),"prompt":"/scribe on"}),
+        &[("CLAUDE_CODE_ENTRYPOINT", "claude-desktop")],
+    );
+    let on_reply: Value = serde_json::from_slice(&on.stdout).unwrap();
+    assert_eq!(on_reply["decision"], "block", "{on_reply}");
+    assert_eq!(
+        invoke(&f, B, &["group", "show", "g-1"], 0)["seats"][0]["transcripts"],
+        json!([A])
+    );
+
+    let payload = json!({"session_id":B,"transcript_path":path,"cwd":f.home(),"prompt":"continue from handoff"});
+    let result = hook(
+        &f,
+        &["hook", "user-prompt-submit"],
+        payload.clone(),
+        &[("CLAUDE_CODE_ENTRYPOINT", "claude-desktop")],
+    );
+    let reply: Value = serde_json::from_slice(&result.stdout).unwrap();
+    let context = reply["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(
+        context.starts_with("## State\nReady") && context.contains("inherited from"),
+        "{reply}"
+    );
+    assert_eq!(
+        invoke(&f, B, &["group", "show", "g-1"], 0)["seats"][0]["transcripts"],
+        json!([A, B])
+    );
+    assert_eq!(
+        support::control(&f.root())["sessions"][B]["on"],
+        json!(true)
+    );
+
+    let again = hook(
+        &f,
+        &["hook", "user-prompt-submit"],
+        payload,
+        &[("CLAUDE_CODE_ENTRYPOINT", "claude-desktop")],
+    );
+    assert!(again.stdout.is_empty(), "{}", text(&again.stdout));
+}
+
+#[test]
+fn deferred_ancestry_survives_while_transcript_remains_missing() {
+    let f = Fixture::new();
+    let path = setup_missing_start(&f);
+    let payload =
+        json!({"session_id":B,"transcript_path":path,"cwd":f.home(),"prompt":"first typed prompt"});
+
+    // Transcript still absent: prompt is not blocked, check is not consumed.
+    let early = hook(
+        &f,
+        &["hook", "user-prompt-submit"],
+        payload.clone(),
+        &[("CLAUDE_CODE_ENTRYPOINT", "claude-desktop")],
+    );
+    assert!(early.stdout.is_empty(), "{}", text(&early.stdout));
+    assert_eq!(
+        invoke(&f, B, &["group", "show", "g-1"], 0)["seats"][0]["transcripts"],
+        json!([A])
+    );
+
+    // Once the transcript exists, the next typed prompt consumes the deferred check once.
+    write_cleared_b_transcript(&f);
+    let recovered = hook(
+        &f,
+        &["hook", "user-prompt-submit"],
+        payload.clone(),
+        &[("CLAUDE_CODE_ENTRYPOINT", "claude-desktop")],
+    );
+    let reply: Value = serde_json::from_slice(&recovered.stdout).unwrap();
+    let context = reply["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(
+        context.starts_with("## State\nReady") && context.contains("inherited from"),
+        "{reply}"
+    );
+    assert_eq!(
+        invoke(&f, B, &["group", "show", "g-1"], 0)["seats"][0]["transcripts"],
+        json!([A, B])
+    );
+
     let again = hook(
         &f,
         &["hook", "user-prompt-submit"],

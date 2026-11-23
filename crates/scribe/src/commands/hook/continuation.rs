@@ -20,31 +20,41 @@ pub(in crate::commands) enum ClearedPredecessor {
 }
 
 /// Inspect `path` for opening `derived-from` (`via: clear`) ancestors of `session`.
+/// Returns `None` when the transcript does not yet exist or cannot be read.
+pub(super) fn try_cleared_predecessor(
+    ctx: &Context,
+    path: &Path,
+    session: &SessionId,
+) -> Option<ClearedPredecessor> {
+    if ctx.provider() != Provider::ClaudeCode {
+        return Some(ClearedPredecessor::None);
+    }
+    let header = match payload::claude_header(ctx, path, session) {
+        Ok(Some(header)) => header,
+        Ok(None) => return None,
+        Err(err) => {
+            tracing::warn!(?err, "cannot read session ancestry");
+            return None;
+        }
+    };
+    let mut parents = scribe_core::transcript::cleared_sessions(&header);
+    Some(match parents.len() {
+        0 => ClearedPredecessor::None,
+        1 => ClearedPredecessor::One(parents.swap_remove(0)),
+        _ => ClearedPredecessor::Multiple(parents),
+    })
+}
+
+/// Inspect `path` for opening `derived-from` (`via: clear`) ancestors of `session`.
 pub(in crate::commands) fn cleared_predecessor(
     ctx: &Context,
     path: Option<&Path>,
     session: &SessionId,
 ) -> ClearedPredecessor {
-    if ctx.provider() != Provider::ClaudeCode {
-        return ClearedPredecessor::None;
-    }
     let Some(path) = path else {
         return ClearedPredecessor::None;
     };
-    let header = match payload::claude_header(ctx, path, session) {
-        Ok(Some(header)) => header,
-        Ok(None) => return ClearedPredecessor::None,
-        Err(err) => {
-            tracing::warn!(?err, "cannot read session ancestry");
-            return ClearedPredecessor::None;
-        }
-    };
-    let mut parents = scribe_core::transcript::cleared_sessions(&header);
-    match parents.len() {
-        0 => ClearedPredecessor::None,
-        1 => ClearedPredecessor::One(parents.swap_remove(0)),
-        _ => ClearedPredecessor::Multiple(parents),
-    }
+    try_cleared_predecessor(ctx, path, session).unwrap_or(ClearedPredecessor::None)
 }
 
 pub(super) fn restore(
