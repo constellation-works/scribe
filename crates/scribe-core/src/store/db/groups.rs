@@ -68,6 +68,38 @@ ALTER TABLE groups ADD COLUMN slug TEXT;
 CREATE UNIQUE INDEX group_open_slug ON groups(slug) WHERE slug IS NOT NULL AND closed IS NULL;
 ";
 
+/// Invalidate summaries before dropping the membership. A seat that still
+/// has members keeps its role and chain.
+pub(super) fn forget_session(conn: &Connection, path: &Path, id: &SessionId) -> Result<usize> {
+    let fail = |e| db_error("forget a group member in", path, e);
+    let member: Option<(i64, String)> = conn
+        .query_row(
+            "SELECT group_id, seat FROM group_members WHERE session = ?1",
+            [id.as_str()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(fail)?;
+    let Some((group, seat)) = member else {
+        return Ok(0);
+    };
+    conn.execute("UPDATE groups SET summary = NULL WHERE id = ?1", [group])
+        .map_err(fail)?;
+    let removed = conn
+        .execute(
+            "DELETE FROM group_members WHERE session = ?1",
+            [id.as_str()],
+        )
+        .map_err(fail)?;
+    conn.execute(
+        "DELETE FROM group_seats WHERE group_id = ?1 AND name = ?2
+         AND NOT EXISTS (SELECT 1 FROM group_members WHERE group_id = ?1 AND seat = ?2)",
+        (group, seat),
+    )
+    .map_err(fail)?;
+    Ok(removed)
+}
+
 /// The handoff lookup follows the session reference and ranks active handoffs across
 /// the whole seat. A single SELECT keeps metadata, chains and handoffs in one snapshot.
 const ROSTER: &str = "
@@ -347,6 +379,7 @@ impl Store {
             ));
         }
         self.write(|| {
+            self.refuse_forgotten(session)?;
             let conn = open_writer(self.root(), self.lock_wait)?;
             let path = self.root().join(DB_FILE);
             let fail = |e| db_error("join project group in", &path, e);
@@ -379,6 +412,7 @@ impl Store {
             crate::check_content(role)?;
         }
         self.write(|| {
+            self.refuse_forgotten(join.session)?;
             let n = self.group_number(join.group)?;
             let conn = open_writer(self.root(), self.lock_wait)?;
             let path = self.root().join(DB_FILE);
@@ -621,6 +655,7 @@ impl Store {
             return Ok(SeatStart::Unjoined);
         };
         self.write(|| {
+            self.refuse_forgotten(child)?;
             let conn = open_writer(self.root(), self.lock_wait)?;
             let path = self.root().join(DB_FILE);
             let fail = |e| db_error("inherit group seat in", &path, e);

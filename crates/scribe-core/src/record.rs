@@ -558,6 +558,13 @@ pub struct Related {
 }
 
 impl Related {
+    pub(crate) fn deleted_session() -> Self {
+        Self {
+            kind: RelatedKind::Session,
+            target: String::from("deleted"),
+        }
+    }
+
     /// What it points at.
     #[must_use]
     pub fn kind(&self) -> RelatedKind {

@@ -138,6 +138,9 @@ pub(in crate::commands) fn run_with<M: Models>(
 ) -> Result<Output, CliError> {
     let store = ctx.store();
     let state = store.control()?;
+    for id in only {
+        store.refuse_forgotten(id)?;
+    }
     let due = if only.is_empty() {
         control::due(&state)
     } else {

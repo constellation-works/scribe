@@ -3641,10 +3641,11 @@ instruction. `--json` adds the fields; none is renamed or retyped.
 | Entry | `retire`: hidden from lists and `ask`, `retirement_reason` set | no un-retire verb exists, but the text is intact and can be added again as a new entry | the whole entry, `updated_by`, the instruction (`removal_instruction`, apart from an approval's `instruction`) |
 | Entry, "forget" or "for good" | `forget`: entry text and evidence cleared, with every proposal quote of it and related candidate quotes, evidence and reasons (§7) | no | id, tag, dates, author, `updated_by` and the instruction's session and message ids (`removal_instruction`; an approval's `instruction` keeps its ids too); **not** their quotes, which may repeat the words he wants gone |
 | Session | `deactivate`: hidden from `ask` and lists unless `--include-inactive` | `session activate` | the record and its log |
+| Session, "forget" or "for good" | Daniel types `#scribe forget <session-id>` to erase the record and its stored sources (§15.7) | no | the forgotten session ids and timestamp, Daniel's approved entries with a deleted citation, and the provider's transcript |
 
-"Delete" never removes a file. A removed proposal would leave the
-suppression set and come back on the next pass; a removed entry would
-break the cites and `superseded_by` links of others. **Audit**: one line
+Proposal and entry removal preserve their ids for suppression and existing
+references. Session forget also erases scribe's archived files and detached
+records where applicable. **Audit**: one line
 per change or refusal, as every write verb (§1.1): the command, the
 agent's name, the target id, the instruction's session and message ids,
 and the error code on a refusal (`instruction_not_found`,
@@ -3748,15 +3749,16 @@ gives the reasons.
 - **Mac only.** The aide must run on the host of the store and of its own
   transcript.
 
+Entry forget applies only to the entry and its evidence. To erase a session,
+Daniel types `#scribe forget <session-id>` as a whole line (§15.7,
+[ORB-27121]). The CLI has no session deletion route.
+
 Not built until seen:
 
 - settling a consistency proposal about his entry, or changing his
   entry's content, on instruction (all 20 observed claims are candidates);
-- removing a session record or blanking its text (`session forget`):
-  entry forget does not erase the session record, including its summary and
-  segment text; deactivation is the delete;
-- forgetting a proposal's words without an entry (a rejected claim keeps
-  its quote for suppression);
+- forgetting a proposal by its own id. A session forget can clear proposals
+  from that session even when they never became entries;
 - settling many ids in one command or by a description ("all the tmux
   claims") resolved by the store rather than by the aide listing ids;
 - instructions from a non-interactive or remote session, and any token or
@@ -4779,9 +4781,9 @@ rewrites the header (it is the rewritable part of §5.5).
   switched on; `scribe search --kind session` and `ask` include light
   entries as session summaries, labelled light, at the weight of a
   session record (never Daniel's words).
-- **Correction**: a light entry is deactivated like any session (§5.7);
-  `#scribe forget session:<id>` is not built (§12's limit), so a private
-  conversation is kept out by `/scribe private`, before the pass reads it.
+- **Correction**: a light entry can be deactivated like any session (§5.7).
+  Daniel can use `#scribe forget <session-id>` to erase a stored session
+  (§15.7). `/scribe private` keeps a conversation out before a pass reads it.
 
 **A behaviour, not a setting.** There is no `[sessions] light_catalog`
 key: the light entry is what the base pass does for a session that is off,
@@ -5949,13 +5951,27 @@ with phase 4):
     until phase 6.
 - **Not stored.** An off session receives no catalog pass; without group
   consent it has no group-captured turns.
-- **Forget.** `#scribe forget s-<n>` deletes the session's messages and
-  segments' text, and keeps the row as `forgotten`. It replaces today's
-  forget of a record file. (Phase 4) Forgetting an entry or a memory item
-  deletes the messages it cites, so a forget still leaves no trace of the
-  words in the store (`secure_delete`, an FTS5 `optimize` and a `TRUNCATE`
-  checkpoint). Repeating a session forget removes any stale rebuild checkpoint,
-  acknowledges that cleanup, and audits it once; a clean repeat writes no audit line.
+- **Forget.** Daniel types one whole `#scribe forget <session-id>` line,
+  using `s-<n>` or the full provider id. The existing typed-turn gate
+  excludes peer, scheduled, harness and pasted content. In one audited
+  transaction, scribe erases the header, summary, goals, next, segments,
+  indexed turns, checkpoints and switch. The forgotten row keeps its ids
+  and the forget timestamp. A pass, catalog or `/scribe on` refuses to
+  recreate it.
+- Scribe removes handoffs naming the session and removes its group
+  membership. A clear successor keeps its seat and loses the `continues`
+  link to the erased session. The affected group's derived summary is
+  cleared. Open claims sourced from the session close as `withdrawn` with
+  their quotes cleared. Daniel's approved entries retain their text with
+  `session:deleted` as the source. He can erase an entry with `#scribe
+  forget <entry-id>`. Memory loses the session's occurrences. Items with
+  no remaining occurrence retire.
+- Scribe erases the matching contents of its `pre-sqlite-*` archives
+  after commit. Subsequent exports read the erased store, and an earlier
+  export to a caller's directory is a copy the caller controls. The
+  provider owns the transcript and the hook's reply confirms it was left
+  untouched. The audit contains ids only. Repeating a forget cleans any
+  older residue, with one audit line for a change and none for a clean repeat.
 - **Search.** BM25 over messages is FTS5's `bm25()`. `scribe search --kind
   message` and `ask` retrieval use it. Embeddings are not built until a
   miss is seen that BM25 cannot fix.
@@ -6682,9 +6698,9 @@ content-free line (`target` `session:<id>`, no error code; §8), and a run that
 stores none writes none. Regular cataloging
 still follows the session's own switch. Explicit `#scribe` annotations keep
 their usual behavior. Leaving deletes the turns stored on group consent alone.
-`#scribe forget <session-id>` also works for a session with stored turns and no
-catalog record. Erasing a member's sources can clear the group's derived
-summary, and the group stays closed.
+`#scribe forget <session-id>` also works for a group member without a
+catalog record. It erases the member's turns, removes that membership and
+clears the derived summary. A closed group stays closed.
 
 **Closing.** `group close <id>` checks the caller against the recorded opening
 session and its local provider transcript, an accident guard against closing

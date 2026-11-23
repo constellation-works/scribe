@@ -45,6 +45,12 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
         block: None,
         outcomes: Vec::new(),
     };
+    if let Err(error) = ctx.store().refuse_forgotten(&session) {
+        if error.code() == "session_forgotten" {
+            return Ok(Output::Hook(reply));
+        }
+        return Err(error.into());
+    }
     // Codex has its own host-attributed ingestion; its transcript is not
     // checked here.
     if ctx.provider() != Provider::Codex

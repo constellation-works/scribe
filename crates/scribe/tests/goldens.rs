@@ -385,6 +385,42 @@ fn group_roster_matches_goldens() {
 }
 
 #[test]
+fn session_forget_matches_golden() {
+    const SESSION: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f";
+    let fx = Fixture::new();
+    let project = fx.home().join(".claude/projects/-work-scribe");
+    std::fs::create_dir_all(&project).unwrap();
+    let transcript = project.join(format!("{SESSION}.jsonl"));
+    std::fs::write(&transcript, b"").unwrap();
+    let submit = |prompt| {
+        let payload = json!({
+            "session_id": SESSION,
+            "transcript_path": transcript,
+            "cwd": "/work/scribe",
+            "permission_mode": "default",
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": prompt
+        });
+        let output = run_with_input(
+            &fx,
+            &["hook", "user-prompt-submit"],
+            payload.to_string().as_bytes(),
+            None,
+        );
+        assert!(output.status.success(), "{}", text(&output.stderr));
+        text(&output.stdout)
+    };
+    let switched = submit("/scribe on");
+    assert!(switched.contains("scribe: on"), "{switched}");
+    let reply = submit("#scribe forget s-1");
+    report(
+        &check("output/session-forget-hook.json", &reply)
+            .into_iter()
+            .collect::<Vec<_>>(),
+    );
+}
+
+#[test]
 fn failed_session_pass_matches_golden() {
     const SESSION: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f";
     let fx = Fixture::new();

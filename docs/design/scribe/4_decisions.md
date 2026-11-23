@@ -4375,3 +4375,34 @@ record across two files.
   binary for that project.
 - A future receipt format is refused as unsupported without being parsed as a
   receipt of this format.
+
+## A typed turn authorizes permanent session deletion
+
+**Recorded:** 2026-11-23 · [ORB-27121] · **Overridable by Daniel**
+
+### Context
+
+Daniel said in the chief's chat on [ORB-26869] (`ws_constellation`) at
+02:30 UTC, “I think we should allow deletion - if a user wants to delete its
+own session, then we should respect it.” At 03:03 UTC he chose the route,
+“A: typed lines only”.
+
+**Code anchors:** `crates/scribe-core/src/store/sessions.rs::Store::forget_session_locked`
+and `crates/scribe/src/commands/hook/proposal_command.rs::run`.
+
+### Decision
+
+Extend the existing typed `#scribe forget <session-id>` line so scribe
+erases the session record and its stored sources. The proposed terminal
+route with an explicit confirmation was also considered. [ORB-24030]
+continues to reserve Daniel's identity to verified typed turns. Session
+deletion has no CLI route.
+
+### Consequences
+
+- The tombstone reserves the session ids. Handoffs, group turns and
+  source occurrences are erased. Daniel's approved entries stay with a
+  deleted source marker, and he can forget each entry by its own id.
+- The hook tells Daniel that the provider transcript was left untouched.
+- Cost: Daniel must type the line in an interactive provider session. A
+  restored backup outside the live store has its own copy of the data.

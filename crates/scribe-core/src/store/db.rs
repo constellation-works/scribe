@@ -72,6 +72,7 @@ const MIGRATIONS: &[&str] = &[
     groups::V11,
     groups::V12,
     V13,
+    docs::V14,
 ];
 
 /// Pending first-prompt ancestry checks for starts before transcript creation.
@@ -725,7 +726,17 @@ fn write_messages<'a>(
         .prepare(&format!("{insert} {conflict}"))
         .map_err(|e| db_error("write messages to", path, e))?;
     let mut changed = 0;
+    let mut checked = std::collections::BTreeSet::new();
     for m in messages {
+        if checked.insert(&m.session)
+            && sessions::is_forgotten(conn, &m.session)
+                .map_err(|e| db_error("write messages to", path, e))?
+        {
+            return Err(sessions::forgotten_refusal(
+                &m.session,
+                "nothing is written to it",
+            ));
+        }
         let text = redactor.message(&m.text);
         let sha256 = crate::capture::prompt_sha256(&text);
         changed += insert

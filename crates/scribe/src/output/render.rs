@@ -863,6 +863,9 @@ pub(super) fn entry_metadata(out: &mut dyn Write, e: &EntryPayload, color: bool)
         .cite
         .as_ref()
         .map(|c| {
+            if c.session == "deleted" && c.line == 0 {
+                return String::from("session:deleted");
+            }
             format!(
                 "session {}, line {}, message {}, at {}",
                 c.session,

@@ -28,7 +28,7 @@ use crate::annotation::MarkRecord;
 use crate::entry::{Entry, EntryId};
 use crate::error::{Error, Result};
 use crate::proposal::Proposal;
-use crate::session::ControlState;
+use crate::session::{ControlState, SessionId};
 use crate::tag::StoreTag;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -148,7 +148,10 @@ impl Store {
 
     /// Run `f` on the document tables when the documents live in the
     /// database (after checking the format stamp), else `None`.
-    fn read_db<T>(&self, f: impl Fn(&Connection, &Path) -> Result<T>) -> Result<Option<T>> {
+    pub(super) fn read_db<T>(
+        &self,
+        f: impl Fn(&Connection, &Path) -> Result<T>,
+    ) -> Result<Option<T>> {
         if !self.root_exists()? {
             return Ok(None);
         }
@@ -178,6 +181,46 @@ impl Store {
             }
         }
         Ok((entries, skipped))
+    }
+
+    /// Erase session handoffs and withdraw claims in the same write.
+    pub(super) fn forget_session_documents(
+        &self,
+        id: &SessionId,
+        now: OffsetDateTime,
+    ) -> Result<bool> {
+        let (entries, skipped) = self.load_entries()?;
+        if let Some(bad) = skipped.into_iter().next() {
+            return Err(bad.error);
+        }
+        let number = self.session_numbers()?.get(id).map(|n| format!("s-{n}"));
+        let matches = |value: &str| value == id.as_str() || number.as_deref() == Some(value);
+        let mut changed = false;
+        let mut removed = Vec::new();
+        for before in entries {
+            let mut entry = before.clone();
+            if handoff_names(&entry, matches) {
+                self.with_conn(|conn, db| docs::delete_handoff(conn, db, &entry.id))?;
+                removed.push(entry.id);
+            } else {
+                detach_entry(&mut entry, matches, now);
+                if entry != before {
+                    self.write_entry(&entry, false)?;
+                    if entry.author.kind == crate::AuthorKind::Scribe {
+                        removed.push(entry.id);
+                    }
+                    changed = true;
+                }
+            }
+        }
+        let before = self.proposals()?;
+        let mut after = before.clone();
+        detach_claims(&mut after, matches, &removed, now);
+        if before != after {
+            self.write_proposals(&after)?;
+            changed = true;
+        }
+        Ok(changed || !removed.is_empty())
     }
 
     /// The entry with this id.
@@ -848,6 +891,116 @@ impl Store {
         tx.commit()
     }
 
+    /// Plan erasure of an archived session's structured references. The
+    /// caller recomputes the plan under the archive lock before writing.
+    pub(super) fn moved_session_documents(
+        &self,
+        id: &SessionId,
+        number: Option<std::num::NonZeroU64>,
+        now: OffsetDateTime,
+    ) -> Result<Vec<(PathBuf, Option<Vec<u8>>)>> {
+        let number = number.map(|n| format!("s-{n}"));
+        let matches = |value: &str| value == id.as_str() || number.as_deref() == Some(value);
+        let mut entry_changes = Vec::new();
+        let mut removed = Vec::new();
+        let mut archives = Vec::new();
+        for name in fsio::list_dir(&self.root)? {
+            let archive = self.root.join(&name);
+            if !name.starts_with(super::sessions::MOVED_PREFIX) || !fsio::inspect_subdir(&archive)?
+            {
+                continue;
+            }
+            let names = fsio::list_dir(&archive)?;
+            for name in names.iter().filter(|n| is_moved_variant(n, ENTRIES_DIR)) {
+                let dir = archive.join(name);
+                if !fsio::inspect_subdir(&dir)? {
+                    continue;
+                }
+                for tag in fsio::list_dir(&dir)? {
+                    let tag_dir = dir.join(&tag);
+                    if !fsio::inspect_subdir(&tag_dir)? {
+                        continue;
+                    }
+                    for name in super::visible(fsio::list_dir(&tag_dir)?) {
+                        let Some(stem) = name.strip_suffix(RECORD_EXT) else {
+                            continue;
+                        };
+                        let path = tag_dir.join(&name);
+                        if !fsio::inspect_file(&path)? {
+                            continue;
+                        }
+                        let before = format::decode_entry(&path, &fsio::read(&path)?, stem, &tag)?;
+                        let mut entry = before.clone();
+                        if handoff_names(&entry, matches) {
+                            removed.push(entry.id);
+                            entry_changes.push((path, None));
+                        } else {
+                            detach_entry(&mut entry, matches, now);
+                            if before != entry {
+                                if entry.author.kind == crate::AuthorKind::Scribe {
+                                    removed.push(entry.id.clone());
+                                }
+                                let bytes = format::encode_entry(&path, &entry)?;
+                                entry_changes.push((path, Some(bytes)));
+                            }
+                        }
+                    }
+                }
+            }
+            archives.push((archive, names));
+        }
+        let mut changes = Vec::new();
+        for (archive, names) in archives {
+            for name in names {
+                let path = archive.join(&name);
+                if is_moved_variant(&name, PROPOSALS_FILE) && fsio::inspect_file(&path)? {
+                    let before = format::decode_proposals(&path, &fsio::read(&path)?)?;
+                    let mut after = before.clone();
+                    detach_claims(&mut after, matches, &removed, now);
+                    if before != after {
+                        let bytes = format::encode_proposals(&path, &after)?;
+                        changes.push((path, Some(bytes)));
+                    }
+                } else if is_moved_variant(&name, CONTROL_FILE) && fsio::inspect_file(&path)? {
+                    let mut state = format::decode_control(&path, &fsio::read(&path)?)?;
+                    let before = state.clone();
+                    state.sessions.retain(|sid, _| !matches(sid.as_str()));
+                    state.codex_cursors.retain(|sid, _| !matches(sid.as_str()));
+                    for switch in state.sessions.values_mut() {
+                        switch.pending_links.retain(|link| {
+                            link.kind != crate::LinkType::Continues
+                                || !matches(link.session.as_str())
+                        });
+                    }
+                    if before != state {
+                        let bytes = format::encode_control(&path, &state)?;
+                        changes.push((path, Some(bytes)));
+                    }
+                } else if is_moved_variant(&name, MARKS_FILE) && fsio::inspect_file(&path)? {
+                    let mut marks = format::decode_marks(&path, &fsio::read(&path)?)?;
+                    let before = marks.len();
+                    marks.retain(|mark| !matches(mark.session.as_str()));
+                    if before != marks.len() {
+                        let bytes = format::encode_marks(&path, &marks)?;
+                        changes.push((path, Some(bytes)));
+                    }
+                } else if is_moved_variant(&name, PICKUPS_FILE) && fsio::inspect_file(&path)? {
+                    let mut pickups = format::decode_pickups(&path, &fsio::read(&path)?)?;
+                    let before = pickups.len();
+                    pickups.retain(|pickup| !removed.contains(&pickup.entry));
+                    if before != pickups.len() {
+                        let bytes = format::encode_pickups(&path, &pickups)?;
+                        changes.push((path, Some(bytes)));
+                    }
+                }
+            }
+        }
+        // Keep the entries that identify archived claim quotes and pickups
+        // until the documents that refer to them are clean.
+        changes.extend(entry_changes);
+        Ok(changes)
+    }
+
     /// Drop `audit.jsonl*` lines matching `item`'s digests (plus extra
     /// pre-move proposal texts and the moved entry's archived text), rewrite
     /// or drop matching proposals in `proposals.json*`, and delete
@@ -967,7 +1120,109 @@ impl Store {
     }
 }
 
-fn is_moved_variant(name: &str, base: &str) -> bool {
+fn handoff_names(entry: &Entry, matches: impl Fn(&str) -> bool) -> bool {
+    entry.tag.as_str() == crate::handoff::HANDOFF_TAG
+        && entry
+            .related
+            .iter()
+            .any(|r| r.kind() == crate::RelatedKind::Session && matches(r.target()))
+}
+
+/// Preserve independently recorded entries and mark the removed provenance.
+fn detach_entry(entry: &mut Entry, matches: impl Fn(&str) -> bool, now: OffsetDateTime) {
+    if entry
+        .cite
+        .as_ref()
+        .is_some_and(|c| !c.is_deleted() && matches(c.session.as_str()))
+    {
+        if entry.author.kind == crate::AuthorKind::Scribe {
+            let id = entry.id.clone();
+            crate::consistency::forget(&id, &mut [], std::slice::from_mut(entry), now);
+        }
+        if let Some(cite) = &mut entry.cite {
+            cite.mark_deleted();
+        }
+        if let crate::ContentFrom::Message { message, at, .. } = &mut entry.content_from {
+            *message = String::from("deleted");
+            *at = OffsetDateTime::UNIX_EPOCH;
+        }
+        entry.window = None;
+    }
+    let named = |value: &str| value.strip_prefix("session:").is_some_and(&matches);
+    if entry.evidence.as_deref().is_some_and(named) {
+        entry.evidence = Some(String::from("session:deleted"));
+    }
+    let source_reference =
+        |r: &crate::Related| r.kind() == crate::RelatedKind::Session && matches(r.target());
+    if entry.related.iter().any(source_reference) {
+        entry.related.retain(|r| !source_reference(r));
+        let marker = crate::Related::deleted_session();
+        if !entry.related.contains(&marker) {
+            entry.related.push(marker);
+        }
+    }
+    for instruction in [&mut entry.instruction, &mut entry.removal_instruction]
+        .into_iter()
+        .flatten()
+    {
+        if matches(instruction.session.as_str()) {
+            instruction.quote = None;
+        }
+    }
+}
+
+fn detach_claims(
+    claims: &mut [Proposal],
+    matches: impl Fn(&str) -> bool,
+    removed: &[EntryId],
+    now: OffsetDateTime,
+) {
+    for claim in claims {
+        let source = claim
+            .candidate
+            .as_ref()
+            .is_some_and(|c| !c.cite.is_deleted() && matches(c.cite.session.as_str()));
+        let about = removed.contains(&claim.older)
+            || claim.newer.as_ref().is_some_and(|id| removed.contains(id));
+        if source || about {
+            claim.reason.clear();
+            for quote in &mut claim.quotes {
+                quote.text.clear();
+            }
+            if let Some(candidate) = &mut claim.candidate {
+                candidate.cite.mark_deleted();
+                candidate.quote.clear();
+                candidate.context = None;
+                candidate.statement = None;
+                candidate.subject = None;
+                candidate.evidence = None;
+                candidate.admitted = None;
+                candidate.project = crate::Project::sanitized("deleted");
+                candidate.provider = crate::Label::sanitized("deleted", "deleted");
+                candidate.host = crate::Label::sanitized("deleted", "deleted");
+            }
+            if claim.state == crate::ProposalState::Open {
+                claim.state = crate::ProposalState::Rejected;
+                claim.closed_reason = Some(crate::ClosedReason::Withdrawn);
+                claim.settled_at = Some(now);
+                claim.settled_author = Some(crate::Author::consistency());
+            }
+        }
+        let settlement_deleted = claim
+            .settled_by
+            .as_ref()
+            .is_some_and(|c| !c.is_deleted() && matches(c.session.as_str()));
+        if let Some(instruction) = &mut claim.instruction {
+            if settlement_deleted || source {
+                instruction.quote = None;
+            }
+        } else if settlement_deleted && let Some(cite) = &mut claim.settled_by {
+            cite.mark_deleted();
+        }
+    }
+}
+
+pub(super) fn is_moved_variant(name: &str, base: &str) -> bool {
     name == base
         || name
             .strip_prefix(base)

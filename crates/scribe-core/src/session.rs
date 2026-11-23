@@ -55,6 +55,11 @@ impl SessionId {
     /// The longest id accepted, in characters.
     pub const MAX_CHARS: usize = 128;
 
+    /// The synthetic source id on a citation whose session was erased.
+    pub(crate) fn deleted() -> Self {
+        Self(String::from("deleted"))
+    }
+
     /// The id text.
     #[must_use]
     pub fn as_str(&self) -> &str {

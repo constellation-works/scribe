@@ -34,6 +34,51 @@ use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 
+/// Allow withdrawn claims and reserve the ids of erased handoff entries.
+pub(super) const V14: &str = "
+ALTER TABLE claims RENAME TO claims_v12;
+CREATE TABLE claims (
+    n              INTEGER NOT NULL PRIMARY KEY CHECK (n >= 1),
+    kind           TEXT    NOT NULL CHECK (kind IN ('supersedes', 'stale', 'candidate')),
+    older          TEXT    NOT NULL,
+    newer          TEXT,
+    reason         TEXT    NOT NULL,
+    quotes         TEXT    NOT NULL CHECK (json_valid(quotes) AND json_type(quotes) = 'array'),
+    state          TEXT    NOT NULL CHECK (state IN ('open', 'approved', 'rejected')),
+    opened_at      TEXT    NOT NULL,
+    settled_at     TEXT,
+    settled_by     TEXT    CHECK (settled_by IS NULL OR json_valid(settled_by)),
+    author         TEXT    NOT NULL CHECK (json_valid(author)),
+    updated_by     TEXT    CHECK (updated_by IS NULL OR json_valid(updated_by)),
+    settled_author TEXT    CHECK (settled_author IS NULL OR json_valid(settled_author)),
+    closed_reason  TEXT    CHECK (closed_reason IS NULL
+                                  OR closed_reason IN ('tag_retired', 'instructed', 'covered', 'withdrawn')),
+    instruction    TEXT    CHECK (instruction IS NULL OR json_valid(instruction)),
+    has_candidate  INTEGER NOT NULL CHECK (has_candidate IN (0, 1)),
+    c_tag          TEXT,
+    c_role         TEXT    CHECK (c_role IS NULL OR c_role IN ('user', 'assistant')),
+    c_quote        TEXT,
+    c_context      TEXT,
+    c_statement    TEXT,
+    c_subject      TEXT,
+    c_evidence     TEXT,
+    c_cite         TEXT    CHECK (c_cite IS NULL OR json_valid(c_cite)),
+    c_project      TEXT,
+    c_provider     TEXT,
+    c_host         TEXT,
+    c_admitted     TEXT    CHECK (c_admitted IS NULL OR json_valid(c_admitted)),
+    CHECK (has_candidate = 0 OR (c_tag IS NOT NULL AND c_role IS NOT NULL
+        AND c_quote IS NOT NULL AND c_cite IS NOT NULL AND c_project IS NOT NULL
+        AND c_provider IS NOT NULL AND c_host IS NOT NULL))
+) STRICT;
+INSERT INTO claims SELECT * FROM claims_v12;
+DROP TABLE claims_v12;
+
+CREATE TABLE IF NOT EXISTS deleted_handoffs (
+    id TEXT PRIMARY KEY NOT NULL
+) STRICT;
+";
+
 /// The record kinds phase 7 moves, as `record_kinds` names them.
 pub(in crate::store) const KINDS: [&str; 6] = [
     "entries",
@@ -419,6 +464,44 @@ pub(in crate::store) fn put_entry(
         })?;
     }
     Ok(())
+}
+
+/// Delete a handoff, retaining only its id so old references cannot name
+/// a future handoff. Drop its pickups with it.
+pub(in crate::store) fn delete_handoff(conn: &Connection, db: &Path, id: &EntryId) -> Result<()> {
+    let fail = |e| db_error("delete a handoff in", db, e);
+    let id = id.to_string();
+    conn.execute("INSERT INTO deleted_handoffs (id) VALUES (?1)", [&id])
+        .map_err(fail)?;
+    conn.execute("DELETE FROM pickups WHERE entry = ?1", [&id])
+        .map_err(fail)?;
+    conn.execute("DELETE FROM entries WHERE id = ?1", [&id])
+        .map_err(fail)?;
+    Ok(())
+}
+
+/// Handoff ids that must not be allocated again.
+pub(in crate::store) fn deleted_handoffs(conn: &Connection, db: &Path) -> Result<Vec<EntryId>> {
+    let fail = |e| db_error("read deleted handoff ids from", db, e);
+    if conn
+        .query_row("PRAGMA user_version", [], |row| row.get::<_, u32>(0))
+        .map_err(fail)?
+        < 14
+    {
+        return Ok(Vec::new());
+    }
+    let mut query = conn
+        .prepare("SELECT id FROM deleted_handoffs")
+        .map_err(fail)?;
+    let rows = query
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(fail)?;
+    rows.map(|row| {
+        row.map_err(fail)?
+            .parse()
+            .map_err(|e| Error::corrupt(db, e))
+    })
+    .collect()
 }
 
 /// Every claim, by id, checked as `proposals.json` was.

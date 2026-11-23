@@ -588,9 +588,9 @@ pub enum Settled {
         /// The active entry that covers the statement.
         by: EntryId,
     },
-    /// A session's words were erased; its row stays as forgotten.
+    /// A session's stored data was erased, leaving its id as a tombstone.
     SessionForgotten(crate::SessionForget),
-    /// The session was already forgotten, but a stale checkpoint was removed.
+    /// The session was already forgotten and the store had residue to erase.
     SessionForgetRepaired {
         /// The provider session id.
         id: crate::SessionId,
