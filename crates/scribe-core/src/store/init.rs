@@ -41,6 +41,8 @@ pub struct InitReport {
 struct Receipt {
     format: u32,
     skill_sha256: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    skill_files: BTreeMap<String, String>,
     hooks: BTreeMap<String, Value>,
 }
 
@@ -72,6 +74,18 @@ pub fn init_project(
     binary: &Path,
     skill: &str,
 ) -> Result<InitReport> {
+    init_project_with_skill_files(target, provider, binary, skill, &[])
+}
+
+/// Scaffold a skill and its bundled files with one ownership receipt.
+/// Each additional file has a skill-relative path under a bundle directory.
+pub fn init_project_with_skill_files(
+    target: &Path,
+    provider: Provider,
+    binary: &Path,
+    skill: &str,
+    skill_files: &[(&str, &str)],
+) -> Result<InitReport> {
     check_path(target, true)?;
     let target =
         std::fs::canonicalize(target).map_err(|e| Error::io("resolve project", target, e))?;
@@ -79,10 +93,11 @@ pub fn init_project(
         Provider::Codex => ".codex",
         Provider::ClaudeCode => ".claude",
     });
-    let skill_path = target.join(match provider {
-        Provider::Codex => ".agents/skills/scribe/SKILL.md",
-        Provider::ClaudeCode => ".claude/skills/scribe/SKILL.md",
+    let skill_dir = target.join(match provider {
+        Provider::Codex => ".agents/skills/scribe",
+        Provider::ClaudeCode => ".claude/skills/scribe",
     });
+    let skill_path = skill_dir.join("SKILL.md");
     let hook_path = config_dir.join(match provider {
         Provider::Codex => "hooks.json",
         Provider::ClaudeCode => "settings.json",
@@ -112,16 +127,36 @@ pub fn init_project(
             "unsupported installation receipt format",
         ));
     }
-    let skill_before = read_optional(&target, &skill_path)?;
-    let skill_hash = prompt_sha256(skill);
-    if let Some(before) = &skill_before {
-        let hash = prompt_sha256(&String::from_utf8_lossy(before));
-        if before != skill.as_bytes() && receipt.as_ref().is_none_or(|r| r.skill_sha256 != hash) {
-            return Err(conflict(
-                &skill_path,
-                "skill exists with user-modified or unowned contents",
-            ));
+    let skill_before = read_owned_skill(
+        &target,
+        &skill_path,
+        skill,
+        receipt.as_ref().map(|r| r.skill_sha256.as_str()),
+    )?;
+    let mut digests = receipt
+        .as_ref()
+        .map_or_else(BTreeMap::new, |r| r.skill_files.clone());
+    let mut plans = Vec::new();
+    for &(relative, contents) in skill_files {
+        let path = skill_dir.join(relative);
+        let mut components = Path::new(relative).components();
+        let bundle_dir = components.next().and_then(|part| part.as_os_str().to_str());
+        if !matches!(
+            bundle_dir,
+            Some("references" | "scripts" | "assets" | "evals")
+        ) || components.next().is_none()
+        {
+            return Err(conflict(&path, "invalid skill bundle path"));
         }
+        check_descendants(&target, &path)?;
+        let before = read_owned_skill(
+            &target,
+            &path,
+            contents,
+            digests.get(relative).map(String::as_str),
+        )?;
+        digests.insert(relative.to_owned(), prompt_sha256(contents));
+        plans.push((path, contents.as_bytes().to_vec(), before));
     }
     let hook_before = read_optional(&target, &hook_path)?;
     let mut document: Value = match &hook_before {
@@ -160,7 +195,8 @@ pub fn init_project(
     }
     let new_receipt = Receipt {
         format: 1,
-        skill_sha256: skill_hash,
+        skill_sha256: prompt_sha256(skill),
+        skill_files: digests,
         hooks: expected,
     };
     let json_bytes = |v: &Value| -> Result<Vec<u8>> {
@@ -176,11 +212,12 @@ pub fn init_project(
         _ => json_bytes(&document)?,
     };
     let receipt_bytes = json_bytes(&receipt_value)?;
-    let plans = [
+    // Publish the entry point after every file it links to is in place.
+    plans.extend([
         (skill_path, skill.as_bytes().to_vec(), skill_before),
         (hook_path, hook_bytes, hook_before),
         (receipt_path, receipt_bytes, old),
-    ];
+    ]);
     let mut files = Vec::new();
     let mut changed = false;
     for (path, bytes, before) in plans {
@@ -227,6 +264,27 @@ pub fn init_project(
         changed,
         next,
     })
+}
+
+fn read_owned_skill(
+    root: &Path,
+    path: &Path,
+    contents: &str,
+    digest: Option<&str>,
+) -> Result<Option<Vec<u8>>> {
+    let before = read_optional(root, path)?;
+    if let Some(bytes) = &before
+        && bytes != contents.as_bytes()
+        && std::str::from_utf8(bytes)
+            .ok()
+            .is_none_or(|text| Some(prompt_sha256(text).as_str()) != digest)
+    {
+        return Err(conflict(
+            path,
+            "skill exists with user-modified or unowned contents",
+        ));
+    }
+    Ok(before)
 }
 
 fn read_optional(root: &Path, path: &Path) -> Result<Option<Vec<u8>>> {

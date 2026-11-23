@@ -6,6 +6,27 @@ use std::path::PathBuf;
 
 const SKILL: &str = include_str!("../../../../skills/scribe/SKILL.md");
 
+macro_rules! skill_files {
+    ($($path:literal),+ $(,)?) => {
+        &[$(($path, include_str!(concat!("../../../../skills/scribe/", $path)))),+]
+    };
+}
+
+const SKILL_FILES: &[(&str, &str)] = skill_files![
+    "evals/cases.md",
+    "references/action-tags.md",
+    "references/capture-controls.md",
+    "references/catchers.md",
+    "references/handoffs.md",
+    "references/lookups.md",
+    "references/memory.md",
+    "references/project-init.md",
+    "references/session-groups.md",
+    "references/session-refresh.md",
+    "references/settlement.md",
+    "references/store-maintenance.md",
+];
+
 #[derive(Debug, Args)]
 pub(crate) struct InitArgs {
     /// Existing project directory to initialize; unrelated configuration is preserved
@@ -24,6 +45,12 @@ pub(super) fn run(args: InitArgs, ctx: &Context) -> Result<Output, CliError> {
             "scribe executable path is not UTF-8; install it at a UTF-8 path before initializing hooks",
         )));
     }
-    let report = scribe_core::init_project(&args.target, ctx.provider(), &binary, SKILL)?;
+    let report = scribe_core::init_project_with_skill_files(
+        &args.target,
+        ctx.provider(),
+        &binary,
+        SKILL,
+        SKILL_FILES,
+    )?;
     Ok(Output::Init(report))
 }
