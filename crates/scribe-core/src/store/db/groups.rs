@@ -692,9 +692,12 @@ impl Store {
             if held == Some(true) {
                 // The leaver held the seat, so the member it displaced holds it
                 // again. Turns that member typed in between were never
-                // authorized: restart its consent window now.
+                // authorized: restart its consent window now. Its cursor goes
+                // too, since a cursor would make every later turn count as
+                // new whatever its timestamp, and no hook may have moved it
+                // past the displacement interval.
                 conn.execute(
-                    "UPDATE group_members SET joined = ?3
+                    "UPDATE group_members SET joined = ?3, turn_cursor = NULL
                      WHERE group_id = ?1 AND seat = ?2 AND position = (
                          SELECT MAX(position) FROM group_members WHERE group_id = ?1 AND seat = ?2
                      )",
@@ -1045,6 +1048,8 @@ fn after_cursor<'a>(state: &CaptureState, messages: &'a [NewMessage]) -> Option<
 /// backfill or an earlier capture) it is the continuity point: every turn after
 /// it is new whatever its timestamp, since a turn appended while the cursor's
 /// snapshot was being read can be dated before the membership was committed.
+/// Restoring a displaced holder's seat clears its cursor (`leave_group`), so
+/// the new join time cuts off the turns typed during the displacement.
 fn turns_since<'a>(state: &CaptureState, messages: &'a [NewMessage]) -> Vec<&'a NewMessage> {
     if state.cursor.is_some() {
         return messages.iter().collect();

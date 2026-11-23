@@ -977,6 +977,165 @@ fn backfill_keeps_a_turn_appended_after_the_snapshot_but_dated_before_the_join()
     assert_eq!(count("new"), 1);
 }
 
+/// A displaced holder that typed while another session held its seat keeps
+/// those turns out of group search when it regains the seat, even though it
+/// keeps its backfill cursor and no hook ran during the displacement.
+#[test]
+fn a_restored_seat_with_a_cursor_excludes_turns_typed_during_displacement() {
+    use crate::ClaudeCapturePosition;
+    use crate::group::JoinGroup;
+    use crate::instruction::{ClaudeGroupTurns, claude_group_turns};
+    use time::OffsetDateTime;
+    use time::format_description::well_known::Rfc3339;
+
+    let dir = private_tempdir();
+    let store = Store::open(dir.path());
+    let project = crate::Project::sanitized("checkout");
+    let opener = "group-opener".parse().unwrap();
+    let author = "aide".parse().unwrap();
+    let redactor = Redactor::default();
+    let now = OffsetDateTime::now_utc();
+    let hour = Duration::from_secs(3_600);
+    let claude: crate::SessionId = "restored-claude".parse().unwrap();
+    let codex: crate::SessionId = "restored-codex".parse().unwrap();
+    let row = |id: &str, at: OffsetDateTime, text: &str| {
+        serde_json::json!({
+            "sessionId": claude, "uuid": id, "type": "user", "entrypoint": "cli",
+            "timestamp": at.format(&Rfc3339).unwrap(), "message": {"content": text}
+        })
+        .to_string()
+    };
+    let first = row("first", T0, "orchid claude first");
+    let during = row("during", now - hour / 2, "orchid claude during");
+    let after = row("after", now + hour, "orchid claude restored");
+    let codex_first = {
+        let mut m = message("restored-codex", "c-1", "orchid codex first");
+        m.at = T0;
+        m
+    };
+    let codex_during = {
+        let mut m = message("restored-codex", "c-2", "orchid codex during");
+        m.at = now - hour / 2;
+        m
+    };
+    let codex_after = {
+        let mut m = message("restored-codex", "c-3", "orchid codex restored");
+        m.at = now + hour;
+        m
+    };
+    // Backfilled members keep a cursor; each holds its own seat.
+    store
+        .add_project_group_sessions(
+            "restored",
+            &project,
+            &opener,
+            &[
+                crate::group::GroupAddition {
+                    session: claude.clone(),
+                    turns: Some(claude_group_turns(first.as_bytes(), &claude)),
+                },
+                crate::group::GroupAddition {
+                    session: codex.clone(),
+                    turns: Some(vec![codex_first.clone()]),
+                },
+            ],
+            T0,
+            &redactor,
+        )
+        .unwrap();
+    let seat_of = |session: &crate::SessionId| -> crate::Label {
+        let conn = rusqlite::Connection::open(dir.path().join(DB_FILE)).unwrap();
+        let seat: String = conn
+            .query_row(
+                "SELECT seat FROM group_members WHERE session = ?1",
+                [session.as_str()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        crate::Label::sanitized(&seat, "member")
+    };
+    // Replacements take both seats; the displaced holders type meanwhile and
+    // no hook runs for them.
+    let mut replacements = Vec::new();
+    for (index, displaced) in [&claude, &codex].into_iter().enumerate() {
+        let seat = seat_of(displaced);
+        let replacement: crate::SessionId = format!("replacement-{index}").parse().unwrap();
+        store
+            .join_group(
+                JoinGroup {
+                    group: "restored",
+                    seat: &seat,
+                    role: None,
+                    session: &replacement,
+                    author: &author,
+                    replace: true,
+                    ended: None,
+                    predecessor: None,
+                },
+                &redactor,
+            )
+            .unwrap();
+        replacements.push(replacement);
+    }
+    for replacement in &replacements {
+        store.leave_group(replacement).unwrap();
+    }
+
+    let position = ClaudeCapturePosition {
+        file_id: "1:2".to_owned(),
+        offset: 10,
+        modified: "10".to_owned(),
+        boundary: "sample".to_owned(),
+    };
+    let capture_claude = |replay: String| {
+        let snap = store.claude_group_capture(&claude).unwrap().unwrap();
+        store
+            .capture_claude_group_turns(
+                &snap,
+                false,
+                &position,
+                ClaudeGroupTurns::parse(replay.as_bytes(), &claude),
+                &redactor,
+            )
+            .unwrap()
+    };
+    let count = |term: &str| {
+        store
+            .search_group_messages("restored", &tokens(term))
+            .unwrap()
+            .matches
+            .len()
+    };
+    // The first capture after restoration sees the displacement interval.
+    assert_eq!(capture_claude(format!("{first}\n{during}\n")), Some(0));
+    store
+        .capture_group_turns(
+            &codex,
+            &[codex_first.clone(), codex_during.clone()],
+            &redactor,
+        )
+        .unwrap();
+    assert_eq!(count("during"), 0);
+    // Later authorized turns are stored once.
+    for _ in 0..2 {
+        capture_claude(format!("{first}\n{during}\n{after}\n"));
+        store
+            .capture_group_turns(
+                &codex,
+                &[
+                    codex_first.clone(),
+                    codex_during.clone(),
+                    codex_after.clone(),
+                ],
+                &redactor,
+            )
+            .unwrap();
+    }
+    assert_eq!(count("during"), 0);
+    assert_eq!(count("restored"), 2, "one per path, once each");
+    assert_eq!(count("first"), 2, "the backfilled turns stay");
+}
+
 #[test]
 fn project_group_refuses_sensitive_slug_and_masks_legacy_membership_in_errors() {
     let dir = private_tempdir();
