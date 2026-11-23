@@ -8,7 +8,7 @@ Arguments:
 Options:
       --as <SEAT>        Seat name (defaults to the short session id for a project group)
       --author <AUTHOR>  Your agent author name
-      --role <ROLE>      Role (defaults to member for a project group, otherwise the seat name)
+      --role <ROLE>      Role; defaults to member for a new project-group seat, otherwise the seat name. Omission on an existing seat keeps its current role
       --replace          Explicitly replace the newest holder of an occupied seat
   -h, --help             Print help
   -V, --version          Print version

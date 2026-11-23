@@ -56,7 +56,8 @@ pub(crate) enum GroupCommand {
         /// Your agent author name
         #[arg(long)]
         author: AuthorName,
-        /// Role (defaults to member for a project group, otherwise the seat name)
+        /// Role; defaults to member for a new project-group seat, otherwise the seat name.
+        /// Omission on an existing seat keeps its current role.
         #[arg(long)]
         role: Option<String>,
         /// Explicitly replace the newest holder of an occupied seat
@@ -219,7 +220,9 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
                 }
                 None => return Err(CliError::Usage("pass --as for a named seat".into())),
             };
-            let role = role.or_else(|| group.slug.as_ref().map(|_| "member".to_owned()));
+            let seat_exists = group.seats.iter().any(|s| s.name == seat.as_str());
+            let role = role
+                .or_else(|| (group.slug.is_some() && !seat_exists).then(|| "member".to_owned()));
             let latest = group
                 .seats
                 .iter()
