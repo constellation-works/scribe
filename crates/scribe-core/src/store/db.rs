@@ -528,7 +528,7 @@ pub(super) fn open_new_writer(root: &Path, wait: Duration) -> Result<Connection>
     // a free page.
     conn.execute_batch("PRAGMA synchronous = FULL; PRAGMA secure_delete = ON;")
         .map_err(|e| db_error("configure", &path, e))?;
-    migrate(&mut conn, &path)?;
+    migrate(&mut conn, &path, wait)?;
     Ok(conn)
 }
 
@@ -566,7 +566,7 @@ fn is_busy(e: &rusqlite::Error) -> bool {
 /// Run every step past the database's `user_version`, each in its own
 /// immediate transaction that re-reads the version, so two writers racing
 /// on a new database run each step once.
-fn migrate(conn: &mut Connection, path: &Path) -> Result<()> {
+fn migrate(conn: &mut Connection, path: &Path, wait: Duration) -> Result<()> {
     let target = schema();
     loop {
         let started = Instant::now();
@@ -579,15 +579,35 @@ fn migrate(conn: &mut Connection, path: &Path) -> Result<()> {
             .map_err(|e| db_error("read the schema version of", path, e))?;
         let cleaned = (8..=9).contains(&observed);
         if cleaned {
-            let busy: i64 = conn
-                .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))
-                .map_err(|e| write_error("checkpoint", path, started, e))?;
-            if busy != 0 {
-                return Err(Error::Locked {
-                    path: path.to_path_buf(),
-                    holder: String::from("another scribe.db connection"),
-                    waited_ms: started.elapsed().as_millis(),
-                });
+            let checkpoint_started = Instant::now();
+            loop {
+                let busy: i64 = conn
+                    .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))
+                    .map_err(|e| write_error("checkpoint", path, started, e))?;
+                if busy == 0 {
+                    break;
+                }
+
+                let waited = checkpoint_started.elapsed();
+                if waited >= wait {
+                    return Err(Error::Locked {
+                        path: path.to_path_buf(),
+                        holder: String::from("another scribe.db connection"),
+                        waited_ms: waited.as_millis(),
+                    });
+                }
+
+                // Another opener may have advanced the schema while this
+                // checkpoint was busy. Version 10 records completed cleanup,
+                // so it removes the obligation to checkpoint here.
+                let current: u32 = conn
+                    .query_row("PRAGMA user_version", [], |row| row.get(0))
+                    .map_err(|e| db_error("read the schema version of", path, e))?;
+                if !(8..=9).contains(&current) {
+                    break;
+                }
+
+                std::thread::sleep(WAL_RETRY.min(wait.saturating_sub(waited)));
             }
         }
         let tx = conn
