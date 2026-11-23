@@ -1431,6 +1431,16 @@ fn record_meta<'a>(corpus: Corpus<'a>, cite: &str) -> (Option<&'a str>, Vec<&'a 
             }
             return (Some(r.project.as_str()), topics);
         }
+        // A group-only message has no catalog record: its group's project
+        // is all it carries (the same one `retrieve` scopes it by).
+        if let Some(project) = corpus
+            .messages
+            .iter()
+            .find(|m| m.session.as_str() == id)
+            .and_then(|m| m.group_project.as_ref())
+        {
+            return (Some(project.as_str()), Vec::new());
+        }
     } else if let Some(e) = corpus.entries.iter().find(|e| e.id.to_string() == cite) {
         return (
             Some(e.project.as_str()),
