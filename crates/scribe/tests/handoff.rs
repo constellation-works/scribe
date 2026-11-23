@@ -1759,10 +1759,17 @@ fn refresh_requires_interactive_start_and_provenance_and_refuses_a_self_link() {
 
 // Write the opening ancestry before the peer-origin user turn, as Claude does.
 fn clear_transcript(fx: &Fixture, id: &str, parents: &[&str]) -> Transcript {
+    let edges: Vec<_> = parents.iter().map(|parent| ("clear", *parent)).collect();
+    ancestry_transcript(fx, id, &edges)
+}
+
+// Write the opening ancestry of `id`, one `(via, parent)` edge each, before the
+// peer-origin user turn, as Claude does.
+fn ancestry_transcript(fx: &Fixture, id: &str, edges: &[(&str, &str)]) -> Transcript {
     let tr = Transcript::new(fx, id);
-    let sessions: Vec<_> = parents
+    let sessions: Vec<_> = edges
         .iter()
-        .map(|id| json!({"via":"clear", "id":id}))
+        .map(|(via, parent)| json!({"via": via, "id": parent}))
         .collect();
     let rows = [
         json!({"type":"session-owner", "sessionId":id}),
@@ -1854,6 +1861,91 @@ fn refresh_clear_ancestry_is_limited_to_sixteen_hops() {
         .collect();
     for n in 0..17 {
         clear_transcript(&fx, &ids[n], &[&ids[n + 1]]);
+    }
+    Transcript::new(&fx, &ids[17]).write(&[("u", "user", "A typed turn")]);
+    let accepted = try_refresh(&fx, &ids[1]);
+    assert!(accepted.status.success(), "{}", text(&accepted.stderr));
+    let refused = try_refresh(&fx, &ids[0]);
+    assert_eq!(refused.status.code(), Some(1));
+    let error: Value = serde_json::from_slice(&refused.stderr).unwrap();
+    assert_eq!(error["code"], "quote_not_found");
+    assert!(error.to_string().contains(&ids[16]));
+    assert!(error.to_string().contains("16-hop"));
+}
+
+// A session id no transcript on this host has.
+const UNREADABLE_SESSION: &str = "9a0b1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d";
+
+#[test]
+fn refresh_follows_a_launch_edge_from_a_typed_session_to_a_cleared_rank() {
+    let fx = Fixture::new();
+    Transcript::new(&fx, ON_SESSION).write(&[("u", "user", "A typed turn")]);
+    // The seat's root: a rank a peer launched from the typed session, never typed in.
+    ancestry_transcript(&fx, OFF_SESSION, &[("launch", ON_SESSION)]);
+    // The session a peer restarted after a clear from that root.
+    clear_transcript(&fx, CHILD, &[OFF_SESSION]);
+    let out = try_refresh(&fx, CHILD);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(json_of(&out)["handoff_mode"], "continue");
+}
+
+#[test]
+fn refresh_launch_ancestry_refuses_untyped_ambiguous_cyclic_and_unreadable_links() {
+    let fx = Fixture::new();
+    let assert_refused = |id: &str, stopped_at: &str, reason: &str| {
+        let out = try_refresh(&fx, id);
+        assert_eq!(out.status.code(), Some(1));
+        let error: Value = serde_json::from_slice(&out.stderr).unwrap();
+        assert_eq!(error["code"], "quote_not_found");
+        assert!(error.to_string().contains(stopped_at), "{error}");
+        assert!(error.to_string().contains(reason), "{error}");
+    };
+    // A launched root with no typed turn and no predecessor of its own.
+    ancestry_transcript(&fx, OFF_SESSION, &[("launch", ON_SESSION)]);
+    ancestry_transcript(&fx, ON_SESSION, &[]);
+    clear_transcript(&fx, CHILD, &[OFF_SESSION]);
+    assert_refused(CHILD, ON_SESSION, "typed user turn");
+    // Two launch edges are ambiguous, as two clear edges are.
+    ancestry_transcript(
+        &fx,
+        OFF_SESSION,
+        &[("launch", ON_SESSION), ("launch", UNREADABLE_SESSION)],
+    );
+    assert_refused(CHILD, OFF_SESSION, "more than one launch predecessor");
+    // A launch edge back to a session already on the walk.
+    ancestry_transcript(&fx, OFF_SESSION, &[("launch", CHILD)]);
+    assert_refused(CHILD, CHILD, "cycle");
+    // A launch edge to a session this host cannot read.
+    ancestry_transcript(&fx, CHILD, &[("launch", UNREADABLE_SESSION)]);
+    assert_refused(CHILD, UNREADABLE_SESSION, "not readable");
+}
+
+#[test]
+fn refresh_follows_a_refreshed_ranks_clear_edge_before_its_launch_edge() {
+    let fx = Fixture::new();
+    Transcript::new(&fx, ON_SESSION).write(&[("u", "user", "A typed turn")]);
+    ancestry_transcript(&fx, OFF_SESSION, &[("launch", ON_SESSION)]);
+    // A refreshed rank: its launch edge names a session this host cannot read.
+    // The walk takes the clear edge to the seat's root first, so it is not read.
+    ancestry_transcript(
+        &fx,
+        CHILD,
+        &[("launch", UNREADABLE_SESSION), ("clear", OFF_SESSION)],
+    );
+    let out = try_refresh(&fx, CHILD);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(json_of(&out)["handoff_mode"], "continue");
+}
+
+#[test]
+fn refresh_clear_and_launch_edges_share_the_sixteen_hop_limit() {
+    let fx = Fixture::new();
+    let ids: Vec<String> = (0..18)
+        .map(|n| format!("00000000-0000-4000-8000-{n:012x}"))
+        .collect();
+    for n in 0..17 {
+        let via = if n % 2 == 0 { "launch" } else { "clear" };
+        ancestry_transcript(&fx, &ids[n], &[(via, ids[n + 1].as_str())]);
     }
     Transcript::new(&fx, &ids[17]).write(&[("u", "user", "A typed turn")]);
     let accepted = try_refresh(&fx, &ids[1]);
