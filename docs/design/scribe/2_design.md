@@ -6918,7 +6918,12 @@ group for a caller with no seat in it when `<span>` is a verbatim span of the
 user's own typed turn in the calling session and contains the group's `g-<n>`
 id as a whole word. The quote is checked as `group open` checks its consent
 (`GroupConsent::verify`), for every caller, so a refused quote fails even for
-the opener. The user's explicit ask satisfies the accident guard. The caller
+the opener. The verified consent is bound to the canonical group id it was
+checked for and to closing, not opening: the command resolves the id or slug
+once, and the store refuses consent for another group or for opening, at the
+first check and again before the commit, so a slug reused after a close or a
+concurrent reopen cannot apply an old request to the replacement group. The
+user's explicit ask satisfies the accident guard. The caller
 takes no seat, and the success audit names the consenting message id, as `open`
 does. Without a quote the seat rule above applies unchanged. It sends up to 16
 recent active handoffs and 32 recent stored user turns from the members, with

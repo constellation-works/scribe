@@ -4519,6 +4519,10 @@ opener. A typed `/scribe group close` line was not added.
 - A retry returns the closed record with no second model call. A retry whose
   quoted transcript can no longer be read is refused with `quote_not_found`,
   although the group is closed.
+- The consent is bound to the canonical `g-<n>` id and to closing. The command
+  resolves the id or slug once, and the store checks the binding at the first
+  check and again before the commit, so consent for another group, consent to
+  open, or a slug reused after a close cannot close a replacement group.
 - Cost: the power to close reaches any session the user quotes into, not only
   the opener's seat chain. Only a typed quote grants it, so a session cannot
   close a group on its own word.
