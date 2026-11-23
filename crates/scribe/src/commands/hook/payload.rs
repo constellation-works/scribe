@@ -533,7 +533,9 @@ fn open_beneath(root: &Path, parts: &[Component<'_>]) -> std::io::Result<std::fs
 
 /// Transcript entries found under a root: regular files, and entries named
 /// like a transcript whose file type is refused (a link, a device, a
-/// directory). A refused entry is present, not absent: it is never read.
+/// directory). A refused entry is present, not absent: it is never read. Every
+/// refused entry is kept, sorted by id and path, even when several in one root
+/// share a session id; a caller that opens them checks each one.
 #[derive(Default)]
 pub(in crate::commands) struct Discovered {
     pub(in crate::commands) files: Vec<(SessionId, PathBuf)>,
@@ -563,7 +565,7 @@ pub(in crate::commands) fn discover(
 ) -> Result<Discovered, CliError> {
     let mut pending = vec![(dir.to_path_buf(), 0usize)];
     let mut found = std::collections::BTreeMap::new();
-    let mut refused = std::collections::BTreeMap::new();
+    let mut refused = std::collections::BTreeSet::new();
     let mut count = 0usize;
     while let Some((parent, depth)) = pending.pop() {
         let entries = match std::fs::read_dir(&parent) {
@@ -604,7 +606,7 @@ pub(in crate::commands) fn discover(
                 continue;
             };
             if !kind.is_file() {
-                refused.insert(id, entry.path());
+                refused.insert((id, entry.path()));
                 continue;
             }
             if found.insert(id, entry.path()).is_some() {

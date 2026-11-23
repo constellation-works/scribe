@@ -337,3 +337,84 @@ fn cross_provider_collision_stays_refused_when_discovered_refused_entry_becomes_
         );
     }
 }
+
+/// Two project directories under one Claude projects root each hold a refused
+/// entry named for B. Discovery must keep both, and the checked open must reach
+/// each: a readable first entry cannot stand in for the other. The variants
+/// make the first entry the checked open reaches readable, and then every
+/// entry. Neither depends on which directory the enumeration yields first.
+#[test]
+fn two_refused_entries_in_one_root_refuse_the_whole_line_when_one_becomes_readable() {
+    for every_path_transitions in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let projects = home.join(".claude/projects");
+        let refused_a = projects.join("refused-a").join(format!("{B}.jsonl"));
+        let refused_b = projects.join("refused-b").join(format!("{B}.jsonl"));
+        std::fs::create_dir_all(&refused_a).unwrap();
+        std::fs::create_dir_all(&refused_b).unwrap();
+
+        let root = dir.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let ctx =
+            Context::at(root, Some(projects.clone())).with_codex_home(Some(home.join(".codex")));
+        let payload: PromptPayload = serde_json::from_value(json!({
+            "session_id": A,
+            "transcript_path": projects.join("regular").join(format!("{A}.jsonl")),
+            "cwd": "/work",
+            "prompt": "/scribe group add planning"
+        }))
+        .unwrap();
+        let session = A.parse::<SessionId>().unwrap();
+        let named = [B.parse::<SessionId>().unwrap()];
+        let opened = std::cell::RefCell::new(Vec::new());
+
+        let output = run_with_transcript_reader(
+            "planning",
+            &named,
+            &payload,
+            &session,
+            &ctx,
+            |provider_ctx, id, path| {
+                assert_eq!(id.as_str(), B);
+                let first = opened.borrow().is_empty();
+                opened.borrow_mut().push(path.to_path_buf());
+                if first || every_path_transitions {
+                    std::fs::remove_dir(path).unwrap();
+                    write_private(path, &claude_turn_line("b-refused", "transitionedorchid"));
+                }
+                group_turns::past(provider_ctx, id, path)
+            },
+        )
+        .unwrap();
+        let Output::Hook(reply) = output else {
+            panic!("group add should return a hook reply");
+        };
+        let reason = reply.block.unwrap();
+        assert!(reason.contains("group add refused"), "{reason}");
+        assert!(reason.contains("nothing changed"), "{reason}");
+        assert!(ctx.store().groups().unwrap().is_empty(), "{reason}");
+        assert!(
+            ctx.store()
+                .search_messages(&[String::from("transitionedorchid")])
+                .unwrap()
+                .matches
+                .is_empty(),
+            "{reason}"
+        );
+
+        // Both refused entries were reached by the checked open, in either order.
+        let mut reached = opened.into_inner();
+        reached.sort();
+        assert_eq!(
+            reached,
+            [refused_a, refused_b],
+            "every_path_transitions={every_path_transitions}"
+        );
+    }
+}
