@@ -238,6 +238,7 @@ fn jsonl_export_reads_phase_six_sessions_when_no_live_files_remain() {
     store.migrate_store(T0).unwrap();
     let root = store.root();
     let conn = rusqlite::Connection::open(root.join(db::DB_FILE)).unwrap();
+    conn.execute_batch(db::REMOVE_GROUP_CAPTURE_SCHEMA).unwrap();
     conn.execute_batch(
         "DROP TABLE group_members; DROP TABLE group_seats; DROP TABLE groups;
          DROP TABLE entries;
@@ -479,6 +480,7 @@ fn stage_legacy_checkpoint(root: &Path, session: &str, record: &str, user_versio
         .unwrap();
     assert_eq!(inserted, 1, "the legacy writer found the session row");
     if let Some(version) = user_version {
+        conn.execute_batch(db::REMOVE_GROUP_CAPTURE_SCHEMA).unwrap();
         if version == 6 {
             // Remove the schema-9 group tables and schema-7 entry column
             // before replaying the upgrades from version 6.
@@ -573,7 +575,7 @@ fn jsonl_export_omits_a_preexisting_forgotten_checkpoint_until_upgrade_erases_it
             &Redactor::default(),
         )
         .unwrap();
-    assert_eq!(user_version(&root), 10);
+    assert_eq!(user_version(&root), 11);
     assert_eq!(checkpoint_record(&root, "s-1"), None);
     assert!(
         checkpoint_record(&root, "s-2")
@@ -719,7 +721,7 @@ fn schema_nine_retries_cleanup_left_by_an_older_writer() {
     reader.execute_batch("ROLLBACK").unwrap();
     drop(reader);
     write().unwrap();
-    assert_eq!(user_version(&root), 10);
+    assert_eq!(user_version(&root), 11);
     assert!(!on_disk(&root, STALE_CHECKPOINT));
     assert!(
         checkpoint_record(&root, "s-2")

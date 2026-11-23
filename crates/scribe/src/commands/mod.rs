@@ -82,6 +82,9 @@ pub(crate) enum Command {
     /// Ranks entries, session headers and segments for words, best first, as question ask ranks them, with no model call.
     #[command(after_help = search::SEARCH_EXAMPLES)]
     Search(search::SearchArgs),
+    /// Answer a question from stored records with verbatim quotes
+    #[command(after_help = question::ASK_EXAMPLES)]
+    Ask(question::AskArgs),
     /// Propose superseding or retiring entries via scan
     ///
     /// Proposes superseding or retiring entries a later one replaced or that are due for review, and deactivates stale or removed-feature sessions via scan.
@@ -138,6 +141,7 @@ impl Command {
             Self::Init(_)
             | Self::Transcript(_)
             | Self::Search(_)
+            | Self::Ask(_)
             | Self::Consistency(_)
             | Self::Tag(_)
             | Self::Hook(_)
@@ -175,7 +179,7 @@ impl Command {
             Self::Question(command) => command.audit(),
             // Read-only: the popup only lists and shows, the brief only
             // reads, and an export writes nothing to the store (STD-01 R31).
-            Self::Tmux(_) | Self::Brief(_) | Self::Export(_) => None,
+            Self::Tmux(_) | Self::Brief(_) | Self::Export(_) | Self::Ask(_) => None,
             Self::Plugin(command) => command.audit(),
         }
     }
@@ -234,6 +238,7 @@ fn dispatch(command: Command, ctx: &Context) -> Result<Output, CliError> {
         Command::Proposal(command) => proposal::run(command, ctx),
         Command::Memory(command) => memory::run(command, ctx),
         Command::Search(args) => search::run(args, ctx),
+        Command::Ask(args) => question::run(QuestionCommand::Ask(args), ctx),
         Command::Consistency(command) => consistency::run(command, ctx),
         Command::Store(command) => store::run(command, ctx),
         Command::Export(args) => export::run(&args, ctx),

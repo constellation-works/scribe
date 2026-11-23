@@ -58,7 +58,7 @@ pub const DB_FILE: &str = "scribe.db";
 /// The schema, one step per `user_version`: step `n` (1-based) moves the
 /// database from version `n - 1` to `n`. Append only; never edit a shipped
 /// step.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, groups::V9, V10];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, groups::V9, V10, groups::V11];
 
 /// Version 1 (phase 4): `meta`, `messages` and its FTS5 index, and the
 /// memory tables phase 5 uses.
@@ -659,21 +659,37 @@ pub(super) fn upsert_in(
     messages: &[NewMessage],
     redactor: &Redactor,
 ) -> Result<usize> {
-    let mut changed = 0;
-    let mut insert = conn
-        .prepare(
-            "INSERT INTO messages (session, message, role, at, text, sha256)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-             ON CONFLICT (session, message) DO UPDATE SET
+    write_messages(conn, path, started, messages.iter(), redactor, false)
+}
+
+fn write_messages<'a>(
+    conn: &Connection,
+    path: &Path,
+    started: Instant,
+    messages: impl Iterator<Item = &'a NewMessage>,
+    redactor: &Redactor,
+    group_only: bool,
+) -> Result<usize> {
+    let insert = "INSERT INTO messages (session, message, role, at, text, sha256, group_only)
+                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
+    let conflict = if group_only {
+        "ON CONFLICT (session, message) DO NOTHING"
+    } else {
+        "ON CONFLICT (session, message) DO UPDATE SET
+                 group_only = 0,
                  role = excluded.role, at = excluded.at,
                  text = excluded.text, sha256 = excluded.sha256
              WHERE messages.sha256 <> excluded.sha256
                 OR messages.role <> excluded.role
-                OR messages.at <> excluded.at",
-        )
+                OR messages.at <> excluded.at
+                OR messages.group_only = 1"
+    };
+    let mut insert = conn
+        .prepare(&format!("{insert} {conflict}"))
         .map_err(|e| db_error("write messages to", path, e))?;
+    let mut changed = 0;
     for m in messages {
-        let text = redactor.mask(&m.text);
+        let text = redactor.message(&m.text);
         let sha256 = crate::capture::prompt_sha256(&text);
         changed += insert
             .execute((
@@ -683,6 +699,7 @@ pub(super) fn upsert_in(
                 stamp(m.at),
                 &text,
                 &sha256,
+                group_only,
             ))
             .map_err(|e| write_error("write messages to", path, started, e))?;
     }
@@ -761,13 +778,17 @@ pub(super) fn delete_messages(
 /// Every message whose text matches one of `tokens` as a word prefix, best
 /// BM25 score first. Read-only: no lock, no write; a missing database
 /// matches nothing.
-pub(super) fn search_messages(root: &Path, tokens: &[String]) -> Result<MessageSearch> {
+pub(super) fn search_messages(
+    root: &Path,
+    tokens: &[String],
+    group: Option<i64>,
+) -> Result<MessageSearch> {
     let path = root.join(DB_FILE);
     if tokens.is_empty() || !inspect(root)? {
         return Ok(MessageSearch::default());
     }
     let query = fts_query(tokens);
-    match open_reader(&path, false).and_then(|conn| read_matches(&conn, &path, &query)) {
+    match open_reader(&path, false).and_then(|conn| read_matches(&conn, &path, &query, group)) {
         Ok(matches) => Ok(MessageSearch {
             matches,
             read_only_copy: false,
@@ -775,7 +796,8 @@ pub(super) fn search_messages(root: &Path, tokens: &[String]) -> Result<MessageS
         Err(Fallible::NeedsImmutable(first)) => {
             tracing::debug!(path = %path.display(), error = %first, "retrying scribe.db as a read-only copy");
             let conn = open_reader(&path, true).map_err(Fallible::into_error)?;
-            let matches = read_matches(&conn, &path, &query).map_err(Fallible::into_error)?;
+            let matches =
+                read_matches(&conn, &path, &query, group).map_err(Fallible::into_error)?;
             Ok(MessageSearch {
                 matches,
                 read_only_copy: true,
@@ -831,6 +853,7 @@ fn read_matches(
     conn: &Connection,
     path: &Path,
     query: &str,
+    group: Option<i64>,
 ) -> Result<Vec<MessageMatch>, Fallible> {
     let version: u32 = conn
         .query_row("PRAGMA user_version", [], |row| row.get(0))
@@ -842,19 +865,31 @@ fn read_matches(
             supported: schema(),
         }));
     }
-    if version == 0 {
+    if version == 0 || (version < 9 && group.is_some()) {
         return Ok(Vec::new());
     }
+    let group_project = if version >= 11 {
+        "(SELECT g.project FROM groups g JOIN group_members gm ON gm.group_id = g.id
+          WHERE gm.session = m.session AND m.group_only = 1)"
+    } else {
+        "NULL"
+    };
+    let membership = if group.is_some() {
+        "AND EXISTS (SELECT 1 FROM group_members gm WHERE gm.session = m.session AND gm.group_id = ?2)"
+    } else {
+        ""
+    };
     let mut select = conn
-        .prepare(
-            "SELECT m.session, m.message, m.role, m.at, m.text, bm25(messages_fts)
+        .prepare(&format!(
+            "SELECT m.session, m.message, m.role, m.at, m.text, bm25(messages_fts), {group_project}
              FROM messages_fts JOIN messages m ON m.id = messages_fts.rowid
-             WHERE messages_fts MATCH ?1
-             ORDER BY bm25(messages_fts), m.at, m.id",
-        )
+             WHERE messages_fts MATCH ?1 {membership}
+             ORDER BY bm25(messages_fts), m.at, m.id"
+        ))
         .map_err(|e| Fallible::from_sqlite("read", path, e))?;
+    let params = rusqlite::params![query, group];
     let rows = select
-        .query_map([query], |row| {
+        .query_map(&params[..if group.is_some() { 2 } else { 1 }], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -862,12 +897,13 @@ fn read_matches(
                 row.get::<_, String>(3)?,
                 row.get::<_, String>(4)?,
                 row.get::<_, f64>(5)?,
+                row.get::<_, Option<String>>(6)?,
             ))
         })
         .map_err(|e| Fallible::from_sqlite("read", path, e))?;
     let mut matches = Vec::new();
     for row in rows {
-        let (session, message, role, at, text, bm25) =
+        let (session, message, role, at, text, bm25, project) =
             row.map_err(|e| Fallible::from_sqlite("read", path, e))?;
         let corrupt = |what: &str| {
             Fallible::Failed(Error::corrupt(path, format!("a message row has {what}")))
@@ -883,6 +919,10 @@ fn read_matches(
             at: OffsetDateTime::parse(&at, &Rfc3339).map_err(|_| corrupt("a bad time"))?,
             text,
             score: -bm25,
+            group_project: project
+                .map(|p| p.parse())
+                .transpose()
+                .map_err(|_| corrupt("a bad group project"))?,
         });
     }
     Ok(matches)
@@ -1014,6 +1054,17 @@ pub(super) fn db_error(action: &'static str, path: &Path, e: rusqlite::Error) ->
         },
     }
 }
+
+/// Restore the schema-10 shape before exercising migrations from an older version.
+#[cfg(test)]
+pub(super) const REMOVE_GROUP_CAPTURE_SCHEMA: &str = "
+DROP TRIGGER handoffs_clear_group_summary;
+DROP TRIGGER messages_clear_group_summary;
+ALTER TABLE messages DROP COLUMN group_only;
+ALTER TABLE group_members DROP COLUMN turn_cursor;
+ALTER TABLE group_members DROP COLUMN joined;
+ALTER TABLE groups DROP COLUMN summary;
+";
 
 /// The schema version and store id of the database under `root`, for
 /// tests; `None` when there is no database.

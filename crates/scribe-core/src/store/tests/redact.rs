@@ -136,6 +136,13 @@ fn the_redacted_field_inventory_is_exactly_the_fields_masked() {
     redactor.group(&mut draft);
     assert_eq!(draft.title, "[redacted:SECRET]");
     assert_eq!(draft.kind, draft.title);
+    for (name, masked) in [
+        ("group.summary", redactor.group_summary(SECRET)),
+        ("message.text", redactor.message(SECRET)),
+    ] {
+        names.push(name);
+        assert_eq!(masked, draft.title);
+    }
     names.dedup();
     assert_eq!(names, REDACTED_FIELDS);
 }

@@ -268,8 +268,15 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
         (OutputMode::Json, Record::Group(g)) => write_json(out, g),
         (OutputMode::Plain, Record::Group(g)) => writeln!(out, "{}", plain_line(&group_row(g))),
         (OutputMode::Table, Record::Group(g)) => {
-            for (label, cell) in GROUP_COLUMNS.iter().zip(group_row(g)) {
+            for (label, cell) in GROUP_COLUMNS
+                .iter()
+                .take(GROUP_COLUMNS.len() - 1)
+                .zip(group_row(g))
+            {
                 field(out, &label.to_ascii_lowercase(), &cell.text)?;
+            }
+            if let Some(summary) = &g.summary {
+                field(out, "summary", summary)?;
             }
             Ok(())
         }
@@ -1292,8 +1299,8 @@ fn field(out: &mut dyn Write, label: &str, value: &str) -> io::Result<()> {
     writeln!(out, "{label:<width$}{}", value.replace('\n', &indent))
 }
 
-const GROUP_COLUMNS: [&str; 9] = [
-    "ID", "TITLE", "KIND", "PROJECT", "OPENED", "CLOSED", "OPENER", "RELATED", "SEATS",
+const GROUP_COLUMNS: [&str; 10] = [
+    "ID", "TITLE", "KIND", "PROJECT", "OPENED", "CLOSED", "OPENER", "RELATED", "SEATS", "SUMMARY",
 ];
 
 fn group_row(g: &scribe_core::group::Group) -> Vec<Cell> {
@@ -1331,6 +1338,7 @@ fn group_row(g: &scribe_core::group::Group) -> Vec<Cell> {
             .collect::<Vec<_>>()
             .join(", "),
         seats,
+        g.summary.as_deref().map_or_else(String::new, one_line),
     ]
     .into_iter()
     .map(Cell::plain)

@@ -102,6 +102,10 @@ pub(crate) struct ListArgs {
     #[arg(long, value_name = "PROJECT")]
     pub(crate) project: Option<Project>,
 
+    /// Only session records of this group's members (id or unique prefix)
+    #[arg(long, value_name = "ID")]
+    pub(crate) group: Option<String>,
+
     /// Only sessions carrying this topic; repeat it to require every one [default: any]
     #[arg(long, value_name = "TOPIC")]
     pub(crate) topic: Vec<Topic>,
@@ -271,7 +275,14 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
         include_inactive: args.include_inactive,
         limit: args.limit,
     };
-    let found = ctx.store().list_sessions(&filter)?;
+    let store = ctx.store();
+    let group = args
+        .group
+        .as_deref()
+        .map(|id| store.group(id))
+        .transpose()?;
+    let members = group.as_ref().map(|group| group.members());
+    let found = store.list_sessions_scoped(&filter, members.as_ref())?;
     let empty = format!(
         "no session records in {}; a session is cataloged after /scribe on",
         ctx.store().root().display()
@@ -279,6 +290,9 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
     let mut criteria = Vec::new();
     if let Some(project) = &filter.project {
         criteria.push(format!("--project {project}"));
+    }
+    if let Some(group) = group {
+        criteria.push(format!("--group {}", group.id));
     }
     for topic in &filter.topics {
         criteria.push(format!("--topic {topic}"));

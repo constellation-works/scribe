@@ -56,6 +56,8 @@ pub struct MessageMatch {
     pub text: String,
     /// FTS5's `bm25()` score, negated so that higher is better.
     pub score: f64,
+    /// Project of the group that authorized a turn without a session pass.
+    pub group_project: Option<crate::Project>,
 }
 
 /// What a message search read: the matches, best first, and whether they
@@ -85,17 +87,7 @@ pub fn window(
     let mut kept: Vec<NewMessage> = window
         .iter()
         .filter(|m| m.role == Speaker::User)
-        .filter_map(|m| {
-            let text = typed_text(&m.text);
-            let at = line(&m.uuid)?.at;
-            keeps(&text).then(|| NewMessage {
-                session: session.clone(),
-                message: m.uuid.clone(),
-                role: Speaker::User,
-                at,
-                text,
-            })
-        })
+        .filter_map(|m| typed_turn(session, line(&m.uuid)?, &m.text))
         .collect();
     for claim in claims {
         let candidate = &claim.candidate;
@@ -121,6 +113,24 @@ pub fn window(
         }
     }
     kept
+}
+
+/// Select a verified user's turn for storage, applying the same content
+/// exclusions as a session pass. `own` has already had pasted blocks removed.
+#[must_use]
+pub fn typed_turn(
+    session: &SessionId,
+    message: &transcript::Message,
+    own: &str,
+) -> Option<NewMessage> {
+    let text = typed_text(own);
+    keeps(&text).then(|| NewMessage {
+        session: session.clone(),
+        message: message.uuid.clone(),
+        role: Speaker::User,
+        at: message.at,
+        text,
+    })
 }
 
 /// Whether a turn's text is stored: not empty and holding no finance or

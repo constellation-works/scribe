@@ -506,6 +506,12 @@ pub(in crate::store) fn forget(
     let messages = conn
         .execute("DELETE FROM messages WHERE session = ?1", [id.as_str()])
         .map_err(err)?;
+    conn.execute(
+        "UPDATE groups SET summary = NULL WHERE summary IS NOT NULL
+         AND id = (SELECT group_id FROM group_members WHERE session = ?1)",
+        [id.as_str()],
+    )
+    .map_err(err)?;
     conn.execute("DELETE FROM now_pending WHERE session = ?1", [id.as_str()])
         .map_err(err)?;
     for table in ["session_terms", "rebuild_checkpoints"] {

@@ -1496,6 +1496,7 @@ fn legacy_database_reads_without_migrating_and_upgrades_on_write() {
         request,
         &body,
     ]);
+    support::remove_group_capture_schema(&fx.root());
     support::sql(
         &fx.root(),
         "DROP TABLE group_members; DROP TABLE group_seats; DROP TABLE groups;

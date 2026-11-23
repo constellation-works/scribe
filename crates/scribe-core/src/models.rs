@@ -1642,6 +1642,18 @@ pub trait Models {
         )))
     }
 
+    /// Summarize a group's bounded, stored evidence in one model call.
+    fn group_summary(
+        &self,
+        model: &str,
+        evidence: &crate::group::CloseEvidence,
+    ) -> Result<String, ModelError> {
+        let _ = (model, evidence);
+        Err(ModelError::Unavailable(
+            "this adapter does not summarize groups".into(),
+        ))
+    }
+
     /// Label candidate pairs for the consistency routine.
     ///
     /// The default answers [`ModelError::Unavailable`], so an adapter that

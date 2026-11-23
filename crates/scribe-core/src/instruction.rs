@@ -505,6 +505,42 @@ fn string(value: Option<&serde_json::Value>) -> Option<String> {
     value.and_then(serde_json::Value::as_str).map(str::to_owned)
 }
 
+/// Read the conversation with copied histories from other sessions excluded.
+#[must_use]
+pub fn claude_session_conversation(bytes: &[u8], session: &SessionId) -> Vec<Spoken> {
+    claude_conversation(&claude_session_lines(bytes, session))
+}
+
+/// Verified Claude turns with the same text selection as the session pass.
+#[must_use]
+pub fn claude_group_turns(bytes: &[u8], session: &SessionId) -> Vec<crate::message::NewMessage> {
+    read_claude_conversation(&claude_session_lines(bytes, session), str::to_owned)
+        .into_iter()
+        .filter(|turn| turn.entrypoint.is_none() || turn.interactive)
+        .filter_map(|turn| {
+            crate::message::typed_turn(session, &turn.message, turn.typed.as_deref()?)
+        })
+        .collect()
+}
+
+fn claude_session_lines(bytes: &[u8], session: &SessionId) -> Vec<u8> {
+    let mut local = Vec::new();
+    for line in bytes.split(|b| *b == b'\n') {
+        let Ok(row) = serde_json::from_slice::<serde_json::Value>(line) else {
+            continue;
+        };
+        if row
+            .get("sessionId")
+            .is_some_and(|id| id.as_str() != Some(session.as_str()))
+        {
+            continue;
+        }
+        local.extend_from_slice(line);
+        local.push(b'\n');
+    }
+    local
+}
+
 /// A Claude Code transcript as the check reads it: the conversation
 /// ([`transcript::parse`]), each user turn marked as Daniel's when
 /// [`transcript::user_turn`] keeps it and §4.1's origin guard
@@ -514,6 +550,10 @@ fn string(value: Option<&serde_json::Value>) -> Option<String> {
 /// fields, as the conversation keeps its first copy.
 #[must_use]
 pub fn claude_conversation(bytes: &[u8]) -> Vec<Spoken> {
+    read_claude_conversation(bytes, own_words)
+}
+
+fn read_claude_conversation(bytes: &[u8], own: impl Fn(&str) -> String) -> Vec<Spoken> {
     let mut claims: BTreeMap<String, Claims> = BTreeMap::new();
     for line in bytes.split(|&b| b == b'\n') {
         let Ok(meta) = serde_json::from_slice::<LineMeta>(line) else {
@@ -551,7 +591,7 @@ pub fn claude_conversation(bytes: &[u8]) -> Vec<Spoken> {
                     claim.is_some_and(|c| !c.origin_blocked)
                         && !capture::agent_originated(&[], &message.text())
                 })
-                .map(|turn| own_words(&turn.own))
+                .map(|turn| own(&turn.own))
                 .filter(|own| !own.trim().is_empty());
             let interactive = entrypoint
                 .as_deref()

@@ -59,6 +59,9 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
         });
         return Ok(Output::Hook(reply));
     }
+    if ctx.provider() == Provider::ClaudeCode {
+        super::group_turns::claude(ctx, &session, &payload.transcript_path)?;
+    }
     let mut outcomes = fill_cites(&payload, &session, ctx)?;
     if !outcomes
         .iter()

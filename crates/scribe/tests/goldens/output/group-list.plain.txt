@@ -1,1 +1,1 @@
-g-1	Release review	review	scribe	2026-11-22T09:00:00Z	-	opener	repo:scribe	editor (reviewer): member [handoff: -]
+g-1	Release review	review	scribe	2026-11-22T09:00:00Z	2026-11-22T10:00:00Z	opener	repo:scribe	editor (reviewer): member [handoff: -]	Review complete. For work missing from the handoffs, see repo:scribe.

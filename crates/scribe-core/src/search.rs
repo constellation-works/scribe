@@ -175,39 +175,47 @@ pub fn messages(
     let mut kept = Vec::new();
     let mut hidden_matches = 0;
     for m in &found.matches {
-        let Some(record) = sessions.iter().find(|r| r.id == m.session) else {
+        let record = sessions.iter().find(|r| r.id == m.session);
+        let Some(project) = record.map(|r| &r.project).or(m.group_project.as_ref()) else {
             continue;
         };
-        let keeps = query.project.as_ref().is_none_or(|p| &record.project == p)
-            && query.topics.iter().all(|t| record.topics.contains(t))
+        let keeps = query.project.as_ref().is_none_or(|p| project == p)
+            && query
+                .topics
+                .iter()
+                .all(|t| record.is_some_and(|r| r.topics.contains(t)))
             && query.dates.contains(m.at);
         if !keeps {
             continue;
         }
-        if !record.active && !query.include_hidden {
+        if record.is_some_and(|r| !r.active) && !query.include_hidden {
             hidden_matches += 1;
             continue;
         }
-        kept.push((m, record));
+        kept.push((m, record, project));
     }
     let total = kept.len();
     let hits = kept
         .into_iter()
         .take(query.limit.get())
-        .map(|(m, r)| Hit {
+        .map(|(m, record, project)| Hit {
             kind: RecordKind::Message,
-            cite: format!("session:{}", r.id),
-            id: r.id.to_string(),
+            cite: format!("session:{}", m.session),
+            id: m.session.to_string(),
             segment: None,
             message: Some(m.message.clone()),
             score: (m.score * 1000.0).round() / 1000.0,
-            title: format!("{} ({})", r.title, m.role.as_str()),
+            title: format!(
+                "{} ({})",
+                record.map_or(m.session.as_str(), |r| r.title.as_str()),
+                m.role.as_str()
+            ),
             snippet: snippet(&m.text, &wanted),
-            project: r.project.clone(),
-            topics: r.topics.as_slice().to_vec(),
+            project: project.clone(),
+            topics: record.map_or_else(Vec::new, |r| r.topics.as_slice().to_vec()),
             author: None,
-            active: Some(r.active),
-            status: r.status.as_str(),
+            active: record.map(|r| r.active),
+            status: record.map_or("stored", |r| r.status.as_str()),
             updated: m.at,
             evidence: None,
             as_of: None,
@@ -374,7 +382,7 @@ fn hit(score: f64, doc: &Doc, corpus: Corpus<'_>, wanted: &BTreeSet<String>) -> 
                 as_of: None,
             })
         }
-        Origin::Task => None,
+        Origin::Task | Origin::Message => None,
     }
 }
 

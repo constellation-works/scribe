@@ -6555,6 +6555,9 @@ seats’ roles are labels chosen by the caller. The public id is `g-<n>`.
 scribe group open --title 'Release review' --kind review --project scribe \
   --related repo:scribe --quote 'open a release review'
 scribe group join <id> --as editor --role reviewer --author aide
+scribe search 'release checklist' --group <id> --kind message
+scribe ask 'what remains for the release?' --group <id>
+scribe group close <id>
 scribe group show <id> --json
 scribe group leave
 ```
@@ -6566,8 +6569,10 @@ own words in a typed turn of its local transcript. Claude history copied
 from a different session, pasted material and agent-originated turns cannot
 authorize an open. Codex uses host-attributed user input. The audit line
 records the group, session and message ids. The user’s quoted text stays
-in the transcript. Opening authorizes members to join and leaves seat
-selection to a separate join, including for the opener.
+in the transcript. Opening gives consent to store the user's typed turns of
+member sessions while the group is open. Seat selection takes a separate join,
+including for the opener. Opening a group reports any other open group ids in
+that project on stderr.
 
 **Joining and correcting membership.** A caller supplies its own agent
 `--author`. A new seat takes `--role`, defaulting to the seat name.
@@ -6580,8 +6585,9 @@ the caller’s own single `via: clear` predecessor against the seat’s
 newest transcript. An unreadable
 or empty transcript requires explicit replacement unless the caller cleared
 from that holder. The write rechecks the
-holder under the store transaction before appending. `group leave`
-removes only the caller’s position and drops a seat when its chain is empty.
+holder under the store transaction before appending. Closed groups accept no
+new members. `group leave` removes the caller’s position and drops a seat when
+its chain is empty.
 
 **Seats across clears.** An interactive Claude Code `SessionStart` whose
 source is `startup`, `clear`, or omitted reuses
@@ -6603,13 +6609,36 @@ joined and `additionalContext` tells the session to re-run
 `scribe group join`. If the seat lookup fails, the hook reports the failure
 and also recommends running `scribe group join`.
 
+**Stored turns.** Joining starts no catalog pass and creates no session record.
+Once the provider persists a typed turn, the prompt or Stop hook can store its
+words without a model call, beginning at the time the session joined. Capture
+uses the pass's exclusions for synthetic and control turns, pasted blocks,
+fenced code and sensitive text, plus its store redactor. Regular cataloging
+still follows the session's own switch. Explicit `#scribe` annotations keep
+their usual behavior. Leaving deletes the turns stored on group consent alone.
+`#scribe forget <session-id>` also works for a session with stored turns and no
+catalog record. Erasing a member's sources can clear the group's derived
+summary, and the group stays closed.
+
+**Closing.** `group close <id>` checks the caller against the recorded opening
+session and its local provider transcript, an accident guard against closing
+from the wrong session. It sends up to 16 recent active handoffs and 32 recent
+stored user turns from the members, with each source clipped, to the configured
+ask model for one call with a 90-second budget. The summary names decisions,
+completed work and open work supported by those sources. Scribe appends the
+group's related references for work missing from the handoffs. Before writing,
+it checks that the evidence still matches and redacts the summary. An already
+closed group returns its current record without another model call.
+
 **Reading.** `group show <id>` and `group list` include related references,
-seat names and roles, transcript ids in join order, and the newest active
-handoff id across each chain. Read that entry with `entry show <id>`.
-Membership is independent of cataloging. Joining works in an off session,
-creates no session record and starts no passes. Entries, claims, handoffs
-and stored turns remain associated through their existing session ids.
-Group closing and turn storage belong to later phases.
+seat names and roles, transcript ids in join order, the newest active handoff
+id across each chain, and any retained closing summary. Read a handoff with
+`entry show <id>`. `search`, `ask` (also `question ask`), `entry list` and
+`session list` accept `--group <id>`, which limits candidates to recordings
+associated through the group's member sessions. Use `search --kind message`
+to find their stored turns. Scoped `ask` uses matching stored turns and does
+not query Orbit tasks. The project brief shows its most recently opened group
+and its closing summary when available.
 
 ## Task References
 

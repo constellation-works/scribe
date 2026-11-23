@@ -130,6 +130,492 @@ fn join(f: &Fixture, session: &str, id: &str, extra: &[&str], code: i32) -> Valu
     )
 }
 
+fn hook(f: &Fixture, args: &[&str], payload: Value, env: &[(&str, &str)]) -> std::process::Output {
+    let mut child = f
+        .cmd(args)
+        .envs(env.iter().copied())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(payload.to_string().as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    out
+}
+
+fn stop(f: &Fixture, session: &str, path: &PathBuf, env: &[(&str, &str)]) {
+    hook(
+        f,
+        &["hook", "stop"],
+        json!({"session_id":session,"transcript_path":path}),
+        env,
+    );
+}
+
+#[test]
+fn member_capture_is_model_free_and_leave_and_forget_erase_its_turns() {
+    let f = Fixture::new();
+    let opener = transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
+    open(&f);
+    join(&f, B, "g-1", &[], 0);
+    let mut before_join = row(B, "pre", "user", "prejoinorchid");
+    before_join["timestamp"] = json!("2000-01-01T00:00:00Z");
+    let mut injected = row(B, "injected", "user", "agentorchid");
+    injected["turnOrigin"] = json!("agent");
+    let turns = [
+        before_join,
+        row(
+            B,
+            "typed",
+            "user",
+            "Keep the violetorchid with groupsecretvalue\n<pasted_content>pasteorchid</pasted_content>\n```\nfenceorchid\n```",
+        ),
+        row(B, "finance", "user", "Save my bank account financeorchid"),
+        row(B, "control", "user", "/scribe status\ncontrolorchid"),
+        row(B, "assistant", "assistant", "assistantorchid"),
+        row(
+            B,
+            "synthetic",
+            "user",
+            "<task-notification>syntheticorchid</task-notification>",
+        ),
+        row(A, "copied", "user", "copiedorchid"),
+        injected,
+    ];
+    let member = transcript(&f, B, &turns);
+    f.config("[redact]\nenv = [\"GROUP_SECRET\"]\n[catalog]\nevery_turns = 1\n");
+    let path = f.fake_program(
+        "claude",
+        "#!/bin/sh\ntouch \"$HOME/model-called\"\nexit 1\n",
+    );
+    let env = [
+        ("GROUP_SECRET", "groupsecretvalue"),
+        ("PATH", path.to_str().unwrap()),
+    ];
+    stop(&f, B, &member, &env);
+    stop(&f, B, &member, &env);
+    assert!(!f.home().join("model-called").exists());
+    assert!(support::control(&f.root())["sessions"][B].is_null());
+    assert_eq!(
+        invoke(&f, B, &["session", "list", "--group", "g-1"], 0)["total"],
+        0
+    );
+    let messages = |term| {
+        invoke(
+            &f,
+            B,
+            &["search", term, "--kind", "message", "--group", "g-1"],
+            0,
+        )
+    };
+    let hit = messages("violetorchid");
+    assert_eq!(hit["total"], 1);
+    assert_eq!(hit["hits"][0]["cite"], format!("session:{B}"));
+    let snippet = hit["hits"][0]["snippet"].as_str().unwrap();
+    assert!(snippet.contains("[redacted:GROUP_SECRET]"), "{snippet}");
+    for word in [
+        "prejoinorchid",
+        "pasteorchid",
+        "fenceorchid",
+        "financeorchid",
+        "controlorchid",
+        "assistantorchid",
+        "syntheticorchid",
+        "copiedorchid",
+        "agentorchid",
+        "groupsecretvalue",
+    ] {
+        assert_eq!(messages(word)["total"], 0, "{word}");
+    }
+
+    invoke(&f, B, &["group", "leave"], 0);
+    assert_eq!(
+        invoke(&f, B, &["search", "violetorchid", "--kind", "message"], 0)["total"],
+        0
+    );
+    // A second member has no catalog record either, and the existing forget
+    // still erases the data and prevents the next Stop from restoring it.
+    f.config("");
+    join(&f, C, "g-1", &[], 0);
+    let member = transcript(&f, C, &[row(C, "c", "user", "remember cobaltazalea")]);
+    stop(&f, C, &member, &env);
+    assert_eq!(messages("cobaltazalea")["total"], 1);
+    let out = hook(
+        &f,
+        &["hook", "user-prompt-submit"],
+        json!({
+            "session_id": A, "transcript_path": opener, "cwd": f.home(),
+            "prompt": format!("#scribe forget {C}")
+        }),
+        &env,
+    );
+    assert!(
+        text(&out.stdout).contains("forgot"),
+        "{}",
+        text(&out.stdout)
+    );
+    stop(&f, C, &member, &env);
+    assert_eq!(messages("cobaltazalea")["total"], 0);
+}
+
+#[test]
+fn group_filters_apply_before_limits_ranking_and_lookups() {
+    const MEMBER: &str = "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02";
+    let f = Fixture::new();
+    f.seed();
+    f.config("");
+    transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
+    open(&f);
+    join(&f, MEMBER, "g-1", &[], 0);
+    let entries = invoke(
+        &f,
+        A,
+        &[
+            "entry",
+            "list",
+            "--tag",
+            "decisions",
+            "--limit",
+            "1",
+            "--group",
+            "g-1",
+        ],
+        0,
+    );
+    assert_eq!(entries["total"], 1);
+    assert_eq!(entries["entries"][0]["id"], "decisions-2");
+    let sessions = invoke(
+        &f,
+        A,
+        &["session", "list", "--limit", "1", "--group", "g-1"],
+        0,
+    );
+    assert_eq!(sessions["total"], 1);
+    assert_eq!(sessions["sessions"][0]["id"], MEMBER);
+    let found = invoke(
+        &f,
+        A,
+        &["search", "merge", "--group", "g-1", "--include-hidden"],
+        0,
+    );
+    assert!(found["total"].as_u64().unwrap() > 1);
+    assert!(found["hits"].as_array().unwrap().iter().all(|hit| {
+        hit["cite"] == "decisions-2"
+            || hit["cite"]
+                .as_str()
+                .unwrap()
+                .starts_with(&format!("session:{MEMBER}"))
+    }));
+    for args in [vec!["ask"], vec!["question", "ask"]] {
+        let result = invoke(
+            &f,
+            A,
+            &[args.as_slice(), &["last session", "--group", "g-1"]].concat(),
+            0,
+        );
+        assert_eq!(result["status"], "record");
+        assert_eq!(result["records"][0]["cite"], format!("session:{MEMBER}"));
+    }
+    assert_eq!(
+        invoke(&f, A, &["search", "merge", "--group", "g-99"], 1)["code"],
+        "group_not_found"
+    );
+}
+
+#[test]
+fn leaving_preserves_a_turn_independently_written_by_a_pass() {
+    const MEMBER: &str = "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02";
+    let f = Fixture::new();
+    f.seed();
+    f.config("");
+    transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
+    open(&f);
+    join(&f, MEMBER, "g-1", &[], 0);
+    let member = transcript(
+        &f,
+        MEMBER,
+        &[
+            row(MEMBER, "kept", "user", "preserve copperlilac"),
+            row(MEMBER, "erased", "user", "erase copperlilac"),
+        ],
+    );
+    stop(&f, MEMBER, &member, &[]);
+    let search = |extra: &[&str]| {
+        let args = [&["search", "copperlilac", "--kind", "message"][..], extra].concat();
+        invoke(&f, A, &args, 0)
+    };
+    assert_eq!(search(&["--group", "g-1"])["total"], 2);
+    scribe_core::Store::open(f.root())
+        .write_messages(
+            &[scribe_core::message::NewMessage {
+                session: MEMBER.parse().unwrap(),
+                message: "kept".into(),
+                role: scribe_core::Speaker::User,
+                at: time::macros::datetime!(2090-11-20 1:00 UTC),
+                text: "preserve copperlilac".into(),
+            }],
+            &scribe_core::Redactor::default(),
+        )
+        .unwrap();
+    invoke(&f, MEMBER, &["group", "leave"], 0);
+    assert_eq!(search(&["--group", "g-1"])["total"], 0);
+    let independent = search(&[]);
+    assert_eq!(independent["total"], 1);
+    assert_eq!(independent["hits"][0]["message"], "kept");
+}
+
+#[test]
+fn opener_closes_with_one_bounded_summary_and_the_project_brief_shows_it() {
+    let f = Fixture::new();
+    transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
+    open(&f);
+    join(&f, B, "g-1", &[], 0);
+    let private = "ghp_abcdefghijklmnopqrstuvwxyzABCDEFGHIJ";
+    let member = transcript(
+        &f,
+        B,
+        &[row(
+            B,
+            "u",
+            "user",
+            &format!(
+                "{QUOTE} sprucechecklist {private} {}",
+                "longword ".repeat(100)
+            ),
+        )],
+    );
+    stop(&f, B, &member, &[]);
+    let handoff = invoke(
+        &f,
+        B,
+        &[
+            "entry",
+            "add",
+            HANDOFF,
+            "--tag",
+            "handoff",
+            "--author",
+            "aide",
+            "--related",
+            &format!("session:{B}"),
+            "--quote",
+            QUOTE,
+        ],
+        0,
+    );
+    let path = f.fake_program("claude", &format!(r#"#!/bin/sh
+echo call >> "$HOME/model-calls"
+cat > "$HOME/model-prompt"
+printf '%s\n' '{{"type":"result","is_error":false,"structured_output":{{"summary":"Review complete. {private}"}}}}'
+"#));
+    let close = |session| {
+        f.cmd(&["group", "close", "g-1", "--json"])
+            .env("CLAUDE_CODE_SESSION_ID", session)
+            .env("PATH", &path)
+            .output()
+            .unwrap()
+    };
+    let denied = close(B);
+    assert_eq!(denied.status.code(), Some(1));
+    assert!(text(&denied.stderr).contains("only the opening session"));
+    assert!(!f.home().join("model-calls").exists());
+    for _ in 0..2 {
+        let out = close(A);
+        assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    }
+    let calls = std::fs::read_to_string(f.home().join("model-calls")).unwrap();
+    assert_eq!(calls.lines().count(), 1);
+    let prompt = std::fs::read_to_string(f.home().join("model-prompt")).unwrap();
+    assert!(prompt.contains(handoff["id"].as_str().unwrap()), "{prompt}");
+    assert!(prompt.contains("sprucechecklist") && prompt.contains("Review"));
+    assert!(!prompt.contains(private));
+    assert!(
+        prompt.len() < 2500,
+        "unexpectedly long prompt: {}",
+        prompt.len()
+    );
+    let shown = invoke(&f, A, &["group", "show", "g-1"], 0);
+    assert!(!shown["closed"].is_null());
+    let summary = shown["summary"].as_str().unwrap();
+    assert!(summary.contains("Review complete."));
+    assert!(!summary.contains(private));
+    assert!(summary.contains("task:example"));
+    let report = invoke(&f, A, &["brief", "--project", "scribe"], 0);
+    assert_eq!(report["last_group"]["id"], "g-1");
+    assert_eq!(report["last_group"]["summary"], summary);
+    assert!(text(&f.ok(&["brief", "--project", "scribe"]).stdout).contains(summary));
+    let member = transcript(&f, B, &[row(B, "after", "user", "aftercloseorchid")]);
+    stop(&f, B, &member, &[]);
+    assert_eq!(
+        invoke(
+            &f,
+            A,
+            &[
+                "search",
+                "aftercloseorchid",
+                "--kind",
+                "message",
+                "--group",
+                "g-1"
+            ],
+            0
+        )["total"],
+        0
+    );
+    let left = invoke(&f, B, &["group", "leave"], 0);
+    assert!(left["summary"].is_null());
+    assert!(!left["closed"].is_null());
+}
+
+#[test]
+fn opening_flags_only_other_open_groups_in_the_same_project() {
+    let f = Fixture::new();
+    transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
+    open(&f);
+    let args = [OPEN, &["--quote", QUOTE]].concat();
+    let out = f
+        .cmd(&args)
+        .env("CLAUDE_CODE_SESSION_ID", A)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(text(&out.stderr).contains("g-1 is still open"));
+    let mut other = args;
+    let project = other.iter().position(|s| *s == "--project").unwrap();
+    other[project + 1] = "other";
+    let out = f
+        .cmd(&other)
+        .env("CLAUDE_CODE_SESSION_ID", A)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(out.stderr.is_empty(), "{}", text(&out.stderr));
+    assert_eq!(
+        invoke(&f, A, &["brief", "--project", "scribe"], 0)["last_group"]["id"],
+        "g-2"
+    );
+}
+
+#[test]
+fn close_cannot_publish_a_summary_after_a_member_erases_its_sources() {
+    let f = Fixture::new();
+    transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
+    open(&f);
+    join(&f, B, "g-1", &[], 0);
+    let member = transcript(&f, B, &[row(B, "u", "user", "retained snapshot azalea")]);
+    stop(&f, B, &member, &[]);
+    let mut leave = f.cmd(&["group", "leave"]);
+    leave.env("CLAUDE_CODE_SESSION_ID", B);
+    let hold = support::Hold::new(&f.home(), move || {
+        let out = leave.output().unwrap();
+        assert!(out.status.success(), "{}", text(&out.stderr));
+    });
+    let path = f.fake_program("claude", &format!(
+        "#!/bin/sh\ncat > \"$HOME/model-prompt\"\n{}\nprintf '%s\\n' '{{\"type\":\"result\",\"is_error\":false,\"structured_output\":{{\"summary\":\"retained snapshot azalea\"}}}}'\n",
+        hold.script()
+    ));
+    let out = f
+        .cmd(&["group", "close", "g-1", "--json"])
+        .env("CLAUDE_CODE_SESSION_ID", A)
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        text(&out.stderr).contains("group evidence changed"),
+        "{}",
+        text(&out.stderr)
+    );
+    hold.join();
+    let record = invoke(&f, A, &["group", "show", "g-1"], 0);
+    assert!(record["closed"].is_null() && record["summary"].is_null());
+}
+
+#[test]
+fn codex_group_capture_uses_host_typed_blocks_and_ask_cites_the_stored_turn() {
+    let f = Fixture::new();
+    transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
+    open(&f);
+    let out = f
+        .cmd(&[
+            "--provider",
+            "codex",
+            "group",
+            "join",
+            "g-1",
+            "--as",
+            "editor",
+            "--author",
+            "aide",
+        ])
+        .env("CODEX_THREAD_ID", B)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+
+    let dir = f.home().join(".codex/sessions/2090/11/20");
+    f.create_private_dir_all(&dir);
+    let path = dir.join(format!("rollout-2090-11-20T01-00-00-{B}.jsonl"));
+    let rows = [
+        json!({"type":"session_meta","payload":{"id":B,"source":"vscode","thread_source":"user","cwd":f.home()}}),
+        json!({"timestamp":"2090-11-20T01:00:00Z","type":"response_item","payload":{
+            "type":"message","role":"user","id":"codex-typed",
+            "content":[{"type":"input_text","text":"Always label the saffronqueue."},
+                       {"type":"input_text","text":"Exclude skill saffronqueue."}],
+            "internal_chat_message_metadata_passthrough":{
+                "turn_id":"turn-1","content_item_kinds":["user.text","skill"],
+                "content_item_metadata":[{"provenance":{"type":"user"}},{"provenance":{"type":"skill"}}]
+            }
+        }}),
+    ];
+    std::fs::write(
+        &path,
+        rows.iter()
+            .map(|row| format!("{row}\n"))
+            .collect::<String>(),
+    )
+    .unwrap();
+    support::make_private(&path);
+    hook(
+        &f,
+        &["--provider", "codex", "hook", "stop"],
+        json!({
+            "session_id": B, "transcript_path": path, "hook_event_name":"Stop", "turn_id":"turn-1"
+        }),
+        &[],
+    );
+    let model = f.fake_program("claude", &format!(
+        "#!/bin/sh\ncat > \"$HOME/ask-prompt\"\nprintf '%s\\n' '{{\"type\":\"result\",\"is_error\":false,\"structured_output\":{{\"status\":\"answered\",\"answer\":\"Label the queue.\",\"claims\":[{{\"text\":\"label it\",\"quote\":\"Always label the saffronqueue.\",\"cite\":\"session:{B}#message:codex-typed\"}}],\"conflicts\":[]}}}}'\n"
+    ));
+    let out = f
+        .cmd(&[
+            "ask",
+            "how should we handle saffronqueue?",
+            "--group",
+            "g-1",
+            "--json",
+        ])
+        .env("PATH", &model)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let result: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(result["status"], "answered", "{result}");
+    assert_eq!(
+        result["claims"][0]["quote"],
+        "Always label the saffronqueue."
+    );
+    let prompt = std::fs::read_to_string(f.home().join("ask-prompt")).unwrap();
+    assert!(!prompt.contains("Exclude skill"));
+}
+
 #[test]
 fn consent_belongs_to_the_callers_own_typed_turn() {
     let f = Fixture::new();
@@ -294,6 +780,7 @@ fn old_schema_reads_empty_without_migration_then_upgrades_on_open() {
     let f = Fixture::new();
     transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
     f.ok(&["store", "migrate"]);
+    support::remove_group_capture_schema(&f.root());
     support::sql(
         &f.root(),
         "DROP TABLE group_members; DROP TABLE group_seats; DROP TABLE groups; PRAGMA user_version=8;",
@@ -306,7 +793,42 @@ fn old_schema_reads_empty_without_migration_then_upgrades_on_open() {
     };
     assert_eq!(version(), 8);
     open(&f);
-    assert_eq!(version(), 10);
+    assert_eq!(version(), 11);
+}
+
+#[test]
+fn existing_members_start_group_capture_at_the_schema_upgrade() {
+    let f = Fixture::new();
+    transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
+    open(&f);
+    join(&f, B, "g-1", &[], 0);
+    support::remove_group_capture_schema(&f.root());
+    support::sql(&f.root(), "PRAGMA user_version = 10");
+    let old = invoke(&f, A, &["group", "show", "g-1"], 0);
+    assert!(old["summary"].is_null());
+    assert_eq!(old["seats"][0]["transcripts"], json!([B]));
+    let report = invoke(&f, A, &["brief", "--project", "scribe"], 0);
+    assert_eq!(report["last_group"]["id"], "g-1");
+
+    open(&f);
+    let mut old_turn = row(B, "old", "user", "beforeupgradejuniper");
+    old_turn["timestamp"] = json!("2000-01-01T00:00:00Z");
+    let path = transcript(
+        &f,
+        B,
+        &[old_turn, row(B, "new", "user", "afterupgradejuniper")],
+    );
+    stop(&f, B, &path, &[]);
+    let messages = |word| {
+        invoke(
+            &f,
+            A,
+            &["search", word, "--kind", "message", "--group", "g-1"],
+            0,
+        )
+    };
+    assert_eq!(messages("beforeupgradejuniper")["total"], 0);
+    assert_eq!(messages("afterupgradejuniper")["total"], 1);
 }
 
 #[test]

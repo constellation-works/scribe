@@ -1563,6 +1563,9 @@ pub(crate) struct BriefPayload {
     pub(crate) warnings: Vec<String>,
     /// The project whose sessions come first; `null` for none.
     pub(crate) project: Option<String>,
+    /// The project's most recently opened group, when there is one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) last_group: Option<scribe_core::brief::LastGroup>,
     /// The last sessions: the project's first, each part newest first.
     pub(crate) sessions: Vec<BriefSessionPayload>,
     /// How many open claims `claims` holds.
@@ -1627,6 +1630,7 @@ impl BriefPayload {
             warnings: memory.warnings.clone(),
             memory,
             project: b.project.as_ref().map(ToString::to_string),
+            last_group: b.last_group.clone(),
             sessions: b
                 .sessions
                 .iter()
