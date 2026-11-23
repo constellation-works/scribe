@@ -13,7 +13,7 @@ Options:
           The consumer's name
 
       --result <REF>
-          What the consumer made of it (task:<id>, pr:<owner>/<repo>#<n>, repo:<slug> or session:<id>)
+          What the consumer made of it (task:<id>, pr:<owner>/<repo>#<n>, repo:<slug> or session:<id>, whose id may be a unique prefix)
 
       --rejected
           The user rejected the result

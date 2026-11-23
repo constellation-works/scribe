@@ -1218,9 +1218,11 @@ impl Store {
                         id: resolved,
                         number,
                     },
-                    sessions::SessionForgetOutcome::Already { cleaned: false, .. } => {
-                        Settled::Already(format!("{id} is already forgotten"))
-                    }
+                    sessions::SessionForgetOutcome::Already {
+                        id: resolved,
+                        cleaned: false,
+                        ..
+                    } => Settled::Already(format!("{resolved} is already forgotten")),
                 });
             }
             let mut proposals = self.proposals()?;

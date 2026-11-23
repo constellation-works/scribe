@@ -15,7 +15,7 @@ Options:
           Only sessions carrying this topic; repeat it to require every one [default: any]
 
       --related <REF>
-          Only sessions mentioning this reference (task:<id>, pr:<owner>/<repo>#<n>, repo:<slug> or session:<id>); repeat it to accept any of them [default: any]
+          Only sessions mentioning this reference (task:<id>, pr:<owner>/<repo>#<n>, repo:<slug> or session:<id>, whose id may be a unique prefix); repeat it to accept any of them [default: any]
 
       --status <STATUS>
           Only sessions with this status: open (more passes may update it) or final [default: any]

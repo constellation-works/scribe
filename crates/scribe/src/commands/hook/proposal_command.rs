@@ -119,6 +119,11 @@ pub(super) fn run(settling: &Settling, turn: &Turn, ctx: &Context) -> Reply {
             let name = forgot
                 .number
                 .map_or_else(|| forgot.id.to_string(), |n| format!("s-{n}"));
+            // Whatever was typed, the line names the full id it erased.
+            let shown = match forgot.number {
+                Some(_) => format!("{name} ({})", forgot.id),
+                None => name.clone(),
+            };
             let off = if forgot.was_on {
                 "; it is switched off for good"
             } else {
@@ -127,17 +132,21 @@ pub(super) fn run(settling: &Settling, turn: &Turn, ctx: &Context) -> Reply {
             done(
                 name.clone(),
                 format!(
-                    "scribe: forgot {name} — the session record and {} stored messages are erased{off}; the provider transcript was left untouched",
+                    "scribe: forgot {shown} — the session record and {} stored messages are erased{off}; the provider transcript was left untouched",
                     forgot.messages
                 ),
             )
         }
         Settled::SessionForgetRepaired { id, number } => {
             let name = number.map_or_else(|| id.to_string(), |n| format!("s-{n}"));
+            let shown = match number {
+                Some(_) => format!("{name} ({id})"),
+                None => name.clone(),
+            };
             done(
                 name.clone(),
                 format!(
-                    "scribe: {name} is already forgotten — cleared remaining scribe data, including any stale checkpoint; the provider transcript was left untouched"
+                    "scribe: {shown} is already forgotten — cleared remaining scribe data, including any stale checkpoint; the provider transcript was left untouched"
                 ),
             )
         }

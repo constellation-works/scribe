@@ -121,7 +121,7 @@ pub(crate) struct ListArgs {
     #[arg(long, value_name = "TOPIC")]
     pub(crate) topic: Vec<Topic>,
 
-    /// Only entries mentioning this reference (task:<id>, pr:<owner>/<repo>#<n>, repo:<slug> or session:<id>); repeat it to accept any of them [default: any]
+    /// Only entries mentioning this reference (task:<id>, pr:<owner>/<repo>#<n>, repo:<slug> or session:<id>, whose id may be a unique prefix); repeat it to accept any of them [default: any]
     #[arg(long, value_name = "REF")]
     pub(crate) related: Vec<Related>,
 
@@ -272,6 +272,8 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
             // an unset [redact] env name.
             let topics = scribe_core::Topics::try_from(args.topic)
                 .map_err(|e| CliError::Usage(e.to_string()))?;
+            // A session given as a unique prefix is stored as the full id.
+            let related = ctx.store().resolve_relateds(&args.related)?;
             let def = ctx.store().check_new_entry_full(
                 &args.tag,
                 &args.content,
@@ -279,18 +281,18 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
                 args.evidence.as_deref(),
                 args.spoken,
             )?;
-            scribe_core::check_handoff_related(&def.name, &args.related)?;
+            scribe_core::check_handoff_related(&def.name, &related)?;
             if let Some(quote) = &args.quote {
                 verify_quote(
                     ctx,
-                    &args.related,
+                    &related,
                     quote,
                     def.name.as_str() == scribe_core::HANDOFF_TAG,
                 )?;
             }
             let self_refresh_verified =
                 if def.name.as_str() == scribe_core::HANDOFF_TAG && args.quote.is_none() {
-                    verify_self_refresh(ctx, &args.related, args.mode)?;
+                    verify_self_refresh(ctx, &related, args.mode)?;
                     true
                 } else {
                     false
@@ -302,7 +304,7 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
                     content: args.content,
                     project: args.project,
                     topics,
-                    related: args.related,
+                    related,
                     host: ctx.host(),
                     quote: args.quote,
                     evidence: args.evidence,
@@ -319,10 +321,15 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
         }
         EntryCommand::Pickup(args) => {
             scribe_core::check_agent_author(&args.author)?;
+            let result = args
+                .result
+                .as_ref()
+                .map(|r| ctx.store().resolve_related(r))
+                .transpose()?;
             let (pickup, changed) = ctx.store().record_pickup(
                 &args.id,
                 args.author,
-                args.result,
+                result,
                 args.rejected,
                 ctx.now(),
             )?;
@@ -335,8 +342,8 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
                 content: args.content,
                 add_topics: args.add_topic,
                 remove_topics: args.remove_topic,
-                add_related: args.add_related,
-                remove_related: args.remove_related,
+                add_related: ctx.store().resolve_relateds(&args.add_related)?,
+                remove_related: ctx.store().resolve_relateds(&args.remove_related)?,
             };
             ctx.store().check_agent_entry_update(&args.id, &patch)?;
             let redactor = ctx.redactor(&ctx.store().config()?)?;
@@ -416,7 +423,7 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
         status: args.status,
         project: args.project,
         topics: args.topic,
-        related: args.related,
+        related: ctx.store().resolve_relateds(&args.related)?,
         dates: args.dates.range()?,
         after: args.after,
         author: args.author.map(scribe_core::AuthorName::current),
@@ -742,7 +749,7 @@ pub(crate) struct AddArgs {
     /// Topic, repeatable (at most five)
     #[arg(long)]
     topic: Vec<Topic>,
-    /// Related reference, repeatable; under an action tag, name the session you write in (session:<id>)
+    /// Related reference, repeatable; under an action tag, name the session you write in (session:<id>, whose id may be a unique prefix, stored in full)
     #[arg(long)]
     related: Vec<scribe_core::Related>,
     /// The user's words, verbatim from a typed turn in the related session; required by quote tags except a verified self-refresh handoff
@@ -769,7 +776,7 @@ pub(crate) struct PickupArgs {
     /// The consumer's name
     #[arg(long)]
     author: scribe_core::AuthorName,
-    /// What the consumer made of it (task:<id>, pr:<owner>/<repo>#<n>, repo:<slug> or session:<id>)
+    /// What the consumer made of it (task:<id>, pr:<owner>/<repo>#<n>, repo:<slug> or session:<id>, whose id may be a unique prefix)
     #[arg(long, value_name = "REF")]
     result: Option<scribe_core::Related>,
     /// The user rejected the result

@@ -101,6 +101,106 @@ impl Store {
         self.resolve_session_with(input, true)
     }
 
+    /// Every session id the store knows and `resolve_session_or_handoff`
+    /// accepts: records (readable or not), switches, Codex cursors and
+    /// sessions named only by an active handoff. The universe a table's
+    /// short ids must be unique in. Reads only.
+    pub fn session_ids(&self) -> Result<Vec<String>> {
+        let loaded = self.load_sessions()?;
+        let handoffs: Vec<SessionId> = self
+            .load_entries()?
+            .0
+            .iter()
+            .filter(|e| {
+                e.status == crate::EntryStatus::Active
+                    && e.tag.as_str() == crate::handoff::HANDOFF_TAG
+            })
+            .flat_map(crate::handoff::session_ids)
+            .collect();
+        Ok(Self::session_id_universe(&loaded, &handoffs))
+    }
+
+    /// `related` with a `session:` target written as a unique id prefix
+    /// replaced by the full id, so what is stored or compared is always the
+    /// full id. A target that matches no known session stays as typed: the
+    /// session may be one the store has never cataloged, and the command
+    /// that reads the reference reports it. Any other kind is returned as
+    /// given. Reads only.
+    ///
+    /// # Errors
+    ///
+    /// A usage error for a target shorter than four characters that is not a
+    /// known id; `id_ambiguous` naming the candidates when several ids
+    /// match.
+    pub fn resolve_related(&self, related: &crate::Related) -> Result<crate::Related> {
+        if related.kind() != crate::RelatedKind::Session {
+            return Ok(related.clone());
+        }
+        let Ok(input) = related.target().parse::<SessionId>() else {
+            return Ok(related.clone());
+        };
+        match self.resolve_session_or_handoff(&input) {
+            Ok(id) if id == input => Ok(related.clone()),
+            Ok(id) => format!("session:{id}")
+                .parse::<crate::Related>()
+                .map_err(|e| refusal(WriteRefusal::InvalidId, e.to_string())),
+            Err(Error::SessionNotFound { .. }) => Ok(related.clone()),
+            Err(other) => Err(other),
+        }
+    }
+
+    /// [`Store::resolve_session_or_handoff`], except that an id matching no
+    /// known session is returned as typed: for a caller naming the session
+    /// it runs in, which the store may never have cataloged.
+    ///
+    /// # Errors
+    ///
+    /// As [`Store::resolve_session_or_handoff`], except not-found.
+    pub fn resolve_session_or_typed(&self, input: &SessionId) -> Result<SessionId> {
+        match self.resolve_session_or_handoff(input) {
+            Err(Error::SessionNotFound { .. }) => Ok(input.clone()),
+            other => other,
+        }
+    }
+
+    /// [`Store::resolve_related`] over a list.
+    ///
+    /// # Errors
+    ///
+    /// The first error of [`Store::resolve_related`].
+    pub fn resolve_relateds(&self, related: &[crate::Related]) -> Result<Vec<crate::Related>> {
+        related.iter().map(|r| self.resolve_related(r)).collect()
+    }
+
+    fn session_id_universe(
+        loaded: &super::sessions::Loaded,
+        handoffs: &[SessionId],
+    ) -> Vec<String> {
+        let mut ids: Vec<String> = loaded
+            .records
+            .iter()
+            .map(|r| r.id.as_str().to_owned())
+            .chain(
+                loaded
+                    .skipped
+                    .iter()
+                    .filter_map(|(id, _)| id.as_ref().map(|id| id.as_str().to_owned())),
+            )
+            .chain(loaded.numbers.keys().map(|id| id.as_str().to_owned()))
+            .chain(
+                loaded
+                    .control
+                    .sessions
+                    .keys()
+                    .map(|id| id.as_str().to_owned()),
+            )
+            .chain(handoffs.iter().map(|id| id.as_str().to_owned()))
+            .collect();
+        ids.sort();
+        ids.dedup();
+        ids
+    }
+
     fn resolve_session_with(&self, input: &SessionId, include_handoffs: bool) -> Result<SessionId> {
         let loaded = self.load_sessions()?;
         let handoff_sessions: Vec<SessionId> = if include_handoffs {
@@ -139,28 +239,7 @@ impl Store {
                 None => not_found(),
             };
         }
-        let mut ids: Vec<String> = loaded
-            .records
-            .iter()
-            .map(|r| r.id.as_str().to_owned())
-            .chain(
-                loaded
-                    .skipped
-                    .iter()
-                    .filter_map(|(id, _)| id.as_ref().map(|id| id.as_str().to_owned())),
-            )
-            .chain(loaded.numbers.keys().map(|id| id.as_str().to_owned()))
-            .chain(
-                loaded
-                    .control
-                    .sessions
-                    .keys()
-                    .map(|id| id.as_str().to_owned()),
-            )
-            .chain(handoff_sessions.iter().map(|id| id.as_str().to_owned()))
-            .collect();
-        ids.sort();
-        ids.dedup();
+        let ids = Self::session_id_universe(&loaded, &handoff_sessions);
         match resolve(input.as_str(), &ids)? {
             Some(i) => ids[i]
                 .parse::<SessionId>()

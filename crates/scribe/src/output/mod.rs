@@ -26,6 +26,7 @@ pub(crate) use payload::{
 pub(crate) use sink::{FORMAT_ENV, FormatArg, Sink, help_width};
 
 use crate::error::CliError;
+use scribe_core::ShortIds;
 use serde::Serialize;
 use std::ffi::OsString;
 use std::io::{self, Write};
@@ -72,9 +73,9 @@ pub(crate) fn init_logging() {
 /// pass report with a failed pass is printed, then reported as an error
 /// naming each failed session, its code and its redacted reason (exit 1,
 /// STD-01 R20).
-pub(crate) fn finish(sink: &Sink, outcome: Result<Output, CliError>) -> ExitCode {
-    let result = outcome.and_then(|output| {
-        emit(sink, &output).map_err(CliError::Output)?;
+pub(crate) fn finish(sink: &Sink, outcome: Result<(Output, ShortIds), CliError>) -> ExitCode {
+    let result = outcome.and_then(|(output, shorts)| {
+        emit(sink, &shorts, &output).map_err(CliError::Output)?;
         match &output {
             Output::Pass(report) => report.failure().map_or(Ok(()), Err),
             Output::Init(_)
@@ -142,7 +143,7 @@ fn stderr() -> printable::Printable<io::StderrLock<'static>> {
     printable::Printable::new(io::stderr().lock(), false)
 }
 
-fn emit(sink: &Sink, output: &Output) -> io::Result<()> {
+fn emit(sink: &Sink, shorts: &ShortIds, output: &Output) -> io::Result<()> {
     if let Output::List {
         warnings, notices, ..
     } = output
@@ -233,12 +234,12 @@ fn emit(sink: &Sink, output: &Output) -> io::Result<()> {
             total,
             warnings,
             ..
-        } => render::list(&mut out, sink, records, *total, warnings)?,
+        } => render::list(&mut out, sink, shorts, records, *total, warnings)?,
         Output::Show { record } | Output::Written { record, .. } => {
-            render::show(&mut out, sink, record)?;
+            render::show(&mut out, sink, shorts, record)?;
         }
         Output::Hook(reply) => render::hook(&mut out, reply)?,
-        Output::Pass(report) => render::pass(&mut out, sink, report)?,
+        Output::Pass(report) => render::pass(&mut out, sink, shorts, report)?,
         Output::Scan(report) => render::scan(&mut out, sink, report)?,
         Output::Ask(payload) => render::ask(&mut out, sink, payload)?,
         Output::Plugin(reply) => render::plugin(&mut out, reply)?,

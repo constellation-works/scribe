@@ -532,3 +532,94 @@ fn the_record_noun_is_gone_and_search_is_a_top_level_verb() {
     }
     ok(&fx, &["search", "merge agent PRs"]);
 }
+
+#[test]
+fn a_table_prints_the_shortest_unique_prefix_and_piped_output_the_full_id() {
+    let fx = Fixture::new();
+    fx.seed();
+    let table = |fx: &Fixture| text(&ok(fx, &["session", "list", "--format", "table"]).stdout);
+    // Unique at eight characters, the first group of a UUID.
+    let listed = table(&fx);
+    assert!(listed.contains("7c2b9d14 "), "{listed}");
+    assert!(!listed.contains(SESSION), "{listed}");
+    // A printed prefix is accepted back.
+    assert_eq!(
+        ok_json(&fx, &["session", "show", "7c2b9d14"])["id"],
+        SESSION
+    );
+    // Piped and JSON output keep the full id.
+    let plain = text(&ok(&fx, &["session", "list", "--format", "auto"]).stdout);
+    assert!(plain.contains(SESSION), "{plain}");
+    let listed_json = ok_json(&fx, &["session", "list"]);
+    assert!(ids(&listed_json, "sessions", "id").contains(&SESSION.to_owned()));
+    // A session sharing the first eight characters (a UUIDv7's timestamp)
+    // lengthens both, past the shared run, and each is accepted back.
+    let sibling = "7c2b9d14-ffff-4a3b-b1c6-2f9e8d7a6b02";
+    copy_session(&fx, sibling);
+    let listed = table(&fx);
+    assert!(listed.contains("7c2b9d14-8 "), "{listed}");
+    assert!(listed.contains("7c2b9d14-f "), "{listed}");
+    assert_eq!(
+        ok_json(&fx, &["session", "show", "7c2b9d14-8"])["id"],
+        SESSION
+    );
+    assert_eq!(
+        ok_json(&fx, &["session", "show", "7c2b9d14-f"])["id"],
+        sibling
+    );
+}
+
+#[test]
+fn a_session_reference_given_as_a_prefix_is_stored_in_full() {
+    let fx = Fixture::new();
+    fx.seed();
+    let added = ok_json(
+        &fx,
+        &[
+            "entry",
+            "add",
+            "--tag",
+            "preferences",
+            "--author",
+            "opus",
+            "--related",
+            "session:7c2b9d14",
+            "Cache the manifest between runs",
+        ],
+    );
+    let related: Vec<&str> = added["related"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r.as_str().unwrap())
+        .collect();
+    assert_eq!(related, [format!("session:{SESSION}")]);
+    // The same prefix filters a list.
+    let listed = ok_json(&fx, &["entry", "list", "--related", "session:7c2b9d14"]);
+    assert_eq!(listed["total"], 1);
+    // An ambiguous prefix is refused, names the sessions and writes nothing.
+    let longer = format!("{SESSION}-b");
+    copy_session(&fx, &longer);
+    let before = ok_json(&fx, &["entry", "list"])["total"].clone();
+    let err = usage_error(
+        &fx,
+        &[
+            "entry",
+            "add",
+            "--tag",
+            "preferences",
+            "--author",
+            "opus",
+            "--related",
+            "session:7c2b9d14",
+            "Another idea about caching",
+        ],
+    );
+    assert_eq!(err["code"], "id_ambiguous");
+    let message = err["error"].as_str().unwrap();
+    assert!(
+        message.contains(SESSION) && message.contains(&longer),
+        "{message}"
+    );
+    assert_eq!(ok_json(&fx, &["entry", "list"])["total"], before);
+}

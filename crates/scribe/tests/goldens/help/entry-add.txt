@@ -10,7 +10,7 @@ Options:
       --author <AUTHOR>     Agent name (always recorded as the agent channel; reserved names are refused)
       --project <PROJECT>   Project slug [default: global]
       --topic <TOPIC>       Topic, repeatable (at most five)
-      --related <RELATED>   Related reference, repeatable; under an action tag, name the session you write in (session:<id>)
+      --related <RELATED>   Related reference, repeatable; under an action tag, name the session you write in (session:<id>, whose id may be a unique prefix, stored in full)
       --quote <QUOTE>       The user's words, verbatim from a typed turn in the related session; required by quote tags except a verified self-refresh handoff
       --mode <MODE>         Handoff refresh mode: continue or new
       --evidence <POINTER>  Evidence pointer (a path, task, run, experiment or commit); required under a require_evidence tag, refused under any other tag

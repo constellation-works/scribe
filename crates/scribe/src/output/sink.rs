@@ -84,6 +84,12 @@ pub(crate) struct Sink {
 }
 
 impl Sink {
+    /// Whether this is a terminal table, which prints session ids in their
+    /// short form (STD-01 R15); piped and JSON output keep the full id.
+    pub(crate) fn shortens_ids(&self) -> bool {
+        self.mode == OutputMode::Table
+    }
+
     /// Resolve the sink from the real stdout and environment. Called once.
     pub(crate) fn from_process(requested: Option<FormatArg>) -> Self {
         Self::resolve(
