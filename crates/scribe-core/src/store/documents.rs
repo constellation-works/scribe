@@ -868,6 +868,21 @@ impl Store {
         let id = &item.entry;
         let db_path = self.root.join(DB_FILE);
         let entry_file = format!("{id}{RECORD_EXT}");
+        // One entry's words can sit in several `pre-sqlite-*` directories: an
+        // interrupted move followed by a recovery on another date puts the
+        // entries in one and `audit.jsonl` in another. So first read every
+        // directory's proposal and entry texts, then scrub every audit log
+        // with the union, and only then rewrite proposals and delete entry
+        // files. A replay after an interruption reads whatever the earlier
+        // run left, and an entry file is deleted only after every audit log
+        // is clean, so the texts it holds are never lost before then.
+        struct Moved {
+            dir: PathBuf,
+            names: Vec<String>,
+            proposals: Vec<(PathBuf, Vec<Proposal>)>,
+        }
+        let mut dirs = Vec::new();
+        let mut extra_texts = Vec::new();
         for moved_name in fsio::list_dir(&self.root)? {
             if !moved_name.starts_with(super::sessions::MOVED_PREFIX) {
                 continue;
@@ -877,8 +892,7 @@ impl Store {
                 continue;
             }
             let names = fsio::list_dir(&moved)?;
-            let mut extra_texts = Vec::new();
-            let mut decoded_proposals: Vec<(PathBuf, Vec<Proposal>)> = Vec::new();
+            let mut proposals_files: Vec<(PathBuf, Vec<Proposal>)> = Vec::new();
             for name in names.iter().filter(|n| is_moved_variant(n, PROPOSALS_FILE)) {
                 let path = moved.join(name);
                 if fsio::inspect_file(&path)? {
@@ -886,7 +900,7 @@ impl Store {
                     #[cfg(test)]
                     notify_forget_moved(ForgetMovedStep::AfterProposalsRead);
                     collect_proposal_texts(id, &proposals, &mut extra_texts);
-                    decoded_proposals.push((path, proposals));
+                    proposals_files.push((path, proposals));
                 }
             }
             for name in names.iter().filter(|n| is_moved_variant(n, ENTRIES_DIR)) {
@@ -909,20 +923,39 @@ impl Store {
                     extra_texts.extend(erased_texts(&archived, &[]));
                 }
             }
-            extra_texts.sort();
-            extra_texts.dedup();
-            let matcher = AuditMatcher::new(&item.salt, &item.digests, &extra_texts, &db_path)?;
-            for name in names.iter().filter(|n| is_moved_variant(n, AUDIT_FILE)) {
-                let path = moved.join(name);
+            dirs.push(Moved {
+                dir: moved,
+                names,
+                proposals: proposals_files,
+            });
+        }
+        extra_texts.sort();
+        extra_texts.dedup();
+        let matcher = AuditMatcher::new(&item.salt, &item.digests, &extra_texts, &db_path)?;
+        for moved in &dirs {
+            for name in moved
+                .names
+                .iter()
+                .filter(|n| is_moved_variant(n, AUDIT_FILE))
+            {
+                let path = moved.dir.join(name);
                 if fsio::inspect_file(&path)? {
                     forget_moved_audit(&path, &matcher, lock)?;
                 }
             }
-            for (path, proposals) in decoded_proposals {
+        }
+        for moved in &mut dirs {
+            for (path, proposals) in std::mem::take(&mut moved.proposals) {
                 rewrite_moved_proposals(id, &path, proposals, lock)?;
             }
-            for name in names.iter().filter(|n| is_moved_variant(n, ENTRIES_DIR)) {
-                let entries_dir = moved.join(name);
+        }
+        for moved in &dirs {
+            for name in moved
+                .names
+                .iter()
+                .filter(|n| is_moved_variant(n, ENTRIES_DIR))
+            {
+                let entries_dir = moved.dir.join(name);
                 if !fsio::inspect_subdir(&entries_dir)? {
                     continue;
                 }
