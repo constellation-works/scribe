@@ -7,7 +7,9 @@
 //! is kept: tool calls, tool results, thinking and images are dropped, and a
 //! line left with no text (a tool result) is not a message. Sidechain lines
 //! (a subagent's) and meta lines (`isMeta`, the harness's own) are not the
-//! conversation and are dropped too. A line that does not parse, or has a
+//! conversation and are dropped too. The typed forms, a slash command's args
+//! and a queued message Daniel typed mid-turn, are kept only when the origin
+//! guard passes them (§4.1). A line that does not parse, or has a
 //! shape this build does not know, is skipped: the file is Claude Code's,
 //! and a new line type must not break capture. A uuid names one message:
 //! Claude Code rewrites earlier lines into the file again (with their uuid,
@@ -17,6 +19,7 @@
 //! Bytes in, messages out: no I/O (STD-02 R5). A survey of the same bytes
 //! counts Daniel's turns the way a pass does, for `transcript list`.
 
+use crate::capture;
 use crate::control;
 use crate::entry::Speaker;
 use crate::record::Project;
@@ -219,7 +222,10 @@ fn analyze(bytes: &[u8], with_line_indices: bool, detect_codex: bool) -> Analysi
                     .filter(|value| !value.is_empty())
                     .map(str::to_owned);
             }
-            if seen.insert(message.uuid.clone()) {
+            // A typed form the origin guard refuses is not conversation. Its
+            // uuid is still used up, so a replay of it stays refused.
+            let refused = refused_typed_form(line, &raw, &message);
+            if seen.insert(message.uuid.clone()) && !refused {
                 messages.push(message);
                 if let Some(indices) = &mut line_indices {
                     indices.push(line_index);
@@ -326,6 +332,24 @@ pub(crate) fn queued_message(line: &[u8]) -> Option<Message> {
         at,
         blocks: vec![prompt.to_owned()],
     })
+}
+
+/// Whether the origin guard (§4.1) refuses a typed form on `line`: a slash
+/// command's args, or a queued message. Either is Daniel's only when no origin
+/// claim on the line refuses it and its words are not an agent or harness
+/// wrapper, the test the instruction check applies. A session pass reads this
+/// same parse, so a refused form is not a turn there either.
+fn refused_typed_form(line: &[u8], raw: &RawLine<'_>, message: &Message) -> bool {
+    if message.role != Speaker::User {
+        return false;
+    }
+    let text = message.text();
+    let words = match slash_command_args(&text) {
+        Some(args) => args,
+        None if raw.kind.as_deref() == Some("attachment") => text.as_str(),
+        None => return false,
+    };
+    capture::agent_originated(&[], words) || capture::line_refused(line)
 }
 
 /// A string field that is `None` when the JSON value is not a string; the

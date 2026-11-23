@@ -456,55 +456,6 @@ pub fn own_words(text: &str) -> String {
         .join("\n")
 }
 
-/// The per-line fields of a Claude Code transcript the check reads beside
-/// the conversation: the entry point and the origin claims.
-#[derive(Deserialize)]
-struct LineMeta {
-    #[serde(rename = "type", default)]
-    kind: Option<String>,
-    #[serde(default)]
-    uuid: Option<serde_json::Value>,
-    #[serde(default)]
-    entrypoint: Option<serde_json::Value>,
-    #[serde(default, deserialize_with = "capture::present_value")]
-    source: Option<serde_json::Value>,
-    #[serde(
-        default,
-        rename = "promptSource",
-        deserialize_with = "capture::present_value"
-    )]
-    prompt_source_camel: Option<serde_json::Value>,
-    #[serde(default, deserialize_with = "capture::present_value")]
-    prompt_source: Option<serde_json::Value>,
-    #[serde(default, deserialize_with = "capture::present_value")]
-    origin: Option<serde_json::Value>,
-    #[serde(
-        default,
-        rename = "promptOrigin",
-        deserialize_with = "capture::present_value"
-    )]
-    prompt_origin_camel: Option<serde_json::Value>,
-    #[serde(default, deserialize_with = "capture::present_value")]
-    prompt_origin: Option<serde_json::Value>,
-    #[serde(
-        default,
-        rename = "turnOrigin",
-        deserialize_with = "capture::present_value"
-    )]
-    turn_origin_camel: Option<serde_json::Value>,
-    #[serde(default, deserialize_with = "capture::present_value")]
-    turn_origin: Option<serde_json::Value>,
-    #[serde(default)]
-    attachment: Option<LineAttachment>,
-}
-
-/// The attachment of a queued message, whose origin is the claim it carries.
-#[derive(Deserialize)]
-struct LineAttachment {
-    #[serde(default)]
-    origin: Option<serde_json::Value>,
-}
-
 struct Claims {
     origin_blocked: bool,
     entrypoint: Option<String>,
@@ -602,43 +553,24 @@ fn verified_words(message: &Message, permitted: bool) -> Option<String> {
 fn claude_claims(bytes: &[u8]) -> BTreeMap<String, Claims> {
     let mut claims: BTreeMap<String, Claims> = BTreeMap::new();
     for line in bytes.split(|&b| b == b'\n') {
-        let Ok(meta) = serde_json::from_slice::<LineMeta>(line) else {
+        let Ok(meta) = serde_json::from_slice::<capture::LineMeta>(line) else {
             continue;
         };
         let Some(uuid) = string(meta.uuid.as_ref()) else {
             continue;
         };
-        match meta.kind.as_deref() {
-            Some("user" | "assistant") => {
-                claims.entry(uuid).or_insert_with(|| {
-                    let mut origin = capture::OriginClaims::default();
-                    origin.push_claim(meta.source.as_ref());
-                    origin.push_prompt_source(meta.prompt_source_camel.as_ref());
-                    origin.push_prompt_source(meta.prompt_source.as_ref());
-                    origin.push_origin(meta.origin.as_ref());
-                    origin.push_claim(meta.prompt_origin_camel.as_ref());
-                    origin.push_claim(meta.prompt_origin.as_ref());
-                    origin.push_turn_origin(meta.turn_origin_camel.as_ref());
-                    origin.push_turn_origin(meta.turn_origin.as_ref());
-                    Claims {
-                        origin_blocked: origin.claims_agent_originated(),
-                        entrypoint: string(meta.entrypoint.as_ref()),
-                    }
-                });
-            }
-            // Only a queued message is a conversation line here: the same
-            // predicate that makes it a message gates its claims.
-            Some("attachment") if transcript::queued_message(line).is_some() => {
-                claims.entry(uuid).or_insert_with(|| {
-                    let mut origin = capture::OriginClaims::default();
-                    origin.push_origin(meta.attachment.as_ref().and_then(|a| a.origin.as_ref()));
-                    Claims {
-                        origin_blocked: origin.claims_agent_originated(),
-                        entrypoint: string(meta.entrypoint.as_ref()),
-                    }
-                });
-            }
-            _ => {}
+        // Only a conversation line has claims here. A queued message counts
+        // only when the predicate that makes it a message accepts it.
+        let conversation = match meta.kind.as_deref() {
+            Some("user" | "assistant") => true,
+            Some("attachment") => transcript::queued_message(line).is_some(),
+            _ => false,
+        };
+        if conversation {
+            claims.entry(uuid).or_insert_with(|| Claims {
+                origin_blocked: meta.origin_claims().claims_agent_originated(),
+                entrypoint: string(meta.entrypoint.as_ref()),
+            });
         }
     }
     claims

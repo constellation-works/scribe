@@ -33,6 +33,7 @@ use crate::proposal::ProposalId;
 use crate::record::{Label, Project};
 use crate::session::SessionId;
 use crate::transcript::Message;
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::fmt;
 use std::fmt::Write as _;
@@ -281,7 +282,9 @@ pub fn present_value<'de, D: serde::Deserializer<'de>>(
 pub struct OriginClaims {
     invalid: bool,
     prompt_sources: Vec<String>,
-    origin_kind: Option<String>,
+    /// Every `origin.kind` the line carries. A queued message has one on the
+    /// line and one on its attachment, and each must be plain.
+    origin_kinds: Vec<String>,
     turn_origins: Vec<String>,
     other: Vec<String>,
 }
@@ -317,7 +320,7 @@ impl OriginClaims {
             serde_json::Value::Object(map) => {
                 match map.get("kind").and_then(serde_json::Value::as_str) {
                     Some(kind) if !kind.trim().is_empty() => {
-                        self.origin_kind = Some(kind.to_owned());
+                        self.origin_kinds.push(kind.to_owned());
                     }
                     _ => self.invalid = true,
                 }
@@ -346,14 +349,11 @@ impl OriginClaims {
         if self.invalid {
             return true;
         }
-        let desktop_plain = self.origin_kind.as_deref().is_some_and(is_explicitly_plain)
+        let desktop_plain = self.origin_kinds.iter().any(|k| is_explicitly_plain(k))
             || self.turn_origins.iter().any(|s| is_explicitly_plain(s));
         if self.other.iter().any(|s| !is_plain_or_empty(s))
             || self.turn_origins.iter().any(|s| !is_plain_or_empty(s))
-            || self
-                .origin_kind
-                .as_deref()
-                .is_some_and(|k| !is_explicitly_plain(k))
+            || self.origin_kinds.iter().any(|k| !is_explicitly_plain(k))
         {
             return true;
         }
@@ -371,6 +371,75 @@ impl OriginClaims {
     #[must_use]
     pub fn is_agent_originated(&self, prompt: &str) -> bool {
         self.claims_agent_originated() || agent_originated(&[], prompt)
+    }
+}
+
+/// The fields of one Claude Code transcript line the origin guard reads beside
+/// its text (§4.1): the line's kind, uuid and entry point, and every origin
+/// claim it carries. A claim field keeps an explicit JSON `null` as present,
+/// so the guard refuses it as an unexpected shape rather than reading it as
+/// absent.
+#[derive(Deserialize)]
+pub(crate) struct LineMeta {
+    #[serde(rename = "type", default)]
+    pub(crate) kind: Option<String>,
+    #[serde(default)]
+    pub(crate) uuid: Option<serde_json::Value>,
+    #[serde(default)]
+    pub(crate) entrypoint: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "present_value")]
+    source: Option<serde_json::Value>,
+    #[serde(default, rename = "promptSource", deserialize_with = "present_value")]
+    prompt_source_camel: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "present_value")]
+    prompt_source: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "present_value")]
+    origin: Option<serde_json::Value>,
+    #[serde(default, rename = "promptOrigin", deserialize_with = "present_value")]
+    prompt_origin_camel: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "present_value")]
+    prompt_origin: Option<serde_json::Value>,
+    #[serde(default, rename = "turnOrigin", deserialize_with = "present_value")]
+    turn_origin_camel: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "present_value")]
+    turn_origin: Option<serde_json::Value>,
+    /// A queued message's attachment, whose origin is a claim as well.
+    #[serde(default)]
+    attachment: Option<LineAttachment>,
+}
+
+#[derive(Deserialize)]
+struct LineAttachment {
+    #[serde(default, deserialize_with = "present_value")]
+    origin: Option<serde_json::Value>,
+}
+
+impl LineMeta {
+    /// Every origin claim the line carries: its own fields, then a queued
+    /// message's attachment origin. Each is checked, so a claim that
+    /// contradicts the others refuses the line wherever it sits.
+    pub(crate) fn origin_claims(&self) -> OriginClaims {
+        let mut origin = OriginClaims::default();
+        origin.push_claim(self.source.as_ref());
+        origin.push_prompt_source(self.prompt_source_camel.as_ref());
+        origin.push_prompt_source(self.prompt_source.as_ref());
+        origin.push_origin(self.origin.as_ref());
+        origin.push_origin(self.attachment.as_ref().and_then(|a| a.origin.as_ref()));
+        origin.push_claim(self.prompt_origin_camel.as_ref());
+        origin.push_claim(self.prompt_origin.as_ref());
+        origin.push_turn_origin(self.turn_origin_camel.as_ref());
+        origin.push_turn_origin(self.turn_origin.as_ref());
+        origin
+    }
+}
+
+/// Whether the origin claims on one Claude Code line refuse it. A line whose
+/// origin fields do not parse is refused too: its shape is one the guard does
+/// not know.
+pub(crate) fn line_refused(line: &[u8]) -> bool {
+    match serde_json::from_slice::<LineMeta>(line) {
+        Ok(meta) => meta.origin_claims().claims_agent_originated(),
+        Err(_) => true,
     }
 }
 
