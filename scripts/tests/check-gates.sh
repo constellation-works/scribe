@@ -77,6 +77,19 @@ near=$(tree deps-near)
 printf '//! entry\nuse std::{fmt, ffi::OsStr};\n' >"$near/crates/scribe-core/src/entry.rs"
 expect pass check-dependency-direction.sh "$near" "a grouped import of names that only start like fs"
 
+# The Models port may not depend on its callers.
+port=$(tree port-clean)
+printf 'use crate::voice::Voice;\n' >"$port/crates/scribe-core/src/models.rs"
+expect pass check-dependency-direction.sh "$port" "a port using a lower-level module"
+printf 'use crate::{voice::{group, Voice}};\n' >"$port/crates/scribe-core/src/models.rs"
+expect pass check-dependency-direction.sh "$port" "a nested name that is not a caller module"
+for module in ask memory group; do
+  printf 'use crate::%s::Item;\n' "$module" >"$port/crates/scribe-core/src/models.rs"
+  expect fail check-dependency-direction.sh "$port" "a port importing $module"
+  printf 'use crate::{voice::Voice,\n    %s::Item};\n' "$module" >"$port/crates/scribe-core/src/models.rs"
+  expect fail check-dependency-direction.sh "$port" "a port importing $module in a group"
+done
+
 # --- check-readme-links.py: README links, anchors and paths (STD-09 R12) -----
 # readme <name>: a fixture root whose README.md is read from stdin, with the
 # files the clean README below names. A broken case appends one reference to it.

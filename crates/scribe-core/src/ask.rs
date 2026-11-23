@@ -1506,34 +1506,12 @@ fn count_f64(n: usize) -> f64 {
     n as f64
 }
 
+pub use crate::voice::{
+    agent_stated_whose, stated_quote_label, stated_whose, stated_whose_for, words_label,
+};
+
 fn day(at: OffsetDateTime) -> String {
     crate::record::nullable_date::format(at.date())
-}
-
-/// Whose words an approved pass statement is, in `ask` evidence and in
-/// `scribe search` snippets (2_design.md §11.1).
-#[must_use]
-pub fn stated_whose(user: &UserName) -> String {
-    format!("scribe's statement of {}'s turn", user.noun())
-}
-
-/// Whose words an approved pass statement of `speaker`'s turn is, in
-/// `ask` evidence, `scribe search` snippets and `entry show`
-/// (2_design.md §11.1, §15.3).
-#[must_use]
-pub fn stated_whose_for(user: &UserName, speaker: Speaker) -> String {
-    match speaker {
-        Speaker::User => stated_whose(user),
-        Speaker::Assistant => String::from("scribe's statement of the assistant's turn"),
-    }
-}
-
-/// Whose words an agent's statement of the user's spoken instruction is, in
-/// `ask` evidence, `scribe search` snippets and `entry show` (2_design.md
-/// §16.6).
-#[must_use]
-pub fn agent_stated_whose(user: &UserName, agent: &str) -> String {
-    format!("agent ({agent})'s statement of {}'s turn", user.noun())
 }
 
 /// Whose words `entry`'s content is when `stated_quote` returned its quote.
@@ -1546,22 +1524,6 @@ pub fn stated_whose_of(user: &UserName, entry: &Entry) -> String {
     {
         Some(by) => agent_stated_whose(user, by.name.as_str()),
         None => stated_whose_for(user, speaker_of(entry)),
-    }
-}
-
-/// The label before the user's own words beside such a statement.
-#[must_use]
-pub fn stated_quote_label(user: &UserName) -> String {
-    format!("{}'s words:", user.title())
-}
-
-/// The label before a quote of `speaker`'s words beside scribe's
-/// statement of their turn.
-#[must_use]
-pub fn words_label(user: &UserName, speaker: Speaker) -> String {
-    match speaker {
-        Speaker::User => stated_quote_label(user),
-        Speaker::Assistant => String::from("The assistant's words:"),
     }
 }
 
