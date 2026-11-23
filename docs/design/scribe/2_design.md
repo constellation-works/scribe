@@ -5609,7 +5609,7 @@ injected into every interactive session.
 | `## Profile (as of <date>)` | `profile.md` in full; the date is its last revision | | none here: the profile job caps it at 6,000 characters when it writes it (§15.6) |
 | `## Now` | `- <id> · due <date> · <title>` | nearest date first | every item: a `now` item exists only with a date and leaves 14 days after it (§15.5), so the part bounds itself |
 | `## Milestones` | `- <id> · <date> · <title>` | newest first | the last 5 |
-| `## Last group` | `g-<n> · <title>`; its retained close summary follows when present, or `Still open.` for an open group without a summary | most recently opened in this project | one group |
+| `## Last group` | `g-<n> · <title>`; its retained close summary follows when present, or `Still open.` for an open group without a summary | most recently opened in this project | one group; the section appears only when this project has a group |
 | `## Recent sessions` | `- <id> · <date> · <project> · <title>` (the date of its last message; titles only; the id is for `scribe session show`) | this project's sessions first, then the others, each group newest first; this session left out | the last 5 |
 | `## Open claims` | `- <id> · <tag> · "<quote>"` | grouped by tag, tags in table order, oldest first within a tag | every open claim (the store cap is 20); a quote over 200 characters is cut with `…` |
 
@@ -5619,7 +5619,8 @@ injected into every interactive session.
   UUID before phase 6. A group id is `g-<n>`; `scribe group show <id>` prints
   the group and its retained summary. A claim id is `p-<n>`.
 - **Empty parts.** An empty part prints its heading and `(none)`, so a
-  reader can tell it is empty and not cut off.
+  reader can tell it is empty and not cut off. `Last group` is optional: when
+  this project has no group, the heading and section are omitted entirely.
 - **What the page leaves out.** The quotes behind memory, a claim's context
   paragraph (§15.3), session summaries and `next` items. `scribe proposal
   list` and `scribe session show <id>` print them. The `raised` mark of
@@ -5638,13 +5639,16 @@ injected into every interactive session.
      session. The brief shows no entries, and its layout is the one Daniel
      agreed, so the binding rules are not put on the page. They stay a read
      of their own: they bind, the page describes.
-  2. **Present the brief** in the first message: the last group, recent
-     sessions, then the open claims and how to settle them. Use the memory
-     block; don't recite it.
+  2. **Present the brief** in the first message: the last group when present,
+     then recent sessions, then the open claims and how to settle them. The
+     group may be the only populated part outside the memory block. Use the
+     memory block; don't recite it.
 - A Codex session runs `scribe brief` through the skill until its hook adds
   it.
-- `--json` gives `{memory: {profile, now, milestones}, sessions, claims,
-  truncated, warnings}`, and `scribe memory show --json` gives the `memory`
+- `--json` gives `{memory: {profile, now, milestones}, last_group?: {id,
+  title, closed, summary}, sessions, claims, truncated, warnings}`. The
+  `last_group` property is present only when the selected project has a group;
+  otherwise it is omitted. `scribe memory show --json` gives the `memory`
   object alone.
 
 **What exists before the new memory shape, and what waits for it.**
