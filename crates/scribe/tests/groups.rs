@@ -1615,7 +1615,7 @@ fn old_schema_reads_empty_without_migration_then_upgrades_on_open() {
     };
     assert_eq!(version(), 8);
     open(&f);
-    assert_eq!(version(), 15);
+    assert_eq!(version(), 16);
 }
 
 #[test]

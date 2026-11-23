@@ -837,9 +837,8 @@ pub(in crate::store) fn spooled_names(conn: &Connection, db: &Path) -> Result<Ve
     rows.collect::<rusqlite::Result<Vec<String>>>().map_err(err)
 }
 
-/// A non-cleartext digest of one erased text: its UTF-8 byte length and its
-/// salted SHA-256 digest (64 lowercase hex characters), keyed with its
-/// obligation's salt.
+/// An erased text or legacy source token's UTF-8 byte length and SHA-256
+/// digest (64 lowercase hex characters), keyed with its obligation's salt.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(in crate::store) struct TextDigest {
@@ -848,7 +847,7 @@ pub(in crate::store) struct TextDigest {
 }
 
 /// One committed entry-forget archive erasure waiting for post-commit
-/// completion across `pre-sqlite-*` directories.
+/// completion across legacy archives.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::store) struct PendingArchiveForget {
     pub id: i64,

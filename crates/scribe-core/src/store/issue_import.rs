@@ -21,6 +21,8 @@
 //! tag, content and quote) and only moves it. An issue file that does not
 //! parse stays in `issues/` and is tried again on the next write.
 
+use super::db::{self, DB_FILE, docs};
+use super::documents::{encode_hex_32, matches_issue_source};
 use super::format::{parse_frontmatter, split_frontmatter};
 use super::fsio;
 use super::{ENTRIES_DIR, RECORD_EXT, Skipped, Store, visible};
@@ -28,12 +30,14 @@ use crate::entry::{ContentFrom, Entry, EntryId, EntryStatus, TagName};
 use crate::error::{Error, Result};
 use crate::record::{Author, AuthorKind, Label, Project, Related, Topics};
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use std::num::{NonZeroU32, NonZeroU64};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 
 /// Where issue records lived.
 pub(super) const ISSUES_DIR: &str = "issues";
+const ARCHIVE_PREFIX: &str = "pre-issue-";
 /// The tag a converted issue is filed under.
 pub(super) const ISSUE_TAG: &str = "issue";
 /// What an issue record said when no cause or fix was known.
@@ -85,6 +89,14 @@ struct Converted {
     entry: Option<Entry>,
 }
 
+/// A legacy issue file and the ordinary entry it imports as.
+pub(super) struct IssueSource {
+    pub(super) path: PathBuf,
+    pub(super) entry: Entry,
+    /// Identifies the original filename and file contents across renames.
+    pub(super) token: String,
+}
+
 impl Store {
     /// Convert every issue record in `issues/` to an `issue` entry and move
     /// its file to `pre-issue-<date>/` after the write commits, `now` dating
@@ -94,7 +106,7 @@ impl Store {
     ///
     /// A store error reading entries or writing one; an issue file that
     /// does not parse is left in place, not an error.
-    pub(super) fn convert_issues(&self, now: OffsetDateTime) -> Result<()> {
+    pub(super) fn convert_issues(&self, conn: &db::Conn, now: OffsetDateTime) -> Result<()> {
         let dir = self.root.join(ISSUES_DIR);
         if !self.root_exists()? || !fsio::inspect_subdir(&dir)? {
             return Ok(());
@@ -105,6 +117,8 @@ impl Store {
         if names.is_empty() {
             return Ok(());
         }
+        let db_path = self.root.join(DB_FILE);
+        let pending = docs::pending_archive_forgets(conn, &db_path)?;
         let tag = TagName::try_from(ISSUE_TAG.to_owned())
             .map_err(|e| Error::corrupt(self.root.join(ENTRIES_DIR), e))?;
         let (mut entries, skipped) = self.load_entries()?;
@@ -120,7 +134,7 @@ impl Store {
         let mut ids = entry_ids(&entries, &skipped);
         ids.extend(self.candidate_reserved_ids()?);
         let aside = self.root.join(format!(
-            "pre-issue-{}",
+            "{ARCHIVE_PREFIX}{}",
             crate::record::DateRange::day(now.date())
         ));
         for name in names {
@@ -128,7 +142,8 @@ impl Store {
             if !fsio::inspect_file(&path)? {
                 continue;
             }
-            let converted = match convert(&path, &fsio::read(&path)?, &tag) {
+            let bytes = fsio::read(&path)?;
+            let converted = match convert(&path, &bytes, &tag) {
                 Ok(converted) => converted,
                 Err(error @ Error::Corrupt { .. }) => {
                     tracing::warn!(path = %path.display(), %error, "issue record not converted");
@@ -136,7 +151,15 @@ impl Store {
                 }
                 Err(other) => return Err(other),
             };
-            if let Some(mut entry) = converted.entry {
+            let has_erasure = !pending.is_empty() && {
+                let token = source_token(&name, &bytes);
+                pending
+                    .iter()
+                    .any(|item| matches_issue_source(item, &token))
+            };
+            if let Some(mut entry) = converted.entry
+                && !has_erasure
+            {
                 let done = entries.iter().any(|e| {
                     e.tag == entry.tag && e.content == entry.content && e.quote == entry.quote
                 });
@@ -170,6 +193,113 @@ impl Store {
         }
         Ok(())
     }
+
+    /// Include live legacy files whose conversion may still be waiting for
+    /// its post-commit rename.
+    pub(super) fn has_issue_sources(&self) -> Result<bool> {
+        Ok(fsio::list_dir(&self.root)?
+            .iter()
+            .any(|name| name == ISSUES_DIR || name.starts_with(ARCHIVE_PREFIX)))
+    }
+
+    /// Identify the source of an imported issue before erasing the entry.
+    /// An edited entry still has its original quote and creation metadata.
+    /// When multiple distinct sources match, the original body can
+    /// disambiguate them. Otherwise refuse to erase any of them.
+    pub(super) fn issue_forget_tokens(&self, entry: &Entry) -> Result<Vec<String>> {
+        if entry.tag.as_str() != ISSUE_TAG
+            || entry.content_from != ContentFrom::Agent
+            || entry.author.kind != AuthorKind::Agent
+            || entry.stated_by.is_some()
+            || entry.quote.is_none()
+        {
+            return Ok(Vec::new());
+        }
+        let mut sources: Vec<_> = self
+            .issue_sources()?
+            .into_iter()
+            .filter(|source| {
+                let original = &source.entry;
+                entry.author == original.author
+                    && entry.created == original.created
+                    && entry.host == original.host
+                    && entry.project == original.project
+                    && entry.quote == original.quote
+            })
+            .collect();
+        if let Some(first) = sources.first()
+            && sources
+                .iter()
+                .any(|s| s.entry.content != first.entry.content)
+        {
+            if entry.updated_by.is_none()
+                && sources.iter().any(|s| s.entry.content == entry.content)
+            {
+                sources.retain(|s| s.entry.content == entry.content);
+            } else {
+                return Err(Error::corrupt(
+                    &first.path,
+                    format!(
+                        "cannot identify the original issue file for {}: multiple archived issues match its creation metadata and quote",
+                        entry.id
+                    ),
+                ));
+            }
+        }
+        Ok(sources.into_iter().map(|source| source.token).collect())
+    }
+
+    /// Use the same parser as migration, which can assign an entry a
+    /// different number than the original issue's.
+    pub(super) fn issue_sources(&self) -> Result<Vec<IssueSource>> {
+        let tag =
+            TagName::try_from(ISSUE_TAG.to_owned()).map_err(|e| Error::corrupt(&self.root, e))?;
+        let mut entries = Vec::new();
+        // A concurrent move goes from issues/ to a pre-issue-* directory.
+        // Read the source directory before listing the destinations so a
+        // move to a newly created archive cannot hide the source from both.
+        read_issue_sources(&self.root.join(ISSUES_DIR), &tag, &mut entries)?;
+        for name in fsio::list_dir(&self.root)?
+            .into_iter()
+            .filter(|n| n.starts_with(ARCHIVE_PREFIX))
+        {
+            read_issue_sources(&self.root.join(name), &tag, &mut entries)?;
+        }
+        Ok(entries)
+    }
+}
+
+fn read_issue_sources(dir: &Path, tag: &TagName, sources: &mut Vec<IssueSource>) -> Result<()> {
+    if !fsio::inspect_subdir(dir)? {
+        return Ok(());
+    }
+    for name in visible(fsio::list_dir(dir)?).filter(|n| n.ends_with(RECORD_EXT)) {
+        let path = dir.join(&name);
+        if !fsio::inspect_file(&path)? {
+            continue;
+        }
+        let bytes = fsio::read(&path)?;
+        match convert(&path, &bytes, tag) {
+            Ok(Converted {
+                entry: Some(entry), ..
+            }) => {
+                sources.push(IssueSource {
+                    path,
+                    entry,
+                    token: source_token(&name, &bytes),
+                });
+            }
+            Ok(Converted { entry: None, .. }) | Err(Error::Corrupt { .. }) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+fn source_token(name: &str, bytes: &[u8]) -> String {
+    // Keep this identifier distinct from free text in the salted obligation.
+    let digest = encode_hex_32(&Sha256::digest(bytes).into());
+    format!("scribe-legacy-issue\0{name}\0{digest}")
 }
 
 fn entry_ids(entries: &[Entry], skipped: &[Skipped]) -> Vec<EntryId> {

@@ -1109,7 +1109,7 @@ impl Store {
         self.prepare_dir(&self.root)?;
         self.write(|| {
             let stem = bare(id).to_owned();
-            let (shown, _) = self.memory_write(redactor, now, |_, files| {
+            let (shown, journal) = self.memory_write(redactor, now, |_, files| {
                 let (shown, op) = if let Some(item) =
                     files.now.iter().find(|n| n.stem.as_str() == stem)
                 {
@@ -1134,6 +1134,12 @@ impl Store {
                 };
                 Ok((commit, shown))
             })?;
+            let conn = db::open_writer(&self.root, self.lock_wait)?;
+            let writer = Writer::new(&conn, &self.root);
+            // Keep the removal operation and discard earlier copies of this
+            // file, including copies in already closed journals.
+            writer.scrub_journal(journal.as_ref(), |_| Ok(false))?;
+            db::scope::Scope::truncate_later(&self.root);
             Ok(shown)
         })
     }

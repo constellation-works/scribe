@@ -18,6 +18,7 @@
 
 use super::audit::{self, AuditEvent};
 use super::db::{self, Conn as Connection, DB_FILE, docs};
+use super::issue_import;
 use super::write::Move;
 use super::{
     AUDIT_FILE, CONTROL_FILE, ENTRIES_DIR, MARKS_FILE, PICKUPS_FILE, PROPOSALS_FILE, RECORD_EXT,
@@ -39,8 +40,8 @@ use time::OffsetDateTime;
 /// The store tags' file, before the move.
 pub(super) const TAGS_FILE: &str = "tags.json";
 
-/// Advisory lock under `locks/` serializing post-commit read-modify-writes of
-/// archived `pre-sqlite-*` proposal and audit files during entry forget
+/// Advisory lock under `locks/` serializing post-commit archive moves and
+/// erasures, including read-modify-writes of proposals and audit files
 /// (STD-03 R6).
 pub(super) const ARCHIVE_FORGET_LOCK: &str = "archive-forget.lock";
 
@@ -503,7 +504,7 @@ impl Store {
             db::scope::Scope::truncate_later(&self.root);
         }
         moved.audit_lines += self.drain_spool(&conn, &path)?;
-        self.convert_issues(now)?;
+        self.convert_issues(&conn, now)?;
         Ok(moved)
     }
 
@@ -829,10 +830,12 @@ impl Store {
         // The cited turns' stored messages go first: they hold the words
         // the forget removes, and deleting them again is a no-op.
         self.forget_cited_messages(entry, proposals)?;
-        if !self.has_moved_archives()? && !self.aside_pending() {
+        let issue_sources = self.issue_forget_tokens(entry)?;
+        if !self.has_moved_archives()? && !self.aside_pending() && issue_sources.is_empty() {
             return Ok(());
         }
-        let texts = erased_texts(entry, proposals);
+        let mut texts = erased_texts(entry, proposals);
+        texts.extend(issue_sources);
         let salt = forget_salt(&entry.id, &self.root);
         let digests = digest_texts(&salt, &texts);
         self.with_conn(|conn, path| {
@@ -852,7 +855,7 @@ impl Store {
     /// Drain every committed entry-forget archive erasure from
     /// `pending_archive_forgets` (STD-03 R8–R9). Runs after the transaction
     /// commits, serialized across processes by `locks/archive-forget.lock`,
-    /// and deletes the obligation rows only after every `pre-sqlite-*` archive
+    /// and deletes the obligation rows only after every matching archive
     /// is cleaned. Never holds the archive lock and a SQLite write transaction
     /// at the same time (STD-03 R3).
     pub(super) fn apply_pending_archive_forgets(&self) -> Result<()> {
@@ -875,7 +878,10 @@ impl Store {
         if pending.is_empty() {
             return Ok(());
         }
-        if self.has_moved_archives()? {
+        let issue_pending = pending
+            .iter()
+            .any(|item| item.entry.tag().as_str() == issue_import::ISSUE_TAG);
+        if self.has_moved_archives()? || (issue_pending && self.has_issue_sources()?) {
             #[cfg(test)]
             notify_forget_moved(ForgetMovedStep::BeforeLock);
             let lock_path = self.lock_path(ARCHIVE_FORGET_LOCK)?;
@@ -992,6 +998,11 @@ impl Store {
                         let bytes = format::encode_pickups(&path, &pickups)?;
                         changes.push((path, Some(bytes)));
                     }
+                } else if is_moved_variant(&name, AUDIT_FILE)
+                    && fsio::inspect_file(&path)?
+                    && let Some(bytes) = scrub_moved_session_audit(&path, matches)?
+                {
+                    changes.push((path, Some(bytes)));
                 }
             }
         }
@@ -1004,7 +1015,8 @@ impl Store {
     /// Drop `audit.jsonl*` lines matching `item`'s digests (plus extra
     /// pre-move proposal texts and the moved entry's archived text), rewrite
     /// or drop matching proposals in `proposals.json*`, and delete
-    /// `item.entry`'s moved-aside entry file across every `pre-sqlite-*` dir.
+    /// `item.entry`'s moved-aside entry file across every `pre-sqlite-*` dir
+    /// and its matching legacy issue source.
     ///
     /// Runs under `locks/archive-forget.lock` (`_lock` witness) so concurrent
     /// forgets cannot restore one another's erased text (STD-03 R6). Cleaning
@@ -1019,6 +1031,14 @@ impl Store {
         let id = &item.entry;
         let db_path = self.root.join(DB_FILE);
         let entry_file = format!("{id}{RECORD_EXT}");
+        let moved_issues = if id.tag().as_str() == issue_import::ISSUE_TAG {
+            self.issue_sources()?
+                .into_iter()
+                .filter(|source| matches_issue_source(item, &source.token))
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         // One entry's words can sit in several `pre-sqlite-*` directories: an
         // interrupted move followed by a recovery on another date puts the
         // entries in one and `audit.jsonl` in another. So first read every
@@ -1033,7 +1053,10 @@ impl Store {
             proposals: Vec<(PathBuf, Vec<Proposal>)>,
         }
         let mut dirs = Vec::new();
-        let mut extra_texts = Vec::new();
+        let mut extra_texts: Vec<String> = moved_issues
+            .iter()
+            .flat_map(|source| erased_texts(&source.entry, &[]))
+            .collect();
         for moved_name in fsio::list_dir(&self.root)? {
             if !moved_name.starts_with(super::sessions::MOVED_PREFIX) {
                 continue;
@@ -1115,6 +1138,9 @@ impl Store {
                     fsio::remove_private(&tag_dir.join(&entry_file))?;
                 }
             }
+        }
+        for source in moved_issues {
+            fsio::remove_private(&source.path)?;
         }
         Ok(())
     }
@@ -1312,22 +1338,31 @@ fn digest_texts(salt: &str, texts: &[String]) -> Vec<docs::TextDigest> {
     let mut out: Vec<docs::TextDigest> = texts
         .iter()
         .filter(|t| !t.is_empty())
-        .map(|text| {
-            let mut hasher = prefix.clone();
-            hasher.update(text.as_bytes());
-            let digest: [u8; 32] = hasher.finalize().into();
-            docs::TextDigest {
-                len: text.len(),
-                sha256: encode_hex_32(&digest),
-            }
-        })
+        .map(|text| digest_text(&prefix, text))
         .collect();
     out.sort();
     out.dedup();
     out
 }
 
-fn encode_hex_32(bytes: &[u8; 32]) -> String {
+fn digest_text(prefix: &Sha256, text: &str) -> docs::TextDigest {
+    let mut hasher = prefix.clone();
+    hasher.update(text.as_bytes());
+    docs::TextDigest {
+        len: text.len(),
+        sha256: encode_hex_32(&hasher.finalize().into()),
+    }
+}
+
+/// Check an exact legacy source token against a committed archive erasure.
+pub(super) fn matches_issue_source(item: &docs::PendingArchiveForget, token: &str) -> bool {
+    item.entry.tag().as_str() == issue_import::ISSUE_TAG
+        && item
+            .digests
+            .contains(&digest_text(&salted_prefix(&item.salt), token))
+}
+
+pub(super) fn encode_hex_32(bytes: &[u8; 32]) -> String {
     let mut out = String::with_capacity(64);
     for byte in bytes {
         let _ = write!(&mut out, "{byte:02x}");
@@ -1444,6 +1479,49 @@ const AUDIT_STANDARD_KEYS: &[&str] = &[
     "issue",
     "duration_ms",
 ];
+
+/// Legacy audit lines can have extra fields that the import discarded.
+/// When an event names the forgotten session, retain just its audit fields.
+fn scrub_moved_session_audit(
+    path: &Path,
+    matches: impl Fn(&str) -> bool,
+) -> Result<Option<Vec<u8>>> {
+    let bytes = fsio::read(path)?;
+    let mut kept = Vec::with_capacity(bytes.len());
+    let mut changed = false;
+    for raw in bytes.split_inclusive(|&b| b == b'\n') {
+        if let Ok(serde_json::Value::Object(mut line)) = serde_json::from_slice(raw) {
+            let target = line.get("target").and_then(serde_json::Value::as_str);
+            let instruction = line
+                .get("instruction_session")
+                .and_then(serde_json::Value::as_str);
+            let issue = line
+                .get("issue")
+                .and_then(|issue| issue.get("session"))
+                .and_then(serde_json::Value::as_str);
+            let related = target
+                .map(|id| id.strip_prefix("session:").unwrap_or(id))
+                .into_iter()
+                .chain(instruction)
+                .chain(issue)
+                .any(&matches);
+            if related {
+                let fields = line.len();
+                line.retain(|key, _| AUDIT_STANDARD_KEYS.contains(&key.as_str()));
+                if line.len() != fields {
+                    serde_json::to_writer(&mut kept, &line).map_err(|e| Error::corrupt(path, e))?;
+                    if raw.ends_with(b"\n") {
+                        kept.push(b'\n');
+                    }
+                    changed = true;
+                    continue;
+                }
+            }
+        }
+        kept.extend_from_slice(raw);
+    }
+    Ok(changed.then_some(kept))
+}
 
 fn audit_line_carries_text(raw: &[u8], matcher: &AuditMatcher<'_>) -> bool {
     match serde_json::from_slice::<serde_json::Value>(raw) {

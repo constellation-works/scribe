@@ -122,13 +122,13 @@ user's file could pass for one of Daniel's records.
 ├── config.toml                          0600, optional
 ├── entries/<tag>/<tag>-<n>.md           0600, one file per entry, until the move (formats 1–26)
 ├── issues/issue-<n>.md                  0600, one file per issue (formats 17–23; phase 2 converts each to an entry)
-├── pre-issue-<yyyy-mm-dd>/issue-<n>.md   0600, an issue file after its conversion (phase 2)
+├── pre-issue-<yyyy-mm-dd>/issue-<n>.md   0600, an issue file after its conversion, until its entry is forgotten (phase 2)
 ├── sessions/<yyyy>/<mm>/<session-id>.md 0600, one file per session record, until the move (formats 1–25)
 ├── control.json                         0600, optional; after the move only the format stamp (see [Formats 27–30](#documents-in-scribedb-phase-7))
 ├── pre-sqlite-<yyyy-mm-dd>/             0700, the files the move took in (`sessions/`, `entries/`, the JSON documents, `audit.jsonl`, `.codex-<id>.lock`), kept except when a forget erases a session or an entry from them
 ├── locks/codex-<id>.lock                0600, the Codex ingestion lock of a session (phase 6)
 ├── locks/rebuild-<id>.lock              0600, the rebuild lock of a session (phase 6)
-├── locks/archive-forget.lock            0600, serializes `pre-sqlite-*` rewrites during entry and session forget
+├── locks/archive-forget.lock            0600, serializes archive erasure and legacy issue moves
 ├── proposals.json                       0600, optional until the move (formats 1–26); after it an empty format stamp
 ├── tags.json                            0600, optional (introduced at format 5, S12); after the move an empty format stamp
 ├── pickups.json                         0600, optional (introduced at format 8); after the move an empty format stamp
@@ -213,8 +213,10 @@ Schema version 15 adds the local Claude group capture checkpoint and
 first-seen message index. Existing membership cursors carry forward and seed
 the checkpoint on the next transcript replay that finds them. Both tables
 are derived from the checked local transcript and are omitted from exports.
+Version 16 protects pending legacy issue erasures from older writers that
+would drop the obligation without erasing the source. It changes no table.
 
-### Tables (version 15)
+### Tables (version 16)
 
 | Table | Columns (type, constraint) | Written by |
 |---|---|---|
@@ -247,7 +249,7 @@ are derived from the checked local transcript and are omitted from exports.
 | `pickups` | `position INTEGER PRIMARY KEY`; the fields of one `pickups.json` record | `entry pickup` (version 5) |
 | `audit` | `id INTEGER PRIMARY KEY`; `format INTEGER NOT NULL`, the line's own format (1–5); the event's fields (`issue` as JSON text, `NULL` for none); `spool TEXT UNIQUE`, the spool file a line was drained from or the `audit.jsonl:<offset>:<sha256>` key of an imported log line, else `NULL` | every audited command; the move; the spool drain (version 5) |
 | `deleted_handoffs` | `id TEXT PRIMARY KEY NOT NULL` | session forget reserves erased handoff ids (version 14) |
-| `pending_archive_forgets` | `id INTEGER PRIMARY KEY`; `entry TEXT NOT NULL` (`<tag>-<n>`); `salt TEXT NOT NULL`, 64 hex characters; `digests TEXT NOT NULL`, JSON array of `{len, sha256}` salted SHA-256 digests of erased texts (never cleartext); `created TEXT NOT NULL` | committed in the entry forget's transaction when `pre-sqlite-*` archives exist or are pending move-aside; drained after commit by that write or any restarted write (version 6) |
+| `pending_archive_forgets` | `id INTEGER PRIMARY KEY`; `entry TEXT NOT NULL` (`<tag>-<n>`); `salt TEXT NOT NULL`, 64 hex characters; `digests TEXT NOT NULL`, JSON array of `{len, sha256}` salted SHA-256 digests of erased texts and any matched legacy issue source tokens (never cleartext); `created TEXT NOT NULL` | committed in the entry forget's transaction when archives exist or are pending move-aside; drained after commit by that write or any restarted write (version 6) |
 
 Group turns use the same `messages` and FTS5 rows, with `group_only = 1` for
 turns kept solely through membership. `group open` stores the opener's typed
@@ -345,8 +347,10 @@ verified typed hook is the deletion route.
 - The hook's single audit line commits with the changes and uses `s-<n>`
   as its target. Post-commit cleanup truncates the WAL and removes session
   record and checkpoint files and matching document data in each
-  `pre-sqlite-*` archive. The forgotten row drives retry after interrupted
-  cleanup and after migration moves legacy files. A repeated forget can
+  `pre-sqlite-*` archive. Archived audit events that name the session keep
+  their audit fields and lose extra fields that can hold free text. The
+  forgotten row drives retry after interrupted cleanup and after migration
+  moves legacy files. A repeated forget can
   also repair residue from an earlier version.
 
 The provider transcript stays at its original path. New exports omit erased
@@ -489,17 +493,24 @@ Rebuild also checks after acquiring its per-session lock.
   `pre-sqlite-<date>/entries*/`, drops or rewrites the matching proposals in
   `pre-sqlite-<date>/proposals.json*` atomically (keeping every claim the
   database keeps), and drops any `pre-sqlite-<date>/audit.jsonl*` lines
-  carrying the entry's text in a free-text value. The archive-erasure
-  obligation commits in `pending_archive_forgets` inside the forget's own
+  carrying the entry's text in a free-text value. Forgetting a converted
+  issue also deletes its matched source files in `pre-issue-<date>/`.
+  The source is identified before the entry is blanked, using the original
+  quote and creation metadata. An unchanged body can disambiguate
+  distinct matching sources. When the source remains ambiguous, the
+  forget refuses before committing. The archive-erasure obligation
+  commits in `pending_archive_forgets` inside the forget's own
   SQLite transaction (storing only the entry id, a per-obligation salt, and
-  salted SHA-256 `{len, sha256}` digests — never the entry's cleartext), and
-  is removed only after every `pre-sqlite-*` archive has been cleaned
-  (audit lines first, then proposals, then entry files). A crash or I/O
-  failure after commit leaves the obligation in `pending_archive_forgets`,
+  salted SHA-256 `{len, sha256}` digests of the texts and exact issue
+  source tokens), and is removed only after every matching archive copy
+  has been cleaned (audit lines first, then proposals, then source files).
+  A pending issue erasure also prevents a still-unmoved legacy source from
+  being imported again. A crash or I/O failure after commit leaves the
+  obligation in `pending_archive_forgets`,
   and the next write (a retry of `entry forget` or `#scribe forget`, or any
   subsequent write) replays WAL truncation and archive erasure idempotently
   without needing the original entry contents in cleartext (STD-03 R8–R9).
-  These post-commit `pre-sqlite-*` rewrites run under
+  Post-commit archive erasure and legacy issue moves run under
   `locks/archive-forget.lock` (`flock` / `LockFileEx`, bounded by the lock
   wait) so concurrent forgets serialize their read-modify-writes and cannot
   restore one another's erased text. An audit line's structural
@@ -857,10 +868,11 @@ items and warn how many await migration.
 
 **Forget** (`memory forget <stem> --confirm`) removes the file and, in
 the journal's transaction, deletes the item's `memory_history` rows, the
-messages it cites and its `memory_messages` rows; when a message went, an
-FTS5 `optimize` runs in the transaction and a `TRUNCATE` checkpoint after
-it, as for an entry forget, so no trace of the words is left. The profile is not forgotten: it is
-corrected by editing it outside Pinned.
+messages it cites and its `memory_messages` rows, and clears older open
+and closed journal operations for that file. An FTS5 `optimize` runs in the
+transaction if messages were deleted. A `TRUNCATE` checkpoint follows even
+when the item had no cited messages, so old history and journal pages are
+cleared from the WAL. The profile is corrected by editing it outside Pinned.
 
 ## JSON documents
 

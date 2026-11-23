@@ -652,7 +652,7 @@ fn jsonl_export_omits_a_preexisting_forgotten_checkpoint_until_upgrade_erases_it
             &Redactor::default(),
         )
         .unwrap();
-    assert_eq!(user_version(&root), 15);
+    assert_eq!(user_version(&root), 16);
     assert_eq!(checkpoint_record(&root, "s-1"), None);
     assert!(
         checkpoint_record(&root, "s-2")
@@ -798,7 +798,7 @@ fn schema_nine_retries_cleanup_left_by_an_older_writer() {
     reader.execute_batch("ROLLBACK").unwrap();
     drop(reader);
     write().unwrap();
-    assert_eq!(user_version(&root), 15);
+    assert_eq!(user_version(&root), 16);
     assert!(!on_disk(&root, STALE_CHECKPOINT));
     assert!(
         checkpoint_record(&root, "s-2")
