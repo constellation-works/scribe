@@ -1,6 +1,6 @@
-List session records, oldest first
+List session records, newest first
 
-Lists session records, oldest first, with whether a pass is due; inactive sessions are included only with --include-inactive.
+Lists session records, newest first by when each was last updated, with whether a pass is due; inactive sessions are included only with --include-inactive.
 
 Usage: scribe session list [OPTIONS]
 
@@ -29,7 +29,7 @@ Options:
           Only records on or before this day, YYYY-MM-DD [default: no upper bound]
 
       --limit <N>
-          Show at most this many of the matching sessions, 1 or more; --json reports the total and whether the list was cut [default: all]
+          Show at most this many of the matching sessions, the most recently updated, 1 or more; --json reports the total and whether the list was cut [default: all]
 
       --tree
           Order the sessions as a tree: each one under the session it was spawned from (else the one it continues), with a PARENT column; --json keeps the envelope, in tree order

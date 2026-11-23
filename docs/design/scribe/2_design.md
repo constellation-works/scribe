@@ -2456,6 +2456,11 @@ CLI behaviour; tests follow the repository's rules in `AGENTS.md`.
   `segment_not_found`. `session show --json` adds `active`, `keep_active`,
   `active_change`, `cataloged_by` and `log` (each segment with its text);
   `outcome` stays in the payload as `""`.
+- `session list` orders records by `updated`, newest first, ties by id; the
+  order applies before `--limit`, so the N shown are the most recently
+  updated. Internal reads keep the chronological `SessionOrder::Started`
+  default; `group show` reads its stored seats and does not go through this
+  select, so its transcripts stay in join order.
 - `session list` leaves inactive sessions out unless `--include-inactive`;
   `ask` leaves them out of evidence and lookups unless `include_hidden` and
   counts them in `hidden_matches`.

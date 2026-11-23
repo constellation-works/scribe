@@ -5,7 +5,7 @@ Lists and shows cataloged session records, and writes them with pass and catalog
 Usage: scribe session [OPTIONS] <COMMAND>
 
 Commands:
-  list        List session records, oldest first
+  list        List session records, newest first
   show        Show one session record
   pass        Write session records for due or named sessions
   rebuild     Rebuild a session record from its full transcript

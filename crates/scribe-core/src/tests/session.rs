@@ -1,5 +1,7 @@
 use super::{T0, session};
-use crate::session::{Cadence, SessionControl, SessionFilter, SessionId, SessionStatus};
+use crate::session::{
+    Cadence, SessionControl, SessionFilter, SessionId, SessionOrder, SessionStatus,
+};
 use std::num::{NonZeroU32, NonZeroUsize};
 use time::Duration;
 
@@ -83,6 +85,52 @@ fn session_selection_filters_then_sorts_by_start() {
         ..SessionFilter::default()
     };
     assert_eq!(ids(&ci), ["b"]);
+}
+
+#[test]
+fn session_selection_orders_by_updated_newest_first_then_id() {
+    let at = |id: &str, started: Duration, updated: Duration| {
+        let mut r = session(id, T0 + started);
+        r.updated = T0 + updated;
+        r
+    };
+    let records = vec![
+        at("b", Duration::hours(1), Duration::hours(1)),
+        at("d", Duration::hours(3), Duration::hours(5)),
+        at("a", Duration::hours(0), Duration::hours(3)),
+        at("c", Duration::hours(2), Duration::hours(5)),
+    ];
+    let ids = |f: &SessionFilter| -> Vec<String> {
+        f.select(records.clone())
+            .items
+            .iter()
+            .map(|r| r.id.to_string())
+            .collect()
+    };
+    let updated = SessionFilter {
+        order: SessionOrder::Updated,
+        ..SessionFilter::default()
+    };
+    assert_eq!(
+        ids(&updated),
+        ["c", "d", "a", "b"],
+        "newest updated first, ties by id"
+    );
+    let newest_two = SessionFilter {
+        limit: NonZeroUsize::new(2),
+        ..updated.clone()
+    };
+    assert_eq!(
+        ids(&newest_two),
+        ["c", "d"],
+        "the limit keeps the most recently updated"
+    );
+    assert_eq!(newest_two.select(records.clone()).total, 4);
+    assert_eq!(
+        ids(&SessionFilter::default()),
+        ["a", "b", "c", "d"],
+        "the default stays oldest started first"
+    );
 }
 
 #[test]
