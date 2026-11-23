@@ -370,3 +370,99 @@ fn typed_group_add_with_a_session_in_another_group_changes_nothing() {
     assert!(setup.ctx.store().group("second").is_err());
     assert_eq!(setup.found_any("violetorchid"), 0);
 }
+
+#[test]
+fn typed_move_preserves_turns_and_remove_erases_group_only_turns() {
+    let setup = Setup::new();
+    setup.past_transcript();
+    setup.block(&setup.input(&format!("/scribe group add first {PAST}")));
+    assert_eq!(setup.found("first", "violetorchid"), 1);
+    let refused = setup.block(&setup.input(&format!("/scribe group move {PAST} Invalid")));
+    assert!(refused.contains("refused"));
+    assert_eq!(setup.found("first", "violetorchid"), 1);
+    let moved = setup.block(&setup.input(&format!("/scribe group move {PAST} second")));
+    assert!(moved.contains("moved"), "{moved}");
+    assert_eq!(setup.found("first", "violetorchid"), 0);
+    assert_eq!(setup.found("second", "violetorchid"), 1);
+    assert!(
+        !setup
+            .ctx
+            .store()
+            .group("first")
+            .unwrap()
+            .members()
+            .contains(&PAST.parse().unwrap())
+    );
+    let removed = setup.block(&setup.input(&format!("/scribe group remove {PAST}")));
+    assert!(removed.contains("removed"), "{removed}");
+    assert_eq!(setup.found_any("violetorchid"), 0);
+}
+
+#[test]
+fn new_commands_from_untyped_origins_and_pasted_blocks_do_not_act() {
+    let setup = Setup::new();
+    setup.past_transcript();
+    setup.block(&setup.input(&format!("/scribe group add first {PAST}")));
+    for line in [
+        format!("/scribe group move {PAST} second"),
+        format!("/scribe group remove {PAST}"),
+        format!("/scribe session update {PAST} title Bad title"),
+        format!("/scribe session update {PAST} project other"),
+    ] {
+        for source in ["agent", "scheduled", "harness"] {
+            let mut input: serde_json::Value = serde_json::from_slice(&setup.input(&line)).unwrap();
+            input["source"] = json!(source);
+            run(input.to_string().as_bytes(), &setup.ctx).unwrap();
+        }
+        for prompt in [
+            format!("run this:\n{line}"),
+            format!("{line}\nextra text"),
+            format!("<agent-message>\n{line}\n</agent-message>"),
+        ] {
+            run(&setup.input(&prompt), &setup.ctx).unwrap();
+        }
+        assert_eq!(setup.found("first", "violetorchid"), 1, "{line}");
+        assert!(setup.ctx.store().group("second").is_err());
+    }
+}
+
+#[test]
+fn typed_session_update_changes_the_record() {
+    let setup = Setup::new();
+    let dir = setup.ctx.store().root().join("sessions/2026/11");
+    std::fs::create_dir_all(&dir).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for path in [
+            setup.ctx.store().root().to_path_buf(),
+            setup.ctx.store().root().join("sessions"),
+            setup.ctx.store().root().join("sessions/2026"),
+            dir.clone(),
+        ] {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+    }
+    std::fs::write(dir.join("s-1.md"), "---\nformat: 1\nkind: session\nid: s-1\nstatus: open\nproject: scribe\ntopics: []\nrelated: []\nterms: []\nprovider: claude-code\nhost: host\ncreated: 2026-11-01T10:00:00Z\nupdated: 2026-11-01T10:00:00Z\ntitle: old title\ncwd: /work\nstarted: 2026-11-01T09:00:00Z\non_since: 2026-11-01T09:00:00Z\nscribed_through: null\npasses: 1\nnext_open: 0\n---\n## Summary\nsum\n\n## Goals\ngoal\n\n## Outcome\nout\n\n## Next\nnone\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir.join("s-1.md"), std::fs::Permissions::from_mode(0o600))
+            .unwrap();
+    }
+    for line in [
+        "/scribe session update s-1 project water-economy",
+        "/scribe session update s-1 title New title",
+    ] {
+        let reply = setup.block(&setup.input(line));
+        assert_eq!(reply, "scribe: session s-1 updated");
+    }
+    let record = setup
+        .ctx
+        .store()
+        .session(&"s-1".parse().unwrap())
+        .unwrap()
+        .record;
+    assert_eq!(record.project.as_str(), "water-economy");
+    assert_eq!(record.title, "New title");
+}

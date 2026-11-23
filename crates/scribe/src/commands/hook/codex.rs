@@ -45,6 +45,9 @@ fn command_text(original: &str) -> String {
                     | control::Switch::Catalog(_)
                     | control::Switch::Group(_)
                     | control::Switch::GroupAdd { .. }
+                    | control::Switch::GroupMove { .. }
+                    | control::Switch::GroupRemove(_)
+                    | control::Switch::SessionUpdate { .. }
             )
         ) {
             return candidate;

@@ -657,6 +657,10 @@ impl Store {
 
     /// Remove only the caller from its chain and remove a seat left empty.
     pub fn leave_group(&self, session: &SessionId) -> Result<String> {
+        self.leave_group_inner(session, false)
+    }
+
+    fn leave_group_inner(&self, session: &SessionId, keep_turns: bool) -> Result<String> {
         self.write(|| {
             let conn = open_writer(self.root(), self.lock_wait)?;
             let path = self.root().join(DB_FILE);
@@ -705,12 +709,15 @@ impl Store {
                 )
                 .map_err(fail)?;
             }
-            let erased = conn
-                .execute(
+            let erased = if keep_turns {
+                0
+            } else {
+                conn.execute(
                     "DELETE FROM messages WHERE session = ?1 AND group_only = 1",
                     [session.as_str()],
                 )
-                .map_err(fail)?;
+                .map_err(fail)?
+            };
             let cleared = conn
                 .execute(
                     "UPDATE groups SET summary = NULL WHERE id = ?1 AND summary IS NOT NULL",
@@ -728,6 +735,61 @@ impl Store {
                 super::truncate_wal(&conn, &path, std::time::Instant::now())?;
             }
             Ok(format!("g-{n}"))
+        })
+    }
+
+    /// Move a member atomically, retaining its stored turns and capture cursor.
+    pub fn move_project_group(
+        &self,
+        session: &SessionId,
+        slug: &str,
+        project: &Project,
+        now: OffsetDateTime,
+        redactor: &Redactor,
+    ) -> Result<String> {
+        check_project_slug(slug, redactor)?;
+        self.write(|| {
+            let conn = open_writer(self.root(), self.lock_wait)?;
+            let path = self.root().join(DB_FILE);
+            let fail = |e| db_error("move group member in", &path, e);
+            let (old, joined, cursor, held): (i64, String, Option<String>, bool) = conn
+                .query_row(
+                    &format!("SELECT m.group_id, m.joined, m.turn_cursor, {HOLDS_SEAT} FROM group_members m WHERE m.session=?1"),
+                    [session.as_str()],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                )
+                .optional()
+                .map_err(fail)?
+                .ok_or_else(|| {
+                    refusal(
+                        WriteRefusal::GroupMembership,
+                        "session has no group membership",
+                    )
+                })?;
+            let target: Option<i64> = conn
+                .query_row(
+                    "SELECT id FROM groups WHERE slug=?1 AND closed IS NULL",
+                    [slug],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(fail)?;
+            if target == Some(old) {
+                return Ok(format!("g-{old}"));
+            }
+            self.leave_group_inner(session, true)?;
+            let id = self.join_project_group(slug, project, session, now, redactor)?;
+            let (joined, cursor) = if held { (joined, cursor) } else { (stamp(now), None) };
+            conn.execute(
+                "UPDATE group_members SET joined=?2, turn_cursor=?3 WHERE session=?1",
+                params![session.as_str(), joined, cursor],
+            )
+            .map_err(fail)?;
+            if let Some(n) = target {
+                conn.execute("UPDATE groups SET summary=NULL WHERE id=?1", [n])
+                    .map_err(fail)?;
+            }
+            Ok(id)
         })
     }
 

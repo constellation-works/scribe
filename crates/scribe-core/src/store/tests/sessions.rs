@@ -1012,3 +1012,29 @@ fn resolve_with_extra_ids_expands_unique_prefixes_and_refuses_ambiguity() {
         unknown
     );
 }
+
+#[test]
+fn typed_metadata_update_changes_only_the_named_record_fields() {
+    let (_dir, store) = file_store();
+    let id = s1();
+    let before = store.session(&id).unwrap().record;
+    store
+        .update_session_metadata(&id, "project", "water-economy", &Redactor::default())
+        .unwrap();
+    store
+        .update_session_metadata(&id, "title", "Water economy study", &Redactor::default())
+        .unwrap();
+    let after = store.session(&id).unwrap().record;
+    assert_eq!(after.project.as_str(), "water-economy");
+    assert_eq!(after.title, "Water economy study");
+    assert_eq!(after.log, before.log);
+    assert!(
+        store
+            .update_session_metadata(&id, "project", "bad project", &Redactor::default())
+            .is_err()
+    );
+    assert_eq!(
+        store.session(&id).unwrap().record.project.as_str(),
+        "water-economy"
+    );
+}
