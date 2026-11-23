@@ -169,6 +169,40 @@ expect fail check-readme-links.py "$(readme_with readme-live-after-code-span '``
   "a live link after a triple-backtick code span on the same line"
 expect fail check-readme-links.py "$(tree readme-absent)" "a repository with no README.md"
 
+# --- check-store-format-claims.py: marked current-format claims in the store spec ---
+# format_tree <name> <FORMAT>: a fixture root whose format.rs declares FORMAT
+# and whose store spec is read from stdin.
+format_tree() {
+  local root
+  root=$(tree "$1")
+  mkdir -p "$root/crates/scribe-core/src/store" "$root/docs/design/scribe/specs"
+  printf 'pub(super) const FORMAT: u32 = %s;\n' "$2" >"$root/crates/scribe-core/src/store/format.rs"
+  cat >"$root/docs/design/scribe/specs/store.md"
+  echo "$root"
+}
+claims_clean='The code writes format <!-- current-format -->30 and reads formats 1–<!-- current-format -->30.
+Format 29 adds groups. The format-28 release stamped `control.json` at 28.
+The current format-<!-- current-format -->30 build stamps `control.json` at <!-- current-stamp -->30.'
+expect pass check-store-format-claims.py "$(format_tree claims-clean 30 <<<"$claims_clean")" \
+  "marked claims that match FORMAT beside historical format statements"
+expect fail check-store-format-claims.py "$(format_tree claims-bumped 31 <<<"$claims_clean")" \
+  "marked claims left at 30 after FORMAT moved to 31"
+expect fail check-store-format-claims.py \
+  "$(format_tree claims-stale-format 30 <<<"${claims_clean/writes format <!-- current-format -->30/writes format <!-- current-format -->29}")" \
+  "a marked current-format claim that differs from FORMAT"
+expect fail check-store-format-claims.py \
+  "$(format_tree claims-stale-stamp 30 <<<"${claims_clean/at <!-- current-stamp -->30/at <!-- current-stamp -->28}")" \
+  "a marked current control-stamp claim that differs from FORMAT"
+expect fail check-store-format-claims.py \
+  "$(format_tree claims-no-number 30 <<<"${claims_clean/at <!-- current-stamp -->30/at <!-- current-stamp -->thirty}")" \
+  "a marker not followed by a number"
+expect fail check-store-format-claims.py \
+  "$(format_tree claims-bad-kind 30 <<<"${claims_clean/at <!-- current-stamp -->30/at <!-- current-stmap -->30}")" \
+  "a marker of an unknown kind"
+expect fail check-store-format-claims.py "$(format_tree claims-unmarked 30 <<<'The code writes format 30.')" \
+  "a spec with no marked claim"
+expect fail check-store-format-claims.py "$(tree claims-absent)" "a tree with no format.rs or store spec"
+
 if [[ "$fail" -eq 0 ]]; then
   echo "check-gates: ok ($n cases)"
 fi

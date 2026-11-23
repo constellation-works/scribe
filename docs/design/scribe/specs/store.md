@@ -10,7 +10,7 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-The code writes format 30 and reads formats 1–30. Format 30 permits withdrawn claims, deleted citations and legacy memory items retired with their sources erased. Format 29 adds groups and seats in SQLite schema 9. SQLite schema 11 adds group turn capture and closing summaries. SQLite schema 12 adds optional `groups.slug` and a unique partial index for open slugs. Format 28 adds an optional `handoff_mode` (`continue` or `new`) to entries; SQLite schema 7 adds its nullable column, and older databases read it as null until the next write migrates them. SQLite schema 8 removes stale rebuild checkpoints for forgotten sessions; export omits them before that migration runs. Schema 10 records completion of the required WAL cleanup, retrying after a busy reader, a busy writer, or interruption, including on stores already at schema 9. Format 26 moves the
+The code writes format <!-- current-format -->30 and reads formats 1–<!-- current-format -->30. Format 30 permits withdrawn claims, deleted citations and legacy memory items retired with their sources erased. Format 29 adds groups and seats in SQLite schema 9. SQLite schema 11 adds group turn capture and closing summaries. SQLite schema 12 adds optional `groups.slug` and a unique partial index for open slugs. Format 28 adds an optional `handoff_mode` (`continue` or `new`) to entries; SQLite schema 7 adds its nullable column, and older databases read it as null until the next write migrates them. SQLite schema 8 removes stale rebuild checkpoints for forgotten sessions; export omits them before that migration runs. Schema 10 records completion of the required WAL cleanup, retrying after a busy reader, a busy writer, or interruption, including on stores already at schema 9. Format 26 moves the
 sessions into `scribe.db`
 ([2_design.md §15.7](../2_design.md#157-storage), phase 6): records,
 switches, Codex cursors and rebuild checkpoints become rows (schema version
@@ -20,7 +20,7 @@ and `control.json` stays as the format stamp alone; see
 [Sessions in scribe.db](#sessions-in-scribedb-phase-6). Format 27 (phase 7)
 introduced moving the other kinds into `scribe.db`; the format-27 release
 wrote the format stamps, including `control.json`, at 27. The current
-format-30 build retains that migration and stamps at 30 after its first
+format-<!-- current-format -->30 build retains that migration and stamps at <!-- current-stamp -->30 after its first
 eligible store write transaction moves every kind still in files, sessions
 first. A standalone audit line does not start that move: it is inserted
 without waiting, or spooled under `audit-spool/` while the store is still in
@@ -124,7 +124,7 @@ user's file could pass for one of Daniel's records.
 ├── issues/issue-<n>.md                  0600, one file per issue (formats 17–23; phase 2 converts each to an entry)
 ├── pre-issue-<yyyy-mm-dd>/issue-<n>.md   0600, an issue file after its conversion (phase 2)
 ├── sessions/<yyyy>/<mm>/<session-id>.md 0600, one file per session record, until the move (formats 1–25)
-├── control.json                         0600, optional; after the move only the format stamp, `{"format": 28, "sessions": {}, "codex_cursors": {}}`
+├── control.json                         0600, optional; after the move only the format stamp (see [Formats 27–30](#documents-in-scribedb-phase-7))
 ├── pre-sqlite-<yyyy-mm-dd>/             0700, the files the move took in (`sessions/`, `entries/`, the JSON documents, `audit.jsonl`, `.codex-<id>.lock`), kept except when a forget erases a session or an entry from them
 ├── locks/codex-<id>.lock                0600, the Codex ingestion lock of a session (phase 6)
 ├── locks/rebuild-<id>.lock              0600, the rebuild lock of a session (phase 6)
@@ -465,7 +465,7 @@ Rebuild also checks after acquiring its per-session lock.
   format, and a torn line is counted and left in the moved file. After the
   commit the files go to `pre-sqlite-<yyyy-mm-dd>/`, and `control.json`,
   `proposals.json`, `tags.json`, `marks.json` and `pickups.json` are
-  written as empty stamps at format 30, so a format-29 build refuses the
+  written as empty stamps at format <!-- current-stamp -->30, so a format-29 build refuses the
   store instead of writing files beside the database. The format-27 release
   wrote these stamps at 27, the format-28 release at 28, and the format-29
   release at 29. A
@@ -512,7 +512,8 @@ Rebuild also checks after acquiring its per-session lock.
   files into `scribe.db`, sessions first, and stamped `control.json` at 27.
   The format-28 release kept that migration path and stamped `control.json`
   at 28 after the move. Format 29 adds groups and seats. The current
-  format-30 build keeps that migration path and stamps `control.json` at 30.
+  format-<!-- current-format -->30 build keeps that migration path and stamps `control.json` at <!-- current-stamp -->30. After the move `control.json` holds only that stamp, with an
+  empty `sessions` and `codex_cursors`, so its `format` is <!-- current-stamp -->30.
   Format 28 adds optional `handoff_mode`
   (`continue` or `new`) to entries; SQLite schema 7 adds its nullable column.
   The upgrade registry remains append-only for persisted document shapes; SQL
@@ -520,7 +521,7 @@ Rebuild also checks after acquiring its per-session lock.
   read a store left at any older format for the support window; phase 8
   removes them with the file decoders.
 - **`scribe export <dir>`** writes records into a separate directory. `--as markdown` writes the
-  file store's files at format 30 (`sessions/`, `entries/<tag>/<id>.md`,
+  file store's files at format <!-- current-format -->30 (`sessions/`, `entries/<tag>/<id>.md`,
   `control.json`, `proposals.json`, `tags.json`, `marks.json`,
   `pickups.json`, `audit.jsonl`), which a build reads as a store and moves
   in again unchanged. Each exported audit line keeps its original audit
