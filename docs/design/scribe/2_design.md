@@ -6704,7 +6704,9 @@ cursor is set after the last of them, so a later capture neither repeats them
 nor skips newer ones. The join time is taken before any transcript is read, and once a cursor is set every turn after it is stored whatever its timestamp, so a turn appended while the snapshots were being read, though dated before the membership committed, is kept exactly once; an ordinary join, which has no cursor, keeps its join-time cutoff. The reply says `transcript on disk, <n> typed turns
 stored`. When it is not, only membership is added and the reply says
 `membership only, no transcript on disk`. A transcript on disk that fails the
-provenance check refuses the whole line. A session already in another group
+provenance check refuses the whole line, including an entry named for the session
+whose file type is refused (a symbolic link, say), which is present, not absent,
+and is never read. A session already in another group
 refuses the whole line, naming each such session and its group, and changes
 nothing; a session already in this group is reported and left as it is. A line
 names at most 32 sessions. The hook blocks the prompt, as every `/scribe` line

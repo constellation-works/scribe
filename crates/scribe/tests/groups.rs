@@ -2682,6 +2682,56 @@ fn typed_group_add_audits_ids_only_and_a_later_capture_resumes_after_the_stored_
     assert_eq!(total("lateorchid"), 1);
 }
 
+#[cfg(unix)]
+#[test]
+fn typed_group_add_refuses_a_linked_transcript_but_keeps_an_absent_one_membership_only() {
+    let f = Fixture::new();
+    let typing = transcript(&f, A, &[row(A, "t", "user", "/scribe group add planning")]);
+    // B's transcript was replaced by a link to a file elsewhere.
+    let outside = f.elsewhere("outside.jsonl");
+    std::fs::write(
+        &outside,
+        format!("{}\n", row(B, "b1", "user", "linkedorchid typed")),
+    )
+    .unwrap();
+    support::make_private(&outside);
+    std::os::unix::fs::symlink(&outside, transcript_path(&f, B)).unwrap();
+    let submit = |named: &str| {
+        text(
+            &hook(
+                &f,
+                &["hook", "user-prompt-submit"],
+                json!({"session_id": A, "transcript_path": typing, "cwd": f.home(),
+                    "prompt": format!("/scribe group add planning {named}")}),
+                &[],
+            )
+            .stdout,
+        )
+    };
+    let store = scribe_core::Store::open(f.root());
+
+    // The linked entry refuses the whole line, even beside an absent session.
+    let reply = submit(&format!("{B} {C}"));
+    assert!(reply.contains("group add refused"), "{reply}");
+    assert!(reply.contains("nothing changed"), "{reply}");
+    assert!(!reply.contains("membership only"), "{reply}");
+    assert!(store.groups().unwrap().is_empty());
+    assert_eq!(
+        invoke(&f, A, &["search", "linkedorchid", "--kind", "message"], 0)["total"],
+        0
+    );
+    let log = support::audit_text(&f.root());
+    assert!(!log.contains("linkedorchid"), "{log}");
+
+    // A genuinely absent transcript is still membership only.
+    let reply = submit(C);
+    assert!(reply.contains("group planning (g-1) opened"), "{reply}");
+    assert!(
+        reply.contains("membership only, no transcript on disk"),
+        "{reply}"
+    );
+}
+
 #[test]
 fn typed_group_add_resolves_prefixes_and_exact_ids_across_disk_and_store() {
     let f = Fixture::new();
