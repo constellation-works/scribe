@@ -437,12 +437,16 @@ line has the session's `s-<n>` as its target.
   event. A torn line, which the reader skips, is dropped if it contains the
   text. Other files in `pre-sqlite-<date>/` are the user's and are never
   rewritten.
-- **Format 27.** `FORMAT` is 27 and the upgrade registry is closed: its
-  last step (`documents_sqlite`) changes no document, and later SQLite schema changes are SQL migrations; format 28 also adds the optional handoff mode to exported entries. The steps stay so the move can read a store
-  left at any older format for the support window; phase 8 removes them
-  with the file decoders.
+- **Formats 27–28.** The first eligible store write transaction moves every
+  kind still in files into `scribe.db`, sessions first, and stamps
+  `control.json` at 27. Format 28 adds optional `handoff_mode` (`continue`
+  or `new`) to entries and SQLite schema 7 adds its nullable column. The
+  upgrade registry remains append-only for persisted document shapes; SQL
+  schema changes use migrations. The existing steps stay so the move can
+  read a store left at any older format for the support window; phase 8
+  removes them with the file decoders.
 - **`scribe export <dir>`** writes every kind. `--as markdown` writes the
-  file store's files at format 27 (`sessions/`, `entries/<tag>/<id>.md`,
+  file store's files at format 28 (`sessions/`, `entries/<tag>/<id>.md`,
   `control.json`, `proposals.json`, `tags.json`, `marks.json`,
   `pickups.json`, `audit.jsonl`), which a build reads as a store and moves
   in again unchanged. Each exported audit line keeps its original audit

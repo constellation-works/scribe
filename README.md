@@ -130,7 +130,7 @@ naming a turn they typed in the last 30 minutes) may an agent retire or forget
 their entry, or approve or reject a claim a session pass proposed. Agent notes have no typed-turn citation;
 `ask` labels them `agent note (<name>)`. Repeating an unchanged write prints
 the unchanged record with `nothing changed` on stderr and no audit event.
-The store writes format 27 and reads formats 1 to 27; [specs/store.md](docs/design/scribe/specs/store.md) says what each format changed. The shipped catchers are `preferences` and `standard`, and both propose claims for approval. Under a tag whose capture route is `write`, a session pass writes up to 3 claims per session per pass for that tag, with no proposal, as entries authored by `scribe` `session-pass`. No write-route tag ships: `idea` is a config example in [specs/catchers.md](docs/design/scribe/specs/catchers.md), enabled by a `[tags.idea.capture]` table with `route = "write"`.
+The store writes format 28 and reads formats 1–28; [specs/store.md](docs/design/scribe/specs/store.md) says what each format changed. The shipped catchers are `preferences` and `standard`, and both propose claims for approval. Under a tag whose capture route is `write`, a session pass writes up to 3 claims per session per pass for that tag, with no proposal, as entries authored by `scribe` `session-pass`. No write-route tag ships: `idea` is a config example in [specs/catchers.md](docs/design/scribe/specs/catchers.md), enabled by a `[tags.idea.capture]` table with `route = "write"`.
 Passes rewrite the header and open segment and append new
 segments; sealed segments stay unchanged. `[catalog] segment_windows`
 (default 3) bounds each segment's rewrites. Rebuild replaces a record from
