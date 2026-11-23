@@ -3,12 +3,14 @@
 //! with a continue handoff restores it before the brief (§16.7). On other
 //! starts the same-project reminder is advisory and changes no switch.
 
+use super::continuation::{self, ClearedPredecessor};
 use super::payload::{self, SessionStartPayload};
 use super::project;
 use crate::app::Context;
 use crate::error::CliError;
-use crate::output::{HookReply, Output};
-use scribe_core::{ProposalState, SessionFilter, SessionId, TagName};
+use crate::output::{HookOutcome, HookReply, Output};
+use scribe_core::group::SeatStart;
+use scribe_core::{ProposalState, Provider, SessionFilter, SessionId, TagName};
 use std::collections::BTreeMap;
 use std::path::Path;
 use time::OffsetDateTime;
@@ -51,8 +53,16 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
             None
         }
     };
-    let refresh = super::continuation::at_start(ctx, &payload, &session);
-    let (continuation, handoff, outcomes) = match refresh {
+    let start_ancestry = ctx.interactive()
+        && ctx.provider() == Provider::ClaudeCode
+        && matches!(payload.source.as_deref(), None | Some("startup" | "clear"));
+    let predecessor = if start_ancestry {
+        continuation::cleared_predecessor(ctx, payload.transcript_path.as_deref(), &session)
+    } else {
+        ClearedPredecessor::None
+    };
+    let refresh = continuation::at_start(ctx, &session, &predecessor);
+    let (continuation, handoff, mut outcomes) = match refresh {
         Some(reply) => (reply.message, reply.context, reply.outcomes),
         None => {
             let reminder = (payload.source.as_deref() != Some("clear"))
@@ -61,20 +71,29 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
             (reminder, None, Vec::new())
         }
     };
+    let seat = if start_ancestry {
+        seat_at_start(ctx, &session, &predecessor)
+    } else {
+        SeatReply::default()
+    };
+    outcomes.extend(seat.outcomes);
     let lines: Vec<String> = proposals
         .into_iter()
         .chain(stuck)
         .chain(continuation)
+        .chain(seat.message)
         .collect();
     let message = (!lines.is_empty()).then(|| lines.join("\n"));
     let brief = ctx
         .interactive()
         .then(|| brief_text(ctx, &session, payload.cwd.as_deref()))
         .flatten();
-    let context = match (handoff, brief) {
-        (Some(body), Some(brief)) => Some(format!("{body}\n\n{brief}")),
-        (body, brief) => body.or(brief),
-    };
+    let context_parts: Vec<String> = handoff
+        .into_iter()
+        .chain(seat.context)
+        .chain(brief)
+        .collect();
+    let context = (!context_parts.is_empty()).then(|| context_parts.join("\n\n"));
     Ok(Output::Hook(HookReply {
         event: EVENT,
         message,
@@ -82,6 +101,75 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
         block: None,
         outcomes,
     }))
+}
+
+#[derive(Default)]
+struct SeatReply {
+    context: Option<String>,
+    message: Option<String>,
+    outcomes: Vec<HookOutcome>,
+}
+
+fn seat_at_start(ctx: &Context, child: &SessionId, predecessor: &ClearedPredecessor) -> SeatReply {
+    let parent = match predecessor {
+        ClearedPredecessor::One(parent) => Some(parent),
+        ClearedPredecessor::None | ClearedPredecessor::Multiple(_) => None,
+    };
+    match ctx.store().inherit_seat(child, parent) {
+        Ok(SeatStart::NoOpenGroups) => SeatReply::default(),
+        Ok(SeatStart::AlreadySeated(hold)) => SeatReply {
+            context: Some(format!(
+                "scribe: session {child} holds seat {} ({}) in {}",
+                hold.seat, hold.role, hold.group
+            )),
+            message: None,
+            outcomes: Vec::new(),
+        },
+        Ok(SeatStart::Inherited { hold, from }) => SeatReply {
+            context: Some(format!(
+                "scribe: session {child} holds seat {} ({}) in {} (inherited from {from})",
+                hold.seat, hold.role, hold.group
+            )),
+            message: None,
+            outcomes: vec![HookOutcome {
+                target: Some(hold.group),
+                error_code: None,
+            }],
+        },
+        Ok(SeatStart::Unjoined) => {
+            let reason = match predecessor {
+                ClearedPredecessor::None => {
+                    "scribe: no predecessor line in this transcript; no group seat was inherited — re-run `scribe group join` if your brief names a group"
+                        .to_owned()
+                }
+                ClearedPredecessor::One(parent) => format!(
+                    "scribe: predecessor {parent} holds no open group seat; nothing inherited — re-run `scribe group join` if your brief names a group"
+                ),
+                ClearedPredecessor::Multiple(_) => {
+                    "scribe: multiple cleared predecessors in this transcript; no group seat was inherited — re-run `scribe group join` if your brief names a group"
+                        .to_owned()
+                }
+            };
+            SeatReply {
+                context: Some(reason),
+                message: None,
+                outcomes: Vec::new(),
+            }
+        }
+        Err(err) => {
+            tracing::warn!(%err, "cannot inherit group seat");
+            SeatReply {
+                context: Some(format!(
+                    "scribe: could not inherit group seat ({err}) — re-run `scribe group join` if your brief names a group"
+                )),
+                message: Some(format!("scribe: could not inherit group seat — {err}")),
+                outcomes: vec![HookOutcome {
+                    target: Some(format!("session:{child}")),
+                    error_code: Some(err.code()),
+                }],
+            }
+        }
+    }
 }
 
 /// The memory block's text, or `None` when memory holds nothing or the

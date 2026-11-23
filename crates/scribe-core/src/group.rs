@@ -119,6 +119,35 @@ impl GroupConsent {
     }
 }
 
+/// The open group seat a session holds after start checks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SeatHold {
+    /// Group id (`g-<n>`).
+    pub group: String,
+    /// Seat name within the group.
+    pub seat: String,
+    /// Seat role label.
+    pub role: String,
+}
+
+/// Outcome of checking group seat inheritance at session start.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SeatStart {
+    /// No open groups exist in the store (or store/schema predates groups).
+    NoOpenGroups,
+    /// The starting session already holds a seat.
+    AlreadySeated(SeatHold),
+    /// Appended the starting session to the predecessor's open seat.
+    Inherited {
+        /// Seat the session now holds.
+        hold: SeatHold,
+        /// Predecessor session it inherited from.
+        from: SessionId,
+    },
+    /// Open groups exist and the session holds no seat.
+    Unjoined,
+}
+
 /// One caller's request to hold a seat.
 pub struct JoinGroup<'a> {
     /// Group id or prefix.
@@ -135,4 +164,6 @@ pub struct JoinGroup<'a> {
     pub replace: bool,
     /// Previous holder whose verified transcript has ended, if any.
     pub ended: Option<&'a SessionId>,
+    /// Previous holder verified as the caller's own cleared predecessor, if any.
+    pub predecessor: Option<&'a SessionId>,
 }

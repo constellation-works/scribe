@@ -1535,9 +1535,11 @@ stay.
 ## `session-start` is read-only except when restoring a continue handoff
 
 **Recorded:** 2026-11 · [ORB-21795]
-**Refined by session refresh:** Outside the §16.7 continue-handoff path,
+**Refined by session refresh and session groups:** Outside the §16.7
+continue-handoff path and §17 group seat inheritance across a clear,
 `session-start` remains read-only. Restoring a continue handoff writes the
-child's `continues` link and inherited switch and audits that write.
+child's `continues` link and inherited switch, and inheriting a group seat
+appends the child to the predecessor's open seat; both audit their writes.
 **Code anchors:** `crates/scribe/src/commands/hook/session_start.rs`,
 `crates/scribe/src/commands/hook/continuation.rs` (the restoration)
 

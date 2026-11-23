@@ -511,7 +511,14 @@ session or a claim to show, `SessionStart` also gives the agent the brief
 none) gets none. A verified clear with a single predecessor and a current
 `continue` handoff prepends its body to the brief and writes the link.
 A `new`, missing or legacy handoff leaves the ordinary brief alone.
-Multiple clear predecessors are named in `systemMessage`. A typed
+Multiple clear predecessors are named in `systemMessage`. When the single
+clear predecessor is the newest transcript of an open group seat, an
+interactive Claude Code `SessionStart` (`startup` or `clear`) appends the
+starting session to that seat's chain (audited against the group id) and
+notes the held seat in `additionalContext`. When open groups exist and the
+starting session holds no seat (missing or ambiguous predecessor line, or
+a predecessor in no open seat), it joins nothing and notes in
+`additionalContext` that `scribe group join` must be re-run. A typed
 `/scribe continue <handoff-id>` supplies the same body in the prompt’s
 `hookSpecificOutput.additionalContext` and lets that turn reach the agent.
 It
