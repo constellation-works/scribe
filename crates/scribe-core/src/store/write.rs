@@ -348,6 +348,11 @@ impl Store {
     /// lines removed, open memory journals applied, and the WAL emptied
     /// after a forget.
     fn after_commit(&self, after: After, now: OffsetDateTime, truncate: bool) -> Result<()> {
+        if truncate {
+            let path = self.root.join(DB_FILE);
+            let conn = db::open_new_writer(&self.root, self.lock_wait)?;
+            db::truncate_wal(&conn, &path, std::time::Instant::now())?;
+        }
         for (from, to) in &after.renames {
             if let Some(dir) = to.parent() {
                 self.prepare_subdir(dir)?;
@@ -372,11 +377,6 @@ impl Store {
         }
         if after.journals {
             self.apply_open_journals()?;
-        }
-        if truncate {
-            let path = self.root.join(DB_FILE);
-            let conn = db::open_new_writer(&self.root, self.lock_wait)?;
-            db::truncate_wal(&conn, &path, std::time::Instant::now())?;
         }
         if after.archive_forgets {
             self.apply_pending_archive_forgets()?;

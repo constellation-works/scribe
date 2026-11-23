@@ -75,10 +75,9 @@ pub struct SessionForget {
     pub number: Option<NonZeroU64>,
     /// Stored messages deleted.
     pub messages: usize,
-    /// Segments whose text was blanked.
+    /// Segments deleted.
     pub segments: usize,
-    /// Moved-aside record and checkpoint files under `pre-sqlite-<date>/`
-    /// deleted.
+    /// Archived record and checkpoint files scheduled for erasure.
     pub files: usize,
     /// Whether it was switched on, and is now off.
     pub was_on: bool,
@@ -140,7 +139,10 @@ impl Store {
         };
         for row in found.records {
             match row {
-                Ok((_, record)) => loaded.records.push(record),
+                Ok((_, record)) if !loaded.forgotten.contains_key(&record.id) => {
+                    loaded.records.push(record);
+                }
+                Ok(_) => {}
                 Err(bad) => loaded.skipped.push((
                     bad.id,
                     Skipped {
@@ -497,51 +499,67 @@ impl Store {
         Ok(out)
     }
 
-    /// Forget the session `input` names (`s-<n>` or its provider id) for
-    /// good, under the store lock the caller holds (2_design.md §15.7):
-    /// [`rows::forget`] in one session transaction, then a `TRUNCATE`
-    /// checkpoint so the deleted pages leave the WAL, then its moved-aside
-    /// files deleted, the one exception to `pre-sqlite-<date>/` being kept.
-    /// A session that is on is switched off in the same transaction, and
-    /// stays off. An already-forgotten result reports whether a rebuild
-    /// checkpoint an older build left was deleted and the WAL truncated.
+    /// Erase session data and detach dependent records in the transaction
+    /// the typed hook uses for its audit. The tombstone also drives replay
+    /// of filesystem cleanup after commit.
     pub(super) fn forget_session_locked(
         &self,
         input: &SessionId,
         now: OffsetDateTime,
     ) -> Result<SessionForgetOutcome> {
-        let id = self.resolve_session(input)?;
-        let number = self.load_sessions()?.numbers.get(&id).copied();
-        let outcome = self.sessions_tx(|tx| tx.forget(&id, now))?;
-        let erased = match outcome {
-            Some(rows::ForgetOutcome::Erased(erased)) => erased,
-            Some(rows::ForgetOutcome::Already { checkpoints }) => {
-                if checkpoints > 0 {
-                    db::truncate_wal_of(&self.root, self.lock_wait)?;
+        let id = match self.resolve_session_or_handoff(input) {
+            Ok(id) => id,
+            Err(error @ Error::SessionNotFound { .. }) => {
+                let known = self
+                    .with_conn(|conn, path| rows::has_group_membership(conn, path, input))?
+                    || self
+                        .load_entries()?
+                        .0
+                        .iter()
+                        .any(|entry| crate::handoff::session_ids(entry).contains(input));
+                if !known {
+                    return Err(error);
                 }
-                return Ok(SessionForgetOutcome::Already {
-                    id,
-                    number,
-                    cleaned: checkpoints > 0,
-                });
+                input.clone()
             }
-            None => {
-                return Err(Error::SessionNotFound {
-                    id: id.clone(),
-                    path: rows::db_path(&self.root),
-                });
-            }
+            Err(error) => return Err(error),
         };
-        db::truncate_wal_of(&self.root, self.lock_wait)?;
-        let files = self.forget_moved_files(&id)? + self.legacy_files_to_forget(&id)?;
-        Ok(SessionForgetOutcome::Forgotten(SessionForget {
-            id,
-            number,
-            messages: erased.messages,
-            segments: erased.segments,
-            files,
-            was_on: erased.was_on,
-        }))
+        let number = self.session_numbers()?.get(&id).copied();
+        let files = self.moved_files_of(&id)?.len() + self.legacy_files_to_forget(&id)?;
+        let archive_changed = !self.moved_session_documents(&id, number, now)?.is_empty();
+        let (erased, already, changed) = self.with_conn(|conn, path| {
+            if number.is_none() {
+                rows::register(conn, path, &id)?;
+            }
+            let (erased, already, mut changed) =
+                rows::forget(conn, path, &id, now)?.ok_or_else(|| Error::SessionNotFound {
+                    id: id.clone(),
+                    path: path.to_path_buf(),
+                })?;
+            changed |= self.forget_session_documents(&id, now)?;
+            changed |= self.forget_session_memory(&id, now)?;
+            if changed || files > 0 {
+                db::truncate_wal_of(&self.root, self.lock_wait)?;
+            }
+            Ok((erased, already, changed))
+        })?;
+        let number = self.session_numbers()?.get(&id).copied();
+        Ok(if already {
+            SessionForgetOutcome::Already {
+                id,
+                number,
+                cleaned: changed || files > 0 || archive_changed,
+            }
+        } else {
+            SessionForgetOutcome::Forgotten(SessionForget {
+                id,
+                number,
+                messages: erased.messages,
+                segments: erased.segments,
+                files,
+                was_on: erased.was_on,
+            })
+        })
     }
 
     /// A forgotten row is the durable obligation to remove legacy files.
@@ -557,36 +575,44 @@ impl Store {
         let Some(forgotten) = rows::read_forgotten(&self.root)? else {
             return Ok(());
         };
-        self.check_stamp()?;
-        let mut pending = false;
-        for id in forgotten.keys() {
-            if !self.moved_files_of(id)?.is_empty() {
-                pending = true;
-                break;
-            }
-        }
-        if !pending {
+        if forgotten.is_empty() {
             return Ok(());
         }
-        let lock_path = self.lock_path("archive-forget.lock")?;
-        let _lock = fsio::LockGuard::acquire(&lock_path, "forget moved session", self.lock_wait)?;
-        for id in forgotten.keys() {
-            self.forget_moved_files(id)?;
+        self.check_stamp()?;
+        let changes = |id: &SessionId,
+                       tombstone: rows::Tombstone|
+         -> Result<Vec<(PathBuf, Option<Vec<u8>>)>> {
+            let mut changes =
+                self.moved_session_documents(id, Some(tombstone.number), tombstone.at)?;
+            changes.extend(
+                self.moved_files_of(id)?
+                    .into_iter()
+                    .map(|path| (path, None)),
+            );
+            Ok(changes)
+        };
+        for (id, tombstone) in forgotten {
+            if changes(&id, tombstone)?.is_empty() {
+                continue;
+            }
+            let lock_path = self.lock_path(super::documents::ARCHIVE_FORGET_LOCK)?;
+            let _lock =
+                fsio::LockGuard::acquire(&lock_path, "forget moved session", self.lock_wait)?;
+            let mut changes = changes(&id, tombstone)?;
+            // Rewrite documents that reference archived handoff ids before
+            // deleting the files that identify them.
+            changes.sort_by_key(|(_, content)| content.is_none());
+            for (path, content) in changes {
+                match content {
+                    Some(bytes) => fsio::write_atomic(&path, &bytes)?,
+                    None => fsio::remove_private(&path)?,
+                }
+            }
         }
         Ok(())
     }
 
-    /// Delete `id`'s record and rebuild checkpoint files from every
-    /// `pre-sqlite-<date>/sessions*/<yyyy>/<mm>/`. Returns how many went.
-    fn forget_moved_files(&self, id: &SessionId) -> Result<usize> {
-        let files = self.moved_files_of(id)?;
-        for path in &files {
-            fsio::remove_private(path)?;
-        }
-        Ok(files.len())
-    }
-
-    /// The files [`Self::forget_moved_files`] would delete for `id`.
+    /// Archived record and checkpoint files belonging to `id`.
     fn moved_files_of(&self, id: &SessionId) -> Result<Vec<PathBuf>> {
         let mut found = Vec::new();
         for moved in fsio::list_dir(&self.root)? {
@@ -604,7 +630,7 @@ impl Store {
                 if sessions
                     .file_name()
                     .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.starts_with(SESSIONS_DIR))
+                    .is_some_and(|n| super::documents::is_moved_variant(n, SESSIONS_DIR))
                     && fsio::inspect_subdir(&sessions)?
                 {
                     found.extend(Self::session_files_of(&sessions, id)?);
@@ -739,5 +765,40 @@ fn prepare_target(target: &Path) -> Result<()> {
             WriteRefusal::ExportTargetExists,
             format!("{} exists and is not a directory", target.display()),
         )),
+    }
+}
+
+/// The existing session-show shape, populated solely from a tombstone.
+/// It is never listed, exported as a record or offered as evidence.
+pub(super) fn forgotten_record(id: &SessionId, at: OffsetDateTime) -> SessionRecord {
+    use crate::{Label, Project, SessionStatus};
+    SessionRecord {
+        id: id.clone(),
+        status: SessionStatus::Final,
+        active: false,
+        keep_active: false,
+        active_change: None,
+        cataloged_by: None,
+        rebuilt_by: None,
+        project: Project::sanitized("deleted"),
+        topics: Default::default(),
+        related: Vec::new(),
+        links: Vec::new(),
+        terms: Vec::new(),
+        provider: Label::sanitized("deleted", "deleted"),
+        host: Label::sanitized("deleted", "deleted"),
+        created: at,
+        updated: at,
+        title: String::new(),
+        cwd: String::new(),
+        started: at,
+        on_since: at,
+        scribed_through: None,
+        passes: 0,
+        next_open: 0,
+        log: Vec::new(),
+        summary: String::new(),
+        goals: String::new(),
+        next: String::new(),
     }
 }

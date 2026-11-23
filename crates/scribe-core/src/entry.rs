@@ -302,6 +302,23 @@ pub struct Cite {
     pub cwd: String,
 }
 
+impl Cite {
+    /// The source session of this citation was erased.
+    #[must_use]
+    pub fn is_deleted(&self) -> bool {
+        self.session.as_str() == "deleted" && self.line == 0
+    }
+
+    pub(crate) fn mark_deleted(&mut self) {
+        self.session = SessionId::deleted();
+        self.message = None;
+        self.at = OffsetDateTime::UNIX_EPOCH;
+        self.prompt_sha256.clear();
+        self.line = 0;
+        self.cwd.clear();
+    }
+}
+
 /// Daniel's checked typed instruction that authorized an agent to settle a
 /// claim or retire or forget an entry (docs/design/scribe/2_design.md §12.3, §12.7).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -17,12 +17,8 @@
 //! - **Header-only rows.** A session switched on but never passed has a row
 //!   with `has_record = 0`; a cataloged one never switched on has
 //!   `has_switch = 0`.
-//! - **Forgotten rows** (schema 4). `#scribe forget s-<n>` ([`forget`])
-//!   deletes the session's messages, its words and its rebuild checkpoint,
-//!   and stamps `forgotten`. The row stays, so `s-<n>` is never reused, and
-//!   no write fills it again: a record write or switching it on is refused
-//!   `session_forgotten`. A checkpoint an older build left is omitted from
-//!   export and removed by the next forget or by schema 8.
+//! - **Forgotten rows.** The provider id, short id and forget timestamp
+//!   stay. The record and switch are removed, and their id cannot be reused.
 //!
 //! The functions take a connection or a transaction the caller opened; the
 //! store holds its lock around every write.
@@ -240,17 +236,35 @@ pub(in crate::store) fn read_sessions(root: &Path) -> Result<Option<Sessions>> {
     Ok(found)
 }
 
-/// Forgotten session IDs and timestamps, without loading session payloads.
+/// A forgotten row's short id and forget time, for archive cleanup.
+#[derive(Clone, Copy, Debug)]
+pub(in crate::store) struct Tombstone {
+    pub number: NonZeroU64,
+    pub at: OffsetDateTime,
+}
+
+/// Forgotten session ids, without loading session payloads.
 /// `None` means sessions have not moved into the database yet.
 pub(in crate::store) fn read_forgotten(
     root: &Path,
-) -> Result<Option<BTreeMap<SessionId, OffsetDateTime>>> {
+) -> Result<Option<BTreeMap<SessionId, Tombstone>>> {
     let (found, _) = read(root, |conn, path| {
         super::refuse_newer(conn, path)?;
         if !moved(conn).map_err(|e| Fallible::from_sqlite("read", path, e))? {
             return Ok(None);
         }
         forgotten(conn, path).map(Some).map_err(Fallible::Failed)
+    })?;
+    Ok(found)
+}
+
+/// Check the tombstone without decoding any session record or switch.
+pub(in crate::store) fn read_is_forgotten(root: &Path, id: &SessionId) -> Result<bool> {
+    let (found, _) = read(root, |conn, path| {
+        if super::refuse_newer(conn, path)? < 4 {
+            return Ok(false);
+        }
+        is_forgotten(conn, id).map_err(|e| Fallible::from_sqlite("read", path, e))
     })?;
     Ok(found)
 }
@@ -390,13 +404,16 @@ pub(in crate::store) fn load(conn: &Connection, db: &Path) -> Result<Sessions> {
         });
     }
     out.control = control(conn, db)?;
-    out.forgotten = forgotten(conn, db)?;
+    out.forgotten = forgotten(conn, db)?
+        .into_iter()
+        .map(|(id, tombstone)| (id, tombstone.at))
+        .collect();
     Ok(out)
 }
 
 /// When each forgotten session was forgotten; none before schema 4, which
 /// a reader of a database no writer has migrated yet still sees.
-fn forgotten(conn: &Connection, db: &Path) -> Result<BTreeMap<SessionId, OffsetDateTime>> {
+fn forgotten(conn: &Connection, db: &Path) -> Result<BTreeMap<SessionId, Tombstone>> {
     let err = |e| db_error("read sessions from", db, e);
     let version: u32 = conn
         .query_row("PRAGMA user_version", [], |row| row.get(0))
@@ -419,13 +436,15 @@ fn forgotten(conn: &Connection, db: &Path) -> Result<BTreeMap<SessionId, OffsetD
         let id: SessionId = id.parse().map_err(|e| Error::corrupt(row_path(db, n), e))?;
         let at = OffsetDateTime::parse(&at, &time::format_description::well_known::Rfc3339)
             .map_err(|e| Error::corrupt(row_path(db, n), format!("forgotten: {e}")))?;
-        out.insert(id, at);
+        let number = NonZeroU64::new(u64::try_from(n).unwrap_or(0))
+            .ok_or_else(|| Error::corrupt(row_path(db, n), "row id is not positive"))?;
+        out.insert(id, Tombstone { number, at });
     }
     Ok(out)
 }
 
 /// Whether `id` has a forgotten row.
-fn is_forgotten(conn: &Connection, id: &SessionId) -> rusqlite::Result<bool> {
+pub(super) fn is_forgotten(conn: &Connection, id: &SessionId) -> rusqlite::Result<bool> {
     conn.query_row(
         "SELECT EXISTS (SELECT 1 FROM sessions
          WHERE provider_session = ?1 AND forgotten IS NOT NULL)",
@@ -446,41 +465,46 @@ pub(in crate::store) fn forgotten_refusal(id: &SessionId, what: &str) -> Error {
 pub(in crate::store) struct Erased {
     /// Its `messages` rows deleted.
     pub messages: usize,
-    /// Its segments whose text was blanked.
+    /// Its segment rows deleted.
     pub segments: usize,
     /// Whether it was switched on, and is now off.
     pub was_on: bool,
 }
 
-/// What [`forget`] did to a session that has a row.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::store) enum ForgetOutcome {
-    /// It was already forgotten. `checkpoints` is a rebuild checkpoint an
-    /// older build left, which this call removed.
-    Already {
-        /// Stale `rebuild_checkpoints` rows deleted.
-        checkpoints: usize,
-    },
-    /// The first forget.
-    Erased(Erased),
+/// A joined session can be known before it writes its first captured turn.
+pub(in crate::store) fn has_group_membership(
+    conn: &Connection,
+    path: &Path,
+    id: &SessionId,
+) -> Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM group_members WHERE session = ?1)",
+        [id.as_str()],
+        |row| row.get(0),
+    )
+    .map_err(|e| db_error("read group membership in", path, e))
 }
 
-/// Forget the session `id` (§15.7): delete its `messages`, its pending
-/// `now` candidates, its terms (the user's words) and its rebuild
-/// checkpoint; blank its segments' text and its summary, goals and next;
-/// switch it off; stamp `forgotten`. The row, its id, title, headings,
-/// topics and links stay, so cites to it resolve to a forgotten session.
-/// The FTS5 index is optimized when a message went, so no term of one
-/// stays in it; the caller checkpoints the WAL after the commit. `None`
-/// when `id` has no row. An already-forgotten session still drops a
-/// rebuild checkpoint an older build left ([`ForgetOutcome::Already`]);
-/// the caller checkpoints the WAL when that removed a row.
+/// Allocate an id for a session previously known only by a handoff or membership.
+pub(in crate::store) fn register(conn: &Connection, db: &Path, id: &SessionId) -> Result<()> {
+    conn.execute(
+        "INSERT INTO sessions(provider_session, has_record, has_switch) VALUES (?1, 0, 0)
+         ON CONFLICT(provider_session) DO NOTHING",
+        [id.as_str()],
+    )
+    .map_err(|e| db_error("register a session in", db, e))?;
+    Ok(())
+}
+
+/// Erase the session and its directly owned rows. A tombstone keeps both
+/// ids and the first forget timestamp. Reapplying also cleans residue from
+/// older versions and reports whether that cleanup changed anything.
 pub(in crate::store) fn forget(
     conn: &Connection,
     db: &Path,
     id: &SessionId,
     now: OffsetDateTime,
-) -> Result<Option<ForgetOutcome>> {
+) -> Result<Option<(Erased, bool, bool)>> {
     let err = |e| db_error("forget a session in", db, e);
     let row: Option<(i64, bool, bool)> = conn
         .query_row(
@@ -494,49 +518,64 @@ pub(in crate::store) fn forget(
     let Some((n, already, was_on)) = row else {
         return Ok(None);
     };
-    if already {
-        // The first forget already returned. A checkpoint written after it,
-        // by a build that did not refuse the forgotten session, is still
-        // plaintext and still goes.
-        let checkpoints = conn
-            .execute("DELETE FROM rebuild_checkpoints WHERE session = ?1", [n])
-            .map_err(err)?;
-        return Ok(Some(ForgetOutcome::Already { checkpoints }));
-    }
     let messages = conn
         .execute("DELETE FROM messages WHERE session = ?1", [id.as_str()])
         .map_err(err)?;
-    conn.execute(
-        "UPDATE groups SET summary = NULL WHERE summary IS NOT NULL
-         AND id = (SELECT group_id FROM group_members WHERE session = ?1)",
-        [id.as_str()],
-    )
-    .map_err(err)?;
-    conn.execute("DELETE FROM now_pending WHERE session = ?1", [id.as_str()])
+    let segments = conn
+        .execute("DELETE FROM segments WHERE session = ?1", [n])
         .map_err(err)?;
-    for table in ["session_terms", "rebuild_checkpoints"] {
-        conn.execute(&format!("DELETE FROM {table} WHERE session = ?1"), [n])
+    let mut changed = messages + segments;
+    for table in ["session_terms", "rebuild_checkpoints", "session_links"] {
+        changed += conn
+            .execute(&format!("DELETE FROM {table} WHERE session = ?1"), [n])
             .map_err(err)?;
     }
-    let segments = conn
+    for (table, key) in [
+        ("now_pending", "session"),
+        ("pass_signals", "session"),
+        ("codex_cursors", "session"),
+        ("marks", "session"),
+    ] {
+        changed += conn
+            .execute(
+                &format!("DELETE FROM {table} WHERE {key} = ?1"),
+                [id.as_str()],
+            )
+            .map_err(err)?;
+    }
+    changed += super::groups::forget_session(conn, db, id)?;
+    changed += conn
         .execute(
-            "UPDATE segments SET text = '' WHERE session = ?1 AND text <> ''",
-            [n],
+            "DELETE FROM session_links WHERE type = 'continues' AND target = ?1",
+            [id.as_str()],
         )
         .map_err(err)?;
-    conn.execute(
-        "UPDATE sessions SET
-             forgotten = ?2,
-             summary = CASE WHEN has_record = 1 THEN '' END,
-             goals = CASE WHEN has_record = 1 THEN '' END,
-             next = CASE WHEN has_record = 1 THEN '' END,
-             next_open = CASE WHEN has_record = 1 THEN 0 END,
-             sw_on = CASE WHEN has_switch = 1 THEN 0 END,
-             sw_due = CASE WHEN has_switch = 1 THEN 0 END
-         WHERE id = ?1",
-        (n, stamp(now)),
-    )
-    .map_err(err)?;
+    changed += conn
+        .execute(
+            "UPDATE sessions SET sw_pending_links = (SELECT json_group_array(json(link.value))
+             FROM json_each(sw_pending_links) AS link
+             WHERE NOT (link.value ->> 'type' = 'continues' AND link.value ->> 'session' = ?1))
+         WHERE EXISTS (SELECT 1 FROM json_each(sw_pending_links) AS link
+             WHERE link.value ->> 'type' = 'continues' AND link.value ->> 'session' = ?1)",
+            [id.as_str()],
+        )
+        .map_err(err)?;
+    let clear = RECORD
+        .iter()
+        .map(|(name, _)| format!("{} = NULL", quoted(name)))
+        .chain(SWITCH.iter().map(|(name, _)| format!("sw_{name} = NULL")))
+        .collect::<Vec<_>>()
+        .join(", ");
+    changed += conn
+        .execute(
+            &format!(
+                "UPDATE sessions SET forgotten = coalesce(forgotten, ?2),
+             has_record = 0, has_switch = 0, summary = NULL, goals = NULL, next = NULL, {clear}
+             WHERE id = ?1 AND (forgotten IS NULL OR has_record = 1 OR has_switch = 1)"
+            ),
+            (n, stamp(now)),
+        )
+        .map_err(err)?;
     if messages > 0 {
         conn.execute(
             "INSERT INTO messages_fts (messages_fts) VALUES ('optimize')",
@@ -544,11 +583,15 @@ pub(in crate::store) fn forget(
         )
         .map_err(err)?;
     }
-    Ok(Some(ForgetOutcome::Erased(Erased {
-        messages,
-        segments,
-        was_on,
-    })))
+    Ok(Some((
+        Erased {
+            messages,
+            segments,
+            was_on,
+        },
+        already,
+        changed > 0,
+    )))
 }
 
 /// Every segment, by row: its metadata object and its text, in order.
@@ -692,6 +735,11 @@ pub(in crate::store) fn put_record(
             .map_err(err)?;
     }
     for (i, link) in record.links.iter().enumerate() {
+        if link.kind == crate::LinkType::Continues
+            && is_forgotten(conn, &link.session).map_err(err)?
+        {
+            continue;
+        }
         conn.execute(
             "INSERT INTO session_links (session, position, type, target) VALUES (?1, ?2, ?3, ?4)",
             (
@@ -772,7 +820,7 @@ pub(in crate::store) fn put_control(
             continue;
         }
         let corrupt = |e: String| Error::corrupt(db, format!("switch {id}: {e}"));
-        if switch.on && is_forgotten(conn, id).map_err(err)? {
+        if is_forgotten(conn, id).map_err(err)? {
             return Err(forgotten_refusal(id, "it cannot be switched on again"));
         }
         let obj = object(switch).map_err(corrupt)?;
@@ -794,7 +842,7 @@ pub(in crate::store) fn put_control(
         }
     }
     for (id, message) in &after.codex_cursors {
-        if before.codex_cursors.get(id) != Some(message) {
+        if before.codex_cursors.get(id) != Some(message) && !is_forgotten(conn, id).map_err(err)? {
             conn.execute(
                 "INSERT INTO codex_cursors (session, message) VALUES (?1, ?2)
                  ON CONFLICT (session) DO UPDATE SET message = excluded.message",
@@ -900,23 +948,37 @@ pub(in crate::store) fn export_rows(
                 let value = export_sql_value(row.get::<_, Sql>(i).map_err(err)?);
                 obj.insert(name.clone(), value);
             }
+            // A database last written by an older build can still carry
+            // the original header on its tombstone.
+            if table == "sessions" && obj.get("forgotten").is_some_and(|v| !v.is_null()) {
+                for (name, value) in &mut obj {
+                    match name.as_str() {
+                        "id" | "provider_session" | "forgotten" => {}
+                        "has_record" | "has_switch" => *value = Value::from(0),
+                        _ => *value = Value::Null,
+                    }
+                }
+            }
             out.push((table, Value::Object(obj)));
         }
     }
     Ok(out)
 }
 
-/// The `SELECT` [`export_rows`] runs for one table. A forgotten session's
-/// rebuild checkpoint is plaintext the forget was supposed to remove, so
-/// JSONL export leaves it out even when the row is still there (schema 4
-/// and newer; the version 8 migration deletes it on the next write).
+/// The `SELECT` [`export_rows`] runs for one table. Deletion residue from
+/// older builds is omitted even on a read-only database.
 fn export_select(table: &str, order: &str, version: u32) -> String {
-    if table == "rebuild_checkpoints" && version >= 4 {
+    if version >= 4
+        && matches!(
+            table,
+            "rebuild_checkpoints" | "segments" | "session_terms" | "session_links"
+        )
+    {
         return format!(
-            "SELECT c.* FROM rebuild_checkpoints AS c
+            "SELECT c.* FROM {table} AS c
              JOIN sessions AS s ON s.id = c.session
              WHERE s.forgotten IS NULL
-             ORDER BY c.{order}"
+             ORDER BY {order}"
         );
     }
     format!("SELECT * FROM {table} ORDER BY {order}")
@@ -1024,15 +1086,6 @@ impl<'c> SessionTx<'c> {
         now: OffsetDateTime,
     ) -> Result<(Option<super::Journal>, usize)> {
         super::memory::stage(&self.tx, &self.path, self.started, commit, now)
-    }
-
-    /// Forget a session ([`forget`]).
-    pub(in crate::store) fn forget(
-        &self,
-        id: &SessionId,
-        now: OffsetDateTime,
-    ) -> Result<Option<ForgetOutcome>> {
-        forget(&self.tx, &self.path, id, now)
     }
 
     /// Commit.

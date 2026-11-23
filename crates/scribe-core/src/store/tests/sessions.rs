@@ -415,6 +415,83 @@ fn a_pass_window_that_fails_inside_its_transaction_writes_nothing() {
     );
 }
 
+#[test]
+fn session_forget_retires_single_source_memory_and_keeps_other_occurrences() {
+    let dir = private_tempdir();
+    let store = Store::open(dir.path().join("store"));
+    let redactor = Redactor::default();
+    let first = session("first", T0);
+    let second = session("second", T0 + time::Duration::hours(1));
+    let sole = "Private forgotten source appointment";
+    for (record, drafts) in [
+        (&first, vec![draft(sole), draft("Shared event")]),
+        (&second, vec![draft("Shared event")]),
+    ] {
+        store
+            .write_pass_window(
+                record.clone(),
+                None,
+                PassWrite::Settle(false),
+                &[],
+                Some(&memory(drafts)),
+                &[],
+                &redactor,
+            )
+            .unwrap();
+    }
+    let items = store.memory_view().unwrap().now;
+    assert_eq!(items.len(), 2, "{items:?}");
+    assert_eq!(
+        items
+            .iter()
+            .find(|i| i.title == "Shared event")
+            .unwrap()
+            .sources
+            .len(),
+        2
+    );
+    let cite = Cite {
+        session: second.id.clone(),
+        message: None,
+        at: T0,
+        prompt_sha256: "0".repeat(64),
+        line: 1,
+        cwd: String::from("/work"),
+    };
+    // Interruption after the transaction commits must not lose the erasure.
+    CRASH_AFTER_COMMIT.with(|crash| crash.set(true));
+    assert!(
+        store
+            .settle(&Settle::ForgetSession(first.id.clone()), &cite, T0)
+            .is_err()
+    );
+    assert_eq!(
+        store.refuse_forgotten(&first.id).unwrap_err().code(),
+        "session_forgotten"
+    );
+    assert_eq!(
+        store.memory_view().unwrap().now[0].sources,
+        vec![second.id.clone()]
+    );
+    store
+        .settle(&Settle::ForgetSession(first.id.clone()), &cite, T0)
+        .unwrap();
+    let items = store.memory_view().unwrap().now;
+    assert_eq!(items.len(), 1, "{items:?}");
+    assert_eq!(items[0].title, "Shared event");
+    assert_eq!(items[0].sources, vec![second.id.clone()]);
+    let conn = rusqlite::Connection::open(store.root().join(db::DB_FILE)).unwrap();
+    let count: u32 = conn
+        .query_row(
+            "SELECT count(*) FROM memory_messages WHERE session = ?1",
+            [first.id.as_str()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 0);
+    assert!(!on_disk(store.root(), sole));
+}
+
 /// Plaintext an older `session rebuild` could store on a forgotten session.
 const STALE_CHECKPOINT: &str = "forgotten-checkpoint-plaintext-9f3a";
 /// Plaintext of a checkpoint that belongs to a session that was not forgotten.
@@ -575,7 +652,7 @@ fn jsonl_export_omits_a_preexisting_forgotten_checkpoint_until_upgrade_erases_it
             &Redactor::default(),
         )
         .unwrap();
-    assert_eq!(user_version(&root), 13);
+    assert_eq!(user_version(&root), 14);
     assert_eq!(checkpoint_record(&root, "s-1"), None);
     assert!(
         checkpoint_record(&root, "s-2")
@@ -721,7 +798,7 @@ fn schema_nine_retries_cleanup_left_by_an_older_writer() {
     reader.execute_batch("ROLLBACK").unwrap();
     drop(reader);
     write().unwrap();
-    assert_eq!(user_version(&root), 13);
+    assert_eq!(user_version(&root), 14);
     assert!(!on_disk(&root, STALE_CHECKPOINT));
     assert!(
         checkpoint_record(&root, "s-2")

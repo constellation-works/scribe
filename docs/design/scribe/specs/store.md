@@ -1,6 +1,6 @@
 ---
 type: design
-summary: "Spec: store — layout, scribe.db (phase 4: messages with FTS5, WAL, read-only copies; phase 5: the memory journal and pass signals; phase 6: sessions, switches, Codex cursors and rebuild checkpoints as rows, s-<n> ids, store migrate and export), memory files (profile, now items, milestones), record files with YAML frontmatter (format 25: memory files migrated from memory items; format 24: a claim's context paragraph; format 23: the user author channel; format 22: marks.json and the annotation entry; format 21: a working item's preference_proposal; format 20: memory consolidation and promotion; format 19: memory items; format 18: entry removal_instruction apart from the approval instruction; format 17: issue records; format 16: entry outcome on a pass-written idea; format 15: instructed approval said and closed_reason covered; format 14: candidate statement and subject, entry stated_by; format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
+summary: "Spec: store — layout, scribe.db (phase 4: messages with FTS5, WAL, read-only copies; phase 5: the memory journal and pass signals; phase 6: sessions, switches, Codex cursors and rebuild checkpoints as rows, s-<n> ids, store migrate and export), memory files (profile, now items, milestones), record files with YAML frontmatter (format 30: withdrawn claims and deleted source markers; format 25: memory files migrated from memory items; format 24: a claim's context paragraph; format 23: the user author channel; format 22: marks.json and the annotation entry; format 21: a working item's preference_proposal; format 20: memory consolidation and promotion; format 19: memory items; format 18: entry removal_instruction apart from the approval instruction; format 17: issue records; format 16: entry outcome on a pass-written idea; format 15: instructed approval said and closed_reason covered; format 14: candidate statement and subject, entry stated_by; format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
 last_validated: 2026-11-22
 ---
 
@@ -10,7 +10,7 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-The code writes format 29 and reads formats 1–29. Format 29 adds groups and seats in SQLite schema 9. SQLite schema 11 adds group turn capture and closing summaries. SQLite schema 12 adds optional `groups.slug` and a unique partial index for open slugs. Format 28 adds an optional `handoff_mode` (`continue` or `new`) to entries; SQLite schema 7 adds its nullable column, and older databases read it as null until the next write migrates them. SQLite schema 8 removes stale rebuild checkpoints for forgotten sessions; export omits them before that migration runs. Schema 10 records completion of the required WAL cleanup, retrying after a busy reader, a busy writer, or interruption, including on stores already at schema 9. Format 26 moves the
+The code writes format 30 and reads formats 1–30. Format 30 permits withdrawn claims, deleted citations and legacy memory items retired with their sources erased. Format 29 adds groups and seats in SQLite schema 9. SQLite schema 11 adds group turn capture and closing summaries. SQLite schema 12 adds optional `groups.slug` and a unique partial index for open slugs. Format 28 adds an optional `handoff_mode` (`continue` or `new`) to entries; SQLite schema 7 adds its nullable column, and older databases read it as null until the next write migrates them. SQLite schema 8 removes stale rebuild checkpoints for forgotten sessions; export omits them before that migration runs. Schema 10 records completion of the required WAL cleanup, retrying after a busy reader, a busy writer, or interruption, including on stores already at schema 9. Format 26 moves the
 sessions into `scribe.db`
 ([2_design.md §15.7](../2_design.md#157-storage), phase 6): records,
 switches, Codex cursors and rebuild checkpoints become rows (schema version
@@ -20,7 +20,7 @@ and `control.json` stays as the format stamp alone; see
 [Sessions in scribe.db](#sessions-in-scribedb-phase-6). Format 27 (phase 7)
 introduced moving the other kinds into `scribe.db`; the format-27 release
 wrote the format stamps, including `control.json`, at 27. The current
-format-29 build retains that migration and stamps at 29 after its first
+format-30 build retains that migration and stamps at 30 after its first
 eligible store write transaction moves every kind still in files, sessions
 first. A standalone audit line does not start that move: it is inserted
 without waiting, or spooled under `audit-spool/` while the store is still in
@@ -128,7 +128,7 @@ user's file could pass for one of Daniel's records.
 ├── pre-sqlite-<yyyy-mm-dd>/             0700, the files the move took in (`sessions/`, `entries/`, the JSON documents, `audit.jsonl`, `.codex-<id>.lock`), kept except when a forget erases a session or an entry from them
 ├── locks/codex-<id>.lock                0600, the Codex ingestion lock of a session (phase 6)
 ├── locks/rebuild-<id>.lock              0600, the rebuild lock of a session (phase 6)
-├── locks/archive-forget.lock            0600, serializes `pre-sqlite-*` rewrites during entry forget
+├── locks/archive-forget.lock            0600, serializes `pre-sqlite-*` rewrites during entry and session forget
 ├── proposals.json                       0600, optional until the move (formats 1–26); after it an empty format stamp
 ├── tags.json                            0600, optional (introduced at format 5, S12); after the move an empty format stamp
 ├── pickups.json                         0600, optional (introduced at format 8); after the move an empty format stamp
@@ -198,7 +198,7 @@ Only `config.toml` and `memory/`'s files remain as primary data files outside th
   `rebuild_checkpoints` rows whose session is forgotten (a
   checkpoint an older build could write after the forget) and adds no
   table. `scribe export --as jsonl` leaves those rows out even before that
-  migration runs. Version 9 adds the group, seat and membership tables. Before advancing past versions 8 or 9, a writer truncates the WAL; if another reader or writer connection keeps the checkpoint from completing, the write fails and leaves the version available for retry. Version 10 records that cleanup without changing tables. Version 11 adds summary, membership capture time and cursor, and group-only message provenance. Because old memberships have no join time, their capture starts at migration. Messages that already exist retain their independent session-pass provenance. Version 12 adds the nullable `groups.slug` column and the unique partial index `group_open_slug` on `groups(slug) WHERE slug IS NOT NULL AND closed IS NULL`. Every application table is `STRICT`; the one virtual table, `messages_fts`, is an FTS5 index (`CREATE VIRTUAL TABLE`), and a virtual table takes no `STRICT` option. Times are RFC 3339 UTC text.
+  migration runs. Version 9 adds the group, seat and membership tables. Before advancing past versions 8 or 9, a writer truncates the WAL; if another reader or writer connection keeps the checkpoint from completing, the write fails and leaves the version available for retry. Version 10 records that cleanup without changing tables. Version 11 adds summary, membership capture time and cursor, and group-only message provenance. Because old memberships have no join time, their capture starts at migration. Messages that already exist retain their independent session-pass provenance. Version 12 adds the nullable `groups.slug` column and the unique partial index `group_open_slug` on `groups(slug) WHERE slug IS NOT NULL AND closed IS NULL`. Version 13 adds `deferred_ancestry` for pending first-prompt ancestry checks when a session starts before transcript creation. Version 14 permits the `withdrawn` reason on claims and reserves deleted handoff ids. Every application table is `STRICT`; the one virtual table, `messages_fts`, is an FTS5 index (`CREATE VIRTUAL TABLE`), and a virtual table takes no `STRICT` option. Times are RFC 3339 UTC text.
 - **Errors.** Contention is `store_locked`: a write that waits past the lock
   wait (`SQLITE_BUSY` or `SQLITE_LOCKED`) fails with holder
   `another scribe.db writer`, and a schema 8 or 9 WAL cleanup blocked by an
@@ -209,7 +209,7 @@ Only `config.toml` and `memory/`'s files remain as primary data files outside th
   `store_database`; readers set no busy timeout, so a read SQLite reports
   busy is one too.
 
-### Tables (version 12)
+### Tables (version 14)
 
 | Table | Columns (type, constraint) | Written by |
 |---|---|---|
@@ -239,6 +239,7 @@ Only `config.toml` and `memory/`'s files remain as primary data files outside th
 | `marks` | `position INTEGER PRIMARY KEY`; the fields of one `marks.json` record | the `Stop` hook's marker outcomes (version 5) |
 | `pickups` | `position INTEGER PRIMARY KEY`; the fields of one `pickups.json` record | `entry pickup` (version 5) |
 | `audit` | `id INTEGER PRIMARY KEY`; `format INTEGER NOT NULL`, the line's own format (1–5); the event's fields (`issue` as JSON text, `NULL` for none); `spool TEXT UNIQUE`, the spool file a line was drained from or the `audit.jsonl:<offset>:<sha256>` key of an imported log line, else `NULL` | every audited command; the move; the spool drain (version 5) |
+| `deleted_handoffs` | `id TEXT PRIMARY KEY NOT NULL` | session forget reserves erased handoff ids (version 14) |
 | `pending_archive_forgets` | `id INTEGER PRIMARY KEY`; `entry TEXT NOT NULL` (`<tag>-<n>`); `salt TEXT NOT NULL`, 64 hex characters; `digests TEXT NOT NULL`, JSON array of `{len, sha256}` salted SHA-256 digests of erased texts (never cleartext); `created TEXT NOT NULL` | committed in the entry forget's transaction when `pre-sqlite-*` archives exist or are pending move-aside; drained after commit by that write or any restarted write (version 6) |
 
 Group turns use the same `messages` and FTS5 rows, with `group_only = 1` for
@@ -303,40 +304,43 @@ leaves the group open for retry.
 
 ### Forgetting a session
 
-`#scribe forget s-<n>`, or the provider's session id in full, typed as a
-whole line (2_design.md §15.7). No CLI verb forgets a session. Under `.lock`,
-in one session transaction:
+Daniel types `#scribe forget s-<n>`, or uses the full provider session id
+(2_design.md §15.7). The verified typed hook is the deletion route.
 
-- **Deleted:** the session's `messages` rows and their FTS5 terms
-  (`optimize`), its `now_pending` candidates, its `session_terms` (the
-  user's words) and its rebuild checkpoint.
-- **Blanked:** every segment's `text`, and the record's `summary`, `goals`
-  and `next` (`next_open` 0).
-- **Switched off for good:** `sw_on` and `sw_due` become 0 when the session
-  is on; it is not refused for being on.
-- **Kept:** the row with its `id`, provider id, title, segment headings,
-  topics, related and links, now stamped `forgotten`. An `AUTOINCREMENT`
-  id is never reused, so `s-<n>` names this row for good. Entries, memory
-  items and claims that cite the session keep their own text, and their
-  cites resolve to a forgotten session.
+- The session transaction deletes its segments, terms, links, switch, cursor,
+  rebuild checkpoint, pending candidates and indexed message rows, including
+  group-only turns. `secure_delete` and FTS5 `optimize` discard old contents.
+  Only the short id, provider id and forget timestamp survive in the tombstone.
+- The transaction deletes handoffs related to the session and reserves their
+  ids in `deleted_handoffs`. It removes the member from its seat, removes an
+  empty seat, invalidates the group's derived summary and drops successor
+  `continues` links from records and pending switches.
+- Open source claims become `rejected` with `closed_reason: withdrawn`.
+  Their reason, quote and other text evidence are cleared. An approved
+  entry remains readable, with `cite.session: deleted` and its source
+  message unset. `session:deleted` also replaces a matching explicit
+  citation. A claim with an erased source cannot recreate a missing entry.
+- Memory occurrences and pending candidates for the session are removed.
+  A current item without any source is retired from the live files, and
+  source-free history is removed. An unmigrated `m-<n>` item can retain a
+  retired header with no statement or occurrences. The memory journal
+  applies file changes after commit and drops old copies of those files.
+- The hook's single audit line commits with the changes and uses `s-<n>`
+  as its target. Post-commit cleanup truncates the WAL and removes session
+  record and checkpoint files and matching document data in each
+  `pre-sqlite-*` archive. The forgotten row drives retry after interrupted
+  cleanup and after migration moves legacy files. A repeated forget can
+  also repair residue from an earlier version.
 
-After the commit, a `TRUNCATE` checkpoint empties the WAL, and the
-session's record and checkpoint files are deleted from every
-`pre-sqlite-<date>/sessions*/`. That is the one deletion in a directory
-scribe otherwise never deletes from. The forgotten row also serves as a durable
-erasure obligation: after migration moves files, and after later writes, scribe
-retries archive cleanup. Repeating forget removes residue left by older builds.
+The provider transcript stays at its original path. New exports omit erased
+content. A previously delivered export in the caller's directory is a
+separate backup. Markdown export omits tombstones, and JSONL retains the
+id-only session row with its forget timestamp. JSONL leaves out stale
+forgotten checkpoints even before a write removes them.
 
-A forgotten session takes no write. Writing its record (a pass, a rebuild,
-a catalog) and switching it on are refused with `session_forgotten`. A
-rebuild or a catalog of one is refused before any model call, and keeps no
-rebuild checkpoint. Rebuild checks again after acquiring its per-session lock,
-so a forget completed while it waited is refused before a model call.
-A checkpoint an older build wrote after the forget is left out of
-`scribe export --as jsonl` before any later write. The version 8 migration
-deletes that row on the next store write, and forgetting the session again
-deletes it too. A repeated forget also removes any remaining archived record and checkpoint files. The hook's
-audit line has the session's `s-<n>` as its target.
+A forgotten session takes no record, message, group, rebuild or switch write.
+Explicit passes, catalogs and `/scribe on` report `session_forgotten`.
+Rebuild also checks after acquiring its per-session lock.
 
 ### Sessions in scribe.db (phase 6)
 
@@ -361,7 +365,7 @@ audit line has the session's `s-<n>` as its target.
   `pre-sqlite-<yyyy-mm-dd>/`. If a move on the same date reuses an existing
   archive directory, each colliding moved child gets the next numeric suffix
   inside it (for example, `pre-sqlite-2026-10-15/entries.2/` and
-  `pre-sqlite-2026-10-15/proposals.json.2`); scribe never deletes the archive.
+  `pre-sqlite-2026-10-15/proposals.json.2`); scribe keeps the archive directory and cleans erasures within it.
   It then writes `control.json` as the format stamp. A move cut off after
   the commit finishes at the next write. A write that refuses leaves the
   files where they are; at format 26, a write transaction that touches no
@@ -444,9 +448,10 @@ audit line has the session's `s-<n>` as its target.
   format, and a torn line is counted and left in the moved file. After the
   commit the files go to `pre-sqlite-<yyyy-mm-dd>/`, and `control.json`,
   `proposals.json`, `tags.json`, `marks.json` and `pickups.json` are
-  written as empty stamps at format 29, so a format-28 build refuses the
+  written as empty stamps at format 30, so a format-29 build refuses the
   store instead of writing files beside the database. The format-27 release
-  wrote these stamps at 27, and the format-28 release wrote them at 28. A
+  wrote these stamps at 27, the format-28 release at 28, and the format-29
+  release at 29. A
   standalone audit
   line does not trigger this move; a later eligible transaction imports the
   records and drains its spool. A write that refuses rolls the move back
@@ -486,18 +491,19 @@ audit line has the session's `s-<n>` as its target.
   event. A torn line, which the reader skips, is dropped if it contains the
   text. Other files in `pre-sqlite-<date>/` are the user's and are never
   rewritten.
-- **Formats 27–28.** Format 27 introduced the move of every kind still in
+- **Formats 27–30.** Format 27 introduced the move of every kind still in
   files into `scribe.db`, sessions first, and stamped `control.json` at 27.
   The format-28 release kept that migration path and stamped `control.json`
-  at 28 after the move. The current format-29 build keeps that migration path
-  and stamps `control.json` at 29. Format 28 adds optional `handoff_mode`
+  at 28 after the move. Format 29 adds groups and seats. The current
+  format-30 build keeps that migration path and stamps `control.json` at 30.
+  Format 28 adds optional `handoff_mode`
   (`continue` or `new`) to entries; SQLite schema 7 adds its nullable column.
   The upgrade registry remains append-only for persisted document shapes; SQL
   schema changes use migrations. The existing steps stay so the move can
   read a store left at any older format for the support window; phase 8
   removes them with the file decoders.
 - **`scribe export <dir>`** writes records into a separate directory. `--as markdown` writes the
-  file store's files at format 29 (`sessions/`, `entries/<tag>/<id>.md`,
+  file store's files at format 30 (`sessions/`, `entries/<tag>/<id>.md`,
   `control.json`, `proposals.json`, `tags.json`, `marks.json`,
   `pickups.json`, `audit.jsonl`), which a build reads as a store and moves
   in again unchanged. Each exported audit line keeps its original audit

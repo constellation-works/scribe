@@ -530,11 +530,31 @@ impl Store {
         if !self.root_exists()? {
             return Ok(MemoryView::default());
         }
-        let (now, mut skipped) = self.read_items(NOW_DIR, format::decode_now)?;
-        let (milestones, more) = self.read_items(MILESTONES_DIR, format::decode_milestone)?;
+        let (mut now, mut skipped) = self.read_items(NOW_DIR, format::decode_now)?;
+        let (mut milestones, more) = self.read_items(MILESTONES_DIR, format::decode_milestone)?;
         skipped.extend(more);
         let (legacy, more) = self.legacy_items()?;
         skipped.extend(more);
+        if let Some(forgotten) = super::db::sessions::read_forgotten(&self.root)? {
+            let live = |id: &SessionId| !forgotten.contains_key(id);
+            now.retain_mut(|item| {
+                let sourced = !item.sources.is_empty();
+                item.sources.retain(live);
+                if item
+                    .raised
+                    .as_ref()
+                    .is_some_and(|raised| !live(&raised.session))
+                {
+                    item.raised = None;
+                }
+                !sourced || !item.sources.is_empty()
+            });
+            milestones.retain_mut(|item| {
+                let sourced = !item.sources.is_empty();
+                item.sources.retain(live);
+                !sourced || !item.sources.is_empty()
+            });
+        }
         let dbv = db::memory_view(&self.root)?;
         let file = self.profile_text()?;
         let profile = if dbv.open_journal {
@@ -629,9 +649,14 @@ impl Store {
             return Ok((Vec::new(), Vec::new()));
         }
         let (now, _) = self.read_items(NOW_DIR, format::decode_now)?;
+        let forgotten = super::db::sessions::read_forgotten(&self.root)?.unwrap_or_default();
         let pending = db::pending_read(&self.root, session)?;
         Ok((
             now.iter()
+                .filter(|item| {
+                    item.sources.is_empty()
+                        || item.sources.iter().any(|id| !forgotten.contains_key(id))
+                })
                 .map(|n| MemoryContext {
                     stem: n.stem.to_string(),
                     date: crate::record::nullable_date::format(n.date),
@@ -735,8 +760,13 @@ impl Store {
                     .sort_by(|a, b| a.stem.as_str().cmp(b.stem.as_str()));
             }
         } else {
-            // A format-24 `m-<n>.md`: a journal only removes one.
             files.legacy.retain(|i| i.id.as_str() != stem);
+            if let Some(content) = &op.content {
+                files
+                    .legacy
+                    .push(format::decode_memory(&path, content.as_bytes(), stem)?);
+                files.legacy.sort_by_key(|i| i.id.number());
+            }
         }
         Ok(())
     }
@@ -955,6 +985,103 @@ impl Store {
             })?;
             Ok((item, changed))
         })
+    }
+
+    /// Remove session occurrences and retire items without any other source.
+    /// The existing journal keeps the file changes in step with the audit.
+    pub(super) fn forget_session_memory(
+        &self,
+        session: &SessionId,
+        now: OffsetDateTime,
+    ) -> Result<bool> {
+        let conn = db::open_writer(&self.root, self.lock_wait)?;
+        let mut writer = Writer::new(&conn, &self.root);
+        let mut files = self.files_after_journals(&mut writer)?;
+        let mut commit = MemoryCommit::default();
+        let dir = self.memory_dir();
+        for item in &mut files.now {
+            let had_source = item.sources.contains(session);
+            let was_raised = item.raised.as_ref().is_some_and(|r| &r.session == session);
+            if had_source || was_raised {
+                item.sources.retain(|id| id != session);
+                if was_raised {
+                    item.raised = None;
+                }
+                let path = dir.join(NOW_DIR).join(format!("{}.md", item.stem));
+                commit.ops.push(if had_source && item.sources.is_empty() {
+                    remove_op(NOW_DIR, &item.stem)
+                } else {
+                    now_op(&path, item)?
+                });
+            }
+        }
+        for item in &mut files.milestones {
+            if item.sources.contains(session) {
+                item.sources.retain(|id| id != session);
+                let path = dir.join(MILESTONES_DIR).join(format!("{}.md", item.stem));
+                commit.ops.push(if item.sources.is_empty() {
+                    remove_op(MILESTONES_DIR, &item.stem)
+                } else {
+                    milestone_op(&path, item)?
+                });
+            }
+        }
+        for item in &mut files.legacy {
+            let before = item.occurrences.len();
+            item.occurrences.retain(|o| &o.session != session);
+            let source_removed = item.occurrences.len() != before;
+            let acknowledged = item
+                .acknowledged
+                .as_ref()
+                .is_some_and(|a| &a.session == session);
+            if source_removed || acknowledged {
+                if acknowledged {
+                    item.acknowledged = None;
+                }
+                if source_removed && item.occurrences.is_empty() {
+                    item.status = crate::memory::legacy::MemoryStatus::Retired;
+                    item.statement.clear();
+                    item.retirement_reason = None;
+                }
+                let rel = format!("{}.md", item.id);
+                let path = dir.join(&rel);
+                let bytes = format::encode_memory(&path, item)?;
+                let content = String::from_utf8(bytes).map_err(|e| Error::corrupt(&path, e))?;
+                commit.ops.push(FileOp {
+                    path: rel,
+                    content: Some(content),
+                });
+            }
+        }
+        let changed = writer.forget_session(session)?;
+        let journal = self.commit_memory(&mut writer, &commit, now)?;
+        let scrubbed = writer.scrub_journal(journal.as_ref(), |op| {
+            let (Some(content), Some(stem)) = (&op.content, op.path.strip_suffix(RECORD_EXT))
+            else {
+                return Ok(false);
+            };
+            let path = self.op_path(&op.path)?;
+            if let Some(stem) = stem.strip_prefix("now/") {
+                let item = format::decode_now(&path, content.as_bytes(), stem)?;
+                return Ok(item.sources.contains(session)
+                    || item.raised.as_ref().is_some_and(|r| &r.session == session));
+            }
+            if let Some(stem) = stem.strip_prefix("milestones/") {
+                return Ok(format::decode_milestone(&path, content.as_bytes(), stem)?
+                    .sources
+                    .contains(session));
+            }
+            if stem.starts_with("m-") {
+                let item = format::decode_memory(&path, content.as_bytes(), stem)?;
+                return Ok(item.occurrences.iter().any(|o| &o.session == session)
+                    || item
+                        .acknowledged
+                        .as_ref()
+                        .is_some_and(|a| &a.session == session));
+            }
+            Ok(false)
+        })?;
+        Ok(changed || scrubbed || journal.is_some())
     }
 
     /// Forget a `now` item or milestone for good for the agent `author`
@@ -1217,6 +1344,15 @@ impl Store {
     ) -> Result<RefreshWritten> {
         self.prepare_dir(&self.root)?;
         self.write(|| {
+        if let Some(forgotten) = super::db::sessions::read_forgotten(&self.root)?
+            && inputs.sessions.iter().any(|session| forgotten.keys().any(|id| id.as_str() == session.id))
+        {
+            return Err(refusal(
+                WriteRefusal::MemoryChanged,
+                "a session was forgotten while the profile was rebuilt; run 'scribe memory refresh' again",
+            ));
+        }
+
         let path = self.memory_dir();
         let masks = |text: &str| redactor.mask(text) != text;
         let (written, journal) = self.memory_write(redactor, now, |writer, files| {

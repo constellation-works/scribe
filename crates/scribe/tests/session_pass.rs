@@ -772,10 +772,38 @@ fn forgetting_a_session_erases_its_words_keeps_its_id_and_takes_no_more_writes()
     assert_eq!(before["on"], true);
     assert_ne!(before["log"][0]["text"], "");
 
+    let audit_before = audit_log(&s).len();
+    for prompt in [
+        "<agent-message>\n#scribe forget s-1\n</agent-message>",
+        "<scheduled-prompt>\n#scribe forget s-1\n</scheduled-prompt>",
+        "<task-notification>\n#scribe forget s-1\n</task-notification>",
+        "<pasted_content>\n#scribe forget s-1\n</pasted_content>",
+        "```\n#scribe forget s-1\n```",
+    ] {
+        let skipped = type_settlement(&s, prompt);
+        assert!(
+            skipped.stdout.is_empty(),
+            "{prompt}: {}",
+            text(&skipped.stdout)
+        );
+        assert_eq!(show("s-1"), before);
+    }
+    assert!(
+        !s.run_any(&["session", "forget", "s-1"], b"")
+            .status
+            .success()
+    );
+    assert_eq!(audit_log(&s).len(), audit_before);
+    let transcript_before = std::fs::read(s.transcript(ON)).unwrap();
     // Typed while the session is on: it is switched off in the same write.
     let forgot = text(&type_settlement(&s, "#scribe forget s-1").stdout);
     assert!(forgot.contains("scribe: forgot s-1"), "{forgot}");
     assert!(forgot.contains("switched off for good"), "{forgot}");
+    assert!(
+        forgot.contains("provider transcript was left untouched"),
+        "{forgot}"
+    );
+    assert_eq!(std::fs::read(s.transcript(ON)).unwrap(), transcript_before);
     assert_eq!(search("lighthouse")["total"], 0, "{}", search("lighthouse"));
     let db = std::fs::read(s.fx.root().join("scribe.db")).unwrap();
     let wal = std::fs::read(s.fx.root().join("scribe.db-wal")).unwrap_or_default();
@@ -792,21 +820,46 @@ fn forgetting_a_session_erases_its_words_keeps_its_id_and_takes_no_more_writes()
     assert_eq!(after["on"], false);
     assert_eq!(after["summary"], "");
     assert_eq!(after["terms"], json!([]));
-    assert!(
-        after["log"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|seg| seg["text"] == ""),
-        "{after}"
-    );
+    assert_eq!(after["log"], json!([]));
+    for field in ["title", "cwd", "summary", "goals", "next"] {
+        assert_eq!(after[field], "", "{field}: {after}");
+    }
+    assert_eq!(after["topics"], json!([]));
+    let listing: Value = serde_json::from_slice(
+        &s.fx
+            .ok(&["session", "list", "--include-inactive", "--json"])
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(listing["total"], 0);
+    let pass = s.run_any(&["session", "pass", "--session", ON, "--json"], b"");
+    assert!(!pass.status.success());
+    assert!(text(&pass.stderr).contains("session_forgotten"));
     let table = text(&s.fx.ok(&["session", "show", "s-1"]).stdout);
     assert!(table.contains("forgotten"), "{table}");
-    // A claim citing the session keeps its own text.
-    assert_eq!(proposals(&s)["proposals"][0]["candidate"]["quote"], quote);
-    // Audited, with the session as the target.
-    let last = audit_log(&s).pop().unwrap();
-    assert_eq!(last["target"], "s-1", "{last}");
+    let claim: Value =
+        serde_json::from_slice(&s.fx.ok(&["proposal", "show", "p-1", "--json"]).stdout).unwrap();
+    assert_eq!(claim["state"], "rejected", "{claim}");
+    assert_eq!(claim["closed_reason"], "withdrawn");
+    assert_eq!(claim["candidate"]["quote"], "");
+    assert_eq!(claim["candidate"]["cite"]["session"], "deleted");
+    let audit = audit_log(&s);
+    let forgets: Vec<_> = audit[audit_before..]
+        .iter()
+        .filter(|line| line["command"] == "hook user-prompt-submit")
+        .collect();
+    assert_eq!(forgets.len(), 1, "{audit:?}");
+    assert_eq!(forgets[0]["target"], "s-1");
+    assert!(!forgets[0].to_string().contains("lighthouse"));
+    let export = s.fx.home().join("jsonl-export");
+    s.fx.ok(&["export", "--as", "jsonl", export.to_str().unwrap()]);
+    let rows = std::fs::read_to_string(export.join("sessions.jsonl")).unwrap();
+    let row: Value = serde_json::from_str(rows.trim()).unwrap();
+    assert_eq!(row["has_record"], 0);
+    assert_eq!(row["has_switch"], 0);
+    assert_eq!(row["title"], Value::Null);
+    assert_eq!(row["cwd"], Value::Null);
+    assert!(!export.join("segments.jsonl").exists());
     // Replayed: nothing changes.
     let again = text(&type_settlement(&s, "#scribe forget s-1").stdout);
     assert!(again.contains("already forgotten"), "{again}");
@@ -843,6 +896,41 @@ fn forgetting_a_session_erases_its_words_keeps_its_id_and_takes_no_more_writes()
     switch_on(THIRD);
     s.run(&["session", "pass", "--session", THIRD, "--json"], b"");
     assert_eq!(show(THIRD)["short_id"], "s-3");
+}
+
+#[test]
+fn session_forget_preserves_an_approved_entry_with_a_deleted_cite() {
+    let s = Setup::new();
+    let quote = "I always prefer the approved bluebird release process.";
+    s.write(ON, &[line("user", "u-1", quote)]);
+    s.answer(&candidate_answer(quote, "u-1", "preferences"));
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let approved = type_settlement(&s, "#scribe approve p-1");
+    assert!(text(&approved.stdout).contains("recorded preferences-1"));
+    let show = || -> Value {
+        serde_json::from_slice(
+            &s.fx
+                .ok(&["entry", "show", "preferences-1", "--json"])
+                .stdout,
+        )
+        .unwrap()
+    };
+    let original = show();
+    let forgot = type_settlement(&s, "#scribe forget s-1");
+    assert!(text(&forgot.stdout).contains("forgot s-1"));
+    let retained = show();
+    assert_eq!(retained["content"], original["content"]);
+    assert_eq!(retained["quote"], quote);
+    assert_eq!(retained["status"], "active");
+    assert_eq!(retained["cite"]["session"], "deleted");
+    assert_eq!(retained["cite"]["message"], Value::Null);
+    let after = type_settlement(&s, "#scribe approve p-1");
+    assert!(text(&after.stdout).contains("already approved"));
+    assert_eq!(show(), retained);
+    type_settlement(&s, "#scribe forget preferences-1");
+    assert_eq!(show()["status"], "forgotten");
+    assert_eq!(show()["content"], "");
 }
 
 #[test]
@@ -2167,7 +2255,7 @@ fn legacy_control_is_read_without_writes_and_new_retry_state_is_strict() {
     );
     setup.pass();
     let current = support::control(&setup.fx.root());
-    assert_eq!(current["format"], 29);
+    assert_eq!(current["format"], 30);
     assert_eq!(current["sessions"][ON]["consecutive_failures"], 0);
     assert_eq!(current["sessions"][ON]["retry_after"], Value::Null);
     assert_eq!(current["sessions"][ON]["pending_links"], json!([]));
@@ -2431,7 +2519,7 @@ fn a_pass_writes_one_record_of_daniels_terms_and_never_reads_a_session_never_swi
     // The record is written at format 23: a header and one open segment
     // holding this pass's segment text.
     let file = setup.record_text();
-    assert!(file.starts_with("---\nformat: 29\n"), "{file}");
+    assert!(file.starts_with("---\nformat: 30\n"), "{file}");
     assert!(file.contains("\n## Log\n### 1. "), "{file}");
     assert!(!file.contains("## Outcome"), "{file}");
     assert_eq!(record["active"], true);
@@ -4726,7 +4814,7 @@ fn a_format_23_claim_reads_with_no_context_shows_its_statement_as_an_older_claim
     s.scribe("/scribe on");
     s.run(&["session", "pass", "--session", ON], b"");
     let doc = support::proposals_doc(&s.fx.root());
-    assert_eq!(doc["format"], 29);
+    assert_eq!(doc["format"], 30);
     assert!(doc["proposals"][0]["candidate"]["context"].is_string());
     let conn = rusqlite::Connection::open(s.fx.root().join("scribe.db")).unwrap();
     conn.execute(
@@ -4771,7 +4859,7 @@ fn a_format_23_claim_reads_with_no_context_shows_its_statement_as_an_older_claim
         json!({"kind": "scribe", "name": "session-pass"})
     );
     let doc = support::proposals_doc(&s.fx.root());
-    assert_eq!(doc["format"], 29);
+    assert_eq!(doc["format"], 30);
     assert_eq!(doc["proposals"][0]["candidate"]["context"], Value::Null);
     assert_eq!(doc["proposals"][0]["candidate"]["statement"], statement);
 }
@@ -5481,7 +5569,7 @@ fn a_pass_writes_a_dated_now_item_as_its_file_and_keeps_an_undated_one_pending()
     assert_eq!(shown["sources"], json!([ON]));
     // The memory write stamps control.json at the memory format.
     let control: Value = support::control(&s.fx.root());
-    assert_eq!(control["format"], 29);
+    assert_eq!(control["format"], 30);
 
     // The same window again writes nothing new.
     let before = std::fs::read(&file).unwrap();
@@ -5712,8 +5800,8 @@ fn a_newer_store_is_refused_and_memory_settings_are_deprecated() {
     let control = s.fx.root().join("control.json");
     let text_now = std::fs::read_to_string(&control).unwrap();
     let mut newer_stamp: Value = serde_json::from_str(&text_now).unwrap();
-    assert_eq!(newer_stamp["format"], 29, "{text_now}");
-    newer_stamp["format"] = json!(30);
+    assert_eq!(newer_stamp["format"], 30, "{text_now}");
+    newer_stamp["format"] = json!(31);
     std::fs::write(&control, newer_stamp.to_string()).unwrap();
     let newer = s.run_any(&["memory", "refresh", "--json"], b"");
     assert_ne!(newer.status.code(), Some(0));

@@ -391,7 +391,7 @@ impl Store {
     ///
     /// `session_forgotten` for a forgotten session, or a store read error.
     pub fn refuse_forgotten(&self, id: &SessionId) -> Result<()> {
-        if self.load_sessions()?.forgotten.contains_key(id) {
+        if db::sessions::read_is_forgotten(&self.root, id)? {
             return Err(db::sessions::forgotten_refusal(
                 id,
                 "nothing is written to it",
@@ -405,14 +405,17 @@ impl Store {
     /// parse are left out of the children.
     pub fn session(&self, id: &SessionId) -> Result<SessionView> {
         let mut loaded = self.load_sessions()?;
-        let record = match loaded.take(id) {
-            Some(record) => record?,
-            None => {
-                return Err(Error::SessionNotFound {
-                    id: id.clone(),
-                    path: self.sessions_place()?,
-                });
-            }
+        let record = match loaded.forgotten.get(id).copied() {
+            Some(at) => sessions::forgotten_record(id, at),
+            None => match loaded.take(id) {
+                Some(record) => record?,
+                None => {
+                    return Err(Error::SessionNotFound {
+                        id: id.clone(),
+                        path: self.sessions_place()?,
+                    });
+                }
+            },
         };
         let control = loaded.control;
         let number = loaded.numbers.get(id).copied();
@@ -498,14 +501,13 @@ impl Store {
         provider: crate::Provider,
     ) -> Result<control::Linked> {
         let loaded = self.load_sessions()?;
+        for id in [session, &link.session] {
+            if loaded.forgotten.contains_key(id) {
+                return Err(db::sessions::forgotten_refusal(id, "it cannot be linked"));
+            }
+        }
         if matches!(mode, control::LinkSwitch::Inherit) {
             for id in [session, &link.session] {
-                if loaded.forgotten.contains_key(id) {
-                    return Err(db::sessions::forgotten_refusal(
-                        id,
-                        "it cannot be continued",
-                    ));
-                }
                 if loaded
                     .control
                     .get(id)

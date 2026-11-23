@@ -25,15 +25,20 @@ pub(super) struct ClaimsWritten {
 }
 
 impl Store {
-    /// Candidate ids are reserved without creating an entry file. Every entry
-    /// allocator includes them, including rejected and approved proposals.
+    /// Include reserved candidate ids and deleted handoff ids when
+    /// allocating an entry id.
     pub(super) fn candidate_reserved_ids(&self) -> Result<Vec<EntryId>> {
-        Ok(self
+        let mut ids: Vec<_> = self
             .proposals()?
             .into_iter()
             .filter(|p| p.kind == ProposalKind::Candidate)
             .map(|p| p.older)
-            .collect())
+            .collect();
+        let deleted = self
+            .read_db(super::db::docs::deleted_handoffs)?
+            .unwrap_or_default();
+        ids.extend(deleted);
+        Ok(ids)
     }
 
     /// Caller holds the pass lock and has checked the record revision and seals.
@@ -413,6 +418,14 @@ impl Store {
 
     /// Caller holds the lock. What happened to the reserved entry file.
     pub(super) fn write_candidate_entry(&self, proposal: &Proposal) -> Result<CandidateWrite> {
+        if proposal
+            .candidate
+            .as_ref()
+            .is_some_and(|c| c.cite.is_deleted())
+        {
+            // The former source can no longer be used to create an entry.
+            return Ok(CandidateWrite::Present);
+        }
         let config = self.config()?;
         let review_after = config.tags.get(proposal.older.tag()).and_then(|tag| {
             proposal

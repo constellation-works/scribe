@@ -15,11 +15,10 @@
 //! - forget: entry text and evidence, proposal quotes of it, and related
 //!   candidate quotes, evidence and reasons are cleared; session records stay;
 //! - forget a session (`s-<n>` or its provider id; 2_design.md §15.7): its
-//!   stored messages, log text, summary, goals, next and terms are erased,
-//!   it is switched off for good, and its row stays as forgotten; entries,
-//!   memory and claims citing it keep their own text.
+//!   scribe's stored session data is erased and the id is kept as a tombstone.
+//!   The provider transcript stays in place.
 //!
-//! A change is one audit line whose target is the proposal or entry; a
+//! A change is one audit line whose target is the proposal, entry or session; a
 //! refusal is one line with its code; an instruction already applied (a
 //! replayed hook) changes nothing and writes none. There is no other way to
 //! settle: no CLI verb and no Orbit tool reaches this code (4_decisions.md,
@@ -128,7 +127,7 @@ pub(super) fn run(settling: &Settling, turn: &Turn, ctx: &Context) -> Reply {
             done(
                 name.clone(),
                 format!(
-                    "scribe: forgot {name} — {} stored messages and its log text are erased{off}; its id stays as forgotten, and entries, memory and claims citing it keep their own text",
+                    "scribe: forgot {name} — the session record and {} stored messages are erased{off}; the provider transcript was left untouched",
                     forgot.messages
                 ),
             )
@@ -137,7 +136,9 @@ pub(super) fn run(settling: &Settling, turn: &Turn, ctx: &Context) -> Reply {
             let name = number.map_or_else(|| id.to_string(), |n| format!("s-{n}"));
             done(
                 name.clone(),
-                format!("scribe: {name} is already forgotten — removed a stale rebuild checkpoint"),
+                format!(
+                    "scribe: {name} is already forgotten — cleared remaining scribe data, including any stale checkpoint; the provider transcript was left untouched"
+                ),
             )
         }
         Settled::Already(what) => Reply {

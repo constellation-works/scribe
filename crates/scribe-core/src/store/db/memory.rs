@@ -352,6 +352,84 @@ impl<'a> Writer<'a> {
         Ok(out)
     }
 
+    /// Remove the session's memory links and history sources. History with
+    /// no source left must not supply text or a migration hint.
+    pub(in crate::store) fn forget_session(&self, session: &SessionId) -> Result<bool> {
+        let fail = |e| self.err(e);
+        let id = session.as_str();
+        let mut changed = self
+            .conn
+            .execute("DELETE FROM memory_messages WHERE session = ?1", [id])
+            .map_err(fail)?;
+        changed += self.conn.execute(
+            "DELETE FROM memory_history WHERE EXISTS (SELECT 1 FROM json_each(sources) WHERE value = ?1)
+             AND NOT EXISTS (SELECT 1 FROM json_each(sources) WHERE value <> ?1)",
+            [id],
+        ).map_err(fail)?;
+        changed += self
+            .conn
+            .execute(
+                "UPDATE memory_history SET sources = (SELECT json_group_array(value)
+                FROM json_each(sources) WHERE value <> ?1)
+             WHERE EXISTS (SELECT 1 FROM json_each(sources) WHERE value = ?1)",
+                [id],
+            )
+            .map_err(fail)?;
+        Ok(changed > 0)
+    }
+
+    /// Older journal operations are copies of affected files. A new forget
+    /// operation takes their place during replay, including across a crash.
+    /// The caller plans from the latest state after all open operations,
+    /// so an older open operation carrying the erased source already has
+    /// either a replacement or a later operation shadowing it.
+    pub(in crate::store) fn scrub_journal(
+        &self,
+        replace: Option<&Journal>,
+        contains_source: impl Fn(&FileOp) -> Result<bool>,
+    ) -> Result<bool> {
+        let fail = |e| self.err(e);
+        let mut select = self
+            .conn
+            .prepare("SELECT id, ops FROM memory_journal WHERE ops <> '[]'")
+            .map_err(fail)?;
+        let rows = select
+            .query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(fail)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(fail)?;
+        let mut changed = false;
+        for (id, raw) in rows {
+            if replace.is_some_and(|j| j.id == id) {
+                continue;
+            }
+            let ops: Vec<FileOp> =
+                serde_json::from_str(&raw).map_err(|e| Error::corrupt(&self.path, e))?;
+            let mut keep = Vec::with_capacity(ops.len());
+            for op in &ops {
+                let superseded =
+                    replace.is_some_and(|j| j.ops.iter().any(|new| new.path == op.path));
+                if !(superseded || contains_source(op)?) {
+                    keep.push(op);
+                }
+            }
+            if keep.len() != ops.len() {
+                let raw =
+                    serde_json::to_string(&keep).map_err(|e| Error::corrupt(&self.path, e))?;
+                self.conn
+                    .execute(
+                        "UPDATE memory_journal SET ops = ?2 WHERE id = ?1",
+                        (id, raw),
+                    )
+                    .map_err(fail)?;
+                changed = true;
+            }
+        }
+        Ok(changed)
+    }
+
     /// Commit `commit` in one immediate transaction: its rows, and a journal
     /// row when it has file operations, which this returns.
     pub(in crate::store) fn commit(

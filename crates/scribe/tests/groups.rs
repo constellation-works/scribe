@@ -995,7 +995,7 @@ fn old_schema_reads_empty_without_migration_then_upgrades_on_open() {
     };
     assert_eq!(version(), 8);
     open(&f);
-    assert_eq!(version(), 13);
+    assert_eq!(version(), 14);
 }
 
 #[test]
@@ -1139,6 +1139,69 @@ fn desktop_clear_with_continue_handoff_prepends_handoff_and_inherits_seat() {
         invoke(&f, B, &["group", "show", "g-1"], 0)["seats"][0]["transcripts"],
         json!([A, B])
     );
+
+    let store = scribe_core::Store::open(f.root());
+    let parent = A.parse().unwrap();
+    let successor = B.parse().unwrap();
+    store
+        .update_control(|state| {
+            scribe_core::control::switch(
+                state,
+                &parent,
+                &scribe_core::control::Switch::On,
+                time::OffsetDateTime::now_utc(),
+            )
+        })
+        .unwrap();
+    let now = time::OffsetDateTime::now_utc();
+    store
+        .link_session(
+            &successor,
+            &scribe_core::SessionLink {
+                kind: scribe_core::LinkType::Continues,
+                session: parent,
+            },
+            true,
+            now,
+        )
+        .unwrap();
+    let archive = f.root().join("pre-sqlite-session-forget-test");
+    f.ok(&["export", archive.to_str().unwrap()]);
+    let archived_handoff = archive.join("entries/handoff/handoff-1.md");
+    assert!(archived_handoff.is_file());
+    let before = std::fs::read(&child_b).unwrap();
+    let reply = hook(
+        &f,
+        &["hook", "user-prompt-submit"],
+        json!({"session_id": B, "transcript_path": child_b, "cwd": f.home(),
+            "prompt": format!("#scribe forget {A}")}),
+        &[],
+    );
+    assert!(text(&reply.stdout).contains("provider transcript was left untouched"));
+    assert_eq!(std::fs::read(&child_b).unwrap(), before);
+    assert!(!archived_handoff.exists());
+    assert_eq!(
+        invoke(&f, B, &["entry", "show", "handoff-1"], 1)["code"],
+        "entry_not_found"
+    );
+    let group = invoke(&f, B, &["group", "show", "g-1"], 0);
+    let seat = &group["seats"][0];
+    assert_eq!(seat["transcripts"], json!([B]), "{group}");
+    assert_eq!(seat["role"], "reviewer");
+    assert!(seat["handoff"].is_null(), "{group}");
+    assert!(
+        store
+            .control()
+            .unwrap()
+            .get(&successor)
+            .unwrap()
+            .pending_links
+            .is_empty()
+    );
+    let ask = invoke(&f, B, &["ask", "last session", "--group", "g-1"], 0);
+    assert!(!ask.to_string().contains("Carry on."), "{ask}");
+    let brief = invoke(&f, B, &["brief", "--project", "scribe"], 0);
+    assert!(!brief.to_string().contains("Carry on."), "{brief}");
 }
 
 #[test]

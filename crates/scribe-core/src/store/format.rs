@@ -41,7 +41,7 @@ use time::OffsetDateTime;
 
 /// The newest store format: this build reads formats 1 to `FORMAT` of every
 /// document and would write `FORMAT`.
-pub(super) const FORMAT: u32 = 29;
+pub(super) const FORMAT: u32 = 30;
 
 /// Which document an upgrade step is applied to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,7 +103,13 @@ pub(super) const UPGRADES: &[Upgrade] = &[
     documents_sqlite,
     handoff_mode,
     session_groups,
+    session_forget,
 ];
+
+/// Format 29 -> 30 permits withdrawn claims and deleted source markers.
+fn session_forget(_: Document, value: serde_json::Value) -> serde_json::Result<serde_json::Value> {
+    Ok(value)
+}
 
 /// Format 28 -> 29 adds groups in SQLite schema 9. Existing file records keep their shape.
 fn session_groups(_: Document, value: serde_json::Value) -> serde_json::Result<serde_json::Value> {
@@ -2645,9 +2651,15 @@ pub(super) fn check_proposals(path: &Path, proposals: &[Proposal]) -> Result<()>
             (ProposalKind::Candidate, Some(candidate))
                 if proposal.newer.is_none()
                     && proposal.older.tag() == &candidate.tag
-                    && candidate.has_valid_provenance()
-                    && (!candidate.quote.is_empty()
-                        || proposal.state == ProposalState::Approved)
+                    && ((candidate.has_valid_provenance()
+                        && (!candidate.quote.is_empty()
+                            || proposal.state == ProposalState::Approved))
+                        || (candidate.cite.is_deleted()
+                            && proposal.state != ProposalState::Open
+                            && candidate.quote.is_empty()
+                            && candidate.stated().is_none()
+                            && candidate.evidence.is_none()
+                            && candidate.admitted.is_none()))
                     && candidate.quote.chars().count() <= 400 => {}
             (ProposalKind::Candidate, Some(_) | None)
             | (ProposalKind::Supersedes | ProposalKind::Stale, Some(_)) => {
@@ -2902,7 +2914,9 @@ pub(super) fn decode_memory(
         || (item.section == crate::memory::legacy::Section::Now && item.promotion.is_some());
     if item.statement.chars().count() > crate::memory::legacy::STATEMENT_CHARS
         || (item.sensitive && !item.section.holds_sensitive())
-        || (item.occurrences.is_empty() && !moved)
+        || (item.occurrences.is_empty()
+            && !moved
+            && !(from >= 30 && item.status == MemoryStatus::Retired && item.statement.is_empty()))
     {
         return Err(shape(
             path,
@@ -2924,8 +2938,7 @@ pub(super) fn decode_memory(
     Ok(item)
 }
 
-/// A format-24 memory item's bytes, for migration fixtures.
-#[cfg(test)]
+/// A legacy memory item's bytes, including retired items with erased sources.
 pub(super) fn encode_memory(
     path: &Path,
     item: &crate::memory::legacy::MemoryItem,

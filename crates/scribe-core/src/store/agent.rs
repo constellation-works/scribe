@@ -494,6 +494,17 @@ impl Store {
                 check_quote(tag, draft.quote.as_deref())?;
             }
             check_handoff_related(&tag.name, &draft.related)?;
+            if tag.name.as_str() == crate::handoff::HANDOFF_TAG
+                && let Some(id) = draft_session(&draft.related)
+                && let Ok(id) = id.parse::<crate::SessionId>()
+            {
+                let resolved = match self.resolve_session(&id) {
+                    Ok(resolved) => resolved,
+                    Err(Error::SessionNotFound { .. }) => id,
+                    Err(error) => return Err(error),
+                };
+                self.refuse_forgotten(&resolved)?;
+            }
         }
         if draft.handoff_mode.is_some() && tag.name.as_str() != crate::handoff::HANDOFF_TAG {
             return Err(refusal(WriteRefusal::InvalidText, "--mode applies only to handoffs"));

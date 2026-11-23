@@ -190,6 +190,8 @@ pub enum ClosedReason {
     /// approval's settlement, and its instruction when an agent approved it
     /// on Daniel's word, are kept as they were: nobody rejected it.
     Covered,
+    /// Its source was erased by a typed session forget.
+    Withdrawn,
 }
 
 impl ClosedReason {
@@ -200,6 +202,7 @@ impl ClosedReason {
             Self::TagRetired => "tag_retired",
             Self::Instructed => "instructed",
             Self::Covered => "covered",
+            Self::Withdrawn => "withdrawn",
         }
     }
 }

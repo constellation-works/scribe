@@ -43,10 +43,13 @@ quotes of it, and related candidate quotes, evidence and reasons. The
 session record stays.
 
 To erase a whole session, tell the human to type `#scribe forget s-<n>`
-(or use the session's full provider id there). This is the human's command.
-It erases stored messages and log text and switches cataloging off for good.
-Its id stays as forgotten. Entries, memory and claims citing it keep their
-own text.
+(or use the session's full provider id there). This erases scribe's session
+record, stored turns and handoffs, then leaves an id-only forgotten marker.
+Open claims from the session are withdrawn with their quotes cleared.
+Approved entries keep their text with a deleted `session:<id>` citation; the
+human can remove one with `#scribe forget <entry-id>`. The session cannot be
+cataloged or switched back on. The provider transcript stays in place. Only
+the human's typed line can forget a session.
 
 ## Hook status and model work
 

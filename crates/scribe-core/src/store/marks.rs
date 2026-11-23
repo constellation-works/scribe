@@ -115,6 +115,7 @@ impl Store {
             let mut out = Vec::with_capacity(updates.len());
             let mut changed = false;
             for (key, change) in updates {
+                self.refuse_forgotten(&key.session)?;
                 let at = marks
                     .iter()
                     .position(|m| m.session == key.session && m.is(&key.message, key.marker));
