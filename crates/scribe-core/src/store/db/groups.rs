@@ -406,9 +406,17 @@ impl Store {
                 Some(n) => n,
                 None => conn.query_row("INSERT INTO groups(title,kind,project,opened,opener,related,slug) VALUES (?1,'project',?2,?3,?4,'[]',?1) RETURNING id", params![slug, project.as_str(), stamp(now), session.as_str()], |r| r.get(0)).map_err(fail)?,
             };
-            let short: String = session.as_str().chars().take(8).collect();
-            let occupied: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM group_seats WHERE group_id=?1 AND name=?2)", params![n, short], |r| r.get(0)).map_err(fail)?;
-            let seat = if occupied { session.as_str() } else { &short };
+            let mut query = conn.prepare("SELECT EXISTS(SELECT 1 FROM group_seats WHERE group_id=?1 AND name=?2)").map_err(fail)?;
+            let mut lookup = Ok(());
+            let seat = crate::group::automatic_seat(session, |name| {
+                query.query_row(params![n, name], |r| r.get(0)).unwrap_or_else(|e| {
+                    lookup = Err(e);
+                    true
+                })
+            });
+            lookup.map_err(fail)?;
+            drop(query);
+            let seat = seat.as_str();
             conn.execute("INSERT INTO group_seats(group_id,name,role) VALUES (?1,?2,'member')", params![n, seat]).map_err(fail)?;
             conn.execute("INSERT INTO group_members(group_id,seat,session,author,joined) VALUES (?1,?2,?3,'user',?4)", params![n, seat, session.as_str(), stamp(now)]).map_err(fail)?;
             Ok(format!("g-{n}"))

@@ -196,6 +196,28 @@ pub enum SeatStart {
     Unjoined,
 }
 
+/// The automatic seat name for `session` when it joins without naming one: the
+/// first of its eight-character prefix, its full id, then the full id with a
+/// numeric suffix that `taken` does not report as held. `taken` must say true
+/// for every seat already in the group, so a join never displaces anyone.
+pub fn automatic_seat(session: &SessionId, mut taken: impl FnMut(&str) -> bool) -> crate::Label {
+    use crate::Label;
+    let id = session.as_str();
+    let short: String = id.chars().take(8).collect();
+    let stem: String = id.chars().take(Label::MAX_CHARS - 12).collect();
+    let mut name = short;
+    let mut next = [id.to_owned()]
+        .into_iter()
+        .chain((2u64..).map(|n| format!("{stem}-{n}")));
+    loop {
+        let label = Label::sanitized(&name, "member");
+        if !taken(label.as_str()) {
+            return label;
+        }
+        name = next.next().unwrap_or_default();
+    }
+}
+
 /// One caller's request to hold a seat.
 pub struct JoinGroup<'a> {
     /// Group id or prefix.

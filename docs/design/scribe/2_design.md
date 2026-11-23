@@ -6640,7 +6640,9 @@ the slug, its kind is `project`, and its project comes from the working
 directory. Open slugs are unique; group selectors and `--group` accept the
 slug. A slug the configured redactor would change is refused without echoing
 it, preserving stable lookup without storing sensitive text. Each session gets
-a seat named for its short id and the `member` role. The `group` word is
+a seat named for its short id and the `member` role; a taken short id falls
+back to the full id, then to the full id with `-2`, `-3` and so on, and a
+`group join` without `--as` reuses the seat the session already holds. The `group` word is
 read case-insensitively, as every control argument is (§5.1); the slug is
 still checked as typed, so it must be lowercase.
 The same typed line in another session joins the existing group. A session
