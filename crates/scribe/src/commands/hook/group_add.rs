@@ -135,6 +135,10 @@ fn additions(
     ) -> Result<Option<Vec<scribe_core::message::NewMessage>>, CliError>,
 ) -> Result<Vec<GroupAddition>, CliError> {
     let mut files = std::collections::BTreeMap::new();
+    // Sessions with a regular transcript in more than one provider: kept in the
+    // id universe for prefix resolution, and refused only if a named session
+    // resolves to one.
+    let mut cross_provider = std::collections::BTreeSet::new();
     // Entries named like a transcript whose file type is refused: present, so
     // a named session among them is read through the checked open, which
     // refuses it, never treated as membership only.
@@ -146,10 +150,13 @@ fn additions(
         let provider_ctx = ctx.with_provider(provider);
         let found = payload::discovered_for(&provider_ctx)?;
         for (id, path) in found.files {
-            if files.insert(id, (path, provider)).is_some() {
-                return Err(CliError::Usage(String::from(
-                    "session exists in multiple transcript providers",
-                )));
+            match files.entry(id) {
+                std::collections::btree_map::Entry::Vacant(slot) => {
+                    slot.insert((path, provider));
+                }
+                std::collections::btree_map::Entry::Occupied(slot) => {
+                    cross_provider.insert(slot.key().clone());
+                }
             }
         }
         for (id, path) in found.refused {
@@ -175,7 +182,7 @@ fn additions(
         // so a session with both is read through the checked open and refuses
         // the whole line, never backfilled from its regular transcript.
         let was_refused = refused.contains_key(&id);
-        let turns = match refused.get(&id).or_else(|| files.get(&id)) {
+        let turns = match refused.get(&id) {
             Some((path, provider)) => {
                 let turns = read_past(&ctx.with_provider(*provider), &id, path)?;
                 if was_refused && turns.is_none() {
@@ -186,7 +193,15 @@ fn additions(
                 }
                 turns
             }
-            None => None,
+            None if cross_provider.contains(&id) => {
+                return Err(CliError::Usage(format!(
+                    "session {id} exists in multiple transcript providers"
+                )));
+            }
+            None => match files.get(&id) {
+                Some((path, provider)) => read_past(&ctx.with_provider(*provider), &id, path)?,
+                None => None,
+            },
         };
         additions.push(GroupAddition { session: id, turns });
     }
