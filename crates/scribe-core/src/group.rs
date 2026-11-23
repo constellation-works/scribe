@@ -137,6 +137,9 @@ pub enum SeatStart {
     NoOpenGroups,
     /// The starting session already holds a seat.
     AlreadySeated(SeatHold),
+    /// The starting session once held a seat that a later session took. Its
+    /// row stays as history, so it holds nothing and is never appended again.
+    Replaced,
     /// Appended the starting session to the predecessor's open seat.
     Inherited {
         /// Seat the session now holds.

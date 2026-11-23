@@ -495,3 +495,70 @@ fn group_join_accepts_cleared_predecessor_without_replace_and_refuses_others() {
     cleared_transcript(&f, D, C, &[A]);
     assert_eq!(join(&f, D, "g-1", &[], 1)["code"], "seat_occupied");
 }
+
+/// Count of membership rows; a replaced session keeps its row, so the
+/// count only grows by real joins.
+fn member_rows(f: &Fixture) -> i64 {
+    rusqlite::Connection::open_with_flags(
+        f.root().join("scribe.db"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap()
+    .query_row("SELECT COUNT(*) FROM group_members", [], |r| r.get(0))
+    .unwrap()
+}
+
+#[test]
+fn restarting_a_replaced_session_names_no_seat_and_writes_nothing() {
+    let f = Fixture::new();
+    for id in [A, B, C] {
+        transcript(&f, id, &[row(id, "u", "user", QUOTE)]);
+    }
+    open(&f);
+    open(&f);
+    join(&f, A, "g-1", &[], 0);
+    join(&f, B, "g-1", &["--replace"], 0);
+    join(&f, C, "g-2", &[], 0);
+    let before = support::audit_lines(&f.root());
+    assert_eq!(member_rows(&f), 3);
+
+    // A restarts on its own transcript with no predecessor line: B holds
+    // the seat now, so A must not be reported as holding it.
+    let a_path = transcript_path(&f, A);
+    let reply = session_start(&f, A, Some(&a_path), "startup", "claude-desktop");
+    let context = reply["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(!context.contains("holds seat"), "{reply}");
+    assert!(context.contains("was replaced"), "{reply}");
+
+    // A's cleared predecessor C holds an open seat in g-2. A has a historical
+    // row, so it must not be inserted again (the session is unique).
+    let cleared = cleared_transcript(&f, A, D, &[C]);
+    let reply = session_start(&f, A, Some(&cleared), "startup", "claude-desktop");
+    let context = reply["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(!context.contains("holds seat"), "{reply}");
+    assert!(context.contains("was replaced"), "{reply}");
+    assert_eq!(member_rows(&f), 3);
+    assert_eq!(support::audit_lines(&f.root()), before);
+    assert_eq!(
+        invoke(&f, A, &["group", "show", "g-1"], 0)["seats"][0]["transcripts"],
+        json!([A, B])
+    );
+    assert_eq!(
+        invoke(&f, A, &["group", "show", "g-2"], 0)["seats"][0]["transcripts"],
+        json!([C])
+    );
+
+    // B restarting still identifies itself as the holder, with no write.
+    let b_path = transcript_path(&f, B);
+    let reply = session_start(&f, B, Some(&b_path), "startup", "claude-desktop");
+    let context = reply["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(context.contains("holds seat editor"), "{reply}");
+    assert_eq!(member_rows(&f), 3);
+    assert_eq!(support::audit_lines(&f.root()), before);
+}

@@ -6587,10 +6587,13 @@ the hook appends the new session to that seat’s chain under the predecessor’
 author, audits the write against the group id, and notes the held seat in
 `additionalContext`, without switching cataloging on or creating a session
 record. Repeating `SessionStart` keeps the existing seat with no second
-write. When open groups exist and the starting session holds no seat (no
+write. A session that a later member replaced on its seat holds none: its
+chain row stays as history, so `additionalContext` says it was replaced
+rather than naming it the holder, and it is never appended again. When open
+groups exist and the starting session holds no seat for another reason (no
 predecessor line, multiple predecessors, or a predecessor holding no open
-seat), nothing is joined and `additionalContext` tells the session to
-re-run `scribe group join`.
+seat), nothing is joined and `additionalContext` tells the session to re-run
+`scribe group join`.
 
 **Reading.** `group show <id>` and `group list` include related references,
 seat names and roles, transcript ids in join order, and the newest active
