@@ -1148,7 +1148,8 @@ a personal memory base and leave a light catalog entry, with `/scribe
 private` to stop that for one session,
 [§13.12](#1312-a-personal-base-and-a-work-layer-per-session) and
 [§13.15](#1315-what-a-session-that-is-not-switched-on-leaves). While they
-are parked an off session writes nothing.) `on` records `on_since` and marks a
+are parked an off session receives no catalog pass. Group membership can still
+permit turn capture while cataloging is off (§17).) `on` records `on_since` and marks a
 pass due; `off` stops further passes and keeps the record. `/scribe on` in a
 session that is already on is a no-op that says so.
 
@@ -3806,7 +3807,8 @@ What the parking means for the rest of this section:
 - **Sources.** While the base is parked, memory items are written **only
   from sessions switched on with `/scribe on`** (or named with `session
   catalog`, §5.8), including the personal sections (`profile`, `now`,
-  `milestones`). An off session writes nothing, as today. Where §13.3 and
+  `milestones`). An off session receives no memory pass; group consent can
+  still capture turns (§17). Where §13.3 and
   §13.8 say "a session he switched on" as the only source, that is the rule
   in force; the pointers to §13.12 describe the parked design.
 - **Fields.** Slice (a) does not add `layer`, `person` or `recurs` to an
@@ -5884,8 +5886,10 @@ with phase 4):
 
 **Messages.**
 
-- **What is stored.** Only the user's typed turns of a switched-on session,
-  with §5.3's exclusions (pasted blocks, fenced code, synthetic and meta
+- **What is stored.** A session pass stores the user's typed turns of a
+  switched-on session; group consent also permits capture from the time a
+  session joins an open group, even with cataloging off (§17). Both use
+  §5.3's exclusions (pasted blocks, fenced code, synthetic and meta
   turns). The text passes the redactor before it is written (STD-05). The
   only assistant turns stored are those a claim or a collected entry cites
   (decision 3), with `role = assistant`. (Phase 4) A turn holding one of
@@ -5903,7 +5907,8 @@ with phase 4):
     two leaves messages past the file's cursor, and the rerun of that
     window writes the same rows again. The file's cursor stays the truth
     until phase 6.
-- **Not stored.** A session that is off stores nothing, as today.
+- **Not stored.** An off session receives no catalog pass; without group
+  consent it has no group-captured turns.
 - **Forget.** `#scribe forget s-<n>` deletes the session's messages and
   segments' text, and keeps the row as `forgotten`. It replaces today's
   forget of a record file. (Phase 4) Forgetting an entry or a memory item

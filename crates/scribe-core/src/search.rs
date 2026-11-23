@@ -11,8 +11,8 @@
 //!
 //! [`messages`] ranks nothing itself: the store's FTS5 `bm25()` already
 //! ordered the stored messages (2_design.md §15.7), and it applies the same
-//! filters through each message's session record. Message scores are not
-//! comparable with the other kinds', so messages are searched only as
+//! filters through each message's session record or group provenance. Message
+//! scores are not comparable with the other kinds', so messages are searched only as
 //! `--kind message`.
 //!
 //! No I/O (STD-02 R5).
@@ -154,11 +154,10 @@ pub fn search(query: &SearchQuery, corpus: Corpus<'_>) -> Result<Found, SearchEr
 }
 
 /// The stored messages of `found` that `query`'s filters keep, as hits,
-/// best first. A message is filtered through its session's record: the
-/// record's project and topics, and the message's own time for the dates.
-/// A message whose session has no record is left out, since the session
-/// file is the truth until the sessions move into the database; an inactive
-/// session's messages are hidden unless `include_hidden`.
+/// best first. A session record supplies project and topics when present;
+/// otherwise group-only messages use their group's project and have no topics.
+/// Dates use the message's time. An inactive session's messages are hidden
+/// unless `include_hidden`.
 ///
 /// # Errors
 ///

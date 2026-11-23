@@ -272,7 +272,9 @@ leaves the group open for retry.
   sensitive-event words (loss, health, relationship; `memory::finance_word`,
   `memory::sensitive_word`). A memory item may not hold them outside `now`
   and `milestones`, and the profile job is the reader these messages are
-  for. A session that is off keeps nothing.
+  for. An off session receives no catalog pass; an open group membership
+  can still capture eligible typed turns from the time it joins, without a
+  session record or switch.
 - **When.** The pass upserts a window's messages on (`session`,
   `message`) in the transaction that writes the window's record (phase 6;
   before it, the messages committed first and the record file followed).
@@ -291,8 +293,11 @@ leaves the group open for retry.
   [Forgetting a session](#forgetting-a-session).
 - **Search.** `scribe search --kind message` matches each search token as
   a word prefix (`"<token>"*`, any of them) and orders by `bm25()`, then
-  time. Messages are filtered through their session's record; one whose
-  session has no record is not shown.
+  time. Unscoped and group-scoped search include group-only turns even
+  without a session record. A record supplies project, topics, title and
+  active status when present; otherwise group-only turns use the group's
+  project, have no topics and cite the session id. Inactive records are
+  hidden unless requested; date filters use the message time.
 
 ### Forgetting a session
 
