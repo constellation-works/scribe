@@ -6619,7 +6619,11 @@ Once the provider persists a typed turn, the prompt or Stop hook can store its
 words without a model call, beginning at the time the session joined. Only the
 session that holds the seat stores turns: while a later member holds the seat,
 the replaced session's later turns are not stored, and the turns it already
-stored stay readable until it leaves or is forgotten. Capture uses the pass's exclusions for synthetic and control turns, pasted blocks,
+stored stay readable until it leaves or is forgotten. The replaced session's
+hooks move its capture cursor past the turns it types meanwhile without storing
+them, and when the replacement leaves, the restored holder's consent window
+restarts at that moment, so turns typed during the displacement are never
+stored later. Capture uses the pass's exclusions for synthetic and control turns, pasted blocks,
 fenced code and sensitive text, plus its store redactor. Regular cataloging
 still follows the session's own switch. Explicit `#scribe` annotations keep
 their usual behavior. Leaving deletes the turns stored on group consent alone.

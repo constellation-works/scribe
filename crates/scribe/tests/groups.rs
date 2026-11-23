@@ -1172,6 +1172,47 @@ fn replaced_member_stores_no_new_turns_and_its_history_stays_readable() {
 }
 
 #[test]
+fn a_restored_seat_keeps_turns_typed_during_displacement_out_of_the_group() {
+    let f = Fixture::new();
+    let a_before = [
+        row(A, "u", "user", QUOTE),
+        row(A, "before", "user", "beforeorchid typed by A"),
+    ];
+    let a_path = transcript(&f, A, &a_before);
+    transcript(&f, B, &[row(B, "u", "user", "joining now")]);
+    open(&f);
+    join(&f, A, "g-1", &[], 0);
+    let fake = f.fake_program("claude", "#!/bin/sh\nexit 1\n");
+    let env = [("PATH", fake.to_str().unwrap())];
+    stop(&f, A, &a_path, &env);
+
+    join(&f, B, "g-1", &["--replace"], 0);
+    let mut a_turns = a_before.to_vec();
+    a_turns.push(row(A, "during", "user", "duringdisplaceorchid typed by A"));
+    transcript(&f, A, &a_turns);
+    stop(&f, A, &a_path, &env);
+
+    // B leaves: A holds the seat again and its next hooks must not backfill.
+    invoke(&f, B, &["group", "leave"], 0);
+    stop(&f, A, &a_path, &env);
+    a_turns.push(row(A, "after", "user", "afterrestoreorchid typed by A"));
+    transcript(&f, A, &a_turns);
+    stop(&f, A, &a_path, &env);
+
+    let search = |term: &str| {
+        invoke(
+            &f,
+            A,
+            &["search", term, "--kind", "message", "--group", "g-1"],
+            0,
+        )
+    };
+    assert_eq!(search("duringdisplaceorchid")["total"], 0);
+    assert_eq!(search("beforeorchid")["total"], 1);
+    assert_eq!(search("afterrestoreorchid")["total"], 1);
+}
+
+#[test]
 fn prompt_hooks_audit_newly_persisted_member_turns_once_per_turn_for_each_provider() {
     let f = Fixture::new();
     transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
