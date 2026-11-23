@@ -311,8 +311,11 @@ line has the session's `s-<n>` as its target.
   `.<id>.rebuild.md` checkpoint as a row, checks the row count against the
   files read, and adds the `record_kinds` row. After the commit it moves
   `sessions/`, `control.json` and the root's `.codex-<id>.lock` files to
-  `pre-sqlite-<yyyy-mm-dd>/` (`.2`, `.3` … when taken; scribe never deletes
-  it) and writes `control.json` as the format stamp. A move cut off after
+  `pre-sqlite-<yyyy-mm-dd>/`. If a move on the same date reuses an existing
+  archive directory, each colliding moved child gets the next numeric suffix
+  inside it (for example, `pre-sqlite-2026-10-15/entries.2/` and
+  `pre-sqlite-2026-10-15/proposals.json.2`); scribe never deletes the archive.
+  It then writes `control.json` as the format stamp. A move cut off after
   the commit finishes at the next write. A write that refuses leaves the
   files where they are; at format 26, a write transaction that touches no
   session (an entry or a tag) also leaves sessions in files. The next
