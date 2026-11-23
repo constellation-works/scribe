@@ -299,9 +299,31 @@ fn group_filters_apply_before_limits_ranking_and_lookups() {
     let f = Fixture::new();
     f.seed();
     f.config("");
+    let entry_path = f.root().join("entries/decisions/decisions-2.md");
+    let entry = std::fs::read_to_string(&entry_path).unwrap();
+    let entry = entry.replace(
+        &format!("session: {MEMBER}, message: null"),
+        &format!("session: {C}, message: null"),
+    );
+    assert!(entry.contains(&format!("session: {C}, message: null")));
+    std::fs::write(&entry_path, entry).unwrap();
     transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
     open(&f);
     join(&f, MEMBER, "g-1", &[], 0);
+    invoke(
+        &f,
+        MEMBER,
+        &[
+            "entry",
+            "update",
+            "decisions-2",
+            "--author",
+            "aide",
+            "--add-related",
+            &format!("session:{MEMBER}"),
+        ],
+        0,
+    );
     let entries = invoke(
         &f,
         A,
@@ -341,6 +363,43 @@ fn group_filters_apply_before_limits_ranking_and_lookups() {
                 .unwrap()
                 .starts_with(&format!("session:{MEMBER}"))
     }));
+    assert!(
+        found["hits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|hit| hit["cite"] != "decisions-1")
+    );
+    let model = f.fake_program(
+        "claude",
+        "#!/bin/sh\ncat > \"$HOME/ask-prompt\"\nprintf '%s\\n' '{\"type\":\"result\",\"is_error\":false,\"structured_output\":{\"status\":\"no_record\",\"answer\":\"\",\"claims\":[],\"conflicts\":[]}}'\n",
+    );
+    for prefix in [vec!["ask"], vec!["question", "ask"]] {
+        let args = [
+            prefix.as_slice(),
+            &[
+                "squash merge",
+                "--kind",
+                "entry",
+                "--group",
+                "g-1",
+                "--json",
+            ],
+        ]
+        .concat();
+        let out = f
+            .cmd(&args)
+            .env("CLAUDE_CODE_SESSION_ID", A)
+            .env("PATH", &model)
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+        let result: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(result["evidence_considered"], 1);
+        let prompt = std::fs::read_to_string(f.home().join("ask-prompt")).unwrap();
+        assert!(prompt.contains("cite=\"decisions-2\""), "{prompt}");
+        assert!(!prompt.contains("cite=\"decisions-1\""), "{prompt}");
+    }
     for args in [vec!["ask"], vec!["question", "ask"]] {
         let result = invoke(
             &f,

@@ -75,15 +75,16 @@ impl CloseEvidence {
 /// cite or an explicit session reference (as used by handoffs).
 #[must_use]
 pub fn entry_belongs(entry: &crate::Entry, members: &BTreeSet<SessionId>) -> bool {
-    if let Some(cite) = &entry.cite {
-        return members.contains(&cite.session);
-    }
     entry
-        .related
-        .iter()
-        .filter(|related| related.kind() == RelatedKind::Session)
-        .filter_map(|related| related.target().parse::<SessionId>().ok())
-        .any(|id| members.contains(&id))
+        .cite
+        .as_ref()
+        .is_some_and(|cite| members.contains(&cite.session))
+        || entry
+            .related
+            .iter()
+            .filter(|related| related.kind() == RelatedKind::Session)
+            .filter_map(|related| related.target().parse::<SessionId>().ok())
+            .any(|id| members.contains(&id))
 }
 
 /// The transcript chain of one named member.
