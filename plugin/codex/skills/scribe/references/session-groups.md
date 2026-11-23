@@ -18,7 +18,8 @@ For open, join, leave and close in Codex, put `--provider codex` before
   task, PR or repository. Open a group only when the human asks: the quote must
   be a verbatim span of one of the human's typed turns in this session.
 - **After opening.** Opening warns about any other open group in the project.
-  The opener joins separately to take a seat.
+  The opener joins separately to take a seat. Opening stores the opener's
+  earlier typed turns; they read as part of the group once it holds a seat.
 - **Join.** Run `scribe group join <id> --as <seat> --author <name> [--role <role>]`
   in the session that joins, under its own `--author`. Join when the human names
   the group and seat, or when the brief that started the session names them. A
@@ -49,11 +50,15 @@ For open, join, leave and close in Codex, put `--provider codex` before
   `scribe group join`. Codex inherits nothing. A new chat joins again, and
   until the old transcript is a day idle that join needs `--replace`, which
   the human must ask for.
-- **Stored turns.** While the group is open, a member's typed turns are stored
-  from the time they join. Explicitly adding a member with `/scribe group add`
-  also backfills eligible older typed turns. Stored turns contain the human's
-  words only and are group-only: no memory pass reads them and they make no
-  catalog entry, since a session pass reads the transcript, not these rows.
+- **Stored turns.** While the group is open, a member's typed turns are stored.
+  Stored turns contain the human's words only and are group-only: no memory
+  pass reads them and they make no catalog entry, since a session pass reads
+  the transcript, not these rows.
+- **Earlier turns.** `group open` and `group join` also store the session's
+  own earlier typed turns, from the first line of its transcript, so the line
+  that started the work is kept. Capture continues after them, storing none
+  twice. A `--replace` or clear successor stores its own earlier turns only.
+  `/scribe group add` also backfills eligible older typed turns.
 - **Capture exclusions.** Scribe excludes assistant turns, harness and
   `/scribe` control lines, pasted blocks, fenced code, and turns with a
   finance or sensitive-event word. It also excludes peer, agent and

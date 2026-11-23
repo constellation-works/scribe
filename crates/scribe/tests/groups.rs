@@ -1285,13 +1285,20 @@ fn consent_belongs_to_the_callers_own_typed_turn() {
     assert!(group["closed"].is_null());
     assert_eq!(group["seats"], json!([]));
     let db = rusqlite::Connection::open(f.root().join("scribe.db")).unwrap();
-    for table in ["sessions", "messages", "claims", "entries"] {
+    // Opening stores the opener's own typed turn, under a header-only session
+    // row, and nothing a pass would write.
+    for (table, expected) in [
+        ("sessions", 1),
+        ("messages", 1),
+        ("claims", 0),
+        ("entries", 0),
+    ] {
         let count: i64 = db
             .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(count, 0, "{table}");
+        assert_eq!(count, expected, "{table}");
     }
     let audit = support::audit_lines(&f.root());
     let last = audit.last().unwrap();
@@ -3666,4 +3673,335 @@ fn typed_multiline_group_controls_dispatch_through_hook_and_ignore_later_lines()
         assert_eq!(line["target"], format!("session:{expected_member}"));
         assert!(line["error_code"].is_null(), "{line}");
     }
+}
+
+// Backfill on open and join: a member's capture starts at its own transcript's
+// first line, not at its join time.
+
+const OLD: &str = "2020-01-01T00:00:00Z";
+
+fn row_at(session: &str, id: &str, role: &str, body: &str, at: &str) -> Value {
+    let mut row = row(session, id, role, body);
+    row["timestamp"] = json!(at);
+    row
+}
+
+/// A line of `session` typed in the desktop app: the shape of `/formation` and
+/// of a message typed while a turn runs.
+fn desktop_rows(session: &str) -> [Value; 2] {
+    [
+        json!({"sessionId": session, "uuid": "slash", "type": "user",
+            "entrypoint": "claude-desktop", "origin": {"kind": "human"},
+            "promptSource": "sdk", "turnOrigin": "human", "timestamp": OLD,
+            "message": {"role": "user", "content": "<command-message>formation</command-message>\n<command-name>/formation</command-name>\n<command-args>duo scribe formationorchid</command-args>"}}),
+        json!({"sessionId": session, "uuid": "queued", "type": "attachment",
+            "entrypoint": "claude-desktop", "timestamp": OLD,
+            "attachment": {"type": "queued_command", "prompt": "queuedorchid typed mid turn",
+                "origin": {"kind": "human"}, "humanTurn": true}}),
+    ]
+}
+
+/// Lines that are never a member's own typed turn.
+fn never_stored(session: &str, other: &str) -> Vec<Value> {
+    let mut injected = row_at(session, "agent", "user", "agentorchid supplied", OLD);
+    injected["source"] = json!("agent");
+    let mut meta = row_at(session, "meta", "user", "metaorchid harness note", OLD);
+    meta["isMeta"] = json!(true);
+    vec![
+        row_at(session, "reply", "assistant", "assistantorchid reply", OLD),
+        injected,
+        meta,
+        row_at(
+            session,
+            "stdout",
+            "user",
+            "<local-command-stdout>harnessorchid</local-command-stdout>",
+            OLD,
+        ),
+        row_at(
+            session,
+            "peer",
+            "user",
+            "<teammate-message teammate_id=\"x\">peerorchid</teammate-message>",
+            OLD,
+        ),
+        row_at(
+            session,
+            "cron",
+            "user",
+            "<scheduled-prompt>scheduledorchid</scheduled-prompt>",
+            OLD,
+        ),
+        row_at(
+            other,
+            "copy",
+            "user",
+            "copiedorchid from another session",
+            OLD,
+        ),
+    ]
+}
+
+fn stored_turns(f: &Fixture, session: &str) -> Vec<String> {
+    let db = rusqlite::Connection::open_with_flags(
+        f.root().join("scribe.db"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    let mut query = db
+        .prepare("SELECT message FROM messages WHERE session = ?1 ORDER BY id")
+        .unwrap();
+    query
+        .query_map([session], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap()
+}
+
+fn all_stored(f: &Fixture) -> i64 {
+    rusqlite::Connection::open_with_flags(
+        f.root().join("scribe.db"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap()
+    .query_row("SELECT count(*) FROM messages", [], |r| r.get(0))
+    .unwrap()
+}
+
+fn search_group(f: &Fixture, term: &str) -> Value {
+    invoke(
+        f,
+        A,
+        &["search", term, "--kind", "message", "--group", "g-1"],
+        0,
+    )
+}
+
+#[test]
+fn open_stores_the_openers_earlier_typed_turns_and_no_other_line() {
+    let f = Fixture::new();
+    let [slash, queued] = desktop_rows(A);
+    let mut rows = vec![slash, queued, row_at(A, "u", "user", QUOTE, OLD)];
+    rows.extend(never_stored(A, B));
+    transcript(&f, A, &rows);
+    open(&f);
+    assert_eq!(stored_turns(&f, A), ["slash", "queued", "u"]);
+    assert_eq!(all_stored(&f), 3);
+
+    // Another open from the same session stores nothing it has not stored.
+    invoke(&f, A, &[OPEN, &["--quote", QUOTE]].concat(), 0);
+    assert_eq!(stored_turns(&f, A), ["slash", "queued", "u"]);
+    assert_eq!(all_stored(&f), 3);
+
+    // The turns belong to the group once the opener takes a seat; no model ran.
+    join_as(&f, A, "g-1", "chief", &[], 0);
+    assert_eq!(search_group(&f, "formationorchid")["total"], 1);
+    assert_eq!(search_group(&f, "queuedorchid")["total"], 1);
+    for term in [
+        "assistantorchid",
+        "agentorchid",
+        "metaorchid",
+        "harnessorchid",
+        "peerorchid",
+        "scheduledorchid",
+        "copiedorchid",
+    ] {
+        assert_eq!(search_group(&f, term)["total"], 0, "{term}");
+    }
+    assert_eq!(model_calls(&f), 0);
+}
+
+#[test]
+fn join_stores_the_joining_sessions_earlier_typed_turns_and_no_other_line() {
+    let f = Fixture::new();
+    transcript(&f, A, &[row_at(A, "u", "user", QUOTE, OLD)]);
+    open(&f);
+    let [slash, queued] = desktop_rows(B);
+    let mut rows = vec![slash, queued];
+    rows.extend(never_stored(B, A));
+    rows.push(row_at(
+        B,
+        "typed",
+        "user",
+        "typedorchid before the join",
+        OLD,
+    ));
+    transcript(&f, B, &rows);
+    let before = all_stored(&f);
+    join(&f, B, "g-1", &[], 0);
+    assert_eq!(stored_turns(&f, B), ["slash", "queued", "typed"]);
+    // A's own earlier turn came with its open.
+    assert_eq!(all_stored(&f), before + 3);
+    assert_eq!(search_group(&f, "formationorchid")["total"], 1);
+    assert_eq!(search_group(&f, "typedorchid")["total"], 1);
+    for term in [
+        "assistantorchid",
+        "metaorchid",
+        "copiedorchid",
+        "scheduledorchid",
+    ] {
+        assert_eq!(search_group(&f, term)["total"], 0, "{term}");
+    }
+    assert_eq!(model_calls(&f), 0);
+}
+
+#[test]
+fn a_capture_after_the_backfill_stores_no_turn_twice_and_a_retried_join_nothing() {
+    let f = Fixture::new();
+    let mut rows = vec![
+        row_at(A, "u", "user", QUOTE, OLD),
+        row_at(A, "early", "user", "earlyorchid typed before the join", OLD),
+    ];
+    let path = transcript(&f, A, &rows);
+    open(&f);
+    join_as(&f, A, "g-1", "chief", &[], 0);
+    assert_eq!(stored_turns(&f, A), ["u", "early"]);
+
+    // A retried join is a no-op.
+    join_as(&f, A, "g-1", "chief", &[], 0);
+    assert_eq!(stored_turns(&f, A), ["u", "early"]);
+
+    let fake = f.fake_program("claude", "#!/bin/sh\nexit 1\n");
+    let env = [("PATH", fake.to_str().unwrap())];
+    stop(&f, A, &path, &env);
+    assert_eq!(stored_turns(&f, A), ["u", "early"]);
+
+    // A later turn is stored once, however many hooks read it, even when it is
+    // dated before the join.
+    rows.push(row_at(
+        A,
+        "late",
+        "user",
+        "lateorchid typed after the join",
+        OLD,
+    ));
+    transcript(&f, A, &rows);
+    stop(&f, A, &path, &env);
+    stop(&f, A, &path, &env);
+    assert_eq!(stored_turns(&f, A), ["u", "early", "late"]);
+    assert_eq!(search_group(&f, "lateorchid")["total"], 1);
+    assert_eq!(search_group(&f, "earlyorchid")["total"], 1);
+}
+
+#[test]
+fn a_restored_seat_keeps_its_new_join_time_as_the_cutoff_after_a_backfilled_join() {
+    let f = Fixture::new();
+    let mut a_rows = vec![
+        row_at(A, "u", "user", QUOTE, OLD),
+        row_at(
+            A,
+            "before",
+            "user",
+            "beforeorchid typed before the join",
+            OLD,
+        ),
+    ];
+    let a_path = transcript(&f, A, &a_rows);
+    transcript(&f, B, &[row_at(B, "b", "user", "joining now", OLD)]);
+    open(&f);
+    join(&f, A, "g-1", &[], 0);
+    assert_eq!(stored_turns(&f, A), ["u", "before"]);
+    let fake = f.fake_program("claude", "#!/bin/sh\nexit 1\n");
+    let env = [("PATH", fake.to_str().unwrap())];
+
+    join(&f, B, "g-1", &["--replace"], 0);
+    a_rows.push(row_at(
+        A,
+        "during",
+        "user",
+        "duringorchid typed while displaced",
+        OLD,
+    ));
+    transcript(&f, A, &a_rows);
+
+    // B leaves: A holds the seat again from now, and nothing it typed
+    // meanwhile is stored, even by a hook that ran after the restore.
+    invoke(&f, B, &["group", "leave"], 0);
+    stop(&f, A, &a_path, &env);
+    assert_eq!(stored_turns(&f, A), ["u", "before"]);
+    assert_eq!(search_group(&f, "duringorchid")["total"], 0);
+    a_rows.push(row(
+        A,
+        "after",
+        "user",
+        "afterorchid typed after the restore",
+    ));
+    transcript(&f, A, &a_rows);
+    stop(&f, A, &a_path, &env);
+    assert_eq!(stored_turns(&f, A), ["u", "before", "after"]);
+}
+
+#[test]
+fn a_replace_or_clear_successor_backfills_only_its_own_transcript() {
+    let f = Fixture::new();
+    transcript(
+        &f,
+        A,
+        &[
+            row_at(A, "u", "user", QUOTE, OLD),
+            row_at(
+                A,
+                "a1",
+                "user",
+                "predecessororchid typed by the holder",
+                OLD,
+            ),
+        ],
+    );
+    open(&f);
+    join(&f, A, "g-1", &[], 0);
+
+    // A `--replace` successor: its own turns, never the holder's, and a line
+    // of the holder's copied into its transcript is not its own.
+    transcript(
+        &f,
+        B,
+        &[
+            row_at(A, "copied", "user", "copiedorchid from the holder", OLD),
+            row_at(B, "b1", "user", "replaceorchid typed by the successor", OLD),
+        ],
+    );
+    join(&f, B, "g-1", &["--replace"], 0);
+    assert_eq!(stored_turns(&f, B), ["b1"]);
+    assert_eq!(stored_turns(&f, A), ["u", "a1"]);
+
+    // A clear successor of B: the same, with no `--replace`.
+    let mut rows = vec![json!({"type":"derived-from","sessions":[
+        {"via":"launch","id":D},{"via":"clear","id":B}]})];
+    rows.push(row_at(
+        B,
+        "copied-b",
+        "user",
+        "copiedbyorchid from the predecessor",
+        OLD,
+    ));
+    rows.push(row_at(
+        C,
+        "c1",
+        "user",
+        "clearorchid typed by the successor",
+        OLD,
+    ));
+    transcript(&f, C, &rows);
+    join(&f, C, "g-1", &[], 0);
+    assert_eq!(stored_turns(&f, C), ["c1"]);
+    assert_eq!(stored_turns(&f, B), ["b1"]);
+    assert_eq!(search_group(&f, "copiedorchid")["total"], 0);
+    assert_eq!(search_group(&f, "copiedbyorchid")["total"], 0);
+}
+
+#[test]
+fn a_join_without_a_readable_transcript_still_joins_and_stores_nothing() {
+    let f = Fixture::new();
+    transcript(&f, A, &[row_at(A, "u", "user", QUOTE, OLD)]);
+    open(&f);
+    let path = transcript(&f, B, &[row_at(B, "b1", "user", "refusedorchid", OLD)]);
+    std::fs::remove_file(&path).unwrap();
+    std::os::unix::fs::symlink(f.home().join("elsewhere"), &path).unwrap();
+    join(&f, B, "g-1", &[], 0);
+    assert!(stored_turns(&f, B).is_empty());
+    assert_eq!(
+        invoke(&f, B, &["group", "show", "g-1"], 0)["seats"][0]["transcripts"],
+        json!([B])
+    );
 }

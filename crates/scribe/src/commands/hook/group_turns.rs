@@ -156,17 +156,27 @@ pub(super) fn past(
             });
         }
     };
+    typed_turns(ctx, session, &bytes).map(Some)
+}
+
+/// The typed turns in an already checked transcript of `session`, from its
+/// first line, in transcript order. Lines of another session's copied history,
+/// harness and `isMeta` lines, peer messages and scheduled prompts are not
+/// turns. No model runs.
+pub(in crate::commands) fn typed_turns(
+    ctx: &Context,
+    session: &SessionId,
+    bytes: &[u8],
+) -> Result<Vec<message::NewMessage>, CliError> {
     if ctx.provider() == scribe_core::Provider::Codex {
         let rollout =
-            scribe_core::codex::parse(&bytes).map_err(|reason| CliError::TranscriptRefused {
+            scribe_core::codex::parse(bytes).map_err(|reason| CliError::TranscriptRefused {
                 id: session.clone(),
                 reason,
             })?;
-        return Ok(Some(codex_messages(session, &rollout.typed)));
+        return Ok(codex_messages(session, &rollout.typed));
     }
-    Ok(Some(scribe_core::instruction::claude_group_turns(
-        &bytes, session,
-    )))
+    Ok(scribe_core::instruction::claude_group_turns(bytes, session))
 }
 
 fn save(

@@ -6792,7 +6792,16 @@ authorize an open. Codex uses host-attributed user input. The audit line
 records the group, session and message ids. The user’s quoted text stays
 in the transcript. Opening gives consent to store the user's typed turns of
 member sessions while the group is open. Seat selection takes a separate join,
-including for the opener. Opening a group reports any other open group ids in
+including for the opener. Opening also stores the opener's own typed turns from
+the first line of its transcript, in the same transaction as the group, so the
+line that started the day (`/formation …`, typed before the group existed) is
+kept. They are the turns every group capture stores (see **Stored turns**), no
+model runs, and a retried open stores nothing it has already stored. They are
+group-only rows of the opener's session: they read as part of the group once the
+opener takes a seat, and `#scribe forget <session-id>` erases them. An opener
+that already belongs to a group, or has been forgotten, stores none at open
+(Daniel, chief's chat, 2026-11-23, ORB-27563: “let's go with that”;
+[decision](./4_decisions.md#a-member-is-captured-from-the-start-of-its-own-session)). Opening a group reports any other open group ids in
 that project on stderr.
 
 **Joining and correcting membership.** A caller supplies its own agent
@@ -6808,8 +6817,13 @@ the caller’s own single `via: clear` predecessor against the seat’s
 newest transcript. An unreadable
 or empty transcript requires explicit replacement unless the caller cleared
 from that holder. The write rechecks the
-holder under the store transaction before appending. Closed groups accept no
-new members. `group leave` removes the caller’s position and drops a seat when
+holder under the store transaction before appending. A join also stores the
+joining session's own typed turns from the first line of its transcript, in the
+same transaction as the membership, and sets the capture cursor to the last of
+them (see **Stored turns**). A `--replace` or clear successor backfills its own
+transcript only, never its predecessor's, and a transcript that is absent or
+fails its check joins with no earlier turns. A retried join, which changes
+nothing, stores nothing. Closed groups accept no new members. `group leave` removes the caller’s position and drops a seat when
 its chain is empty.
 
 **Seats across clears.** An interactive Claude Code `SessionStart` whose
@@ -6833,8 +6847,15 @@ joined and `additionalContext` tells the session to re-run
 and also recommends running `scribe group join`.
 
 **Stored turns.** Joining starts no catalog pass and creates no session record.
-Once the provider persists a typed turn, the prompt or Stop hook can store its
-words without a model call, beginning at the time the session joined. Only the
+A session's typed turns are stored from the first line of its own transcript,
+not from its join time: `group open` stores the opener's earlier turns and
+`group join` the joining session's, by the rules below (a typed turn of the
+session itself, not an agent or harness turn, a copied history, a peer message
+or a scheduled prompt), and the capture cursor starts after the last of them, so
+a later capture stores no turn twice. The typed `/scribe group <slug>` join and
+clear-time seat inheritance do not backfill; they store from the time the
+session joined. Once the provider persists a typed turn, the prompt or Stop hook
+can store its words without a model call. Only the
 session that holds the seat stores turns: while a later member holds the seat,
 the replaced session's later turns are not stored, and the turns it already
 stored stay readable until it leaves or is forgotten. The replaced session's
