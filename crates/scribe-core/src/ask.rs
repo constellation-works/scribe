@@ -1369,6 +1369,7 @@ fn narrow_docs(
 ) {
     let mut named_projects: BTreeSet<String> = BTreeSet::new();
     let mut named_topics: BTreeSet<String> = BTreeSet::new();
+    let no_topics: &[Topic] = &[];
     let known = corpus
         .entries
         .iter()
@@ -1384,6 +1385,17 @@ fn narrow_docs(
                 .sessions
                 .iter()
                 .flat_map(|r| r.log.iter().map(move |s| (&r.project, s.topics.as_slice()))),
+        )
+        // A group-only message has no session record, so `record_meta`
+        // resolves it to its group's project; a message with a record is
+        // already covered by that record.
+        .chain(
+            corpus
+                .messages
+                .iter()
+                .filter(|m| corpus.sessions.iter().all(|r| r.id != m.session))
+                .filter_map(|m| m.group_project.as_ref())
+                .map(|project| (project, no_topics)),
         );
     for (project, topics) in known {
         for w in words {
