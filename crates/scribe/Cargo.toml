@@ -24,9 +24,10 @@ tracing-subscriber = { workspace = true }
 unicode-width = { workspace = true }
 
 # Unix only: the host name stamped on records and the effective uid the
-# transcript owner is checked against (STD-05 R1, R9).
+# transcript owner is checked against (STD-05 R1, R9), and the terminal's
+# width, asked of stdout when `COLUMNS` is unset (STD-01 R17).
 [target.'cfg(unix)'.dependencies]
-rustix = { workspace = true, features = ["fs", "system"] }
+rustix = { workspace = true, features = ["fs", "system", "termios"] }
 
 [dev-dependencies]
 # Tests edit `scribe.db` by hand to stage states no command writes.

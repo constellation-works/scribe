@@ -179,10 +179,16 @@ pub(crate) fn list(
         return Ok(());
     }
     let (columns, rows): (Vec<Column>, Vec<Vec<Cell>>) = match records {
+        // The table holds short values only; the tab-separated form keeps
+        // every field, and `group show` and `--json` carry them all.
+        Records::Groups(items) if sink.mode == OutputMode::Table => (
+            GROUP_LIST_COLUMNS.to_vec(),
+            items.iter().map(group_list_row).collect(),
+        ),
         Records::Groups(items) => (
             GROUP_COLUMNS
                 .iter()
-                .map(|label| col(label, Align::Left, true))
+                .map(|label| col(label, Align::Left, false))
                 .collect(),
             items.iter().map(group_row).collect(),
         ),
@@ -1302,9 +1308,37 @@ fn field(out: &mut dyn Write, label: &str, value: &str) -> io::Result<()> {
     writeln!(out, "{label:<width$}{}", value.replace('\n', &indent))
 }
 
+/// The `group list` table: short values only (STD-01 R15). The opener,
+/// related references, seat chains and summary are in `group show`.
+const GROUP_LIST_COLUMNS: [Column; 7] = [
+    col("ID", Align::Left, false),
+    col("TITLE", Align::Left, true),
+    col("KIND", Align::Left, false),
+    col("PROJECT", Align::Left, false),
+    col("OPENED", Align::Left, false),
+    col("CLOSED", Align::Left, false),
+    col("SEATS", Align::Right, false),
+];
+
+/// The full field list: `group show` labels and the tab-separated line.
 const GROUP_COLUMNS: [&str; 10] = [
     "ID", "TITLE", "KIND", "PROJECT", "OPENED", "CLOSED", "OPENER", "RELATED", "SEATS", "SUMMARY",
 ];
+
+fn group_list_row(g: &scribe_core::group::Group) -> Vec<Cell> {
+    [
+        g.id.clone(),
+        one_line(&g.title),
+        one_line(&g.kind),
+        g.project.clone(),
+        g.opened.clone(),
+        g.closed.clone().unwrap_or_else(|| "-".into()),
+        g.seats.len().to_string(),
+    ]
+    .into_iter()
+    .map(Cell::plain)
+    .collect()
+}
 
 fn group_row(g: &scribe_core::group::Group) -> Vec<Cell> {
     let seats = g
@@ -1335,13 +1369,16 @@ fn group_row(g: &scribe_core::group::Group) -> Vec<Cell> {
         g.opened.clone(),
         g.closed.clone().unwrap_or_else(|| "-".into()),
         g.opener.clone(),
-        g.related
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(", "),
-        seats,
-        g.summary.as_deref().map_or_else(String::new, one_line),
+        or_dash(
+            &g.related
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
+        .to_owned(),
+        or_dash(&seats).to_owned(),
+        g.summary.as_deref().map_or_else(|| "-".into(), one_line),
     ]
     .into_iter()
     .map(Cell::plain)

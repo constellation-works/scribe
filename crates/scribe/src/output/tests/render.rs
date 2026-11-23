@@ -293,3 +293,90 @@ fn handoff_only_session_renders_switch_state_in_every_mode() {
         "{off_table}"
     );
 }
+
+fn group(id: &str, summary: Option<&str>) -> scribe_core::group::Group {
+    let session = |id: &str| scribe_core::SessionId::try_from(id.to_owned()).unwrap();
+    let seat = |name: &str, chain: &[&str]| scribe_core::group::Seat {
+        name: name.to_owned(),
+        role: String::from("reviewer"),
+        transcripts: chain.iter().map(|id| session(id)).collect(),
+        newest_handoff: None,
+    };
+    scribe_core::group::Group {
+        id: id.to_owned(),
+        slug: None,
+        title: String::from("Release review"),
+        kind: String::from("review"),
+        project: String::from("scribe"),
+        opened: String::from("2026-11-22T09:00:00Z"),
+        closed: None,
+        summary: summary.map(str::to_owned),
+        opener: String::from("5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f"),
+        related: Vec::new(),
+        seats: vec![
+            seat("editor", &["first-session", "second-session"]),
+            seat("checker", &["third-session"]),
+        ],
+    }
+}
+
+// The group list table holds short values: a seat count, no seat chains,
+// opener or summary (STD-01 R15); an absent value is `-` (R14).
+#[test]
+fn the_group_list_table_holds_short_values_and_counts_seats() {
+    let records = Records::Groups(vec![
+        group("g-1", Some("Review complete.")),
+        group("g-2", None),
+    ]);
+    let text = render_list(OutputMode::Table, &records, 2, &[]);
+    assert_eq!(
+        text,
+        "ID   TITLE           KIND    PROJECT  OPENED                CLOSED  SEATS\n\
+         g-1  Release review  review  scribe   2026-11-22T09:00:00Z  -           2\n\
+         g-2  Release review  review  scribe   2026-11-22T09:00:00Z  -           2\n"
+    );
+}
+
+#[test]
+fn only_the_group_title_truncates_on_a_narrow_terminal() {
+    let mut long = group("g-1", None);
+    long.title = "A title that is far too long to fit on a narrow terminal".into();
+    let narrow = Sink {
+        width: Some(80),
+        ..sink(OutputMode::Table)
+    };
+    let mut out = Vec::new();
+    list(&mut out, &narrow, &Records::Groups(vec![long]), 1, &[]).unwrap();
+    let text = String::from_utf8(out).unwrap();
+    for line in text.lines() {
+        assert!(line.chars().count() <= 80, "line too wide: {line:?}");
+    }
+    assert_eq!(text.matches('…').count(), 1, "{text}");
+    assert!(text.lines().nth(1).unwrap().contains("g-1"), "{text}");
+}
+
+#[test]
+fn the_group_plain_line_and_show_keep_every_field_and_dash_an_absent_summary() {
+    let records = Records::Groups(vec![group("g-2", None)]);
+    let plain = render_list(OutputMode::Plain, &records, 1, &[]);
+    let fields: Vec<&str> = plain.trim_end().split('\t').collect();
+    assert_eq!(fields.len(), 10, "{plain:?}");
+    assert!(
+        fields[8].contains("first-session -> second-session"),
+        "{plain:?}"
+    );
+    assert_eq!(fields[9], "-");
+
+    let mut out = Vec::new();
+    show(
+        &mut out,
+        &sink(OutputMode::Table),
+        &Record::Group(Box::new(group("g-1", Some("Review complete.")))),
+    )
+    .unwrap();
+    let shown = String::from_utf8(out).unwrap();
+    for label in ["opener", "related", "seats", "summary"] {
+        assert!(shown.lines().any(|l| l.starts_with(label)), "{shown}");
+    }
+    assert!(shown.contains("first-session -> second-session"), "{shown}");
+}

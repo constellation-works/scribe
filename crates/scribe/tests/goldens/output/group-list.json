@@ -1,6 +1,17 @@
 {
   "items": [
     {
+      "id": "g-2",
+      "title": "Docs sweep",
+      "kind": "sweep",
+      "project": "scribe",
+      "opened": "2026-11-22T11:00:00Z",
+      "closed": null,
+      "opener": "opener",
+      "related": [],
+      "seats": []
+    },
+    {
       "id": "g-1",
       "title": "Release review",
       "kind": "review",
@@ -24,7 +35,7 @@
       ]
     }
   ],
-  "total": 1,
+  "total": 2,
   "truncated": false,
   "warnings": []
 }

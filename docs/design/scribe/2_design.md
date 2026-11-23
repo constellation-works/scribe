@@ -6732,10 +6732,12 @@ audit remains the sole audit for the attempt. A refusal or transaction failure
 leaves the group unchanged and records a failure audit. An already closed
 group returns its current record without another model call.
 
-**Reading.** `group show <id>` and `group list` include related references,
-seat names and roles, transcript ids in join order, the newest active handoff
-id across each chain, and any retained closing summary. Read a handoff with
-`entry show <id>`. `search`, `ask` (also `question ask`), `entry list` and
+**Reading.** `group show <id>` and `group list --json` include related
+references, seat names and roles, transcript ids in join order, the newest
+active handoff id across each chain, and any retained closing summary. The
+`group list` table is short on purpose: id, title, kind, project, opened,
+closed and a count of seats, with only the title cut to a terminal's width;
+the rest is in `group show`. Read a handoff with `entry show <id>`. `search`, `ask` (also `question ask`), `entry list` and
 `session list` accept `--group <id>`, which limits candidates to recordings
 associated through the group's member sessions. Use `search --kind message`
 to find their stored turns. Scoped `ask` uses matching stored turns and does

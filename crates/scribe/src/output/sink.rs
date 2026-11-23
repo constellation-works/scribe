@@ -52,6 +52,9 @@ pub(crate) struct SinkEnv {
     pub(crate) term: Option<String>,
     /// `COLUMNS`: the width to fit tables to on a terminal.
     pub(crate) columns: Option<String>,
+    /// The terminal's own width, asked of stdout (`TIOCGWINSZ`). Used when
+    /// `COLUMNS` is unset or unusable: most shells do not export it.
+    pub(crate) terminal_columns: Option<usize>,
 }
 
 impl SinkEnv {
@@ -64,6 +67,7 @@ impl SinkEnv {
             clicolor_force: var("CLICOLOR_FORCE"),
             term: var("TERM"),
             columns: var("COLUMNS"),
+            terminal_columns: terminal_columns(),
         }
     }
 }
@@ -94,7 +98,7 @@ impl Sink {
         Self {
             mode: resolve_mode(is_tty, env.format.as_deref(), requested),
             color: resolve_color(is_tty, env),
-            width: resolve_width(is_tty, env.columns.as_deref()),
+            width: resolve_width(is_tty, env.columns.as_deref(), env.terminal_columns),
         }
     }
 }
@@ -131,7 +135,7 @@ pub(crate) fn resolve_color(is_tty: bool, env: &SinkEnv) -> bool {
 
 /// Columns the root help may wrap command rows into.
 ///
-/// `None` when stdout is not a terminal or `COLUMNS` is unset, so each
+/// `None` when stdout is not a terminal or no width is known, so each
 /// command stays on one line. Piped `--help`, which is how the golden is
 /// captured, therefore does not depend on the machine (STD-01 R17, R24).
 pub(crate) fn help_width() -> Option<usize> {
@@ -139,13 +143,34 @@ pub(crate) fn help_width() -> Option<usize> {
 }
 
 /// Only a terminal has a width; piped output is never truncated (STD-01 R9).
-fn resolve_width(is_tty: bool, columns: Option<&str>) -> Option<usize> {
+/// `COLUMNS` wins when it holds a positive number; otherwise the terminal's
+/// own width, when it could be asked (STD-01 R17).
+fn resolve_width(
+    is_tty: bool,
+    columns: Option<&str>,
+    terminal_columns: Option<usize>,
+) -> Option<usize> {
     if !is_tty {
         return None;
     }
     columns
         .and_then(|c| c.trim().parse::<usize>().ok())
         .filter(|&w| w > 0)
+        .or(terminal_columns.filter(|&w| w > 0))
+}
+
+/// Ask stdout's terminal for its width in columns (`TIOCGWINSZ`). `None`
+/// when stdout is not a terminal, the terminal reports no size, or the
+/// platform has no such query.
+#[cfg(unix)]
+fn terminal_columns() -> Option<usize> {
+    let size = rustix::termios::tcgetwinsize(std::io::stdout()).ok()?;
+    Some(usize::from(size.ws_col))
+}
+
+#[cfg(not(unix))]
+fn terminal_columns() -> Option<usize> {
+    None
 }
 
 /// Whether a command line that failed to parse asked for JSON, so the usage
