@@ -9,7 +9,10 @@
 //! write replays a journal left open by a crash. Reads ([`memory_view`],
 //! [`revision_at`]) open read-only and never replay.
 
-use super::{DB_FILE, Fallible, db_error, inspect, open_reader, refuse_newer, stamp, write_error};
+use super::{
+    DB_FILE, Fallible, db_error, inspect, open_reader, optimize_fts, refuse_newer, stamp,
+    write_error,
+};
 use crate::error::{Error, Result};
 use crate::memory::Pending;
 use crate::session::SessionId;
@@ -640,11 +643,7 @@ pub(super) fn stage(
             .map_err(fail)?;
     }
     if erased > 0 {
-        conn.execute(
-            "INSERT INTO messages_fts (messages_fts) VALUES ('optimize')",
-            [],
-        )
-        .map_err(fail)?;
+        optimize_fts(conn).map_err(fail)?;
     }
     for row in &commit.history {
         let sources = serde_json::to_string(&row.sources).map_err(|e| Error::corrupt(path, e))?;

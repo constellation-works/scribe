@@ -57,6 +57,15 @@ pub use groups::{ClaudeCapturePosition, ClaudeGroupCapture};
 /// The database's file name under the store root.
 pub const DB_FILE: &str = "scribe.db";
 
+/// Merge the FTS5 index after a forget removes messages.
+pub(super) fn optimize_fts(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO messages_fts (messages_fts) VALUES ('optimize')",
+        [],
+    )
+    .map(|_| ())
+}
+
 /// The schema, one step per `user_version`: step `n` (1-based) moves the
 /// database from version `n - 1` to `n`. Append only; never edit a shipped
 /// step.
@@ -857,11 +866,7 @@ pub(super) fn delete_messages(
         }
     }
     if deleted > 0 {
-        tx.execute(
-            "INSERT INTO messages_fts (messages_fts) VALUES ('optimize')",
-            [],
-        )
-        .map_err(|e| write_error("forget messages in", &path, started, e))?;
+        optimize_fts(&tx).map_err(|e| write_error("forget messages in", &path, started, e))?;
     }
     tx.commit()?;
     if deleted > 0 {

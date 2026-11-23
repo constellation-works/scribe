@@ -7,7 +7,9 @@ mod close;
 pub(super) use claude::V15;
 pub use claude::{ClaudeCapturePosition, ClaudeGroupCapture};
 
-use super::{DB_FILE, Fallible, db_error, memory::read, open_writer, refuse_newer, stamp};
+use super::{
+    DB_FILE, Fallible, db_error, memory::read, open_writer, optimize_fts, refuse_newer, stamp,
+};
 use crate::group::{
     Added, Group, GroupAdded, GroupAddition, GroupConsent, JoinGroup, NewGroup, OpenedGroup, Seat,
     SeatHold, SeatStart,
@@ -724,11 +726,7 @@ impl Store {
                 )
                 .map_err(fail)?;
             if erased > 0 {
-                conn.execute(
-                    "INSERT INTO messages_fts (messages_fts) VALUES ('optimize')",
-                    [],
-                )
-                .map_err(fail)?;
+                optimize_fts(&conn).map_err(fail)?;
             }
             if erased > 0 || cleared > 0 {
                 super::truncate_wal(&conn, &path, std::time::Instant::now())?;
