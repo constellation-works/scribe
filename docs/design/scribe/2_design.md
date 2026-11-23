@@ -195,8 +195,11 @@ Rules every verb keeps:
   transcripts directory) so a wrong `--root` shows. A session id is
   resolved by `Store::resolve_session` (and `resolve_related` for a
   `session:<id>` reference) before the command's own logic, so no command
-  parses its own prefixes; a record written from a prefix stores the full id,
-  and a changing command names the full id in its success line. A terminal
+  parses its own prefixes. A `session:<id>` reference is the exception to
+  not-found: one no session matches is kept as written, since the session may
+  never have been cataloged (`resolve_related`). A record written from a prefix
+  stores the full id, and a changing command names the full id in its success
+  line. A terminal
   table prints a session id as its shortest prefix that no other session in
   the store shares, at least eight characters (`ShortIds`), so a printed
   prefix is accepted back; piped and `--json` output keep the full id

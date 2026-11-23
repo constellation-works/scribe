@@ -123,9 +123,21 @@ prints each session id as its shortest prefix that no other session in the
 store shares, at least eight characters (the first group of a Claude Code
 UUID), and a prefix printed there is accepted back. Piped output and `--json`
 keep the full id. A prefix that matches several sessions is refused with
-`id_ambiguous` and the matching ids, and nothing changes; one that matches none
-is a not-found error. A record written from a prefix stores the full id, and a
-command that changes something names it.
+`id_ambiguous` and the matching ids, and nothing changes. A record written from
+a prefix stores the full id, and a command that changes something names it.
+
+What an id that matches no session does depends on what the command does with
+it:
+
+- A command that acts on a session the store knows refuses it with a not-found
+  error (`session_not_found`) and changes nothing: `session show`, `session
+  activate`, `session deactivate`, `session rebuild` and `#scribe forget`.
+- `session pass --session <id>` refuses it as not switched on
+  (`session_not_on`).
+- A `session:<id>` reference is not a lookup. `--related` on `entry add` and
+  `entry update --add-related` keeps an id that matches no session as written:
+  `entry add --tag preferences --related session:abcd` succeeds on a store with
+  no session `abcd`, because the session may never have been cataloged.
 
 `scribe question ask "can you fetch me last session summary?"` is a lookup: it
 returns the stored record and does not call a model. Anything that is not a

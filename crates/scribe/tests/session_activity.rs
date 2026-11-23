@@ -302,3 +302,67 @@ fn bad_arguments_are_usage_errors_and_an_unknown_session_is_not_found() {
     );
     assert_eq!(doc["active"], false);
 }
+
+/// docs/guide.md: a `session:<id>` reference keeps an id no session matches
+/// as written, while a command that acts on a session refuses it.
+#[test]
+fn a_session_reference_is_kept_as_typed_and_a_lookup_of_a_session_is_not_found() {
+    let fx = Fixture::new();
+    ok(
+        &fx,
+        &[
+            "entry",
+            "add",
+            "--tag",
+            "preferences",
+            "--author",
+            "opus",
+            "--related",
+            "session:abcd",
+            "Use the stable API",
+        ],
+    );
+    let listed = ok(&fx, &["entry", "list", "--related", "session:abcd"]);
+    assert!(
+        text(&listed.stdout).contains("Use the stable API"),
+        "{}",
+        text(&listed.stdout)
+    );
+
+    for (args, code) in [
+        (
+            &["session", "show", "abcd", "--json"][..],
+            "session_not_found",
+        ),
+        (
+            &[
+                "session",
+                "deactivate",
+                "abcd",
+                "--author",
+                "opus",
+                "--reason",
+                "x",
+                "--json",
+            ][..],
+            "session_not_found",
+        ),
+        (
+            &["session", "activate", "abcd", "--author", "opus", "--json"][..],
+            "session_not_found",
+        ),
+        (
+            &["session", "pass", "--session", "abcd", "--json"][..],
+            "session_not_on",
+        ),
+    ] {
+        let out = run(&fx, args);
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "{args:?}: {}",
+            text(&out.stderr)
+        );
+        assert_eq!(json(&out.stderr)["code"], code, "{args:?}");
+    }
+}
