@@ -2,7 +2,7 @@
 //! the store transaction. Provider ids have no foreign key to cataloged sessions.
 
 use super::{DB_FILE, Fallible, db_error, memory::read, open_writer, refuse_newer, stamp};
-use crate::group::{Group, GroupConsent, JoinGroup, NewGroup, Seat};
+use crate::group::{Group, GroupConsent, JoinGroup, NewGroup, Seat, SeatHold, SeatStart};
 use crate::store::agent::refusal;
 use crate::{Error, Redactor, RelatedKind, Result, SessionId, Store, WriteRefusal};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -277,7 +277,10 @@ impl Store {
                 if held.is_some() {
                     return Ok(false);
                 }
-                if !join.replace && join.ended.map(SessionId::as_str) != Some(latest.as_str()) {
+                if !join.replace
+                    && join.ended.map(SessionId::as_str) != Some(latest.as_str())
+                    && join.predecessor.map(SessionId::as_str) != Some(latest.as_str())
+                {
                     return Err(refusal(
                         WriteRefusal::SeatOccupied,
                         format!("seat {seat} is held by session {latest}; pass --replace to take it over"),
@@ -329,4 +332,128 @@ impl Store {
             Ok(format!("g-{n}"))
         })
     }
+
+    /// Inherit the predecessor's open seat for a newly cleared session.
+    /// An ordinary start takes no write lock; any candidate write rechecks
+    /// seat ownership inside the transaction.
+    pub fn inherit_seat(
+        &self,
+        child: &SessionId,
+        predecessor: Option<&SessionId>,
+    ) -> Result<SeatStart> {
+        #[derive(Default)]
+        enum Snapshot {
+            #[default]
+            NoOpenGroups,
+            AlreadySeated(SeatHold),
+            Inherit,
+            Unjoined,
+        }
+
+        let predecessor = predecessor.filter(|parent| *parent != child);
+        let snap = self.read_groups(|conn, path| {
+            let fail = |e| Fallible::from_sqlite("read groups from", path, e);
+            if let Some(hold) = held_seat(conn, child).map_err(fail)? {
+                return Ok(Snapshot::AlreadySeated(hold));
+            }
+            if !has_open_groups(conn).map_err(fail)? {
+                return Ok(Snapshot::NoOpenGroups);
+            }
+            let Some(parent) = predecessor else {
+                return Ok(Snapshot::Unjoined);
+            };
+            if newest_open_seat(conn, parent).map_err(fail)?.is_none() {
+                return Ok(Snapshot::Unjoined);
+            }
+            Ok(Snapshot::Inherit)
+        })?;
+        let Snapshot::Inherit = snap else {
+            return Ok(match snap {
+                Snapshot::NoOpenGroups => SeatStart::NoOpenGroups,
+                Snapshot::AlreadySeated(hold) => SeatStart::AlreadySeated(hold),
+                Snapshot::Unjoined => SeatStart::Unjoined,
+                Snapshot::Inherit => unreachable!(),
+            });
+        };
+        let Some(parent) = predecessor else {
+            return Ok(SeatStart::Unjoined);
+        };
+        self.write(|| {
+            let conn = open_writer(self.root(), self.lock_wait)?;
+            let path = self.root().join(DB_FILE);
+            let fail = |e| db_error("inherit group seat in", &path, e);
+            if let Some(hold) = held_seat(&conn, child).map_err(fail)? {
+                return Ok(SeatStart::AlreadySeated(hold));
+            }
+            if !has_open_groups(&conn).map_err(fail)? {
+                return Ok(SeatStart::NoOpenGroups);
+            }
+            let Some((group, seat, role, author)) =
+                newest_open_seat(&conn, parent).map_err(fail)?
+            else {
+                return Ok(SeatStart::Unjoined);
+            };
+            conn.execute(
+                "INSERT INTO group_members(group_id, seat, session, author) VALUES (?1, ?2, ?3, ?4)",
+                params![group, seat, child.as_str(), author],
+            )
+            .map_err(fail)?;
+            Ok(SeatStart::Inherited {
+                hold: SeatHold {
+                    group: format!("g-{group}"),
+                    seat,
+                    role,
+                },
+                from: parent.clone(),
+            })
+        })
+    }
+}
+
+fn held_seat(conn: &Connection, session: &SessionId) -> rusqlite::Result<Option<SeatHold>> {
+    conn.query_row(
+        "SELECT m.group_id, m.seat, s.role
+         FROM group_members m
+         JOIN group_seats s ON s.group_id = m.group_id AND s.name = m.seat
+         WHERE m.session = ?1",
+        [session.as_str()],
+        |r| {
+            Ok(SeatHold {
+                group: format!("g-{}", r.get::<_, i64>(0)?),
+                seat: r.get(1)?,
+                role: r.get(2)?,
+            })
+        },
+    )
+    .optional()
+}
+
+fn has_open_groups(conn: &Connection) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM groups WHERE closed IS NULL)",
+        [],
+        |r| r.get(0),
+    )
+}
+
+fn newest_open_seat(
+    conn: &Connection,
+    session: &SessionId,
+) -> rusqlite::Result<Option<(i64, String, String, String)>> {
+    conn.query_row(
+        "SELECT g.id, s.name, s.role, m.author
+         FROM groups g
+         JOIN group_seats s ON s.group_id = g.id
+         JOIN group_members m ON m.group_id = s.group_id AND m.seat = s.name
+         WHERE g.closed IS NULL
+           AND m.session = ?1
+           AND m.position = (
+               SELECT MAX(m2.position)
+               FROM group_members m2
+               WHERE m2.group_id = s.group_id AND m2.seat = s.name
+           )",
+        [session.as_str()],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+    )
+    .optional()
 }

@@ -38,6 +38,8 @@ mod session_start;
 mod stop;
 mod user_prompt_submit;
 
+pub(in crate::commands) use continuation::{ClearedPredecessor, cleared_predecessor};
+
 use crate::app::Context;
 use crate::audit_middleware::AuditMeta;
 use crate::error::CliError;
@@ -95,9 +97,10 @@ Examples:
 const SESSION_START_EXAMPLES: &str = "\
 Reads the SessionStart payload (session_id, cwd, source and transcript_path).
 Reports open proposals, unpicked actions and possible recorded predecessors.
-Interactive Claude sessions receive the brief. After a clear with a continue
-handoff, the hook prepends that handoff and links the sessions, carrying the
-recording switch. Calls no model.
+Interactive Claude sessions receive the brief. After a clear, a single
+predecessor's continue handoff is prepended and linked, and its open group seat
+is inherited (or `scribe group join` is noted when no seat is inherited).
+Calls no model.
 
 Examples:
   scribe hook session-start < <payload.json>";

@@ -100,7 +100,7 @@ counting action entries left unpicked for over an hour
 session in the same project was recorded within the last day, adds
 `scribe: this may continue <id> (recorded) — type /scribe on --from <id> to keep recording`
 ([§5.4](#54-session-links), [§7](#7-consistency-routine)). It prints nothing
-otherwise. Restoring a continue handoff (§16.7) is the hook’s write path. It does not create `config.toml`
+otherwise. Restoring a continue handoff (§16.7) and inheriting a group seat across a clear (§17) are the hook’s write paths. It does not create `config.toml`
 ([§3](#3-storage)).
 (Proposed, not built: it also gives the agent the memory page as
 `additionalContext` in interactive sessions,
@@ -697,9 +697,9 @@ texts that replace the shipped ones ahead of the fixed output contract
 an unknown key or bad value is refused, naming the file and line
 ([specs/store.md](./specs/store.md#config)).
 `session-start` does not create or rewrite this file; when it is absent, the
-defaults apply. Outside the continue-handoff restoration in [§16.7](#167-continuing-after-a-clear),
+defaults apply. Outside the continue-handoff restoration in [§16.7](#167-continuing-after-a-clear) and seat inheritance across a clear in [§17](#17-session-groups-and-seats),
 the hook is read-only. Restoring that handoff writes the child's link and
-inherited switch and audits the write
+inherited switch, inheriting a seat appends the child to the seat chain, and both audit the write
 ([4_decisions.md](./4_decisions.md#session-start-is-read-only-except-when-restoring-a-continue-handoff)).
 
 **Redaction.** Before any write of `said`, `content`, a session record's
@@ -6570,11 +6570,27 @@ selection to a separate join, including for the opener.
 A replacement inherits that role. A transcript can occur in only one
 seat across the store, including earlier positions in a chain. Repeating
 the same join preserves its position. To take an occupied seat, pass
-`--replace` or let scribe verify that the previous holder’s transcript
-has ended. This uses the catalog’s 24-hour last-message rule. An unreadable
-or empty transcript requires explicit replacement. The write rechecks the
+`--replace`, let scribe verify that the previous holder’s transcript
+has ended (using the catalog’s 24-hour last-message rule), or match
+the caller’s own single `via: clear` predecessor against the seat’s
+newest transcript. An unreadable
+or empty transcript requires explicit replacement unless the caller cleared
+from that holder. The write rechecks the
 holder under the store transaction before appending. `group leave`
 removes only the caller’s position and drops a seat when its chain is empty.
+
+**Seats across clears.** An interactive Claude Code `SessionStart`
+(`startup` or `clear`) reuses [§16.7](#167-continuing-after-a-clear)’s
+`derived-from` (`via: clear`) predecessor lookup once per start. When a
+single clear predecessor is the newest transcript of a seat in an open group,
+the hook appends the new session to that seat’s chain under the predecessor’s
+author, audits the write against the group id, and notes the held seat in
+`additionalContext`, without switching cataloging on or creating a session
+record. Repeating `SessionStart` keeps the existing seat with no second
+write. When open groups exist and the starting session holds no seat (no
+predecessor line, multiple predecessors, or a predecessor holding no open
+seat), nothing is joined and `additionalContext` tells the session to
+re-run `scribe group join`.
 
 **Reading.** `group show <id>` and `group list` include related references,
 seat names and roles, transcript ids in join order, and the newest active
@@ -6582,8 +6598,7 @@ handoff id across each chain. Read that entry with `entry show <id>`.
 Membership is independent of cataloging. Joining works in an off session,
 creates no session record and starts no passes. Entries, claims, handoffs
 and stored turns remain associated through their existing session ids.
-Group closing, turn storage and seat inheritance across clears belong to
-later phases.
+Group closing and turn storage belong to later phases.
 
 ## Task References
 

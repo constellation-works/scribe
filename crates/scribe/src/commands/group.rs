@@ -1,6 +1,6 @@
 //! Quote-checked group opening, caller-bound seat membership and roster reads.
 
-use super::hook::payload;
+use super::hook::{self, ClearedPredecessor, payload};
 use super::{ListNotice, list_output};
 use crate::app::Context;
 use crate::audit_middleware::{AuditMeta, AuditSubject};
@@ -195,11 +195,27 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
                 .iter()
                 .find(|s| s.name == seat.as_str())
                 .and_then(|s| s.transcripts.last());
-            let ended = match latest {
-                Some(previous) if !replace && previous != &caller && ended(ctx, previous)? => {
-                    Some(previous)
+            let (ended, predecessor) = match latest {
+                Some(previous) if !replace && previous != &caller => {
+                    let predecessor = if ctx.provider() == Provider::ClaudeCode {
+                        let path = payload::locate(ctx, &caller)?;
+                        match hook::cleared_predecessor(ctx, path.as_deref(), &caller) {
+                            ClearedPredecessor::One(parent) if &parent == previous => Some(parent),
+                            ClearedPredecessor::None
+                            | ClearedPredecessor::One(_)
+                            | ClearedPredecessor::Multiple(_) => None,
+                        }
+                    } else {
+                        None
+                    };
+                    let ended = if predecessor.is_none() && ended(ctx, previous)? {
+                        Some(previous)
+                    } else {
+                        None
+                    };
+                    (ended, predecessor)
                 }
-                _ => None,
+                _ => (None, None),
             };
             let join = JoinGroup {
                 group: &group.id,
@@ -209,6 +225,7 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
                 role: role.as_deref(),
                 replace,
                 ended,
+                predecessor: predecessor.as_ref(),
             };
             let changed = store.join_group(join, &ctx.redactor(&ctx.config()?)?)?;
             (group.id, changed)

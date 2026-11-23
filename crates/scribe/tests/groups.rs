@@ -3,11 +3,15 @@
 
 mod support;
 use serde_json::{Value, json};
+use std::io::Write;
+use std::path::PathBuf;
+use std::process::Stdio;
 use support::{Fixture, text};
 
 const A: &str = "11111111-1111-4111-8111-111111111111";
 const B: &str = "22222222-2222-4222-8222-222222222222";
 const C: &str = "33333333-3333-4333-8333-333333333333";
+const D: &str = "44444444-4444-4444-8444-444444444444";
 const QUOTE: &str = "open our release review";
 const OPEN: &[&str] = &[
     "group",
@@ -30,16 +34,67 @@ fn row(session: &str, id: &str, role: &str, body: &str) -> Value {
         "timestamp":"2090-11-20T01:00:00Z","message":{"role":role,"content":body}})
 }
 
-fn transcript(f: &Fixture, session: &str, rows: &[Value]) {
+fn transcript_path(f: &Fixture, session: &str) -> PathBuf {
     let dir = f.home().join(".claude/projects/-test");
     f.create_private_dir_all(&dir);
-    let path = dir.join(format!("{session}.jsonl"));
+    dir.join(format!("{session}.jsonl"))
+}
+
+fn transcript(f: &Fixture, session: &str, rows: &[Value]) -> PathBuf {
+    let path = transcript_path(f, session);
     std::fs::write(
         &path,
         rows.iter().map(|r| format!("{r}\n")).collect::<String>(),
     )
     .unwrap();
     support::make_private(&path);
+    path
+}
+
+fn cleared_transcript(f: &Fixture, session: &str, launch: &str, clears: &[&str]) -> PathBuf {
+    let mut sessions = vec![json!({"via":"launch","id":launch})];
+    sessions.extend(clears.iter().map(|id| json!({"via":"clear","id":id})));
+    transcript(
+        f,
+        session,
+        &[json!({"type":"derived-from","sessions":sessions})],
+    )
+}
+
+fn session_start(
+    f: &Fixture,
+    session: &str,
+    path: Option<&PathBuf>,
+    source: &str,
+    entrypoint: &str,
+) -> Value {
+    let mut payload = json!({
+        "session_id": session,
+        "hook_event_name": "SessionStart",
+        "source": source
+    });
+    if let Some(path) = path {
+        payload["transcript_path"] = json!(path);
+    }
+    let mut cmd = f.cmd(&["hook", "session-start"]);
+    cmd.env("CLAUDE_CODE_ENTRYPOINT", entrypoint)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd.spawn().unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(payload.to_string().as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    if out.stdout.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&out.stdout).unwrap()
+    }
 }
 
 fn invoke(f: &Fixture, session: &str, args: &[&str], code: i32) -> Value {
@@ -252,4 +307,191 @@ fn old_schema_reads_empty_without_migration_then_upgrades_on_open() {
     assert_eq!(version(), 8);
     open(&f);
     assert_eq!(version(), 10);
+}
+
+#[test]
+fn desktop_clear_inherits_group_and_seat_without_typing_or_rerunning() {
+    let f = Fixture::new();
+    transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
+    open(&f);
+    join(&f, A, "g-1", &["--role", "reviewer"], 0);
+
+    // Non-interactive, resume, compact, and mismatched transcripts do not inherit.
+    let child_b = cleared_transcript(&f, B, C, &[A]);
+    for (source, entrypoint) in [
+        ("startup", "sdk-cli"),
+        ("resume", "claude-desktop"),
+        ("compact", "claude-desktop"),
+    ] {
+        session_start(&f, B, Some(&child_b), source, entrypoint);
+    }
+    let mismatched = transcript_path(&f, C);
+    std::fs::copy(&child_b, &mismatched).unwrap();
+    session_start(&f, B, Some(&mismatched), "startup", "claude-desktop");
+    assert_eq!(
+        invoke(&f, A, &["group", "show", "g-1"], 0)["seats"][0]["transcripts"],
+        json!([A])
+    );
+
+    // Desktop clear (`source: startup`) appends B to A's seat with nothing typed.
+    let before = support::audit_lines(&f.root()).len();
+    let reply = session_start(&f, B, Some(&child_b), "startup", "claude-desktop");
+    assert!(reply.get("systemMessage").is_none(), "{reply}");
+    let context = reply["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(
+        context.contains("editor") && context.contains("reviewer") && context.contains("g-1"),
+        "{context}"
+    );
+    assert!(!context.contains("scribe group join"), "{context}");
+    assert_eq!(
+        invoke(&f, B, &["group", "show", "g-1"], 0)["seats"][0]["transcripts"],
+        json!([A, B])
+    );
+    let audit = support::audit_lines(&f.root());
+    assert_eq!(audit.len(), before + 1);
+    assert_eq!(audit[before]["command"], "hook session-start");
+    assert_eq!(audit[before]["target"], "g-1");
+    assert!(audit[before]["error_code"].is_null());
+    assert_eq!(invoke(&f, B, &["session", "list"], 0)["total"], 0);
+
+    // Repeating SessionStart for B is idempotent and writes no second audit line.
+    let repeat = session_start(&f, B, Some(&child_b), "startup", "claude-desktop");
+    assert_eq!(support::audit_lines(&f.root()).len(), before + 1);
+    assert!(
+        !repeat["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap()
+            .contains("scribe group join")
+    );
+
+    // A second clear (C cleared from B, still carrying A as launch ancestor) appends C too.
+    let child_c = cleared_transcript(&f, C, A, &[B]);
+    session_start(&f, C, Some(&child_c), "startup", "claude-desktop");
+    assert_eq!(
+        invoke(&f, C, &["group", "show", "g-1"], 0)["seats"][0]["transcripts"],
+        json!([A, B, C])
+    );
+}
+
+#[test]
+fn desktop_clear_with_continue_handoff_prepends_handoff_and_inherits_seat() {
+    let f = Fixture::new();
+    transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
+    open(&f);
+    join(&f, A, "g-1", &["--role", "reviewer"], 0);
+    invoke(
+        &f,
+        A,
+        &[
+            "entry",
+            "add",
+            "--tag",
+            "handoff",
+            "--author",
+            "aide",
+            "--related",
+            &format!("session:{A}"),
+            "--mode",
+            "continue",
+            "--quote",
+            QUOTE,
+            &format!("{HANDOFF}\nCarry on."),
+        ],
+        0,
+    );
+    let child_b = cleared_transcript(&f, B, C, &[A]);
+    let reply = session_start(&f, B, Some(&child_b), "startup", "claude-desktop");
+    let context = reply["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(context.starts_with("## State\nReady"), "{context}");
+    assert!(
+        context.contains("editor") && context.contains("g-1"),
+        "{context}"
+    );
+    assert_eq!(
+        invoke(&f, B, &["group", "show", "g-1"], 0)["seats"][0]["transcripts"],
+        json!([A, B])
+    );
+}
+
+#[test]
+fn missing_or_non_member_predecessor_joins_nothing_and_tells_session_to_rerun_join() {
+    let f = Fixture::new();
+    transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
+    open(&f);
+    join(&f, A, "g-1", &[], 0);
+    let before = support::audit_lines(&f.root());
+
+    // Missing derived-from line (and missing transcript file).
+    let no_ancestry = transcript(&f, B, &[row(B, "u", "user", "fresh")]);
+    for (source, path) in [
+        ("startup", Some(&no_ancestry)),
+        ("clear", Some(&no_ancestry)),
+        ("startup", None),
+    ] {
+        let reply = session_start(&f, B, path, source, "claude-desktop");
+        let context = reply["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(context.contains("scribe group join"), "{reply}");
+    }
+
+    // Predecessor line naming a session in no group.
+    let non_member = cleared_transcript(&f, C, A, &[D]);
+    let reply = session_start(&f, C, Some(&non_member), "startup", "claude-desktop");
+    let context = reply["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(context.contains("scribe group join"), "{reply}");
+
+    // Predecessor line naming an earlier holder already replaced on the seat.
+    join(&f, D, "g-1", &["--replace"], 0);
+    let replaced_before = support::audit_lines(&f.root());
+    let stale_child = cleared_transcript(&f, "55555555-5555-4555-8555-555555555555", C, &[A]);
+    let stale_reply = session_start(
+        &f,
+        "55555555-5555-4555-8555-555555555555",
+        Some(&stale_child),
+        "startup",
+        "claude-desktop",
+    );
+    assert!(
+        stale_reply["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("scribe group join"),
+        "{stale_reply}"
+    );
+    assert_eq!(support::audit_lines(&f.root()), replaced_before);
+    assert_eq!(
+        invoke(&f, A, &["group", "show", "g-1"], 0)["seats"][0]["transcripts"],
+        json!([A, D])
+    );
+    assert!(before.len() < replaced_before.len());
+}
+
+#[test]
+fn group_join_accepts_cleared_predecessor_without_replace_and_refuses_others() {
+    let f = Fixture::new();
+    // Recent timestamp (year 2090): A has NOT ended under the 24-hour rule.
+    transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
+    open(&f);
+    join(&f, A, "g-1", &["--role", "reviewer"], 0);
+
+    // B's transcript names A as its cleared predecessor -> join succeeds without --replace.
+    cleared_transcript(&f, B, C, &[A]);
+    let joined = join(&f, B, "g-1", &[], 0);
+    assert_eq!(joined["seats"][0]["role"], "reviewer");
+    assert_eq!(joined["seats"][0]["transcripts"], json!([A, B]));
+
+    // C has no predecessor line -> refused with seat_occupied without --replace.
+    transcript(&f, C, &[row(C, "u", "user", "unrelated")]);
+    assert_eq!(join(&f, C, "g-1", &[], 1)["code"], "seat_occupied");
+
+    // D's predecessor is A (no longer the seat's newest transcript B) -> refused with seat_occupied.
+    cleared_transcript(&f, D, C, &[A]);
+    assert_eq!(join(&f, D, "g-1", &[], 1)["code"], "seat_occupied");
 }
