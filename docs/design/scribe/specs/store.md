@@ -969,8 +969,11 @@ cleared from the WAL. The profile is corrected by editing it outside Pinned.
   the next Stop retries it). `attempts` counts the model calls spent; the
   third failure is `refused` `model_failed`. Every outcome but `pending` is
   final: the marker is never sent to the model again. An outcome whose
-  fields disagree is `store_corrupt`. Written only by the Stop hook, under
-  the lock, after the entries it records (`Store::record_marks`). Absent is
+  fields disagree is `store_corrupt`. Written by the Stop hook and `scribe
+  mark retry`, under the lock, after the entries it records
+  (`Store::record_marks`); `mark retry` first turns a `refused`
+  `model_failed` marker back to `pending` with `attempts` 0
+  (`Store::reopen_marks`), the one way a final outcome is reopened. Absent is
   no marks.
 - `pickups.json` (written at format 22; introduced at format 8, no older form): `{"pickups": [{"entry", "author",
   "at", "result", "rejected"}]}`, oldest first: a consumer's note that it

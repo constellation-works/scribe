@@ -1095,6 +1095,9 @@ pub(crate) enum Records {
     Hits(Vec<HitPayload>),
     /// `transcript list`.
     Transcripts(Vec<TranscriptPayload>),
+    /// `mark list` and `mark retry`: `#scribe` markers as `marks.json`
+    /// stores them.
+    Marks(Vec<scribe_core::annotation::MarkRecord>),
 }
 
 impl Records {
@@ -1108,6 +1111,7 @@ impl Records {
             Self::Tags(v) => v.len(),
             Self::Hits(v) => v.len(),
             Self::Transcripts(v) => v.len(),
+            Self::Marks(v) => v.len(),
         }
     }
 }

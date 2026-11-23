@@ -1,0 +1,2 @@
+5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f	u-1	1	refused	model_failed	3	2026-11-23T23:11:16Z
+5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f	u-2	1	pending	-	1	2026-11-23T23:12:00Z

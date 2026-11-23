@@ -38,7 +38,15 @@ repository.
 
 Let scribe capture the turn. Its content is scribe's context paragraph
 (`stated_by: scribe:annotation`) and its `quote` is the human's exact words.
-Quote only the `quote` as theirs.
+Quote only the `quote` as theirs. A queued line and a slash command's
+arguments are marked the same way.
+
+If every model call fails, scribe gives up after three replies and tells you
+in your context, with the marked line. Only then, if the human wants it
+kept, record it with their exact words (`scribe entry add --tag <tag>
+--quote '<their words>' --spoken '<statement>' --author <name>`), or ask
+them to run `scribe mark retry <session>` from a shell that has the model
+credentials. `scribe mark list` shows the markers still waiting.
 
 ## Settlement and deletion by the human
 

@@ -17,6 +17,7 @@ mod group;
 mod hook;
 mod init;
 mod instruction;
+mod mark;
 pub(in crate::commands) mod memory;
 mod plugin;
 mod proposal;
@@ -69,6 +70,11 @@ pub(crate) enum Command {
     /// List uncataloged provider transcripts and show one, writing nothing
     #[command(subcommand, after_help = transcript::EXAMPLES)]
     Transcript(transcript::TranscriptCommand),
+    /// List the #scribe markers not cataloged yet and retry them
+    ///
+    /// Lists the #scribe markers whose model call is pending or gave up, and catalogs a session's again from a shell with model credentials.
+    #[command(subcommand, after_help = mark::EXAMPLES)]
+    Mark(mark::MarkCommand),
     /// Read, open, update and settle proposals
     #[command(subcommand, after_help = proposal::PROPOSAL_EXAMPLES)]
     Proposal(ProposalCommand),
@@ -138,6 +144,7 @@ impl Command {
             Self::Session(command) => command.subject(ctx),
             Self::Proposal(command) => command.subject(ctx),
             Self::Memory(command) => command.subject(ctx),
+            Self::Mark(command) => command.subject(ctx),
             Self::Init(_)
             | Self::Transcript(_)
             | Self::Search(_)
@@ -169,6 +176,7 @@ impl Command {
             Self::Entry(command) => command.audit(),
             Self::Session(command) => command.audit(),
             Self::Transcript(command) => command.audit(),
+            Self::Mark(command) => command.audit(),
             Self::Proposal(command) => command.audit(),
             Self::Memory(command) => command.audit(),
             Self::Search(args) => search::audit(args),
@@ -198,7 +206,10 @@ pub(crate) fn short_ids(output: &Output, ctx: &Context) -> scribe_core::ShortIds
     let prints_sessions = match output {
         Output::List { records, .. } => matches!(
             records,
-            Records::Sessions { .. } | Records::SessionTree { .. } | Records::Transcripts(_)
+            Records::Sessions { .. }
+                | Records::SessionTree { .. }
+                | Records::Transcripts(_)
+                | Records::Marks(_)
         ),
         Output::Pass(_) => true,
         Output::Show { record } | Output::Written { record, .. } => {
@@ -346,6 +357,7 @@ fn dispatch(command: Command, ctx: &Context) -> Result<Output, CliError> {
         Command::Entry(command) => entry::run(command, ctx),
         Command::Session(command) => session::run(command, ctx),
         Command::Transcript(command) => transcript::run(command, ctx),
+        Command::Mark(command) => mark::run(command, ctx),
         Command::Proposal(command) => proposal::run(command, ctx),
         Command::Memory(command) => memory::run(command, ctx),
         Command::Search(args) => search::run(args, ctx),

@@ -5142,8 +5142,8 @@ again.
 
 - **Bounds (STD-08 §R1, §R3).** One model call per marked turn per Stop,
   30 s each. At most 3 attempts per marked turn, across Stops; after the
-  third failure the outcome is `refused` (`model_failed`) and the echo
-  says to retype it. At most 3 markers per turn: a fourth is refused
+  third failure the outcome is `refused` (`model_failed`) and the marker is
+  given up (below). At most 3 markers per turn: a fourth is refused
   `too_many_marks` before any call. At most 2 marked turns per Stop,
   oldest first; the rest stay `pending` for the next Stop. The window is
   at most 40,000 characters in, and the answer at most 3 × about 2,100
@@ -5226,6 +5226,29 @@ differs from the text above:
 - **A marker** is `#scribe` or `#scribe/<word>` that starts the line or
   follows whitespace or an opening bracket, and is followed by the end of
   the line, whitespace, `:`, a closing bracket or sentence punctuation.
+- **Which turns** ([ORB-27648]). Stop catalogs a marker in any turn the
+  user typed, by the typed-turn rule every reader shares (§4.1): a plain
+  prompt, a line queued while the agent was working (a `queued_command`
+  attachment with `humanTurn`), and a slash command's arguments, read
+  apart from its `<command-…>` tags so a marker right after
+  `<command-args>` counts. A session never switched on is cataloged too.
+- **Given up** ([ORB-27648]). A marker `refused` `model_failed` is not
+  lost. The Stop echo names `scribe mark retry <session>`; the agent's
+  context (`additionalContext` on the Stop reply) carries the echo, the
+  marked line and a note: record it yourself with the user's exact words
+  (`scribe entry add`) if they want it kept, or ask them to retry. So the
+  prompt hook's agent note says scribe will tell the agent if it gives up,
+  and to record it only then. `scribe mark list` lists pending and given-up
+  markers; `scribe mark retry <session>` turns the session's given-up
+  markers back to `pending` with no attempts and catalogs its transcript
+  as Stop does, unbounded by turns, exiting `model_failed` if a call fails
+  again. A hook runs with the environment of the app that launched the
+  provider, and the Claude desktop app does not load the login shell's
+  profile, so a credential exported there (`CLAUDE_CODE_OAUTH_TOKEN`) is
+  missing from the cleared `claude -p` environment (§8) and every call
+  fails. scribe does not source shell profiles or store credentials
+  (STD-05); the failure names the missing `[models] credentials`, and
+  `mark retry` from a shell that has them catalogs the marker.
 - **Refusals before any call** (a settling verb after a marker inside a
   sentence or a `#scribe/<word>` other than `global`: `unparsed_instruction`;
   a fourth marker: `too_many_marks`) are echoed by the prompt hook, which
@@ -5235,6 +5258,8 @@ differs from the text above:
   code; a refusal audits its code (`quote_not_verbatim`, `unknown_tag`,
   `annotation_out_of_bounds`, `covered`, `needs_redaction`,
   `model_failed`, or the two above); a pending retry audits nothing.
+  `scribe mark retry` writes one line (`mark retry`, `session:<id>`, the
+  code when it fails); `mark list` is read-only and not audited.
 - **Codex** ([ORB-26535]). Under `--provider codex` the prompt hook
   (`hook/codex.rs`) echoes a marker once the typed turn is verified in the
   rollout (before that it says Stop will retry), and Stop catalogs it from

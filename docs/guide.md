@@ -15,7 +15,17 @@ it with one bounded model call: the entry's content is scribe's statement and
 its `quote` is your words. A tag named by the marker, or written at the end of
 the line (`… to preferences`), is a hint that call must follow. `#scribe/global`
 instead of `#scribe` stores `project: global`, for every repository; otherwise
-the entry keeps the working directory's project.
+the entry keeps the working directory's project. A line you queue while the
+agent works and a slash command's arguments are marked the same way.
+
+If the model call fails three replies in a row, Stop gives the marker up,
+says so to you and to the agent, and keeps it listed: `scribe mark list` shows
+the markers still waiting and `scribe mark retry <session>` catalogs them again.
+Hooks get the environment of the app that started the agent. The Claude
+desktop app does not read your shell profile, so a `CLAUDE_CODE_OAUTH_TOKEN`
+exported there never reaches scribe's `claude -p` call, and the failure names
+the missing variables. Run `claude login` so `claude` finds its own
+credential, or run `mark retry` from a terminal that has the token.
 
 `/scribe on` in Claude Code, or an exact `$scribe on` in Codex, catalogs that
 session. `scribe session pass` then writes one record per session whose pass is
@@ -341,7 +351,8 @@ Packaging: [Build plugins](https://developers.openai.com/plugins/build/plugins#b
   `#scribe approve|reject|retire|forget`, and replies with what it marked,
   settled or refused.
 - `Stop` runs `scribe hook stop`. It catalogs the session's unsettled markers
-  (one annotation call per marked turn, at most two turns per Stop), echoes what it recorded or why not,
+  (one annotation call per marked turn, at most two turns per Stop), echoes what it recorded or why not
+  (and tells the agent about a marker it gave up),
   and fills the message id of an older entry's cite. A line an older store
   already recorded verbatim is not cataloged again, and settling commands are
   not replayed. For a session that is on, Stop also marks a pass due on the

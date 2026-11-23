@@ -278,6 +278,45 @@ fn a_failing_claude_is_a_model_error_naming_its_last_words() {
     assert!(message.contains("Not logged in"), "{message}");
 }
 
+/// A hook started by an app that was not launched from a login shell (the
+/// Claude desktop app) lacks the credential the login shell exports, so
+/// `claude` exits refusing to run: the failure names the missing variables,
+/// and only when none of them is set.
+#[test]
+fn a_failing_claude_names_the_credentials_missing_from_the_environment() {
+    let fake = FakeClaude::new("echo 'Not logged in. Run /login' >&2\nexit 1");
+    let names = [
+        String::from("CLAUDE_CODE_OAUTH_TOKEN"),
+        String::from("ANTHROPIC_API_KEY"),
+    ];
+    let err = fake
+        .models(&["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"], &[])
+        .with_credentials(&names)
+        .annotation(&request(Duration::from_secs(10)))
+        .unwrap_err();
+    let ModelError::Failed(message) = &err else {
+        panic!("expected a failure: {err:?}");
+    };
+    assert!(
+        message.starts_with(
+            "claude ended with exit status: 1 (none of CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY is set in scribe's environment): Not logged in"
+        ),
+        "{message}"
+    );
+
+    let err = with_oauth(&fake)
+        .with_credentials(&names)
+        .annotation(&request(Duration::from_secs(10)))
+        .unwrap_err();
+    let ModelError::Failed(message) = &err else {
+        panic!("expected a failure: {err:?}");
+    };
+    assert!(
+        !message.contains("is set in scribe's environment"),
+        "{message}"
+    );
+}
+
 #[test]
 fn an_error_result_is_a_failure_and_a_bad_answer_is_malformed() {
     let fake = FakeClaude::new(

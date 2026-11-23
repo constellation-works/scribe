@@ -612,8 +612,8 @@ double quotes, fences, blockquotes, indented code and pasted content),
 writes nothing at submit and calls no model.
 The `UserPromptSubmit` reply echoes `scribe: marked — cataloged after the
 reply` (`marked <n> times` for several markers), with the agent note
-` (scribe catalogs this #scribe marker after your reply; do not record it
-yourself)`, and `scribe: refused #scribe in "<line>" — <reason>` with the
+` (scribe tries to catalog this #scribe marker after your reply and tells
+you if it gives up; record it yourself only then)`, and `scribe: refused #scribe in "<line>" — <reason>` with the
 relay note for a marker refused before any call (a settling verb after it
 or a `#scribe/<word>` other than `global`: `unparsed_instruction`; a fourth
 marker: `too_many_marks`). The same turn's `Stop` reply then prints, in
@@ -624,7 +624,18 @@ model found nothing, a check refused the answer, an active entry already
 covers it — `already covered by <id> in <tag>` — or redaction would change
 the quote), or `scribe: could not catalog #scribe in your message —
 <error>; will retry at the next reply (<n> of 3)` and, at the third
-failure, `…; gave up after 3 attempts`. A refusal the prompt hook echoed
+failure, `…; gave up after 3 attempts — scribe mark retry <session> tries
+again`. A given-up marker reaches the agent as well: the `Stop` reply's
+`hookSpecificOutput` (`hookEventName` `Stop`) carries in
+`additionalContext` the echo, the marked line and the note `(not cataloged
+by scribe; if the user wants it kept, record it with their exact words:
+scribe entry add --tag <tag> --quote '<their words>' --spoken
+'<statement>' --author <name>, or ask them to run scribe mark retry
+<session> from a shell with model credentials)`. When `claude` fails and
+none of `[models] credentials` is set in scribe's environment, `<error>`
+names them: `claude ended with exit status: 1 (none of
+CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY is set in scribe's
+environment)`. A refusal the prompt hook echoed
 is not echoed again. Audit lines (`hook stop`): an entry's id as `target`;
 `session:<id>` with no code for nothing found; `session:<id>` with the
 refusal code (`unparsed_instruction`, `too_many_marks`,
@@ -642,6 +653,27 @@ same echoes and audit lines hold, line-start forms included: the prompt
 hook echoes a marker once the typed turn is in the rollout (before that it
 refuses with `provenance_failed`, `typed input not yet verified …; Stop will
 retry`), and Stop catalogs from the rollout.
+
+`scribe mark list [--session <id>]` lists the markers not cataloged yet,
+oldest first: `pending` ones and given-up ones (`refused`, `model_failed`).
+`--json` is the list envelope with `marks`, each record in `marks.json`'s
+shape (store.md): `session`, `message`, `prompt_sha256`, `marker`,
+`outcome`, `entry`, `code`, `attempts`, `at`. The table columns are
+`SESSION MESSAGE MARKER OUTCOME CODE ATTEMPTS AT`; piped lines are
+tab-separated with full ids and timestamps. An empty list prints nothing on
+stdout and `no uncataloged #scribe markers: every marker has an entry or an
+answer` on stderr. It is read-only and not audited.
+`scribe mark retry <session>` resolves the session (a cataloged id, a
+transcript's id or a unique prefix), turns its given-up markers back to
+`pending` with no attempts, and catalogs every unsettled marker of the
+session's transcript as `Stop` does, with no per-run turn bound. It prints
+the markers it wrote, in `mark list`'s forms, and the `Stop` echoes on
+stderr. When a call fails again it exits 1 with `model_failed` (`<n> #scribe
+marker(s) of <session> still not cataloged — <error>`) and the marker stays
+`pending`. It writes one audit line (`mark retry`, `target`
+`session:<id>`, the code on failure); a missing transcript is
+`transcript_missing` and one failing the provenance check
+`provenance_failed`.
 
 The single-line commands `/scribe group move <session-id> <slug>`, `/scribe group remove <session-id>`, and `/scribe session update <session-id> project|title <value>` have provider-specific replies. Claude Code blocks with `scribe: session <id> moved|removed|updated` on success, or `scribe: <verb> refused — <reason>` on refusal. Codex returns a verified command's reply as `systemMessage` and `hookSpecificOutput.additionalContext`, without `decision: "block"`. Their audit targets contain session ids and error codes only.
 

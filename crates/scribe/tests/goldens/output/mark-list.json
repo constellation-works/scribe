@@ -1,0 +1,29 @@
+{
+  "marks": [
+    {
+      "session": "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f",
+      "message": "u-1",
+      "prompt_sha256": "aa",
+      "marker": 1,
+      "outcome": "refused",
+      "entry": null,
+      "code": "model_failed",
+      "attempts": 3,
+      "at": "2026-11-23T23:11:16Z"
+    },
+    {
+      "session": "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f",
+      "message": "u-2",
+      "prompt_sha256": "bb",
+      "marker": 1,
+      "outcome": "pending",
+      "entry": null,
+      "code": null,
+      "attempts": 1,
+      "at": "2026-11-23T23:12:00Z"
+    }
+  ],
+  "total": 2,
+  "truncated": false,
+  "warnings": []
+}

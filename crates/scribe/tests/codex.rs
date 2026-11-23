@@ -757,7 +757,10 @@ fn a_codex_marker_is_echoed_once_verified_and_cataloged_at_stop_as_daniels_entry
     let context = submitted["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .unwrap();
-    assert!(context.contains("do not record it yourself"), "{context}");
+    assert!(
+        context.contains("tells you if it gives up; record it yourself only then"),
+        "{context}"
+    );
     assert_eq!(model_calls(&f), 0, "no model call at submit");
     assert!(marks_json(&f).is_empty(), "nothing written at submit");
 

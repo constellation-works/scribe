@@ -28,7 +28,8 @@ pub(crate) struct Group {
 /// `brief` leads Find: it is what a session reads first. `search` sits with Find: it searches stored records, it is not one of them.
 /// `transcript` and `tmux` sit there too, as discovery and browse. Clap's
 /// built-in `help` subcommand is not a declared noun; it stays runnable and
-/// is left off this page, as Orbit's root help leaves it off.
+/// is left off this page, as Orbit's root help leaves it off. `mark` is
+/// Upkeep: it retries the markers a hook could not catalog.
 pub(crate) const ROOT_GROUPS: &[Group] = &[
     Group {
         heading: "Setup",
@@ -44,7 +45,7 @@ pub(crate) const ROOT_GROUPS: &[Group] = &[
     },
     Group {
         heading: "Upkeep",
-        commands: &["consistency", "store", "export"],
+        commands: &["consistency", "mark", "store", "export"],
     },
     Group {
         heading: "Integration",

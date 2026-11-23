@@ -1,0 +1,22 @@
+List #scribe markers not cataloged yet: pending a retry, or given up
+
+Usage: scribe mark list [OPTIONS]
+
+Options:
+      --session <SESSION>  Only this session's markers: a provider session id or a unique prefix [default: every session]
+  -h, --help               Print help
+  -V, --version            Print version
+
+Global options:
+      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json                 Shorthand for --format json
+
+A marker is listed while it is pending (the session's next reply retries it)
+or given up (outcome refused, code model_failed: every call failed). It holds
+ids only; the line it marks is in the session's transcript.
+
+Examples:
+  scribe mark list
+  scribe mark list --session <id> --json
