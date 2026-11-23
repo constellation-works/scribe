@@ -71,10 +71,12 @@ line).
 
 Search hits are best first; on a tie entries come before sessions, then
 the newest first (as `ask` ranks); transcripts newest first by
-`started`. Entries and sessions are oldest first (by `created`, then `started`, ties by
-id); proposals by number; tags by name. `session list --tree` keeps that
-order among siblings but lists each session right after the one it nests
-under, depth first; a session whose parent is not listed is a root. The
+`started`. Entries are oldest first (by `created`, then `started`, ties by
+id). Session lists are newest first by `updated` instant, with IDs ascending
+on ties; filters select matching sessions before `--limit` cuts the list.
+Proposals are ordered by number; tags by name. `session list --tree` keeps
+that session order among siblings and lists each session right after the one
+it nests under, depth first; a session whose parent is not listed is a root. The
 table indents the title two spaces per level; the piped form does not
 indent, and the `parent` column carries the nesting.
 
