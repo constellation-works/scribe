@@ -507,7 +507,7 @@ when just one record matches. With several matches it names their ids. No line w
 switch is on or it already has a record, when no record in the project is
 that recent, or when the sessions cannot be read. (Format 19) In an
 interactive session (`CLAUDE_CODE_ENTRYPOINT` is `cli` or `claude-desktop`) with memory, a
-session or a claim to show, `SessionStart` also gives the agent the brief
+last group, a session or a claim to show, `SessionStart` also gives the agent the brief
 (as `scribe brief` prints it) as `hookSpecificOutput.additionalContext`
 (`hookEventName` `SessionStart`); a headless run (any other entrypoint, or
 none) gets none. A verified clear with a single predecessor and a current
@@ -803,8 +803,10 @@ prints `<rule>\t<value>\t<origin>` lines; the table adds `meaning`.
 project defaults to the current directory's) reads and writes nothing.
 Plain and table print the same text, which the `SessionStart` hook also
 injects: `# scribe brief`; the memory block (as `memory show` prints it);
-`## Recent
-sessions` with one `- <id> · <YYYY-MM-DD HH:MMZ> · <project> · <title>` line
+`## Last group` with the most recently opened group in the current project,
+`g-<n> · <title>`, followed by its retained close summary when present or
+`Still open.` when the group is open without a summary; `## Recent sessions`
+with one `- <id> · <YYYY-MM-DD HH:MMZ> · <project> · <title>` line
 per session, `<p>`'s first, each part newest first (or
 `(none)`): a recorded session with an active handoff ends in
 `[handoff: <entry-id>]`, or `[handoff: <entry-id>, mode: <continue|new>]`
@@ -819,11 +821,15 @@ characters, ending in `…`. JSON:
 ```json
 {"memory": {"profile", "now", "milestones"}, "warnings": ["<memory warning>"],
  "project": "<p or null>",
+ "last_group": {"id", "title", "closed", "summary"} or omitted,
  "sessions": [{"id", "project", "title", "at", "has_record", "handoff", "handoffs", "handoff_mode"}],
  "claim_count": 1,
  "claims": [{"tag": "<tag>", "claims": [{"id": "p-<n>", "kind": "candidate|supersedes|stale",
    "quote", "statement", "subject", "older", "newer", "opened_at"}]}]}
 ```
+
+`last_group` is omitted when the project has no group. When present, its
+`closed` and `summary` fields are strings or `null`.
 
 (Format 25) `memory` is the memory block's JSON (above); `warnings` holds
 the memory block's warnings.
