@@ -6848,9 +6848,18 @@ session, or the newest transcript of the seat whose chain contains the opener
 (the seat's current holder after a clear or `--replace`), and its local
 provider transcript, an accident guard against closing from the wrong session.
 An opener that holds no seat can be closed only by the opening session itself,
-and a caller that is not authorized is refused even on a closed group. It sends up to 16 recent active handoffs and 32 recent
-stored user turns from the members, with each source clipped, to the configured
-ask model for one call with a 90-second budget. The summary names decisions,
+and a caller that is not authorized is refused even on a closed group.
+`--quote '<span>'` is the one exception: `group close <id> --quote` closes the
+group for a caller with no seat in it when `<span>` is a verbatim span of the
+user's own typed turn in the calling session and contains the group's `g-<n>`
+id as a whole word. The quote is checked as `group open` checks its consent
+(`GroupConsent::verify`), for every caller, so a refused quote fails even for
+the opener. The user's explicit ask satisfies the accident guard. The caller
+takes no seat, and the success audit names the consenting message id, as `open`
+does. Without a quote the seat rule above applies unchanged. It sends up to 16
+recent active handoffs and 32 recent stored user turns from the members, with
+each source clipped, to the configured ask model for one call with a 90-second
+budget. The summary names decisions,
 completed work and open work supported by those sources. Scribe appends the
 group's related references for work missing from the handoffs. Before writing,
 it checks that the evidence still matches and redacts the summary. The closing

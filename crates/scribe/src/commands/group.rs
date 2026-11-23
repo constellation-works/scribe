@@ -7,7 +7,7 @@ use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{Output, Record, Records};
 use clap::Subcommand;
-use scribe_core::group::{GroupConsent, JoinGroup, NewGroup, automatic_seat};
+use scribe_core::group::{GroupCloser, GroupConsent, JoinGroup, NewGroup, automatic_seat};
 use scribe_core::{
     AuthorName, CloseGroupOutcome, Label, Models, Project, Provider, Related, SessionId,
     WriteRefusal, transcript,
@@ -68,11 +68,15 @@ pub(crate) enum GroupCommand {
     /// Remove the calling session from its seat
     #[command(after_help = "Example: scribe group leave")]
     Leave,
-    /// Summarize and close the group from its opener or its seat holder
+    /// Summarize and close the group from its opener, seat holder or a quote
     #[command(after_help = "Example: scribe group close <id>")]
     Close {
         /// Group id, unique prefix, or project group slug
         id: String,
+        /// Words the user typed in this session that contain the group id; closes
+        /// the group for a session that holds no seat in it
+        #[arg(long)]
+        quote: Option<String>,
     },
     /// Show one group, its references and its seat chains
     #[command(after_help = "Example: scribe group show <id> --json")]
@@ -110,7 +114,7 @@ impl GroupCommand {
                 author: Some(author.to_string()),
                 target: ctx.store().group(id).ok().map(|g| g.id),
             },
-            Self::Close { id } => AuditSubject {
+            Self::Close { id, .. } => AuditSubject {
                 author: None,
                 target: ctx.store().group(id).ok().map(|g| g.id),
             },
@@ -273,16 +277,50 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
             (group.id, changed)
         }
         GroupCommand::Leave => (store.leave_group(&caller(ctx)?)?, true),
-        GroupCommand::Close { id } => {
+        GroupCommand::Close { id, quote } => {
             let session = caller(ctx)?;
             ctx.note_instruction_session(session.as_str());
             let now = ctx.now();
             let started = std::time::Instant::now();
             let config = ctx.config()?;
             let models = ctx.models(&config);
+            let consent = match quote {
+                None => None,
+                Some(quote) if quote.trim().is_empty() => {
+                    return Err(scribe_core::Error::AgentWrite {
+                        kind: WriteRefusal::QuoteRequired,
+                        message: "pass --quote with the user's own words from this session".into(),
+                    }
+                    .into());
+                }
+                Some(quote) => {
+                    let group = store.group(&id)?;
+                    let path = payload::locate(ctx, &session)?;
+                    let bytes = path
+                        .and_then(|p| payload::read_checked(ctx, &p, &session).ok().flatten())
+                        .ok_or_else(|| scribe_core::Error::AgentWrite {
+                            kind: WriteRefusal::QuoteNotFound,
+                            message: format!(
+                                "cannot verify a typed quote in session {session} on this host"
+                            ),
+                        })?;
+                    let consent = GroupConsent::verify_close(
+                        session.clone(),
+                        ctx.provider(),
+                        &bytes,
+                        &quote,
+                        &group.id,
+                    )?;
+                    ctx.note_instruction_message(consent.message());
+                    Some(consent)
+                }
+            };
+            let closer = consent
+                .as_ref()
+                .map_or(GroupCloser::Session(&session), GroupCloser::Quoted);
             let outcome = store.close_group_with_outcome(
                 &id,
-                &session,
+                closer,
                 now,
                 &ctx.redactor(&config)?,
                 |evidence| -> Result<_, CliError> {
@@ -308,7 +346,7 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
                     error_code: None,
                     author: None,
                     instruction_session: Some(session.as_str().to_owned()),
-                    instruction_message: None,
+                    instruction_message: consent.as_ref().map(|c| c.message().to_owned()),
                     issue: None,
                     duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
                 },
