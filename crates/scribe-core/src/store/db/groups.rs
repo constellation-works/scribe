@@ -475,17 +475,20 @@ impl Store {
             let conn = open_writer(self.root(), self.lock_wait)?;
             let path = self.root().join(DB_FILE);
             let fail = |e| db_error("join project group in", &path, e);
-            let held: Option<(i64, String)> = conn.query_row(
-                "SELECT m.group_id, COALESCE(g.slug, 'g-' || g.id) FROM group_members m JOIN groups g ON g.id=m.group_id WHERE m.session=?1",
-                [session.as_str()], |r| Ok((r.get(0)?, r.get(1)?))
-            ).optional().map_err(fail)?;
+            let held = project_group_membership(&conn, session).map_err(fail)?;
             if let Some((_, name)) = held {
-                return Err(refusal(WriteRefusal::GroupMembership, format!("session already belongs to group {}; leave it before joining", redactor.mask(&name))));
+                return Err(refusal(
+                    WriteRefusal::GroupMembership,
+                    format!(
+                        "session already belongs to group {}; leave it before joining",
+                        redactor.mask(&name)
+                    ),
+                ));
             }
-            let existing: Option<i64> = conn.query_row("SELECT id FROM groups WHERE slug=?1 AND closed IS NULL", [slug], |r| r.get(0)).optional().map_err(fail)?;
+            let existing = open_project_group(&conn, slug).map_err(fail)?;
             let n = match existing {
                 Some(n) => n,
-                None => conn.query_row("INSERT INTO groups(title,kind,project,opened,opener,related,slug) VALUES (?1,'project',?2,?3,?4,'[]',?1) RETURNING id", params![slug, project.as_str(), stamp(now), session.as_str()], |r| r.get(0)).map_err(fail)?,
+                None => insert_project_group(&conn, slug, project, now, session).map_err(fail)?,
             };
             seat_member(&conn, n, session, now).map_err(fail)?;
             Ok(format!("g-{n}"))
@@ -529,26 +532,11 @@ impl Store {
             let conn = open_writer(self.root(), self.lock_wait)?;
             let path = self.root().join(DB_FILE);
             let fail = |e| db_error("add to project group in", &path, e);
-            let existing: Option<i64> = conn
-                .query_row(
-                    "SELECT id FROM groups WHERE slug=?1 AND closed IS NULL",
-                    [slug],
-                    |r| r.get(0),
-                )
-                .optional()
-                .map_err(fail)?;
+            let existing = open_project_group(&conn, slug).map_err(fail)?;
             let mut elsewhere = Vec::new();
             let mut already = Vec::new();
             for addition in additions {
-                let held: Option<(i64, String)> = conn
-                    .query_row(
-                        "SELECT m.group_id, COALESCE(g.slug, 'g-' || g.id) FROM group_members m
-                         JOIN groups g ON g.id = m.group_id WHERE m.session = ?1",
-                        [addition.session.as_str()],
-                        |r| Ok((r.get(0)?, r.get(1)?)),
-                    )
-                    .optional()
-                    .map_err(fail)?;
+                let held = project_group_membership(&conn, &addition.session).map_err(fail)?;
                 match held {
                     Some((group, _)) if Some(group) == existing => {
                         already.push(addition.session.as_str());
@@ -570,13 +558,7 @@ impl Store {
             let (n, created) = match existing {
                 Some(n) => (n, false),
                 None => (
-                    conn.query_row(
-                        "INSERT INTO groups(title,kind,project,opened,opener,related,slug)
-                         VALUES (?1,'project',?2,?3,?4,'[]',?1) RETURNING id",
-                        params![slug, project.as_str(), stamp(now), opener.as_str()],
-                        |r| r.get(0),
-                    )
-                    .map_err(fail)?,
+                    insert_project_group(&conn, slug, project, now, opener).map_err(fail)?,
                     true,
                 ),
             };
@@ -783,14 +765,7 @@ impl Store {
                         "session has no group membership",
                     )
                 })?;
-            let target: Option<i64> = conn
-                .query_row(
-                    "SELECT id FROM groups WHERE slug=?1 AND closed IS NULL",
-                    [slug],
-                    |r| r.get(0),
-                )
-                .optional()
-                .map_err(fail)?;
+            let target = open_project_group(&conn, slug).map_err(fail)?;
             if target == Some(old) {
                 return Ok(format!("g-{old}"));
             }
@@ -1173,6 +1148,41 @@ fn has_membership(conn: &Connection, session: &SessionId) -> rusqlite::Result<bo
     conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM group_members WHERE session = ?1)",
         [session.as_str()],
+        |r| r.get(0),
+    )
+}
+
+fn open_project_group(conn: &Connection, slug: &str) -> rusqlite::Result<Option<i64>> {
+    conn.query_row(
+        "SELECT id FROM groups WHERE slug=?1 AND closed IS NULL",
+        [slug],
+        |r| r.get(0),
+    )
+    .optional()
+}
+
+fn project_group_membership(
+    conn: &Connection,
+    session: &SessionId,
+) -> rusqlite::Result<Option<(i64, String)>> {
+    conn.query_row(
+        "SELECT m.group_id, COALESCE(g.slug, 'g-' || g.id) FROM group_members m JOIN groups g ON g.id=m.group_id WHERE m.session=?1",
+        [session.as_str()],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+    .optional()
+}
+
+fn insert_project_group(
+    conn: &Connection,
+    slug: &str,
+    project: &Project,
+    now: OffsetDateTime,
+    opener: &SessionId,
+) -> rusqlite::Result<i64> {
+    conn.query_row(
+        "INSERT INTO groups(title,kind,project,opened,opener,related,slug) VALUES (?1,'project',?2,?3,?4,'[]',?1) RETURNING id",
+        params![slug, project.as_str(), stamp(now), opener.as_str()],
         |r| r.get(0),
     )
 }
