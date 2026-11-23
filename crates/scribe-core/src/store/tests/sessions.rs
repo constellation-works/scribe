@@ -827,3 +827,49 @@ fn archive_erasure_stays_serialized_and_retries_after_the_lock_is_released() {
     assert!(!root.join(second).exists());
     assert!(root.join(live).exists());
 }
+
+#[test]
+fn a_first_write_forget_counts_the_legacy_files_it_deletes() {
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+    let record = session_text("", SESSION_BODY);
+    let other = record.replace("id: s-1", "id: s-2");
+    put(&root, "sessions/2026/11/s-1.md", &record);
+    put(&root, "sessions/2026/11/.s-1.rebuild.md", &record);
+    put(&root, "sessions/2026/11/s-2.md", &other);
+    let store = Store::open(&root);
+    let cite = Cite {
+        session: s1(),
+        message: None,
+        at: T0,
+        prompt_sha256: "0".repeat(64),
+        line: 1,
+        cwd: String::from("/work"),
+    };
+
+    let settled = store
+        .settle(&Settle::ForgetSession(s1()), &cite, T0)
+        .unwrap();
+
+    let Settled::SessionForgotten(forgot) = settled else {
+        panic!("expected a forgotten session, got {settled:?}");
+    };
+    assert_eq!(forgot.id, s1());
+    assert_eq!(
+        forgot.files, 2,
+        "the record and the checkpoint the cleanup deleted"
+    );
+    let archive = fs::read_dir(&root)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| {
+            p.file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with("pre-sqlite-"))
+        })
+        .expect("the first write moved the files aside");
+    let moved = archive.join("sessions/2026/11");
+    assert!(!moved.join("s-1.md").exists());
+    assert!(!moved.join(".s-1.rebuild.md").exists());
+    assert!(moved.join("s-2.md").is_file(), "the other session is kept");
+    assert!(store.session(&"s-2".parse().unwrap()).is_ok());
+}
