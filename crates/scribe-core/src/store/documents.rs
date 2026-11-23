@@ -459,9 +459,7 @@ impl Store {
             self.after(|a| a.archive_forgets = true);
             db::scope::Scope::truncate_later(&self.root);
         }
-        let spooled = self.spooled_audit()?.0.len();
-        self.drain_spool(&conn, &path)?;
-        moved.audit_lines += spooled;
+        moved.audit_lines += self.drain_spool(&conn, &path)?;
         self.convert_issues(now)?;
         Ok(moved)
     }
