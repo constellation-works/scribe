@@ -73,6 +73,9 @@ const HELP: &[(&str, &[&str])] = &[
     ("tmux", &["tmux", "--help"]),
     ("consistency", &["consistency", "--help"]),
     ("consistency-scan", &["consistency", "scan", "--help"]),
+    ("mark", &["mark", "--help"]),
+    ("mark-list", &["mark", "list", "--help"]),
+    ("mark-retry", &["mark", "retry", "--help"]),
     ("store", &["store", "--help"]),
     ("store-migrate", &["store", "migrate", "--help"]),
     ("export", &["export", "--help"]),
@@ -393,6 +396,29 @@ fn group_roster_matches_goldens() {
         let out = fx.ok(&[&["group", "backfill", "g-2"][..], *mode].concat());
         failures.extend(check(
             &format!("output/group-backfill.{suffix}"),
+            &text(&out.stdout),
+        ));
+    }
+    report(&failures);
+}
+
+#[test]
+fn mark_list_matches_goldens() {
+    // One given-up marker, one pending, and one settled that is not listed.
+    let fx = Fixture::new();
+    fx.ok(&["store", "migrate"]);
+    support::sql(
+        &fx.root(),
+        r#"INSERT INTO marks (position, session, message, prompt_sha256, marker, outcome, entry, code, attempts, at) VALUES
+            (0,'5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f','u-1','aa',1,'refused',NULL,'model_failed',3,'2026-11-23T23:11:16Z'),
+            (1,'5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f','u-2','bb',1,'pending',NULL,NULL,1,'2026-11-23T23:12:00Z'),
+            (2,'5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f','u-3','cc',1,'none',NULL,NULL,1,'2026-11-23T23:13:00Z');"#,
+    );
+    let mut failures = Vec::new();
+    for (suffix, mode) in MODES {
+        let out = fx.ok(&[&["mark", "list"][..], *mode].concat());
+        failures.extend(check(
+            &format!("output/mark-list.{suffix}"),
             &text(&out.stdout),
         ));
     }

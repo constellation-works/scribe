@@ -4,7 +4,12 @@
 //! The prompt hook only echoed the marker. Here, after the reply, each
 //! typed turn of the transcript with a marker that `marks.json` has not
 //! settled gets one bounded `models.annotation` call ([`MAX_TURNS_PER_STOP`]
-//! turns per Stop, oldest first). Each answer is checked without a model
+//! turns per Stop, oldest first; `scribe mark retry` runs the same catalog
+//! for one session with no per-run bound). A typed turn is one the shared
+//! typed-turn rule keeps (`instruction::claude_conversation_raw_typed`, §4.1):
+//! a plain prompt, a queued line Daniel typed while the agent was busy, or a
+//! slash command, whose markers are read from its args
+//! (`annotation::turn_marks`). Each answer is checked without a model
 //! (`annotation::check`) and recorded in one store call that writes the
 //! entries and `marks.json` (`Store::record_marks`):
 //!
@@ -15,7 +20,10 @@
 //!   call): never asked again;
 //! - a failed call: nothing written, the marker stays pending and the next
 //!   Stop retries it, up to [`MAX_ATTEMPTS`] calls, then refused
-//!   `model_failed`.
+//!   `model_failed`. A given-up marker stays listed (`scribe mark list`)
+//!   until `scribe mark retry` catalogs it, and its echo also reaches the
+//!   agent (`Cataloged::context`) with the line, so the agent can record
+//!   the user's words itself.
 //!
 //! The user sees an echo for every outcome except a marker the prompt hook
 //! already refused, which is recorded and audited here silently. A turn
@@ -32,13 +40,13 @@
 //! its user messages are the host-attributed typed inputs, its cwd the
 //! session's, and a `$scribe` skill control is skipped as a `/scribe` one is.
 
-use super::payload::{self, PromptPayload, StopPayload, Transcript};
+use super::payload::{self, StopPayload, Transcript};
 use super::project;
 use super::user_prompt_submit::{chain, quote};
 use crate::app::Context;
 use crate::error::CliError;
 use crate::output::HookOutcome;
-use scribe_core::annotation::{self, Checked, MAX_ATTEMPTS, MAX_TURNS_PER_STOP, Mark};
+use scribe_core::annotation::{self, Checked, MAX_ATTEMPTS, Mark};
 use scribe_core::capture::{self, Turn};
 use scribe_core::transcript::{self, Message};
 use scribe_core::{
@@ -47,11 +55,15 @@ use scribe_core::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-/// What the hook tells the user and audits.
+/// What the hook tells the user and the agent, and audits.
 #[derive(Default)]
-pub(super) struct Cataloged {
-    pub(super) echoes: Vec<String>,
-    pub(super) outcomes: Vec<HookOutcome>,
+pub(in crate::commands) struct Cataloged {
+    /// For the user, one per marker outcome.
+    pub(in crate::commands) echoes: Vec<String>,
+    /// For the agent: one per given-up marker, with the line and what the
+    /// agent may do instead.
+    pub(in crate::commands) context: Vec<String>,
+    pub(in crate::commands) outcomes: Vec<HookOutcome>,
 }
 
 /// One marked turn still to catalog.
@@ -71,8 +83,8 @@ enum Say {
     Silent,
     /// Its reason, for a refusal the checks made.
     Reason(String),
-    /// The call's error, for a failure.
-    Failed(String),
+    /// The call's error, for a failure, and the marker's line as typed.
+    Failed { error: String, said: String },
     /// The model's answer.
     Answer,
 }
@@ -81,18 +93,20 @@ impl Say {
     /// Its words, when it has any.
     fn text(self) -> Option<String> {
         match self {
-            Self::Reason(text) | Self::Failed(text) => Some(text),
+            Self::Reason(text) | Self::Failed { error: text, .. } => Some(text),
             Self::Silent | Self::Answer => None,
         }
     }
 }
 
-/// Catalog the session's unsettled markers, building the model adapter
-/// with `models` only when a call is due.
-pub(super) fn run<M: Models>(
+/// Catalog the session's unsettled markers, at most `turns` marked turns
+/// (oldest first), building the model adapter with `models` only when a
+/// call is due.
+pub(in crate::commands) fn run<M: Models>(
     payload: &StopPayload,
     session: &SessionId,
     ctx: &Context,
+    turns: usize,
     models: impl FnOnce(&Config) -> M,
 ) -> Result<Cataloged, CliError> {
     let mut out = Cataloged::default();
@@ -125,7 +139,7 @@ pub(super) fn run<M: Models>(
         .iter()
         .enumerate()
         .filter(|(_, m)| m.role == Speaker::User && m.text().contains(capture::MARKER))
-        .map(|(i, m)| (i, annotation::marks(&m.text())))
+        .map(|(i, m)| (i, annotation::turn_marks(&m.text())))
         .filter(|(_, marks)| !marks.is_empty())
         .collect();
     if marked.is_empty() {
@@ -150,6 +164,18 @@ pub(super) fn run<M: Models>(
         (None, Some(indices)) => raw_lines(&bytes, &candidates, &messages, indices),
         _ => BTreeMap::new(),
     };
+    // The Claude user turns Daniel typed, by the rule every typed-turn reader
+    // shares (§4.1): the line's origin claims, then his words (a slash
+    // command's args, not its harness tags) free of agent wrappers.
+    let typed: BTreeSet<String> = if codex_cwd.is_none() {
+        scribe_core::instruction::claude_conversation_raw_typed(&bytes)
+            .into_iter()
+            .filter(|spoken| spoken.typed.is_some())
+            .map(|spoken| spoken.message.uuid)
+            .collect()
+    } else {
+        BTreeSet::new()
+    };
     let mut work = Vec::new();
     for (index, marks) in marked {
         let message = &messages[index];
@@ -167,18 +193,19 @@ pub(super) fn run<M: Models>(
                 cwd.clone()
             }
             None => {
-                let Some(prompt) = raw
-                    .get(&message.uuid)
-                    .and_then(|value| prompt_of(value, message, session, payload).ok())
-                else {
-                    continue;
-                };
-                if payload::agent_originated(&prompt)
-                    || scribe_core::control::parse(&prompt.prompt).is_some()
+                if !typed.contains(&message.uuid)
+                    || scribe_core::control::parse(&message.text()).is_some()
                 {
                     continue;
                 }
-                prompt.cwd
+                // The line's own cwd, else the Stop payload's.
+                raw.get(&message.uuid)
+                    .and_then(|value| value.get("cwd"))
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|cwd| !cwd.is_empty())
+                    .map(str::to_owned)
+                    .or_else(|| payload.cwd.clone())
+                    .unwrap_or_default()
             }
         };
         if transcript::user_turn(message).is_none() || cwd.is_empty() {
@@ -254,16 +281,18 @@ pub(super) fn run<M: Models>(
             updates.push((key(mark), MarkChange::Refused(code)));
             says.push(Say::Silent);
         }
-        if item.open.is_empty() || calls >= MAX_TURNS_PER_STOP {
+        if item.open.is_empty() || calls >= turns {
             continue;
         }
         calls += 1;
         let window = annotation::window(&messages, &item.message.uuid);
         let in_window: BTreeSet<&str> = window.iter().map(|m| m.uuid.as_str()).collect();
-        let typed: Vec<&Message> = messages[..=item.index]
+        // The window's turns he typed: a quote must come from one of them.
+        let own: Vec<&Message> = messages[..=item.index]
             .iter()
             .filter(|m| in_window.contains(m.uuid.as_str()))
             .filter(|m| transcript::user_turn(m).is_some())
+            .filter(|m| codex_cwd.is_some() || typed.contains(&m.uuid))
             .collect();
         let open: Vec<&Mark> = item.open.iter().collect();
         let request = annotation::request(
@@ -284,13 +313,17 @@ pub(super) fn run<M: Models>(
             let found = answer
                 .as_ref()
                 .map(|a| a.marks.iter().find(|m| m.marker == mark.number));
+            let failed = |error: String| Say::Failed {
+                error,
+                said: mark.said.clone(),
+            };
             let (change, say) = match found {
-                Err(err) => (MarkChange::Failed, Say::Failed(err.clone())),
+                Err(err) => (MarkChange::Failed, failed(err.clone())),
                 Ok(None) => (
                     MarkChange::Failed,
-                    Say::Failed(format!("the answer had no marker {}", mark.number)),
+                    failed(format!("the answer had no marker {}", mark.number)),
                 ),
-                Ok(Some(answer)) => match annotation::check(mark, answer, &typed, &config.tags) {
+                Ok(Some(answer)) => match annotation::check(mark, answer, &own, &config.tags) {
                     Ok(Checked::Entry(annotated)) => {
                         let mut draft = annotation::draft(
                             mark,
@@ -399,13 +432,26 @@ fn echo(out: &mut Cataloged, session: &SessionId, result: MarkResult, say: Say) 
             out.outcomes.push(refusal(session, code));
         }
         (MarkResult::Failed { attempts, gave_up }, say) => {
+            let said = match &say {
+                Say::Failed { said, .. } => said.clone(),
+                Say::Silent | Say::Reason(_) | Say::Answer => String::new(),
+            };
             let err = say
                 .text()
                 .unwrap_or_else(|| String::from("the model call failed"));
             if gave_up {
-                out.echoes.push(format!(
+                let echo = format!(
                     "scribe: could not catalog #scribe in your message — {}; gave up after {MAX_ATTEMPTS} attempts",
                     quote(&err)
+                );
+                out.echoes
+                    .push(format!("{echo} — scribe mark retry {session} tries again"));
+                // The agent gets the line too: nothing was recorded, so it
+                // may record the user's words itself.
+                out.context.push(format!(
+                    "{echo} — the line: \"{}\" {}",
+                    quote(&said),
+                    gave_up_note(session)
                 ));
                 out.outcomes.push(refusal(session, MODEL_FAILED));
             } else {
@@ -417,6 +463,14 @@ fn echo(out: &mut Cataloged, session: &SessionId, result: MarkResult, say: Say) 
             }
         }
     }
+}
+
+/// What the agent is told after a given-up marker: it was not recorded, and
+/// how the user's words can still be kept.
+fn gave_up_note(session: &SessionId) -> String {
+    format!(
+        "(not cataloged by scribe; if the user wants it kept, record it with their exact words: scribe entry add --tag <tag> --quote '<their words>' --spoken '<statement>' --author <name>, or ask them to run scribe mark retry {session} from a shell with model credentials)"
+    )
 }
 
 fn refusal(session: &SessionId, code: &'static str) -> HookOutcome {
@@ -486,25 +540,4 @@ fn raw_lines(
         }
     }
     raw
-}
-
-/// The prompt payload a transcript user message would have had: its raw
-/// line with the session, transcript path and joined text, and the Stop
-/// payload's cwd when the line has none (the empty placeholder lets the
-/// origin guard skip synthetic turns even without cwd; it must never reach
-/// capture as a citation).
-fn prompt_of(
-    raw: &serde_json::Value,
-    message: &transcript::Message,
-    session: &SessionId,
-    payload: &StopPayload,
-) -> serde_json::Result<PromptPayload> {
-    let mut value = raw.clone();
-    value["session_id"] = serde_json::json!(session);
-    value["transcript_path"] = serde_json::json!(payload.transcript_path);
-    value["prompt"] = serde_json::json!(message.text());
-    if value["cwd"].is_null() {
-        value["cwd"] = serde_json::json!(payload.cwd.as_deref().unwrap_or_default());
-    }
-    serde_json::from_value(value)
 }

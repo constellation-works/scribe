@@ -1,0 +1,42 @@
+Catalog a session's given-up and pending #scribe markers now
+
+Opens the session's given-up markers again and catalogs every unsettled marker of its transcript now, as the Stop hook would.
+
+Usage: scribe mark retry [OPTIONS] <SESSION>
+
+Arguments:
+  <SESSION>
+          The session whose markers to catalog: a provider session id or a unique prefix
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Global options:
+      --provider <PROVIDER>
+          Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+
+      --root <DIR>
+          Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+
+      --format <FORMAT>
+          Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto]
+          
+          [possible values: auto, table, json]
+
+      --json
+          Shorthand for --format json
+
+Run it from a shell whose environment holds the model credential
+([models] credentials in config.toml). Each given-up marker of the session
+gets its attempts back, then every marker of the session's transcript that
+nothing settled yet is sent to the model, as the Stop hook would, with no
+per-run bound. Exits 1 with model_failed when a call fails again; the marker
+stays pending.
+
+Examples:
+  scribe mark retry <id>
+  scribe --provider codex mark retry <id>

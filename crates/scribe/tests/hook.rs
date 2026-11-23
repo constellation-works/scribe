@@ -160,7 +160,7 @@ fn each_scribe_line_of_the_fixture_prompt_is_a_marker_cataloged_at_stop() {
     );
     assert_eq!(
         reply_json["hookSpecificOutput"]["additionalContext"],
-        "scribe: marked 2 times — cataloged after the reply (scribe catalogs this #scribe marker after your reply; do not record it yourself)"
+        "scribe: marked 2 times — cataloged after the reply (scribe tries to catalog this #scribe marker after your reply and tells you if it gives up; record it yourself only then)"
     );
     assert!(
         reply_json.get("decision").is_none(),
@@ -500,7 +500,7 @@ fn a_mixed_prompt_notes_each_line_by_whether_it_was_recorded() {
     );
     assert_eq!(
         lines[2],
-        "scribe: marked — cataloged after the reply (scribe catalogs this #scribe marker after your reply; do not record it yourself)"
+        "scribe: marked — cataloged after the reply (scribe tries to catalog this #scribe marker after your reply and tells you if it gives up; record it yourself only then)"
     );
 }
 
@@ -1823,7 +1823,10 @@ fn a_marker_inside_a_sentence_is_echoed_at_submit_and_writes_nothing() {
     let context = reply["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .unwrap();
-    assert!(context.contains("do not record it yourself"), "{context}");
+    assert!(
+        context.contains("tells you if it gives up; record it yourself only then"),
+        "{context}"
+    );
     assert!(claude_calls(&fx).is_empty(), "no model call at submit");
     assert!(!fx.root().exists(), "nothing written at submit");
 }
@@ -1965,8 +1968,27 @@ fn a_failing_model_stays_pending_for_three_attempts_then_refuses_model_failed() 
         assert_eq!(marks_json(&fx)[0]["outcome"], "pending");
     }
     let out = hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
-    let echo = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
-    assert!(echo.ends_with("; gave up after 3 attempts"), "{echo}");
+    let reply = reply(&out);
+    let echo = reply["systemMessage"].as_str().unwrap().to_owned();
+    assert!(
+        echo.ends_with(&format!(
+            "; gave up after 3 attempts — scribe mark retry {SESSION} tries again"
+        )),
+        "{echo}"
+    );
+    // The agent is told too, with the line, so it is not lost.
+    let context = reply["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert_eq!(reply["hookSpecificOutput"]["hookEventName"], "Stop");
+    assert!(
+        context.starts_with("scribe: could not catalog #scribe in your message — "),
+        "{context}"
+    );
+    assert!(context.contains("gave up after 3 attempts"), "{context}");
+    assert!(context.contains(MARKED), "{context}");
+    assert!(context.contains("not cataloged by scribe"), "{context}");
+    assert!(context.contains("scribe entry add --tag"), "{context}");
     let marks = marks_json(&fx);
     assert_eq!(marks[0]["outcome"], "refused");
     assert_eq!(marks[0]["code"], "model_failed");
@@ -2368,4 +2390,129 @@ fn stop_uses_the_retained_user_row_instead_of_same_uuid_progress_origin() {
         marks_json(&fx).is_empty(),
         "synthetic turn writes no mark outcome"
     );
+}
+
+/// A Claude desktop transcript of a session that was never switched on: a
+/// slash-command turn whose args carry a marker, then a line Daniel typed
+/// while the agent was busy (a `queued_command` attachment), both marked.
+fn typed_forms_transcript(claude: &Claude, slash: &str, queued: &str) {
+    let at = now_rfc3339();
+    let desktop = |line: Value| {
+        let mut line = line;
+        let obj = line.as_object_mut().unwrap();
+        obj.insert("sessionId".into(), json!(SESSION));
+        obj.insert("timestamp".into(), json!(at));
+        obj.insert("cwd".into(), json!(claude.cwd));
+        obj.insert("entrypoint".into(), json!("claude-desktop"));
+        line
+    };
+    write_lines(
+        claude,
+        &[
+            json!({"type": "session-owner", "sessionId": SESSION}),
+            desktop(json!({"type": "user", "uuid": "u-slash",
+            "origin": {"kind": "human"}, "turnOrigin": "human",
+            "message": {"role": "user", "content": format!(
+                "<command-message>design</command-message>\n<command-name>/design</command-name>\n<command-args>{slash}</command-args>"
+            )}})),
+            desktop(json!({"type": "assistant", "uuid": "a-1",
+                "message": {"role": "assistant", "content": [{"type": "text", "text": "Working on it."}]}})),
+            desktop(json!({"type": "attachment", "uuid": "u-queued",
+                "attachment": {"type": "queued_command", "prompt": queued,
+                    "commandMode": "prompt", "origin": {"kind": "human"}, "humanTurn": true}})),
+            desktop(json!({"type": "assistant", "uuid": "a-2",
+                "message": {"role": "assistant", "content": [{"type": "text", "text": "Noted."}]}})),
+        ],
+    );
+}
+
+#[test]
+fn markers_in_a_slash_command_turn_and_a_queued_line_of_an_off_session_are_cataloged_at_stop() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    let slash = "draft the plan; #scribe preference: dates are always absolute";
+    let queued = "#scribe preference: keep status updates under five lines";
+    typed_forms_transcript(&claude, slash, queued);
+    let path = annotating_claude(&fx, &none_for(1..=1));
+    let out = hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
+    assert_eq!(claude_calls(&fx).len(), 2, "{}", text(&out.stdout));
+    let marks = marks_json(&fx);
+    let settled: Vec<&Value> = marks.iter().map(|m| &m["message"]).collect();
+    assert_eq!(
+        settled,
+        vec![&json!("u-slash"), &json!("u-queued")],
+        "{marks:?}"
+    );
+    assert!(marks.iter().all(|m| m["outcome"] == "none"), "{marks:?}");
+}
+
+/// Run `scribe <args>` with the fake `claude` on PATH and a credential set.
+fn mark_cmd(fx: &Fixture, args: &[&str], path: &std::ffi::OsString) -> Output {
+    let mut cmd = fx.cmd(args);
+    cmd.env("PATH", path)
+        .env("CLAUDE_CODE_OAUTH_TOKEN", "oauth-test-value");
+    cmd.output().unwrap()
+}
+
+#[test]
+fn a_given_up_marker_stays_listed_and_mark_retry_catalogs_it() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    // As Claude Code writes them: each line carries the session's cwd.
+    write_lines(
+        &claude,
+        &[
+            json!({"type": "session-owner", "sessionId": SESSION}),
+            json!({"type": "user", "uuid": "u-1", "sessionId": SESSION, "cwd": claude.cwd,
+                   "timestamp": now_rfc3339(),
+                   "message": {"role": "user", "content": MARKED}}),
+            json!({"type": "assistant", "uuid": "a-u-1", "sessionId": SESSION, "cwd": claude.cwd,
+                   "timestamp": now_rfc3339(),
+                   "message": {"role": "assistant", "content": [{"type": "text", "text": "Noted."}]}}),
+        ],
+    );
+    let failing = fake_claude(&fx, "exit 1");
+    for _ in 1..=3 {
+        hook_path(&fx, "stop", &claude.payload("stop.json"), &failing);
+    }
+    assert_eq!(marks_json(&fx)[0]["code"], "model_failed");
+
+    let listed = mark_cmd(&fx, &["mark", "list", "--json"], &failing);
+    assert!(listed.status.success(), "{listed:?}");
+    let doc: Value = serde_json::from_slice(&listed.stdout).unwrap();
+    assert_eq!(doc["total"], 1, "{doc}");
+    assert_eq!(doc["marks"][0]["message"], "u-1");
+    assert_eq!(doc["marks"][0]["outcome"], "refused");
+    assert_eq!(doc["marks"][0]["code"], "model_failed");
+
+    // Still failing: exits 1 with model_failed, and the marker waits pending.
+    let again = mark_cmd(&fx, &["mark", "retry", SESSION], &failing);
+    assert_eq!(again.status.code(), Some(1), "{again:?}");
+    assert!(
+        String::from_utf8_lossy(&again.stderr).contains(
+            "1 #scribe marker(s) of 5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f still not cataloged"
+        ),
+        "{again:?}"
+    );
+    assert_eq!(marks_json(&fx)[0]["outcome"], "pending");
+    assert_eq!(claude_calls(&fx).len(), 4);
+
+    let working = annotating_claude(&fx, &none_for(1..=1));
+    let retried = mark_cmd(&fx, &["mark", "retry", SESSION, "--json"], &working);
+    assert!(retried.status.success(), "{retried:?}");
+    let doc: Value = serde_json::from_slice(&retried.stdout).unwrap();
+    assert_eq!(doc["marks"][0]["outcome"], "none", "{doc}");
+    assert_eq!(marks_json(&fx)[0]["outcome"], "none");
+    assert_eq!(claude_calls(&fx).len(), 5);
+    assert!(
+        audit(&fx)
+            .iter()
+            .any(|l| l["command"] == "mark retry" && l["error_code"].is_null()),
+        "{:?}",
+        audit(&fx)
+    );
+
+    let empty = mark_cmd(&fx, &["mark", "list", "--json"], &working);
+    let doc: Value = serde_json::from_slice(&empty.stdout).unwrap();
+    assert_eq!(doc["total"], 0, "{doc}");
 }

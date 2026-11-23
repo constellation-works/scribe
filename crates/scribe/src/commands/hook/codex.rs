@@ -291,10 +291,12 @@ fn ingest(event: &'static str, input: &[u8], ctx: &Context) -> Result<Output, Cl
     }
     // Stop's own echoes (the markers it cataloged) follow the replayed
     // turns' replies, so a catch-up Stop still reports what it recorded.
+    let mut agent_only = None;
     if event == "Stop"
         && let Output::Hook(reply) = stop::run(input, ctx)?
     {
         replies.extend(reply.message);
+        agent_only = reply.context;
         outcomes.extend(reply.outcomes);
     }
     if let Some(persisted) = persisted.as_mut() {
@@ -303,10 +305,15 @@ fn ingest(event: &'static str, input: &[u8], ctx: &Context) -> Result<Output, Cl
     let message = (!replies.is_empty()).then(|| replies.join("\n"));
     // Codex Stop permits additionalContext JSON; no plain stdout, and no
     // blocking decision that would accidentally ask the model to continue.
+    // The agent gets the echoes, then a given-up marker's line and note.
+    let context = [message.clone(), agent_only]
+        .into_iter()
+        .flatten()
+        .reduce(|a, b| format!("{a}\n{b}"));
     Ok(Output::Hook(HookReply {
         event,
         message: message.clone(),
-        context: message,
+        context,
         block: None,
         outcomes,
     }))

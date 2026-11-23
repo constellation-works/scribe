@@ -105,14 +105,15 @@ pub(super) struct SessionEndPayload {
     pub(super) session_id: String,
 }
 
-/// The fields of the `Stop` payload scribe uses.
+/// The fields of the `Stop` payload scribe uses. `scribe mark retry` builds
+/// one for a session's transcript to catalog its markers as `Stop` would.
 #[derive(Debug, Deserialize)]
-pub(super) struct StopPayload {
-    pub(super) session_id: String,
-    pub(super) transcript_path: PathBuf,
+pub(in crate::commands) struct StopPayload {
+    pub(in crate::commands) session_id: String,
+    pub(in crate::commands) transcript_path: PathBuf,
     /// Fallback for transcript lines from clients that omit their cwd.
     #[serde(default)]
-    pub(super) cwd: Option<String>,
+    pub(in crate::commands) cwd: Option<String>,
 }
 
 /// Read the whole of stdin, up to [`MAX_PAYLOAD`].

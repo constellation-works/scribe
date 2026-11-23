@@ -136,6 +136,11 @@ pub(crate) struct ClaudeCliModels {
     /// Masks secret values and credential shapes in every failure this
     /// adapter reports (see [`ClaudeCliModels::with_redactor`]).
     redactor: Redactor,
+    /// The configured credential names, when none of them is set in this
+    /// process's environment; empty otherwise. A failed call then names
+    /// them, since `claude` refuses to run without a login
+    /// ([`ClaudeCliModels::with_credentials`]).
+    unset_credentials: Vec<String>,
 }
 
 impl ClaudeCliModels {
@@ -148,7 +153,27 @@ impl ClaudeCliModels {
             program: OsString::from(PROGRAM),
             redactor: credential_redactor(&env),
             env,
+            unset_credentials: Vec::new(),
         }
+    }
+
+    /// Note the configured credential `names` (`[models] credentials`). When
+    /// none of them reached the child's environment, a failed call says so:
+    /// a hook inherits the environment of the app that started it, and an
+    /// app not started from a login shell may lack the variable the login
+    /// shell exports, so `claude` exits refusing to run.
+    pub(crate) fn with_credentials(mut self, names: &[String]) -> Self {
+        let set = |name: &String| {
+            self.env
+                .iter()
+                .any(|(key, _)| key.as_os_str() == name.as_str())
+        };
+        self.unset_credentials = if names.is_empty() || names.iter().any(set) {
+            Vec::new()
+        } else {
+            names.to_vec()
+        };
+        self
     }
 
     /// Select the configured executable transport, with no model-name guessing.
@@ -183,7 +208,8 @@ impl ClaudeCliModels {
         match ran.ended {
             Ended::Exited(status) if status.success() => structured(&ran.stdout, &self.redactor),
             Ended::Exited(status) => Err(ModelError::Failed(format!(
-                "{PROGRAM} ended with {status}{}",
+                "{PROGRAM} ended with {status}{}{}",
+                self.unset_hint(),
                 detail(&ran.stderr, &self.redactor)
                     .or_else(|| detail(&ran.stdout, &self.redactor))
                     .map(|d| format!(": {d}"))
@@ -191,6 +217,17 @@ impl ClaudeCliModels {
             ))),
             Ended::TimedOut => Err(ModelError::Timeout { budget }),
         }
+    }
+
+    /// Why a call may have failed when no credential reached the child.
+    fn unset_hint(&self) -> String {
+        if self.unset_credentials.is_empty() {
+            return String::new();
+        }
+        format!(
+            " (none of {} is set in scribe's environment)",
+            self.unset_credentials.join(", ")
+        )
     }
 
     fn command(&self, args: &[String]) -> Command {

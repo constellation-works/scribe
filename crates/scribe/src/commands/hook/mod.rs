@@ -26,7 +26,7 @@
 //! writes is audited, and none calls a model
 //! except Stop's annotation call in `annotation.rs`.
 
-mod annotation;
+pub(super) mod annotation;
 mod codex;
 mod continuation;
 mod group_add;

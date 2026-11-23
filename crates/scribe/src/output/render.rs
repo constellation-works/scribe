@@ -114,6 +114,16 @@ const TRANSCRIPT_COLUMNS: [Column; 7] = [
     col("FIRST_PROMPT", Align::Left, true),
 ];
 
+const MARK_COLUMNS: [Column; 7] = [
+    col("SESSION", Align::Left, false),
+    col("MESSAGE", Align::Left, true),
+    col("MARKER", Align::Right, false),
+    col("OUTCOME", Align::Left, false),
+    col("CODE", Align::Left, false),
+    col("ATTEMPTS", Align::Right, false),
+    col("AT", Align::Left, false),
+];
+
 const HIT_COLUMNS: [Column; 6] = [
     col("CITE", Align::Left, false),
     col("KIND", Align::Left, false),
@@ -187,6 +197,7 @@ pub(crate) fn list(
             Records::Transcripts(items) => {
                 write_json(out, &envelope("transcripts", items, total, warnings))
             }
+            Records::Marks(items) => write_json(out, &envelope("marks", items, total, warnings)),
         };
     }
     // An empty list prints nothing, not a lone header (STD-01 R16).
@@ -250,6 +261,13 @@ pub(crate) fn list(
             items
                 .iter()
                 .map(|t| transcript_row(t, sink.mode, table_shorts(sink, shorts)))
+                .collect(),
+        ),
+        Records::Marks(items) => (
+            MARK_COLUMNS.to_vec(),
+            items
+                .iter()
+                .map(|m| mark_row(m, sink.mode, table_shorts(sink, shorts)))
                 .collect(),
         ),
     };
@@ -1927,6 +1945,22 @@ fn transcript_row(t: &TranscriptPayload, mode: OutputMode, shorts: Option<&Short
         Cell::plain(optional_list_timestamp(t.started, mode)),
         Cell::plain(optional_list_timestamp(t.ended, mode)),
         Cell::plain(one_line(&t.first_prompt)),
+    ]
+}
+
+fn mark_row(
+    m: &scribe_core::annotation::MarkRecord,
+    mode: OutputMode,
+    shorts: Option<&ShortIds>,
+) -> Vec<Cell> {
+    vec![
+        Cell::plain(shown_id(m.session.as_str(), shorts)),
+        Cell::plain(m.message.clone()),
+        Cell::plain(m.marker.to_string()),
+        Cell::plain(m.outcome.as_str().to_owned()),
+        Cell::plain(m.code.clone().unwrap_or_else(|| String::from("-"))),
+        Cell::plain(m.attempts.to_string()),
+        Cell::plain(list_timestamp(m.at, mode)),
     ]
 }
 

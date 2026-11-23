@@ -194,6 +194,32 @@ pub fn marks(text: &str) -> Vec<Mark> {
     found
 }
 
+/// The markers of a typed turn as the transcript holds it (§14.1): [`marks`]
+/// of its text, or, for a slash command Daniel typed, of the command's args,
+/// which are his words (`transcript::slash_command_args`, §4.1). An args
+/// marker keeps the line number of the turn's whole text, so its cite and the
+/// lines an older store recorded verbatim agree with the prompt the line is
+/// in.
+#[must_use]
+pub fn turn_marks(text: &str) -> Vec<Mark> {
+    let Some(args) = crate::transcript::slash_command_args(text) else {
+        return marks(text);
+    };
+    // `args` is a slice of `text`; its first line is the line it starts on.
+    let start = (args.as_ptr() as usize).saturating_sub(text.as_ptr() as usize);
+    let before = text
+        .get(..start)
+        .map_or(0, |head| head.matches('\n').count());
+    let shift = u32::try_from(before).unwrap_or(u32::MAX);
+    marks(args)
+        .into_iter()
+        .map(|mut mark| {
+            mark.line = mark.line.saturating_add(shift);
+            mark
+        })
+        .collect()
+}
+
 /// Byte offsets in `line` where a marker starts, outside code and quotes.
 fn tokens(line: &str) -> Vec<usize> {
     let lone = unpaired(line);
@@ -687,5 +713,19 @@ impl MarkRecord {
     #[must_use]
     pub fn is(&self, message: &str, marker: u32) -> bool {
         self.message == message && self.marker == marker
+    }
+
+    /// Whether every call for it failed: refused `model_failed` after
+    /// [`MAX_ATTEMPTS`] (§14.5). `scribe mark retry` opens it again.
+    #[must_use]
+    pub fn gave_up(&self) -> bool {
+        self.outcome == MarkState::Refused && self.code.as_deref() == Some(crate::MODEL_FAILED)
+    }
+
+    /// Whether no entry or answer settled it yet: pending a retry, or given
+    /// up ([`MarkRecord::gave_up`]). `scribe mark list` lists these.
+    #[must_use]
+    pub fn uncataloged(&self) -> bool {
+        self.outcome == MarkState::Pending || self.gave_up()
     }
 }

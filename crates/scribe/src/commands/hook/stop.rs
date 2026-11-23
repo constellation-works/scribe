@@ -4,8 +4,10 @@
 //!
 //! The `#scribe` markers the user typed are cataloged (`annotation.rs`, §14):
 //! the only model call this hook makes, one per marked turn, bounded. A
-//! transcript that fails the provenance check is echoed once and stops the
-//! hook: nothing is filled, cataloged or marked due.
+//! marker given up after its last failed call is echoed to the user and, with
+//! its line, to the agent (`additionalContext`). A transcript that fails the
+//! provenance check is echoed once and stops the hook: nothing is filled,
+//! cataloged or marked due.
 //!
 //! `UserPromptSubmit` runs before Claude Code writes the prompt to the
 //! transcript, so an entry's cite starts with `message: null` and the hash
@@ -28,6 +30,7 @@ use super::payload::{self, StopPayload, Transcript};
 use crate::app::Context;
 use crate::error::CliError;
 use crate::output::{HookOutcome, HookReply, Output};
+use scribe_core::annotation::MAX_TURNS_PER_STOP;
 use scribe_core::control::{self, Since};
 use scribe_core::transcript::{self, Message};
 use scribe_core::{Cite, Provider, SessionId, Speaker, pass};
@@ -89,9 +92,16 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
         .any(|o| o.error_code == Some(PROVENANCE_FAILED))
     {
         let cataloged =
-            super::annotation::run(&payload, &session, ctx, |config| ctx.models(config))?;
+            super::annotation::run(&payload, &session, ctx, MAX_TURNS_PER_STOP, |config| {
+                ctx.models(config)
+            })?;
         if !cataloged.echoes.is_empty() {
             reply.message = Some(cataloged.echoes.join("\n"));
+        }
+        // A given-up marker reaches the agent as well (Claude Code delivers a
+        // Stop's `additionalContext` to the model), so the line is not lost.
+        if !cataloged.context.is_empty() {
+            reply.context = Some(cataloged.context.join("\n"));
         }
         outcomes.extend(cataloged.outcomes);
     }

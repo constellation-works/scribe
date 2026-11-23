@@ -81,6 +81,51 @@ impl Store {
             .collect())
     }
 
+    /// The markers no entry or answer settled yet ([`MarkRecord::uncataloged`]):
+    /// pending a retry or given up after [`MAX_ATTEMPTS`], of `session` or of
+    /// every session, in file order. Reads only.
+    pub fn uncataloged_marks(&self, session: Option<&SessionId>) -> Result<Vec<MarkRecord>> {
+        Ok(self
+            .all_marks()?
+            .into_iter()
+            .filter(|m| m.uncataloged() && session.is_none_or(|s| m.session == *s))
+            .collect())
+    }
+
+    /// Open `session`'s given-up markers again ([`MarkRecord::gave_up`]):
+    /// each becomes pending with no attempt spent, so the next catalog
+    /// call (`scribe mark retry`, or the session's next `Stop`) asks the
+    /// model again, up to [`MAX_ATTEMPTS`] more calls. Returns how many it
+    /// opened; none writes nothing.
+    pub fn reopen_marks(&self, session: &SessionId, now: OffsetDateTime) -> Result<usize> {
+        if !self
+            .all_marks()?
+            .iter()
+            .any(|m| m.session == *session && m.gave_up())
+        {
+            return Ok(0);
+        }
+        self.write(|| {
+            self.refuse_forgotten(session)?;
+            let mut marks = self.all_marks()?;
+            let mut opened = 0;
+            for mark in marks
+                .iter_mut()
+                .filter(|m| m.session == *session && m.gave_up())
+            {
+                mark.outcome = MarkState::Pending;
+                mark.code = None;
+                mark.attempts = 0;
+                mark.at = now;
+                opened += 1;
+            }
+            if opened > 0 {
+                self.write_marks(&marks)?;
+            }
+            Ok(opened)
+        })
+    }
+
     /// Record each marker's outcome in one write, writing the
     /// checked annotation entries first (2_design.md §14.4, §14.5).
     ///

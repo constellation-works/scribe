@@ -305,8 +305,14 @@ impl Context {
             env.retain(|(key, _)| key != "CODEX_HOME");
             env.push((OsString::from("CODEX_HOME"), root.as_os_str().to_owned()));
         }
+        let named = if config.models.provider == Provider::Codex {
+            Vec::new()
+        } else {
+            config.models.credentials.clone()
+        };
         ClaudeCliModels::new(env)
             .with_provider(config.models.provider)
+            .with_credentials(&named)
             .with_redactor(Redactor::from_config(config, |name| {
                 std::env::var(name).ok()
             }))

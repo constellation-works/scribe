@@ -118,7 +118,7 @@ fn a_capture_line_is_echoed_as_marked_and_writes_nothing() {
             "{prompt}"
         );
         assert!(
-            context.contains("do not record it yourself"),
+            context.contains("tells you if it gives up; record it yourself only then"),
             "{prompt}: {context}"
         );
         assert!(setup.entries().is_empty(), "{prompt}");

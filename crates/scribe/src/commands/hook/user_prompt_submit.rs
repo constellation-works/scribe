@@ -28,7 +28,8 @@
 //! one for the markers. The main agent (`additionalContext`) gets the same
 //! echoes, each with a note: applied lines say no action is needed,
 //! refused or failed lines say they must be relayed to the user, and markers
-//! say scribe catalogs them after the reply. The hook never blocks the
+//! say scribe tries to catalog them after the reply and tells the agent if it
+//! gives up, so only then does the agent record the line itself. The hook never blocks the
 //! prompt: a refusal or a store failure is a reply, not an error exit, so
 //! the rest of the prompt still reaches the agent.
 
@@ -50,10 +51,10 @@ const AGENT_NOTE: &str = "(recorded by scribe; no action needed)";
 /// What the agent is told after a refused or failed echo: nothing was
 /// applied, so the line must not be silently lost.
 const AGENT_RELAY_NOTE: &str = "(not recorded by scribe; relay this to the user)";
-/// What the agent is told after a marked echo: Stop catalogs the marker
-/// after the reply, so the agent must not record it as well.
-const AGENT_MARKED_NOTE: &str =
-    "(scribe catalogs this #scribe marker after your reply; do not record it yourself)";
+/// What the agent is told after a marked echo: Stop tries to catalog the
+/// marker after the reply, so the agent does not record it as well; when the
+/// last try fails, that Stop tells the agent, which may then record it.
+const AGENT_MARKED_NOTE: &str = "(scribe tries to catalog this #scribe marker after your reply and tells you if it gives up; record it yourself only then)";
 /// The code of a payload whose transcript failed the provenance check.
 const PROVENANCE_FAILED: &str = "provenance_failed";
 
