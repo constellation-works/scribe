@@ -18,13 +18,15 @@ switches, Codex cursors and rebuild checkpoints become rows (schema version
 `pre-sqlite-<date>/` (a write that touches no session leaves them in files),
 and `control.json` stays as the format stamp alone; see
 [Sessions in scribe.db](#sessions-in-scribedb-phase-6). Format 27 (phase 7)
-moves the other kinds into `scribe.db` and writes the format stamps,
-`control.json` among them, at 27. At format 27 the first eligible store write
-transaction moves every kind still in files, sessions first. A standalone
-audit line does not start that move: it is inserted without waiting, or
-spooled under `audit-spool/` while the store is still in files or another
-writer holds the database, and the next eligible transaction drains the
-spool; see [Documents in scribe.db](#documents-in-scribedb-phase-7). Format 25
+introduced moving the other kinds into `scribe.db`; the format-27 release
+wrote the format stamps, including `control.json`, at 27. The current
+format-28 build retains that migration and stamps at 28 after its first
+eligible store write transaction moves every kind still in files, sessions
+first. A standalone audit line does not start that move: it is inserted
+without waiting, or spooled under `audit-spool/` while the store is still in
+files or another writer holds the database, and the next eligible
+transaction drains the spool; see
+[Documents in scribe.db](#documents-in-scribedb-phase-7). Format 25
 changes no stored document: it adds the memory files of
 [2_design.md §15.5](../2_design.md#155-memory-one-fixed-shape) (`memory/profile.md`,
 `memory/now/<stem>.md`, `memory/milestones/<stem>.md`), and the first
@@ -122,7 +124,7 @@ user's file could pass for one of Daniel's records.
 ├── issues/issue-<n>.md                  0600, one file per issue (formats 17–23; phase 2 converts each to an entry)
 ├── pre-issue-<yyyy-mm-dd>/issue-<n>.md   0600, an issue file after its conversion (phase 2)
 ├── sessions/<yyyy>/<mm>/<session-id>.md 0600, one file per session record, until the move (formats 1–25)
-├── control.json                         0600, optional; after the move only the format stamp, `{"format": 27, "sessions": {}, "codex_cursors": {}}`
+├── control.json                         0600, optional; after the move only the format stamp, `{"format": 28, "sessions": {}, "codex_cursors": {}}`
 ├── pre-sqlite-<yyyy-mm-dd>/             0700, the files the move took in (`sessions/`, `entries/`, the JSON documents, `audit.jsonl`, `.codex-<id>.lock`), kept except when a forget erases a session or an entry from them
 ├── locks/codex-<id>.lock                0600, the Codex ingestion lock of a session (phase 6)
 ├── locks/rebuild-<id>.lock              0600, the rebuild lock of a session (phase 6)
@@ -307,8 +309,8 @@ audit line has the session's `s-<n>` as its target.
   without one the store has not moved and reads `sessions/` and
   `control.json` as before. `control.json`'s format is checked either way,
   so a store stamped by a newer build is `store_too_new`.
-- **The move.** At format 27, the first eligible store write transaction
-  moves every kind still in files, sessions first (see
+- **The move.** In the format-27 release, the first eligible store write
+  transaction moves every kind still in files, sessions first (see
   [Documents in scribe.db](#documents-in-scribedb-phase-7)). A session write
   (a switch, a pass, a rebuild, an activity change, a link) starts such a
   transaction. An audit line recorded outside a write transaction does not
@@ -406,8 +408,9 @@ audit line has the session's `s-<n>` as its target.
   format, and a torn line is counted and left in the moved file. After the
   commit the files go to `pre-sqlite-<yyyy-mm-dd>/`, and `control.json`,
   `proposals.json`, `tags.json`, `marks.json` and `pickups.json` are
-  written as empty stamps at format 27, so a format-26 build refuses the
-  store instead of writing files beside the database. A standalone audit
+  written as empty stamps at format 28, so a format-27 build refuses the
+  store instead of writing files beside the database. The format-27 release
+  wrote these stamps at 27. A standalone audit
   line does not trigger this move; a later eligible transaction imports the
   records and drains its spool. A write that refuses rolls the move back
   with it; a move cut off after the commit finishes at the next write, with
@@ -446,11 +449,12 @@ audit line has the session's `s-<n>` as its target.
   event. A torn line, which the reader skips, is dropped if it contains the
   text. Other files in `pre-sqlite-<date>/` are the user's and are never
   rewritten.
-- **Formats 27–28.** The first eligible store write transaction moves every
-  kind still in files into `scribe.db`, sessions first, and stamps
-  `control.json` at 27. Format 28 adds optional `handoff_mode` (`continue`
-  or `new`) to entries and SQLite schema 7 adds its nullable column. The
-  upgrade registry remains append-only for persisted document shapes; SQL
+- **Formats 27–28.** Format 27 introduced the move of every kind still in
+  files into `scribe.db`, sessions first, and stamped `control.json` at 27.
+  The current format-28 build keeps that migration path and stamps
+  `control.json` at 28 after the move. Format 28 adds optional `handoff_mode`
+  (`continue` or `new`) to entries; SQLite schema 7 adds its nullable column.
+  The upgrade registry remains append-only for persisted document shapes; SQL
   schema changes use migrations. The existing steps stay so the move can
   read a store left at any older format for the support window; phase 8
   removes them with the file decoders.
@@ -805,7 +809,7 @@ corrected by editing it outside Pinned.
   (an older file upgrades on read). Once the sessions moved, a switch is a
   row of `sessions` (its `sw_*` columns) and a cursor a row of
   `codex_cursors`, both in `scribe.db`, and the file holds only
-  `{"format": 27, "sessions": {}, "codex_cursors": {}}`. A switch has the
+  `{"format": 28, "sessions": {}, "codex_cursors": {}}`. A switch has the
   same fields in either home. `pending_links` holds `{type, session}` links
   established before the session had a record; the pass that writes
   the record moves them onto it, then clears them, in one locked call.
