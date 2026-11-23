@@ -48,8 +48,10 @@ in the output sink only, and with neither no table is cut. In plain and table
 rows, free text is flattened to one line (every whitespace run becomes one
 space), an empty value or list is `-`, lists are comma-joined, and timestamps
 are RFC 3339, except the `updated` column of `session list` in table mode
-(flat, `--tree` or `--include-inactive`), which is the UTC date `YYYY-MM-DD`,
-including when table mode is selected by `--format table` on a pipe. Plain
+(flat, `--tree` or `--include-inactive`), which shows the UTC date as
+`YYYY-MM-DD` when representable. For a present timestamp whose UTC date is
+outside the supported range, the column shows `-`. This applies when table
+mode is selected by `--format table` on a pipe too. Plain
 and JSON `session list` output keep the full instant, as does `session show`
 in every mode. The table date is display-only. After filtering, `session list`
 sorts matches by full `updated` instant, newest first (IDs ascending on ties),
