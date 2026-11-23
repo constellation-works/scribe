@@ -2853,3 +2853,100 @@ fn typed_group_add_resolves_prefixes_and_exact_ids_across_disk_and_store() {
         1
     );
 }
+
+#[test]
+fn typed_group_add_backfills_other_provider_including_archived_codex() {
+    let f = Fixture::new();
+    let claude_prompt = format!("/scribe group add cross {B}");
+    let claude_path = transcript(&f, A, &[row(A, "a", "user", &claude_prompt)]);
+    let archived = f.home().join(".codex/archived_sessions");
+    f.create_private_dir_all(&archived);
+    let codex_past = archived.join(format!("rollout-2090-11-20T01-00-00-{B}.jsonl"));
+    let codex_rows = [
+        json!({"type":"session_meta","payload":{"id":B,"source":"vscode","thread_source":"user","cwd":f.home()}}),
+        json!({"timestamp":"2090-11-20T01:00:00Z","type":"response_item","payload":{
+            "type":"message","role":"user","id":"past-codex",
+            "content":[{"type":"input_text","text":"archivedcodexorchid"},{"type":"input_text","text":"untrustedcodexorchid"}],
+            "internal_chat_message_metadata_passthrough":{"turn_id":"past-turn","content_item_kinds":["user.text","skill"],"content_item_metadata":[{"provenance":{"type":"user"}},{"provenance":{"type":"skill"}}]}
+        }}),
+    ];
+    std::fs::write(
+        &codex_past,
+        codex_rows
+            .iter()
+            .map(|r| format!("{r}\n"))
+            .collect::<String>(),
+    )
+    .unwrap();
+    support::make_private(&codex_past);
+    let out = hook(
+        &f,
+        &["hook", "user-prompt-submit"],
+        json!({"session_id":A,"transcript_path":claude_path,"cwd":f.home(),"prompt":claude_prompt}),
+        &[],
+    );
+    assert!(
+        text(&out.stdout).contains("1 typed turn stored"),
+        "{}",
+        text(&out.stdout)
+    );
+
+    let claude_past = transcript(
+        &f,
+        D,
+        &[
+            row(D, "past-claude", "user", "pastclaudeorchid"),
+            row(C, "copied", "user", "copiedclaudeorchid"),
+        ],
+    );
+    assert!(claude_past.exists());
+    let codex_prompt = format!("/scribe group add cross {D}");
+    let dir = f.home().join(".codex/sessions/2090/11/20");
+    f.create_private_dir_all(&dir);
+    let codex_caller = dir.join(format!("rollout-2090-11-20T01-00-00-{C}.jsonl"));
+    let caller_rows = [
+        json!({"type":"session_meta","payload":{"id":C,"source":"vscode","thread_source":"user","cwd":f.home()}}),
+        json!({"timestamp":"2090-11-20T01:00:00Z","type":"response_item","payload":{
+            "type":"message","role":"user","id":"caller",
+            "content":[{"type":"input_text","text":codex_prompt}],
+            "internal_chat_message_metadata_passthrough":{"turn_id":"caller-turn","content_item_kinds":["user.text"],"content_item_metadata":[{"provenance":{"type":"user"}}]}
+        }}),
+    ];
+    std::fs::write(
+        &codex_caller,
+        caller_rows
+            .iter()
+            .map(|r| format!("{r}\n"))
+            .collect::<String>(),
+    )
+    .unwrap();
+    support::make_private(&codex_caller);
+    let out = hook(
+        &f,
+        &["--provider", "codex", "hook", "user-prompt-submit"],
+        json!({"session_id":C,"transcript_path":codex_caller,"cwd":f.home(),"hook_event_name":"UserPromptSubmit","turn_id":"caller-turn","prompt":codex_prompt}),
+        &[],
+    );
+    assert!(
+        text(&out.stdout).contains("1 typed turn stored"),
+        "{}",
+        text(&out.stdout)
+    );
+    for (term, expected) in [
+        ("archivedcodexorchid", 1),
+        ("untrustedcodexorchid", 0),
+        ("pastclaudeorchid", 1),
+        ("copiedclaudeorchid", 0),
+    ] {
+        assert_eq!(
+            invoke(
+                &f,
+                A,
+                &["search", term, "--kind", "message", "--group", "cross"],
+                0
+            )["total"],
+            expected,
+            "{term}"
+        );
+    }
+}
