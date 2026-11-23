@@ -116,6 +116,17 @@ scribe --provider codex transcript show <id> --json
 updated (ties by id), in the table, piped output and `--json`; `--limit N`
 keeps the N most recently updated.
 
+A session id may be given as a unique prefix of at least four characters
+wherever a command or a typed `#scribe` or `/scribe` line takes one: `session
+show 7c2b`, `--related session:7c2b`, `#scribe forget 7c2b`. A terminal table
+prints each session id as its shortest prefix that no other session in the
+store shares, at least eight characters (the first group of a Claude Code
+UUID), and a prefix printed there is accepted back. Piped output and `--json`
+keep the full id. A prefix that matches several sessions is refused with
+`id_ambiguous` and the matching ids, and nothing changes; one that matches none
+is a not-found error. A record written from a prefix stores the full id, and a
+command that changes something names it.
+
 `scribe question ask "can you fetch me last session summary?"` is a lookup: it
 returns the stored record and does not call a model. Anything that is not a
 lookup is answered by the configured ask model, and every quote is checked

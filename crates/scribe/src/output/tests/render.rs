@@ -4,6 +4,7 @@ use crate::output::payload::{
 };
 use crate::output::render::{list, show, updated_date};
 use crate::output::sink::{OutputMode, Sink};
+use scribe_core::ShortIds;
 use time::macros::datetime;
 
 fn entry(id: &str, content: &str) -> EntryPayload {
@@ -74,7 +75,15 @@ fn render_list(
     warnings: &[WarningPayload],
 ) -> String {
     let mut out = Vec::new();
-    list(&mut out, &sink(mode), records, total, warnings).unwrap();
+    list(
+        &mut out,
+        &sink(mode),
+        &ShortIds::default(),
+        records,
+        total,
+        warnings,
+    )
+    .unwrap();
     String::from_utf8(out).unwrap()
 }
 
@@ -164,7 +173,13 @@ fn json_carries_null_for_absent_values_rather_than_omitting_them() {
     // STD-01 R11.
     let mut out = Vec::new();
     let record = Record::Entry(Box::new(entry("preferences-1", "x")));
-    show(&mut out, &sink(OutputMode::Json), &record).unwrap();
+    show(
+        &mut out,
+        &sink(OutputMode::Json),
+        &ShortIds::default(),
+        &record,
+    )
+    .unwrap();
     let value: serde_json::Value = serde_json::from_slice(&out).unwrap();
     for key in ["superseded_by", "review_after"] {
         assert!(
@@ -191,7 +206,7 @@ fn the_detail_view_keeps_the_content_whole() {
         width: Some(40),
         ..sink(OutputMode::Table)
     };
-    show(&mut out, &narrow, &record).unwrap();
+    show(&mut out, &narrow, &ShortIds::default(), &record).unwrap();
     let text = String::from_utf8(out).unwrap();
     assert!(text.contains(long.trim_end()), "{text}");
     assert!(text.contains("second line"), "{text}");
@@ -250,6 +265,7 @@ fn handoff_only_session_renders_switch_state_in_every_mode() {
     show(
         &mut json_buf,
         &sink(OutputMode::Json),
+        &ShortIds::default(),
         &Record::SessionHandoffs(Box::new(payload.clone())),
     )
     .unwrap();
@@ -262,6 +278,7 @@ fn handoff_only_session_renders_switch_state_in_every_mode() {
     show(
         &mut plain_buf,
         &sink(OutputMode::Plain),
+        &ShortIds::default(),
         &Record::SessionHandoffs(Box::new(payload.clone())),
     )
     .unwrap();
@@ -275,6 +292,7 @@ fn handoff_only_session_renders_switch_state_in_every_mode() {
     show(
         &mut table_buf,
         &sink(OutputMode::Table),
+        &ShortIds::default(),
         &Record::SessionHandoffs(Box::new(payload.clone())),
     )
     .unwrap();
@@ -299,6 +317,7 @@ fn handoff_only_session_renders_switch_state_in_every_mode() {
     show(
         &mut off_buf,
         &sink(OutputMode::Table),
+        &ShortIds::default(),
         &Record::SessionHandoffs(Box::new(payload)),
     )
     .unwrap();
@@ -361,7 +380,15 @@ fn only_the_group_title_truncates_on_a_narrow_terminal() {
         ..sink(OutputMode::Table)
     };
     let mut out = Vec::new();
-    list(&mut out, &narrow, &Records::Groups(vec![long]), 1, &[]).unwrap();
+    list(
+        &mut out,
+        &narrow,
+        &ShortIds::default(),
+        &Records::Groups(vec![long]),
+        1,
+        &[],
+    )
+    .unwrap();
     let text = String::from_utf8(out).unwrap();
     for line in text.lines() {
         assert!(line.chars().count() <= 80, "line too wide: {line:?}");
@@ -386,6 +413,7 @@ fn the_group_plain_line_and_show_keep_every_field_and_dash_an_absent_summary() {
     show(
         &mut out,
         &sink(OutputMode::Table),
+        &ShortIds::default(),
         &Record::Group(Box::new(group("g-1", Some("Review complete.")))),
     )
     .unwrap();

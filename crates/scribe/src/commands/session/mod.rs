@@ -110,7 +110,7 @@ pub(crate) struct ListArgs {
     #[arg(long, value_name = "TOPIC")]
     pub(crate) topic: Vec<Topic>,
 
-    /// Only sessions mentioning this reference (task:<id>, pr:<owner>/<repo>#<n>, repo:<slug> or session:<id>); repeat it to accept any of them [default: any]
+    /// Only sessions mentioning this reference (task:<id>, pr:<owner>/<repo>#<n>, repo:<slug> or session:<id>, whose id may be a unique prefix); repeat it to accept any of them [default: any]
     #[arg(long, value_name = "REF")]
     pub(crate) related: Vec<Related>,
 
@@ -269,7 +269,7 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
     let filter = SessionFilter {
         project: args.project,
         topics: args.topic,
-        related: args.related,
+        related: ctx.store().resolve_relateds(&args.related)?,
         status: args.status.map(SessionStatus::from),
         dates: args.dates.range()?,
         include_inactive: args.include_inactive,

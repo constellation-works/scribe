@@ -91,9 +91,9 @@ pub use record::{
 };
 pub use session::{
     Cadence, Child, ControlState, HEADER_SECTIONS, LOG_SECTION, LinkError, LinkType, LogError,
-    SEGMENT_HEADING_CHARS, Segment, SegmentOrigin, SegmentState, SessionControl, SessionError,
-    SessionFilter, SessionId, SessionLink, SessionOrder, SessionRecord, SessionStatus, Term,
-    check_link, check_log, children, tree_order, tree_parent,
+    SEGMENT_HEADING_CHARS, SHORT_ID_MIN, Segment, SegmentOrigin, SegmentState, SessionControl,
+    SessionError, SessionFilter, SessionId, SessionLink, SessionOrder, SessionRecord,
+    SessionStatus, ShortIds, Term, check_link, check_log, children, tree_order, tree_parent,
 };
 pub use store::{
     AUDIT_FILE, AuditEvent, AuditStatus, CONFIG_FILE, CONTROL_FILE, COVERED, ClaudeCapturePosition,

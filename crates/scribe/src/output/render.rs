@@ -10,6 +10,7 @@ use super::payload::{
 };
 use super::sink::{OutputMode, Sink};
 use super::table::{self, Align, Cell, Column};
+use scribe_core::ShortIds;
 use serde::ser::{Serialize, SerializeMap, Serializer};
 use std::io::{self, Write};
 use time::format_description::well_known::{Iso8601, Rfc3339};
@@ -148,6 +149,7 @@ impl<T: Serialize> Serialize for Envelope<'_, T> {
 pub(crate) fn list(
     out: &mut dyn Write,
     sink: &Sink,
+    shorts: &ShortIds,
     records: &Records,
     total: usize,
     warnings: &[WarningPayload],
@@ -190,7 +192,7 @@ pub(crate) fn list(
                 .iter()
                 .map(|label| col(label, Align::Left, false))
                 .collect(),
-            items.iter().map(group_row).collect(),
+            items.iter().map(|g| group_row(g, None)).collect(),
         ),
         Records::Entries(items) => (
             ENTRY_COLUMNS.to_vec(),
@@ -203,7 +205,7 @@ pub(crate) fn list(
             with_active(&SESSION_COLUMNS, *active_column, 2),
             items
                 .iter()
-                .map(|s| session_row(s, *active_column, sink.mode == OutputMode::Table))
+                .map(|s| session_row(s, *active_column, table_shorts(sink, shorts)))
                 .collect(),
         ),
         Records::SessionTree {
@@ -212,7 +214,7 @@ pub(crate) fn list(
         } => (
             with_active(&SESSION_TREE_COLUMNS, *active_column, 3),
             rows.iter()
-                .map(|row| tree_row(row, sink.mode == OutputMode::Table, *active_column))
+                .map(|row| tree_row(row, table_shorts(sink, shorts), *active_column))
                 .collect(),
         ),
         Records::Proposals(items) => (
@@ -229,7 +231,10 @@ pub(crate) fn list(
         ),
         Records::Transcripts(items) => (
             TRANSCRIPT_COLUMNS.to_vec(),
-            items.iter().map(transcript_row).collect(),
+            items
+                .iter()
+                .map(|t| transcript_row(t, table_shorts(sink, shorts)))
+                .collect(),
         ),
     };
     match sink.mode {
@@ -240,6 +245,18 @@ pub(crate) fn list(
             .iter()
             .try_for_each(|row| writeln!(out, "{}", plain_line(row))),
     }
+}
+
+/// `shorts` when the output is a terminal table, which prints session ids in
+/// their short form; `None` for piped and `--json` output, which keep full
+/// ids (STD-01 R15).
+fn table_shorts<'a>(sink: &Sink, shorts: &'a ShortIds) -> Option<&'a ShortIds> {
+    (sink.mode == OutputMode::Table).then_some(shorts)
+}
+
+/// A session id as a table prints it: the short form when `shorts` is set.
+fn shown_id(id: &str, shorts: Option<&ShortIds>) -> String {
+    shorts.map_or_else(|| id.to_owned(), |s| s.short(id).to_owned())
 }
 
 /// `columns` with an `ACTIVE` column inserted at `at` when `active`.
@@ -269,15 +286,22 @@ fn envelope<'a, T>(
 /// same line its list prints), or a JSON object. The detail view never
 /// truncates: it is where a truncated table cell is read in full (STD-01
 /// R15).
-pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Result<()> {
+pub(crate) fn show(
+    out: &mut dyn Write,
+    sink: &Sink,
+    shorts: &ShortIds,
+    record: &Record,
+) -> io::Result<()> {
     match (sink.mode, record) {
         (OutputMode::Json, Record::Group(g)) => write_json(out, g),
-        (OutputMode::Plain, Record::Group(g)) => writeln!(out, "{}", plain_line(&group_row(g))),
+        (OutputMode::Plain, Record::Group(g)) => {
+            writeln!(out, "{}", plain_line(&group_row(g, None)))
+        }
         (OutputMode::Table, Record::Group(g)) => {
             for (label, cell) in GROUP_COLUMNS
                 .iter()
                 .take(GROUP_COLUMNS.len() - 1)
-                .zip(group_row(g))
+                .zip(group_row(g, Some(shorts)))
             {
                 field(out, &label.to_ascii_lowercase(), &cell.text)?;
             }
@@ -439,7 +463,7 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
             Ok(())
         }
         (OutputMode::Plain, Record::Session(session)) => {
-            writeln!(out, "{}", plain_line(&session_row(session, false, false)))?;
+            writeln!(out, "{}", plain_line(&session_row(session, false, None)))?;
             if let Some(at) = session.forgotten {
                 writeln!(out, "forgotten\t{}", timestamp(at))?;
             }
@@ -510,7 +534,7 @@ pub(crate) fn show(out: &mut dyn Write, sink: &Sink, record: &Record) -> io::Res
         }
         (OutputMode::Json, Record::Transcript(transcript)) => write_json(out, transcript),
         (OutputMode::Plain, Record::Transcript(transcript)) => {
-            writeln!(out, "{}", plain_line(&transcript_row(transcript)))?;
+            writeln!(out, "{}", plain_line(&transcript_row(transcript, None)))?;
             if let Some(turns) = &transcript.user_first_turns {
                 for (n, turn) in turns.iter().enumerate() {
                     let index = n.saturating_add(1);
@@ -1340,7 +1364,9 @@ fn group_list_row(g: &scribe_core::group::Group) -> Vec<Cell> {
     .collect()
 }
 
-fn group_row(g: &scribe_core::group::Group) -> Vec<Cell> {
+/// A group's full field list; `shorts` prints each seat's sessions as short
+/// ids, for a terminal.
+fn group_row(g: &scribe_core::group::Group, shorts: Option<&ShortIds>) -> Vec<Cell> {
     let seats = g
         .seats
         .iter()
@@ -1348,7 +1374,9 @@ fn group_row(g: &scribe_core::group::Group) -> Vec<Cell> {
             let chain = s
                 .transcripts
                 .iter()
-                .map(ToString::to_string)
+                .map(|id| {
+                    shorts.map_or_else(|| id.to_string(), |s| s.short(id.as_str()).to_owned())
+                })
                 .collect::<Vec<_>>()
                 .join(" -> ");
             format!(
@@ -1431,14 +1459,23 @@ fn age(seconds: i64) -> String {
 /// A session pass's report: a table or tab-separated lines, one per
 /// session passed, or `{"passes": [...], "remaining": n}`. Nothing passed
 /// prints nothing but the JSON object.
-pub(crate) fn pass(out: &mut dyn Write, sink: &Sink, report: &PassReport) -> io::Result<()> {
+pub(crate) fn pass(
+    out: &mut dyn Write,
+    sink: &Sink,
+    shorts: &ShortIds,
+    report: &PassReport,
+) -> io::Result<()> {
     if sink.mode == OutputMode::Json {
         return write_json(out, report);
     }
     if report.passes.is_empty() {
         return Ok(());
     }
-    let rows: Vec<Vec<Cell>> = report.passes.iter().map(pass_row).collect();
+    let rows: Vec<Vec<Cell>> = report
+        .passes
+        .iter()
+        .map(|p| pass_row(p, table_shorts(sink, shorts)))
+        .collect();
     match sink.mode {
         OutputMode::Table => {
             out.write_all(table::render(&PASS_COLUMNS, &rows, sink.width, sink.color).as_bytes())
@@ -1609,9 +1646,9 @@ pub(crate) fn scan(out: &mut dyn Write, sink: &Sink, report: &ScanReport) -> io:
     }
 }
 
-fn pass_row(p: &PassPayload) -> Vec<Cell> {
+fn pass_row(p: &PassPayload, shorts: Option<&ShortIds>) -> Vec<Cell> {
     vec![
-        Cell::plain(p.session.clone()),
+        Cell::plain(shown_id(&p.session, shorts)),
         Cell {
             text: p.result.to_owned(),
             role: if p.result == "failed" {
@@ -1631,29 +1668,36 @@ fn pass_row(p: &PassPayload) -> Vec<Cell> {
 
 /// A `session list --tree` row: the session's row with its parent after
 /// the id; in a table the title is indented two spaces per level.
-fn tree_row(row: &TreeRow, table: bool, active: bool) -> Vec<Cell> {
-    let mut cells = session_row(&row.session, active, table);
+fn tree_row(row: &TreeRow, shorts: Option<&ShortIds>, active: bool) -> Vec<Cell> {
+    let mut cells = session_row(&row.session, active, shorts);
     cells.insert(
         1,
-        Cell::plain(row.parent.clone().unwrap_or_else(|| String::from("-"))),
+        Cell::plain(
+            row.parent
+                .as_deref()
+                .map_or_else(|| String::from("-"), |parent| shown_id(parent, shorts)),
+        ),
     );
-    if table && let Some(title) = cells.last_mut() {
+    if shorts.is_some()
+        && let Some(title) = cells.last_mut()
+    {
         title.text = format!("{}{}", "  ".repeat(row.depth), title.text);
     }
     cells
 }
 
 /// A session's list row; `active` adds its `active` column after the
-/// status (`session list --include-inactive`). `table` shows `UPDATED` as
-/// its date; piped output keeps the full instant.
-fn session_row(s: &SessionPayload, active: bool, table: bool) -> Vec<Cell> {
-    let updated = if table {
+/// status (`session list --include-inactive`). `shorts` is set for a
+/// terminal table: it shows the id as its short form and `UPDATED` as its
+/// date; piped output keeps the full id and the full instant.
+fn session_row(s: &SessionPayload, active: bool, shorts: Option<&ShortIds>) -> Vec<Cell> {
+    let updated = if shorts.is_some() {
         updated_date(s.updated)
     } else {
         timestamp(s.updated)
     };
     let mut cells = vec![
-        Cell::plain(s.id.clone()),
+        Cell::plain(shown_id(&s.id, shorts)),
         Cell::plain(s.status),
         Cell {
             text: yes_no(s.due).to_owned(),
@@ -1844,9 +1888,9 @@ fn hit_row(h: &HitPayload, mode: OutputMode) -> Vec<Cell> {
 /// The widest title a hit's table row shows.
 const TITLE_CELL_CHARS: usize = 40;
 
-fn transcript_row(t: &TranscriptPayload) -> Vec<Cell> {
+fn transcript_row(t: &TranscriptPayload, shorts: Option<&ShortIds>) -> Vec<Cell> {
     vec![
-        Cell::plain(t.session.clone()),
+        Cell::plain(shown_id(&t.session, shorts)),
         Cell::plain(t.project.clone()),
         Cell::plain(t.user_turns.to_string()),
         Cell::plain(t.bytes.to_string()),

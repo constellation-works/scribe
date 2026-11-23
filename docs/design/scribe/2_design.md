@@ -192,7 +192,15 @@ Rules every verb keeps:
   characters is a usage error (exit 2) for every noun; no match is the
   noun's `*_not_found` (exit 1), whose message names the id and the store
   path searched (`entries/…`, `sessions`, `proposals.json`, the
-  transcripts directory) so a wrong `--root` shows.
+  transcripts directory) so a wrong `--root` shows. A session id is
+  resolved by `Store::resolve_session` (and `resolve_related` for a
+  `session:<id>` reference) before the command's own logic, so no command
+  parses its own prefixes; a record written from a prefix stores the full id,
+  and a changing command names the full id in its success line. A terminal
+  table prints a session id as its shortest prefix that no other session in
+  the store shares, at least eight characters (`ShortIds`), so a printed
+  prefix is accepted back; piped and `--json` output keep the full id
+  (STD-01 R15).
 - **Argument checks come first.** A write verb refuses a bad argument
   (unknown tag, blank content or reason, an id that matches nothing, a
   repeated tag) before it reports an unset `[redact] env` name, so the

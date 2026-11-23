@@ -10,7 +10,7 @@ Arguments:
 
 Options:
       --session <ID>
-          The session the item was raised in
+          The session the item was raised in (an id or a unique prefix of it)
 
       --author <NAME>
           Your crew or model name

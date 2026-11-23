@@ -280,3 +280,46 @@ mod links {
         assert!(order.iter().all(|(depth, _)| *depth == 0));
     }
 }
+
+#[test]
+fn short_ids_are_the_shortest_unique_prefix_of_at_least_eight_characters() {
+    use crate::ShortIds;
+    let a = "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02";
+    let b = "0f8e7a52-3c1d-4b6e-9a2f-5d4c3b2a1e01";
+    let shorts = ShortIds::new([a, b]);
+    assert_eq!(shorts.short(a), "7c2b9d14");
+    assert_eq!(shorts.short(b), "0f8e7a52");
+    // UUIDv7s a minute apart share their first eight characters.
+    let x = "019a9f3e-5b21-7000-8000-000000000001";
+    let y = "019a9f3e-6c44-7000-8000-000000000002";
+    let z = "019a9f3e-6c45-7000-8000-000000000003";
+    let shorts = ShortIds::new([x, y, z, a]);
+    assert_eq!(shorts.short(x), "019a9f3e-5");
+    assert_eq!(shorts.short(y), "019a9f3e-6c44");
+    assert_eq!(shorts.short(z), "019a9f3e-6c45");
+    assert_eq!(shorts.short(a), "7c2b9d14");
+    // Every short form resolves to its own id and no other.
+    for id in [x, y, z, a] {
+        let short = shorts.short(id);
+        let hits: Vec<&str> = [x, y, z, a]
+            .into_iter()
+            .filter(|other| other.starts_with(short))
+            .collect();
+        assert_eq!(hits, [id]);
+    }
+}
+
+#[test]
+fn a_short_id_is_the_whole_id_when_it_is_short_unknown_or_a_prefix_of_another() {
+    use crate::ShortIds;
+    let shorts = ShortIds::new(["abc12345", "abc12345-x", "s1"]);
+    // An exact id wins over a prefix, so the shorter one prints whole.
+    assert_eq!(shorts.short("abc12345"), "abc12345");
+    assert_eq!(shorts.short("abc12345-x"), "abc12345-");
+    assert_eq!(shorts.short("s1"), "s1");
+    assert_eq!(
+        shorts.short("not-known-to-the-store"),
+        "not-known-to-the-store"
+    );
+    assert_eq!(ShortIds::default().short("7c2b9d14-8e5f"), "7c2b9d14-8e5f");
+}

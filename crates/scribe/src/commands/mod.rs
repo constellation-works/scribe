@@ -185,6 +185,50 @@ impl Command {
     }
 }
 
+/// The short forms of the session ids `output` prints in a terminal table:
+/// unique across every session the store knows, not only the rows shown, so
+/// what is printed is accepted back (STD-01 R32). A `transcript list` also
+/// counts the transcripts on disk, which `transcript show` resolves against.
+/// Nothing is computed for an output that prints no session id; a read that
+/// fails leaves the table with full ids rather than failing the command
+/// (STD-02 R31).
+pub(crate) fn short_ids(output: &Output, ctx: &Context) -> scribe_core::ShortIds {
+    use crate::output::Record;
+    let prints_sessions = match output {
+        Output::List { records, .. } => matches!(
+            records,
+            Records::Sessions { .. } | Records::SessionTree { .. } | Records::Transcripts(_)
+        ),
+        Output::Pass(_) => true,
+        Output::Show { record } | Output::Written { record, .. } => {
+            matches!(record, Record::Group(_))
+        }
+        Output::Init(_)
+        | Output::Hook(_)
+        | Output::Scan(_)
+        | Output::Ask(_)
+        | Output::Plugin(_)
+        | Output::Popup
+        | Output::PopupRows(_)
+        | Output::PopupPreview(_) => false,
+    };
+    if !prints_sessions {
+        return scribe_core::ShortIds::default();
+    }
+    let mut ids = ctx.store().session_ids().unwrap_or_default();
+    if matches!(
+        output,
+        Output::List {
+            records: Records::Transcripts(_),
+            ..
+        }
+    ) && let Ok(files) = hook::payload::files_for(ctx)
+    {
+        ids.extend(files.into_iter().map(|(id, _)| id.to_string()));
+    }
+    scribe_core::ShortIds::new(ids)
+}
+
 /// Run one command, auditing it if it is audited.
 ///
 /// The guard exists before dispatch and records when it is dropped, so a

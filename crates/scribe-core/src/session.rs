@@ -105,6 +105,62 @@ impl fmt::Display for SessionId {
     }
 }
 
+/// The shortest prefix a table prints for a session id, in characters. The
+/// first group of a Claude Code UUID is this long.
+pub const SHORT_ID_MIN: usize = 8;
+
+/// The short forms of session ids, git-style: each id prints as its shortest
+/// prefix that no other known id shares, at least [`SHORT_ID_MIN`] characters.
+/// The universe is every id the store resolves, not only the rows shown, so a
+/// printed prefix is always accepted back (STD-01 R32). Codex ids are
+/// UUIDv7, whose first eight characters are a timestamp, so a fixed length
+/// would not be unique.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ShortIds {
+    /// Every id, sorted, without duplicates.
+    ids: Vec<String>,
+}
+
+impl ShortIds {
+    /// The short forms over `ids`.
+    pub fn new<I, S>(ids: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let mut ids: Vec<String> = ids.into_iter().map(Into::into).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        Self { ids }
+    }
+
+    /// The short form of `id`: its shortest unique prefix, at least
+    /// [`SHORT_ID_MIN`] characters, or the whole id when it is shorter, is
+    /// not a known id, or is itself a prefix of another id (an exact id wins
+    /// over a prefix, so the whole id is accepted).
+    #[must_use]
+    pub fn short<'a>(&self, id: &'a str) -> &'a str {
+        let Ok(at) = self.ids.binary_search_by(|known| known.as_str().cmp(id)) else {
+            return id;
+        };
+        let shared = |other: Option<&String>| {
+            other.map_or(0, |other| {
+                id.chars()
+                    .zip(other.chars())
+                    .take_while(|(a, b)| a == b)
+                    .count()
+            })
+        };
+        let before = shared(at.checked_sub(1).and_then(|i| self.ids.get(i)));
+        let after = shared(self.ids.get(at.saturating_add(1)));
+        let want = before.max(after).saturating_add(1).max(SHORT_ID_MIN);
+        match id.char_indices().nth(want) {
+            Some((end, _)) => &id[..end],
+            None => id,
+        }
+    }
+}
+
 /// Whether more passes will update a record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

@@ -34,10 +34,14 @@ fn main() -> ExitCode {
     output::init_logging();
     let outcome = app::Context::resolve(cli.global.root.as_deref(), &app::AppEnv::from_process())
         .and_then(|ctx| {
-            commands::run(
-                cli.command,
-                &ctx.with_provider(cli.global.provider.unwrap_or_default()),
-            )
+            let ctx = ctx.with_provider(cli.global.provider.unwrap_or_default());
+            let output = commands::run(cli.command, &ctx)?;
+            let shorts = if sink.shortens_ids() {
+                commands::short_ids(&output, &ctx)
+            } else {
+                scribe_core::ShortIds::default()
+            };
+            Ok((output, shorts))
         });
     output::finish(&sink, outcome)
 }

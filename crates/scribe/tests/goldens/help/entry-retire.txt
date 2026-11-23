@@ -16,7 +16,7 @@ Options:
           Why the note no longer applies
 
       --session <ID>
-          The session you run in, whose transcript holds the user's instruction; requires --instruction
+          The session you run in, whose transcript holds the user's instruction (an id or a unique prefix of it); requires --instruction
 
       --instruction <WORDS>
           The user's instruction, word for word from one of their last three typed turns of --session within 30 minutes, naming the id (or answering your reply that names it) and the act; requires --session

@@ -559,9 +559,9 @@ entry is missing, format 15 also keeps its settlement and sets
 proposed again`, `scribe: retired <id> — ask leaves it out of answers;
 scribe entry show <id> still has it`, `scribe: forgot <id> — entry text and
 evidence, proposal quotes of it, and related candidate quotes, evidence and
-reasons are cleared; session records stay`, `scribe: forgot s-<n> — the
+reasons are cleared; session records stay`, `scribe: forgot s-<n> (<full id>) — the
 session record and <k> stored messages are erased[; it is switched off for
-good]; the provider transcript was left untouched`, `scribe: s-<n> is
+good]; the provider transcript was left untouched`, `scribe: s-<n> (<full id>) is
 already forgotten — cleared remaining scribe data, including any stale
 checkpoint; the provider transcript was left untouched` on a repair, or
 `scribe: <id> is already <state>

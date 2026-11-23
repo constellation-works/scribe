@@ -149,7 +149,7 @@ pub(crate) struct RulesArgs {}
 pub(crate) struct AckArgs {
     /// The now item's file stem
     id: String,
-    /// The session the item was raised in
+    /// The session the item was raised in (an id or a unique prefix of it)
     #[arg(long, value_name = "ID")]
     session: SessionId,
     /// Your crew or model name
@@ -227,13 +227,10 @@ pub(super) fn run(command: MemoryCommand, ctx: &Context) -> Result<Output, CliEr
         MemoryCommand::Ack(args) => {
             let config = ctx.config()?;
             let redactor = ctx.redactor(&config)?;
-            let (item, changed) = ctx.store().ack_memory(
-                &args.id,
-                args.session,
-                args.author,
-                &redactor,
-                ctx.now(),
-            )?;
+            let session = ctx.store().resolve_session_or_typed(&args.session)?;
+            let (item, changed) =
+                ctx.store()
+                    .ack_memory(&args.id, session, args.author, &redactor, ctx.now())?;
             Ok(Output::written(
                 Record::Memory(Box::new(MemoryPayload::now(&item))),
                 changed,

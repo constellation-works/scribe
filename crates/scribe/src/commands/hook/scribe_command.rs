@@ -233,6 +233,23 @@ fn run_link(
     ctx: &Context,
 ) -> Output {
     let target = || Some(format!("session:{session}"));
+    // A unique prefix of the target is stored, and reported, as the full id.
+    let resolved = match ctx.store().resolve_session_or_typed(&link.session) {
+        Ok(id) => id,
+        Err(err) => {
+            return blocked(
+                format!("scribe: {} refused — {}", typed(switch), chain(&err)),
+                vec![HookOutcome {
+                    target: target(),
+                    error_code: Some(err.code()),
+                }],
+            );
+        }
+    };
+    let link = &SessionLink {
+        session: resolved,
+        kind: link.kind,
+    };
     let relation = format!("{} {}", link.kind, link.session);
     match ctx
         .store()

@@ -19,7 +19,7 @@ use scribe_core::{SessionId, WriteRefusal};
 /// The instruction a write is run on: given together or not at all.
 #[derive(Debug, Args)]
 pub(crate) struct InstructionArgs {
-    /// The session you run in, whose transcript holds the user's instruction; requires --instruction
+    /// The session you run in, whose transcript holds the user's instruction (an id or a unique prefix of it); requires --instruction
     #[arg(long, value_name = "ID", requires = "instruction")]
     pub(crate) session: Option<SessionId>,
 
@@ -42,10 +42,13 @@ pub(super) fn check(
     act: Act,
     target: &Target,
 ) -> Result<Option<Instructed>, CliError> {
-    let (Some(session), Some(quote)) = (&args.session, &args.instruction) else {
+    let (Some(typed), Some(quote)) = (&args.session, &args.instruction) else {
         return Ok(None);
     };
     args.note(ctx);
+    // A unique prefix names the stored session; the check runs on the full id.
+    let resolved = ctx.store().resolve_session_or_typed(typed)?;
+    let session = &resolved;
     let not_found = |why: String| -> CliError {
         scribe_core::Error::AgentWrite {
             kind: WriteRefusal::InstructionNotFound,
@@ -100,6 +103,10 @@ impl InstructionArgs {
     /// refusal before the check is attributed too.
     pub(crate) fn note(&self, ctx: &Context) {
         if let Some(session) = &self.session {
+            let session = ctx
+                .store()
+                .resolve_session_or_typed(session)
+                .unwrap_or_else(|_| session.clone());
             ctx.note_instruction_session(session.as_str());
         }
     }
