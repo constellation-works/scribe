@@ -6641,5 +6641,6 @@ from the default package. It additionally requires `codex_runtime_tmp` and
 provider's startup state. Auth/config/transcripts receive no write grant. The
 same identity, tools, jobs and disabled routine defaults are preserved. Explicit
 settings and consent are required; no provider-specific logic enters Orbit.
-See README's Codex section for current installation/trust prerequisites and the
-explicit same-OS-user accident-guard limitation.
+See the [Codex plugin section in the guide](../../guide.md#codex-plugin) for
+current installation/trust prerequisites and the explicit same-OS-user
+accident-guard limitation.
