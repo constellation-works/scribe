@@ -1668,7 +1668,7 @@ fn close_group_commits_audit_with_closing_record_without_holding_write_lock_acro
 
     let mut model_calls = 0;
     let (closed_id, changed) = store
-        .close_group(
+        .close_group_with_outcome(
             &id,
             &opener,
             T0,
@@ -1682,6 +1682,8 @@ fn close_group_commits_audit_with_closing_record_without_holding_write_lock_acro
             },
             |group_id| audit_for(group_id, &opener),
         )
+        .unwrap()
+        .into_result()
         .unwrap();
     assert_eq!(closed_id, id);
     assert!(changed);
@@ -1712,7 +1714,7 @@ fn close_group_commits_audit_with_closing_record_without_holding_write_lock_acro
 
     // Retry returns changed=false without calling the model or adding an audit row.
     let (retry_id, retry_changed) = store
-        .close_group(
+        .close_group_with_outcome(
             &id,
             &opener,
             T0,
@@ -1720,6 +1722,8 @@ fn close_group_commits_audit_with_closing_record_without_holding_write_lock_acro
             |_| -> Result<String, Error> { panic!("model must not run on retry") },
             |_| panic!("audit builder must not run on retry"),
         )
+        .unwrap()
+        .into_result()
         .unwrap();
     assert_eq!(retry_id, id);
     assert!(!retry_changed);
@@ -1747,7 +1751,7 @@ fn close_group_commits_audit_with_closing_record_without_holding_write_lock_acro
     drop(conn);
 
     let err = store
-        .close_group(
+        .close_group_with_outcome(
             &second_id,
             &second_opener,
             T0,

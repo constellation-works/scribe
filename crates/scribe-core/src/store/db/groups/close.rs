@@ -18,28 +18,14 @@ struct Snapshot {
 }
 
 impl Store {
-    /// Summarize and close a group from its opening session. Return false on
-    /// retry after a successful close, without calling the model again.
+    /// Close a group and report a committed success audit even if cleanup
+    /// failed. An outer error means this attempt did not commit a close.
+    /// A retry after a successful close returns `AlreadyClosed` without
+    /// calling the model again.
     ///
     /// The model closure runs outside any SQLite write transaction. The final
     /// write commits `closed`, `summary`, and the caller-built success audit
     /// row in one `scribe.db` transaction.
-    pub fn close_group<E: From<Error>>(
-        &self,
-        id: &str,
-        caller: &SessionId,
-        now: OffsetDateTime,
-        redactor: &Redactor,
-        summarize: impl FnOnce(&CloseEvidence) -> std::result::Result<String, E>,
-        audit: impl FnOnce(&str) -> AuditEvent,
-    ) -> std::result::Result<(String, bool), E> {
-        self.close_group_with_outcome(id, caller, now, redactor, summarize, audit)?
-            .into_result()
-            .map_err(E::from)
-    }
-
-    /// Close a group and report a committed success audit even if cleanup
-    /// failed. An outer error means this attempt did not commit a close.
     pub fn close_group_with_outcome<E: From<Error>>(
         &self,
         id: &str,

@@ -633,12 +633,6 @@ impl DateRange {
         nullable_date::format(date)
     }
 
-    /// Whether neither end is set.
-    #[must_use]
-    pub fn is_unbounded(&self) -> bool {
-        self.since.is_none() && self.until.is_none()
-    }
-
     /// Whether `at`'s day (in its own offset) is in the range.
     #[must_use]
     pub fn contains(&self, at: OffsetDateTime) -> bool {

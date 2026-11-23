@@ -373,37 +373,16 @@ impl Store {
         self.entry(&id)
     }
 
-    /// Check a new note's arguments (content and tag) as `add_agent_entry`
-    /// does, without locking or writing, so a caller can refuse a bad
-    /// argument before it sets up anything a write needs.
+    /// Check a new note's arguments (content, tag, quote and evidence) as
+    /// `add_agent_entry` does, without locking or writing, so a caller can
+    /// refuse a bad argument before it sets up anything a write needs.
+    /// `spoken` checks an entry written on the user's spoken instruction
+    /// (2_design.md §16.6).
     ///
     /// # Errors
     ///
     /// `invalid_text` for blank content; `tag_not_found` for a tag no
     /// config or store tag names.
-    pub fn check_new_entry(
-        &self,
-        tag: &TagName,
-        content: &str,
-        quote: Option<&str>,
-    ) -> Result<crate::TagDef> {
-        self.check_new_entry_with_evidence(tag, content, quote, None)
-    }
-
-    /// [`Store::check_new_entry`] with an evidence pointer, for the
-    /// `require_evidence` (`finding`) tag.
-    pub fn check_new_entry_with_evidence(
-        &self,
-        tag: &TagName,
-        content: &str,
-        quote: Option<&str>,
-        evidence: Option<&str>,
-    ) -> Result<crate::TagDef> {
-        self.check_new_entry_full(tag, content, quote, evidence, false)
-    }
-
-    /// [`Store::check_new_entry_with_evidence`] with `spoken`, checking an
-    /// entry written on the user's spoken instruction (2_design.md §16.6).
     pub fn check_new_entry_full(
         &self,
         tag: &TagName,

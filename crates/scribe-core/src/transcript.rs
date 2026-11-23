@@ -670,20 +670,6 @@ pub fn user_turn(message: &Message) -> Option<UserTurn> {
     (!own.is_empty() || !pasted.is_empty()).then_some(UserTurn { own, pasted })
 }
 
-/// Daniel's own words in a prompt he typed, as [`user_turn`] reads a
-/// transcript turn: pasted blocks left out; `None` for a synthetic harness
-/// line or a `/scribe` control line.
-#[must_use]
-pub fn typed_own(prompt: &str) -> Option<String> {
-    let start = prompt.trim_start();
-    if SYNTHETIC.iter().any(|tag| start.starts_with(tag)) || control::parse(prompt).is_some() {
-        return None;
-    }
-    // Untrimmed, so an indented first line stays indented for the
-    // trigger's own-line filter.
-    Some(split_pasted_raw(prompt).0)
-}
-
 /// Daniel's turns, in transcript order.
 #[must_use]
 pub fn user_turns(messages: &[Message]) -> Vec<UserTurn> {
