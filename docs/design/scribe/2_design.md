@@ -696,11 +696,11 @@ texts that replace the shipped ones ahead of the fixed output contract
 ([specs/store.md](./specs/store.md#config)). A missing file or table is the defaults;
 an unknown key or bad value is refused, naming the file and line
 ([specs/store.md](./specs/store.md#config)).
-The file is created by `scribe hook session-start` on first run with the
-defaults ([4_decisions.md](./4_decisions.md#only-decisions-and-preferences-ship-by-default))
-if absent; scribe never rewrites it after that. As built (S6), it is not:
-`session-start` reads only, and a missing file is the defaults
-([4_decisions.md](./4_decisions.md#session-start-reads-only)).
+`session-start` does not create or rewrite this file; when it is absent, the
+defaults apply. Outside the continue-handoff restoration in [§16.7](#167-continuing-after-a-clear),
+the hook is read-only. Restoring that handoff writes the child's link and
+inherited switch and audits the write
+([4_decisions.md](./4_decisions.md#session-start-is-read-only-except-when-restoring-a-continue-handoff)).
 
 **Redaction.** Before any write of `said`, `content`, a session record's
 title, text fields and terms (from S8 also each segment's heading and text,
@@ -1436,7 +1436,7 @@ linked session's pass reads each linked record's latest title and summary
 as data. The refusals and replies are in
 [specs/output-contract.md](./specs/output-contract.md#hook-replies); the
 reasons in
-[4_decisions.md](./4_decisions.md#session-links-are-typed-stored-on-the-child-and-manual).
+[4_decisions.md](./4_decisions.md#session-links-are-typed-stored-on-the-child-and-usually-manual).
 Desktop clear ancestry also permits a `continues` link through a handoff
 (§16.7). Otherwise the start reminder suggests a single active recorded
 session in the same project updated in the last day. With several it names
@@ -3966,8 +3966,9 @@ occurrences:
 - **Derived, never stored**: whether an item is on the page, and why not
   (decayed, past its window). It is a pure function of the item and the
   day, in `scribe-core`, so no routine has to run for an item to leave the
-  page, and `SessionStart` stays read-only
-  ([4_decisions.md](./4_decisions.md#session-start-reads-only)).
+  page. `SessionStart` derives the memory page without writing memory and,
+  except when restoring a continue handoff (§16.7), remains read-only
+  ([4_decisions.md](./4_decisions.md#session-start-is-read-only-except-when-restoring-a-continue-handoff)).
 
 ### 13.3 Writing: the session pass
 

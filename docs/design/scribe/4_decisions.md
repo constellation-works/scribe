@@ -1532,9 +1532,12 @@ stay.
 - Cost: a proposal about a forgotten entry no longer says why it was
   opened, or what the other entry's quote was contrasted with.
 
-## `session-start` reads only
+## `session-start` is read-only except when restoring a continue handoff
 
 **Recorded:** 2026-11 · [ORB-21795]
+**Refined by session refresh:** Outside the §16.7 continue-handoff path,
+`session-start` remains read-only. Restoring a continue handoff writes the
+child's `continues` link and inherited switch and audits that write.
 **Code anchors:** `crates/scribe/src/commands/hook/session_start.rs`
 
 ### Context
@@ -1545,9 +1548,12 @@ missing file as the defaults, and the hook runs before every session.
 
 ### Decision
 
-`session-start` only reads `proposals.json` and prints the open count; it
-writes nothing, so it is not audited and cannot fail a session start on a
-read-only or missing store (a read error is logged and counts as none).
+Outside the continue-handoff restoration in [design §16.7](./2_design.md#167-continuing-after-a-clear),
+`session-start` only reads `proposals.json` and prints the open count; a
+read error is logged and counts as none. When it restores a continue
+handoff, it writes the `continues` link and inherited switch under
+`Store::write`, and audits the write (or refusal). That is the hook's only
+write path.
 
 ### Consequences
 
@@ -1555,7 +1561,7 @@ read-only or missing store (a read error is logged and counts as none).
   writes it for him.
 - Cost: no file on disk to show the defaults; `scribe tag list` shows them.
 
-## Session links are typed, stored on the child, and manual
+## Session links are typed, stored on the child, and usually manual
 
 **Recorded:** 2026-11 · [ORB-23849]
 **Refined by session refresh:** A desktop clear names its predecessor in the
@@ -1581,14 +1587,16 @@ are structured.
   meaning; no free-form `related_to` until a real case needs one.
 - A link is stored once, on the child. Children are derived at read time;
   a parent record is never rewritten because a child appeared.
-- Links are manual: `/scribe on --from <id>` and `/scribe link <id>
-  [--type …]`, typed by Daniel in the child. An unknown target, a
-  self-link, a cycle (through links of either type), a second parent and a
+- Links are ordinarily manual: `/scribe on --from <id>` and
+  `/scribe link <id> [--type …]`, typed by Daniel in the child. A desktop
+  clear is the automatic exception: when its checked transcript ancestry
+  names one predecessor with an active `continue` handoff, `session-start`
+  records a `continues` link and carries over the recording switch
+  ([design §16.7](./2_design.md#167-continuing-after-a-clear)). It does not
+  pair sessions by checkout or time. For a manual link, an unknown target,
+  a self-link, a cycle (through links of either type), a second parent and a
   `link` in an uncataloged session are refused with stable codes and change
-  nothing. Neither the hook inputs nor the transcripts carry a parent
-  session id (checked across 4,970 transcripts on dk-server-1,
-  [2_design.md §5.4](./2_design.md#54-session-links)), so nothing is
-  linked automatically.
+  nothing.
 - A link typed before the session has a record waits on its switch
   (`pending_links` in `control.json`) and moves onto the record with the
   first pass write. Store format 3 adds `links` and `pending_links`; the
@@ -1603,8 +1611,8 @@ are structured.
   instead of dropping links (STD-03 R10).
 - A link write rewrites only the child's record, keeping its `updated`, so
   it does not count as a pass for the `Stop` hook's cadence.
-- Cost: links exist only where Daniel types them; a forked or side session
-  he forgets to link stands alone, as before.
+- Cost: a fork or side session stands alone unless Daniel links it or it
+  qualifies for the continue-handoff exception.
 - Cost: `ask` does not follow links yet; a linked record is evidence only
   on its own merits.
 
