@@ -484,7 +484,9 @@ fn parse(line: u32, said: &str) -> Option<Parsed> {
         None => {
             let expected = match verb.as_str() {
                 "approve" | "reject" => "a proposal id, such as p-4",
-                "forget" => "an entry id, such as preferences-12, or a session id, such as s-4",
+                "forget" => {
+                    "an entry id, such as preferences-12, or a session id, such as s-4 or 7c2b9d14"
+                }
                 _ => "an entry id, such as preferences-12",
             };
             refuse(Refusal::BadId { verb, expected })
@@ -492,19 +494,43 @@ fn parse(line: u32, said: &str) -> Option<Parsed> {
     }
 }
 
-/// The session a forget names: `s-<n>` (no leading zero), or a provider
-/// session id in UUID form, which an entry id could otherwise swallow when
-/// its last group is all digits. Anything else is an entry id or nothing.
+/// The group lengths of a UUID, which a Claude Code or Codex session id is.
+const UUID_GROUPS: [usize; 5] = [8, 4, 4, 4, 12];
+
+/// The session a forget names: `s-<n>` (no leading zero), a provider
+/// session id in UUID form, or a prefix of one (at least
+/// [`crate::session::MIN_ID_PREFIX`] characters, as a table prints it). A UUID or
+/// its prefix is read as a session before an entry id, which it could
+/// otherwise swallow when its last group is all digits. The store resolves a
+/// prefix, refusing an ambiguous one. Anything else is an entry id or
+/// nothing.
 fn session_id(id: &str) -> Option<SessionId> {
     let numbered = id.strip_prefix("s-").is_some_and(|n| {
         !n.is_empty() && !n.starts_with('0') && n.bytes().all(|b| b.is_ascii_digit())
     });
+    (numbered || is_uuid_prefix(id))
+        .then(|| id.parse().ok())
+        .flatten()
+}
+
+/// Whether `id` is a UUID, whole or cut anywhere after its first
+/// [`crate::session::MIN_ID_PREFIX`] characters: hex groups of 8-4-4-4-12, every
+/// group but the last complete and the last neither empty nor too long.
+fn is_uuid_prefix(id: &str) -> bool {
     let groups: Vec<&str> = id.split('-').collect();
-    let uuid = groups.iter().map(|g| g.len()).eq([8, 4, 4, 4, 12])
-        && groups
+    let Some((last, whole)) = groups.split_last() else {
+        return false;
+    };
+    let hex = |g: &str| g.bytes().all(|b| b.is_ascii_hexdigit());
+    id.len() >= crate::session::MIN_ID_PREFIX
+        && groups.len() <= UUID_GROUPS.len()
+        && whole
             .iter()
-            .all(|g| g.bytes().all(|b| b.is_ascii_hexdigit()));
-    (numbered || uuid).then(|| id.parse().ok()).flatten()
+            .zip(UUID_GROUPS)
+            .all(|(g, len)| g.len() == len && hex(g))
+        && !last.is_empty()
+        && last.len() <= UUID_GROUPS[whole.len()]
+        && hex(last)
 }
 
 /// The hashes a transcript turn's text can match a typed prompt by: of the

@@ -12,7 +12,7 @@ use super::agent::refusal;
 use crate::{Error, Result, SessionId, WriteRefusal};
 
 /// The shortest prefix accepted, in characters.
-pub(crate) const MIN_PREFIX: usize = 4;
+pub(crate) const MIN_PREFIX: usize = crate::session::MIN_ID_PREFIX;
 /// The most candidates an `id_ambiguous` refusal names.
 pub(crate) const MAX_CANDIDATES: usize = 10;
 

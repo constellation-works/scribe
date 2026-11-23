@@ -899,6 +899,86 @@ fn forgetting_a_session_erases_its_words_keeps_its_id_and_takes_no_more_writes()
 }
 
 #[test]
+fn typed_forget_takes_a_printed_session_prefix_and_refuses_an_ambiguous_one() {
+    const SIBLING: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e61";
+    const OTHER: &str = "9e3a4f10-7b2c-4d58-a6f1-3c8d9e0b1a24";
+    let s = Setup::new();
+    let show = |id: &str| -> Value {
+        serde_json::from_slice(&s.fx.ok(&["session", "show", id, "--json"]).stdout).unwrap()
+    };
+    let search = |word: &str| -> Value {
+        serde_json::from_slice(
+            &s.fx
+                .ok(&["search", word, "--kind", "message", "--json"])
+                .stdout,
+        )
+        .unwrap()
+    };
+    let switch_on = |session: &str, said: &str| {
+        s.write(session, &[line("user", "o-1", said)]);
+        let mut payload = s.payload("UserPromptSubmit");
+        payload["session_id"] = json!(session);
+        payload["transcript_path"] = json!(s.transcript(session));
+        payload["prompt"] = json!("/scribe on");
+        s.hook("user-prompt-submit", &payload);
+        s.answer(&answer());
+        s.run(&["session", "pass", "--session", session, "--json"], b"");
+    };
+    s.write(ON, &[line("user", "u-1", "The quarry needs a new fence.")]);
+    s.scribe("/scribe on");
+    s.answer(&answer());
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    switch_on(SIBLING, "The harbour crane needs a new cable.");
+    switch_on(OTHER, "The lighthouse needs a new lamp.");
+    assert_eq!(search("quarry")["total"], 1);
+    assert_eq!(search("harbour")["total"], 1);
+    assert_eq!(search("lighthouse")["total"], 1);
+
+    // The first group is shared by ON and SIBLING: ambiguous, so nothing
+    // changes and the refusal is audited with its code.
+    let audited = audit_log(&s).len();
+    let refused = text(&type_settlement(&s, "#scribe forget 5d1c0b7e").stdout);
+    assert!(refused.contains("could not apply"), "{refused}");
+    assert!(refused.contains("ambiguous"), "{refused}");
+    assert_eq!(audit_log(&s).pop().unwrap()["error_code"], "id_ambiguous");
+    assert_eq!(audit_log(&s).len(), audited + 1);
+    assert_eq!(search("quarry")["total"], 1);
+    assert_eq!(search("harbour")["total"], 1);
+    assert!(show(ON)["forgotten"].is_null());
+    assert!(show(SIBLING)["forgotten"].is_null());
+
+    // A unique printed prefix erases the same session as the full id would,
+    // and the echo names the full id.
+    let forgot = text(&type_settlement(&s, "#scribe forget 9e3a4f10").stdout);
+    assert!(
+        forgot.contains(&format!("scribe: forgot s-3 ({OTHER})")),
+        "{forgot}"
+    );
+    assert_eq!(search("lighthouse")["total"], 0);
+    assert!(show(OTHER)["forgotten"].is_string());
+    assert_eq!(search("quarry")["total"], 1);
+    assert_eq!(search("harbour")["total"], 1);
+
+    // A longer prefix both siblings still share is refused; the full id of one erases it.
+    let forgot =
+        text(&type_settlement(&s, "#scribe forget 5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e").stdout);
+    assert!(forgot.contains("could not apply"), "{forgot}");
+    let forgot =
+        text(&type_settlement(&s, "#scribe forget 5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e61").stdout);
+    assert!(
+        forgot.contains(&format!("forgot s-2 ({SIBLING})")),
+        "{forgot}"
+    );
+    assert_eq!(search("harbour")["total"], 0);
+    assert_eq!(search("quarry")["total"], 1);
+
+    // A prefix that matches nothing erases nothing.
+    let none = text(&type_settlement(&s, "#scribe forget abcdef12").stdout);
+    assert!(none.contains("could not apply"), "{none}");
+    assert_eq!(search("quarry")["total"], 1);
+}
+
+#[test]
 fn session_forget_preserves_an_approved_entry_with_a_deleted_cite() {
     let s = Setup::new();
     let quote = "I always prefer the approved bluebird release process.";
