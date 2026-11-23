@@ -240,7 +240,7 @@ fn run_link(
 ) -> Output {
     let target = || Some(format!("session:{session}"));
     // A unique prefix of the target is stored, and reported, as the full id.
-    let resolved = match ctx.store().resolve_session_or_typed(&link.session) {
+    let resolved = match crate::commands::resolve_session_or_typed(ctx, &link.session) {
         Ok(id) => id,
         Err(err) => {
             return blocked(
@@ -383,9 +383,9 @@ fn timestamp(at: OffsetDateTime) -> String {
 }
 
 /// An error and its causes on one line.
-fn chain(err: &scribe_core::Error) -> String {
+fn chain(err: &dyn std::error::Error) -> String {
     let mut message = err.to_string();
-    let mut source = std::error::Error::source(err);
+    let mut source = err.source();
     while let Some(cause) = source {
         message.push_str(": ");
         message.push_str(&cause.to_string());

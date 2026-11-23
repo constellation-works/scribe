@@ -227,7 +227,7 @@ pub(super) fn run(command: MemoryCommand, ctx: &Context) -> Result<Output, CliEr
         MemoryCommand::Ack(args) => {
             let config = ctx.config()?;
             let redactor = ctx.redactor(&config)?;
-            let session = ctx.store().resolve_session_or_typed(&args.session)?;
+            let session = super::resolve_session_or_typed(ctx, &args.session)?;
             let (item, changed) =
                 ctx.store()
                     .ack_memory(&args.id, session, args.author, &redactor, ctx.now())?;

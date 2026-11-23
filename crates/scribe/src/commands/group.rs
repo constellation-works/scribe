@@ -191,7 +191,7 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
                 title,
                 kind,
                 project,
-                related: store.resolve_relateds(&related)?,
+                related: super::resolve_relateds(ctx, &related)?,
             };
             let opened =
                 store.open_group(draft, &consent, ctx.now(), &ctx.redactor(&ctx.config()?)?)?;

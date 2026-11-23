@@ -223,9 +223,9 @@ pub(crate) fn short_ids(output: &Output, ctx: &Context) -> scribe_core::ShortIds
             records: Records::Transcripts(_),
             ..
         }
-    ) && let Ok(files) = hook::payload::files_for(ctx)
+    ) && let Ok(extra) = transcript_session_ids(ctx)
     {
-        ids.extend(files.into_iter().map(|(id, _)| id.to_string()));
+        ids.extend(extra);
     }
     if let Output::Show {
         record: Record::Group(group),
@@ -238,6 +238,56 @@ pub(crate) fn short_ids(output: &Output, ctx: &Context) -> scribe_core::ShortIds
         ids.extend(group.members().iter().map(|id| id.to_string()));
     }
     scribe_core::ShortIds::new(ids)
+}
+
+/// The session ids of provider transcripts on disk, for resolving prefixes
+/// of uncataloged sessions alongside the store's own ids.
+pub(in crate::commands) fn transcript_session_ids(ctx: &Context) -> Result<Vec<String>, CliError> {
+    Ok(hook::payload::files_for(ctx)?
+        .into_iter()
+        .map(|(id, _)| id.to_string())
+        .collect())
+}
+
+/// Resolve a session id or unique prefix across the store and provider
+/// transcripts on disk, returning an unknown id as typed so its own check can
+/// report it. Ambiguity and short prefixes are still refused.
+pub(in crate::commands) fn resolve_session_or_typed(
+    ctx: &Context,
+    input: &scribe_core::SessionId,
+) -> Result<scribe_core::SessionId, CliError> {
+    let extra = transcript_session_ids(ctx)?;
+    Ok(ctx.store().resolve_session_or_typed_with(input, &extra)?)
+}
+
+/// Resolve one `--related` or `--result` `session:<id>` reference across the
+/// store and provider transcripts on disk, leaving other kinds and unknown
+/// ids as typed.
+pub(in crate::commands) fn resolve_related(
+    ctx: &Context,
+    related: &scribe_core::Related,
+) -> Result<scribe_core::Related, CliError> {
+    if related.kind() != scribe_core::RelatedKind::Session {
+        return Ok(related.clone());
+    }
+    let extra = transcript_session_ids(ctx)?;
+    Ok(ctx.store().resolve_related_with(related, &extra)?)
+}
+
+/// Resolve `session:<id>` references in `related` across the store and
+/// provider transcripts on disk, scanning transcripts at most once.
+pub(in crate::commands) fn resolve_relateds(
+    ctx: &Context,
+    related: &[scribe_core::Related],
+) -> Result<Vec<scribe_core::Related>, CliError> {
+    if !related
+        .iter()
+        .any(|r| r.kind() == scribe_core::RelatedKind::Session)
+    {
+        return Ok(related.to_vec());
+    }
+    let extra = transcript_session_ids(ctx)?;
+    Ok(ctx.store().resolve_relateds_with(related, &extra)?)
 }
 
 /// Run one command, auditing it if it is audited.

@@ -952,3 +952,63 @@ fn a_first_write_forget_counts_the_legacy_files_it_deletes() {
     assert!(moved.join("s-2.md").is_file(), "the other session is kept");
     assert!(store.session(&"s-2".parse().unwrap()).is_ok());
 }
+
+#[test]
+fn resolve_with_extra_ids_expands_unique_prefixes_and_refuses_ambiguity() {
+    let (_dir, store) = file_store();
+    let stored: SessionId = "0b8ef4a6-0c6a-4d77-9c41-000000000002".parse().unwrap();
+    store
+        .update_control(|s| control::switch(s, &stored, &Switch::On, T0))
+        .unwrap();
+    let extra_only = String::from("9999aaaa-1111-4222-8333-444455556666");
+    let colliding_extra = String::from("0b8ef4a6-ffff-4000-8000-000000000099");
+    let extra = vec![
+        extra_only.clone(),
+        colliding_extra.clone(),
+        stored.to_string(),
+    ];
+
+    // Extra-only id resolves from a 4+ char prefix.
+    let prefix: SessionId = "9999aaaa".parse().unwrap();
+    assert_eq!(
+        store
+            .resolve_session_or_typed_with(&prefix, &extra)
+            .unwrap(),
+        extra_only.parse::<SessionId>().unwrap()
+    );
+    let rel: crate::Related = "session:9999aaaa".parse().unwrap();
+    assert_eq!(
+        store.resolve_relateds_with(&[rel], &extra).unwrap(),
+        vec![format!("session:{extra_only}").parse().unwrap()]
+    );
+
+    // Same id in both the store and `extra_ids` deduplicates without ambiguity.
+    let stored_prefix: SessionId = "0b8ef4a6-0c6a".parse().unwrap();
+    assert_eq!(
+        store
+            .resolve_session_or_typed_with(&stored_prefix, &extra)
+            .unwrap(),
+        stored
+    );
+
+    // Shared prefix across a store session (`stored`) and `extra_ids` (`colliding_extra`) is ambiguous.
+    let ambig: SessionId = "0b8ef4a6".parse().unwrap();
+    let err = store
+        .resolve_session_or_typed_with(&ambig, &extra)
+        .unwrap_err();
+    assert_eq!(code(&err), "id_ambiguous");
+    let rel_ambig: crate::Related = "session:0b8ef4a6".parse().unwrap();
+    let err = store
+        .resolve_relateds_with(&[rel_ambig], &extra)
+        .unwrap_err();
+    assert_eq!(code(&err), "id_ambiguous");
+
+    // Unknown 4+ char prefix stays as typed.
+    let unknown: SessionId = "deadbeef".parse().unwrap();
+    assert_eq!(
+        store
+            .resolve_session_or_typed_with(&unknown, &extra)
+            .unwrap(),
+        unknown
+    );
+}

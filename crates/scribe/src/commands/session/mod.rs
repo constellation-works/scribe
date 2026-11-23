@@ -269,7 +269,7 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
     let filter = SessionFilter {
         project: args.project,
         topics: args.topic,
-        related: ctx.store().resolve_relateds(&args.related)?,
+        related: super::resolve_relateds(ctx, &args.related)?,
         status: args.status.map(SessionStatus::from),
         dates: args.dates.range()?,
         include_inactive: args.include_inactive,
