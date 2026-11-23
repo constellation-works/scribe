@@ -218,6 +218,39 @@ pub fn automatic_seat(session: &SessionId, mut taken: impl FnMut(&str) -> bool) 
     }
 }
 
+/// One session named by a typed `/scribe group add` line: its id, and its typed
+/// turns when its transcript was on disk. `None` adds membership only.
+pub struct GroupAddition {
+    /// The session to add.
+    pub session: SessionId,
+    /// Its typed turns, selected as the hook selects them, in transcript order.
+    pub turns: Option<Vec<crate::message::NewMessage>>,
+}
+
+/// What a typed `/scribe group add` did for one session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Added {
+    /// The session joined. `stored` is how many typed turns were stored for it,
+    /// or `None` when it had no transcript and only membership was added.
+    Joined {
+        /// Typed turns stored, when its transcript was read.
+        stored: Option<usize>,
+    },
+    /// The session already belonged to this group: nothing changed for it.
+    AlreadyMember,
+}
+
+/// What a typed `/scribe group add` did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GroupAdded {
+    /// The group's id, `g-<n>`.
+    pub id: String,
+    /// Whether the line opened the group.
+    pub created: bool,
+    /// Each named session, in the order named.
+    pub sessions: Vec<(SessionId, Added)>,
+}
+
 /// One caller's request to hold a seat.
 pub struct JoinGroup<'a> {
     /// Group id or prefix.

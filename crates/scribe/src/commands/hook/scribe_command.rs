@@ -43,7 +43,7 @@ const PROVENANCE_FAILED: &str = "provenance_failed";
 /// The code of a `/scribe` argument that is not a command.
 const UNKNOWN_COMMAND: &str = "unknown_scribe_command";
 /// The commands, for a refusal.
-const USAGE: &str = "use /scribe on, /scribe off, /scribe status, /scribe on --from <id>, /scribe link <id> [--type spawned_from|continues], /scribe catalog <id>, /scribe group <slug> or /scribe continue <handoff-id>";
+const USAGE: &str = "use /scribe on, /scribe off, /scribe status, /scribe on --from <id>, /scribe link <id> [--type spawned_from|continues], /scribe catalog <id>, /scribe group <slug>, /scribe group add <slug> <session-id>... or /scribe continue <handoff-id>";
 
 /// Apply `switch` for the payload's session and block the prompt with the
 /// result.
@@ -95,6 +95,7 @@ pub(super) fn run(
         | Switch::Catalog(_)
         | Switch::Continue(_)
         | Switch::Group(_)
+        | Switch::GroupAdd { .. }
         | Switch::Status => store
             .control()
             .map(|state| (Change::Status(state.get(session).cloned()), false)),
@@ -132,6 +133,7 @@ pub(super) fn run(
                 | Switch::Catalog(_)
                 | Switch::Continue(_)
                 | Switch::Group(_)
+                | Switch::GroupAdd { .. }
                 | Switch::Status
                 | Switch::Unknown(_) => Vec::new(),
             };
@@ -180,6 +182,10 @@ fn typed(switch: &Switch) -> String {
             format!("/scribe link {} --type {}", link.session, link.kind)
         }
         Switch::Group(slug) => format!("/scribe group {slug}"),
+        Switch::GroupAdd { slug, sessions } => {
+            let ids: Vec<_> = sessions.iter().map(SessionId::as_str).collect();
+            format!("/scribe group add {slug} {}", ids.join(" "))
+        }
         Switch::Continue(id) => format!("/scribe continue {id}"),
         Switch::Catalog(id) => format!("/scribe catalog {id}"),
         Switch::Unknown(arg) => format!("/scribe {arg}"),

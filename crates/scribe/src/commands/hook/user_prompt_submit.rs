@@ -41,7 +41,7 @@ use scribe_core::capture::{self, Parsed, Turn};
 use scribe_core::{Label, Provider, SessionId, annotation};
 
 /// The hook event this replies to.
-const EVENT: &str = "UserPromptSubmit";
+pub(super) const EVENT: &str = "UserPromptSubmit";
 /// The longest quote an echo shows, in characters; `entry show` has it all.
 const ECHO_CHARS: usize = 200;
 /// What the agent is told after an applied echo, so it does not act on it
@@ -249,7 +249,7 @@ fn capture_prompt(payload: &PromptPayload, ctx: &Context) -> Result<Output, CliE
         if payload
             .prompt
             .lines()
-            .any(|line| group_slug(line).is_some())
+            .any(|line| group_line(line).is_some())
         {
             return Ok(group_reply(
                 "scribe: group refused — the prompt is not a typed user turn".into(),
@@ -259,7 +259,7 @@ fn capture_prompt(payload: &PromptPayload, ctx: &Context) -> Result<Output, CliE
         }
         return Ok(reply(Vec::new(), Vec::new()));
     }
-    if let Some(slug) = group_slug(&payload.prompt) {
+    if let Some(line) = group_line(&payload.prompt) {
         if let Err(reason) = payload::check(ctx, &payload.transcript_path, &session) {
             return Ok(group_reply(
                 format!("scribe: group refused — {reason}"),
@@ -267,25 +267,34 @@ fn capture_prompt(payload: &PromptPayload, ctx: &Context) -> Result<Output, CliE
                 &session,
             ));
         }
-        let project = project::of(std::path::Path::new(&payload.cwd));
-        let redactor = ctx.redactor(&ctx.config()?)?;
-        return Ok(
-            match ctx
-                .store()
-                .join_project_group(&slug, &project, &session, ctx.now(), &redactor)
-            {
-                Ok(id) => group_reply(
-                    format!("scribe: joined group {slug} ({id})"),
-                    None,
-                    &session,
-                ),
-                Err(err) => group_reply(
-                    format!("scribe: group refused — {err}"),
-                    Some(err.code()),
-                    &session,
-                ),
-            },
-        );
+        let (slug, named) = match line {
+            GroupLine::Join(slug) => {
+                let project = project::of(std::path::Path::new(&payload.cwd));
+                let redactor = ctx.redactor(&ctx.config()?)?;
+                return Ok(
+                    match ctx.store().join_project_group(
+                        &slug,
+                        &project,
+                        &session,
+                        ctx.now(),
+                        &redactor,
+                    ) {
+                        Ok(id) => group_reply(
+                            format!("scribe: joined group {slug} ({id})"),
+                            None,
+                            &session,
+                        ),
+                        Err(err) => group_reply(
+                            format!("scribe: group refused — {err}"),
+                            Some(err.code()),
+                            &session,
+                        ),
+                    },
+                );
+            }
+            GroupLine::Add { slug, sessions } => (slug, sessions),
+        };
+        return super::group_add::run(&slug, &named, payload, &session, ctx);
     }
     if let Some(switch) = scribe_core::control::parse(&payload.prompt) {
         return Ok(super::scribe_command::run(&switch, payload, &session, ctx));
@@ -358,12 +367,26 @@ fn capture_prompt(payload: &PromptPayload, ctx: &Context) -> Result<Output, CliE
     Ok(reply(echoes, outcomes))
 }
 
-/// The slug of a `/scribe group <slug>` line, read by the shared control
+/// A typed project-group line.
+enum GroupLine {
+    /// `/scribe group <slug>`: the typing session joins.
+    Join(String),
+    /// `/scribe group add <slug> <session-id>...`: the named sessions join.
+    Add {
+        slug: String,
+        sessions: Vec<SessionId>,
+    },
+}
+
+/// The project-group line `text` opens with, read by the shared control
 /// parser, so the subcommand is spelled as every control argument is:
 /// case-insensitively. The slug is passed on as typed; the store checks it.
-fn group_slug(text: &str) -> Option<String> {
+fn group_line(text: &str) -> Option<GroupLine> {
     match scribe_core::control::parse(text) {
-        Some(scribe_core::control::Switch::Group(slug)) => Some(slug),
+        Some(scribe_core::control::Switch::Group(slug)) => Some(GroupLine::Join(slug)),
+        Some(scribe_core::control::Switch::GroupAdd { slug, sessions }) => {
+            Some(GroupLine::Add { slug, sessions })
+        }
         _ => None,
     }
 }

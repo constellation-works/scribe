@@ -9,7 +9,8 @@ pub use claude::{ClaudeCapturePosition, ClaudeGroupCapture};
 
 use super::{DB_FILE, Fallible, db_error, memory::read, open_writer, refuse_newer, stamp};
 use crate::group::{
-    Group, GroupConsent, JoinGroup, NewGroup, OpenedGroup, Seat, SeatHold, SeatStart,
+    Added, Group, GroupAdded, GroupAddition, GroupConsent, JoinGroup, NewGroup, OpenedGroup, Seat,
+    SeatHold, SeatStart,
 };
 use crate::message::NewMessage;
 use crate::store::agent::refusal;
@@ -198,6 +199,65 @@ fn number(id: &str) -> Option<i64> {
     (n > 0 && format!("g-{n}") == id).then_some(n)
 }
 
+/// A project group slug: lowercase letters, digits and interior hyphens, not a
+/// group id, and free of configured sensitive text.
+fn check_project_slug(slug: &str, redactor: &Redactor) -> Result<()> {
+    if slug.is_empty()
+        || slug.len() > 64
+        || !slug
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        || slug.starts_with('-')
+        || slug.ends_with('-')
+        || number(slug).is_some()
+    {
+        return Err(refusal(
+            WriteRefusal::InvalidText,
+            "group slug must be lowercase letters, digits and interior hyphens, and not a group id",
+        ));
+    }
+    if redactor.mask(slug) != slug {
+        return Err(refusal(
+            WriteRefusal::InvalidText,
+            "group slug contains sensitive text",
+        ));
+    }
+    Ok(())
+}
+
+/// Seat `session` in group `n` under an automatic name that no member of the
+/// group holds, so a join never displaces anyone.
+fn seat_member(
+    conn: &Connection,
+    n: i64,
+    session: &SessionId,
+    now: OffsetDateTime,
+) -> rusqlite::Result<()> {
+    let mut query =
+        conn.prepare("SELECT EXISTS(SELECT 1 FROM group_seats WHERE group_id=?1 AND name=?2)")?;
+    let mut lookup = Ok(());
+    let seat = crate::group::automatic_seat(session, |name| {
+        query
+            .query_row(params![n, name], |r| r.get(0))
+            .unwrap_or_else(|e| {
+                lookup = Err(e);
+                true
+            })
+    });
+    lookup?;
+    drop(query);
+    let seat = seat.as_str();
+    conn.execute(
+        "INSERT INTO group_seats(group_id,name,role) VALUES (?1,?2,'member')",
+        params![n, seat],
+    )?;
+    conn.execute(
+        "INSERT INTO group_members(group_id,seat,session,author,joined) VALUES (?1,?2,?3,'user',?4)",
+        params![n, seat, session.as_str(), stamp(now)],
+    )?;
+    Ok(())
+}
+
 impl Store {
     fn read_groups<T: Default>(
         &self,
@@ -369,26 +429,7 @@ impl Store {
         now: OffsetDateTime,
         redactor: &Redactor,
     ) -> Result<String> {
-        if slug.is_empty()
-            || slug.len() > 64
-            || !slug
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-            || slug.starts_with('-')
-            || slug.ends_with('-')
-            || number(slug).is_some()
-        {
-            return Err(refusal(
-                WriteRefusal::InvalidText,
-                "group slug must be lowercase letters, digits and interior hyphens, and not a group id",
-            ));
-        }
-        if redactor.mask(slug) != slug {
-            return Err(refusal(
-                WriteRefusal::InvalidText,
-                "group slug contains sensitive text",
-            ));
-        }
+        check_project_slug(slug, redactor)?;
         self.write(|| {
             self.refuse_forgotten(session)?;
             let conn = open_writer(self.root(), self.lock_wait)?;
@@ -406,20 +447,119 @@ impl Store {
                 Some(n) => n,
                 None => conn.query_row("INSERT INTO groups(title,kind,project,opened,opener,related,slug) VALUES (?1,'project',?2,?3,?4,'[]',?1) RETURNING id", params![slug, project.as_str(), stamp(now), session.as_str()], |r| r.get(0)).map_err(fail)?,
             };
-            let mut query = conn.prepare("SELECT EXISTS(SELECT 1 FROM group_seats WHERE group_id=?1 AND name=?2)").map_err(fail)?;
-            let mut lookup = Ok(());
-            let seat = crate::group::automatic_seat(session, |name| {
-                query.query_row(params![n, name], |r| r.get(0)).unwrap_or_else(|e| {
-                    lookup = Err(e);
-                    true
-                })
-            });
-            lookup.map_err(fail)?;
-            drop(query);
-            let seat = seat.as_str();
-            conn.execute("INSERT INTO group_seats(group_id,name,role) VALUES (?1,?2,'member')", params![n, seat]).map_err(fail)?;
-            conn.execute("INSERT INTO group_members(group_id,seat,session,author,joined) VALUES (?1,?2,?3,'user',?4)", params![n, seat, session.as_str(), stamp(now)]).map_err(fail)?;
+            seat_member(&conn, n, session, now).map_err(fail)?;
             Ok(format!("g-{n}"))
+        })
+    }
+
+    /// Add named past sessions to an open project group on a user-typed hook
+    /// command, opening the group when absent. A session already in another
+    /// group refuses the whole line, naming each such session and its group, so
+    /// nothing changes. A session whose transcript was read has its typed turns
+    /// stored, whatever their age, and its capture cursor set to the last of
+    /// them; one without a transcript gets membership only.
+    pub fn add_project_group_sessions(
+        &self,
+        slug: &str,
+        project: &Project,
+        opener: &SessionId,
+        additions: &[GroupAddition],
+        now: OffsetDateTime,
+        redactor: &Redactor,
+    ) -> Result<GroupAdded> {
+        check_project_slug(slug, redactor)?;
+        self.write(|| {
+            for addition in additions {
+                self.refuse_forgotten(&addition.session)?;
+            }
+            let conn = open_writer(self.root(), self.lock_wait)?;
+            let path = self.root().join(DB_FILE);
+            let fail = |e| db_error("add to project group in", &path, e);
+            let existing: Option<i64> = conn
+                .query_row(
+                    "SELECT id FROM groups WHERE slug=?1 AND closed IS NULL",
+                    [slug],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(fail)?;
+            let mut elsewhere = Vec::new();
+            let mut already = Vec::new();
+            for addition in additions {
+                let held: Option<(i64, String)> = conn
+                    .query_row(
+                        "SELECT m.group_id, COALESCE(g.slug, 'g-' || g.id) FROM group_members m
+                         JOIN groups g ON g.id = m.group_id WHERE m.session = ?1",
+                        [addition.session.as_str()],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .optional()
+                    .map_err(fail)?;
+                match held {
+                    Some((group, _)) if Some(group) == existing => {
+                        already.push(addition.session.as_str());
+                    }
+                    Some((_, name)) => elsewhere.push(format!(
+                        "session {} already belongs to group {}",
+                        addition.session,
+                        redactor.mask(&name)
+                    )),
+                    None => {}
+                }
+            }
+            if !elsewhere.is_empty() {
+                return Err(refusal(
+                    WriteRefusal::GroupMembership,
+                    format!("{}; nothing changed", elsewhere.join("; ")),
+                ));
+            }
+            let (n, created) = match existing {
+                Some(n) => (n, false),
+                None => (
+                    conn.query_row(
+                        "INSERT INTO groups(title,kind,project,opened,opener,related,slug)
+                         VALUES (?1,'project',?2,?3,?4,'[]',?1) RETURNING id",
+                        params![slug, project.as_str(), stamp(now), opener.as_str()],
+                        |r| r.get(0),
+                    )
+                    .map_err(fail)?,
+                    true,
+                ),
+            };
+            let mut sessions = Vec::new();
+            for addition in additions {
+                if already.contains(&addition.session.as_str()) {
+                    sessions.push((addition.session.clone(), Added::AlreadyMember));
+                    continue;
+                }
+                seat_member(&conn, n, &addition.session, now).map_err(fail)?;
+                let stored = match &addition.turns {
+                    None => None,
+                    Some(turns) => {
+                        let inserted = write_captured_turns(
+                            &conn,
+                            &path,
+                            &addition.session,
+                            turns.iter().collect(),
+                            redactor,
+                        )?;
+                        if let Some(last) = turns.last() {
+                            conn.execute(
+                                "UPDATE group_members SET turn_cursor = ?2 WHERE session = ?1",
+                                params![addition.session.as_str(), last.message],
+                            )
+                            .map_err(fail)?;
+                        }
+                        Some(inserted)
+                    }
+                };
+                sessions.push((addition.session.clone(), Added::Joined { stored }));
+            }
+            Ok(GroupAdded {
+                id: format!("g-{n}"),
+                created,
+                sessions,
+            })
         })
     }
 

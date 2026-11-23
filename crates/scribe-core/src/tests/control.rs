@@ -378,3 +378,28 @@ fn a_link_for_a_session_without_a_record_waits_on_its_switch() {
     assert!(done.added && !done.switched_on && done.write_record);
     assert!(fresh.get(&child).is_none());
 }
+
+#[test]
+fn group_add_names_a_slug_and_at_least_one_session() {
+    let a = "11111111-1111-4111-8111-111111111111";
+    let b = "22222222-2222-4222-8222-222222222222";
+    assert_eq!(
+        control::parse(&format!("/scribe GROUP Add water {a} {b}")),
+        Some(Switch::GroupAdd {
+            slug: "water".into(),
+            sessions: vec![a.parse().unwrap(), b.parse().unwrap()],
+        })
+    );
+    // Two words after `group` is still the slug form, even when it reads "add".
+    assert_eq!(
+        control::parse("/scribe group add"),
+        Some(Switch::Group("add".into()))
+    );
+    // No session, or an id that is not one: the usage reply, never a write.
+    for line in ["/scribe group add water", "/scribe group add water a/b"] {
+        assert!(
+            matches!(control::parse(line), Some(Switch::Unknown(_))),
+            "{line}"
+        );
+    }
+}

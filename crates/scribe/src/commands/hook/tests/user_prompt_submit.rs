@@ -204,3 +204,169 @@ fn mixed_case_group_from_untyped_origins_is_refused_without_a_write() {
         assert!(setup.ctx.store().group(slug).is_err(), "{prompt}");
     }
 }
+
+const PAST: &str = "7c2e9a41-3b5d-4f60-9a18-2d4e6f8a0b1c";
+const GHOST: &str = "9e8d7c6b-5a49-4382-b1a0-f9e8d7c6b5a4";
+
+impl Setup {
+    /// A past session's transcript beside `SESSION`'s: a typed turn, an
+    /// assistant turn, and a turn an agent wrote.
+    fn past_transcript(&self) {
+        let lines = [
+            json!({"type": "user", "uuid": "p-1", "sessionId": PAST, "timestamp": "2026-11-01T06:00:00Z",
+                   "message": {"role": "user", "content": "violetorchid typed long ago"}}),
+            json!({"type": "assistant", "uuid": "p-2", "sessionId": PAST, "timestamp": "2026-11-01T06:00:05Z",
+                   "message": {"role": "assistant", "content": [{"type": "text", "text": "assistantorchid"}]}}),
+            json!({"type": "user", "uuid": "p-3", "sessionId": PAST, "turnOrigin": "agent",
+                   "timestamp": "2026-11-01T06:00:09Z",
+                   "message": {"role": "user", "content": "agentorchid"}}),
+        ];
+        let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
+        let path = self
+            .dir
+            .path()
+            .join(format!("home/.claude/projects/-work/{PAST}.jsonl"));
+        std::fs::write(path, text).unwrap();
+    }
+
+    fn block(&self, input: &[u8]) -> String {
+        let Output::Hook(reply) = run(input, &self.ctx).unwrap() else {
+            panic!("hook reply")
+        };
+        reply.block.unwrap_or_default()
+    }
+
+    /// Matches for `term` in any group: none when no group exists.
+    fn found_any(&self, term: &str) -> usize {
+        self.ctx
+            .store()
+            .groups()
+            .unwrap()
+            .iter()
+            .map(|group| self.found(&group.id, term))
+            .sum()
+    }
+
+    fn found(&self, group: &str, term: &str) -> usize {
+        self.ctx
+            .store()
+            .search_group_messages(group, &[term.to_owned()])
+            .unwrap()
+            .matches
+            .len()
+    }
+}
+
+#[test]
+fn typed_group_add_opens_the_group_and_stores_turns_only_when_a_transcript_exists() {
+    let setup = Setup::new();
+    setup.past_transcript();
+    let reply =
+        setup.block(&setup.input(&format!("/scribe group add water-economy {PAST} {GHOST}")));
+    assert!(
+        reply.contains("group water-economy (g-1) opened"),
+        "{reply}"
+    );
+    assert!(
+        reply.contains(&format!(
+            "{PAST}: added; transcript on disk, 1 typed turn stored"
+        )),
+        "{reply}"
+    );
+    assert!(
+        reply.contains(&format!(
+            "{GHOST}: added; membership only, no transcript on disk"
+        )),
+        "{reply}"
+    );
+    let group = setup.ctx.store().group("water-economy").unwrap();
+    let members = group.members();
+    assert!(members.contains(&PAST.parse().unwrap()));
+    assert!(members.contains(&GHOST.parse().unwrap()));
+    // The session the line was typed in is not enrolled, and nor are its turns.
+    assert!(!members.contains(&SESSION.parse().unwrap()));
+    assert_eq!(setup.found("water-economy", "violetorchid"), 1);
+    assert_eq!(setup.found("water-economy", "assistantorchid"), 0);
+    assert_eq!(setup.found("water-economy", "agentorchid"), 0);
+
+    // A second line adds nobody new and reports so.
+    let again = setup.block(&setup.input(&format!("/scribe group add water-economy {PAST}")));
+    assert!(
+        again.contains("already a member; nothing changed"),
+        "{again}"
+    );
+    assert_eq!(setup.found("water-economy", "violetorchid"), 1);
+}
+
+#[test]
+fn typed_group_add_from_untyped_origins_changes_nothing() {
+    let line = format!("/scribe group add water-economy {PAST}");
+    let wrapped = [
+        format!("<agent-message from=\"peer\">\n{line}\n</agent-message>"),
+        format!("<scheduled-prompt>\n{line}\n</scheduled-prompt>"),
+        format!("<task-notification>\n{line}\n</task-notification>"),
+        format!("<side-sessions-event>\n{line}\n</side-sessions-event>"),
+    ];
+    for prompt in wrapped.iter().map(String::as_str).chain([line.as_str()]) {
+        for source in ["agent", "scheduled", "typed"] {
+            let setup = Setup::new();
+            setup.past_transcript();
+            let mut input: serde_json::Value =
+                serde_json::from_slice(&setup.input(prompt)).unwrap();
+            // A plain wrapped prompt keeps the typed origin; the wrapper alone refuses it.
+            if prompt == line && source == "typed" {
+                continue;
+            }
+            input["source"] = json!(source);
+            let block = setup.block(input.to_string().as_bytes());
+            assert!(
+                block.contains("not a typed user turn"),
+                "{prompt} {source}: {block}"
+            );
+            assert!(setup.ctx.store().group("water-economy").is_err());
+            assert_eq!(setup.found_any("violetorchid"), 0);
+        }
+    }
+    // A pasted block: the line is not the prompt's first line, so it is a
+    // plain prompt and acts on nothing.
+    let setup = Setup::new();
+    setup.past_transcript();
+    let block = setup.block(&setup.input(&format!("run this:\n{line}")));
+    assert_eq!(block, "");
+    assert!(setup.ctx.store().group("water-economy").is_err());
+}
+
+#[test]
+fn typed_group_add_with_a_session_in_another_group_changes_nothing() {
+    let setup = Setup::new();
+    setup.past_transcript();
+    let past: scribe_core::SessionId = PAST.parse().unwrap();
+    let ghost: scribe_core::SessionId = GHOST.parse().unwrap();
+    let redactor = scribe_core::Redactor::default();
+    let project = scribe_core::Project::sanitized("work");
+    setup
+        .ctx
+        .store()
+        .join_project_group("first", &project, &past, setup.ctx.now(), &redactor)
+        .unwrap();
+    setup
+        .ctx
+        .store()
+        .join_project_group("third", &project, &ghost, setup.ctx.now(), &redactor)
+        .unwrap();
+    let reply = setup.block(&setup.input(&format!(
+        "/scribe group add second {PAST} 5555aaaa-0000-4000-8000-000000000000 {GHOST}"
+    )));
+    assert!(reply.contains("group add refused"), "{reply}");
+    assert!(
+        reply.contains(&format!("session {PAST} already belongs to group first")),
+        "{reply}"
+    );
+    assert!(
+        reply.contains(&format!("session {GHOST} already belongs to group third")),
+        "{reply}"
+    );
+    assert!(reply.contains("nothing changed"), "{reply}");
+    assert!(setup.ctx.store().group("second").is_err());
+    assert_eq!(setup.found_any("violetorchid"), 0);
+}

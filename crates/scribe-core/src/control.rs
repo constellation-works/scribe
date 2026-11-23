@@ -50,6 +50,15 @@ pub enum Switch {
     Continue(String),
     /// Join a project group on a typed command.
     Group(String),
+    /// Add past sessions to a project group on a typed command
+    /// (`/scribe group add <slug> <session-id>...`), creating the group when
+    /// absent. The session it is typed in is not enrolled unless named.
+    GroupAdd {
+        /// The group's slug, as typed; the store checks it.
+        slug: String,
+        /// The named sessions, each an id or a prefix of one, at least one.
+        sessions: Vec<SessionId>,
+    },
     /// Any other argument: refused with the usage.
     Unknown(String),
 }
@@ -73,6 +82,22 @@ pub fn parse(prompt: &str) -> Option<Switch> {
         [arg] if arg.eq_ignore_ascii_case("off") => Switch::Off,
         [arg] if arg.eq_ignore_ascii_case("status") => Switch::Status,
         [arg, slug] if arg.eq_ignore_ascii_case("group") => Switch::Group((*slug).to_owned()),
+        [arg, add, slug, ids @ ..]
+            if arg.eq_ignore_ascii_case("group") && add.eq_ignore_ascii_case("add") =>
+        {
+            ids.iter()
+                .map(|id| id.parse::<SessionId>())
+                .collect::<Result<Vec<_>, _>>()
+                .ok()
+                .filter(|sessions| !sessions.is_empty())
+                .map_or_else(
+                    || Switch::Unknown(words.join(" ")),
+                    |sessions| Switch::GroupAdd {
+                        slug: (*slug).to_owned(),
+                        sessions,
+                    },
+                )
+        }
         [arg, id] if arg.eq_ignore_ascii_case("continue") => Switch::Continue((*id).to_owned()),
         [arg, id] if arg.eq_ignore_ascii_case("catalog") => id
             .parse()
@@ -372,9 +397,11 @@ pub fn switch(
         Switch::Status => Change::Status(current),
         // A link is applied by the store's link call, and a catalog by
         // `catalog_gate` and `catalog_on`, not here.
-        Switch::Link { .. } | Switch::Catalog(_) | Switch::Continue(_) | Switch::Group(_) => {
-            Change::Status(current)
-        }
+        Switch::Link { .. }
+        | Switch::Catalog(_)
+        | Switch::Continue(_)
+        | Switch::Group(_)
+        | Switch::GroupAdd { .. } => Change::Status(current),
         Switch::Unknown(arg) => Change::Unknown(arg.clone()),
     }
 }

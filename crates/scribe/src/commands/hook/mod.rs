@@ -29,6 +29,7 @@
 mod annotation;
 mod codex;
 mod continuation;
+mod group_add;
 mod group_turns;
 pub(super) mod payload;
 pub(super) mod project;
