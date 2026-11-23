@@ -18,10 +18,11 @@
 //!   with `has_record = 0`; a cataloged one never switched on has
 //!   `has_switch = 0`.
 //! - **Forgotten rows** (schema 4). `#scribe forget s-<n>` ([`forget`])
-//!   deletes the session's messages and its words, and stamps `forgotten`.
-//!   The row stays, so `s-<n>` is never reused, and no write fills it
-//!   again: a record write or switching it on is refused
-//!   `session_forgotten`.
+//!   deletes the session's messages, its words and its rebuild checkpoint,
+//!   and stamps `forgotten`. The row stays, so `s-<n>` is never reused, and
+//!   no write fills it again: a record write or switching it on is refused
+//!   `session_forgotten`. A checkpoint an older build left is omitted from
+//!   export and removed by the next forget or by schema 8.
 //!
 //! The functions take a connection or a transaction the caller opened; the
 //! store holds its lock around every write.
@@ -436,6 +437,19 @@ pub(in crate::store) struct Erased {
     pub was_on: bool,
 }
 
+/// What [`forget`] did to a session that has a row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::store) enum ForgetOutcome {
+    /// It was already forgotten. `checkpoints` is a rebuild checkpoint an
+    /// older build left, which this call removed.
+    Already {
+        /// Stale `rebuild_checkpoints` rows deleted.
+        checkpoints: usize,
+    },
+    /// The first forget.
+    Erased(Erased),
+}
+
 /// Forget the session `id` (§15.7): delete its `messages`, its pending
 /// `now` candidates, its terms (the user's words) and its rebuild
 /// checkpoint; blank its segments' text and its summary, goals and next;
@@ -443,13 +457,15 @@ pub(in crate::store) struct Erased {
 /// topics and links stay, so cites to it resolve to a forgotten session.
 /// The FTS5 index is optimized when a message went, so no term of one
 /// stays in it; the caller checkpoints the WAL after the commit. `None`
-/// when `id` has no row; `Some(None)` when it is already forgotten.
+/// when `id` has no row. An already-forgotten session still drops a
+/// rebuild checkpoint an older build left ([`ForgetOutcome::Already`]);
+/// the caller checkpoints the WAL when that removed a row.
 pub(in crate::store) fn forget(
     conn: &Connection,
     db: &Path,
     id: &SessionId,
     now: OffsetDateTime,
-) -> Result<Option<Option<Erased>>> {
+) -> Result<Option<ForgetOutcome>> {
     let err = |e| db_error("forget a session in", db, e);
     let row: Option<(i64, bool, bool)> = conn
         .query_row(
@@ -464,7 +480,13 @@ pub(in crate::store) fn forget(
         return Ok(None);
     };
     if already {
-        return Ok(Some(None));
+        // The first forget already returned. A checkpoint written after it,
+        // by a build that did not refuse the forgotten session, is still
+        // plaintext and still goes.
+        let checkpoints = conn
+            .execute("DELETE FROM rebuild_checkpoints WHERE session = ?1", [n])
+            .map_err(err)?;
+        return Ok(Some(ForgetOutcome::Already { checkpoints }));
     }
     let messages = conn
         .execute("DELETE FROM messages WHERE session = ?1", [id.as_str()])
@@ -501,7 +523,7 @@ pub(in crate::store) fn forget(
         )
         .map_err(err)?;
     }
-    Ok(Some(Some(Erased {
+    Ok(Some(ForgetOutcome::Erased(Erased {
         messages,
         segments,
         was_on,
@@ -777,13 +799,19 @@ pub(in crate::store) fn checkpoint(
     conn: &Connection,
     id: &SessionId,
 ) -> rusqlite::Result<Option<String>> {
-    conn.query_row(
+    let version: u32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    // Schema 4 is the first with `sessions.forgotten`. A forgotten session
+    // keeps no checkpoint, including one an older build left before the
+    // version 8 repair deletes the row.
+    let sql = if version >= 4 {
         "SELECT c.record FROM rebuild_checkpoints c JOIN sessions s ON s.id = c.session
-         WHERE s.provider_session = ?1",
-        [id.as_str()],
-        |row| row.get(0),
-    )
-    .optional()
+         WHERE s.provider_session = ?1 AND s.forgotten IS NULL"
+    } else {
+        "SELECT c.record FROM rebuild_checkpoints c JOIN sessions s ON s.id = c.session
+         WHERE s.provider_session = ?1"
+    };
+    conn.query_row(sql, [id.as_str()], |row| row.get(0))
+        .optional()
 }
 
 /// Keep `text` as the rebuild checkpoint of `id`, which has a row.
@@ -835,10 +863,13 @@ pub(in crate::store) fn export_rows(
     tables: &[(&'static str, &str)],
 ) -> Result<Vec<(&'static str, Value)>> {
     let err = |e| db_error("export", db, e);
+    let version: u32 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(err)?;
     let mut out = Vec::new();
     for &(table, order) in tables {
         let mut select = conn
-            .prepare(&format!("SELECT * FROM {table} ORDER BY {order}"))
+            .prepare(&export_select(table, order, version))
             .map_err(err)?;
         let names: Vec<String> = select.column_names().map(str::to_owned).collect();
         let mut rows = select.query([]).map_err(err)?;
@@ -852,6 +883,22 @@ pub(in crate::store) fn export_rows(
         }
     }
     Ok(out)
+}
+
+/// The `SELECT` [`export_rows`] runs for one table. A forgotten session's
+/// rebuild checkpoint is plaintext the forget was supposed to remove, so
+/// JSONL export leaves it out even when the row is still there (schema 4
+/// and newer; the version 8 migration deletes it on the next write).
+fn export_select(table: &str, order: &str, version: u32) -> String {
+    if table == "rebuild_checkpoints" && version >= 4 {
+        return format!(
+            "SELECT c.* FROM rebuild_checkpoints AS c
+             JOIN sessions AS s ON s.id = c.session
+             WHERE s.forgotten IS NULL
+             ORDER BY c.{order}"
+        );
+    }
+    format!("SELECT * FROM {table} ORDER BY {order}")
 }
 
 /// One write transaction on the session tables (`BEGIN IMMEDIATE`), so the
@@ -963,7 +1010,7 @@ impl<'c> SessionTx<'c> {
         &self,
         id: &SessionId,
         now: OffsetDateTime,
-    ) -> Result<Option<Option<Erased>>> {
+    ) -> Result<Option<ForgetOutcome>> {
         forget(&self.tx, &self.path, id, now)
     }
 
