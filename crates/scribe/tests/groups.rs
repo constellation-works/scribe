@@ -919,6 +919,106 @@ fn a_quoted_close_is_refused_unless_a_typed_span_of_this_session_names_the_group
     assert!(invoke(&f, A, &["group", "show", "g-1"], 0)["closed"].is_null());
 }
 
+/// Restores owner access to a path a test made unreadable, even on a panic.
+#[cfg(unix)]
+struct RestoreMode(PathBuf, u32);
+
+#[cfg(unix)]
+impl RestoreMode {
+    fn lock(path: &std::path::Path, restore: u32) -> Self {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        Self(path.to_path_buf(), restore)
+    }
+}
+
+#[cfg(unix)]
+impl Drop for RestoreMode {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(self.1));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_quoted_close_keeps_a_transcript_io_failure_apart_from_missing_evidence() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let f = Fixture::new();
+    for id in [A, B] {
+        transcript(&f, id, &[row(id, "u", "user", QUOTE)]);
+    }
+    let quoted = transcript(
+        &f,
+        D,
+        &[row(
+            D,
+            "u-close",
+            "user",
+            "please close g-1 once the release ships",
+        )],
+    );
+    open(&f);
+    join_as(&f, B, "g-1", "chief", &[], 0);
+    let path = summary_model(&f);
+    let args = ["--quote", "please close g-1"];
+    let unreadable = std::fs::read(&quoted).unwrap();
+    let projects = quoted.parent().unwrap().to_path_buf();
+
+    // Missing evidence and a provenance refusal fail closed as not found.
+    std::fs::remove_file(&quoted).unwrap();
+    assert_close_refused_with(&f, &path, D, &args, "quote_not_found");
+    std::fs::write(&quoted, &unreadable).unwrap();
+    std::fs::set_permissions(&quoted, std::fs::Permissions::from_mode(0o666)).unwrap();
+    assert_close_refused_with(&f, &path, D, &args, "quote_not_found");
+    support::make_private(&quoted);
+
+    // A read that fails on an existing transcript keeps its I/O diagnostic and
+    // audit code; the request itself was valid.
+    {
+        let _restore = RestoreMode::lock(&quoted, 0o600);
+        assert_close_refused_with(&f, &path, D, &args, "io_error");
+        let out = close_with(&f, &path, D, &args);
+        let error: Value = serde_json::from_slice(&out.stderr).unwrap();
+        assert!(
+            error["error"]
+                .as_str()
+                .is_some_and(|m| m.contains("cannot read")
+                    && m.contains(&format!("{D}.jsonl"))
+                    && m.contains("Permission denied")),
+            "{error}"
+        );
+    }
+    // So does a discovery failure, before any transcript is opened.
+    {
+        let _restore = RestoreMode::lock(&projects, 0o700);
+        assert_close_refused_with(&f, &path, D, &args, "io_error");
+    }
+    assert_eq!(model_calls(&f), 0);
+
+    let out = close_with(&f, &path, D, &args);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(model_calls(&f), 1);
+
+    // A retry on the closed group verifies the quote first: unreadable
+    // evidence is `io_error`, absent evidence is `quote_not_found`, and
+    // neither adds a model call or changes the closed record.
+    let group = invoke(&f, A, &["group", "show", "g-1"], 0);
+    {
+        let _restore = RestoreMode::lock(&quoted, 0o600);
+        assert_close_refused_with(&f, &path, D, &args, "io_error");
+    }
+    {
+        let _restore = RestoreMode::lock(&projects, 0o700);
+        assert_close_refused_with(&f, &path, D, &args, "io_error");
+    }
+    std::fs::remove_file(&quoted).unwrap();
+    assert_close_refused_with(&f, &path, D, &args, "quote_not_found");
+    assert_eq!(model_calls(&f), 1);
+    assert_eq!(invoke(&f, A, &["group", "show", "g-1"], 0), group);
+}
+
 #[test]
 fn session_start_includes_last_group_when_it_is_the_only_brief_content() {
     let f = Fixture::new();
