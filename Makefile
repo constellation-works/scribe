@@ -1,4 +1,4 @@
-.PHONY: help build test goldens fmt fmt-check clippy deny structure readme-links standards-check ci-fast ci-lint ci install clean
+.PHONY: help build test goldens fmt fmt-check clippy deny structure readme-links standards-check ci-fast ci-lint ci install update-plugins clean
 
 CARGO ?= cargo
 # Every build uses the committed Cargo.lock as is; a stale lock fails instead
@@ -6,6 +6,8 @@ CARGO ?= cargo
 LOCKED := --locked
 BINARY := scribe
 INSTALL_BIN_DIR ?= $(HOME)/.cargo/bin
+# The plugin as both local marketplace manifests name it.
+PLUGIN_ID := scribe@scribe-local
 # `make goldens UPDATE=1` rewrites the golden files instead of comparing.
 UPDATE ?=
 # `STANDARDS_STRICT=1` makes a missing docs/standards/ a failure (CI sets it).
@@ -34,6 +36,7 @@ help:
 	@echo "  make goldens UPDATE=1 Regenerate goldens after an intended surface change"
 	@echo "  make standards-check  Run the vendored standards check (docs/standards/check.sh)"
 	@echo "  make ci               Everything above; what CI runs"
+	@echo "  make update-plugins   Refresh the installed Claude Code and Codex plugins from this checkout"
 	@echo "  make build | fmt | install | clean"
 
 build:
@@ -148,6 +151,24 @@ install:
 	$(CARGO) build --release --bin $(BINARY) $(LOCKED)
 	install -d $(INSTALL_BIN_DIR)
 	install -m 755 target/release/$(BINARY) $(INSTALL_BIN_DIR)/$(BINARY)
+
+# Refresh the plugin each harness installed from this checkout's `scribe-local`
+# marketplace (docs/guide.md). A harness that is not on PATH is skipped; a
+# failing command stops the target. Restart the harness afterwards.
+update-plugins:
+	@if command -v claude >/dev/null 2>&1; then \
+		set -ex; \
+		claude plugin marketplace update scribe-local; \
+		claude plugin update $(PLUGIN_ID); \
+	else \
+		echo "update-plugins: claude is not on PATH; skipped." >&2; \
+	fi
+	@if command -v codex >/dev/null 2>&1; then \
+		set -ex; \
+		codex plugin add $(PLUGIN_ID) --json; \
+	else \
+		echo "update-plugins: codex is not on PATH; skipped." >&2; \
+	fi
 
 clean:
 	$(CARGO) clean
