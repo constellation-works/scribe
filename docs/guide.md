@@ -333,7 +333,7 @@ is typed in: a session whose transcript is still on disk has its typed turns
 stored, any other gets membership only, and the reply says which. A session
 already in another group refuses the whole line. It is a typed line only; there
 is no terminal command. Codex accepts the same `/scribe group <slug>`, `$scribe group <slug>`,
-and skill mention link `[$scribe](.../scribe/SKILL.md) group <slug>` once the host
+`$scribe group add <slug> <session-id>...`, and skill mention link `[$scribe](.../scribe/SKILL.md) group <slug>` once the host
 rollout verifies the typed turn. After a desktop clear, the transcript names
 the previous session. When its newest active handoff has mode `continue`, the
 hook puts that body before the brief, carries the recording switch and writes

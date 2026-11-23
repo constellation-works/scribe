@@ -951,6 +951,27 @@ fn group_subcommand_spelling_under_codex_follows_the_shared_parser() {
 }
 
 #[test]
+fn group_add_spellings_under_codex_follow_the_shared_parser() {
+    const PAST: &str = "5555aaaa-0000-4000-8000-000000000000";
+    for spelling in [
+        format!("$scribe group add planning {PAST}"),
+        format!("[$scribe](/installed/skills/scribe/SKILL.md) group add planning {PAST}"),
+    ] {
+        let f = Fixture::new();
+        let mut c = Codex::new(&f);
+        c.typed("g-1", "turn-add", &spelling);
+        c.write();
+        let out = c.hook(&f, "UserPromptSubmit", "turn-add", &spelling);
+        let reply = text(&out.stdout);
+        assert!(
+            reply.contains("group planning (g-1)"),
+            "{spelling}: {reply}"
+        );
+        assert!(reply.contains(PAST), "{spelling}: {reply}");
+    }
+}
+
+#[test]
 fn untyped_mixed_case_group_under_codex_is_refused_before_joining() {
     let f = Fixture::new();
     let c = Codex::new(&f);

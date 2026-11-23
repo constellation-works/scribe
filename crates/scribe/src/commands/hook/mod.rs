@@ -72,7 +72,9 @@ line is /scribe on, /scribe off or /scribe status switches this session's
 cataloging and is blocked, its status given as the reason; /scribe catalog
 <id> starts the user's catalog of a past session, whose windows the next
 session pass runs. /scribe group <slug> creates or joins an open project group
-and assigns an automatic short-id member seat. /scribe continue <handoff-id>
+and assigns an automatic short-id member seat. /scribe group add <slug>
+<session-id>... adds past sessions to a group, creating it when absent, without
+enrolling this session. /scribe continue <handoff-id>
 restores a continue handoff to this turn and inherits its session's recording
 switch.
 
