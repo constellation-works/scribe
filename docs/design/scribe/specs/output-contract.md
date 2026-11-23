@@ -47,12 +47,18 @@ number, else the terminal's own size (`TIOCGWINSZ` on stdout); both are read
 in the output sink only, and with neither no table is cut. In plain and table
 rows, free text is flattened to one line (every whitespace run becomes one
 space), an empty value or list is `-`, lists are comma-joined, and timestamps
-are RFC 3339, except the `updated` column of a `session list` table (flat,
-`--tree` or `--include-inactive`), which is the UTC date `YYYY-MM-DD`; piped
-output, `--json` and `session show` keep the full instant, and the order of
-records is by the full instant, never by the shown date. An absent cell is `-` in every table, never blank; the one
-blank cells are the layout cells of a continuation row (a proposal's quote
-line).
+are RFC 3339, except the `updated` column of `session list` in table mode
+(flat, `--tree` or `--include-inactive`), which is the UTC date `YYYY-MM-DD`,
+including when table mode is selected by `--format table` on a pipe. Plain
+and JSON `session list` output keep the full instant, as does `session show`
+in every mode. The table date is display-only. After filtering, `session list`
+sorts matches by full `updated` instant, newest first (IDs ascending on ties),
+before applying `--limit`; `--tree` then traverses limited rows depth first,
+parent before child, preserving selection order among roots and siblings. A
+session whose parent is not in the limited rows is a root. An absent cell is
+`-` in every table, never
+blank; the only blank cells are the layout cells of a continuation row (a
+proposal's quote line).
 
 ## Plain columns
 
@@ -72,13 +78,9 @@ line).
 Search hits are best first; on a tie entries come before sessions, then
 the newest first (as `ask` ranks); transcripts newest first by
 `started`. Entries are oldest first (by `created`, then `started`, ties by
-id). Session lists are newest first by `updated` instant, with IDs ascending
-on ties; filters select matching sessions before `--limit` cuts the list.
-Proposals are ordered by number; tags by name. `session list --tree` keeps
-that session order among siblings and lists each session right after the one
-it nests under, depth first; a session whose parent is not listed is a root. The
-table indents the title two spaces per level; the piped form does not
-indent, and the `parent` column carries the nesting.
+id). Proposals are ordered by number; tags by name. Table output indents the
+title two spaces per level; plain output does not indent, and the `parent`
+column carries the nesting.
 
 ## JSON list envelope
 
