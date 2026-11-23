@@ -112,6 +112,10 @@ scribe --provider codex transcript list --since 2026-10-01 --min-turns 1 --json
 scribe --provider codex transcript show <id> --json
 ```
 
+`scribe session list` shows the newest session first, by when it was last
+updated (ties by id), in the table, piped output and `--json`; `--limit N`
+keeps the N most recently updated.
+
 `scribe question ask "can you fetch me last session summary?"` is a lookup: it
 returns the stored record and does not call a model. Anything that is not a
 lookup is answered by the configured ask model, and every quote is checked

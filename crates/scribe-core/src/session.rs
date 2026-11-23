@@ -612,6 +612,17 @@ impl SessionRecord {
     }
 }
 
+/// The order a listing puts the matching records in, before its limit.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SessionOrder {
+    /// By `started`, oldest first, then id. Internal reads that work
+    /// chronologically use it.
+    #[default]
+    Started,
+    /// By `updated`, newest first, then id: the order `session list` shows.
+    Updated,
+}
+
 /// Which session records a listing returns. Every field set must match.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SessionFilter {
@@ -632,6 +643,8 @@ pub struct SessionFilter {
     pub include_inactive: bool,
     /// At most this many of the matching sessions.
     pub limit: Option<NonZeroUsize>,
+    /// The order the matching sessions are cut to `limit` in.
+    pub order: SessionOrder,
 }
 
 impl SessionFilter {
@@ -651,11 +664,18 @@ impl SessionFilter {
             && self.dates.overlaps(record.started, record.updated)
     }
 
-    /// Apply the filter to `records`, oldest first (by `started`, then id),
-    /// then the limit.
+    /// Apply the filter to `records` in `order` (by `started`, oldest first,
+    /// or by `updated`, newest first; the id breaks ties), then the limit.
     #[must_use]
     pub fn select(&self, mut records: Vec<SessionRecord>) -> Listing<SessionRecord> {
-        records.sort_by(|a, b| a.started.cmp(&b.started).then_with(|| a.id.cmp(&b.id)));
+        match self.order {
+            SessionOrder::Started => {
+                records.sort_by(|a, b| a.started.cmp(&b.started).then_with(|| a.id.cmp(&b.id)));
+            }
+            SessionOrder::Updated => {
+                records.sort_by(|a, b| b.updated.cmp(&a.updated).then_with(|| a.id.cmp(&b.id)));
+            }
+        }
         Listing::select(records, |r| self.matches(r), self.limit)
     }
 }

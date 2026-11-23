@@ -26,7 +26,7 @@ use crate::output::{
 };
 use clap::{Args, Subcommand};
 use scribe_core::{
-    Project, Related, SessionFilter, SessionId, SessionRecord, SessionStatus, Topic,
+    Project, Related, SessionFilter, SessionId, SessionOrder, SessionRecord, SessionStatus, Topic,
 };
 use std::num::{NonZeroU32, NonZeroUsize};
 
@@ -58,9 +58,9 @@ Examples:
 /// Verbs on the `session` noun.
 #[derive(Debug, Subcommand)]
 pub(crate) enum SessionCommand {
-    /// List session records, oldest first
+    /// List session records, newest first
     ///
-    /// Lists session records, oldest first, with whether a pass is due; inactive sessions are included only with --include-inactive.
+    /// Lists session records, newest first by when each was last updated, with whether a pass is due; inactive sessions are included only with --include-inactive.
     #[command(after_help = LIST_EXAMPLES)]
     List(ListArgs),
     /// Show one session record
@@ -122,7 +122,7 @@ pub(crate) struct ListArgs {
     #[command(flatten)]
     pub(crate) dates: DateArgs,
 
-    /// Show at most this many of the matching sessions, 1 or more; --json reports the total and whether the list was cut [default: all]
+    /// Show at most this many of the matching sessions, the most recently updated, 1 or more; --json reports the total and whether the list was cut [default: all]
     #[arg(long, value_name = "N")]
     pub(crate) limit: Option<NonZeroUsize>,
 
@@ -274,6 +274,7 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
         dates: args.dates.range()?,
         include_inactive: args.include_inactive,
         limit: args.limit,
+        order: SessionOrder::Updated,
     };
     let store = ctx.store();
     let group = args

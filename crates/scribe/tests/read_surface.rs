@@ -356,9 +356,10 @@ fn session_list_filters_by_status_dates_topics_and_related() {
     let list = |args: &[&str]| ids(&ok_json(&fx, args), "sessions", "id");
     assert_eq!(list(&["session", "list", "--status", "open"]), [SESSION]);
     assert_eq!(list(&["session", "list", "--status", "final"]), [LEGACY]);
+    // Newest updated first: INACTIVE (updated 10-25) before LEGACY (10-20).
     assert_eq!(
         list(&["session", "list", "--status", "final", "--include-inactive"]),
-        [LEGACY, INACTIVE]
+        [INACTIVE, LEGACY]
     );
     assert_eq!(
         list(&["session", "list", "--since", "2026-11-01"]),
