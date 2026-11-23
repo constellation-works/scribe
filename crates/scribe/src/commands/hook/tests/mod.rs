@@ -1,6 +1,6 @@
 //! Unit tests for the hook modules, one file per source file (STD-02 R19).
 
-mod group_add;
+pub(super) mod group_add;
 mod payload;
 mod project;
 mod user_prompt_submit;
