@@ -742,6 +742,31 @@ fn unrelated_write(store: &Store) -> crate::error::Result<()> {
 }
 
 #[test]
+fn unrelated_write_without_forgets_does_not_read_session_payloads() {
+    let (_dir, store) = file_store();
+    store.migrate_store(T0).unwrap();
+    let conn = rusqlite::Connection::open(store.root().join(db::DB_FILE)).unwrap();
+    // Invalid UTF-8 makes fetching segment text fail, while SQLite can still
+    // store it as TEXT. This detects a payload read without timing assumptions.
+    let changed = conn
+        .execute("UPDATE segments SET text = CAST(x'80' AS TEXT)", [])
+        .unwrap();
+    assert!(changed > 0, "fixture must contain a segment");
+    drop(conn);
+    assert!(
+        store.load_sessions().is_err(),
+        "the poisoned text detects a full load"
+    );
+    store
+        .with_conn(|conn, path| {
+            conn.execute("UPDATE meta SET created = created", [])
+                .map_err(|e| db::db_error("update", path, e))?;
+            Ok(())
+        })
+        .unwrap();
+}
+
+#[test]
 fn an_unrelated_write_ignores_the_archive_lock_when_no_archive_file_is_left() {
     use crate::store::{LOCKS_DIR, fsio};
     use std::time::Duration;
@@ -767,9 +792,27 @@ fn archive_erasure_stays_serialized_and_retries_after_the_lock_is_released() {
     use std::time::Duration;
 
     let pair = forgotten_pair();
+    let second: SessionId = "s-2".parse().unwrap();
+    let cite = Cite {
+        session: second.clone(),
+        message: None,
+        at: T0,
+        prompt_sha256: "0".repeat(64),
+        line: 1,
+        cwd: String::from("/work"),
+    };
+    pair.store
+        .settle(&Settle::ForgetSession(second), &cite, T0)
+        .unwrap();
     let root = pair.store.root().to_path_buf();
     let archived = "pre-sqlite-2026-11-01/sessions/2026/11/s-1.md";
     put(&root, archived, "forgotten plaintext");
+    let checkpoint = "pre-sqlite-2026-11-02/sessions.2/2025/12/.s-1.rebuild.md";
+    let second = "pre-sqlite-2026-11-02/sessions.2/2025/12/s-2.md";
+    let live = "pre-sqlite-2026-11-02/sessions.2/2025/12/s-4.md";
+    put(&root, checkpoint, "forgotten checkpoint");
+    put(&root, second, "another forgotten session");
+    put(&root, live, "live session");
     let store = Store::open(&root).with_lock_wait(Duration::from_millis(50));
     let lock_path = store.lock_path("archive-forget.lock").unwrap();
     let held =
@@ -780,4 +823,7 @@ fn archive_erasure_stays_serialized_and_retries_after_the_lock_is_released() {
     drop(held);
     store.clean_forgotten_session_files().unwrap();
     assert!(!root.join(archived).exists());
+    assert!(!root.join(checkpoint).exists());
+    assert!(!root.join(second).exists());
+    assert!(root.join(live).exists());
 }
