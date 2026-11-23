@@ -16,9 +16,11 @@
 //! which can carry entry contents or paths (STD-05 R13).
 //!
 //! A hook run writes one line per record it wrote or refused (two `#scribe`
-//! lines in one prompt are two lines in the log), and none when it changed
-//! nothing; a session pass one per session passed (a `session catalog` also one
-//! for the switch it wrote, unless a window failed: a failed catalog is one
+//! lines in one prompt are two lines in the log), one more per run that stores
+//! a group member's new typed turns (`target` `session:<id>`, no error code,
+//! content-free, one per run however many turns it stores), and none when it
+//! changed nothing; a session pass one per session passed (a `session catalog`
+//! also one for the switch it wrote, unless a window failed: a failed catalog is one
 //! failure line) and one per retired-tag candidate closed; a consistency scan one
 //! per entry re-applied, per proposal opened or closed, per session deactivated or
 //! deactivation failed, per batch the model failed, and none when it changed
@@ -26,7 +28,7 @@
 //! `session activate|deactivate`) one when it changed the record and none
 //! when it did not: the `Stop` hook runs after
 //! every reply and usually has nothing to do, and a prompt with no
-//! `#scribe` line is not a mutation.
+//! `#scribe` line is not a mutation unless it stores a group member's turn.
 //!
 //! A command that calls no model runs, with its lines, as one `scribe.db`
 //! transaction: [`AuditGuard::flush`] writes them inside it, so a write and

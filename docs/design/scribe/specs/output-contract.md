@@ -599,7 +599,10 @@ is not echoed again. Audit lines (`hook stop`): an entry's id as `target`;
 refusal code (`unparsed_instruction`, `too_many_marks`,
 `quote_not_verbatim`, `unknown_tag`, `annotation_out_of_bounds`,
 `covered`, `needs_redaction`, `model_failed`) for a refusal; none for a
-pending retry or a marker already settled. A marker on a line an older
+pending retry or a marker already settled. A `hook stop` or
+`hook user-prompt-submit` run that stores a group member's new typed turns
+writes one content-free success line for the run (`target` `session:<id>`, no
+code), and a run that stores none writes none. A marker on a line an older
 store recorded verbatim (an entry cites that prompt and line) is not
 cataloged again. When the transcript fails the provenance check, `Stop`
 echoes `scribe: could not check for #scribe markers — <reason>`, audits

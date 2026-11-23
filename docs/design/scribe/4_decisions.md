@@ -1086,14 +1086,17 @@ command would either lose which line failed or log every keystroke.
 ### Decision
 
 A hook result carries its outcomes: an entry written or a cite filled
-(`target` the entry id) or a line refused or failed (`target`
-`session:<id>`, `error_code`). The guard writes one audit line per outcome
-and none when there are none; a hook that fails before a result (an invalid
-payload) writes one failure line.
+(`target` the entry id), a line refused or failed (`target`
+`session:<id>`, `error_code`), or a group member's new typed turns stored
+(`target` `session:<id>`, no `error_code`, one per run that stored any). The
+guard writes one audit line per outcome and none when there are none; a hook
+that fails before a result (an invalid payload) writes one failure line.
 
 ### Consequences
 
 - The audit log shows every write and refusal with ids and codes only.
+- A group turn capture shows that a member's turns were stored, once per run,
+  with no content; the turns themselves stay out of the log.
 - A replay writes no audit line; it changed nothing.
 
 ## The provenance check allows a missing transcript
