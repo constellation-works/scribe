@@ -2090,3 +2090,52 @@ fn put_entry_refuses_unreadable_spoken_entry_without_writing() {
     let (entries, skipped) = store.load_entries().unwrap();
     assert!(entries.is_empty() && skipped.is_empty());
 }
+
+#[test]
+fn migrate_counts_spool_arriving_before_drain() {
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+    file_store(&root);
+    let store = Store::open(&root);
+    let line = AUDIT_FIXTURE.lines().next().unwrap().as_bytes().to_vec();
+    let late_root = root.clone();
+    crate::store::write::BEFORE_SPOOL_DRAIN.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move || {
+            put(&late_root, "audit-spool/late.json", &line);
+        }));
+    });
+    let moved = store.migrate_store(NOW).unwrap();
+    assert_eq!(moved.audit_lines, 6);
+    assert_eq!(store.audit_events().unwrap().0.len(), 6);
+}
+
+#[test]
+fn migrate_does_not_count_replayed_spool_key() {
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+    file_store(&root);
+    let store = Store::open(&root);
+    let (format, event) = fixture_lines().remove(0);
+    let line = AUDIT_FIXTURE.lines().next().unwrap().as_bytes().to_vec();
+    put(&root, "audit-spool/replayed.json", &line);
+    let replay_root = root.clone();
+    crate::store::write::BEFORE_SPOOL_DRAIN.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move || {
+            let conn = db::open_writer(&replay_root, std::time::Duration::from_secs(1)).unwrap();
+            let db_path = replay_root.join(db::DB_FILE);
+            db::docs::put_audit(
+                &conn,
+                &db_path,
+                format,
+                &event,
+                Some("replayed.json"),
+                |e| db::db_error("test", &db_path, e),
+            )
+            .unwrap();
+        }));
+    });
+    let moved = store.migrate_store(NOW).unwrap();
+    assert_eq!(moved.audit_lines, 5);
+    assert_eq!(store.audit_events().unwrap().0.len(), 6);
+    assert!(!root.join("audit-spool/replayed.json").exists());
+}

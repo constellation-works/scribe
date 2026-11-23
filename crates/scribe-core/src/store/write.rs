@@ -54,6 +54,8 @@ pub(super) const AUDIT_SPOOL_DIR: &str = "audit-spool";
 
 #[cfg(test)]
 thread_local! {
+    /// Test-only synchronization immediately before the spool is listed.
+    pub(super) static BEFORE_SPOOL_DRAIN: RefCell<Option<Box<dyn FnOnce()>>> = RefCell::new(None);
     /// Tests: fail the next write after its transaction commits and before
     /// `move_files_aside` runs, as an interruption there would.
     pub(super) static CRASH_BEFORE_ASIDE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -475,17 +477,26 @@ impl Store {
 
     /// Drain the spool into the table inside the write under way; the files
     /// are removed after the commit.
-    pub(super) fn drain_spool(&self, conn: &Connection, path: &Path) -> Result<()> {
+    pub(super) fn drain_spool(&self, conn: &Connection, path: &Path) -> Result<usize> {
+        #[cfg(test)]
+        BEFORE_SPOOL_DRAIN.with(|hook| {
+            if let Some(hook) = hook.borrow_mut().take() {
+                hook();
+            }
+        });
         let (lines, _) = self.spooled_audit()?;
         let dir = self.root.join(AUDIT_SPOOL_DIR);
+        let mut inserted = 0;
         for (name, format, event) in lines {
-            docs::put_audit(conn, path, format, &event, Some(&name), |e| {
+            if docs::put_audit(conn, path, format, &event, Some(&name), |e| {
                 db::db_error("audit to", path, e)
-            })?;
+            })? {
+                inserted += 1;
+            }
             let file = dir.join(&name);
             self.after(|a| a.spooled.push(file));
         }
-        Ok(())
+        Ok(inserted)
     }
 
     /// Refuse `store migrate` before anything moves: once every kind is in
