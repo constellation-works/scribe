@@ -6701,10 +6701,23 @@ to project groups too. Only typed user turns are stored.
 adds the named sessions, each an id or a unique prefix of one, to the open
 project group, creating it when absent as `/scribe group <slug>` does. It does
 not enrol the session it is typed in unless that session is named. The prompt
-hook reads it with the same checks as `/scribe group <slug>`: a peer message,
-scheduled prompt, harness line or pasted block never acts (§4.1), and the
-prompt's transcript must pass the provenance check. A named session need not
-have been recorded. Both supported providers are searched, including archived
+hook recognizes the command only when it is the prompt's first line. Ordinary,
+unmarked prose or pasted text that mentions the command later in the prompt does
+nothing and is not refused. An explicit agent or harness origin claim or
+wrapper, or a prompt opening with a markup tag, that contains a group command
+is refused as `scribe: group refused — the prompt is not a typed user turn`
+(`group_membership`); this refusal is audited against the typing session. The
+caller's transcript must pass the provenance check before the command runs.
+Under Claude Code, if that check fails, the reply is `scribe: group refused —
+<reason>` (`provenance_failed`), audited against the typing session. Codex
+checks its rollout before dispatch; a caller transcript failure is reported
+as `scribe: not recorded — <reason>` (`provenance_failed`) with no audit
+target and no cursor advance.
+A named transcript that is present but fails its check instead returns
+`scribe: group add refused — transcript for session <id> refused: <reason>;
+nothing changed` (`provenance_failed`). That failure is audited against the
+typing session, not the named session. A named session need not have been
+recorded. Both supported providers are searched, including archived
 Codex rollouts, regardless of the caller’s provider. When its transcript is still
 on disk, its typed turns are stored with the selection a member's own turns get (a typed turn, not an agent
 or harness turn, nor a copied history) whatever their age, and its capture
@@ -6717,10 +6730,19 @@ whose file type is refused (a symbolic link, say), which is present, not absent,
 and is never read. A session already in another group
 refuses the whole line, naming each such session and its group, and changes
 nothing; a session already in this group is reported and left as it is. A line
-names at most 32 sessions. The hook blocks the prompt, as every `/scribe` line
-is, and audits one line per added session, against `session:<id>`, with ids and
-error codes only. There is no terminal command for this: no CLI path records
-Daniel's consent (see "Daniel writes only through his typed prompt").
+names at most 32 sessions. Claude Code blocks a valid command with
+`{"decision":"block","reason":"scribe: group <slug> (g-<n>) opened|open\n  <id>: added; ..."}`.
+Codex returns the reply in `systemMessage` and
+`hookSpecificOutput.additionalContext`, without `decision: "block"`; its
+typed command still reaches the model. Both providers audit one line per
+added session, against `session:<id>`. Codex additionally audits one
+content-free success outcome against the typing session when the verified
+typed turn advances its rollout cursor. Audit lines carry ids and error codes
+only. A non-exact id prefix must have at least four characters. A shorter
+string is accepted only when it exactly names a session; otherwise it is
+refused with `usage_error`.
+There is no terminal command for this: no CLI path records Daniel's consent
+(see "Daniel writes only through his typed prompt").
 
 **Regrouping and metadata.** A single typed line `/scribe group move <session-id> <slug>` moves a named member to an open project group, creating the group if necessary. The old membership is removed and the new one added in one transaction; all stored turns and the capture cursor follow. `/scribe group remove <session-id>` removes membership as `group leave` does: group-only turns are erased, while cataloged turns remain. Both accept unique session prefixes. A single typed `/scribe session update <session-id> project <slug>` or `/scribe session update <session-id> title <text>` changes that recorded field without a model call or rebuild. Project labels follow the existing project validation; titles are redacted. A later catalog pass can replace the title as it normally does. These lines use the same typed-turn and provenance checks as group add; peer, scheduled, harness and pasted lines do not act. Audit targets carry session ids and error codes, not field values. No terminal command grants this user consent.
 
