@@ -145,8 +145,13 @@ it:
   the supplied id even when it has no cataloged session.
 - An instruction check resolves `--session <id>` as a unique prefix across
   stored sessions and local transcripts, including uncataloged sessions. If
-  there is no match, it keeps the id as typed for transcript lookup; if no
-  usable transcript is available, it refuses with `instruction_not_found`.
+  there is no match, it keeps the id as typed for transcript lookup. If the
+  session has no transcript on this host, or the provenance check refuses the
+  transcript (including a Codex rollout this build cannot parse as a main
+  interactive thread, or one whose `session_meta` names another session), it
+  refuses with `instruction_not_found`. An I/O error finding or reading the
+  transcript is `io_error`. A session that is not interactive, such as a Codex
+  `exec` rollout, is `not_interactive`.
 - A `session:<id>` reference is not a lookup. `--related` on `entry add` and
   `entry update --add-related` keeps an id that matches no session as written:
   `entry add --tag preferences --related session:abcd` succeeds on a store with
