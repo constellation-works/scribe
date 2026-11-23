@@ -454,12 +454,36 @@ printf '%s\n' '{{"type":"result","is_error":false,"structured_output":{{"summary
     assert_eq!(denied.status.code(), Some(1));
     assert!(text(&denied.stderr).contains("only the opening session"));
     assert!(!f.home().join("model-calls").exists());
+    let after_denied: Vec<_> = support::audit_lines(&f.root())
+        .into_iter()
+        .filter(|line| line["command"] == "group close")
+        .collect();
+    assert_eq!(after_denied.len(), 1, "{after_denied:?}");
+    assert_eq!(after_denied[0]["status"], "failure");
+    assert_eq!(after_denied[0]["target"], "g-1");
+    assert_eq!(after_denied[0]["error_code"], "group_membership");
+    assert_eq!(after_denied[0]["instruction_session"], B);
+
     for _ in 0..2 {
         let out = close(A);
         assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     }
     let calls = std::fs::read_to_string(f.home().join("model-calls")).unwrap();
     assert_eq!(calls.lines().count(), 1);
+    let close_successes: Vec<_> = support::audit_lines(&f.root())
+        .into_iter()
+        .filter(|line| line["command"] == "group close" && line["status"] == "success")
+        .collect();
+    assert_eq!(close_successes.len(), 1, "{close_successes:?}");
+    assert_eq!(close_successes[0]["target"], "g-1");
+    assert!(close_successes[0]["error_code"].is_null());
+    assert!(close_successes[0]["author"].is_null());
+    assert_eq!(close_successes[0]["instruction_session"], A);
+    assert!(close_successes[0]["instruction_message"].is_null());
+    let audit_text = support::audit_text(&f.root());
+    assert!(!audit_text.contains("Review complete."));
+    assert!(!audit_text.contains("sprucechecklist"));
+    assert!(!audit_text.contains(private));
     let prompt = std::fs::read_to_string(f.home().join("model-prompt")).unwrap();
     assert!(prompt.contains(handoff["id"].as_str().unwrap()), "{prompt}");
     assert!(prompt.contains("sprucechecklist") && prompt.contains("Review"));
@@ -626,6 +650,15 @@ fn close_cannot_publish_a_summary_after_a_member_erases_its_sources() {
     hold.join();
     let record = invoke(&f, A, &["group", "show", "g-1"], 0);
     assert!(record["closed"].is_null() && record["summary"].is_null());
+    let close_lines: Vec<_> = support::audit_lines(&f.root())
+        .into_iter()
+        .filter(|line| line["command"] == "group close")
+        .collect();
+    assert_eq!(close_lines.len(), 1, "{close_lines:?}");
+    assert_eq!(close_lines[0]["status"], "failure");
+    assert_eq!(close_lines[0]["target"], "g-1");
+    assert_eq!(close_lines[0]["error_code"], "group_membership");
+    assert_eq!(close_lines[0]["instruction_session"], A);
 }
 
 #[test]

@@ -46,6 +46,8 @@
 use crate::error::CliError;
 use crate::output::{Output, Record};
 use scribe_core::{AuditEvent, AuditStatus, Store};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use time::OffsetDateTime;
 
@@ -107,6 +109,7 @@ pub(crate) struct AuditGuard<'a> {
     lines: Vec<Line>,
     author: Option<String>,
     instruction: crate::app::InstructionNote,
+    committed: Option<Arc<AtomicBool>>,
 }
 
 impl<'a> AuditGuard<'a> {
@@ -125,13 +128,30 @@ impl<'a> AuditGuard<'a> {
             }],
             author: None,
             instruction: crate::app::InstructionNote::default(),
+            committed: None,
         }
+    }
+
+    /// Attach a shared flag set when a stepwise write commits its own success
+    /// audit row inside its store transaction.
+    pub(crate) fn set_committed_flag(&mut self, committed: Arc<AtomicBool>) {
+        self.committed = Some(committed);
+    }
+
+    fn committed_in_write(&self) -> bool {
+        self.committed
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::Acquire))
     }
 
     /// Record how the command ended: the record it acted on on success, the
     /// stable error code on failure (STD-01 R19), and for a hook one line
     /// per write or refusal.
     pub(crate) fn mark_result(&mut self, result: &Result<Output, CliError>) {
+        if self.committed_in_write() {
+            self.lines.clear();
+            return;
+        }
         self.lines = match result {
             Ok(Output::Init(report)) if !report.changed => Vec::new(),
             Ok(Output::Written { changed: false, .. }) => Vec::new(),
@@ -319,6 +339,9 @@ impl<'a> AuditGuard<'a> {
 
 impl Drop for AuditGuard<'_> {
     fn drop(&mut self) {
+        if self.committed_in_write() {
+            return;
+        }
         // Fail open, and never panic in a destructor (STD-03 R4).
         for event in self.events() {
             if let Err(err) = self.store.record_audit(&event) {

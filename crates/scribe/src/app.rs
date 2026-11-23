@@ -12,6 +12,7 @@ use crate::tasks::{self, OrbitTasks};
 use scribe_core::{Config, Label, Provider, Redactor, Store, unresolved_redact_env};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use time::OffsetDateTime;
 
@@ -76,6 +77,10 @@ pub(crate) struct Context {
     /// The instruction the running command acts on, for its audit line;
     /// shared by the provider-scoped views of one context.
     instruction: Arc<Mutex<InstructionNote>>,
+    /// Whether a stepwise command already committed its success audit inside
+    /// its final store transaction, so the enclosing guard must not emit a
+    /// duplicate or unwind line.
+    audit_committed: Arc<AtomicBool>,
 }
 
 /// The ids of the user's instruction a write ran on (2_design.md §12.4): the
@@ -117,6 +122,7 @@ impl Context {
                 .and_then(|e| e.to_str())
                 .is_some_and(|e| scribe_core::instruction::INTERACTIVE_ENTRYPOINTS.contains(&e)),
             instruction: Arc::default(),
+            audit_committed: Arc::default(),
         })
     }
 
@@ -132,6 +138,7 @@ impl Context {
             provider: Provider::ClaudeCode,
             interactive: false,
             instruction: Arc::default(),
+            audit_committed: Arc::default(),
         }
     }
 
@@ -182,6 +189,18 @@ impl Context {
             .lock()
             .map(|note| note.clone())
             .unwrap_or_default()
+    }
+
+    /// Note that a stepwise command already committed its success audit inside
+    /// its final store write transaction.
+    pub(crate) fn note_audit_committed(&self) {
+        self.audit_committed.store(true, Ordering::Release);
+    }
+
+    /// Shared flag telling the enclosing `AuditGuard` that the audit row was
+    /// already committed inside a store write transaction.
+    pub(crate) fn audit_committed_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.audit_committed)
     }
 
     /// The active transcript provider.

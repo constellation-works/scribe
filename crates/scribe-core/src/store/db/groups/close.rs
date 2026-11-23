@@ -4,7 +4,7 @@
 use super::{DB_FILE, Fallible, db_error, open_writer, refusal, stamp};
 use crate::group::CloseEvidence;
 use crate::store::fsio::LockGuard;
-use crate::{Error, Redactor, Related, Result, SessionId, Store, WriteRefusal};
+use crate::{AuditEvent, Error, Redactor, Related, Result, SessionId, Store, WriteRefusal};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
 use time::OffsetDateTime;
@@ -18,6 +18,10 @@ struct Snapshot {
 impl Store {
     /// Summarize and close a group from its opening session. Return false on
     /// retry after a successful close, without calling the model again.
+    ///
+    /// The model closure runs outside any SQLite write transaction. The final
+    /// write commits `closed`, `summary`, and the caller-built success audit
+    /// row in one `scribe.db` transaction.
     pub fn close_group<E: From<Error>>(
         &self,
         id: &str,
@@ -25,6 +29,7 @@ impl Store {
         now: OffsetDateTime,
         redactor: &Redactor,
         summarize: impl FnOnce(&CloseEvidence) -> std::result::Result<String, E>,
+        audit: impl FnOnce(&str) -> AuditEvent,
     ) -> std::result::Result<(String, bool), E> {
         if self.in_write() {
             return Err(refusal(
@@ -90,6 +95,7 @@ impl Store {
                 params![n, stamp(now), summary],
             )
             .map_err(|e| db_error("close group in", &path, e))?;
+            self.record_audit(&audit(&group.id))?;
             Ok(())
         })?;
         Ok((group.id, true))
