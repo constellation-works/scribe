@@ -133,7 +133,7 @@ pub enum Error {
         /// The newest format this build understands.
         supported: u32,
     },
-    /// Another writer held the store lock past the deadline (STD-03 R7).
+    /// A write or migration could not acquire its lock before the deadline (STD-03 R7).
     #[error(
         "{} is locked by {holder} (waited {waited_ms} ms); retry when it finishes",
         path.display()
