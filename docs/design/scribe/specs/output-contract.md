@@ -119,7 +119,8 @@ instruction), `cite` (`{session, message, at, prompt_sha256, line, cwd}`;
 `message` may be `null`), `superseded_by` (an id or `null`),
 `review_after` (`YYYY-MM-DD` or `null`), `author` (`{kind, name}`, `kind`
 `user` or `agent`), `updated_by` (an author or `null`) and
-`retirement_reason` (text or `null`). (Format 11) `entry show` adds
+`retirement_reason` (text or `null`), and `handoff_mode` (`continue`, `new`
+or `null`). (Format 11) `entry show` adds
 `admitted` (the `{trigger, matched, criteria}` of the approved candidate
 proposal that created the entry, or `null`); plain prints it as an
 `admitted\t<trigger>\t<matched>\t<criteria>` line, and the table detail
@@ -182,6 +183,10 @@ the agent's: table detail's `stated_by` reads `agent:<name> (content is agent
 "<quote>"`, and `ask` attributes quotes inside `quote` to the user and quotes
 in `content` to `agent (<name>)'s statement of the user's turn`.
 
+Store format 28 adds `handoff_mode` to entry JSON. It is `continue` or `new`
+for a handoff that sets a mode, and `null` for other entries and legacy
+handoffs.
+
 **Session** (`sessions[]`, `session show`): `id` (the provider's session
 id), (phase 6) `short_id` (`s-<n>`, or `null` for a session with no number;
 the table detail prints it as a `short id` field under `id`), `status` (`open`,
@@ -215,12 +220,14 @@ last_message, from, to, state, windows, origin, topics, related, text}]`,
 oldest first; a `session list` row has no `log` key (use `show`).
 (§16, ORB-26826) `session show` also adds `handoffs`: active agent-written
 `handoff` entries referencing `session:<id>`, newest first, each `{id,
-author, created, project, quote, content}`; a `session list` row has no
-`handoffs` key. When the session has active handoff(s), the table view
-prints `## Handoffs` (each as `### <id> · <author> · <created>` followed by
-its body) before `## Summary`, and plain prints one
-`handoff\t<id>\t<author>\t<created>\t<content>` line per handoff before the
-segments. For a session with active handoff(s) and no session record,
+author, created, project, quote, content, handoff_mode}`; `handoff_mode` is
+`continue`, `new` or `null`. A `session list` row has no `handoffs` key.
+When the session has active handoff(s), the table view prints `## Handoffs`
+(each as `### <id> · <author> · <created>`, an optional `mode: <mode>`
+line, then its body) before `## Summary`, and plain prints one
+`handoff\t<id>\t<author>\t<created>\t<content>` line per handoff before
+the segments, prefixing the content with `mode: <mode> ` when a mode is set.
+For a session with active handoff(s) and no session record,
 `session show <id>` prints `{id, has_record: false, project, on, due,
 summary: "", goals: "", next: "", handoffs}` in JSON (with `on` and `due`
 from its switch, or `false` when it has none), `record: none (handoff
@@ -315,7 +322,7 @@ Daniel): <statement> | Daniel's words: "<quote>" | outcome: <outcome>`,
 and (phase 2) for one the pass caught from an assistant turn, `scribe's
 statement of the assistant's turn, captured by the session pass (not the
 user's words): <statement> | The assistant's words: "<quote>" | outcome:
-<outcome>`),
+<outcome>`; format 28 appends ` | handoff mode: <continue|new>` when set),
 `project`, `topics` (a segment's are its session's plus its
 own), `author` (an entry's `{kind, name}`, `null` for a session), `active`
 (a session's flag; `null` for an entry), `updated` (an entry's or
@@ -779,9 +786,11 @@ injects: `# scribe brief`; the memory block (as `memory show` prints it);
 sessions` with one `- <id> · <YYYY-MM-DD HH:MMZ> · <project> · <title>` line
 per session, `<p>`'s first, each part newest first (or
 `(none)`): a recorded session with an active handoff ends in
-`[handoff: <entry-id>]`, and an off session with a handoff and no session
-record appears as `- <id> · <YYYY-MM-DD HH:MMZ> · <project> · no session
-record [handoff: <entry-id>]`; `## Open claims` with one `- <p-id> · <YYYY-MM-DD HH:MMZ> ·
+`[handoff: <entry-id>]`, or `[handoff: <entry-id>, mode: <continue|new>]`
+when its newest handoff has a mode. An off session with a handoff and no
+session record appears as `- <id> · <YYYY-MM-DD HH:MMZ> · <project> · no
+session record [handoff: <entry-id>]`, or with the same mode suffix when set;
+`## Open claims` with one `- <p-id> · <YYYY-MM-DD HH:MMZ> ·
 <tag> · "<quote>"` line per claim, by tag then id, and the line naming how
 to settle one (or `(none)`). A quote is on one line and cut at 200
 characters, ending in `…`. JSON:
@@ -789,7 +798,7 @@ characters, ending in `…`. JSON:
 ```json
 {"memory": {"profile", "now", "milestones"}, "warnings": ["<memory warning>"],
  "project": "<p or null>",
- "sessions": [{"id", "project", "title", "at", "has_record", "handoff", "handoffs"}],
+ "sessions": [{"id", "project", "title", "at", "has_record", "handoff", "handoffs", "handoff_mode"}],
  "claim_count": 1,
  "claims": [{"tag": "<tag>", "claims": [{"id": "p-<n>", "kind": "candidate|supersedes|stale",
    "quote", "statement", "subject", "older", "newer", "opened_at"}]}]}
@@ -797,6 +806,9 @@ characters, ending in `…`. JSON:
 
 (Format 25) `memory` is the memory block's JSON (above); `warnings` holds
 the memory block's warnings.
+
+For each `sessions[]` row, `handoff_mode` is the newest handoff's mode or
+`null` when there is no handoff or its newest handoff has no mode.
 
 `at` is a session's last activity (its last segment's end, else its
 `updated`). `quote` is a candidate's verbatim words, or a consistency
@@ -933,7 +945,9 @@ Plain prints `<status>\t<answer>`, then `claim\t<cite>\t<quote>\t<text>`,
 `conflict\t<cites>\t<note>` and `record\t<kind>\t<cite>` lines; the table
 is a detail view followed by each record in full. A model failure exits 1
 with its code; nothing found is `no_record` and exits 0. `question ask`
-reads only and writes no audit line.
+reads only and writes no audit line. Handoff evidence is labelled `agent
+note (<author>)`; when it has a mode, ` [handoff mode: <continue|new>]` is
+appended in the model context and claim text.
 
 ## Plugin envelope
 
