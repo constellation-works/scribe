@@ -46,6 +46,9 @@ pub(super) fn run(
         ));
     }
     let redactor = ctx.redactor(&ctx.config()?)?;
+    // Joined time is taken before any transcript is read, so a turn appended
+    // while the snapshots are read is never dated before the membership.
+    let membership_at = ctx.now();
     let additions = match additions(ctx, named) {
         Ok(additions) => additions,
         Err(err) => {
@@ -62,7 +65,7 @@ pub(super) fn run(
         &project,
         session,
         &additions,
-        ctx.now(),
+        membership_at,
         &redactor,
     );
     Ok(match added {

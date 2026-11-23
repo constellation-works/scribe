@@ -865,6 +865,118 @@ fn claude_capture_rejects_a_stale_snapshot_before_advancing_progress() {
     }
 }
 
+/// A turn appended after a backfill snapshot is read but dated before the
+/// membership commit follows the snapshot's cursor, so capture stores it once
+/// on either supported path; a turn before an ordinary join stays cut off.
+#[test]
+fn backfill_keeps_a_turn_appended_after_the_snapshot_but_dated_before_the_join() {
+    use crate::ClaudeCapturePosition;
+    use crate::instruction::{ClaudeGroupTurns, claude_group_turns};
+
+    let dir = private_tempdir();
+    let store = Store::open(dir.path());
+    let project = crate::Project::sanitized("checkout");
+    let opener = "group-opener".parse().unwrap();
+    let session: crate::SessionId = "backfilled-session".parse().unwrap();
+    let redactor = Redactor::default();
+    // `T0` is 2026-11-01 10:00 UTC; the late turn is an hour earlier.
+    let row = |id: &str, at: &str, text: &str| {
+        serde_json::json!({
+            "sessionId": session, "uuid": id, "type": "user", "entrypoint": "cli",
+            "timestamp": at, "message": {"content": text}
+        })
+        .to_string()
+    };
+    let snapshot = row("first", "2026-10-31T09:00:00Z", "orchid snapshot turn");
+    let late = row("late", "2026-11-01T09:00:00Z", "orchid late turn");
+    store
+        .add_project_group_sessions(
+            "late-turn",
+            &project,
+            &opener,
+            &[crate::group::GroupAddition {
+                session: session.clone(),
+                turns: Some(claude_group_turns(snapshot.as_bytes(), &session)),
+            }],
+            T0,
+            &redactor,
+        )
+        .unwrap();
+    let replay = format!("{snapshot}\n{late}\n");
+
+    // Claude path: a full replay after the saved cursor, no byte progress yet.
+    let position = ClaudeCapturePosition {
+        file_id: "1:2".to_owned(),
+        offset: 10,
+        modified: "10".to_owned(),
+        boundary: "sample".to_owned(),
+    };
+    for expected in [1, 0] {
+        let snap = store.claude_group_capture(&session).unwrap().unwrap();
+        let stored = store
+            .capture_claude_group_turns(
+                &snap,
+                false,
+                &position,
+                ClaudeGroupTurns::parse(replay.as_bytes(), &session),
+                &redactor,
+            )
+            .unwrap();
+        assert_eq!(stored, Some(expected));
+    }
+    let count = |term: &str| {
+        store
+            .search_group_messages("late-turn", &tokens(term))
+            .unwrap()
+            .matches
+            .len()
+    };
+    assert_eq!(count("late"), 1);
+    assert_eq!(count("snapshot"), 1);
+
+    // Generic (Codex) path.
+    let other: crate::SessionId = "codex-backfilled".parse().unwrap();
+    let mut first = message("codex-backfilled", "c-1", "orchid codex first");
+    first.at = T0 - Duration::from_secs(86_400);
+    let mut later = message("codex-backfilled", "c-2", "orchid codex later");
+    later.at = T0 - Duration::from_secs(3_600);
+    store
+        .add_project_group_sessions(
+            "late-turn",
+            &project,
+            &opener,
+            &[crate::group::GroupAddition {
+                session: other.clone(),
+                turns: Some(vec![first.clone()]),
+            }],
+            T0,
+            &redactor,
+        )
+        .unwrap();
+    for _ in 0..2 {
+        store
+            .capture_group_turns(&other, &[first.clone(), later.clone()], &redactor)
+            .unwrap();
+    }
+    assert_eq!(count("codex"), 2, "first once, later once");
+    assert_eq!(count("later"), 1);
+
+    // An ordinary join keeps its cutoff: a turn dated before it is not stored.
+    let joined: crate::SessionId = "ordinary-join".parse().unwrap();
+    store
+        .join_project_group("late-turn", &project, &joined, T0, &redactor)
+        .unwrap();
+    let mut old = message("ordinary-join", "o-1", "orchid ordinary old");
+    old.at = T0 - Duration::from_secs(3_600);
+    let mut new = message("ordinary-join", "o-2", "orchid ordinary new");
+    new.at = T0;
+    store
+        .capture_group_turns(&joined, &[old, new], &redactor)
+        .unwrap();
+    assert_eq!(count("ordinary"), 1);
+    assert_eq!(count("new"), 1);
+}
+
 #[test]
 fn project_group_refuses_sensitive_slug_and_masks_legacy_membership_in_errors() {
     let dir = private_tempdir();
