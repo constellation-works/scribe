@@ -851,7 +851,7 @@ fn a_scan_deactivates_old_sessions_and_removed_features_but_never_a_pinned_one()
         .filter(|l| l.starts_with("deactivated"))
         .map(str::to_owned)
         .collect();
-    assert_eq!(rows, ["deactivated\ts-b-digest\tremoved\tpreferences-9\t-"]);
+    assert_eq!(rows, ["deactivated\ts-3\tremoved\tpreferences-9\t-"]);
 }
 
 #[test]
@@ -908,7 +908,7 @@ fn deactivated_rows_print_in_plain_output() {
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     let rows = text(&out.stdout);
     assert!(
-        rows.lines().any(|l| l == "deactivated\ts-quiet\tage\t-\t-"),
+        rows.lines().any(|l| l == "deactivated\ts-1\tage\t-\t-"),
         "{rows}"
     );
 }

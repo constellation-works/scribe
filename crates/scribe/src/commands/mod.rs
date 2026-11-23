@@ -193,14 +193,9 @@ impl Command {
     }
 }
 
-/// The short forms of the session ids `output` prints in a terminal table:
-/// unique across every session the store knows, not only the rows shown, so
-/// what is printed is accepted back (STD-01 R32). A `transcript list` also
-/// counts the transcripts on disk, which `transcript show` resolves against.
-/// A group record also counts the sessions its seats hold, which a join can
-/// name without the store cataloging them. Nothing is computed for an output
-/// that prints no session id; a read that fails leaves the table with full
-/// ids rather than failing the command (STD-02 R31).
+/// Display names for session ids in non-JSON output, unique across stored
+/// sessions, group members and local transcripts. Cataloged sessions use their
+/// stable aliases; others use prefixes. Failed reads leave full ids available.
 pub(crate) fn short_ids(output: &Output, ctx: &Context) -> scribe_core::ShortIds {
     use crate::output::Record;
     let prints_sessions = match output {
@@ -210,16 +205,24 @@ pub(crate) fn short_ids(output: &Output, ctx: &Context) -> scribe_core::ShortIds
                 | Records::SessionTree { .. }
                 | Records::Transcripts(_)
                 | Records::Marks(_)
+                | Records::Groups(_)
+                | Records::Hits(_)
+                | Records::Proposals(_)
         ),
-        Output::Pass(_) => true,
+        Output::Pass(_) | Output::Scan(_) | Output::GroupBackfill(_) | Output::Ask(_) => true,
         Output::Show { record } | Output::Written { record, .. } => {
-            matches!(record, Record::Group(_))
+            matches!(
+                record,
+                Record::Group(_)
+                    | Record::Entry(_)
+                    | Record::Proposal(_)
+                    | Record::Session(_)
+                    | Record::SessionHandoffs(_)
+                    | Record::Transcript(_)
+            )
         }
         Output::Init(_)
         | Output::Hook(_)
-        | Output::GroupBackfill(_)
-        | Output::Scan(_)
-        | Output::Ask(_)
         | Output::Plugin(_)
         | Output::Popup
         | Output::PopupRows(_)
@@ -229,14 +232,7 @@ pub(crate) fn short_ids(output: &Output, ctx: &Context) -> scribe_core::ShortIds
         return scribe_core::ShortIds::default();
     }
     let mut ids = ctx.store().session_ids().unwrap_or_default();
-    if matches!(
-        output,
-        Output::List {
-            records: Records::Transcripts(_),
-            ..
-        }
-    ) && let Ok(extra) = transcript_session_ids(ctx)
-    {
+    if let Ok(extra) = transcript_session_ids(ctx) {
         ids.extend(extra);
     }
     if let Output::Show {
@@ -248,8 +244,29 @@ pub(crate) fn short_ids(output: &Output, ctx: &Context) -> scribe_core::ShortIds
     } = output
     {
         ids.extend(group.members().iter().map(|id| id.to_string()));
+        ids.push(group.opener.clone());
     }
-    scribe_core::ShortIds::new(ids)
+    if let Output::List {
+        records: Records::Groups(groups),
+        ..
+    } = output
+    {
+        ids.extend(
+            groups
+                .iter()
+                .flat_map(|g| g.members().into_iter().map(|id| id.to_string())),
+        );
+        ids.extend(groups.iter().map(|g| g.opener.clone()));
+    }
+    let mut shorts = scribe_core::ShortIds::new(ids);
+    if let Ok(numbers) = ctx.store().session_numbers() {
+        shorts.set_aliases(
+            numbers
+                .into_iter()
+                .map(|(id, n)| (id.to_string(), format!("s-{n}"))),
+        );
+    }
+    shorts
 }
 
 /// The session ids of provider transcripts on disk, for resolving prefixes

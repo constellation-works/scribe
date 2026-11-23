@@ -8,8 +8,8 @@
 (none)
 
 ## Recent sessions
-- 7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02 · 2026-11-02 19:40Z · constellation-works/scribe · Merge policy for agent PRs
-- 0f8e7a52-3c1d-4b6e-9a2f-5d4c3b2a1e01 · 2026-10-20 11:02Z · constellation-works/scribe · Scribe store layout
+- s-3 · 2026-11-02 19:40Z · constellation-works/scribe · Merge policy for agent PRs
+- s-1 · 2026-10-20 11:02Z · constellation-works/scribe · Scribe store layout
 
 ## Open claims
 - p-6 · 2026-11-15 00:06Z · preferences · "yeah, for the popup just show the newest five, nothing older."

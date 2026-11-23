@@ -1190,6 +1190,13 @@ fn handoff_add_refuses_multiple_or_invalid_session_refs_so_unverified_sessions_n
     let sessions = brief["sessions"].as_array().unwrap();
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0]["id"], OFF_SESSION);
+    let plain = text(&fx.ok(&["brief", "--project", "scribe"]).stdout);
+    let prefix = &OFF_SESSION[..8];
+    assert!(plain.contains(&format!("- {prefix} ·")), "{plain}");
+    assert_eq!(
+        json_of(&fx.ok(&["session", "show", prefix, "--json"]))["id"],
+        OFF_SESSION
+    );
 }
 
 #[test]

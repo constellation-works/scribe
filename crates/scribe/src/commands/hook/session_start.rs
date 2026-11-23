@@ -271,7 +271,7 @@ fn brief_text(ctx: &Context, session: &SessionId, cwd: Option<&str>) -> Option<S
         {
             None
         }
-        Ok(brief) => Some(brief.text()),
+        Ok(brief) => Some(brief.text_with_ids(&crate::commands::brief::brief_ids(ctx, &brief))),
         Err(err) => {
             tracing::warn!(%err, "cannot read the sessions or proposals; not injecting the brief");
             None

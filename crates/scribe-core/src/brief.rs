@@ -133,6 +133,12 @@ impl Brief {
     /// The text the command prints and the hook injects.
     #[must_use]
     pub fn text(&self) -> String {
+        self.text_with_ids(&crate::ShortIds::default())
+    }
+
+    /// Render session names using the caller's catalog and prefix universe.
+    #[must_use]
+    pub fn text_with_ids(&self, ids: &crate::ShortIds) -> String {
         let mut out = String::from("# scribe brief\n\n");
         if let Some(memory) = self
             .memory
@@ -165,14 +171,14 @@ impl Brief {
             match (s.has_record, &s.handoff) {
                 (true, None) => out.push_str(&format!(
                     "- {} · {} · {} · {}\n",
-                    s.id,
+                    ids.display(s.id.as_str()),
                     stamp(s.at),
                     s.project,
                     one_line(&s.title)
                 )),
                 (true, Some(handoff)) => out.push_str(&format!(
                     "- {} · {} · {} · {} [handoff: {}{}]\n",
-                    s.id,
+                    ids.display(s.id.as_str()),
                     stamp(s.at),
                     s.project,
                     one_line(&s.title),
@@ -182,7 +188,7 @@ impl Brief {
                 )),
                 (false, Some(handoff)) => out.push_str(&format!(
                     "- {} · {} · {} · no session record [handoff: {}{}]\n",
-                    s.id,
+                    ids.display(s.id.as_str()),
                     stamp(s.at),
                     s.project,
                     handoff,
@@ -191,7 +197,7 @@ impl Brief {
                 )),
                 (false, None) => out.push_str(&format!(
                     "- {} · {} · {} · no session record\n",
-                    s.id,
+                    ids.display(s.id.as_str()),
                     stamp(s.at),
                     s.project
                 )),
