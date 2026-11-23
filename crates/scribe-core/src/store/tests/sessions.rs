@@ -727,3 +727,57 @@ fn schema_nine_retries_cleanup_left_by_an_older_writer() {
             .contains(LIVE_CHECKPOINT)
     );
 }
+
+fn unrelated_write(store: &Store) -> crate::error::Result<()> {
+    let other = session("s-3", T0 + time::Duration::hours(2));
+    store
+        .settle_pass(
+            &other.id,
+            Some(other.clone()),
+            false,
+            None,
+            &Redactor::default(),
+        )
+        .map(|_| ())
+}
+
+#[test]
+fn an_unrelated_write_ignores_the_archive_lock_when_no_archive_file_is_left() {
+    use crate::store::{LOCKS_DIR, fsio};
+    use std::time::Duration;
+
+    let pair = forgotten_pair();
+    let root = pair.store.root().to_path_buf();
+    let store = Store::open(&root).with_lock_wait(Duration::from_millis(50));
+    let lock_path = store.lock_path("archive-forget.lock").unwrap();
+    assert!(lock_path.starts_with(root.join(LOCKS_DIR)));
+    let _held =
+        fsio::LockGuard::acquire(&lock_path, "other forget", Duration::from_secs(1)).unwrap();
+    unrelated_write(&store).unwrap();
+    let ids = store.load_sessions().unwrap().numbers;
+    assert!(
+        ids.contains_key(&"s-3".parse().unwrap()),
+        "the write committed"
+    );
+}
+
+#[test]
+fn archive_erasure_stays_serialized_and_retries_after_the_lock_is_released() {
+    use crate::store::fsio;
+    use std::time::Duration;
+
+    let pair = forgotten_pair();
+    let root = pair.store.root().to_path_buf();
+    let archived = "pre-sqlite-2026-11-01/sessions/2026/11/s-1.md";
+    put(&root, archived, "forgotten plaintext");
+    let store = Store::open(&root).with_lock_wait(Duration::from_millis(50));
+    let lock_path = store.lock_path("archive-forget.lock").unwrap();
+    let held =
+        fsio::LockGuard::acquire(&lock_path, "other forget", Duration::from_secs(1)).unwrap();
+    let err = unrelated_write(&store).unwrap_err();
+    assert_eq!(code(&err), "store_locked");
+    assert!(root.join(archived).exists(), "no erasure under a held lock");
+    drop(held);
+    store.clean_forgotten_session_files().unwrap();
+    assert!(!root.join(archived).exists());
+}
