@@ -1,7 +1,7 @@
 //! A close reads bounded stored evidence, calls the model outside the write
 //! transaction, then compares the evidence before publishing its summary.
 
-use super::{DB_FILE, Fallible, db_error, open_writer, refusal, stamp};
+use super::{DB_FILE, Fallible, HOLDS_SEAT, db_error, open_writer, refusal, stamp};
 use crate::group::CloseEvidence;
 use crate::store::fsio::LockGuard;
 use crate::{
@@ -43,11 +43,13 @@ impl Store {
             .into());
         }
         let group = self.group(id)?;
-        check_opener(&group.opener, caller)?;
+        let n = self.group_number(&group.id)?;
+        self.read_groups(|conn, path| {
+            check_closer(conn, path, n, &group.opener, caller).map_err(Fallible::Failed)
+        })?;
         if group.closed.is_some() {
             return Ok(CloseGroupOutcome::AlreadyClosed { id: group.id });
         }
-        let n = self.group_number(&group.id)?;
         let lock_path = self.lock_path(&format!("group-close-{n}.lock"))?;
         let _lock = LockGuard::acquire(&lock_path, "close group", self.lock_wait)?;
         let Some(before) = self.read_groups(|conn, path| {
@@ -109,14 +111,39 @@ impl Store {
     }
 }
 
-fn check_opener(opener: &str, caller: &SessionId) -> Result<()> {
-    if opener != caller.as_str() {
-        return Err(refusal(
-            WriteRefusal::GroupMembership,
-            "only the opening session can close this group",
-        ));
+/// The opener, or the session that now holds the seat whose chain contains the
+/// opener, may close. A seat replacement already took Daniel's word or a
+/// verified clear, so the seat chain is consent-checked. An opener that never
+/// joined a seat, or left it, has no chain: only that exact session closes.
+fn check_closer(
+    conn: &Connection,
+    path: &Path,
+    n: i64,
+    opener: &str,
+    caller: &SessionId,
+) -> Result<()> {
+    if opener == caller.as_str() {
+        return Ok(());
     }
-    Ok(())
+    let holds: bool = conn
+        .query_row(
+            &format!(
+                "SELECT EXISTS(SELECT 1 FROM group_members m
+                 JOIN group_members o ON o.group_id = m.group_id AND o.seat = m.seat
+                 WHERE m.group_id = ?1 AND m.session = ?2 AND o.session = ?3 AND {HOLDS_SEAT})"
+            ),
+            params![n, caller.as_str(), opener],
+            |r| r.get(0),
+        )
+        .map_err(|e| db_error("read seat chain for group close from", path, e))?;
+    if holds {
+        Ok(())
+    } else {
+        Err(refusal(
+            WriteRefusal::GroupMembership,
+            "only the opening session or the current holder of its seat can close this group",
+        ))
+    }
 }
 
 fn snapshot(
@@ -133,7 +160,7 @@ fn snapshot(
     ).optional().map_err(fail)?.ok_or_else(|| {
         refusal(WriteRefusal::GroupNotFound, format!("no group g-{n}"))
     })?;
-    check_opener(&opener, caller)?;
+    check_closer(conn, path, n, &opener, caller)?;
     if !open {
         return Ok(None);
     }

@@ -1,4 +1,4 @@
-Summarize and close the group from the session that opened it
+Summarize and close the group from its opener or its seat holder
 
 Usage: scribe group close [OPTIONS] <ID>
 

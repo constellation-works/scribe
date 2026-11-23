@@ -11,7 +11,7 @@ summary: Why superseded entries are hidden not removed, why one JSON file per ta
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26650, ORB-26709]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26650, ORB-26709, ORB-27567]
 ---
 
 # scribe — Decisions
@@ -4412,3 +4412,40 @@ deletion has no CLI route.
 - The hook tells Daniel that the provider transcript was left untouched.
 - Cost: Daniel must type the line in an interactive provider session. A
   restored backup outside the live store has its own copy of the data.
+
+## The current holder of the opener's seat may close a group
+
+**Recorded:** 2026-11-23 · [ORB-27567] · **Overridable by Daniel**
+
+### Context
+
+`group close` compared the caller with the recorded opener's exact session id.
+A formation chief's session was cleared and its successor took the same seat,
+joined with `--replace` on Daniel's word. The successor was not the opener,
+and a terminal has no session id, so nobody could close the group and the
+next brief kept showing it as `Still open.` (friction F2026-11-025).
+
+### Decision
+
+Two callers may close a group: the opener itself, and the newest transcript
+of the seat whose chain contains the opener. A clear-ancestry-only rule would
+not cover the observed case, because that successor joined with `--replace`
+rather than through a verified `via: clear` edge. A seat replacement already
+needs Daniel's typed word or a verified clear predecessor
+([2_design.md](./2_design.md), "Joining and correcting membership"), so the
+seat chain is consent-checked. The check stays an accident guard. A typed
+`/scribe group close` line was not added.
+
+### Consequences
+
+- An unrelated session, a member of another seat, a replaced (non-newest)
+  transcript of the opener's seat, a session that left the seat, and any
+  session when the opener holds no seat (other than the opener) are still
+  refused with `group_membership`, before the closed check, so an
+  unauthorized caller on a closed group is refused rather than told the group
+  is already closed.
+- The failure audit, its `group_membership` code and the ids-only audit lines
+  are unchanged.
+- Cost: whoever takes the opener's seat gains the power to close, and an
+  opener that never took a seat or left its seat cannot hand closing to a
+  successor.
