@@ -25,13 +25,13 @@ scribe entry add --tag handoff --author <name> --project <project> \
 ...'
 ```
 
-- **Quote check.** When supplied, `--quote` must be a verbatim span (at
-  least 8 characters) of a typed turn in that session. For a self-refresh,
-  `--mode continue|new` may be used without a quote when the current
-  `CLAUDE_CODE_SESSION_ID` matches the related session and a typed user turn
-  is in its transcript or its verified clear or launch ancestry (at most 16
-  predecessors). Peer messages and scheduled prompts do not count as typed
-  turns.
+- **Quote check.** A supplied `--quote` must quote a typed turn verbatim for
+  at least 8 characters. For self-refresh, `--mode continue|new` may be used
+  without a quote when `CLAUDE_CODE_SESSION_ID` matches the related session
+  and a typed user turn is in its transcript or verified clear or launch
+  ancestry, within a shared total of 16 transcripts across all launch branches
+  (the current session plus up to 15 predecessors). Peer and scheduled prompts
+  are not typed turns.
 - **Works when the session is off.** Writing a handoff needs no session
   record and does not switch the session on; no session pass reads an off
   session, and even in an on session the pass never reads handoffs.
