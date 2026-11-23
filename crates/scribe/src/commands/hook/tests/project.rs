@@ -116,9 +116,15 @@ fn an_oversized_worktree_pointer_or_common_dir_falls_back_to_the_basename() {
     assert_eq!(of(&worktree).as_str(), "wt-dir");
 }
 
+/// A FIFO at `path`, made by `mkfifo(1)`: rustix does not offer `mkfifoat` on
+/// Apple targets, and the CI macOS job builds these tests.
 #[cfg(unix)]
 fn fifo(path: &Path) {
-    rustix::fs::mkfifoat(rustix::fs::CWD, path, rustix::fs::Mode::RWXU).unwrap();
+    let made = std::process::Command::new("mkfifo")
+        .arg(path)
+        .status()
+        .expect("run mkfifo");
+    assert!(made.success(), "mkfifo {}", path.display());
 }
 
 /// Project discovery for `cwd`, asked on another thread. A read that waits
