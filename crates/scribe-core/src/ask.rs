@@ -1264,10 +1264,11 @@ fn retrieve<T: Tasks + ?Sized>(question: &Question, corpus: Corpus<'_>, tasks: &
             let record = corpus.sessions.iter().find(|r| r.id == m.session);
             let project = record.map(|r| &r.project).or(m.group_project.as_ref());
             if scope.project.as_ref().is_some_and(|p| Some(p) != project)
-                || !scope
-                    .topics
-                    .iter()
-                    .all(|t| record.is_some_and(|r| r.topics.contains(t)))
+                || (!scope.topics.is_empty()
+                    && !scope
+                        .topics
+                        .iter()
+                        .any(|t| record.is_some_and(|r| r.topics.contains(t))))
                 || scope.since.is_some_and(|since| m.at.date() < since)
             {
                 return None;

@@ -11,6 +11,7 @@ use crate::models::{
     AskAnswer, AskRequest, ClaimAnswer, ConflictAnswer, ModelError, Models, SessionAnswer,
     SessionRequest,
 };
+use crate::record::Topic;
 use crate::session::{SessionRecord, Term};
 use crate::tag::TagTable;
 use std::cell::RefCell;
@@ -1166,4 +1167,68 @@ fn naming_a_project_keeps_its_group_only_messages_next_to_its_entries() {
     let mut cites = models.cites();
     cites.sort();
     assert_eq!(cites, ["preferences-1", "session:g-1#message:m-1"]);
+}
+
+#[test]
+fn a_group_message_matches_any_requested_session_topic() {
+    let topic_a: Topic = "topic-a".parse().unwrap();
+    let topic_b: Topic = "topic-b".parse().unwrap();
+    let mut member_a = record("g-a", 1, "unrelated title");
+    member_a.topics = vec![topic_a.clone()].try_into().unwrap();
+    let mut member_b = record("g-b", 1, "another unrelated title");
+    member_b.topics = vec![topic_b.clone()].try_into().unwrap();
+    let sessions = [member_a, member_b];
+    let message = |session: &str| crate::message::MessageMatch {
+        session: session.parse().unwrap(),
+        message: String::from("m-1"),
+        role: Speaker::User,
+        at: T0 + Duration::days(1),
+        text: String::from("alpha member location"),
+        score: 1.0,
+        group_project: None,
+    };
+    let messages = [message("g-a"), message("g-b")];
+    let tags = TagTable::defaults();
+    let corpus = Corpus {
+        entries: &[],
+        sessions: &sessions,
+        messages: &messages,
+        tags: &tags,
+        user: &crate::voice::UserName::default(),
+    };
+    let mut q = question("member location");
+    q.scope.topics = vec![topic_a, topic_b];
+    let models = FakeModels::answering(answered(vec![
+        claim(
+            "member A location",
+            "alpha member location",
+            "session:g-a#message:m-1",
+        ),
+        claim(
+            "member B location",
+            "alpha member location",
+            "session:g-b#message:m-1",
+        ),
+    ]));
+
+    let answer = ask::answer(
+        &q,
+        corpus,
+        &models,
+        &NoTasks,
+        "claude-sonnet-5-5",
+        &crate::voice::Voice::default(),
+        T0 + Duration::days(30),
+    )
+    .unwrap();
+
+    assert_eq!(answer.status, Status::Answered);
+    assert_eq!(answer.evidence_considered, 2);
+    assert_eq!(answer.claims.len(), 2);
+    let mut cites = models.cites();
+    cites.sort();
+    assert_eq!(
+        cites,
+        ["session:g-a#message:m-1", "session:g-b#message:m-1"]
+    );
 }
