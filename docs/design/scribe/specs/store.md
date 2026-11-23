@@ -243,8 +243,9 @@ Only `config.toml` and `memory/`'s files remain as primary data files outside th
 
 Group turns use the same `messages` and FTS5 rows, with `group_only = 1` for
 turns kept solely through membership. A session pass that writes the same
-message clears that flag. Capture rechecks open membership and the cursor in
-the message write transaction. Capture skips replay if the transcript no
+message clears that flag. Capture rechecks open membership, that the membership
+is still its seat's newest position (a replaced member holds none), and the
+cursor in the message write transaction. Capture skips replay if the transcript no
 longer contains its cursor. A header-only `sessions` row gives an uncataloged
 member's messages a forget target. A profile refresh reads only turns with
 `group_only = 0`, so no derived profile holds text kept solely on group consent.

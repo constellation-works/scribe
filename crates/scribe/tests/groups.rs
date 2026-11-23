@@ -1086,3 +1086,51 @@ fn restarting_a_replaced_session_names_no_seat_and_writes_nothing() {
     assert_eq!(member_rows(&f), 3);
     assert_eq!(support::audit_lines(&f.root()), before);
 }
+
+#[test]
+fn replaced_member_stores_no_new_turns_and_its_history_stays_readable() {
+    let f = Fixture::new();
+    let a_before = [
+        row(A, "u", "user", QUOTE),
+        row(A, "before", "user", "beforeorchid typed by A"),
+    ];
+    let a_path = transcript(&f, A, &a_before);
+    let b_path = transcript(&f, B, &[row(B, "u", "user", "joining now")]);
+    open(&f);
+    join(&f, A, "g-1", &[], 0);
+    let fake = f.fake_program("claude", "#!/bin/sh\nexit 1\n");
+    let env = [("PATH", fake.to_str().unwrap())];
+    stop(&f, A, &a_path, &env);
+
+    join(&f, B, "g-1", &["--replace"], 0);
+    // A keeps typing on its transcript after B holds the seat.
+    let mut a_after = a_before.to_vec();
+    a_after.push(row(A, "after", "user", "afterreplaceorchid typed by A"));
+    transcript(&f, A, &a_after);
+    stop(&f, A, &a_path, &env);
+    transcript(
+        &f,
+        B,
+        &[
+            row(B, "u", "user", "joining now"),
+            row(B, "b", "user", "bcaptureorchid typed by B"),
+        ],
+    );
+    stop(&f, B, &b_path, &env);
+
+    let search = |session: &str, term: &str| {
+        invoke(
+            &f,
+            session,
+            &["search", term, "--kind", "message", "--group", "g-1"],
+            0,
+        )
+    };
+    assert_eq!(search(B, "afterreplaceorchid")["total"], 0);
+    let history = search(B, "beforeorchid");
+    assert_eq!(history["total"], 1);
+    assert_eq!(history["hits"][0]["cite"], format!("session:{A}"));
+    let captured = search(B, "bcaptureorchid");
+    assert_eq!(captured["total"], 1);
+    assert_eq!(captured["hits"][0]["cite"], format!("session:{B}"));
+}

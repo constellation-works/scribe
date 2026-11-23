@@ -591,15 +591,17 @@ fn capture_state(
 ) -> Result<Option<CaptureState>, Fallible> {
     let fail = |e| Fallible::from_sqlite("read group capture state from", path, e);
     let joined = if refuse_newer(conn, path)? >= 11 {
-        ("gm.joined", "gm.turn_cursor")
+        ("m.joined", "m.turn_cursor")
     } else {
         ("g.opened", "NULL")
     };
+    // Capture belongs to the seat holder only: while a later member holds the
+    // seat, a replaced member stores no new turns.
     let row: Option<(i64, String, Option<String>)> = conn.query_row(
-        &format!("SELECT gm.position, {}, {} FROM group_members gm
-         JOIN groups g ON g.id = gm.group_id
-         WHERE gm.session = ?1 AND g.closed IS NULL AND NOT EXISTS (
-             SELECT 1 FROM sessions s WHERE s.provider_session = gm.session AND s.forgotten IS NOT NULL
+        &format!("SELECT m.position, {}, {} FROM group_members m
+         JOIN groups g ON g.id = m.group_id
+         WHERE m.session = ?1 AND g.closed IS NULL AND {HOLDS_SEAT} AND NOT EXISTS (
+             SELECT 1 FROM sessions s WHERE s.provider_session = m.session AND s.forgotten IS NOT NULL
          )", joined.0, joined.1),
         [session.as_str()],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
@@ -630,19 +632,24 @@ fn next_turns<'a>(state: &CaptureState, messages: &'a [NewMessage]) -> Vec<&'a N
         .collect()
 }
 
-/// The seat the session holds now. Its row must be the seat's newest position:
-/// a session that a later member replaced keeps its row as history but holds nothing.
-fn held_seat(conn: &Connection, session: &SessionId) -> rusqlite::Result<Option<SeatHold>> {
-    conn.query_row(
-        "SELECT m.group_id, m.seat, s.role
-         FROM group_members m
-         JOIN group_seats s ON s.group_id = m.group_id AND s.name = m.seat
-         WHERE m.session = ?1
-           AND m.position = (
+/// A membership row (alias `m`) holds its seat only while it is the seat's newest
+/// position. A session that a later member replaced keeps its row as history but
+/// holds nothing. Seat lookup and turn capture both use this one rule.
+const HOLDS_SEAT: &str = "m.position = (
                SELECT MAX(m2.position)
                FROM group_members m2
                WHERE m2.group_id = m.group_id AND m2.seat = m.seat
-           )",
+           )";
+
+/// The seat the session holds now.
+fn held_seat(conn: &Connection, session: &SessionId) -> rusqlite::Result<Option<SeatHold>> {
+    conn.query_row(
+        &format!(
+            "SELECT m.group_id, m.seat, s.role
+         FROM group_members m
+         JOIN group_seats s ON s.group_id = m.group_id AND s.name = m.seat
+         WHERE m.session = ?1 AND {HOLDS_SEAT}"
+        ),
         [session.as_str()],
         |r| {
             Ok(SeatHold {
