@@ -1169,6 +1169,86 @@ fn naming_a_project_keeps_its_group_only_messages_next_to_its_entries() {
     assert_eq!(cites, ["preferences-1", "session:g-1#message:m-1"]);
 }
 
+/// A message of a group-only session: no catalog record, so the group's
+/// project is all it carries.
+fn group_only_message(session: &str, project: &str, text: &str) -> crate::message::MessageMatch {
+    crate::message::MessageMatch {
+        session: session.parse().unwrap(),
+        message: String::from("m-1"),
+        role: Speaker::User,
+        at: T0 + Duration::days(1),
+        text: text.to_owned(),
+        score: 1.0,
+        group_project: Some(project.parse().unwrap()),
+    }
+}
+
+#[test]
+fn naming_only_a_group_only_project_narrows_out_other_projects() {
+    let mut orbit_entry = decision("preferences-1", 0, SQUASH);
+    orbit_entry.project = "orbit".parse().unwrap();
+    let entries = [orbit_entry];
+    let messages = [group_only_message(
+        "g-1",
+        "scribe",
+        "squash-merge agent PRs here",
+    )];
+    let tags = TagTable::defaults();
+    let corpus = Corpus {
+        entries: &entries,
+        sessions: &[],
+        messages: &messages,
+        tags: &tags,
+        user: &crate::voice::UserName::default(),
+    };
+    let models = FakeModels::silent();
+    ask::answer(
+        &question("how does scribe squash-merge agent PRs"),
+        corpus,
+        &models,
+        &NoTasks,
+        "claude-sonnet-5-5",
+        &crate::voice::Voice::default(),
+        T0 + Duration::days(30),
+    )
+    .unwrap();
+    assert_eq!(models.cites(), ["session:g-1#message:m-1"]);
+}
+
+#[test]
+fn naming_another_project_keeps_a_group_only_project_too() {
+    let mut orbit_entry = decision("preferences-1", 0, SQUASH);
+    orbit_entry.project = "orbit".parse().unwrap();
+    let entries = [orbit_entry];
+    let messages = [group_only_message(
+        "g-1",
+        "scribe",
+        "squash-merge agent PRs here",
+    )];
+    let tags = TagTable::defaults();
+    let corpus = Corpus {
+        entries: &entries,
+        sessions: &[],
+        messages: &messages,
+        tags: &tags,
+        user: &crate::voice::UserName::default(),
+    };
+    let models = FakeModels::silent();
+    ask::answer(
+        &question("how does scribe interact with orbit squash-merge agent PRs"),
+        corpus,
+        &models,
+        &NoTasks,
+        "claude-sonnet-5-5",
+        &crate::voice::Voice::default(),
+        T0 + Duration::days(30),
+    )
+    .unwrap();
+    let mut cites = models.cites();
+    cites.sort();
+    assert_eq!(cites, ["preferences-1", "session:g-1#message:m-1"]);
+}
+
 #[test]
 fn a_group_message_matches_any_requested_session_topic() {
     let topic_a: Topic = "topic-a".parse().unwrap();
