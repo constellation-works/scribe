@@ -255,10 +255,17 @@ fn schema_nine_checkpoint_reports_a_neutral_holder_when_a_writer_is_active() {
             &Redactor::default(),
         )
         .unwrap_err();
-    let Error::Locked { holder, .. } = &err else {
+    let Error::Locked {
+        holder, waited_ms, ..
+    } = &err
+    else {
         panic!("expected a locked store, got {err:?}");
     };
     assert_eq!(holder, "another scribe.db connection");
+    assert!(
+        *waited_ms >= 40,
+        "busy checkpoint did not honor the 50ms lock wait: {waited_ms}ms"
+    );
     assert_eq!(err.code(), "store_locked");
     assert!(
         err.to_string()
