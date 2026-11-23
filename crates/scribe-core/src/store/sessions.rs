@@ -531,6 +531,23 @@ impl Store {
         }))
     }
 
+    /// A forgotten row is the durable obligation to remove legacy files.
+    /// Replay after every commit, including a restarted migration, so an
+    /// interruption between the database commit and the archive move cannot
+    /// leave a forgotten session in plaintext.
+    pub(super) fn clean_forgotten_session_files(&self) -> Result<()> {
+        let forgotten = self.load_sessions()?.forgotten;
+        if forgotten.is_empty() {
+            return Ok(());
+        }
+        let lock_path = self.lock_path("archive-forget.lock")?;
+        let _lock = fsio::LockGuard::acquire(&lock_path, "forget moved session", self.lock_wait)?;
+        for id in forgotten.keys() {
+            self.forget_moved_files(id)?;
+        }
+        Ok(())
+    }
+
     /// Delete `id`'s record and rebuild checkpoint files from every
     /// `pre-sqlite-<date>/sessions*/<yyyy>/<mm>/`. Returns how many went.
     fn forget_moved_files(&self, id: &SessionId) -> Result<usize> {

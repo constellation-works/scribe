@@ -285,7 +285,9 @@ in one session transaction:
 After the commit, a `TRUNCATE` checkpoint empties the WAL, and the
 session's record and checkpoint files are deleted from every
 `pre-sqlite-<date>/sessions*/`. That is the one deletion in a directory
-scribe otherwise never deletes from.
+scribe otherwise never deletes from. The forgotten row also serves as a durable
+erasure obligation: after migration moves files, and after later writes, scribe
+retries archive cleanup. Repeating forget removes residue left by older builds.
 
 A forgotten session takes no write. Writing its record (a pass, a rebuild,
 a catalog) and switching it on are refused with `session_forgotten`. A
@@ -295,7 +297,7 @@ so a forget completed while it waited is refused before a model call.
 A checkpoint an older build wrote after the forget is left out of
 `scribe export --as jsonl` before any later write. The version 8 migration
 deletes that row on the next store write, and forgetting the session again
-deletes it too. Otherwise, forgetting it again changes nothing. The hook's
+deletes it too. A repeated forget also removes any remaining archived record and checkpoint files. The hook's
 audit line has the session's `s-<n>` as its target.
 
 ### Sessions in scribe.db (phase 6)

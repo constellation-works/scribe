@@ -381,6 +381,7 @@ impl Store {
         if after.archive_forgets {
             self.apply_pending_archive_forgets()?;
         }
+        self.clean_forgotten_session_files()?;
         Ok(())
     }
 
