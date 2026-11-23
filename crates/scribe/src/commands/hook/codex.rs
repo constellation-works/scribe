@@ -195,14 +195,23 @@ fn ingest(event: &'static str, input: &[u8], ctx: &Context) -> Result<Output, Cl
             ));
         }
     }
-    super::group_turns::codex(ctx, &id, &rollout.typed)?;
+    let mut persisted = (event == "Stop")
+        .then(|| crate::commands::PersistedAudit::new(ctx.store(), "hook stop", ctx.now()));
+    let group_outcomes: Vec<HookOutcome> = super::group_turns::codex(ctx, &id, &rollout.typed)?
+        .into_iter()
+        .collect();
+    if let Some(persisted) = persisted.as_mut() {
+        for outcome in &group_outcomes {
+            if outcome.error_code.is_none()
+                && let Some(target) = &outcome.target
+            {
+                persisted.record(target.clone());
+            }
+        }
+    }
     let candidates: Vec<_> = rollout.typed.iter().filter(|t| relevant(t)).collect();
     if candidates.is_empty() {
-        return if event == "Stop" {
-            stop::run(input, ctx)
-        } else {
-            Ok(silent(event))
-        };
+        return finish_without_replay(event, input, ctx, group_outcomes, persisted.as_mut());
     }
     let before = ctx.store().control()?;
     if before
@@ -210,11 +219,7 @@ fn ingest(event: &'static str, input: &[u8], ctx: &Context) -> Result<Output, Cl
         .get(&id)
         .is_some_and(|cursor| candidates.last().is_some_and(|t| &t.message.uuid == cursor))
     {
-        return if event == "Stop" {
-            stop::run(input, ctx)
-        } else {
-            Ok(silent(event))
-        };
+        return finish_without_replay(event, input, ctx, group_outcomes, persisted.as_mut());
     }
     let _ingestion = ctx.store().lock_codex_ingestion(&id)?;
     let state = ctx.store().control()?;
@@ -223,10 +228,15 @@ fn ingest(event: &'static str, input: &[u8], ctx: &Context) -> Result<Output, Cl
         Some(cursor) => match candidates.iter().position(|t| &t.message.uuid == cursor) {
             Some(n) => n + 1,
             None => {
-                return Ok(refused(
+                let mut out = refused(
                     event,
                     "Codex ingestion cursor disappeared; transcript was rewritten. Nothing replayed; inspect the session before resuming",
-                ));
+                );
+                prepend_outcomes(&mut out, group_outcomes);
+                if let Some(persisted) = persisted.as_mut() {
+                    persisted.disarm();
+                }
+                return Ok(out);
             }
         },
         None => candidates
@@ -235,7 +245,7 @@ fn ingest(event: &'static str, input: &[u8], ctx: &Context) -> Result<Output, Cl
             .unwrap_or(candidates.len()),
     };
     let mut replies = Vec::new();
-    let mut outcomes = Vec::new();
+    let mut outcomes = group_outcomes;
     for turn in &candidates[start..] {
         if event == "UserPromptSubmit"
             && (turn.turn_id != turn_id
@@ -282,6 +292,9 @@ fn ingest(event: &'static str, input: &[u8], ctx: &Context) -> Result<Output, Cl
         replies.extend(reply.message);
         outcomes.extend(reply.outcomes);
     }
+    if let Some(persisted) = persisted.as_mut() {
+        persisted.disarm();
+    }
     let message = (!replies.is_empty()).then(|| replies.join("\n"));
     // Codex Stop permits additionalContext JSON; no plain stdout, and no
     // blocking decision that would accidentally ask the model to continue.
@@ -292,6 +305,35 @@ fn ingest(event: &'static str, input: &[u8], ctx: &Context) -> Result<Output, Cl
         block: None,
         outcomes,
     }))
+}
+
+fn finish_without_replay(
+    event: &'static str,
+    input: &[u8],
+    ctx: &Context,
+    group_outcomes: Vec<HookOutcome>,
+    persisted: Option<&mut crate::commands::PersistedAudit<'_>>,
+) -> Result<Output, CliError> {
+    let mut out = if event == "Stop" {
+        stop::run(input, ctx)?
+    } else {
+        silent(event)
+    };
+    prepend_outcomes(&mut out, group_outcomes);
+    if let Some(persisted) = persisted {
+        persisted.disarm();
+    }
+    Ok(out)
+}
+
+fn prepend_outcomes(out: &mut Output, mut prefix: Vec<HookOutcome>) {
+    if prefix.is_empty() {
+        return;
+    }
+    if let Output::Hook(reply) = out {
+        prefix.append(&mut reply.outcomes);
+        reply.outcomes = prefix;
+    }
 }
 
 fn silent(event: &'static str) -> Output {

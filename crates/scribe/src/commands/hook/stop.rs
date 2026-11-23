@@ -59,10 +59,24 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
         });
         return Ok(Output::Hook(reply));
     }
-    if ctx.provider() == Provider::ClaudeCode {
-        super::group_turns::claude(ctx, &session, &payload.transcript_path)?;
+    // Group turn capture commits immediately because `hook stop` is stepwise;
+    // keep it audited if a later step returns `Err`.
+    let mut persisted = crate::commands::PersistedAudit::new(ctx.store(), "hook stop", ctx.now());
+    let mut outcomes: Vec<HookOutcome> = if ctx.provider() == Provider::ClaudeCode {
+        super::group_turns::claude(ctx, &session, &payload.transcript_path)?
+            .into_iter()
+            .collect()
+    } else {
+        Vec::new()
+    };
+    for outcome in &outcomes {
+        if outcome.error_code.is_none()
+            && let Some(target) = &outcome.target
+        {
+            persisted.record(target.clone());
+        }
     }
-    let mut outcomes = fill_cites(&payload, &session, ctx)?;
+    outcomes.extend(fill_cites(&payload, &session, ctx)?);
     if !outcomes
         .iter()
         .any(|o| o.error_code == Some(PROVENANCE_FAILED))
@@ -80,6 +94,7 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
     {
         outcomes.extend(mark_due(&payload, &session, ctx)?);
     }
+    persisted.disarm();
     reply.outcomes = outcomes;
     Ok(Output::Hook(reply))
 }
