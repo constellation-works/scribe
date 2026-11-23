@@ -110,3 +110,5 @@ names. A session in a group must leave before joining another. Peer, scheduled
 and harness prompts cannot give consent. Clear-time seat inheritance also
 applies to project groups in Claude Code. The group stays open until
 `scribe group close <slug>` from its opening session.
+
+For corrections, have the human type `/scribe group move <session-id> <slug>` to move a session (stored turns follow), or `/scribe group remove <session-id>` to remove it (group-only turns are erased). To relabel a recorded session, have the human type `/scribe session update <session-id> project <slug>` or `/scribe session update <session-id> title <text>`. These are typed lines only; agents cannot act for the human.

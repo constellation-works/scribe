@@ -6714,6 +6714,8 @@ is, and audits one line per added session, against `session:<id>`, with ids and
 error codes only. There is no terminal command for this: no CLI path records
 Daniel's consent (see "Daniel writes only through his typed prompt").
 
+**Regrouping and metadata.** A single typed line `/scribe group move <session-id> <slug>` moves a named member to an open project group, creating the group if necessary. The old membership is removed and the new one added in one transaction; all stored turns and the capture cursor follow. `/scribe group remove <session-id>` removes membership as `group leave` does: group-only turns are erased, while cataloged turns remain. Both accept unique session prefixes. A single typed `/scribe session update <session-id> project <slug>` or `/scribe session update <session-id> title <text>` changes that recorded field without a model call or rebuild. Project labels follow the existing project validation; titles are redacted. A later catalog pass can replace the title as it normally does. These lines use the same typed-turn and provenance checks as group add; peer, scheduled, harness and pasted lines do not act. Audit targets carry session ids and error codes, not field values. No terminal command grants this user consent.
+
 **Opening consent.** The opener is the provider’s calling session
 (`CLAUDE_CODE_SESSION_ID` for Claude Code, `CODEX_THREAD_ID` with
 `--provider codex`). Scribe checks the supplied quote against the user’s

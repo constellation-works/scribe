@@ -59,6 +59,24 @@ pub enum Switch {
         /// The named sessions, each an id or a prefix of one, at least one.
         sessions: Vec<SessionId>,
     },
+    /// Move a named session to a project group.
+    GroupMove {
+        /// The session to move.
+        session: SessionId,
+        /// The target slug.
+        slug: String,
+    },
+    /// Remove a named session from its group.
+    GroupRemove(SessionId),
+    /// Update a recorded session field.
+    SessionUpdate {
+        /// The record to update.
+        session: SessionId,
+        /// The field name.
+        field: String,
+        /// Its new value.
+        value: String,
+    },
     /// Any other argument: refused with the usage.
     Unknown(String),
 }
@@ -81,6 +99,40 @@ pub fn parse(prompt: &str) -> Option<Switch> {
         [arg] if arg.eq_ignore_ascii_case("on") => Switch::On,
         [arg] if arg.eq_ignore_ascii_case("off") => Switch::Off,
         [arg] if arg.eq_ignore_ascii_case("status") => Switch::Status,
+        [arg, action, id, slug]
+            if arg.eq_ignore_ascii_case("group") && action.eq_ignore_ascii_case("move") =>
+        {
+            id.parse().map_or_else(
+                |_| Switch::Unknown(words.join(" ")),
+                |session| Switch::GroupMove {
+                    session,
+                    slug: (*slug).to_owned(),
+                },
+            )
+        }
+        [arg, action, id]
+            if arg.eq_ignore_ascii_case("group") && action.eq_ignore_ascii_case("remove") =>
+        {
+            id.parse()
+                .map_or_else(|_| Switch::Unknown(words.join(" ")), Switch::GroupRemove)
+        }
+        [arg, action, id, field, value @ ..]
+            if arg.eq_ignore_ascii_case("session")
+                && action.eq_ignore_ascii_case("update")
+                && (field.eq_ignore_ascii_case("title")
+                    || field.eq_ignore_ascii_case("project"))
+                && !value.is_empty()
+                && (!field.eq_ignore_ascii_case("project") || value.len() == 1) =>
+        {
+            id.parse().map_or_else(
+                |_| Switch::Unknown(words.join(" ")),
+                |session| Switch::SessionUpdate {
+                    session,
+                    field: field.to_ascii_lowercase(),
+                    value: value.join(" "),
+                },
+            )
+        }
         [arg, slug] if arg.eq_ignore_ascii_case("group") => Switch::Group((*slug).to_owned()),
         [arg, add, slug, ids @ ..]
             if arg.eq_ignore_ascii_case("group") && add.eq_ignore_ascii_case("add") =>
@@ -401,7 +453,10 @@ pub fn switch(
         | Switch::Catalog(_)
         | Switch::Continue(_)
         | Switch::Group(_)
-        | Switch::GroupAdd { .. } => Change::Status(current),
+        | Switch::GroupAdd { .. }
+        | Switch::GroupMove { .. }
+        | Switch::GroupRemove(_)
+        | Switch::SessionUpdate { .. } => Change::Status(current),
         Switch::Unknown(arg) => Change::Unknown(arg.clone()),
     }
 }

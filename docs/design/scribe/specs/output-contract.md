@@ -634,6 +634,8 @@ hook echoes a marker once the typed turn is in the rollout (before that it
 refuses with `provenance_failed`, `typed input not yet verified …; Stop will
 retry`), and Stop catalogs from the rollout.
 
+The single-line commands `/scribe group move <session-id> <slug>`, `/scribe group remove <session-id>`, and `/scribe session update <session-id> project|title <value>` block with `scribe: session <id> moved|removed|updated` on success, or `scribe: <verb> refused — <reason>` on refusal. Their audit targets contain session ids and error codes only.
+
 A prompt whose first line is `/scribe on`, `/scribe off`, `/scribe status`,
 `/scribe on --from <id> [--type <type>]`, `/scribe link <id> [--type
 <type>]`, `/scribe catalog <id>`, `/scribe group <slug>`, `/scribe group add <slug>
@@ -649,7 +651,7 @@ prompt from the model and shows Daniel the reason. The reason is one line:
 — this session was never switched on …` for a status, `scribe: unknown
 command "/scribe <arg>" — use /scribe on, /scribe off, /scribe status,
 /scribe on --from <id>, /scribe link <id> [--type spawned_from|continues],
-/scribe catalog <id>, /scribe group <slug>, /scribe group add <slug> <session-id>... or /scribe continue <handoff-id>`,
+/scribe catalog <id>, /scribe group <slug>, /scribe group add <slug> <session-id>..., /scribe group move <session-id> <slug>, /scribe group remove <session-id>, /scribe session update <session-id> project|title <value> or /scribe continue <handoff-id>`,
 or `scribe: /scribe <arg> not applied — …` when the payload fails the
 transcript check. `/scribe group <slug>` replies `scribe: joined group
 <slug> (g-<n>)` (audited against `session:<id>`) or `scribe: group refused —
