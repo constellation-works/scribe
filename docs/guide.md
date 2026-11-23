@@ -326,6 +326,9 @@ claude plugin marketplace update scribe-local
 claude plugin update scribe@scribe-local
 ```
 
+`make update-plugins` runs those two commands and the Codex
+`codex plugin add scribe@scribe-local --json` in one step.
+
 Orbit's copy of the plugin is installed from outside the repository. The
 commands and the reason are in the
 [plugin README](../plugin/.orbit-plugin/README.md#install-operator).
