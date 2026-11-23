@@ -15,11 +15,15 @@
 //! instruction its session and turn ids: never argument values or error text,
 //! which can carry entry contents or paths (STD-05 R13).
 //!
-//! A hook run writes one line per record it wrote or refused (two `#scribe`
-//! lines in one prompt are two lines in the log), one more per run that stores
-//! a group member's new typed turns (`target` `session:<id>`, no error code,
-//! content-free, one per run however many turns it stores), and none when it
-//! changed nothing; a session pass one per session passed (a `session catalog`
+//! A hook run writes one line per outcome it reports: one per record it wrote
+//! or refused (two `#scribe` lines in one prompt are two lines in the log);
+//! one per `/scribe` switch it changed (`on`, `off`, a link, `catalog` or
+//! `continue`, `target` `session:<id>`), and a refused `/scribe` command is one
+//! failure line; one more per run that stores a group member's new typed turns
+//! (`target` `session:<id>`, no error code, content-free, one per run however
+//! many turns it stores). A run that only moves a group member's capture cursor
+//! writes none, and so does a no-op switch or a status; a session pass one per
+//! session passed (a `session catalog`
 //! also one for the switch it wrote, unless a window failed: a failed catalog is one
 //! failure line) and one per retired-tag candidate closed; a consistency scan one
 //! per entry re-applied, per proposal opened or closed, per session deactivated or
@@ -27,8 +31,9 @@
 //! nothing; a direct write verb (`entry`, `tag` and `proposal` writes,
 //! `session activate|deactivate`) one when it changed the record and none
 //! when it did not: the `Stop` hook runs after
-//! every reply and usually has nothing to do, and a prompt with no
-//! `#scribe` line is not a mutation unless it stores a group member's turn.
+//! every reply and usually has nothing to do. A prompt with no `#scribe` line
+//! adds a line only when it changes a `/scribe` switch, is a refused `/scribe`
+//! command, or stores a group member's turn.
 //!
 //! A command that calls no model runs, with its lines, as one `scribe.db`
 //! transaction: [`AuditGuard::flush`] writes them inside it, so a write and
