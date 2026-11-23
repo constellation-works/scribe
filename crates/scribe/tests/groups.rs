@@ -1083,6 +1083,62 @@ fn seat_chains_replacement_handoffs_and_mistaken_joins() {
 }
 
 #[test]
+fn group_show_table_shortens_seat_sessions_the_store_does_not_catalog() {
+    // Seat sessions with no catalog entry still print as their shortest unique
+    // prefix. The store-known sibling shares A's first nine characters, so A's
+    // prefix is lengthened to ten; B's is the eight-character minimum.
+    const CATALOGED: &str = "11111111-9999-4999-8999-999999999999";
+    let f = Fixture::new();
+    transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
+    transcript(&f, B, &[row(B, "u", "user", QUOTE)]);
+    transcript(&f, CATALOGED, &[row(CATALOGED, "u", "user", QUOTE)]);
+    // A handoff naming the sibling makes the store know it without a seat.
+    invoke(
+        &f,
+        CATALOGED,
+        &[
+            "entry",
+            "add",
+            &format!("{HANDOFF}\nSession {CATALOGED}"),
+            "--tag",
+            "handoff",
+            "--author",
+            "aide",
+            "--related",
+            &format!("session:{CATALOGED}"),
+            "--quote",
+            QUOTE,
+        ],
+        0,
+    );
+    open(&f);
+    join(&f, A, "g-1", &["--role", "reviewer"], 0);
+    join_as(&f, B, "g-1", "tester", &["--role", "tester"], 0);
+
+    let table = f
+        .cmd(&["group", "show", "g-1", "--format", "table"])
+        .env("CLAUDE_CODE_SESSION_ID", A)
+        .output()
+        .unwrap();
+    assert_eq!(table.status.code(), Some(0), "{}", text(&table.stderr));
+    let shown = text(&table.stdout);
+    let seats = shown.lines().find(|l| l.starts_with("seats")).unwrap();
+    assert!(seats.contains("11111111-1 [handoff"), "{shown}");
+    assert!(seats.contains("22222222 [handoff"), "{shown}");
+    assert!(!seats.contains(A) && !seats.contains(B), "{shown}");
+
+    let plain = text(&f.ok(&["group", "show", "g-1"]).stdout);
+    assert!(plain.contains(A) && plain.contains(B), "{plain}");
+    assert_eq!(
+        invoke(&f, A, &["group", "show", "g-1"], 0)["seats"],
+        json!([
+            {"name":"editor","role":"reviewer","transcripts":[A],"newest_handoff":null},
+            {"name":"tester","role":"tester","transcripts":[B],"newest_handoff":null}
+        ])
+    );
+}
+
+#[test]
 fn project_group_join_preserves_existing_role_when_role_is_omitted() {
     let f = Fixture::new();
     let prompt = "/scribe group role-preservation";

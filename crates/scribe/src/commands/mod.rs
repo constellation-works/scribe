@@ -189,9 +189,10 @@ impl Command {
 /// unique across every session the store knows, not only the rows shown, so
 /// what is printed is accepted back (STD-01 R32). A `transcript list` also
 /// counts the transcripts on disk, which `transcript show` resolves against.
-/// Nothing is computed for an output that prints no session id; a read that
-/// fails leaves the table with full ids rather than failing the command
-/// (STD-02 R31).
+/// A group record also counts the sessions its seats hold, which a join can
+/// name without the store cataloging them. Nothing is computed for an output
+/// that prints no session id; a read that fails leaves the table with full
+/// ids rather than failing the command (STD-02 R31).
 pub(crate) fn short_ids(output: &Output, ctx: &Context) -> scribe_core::ShortIds {
     use crate::output::Record;
     let prints_sessions = match output {
@@ -225,6 +226,16 @@ pub(crate) fn short_ids(output: &Output, ctx: &Context) -> scribe_core::ShortIds
     ) && let Ok(files) = hook::payload::files_for(ctx)
     {
         ids.extend(files.into_iter().map(|(id, _)| id.to_string()));
+    }
+    if let Output::Show {
+        record: Record::Group(group),
+    }
+    | Output::Written {
+        record: Record::Group(group),
+        ..
+    } = output
+    {
+        ids.extend(group.members().iter().map(|id| id.to_string()));
     }
     scribe_core::ShortIds::new(ids)
 }
