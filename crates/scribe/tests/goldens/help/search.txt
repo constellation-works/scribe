@@ -18,7 +18,7 @@ Options:
           Only records of this project (a repository slug, or global) [default: any]
 
       --group <ID>
-          Only records of member sessions in this group (id or unique prefix)
+          Only records of member sessions in this group (id, unique prefix, or project group slug)
 
       --topic <TOPIC>
           Only records carrying this topic (a segment: its session's or its own); repeat it to require every one [default: any]

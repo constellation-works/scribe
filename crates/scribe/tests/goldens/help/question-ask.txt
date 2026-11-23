@@ -19,7 +19,7 @@ Options:
           Only records of this project (a repository slug) [default: any]
 
       --group <ID>
-          Use only records of this group's members, including stored turns (id or unique prefix)
+          Use only records of this group's members, including stored turns (id, unique prefix, or project group slug)
 
       --kind <KIND>
           Only this kind of record. Leaves out Orbit tasks [default: any]

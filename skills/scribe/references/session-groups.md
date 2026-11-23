@@ -16,6 +16,8 @@ For open, join, leave and close in Codex, put `--provider codex` before
   in the session that joins, under its own `--author`. Join when the human names
   the group and seat, or when the brief that started the session names them. A
   new seat takes `--role`, which defaults to the seat name and then stays fixed.
+  For a project group, omit `--as` and `--role` to take the automatic seat (the
+  8-character short session id, or full session id on collision) and role `member`.
 - **Seat changes.** A session holds one seat at a time; joining the seat it already holds changes
   nothing. A seat held by another session is refused (`seat_occupied`) unless
   its holder has been idle for a day or, in Claude Code, this session was cleared
@@ -73,15 +75,20 @@ For open, join, leave and close in Codex, put `--provider codex` before
 
 ## Project groups
 
-Have the human type `/scribe group <slug>` to join the open project group or
-create and join it when absent. The group uses the slug as its title,
-`project` as its kind and the working directory's project. Each session gets
-a seat named for its short id with role `member`. An agent joining a project
-group with `scribe group join <slug> --author <name>` can omit `--as` and
-`--role` to take those defaults.
+Have the human type `/scribe group <slug>` (or in Codex, `$scribe group <slug>`,
+a skill mention link `[$scribe](.../scribe/SKILL.md) group <slug>`, or
+`/scribe group <slug>`) to join the open project group or create and join it
+when absent. A slug is 1–64 bytes of lowercase ASCII letters, digits and
+interior hyphens (not a `g-<n>` id). The group uses the slug as its title,
+`project` as its kind and the working directory's project. Each typed join
+records under author `user` and takes an automatic seat named for the session's
+8-character short id (falling back to the full session id on collision) with
+role `member`. An agent joining a project group with
+`scribe group join <slug> --author <name>` (prefix `--provider codex` before
+`group` in Codex) can omit `--as` and `--role` to take those defaults.
 
-The same typed line in another session joins the existing group. A session in
+The same typed line in another session joins the existing open group. A session in
 a group must leave before joining another. Peer, scheduled and harness
 prompts cannot give consent. Clear-time seat inheritance also applies to
-project groups. The group stays open until `scribe group close <slug>` from
-its opening session.
+project groups in Claude Code. The group stays open until
+`scribe group close <slug>` from its opening session.

@@ -614,8 +614,9 @@ retry`), and Stop catalogs from the rollout.
 
 A prompt whose first line is `/scribe on`, `/scribe off`, `/scribe status`,
 `/scribe on --from <id> [--type <type>]`, `/scribe link <id> [--type
-<type>]`, `/scribe catalog <id>` or a bare `/scribe` (also `/scribe:scribe …`, the plugin-namespaced form;
-the argument is case-insensitive) is not scanned for `#scribe` lines: the
+<type>]`, `/scribe catalog <id>`, `/scribe group <slug>` or a bare `/scribe`
+(also `/scribe:scribe …`, the plugin-namespaced form; the control verb is
+case-insensitive except `group`) is not scanned for `#scribe` lines: the
 reply is `{"decision": "block", "reason": "<status>"}`, which keeps the
 prompt from the model and shows Daniel the reason. The reason is one line:
 `scribe: on — …`, `scribe: already on since <time> — nothing changed`,
@@ -624,9 +625,12 @@ prompt from the model and shows Daniel the reason. The reason is one line:
 — this session was never switched on …` for a status, `scribe: unknown
 command "/scribe <arg>" — use /scribe on, /scribe off, /scribe status,
 /scribe on --from <id>, /scribe link <id> [--type spawned_from|continues],
-/scribe catalog <id> or /scribe continue <handoff-id>`,
+/scribe catalog <id>, /scribe group <slug> or /scribe continue <handoff-id>`,
 or `scribe: /scribe <arg> not applied — …` when the payload fails the
-transcript check. A status of a linked session ends `; linked: <type>
+transcript check. `/scribe group <slug>` replies `scribe: joined group
+<slug> (g-<n>)` (audited against `session:<id>`) or `scribe: group refused —
+<reason>` with code `group_membership`, `invalid_text`, or
+`provenance_failed`. A status of a linked session ends `; linked: <type>
 <id>, …`. A link replies `scribe: on — this session is cataloged from now
 on and linked: <type> <id>; …`, `scribe: on — … it was already linked:
 <type> <id>`, `scribe: linked — this session is <type> <id>`, `scribe:
@@ -1006,9 +1010,10 @@ do, in the store `root` names.
 ## Session groups
 
 `group open`, `group join`, `group leave`, `group close` and `group show` return one group.
-Its JSON fields are `id`, `title`, `kind`, `project`, `opened`, `closed`
-(null while open), `opener`, `related`, `seats` and `summary` (a closing
-summary or null when absent). Each seat has a `name`,
-a `role`, its `transcripts` in join order and `newest_handoff` (an active
-entry id or null). Seats sort by name. `group list --json` returns the same
-objects newest first in `items`, alongside `total`, `truncated` and `warnings`.
+Its JSON fields are `id`, optional `slug` (present on project groups, omitted when
+absent), `title`, `kind`, `project`, `opened`, `closed` (null while open),
+`opener`, `related`, `seats` and optional `summary` (closing summary, omitted
+when absent). Each seat has a `name`, a `role`, its `transcripts` in join order
+and `newest_handoff` (an active entry id or null). Seats sort by name.
+`group list --json` returns the same objects newest first in `items`, alongside
+`total`, `truncated` and `warnings`.

@@ -9,7 +9,7 @@ Options:
           Only sessions that ran in this project (a repository slug) [default: any]
 
       --group <ID>
-          Only session records of this group's members (id or unique prefix)
+          Only session records of this group's members (id, unique prefix, or project group slug)
 
       --topic <TOPIC>
           Only sessions carrying this topic; repeat it to require every one [default: any]

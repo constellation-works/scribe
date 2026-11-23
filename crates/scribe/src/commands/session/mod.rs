@@ -102,7 +102,7 @@ pub(crate) struct ListArgs {
     #[arg(long, value_name = "PROJECT")]
     pub(crate) project: Option<Project>,
 
-    /// Only session records of this group's members (id or unique prefix)
+    /// Only session records of this group's members (id, unique prefix, or project group slug)
     #[arg(long, value_name = "ID")]
     pub(crate) group: Option<String>,
 
