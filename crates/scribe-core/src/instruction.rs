@@ -494,6 +494,15 @@ struct LineMeta {
     turn_origin_camel: Option<serde_json::Value>,
     #[serde(default, deserialize_with = "capture::present_value")]
     turn_origin: Option<serde_json::Value>,
+    #[serde(default)]
+    attachment: Option<LineAttachment>,
+}
+
+/// The attachment of a queued message, whose origin is the claim it carries.
+#[derive(Deserialize)]
+struct LineAttachment {
+    #[serde(default)]
+    origin: Option<serde_json::Value>,
 }
 
 struct Claims {
@@ -583,9 +592,11 @@ fn read_claude_conversation(bytes: &[u8], own: impl Fn(&str) -> String) -> Vec<S
 }
 
 fn verified_words(message: &Message, permitted: bool) -> Option<String> {
-    transcript::user_turn(message)
-        .filter(|_| permitted && !capture::agent_originated(&[], &message.text()))
-        .map(|turn| turn.own)
+    let turn = transcript::user_turn(message)?;
+    let text = message.text();
+    // The guard reads his words: a slash command's args, not its harness tags.
+    let checked = transcript::slash_command_args(&text).unwrap_or(&text);
+    (permitted && !capture::agent_originated(&[], checked)).then_some(turn.own)
 }
 
 fn claude_claims(bytes: &[u8]) -> BTreeMap<String, Claims> {
@@ -594,27 +605,41 @@ fn claude_claims(bytes: &[u8]) -> BTreeMap<String, Claims> {
         let Ok(meta) = serde_json::from_slice::<LineMeta>(line) else {
             continue;
         };
-        if !matches!(meta.kind.as_deref(), Some("user" | "assistant")) {
-            continue;
-        }
         let Some(uuid) = string(meta.uuid.as_ref()) else {
             continue;
         };
-        claims.entry(uuid).or_insert_with(|| {
-            let mut origin = capture::OriginClaims::default();
-            origin.push_claim(meta.source.as_ref());
-            origin.push_prompt_source(meta.prompt_source_camel.as_ref());
-            origin.push_prompt_source(meta.prompt_source.as_ref());
-            origin.push_origin(meta.origin.as_ref());
-            origin.push_claim(meta.prompt_origin_camel.as_ref());
-            origin.push_claim(meta.prompt_origin.as_ref());
-            origin.push_turn_origin(meta.turn_origin_camel.as_ref());
-            origin.push_turn_origin(meta.turn_origin.as_ref());
-            Claims {
-                origin_blocked: origin.claims_agent_originated(),
-                entrypoint: string(meta.entrypoint.as_ref()),
+        match meta.kind.as_deref() {
+            Some("user" | "assistant") => {
+                claims.entry(uuid).or_insert_with(|| {
+                    let mut origin = capture::OriginClaims::default();
+                    origin.push_claim(meta.source.as_ref());
+                    origin.push_prompt_source(meta.prompt_source_camel.as_ref());
+                    origin.push_prompt_source(meta.prompt_source.as_ref());
+                    origin.push_origin(meta.origin.as_ref());
+                    origin.push_claim(meta.prompt_origin_camel.as_ref());
+                    origin.push_claim(meta.prompt_origin.as_ref());
+                    origin.push_turn_origin(meta.turn_origin_camel.as_ref());
+                    origin.push_turn_origin(meta.turn_origin.as_ref());
+                    Claims {
+                        origin_blocked: origin.claims_agent_originated(),
+                        entrypoint: string(meta.entrypoint.as_ref()),
+                    }
+                });
             }
-        });
+            // Only a queued message is a conversation line here: the same
+            // predicate that makes it a message gates its claims.
+            Some("attachment") if transcript::queued_message(line).is_some() => {
+                claims.entry(uuid).or_insert_with(|| {
+                    let mut origin = capture::OriginClaims::default();
+                    origin.push_origin(meta.attachment.as_ref().and_then(|a| a.origin.as_ref()));
+                    Claims {
+                        origin_blocked: origin.claims_agent_originated(),
+                        entrypoint: string(meta.entrypoint.as_ref()),
+                    }
+                });
+            }
+            _ => {}
+        }
     }
     claims
 }

@@ -1,5 +1,6 @@
 use crate::entry::Speaker;
 use crate::transcript;
+use serde_json::json;
 
 const TRANSCRIPT: &str = r#"{"type":"session-owner","sessionId":"s-1"}
 {"type":"user","uuid":"u-1","timestamp":"2026-11-01T10:00:00.250Z","message":{"role":"user","content":"hello\n#scribe preferences: one"}}
@@ -163,4 +164,95 @@ fn a_replayed_line_keeps_its_first_position_and_counts_once() {
     let ids: Vec<&str> = messages.iter().map(|m| m.uuid.as_str()).collect();
     assert_eq!(ids, ["u-1", "u-2", "u-3"]);
     assert_eq!(transcript::survey(raw.as_bytes()).user_turns, 3);
+}
+
+#[test]
+fn a_slash_command_he_typed_is_his_in_its_args_and_its_tags_are_not() {
+    let formation = "<command-message>formation</command-message>\n<command-name>/formation</command-name>\n<command-args>duo scribe (opus:high, sonnet:high)</command-args>";
+    let raw = [
+        user("u-1", "2026-11-23T10:00:00Z", formation),
+        // The expanded skill body Claude Code writes after the command is meta.
+        json!({"type": "user", "uuid": "u-2", "timestamp": "2026-11-23T10:00:01Z", "isMeta": true,
+            "message": {"role": "user", "content": "Base directory for this skill: /skills/formation"}})
+        .to_string(),
+        user("u-3", "2026-11-23T10:01:00Z", "<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args></command-args>"),
+        user("u-4", "2026-11-23T10:02:00Z", "<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args>keep the plan</command-args>"),
+        user("u-5", "2026-11-23T10:03:00Z", "<command-name>/scribe</command-name>\n<command-message>scribe</command-message>\n<command-args>group add s-2</command-args>"),
+        user("u-6", "2026-11-23T10:04:00Z", "<command-name>/formation</command-name>\n<command-message>formation</command-message>\n<command-args>  </command-args>"),
+        user("u-7", "2026-11-23T10:05:00Z", "<local-command-stdout>done</local-command-stdout>"),
+    ]
+    .join("\n");
+    let messages = transcript::parse(raw.as_bytes());
+    let ids: Vec<&str> = messages.iter().map(|m| m.uuid.as_str()).collect();
+    assert_eq!(ids, ["u-1", "u-3", "u-4", "u-5", "u-6", "u-7"]);
+    let own: Vec<String> = transcript::user_turns(&messages)
+        .into_iter()
+        .map(|turn| turn.own)
+        .collect();
+    assert_eq!(own, ["duo scribe (opus:high, sonnet:high)"]);
+}
+
+/// A `queued_command` attachment line (a message typed while the agent was
+/// busy), with `extra` fields on the line itself.
+fn queued_line(uuid: &str, attachment: serde_json::Value, extra: serde_json::Value) -> String {
+    let mut line = json!({"type": "attachment", "uuid": uuid,
+        "timestamp": "2026-11-23T11:00:00Z", "attachment": attachment});
+    if let (Some(line), Some(extra)) = (line.as_object_mut(), extra.as_object()) {
+        line.extend(extra.clone());
+    }
+    line.to_string()
+}
+
+/// The attachment of a message Daniel typed in the desktop app.
+fn typed_queued(prompt: &str) -> serde_json::Value {
+    json!({"type": "queued_command", "prompt": prompt,
+        "origin": {"kind": "human"}, "humanTurn": true})
+}
+
+#[test]
+fn a_queued_message_he_typed_is_a_user_turn_and_other_queued_lines_are_not() {
+    let mut no_turn = typed_queued("no turn");
+    no_turn["humanTurn"] = json!(false);
+    let mut peer = typed_queued("peer");
+    peer["origin"] = json!({"kind": "peer"});
+    let mut no_origin = typed_queued("no origin");
+    no_origin.as_object_mut().unwrap().remove("origin");
+    let mut meta = typed_queued("attachment meta");
+    meta["isMeta"] = json!(true);
+    let mut hook = typed_queued("hook");
+    hook["type"] = json!("hook_success");
+    let raw = [
+        queued_line(
+            "q-typed",
+            typed_queued("can you create the scribe group"),
+            json!({"entrypoint": "claude-desktop"}),
+        ),
+        queued_line("q-no-turn", no_turn, json!({})),
+        queued_line("q-peer", peer, json!({})),
+        queued_line("q-no-origin", no_origin, json!({})),
+        queued_line("q-meta", meta, json!({})),
+        queued_line(
+            "q-line-meta",
+            typed_queued("line meta"),
+            json!({"isMeta": true}),
+        ),
+        queued_line(
+            "q-sidechain",
+            typed_queued("sidechain"),
+            json!({"isSidechain": true}),
+        ),
+        queued_line("q-hook", hook, json!({})),
+    ]
+    .join("\n");
+    let messages = transcript::parse(raw.as_bytes());
+    let ids: Vec<&str> = messages.iter().map(|m| m.uuid.as_str()).collect();
+    assert_eq!(ids, ["q-typed"]);
+    assert_eq!(messages[0].role, Speaker::User);
+    assert_eq!(messages[0].text(), "can you create the scribe group");
+    let own: Vec<String> = transcript::user_turns(&messages)
+        .into_iter()
+        .map(|turn| turn.own)
+        .collect();
+    assert_eq!(own, ["can you create the scribe group"]);
+    assert_eq!(transcript::survey(raw.as_bytes()).user_turns, 1);
 }
