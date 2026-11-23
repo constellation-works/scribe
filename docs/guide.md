@@ -137,8 +137,8 @@ it:
 - Typed `/scribe link <id>` and `/scribe on --from <id>` keep an unmatched
   link target as typed; `/scribe group add <slug> <id>...` keeps unmatched
   member ids as typed. These targets need not have been cataloged.
-- `scribe memory ack <now-id> --session <id>` accepts and records the supplied
-  id even when it has no cataloged session.
+- `scribe memory ack <now-id> --session <id> --author <name>` accepts and records
+  the supplied id even when it has no cataloged session.
 - An instruction check's `--session <id>` is used as typed to look for a
   local transcript; if none is available, the check refuses with
   `instruction_not_found`.
