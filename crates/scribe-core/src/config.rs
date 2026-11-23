@@ -66,6 +66,40 @@
 //! paths = ["codebases/scribe"]
 //! ```
 
+/// The default characters of message content in one window (2_design.md §5.3).
+pub const WINDOW_CHARS: usize = 15_000;
+
+/// The default number of messages in one window.
+pub const WINDOW_MESSAGES: usize = 40;
+
+/// Bounds on each consecutive model window, configured under `[catalog]`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WindowLimits {
+    /// The most messages in one call.
+    pub messages: std::num::NonZeroUsize,
+    /// The most Unicode characters of message content in one call.
+    pub chars: std::num::NonZeroUsize,
+}
+
+impl Default for WindowLimits {
+    fn default() -> Self {
+        Self {
+            messages: std::num::NonZeroUsize::new(WINDOW_MESSAGES)
+                .unwrap_or(std::num::NonZeroUsize::MIN),
+            chars: std::num::NonZeroUsize::new(WINDOW_CHARS).unwrap_or(std::num::NonZeroUsize::MIN),
+        }
+    }
+}
+
+/// Default windows before sealing an open segment.
+pub const SEGMENT_WINDOWS: std::num::NonZeroU32 = match std::num::NonZeroU32::new(3) {
+    Some(n) => n,
+    None => std::num::NonZeroU32::MIN,
+};
+
+/// Maximum open candidate proposals across the whole store.
+pub const MAX_OPEN_CANDIDATES: usize = 20;
+
 use crate::entry::TagName;
 use crate::record::{Label, Project, is_kebab};
 use crate::session::Cadence;
@@ -184,7 +218,7 @@ pub struct Config {
     /// How often an opted-in session gets a pass.
     pub catalog: Cadence,
     /// Per-call message bounds, also configured under `[catalog]`.
-    pub catalog_window: crate::pass::WindowLimits,
+    pub catalog_window: WindowLimits,
     /// Windows before scribe seals an open segment (default 3).
     pub segment_windows: NonZeroU32,
     /// When sessions are deactivated by age.
@@ -209,8 +243,8 @@ impl Default for Config {
             models: ModelIds::default(),
             codex_models: ModelIds::codex(),
             catalog: Cadence::default(),
-            catalog_window: crate::pass::WindowLimits::default(),
-            segment_windows: crate::pass::SEGMENT_WINDOWS,
+            catalog_window: WindowLimits::default(),
+            segment_windows: SEGMENT_WINDOWS,
             sessions: SessionsConfig::default(),
             redact_env: Vec::new(),
             projects: BTreeMap::new(),
@@ -318,7 +352,7 @@ impl Config {
             }
         }
         let cadence = Cadence::default();
-        let window = crate::pass::WindowLimits::default();
+        let window = WindowLimits::default();
         Ok(Self {
             tags,
             tag_warnings,
@@ -329,14 +363,11 @@ impl Config {
                 every_minutes: raw.catalog.every_minutes.unwrap_or(cadence.every_minutes),
                 every_turns: raw.catalog.every_turns.unwrap_or(cadence.every_turns),
             },
-            catalog_window: crate::pass::WindowLimits {
+            catalog_window: WindowLimits {
                 messages: raw.catalog.window_messages.unwrap_or(window.messages),
                 chars: raw.catalog.window_chars.unwrap_or(window.chars),
             },
-            segment_windows: raw
-                .catalog
-                .segment_windows
-                .unwrap_or(crate::pass::SEGMENT_WINDOWS),
+            segment_windows: raw.catalog.segment_windows.unwrap_or(SEGMENT_WINDOWS),
             sessions: SessionsConfig {
                 inactive_after_days: raw
                     .sessions
@@ -619,15 +650,13 @@ impl RawCapture {
         if let Some(max_open) = self.max_open {
             let span = max_open.span();
             let value = NonZeroU32::new(*max_open.get_ref())
-                .filter(|n| {
-                    usize::try_from(n.get()).is_ok_and(|n| n <= crate::pass::MAX_OPEN_CANDIDATES)
-                })
+                .filter(|n| usize::try_from(n.get()).is_ok_and(|n| n <= MAX_OPEN_CANDIDATES))
                 .ok_or_else(|| {
                     refuse(
                         span.clone(),
                         format!(
                             "{key}.max_open: from 1 to {} (the store-wide cap on open claims)",
-                            crate::pass::MAX_OPEN_CANDIDATES
+                            MAX_OPEN_CANDIDATES
                         ),
                     )
                 })?;

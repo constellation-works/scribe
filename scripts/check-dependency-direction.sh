@@ -127,6 +127,10 @@ for path in "$CORE"/*; do
   ban "$path" 'tempfile::|rustix::' "core/$name is business logic: file and process access belong in store/"
   ban "$path" 'crate::store'                              "core/$name is business logic: it must not depend on persistence"
 done
+# Pass is an orchestrator; its lower-level callers cannot depend on it.
+for path in config.rs annotation.rs consistency.rs instruction.rs memory message.rs; do
+  ban "$CORE/$path" 'crate::pass(::|[^[:alnum:]_]|$)' "core/$path must not depend on pass"
+done
 # The Models port must not import its callers.
 ban "$CORE/models.rs" 'crate::(ask|memory|group)(::|[^[:alnum:]_]|$)' "the Models port must not import its callers"
 # A grouped crate import can name a caller without spelling crate::caller.

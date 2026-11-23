@@ -52,45 +52,22 @@ use std::num::NonZeroU32;
 use time::OffsetDateTime;
 
 mod candidates;
+pub use crate::claim::PassClaim;
 #[cfg(test)]
-pub(crate) use candidates::covers_statement;
+pub(crate) use crate::claim::covers_statement;
+pub(crate) use crate::claim::{
+    candidate_says, claim_covers, covering_claim, covering_entry, entry_says, own_span,
+};
+pub use crate::config::{
+    MAX_OPEN_CANDIDATES, SEGMENT_WINDOWS, WINDOW_CHARS, WINDOW_MESSAGES, WindowLimits,
+};
 pub use candidates::{
-    MAX_CANDIDATES, MAX_COLLECTED, MAX_OPEN_CANDIDATES, PassClaim, candidate_drafts,
-    candidate_exclusions, capture_request, write_exclusions,
+    MAX_CANDIDATES, MAX_COLLECTED, candidate_drafts, candidate_exclusions, capture_request,
+    write_exclusions,
 };
-pub(crate) use candidates::{
-    admission, fire, is_marker, own_marked_span, own_span, statement_tokens,
-};
-pub(crate) use candidates::{
-    candidate_says, claim_covers, covering_claim, covering_entry, entry_says,
-};
+pub(crate) use candidates::{admission, fire};
 mod repair;
 pub use repair::repair;
-
-/// The default characters of message content in one window (2_design.md §5.3).
-pub const WINDOW_CHARS: usize = 15_000;
-
-/// The default number of messages in one window.
-pub const WINDOW_MESSAGES: usize = 40;
-
-/// Bounds on each consecutive model window, configured under `[catalog]`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct WindowLimits {
-    /// The most messages in one call.
-    pub messages: std::num::NonZeroUsize,
-    /// The most Unicode characters of message content in one call.
-    pub chars: std::num::NonZeroUsize,
-}
-
-impl Default for WindowLimits {
-    fn default() -> Self {
-        Self {
-            messages: std::num::NonZeroUsize::new(WINDOW_MESSAGES)
-                .unwrap_or(std::num::NonZeroUsize::MIN),
-            chars: std::num::NonZeroUsize::new(WINDOW_CHARS).unwrap_or(std::num::NonZeroUsize::MIN),
-        }
-    }
-}
 
 /// The most sessions one `session pass` run processes (2_design.md §5.2).
 pub const MAX_PER_RUN: usize = 5;
@@ -111,12 +88,6 @@ pub const BUDGETS: Budgets = Budgets {
 
 /// Maximum text length of a model-written segment.
 pub const SEGMENT_CHARS: usize = 900;
-/// Default windows before sealing an open segment.
-pub const SEGMENT_WINDOWS: NonZeroU32 = match NonZeroU32::new(3) {
-    Some(n) => n,
-    None => NonZeroU32::MIN,
-};
-
 /// The session's messages as a pass reads them, in transcript order.
 /// Daniel's turns are [`crate::transcript::user_turn`].
 #[must_use]

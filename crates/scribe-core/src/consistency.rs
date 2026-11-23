@@ -780,7 +780,7 @@ fn approve(
     }
     if proposal.kind == ProposalKind::Candidate {
         let covered_by = proposal.candidate.as_ref().and_then(|candidate| {
-            crate::pass::covering_claim(entries, candidate).map(|entry| entry.id.clone())
+            crate::claim::covering_claim(entries, candidate).map(|entry| entry.id.clone())
         });
         if let Some(by) = covered_by {
             proposal.state = ProposalState::Rejected;

@@ -19,9 +19,9 @@
 //!
 //! No I/O (STD-02 R5): the store redacts and writes what [`window`] selects.
 
+use crate::claim::PassClaim;
 use crate::entry::Speaker;
 use crate::models::PassMessage;
-use crate::pass::PassClaim;
 use crate::session::SessionId;
 use crate::transcript;
 use time::OffsetDateTime;
