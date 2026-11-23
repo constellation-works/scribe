@@ -6655,7 +6655,9 @@ that project on stderr.
 
 **Joining and correcting membership.** A caller supplies its own agent
 `--author`. A new seat takes `--role`, defaulting to the seat name.
-A replacement inherits that role. A transcript can occur in only one
+A project-group seat defaults to `member`. When `--role` is omitted for an
+existing seat, its role is preserved on retries and replacements. A
+replacement inherits that role. A transcript can occur in only one
 seat across the store, including earlier positions in a chain. Repeating
 the same join preserves its position. To take an occupied seat, pass
 `--replace`, let scribe verify that the previous holder’s transcript

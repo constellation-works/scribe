@@ -132,11 +132,15 @@ fn open(f: &Fixture) -> Value {
 }
 
 fn join(f: &Fixture, session: &str, id: &str, extra: &[&str], code: i32) -> Value {
+    join_as(f, session, id, "editor", extra, code)
+}
+
+fn join_as(f: &Fixture, session: &str, id: &str, seat: &str, extra: &[&str], code: i32) -> Value {
     invoke(
         f,
         session,
         &[
-            &["group", "join", id, "--as", "editor", "--author", "aide"][..],
+            &["group", "join", id, "--as", seat, "--author", "aide"][..],
             extra,
         ]
         .concat(),
@@ -957,6 +961,85 @@ fn seat_chains_replacement_handoffs_and_mistaken_joins() {
         invoke(&f, C, &["group", "leave"], 1)["code"],
         "group_membership"
     );
+}
+
+#[test]
+fn project_group_join_preserves_existing_role_when_role_is_omitted() {
+    let f = Fixture::new();
+    let prompt = "/scribe group role-preservation";
+    let transcript = transcript(&f, A, &[row(A, "typed", "user", prompt)]);
+    hook(
+        &f,
+        &["hook", "user-prompt-submit"],
+        json!({
+            "session_id": A,
+            "transcript_path": transcript,
+            "cwd": f.home(),
+            "prompt": prompt
+        }),
+        &[],
+    );
+    let opened = invoke(&f, A, &["group", "show", "role-preservation"], 0);
+    assert_eq!(opened["seats"][0]["role"], "member");
+
+    let custom = join_as(
+        &f,
+        B,
+        "role-preservation",
+        "editor",
+        &["--role", "copy editor"],
+        0,
+    );
+    let custom_editor = custom["seats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|seat| seat["name"] == "editor")
+        .unwrap();
+    assert_eq!(custom_editor["role"], "copy editor");
+
+    // Retrying the same session with no --role keeps the custom role.
+    let retry = join(&f, B, "role-preservation", &[], 0);
+    let editor = retry["seats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|seat| seat["name"] == "editor")
+        .unwrap();
+    assert_eq!(editor["role"], "copy editor");
+    assert_eq!(editor["transcripts"], json!([B]));
+
+    // A new project-group seat without --role still defaults to member.
+    let new_seat = join_as(&f, D, "role-preservation", "observer", &[], 0);
+    let observer = new_seat["seats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|seat| seat["name"] == "observer")
+        .unwrap();
+    assert_eq!(observer["role"], "member");
+
+    // An explicit incompatible role is still refused, while an authorized
+    // replacement that omits --role inherits the existing role.
+    assert_eq!(
+        join(
+            &f,
+            C,
+            "role-preservation",
+            &["--replace", "--role", "member"],
+            1
+        )["code"],
+        "group_membership"
+    );
+    let replacement = join(&f, C, "role-preservation", &["--replace"], 0);
+    let editor = replacement["seats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|seat| seat["name"] == "editor")
+        .unwrap();
+    assert_eq!(editor["role"], "copy editor");
+    assert_eq!(editor["transcripts"], json!([B, C]));
 }
 
 #[test]
