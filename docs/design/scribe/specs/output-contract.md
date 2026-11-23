@@ -199,8 +199,8 @@ message}]`, Daniel's own words), `provider`, `host`, `created`,
 message id or `null`), `passes`, `next_open`, `summary`, `goals`,
 `outcome`, `next`, and from its switch `on` and `due` (both `false` when the
 session has no switch; the switch is read from `scribe.db` once the sessions
-have moved, from `control.json` before). The four text fields are
-model-written.
+have moved, from `control.json` before). The `outcome` field is an empty string
+for compatibility; `summary`, `goals`, and `next` are model-written.
 `links` and `children` were added with session links (store format 3);
 every other field is unchanged.
 
