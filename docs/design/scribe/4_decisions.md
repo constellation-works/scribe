@@ -1538,7 +1538,8 @@ stay.
 **Refined by session refresh:** Outside the §16.7 continue-handoff path,
 `session-start` remains read-only. Restoring a continue handoff writes the
 child's `continues` link and inherited switch and audits that write.
-**Code anchors:** `crates/scribe/src/commands/hook/session_start.rs`
+**Code anchors:** `crates/scribe/src/commands/hook/session_start.rs`,
+`crates/scribe/src/commands/hook/continuation.rs` (the restoration)
 
 ### Context
 
@@ -1549,11 +1550,25 @@ missing file as the defaults, and the hook runs before every session.
 ### Decision
 
 Outside the continue-handoff restoration in [design §16.7](./2_design.md#167-continuing-after-a-clear),
-`session-start` only reads `proposals.json` and prints the open count; a
-read error is logged and counts as none. When it restores a continue
-handoff, it writes the `continues` link and inherited switch under
-`Store::write`, and audits the write (or refusal). That is the hook's only
-write path.
+`session-start` is read-only: it reads the store and writes nothing. It
+replies with a message and additional context:
+
+- The message is the open-proposal count (`scribe: N proposals to review`),
+  the stuck-action line for action entries with no pickup after an hour, and
+  at most one continuation line. On a start that is not `clear`, that line is
+  the same-project reminder (or the list of possible predecessors when
+  several qualify). In an interactive Claude Code session whose transcript
+  names a cleared predecessor, the restoration gives the line instead: an
+  ambiguity note when several are named, or a failure note when the restore
+  fails.
+- The context is a restored continue handoff's body, then, in an interactive
+  session, the brief for this project with its memory page.
+
+The proposals come from the store: its database, or `proposals.json` before
+migration. A read that fails is logged and that part is left out; the rest
+still prints. When it restores a continue handoff, it writes the `continues`
+link and inherited switch under `Store::write`, and audits the write (or
+refusal). That is the hook's only write path.
 
 ### Consequences
 
