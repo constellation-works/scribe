@@ -1556,6 +1556,67 @@ fn blocked_first_prompt_preserves_deferred_ancestry_for_next_prompt() {
 }
 
 #[test]
+fn explicit_off_before_deferred_ancestry_preserves_opt_out() {
+    let f = Fixture::new();
+    let path = setup_missing_start(&f);
+    let store = scribe_core::Store::open(f.root());
+    let parent = A.parse().unwrap();
+    let child = B.parse().unwrap();
+    store
+        .update_control(|state| {
+            scribe_core::control::switch(
+                state,
+                &parent,
+                &scribe_core::control::Switch::On,
+                time::OffsetDateTime::now_utc(),
+            )
+        })
+        .unwrap();
+    write_cleared_b_transcript(&f);
+
+    let off = hook(
+        &f,
+        &["hook", "user-prompt-submit"],
+        json!({"session_id": B, "transcript_path": path, "cwd": f.home(), "prompt": "/scribe off"}),
+        &[("CLAUDE_CODE_ENTRYPOINT", "claude-desktop")],
+    );
+    let reply: Value = serde_json::from_slice(&off.stdout).unwrap();
+    assert_eq!(reply["decision"], "block", "{reply}");
+    let result = hook(
+        &f,
+        &["hook", "user-prompt-submit"],
+        json!({"session_id": B, "transcript_path": path, "cwd": f.home(), "prompt": "continue from handoff"}),
+        &[("CLAUDE_CODE_ENTRYPOINT", "claude-desktop")],
+    );
+    let reply: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert!(
+        reply["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap()
+            .contains("Carry on."),
+        "{reply}"
+    );
+    let state = store.control().unwrap();
+    let control = state.get(&child).unwrap();
+    assert!(!control.on && !control.due && !control.final_pass);
+    assert!(
+        !scribe_core::control::due(&state)
+            .iter()
+            .any(|(id, _)| id == &child)
+    );
+    assert!(
+        control
+            .pending_links
+            .iter()
+            .any(|link| link.kind == scribe_core::LinkType::Continues && link.session == parent)
+    );
+    assert_eq!(
+        invoke(&f, B, &["group", "show", "g-1"], 0)["seats"][0]["transcripts"],
+        json!([A, B])
+    );
+}
+
+#[test]
 fn deferred_ancestry_survives_while_transcript_remains_missing() {
     let f = Fixture::new();
     let path = setup_missing_start(&f);

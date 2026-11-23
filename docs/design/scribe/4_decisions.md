@@ -1654,6 +1654,8 @@ are structured.
   newer active handoff with mode `new` or no mode takes precedence over an
   older active `continue` handoff, leaving the ordinary brief and recording
   switch alone ([design §16.7](./2_design.md#167-continuing-after-a-clear)).
+  An explicit `/scribe on` or `/scribe off` typed before a deferred ancestry
+  check runs is preserved while the link and seat are inherited.
   It does not pair sessions by checkout or time. For a manual link, an
   unknown target, a self-link, a cycle (through links of either type), a
   second parent and a `link` in an uncataloged session are refused with
