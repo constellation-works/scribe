@@ -3,7 +3,7 @@
 //! Both read transcripts and the store and write nothing.
 
 use crate::cases::catalog::{self, CatalogError};
-use crate::cases::{Ctx, PortError, Unreadable};
+use crate::runtime::{Ctx, PortError, Unreadable};
 use crate::transcript::{self, Survey};
 use crate::{Config, Project, Provider, SessionId};
 use std::collections::BTreeMap;

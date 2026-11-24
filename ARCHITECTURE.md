@@ -24,7 +24,7 @@ scribe-domain  <-  scribe-store  <-  scribe-core  <-  scribe
 |-------|------|-----------------------|--------|
 | `scribe-domain` | Records and the pure rules over them: entries, sessions, proposals, tags, transcripts, the parsing of prompts and config, the checks a write runs, redaction, and the request and answer shapes of the `Models` port. Values only, no I/O. | — | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile`, `rustix` |
 | `scribe-store` | The data root and `scribe.db`: the `Store` (`open`, `read() -> Snapshot`, `write(\|tx\| …)` and the repositories), locks, atomic writes, format stamps, the import of the file store's archives and the audit record. The only crate that touches the data root. | `scribe-domain` | `clap`, `tracing-subscriber` and any terminal crate |
-| `scribe-core` | The use cases (`cases/`): each loads what it needs from a snapshot, plans with domain functions, calls the ports and commits in one store write. Its root re-exports `scribe-domain` and `scribe-store` at the paths they had in it. | `scribe-domain`, `scribe-store` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile`, `rustix` |
+| `scribe-core` | The apps (`apps/<app>/`, with the use cases still in `cases/` until ORB-27921 step 2 moves them) and the `runtime/` they run against: the context and its ports, id resolution, the shared errors and the audit lines a use case owes. Each use case loads what it needs from a snapshot, plans with domain functions, calls the ports and commits in one store write. Its root re-exports `scribe-domain` and `scribe-store` at the paths they had in it. | `scribe-domain`, `scribe-store` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile`, `rustix` |
 | `scribe` (binary) | Arguments, dispatch, the audit guard, rendering, and the model adapter. | `scribe-core` | `rusqlite` |
 
 The banned crates are normal dependencies only. Dev-dependencies are exempt:
@@ -51,6 +51,26 @@ so a shipped build never compiles it:
 The store's tests that call the use cases (`*Verbs`) are in `scribe-core`
 (`src/tests/store/`), since `scribe-store` cannot see the use cases and has
 no dev-dependency on `scribe-core`. Its other tests are in `scribe-store`.
+
+## Apps inside `scribe-core`
+
+An app is one subject a user names on the command line
+([the architecture spec](docs/design/scribe/specs/architecture.md#apps)).
+Apps import each other in one order, lowest first, and only through what the
+lower app's `mod.rs` exports, never one of its flow files. The script holds
+the order; a directory under `apps/` that is not in it fails the check, and
+so does `apps/common`, `apps/shared` or `apps/util`. Code in `apps/` never
+imports `cases/`.
+
+```
+tag < mark < memory < entry < proposal < session < group < search < brief < consistency < hook < admin
+```
+
+This is the spec's starting order made total by the imports: `proposal`
+calls `entry`, `session` calls `entry` and `proposal`, `group` calls
+`session`, `brief` calls `memory`, `consistency` calls `proposal` and
+`session`, `hook` calls all of them, and `admin` runs the routines of
+`session`, `consistency` and `memory`.
 
 ## Tiers inside `scribe`
 

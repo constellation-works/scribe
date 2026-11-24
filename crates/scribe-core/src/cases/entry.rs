@@ -1,7 +1,6 @@
 //! Entry verbs: notes written with agent provenance, and the decision and
 //! open-item records (2_design.md §12, §18).
 
-use crate::cases::session::SessionVerbs;
 use crate::checks::entry::{
     check_evidence, check_handoff, check_handoff_related, check_handoff_related_update,
     check_quote, check_spoken_quote, check_spoken_tag, counts_toward_cap, draft_session,
@@ -18,6 +17,7 @@ use crate::entry::{
     AgentEntry, Cite, DECISION_TAG, EntryPatch, OPEN_ITEM_TAG, is_decision_or_item,
 };
 use crate::record::patch;
+use crate::runtime::resolve::refuse_forgotten;
 use crate::{
     Author, AuthorKind, AuthorName, ContentFrom, Decision, Entry, EntryId, EntryStatus, Error,
     ItemAnswer, ItemClosure, ItemState, Label, Redactor, RelatedKind, Result, SessionId, Store,
@@ -232,7 +232,7 @@ impl EntryVerbs for Store {
                         .filter(|r| r.kind() == RelatedKind::Session)
                         .filter_map(|r| r.target().parse::<SessionId>().ok())
                     {
-                        self.refuse_forgotten(&session)?;
+                        refuse_forgotten(self, &session)?;
                     }
                 }
                 Ok(())
@@ -306,7 +306,7 @@ impl EntryVerbs for Store {
                     Err(Error::SessionNotFound { .. }) => id,
                     Err(error) => return Err(error),
                 };
-                self.refuse_forgotten(&resolved)?;
+                refuse_forgotten(self, &resolved)?;
             }
         }
         if draft.handoff_mode.is_some() && tag.name.as_str() != crate::handoff::HANDOFF_TAG {
@@ -593,11 +593,11 @@ impl EntryVerbs for Store {
                 "the answer has quoted text that redaction would alter; nothing written",
             ));
         }
-        self.refuse_forgotten(&answer.session)?;
+        refuse_forgotten(self, &answer.session)?;
         self.write(|tx| {
             // Checked again inside the write: a forget committed after the
             // check above must not be followed by a fresh answer write.
-            self.refuse_forgotten(&answer.session)?;
+            refuse_forgotten(self, &answer.session)?;
             let mut entry = tx.entries().resolve(id)?;
             check_unsettled_item(&entry)?;
             let author = Author::agent(answer.recorded_by.clone());
@@ -817,16 +817,16 @@ pub struct Listed {
 ///
 /// # Errors
 ///
-/// [`ReadError`](crate::cases::read_error::ReadError): an ambiguous
+/// [`ReadError`](crate::runtime::errors::ReadError): an ambiguous
 /// prefix, a range that ends before it starts, or a store error.
-pub fn list<E: crate::cases::PortError>(
-    ctx: &crate::cases::Ctx<'_, E>,
+pub fn list<E: crate::runtime::PortError>(
+    ctx: &crate::runtime::Ctx<'_, E>,
     input: ListInput,
-) -> std::result::Result<Listed, crate::cases::read_error::ReadError<E>> {
-    use crate::cases::read_error::ReadError;
+) -> std::result::Result<Listed, crate::runtime::errors::ReadError<E>> {
+    use crate::runtime::errors::ReadError;
     let mut filter = input.filter;
     filter.related =
-        crate::cases::resolve::relateds_preserving_input(ctx, input.provider, &filter.related)?;
+        crate::runtime::resolve::relateds_preserving_input(ctx, input.provider, &filter.related)?;
     filter.dates = crate::DateRange::checked(input.since, input.until).map_err(ReadError::Usage)?;
     let group = input
         .group
@@ -865,7 +865,7 @@ pub struct Shown {
 /// # Errors
 ///
 /// An unknown or ambiguous id, or a store error.
-pub fn show<E>(ctx: &crate::cases::Ctx<'_, E>, id: &str) -> crate::Result<Shown> {
+pub fn show<E>(ctx: &crate::runtime::Ctx<'_, E>, id: &str) -> crate::Result<Shown> {
     let entry = ctx.store.resolve_entry(id)?;
     let actions = crate::cases::entry_cmd::Actions::load(ctx)?;
     let admitted = ctx

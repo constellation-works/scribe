@@ -34,7 +34,6 @@
 //! the rest of the prompt still reaches the agent.
 
 use crate::capture::{self, Parsed, Turn};
-use crate::cases::Ctx;
 use crate::cases::continuation;
 use crate::cases::group::GroupVerbs;
 use crate::cases::group_add::{self, GroupAddInput};
@@ -47,6 +46,7 @@ use crate::cases::scribe_command::{self, ScribeCommandInput};
 use crate::cases::session::SessionVerbs;
 use crate::cases::session_start;
 use crate::message::NewMessage;
+use crate::runtime::Ctx;
 use crate::{Label, Provider, SessionId, annotation};
 use std::path::Path;
 

@@ -722,14 +722,14 @@ pub struct ListInput<'i> {
 ///
 /// # Errors
 ///
-/// [`ReadError`](crate::cases::read_error::ReadError): an unknown entry, a
+/// [`ReadError`](crate::runtime::errors::ReadError): an unknown entry, a
 /// range that ends before it starts, or a store error.
 pub fn list<E>(
-    ctx: &crate::cases::Ctx<'_, E>,
+    ctx: &crate::runtime::Ctx<'_, E>,
     input: ListInput<'_>,
 ) -> std::result::Result<
     (crate::ProposalFilter, Vec<crate::Proposal>),
-    crate::cases::read_error::ReadError<E>,
+    crate::runtime::errors::ReadError<E>,
 > {
     let mut filter = input.filter;
     filter.entry = match input.entry {
@@ -737,7 +737,7 @@ pub fn list<E>(
         None => None,
     };
     filter.dates = crate::DateRange::checked(input.since, input.until)
-        .map_err(crate::cases::read_error::ReadError::Usage)?;
+        .map_err(crate::runtime::errors::ReadError::Usage)?;
     let proposals = ctx
         .store
         .read()

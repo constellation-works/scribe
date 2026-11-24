@@ -2,10 +2,10 @@
 //! manual activity change, in one locked store call (§7, S10).
 
 use crate::activity::{self, ActiveOutcome, ActiveRoute, SetActive};
-use crate::cases::Ctx;
 use crate::cases::entry::EntryVerbs;
 use crate::cases::session::SessionVerbs;
-use crate::cases::write_error::{WriteError, redactor};
+use crate::runtime::Ctx;
+use crate::runtime::errors::{WriteError, redactor};
 use crate::store::SessionView;
 use crate::{Author, AuthorName, SessionId};
 use std::num::NonZeroU32;

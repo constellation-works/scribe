@@ -2,8 +2,8 @@
 //! sessions and, for `--kind message` or a default search that finds
 //! nothing else, the stored messages (2_design.md §15.2).
 
-use crate::cases::Ctx;
-use crate::cases::read_error::ReadError;
+use crate::runtime::Ctx;
+use crate::runtime::errors::ReadError;
 use crate::search::{self, Found, SearchError, SearchQuery};
 use crate::search::{Corpus, RecordKind};
 use crate::{EntryFilter, SessionFilter, Skipped};

@@ -22,15 +22,6 @@ pub enum HandoffSelection<'a> {
 
 /// The session verbs, implemented for [`Store`].
 pub trait SessionVerbs {
-    /// Refuse `id` when `#scribe forget` erased it, before any model call or
-    /// write on its behalf: a forgotten session takes no write (`session_forgotten`).
-    /// Reads only.
-    ///
-    /// # Errors
-    ///
-    /// `session_forgotten` for a forgotten session, or a store read error.
-    fn refuse_forgotten(&self, id: &SessionId) -> Result<()>;
-
     /// Link `session` to another session, under the store lock
     /// ([`control::link`]): when `on`, switch it on too. A new link is
     /// added to the session's record when it has one (its other fields,
@@ -116,13 +107,6 @@ pub trait SessionVerbs {
 }
 
 impl SessionVerbs for Store {
-    fn refuse_forgotten(&self, id: &SessionId) -> Result<()> {
-        if self.read().sessions().is_forgotten(id)? {
-            return Err(forgotten_refusal(id, "nothing is written to it"));
-        }
-        Ok(())
-    }
-
     fn link_session(
         &self,
         session: &SessionId,
@@ -456,16 +440,16 @@ pub struct Listed {
 ///
 /// # Errors
 ///
-/// [`ReadError`](crate::cases::read_error::ReadError): an ambiguous
+/// [`ReadError`](crate::runtime::errors::ReadError): an ambiguous
 /// prefix, a range that ends before it starts, or a store error.
-pub fn list<E: crate::cases::PortError>(
-    ctx: &crate::cases::Ctx<'_, E>,
+pub fn list<E: crate::runtime::PortError>(
+    ctx: &crate::runtime::Ctx<'_, E>,
     input: ListInput,
-) -> std::result::Result<Listed, crate::cases::read_error::ReadError<E>> {
+) -> std::result::Result<Listed, crate::runtime::errors::ReadError<E>> {
     let mut filter = input.filter;
-    filter.related = crate::cases::resolve::relateds(ctx, input.provider, &filter.related)?;
+    filter.related = crate::runtime::resolve::relateds(ctx, input.provider, &filter.related)?;
     filter.dates = crate::DateRange::checked(input.since, input.until)
-        .map_err(crate::cases::read_error::ReadError::Usage)?;
+        .map_err(crate::runtime::errors::ReadError::Usage)?;
     let group = input
         .group
         .as_deref()
@@ -511,14 +495,14 @@ pub enum Shown {
 ///
 /// # Errors
 ///
-/// [`ReadError::SegmentNotFound`](crate::cases::read_error::ReadError),
+/// [`ReadError::SegmentNotFound`](crate::runtime::errors::ReadError),
 /// an unknown or ambiguous id, or a store error.
 pub fn show<E>(
-    ctx: &crate::cases::Ctx<'_, E>,
+    ctx: &crate::runtime::Ctx<'_, E>,
     id: &SessionId,
     segment: Option<std::num::NonZeroU32>,
-) -> std::result::Result<Shown, crate::cases::read_error::ReadError<E>> {
-    use crate::cases::read_error::ReadError;
+) -> std::result::Result<Shown, crate::runtime::errors::ReadError<E>> {
+    use crate::runtime::errors::ReadError;
     let id = ctx.store.read().sessions().resolve_or_handoff(id)?;
     let handoffs = ctx.store.read().entries().handoffs_for_session(&id)?;
     let view = match ctx.store.read().sessions().get(&id) {

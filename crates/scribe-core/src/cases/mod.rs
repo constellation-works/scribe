@@ -14,13 +14,11 @@
 //! (scripts/check-dependency-direction.sh).
 
 pub mod annotation;
-pub mod audit;
 pub mod brief;
 pub mod catalog;
 pub mod codex;
 pub mod consistency_scan;
 pub mod continuation;
-mod ctx;
 pub mod entry;
 pub mod entry_cmd;
 pub mod entry_verify;
@@ -44,9 +42,7 @@ pub mod pickup;
 pub mod proposal;
 pub mod proposal_cmd;
 pub mod proposal_command;
-pub mod read_error;
 pub mod rebuild;
-pub mod resolve;
 pub mod scribe_command;
 pub mod search;
 pub mod session;
@@ -58,12 +54,5 @@ pub mod tag;
 pub mod tag_cmd;
 pub mod transcript;
 pub mod user_prompt_submit;
-pub mod write_error;
 
-pub use ctx::{
-    AuditNotes, Clock, Ctx, Discovered, PortError, Redaction, RunLimits, TranscriptState,
-    Transcripts, Unreadable,
-};
-#[cfg(unix)]
-pub use ctx::{ClaudeRead, ClaudeWindow};
 pub use group_cmd::GroupError;

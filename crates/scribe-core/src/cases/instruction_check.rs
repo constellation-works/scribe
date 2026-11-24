@@ -7,9 +7,9 @@
 //! and hands the bytes to [`crate::instruction`], before the command takes
 //! the store lock. Any refusal changes nothing.
 
-use crate::cases::write_error::WriteError;
-use crate::cases::{AuditNotes, Ctx, PortError, Unreadable, resolve};
 use crate::instruction::{self, Act, Instructed, Request, Target};
+use crate::runtime::errors::WriteError;
+use crate::runtime::{AuditNotes, Ctx, PortError, Unreadable, resolve};
 use crate::{Provider, SessionId, WriteRefusal};
 
 /// The instruction a write is run on, as the flags carry it.

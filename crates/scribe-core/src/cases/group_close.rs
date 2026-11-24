@@ -3,8 +3,8 @@
 
 use crate::cases::group::GroupVerbs;
 use crate::cases::group_cmd::{GroupError, checked_transcript};
-use crate::cases::{AuditNotes, Ctx, PortError};
 use crate::group::{GroupCloser, GroupConsent};
+use crate::runtime::{AuditNotes, Ctx, PortError};
 use crate::{CloseGroupOutcome, Config, Models, Provider, SessionId, WriteRefusal};
 
 /// The audited command name.

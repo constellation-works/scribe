@@ -2,9 +2,9 @@
 //! with `cataloged_by` and run every window of its transcript.
 
 use crate::cases::pass::{CatalogJob, PassReport, RunFailure, run_catalog};
-use crate::cases::session::SessionVerbs;
-use crate::cases::{Ctx, PortError, Unreadable};
 use crate::control::{self, CatalogGate};
+use crate::runtime::resolve::refuse_forgotten;
+use crate::runtime::{Ctx, PortError, Unreadable};
 use crate::{
     Author, AuthorName, Config, Label, Models, Project, Provider, SessionControl, SessionFilter,
     SessionId, check_agent_author, transcript,
@@ -191,7 +191,7 @@ pub fn begin<E: PortError>(
     by: Author,
 ) -> Result<Begun, CatalogError<E>> {
     let id = resolve_transcript(ctx, provider, input)?;
-    ctx.store.refuse_forgotten(&id)?;
+    refuse_forgotten(ctx.store, &id)?;
     let dir = ctx
         .transcripts
         .dir()

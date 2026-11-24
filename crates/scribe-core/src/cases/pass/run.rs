@@ -2,12 +2,12 @@
 //! pass's step sequence, over the store and the ports in [`Ctx`]. The CLI
 //! parses, calls [`run`] and renders the [`PassReport`].
 
-use crate::cases::audit::PersistedAudit;
 use crate::cases::pass::PassVerbs;
-use crate::cases::session::SessionVerbs;
-use crate::cases::{Ctx, PortError, RunLimits, TranscriptState};
 use crate::control;
 use crate::models::SessionRequest;
+use crate::runtime::audit::PersistedAudit;
+use crate::runtime::resolve::refuse_forgotten;
+use crate::runtime::{Ctx, PortError, RunLimits, TranscriptState};
 use crate::{
     Config, Label, Models, Project, Provider, Redactor, SessionControl, SessionFilter, SessionId,
     SessionRecord, memory, pass, transcript,
@@ -189,7 +189,7 @@ pub fn run<E: PortError, M: Models>(
     let store = ctx.store;
     let state = store.read().sessions().control()?;
     for id in only {
-        store.refuse_forgotten(id)?;
+        refuse_forgotten(store, id)?;
     }
     let due = if only.is_empty() {
         control::due(&state)

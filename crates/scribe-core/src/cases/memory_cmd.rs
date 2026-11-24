@@ -2,9 +2,9 @@
 //! and `refresh`, each an audited write (2_design.md §15.4–§15.6).
 
 use crate::cases::memory::MemoryVerbs;
-use crate::cases::{Ctx, PortError, resolve};
 use crate::memory::NowItem;
 use crate::models::ModelError;
+use crate::runtime::{Ctx, PortError, resolve};
 use crate::{AuthorName, MemoryShown, Models, Provider, RefreshWritten, SessionId};
 use std::time::Duration;
 

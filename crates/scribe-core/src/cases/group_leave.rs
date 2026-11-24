@@ -2,8 +2,8 @@
 //! its seat.
 
 use crate::SessionId;
-use crate::cases::Ctx;
 use crate::cases::group::GroupVerbs;
+use crate::runtime::Ctx;
 
 /// Remove `session` from its seat; the group it left.
 ///

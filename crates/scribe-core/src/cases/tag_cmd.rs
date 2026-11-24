@@ -1,9 +1,9 @@
 //! `scribe tag add|update` (ORB-27707 step 3d): agent tags, without changing
 //! config.toml.
 
-use crate::cases::Ctx;
 use crate::cases::tag::TagVerbs;
-use crate::cases::write_error::{WriteError, redactor};
+use crate::runtime::Ctx;
+use crate::runtime::errors::{WriteError, redactor};
 use crate::{Author, AuthorName, StoreTag, TagName, TagPatch};
 
 /// What `tag add` runs.

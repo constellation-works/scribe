@@ -214,6 +214,59 @@ if [[ -n "$ring_hits" ]]; then
   err "scribe-domain's ring order: a module imports only its own ring or an earlier one (ARCHITECTURE.md)"
 fi
 
+# scribe-core's apps (ORB-27921 step 2; ARCHITECTURE.md, the architecture
+# spec §Apps): every directory under apps/ is in the order below, and an app
+# imports only apps earlier in it, and only through what that app's mod.rs
+# exports (`crate::apps::entry::Item`), never a flow file
+# (`crate::apps::entry::flow::…`). A new app fails until it is given a place.
+APP_ORDER='tag mark memory entry proposal session group search brief consistency hook admin'
+for shared in common shared util; do
+  [[ -e "$CORE/apps/$shared" ]] && err "apps/$shared: code two apps need goes to the lower one, to runtime or to the tools"
+done
+app_hits=$(APP_ORDER="$APP_ORDER" perl -e '
+  use strict; use warnings;
+  my $root = shift;
+  my $n = 0; my %rank = map { $_ => $n++ } split " ", $ENV{APP_ORDER};
+  exit 0 unless -d $root;
+  opendir my $dh, $root or die "$root: $!";
+  for my $d (sort grep { !/^\./ && -d "$root/$_" } readdir $dh) {
+    print "$root/$d: app $d has no place in the app order\n" unless exists $rank{$d};
+  }
+  local $/;
+  my @files = split /\0/, `find "$root" -name "*.rs" -not -path "*/tests/*" -print0`;
+  for my $file (@files) {
+    my ($src) = $file =~ m{^\Q$root\E/(\w+)/};
+    next unless defined $src && exists $rank{$src};
+    open my $fh, "<", $file or die "$file: $!";
+    my $s = <$fh>;
+    $s =~ s{^\s*//.*$}{}mg;
+    my @refs;
+    push @refs, [$1, $2, $-[0]] while $s =~ /crate::apps::(\w+)((?:::\w+)*(?:::\{)?)/g;
+    while ($s =~ /crate::apps::\{/g) {
+      my ($at, $i, $d) = ($-[0], pos($s), 1);
+      my $j = $i;
+      while ($d && $j < length $s) { my $c = substr($s, $j++, 1); $d++ if $c eq "{"; $d-- if $c eq "}"; }
+      my $g = substr($s, $i, $j - $i - 1);
+      1 while $g =~ s/\{[^{}]*\}/X/g;
+      for (split /,/, $g) { push @refs, [$1, $2, $at] if /^\s*(\w+)((?:::\w+)*)/ }
+      pos($s) = $j;
+    }
+    for my $r (@refs) {
+      my ($t, $rest, $at) = @$r;
+      next if $t eq $src;
+      my $line = 1 + (substr($s, 0, $at) =~ tr/\n//);
+      if (!exists $rank{$t}) { print "$file:$line: $src imports unknown app $t\n"; next }
+      print "$file:$line: $src imports $t, which is not lower in the app order\n" if $rank{$t} >= $rank{$src};
+      print "$file:$line: $src reaches into $t$rest: import what its mod.rs exports\n" if $rest =~ /^::[a-z_]\w*::/;
+    }
+  }
+' "$CORE/apps" 2>&1 || true)
+if [[ -n "$app_hits" ]]; then
+  echo "$app_hits" >&2
+  err "scribe-core's app order: an app imports only lower apps, through their mod.rs (ARCHITECTURE.md)"
+fi
+ban "$CORE/apps" 'crate::cases(::|[^[:alnum:]_]|$)' "an app must not import cases/: move what it needs first"
+
 # Pass is an orchestrator; its lower-level callers in the rules ring cannot
 # depend on it.
 for path in config.rs annotation.rs consistency.rs instruction.rs memory message.rs; do
@@ -296,7 +349,12 @@ for retired in \
   crates/scribe-core/src/tests/note.rs \
   crates/scribe-core/src/tests/query.rs \
   crates/scribe/src/commands/note.rs \
-  crates/scribe/src/commands/tests/note.rs; do
+  crates/scribe/src/commands/tests/note.rs \
+  crates/scribe-core/src/cases/ctx.rs \
+  crates/scribe-core/src/cases/resolve.rs \
+  crates/scribe-core/src/cases/read_error.rs \
+  crates/scribe-core/src/cases/write_error.rs \
+  crates/scribe-core/src/cases/audit.rs; do
   [[ -e "$retired" ]] && err "retired path exists again: $retired"
 done
 # ORB-27707 step 4: scribe-core's business modules became scribe-domain

@@ -7,7 +7,8 @@
 //! the proposals, takes no lock and writes nothing.
 
 use crate::brief::{self, Brief, DEFAULT_SESSIONS};
-use crate::cases::{Ctx, PortError, memory_block};
+use crate::cases::memory_block;
+use crate::runtime::{Ctx, PortError};
 use crate::{
     EntryFilter, EntryStatus, MemoryView, Project, Provider, SessionFilter, SessionId, ShortIds,
 };
