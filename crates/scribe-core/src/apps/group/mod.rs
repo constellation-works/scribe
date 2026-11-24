@@ -11,6 +11,7 @@ mod close;
 mod join;
 mod leave;
 mod open;
+pub mod rules;
 mod turns;
 mod verbs;
 

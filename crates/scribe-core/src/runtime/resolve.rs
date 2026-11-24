@@ -2,8 +2,8 @@
 //! transcripts on disk (ORB-27707 step 3d), and refusing a session id
 //! `#scribe forget` erased.
 
-use crate::checks::forgotten_refusal;
 use crate::runtime::{Ctx, PortError};
+use crate::store::forgotten_refusal;
 use crate::{Provider, Related, RelatedKind, Result, SessionId, Store};
 
 /// Refuse `id` when `#scribe forget` erased it, before any model call or

@@ -2,11 +2,11 @@
 //! only while it holds its seat in an open group, within its consent window,
 //! and each write rechecks the membership the hook read.
 
-use crate::checks::group::{check_capture_turns, check_own_user_turns};
-use crate::checks::refusal;
+use crate::apps::group::rules::{check_capture_turns, check_own_user_turns};
 use crate::instruction::ClaudeGroupTurns;
 use crate::message::NewMessage;
 use crate::repository::CaptureState;
+use crate::store::refusal;
 use crate::{
     ClaudeCapturePosition, ClaudeGroupCapture, Redactor, Result, SessionId, Store, WriteRefusal,
 };

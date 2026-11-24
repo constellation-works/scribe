@@ -9,6 +9,7 @@ mod block;
 mod forget;
 mod refresh;
 mod restore;
+pub mod rules;
 mod show;
 mod verbs;
 mod window;
@@ -18,6 +19,7 @@ pub use refresh::{
     Basis, ProfileInputs, REFRESH_BUDGET, REFRESH_SESSIONS, REFRESH_SUMMARY_CHARS,
     REFRESH_VERBATIM_CHARS, REFRESH_VERBATIM_SESSIONS, RefreshWritten,
 };
+pub use rules::check_sensitive_drafts;
 pub use show::Shown;
 #[cfg(any(test, feature = "test-support"))]
 pub use verbs::MemoryVerbs;

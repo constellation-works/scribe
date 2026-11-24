@@ -15,10 +15,10 @@
 use super::Sessions;
 use super::ids::resolve;
 use super::memory::{MemoryFiles, MemoryRows, MemoryStep};
-use crate::checks::refusal;
 use crate::db::MemoryCommit;
 use crate::db::sessions::{self as rows, SessionTx};
 use crate::db::{self, codec};
+use crate::error::refusal;
 use crate::error::{Error, Result};
 use crate::message::NewMessage;
 use crate::{

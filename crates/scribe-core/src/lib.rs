@@ -60,7 +60,6 @@ pub mod composition;
 pub use apps::brief::rules as brief;
 pub use provider::Provider;
 pub use scribe_domain::capture;
-pub(crate) use scribe_domain::checks;
 pub(crate) use scribe_domain::claim;
 pub(crate) use scribe_domain::config;
 /// The consistency rules and the settling verbs, at the path they had in
@@ -127,6 +126,9 @@ pub use scribe_domain::voice;
 pub use apps::entry::EntryVerbs;
 #[cfg(any(test, feature = "test-support"))]
 pub use apps::entry::PickupVerbs;
+pub use apps::entry::rules::{
+    check_content, check_handoff_related, check_reason, check_unsettled_item,
+};
 #[cfg(any(test, feature = "test-support"))]
 pub use apps::group::GroupVerbs;
 #[cfg(any(test, feature = "test-support"))]
@@ -145,10 +147,7 @@ pub use apps::session::{SessionList, SessionView};
 pub use apps::tag::TagList;
 #[cfg(any(test, feature = "test-support"))]
 pub use apps::tag::TagVerbs;
-pub use checks::entry::check_handoff_related;
-pub use checks::records::check_unsettled_item;
-pub use checks::tag::check_description;
-pub use checks::{check_agent_author, check_content, check_reason};
+pub use apps::tag::rules::{check_agent_author, check_description};
 pub use config::{Config, ConfigError, ModelIds, SessionsConfig};
 pub use entry::{
     AgentEntry, AnswerIn, Cite, ContentFrom, Decision, Entry, EntryError, EntryFilter, EntryId,

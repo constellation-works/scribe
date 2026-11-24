@@ -26,7 +26,7 @@ PR 2 until PR 4, when composition is in the core.
 
 | Crate | Owns | Internal dependencies | Banned |
 |-------|------|-----------------------|--------|
-| `scribe-domain` | Records and the pure rules over them: entries, sessions, proposals, tags, transcripts, the parsing of prompts and config, the checks a write runs, redaction, and the request and answer shapes of the `Models` port. Values only, no I/O. | — | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile`, `rustix` |
+| `scribe-domain` | Records and the pure rules over them: entries, sessions, proposals, tags, transcripts, the parsing of prompts and config, redaction, and the request and answer shapes of the `Models` port. Values only, no I/O. | — | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile`, `rustix` |
 | `scribe-store` | The data root and `scribe.db`: the `Store` (`open`, `read() -> Snapshot`, `write(\|tx\| …)` and the repositories), locks, atomic writes, format stamps, the import of the file store's archives and the audit record. The only crate that touches the data root. | `scribe-domain` | `clap`, `tracing-subscriber` and any terminal crate |
 | `scribe-tools` | Functions of host files, bytes and text that decide nothing about a record: provider transcripts found under their roots and read under the provenance checks (`transcript/`), a working directory's project from git's own files (`project.rs`), and the crate's only `std::fs` access (`fs.rs`). | `scribe-domain`, `scribe-store` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile` |
 | `scribe-core` | The apps (`apps/<app>/`, one per subject, each holding its use cases) and the `runtime/` they run against: the context and its ports, id resolution, the shared errors and the audit lines a use case owes. Each use case loads what it needs from a snapshot, plans with domain functions, calls the ports and commits in one store write. Its root re-exports `scribe-domain` and `scribe-store` at the paths they had in it. `composition.rs` captures the environment (`Env`) and resolves the `Context` the apps run against; `runtime/host/` implements the ports on it; `providers/` holds the `Models` port and the model adapters. | `scribe-domain`, `scribe-store`, `scribe-tools` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite` |
@@ -38,7 +38,7 @@ runs at the same step and under the same lock. `forgotten_refusal` is the
 deliberate exception. A forgotten session is a tombstone, and every writer
 that touches a session must refuse it under the write lock, including the
 store's own internal writers, so the refusal stays beside `Error` in the
-store rather than in one app.
+store's `error.rs` rather than in one app.
 
 The banned crates are normal dependencies only. Dev-dependencies are exempt:
 the tests of `scribe-core` and `scribe` stage database states with
@@ -119,7 +119,7 @@ map; a new module fails the check until it is given a ring.
 | 1. base | `record`, `text`, `verbatim`, `provider`, `origin` |
 | 2. records | `session`, `activity`, `control`, `entry`, `handoff`, `tag`, `proposal` |
 | 3. transcript | `transcript` (with `transcript/codex`) |
-| 4. rules | `trigger`, `voice`, `claim`, `capture`, `pass`, `instruction`, `models`, `config`, `error`, `checks`, `group`, `memory`, `message`, `annotation`, `redact` |
+| 4. rules | `trigger`, `voice`, `claim`, `capture`, `pass`, `instruction`, `models`, `config`, `error`, `group`, `memory`, `message`, `annotation`, `redact` |
 
 `brief`, `search` and `consistency` left the domain in ORB-27921 step 5
 (PR 5-3) for the core's `apps/{brief,search}/rules.rs`. `consistency` was
@@ -133,6 +133,17 @@ and approval in `apps/proposal`, and `forget` with the `Settled` outcome in
 to `apps/entry/rules.rs`, and `tag_counts` to `apps/tag/rules.rs` (the tag
 app sits below entry in the app order). The core's root re-exports them as
 `crate::action`.
+
+`checks` followed in PR 5-5, each file to the app it serves:
+`checks/{entry,records}` to `apps/entry/rules.rs`, `checks/candidates` to
+`apps/proposal/rules.rs`, and `checks/{group,memory,tag,admin}` to the app
+of the same name. From `checks/mod.rs`, `refusal` and `forgotten_refusal`
+went to the store's `error.rs`, beside `Error`. The agent-author check went
+to `apps/tag/rules.rs`, and the free-text and reason checks to
+`apps/entry/rules.rs`, the lowest app that uses them. The session-write
+checks went to `apps/session/rules.rs`. `checks::group::number`, the
+`g-<n>` parser, went to the store's `contracts/group.rs`, and the store root
+re-exports it as `group_number`.
 
 These are the rings the code has, and they differ from the approved lists in
 ORB-27707 where an import forces it:
@@ -159,8 +170,7 @@ ORB-27707 where an import forces it:
   - `origin` is in base and imports nothing;
   - `control` is in records, since it imports `activity::CatalogedBy` and
     `session`;
-  - `error` (imports `config::ConfigError`), `checks` (imports `pass`,
-    `instruction`, `group`), `models` (imports
+  - `error` (imports `config::ConfigError`), `models` (imports
     `voice`) and `redact` (imports `config`, `group::NewGroup`) are in rules.
 - **Naming:** `verbatim` is its own module in base, beside `text`. Ids live
   with their records, so there is no `ids` module.

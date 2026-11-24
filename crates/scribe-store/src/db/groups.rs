@@ -11,8 +11,8 @@ pub use rows::CloseHeader;
 use super::{
     DB_FILE, Fallible, db_error, memory::read, open_writer, optimize_fts, refuse_newer, stamp,
 };
-use crate::checks::group::number;
-use crate::checks::refusal;
+use crate::contracts::group::number;
+use crate::error::refusal;
 use crate::group::{Group, NewGroup, Seat, SeatHold};
 use crate::message::NewMessage;
 use crate::{Error, Label, Project, Redactor, Result, SessionId, Store, WriteRefusal};

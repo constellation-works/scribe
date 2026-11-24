@@ -17,8 +17,8 @@
 //!   phase 8), and a read only counts them.
 
 use super::Memory;
-use crate::checks::refusal;
 use crate::db::{self, FileOp, HistoryRow, Journal, MemoryCommit, Revision, Writer, codec};
+use crate::error::refusal;
 use crate::error::{Error, Result};
 use crate::models::{MemoryContext, PendingContext};
 use crate::{RECORD_EXT, SessionId, Skipped, Store, WriteRefusal, fsio};

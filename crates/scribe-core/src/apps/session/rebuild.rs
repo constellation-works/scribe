@@ -2,9 +2,10 @@
 //! one, under its own lock (2_design.md §15.7).
 
 use super::pass::{PassPayload, PassReport, distill, short_reason, window_warnings};
-use crate::checks::{forgotten_refusal, refuse_busy};
+use super::rules::refuse_busy;
 use crate::runtime::resolve::refuse_forgotten;
 use crate::runtime::{Ctx, PortError, TranscriptState, Unreadable};
+use crate::store::forgotten_refusal;
 use crate::{
     Author, AuthorName, Config, Models, Provider, SegmentOrigin, SegmentState, SessionId,
     SessionStatus, check_agent_author, pass, transcript,

@@ -7,7 +7,7 @@
 //! which names the id and the place searched.
 //! Resolution reads only: no lock, no write.
 
-use crate::checks::refusal;
+use crate::error::refusal;
 use crate::{Error, Result, WriteRefusal};
 
 /// The shortest prefix accepted, in characters.

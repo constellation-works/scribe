@@ -449,7 +449,7 @@ pub(super) fn is_forgotten(conn: &Connection, id: &SessionId) -> rusqlite::Resul
     )
 }
 
-pub(crate) use crate::checks::forgotten_refusal;
+pub(crate) use crate::error::forgotten_refusal;
 
 /// What [`forget`] erased.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

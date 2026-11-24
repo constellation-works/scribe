@@ -8,8 +8,7 @@ mod close;
 
 pub use close::CloseGroupOutcome;
 
-use crate::checks::group::{check_additions, check_join, check_new_group, check_project_slug};
-use crate::checks::refusal;
+use super::rules::{check_additions, check_join, check_new_group, check_project_slug};
 use crate::group::{
     Added, CloseEvidence, GroupAdded, GroupAddition, GroupCloser, GroupConsent, JoinGroup,
     NewGroup, OpenedGroup, SeatHold, SeatStart, automatic_seat,
@@ -18,6 +17,7 @@ use crate::instruction::ClaudeGroupTurns;
 use crate::message::NewMessage;
 use crate::repository::{GroupRows, RowError};
 use crate::runtime::resolve::refuse_forgotten;
+use crate::store::refusal;
 use crate::{
     AuditEvent, ClaudeCapturePosition, ClaudeGroupCapture, Error, Project, Redactor, Result,
     SessionId, Store, WriteRefusal,

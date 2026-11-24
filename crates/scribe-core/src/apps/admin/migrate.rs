@@ -2,7 +2,7 @@
 //! inside its write, before anything is imported
 //! ([`Store::import_file_store`]).
 
-use crate::checks::admin;
+use super::rules as admin;
 use crate::{ImportFacts, Result, Store};
 use time::OffsetDateTime;
 

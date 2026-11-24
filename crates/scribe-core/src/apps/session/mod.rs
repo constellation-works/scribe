@@ -13,6 +13,7 @@ mod continuation;
 mod list;
 mod pass;
 mod rebuild;
+pub mod rules;
 mod show;
 mod transcript;
 mod verbs;

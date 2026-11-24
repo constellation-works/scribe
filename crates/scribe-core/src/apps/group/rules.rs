@@ -1,17 +1,14 @@
-//! The checks of a group write that run before its transaction: the
+//! The group app's rules: the checks of a group write that run before its transaction: the
 //! consent, the turns a member brings, the names it uses (2_design.md §17).
 //! The checks that read the group's rows run inside its write.
 
-use super::{check_agent_author, check_content, refusal};
+use crate::apps::entry::check_content;
+use crate::apps::tag::check_agent_author;
 use crate::group::{GroupAddition, GroupConsent, JoinGroup, NewGroup};
 use crate::message::NewMessage;
+use crate::store::group_number as number;
+use crate::store::refusal;
 use crate::{Redactor, RelatedKind, Result, SessionId, WriteRefusal};
-
-/// The number of a group id `g-<n>`, when it is one exactly.
-pub fn number(id: &str) -> Option<i64> {
-    let n = id.strip_prefix("g-")?.parse::<i64>().ok()?;
-    (n > 0 && format!("g-{n}") == id).then_some(n)
-}
 
 /// A project group slug: lowercase letters, digits and interior hyphens, not a
 /// group id, and free of configured sensitive text.
