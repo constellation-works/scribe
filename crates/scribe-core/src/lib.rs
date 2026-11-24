@@ -158,9 +158,9 @@ pub use store::repository;
 pub use store::{
     AUDIT_FILE, AuditEvent, AuditStatus, CONFIG_FILE, CONTROL_FILE, ClaudeCapturePosition,
     ClaudeGroupCapture, DB_FILE, DEFAULT_LOCK_WAIT, ENTRIES_DIR, EntryList, ExportCounts,
-    ExportFormat, Imported, IssueAudit, LOCKS_DIR, MARKS_FILE, MEMORY_DIR, MILESTONES_DIR,
-    MIN_SECRET_CHARS, MemoryShown, MemoryView, MemoryWritten, NOW_DIR, PROFILE_FILE,
-    PROPOSALS_FILE, PassMemory, ProfileRevision, REDACTED_FIELDS, Redactor, SESSIONS_DIR,
+    ExportFormat, ImportFacts, Imported, IssueAudit, LOCKS_DIR, MARKS_FILE, MEMORY_DIR,
+    MILESTONES_DIR, MIN_SECRET_CHARS, MemoryShown, MemoryStep, MemoryView, MemoryWritten, NOW_DIR,
+    PROFILE_FILE, PROPOSALS_FILE, ProfileRevision, REDACTED_FIELDS, Redactor, SESSIONS_DIR,
     SessionForget, SessionList, SessionLock, SessionView, Skipped, Snapshot, Store, TagList, Tx,
     resolve_prefix, unresolved_redact_env,
 };

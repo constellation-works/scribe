@@ -9,6 +9,7 @@ pub use run::{
 };
 pub(crate) use run::{CatalogJob, RunFailure, distill, run_catalog, window_warnings};
 
+use crate::apps::memory::{WindowMemory, plan_window};
 use crate::checks::candidates::{
     checked_outcome, has_context_and_subject, open_under, pass_entry, written_from,
 };
@@ -18,8 +19,8 @@ use crate::pass::{
     covering_claim, entry_says, own_span,
 };
 use crate::{
-    Author, EntryId, Error, MemoryWritten, PassMemory, Proposal, ProposalId, ProposalKind,
-    ProposalState, Redactor, Result, SessionId, SessionLink, SessionRecord, Store, Tx, control,
+    Author, EntryId, Error, MemoryWritten, Proposal, ProposalId, ProposalKind, ProposalState,
+    Redactor, Result, SessionId, SessionLink, SessionRecord, Store, Tx, control,
 };
 
 /// What the candidate write path changed under the store lock.
@@ -102,7 +103,7 @@ pub trait PassVerbs {
         expected: Option<time::OffsetDateTime>,
         kind: PassWrite,
         candidates: &[crate::pass::PassClaim],
-        memory: Option<&PassMemory>,
+        memory: Option<&WindowMemory>,
         messages: &[crate::message::NewMessage],
         redactor: &Redactor,
     ) -> Result<PassWritten>;
@@ -201,7 +202,7 @@ impl PassVerbs for Store {
         expected: Option<time::OffsetDateTime>,
         kind: PassWrite,
         candidates: &[crate::pass::PassClaim],
-        memory: Option<&PassMemory>,
+        memory: Option<&WindowMemory>,
         messages: &[crate::message::NewMessage],
         redactor: &Redactor,
     ) -> Result<PassWritten> {
@@ -238,7 +239,7 @@ struct PassParts<'a> {
     /// Claims to open.
     candidates: &'a [crate::pass::PassClaim],
     /// The window's memory, planned and committed with the record.
-    memory: Option<&'a PassMemory>,
+    memory: Option<&'a WindowMemory>,
     /// The window's messages, upserted with the record.
     messages: &'a [crate::message::NewMessage],
     /// Whether to open `candidates` (and close retired-tag ones).
@@ -347,7 +348,7 @@ fn write_pass_candidates(
         let checked = parts.memory.map(|memory| {
             let (drafts, sensitive) = check_sensitive_drafts(&memory.drafts, redactor);
             (
-                crate::PassMemory {
+                WindowMemory {
                     drafts,
                     ..memory.clone()
                 },
@@ -357,8 +358,11 @@ fn write_pass_candidates(
         let memory = tx.sessions().commit_window(
             record.as_ref(),
             parts.messages,
-            checked.as_ref().map(|(memory, _)| memory),
-            checked.as_ref().map_or(&[][..], |(_, sensitive)| sensitive),
+            plan_window(
+                checked.as_ref().map(|(memory, _)| memory),
+                checked.as_ref().map_or(&[][..], |(_, sensitive)| sensitive),
+                record.as_ref(),
+            ),
             redactor,
             |state| {
                 // An explicit pass can start when not due. Publish the

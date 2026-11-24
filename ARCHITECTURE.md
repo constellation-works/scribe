@@ -32,6 +32,14 @@ PR 2 until PR 4, when composition is in the core.
 | `scribe-core` | The apps (`apps/<app>/`, one per subject, each holding its use cases) and the `runtime/` they run against: the context and its ports, id resolution, the shared errors and the audit lines a use case owes. Each use case loads what it needs from a snapshot, plans with domain functions, calls the ports and commits in one store write. Its root re-exports `scribe-domain` and `scribe-store` at the paths they had in it. `composition.rs` captures the environment (`Env`) and resolves the `Context` the apps run against; `runtime/host/` implements the ports on it; `providers/` holds the `Models` port and the model adapters. | `scribe-domain`, `scribe-store`, `scribe-tools` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite` |
 | `scribe` (binary) | Arguments, dispatch, the audit guard and rendering. | `scribe-core`, `scribe-tools` (interim) | `rusqlite` |
 
+The store holds no rule: a check that decides whether a write may happen
+belongs to its app, which passes it into the write as a closure the store
+runs at the same step and under the same lock. `forgotten_refusal` is the
+deliberate exception. A forgotten session is a tombstone, and every writer
+that touches a session must refuse it under the write lock, including the
+store's own internal writers, so the refusal stays beside `Error` in the
+store rather than in one app.
+
 The banned crates are normal dependencies only. Dev-dependencies are exempt:
 the tests of `scribe-core` and `scribe` stage database states with
 `rusqlite`, and `scribe-core`'s use `tempfile` for their roots. The script

@@ -4,6 +4,7 @@
 
 use super::{Seed, on_disk, private_tempdir, seed};
 use crate::ProposalVerbs;
+use crate::apps::admin::MigrateTestWrites;
 use crate::consistency::{Settle, Settled};
 use crate::control::{self, Switch};
 use crate::entry::{Cite, Entry};

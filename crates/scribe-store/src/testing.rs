@@ -221,13 +221,18 @@ pub trait StoreTestInternals {
     fn tag_definition(&self, word: &str) -> Result<(crate::TagDef, &'static str)>;
     /// Record one audit event. (`Store::record_audit`).
     fn record_audit(&self, event: &crate::AuditEvent) -> Result<()>;
-    /// Write a pass's memory changes outside a session write. (`Store::write_window_memory`).
-    fn write_pass_memory(
+    /// Run a pass window's memory step outside a session write.
+    /// (`Store::write_window_memory`).
+    fn write_window_memory<F>(
         &self,
-        pass: &crate::PassMemory,
-        redactor: &crate::Redactor,
-        record: &crate::SessionRecord,
-    ) -> Result<crate::MemoryWritten>;
+        step: crate::MemoryStep<F>,
+        now: time::OffsetDateTime,
+    ) -> Result<crate::MemoryWritten>
+    where
+        F: FnOnce(
+            &crate::repository::MemoryRows<'_>,
+            &crate::repository::MemoryFiles,
+        ) -> Result<(crate::repository::MemoryCommit, crate::MemoryWritten)>;
     /// A store write's connection (`Store::with_conn`).
     fn with_conn<T>(
         &self,
@@ -375,13 +380,18 @@ impl StoreTestInternals for Store {
     fn record_audit(&self, event: &crate::AuditEvent) -> Result<()> {
         Store::record_audit(self, event)
     }
-    fn write_pass_memory(
+    fn write_window_memory<F>(
         &self,
-        pass: &crate::PassMemory,
-        redactor: &crate::Redactor,
-        record: &crate::SessionRecord,
-    ) -> Result<crate::MemoryWritten> {
-        Store::write_window_memory(self, pass, redactor, record)
+        step: crate::MemoryStep<F>,
+        now: time::OffsetDateTime,
+    ) -> Result<crate::MemoryWritten>
+    where
+        F: FnOnce(
+            &crate::repository::MemoryRows<'_>,
+            &crate::repository::MemoryFiles,
+        ) -> Result<(crate::repository::MemoryCommit, crate::MemoryWritten)>,
+    {
+        Store::write_window_memory(self, step, now)
     }
     fn with_conn<T>(
         &self,

@@ -12,10 +12,11 @@ use crate::checks::group::{check_additions, check_join, check_new_group, check_p
 use crate::checks::refusal;
 use crate::group::{
     Added, CloseEvidence, GroupAdded, GroupAddition, GroupCloser, GroupConsent, JoinGroup,
-    NewGroup, OpenedGroup, SeatHold, SeatStart,
+    NewGroup, OpenedGroup, SeatHold, SeatStart, automatic_seat,
 };
 use crate::instruction::ClaudeGroupTurns;
 use crate::message::NewMessage;
+use crate::repository::{GroupRows, RowError};
 use crate::runtime::resolve::refuse_forgotten;
 use crate::{
     AuditEvent, ClaudeCapturePosition, ClaudeGroupCapture, Error, Project, Redactor, Result,
@@ -213,7 +214,7 @@ impl GroupVerbs for Store {
                     Some(n) => n,
                     None => rows.insert_project(slug, project, now, session)?,
                 };
-                rows.seat_member(n, session, now)?;
+                seat_member(rows, n, session, now)?;
                 Ok(format!("g-{n}"))
             })
         })
@@ -268,7 +269,7 @@ impl GroupVerbs for Store {
                         sessions.push((addition.session.clone(), Added::AlreadyMember));
                         continue;
                     }
-                    rows.seat_member(n, &addition.session, now)?;
+                    seat_member(rows, n, &addition.session, now)?;
                     let stored = match &addition.turns {
                         None => None,
                         Some(turns) => {
@@ -576,4 +577,16 @@ fn leave(store: &Store, session: &SessionId, keep_turns: bool) -> Result<String>
             Ok(format!("g-{n}"))
         })
     })
+}
+
+/// Seat `session` in group `n` under an automatic name that no member of the
+/// group holds, so a join never displaces anyone.
+fn seat_member(
+    rows: &GroupRows<'_>,
+    n: i64,
+    session: &SessionId,
+    now: OffsetDateTime,
+) -> Result<(), RowError> {
+    let seat = automatic_seat(session, |name| rows.seat_exists(n, name))?;
+    rows.seat_member(n, session, &seat, now)
 }

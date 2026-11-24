@@ -1,12 +1,13 @@
 use super::{Seed, private_tempdir, seed};
 use crate::MemoryVerbs;
 use crate::ProposalVerbs;
+use crate::apps::memory::{WindowMemory as PassMemory, WindowMemoryTestWrites};
 use crate::error::Error;
 use crate::memory::{Checked, Draft, ElementKind, NowKind, profile};
 use crate::models::{ProfileAnswer, ProfileMilestoneAnswer};
 use crate::session::{SessionId, SessionRecord};
 use crate::store::memory::CRASH_AFTER_COMMIT;
-use crate::store::{PassMemory, Redactor, Store, db};
+use crate::store::{Redactor, Store, db};
 use crate::testing::StoreTestInternals;
 use crate::tests::{T0, session};
 use std::collections::BTreeMap;

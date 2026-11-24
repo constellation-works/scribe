@@ -17,7 +17,7 @@
 //!   older build refuses the store.
 
 use crate::db::import::is_empty;
-use crate::db::write::Move;
+use crate::db::write::{ImportCheck, ImportFacts, Move};
 use crate::db::{self, Conn as Connection, DB_FILE, codec, docs};
 use crate::error::{Error, Result};
 use crate::repository::audit;
@@ -116,7 +116,12 @@ impl Store {
     /// lines. A file store is refused: its records never moved. `store
     /// migrate` (`mode`) is refused first when there is nothing to import
     /// or the import is unsafe.
-    pub(crate) fn import_at_write(&self, mode: Move, now: OffsetDateTime) -> Result<Imported> {
+    pub(crate) fn import_at_write(
+        &self,
+        mode: Move,
+        check: Option<ImportCheck>,
+        now: OffsetDateTime,
+    ) -> Result<Imported> {
         let conn = db::open_writer(&self.root, self.lock_wait)?;
         let path = self.root.join(DB_FILE);
         let fail = |e| db::db_error("move documents into", &path, e);
@@ -126,8 +131,12 @@ impl Store {
         if !(leftovers.is_empty() || sessions_moved && documents_moved) {
             return Err(self.file_store_error());
         }
-        if mode == Move::ByHand {
-            self.refuse_import(&conn, &leftovers)?;
+        if let Some(check) = check.filter(|_| mode == Move::ByHand) {
+            check(&ImportFacts {
+                store: self,
+                conn: &conn,
+                leftovers: &leftovers,
+            })?;
         }
         if !sessions_moved {
             db::sessions::mark_moved(&conn, now, None).map_err(fail)?;

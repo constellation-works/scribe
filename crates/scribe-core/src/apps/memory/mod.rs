@@ -11,6 +11,7 @@ mod refresh;
 mod restore;
 mod show;
 mod verbs;
+mod window;
 
 pub use block::{is_empty, text, warnings};
 pub use refresh::{
@@ -20,6 +21,9 @@ pub use refresh::{
 pub use show::Shown;
 #[cfg(any(test, feature = "test-support"))]
 pub use verbs::MemoryVerbs;
+#[cfg(any(test, feature = "test-support"))]
+pub use window::WindowMemoryTestWrites;
+pub use window::{WindowMemory, plan_window};
 
 use crate::composition::Context;
 use crate::memory::NowItem;

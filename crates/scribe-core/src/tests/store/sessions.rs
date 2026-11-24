@@ -3,6 +3,8 @@
 
 use super::{SESSION_BODY, Seed, on_disk, private_tempdir, seed, session_text};
 use crate::SessionVerbs;
+use crate::apps::admin::MigrateTestWrites;
+use crate::apps::memory::WindowMemory as PassMemory;
 use crate::consistency::{Settle, Settled};
 use crate::control::{self, Switch};
 use crate::entry::{Cite, Speaker};
@@ -12,7 +14,7 @@ use crate::message::NewMessage;
 use crate::runtime::resolve::refuse_forgotten;
 use crate::session::{SessionFilter, SessionId, SessionRecord};
 use crate::store::memory::CRASH_AFTER_COMMIT;
-use crate::store::{ExportFormat, PassMemory, PassWrite, Redactor, Store, codec, db};
+use crate::store::{ExportFormat, PassWrite, Redactor, Store, codec, db};
 use crate::testing::StoreTestInternals;
 use crate::tests::{T0, session};
 use crate::{EntryVerbs, ProposalVerbs};

@@ -7,10 +7,13 @@
 //! the session, consistency and memory apps through their handlers.
 
 mod init;
+mod migrate;
 
 pub use init::{
     InitFile, InitReport, init_project, init_project_with_skill_files, integration_hooks,
 };
+#[cfg(any(test, feature = "test-support"))]
+pub use migrate::MigrateTestWrites;
 
 use crate::composition::Context;
 use crate::runtime::audit::{Audit, Audited, Line, guarded};
@@ -98,7 +101,9 @@ pub fn exec(
                     skill_files,
                 )?))
             }
-            Command::Migrate => Outcome::Migrated(Box::new(ctx.store().migrate_store(ctx.now())?)),
+            Command::Migrate => {
+                Outcome::Migrated(Box::new(migrate::migrate(ctx.store(), ctx.now())?))
+            }
             Command::Export { dir, format } => Outcome::Exported(Box::new(ExportWritten {
                 exported: ctx.store().export(dir, format)?,
                 dir: dir.to_path_buf(),
