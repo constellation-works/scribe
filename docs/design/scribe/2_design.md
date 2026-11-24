@@ -7267,7 +7267,7 @@ lets him see that his answer has not yet been acted on.
 
 | Line | Order | Cap |
 |---|---|---|
-| `- <id> · <state> · <asked by> · <first task> · [<answer_in> · ]<content cut to 120 chars>` | `open` before `answered`, oldest first in each | 10 lines; then `(+<n> more: scribe entry list --tag open-item --state open)` |
+| `- <id> · <state> · <asked by> · <first task> · [<answer_in> · ]<content cut to 120 chars>` | `open` before `answered`, oldest first in each | 10 lines in all, open and answered together; then `(+<n> more: scribe entry list --tag open-item --state open --state answered)`, where `<n>` counts the open and answered items left out |
 
 It lists open and answered items of every project, because what waits for him
 does not depend on the session's checkout; there are few. An empty part prints

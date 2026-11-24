@@ -1260,3 +1260,48 @@ fn an_answer_takes_the_latest_matching_turn_across_named_sessions_in_either_orde
         }
     }
 }
+
+#[test]
+fn the_brief_overflow_list_reaches_an_answered_item_beyond_ten_open_ones() {
+    // 2_design.md §18.5: the brief shows ten lines in all, and its overflow hint
+    // names `--state open --state answered`, so that list must reach the rest.
+    let fx = Fixture::new();
+    let session = decision_transcript(&fx, &[("user", "1")]);
+    for n in 1..=11 {
+        let question = format!("Restart the dashboard {n}");
+        assert!(
+            add_record(
+                &fx,
+                "open-item",
+                &[
+                    "--asked-by",
+                    "0-chief",
+                    "--blocked",
+                    "Local checks",
+                    &question
+                ],
+            )
+            .status
+            .success()
+        );
+    }
+    // open-item-11 is answered; the other ten stay open.
+    let answered = settle(
+        &fx,
+        "answer",
+        "open-item-11",
+        &["--quote", "1", "--related", &session],
+    );
+    assert!(answered.status.success(), "{answered:?}");
+
+    let open = states(&fx, &["open"]);
+    assert_eq!(open.len(), 10, "{open:?}");
+    assert!(!open.iter().any(|s| s.ends_with(" answered")), "{open:?}");
+
+    let both = states(&fx, &["open", "answered"]);
+    assert_eq!(both.len(), 11, "{both:?}");
+    assert!(
+        both.iter().any(|s| s == "open-item-11 answered"),
+        "{both:?}"
+    );
+}
