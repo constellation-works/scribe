@@ -138,8 +138,12 @@ pub fn parse(bytes: &[u8]) -> Vec<Message> {
 
 /// A Claude suffix does not have a provider prelude. The caller has already
 /// checked its provider, so the first record cannot reinterpret the batch.
-pub(crate) fn parse_claude(bytes: &[u8]) -> Vec<Message> {
-    analyze(bytes, false, false).messages
+/// Also returns the uuids of the refused typed forms in the batch, first
+/// copies only: they are not messages, but group capture still needs their
+/// verdict to survive into the next batch.
+pub(crate) fn parse_claude(bytes: &[u8]) -> (Vec<Message>, Vec<String>) {
+    let analysis = analyze(bytes, false, false);
+    (analysis.messages, analysis.refused)
 }
 
 /// Parse the messages and, for Claude transcripts, the zero-based source line
@@ -166,6 +170,8 @@ pub fn survey_with_cwd(bytes: &[u8]) -> (Survey, Option<String>) {
 
 struct Analysis {
     messages: Vec<Message>,
+    /// Uuids of refused typed forms, first copies only, in file order.
+    refused: Vec<String>,
     line_indices: Option<Vec<usize>>,
     cwd: Option<String>,
 }
@@ -176,6 +182,7 @@ struct Analysis {
 fn analyze(bytes: &[u8], with_line_indices: bool, detect_codex: bool) -> Analysis {
     let mut seen = std::collections::HashSet::new();
     let mut messages = Vec::new();
+    let mut refused = Vec::new();
     let mut line_indices = with_line_indices.then(Vec::new);
     let mut cwd: Option<String> = None;
     let mut decided = !detect_codex;
@@ -198,11 +205,13 @@ fn analyze(bytes: &[u8], with_line_indices: bool, detect_codex: bool) -> Analysi
                 return match crate::codex::parse(bytes) {
                     Ok(rollout) => Analysis {
                         messages: rollout.messages,
+                        refused: Vec::new(),
                         line_indices: None,
                         cwd: Some(rollout.cwd),
                     },
                     Err(_) => Analysis {
                         messages: Vec::new(),
+                        refused: Vec::new(),
                         line_indices: None,
                         cwd: None,
                     },
@@ -223,18 +232,24 @@ fn analyze(bytes: &[u8], with_line_indices: bool, detect_codex: bool) -> Analysi
                     .map(str::to_owned);
             }
             // A typed form the origin guard refuses is not conversation. Its
-            // uuid is still used up, so a replay of it stays refused.
-            let refused = refused_typed_form(line, &raw, &message);
-            if seen.insert(message.uuid.clone()) && !refused {
-                messages.push(message);
-                if let Some(indices) = &mut line_indices {
-                    indices.push(line_index);
+            // uuid is still used up, so a replay of it stays refused, and it is
+            // reported so group capture keeps the verdict across batches.
+            let is_refused = refused_typed_form(line, &raw, &message);
+            if seen.insert(message.uuid.clone()) {
+                if is_refused {
+                    refused.push(message.uuid);
+                } else {
+                    messages.push(message);
+                    if let Some(indices) = &mut line_indices {
+                        indices.push(line_index);
+                    }
                 }
             }
         }
     }
     Analysis {
         messages,
+        refused,
         line_indices,
         cwd,
     }

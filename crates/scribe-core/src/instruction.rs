@@ -589,6 +589,8 @@ fn claude_claims(bytes: &[u8]) -> BTreeMap<String, Claims> {
 pub struct ClaudeGroupTurns {
     session: SessionId,
     messages: Vec<Message>,
+    /// Ids of refused typed forms in this batch, first copies only.
+    refused: Vec<String>,
     claims: BTreeMap<String, bool>,
 }
 
@@ -606,9 +608,11 @@ impl ClaudeGroupTurns {
     #[must_use]
     pub fn parse(bytes: &[u8], session: &SessionId) -> Self {
         let local = claude_session_lines(bytes, session);
+        let (messages, refused) = transcript::parse_claude(&local);
         Self {
             session: session.clone(),
-            messages: transcript::parse_claude(&local),
+            messages,
+            refused,
             claims: claude_claims(&local)
                 .into_iter()
                 .map(|(uuid, claim)| {
@@ -656,6 +660,19 @@ impl ClaudeGroupTurns {
                 && let Some(turn) = crate::message::typed_turn(&self.session, &message, &words)
             {
                 turns.push(turn);
+            }
+        }
+        // A refused typed form is no turn, but its first copy has been seen:
+        // a later copy with the same uuid stays refused, as a full replay does.
+        for uuid in self.refused {
+            let id = capture::prompt_sha256(&uuid);
+            let previous = lookup(&id)?;
+            let current = ClaudeSeen {
+                permitted: previous.permitted.or(self.claims.remove(&uuid)),
+                message: true,
+            };
+            if current != previous {
+                seen.push((id, current));
             }
         }
         for (uuid, permitted) in self.claims {
