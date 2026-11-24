@@ -56,6 +56,8 @@ pub enum MarkRetryError<E> {
     },
     /// Markers still not cataloged: the model failure's message.
     StillFailed(String),
+    /// A usage error.
+    Usage(String),
 }
 
 impl<E> From<crate::Error> for MarkRetryError<E> {
@@ -71,6 +73,7 @@ impl<E> From<HookError<E>> for MarkRetryError<E> {
             HookError::Port(err) => Self::Port(err),
             HookError::Read { what, source } => Self::Read { what, source },
             HookError::TranscriptRefused { id, reason } => Self::TranscriptRefused { id, reason },
+            HookError::Usage(message) => Self::Usage(message),
         }
     }
 }

@@ -315,7 +315,7 @@ pub(in crate::commands) fn read_checked_bytes(
 }
 
 /// Read only the transcript prelude, with the same path and open-handle checks.
-pub(super) fn claude_header(
+pub(in crate::commands) fn claude_header(
     ctx: &crate::app::Context,
     path: &Path,
     session: &SessionId,

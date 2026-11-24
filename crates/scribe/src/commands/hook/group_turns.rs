@@ -14,15 +14,6 @@ mod claude;
 #[cfg(all(test, unix))]
 mod tests;
 
-/// Capture `session`'s new Claude transcript records at `path`.
-pub(super) fn claude(
-    ctx: &Context,
-    session: &SessionId,
-    path: &Path,
-) -> Result<Option<HookOutcome>, CliError> {
-    Ok(case::claude(&ctx.core(), ctx.provider(), session, path)?)
-}
-
 /// The transcripts port's Claude window: open `path` checked, read its
 /// complete records after `prior`, and ask for a retry when the file changed
 /// during the read.

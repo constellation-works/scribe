@@ -3,9 +3,9 @@
 //! `#scribe retire <entry-id>`, `#scribe forget <entry-id>` and `#scribe
 //! forget <session-id>`.
 //!
-//! `user_prompt_submit.rs` hands each such line here after the transcript
+//! [`crate::cases::user_prompt_submit`] hands each such line here after the transcript
 //! check, in prompt order. One locked store call per line applies it
-//! ([`scribe_core::ProposalVerbs::settle`]) and the line gets one echo:
+//! ([`crate::ProposalVerbs::settle`]) and the line gets one echo:
 //!
 //! - approve: the proposal is `approved` and its older entry `superseded`
 //!   by the newer (or `retired`, for a stale proposal);
@@ -25,32 +25,34 @@
 //! settle: no CLI verb and no Orbit tool reaches this code (4_decisions.md,
 //! "Proposals are settled only by #scribe in a typed turn").
 
-use crate::app::Context;
-use crate::output::HookOutcome;
-use scribe_core::ProposalVerbs;
-use scribe_core::capture::{Settling, Turn};
-use scribe_core::consistency::Settled;
-use scribe_core::{EntryStatus, SessionId};
+use crate::EntryStatus;
+use crate::capture::{Settling, Turn};
+use crate::cases::Ctx;
+use crate::cases::hook::{HookOutcome, chain, quote, refusal};
+use crate::cases::proposal::ProposalVerbs;
+use crate::consistency::Settled;
 
 /// The echo and the audit outcome of one settling line.
-pub(super) struct Reply {
+#[derive(Debug)]
+pub struct Reply {
     /// The line shown to the user and the agent.
-    pub(super) echo: String,
+    pub echo: String,
     /// What the audit log records; `None` when nothing changed.
-    pub(super) outcome: Option<HookOutcome>,
+    pub outcome: Option<HookOutcome>,
 }
 
 /// Apply `settling`, typed in `turn`.
-pub(super) fn run(settling: &Settling, turn: &Turn, ctx: &Context) -> Reply {
+#[must_use]
+pub fn run<E>(ctx: &Ctx<'_, E>, settling: &Settling, turn: &Turn) -> Reply {
     let cite = turn.cite(settling.line);
-    let settled = match ctx.store().settle(&settling.action, &cite, ctx.now()) {
+    let settled = match ctx.store.settle(&settling.action, &cite, ctx.clock.now()) {
         Ok(settled) => settled,
         Err(err) => {
             return Reply {
                 echo: format!(
                     "scribe: could not apply \"{}\" — {}",
-                    super::user_prompt_submit::quote(&settling.said),
-                    super::user_prompt_submit::chain(&err)
+                    quote(&settling.said),
+                    chain(&err)
                 ),
                 outcome: Some(refusal(&turn.session, err.code())),
             };
@@ -157,18 +159,8 @@ pub(super) fn run(settling: &Settling, turn: &Turn, ctx: &Context) -> Reply {
             outcome: None,
         },
         Settled::Refused(why) => Reply {
-            echo: format!(
-                "scribe: refused \"{}\" — {why}",
-                super::user_prompt_submit::quote(&settling.said)
-            ),
+            echo: format!("scribe: refused \"{}\" — {why}", quote(&settling.said)),
             outcome: Some(refusal(&turn.session, why.code())),
         },
-    }
-}
-
-fn refusal(session: &SessionId, code: &'static str) -> HookOutcome {
-    HookOutcome {
-        target: Some(format!("session:{session}")),
-        error_code: Some(code),
     }
 }

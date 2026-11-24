@@ -10,7 +10,7 @@ use scribe_core::ClaudeCapturePosition;
 #[cfg(unix)]
 use scribe_core::cases::ClaudeRead;
 use scribe_core::cases::{
-    Clock, Ctx, PortError, Redaction, TranscriptState, Transcripts, Unreadable,
+    Clock, Ctx, Discovered, PortError, Redaction, TranscriptState, Transcripts, Unreadable,
 };
 use scribe_core::{Config, Project, Provider, Redactor, SessionId};
 use std::path::{Path, PathBuf};
@@ -83,6 +83,23 @@ impl Transcripts for Context {
 
     fn project_of(&self, cwd: &Path) -> Project {
         project::of(cwd)
+    }
+
+    fn claude_header(
+        &self,
+        provider: Provider,
+        path: &Path,
+        session: &SessionId,
+    ) -> Result<Option<Vec<u8>>, Unreadable> {
+        payload::claude_header(&self.with_provider(provider), path, session)
+    }
+
+    fn discovered(&self, provider: Provider) -> Result<Discovered, CliError> {
+        let found = payload::discovered_for(&self.with_provider(provider))?;
+        Ok(Discovered {
+            files: found.files,
+            refused: found.refused,
+        })
     }
 
     #[cfg(unix)]

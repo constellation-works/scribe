@@ -203,8 +203,8 @@ impl From<scribe_core::cases::pass::PassRunError<CliError>> for CliError {
     }
 }
 
-/// The Stop-side hooks' errors (`hook stop`, the marker catalog, group turn
-/// capture), each the variant it was before the flow moved to
+/// The hooks' errors (`hook stop`, the marker catalog, group turn capture,
+/// the prompt hook and `/scribe group add`), each the variant it was before the flow moved to
 /// `scribe_core::cases` (ORB-27707 step 3b).
 impl From<scribe_core::cases::hook::HookError<CliError>> for CliError {
     fn from(err: scribe_core::cases::hook::HookError<CliError>) -> Self {
@@ -214,6 +214,7 @@ impl From<scribe_core::cases::hook::HookError<CliError>> for CliError {
             HookError::Port(e) => e,
             HookError::Read { what, source } => Self::Read { what, source },
             HookError::TranscriptRefused { id, reason } => Self::TranscriptRefused { id, reason },
+            HookError::Usage(message) => Self::Usage(message),
         }
     }
 }
@@ -233,6 +234,7 @@ impl From<scribe_core::cases::mark_retry::MarkRetryError<CliError>> for CliError
             MarkRetryError::StillFailed(message) => {
                 Self::Model(scribe_core::models::ModelError::Failed(message))
             }
+            MarkRetryError::Usage(message) => Self::Usage(message),
         }
     }
 }
