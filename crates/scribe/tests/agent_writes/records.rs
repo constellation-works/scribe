@@ -3,12 +3,18 @@
 use super::{Fixture, json, support, text};
 
 const DECISION_SESSION: &str = "8dc9df2b-5808-47cf-8be4-190c9c6e0711";
+const LATER_SESSION: &str = "1b7e5a3c-9f2d-4c8e-b6a1-2d3e4f5a6b7c";
 const DOC_LINK: &str = "doc:scribe/docs/design/scribe/4_decisions.md#stable-api";
 
 fn decision_transcript(fx: &Fixture, turns: &[(&str, &str)]) -> String {
+    decision_transcript_in(fx, DECISION_SESSION, "2026-11-10T01:00:00Z", turns)
+}
+
+/// Writes one session's transcript with every turn at `at`; returns its reference.
+fn decision_transcript_in(fx: &Fixture, session: &str, at: &str, turns: &[(&str, &str)]) -> String {
     let dir = fx.home().join(".claude/projects/-work-scribe");
     fx.create_private_dir_all(&dir);
-    let path = dir.join(format!("{DECISION_SESSION}.jsonl"));
+    let path = dir.join(format!("{session}.jsonl"));
     let rows: String = turns
         .iter()
         .enumerate()
@@ -17,7 +23,7 @@ fn decision_transcript(fx: &Fixture, turns: &[(&str, &str)]) -> String {
                 "{}\n",
                 serde_json::json!({
                     "type": role, "uuid": format!("test-{i}"), "cwd": "/work/scribe",
-                    "timestamp": "2026-11-10T01:00:00Z", "sessionId": DECISION_SESSION,
+                    "timestamp": at, "sessionId": session,
                     "entrypoint": "cli", "message": {"role": role, "content": words}
                 })
             )
@@ -25,7 +31,7 @@ fn decision_transcript(fx: &Fixture, turns: &[(&str, &str)]) -> String {
         .collect();
     std::fs::write(&path, rows).unwrap();
     support::make_private(&path);
-    format!("session:{DECISION_SESSION}")
+    format!("session:{session}")
 }
 
 fn add_record(fx: &Fixture, tag: &str, args: &[&str]) -> std::process::Output {
@@ -1101,4 +1107,67 @@ fn an_answer_typed_outside_the_named_session_is_recorded_with_a_notice() {
         "{out:?}"
     );
     assert_eq!(json(&out.stdout)["state"], "answered");
+}
+
+#[test]
+fn an_answer_takes_the_latest_matching_turn_across_named_sessions_in_either_order() {
+    let fx = Fixture::new();
+    let earlier = decision_transcript_in(
+        &fx,
+        DECISION_SESSION,
+        "2026-11-10T01:00:00Z",
+        &[("user", "yes, restart it")],
+    );
+    let later = decision_transcript_in(
+        &fx,
+        LATER_SESSION,
+        "2026-11-11T02:00:00Z",
+        &[("user", "yes, restart it")],
+    );
+    // The latest typed turn is in LATER_SESSION, so the answer belongs there
+    // whichever session is named first; the notice fires only when the item
+    // names another session.
+    let mut item = 0;
+    for (answer_in, notice) in [(&later, false), (&earlier, true)] {
+        for order in [[&earlier, &later], [&later, &earlier]] {
+            item += 1;
+            let added = add_record(
+                &fx,
+                "open-item",
+                &[
+                    "--asked-by",
+                    "orbit-0-capt",
+                    "--blocked",
+                    "nothing",
+                    "--answer-in",
+                    answer_in,
+                    "Restart the dashboard",
+                ],
+            );
+            assert!(added.status.success(), "{added:?}");
+            let out = settle(
+                &fx,
+                "answer",
+                &format!("open-item-{item}"),
+                &[
+                    "--quote",
+                    "yes, restart it",
+                    "--related",
+                    order[0],
+                    "--related",
+                    order[1],
+                ],
+            );
+            assert!(out.status.success(), "{out:?}");
+            let body = json(&out.stdout);
+            let answer = &body["item"]["answer"];
+            assert_eq!(answer["session"], LATER_SESSION, "{order:?}");
+            assert_eq!(answer["at"], "2026-11-11T02:00:00Z", "{order:?}");
+            assert_eq!(
+                text(&out.stderr).contains("must also type it in that session"),
+                notice,
+                "{order:?} {out:?}"
+            );
+        }
+    }
 }
