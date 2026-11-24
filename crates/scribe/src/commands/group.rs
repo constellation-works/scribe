@@ -1,7 +1,6 @@
 //! Quote-checked group opening, caller-bound seat membership and roster reads.
 
 use super::{ListNotice, list_output};
-use crate::Context;
 use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{Output, Record, Records};
@@ -10,6 +9,7 @@ use scribe_core::apps::group::{
     self as app, CLOSE_COMMAND, Command, GroupBackfilled, GroupCloseInput, GroupJoinInput,
     GroupOpenInput, Outcome, exec,
 };
+use scribe_core::composition::Context;
 use scribe_core::{AuthorName, Config, Label, Project, Provider, Related, SessionId};
 
 pub(super) const EXAMPLES: &str = "Examples:

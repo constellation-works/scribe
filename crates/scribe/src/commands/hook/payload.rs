@@ -11,8 +11,8 @@
 //! mistyped command, not a hostile process of the same user; the design
 //! documents it as an accident guard (STD-05 R5).
 
-use crate::error::CliError;
 use scribe_core::SessionId;
+use scribe_core::runtime::errors::CommandError;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use std::io::Read;
@@ -119,18 +119,18 @@ pub(in crate::commands) struct StopPayload {
 }
 
 /// Read the whole of stdin, up to [`MAX_PAYLOAD`].
-pub(super) fn read_stdin() -> Result<Vec<u8>, CliError> {
+pub(super) fn read_stdin() -> Result<Vec<u8>, CommandError> {
     let mut input = Vec::new();
     std::io::stdin()
         .lock()
         .take(MAX_PAYLOAD + 1)
         .read_to_end(&mut input)
-        .map_err(|source| CliError::Read {
+        .map_err(|source| CommandError::Read {
             what: String::from("stdin"),
             source,
         })?;
     if u64::try_from(input.len()).unwrap_or(u64::MAX) > MAX_PAYLOAD {
-        return Err(CliError::HookPayload(format!(
+        return Err(CommandError::HookPayload(format!(
             "stdin is larger than {} MiB",
             MAX_PAYLOAD / 1024 / 1024
         )));
@@ -139,12 +139,12 @@ pub(super) fn read_stdin() -> Result<Vec<u8>, CliError> {
 }
 
 /// Parse a payload.
-pub(super) fn decode<T: DeserializeOwned>(input: &[u8]) -> Result<T, CliError> {
-    serde_json::from_slice(input).map_err(|e| CliError::HookPayload(e.to_string()))
+pub(super) fn decode<T: DeserializeOwned>(input: &[u8]) -> Result<T, CommandError> {
+    serde_json::from_slice(input).map_err(|e| CommandError::HookPayload(e.to_string()))
 }
 
 /// The payload's session id, validated.
-pub(super) fn session(id: &str) -> Result<SessionId, CliError> {
+pub(super) fn session(id: &str) -> Result<SessionId, CommandError> {
     id.parse()
-        .map_err(|e: scribe_core::SessionError| CliError::HookPayload(e.to_string()))
+        .map_err(|e: scribe_core::SessionError| CommandError::HookPayload(e.to_string()))
 }

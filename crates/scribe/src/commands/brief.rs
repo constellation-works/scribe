@@ -8,13 +8,13 @@
 //! (STD-01 R31). The reads are the brief app's, which the
 //! `SessionStart` hook also uses for an interactive session's context.
 
-use crate::Context;
 use crate::error::CliError;
 use crate::output::{BriefPayload, MemoryBlockPayload, Output, Record};
 use clap::Args;
 use scribe_core::Project;
 use scribe_core::apps::brief::{BriefInput, Command, Outcome, exec};
 use scribe_core::brief::{DEFAULT_SESSIONS, MAX_SESSIONS};
+use scribe_core::composition::Context;
 
 pub(super) const EXAMPLES: &str = "\
 Examples:

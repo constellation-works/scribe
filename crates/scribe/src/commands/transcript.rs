@@ -8,11 +8,11 @@
 
 use super::session::{View, output};
 use super::{DateArgs, ListNotice, day_parser};
-use crate::Context;
 use crate::error::CliError;
 use crate::output::{Output, Record, Records, TranscriptPayload, WarningPayload};
 use clap::{Args, Subcommand};
 use scribe_core::apps::session::{Command, Surveyed, TranscriptListInput, TranscriptsListed, exec};
+use scribe_core::composition::Context;
 use scribe_core::{DateRange, Project, SessionId};
 use time::Date;
 

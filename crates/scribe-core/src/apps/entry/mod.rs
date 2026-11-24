@@ -247,3 +247,13 @@ pub(crate) fn fill_cite_messages(
 ) -> crate::Result<Vec<EntryId>> {
     verbs::EntryVerbs::fill_cite_messages(store, session, now, find)
 }
+
+/// `scribe entry`'s errors, each the variant it was before the app moved.
+impl From<Error<crate::runtime::errors::CommandError>> for crate::runtime::errors::CommandError {
+    fn from(err: Error<crate::runtime::errors::CommandError>) -> Self {
+        match err {
+            Error::Read(e) => e.into(),
+            Error::Write(e) => e.into(),
+        }
+    }
+}

@@ -277,3 +277,22 @@ fn recorded<E>(ctx: &Ctx<'_, E>, id: &SessionId) -> Result<bool, crate::Error> {
     });
     Ok(parsed || skipped)
 }
+
+/// `session catalog`'s errors, each the variant it was before the flow moved.
+impl From<CatalogError<crate::runtime::errors::CommandError>>
+    for crate::runtime::errors::CommandError
+{
+    fn from(err: CatalogError<crate::runtime::errors::CommandError>) -> Self {
+        match err {
+            CatalogError::Core(e) => Self::Core(e),
+            CatalogError::Port(e) => e,
+            CatalogError::TranscriptNotFound { id, dir } => Self::TranscriptNotFound { id, dir },
+            CatalogError::TranscriptRefused { id, reason } => {
+                Self::TranscriptRefused { id, reason }
+            }
+            CatalogError::Read { what, source } => Self::Read { what, source },
+            CatalogError::SessionCataloged(id) => Self::SessionCataloged(id),
+            CatalogError::Usage(message) => Self::Usage(message),
+        }
+    }
+}

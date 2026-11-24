@@ -2,11 +2,11 @@
 //! (2_design.md §14.6), echoed and left for Stop, never recorded here and
 //! never sent to a model.
 
-use crate::Context;
 use crate::commands::hook::user_prompt_submit::run;
 use crate::output::Output;
 use scribe_core::EntryFilter;
 use scribe_core::GroupVerbs;
+use scribe_core::composition::Context;
 use scribe_core::composition::Env as AppEnv;
 use scribe_core::testing::StoreTestReads;
 use serde_json::json;

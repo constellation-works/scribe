@@ -457,3 +457,30 @@ pub fn run<E: PortError, M: Models>(
         }
     }
 }
+
+/// `session rebuild`'s errors, each the variant it was before the flow moved.
+impl From<RebuildError<crate::runtime::errors::CommandError>>
+    for crate::runtime::errors::CommandError
+{
+    fn from(err: RebuildError<crate::runtime::errors::CommandError>) -> Self {
+        match err {
+            RebuildError::Core(e) => Self::Core(e),
+            RebuildError::Port(e) => e,
+            RebuildError::Usage(message) => Self::Usage(message),
+            RebuildError::ConfirmRequired {
+                id,
+                segments,
+                passes,
+            } => Self::ConfirmRequired {
+                id,
+                segments,
+                passes,
+            },
+            RebuildError::TranscriptMissing(id) => Self::TranscriptMissing(id),
+            RebuildError::TranscriptRefused { id, reason } => {
+                Self::TranscriptRefused { id, reason }
+            }
+            RebuildError::Read { what, source } => Self::Read { what, source },
+        }
+    }
+}

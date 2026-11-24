@@ -450,3 +450,34 @@ pub(crate) fn resolve_relateds<E: PortError>(
 ) -> Result<Vec<Related>, GroupError<E>> {
     Ok(resolve::relateds(ctx, provider, related)?)
 }
+
+/// The hooks' errors (`hook stop`, the marker catalog, group turn capture,
+/// the prompt hook and `/scribe group add`), each the variant it was before
+/// the flow moved (ORB-27707 step 3b).
+impl From<HookError<crate::runtime::errors::CommandError>>
+    for crate::runtime::errors::CommandError
+{
+    fn from(err: HookError<crate::runtime::errors::CommandError>) -> Self {
+        match err {
+            HookError::Core(e) => Self::Core(e),
+            HookError::Port(e) => e,
+            HookError::Read { what, source } => Self::Read { what, source },
+            HookError::TranscriptRefused { id, reason } => Self::TranscriptRefused { id, reason },
+            HookError::Usage(message) => Self::Usage(message),
+        }
+    }
+}
+
+/// `scribe group`'s errors, each the variant it was before the flow moved.
+impl From<Error<crate::runtime::errors::CommandError>> for crate::runtime::errors::CommandError {
+    fn from(err: Error<crate::runtime::errors::CommandError>) -> Self {
+        match err {
+            Error::Core(e) => Self::Core(e),
+            Error::Port(e) => e,
+            Error::Read { what, source } => Self::Read { what, source },
+            Error::TranscriptRefused { id, reason } => Self::TranscriptRefused { id, reason },
+            Error::Usage(message) => Self::Usage(message),
+            Error::Model(e) => Self::Model(e),
+        }
+    }
+}

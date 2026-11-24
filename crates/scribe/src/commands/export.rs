@@ -5,12 +5,12 @@
 //! It is the backup, the review copy and the way out of scribe. It reads
 //! the store only: no lock, no store write, no audit line (STD-01 R31).
 
-use crate::Context;
 use crate::error::CliError;
 use crate::output::Output;
 use clap::{Args, ValueEnum};
 use scribe_core::ExportFormat;
 use scribe_core::apps::admin::{Command, exec};
+use scribe_core::composition::Context;
 use std::path::PathBuf;
 
 pub(super) const EXAMPLES: &str = "\

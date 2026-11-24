@@ -27,10 +27,10 @@
 //! that is off or was never switched on.
 
 use super::payload::{self, StopPayload};
-use crate::Context;
 use crate::error::CliError;
 use crate::output::Output;
 use scribe_core::apps::hook::{Command, StopInput, exec};
+use scribe_core::composition::Context;
 
 /// Run the hook on its stdin payload.
 pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {

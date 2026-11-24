@@ -188,3 +188,13 @@ pub(crate) fn close_retired_candidates(
 ) -> crate::Result<Vec<Proposal>> {
     verbs::ProposalVerbs::close_retired_candidates(store, now)
 }
+
+/// `scribe proposal`'s errors, each the variant it was before the app moved.
+impl From<Error<crate::runtime::errors::CommandError>> for crate::runtime::errors::CommandError {
+    fn from(err: Error<crate::runtime::errors::CommandError>) -> Self {
+        match err {
+            Error::Read(e) => e.into(),
+            Error::Write(e) => e.into(),
+        }
+    }
+}

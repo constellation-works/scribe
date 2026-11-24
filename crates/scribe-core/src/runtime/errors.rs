@@ -2,7 +2,8 @@
 //! use cases (`entry`, `proposal`, `session` and `mark` lists and shows,
 //! `search` and `transcript`), [`WriteError`], of the record writes
 //! (`entry`, `proposal`, `tag` and `session activate|deactivate`), and
-//! [`HostError`], of composition and the host's ports.
+//! [`CommandError`], every failure a command can end with: the error the
+//! ports and composition report, and every app error maps into.
 
 use crate::SessionId;
 use std::path::PathBuf;
@@ -88,16 +89,16 @@ pub(crate) fn redactor<E>(
     ctx.redaction.redactor(&config).map_err(WriteError::Port)
 }
 
-/// What composition and the host's ports fail with: no data directory, an
-/// unreadable store or config, a transcript tree that cannot be listed, a
-/// missing redaction value, or arguments that contradict the host. Each has
-/// the message and code the CLI has always reported for it.
+/// Every failure an app's command can end with, as the CLI has always
+/// reported it: the same message (its `Display`) and the same stable code
+/// ([`CommandError::code`]). The ports report it too, so a host failure and
+/// an app's refusal reach the caller, and the audit line, alike.
 #[derive(Debug, thiserror::Error)]
-pub enum HostError {
+pub enum CommandError {
     /// The store refused or failed.
     #[error(transparent)]
     Core(#[from] crate::Error),
-    /// Arguments or a host state that together make no sense; exits 2.
+    /// Arguments that each parse but together make no sense; exits 2.
     #[error("{0}")]
     Usage(String),
     /// No data directory could be resolved.
@@ -110,18 +111,82 @@ pub enum HostError {
         .0.join(", ")
     )]
     RedactEnvUnset(Vec<String>),
-    /// A file or directory the host was pointed at could not be read.
+    /// A hook's stdin was not the JSON Claude Code sends for that event.
+    #[error("the hook input is not a Claude Code hook payload: {0}")]
+    HookPayload(String),
+    /// Reading stdin or a file the command was pointed at failed.
     #[error("cannot read {what}")]
     Read {
-        /// What was being read.
+        /// What was being read: `stdin`, or the transcript's path.
         what: String,
         /// The operating-system error.
         #[source]
         source: std::io::Error,
     },
+    /// `session pass --session` named a session that is not switched on.
+    #[error(
+        "session {0} is not switched on, so it is never passed; /scribe on in that session switches it on"
+    )]
+    SessionNotOn(crate::SessionId),
+    /// `session show --segment <n>` (or `session:<id>#<n>`) named a segment
+    /// the record's log does not have.
+    #[error("session {session} has no segment {n}: its log has {count} segment(s)")]
+    SegmentNotFound {
+        /// The session.
+        session: crate::SessionId,
+        /// The segment asked for.
+        n: u32,
+        /// How many segments the log has.
+        count: usize,
+    },
+    /// Rebuilding replaces the visible record and requires explicit confirmation.
+    #[error(
+        "session {id} has {segments} segment(s) and {passes} pass(es) to replace; pass --confirm to rebuild it"
+    )]
+    ConfirmRequired {
+        /// The session.
+        id: crate::SessionId,
+        /// Its segments.
+        segments: usize,
+        /// Its passes.
+        passes: u32,
+    },
+    /// `entry forget` cannot be undone and requires explicit confirmation.
+    #[error(
+        "forgetting {0} blanks its text for good and cannot be undone; pass --confirm to forget it"
+    )]
+    ForgetConfirmRequired(String),
+    /// No transcript is available for rebuilding this record.
+    #[error("no transcript for session {0}; its record is unchanged")]
+    TranscriptMissing(crate::SessionId),
+    /// A rebuild's transcript failed the same provenance check as a pass.
+    #[error("transcript for session {id} refused: {reason}")]
+    TranscriptRefused {
+        /// The session.
+        id: crate::SessionId,
+        /// Why the check refused it.
+        reason: String,
+    },
+    /// `session catalog` named a session that already has a record or a
+    /// switch it did not write.
+    #[error(
+        "session {0} already has a record or was switched on; use 'scribe session pass --session {0}' or 'scribe session rebuild {0} --author <name> --confirm'"
+    )]
+    SessionCataloged(crate::SessionId),
+    /// No Claude Code transcript has this id.
+    #[error("no transcript {id} under {}", dir.display())]
+    TranscriptNotFound {
+        /// The id that was looked up.
+        id: crate::SessionId,
+        /// The transcripts directory that was searched.
+        dir: std::path::PathBuf,
+    },
+    /// A model call failed.
+    #[error(transparent)]
+    Model(#[from] crate::models::ModelError),
 }
 
-impl HostError {
+impl CommandError {
     /// The stable `snake_case` code (STD-01 R19).
     #[must_use]
     pub fn code(&self) -> &'static str {
@@ -130,13 +195,52 @@ impl HostError {
             Self::Usage(_) => "usage_error",
             Self::NoDataDir => "no_data_dir",
             Self::RedactEnvUnset(_) => "redact_env_unset",
+            Self::HookPayload(_) => "hook_payload_invalid",
             Self::Read { .. } => "io_error",
+            Self::SessionNotOn(_) => "session_not_on",
+            Self::SegmentNotFound { .. } => "segment_not_found",
+            Self::ConfirmRequired { .. } | Self::ForgetConfirmRequired(_) => "confirm_required",
+            Self::TranscriptMissing(_) => "transcript_missing",
+            Self::TranscriptRefused { .. } => "provenance_failed",
+            Self::SessionCataloged(_) => "session_cataloged",
+            Self::TranscriptNotFound { .. } => "transcript_not_found",
+            Self::Model(e) => e.code(),
         }
     }
 }
 
-impl super::PortError for HostError {
+impl super::PortError for CommandError {
     fn code(&self) -> &'static str {
-        HostError::code(self)
+        CommandError::code(self)
+    }
+}
+
+/// The record writes' errors, each the variant it was before the flow moved.
+impl From<WriteError<CommandError>> for CommandError {
+    fn from(err: WriteError<CommandError>) -> Self {
+        match err {
+            WriteError::Core(e) => Self::Core(e),
+            WriteError::Port(e) => e,
+            WriteError::Usage(message) => Self::Usage(message),
+            WriteError::Read { what, source } => Self::Read { what, source },
+            WriteError::ConfirmRequired(id) => Self::ForgetConfirmRequired(id),
+        }
+    }
+}
+
+/// The reads' errors, each the variant it was before the flow moved.
+impl From<ReadError<CommandError>> for CommandError {
+    fn from(err: ReadError<CommandError>) -> Self {
+        match err {
+            ReadError::Core(e) => Self::Core(e),
+            ReadError::Port(e) => e,
+            ReadError::Usage(message) => Self::Usage(message),
+            ReadError::Read { what, source } => Self::Read { what, source },
+            ReadError::SegmentNotFound { session, n, count } => {
+                Self::SegmentNotFound { session, n, count }
+            }
+            ReadError::TranscriptNotFound { id, dir } => Self::TranscriptNotFound { id, dir },
+            ReadError::TranscriptRefused { id, reason } => Self::TranscriptRefused { id, reason },
+        }
     }
 }

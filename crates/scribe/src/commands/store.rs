@@ -4,12 +4,12 @@
 //! choose the moment and is refused while a session is switched on, while
 //! a rebuild checkpoint waits, or when there is nothing to import.
 
-use crate::Context;
 use crate::audit_middleware::AuditMeta;
 use crate::error::CliError;
 use crate::output::Output;
 use clap::{Args, Subcommand};
 use scribe_core::apps::admin::{Command, exec};
+use scribe_core::composition::Context;
 
 pub(super) const EXAMPLES: &str = "\
 Examples:

@@ -2,11 +2,11 @@
 //! to an isolated dot-file; only the complete rebuild replaces the record.
 
 use super::{once, passed};
-use crate::Context;
 use crate::error::CliError;
 use crate::output::Output;
 use clap::Args;
 use scribe_core::apps::session::{self as app, Command, RebuildInput, exec};
+use scribe_core::composition::Context;
 use scribe_core::{AuthorName, Config, Models, SessionId};
 
 pub(in crate::commands) const COMMAND: &str = app::REBUILD_COMMAND;

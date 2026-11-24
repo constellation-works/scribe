@@ -18,7 +18,6 @@ pub(in crate::commands) mod pass;
 pub(in crate::commands) mod rebuild;
 
 use super::{DateArgs, ListNotice, list_output};
-use crate::Context;
 use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{
@@ -26,6 +25,7 @@ use crate::output::{
 };
 use clap::{Args, Subcommand};
 use scribe_core::apps::session::{self as app, Command, ModelsOnce, Outcome, Shown, exec};
+use scribe_core::composition::Context;
 use scribe_core::{
     Config, Models, Project, Related, SessionFilter, SessionOrder, SessionRecord, SessionStatus,
     Topic,

@@ -31,11 +31,11 @@
 //! call writes is known only once the envelope is read (4_decisions.md).
 
 use super::{RunLimits, consistency, session};
-use crate::Context;
 use crate::audit_middleware::{AuditGuard, AuditMeta};
 use crate::error::CliError;
 use crate::output::{Output, PassFailure, PassReport, PluginError, PluginReply, Record};
 use clap::{Args, Subcommand};
+use scribe_core::composition::Context;
 use serde::Deserialize;
 use serde_json::Value;
 use std::io::Read;

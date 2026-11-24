@@ -4,10 +4,10 @@
 //! ordinary brief.
 
 use super::payload::{self, SessionStartPayload};
-use crate::Context;
 use crate::error::CliError;
 use crate::output::Output;
 use scribe_core::apps::hook::{Command, SessionStartInput, exec};
+use scribe_core::composition::Context;
 
 /// Run the hook on its stdin payload.
 pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {

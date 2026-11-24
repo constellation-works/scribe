@@ -1,12 +1,12 @@
 //! Configured and store tags: listing and audited direct writes.
 
 use super::{ListNotice, list_output};
-use crate::Context;
 use crate::audit_middleware::AuditMeta;
 use crate::error::CliError;
 use crate::output::{Output, Record, Records, TagPayload, TagShowPayload};
 use clap::{Args, Subcommand};
 use scribe_core::apps::tag::{Command, Outcome, TagAddInput, exec};
+use scribe_core::composition::Context;
 
 pub(super) const TAG_EXAMPLES: &str = "\
 Examples:

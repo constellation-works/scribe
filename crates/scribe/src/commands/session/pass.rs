@@ -1,12 +1,12 @@
 //! `scribe session pass`: the arguments, then the session app's pass.
 
 use super::passed;
-use crate::Context;
 use crate::commands::RunLimits;
 use crate::error::CliError;
 use crate::output::Output;
 use clap::Args;
 use scribe_core::apps::session::{self as app, Command, PassInput, exec};
+use scribe_core::composition::Context;
 use scribe_core::{Config, Models, SessionId};
 
 /// Redact, flatten and bound a failure reason, as a pass report has it.

@@ -9,11 +9,12 @@
 //! itself runs later from `scribe session pass`. It prints nothing.
 
 use super::payload::{self, SessionEndPayload};
-use crate::Context;
 use crate::error::CliError;
 use crate::output::Output;
 use scribe_core::SessionId;
 use scribe_core::apps::hook::{Command, exec};
+use scribe_core::composition::Context;
+use scribe_core::runtime::errors::CommandError;
 
 /// Run the hook on its stdin payload.
 pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
@@ -22,7 +23,7 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
 }
 
 /// The session a `SessionEnd` payload names.
-pub(super) fn session(input: &[u8]) -> Result<SessionId, CliError> {
+pub(super) fn session(input: &[u8]) -> Result<SessionId, CommandError> {
     let payload: SessionEndPayload = payload::decode(input)?;
     payload::session(&payload.session_id)
 }

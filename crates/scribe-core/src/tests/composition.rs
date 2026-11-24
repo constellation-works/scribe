@@ -1,5 +1,5 @@
 use crate::composition::{Env as AppEnv, resolve_root, transcripts_dir};
-use crate::runtime::errors::HostError as CliError;
+use crate::runtime::errors::CommandError as CliError;
 use std::path::{Path, PathBuf};
 
 fn env(root: Option<&str>, home: Option<&str>) -> AppEnv {

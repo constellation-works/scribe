@@ -150,3 +150,25 @@ pub(crate) fn run<E: PortError>(
         }
     })
 }
+
+/// The id `memory show` prints for an item: `profile`, or a now item's or
+/// milestone's stem.
+fn shown_id(shown: &MemoryShown) -> String {
+    match shown {
+        MemoryShown::Profile(_) => String::from("profile"),
+        MemoryShown::Now(n) => n.stem.to_string(),
+        MemoryShown::Milestone(m) => m.stem.to_string(),
+    }
+}
+
+/// `scribe memory`'s errors, each the variant it was before the flow moved.
+impl From<Error<crate::runtime::errors::CommandError>> for crate::runtime::errors::CommandError {
+    fn from(err: Error<crate::runtime::errors::CommandError>) -> Self {
+        match err {
+            Error::Core(e) => Self::Core(e),
+            Error::Port(e) => e,
+            Error::Model(e) => Self::Model(e),
+            Error::ConfirmRequired(shown) => Self::ForgetConfirmRequired(shown_id(&shown)),
+        }
+    }
+}

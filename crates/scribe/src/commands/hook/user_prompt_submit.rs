@@ -36,10 +36,10 @@
 
 use super::group_add;
 use super::payload::{self, PromptPayload};
-use crate::Context;
 use crate::error::CliError;
 use crate::output::Output;
 use scribe_core::apps::hook::{Command, PromptInput, exec};
+use scribe_core::composition::Context;
 
 /// Run the hook on its stdin payload.
 pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {

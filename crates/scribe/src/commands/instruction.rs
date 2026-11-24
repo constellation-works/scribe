@@ -9,10 +9,10 @@
 //! does) and hands the bytes to [`scribe_core::instruction`], before the
 //! command takes the store lock. Any refusal changes nothing.
 
-use crate::Context;
 use clap::Args;
 use scribe_core::SessionId;
 use scribe_core::apps::entry::Instruction;
+use scribe_core::composition::Context;
 
 /// The instruction a write is run on: given together or not at all.
 #[derive(Debug, Args)]
