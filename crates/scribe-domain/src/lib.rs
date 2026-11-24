@@ -11,8 +11,8 @@
 //! in their modules. The typed `Error` is the store's (`scribe-store`'s
 //! `error`).
 //!
-//! The modules sit in four rings, each importing only its own and the ones
-//! before it: base, records, transcript, rules (ARCHITECTURE.md;
+//! The modules sit in three rings, each importing only its own and the ones
+//! before it: base, records, rules (ARCHITECTURE.md;
 //! `scripts/check-dependency-direction.sh`). It never touches the file
 //! system, the network, a process or the environment: `scribe-store` holds
 //! the records and `scribe-core` runs the use cases over both.
@@ -22,23 +22,19 @@
 
 pub mod claim;
 pub mod config;
-pub mod control;
 pub mod entry;
 pub mod handoff;
 pub mod models;
-pub mod origin;
 pub mod proposal;
 pub mod provider;
 pub mod record;
 pub mod session;
 pub mod tag;
 pub mod text;
-pub mod transcript;
 pub mod trigger;
 pub mod verbatim;
 pub mod voice;
 pub use provider::Provider;
-pub use transcript::codex;
 
 pub use config::{Config, ConfigError, ModelIds, SessionsConfig};
 pub use entry::{

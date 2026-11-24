@@ -6,7 +6,9 @@
 //! - [`project`]: the project a working directory belongs to, from git's own
 //!   files;
 //! - [`host`]: this host's name;
-//! - [`markers`]: the `#scribe` markers and settling lines of a typed turn;
+//! - [`markers`]: the `#scribe` markers and settling lines of a typed turn,
+//!   and the `/scribe` control line ([`markers::control`]);
+//! - [`origin`]: the origin guard, whether a turn was plainly typed;
 //! - [`window`]: the messages a session pass reads and the window it sends;
 //! - [`fs`]: the crate's file-system access, the only module naming
 //!   `std::fs`.
@@ -23,6 +25,7 @@
 pub mod fs;
 pub mod host;
 pub mod markers;
+pub mod origin;
 pub mod payload;
 pub mod project;
 pub mod transcript;
@@ -31,5 +34,9 @@ pub mod window;
 #[cfg(test)]
 mod tests;
 
-// The domain's session ids at the path `markers` names them by.
-use scribe_domain::session;
+// The domain's modules and names at the paths the transcript parser,
+// `codex`, `markers` and `control` name them by, and the control parser and
+// Codex rollout at the root paths they had in the domain.
+use markers::control;
+use scribe_domain::{SessionId, Speaker, entry, record, session, text};
+use transcript::codex;

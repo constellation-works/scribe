@@ -14,11 +14,16 @@
 
 #[cfg(unix)]
 mod claude;
+pub mod codex;
+mod parse;
 #[cfg(all(test, unix))]
 mod tests;
 
 use crate::fs::{self, File, Metadata};
-use scribe_domain::{Provider, SessionId, codex};
+// Transcript bytes read into typed messages (the domain's `transcript`
+// until ORB-27921 PR 5-12), at this module's path.
+pub use parse::*;
+use scribe_domain::{Provider, SessionId};
 #[cfg(unix)]
 use scribe_store::ClaudeCapturePosition;
 use std::io::Read;

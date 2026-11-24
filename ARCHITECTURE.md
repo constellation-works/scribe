@@ -26,9 +26,9 @@ PR 2 until PR 4, when composition is in the core.
 
 | Crate | Owns | Internal dependencies | Banned |
 |-------|------|-----------------------|--------|
-| `scribe-domain` | Records and the pure rules over them: entries, sessions, proposals, tags, transcripts, the parsing of prompts and config, and the request and answer shapes of the `Models` port. Values only, no I/O. | — | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile`, `rustix` |
+| `scribe-domain` | Records and the pure rules over them: entries, sessions, proposals, tags, the parsing of config, and the request and answer shapes of the `Models` port. Values only, no I/O. | — | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile`, `rustix` |
 | `scribe-store` | The data root and `scribe.db`: the `Store` (`open`, `read() -> Snapshot`, `write(\|tx\| …)` and the repositories), locks, atomic writes, format stamps, the import of the file store's archives, the audit record, and the redactor every persisted free-text field passes (`redact.rs`). The only crate that touches the data root. | `scribe-domain` | `clap`, `tracing-subscriber` and any terminal crate |
-| `scribe-tools` | Functions of host files, bytes and text that decide nothing about a record: provider transcripts found under their roots and read under the provenance checks (`transcript/`), a working directory's project from git's own files (`project.rs`), the `#scribe` markers and settling lines of a typed turn (`markers.rs`), and the crate's only `std::fs` access (`fs.rs`). | `scribe-domain`, `scribe-store` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile` |
+| `scribe-tools` | Functions of host files, bytes and text that decide nothing about a record: provider transcripts found under their roots, read under the provenance checks and parsed into typed messages (`transcript/`, with `codex`), the origin guard (`origin.rs`), a working directory's project from git's own files (`project.rs`), the `#scribe` markers, settling lines and `/scribe` control lines of a typed turn (`markers.rs`, with `control`), and the crate's only `std::fs` access (`fs.rs`). | `scribe-domain`, `scribe-store` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile` |
 | `scribe-core` | The apps (`apps/<app>/`, one per subject, each holding its use cases) and the `runtime/` they run against: the context and its ports, id resolution, the shared errors and the audit lines a use case owes. Each use case loads what it needs from a snapshot, plans with domain functions, calls the ports and commits in one store write. Its root re-exports `scribe-domain` and `scribe-store` at the paths they had in it. `composition.rs` captures the environment (`Env`) and resolves the `Context` the apps run against; `runtime/host/` implements the ports on it; `providers/` holds the `Models` port and the model adapters. | `scribe-domain`, `scribe-store`, `scribe-tools` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite` |
 | `scribe` (binary) | Arguments, dispatch, the audit guard and rendering. | `scribe-core`, `scribe-tools` (interim) | `rusqlite` |
 
@@ -116,10 +116,9 @@ map; a new module fails the check until it is given a ring.
 
 | Ring | Modules |
 |------|---------|
-| 1. base | `record`, `text`, `verbatim`, `provider`, `origin` |
-| 2. records | `session`, `control`, `entry`, `handoff`, `tag`, `proposal` |
-| 3. transcript | `transcript` (with `transcript/codex`) |
-| 4. rules | `trigger`, `voice`, `claim`, `models`, `config` |
+| 1. base | `record`, `text`, `verbatim`, `provider` |
+| 2. records | `session`, `entry`, `handoff`, `tag`, `proposal` |
+| 3. rules | `trigger`, `voice`, `claim`, `models`, `config` |
 
 `brief`, `search` and `consistency` left the domain in ORB-27921 step 5
 (PR 5-3) for the core's `apps/{brief,search}/rules.rs`. `consistency` was
@@ -150,9 +149,9 @@ PR 5-6 moved `activity` and `pass` out and split `control`:
 
 - `activity` went whole to `apps/session/rules/activity.rs`.
 - `control`'s switch transitions went to `apps/session/rules/control.rs`.
-  Its line parser (`parse`, `command_text`, `is_control`, `Switch`) stays in
-  the domain's `control`, because the domain's `transcript` reads it. It
-  goes to `tools/markers` once `transcript` leaves the domain.
+  Its line parser (`parse`, `command_text`, `is_control`, `Switch`) stayed in
+  the domain's `control` while the domain's `transcript` read it. It went to
+  `tools/markers/control.rs` in PR 5-12.
 - `pass` went to `apps/session/rules/pass.rs`, with `pass/repair` under it.
 - The pass's window (`conversation`, `window`, `window_with_limits`) went
   to `scribe-tools/src/window.rs`.
@@ -225,6 +224,22 @@ The core's root re-exports both as `crate::message` and `crate::memory`. With
 `memory` gone, `transcript`, `codex`, `origin` and `control`'s parser can
 leave in PR 5-12, and `config` follows in PR 5-13.
 
+PR 5-12 moved the transcript family to the tools:
+
+- `transcript` became `scribe-tools/src/transcript/parse.rs`. The tools'
+  `transcript` module re-exports it, so its parsing sits beside the
+  discovery and the provenance check.
+- `transcript/codex` went to `scribe-tools/src/transcript/codex.rs`.
+- `origin` went to `scribe-tools/src/origin.rs`. The store never reads it,
+  and it holds the origin guard's functions, not shapes.
+- `control`'s line parser went to `scribe-tools/src/markers/control.rs`.
+
+The tools root names the domain's `entry`, `record`, `session`, `text`,
+`SessionId` and `Speaker`, and its own `control` and `codex`, at the paths
+the moved code uses. The core's root re-exports `crate::transcript`,
+`crate::codex`, `crate::origin` and `crate::control` from the tools. The
+domain has no transcript ring now.
+
 `redact` went whole to the store's `redact.rs` in PR 5-7. The store root
 re-exports `Redactor`, `REDACTED_FIELDS`, `MIN_SECRET_CHARS` and
 `unresolved_redact_env` as before. `Redactor::from_config` and
@@ -235,16 +250,10 @@ and build a `Redactor` from plain names.
 These are the rings the code has, and they differ from the approved lists in
 ORB-27707 where an import forces it:
 
-- **`transcript` comes before rules, not after.** The rules read
-  transcripts, though since PR 5-11 none left in the domain imports it.
-  `transcript` imports only the records ring (`control::parse`, `entry`,
-  `session`) and base (`origin`, `text`, `record`).
-- **`config` is in rules, not a ring of its own after transcript.** It imports
+- **`config` is in rules, not a ring of its own.** It imports
   `trigger::MAX_TRIGGERS` and `voice::{UserName, Instructions}`, both in
   rules.
 - **Modules the lists did not name:**
-  - `origin` is in base and imports nothing;
-  - `control` is in records, since it imports `session`;
   - `models` (imports `voice`) is in rules.
 - **Naming:** `verbatim` is its own module in base, beside `text`. Ids live
   with their records, so there is no `ids` module.

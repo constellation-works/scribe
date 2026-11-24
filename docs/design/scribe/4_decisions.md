@@ -1611,7 +1611,7 @@ session that is on and due. Messages after the last pass are not recorded.
 ## `/scribe` ships a command file that expands to itself
 
 **Code anchors:** `plugin/claude-code/commands/scribe.md`;
-`crates/scribe-domain/src/control.rs` (`parse`)
+`crates/scribe-tools/src/markers/control.rs` (`parse`)
 
 ### Context
 

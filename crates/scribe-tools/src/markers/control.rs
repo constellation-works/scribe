@@ -8,8 +8,8 @@
 //! recognises the line ([`parse`]). The switch transitions that change a
 //! `ControlState` in memory live in the session app's rules
 //! (`scribe-core/src/apps/session/rules/control.rs`); the store persists the
-//! result under its lock and the hook words the reply. This half stays in
-//! the domain while the domain's `transcript` reads it (ORB-27921 PR 5-6).
+//! result under its lock and the hook words the reply. This half sits with
+//! the markers because the transcript parser reads it (ORB-27921 PR 5-12).
 //!
 //! Every session starts off. Restoring a handoff can leave an off switch
 //! holding a pending link. Only an on switch schedules a pass.
