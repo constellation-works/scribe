@@ -4500,13 +4500,14 @@ F2026-11-025).
 
 `scribe group close <id> --quote '<span>'` closes the group for a caller that
 holds no seat in it when `<span>` is a verbatim span of the user's own typed
-turn in the calling session and contains the group's `g-<n>` id as a whole word.
-The check is the consent `group open` takes (`GroupConsent::verify`), plus the
-id, so a quote about another group does not serve. The quote is Daniel's
-explicit ask, which satisfies the accident guard. The caller takes no seat, and
-the seat rule is not widened. Without `--quote` the closer rule is unchanged.
-The quote is verified for every caller, so a refused quote fails even for the
-opener. A typed `/scribe group close` line was not added.
+turn in the calling session, contains the whole canonical `g-<n>` id, and is at
+least eight characters long after normalization. The check is the consent
+`group open` takes (`GroupConsent::verify`), plus the id, so a quote about another
+group does not serve. The quote is Daniel's explicit ask, which satisfies the
+accident guard. The caller takes no seat, and the seat rule is not widened.
+Without `--quote` the closer rule is unchanged. The quote is verified for every
+caller, so a refused quote fails even for the opener. A typed `/scribe group
+close` line was not added.
 
 ### Consequences
 
