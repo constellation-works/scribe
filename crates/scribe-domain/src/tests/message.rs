@@ -2,10 +2,10 @@
 //! hits made of them.
 
 use super::T0;
+use crate::claim::PassClaim;
 use crate::entry::{Cite, Speaker};
 use crate::message;
 use crate::models::PassMessage;
-use crate::pass::PassClaim;
 use crate::proposal::EntryCandidate;
 use crate::record::{Label, Project};
 use crate::transcript;

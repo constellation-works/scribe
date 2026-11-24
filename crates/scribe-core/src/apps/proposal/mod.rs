@@ -17,6 +17,11 @@ mod verbs;
 
 pub use add::ProposalAddInput;
 pub use list::ListInput;
+pub use rules::candidates;
+pub use rules::candidates::{
+    MAX_CANDIDATES, MAX_COLLECTED, admission, candidate_drafts, candidate_exclusions,
+    capture_request, write_exclusions,
+};
 pub use rules::{checked_outcome, has_context_and_subject, open_under, pass_entry, written_from};
 pub use settle::ProposalSettleInput;
 #[cfg(any(test, feature = "test-support"))]

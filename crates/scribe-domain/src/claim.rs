@@ -8,7 +8,7 @@ use crate::verbatim;
 /// `text` with fenced, indented and blockquoted material and marked
 /// instructions replaced by a NUL barrier each, so neither a quote nor a
 /// trigger match can be spliced across an excluded line.
-pub(crate) fn own_lines(text: &str) -> String {
+pub fn own_lines(text: &str) -> String {
     own_lines_where(text, |_| false)
 }
 
@@ -115,7 +115,7 @@ pub(crate) fn is_marker(token: &str) -> bool {
 /// and for exclusion ranking: Unicode normalization, trimmed, lowercased, with curly
 /// apostrophes folded to `'`. A token is a run of alphanumeric characters;
 /// an apostrophe between alphanumerics stays, so `don't` is one token.
-pub(crate) fn statement_tokens(text: &str) -> Vec<String> {
+pub fn statement_tokens(text: &str) -> Vec<String> {
     let normalized = verbatim::normalize(text);
     let folded = normalized.replace(['\u{2018}', '\u{2019}'], "'");
     let lower = folded.trim().to_lowercase();

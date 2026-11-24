@@ -1457,7 +1457,7 @@ failure. No persisted shape changes.
 
 **Recorded:** 2026-11 · [ORB-23829] · **Overridable by Daniel**
 **Code anchors:** `crates/scribe/src/commands/session/pass.rs` (`failed`,
-`PassArgs`); `crates/scribe-core/src/control.rs` (`chosen`);
+`PassArgs`); `crates/scribe-core/src/apps/session/rules/control.rs` (`chosen`);
 `crates/scribe/src/output/mod.rs` (`finish`); `crates/scribe/src/commands/plugin.rs`
 (`failed_passes`)
 
@@ -1589,7 +1589,7 @@ from the transcript's first message.
 
 ## `/scribe off` clears a pending pass
 
-**Code anchors:** `crates/scribe-core/src/control.rs` (`switch`)
+**Code anchors:** `crates/scribe-core/src/apps/session/rules/control.rs` (`switch`)
 
 ### Context
 
@@ -1611,7 +1611,7 @@ session that is on and due. Messages after the last pass are not recorded.
 ## `/scribe` ships a command file that expands to itself
 
 **Code anchors:** `plugin/claude-code/commands/scribe.md`;
-`crates/scribe-core/src/control.rs` (`parse`)
+`crates/scribe-domain/src/control.rs` (`parse`)
 
 ### Context
 
@@ -1867,7 +1867,7 @@ are audited. A missing transcript also writes an audited deferred-check marker, 
 new transcript. A continue handoff authorizes the hook to record that link
 and carry the recording switch ([design §16.7](./2_design.md#167-continuing-after-a-clear)).
 
-**Code anchors:** `crates/scribe-core/src/session.rs` (`SessionLink`, `check_link`, `children`), `crates/scribe-core/src/control.rs` (`link`), `crates/scribe-core/src/store/mod.rs` (`link_session`), `crates/scribe/src/commands/hook/scribe_command.rs`
+**Code anchors:** `crates/scribe-core/src/session.rs` (`SessionLink`, `check_link`, `children`), `crates/scribe-core/src/apps/session/rules/control.rs` (`link`), `crates/scribe-core/src/store/mod.rs` (`link_session`), `crates/scribe/src/commands/hook/scribe_command.rs`
 
 ### Context
 
@@ -1923,7 +1923,7 @@ are structured.
 ## A session record is a rewritable header over an append-only log
 
 **Recorded:** 2026-11-10 · [ORB-23892] · **Daniel's choice**
-**Code anchors:** `crates/scribe-core/src/session.rs`, `crates/scribe-core/src/pass.rs`, `store/codec.rs` (from S8, S9; `store/format.rs` before phase 8, ORB-26657)
+**Code anchors:** `crates/scribe-core/src/session.rs`, `crates/scribe-core/src/apps/session/rules/pass.rs`, `store/codec.rs` (from S8, S9; `store/format.rs` before phase 8, ORB-26657)
 
 ### Context
 
@@ -2055,7 +2055,7 @@ transcript is gone keeps the converted segment.
 ## Sessions carry an active flag, separate from status
 
 **Recorded:** 2026-11-10 · [ORB-23892] · **Daniel's choice**
-**Code anchors:** `crates/scribe-core/src/activity.rs` (from S8)
+**Code anchors:** `crates/scribe-core/src/apps/session/rules/activity.rs` (from S8)
 
 ### Context
 
@@ -2087,7 +2087,7 @@ Every change is audited and reversible with `session activate`.
 ## Removal of the feature is the main deactivation route; age is a generous backstop
 
 **Recorded:** 2026-11-10 · [ORB-23892] · **Overridable by Daniel**
-**Code anchors:** `crates/scribe-core/src/activity.rs`, `crates/scribe-core/src/consistency.rs` (from S10)
+**Code anchors:** `crates/scribe-core/src/apps/session/rules/activity.rs`, `crates/scribe-core/src/consistency.rs` (from S10)
 
 > **Superseded, 2026-11-24 ([ORB-27911]):** the consistency scan calls no
 > model, so no session is deactivated for a removed feature; age is the
@@ -3088,7 +3088,7 @@ settled by id.
 ## Claims carry a statement, tags carry capture rules, and issues are their own record
 
 **Recorded:** 2026-11-21 · [ORB-26214] · **Overridable by Daniel** · proposed, not built
-**Paths:** `crates/scribe-core/src/tag.rs` (`SHIPPED_ACTION_TAGS`, `FINDING_TAG`), `crates/scribe-core/src/pass/candidates.rs`, `crates/scribe-core/src/store/candidates.rs`, `crates/scribe/src/commands/hook/user_prompt_submit.rs` — design §11
+**Paths:** `crates/scribe-core/src/tag.rs` (`SHIPPED_ACTION_TAGS`, `FINDING_TAG`), `crates/scribe-core/src/apps/proposal/rules/candidates.rs`, `crates/scribe-core/src/store/candidates.rs`, `crates/scribe/src/commands/hook/user_prompt_submit.rs` — design §11
 
 ### Context
 
@@ -3301,7 +3301,7 @@ Alternatives considered:
 
 **Recorded:** 2026-11-21 · [ORB-26219] · **Overridable by Daniel** · steps (a) built (ORB-26258, store format 19), (b) built (ORB-26259, store format 20) and (c) built (ORB-26260, store format 21)
 **Reverses:** [3_vision.md §4](./3_vision.md#4-deliberately-out-of-scope)'s "no inference of preferences from behaviour", for descriptive memory only
-**Paths:** `crates/scribe-core/src/pass/` (the pass's model output), `crates/scribe-core/src/consistency.rs`, `crates/scribe/src/commands/hook/` (`session-start`) — design §13
+**Paths:** `crates/scribe-core/src/apps/session/rules/pass.rs` (the pass's model output), `crates/scribe-core/src/consistency.rs`, `crates/scribe/src/commands/hook/` (`session-start`) — design §13
 
 ### Context
 
@@ -3480,7 +3480,7 @@ since items are scribe-authored; personal life is kept only with
 **Recorded:** 2026-11-21 · [ORB-26240] · **Overridable by Daniel** · proposed, not built · **points 1–7 parked 2026-11-21** ([ORB-26256], below)
 **Supersedes in part:** [scribe keeps a descriptive memory the pass writes without approval](#scribe-keeps-a-descriptive-memory-the-pass-writes-without-approval), points 2 (on sessions as the only source) and 9 (`personal = false` by default, and the presets)
 **Reverses:** [3_vision.md §4](./3_vision.md#4-deliberately-out-of-scope)'s "Scanning or cataloging sessions on scribe's own initiative", for the personal base and light catalog entries of interactive sessions only
-**Paths:** `crates/scribe-core/src/pass/`, `crates/scribe-core/src/control.rs`, `crates/scribe/src/commands/hook/` (`stop`, `session-start`) — design §13.12–§13.16
+**Paths:** `crates/scribe-core/src/apps/session/rules/pass.rs`, `crates/scribe-core/src/apps/session/rules/control.rs`, `crates/scribe/src/commands/hook/` (`stop`, `session-start`) — design §13.12–§13.16
 
 > **Parked 2026-11-21 ([ORB-26256]).** Daniel: "park 2-5, keep 1, 6, 7".
 > Points 1–7 below (the base pass, `/scribe private`, light catalog
@@ -3756,7 +3756,7 @@ Alternatives considered:
 ## Stop recovery keeps a line covered when it was typed
 
 **Recorded:** 2026-11 · [ORB-26349]
-**Code anchors:** `crates/scribe-core/src/pass/candidates.rs::covers_turn`, `crates/scribe-core/src/store/mod.rs::covered_instruction_lines`
+**Code anchors:** `crates/scribe-core/src/apps/proposal/rules/candidates.rs::covers_turn`, `crates/scribe-core/src/store/mod.rs::covered_instruction_lines`
 
 ### Context
 
@@ -3811,7 +3811,7 @@ a line that may have been covered is the worse miss.
 ## Stop coverage ends when the entry left active, in whole seconds
 
 **Recorded:** 2026-11 · [ORB-26360]
-**Code anchors:** `crates/scribe-core/src/pass/candidates.rs::covers_turn`, `crates/scribe-core/src/store/mod.rs::covered_draft`, `crates/scribe-core/src/store/format.rs::entry_inactive_since` (removed in phase 8, ORB-26657)
+**Code anchors:** `crates/scribe-core/src/apps/proposal/rules/candidates.rs::covers_turn`, `crates/scribe-core/src/store/mod.rs::covered_draft`, `crates/scribe-core/src/store/format.rs::entry_inactive_since` (removed in phase 8, ORB-26657)
 
 ### Context
 
@@ -3970,7 +3970,7 @@ reserved id would point at nothing.
 ## The session pass writes Daniel's ideas itself, with their outcome
 
 **Recorded:** 2026-11-21 · [ORB-26265] · **Overridable by Daniel**
-**Code anchors:** `crates/scribe-core/src/store/candidates.rs` (`open_pass_candidates`, `pass_entry`, `written_from`), `crates/scribe-core/src/pass/candidates.rs` (`check`, `checked_outcome`, `write_exclusions`), `crates/scribe-core/src/entry.rs` (`Outcome`), `crates/scribe-core/src/tag.rs` (the shipped `idea` capture rules)
+**Code anchors:** `crates/scribe-core/src/store/candidates.rs` (`open_pass_candidates`, `pass_entry`, `written_from`), `crates/scribe-core/src/apps/proposal/rules/candidates.rs` (`check`, `checked_outcome`, `write_exclusions`), `crates/scribe-core/src/entry.rs` (`Outcome`), `crates/scribe-core/src/tag.rs` (the shipped `idea` capture rules)
 
 ### Context
 
@@ -4412,7 +4412,7 @@ audit log holds one issue trigger fire.
 ## The store keeps only the assistant turns a claim cites (proposed)
 
 **Recorded:** 2026-11-22 · [ORB-26640] · **Daniel's choice** (decision 3 of the accepted proposal)
-**Code anchors:** `crates/scribe-core/src/pass/candidates.rs` (the `Speaker::User` filter), `crates/scribe-core/src/proposal.rs::EntryCandidate::role`
+**Code anchors:** `crates/scribe-core/src/apps/proposal/rules/candidates.rs` (the `Speaker::User` filter), `crates/scribe-core/src/proposal.rs::EntryCandidate::role`
 
 ### Context
 

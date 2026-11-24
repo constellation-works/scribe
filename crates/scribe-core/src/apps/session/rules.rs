@@ -1,6 +1,17 @@
-//! The session app's rules: the checks of a session write, a hand-set
-//! field, an activity change by an agent, and a rebuild while a pass owns
-//! the session. Pure functions over loaded records: no I/O (STD-02 R5).
+//! The session app's rules. Pure functions over loaded records: no I/O
+//! (STD-02 R5).
+//!
+//! - [`activity`]: whether a session record still describes something
+//!   current, and who cataloged it;
+//! - [`control`]: the `/scribe` switch transitions;
+//! - [`pass`]: a session pass, from a switched-on session's transcript to
+//!   its distilled record;
+//! - here: the checks of a session write, a hand-set field, an activity
+//!   change by an agent, and a rebuild while a pass owns the session.
+
+pub mod activity;
+pub mod control;
+pub mod pass;
 
 use crate::apps::entry::check_content;
 use crate::apps::tag::check_agent_author;
