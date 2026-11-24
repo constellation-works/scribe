@@ -15,7 +15,6 @@
 
 pub mod annotation;
 pub mod brief;
-pub mod catalog;
 pub mod codex;
 pub mod consistency_scan;
 pub mod continuation;
@@ -29,17 +28,12 @@ pub mod group_leave;
 pub mod group_open;
 pub mod group_turns;
 pub mod hook;
-pub mod pass;
 pub mod proposal_command;
-pub mod rebuild;
 pub mod scribe_command;
 pub mod search;
-pub mod session;
-pub mod session_activity;
 pub mod session_end;
 pub mod session_start;
 pub mod stop;
-pub mod transcript;
 pub mod user_prompt_submit;
 
 pub use group_cmd::GroupError;

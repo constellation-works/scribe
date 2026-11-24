@@ -10,4 +10,5 @@ pub mod entry;
 pub mod mark;
 pub mod memory;
 pub mod proposal;
+pub mod session;
 pub mod tag;

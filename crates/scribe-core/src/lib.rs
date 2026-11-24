@@ -97,11 +97,14 @@ pub use apps::memory::MemoryVerbs;
 #[cfg(any(test, feature = "test-support"))]
 pub use apps::proposal::ProposalVerbs;
 #[cfg(any(test, feature = "test-support"))]
+pub use apps::session::RebuildVerbs;
+#[cfg(any(test, feature = "test-support"))]
+pub use apps::session::SessionVerbs;
+#[cfg(any(test, feature = "test-support"))]
+pub use apps::session::{ClaimsWritten, PassVerbs};
+#[cfg(any(test, feature = "test-support"))]
 pub use apps::tag::TagVerbs;
 pub use cases::group::GroupVerbs;
-pub use cases::pass::{ClaimsWritten, PassVerbs};
-pub use cases::rebuild::RebuildVerbs;
-pub use cases::session::{HandoffSelection, SessionVerbs};
 pub use checks::entry::check_handoff_related;
 pub use checks::records::check_unsettled_item;
 pub use checks::tag::check_description;

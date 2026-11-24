@@ -1,14 +1,15 @@
 //! Rebuild a record from the first transcript message. Each window is written
 //! to an isolated dot-file; only the complete rebuild replaces the record.
 
+use super::{once, passed};
 use crate::app::Context;
 use crate::error::CliError;
 use crate::output::Output;
 use clap::Args;
-use scribe_core::cases::rebuild::{self as case, RebuildInput};
+use scribe_core::apps::session::{self as app, Command, RebuildInput, exec};
 use scribe_core::{AuthorName, Config, Models, SessionId};
 
-pub(in crate::commands) const COMMAND: &str = case::REBUILD_COMMAND;
+pub(in crate::commands) const COMMAND: &str = app::REBUILD_COMMAND;
 pub(super) const EXAMPLES: &str = "\
 Replaces the header and log only after every transcript window succeeds.
 Interrupted runs resume their private checkpoint; --confirm is required.
@@ -40,14 +41,11 @@ pub(in crate::commands) fn run_with<M: Models>(
     ctx: &Context,
     models: impl FnOnce(&Config) -> M,
 ) -> Result<Output, CliError> {
-    let report = case::run(
-        &ctx.core(),
-        RebuildInput {
-            id: &args.id,
-            author: &args.author,
-            confirm: args.confirm,
-            models,
-        },
-    )?;
-    Ok(Output::Pass(report))
+    let input = RebuildInput {
+        id: &args.id,
+        author: &args.author,
+        confirm: args.confirm,
+        models: once(models),
+    };
+    Ok(passed(exec(&ctx.runtime(), Command::Rebuild(input))?, ctx))
 }

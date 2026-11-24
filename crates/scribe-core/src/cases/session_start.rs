@@ -5,8 +5,9 @@
 //! with a continue handoff restores it before the brief (§16.7). On other
 //! starts the same-project reminder is advisory and changes no switch.
 
+use crate::apps::session::{self, ClearedPredecessor};
 use crate::cases::brief;
-use crate::cases::continuation::{self, ClearedPredecessor};
+use crate::cases::continuation;
 use crate::cases::group::GroupVerbs;
 use crate::cases::hook::{HookOutcome, HookReply};
 use crate::group::SeatStart;
@@ -96,7 +97,7 @@ pub fn run<E: PortError>(ctx: &Ctx<'_, E>, input: &SessionStartInput<'_>) -> Hoo
         tracing::warn!(%err, "cannot record the deferred ancestry check");
     }
     let predecessor = if start_ancestry && !missing {
-        continuation::cleared_predecessor(ctx, provider, transcript_path, &session)
+        session::cleared_predecessor(ctx, provider, transcript_path, &session)
     } else {
         ClearedPredecessor::None
     };

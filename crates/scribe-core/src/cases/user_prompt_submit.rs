@@ -33,6 +33,7 @@
 //! prompt: a refusal or a store failure is a reply, not an error exit, so
 //! the rest of the prompt still reaches the agent.
 
+use crate::apps::session;
 use crate::capture::{self, Parsed, Turn};
 use crate::cases::continuation;
 use crate::cases::group::GroupVerbs;
@@ -43,7 +44,6 @@ use crate::cases::hook::{
 };
 use crate::cases::proposal_command;
 use crate::cases::scribe_command::{self, ScribeCommandInput};
-use crate::cases::session::SessionVerbs;
 use crate::cases::session_start;
 use crate::message::NewMessage;
 use crate::runtime::Ctx;
@@ -145,7 +145,7 @@ fn apply_deferred_ancestry<E: HookPortError>(
     }
     // Keep the check pending while the transcript is still missing or unreadable.
     let Some(predecessor) =
-        continuation::try_cleared_predecessor(ctx, input.provider, input.transcript_path, session)
+        session::try_cleared_predecessor(ctx, input.provider, input.transcript_path, session)
     else {
         return Ok(());
     };
@@ -381,8 +381,7 @@ fn capture_prompt<E: HookPortError>(
             } => {
                 let redactor = redactor(ctx, provider)?;
                 let result = ctx.store.read().sessions().resolve(&named).and_then(|id| {
-                    ctx.store
-                        .update_session_metadata(&id, &field, &value, &redactor)
+                    session::update_session_metadata(ctx.store, &id, &field, &value, &redactor)
                         .map(|()| id)
                 });
                 return Ok(named_reply(result, "updated", &session));

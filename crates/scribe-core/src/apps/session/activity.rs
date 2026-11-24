@@ -1,9 +1,9 @@
 //! `scribe session activate|deactivate` (ORB-27707 step 3d): an agent's
 //! manual activity change, in one locked store call (§7, S10).
 
+use super::verbs::SessionVerbs;
 use crate::activity::{self, ActiveOutcome, ActiveRoute, SetActive};
 use crate::apps::entry;
-use crate::cases::session::SessionVerbs;
 use crate::runtime::Ctx;
 use crate::runtime::errors::{WriteError, redactor};
 use crate::store::SessionView;

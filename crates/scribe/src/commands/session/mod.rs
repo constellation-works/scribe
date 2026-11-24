@@ -25,8 +25,10 @@ use crate::output::{
     Kin, Output, Record, Records, SessionHandoffsPayload, SessionPayload, TreeRow,
 };
 use clap::{Args, Subcommand};
+use scribe_core::apps::session::{self as app, Command, ModelsOnce, Outcome, Shown, exec};
 use scribe_core::{
-    Project, Related, SessionFilter, SessionOrder, SessionRecord, SessionStatus, Topic,
+    Config, Models, Project, Related, SessionFilter, SessionOrder, SessionRecord, SessionStatus,
+    Topic,
 };
 use std::num::{NonZeroU32, NonZeroUsize};
 
@@ -169,8 +171,7 @@ pub(crate) struct ShowArgs {
     pub(crate) segment: Option<NonZeroU32>,
 }
 
-use scribe_core::cases::session::Shown;
-pub(crate) use scribe_core::cases::session_activity::{SessionRef, parse_session_ref};
+pub(crate) use scribe_core::apps::session::{SessionRef, parse_session_ref};
 
 impl SessionCommand {
     /// The session and agent a write verb names, resolved before it runs, so
@@ -182,17 +183,12 @@ impl SessionCommand {
             // A prefix is resolved before the line is written; an id that
             // resolves to no record leaves the target null, never the typed id.
             Self::Rebuild(args) => AuditSubject {
-                target: ctx
-                    .store()
-                    .read()
-                    .sessions()
-                    .resolve(&args.id)
-                    .ok()
+                target: app::resolved_id(&ctx.runtime(), &args.id)
                     .map(|id| format!("session:{id}")),
                 author: Some(args.author.as_str().to_owned()),
             },
             Self::Catalog(args) => AuditSubject {
-                target: crate::commands::transcript::resolve_transcript(ctx, &args.id)
+                target: app::resolve_transcript(&ctx.runtime(), ctx.provider(), &args.id)
                     .ok()
                     .map(|id| format!("session:{id}")),
                 author: Some(args.author.as_str().to_owned()),
@@ -246,25 +242,35 @@ pub(super) fn run(command: SessionCommand, ctx: &Context) -> Result<Output, CliE
 }
 
 fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
-    let listed = scribe_core::cases::session::list(
-        &ctx.core(),
-        scribe_core::cases::session::ListInput {
-            filter: SessionFilter {
-                project: args.project,
-                topics: args.topic,
-                related: args.related,
-                status: args.status.map(SessionStatus::from),
-                dates: scribe_core::DateRange::default(),
-                include_inactive: args.include_inactive,
-                limit: args.limit,
-                order: SessionOrder::Updated,
-            },
-            since: args.dates.since,
-            until: args.dates.until,
-            group: args.group,
-            provider: ctx.provider(),
+    let input = app::ListInput {
+        filter: SessionFilter {
+            project: args.project.clone(),
+            topics: args.topic.clone(),
+            related: args.related.clone(),
+            status: args.status.map(SessionStatus::from),
+            dates: scribe_core::DateRange::default(),
+            include_inactive: args.include_inactive,
+            limit: args.limit,
+            order: SessionOrder::Updated,
         },
-    )?;
+        since: args.dates.since,
+        until: args.dates.until,
+        group: args.group.clone(),
+        provider: ctx.provider(),
+    };
+    let outcome = exec(&ctx.runtime(), Command::List(Box::new(input)))?;
+    Ok(output(
+        outcome,
+        View {
+            list: Some(&args),
+            ..View::default()
+        },
+        ctx,
+    ))
+}
+
+/// `session list`'s output, echoing `args` as criteria.
+fn listed(listed: app::Listed, args: Option<&ListArgs>, ctx: &Context) -> Output {
     let (filter, group, found) = (listed.filter, listed.group, listed.found);
     let empty = format!(
         "no session records in {}; a session is cataloged after /scribe on",
@@ -286,7 +292,9 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
     if let Some(status) = filter.status {
         criteria.push(format!("--status {}", status.as_str()));
     }
-    criteria.extend(args.dates.criteria());
+    if let Some(args) = args {
+        criteria.extend(args.dates.criteria());
+    }
     let notice = ListNotice {
         noun: "sessions",
         criteria,
@@ -302,8 +310,8 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
         .with_forgotten(found.forgotten.get(&r.id).copied())
     };
     let items = &found.listing.items;
-    let active_column = args.include_inactive;
-    let records = if args.tree {
+    let active_column = filter.include_inactive;
+    let records = if args.is_some_and(|args| args.tree) {
         Records::SessionTree {
             rows: scribe_core::tree_order(items)
                 .into_iter()
@@ -333,7 +341,7 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
             found.inactive_hidden
         ));
     }
-    Ok(output)
+    output
 }
 
 /// One record, inactive or not. The JSON carries every segment with its
@@ -348,23 +356,43 @@ fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
         }
         (flag, cite) => flag.or(cite),
     };
-    let (view, handoffs) =
-        match scribe_core::cases::session::show(&ctx.core(), &args.id.id, segment)? {
-            Shown::Record { view, handoffs } => (view, handoffs),
-            Shown::Handoffs {
-                id,
-                control,
-                handoffs,
-            } => {
-                return Ok(Output::Show {
-                    record: Record::SessionHandoffs(Box::new(SessionHandoffsPayload::new(
-                        &id,
-                        control.as_ref(),
-                        &handoffs,
-                    ))),
-                });
-            }
-        };
+    let outcome = exec(
+        &ctx.runtime(),
+        Command::Show {
+            id: args.id.id.clone(),
+            segment,
+        },
+    )?;
+    Ok(output(
+        outcome,
+        View {
+            log: args.log,
+            segment,
+            ..View::default()
+        },
+        ctx,
+    ))
+}
+
+/// What a `session show` read: the record, its table of contents, and the
+/// text with `log` or a `segment`.
+fn shown(shown: Shown, log: bool, segment: Option<NonZeroU32>) -> Output {
+    let (view, handoffs) = match shown {
+        Shown::Record { view, handoffs } => (view, handoffs),
+        Shown::Handoffs {
+            id,
+            control,
+            handoffs,
+        } => {
+            return Output::Show {
+                record: Record::SessionHandoffs(Box::new(SessionHandoffsPayload::new(
+                    &id,
+                    control.as_ref(),
+                    &handoffs,
+                ))),
+            };
+        }
+    };
     let record = &view.record;
     let payload = SessionPayload::new(
         record,
@@ -382,10 +410,45 @@ fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
         Some(n) => payload.with_log(record.segment(n.get())),
         None => payload.with_log(&record.log),
     };
-    payload.log_text = args.log || segment.is_some();
-    Ok(Output::Show {
+    payload.log_text = log || segment.is_some();
+    Output::Show {
         record: Record::Session(Box::new(payload)),
-    })
+    }
+}
+
+/// What the flags ask of an outcome's output beyond the outcome itself.
+#[derive(Default)]
+pub(in crate::commands) struct View<'a> {
+    /// `session list`'s arguments, echoed as criteria.
+    pub(in crate::commands) list: Option<&'a ListArgs>,
+    /// `session show --log`.
+    pub(in crate::commands) log: bool,
+    /// `session show`'s segment.
+    pub(in crate::commands) segment: Option<NonZeroU32>,
+    /// `transcript list`'s criteria.
+    pub(in crate::commands) transcripts: &'a [String],
+}
+
+/// A `session` or `transcript` outcome as its output.
+pub(in crate::commands) fn output(outcome: Outcome, view: View<'_>, ctx: &Context) -> Output {
+    match outcome {
+        Outcome::Listed(found) => listed(*found, view.list, ctx),
+        Outcome::Shown(read) => shown(*read, view.log, view.segment),
+        Outcome::Passed(report) => Output::Pass(*report),
+        Outcome::Activity(written) => activity::output(*written),
+        Outcome::Transcripts(found) => crate::commands::transcript::listed(found, view.transcripts),
+        Outcome::Transcript(surveyed) => crate::commands::transcript::shown(*surveyed),
+    }
+}
+
+/// A `pass`, `catalog` or `rebuild` outcome as its output.
+fn passed(outcome: Outcome, ctx: &Context) -> Output {
+    output(outcome, View::default(), ctx)
+}
+
+/// `models` as the boxed one-shot factory a command carries.
+fn once<'i, M: Models + 'i>(models: impl FnOnce(&Config) -> M + 'i) -> ModelsOnce<'i> {
+    Box::new(move |config: &Config| Box::new(models(config)) as Box<dyn Models + 'i>)
 }
 
 #[cfg(test)]

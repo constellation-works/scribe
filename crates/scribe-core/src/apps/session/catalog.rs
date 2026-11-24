@@ -1,7 +1,7 @@
 //! `scribe session catalog` (ORB-27707 step 3): switch one past session on
 //! with `cataloged_by` and run every window of its transcript.
 
-use crate::cases::pass::{CatalogJob, PassReport, RunFailure, run_catalog};
+use super::pass::{CatalogJob, PassReport, RunFailure, run_catalog};
 use crate::control::{self, CatalogGate};
 use crate::runtime::resolve::refuse_forgotten;
 use crate::runtime::{Ctx, PortError, Unreadable};
@@ -110,7 +110,7 @@ pub fn run<E: PortError, M: Models>(
     let begun = begin(ctx, provider, id, Author::agent(author.clone()))?;
     let config = ctx.store.read().tags().config()?.for_provider(provider);
     let project = project.unwrap_or_else(|| {
-        crate::cases::pass::attributed_project(&begun.bytes, &config, |cwd| {
+        super::pass::attributed_project(&begun.bytes, &config, |cwd| {
             ctx.transcripts.project_of(cwd)
         })
     });

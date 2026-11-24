@@ -19,20 +19,21 @@
 //! `session pass`, then runs its windows and keeps that attribution
 //! (4_decisions.md "The user writes only through their typed prompt").
 
+use super::{once, passed};
 use crate::app::Context;
 use crate::error::CliError;
 use crate::output::Output;
 use clap::Args;
 #[cfg(test)]
 use scribe_core::Author;
-use scribe_core::cases::catalog::{self as case, CatalogInput};
+use scribe_core::apps::session::{self as app, CatalogInput, Command, exec};
 use scribe_core::{AuthorName, Models, Project, SessionId};
 
 /// A catalog begun: its switch, whether this run wrote it, and the bytes.
 #[cfg(test)]
-pub(in crate::commands) use scribe_core::cases::catalog::Begun;
+pub(in crate::commands) use scribe_core::apps::session::Begun;
 
-pub(in crate::commands) const COMMAND: &str = scribe_core::cases::pass::CATALOG_COMMAND;
+pub(in crate::commands) const COMMAND: &str = app::CATALOG_COMMAND;
 
 pub(super) const EXAMPLES: &str = "\
 Switches one past session on with cataloged_by and runs every window, with
@@ -78,26 +79,28 @@ pub(in crate::commands) fn run_with<M: Models>(
     ctx: &Context,
     models: impl FnOnce(&scribe_core::Config) -> M,
 ) -> Result<Output, CliError> {
-    let report = case::run(
-        &ctx.core(),
-        CatalogInput {
-            id: &args.id,
-            author: &args.author,
-            project: args.project.clone(),
-            provider: ctx.provider(),
-            host: ctx.host(),
-            models,
-        },
-    )?;
-    Ok(Output::Pass(report))
+    let input = CatalogInput {
+        id: &args.id,
+        author: &args.author,
+        project: args.project.clone(),
+        provider: ctx.provider(),
+        host: ctx.host(),
+        models: once(models),
+    };
+    Ok(passed(exec(&ctx.runtime(), Command::Catalog(input))?, ctx))
 }
 
-/// Begin a catalog of `input` by `by` ([`scribe_core::cases::catalog::begin`]).
+/// Begin a catalog of `input` by `by` (the session app's `begin_catalog`).
 #[cfg(test)]
 pub(in crate::commands) fn begin(
     ctx: &Context,
     input: &SessionId,
     by: Author,
 ) -> Result<Begun, CliError> {
-    Ok(case::begin(&ctx.core(), ctx.provider(), input, by)?)
+    Ok(app::begin_catalog(
+        &ctx.runtime(),
+        ctx.provider(),
+        input,
+        by,
+    )?)
 }

@@ -28,11 +28,10 @@
 //! refusal is audited with its code; a no-op or a status writes nothing, except
 //! that an explicit off during deferred ancestry records and audits the opt-out.
 
-use crate::cases::catalog;
+use crate::apps::session;
 use crate::cases::continuation;
 use crate::cases::group::GroupVerbs;
 use crate::cases::hook::{HookOutcome, HookPortError, HookReply, PROVENANCE_FAILED, chain};
-use crate::cases::session::SessionVerbs;
 use crate::control::{self, Change, Switch};
 use crate::runtime::Ctx;
 use crate::{Author, Provider, SessionControl, SessionId, SessionLink, SessionRecord};
@@ -99,7 +98,7 @@ pub fn run<E: HookPortError>(ctx: &Ctx<'_, E>, input: &ScribeCommandInput<'_>) -
                 }],
             );
         }
-        return continuation::restore(ctx, EVENT, session, crate::HandoffSelection::Named(id));
+        return continuation::restore(ctx, EVENT, session, session::HandoffSelection::Named(id));
     }
     let change = match switch {
         Switch::Link { .. }
@@ -234,7 +233,7 @@ fn run_catalog<E: HookPortError>(
     switch: &Switch,
     target: &SessionId,
 ) -> HookReply {
-    match catalog::begin(ctx, provider, target, Author::user()).map_err(E::from) {
+    match session::begin(ctx, provider, target, Author::user()).map_err(E::from) {
         Ok(begun) => {
             let id = &begun.id;
             if begun.wrote_switch {
@@ -309,10 +308,14 @@ fn run_link<E: HookPortError>(
         kind: link.kind,
     };
     let relation = format!("{} {}", link.kind, link.session);
-    match ctx
-        .store
-        .link_session_for_provider(session, link, on, ctx.clock.now(), provider)
-    {
+    match session::link_session_for_provider(
+        ctx.store,
+        session,
+        link,
+        on,
+        ctx.clock.now(),
+        provider,
+    ) {
         Ok(linked) => {
             let outcomes = if linked.added || linked.switched_on {
                 vec![HookOutcome {

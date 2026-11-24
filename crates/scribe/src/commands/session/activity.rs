@@ -12,15 +12,15 @@
 //! (`target` `session:<id>`); a repeat that changes nothing prints the
 //! record, says `nothing changed` on stderr and writes no audit line.
 
-use super::{SessionRef, parse_session_ref};
+use super::{SessionRef, View, parse_session_ref};
 use crate::app::Context;
 use crate::audit_middleware::AuditSubject;
 use crate::error::CliError;
 use crate::output::{Kin, Output, Record, SessionPayload};
 use clap::Args;
 use scribe_core::AuthorName;
-use scribe_core::cases::session_activity::{
-    self as case, ActivateInput, ActivityWritten, DeactivateInput,
+use scribe_core::apps::session::{
+    self as app, ActivateInput, ActivityWritten, Command, DeactivateInput, exec,
 };
 
 /// The command paths in the audit log.
@@ -98,7 +98,7 @@ pub(super) fn subject(ctx: &Context, id: &SessionRef, author: &AuthorName) -> Au
         .segment
         .is_none()
         .then(|| id.id.clone())
-        .and_then(|id| ctx.store().read().sessions().resolve(&id).ok())
+        .and_then(|id| app::resolved_id(&ctx.runtime(), &id))
         .map(|id| format!("session:{id}"));
     AuditSubject {
         target,
@@ -108,16 +108,14 @@ pub(super) fn subject(ctx: &Context, id: &SessionRef, author: &AuthorName) -> Au
 
 /// `session deactivate`.
 pub(super) fn deactivate(args: DeactivateArgs, ctx: &Context) -> Result<Output, CliError> {
-    let written = case::deactivate(
-        &ctx.core(),
-        DeactivateInput {
-            target: args.id,
-            author: args.author,
-            reason: &args.reason,
-            cite: args.cite.as_deref(),
-        },
-    )?;
-    Ok(output(written))
+    let input = DeactivateInput {
+        target: args.id,
+        author: args.author,
+        reason: &args.reason,
+        cite: args.cite.as_deref(),
+    };
+    let outcome = exec(&ctx.runtime(), Command::Deactivate(input))?;
+    Ok(super::output(outcome, View::default(), ctx))
 }
 
 /// `session activate`.
@@ -127,20 +125,18 @@ pub(super) fn activate(args: ActivateArgs, ctx: &Context) -> Result<Output, CliE
         (false, true) => Some(false),
         (false, false) => None,
     };
-    let written = case::activate(
-        &ctx.core(),
-        ActivateInput {
-            target: args.id,
-            author: args.author,
-            reason: args.reason.as_deref(),
-            pin,
-        },
-    )?;
-    Ok(output(written))
+    let input = ActivateInput {
+        target: args.id,
+        author: args.author,
+        reason: args.reason.as_deref(),
+        pin,
+    };
+    let outcome = exec(&ctx.runtime(), Command::Activate(input))?;
+    Ok(super::output(outcome, View::default(), ctx))
 }
 
 /// The record as read after the write.
-fn output(written: ActivityWritten) -> Output {
+pub(super) fn output(written: ActivityWritten) -> Output {
     let view = &written.view;
     let payload = SessionPayload::new(
         &view.record,

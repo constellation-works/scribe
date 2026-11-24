@@ -6,7 +6,7 @@
 
 use crate::activity::{self, ActiveRoute, SetActive};
 use crate::apps::proposal;
-use crate::cases::session::SessionVerbs;
+use crate::apps::session;
 use crate::consistency::{self, ReapplyReport};
 use crate::runtime::audit::PersistedAudit;
 use crate::runtime::{Ctx, PortError};
@@ -161,7 +161,7 @@ fn deactivate_aged(
         .filter(|s| activity::past_age(s, limit, now))
         .map(|s| (s.id.clone(), activity::age_change(s, limit)))
         .collect();
-    let outcomes = store.set_active_many(&aged, now, redactor)?;
+    let outcomes = session::set_active_many(store, &aged, now, redactor)?;
     for ((id, change), outcome) in aged.iter().zip(outcomes) {
         let outcome = match outcome {
             Ok(outcome) => outcome,

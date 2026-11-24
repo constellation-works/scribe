@@ -1,7 +1,7 @@
 //! Rebuild verbs: a session record rebuilt in windows beside the visible
 //! one, under its own lock (2_design.md §15.7).
 
-use crate::cases::pass::{PassPayload, PassReport, distill, short_reason, window_warnings};
+use super::pass::{PassPayload, PassReport, distill, short_reason, window_warnings};
 use crate::checks::{forgotten_refusal, refuse_busy};
 use crate::runtime::resolve::refuse_forgotten;
 use crate::runtime::{Ctx, PortError, TranscriptState, Unreadable};

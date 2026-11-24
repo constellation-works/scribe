@@ -1728,7 +1728,7 @@ pub(crate) struct HookSpecificJson<'a> {
     pub(crate) additional_context: &'a str,
 }
 
-pub(crate) use scribe_core::cases::pass::{PassPayload, PassReport};
+pub(crate) use scribe_core::apps::session::{PassPayload, PassReport};
 
 /// The run's error of a [`PassReport`].
 pub(crate) trait PassFailure {
