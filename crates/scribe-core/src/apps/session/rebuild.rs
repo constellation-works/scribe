@@ -101,7 +101,7 @@ impl RebuildVerbs for Store {
             // Activity attribution belongs to the latest visible record, not this rebuild.
             record.active_change = current.active_change;
             // The record and the end of its checkpoint commit together.
-            tx.sessions().put_rebuilt(&record)?;
+            tx.sessions().put_from_checkpoint(&record)?;
             Ok(Some(record))
         })
     }

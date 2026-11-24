@@ -162,8 +162,8 @@ includes any file added later.
 - The `claim` module owns lexical claim and provenance predicates below the `pass` orchestrator; config owns pass window limits. Their callers (`config`, `annotation`, `consistency`, `instruction`, `memory`, `message`) do not import `pass`.
 - A port imports none of the modules that call it: the model shapes do not import `memory` or `group`, and `providers/` imports no app and no runtime.
 - Only five flows name the `Models` port (`providers`, `Models`, `ModelError`, `ModelsOnce`, `ModelsEach`): session pass, catalog and rebuild, memory refresh and group close, with the `mod.rs` of their apps.
-- In `scribe-store`, `fsio.rs` imports no business module and nothing else from the store. `codec.rs` and `audit.rs` do no file I/O. `archive.rs` reads the file store's archives through `fsio.rs` and reaches their tables through `db/archive.rs`.
-- In `scribe-store`, only `db.rs` and `db/` use `rusqlite` (and `testing.rs`, test support).
+- In `scribe-store`, `db/fsio.rs` imports nothing of the store but its error type, and `contracts/` imports nothing from `db/` or `repository/` and has no `check_*` function.
+- In `scribe-store`, only `db/` uses `rusqlite` (and `testing.rs`, test support).
 - The binary spawns no process: `scribe-core`'s `providers/` (the model transports) does.
 - In `scribe-tools`, only `fs.rs` names `std::fs`; nothing names `scribe_core`, `std::env`, `std::net` or `std::process`, discovers a path, or calls `Store::write`.
 - `output/` imports no `app`, `cli`, `commands` or `audit_middleware`; `audit_middleware.rs` imports no `cli` or `commands`.

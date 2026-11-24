@@ -154,7 +154,7 @@ pub use session::{
     SessionError, SessionFilter, SessionId, SessionLink, SessionOrder, SessionRecord,
     SessionStatus, ShortIds, Term, check_link, check_log, children, tree_order, tree_parent,
 };
-pub use store::repo;
+pub use store::repository;
 pub use store::{
     AUDIT_FILE, AuditEvent, AuditStatus, CONFIG_FILE, CONTROL_FILE, ClaudeCapturePosition,
     ClaudeGroupCapture, DB_FILE, DEFAULT_LOCK_WAIT, ENTRIES_DIR, EntryList, ExportCounts,

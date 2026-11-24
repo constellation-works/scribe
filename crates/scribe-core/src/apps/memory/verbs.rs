@@ -1,7 +1,7 @@
 //! Memory verbs: acknowledging a `now` item, forgetting an item, restoring a
 //! profile revision, and the profile refresh's read and write (§15.4–§15.6).
 //! Each decides inside one store write, over the memory rows and the files
-//! as the open journals leave them ([`Memory::commit`](crate::repo::Memory::commit)).
+//! as the open journals leave them ([`Memory::commit`](crate::repository::Memory::commit)).
 
 use super::refresh::{
     Basis, ProfileInputs, REFRESH_SESSIONS, REFRESH_SUMMARY_CHARS, REFRESH_VERBATIM_CHARS,
@@ -11,7 +11,7 @@ use crate::checks::{check_agent_author, refusal};
 use crate::entry::EntryStatus;
 use crate::memory::{self, Milestone, NowItem, Stem, profile};
 use crate::models::{ProfileAnswer, ProfileSession};
-use crate::repo::{HistoryRow, MemoryCommit};
+use crate::repository::{HistoryRow, MemoryCommit};
 use crate::store::{bare, not_found};
 use crate::{AuthorName, MemoryShown, Redactor, Result, SessionId, Store, WriteRefusal};
 use std::collections::BTreeSet;

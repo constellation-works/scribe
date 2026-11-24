@@ -7,7 +7,7 @@ use crate::{Error, Related};
 use rusqlite::{OptionalExtension, params};
 use time::OffsetDateTime;
 
-/// A group's row as a close reads it ([`GroupRows::close_header`]).
+/// A group's row as a close reads it ([`GroupRows::header`]).
 #[derive(Debug)]
 pub struct CloseHeader {
     /// The session that opened the group.
@@ -30,7 +30,7 @@ impl GroupRows<'_> {
     }
 
     /// Group `n`'s row as a close reads it.
-    pub fn close_header(&self, n: i64) -> Rows<Option<CloseHeader>> {
+    pub fn header(&self, n: i64) -> Rows<Option<CloseHeader>> {
         self.conn
             .query_row(
                 "SELECT opener, closed IS NULL, substr(title, 1, 500), related FROM groups WHERE id = ?1",
@@ -77,7 +77,7 @@ impl GroupRows<'_> {
 
     /// The newest active handoffs of group `n`'s unforgotten members: id and
     /// the first 1200 characters, at most 16.
-    pub fn close_handoffs(&self, n: i64) -> Rows<Vec<(String, String)>> {
+    pub fn member_handoffs(&self, n: i64) -> Rows<Vec<(String, String)>> {
         let mut handoffs = self
             .conn
             .prepare(&format!(
@@ -98,7 +98,7 @@ impl GroupRows<'_> {
 
     /// The newest typed turns of group `n`'s unforgotten members: session,
     /// message id and text, bounded, at most 32.
-    pub fn close_turns(&self, n: i64) -> Rows<Vec<(String, String, String)>> {
+    pub fn member_turns(&self, n: i64) -> Rows<Vec<(String, String, String)>> {
         let mut turns = self
             .conn
             .prepare(&format!(
@@ -115,7 +115,7 @@ impl GroupRows<'_> {
     }
 
     /// Close group `n` at `now` with `summary`.
-    pub fn close(&self, n: i64, now: OffsetDateTime, summary: &str) -> Rows<()> {
+    pub fn set_closed(&self, n: i64, now: OffsetDateTime, summary: &str) -> Rows<()> {
         self.conn
             .execute(
                 "UPDATE groups SET closed = ?2, summary = ?3 WHERE id = ?1",

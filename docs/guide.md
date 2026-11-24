@@ -285,7 +285,7 @@ provenance with a host turn id. User roles alone, injected skills, repository
 instructions, tools, automation and subagents do not supply that provenance.
 Unknown transcript versions fail closed with a nonblocking recording refusal.
 The model transport is written against the Codex request shape named in
-`crates/scribe/src/models/codex.rs`. It is not a stable transcript API.
+`crates/scribe-core/src/providers/cli/codex.rs`. It is not a stable transcript API.
 
 `UserPromptSubmit` may arrive before its transcript item exists. It then
 reports pending verification. Stop processes matching host-attributed inputs,

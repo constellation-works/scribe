@@ -1,7 +1,7 @@
 //! Group verbs: opening a group, joining, adding and moving members,
 //! leaving, a cleared session's seat, the deferred ancestry check, turn
 //! capture and backfill, and the close (2_design.md §17). Every decision and its write share one store write: the
-//! verbs read and write the rows through [`Groups::rows`](crate::repo::Groups::rows).
+//! verbs read and write the rows through [`Groups::rows`](crate::repository::Groups::rows).
 
 mod capture;
 mod close;

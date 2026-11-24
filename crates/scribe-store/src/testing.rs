@@ -25,39 +25,39 @@ use std::path::PathBuf;
 /// The store reads and writes the tests call by their pre-2c-4c names.
 /// Each is one delegation to a repository.
 pub trait StoreTestReads {
-    /// [`crate::repo::Sessions::get`].
+    /// [`crate::repository::Sessions::get`].
     fn session(&self, id: &SessionId) -> Result<SessionView>;
-    /// [`crate::repo::Sessions::control`].
+    /// [`crate::repository::Sessions::control`].
     fn control(&self) -> Result<ControlState>;
-    /// [`crate::repo::Sessions::change_control`] in a [`Store::write`].
+    /// [`crate::repository::Sessions::change_control`] in a [`Store::write`].
     fn update_control<T>(&self, change: impl FnOnce(&mut ControlState) -> T) -> Result<T>;
-    /// [`crate::repo::Sessions::list`].
+    /// [`crate::repository::Sessions::list`].
     fn list_sessions(&self, filter: &SessionFilter) -> Result<SessionList>;
-    /// [`crate::repo::Sessions::numbers`].
+    /// [`crate::repository::Sessions::numbers`].
     fn session_numbers(&self) -> Result<BTreeMap<SessionId, NonZeroU64>>;
-    /// [`crate::repo::Entries::get`].
+    /// [`crate::repository::Entries::get`].
     fn entry(&self, id: &EntryId) -> Result<Entry>;
-    /// [`crate::repo::Entries::list`].
+    /// [`crate::repository::Entries::list`].
     fn list_entries(&self, filter: &EntryFilter) -> Result<EntryList>;
-    /// [`crate::repo::Proposals::all`].
+    /// [`crate::repository::Proposals::all`].
     fn proposals(&self) -> Result<Vec<Proposal>>;
-    /// [`crate::repo::Tags::config`].
+    /// [`crate::repository::Tags::config`].
     fn config(&self) -> Result<Config>;
-    /// [`crate::repo::Tags::list`].
+    /// [`crate::repository::Tags::list`].
     fn list_tags(&self) -> Result<TagList>;
-    /// [`crate::repo::Groups::all`].
+    /// [`crate::repository::Groups::all`].
     fn groups(&self) -> Result<Vec<Group>>;
-    /// [`crate::repo::Groups::get`].
+    /// [`crate::repository::Groups::get`].
     fn group(&self, id: &str) -> Result<Group>;
-    /// [`crate::repo::Groups::search_messages`].
+    /// [`crate::repository::Groups::search_messages`].
     fn search_group_messages(&self, group: &str, tokens: &[String]) -> Result<MessageSearch>;
-    /// [`crate::repo::Messages::search`].
+    /// [`crate::repository::Messages::search`].
     fn search_messages(&self, tokens: &[String]) -> Result<MessageSearch>;
-    /// [`crate::repo::Messages::put`] in a [`Store::write`].
+    /// [`crate::repository::Messages::put`] in a [`Store::write`].
     fn write_messages(&self, messages: &[NewMessage], redactor: &Redactor) -> Result<usize>;
-    /// [`crate::repo::Audit::events`].
+    /// [`crate::repository::Audit::events`].
     fn audit_events(&self) -> Result<(Vec<AuditEvent>, usize)>;
-    /// [`crate::repo::Audit::path`].
+    /// [`crate::repository::Audit::path`].
     fn audit_path(&self) -> PathBuf;
 }
 
@@ -221,7 +221,7 @@ pub trait StoreTestInternals {
     fn tag_definition(&self, word: &str) -> Result<(crate::TagDef, &'static str)>;
     /// Record one audit event. (`Store::record_audit`).
     fn record_audit(&self, event: &crate::AuditEvent) -> Result<()>;
-    /// Write a pass's memory changes outside a session write. (`Store::write_pass_memory`).
+    /// Write a pass's memory changes outside a session write. (`Store::write_window_memory`).
     fn write_pass_memory(
         &self,
         pass: &crate::PassMemory,
@@ -381,7 +381,7 @@ impl StoreTestInternals for Store {
         redactor: &crate::Redactor,
         record: &crate::SessionRecord,
     ) -> Result<crate::MemoryWritten> {
-        Store::write_pass_memory(self, pass, redactor, record)
+        Store::write_window_memory(self, pass, redactor, record)
     }
     fn with_conn<T>(
         &self,
@@ -393,7 +393,7 @@ impl StoreTestInternals for Store {
 
 /// Store internals of `audit` that scribe-core's store tests reach.
 pub mod audit {
-    pub use crate::audit::{AuditEvent, AuditStatus, IssueAudit, decode_formatted};
+    pub use crate::repository::audit::{AuditEvent, AuditStatus, IssueAudit, decode_formatted};
 }
 
 /// Store internals of `codec` that scribe-core's store tests reach.
@@ -415,7 +415,7 @@ pub mod db {
 
 /// Store internals of `memory` that scribe-core's store tests reach.
 pub mod memory {
-    pub use crate::memory::CRASH_AFTER_COMMIT;
+    pub use crate::repository::memory::CRASH_AFTER_COMMIT;
 }
 
 /// Store internals of `write` that scribe-core's store tests reach.
@@ -474,7 +474,7 @@ pub struct Seed {
     /// The pickups.
     pub pickups: Vec<crate::action::Pickup>,
     /// The audit lines, each with its format.
-    pub audit: Vec<(u32, super::audit::AuditEvent)>,
+    pub audit: Vec<(u32, crate::AuditEvent)>,
 }
 
 /// A store at `root` (created owner-only if missing) holding `seed`'s

@@ -33,10 +33,10 @@
 //!   write drains into the table. So a command refused for a locked store
 //!   waits once, and its line is kept.
 
-use crate::audit::{self, AuditEvent};
 use crate::checks::admin;
 use crate::db::{self, Conn as Connection, DB_FILE, docs, scope};
 use crate::error::{Error, Result};
+use crate::repository::audit::{self, AuditEvent};
 use crate::{Store, fsio};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -396,7 +396,7 @@ impl Store {
         Ok(())
     }
 
-    /// [`Audit::record`](crate::repo::Audit::record), in the store's own
+    /// [`Audit::record`](crate::repository::Audit::record), in the store's own
     /// tests' call syntax. Test support: it moves with the tests.
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn record_audit(&self, event: &AuditEvent) -> Result<()> {
@@ -484,7 +484,7 @@ impl Store {
     /// Refuse `store migrate` before anything is imported: when there is
     /// no archive to import, while a session is on, or while a rebuild
     /// checkpoint file waits in a leftover `sessions/`.
-    pub(crate) fn refuse_migrate(&self, conn: &Connection, leftovers: &[String]) -> Result<()> {
+    pub(crate) fn refuse_import(&self, conn: &Connection, leftovers: &[String]) -> Result<()> {
         let db = self.root.join(DB_FILE);
         let mut pending = !leftovers.is_empty();
         for name in self.archive_dirs()? {

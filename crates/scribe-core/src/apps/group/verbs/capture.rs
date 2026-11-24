@@ -6,7 +6,7 @@ use crate::checks::group::{check_capture_turns, check_own_user_turns};
 use crate::checks::refusal;
 use crate::instruction::ClaudeGroupTurns;
 use crate::message::NewMessage;
-use crate::repo::CaptureState;
+use crate::repository::CaptureState;
 use crate::{
     ClaudeCapturePosition, ClaudeGroupCapture, Redactor, Result, SessionId, Store, WriteRefusal,
 };

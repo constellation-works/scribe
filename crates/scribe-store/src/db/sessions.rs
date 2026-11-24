@@ -486,7 +486,7 @@ pub(crate) fn register(conn: &Connection, db: &Path, id: &SessionId) -> Result<(
 /// Erase the session and its directly owned rows. A tombstone keeps both
 /// ids and the first forget timestamp. Reapplying also cleans residue from
 /// older versions and reports whether that cleanup changed anything.
-pub(crate) fn forget(
+pub(crate) fn erase(
     conn: &Connection,
     db: &Path,
     id: &SessionId,
@@ -530,7 +530,7 @@ pub(crate) fn forget(
             )
             .map_err(err)?;
     }
-    changed += super::groups::forget_session(conn, db, id, now)?;
+    changed += super::groups::erase_session_rows(conn, db, id, now)?;
     changed += conn
         .execute(
             "DELETE FROM session_links WHERE type = 'continues' AND target = ?1",

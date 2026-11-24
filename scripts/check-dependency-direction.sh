@@ -391,6 +391,26 @@ if [[ -n "$fsio_hits" ]]; then
   echo "$fsio_hits" >&2
   err "scribe-store/src/db/fsio.rs: fsio imports nothing of the store but its error"
 fi
+# contracts/ holds record shapes only: it imports nothing from db/ or
+# repository/, as a path or inside a grouped import, and decides nothing
+# (no `check_*` function).
+ban "$STORE/contracts" '(crate|super)::(db|repository)([^[:alnum:]_]|$)' \
+  "scribe-store/src/contracts: contracts import nothing from db/ or repository/"
+contracts_hits=$(find "$STORE/contracts" -name '*.rs' -print0 2>/dev/null \
+  | xargs -0 perl -0777 -ne '
+      while (/^[ \t]*(?:pub(?:\([a-z]+\))?[ \t]+)?use[ \t]+(?:crate|super)::\{([^;]*)\};/mg) {
+        my ($stmt, $group, $at) = ($&, $1, $-[0]);
+        next unless $group =~ /(?<![A-Za-z0-9_:])(?:db|repository)(?![A-Za-z0-9_])/;
+        my $line = 1 + (substr($_, 0, $at) =~ tr/\n//);
+        $stmt =~ s/\s+/ /g;
+        print "$ARGV:$line:$stmt\n";
+      }' 2>/dev/null || true)
+if [[ -n "$contracts_hits" ]]; then
+  echo "$contracts_hits" >&2
+  err "scribe-store/src/contracts: contracts import nothing from db/ or repository/"
+fi
+ban "$STORE/contracts" '(^|[^[:alnum:]_])fn[[:space:]]+check_' \
+  "scribe-store/src/contracts: a contract decides nothing (no check_* function)"
 # Composition does not know about parsing, dispatch or rendering (R2).
 # The model adapters spawn supervised processes through providers/cli.rs's
 # supervisor in scribe-core, so process-group supervision, the cleared
@@ -451,6 +471,17 @@ for retired in \
   crates/scribe-store/src/codec.rs \
   crates/scribe-store/src/archive.rs \
   crates/scribe-store/src/rebuild.rs \
+  crates/scribe-store/src/repo.rs \
+  crates/scribe-store/src/documents.rs \
+  crates/scribe-store/src/ids.rs \
+  crates/scribe-store/src/sessions.rs \
+  crates/scribe-store/src/memory.rs \
+  crates/scribe-store/src/tags.rs \
+  crates/scribe-store/src/marks.rs \
+  crates/scribe-store/src/pickups.rs \
+  crates/scribe-store/src/candidates.rs \
+  crates/scribe-store/src/audit.rs \
+  crates/scribe-store/src/db/groups/close.rs \
   crates/scribe-core/src/cases; do
   [[ -e "$retired" ]] && err "retired path exists again: $retired"
 done
