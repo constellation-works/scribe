@@ -1191,6 +1191,16 @@ fn detach_entry(entry: &mut Entry, matches: impl Fn(&str) -> bool, now: OffsetDa
             entry.related.push(marker);
         }
     }
+    if let Some(item) = &mut entry.item
+        && item
+            .answer
+            .as_ref()
+            .is_some_and(|a| matches(a.session.as_str()))
+    {
+        // The answer is the user's verbatim words from the session; erase
+        // them with the id. An unsettled item is open again.
+        item.answer = None;
+    }
     for instruction in [&mut entry.instruction, &mut entry.removal_instruction]
         .into_iter()
         .flatten()

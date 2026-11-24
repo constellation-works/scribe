@@ -363,6 +363,9 @@ impl Store {
         self.refuse_forgotten(&answer.session)?;
         self.prepare_dir(&self.root)?;
         self.write(|| {
+            // Checked again inside the write: a forget committed after the
+            // check above must not be followed by a fresh answer write.
+            self.refuse_forgotten(&answer.session)?;
             let mut entry = self.resolve_entry(id)?;
             check_unsettled_item(&entry)?;
             let author = Author::agent(answer.recorded_by.clone());

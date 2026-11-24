@@ -1042,3 +1042,88 @@ fn typed_metadata_update_changes_only_the_named_record_fields() {
         "water-economy"
     );
 }
+
+/// An active `open-item` entry whose answer was typed in `session`.
+fn answered_item(id: &str, session: &str, words: &str) -> crate::Entry {
+    let mut item = crate::tests::entry(id, T0);
+    item.content = String::from("Restart the dashboard");
+    item.author = crate::Author::agent("0-chief".parse().unwrap());
+    item.content_from = crate::ContentFrom::Agent;
+    item.cite = None;
+    item.said.clear();
+    item.item = Some(crate::OpenItem {
+        asked_by: "0-chief".parse().unwrap(),
+        options: Vec::new(),
+        recommended: None,
+        why: None,
+        blocked: String::from("the restart"),
+        answer_in: crate::AnswerIn::Any,
+        answer: Some(crate::ItemAnswer {
+            words: words.to_owned(),
+            session: session.parse().unwrap(),
+            at: T0,
+            recorded_by: "0-aide".parse().unwrap(),
+        }),
+        closed: None,
+    });
+    item
+}
+
+#[test]
+fn forgetting_a_session_erases_its_open_item_answers_live_and_archived() {
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+    let record = session_text("", SESSION_BODY);
+    put(&root, "sessions/2026/11/s-1.md", &record);
+    put(
+        &root,
+        "sessions/2026/11/s-2.md",
+        &record.replace("id: s-1", "id: s-2"),
+    );
+    let gone = "restart it after the freeze lifts";
+    let kept = "leave the dashboard alone for now";
+    for (id, session, words) in [("open-item-1", "s-1", gone), ("open-item-2", "s-2", kept)] {
+        let path = root.join(format!("entries/open-item/{id}.md"));
+        let bytes = format::encode_entry(&path, &answered_item(id, session, words)).unwrap();
+        put(
+            &root,
+            &format!("entries/open-item/{id}.md"),
+            std::str::from_utf8(&bytes).unwrap(),
+        );
+    }
+    let store = Store::open(&root);
+    let cite = Cite {
+        session: s1(),
+        message: None,
+        at: T0,
+        prompt_sha256: "0".repeat(64),
+        line: 1,
+        cwd: String::from("/work"),
+    };
+
+    store
+        .settle(&Settle::ForgetSession(s1()), &cite, T0)
+        .unwrap();
+
+    let forgotten = store.resolve_entry("open-item-1").unwrap();
+    assert_eq!(forgotten.item.as_ref().unwrap().answer, None);
+    assert_eq!(
+        crate::ItemState::of(&forgotten),
+        Some(crate::ItemState::Open)
+    );
+    let unrelated = store.resolve_entry("open-item-2").unwrap();
+    assert_eq!(unrelated.item.unwrap().answer.unwrap().words, kept);
+    assert!(!on_disk(&root, gone), "the forgotten words remain on disk");
+    assert!(on_disk(&root, kept));
+    let answer = crate::ItemAnswer {
+        words: gone.to_owned(),
+        session: s1(),
+        at: T0,
+        recorded_by: "0-aide".parse().unwrap(),
+    };
+    let refused = store
+        .answer_open_item("open-item-1", answer, T0, &Redactor::new([]))
+        .unwrap_err();
+    assert_eq!(code(&refused), "session_forgotten");
+    assert!(!on_disk(&root, gone));
+}

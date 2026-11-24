@@ -7203,6 +7203,13 @@ answer once the asker sees it done. An item whose `answer_in` is
 the recording session tells him the answer must also be typed in that
 session for its auto mode to accept the action (§18.8).
 
+Forgetting the session he typed the answer in erases the answer (`item.answer`
+becomes empty) from the live entry and from any archived copy, since it holds
+his words and that session's id; an unsettled item then reads as open again,
+and every other record is kept. A forgotten session takes no answer: the
+check runs again inside the write, so an answer racing the forget cannot
+restore what it erased.
+
 **Closing.** The asker closes once it has carried the answer out:
 
 ```sh
