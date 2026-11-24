@@ -28,9 +28,9 @@ PR 2 until PR 4, when composition is in the core.
 |-------|------|-----------------------|--------|
 | `scribe-domain` | Records and the pure rules over them: entries, sessions, proposals, tags, the parsing of config, and the request and answer shapes of the `Models` port. Values only, no I/O. | — | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile`, `rustix` |
 | `scribe-store` | The data root and `scribe.db`: the `Store` (`open`, `read() -> Snapshot`, `write(\|tx\| …)` and the repositories), locks, atomic writes, format stamps, the import of the file store's archives, the audit record, and the redactor every persisted free-text field passes (`redact.rs`). The only crate that touches the data root. | `scribe-domain` | `clap`, `tracing-subscriber` and any terminal crate |
-| `scribe-tools` | Functions of host files, bytes and text that decide nothing about a record: provider transcripts found under their roots, read under the provenance checks and parsed into typed messages (`transcript/`, with `codex`), the origin guard (`origin.rs`), a working directory's project from git's own files (`project.rs`), the `#scribe` markers, settling lines and `/scribe` control lines of a typed turn (`markers.rs`, with `control`), and the crate's only `std::fs` access (`fs.rs`). | `scribe-domain`, `scribe-store` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile` |
+| `scribe-tools` | Functions of host files, bytes and text that decide nothing about a record: provider transcripts found under their roots, read under the provenance checks and parsed into typed messages (`transcript/`, with `codex`), the origin guard (`origin.rs`), a working directory's project from git's own files (`project.rs`), the `#scribe` markers, settling lines and `/scribe` control lines of a typed turn (`markers.rs`, with `control`), the fields of a hook's stdin payload and their decoding (`payload.rs`), a session pass's window over a transcript's messages (`window.rs`), the text primitives every layer may use: ranking tokens, sensitive and finance words, claim, verbatim and trigger predicates (`text/`), the host's name (`host.rs`), and the crate's only `std::fs` access (`fs.rs`). | `scribe-domain`, `scribe-store` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile` |
 | `scribe-core` | The apps (`apps/<app>/`, one per subject, each holding its use cases) and the `runtime/` they run against: the context and its ports, id resolution, the shared errors and the audit lines a use case owes. Each use case loads what it needs from a snapshot, plans with domain functions, calls the ports and commits in one store write. Its root re-exports `scribe-domain` and `scribe-store` at the paths they had in it. `composition.rs` captures the environment (`Env`) and resolves the `Context` the apps run against; `runtime/host/` implements the ports on it; `providers/` holds the `Models` port and the model adapters. | `scribe-domain`, `scribe-store`, `scribe-tools` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite` |
-| `scribe` (binary) | Arguments, dispatch, the audit guard and rendering. | `scribe-core`, `scribe-tools` (interim) | `rusqlite` |
+| `scribe` (binary) | Arguments, the grouped root help, dispatch, the surface error and rendering. The audit guard runs inside the core's `exec` (`runtime/audit.rs`). | `scribe-core`, `scribe-tools` (interim) | `rusqlite` |
 
 The store holds no rule: a check that decides whether a write may happen
 belongs to its app, which passes it into the write as a closure the store
@@ -105,7 +105,7 @@ fails if either crate names it again.
 
 | Tier | Unit | Owns | May depend on |
 |------|------|------|---------------|
-| Surface | `scribe::cli`, `::commands`, `::output`, `::audit_middleware` | Argument declarations, dispatch, the audit guard around mutating commands, rendering, and the only stdout, stderr and terminal access. `main` captures `scribe_core::composition::Env` once and resolves the `Context` (`scribe::Context`, composition's with the binary's error). | `scribe-core` |
+| Surface | `scribe::cli`, `::help`, `::commands`, `::error`, `::output` | Argument declarations, the grouped root help built from them (`help`), dispatch, the surface error type every command ends with (`error`), rendering, and the only stdout, stderr and terminal access. `main` captures `scribe_core::composition::Env` once and resolves the `Context` (`scribe::Context`, composition's with the binary's error). | `scribe-core` |
 
 ## Rings inside `scribe-domain`
 
@@ -313,7 +313,7 @@ includes any file added later.
 - In `scribe-store`, only `db/` uses `rusqlite` (and `testing.rs`, test support).
 - The binary spawns no process: `scribe-core`'s `providers/` (the model transports) does.
 - In `scribe-tools`, only `fs.rs` names `std::fs`; nothing names `scribe_core`, `std::env`, `std::net` or `std::process`, discovers a path, or calls `Store::write`.
-- `output/` imports no `app`, `cli`, `commands` or `audit_middleware`; `audit_middleware.rs` imports no `cli` or `commands`.
+- `output/` imports no `app`, `cli` or `commands`.
 - `commands/` writes no file (`std::fs::write`, `create`, `rename`, `remove`, `copy`, `set_permissions`, `OpenOptions`); every write goes through the store.
 - Only `output/` touches stdout or stderr, asks whether a stream is a terminal, or reads the color and format variables.
 
